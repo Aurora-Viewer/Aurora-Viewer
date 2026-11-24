@@ -13,17 +13,38 @@ fn check(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut bool) -> bool 
     .inner
 }
 
+/// A type filter's switch: the type's symbol before its name, as its items
+/// show it (`category::filter_glyph`).
+fn type_check(ui: &mut egui::Ui, p: &Palette, kind: i32, label: &str, value: &mut bool) -> bool {
+    ui.horizontal(|ui| {
+        let changed = switch(ui, p, value).changed();
+        if let Some((glyph, tint)) = super::category::filter_glyph(kind, p) {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
+            widgets::paint_glyph(ui.painter(), glyph, rect.center(), 14.0, tint);
+        }
+        ui.label(RichText::new(label).color(p.ink));
+        changed
+    })
+    .inner
+}
+
 pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences, tab: usize) -> bool {
     let mut changed = false;
     let sort = prefs.sort_for_mut(tab);
     ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-display-order")).color(p.muted));
     ui.horizontal(|ui| {
-        changed |= ui
-            .selectable_value(&mut sort.by_date, true, aurora_i18n::tr!("ui-inventory-controls-newest-first"))
-            .changed();
-        changed |= ui
-            .selectable_value(&mut sort.by_date, false, aurora_i18n::tr!("common-by-name"))
-            .changed();
+        for (by_date, label) in [
+            (true, aurora_i18n::tr!("ui-inventory-controls-newest-first")),
+            (false, aurora_i18n::tr!("common-by-name")),
+        ] {
+            if ui
+                .selectable_label(sort.by_date == by_date && sort.column.is_none(), label)
+                .clicked()
+            {
+                sort.set_by_date(by_date);
+                changed = true;
+            }
+        }
     });
     changed |= check(
         ui,
@@ -190,7 +211,11 @@ fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     if underlined_button(ui, p, aurora_i18n::tr!("common-preferences"), st.preferences_open).clicked() {
         st.preferences_open = !st.preferences_open;
     }
-    tree_actions(ui, p, st);
+    // LLPanelMainInventory::toggleViewMode hides `collapse_expand_buttons`
+    // in single folder mode: its list opens no folder in place.
+    if st.single_folder.is_none() {
+        tree_actions(ui, p, st);
+    }
 }
 
 fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
@@ -412,7 +437,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                     for (n, (kind, label)) in types().iter().enumerate() {
                         let bit = 1_u32 << kind;
                         let mut on = f.types & bit != 0;
-                        if check(ui, p, label, &mut on) {
+                        if type_check(ui, p, *kind, label, &mut on) {
                             if on {
                                 f.types |= bit;
                             } else {
@@ -432,7 +457,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                 ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-required-permissions")).color(p.muted));
                 ui.horizontal(|ui| {
                     for (bit, label) in [
-                        (super::rules::MODIFY, aurora_i18n::tr!("common-edit")),
+                        (super::rules::MODIFY, aurora_i18n::tr!("common-modify")),
                         (super::rules::COPY, aurora_i18n::tr!("common-copy-2")),
                         (super::rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
                     ] {
@@ -530,7 +555,10 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                     if flat_button(ui, p, aurora_i18n::tr!("common-reset")).clicked() {
                         *f = Filters::default();
                     }
-                    if flat_button(ui, p, aurora_i18n::tr!("ui-inventory-controls-keep-by-default")).clicked() {
+                    // Recent keeps its filters on its own (`remember_recent_filters`).
+                    if st.tab != super::RECENT_TAB
+                        && flat_button(ui, p, aurora_i18n::tr!("ui-inventory-controls-keep-by-default")).clicked()
+                    {
                         prefs.filters_for_mut(st.tab).clone_from(f);
                     }
                 });

@@ -83,6 +83,8 @@ enum Upload {
     Encoding {
         rx: crossbeam_channel::Receiver<Result<Vec<u8>, String>>,
         cost: i32,
+        /// A 360° panorama: named for the marker (`capture_360::item_name`).
+        pano: bool,
     },
     /// Sent (`NetCommand::UploadAsset`), its answer awaited.
     Sent(Uuid),
@@ -170,6 +172,9 @@ pub(super) struct PhotoFrame {
     /// Its look, placed for the part drawn.
     pub look: Option<aurora_render::looks::PhotoLook>,
     pub context: aurora_render::PhotoContext,
+    /// A face of a 360° snapshot: the square 90° projection, whatever the
+    /// window's proportions (`app/capture_360.rs`).
+    pub cube_face: bool,
 }
 
 type Thumb = (PathBuf, Option<(u32, u32, Vec<u8>)>);
@@ -183,11 +188,13 @@ pub(super) struct Snapshots {
     /// What the preview was drawn for (photo size, interface, HUDs).
     preview_for: Option<((u32, u32), bool, bool)>,
     pub(super) preview_wanted: bool,
+    /// The photo window was open last frame (its opening asks a preview).
+    was_open: bool,
     camera: Option<[f32; 7]>,
     camera_moved: Option<Instant>,
     saving: Option<save::Saving>,
-    message: Option<(String, bool)>,
-    last_saved: Option<PathBuf>,
+    pub(super) message: Option<(String, bool)>,
+    pub(super) last_saved: Option<PathBuf>,
     gallery: Vec<(PathBuf, Option<egui::TextureHandle>)>,
     /// The folder the gallery was read from.
     gallery_folder: Option<PathBuf>,
@@ -200,10 +207,18 @@ pub(super) struct Snapshots {
     luts: Option<LutLibrary>,
     /// A table being imported (its file chosen, read and copied on a
     /// worker; None: the dialog was closed).
-    lut_import: Option<crossbeam_channel::Receiver<Option<Vec<Imported>>>>,
+    pub(super) lut_import: Option<crossbeam_channel::Receiver<Option<Vec<Imported>>>>,
+    /// The import was asked from the Director's Filters tab: its editor
+    /// takes the first table (with its own Replace).
+    lut_import_director: bool,
     /// The focus distance of the depth of field last frame, for the depth
     /// looks (None: off, the middle of the photo then).
     pub look_focus: Option<f32>,
+    /// The World filters window's state (`ui/world_look.rs`).
+    pub world_ui: crate::ui::world_look::WorldLookUi,
+    /// The filters catalogue's pictures: which to draw, and when to take a
+    /// new still (`snapshot::look_thumbs`).
+    look_thumbs: crate::snapshot::look_thumbs::Thumbs,
     /// The window was closed when the photo was asked (Ctrl+`).
     quiet: bool,
     /// A photo to disk asked while the renderer draws the frame (the
@@ -218,9 +233,9 @@ pub(super) struct Snapshots {
     quality_ask: bool,
     upload: Option<Upload>,
     /// The message tells of this item, saved to the inventory.
-    message_item: Option<Uuid>,
+    pub(super) message_item: Option<Uuid>,
     /// The message tells of a post to the profile feed ("View").
-    message_profile: bool,
+    pub(super) message_profile: bool,
     /// The photo quality waits since then for the textures in view.
     detail_wait: Option<Instant>,
     /// The wait is over: the next "Take" goes ahead.
@@ -266,6 +281,16 @@ pub(super) struct Snapshots {
     /// The field of view before the viewfinder opened: its focal length
     /// is the photo's, the view gets this back when it closes.
     pub(super) fov_before: Option<f32>,
+    /// The shadow quality and ambient occlusion last given to the renderer
+    /// (`photo_render_settings`).
+    pub(super) quality_drawn: Option<(u8, u8)>,
+    /// The viewfinder's tilt (radians) when it last closed: the view is
+    /// levelled meanwhile, the next opening takes it back (feedback 585:
+    /// leaving the photo mode to change a setting lost the angle).
+    pub(super) roll_kept: f32,
+    /// The viewfinder's view while it shows, then when it last closed: the
+    /// next opening takes it back with the tilt (`app::viewfinder`).
+    pub(super) view_kept: Option<crate::snapshot::viewfinder::KeptView>,
     /// The session's photos (`app::photo_reel`).
     pub(super) reel: super::photo_reel::ReelState,
     /// Choosing for the isolation (`app::photo_isolate`): the points asked
@@ -433,6 +458,7 @@ impl Default for Snapshots {
             preview: None,
             preview_for: None,
             preview_wanted: false,
+            was_open: false,
             camera: None,
             camera_moved: None,
             saving: None,
@@ -446,7 +472,10 @@ impl Default for Snapshots {
             dialog: None,
             luts: None,
             lut_import: None,
+            lut_import_director: false,
             look_focus: None,
+            world_ui: Default::default(),
+            look_thumbs: Default::default(),
             quiet: false,
             to_disk: false,
             confirm: None,
@@ -475,6 +504,9 @@ impl Default for Snapshots {
             vf_tick_slot: None,
             vf_free_up: 0.0,
             fov_before: None,
+            quality_drawn: None,
+            roll_kept: 0.0,
+            view_kept: None,
             reel: Default::default(),
             isolate_picks: Vec::new(),
             isolate_point: None,
@@ -490,6 +522,10 @@ impl App {
     /// The world frozen by the photo mode shows its instant throughout,
     /// the photo's parts included.
     pub(super) fn photo_hold(&mut self, now: Instant) -> Option<snapshot::Hold> {
+        // (the Director's offline render keeps a clock of its own)
+        if let Some(hold) = self.director_render_hold(now) {
+            return Some(hold);
+        }
         let clock = self.start.elapsed().as_secs_f32();
         let frozen = self.photo_freeze_world(now, clock);
         let Some(job) = self.snapshots.job.as_mut() else {
@@ -512,10 +548,12 @@ impl App {
     /// every character, sets FreezeTime and stops the particles and the
     /// clouds the same way.
     fn photo_freeze_world(&mut self, now: Instant, clock: f32) -> Option<snapshot::Hold> {
-        if !self.panels.snapshot || !self.in_world() {
+        // (the Director's window has the switch too)
+        if !(self.panels.snapshot || self.panels.director) || !self.in_world() {
             self.snapshots.ui.freeze_world = false;
         }
-        let wanted = self.snapshots.ui.freeze_world;
+        // (a 360° snapshot holds the world still while its faces are drawn)
+        let wanted = self.snapshots.ui.freeze_world || (self.capture_360.capturing() && self.in_world());
         if wanted != self.snapshots.world_freeze.is_some() {
             self.snapshots.world_freeze = wanted.then_some(snapshot::Hold {
                 at: now,
@@ -549,11 +587,19 @@ impl App {
 
     /// Before a frame is laid out: the photo frame it carries, if any.
     pub(super) fn photo_frame(&mut self, renderer: &mut Renderer) -> Option<PhotoFrame> {
+        if let Some(frame) = self.director_render_photo_frame(renderer) {
+            return Some(frame);
+        }
         let textures = &self.scene.textures;
         let (paused, pending, passes) = (textures.drawing_paused(), textures.pending_in_view(), textures.wants_passes());
-        let occlusion = self.settings.ssao > 0;
+        let occlusion = self.photo_ambient_occlusion() > 0;
         let s = &mut self.snapshots;
         s.capturing = None;
+        // a 360° snapshot's face first: the photo's own parts wait for it
+        if let Some(frame) = self.capture_360.photo_frame(renderer.size(), self.settings.render_scale_percent) {
+            s.capturing = renderer.snapshot_request;
+            return Some(frame);
+        }
         let job = s.job.as_mut()?;
         // (a part already asked is drawn all the same: the frame that
         // carries it draws the scene, `App::scene_paused`)
@@ -618,6 +664,7 @@ impl App {
                 interface: false,
                 huds: false,
                 photo: (width, height),
+                cube: None,
             };
             renderer.snapshot_request = Some(spec);
             job.asked = true;
@@ -630,6 +677,7 @@ impl App {
                 scale,
                 look: None,
                 context: aurora_render::PhotoContext::Record,
+                cube_face: false,
             });
         }
         let tile = job.tiles[job.next].draw;
@@ -642,6 +690,7 @@ impl App {
             interface: job.interface && single,
             huds: job.huds && single,
             photo: job.size,
+            cube: None,
         };
         renderer.snapshot_request = Some(spec);
         job.asked = true;
@@ -669,13 +718,15 @@ impl App {
             } else {
                 aurora_render::PhotoContext::None
             },
+            cube_face: false,
         })
     }
 
-    /// The GPU time of a frame just reported, which plans the photo's
-    /// passes (`snapshot::GpuCost`), and the video memory its targets take.
+    /// The GPU time of a frame just reported, as a photo would spend it
+    /// (its traced passes run more rounds), which plans the photo's passes
+    /// (`snapshot::GpuCost`), and the video memory its targets take.
     pub(super) fn photo_gpu_time(&mut self, stats: &aurora_render::RenderStats) {
-        self.snapshots.gpu_cost.note(stats.gpu_ms, stats.gpu_pixels);
+        self.snapshots.gpu_cost.note(stats.gpu_photo_ms, stats.gpu_pixels);
         if stats.target_bytes_per_pixel.is_some() {
             self.snapshots.target_bytes = stats.target_bytes_per_pixel;
         }
@@ -1105,6 +1156,12 @@ impl App {
 
     /// Start a photo of the destination's size.
     pub(super) fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
+        // a 360° capture owns the renderer's snapshot slot and the frozen
+        // world until its panorama is made: a photo would be taken for a face
+        if self.capture_360.capturing() {
+            log::info!("photo: not started, a 360° capture is under way");
+            return;
+        }
         let window = renderer.size();
         let outfit = purpose.outfit();
         let full = if purpose == (Purpose::Portrait { preview: false }) {
@@ -1165,7 +1222,7 @@ impl App {
         // HUDs or the photo's looks, whatever the Photo window has chosen
         let interface = !outfit && s.interface && snapshot::same_proportions(full, window);
         // (with the ambient occlusion on: GTAO may be forced over its method)
-        let context = ContextPass::plan(size, tiles.len(), self.settings.ssao > 0);
+        let context = ContextPass::plan(size, tiles.len(), self.photo_ambient_occlusion() > 0);
         // (the outfit's photo mode keeps the viewfinder's looks: the
         // square shows them)
         let looks = !outfit || (matches!(purpose, Purpose::Portrait { .. }) && self.outfit_photo_mode());
@@ -1213,21 +1270,19 @@ impl App {
     /// over the photo's frame of the `window` (pixels; `ui::snapshot::fit`),
     /// with the viewfinder's before / after line.
     pub(super) fn live_look(&mut self, window: (u32, u32), focus: Option<f32>) -> Option<aurora_render::looks::PhotoLook> {
-        if !self.panels.snapshot {
-            return None;
-        }
-        let ui = &self.snapshots.ui.looks;
+        let (photo, frame) = self.look_frame(window)?;
+        // the look pointed in the photo window's editor, or in the Director's
+        let ui = match &self.snapshots.ui.looks.hover {
+            None if self.panels.director && self.director.looks.hover.is_some() => &self.director.looks,
+            _ => &self.snapshots.ui.looks,
+        };
         let stack = looks::tried(
             &self.settings.snapshot.looks,
             ui.hover.as_ref().map(|h| h.as_deref()),
-            ui.mode,
-            ui.selected,
+            ui.replace_target(self.settings.snapshot.looks.len()),
         );
         let settings = self.settings.snapshot.look_settings.clone();
         let layers = looks::resolve_stack(&stack, &settings, self.photo_luts());
-        let photo = self.photo_size(window);
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(window.0 as f32, window.1 as f32));
-        let frame = crate::ui::snapshot::fit(screen, photo.0 as f32 / photo.1.max(1) as f32);
         let place = Placement {
             origin: [frame.left(), frame.top()],
             photo,
@@ -1235,6 +1290,107 @@ impl App {
         };
         let compare = self.snapshots.ui.looks.compare.filter(|_| self.viewfinder_on());
         looks::frame_look(&layers, place, compare, false, focus)
+    }
+
+    /// The picture the looks are drawn on in the live view, in a `window`
+    /// of pixels: the photo's size and its frame on screen, or the
+    /// Director's while only its window is open (None: neither).
+    fn look_frame(&self, window: (u32, u32)) -> Option<((u32, u32), egui::Rect)> {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(window.0 as f32, window.1 as f32));
+        if self.panels.snapshot {
+            let photo = self.photo_size(window);
+            Some((photo, crate::ui::snapshot::fit(screen, photo.0 as f32 / photo.1.max(1) as f32)))
+        } else if self.panels.director {
+            // the Director's Filters tab: the picture it films, between the
+            // bars of its format
+            let aspect = self.director.d.picture_aspect(window.0 as f32 / window.1.max(1) as f32);
+            let frame = crate::ui::snapshot::fit(screen, aspect);
+            Some((
+                (frame.width().round().max(1.0) as u32, frame.height().round().max(1.0) as u32),
+                frame,
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// The photo's looks on a frame of the Director's offline render, the
+    /// whole frame `size` (pixels) its picture.
+    pub(super) fn director_render_look(&mut self, size: (u32, u32)) -> Option<aurora_render::looks::PhotoLook> {
+        let stack = self.settings.snapshot.looks.clone();
+        let settings = self.settings.snapshot.look_settings.clone();
+        let layers = looks::resolve_stack(&stack, &settings, self.photo_luts());
+        let place = Placement {
+            origin: [0.0, 0.0],
+            photo: size,
+            scale: 1.0,
+        };
+        looks::frame_look(&layers, place, None, false, self.snapshots.look_focus)
+    }
+
+    /// The filters catalogue's pictures (`snapshot::look_thumbs`): while its
+    /// tiles show, a still of the photo's frame now and then and one look
+    /// drawn on it a frame, at its settings, the photo's proportions cropped
+    /// to the tiles'.
+    pub(super) fn look_thumbs_request(
+        &mut self,
+        window: (u32, u32),
+        focus: Option<f32>,
+    ) -> Option<aurora_render::look_thumbs::ThumbRequest> {
+        use aurora_render::look_thumbs::{MAX_THUMBS, THUMB_SIZE, still_rect};
+        // the tiles the catalogues drew last frame, the photo window's, the
+        // Director's and the World filters window's (none: none is shown)
+        let mut shown = std::mem::take(&mut self.snapshots.ui.looks.shown);
+        let others = [
+            std::mem::take(&mut self.director.looks.shown),
+            std::mem::take(&mut self.snapshots.world_ui.looks.shown),
+        ];
+        for id in others.into_iter().flatten() {
+            if !shown.contains(&id) {
+                shown.push(id);
+            }
+        }
+        if shown.is_empty() {
+            return None;
+        }
+        // the photo's frame and its looks' settings; with only the World
+        // filters window, the whole 3D view and the world's settings
+        let (photo, frame, settings) = match self.look_frame(window) {
+            Some((photo, frame)) => (photo, frame, &self.settings.snapshot.look_settings),
+            None => (
+                window,
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(window.0 as f32, window.1 as f32)),
+                &self.settings.world_look.look_settings,
+            ),
+        };
+        let settings = settings.clone();
+        let edges = [frame.left(), frame.top(), frame.right(), frame.bottom()].map(|v| v.round().max(0.0) as u32);
+        self.snapshots.look_thumbs.source(edges);
+        let now = self.egui_ctx.input(|i| i.time);
+        let plan = self.snapshots.look_thumbs.plan(now, &shown, MAX_THUMBS, &settings);
+        let (w, h) = (window.0.max(1) as f32, window.1.max(1) as f32);
+        let capture = plan
+            .capture
+            .then(|| still_rect([frame.left() / w, frame.top() / h, frame.right() / w, frame.bottom() / h], window));
+        let failed = plan.draw.as_ref().map(|(_, id)| id.clone());
+        let draw = plan.draw.and_then(|(slot, id)| {
+            // the still holds the middle of the photo at the tiles' proportions
+            let want = THUMB_SIZE.0 as f32 / THUMB_SIZE.1 as f32;
+            let (pw, ph) = (photo.0.max(1) as f32, photo.1.max(1) as f32);
+            let crop = if pw / ph > want { (ph * want, ph) } else { (pw, pw / want) };
+            let place = Placement {
+                origin: [0.0, 0.0],
+                photo: (crop.0.round() as u32, crop.1.round() as u32),
+                scale: THUMB_SIZE.0 as f32 / crop.0.max(1.0),
+            };
+            let layers = looks::resolve_stack(&[looks::Layer::new(id)], &settings, self.photo_luts());
+            Some((slot, looks::frame_look(&layers, place, None, false, focus)?))
+        });
+        if let (Some(id), None) = (failed, &draw) {
+            self.snapshots.look_thumbs.failed(&id);
+        }
+        self.snapshots.ui.thumbs = self.snapshots.look_thumbs.slots();
+        Some(aurora_render::look_thumbs::ThumbRequest { capture, draw })
     }
 
     /// How a photo of `size` is drawn (`snapshot::plan`), with the guard
@@ -1249,7 +1405,9 @@ impl App {
             .map_or(0, aurora_render::dof_tile_reach);
         let scale = snapshot::viewfinder_scale(size, renderer.size(), self.settings.render_scale_percent);
         let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
+        let soft = aurora_render::soft_shadow_tile_reach(self.settings.soft_shadows);
         let guard = snapshot::TILE_GUARD
+            .max(soft)
             .max(aurora_render::bloom_tile_reach(bloom))
             .max(dof)
             .max(contact);
@@ -1299,7 +1457,7 @@ impl App {
     /// the shutter (UISndSnapshot) as a SoundTrigger, both seen and heard by
     /// everyone around; "Quiet snapshots" (PlayModeUISndSnapshot, the
     /// setting off) skips the two.
-    fn photo_shutter(&mut self) {
+    pub(super) fn photo_shutter(&mut self) {
         if !self.settings.snapshot.sound {
             return;
         }
@@ -1338,7 +1496,18 @@ impl App {
     /// A photo is being taken, saved or uploaded.
     pub(super) fn photo_busy(&self) -> bool {
         let s = &self.snapshots;
-        s.saving.is_some() || s.upload.is_some() || s.detail_wait.is_some() || s.job.as_ref().is_some_and(|j| !j.purpose.quiet())
+        s.saving.is_some()
+            || s.upload.is_some()
+            || s.detail_wait.is_some()
+            || s.job.as_ref().is_some_and(|j| !j.purpose.quiet())
+            || self.capture_360.busy()
+    }
+
+    /// Any photo work that still owns the renderer's snapshot slot: a
+    /// part or a preview drawn or awaited, a request out, an answer not yet
+    /// taken (a 360° capture waits for all of it).
+    pub(super) fn photo_work_pending(&self, renderer: &Renderer) -> bool {
+        self.photo_busy() || self.snapshots.job.is_some() || renderer.snapshot_request.is_some() || renderer.snapshot.is_some()
     }
 
     /// Upload prices: the account's benefits (texture_upload_cost, by area
@@ -1363,6 +1532,8 @@ impl App {
         // the largest texture when it was read back): its price follows
         let capture = match &self.snapshots.reel.pending {
             Some((_, (w, h, _))) => (*w, *h),
+            // a 360° panorama is the largest texture the grid takes
+            None if self.snapshots.ui.pano => crate::snapshot::capture_360::INVENTORY_OUTPUT,
             None => self.photo_size(window),
         };
         let texture = inventory::texture_size(capture);
@@ -1398,6 +1569,10 @@ impl App {
         if self.photo_busy() {
             return;
         }
+        if self.snapshots.ui.pano {
+            self.capture_360_shutter(super::capture_360::Shutter::Inventory(cost));
+            return;
+        }
         if let Some(held) = &self.snapshots.held {
             let (size, rgba, cutout) = ((held.width, held.height), held.rgba.clone(), held.cutout);
             self.photo_encode(size, rgba, cost, cutout);
@@ -1410,11 +1585,22 @@ impl App {
     /// upload starts, like saveTexture's playSnapshotAnimAndSound.
     pub(super) fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32, cutout: bool) {
         self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
+        self.photo_encode_texture(size, rgba, cost, false);
+    }
+
+    /// A 360° panorama of the inventory, rolled to its heading: the same
+    /// upload, named for the marker, and not in the photo reel.
+    /// (the panorama is shared with the photo window's picture, not copied)
+    pub(super) fn photo_encode_panorama(&mut self, size: (u32, u32), rgba: std::sync::Arc<Vec<u8>>, cost: i32) {
+        self.photo_encode_texture(size, SharedRgba(rgba), cost, true);
+    }
+
+    fn photo_encode_texture(&mut self, size: (u32, u32), rgba: impl AsRef<[u8]> + Send + 'static, cost: i32, pano: bool) {
         let texture = inventory::texture_size(size);
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
             let t0 = Instant::now();
-            let encoded = inventory::encode(size.0, size.1, &rgba, texture);
+            let encoded = inventory::encode(size.0, size.1, rgba.as_ref(), texture);
             if let Ok(data) = &encoded {
                 log::info!(
                     "photo: texture {} x {} encoded in {} ms ({} KB)",
@@ -1426,20 +1612,15 @@ impl App {
             }
             let _ = tx.send(encoded);
         });
-        self.snapshots.upload = Some(Upload::Encoding { rx, cost });
+        self.snapshots.upload = Some(Upload::Encoding { rx, cost, pano });
         self.photo_shutter();
     }
 
     /// The encoded texture: its upload to the Photo Album, named after the
     /// place (LLSnapshotLivePreview::saveTexture).
-    fn photo_upload(&mut self, data: Vec<u8>, cost: i32) {
+    fn photo_upload(&mut self, data: Vec<u8>, cost: i32, pano: bool) {
         let w = &self.world;
-        let maturity = w
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .map(|i| crate::ui::bars::maturity_name(i.sim_access))
-            .unwrap_or("");
-        let place = inventory::location(&w.parcel_name, &w.region_name(), w.agent.position, maturity);
+        let place = photo_place(w);
         // LLAgentUI::buildFullname: the legacy name
         let who = w
             .login
@@ -1452,7 +1633,11 @@ impl App {
         let upload = upload::Request {
             kind: Kind::Snapshot,
             folder,
-            name: inventory::item_name(&place),
+            name: if pano {
+                crate::snapshot::capture_360::item_name(&place)
+            } else {
+                inventory::item_name(&place)
+            },
             description: inventory::item_description(&who, &place),
             // PERM_ALL for the next owner; the group and everyone masks of
             // the uploads (LLFloaterPerms::getGroupPerms("Uploads"))
@@ -1580,16 +1765,30 @@ impl App {
     }
 
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
-    pub(super) fn photo_update(&mut self, renderer: &Renderer) {
+    pub(super) fn photo_update(&mut self, renderer: &mut Renderer) {
+        // every opening (toolbar, menu, shortcut, Phototools…) draws a fresh
+        // preview, as LLFloaterSnapshot::onOpen's updateSnapshot(true); the
+        // preview's own guards (frozen, viewfinder, 360°) still hold it
+        if just_opened(&mut self.snapshots.was_open, self.panels.snapshot) {
+            self.snapshots.preview_wanted = true;
+        }
         if std::mem::take(&mut self.snapshots.to_disk) {
             self.snapshots.quiet = !self.panels.snapshot;
             self.photo_take(renderer, None);
         }
         self.photo_demo(renderer);
+        self.world_look_demo();
         self.photo_reel_demo(renderer);
         self.photo_luts_update();
         self.photo_quality(renderer);
         self.photo_light();
+        // the photo's shadows and occlusion reach the renderer when they
+        // change (the window opening and closing included), not every frame
+        let drawn = (self.photo_shadow_quality(), self.photo_ambient_occlusion());
+        if self.snapshots.quality_drawn != Some(drawn) {
+            self.snapshots.quality_drawn = Some(drawn);
+            renderer.apply_settings(self.photo_render_settings());
+        }
         self.photo_free_camera();
         if let Some(t) = self.snapshots.detail_wait {
             let pending = self.scene.textures.pending_in_view();
@@ -1609,15 +1808,17 @@ impl App {
             }
         }
         // the texture encoded on its worker: its upload
-        if let Some(Upload::Encoding { rx, cost }) = &self.snapshots.upload
+        if let Some(Upload::Encoding { rx, cost, pano }) = &self.snapshots.upload
             && let Ok(encoded) = rx.try_recv()
         {
-            let cost = *cost;
+            let (cost, pano) = (*cost, *pano);
             match encoded {
-                Ok(data) => self.photo_upload(data, cost),
+                Ok(data) => self.photo_upload(data, cost, pano),
                 Err(e) => {
                     log::warn!("photo: texture not encoded: {e}");
-                    self.snapshots.reel.done(None, None);
+                    if !pano {
+                        self.snapshots.reel.done(None, None);
+                    }
                     self.snapshots.upload = None;
                     self.snapshots.message = Some((aurora_i18n::tr!("photo-upload-failed", error = e.as_str()).to_owned(), true));
                 }
@@ -1762,7 +1963,8 @@ impl App {
             s.camera_moved = None;
             s.preview_wanted = true;
         }
-        if s.preview_wanted && s.job.is_none() && in_world {
+        // (a 360° panorama has no preview to draw: its picture is the last panorama)
+        if s.preview_wanted && s.job.is_none() && in_world && !self.capture_360.capturing() && !s.ui.pano {
             s.preview_wanted = false;
             s.preview_for = Some(key);
             self.photo_job(Purpose::Preview, renderer);
@@ -1782,6 +1984,7 @@ impl App {
                 // quality::DETAIL_WAIT), and for its MSAA, whose pipelines
                 // compile on a worker (#1746)
                 if self.settings.photo_held.is_some()
+                    && !self.snapshots.ui.pano
                     && !std::mem::take(&mut self.snapshots.detail_ready)
                     && (self.scene.textures.pending_in_view() > 0 || !renderer.settings_applied() || self.photo_quality_climbing())
                 {
@@ -1801,6 +2004,9 @@ impl App {
                     return;
                 }
                 match self.snapshots.ui.destination {
+                    // 360°: the panorama's own capture (Ctrl+` and the reel
+                    // keep taking ordinary photos)
+                    Destination::Disk if self.snapshots.ui.pano => self.capture_360_shutter(super::capture_360::Shutter::Disk(None)),
                     Destination::Disk => self.photo_take(renderer, None),
                     Destination::Inventory => self.photo_to_inventory(renderer),
                     Destination::Profile => self.photo_to_profile(renderer),
@@ -1828,11 +2034,7 @@ impl App {
                 }
             }
             Action::PersonalLighting => self.panels.personal_lighting = true,
-            Action::KeepLight => {
-                if self.world.eep.keep_photo() {
-                    self.snapshots.ui.light.env = Default::default();
-                }
-            }
+            Action::KeepLight => self.keep_photo_light(),
             Action::Controls => {
                 if !self.panels.camera_controls && !self.panels.movement_controls {
                     self.panels.camera_controls = true;
@@ -1852,6 +2054,7 @@ impl App {
                 let me = self.world.agent_id;
                 self.profile_ui.open(&mut self.world, me);
             }
+            Action::SaveAs if self.snapshots.ui.pano => self.capture_360_ask_path(renderer),
             Action::SaveAs | Action::ChooseFolder => {
                 if self.snapshots.dialog.is_some() {
                     return;
@@ -1893,15 +2096,27 @@ impl App {
                     self.snapshots.preview_wanted = true;
                 }
             }
+            Action::TurnToCamera => self.photo_turn_to_camera(),
             Action::Changed => {
                 self.snapshots.preview_wanted = true;
                 self.settings.save();
             }
             Action::Saved => self.settings.save(),
+            Action::ImportLut | Action::RemoveLut(_) | Action::OpenLutFolder => self.photo_lut_action(action, false),
+            Action::Reel(a) => self.photo_reel_action(a, renderer),
+        }
+    }
+
+    /// The LUTs' actions of the looks editor: import, remove, open their
+    /// folder (the Photo window's, or the Director's Filters tab:
+    /// `director`).
+    pub(super) fn photo_lut_action(&mut self, action: Action, director: bool) {
+        match action {
             Action::ImportLut => {
                 if self.snapshots.lut_import.is_some() {
                     return;
                 }
+                self.snapshots.lut_import_director = director;
                 let dir = self.photo_luts().dir().to_path_buf();
                 let (tx, rx) = crossbeam_channel::bounded(1);
                 std::thread::spawn(move || {
@@ -1919,6 +2134,7 @@ impl App {
                 }
                 let id = format!("{}{name}", looks::LUT);
                 self.settings.snapshot.looks.retain(|l| l.id != id);
+                self.settings.world_look.looks.retain(|l| l.id != id);
                 self.settings.save();
             }
             Action::OpenLutFolder => {
@@ -1926,14 +2142,15 @@ impl App {
                 let _ = std::fs::create_dir_all(&dir);
                 gallery::reveal(&dir, None);
             }
-            Action::Reel(a) => self.photo_reel_action(a, renderer),
+            _ => {}
         }
     }
 
     /// The tables' list for the interface, and an import that came back:
     /// the table chosen and said.
     fn photo_luts_update(&mut self) {
-        if !self.panels.snapshot {
+        // (the world's filters read a table of the library too)
+        if !(self.panels.snapshot || self.panels.director || self.panels.world_look || self.settings.world_look.on) {
             return;
         }
         self.photo_luts().poll();
@@ -1949,6 +2166,7 @@ impl App {
         let Some(rx) = &self.snapshots.lut_import else { return };
         let Ok(result) = rx.try_recv() else { return };
         self.snapshots.lut_import = None;
+        let to_world = std::mem::take(&mut self.snapshots.world_ui.importing);
         let Some(results) = result else { return };
         // the tables kept, the first one chosen; the failures said together
         let mut first = None;
@@ -1974,7 +2192,20 @@ impl App {
                 aurora_i18n::tr!("photo-lut-imported-many", count = count)
             };
             let id = format!("{}{name}", looks::LUT);
-            self.snapshots.ui.looks.pick(&mut self.settings.snapshot, &id);
+            if to_world {
+                let world = &mut self.settings.world_look;
+                self.snapshots.world_ui.looks.pick(
+                    &mut crate::ui::looks_editor::Stack::world(world, &mut self.settings.snapshot.look_favorites),
+                    &id,
+                );
+                world.on = true;
+            } else {
+                let editor = match self.snapshots.lut_import_director {
+                    true => &mut self.director.looks,
+                    false => &mut self.snapshots.ui.looks,
+                };
+                editor.pick(&mut crate::ui::looks_editor::Stack::photo(&mut self.settings.snapshot), &id);
+            }
             self.settings.save();
             self.snapshots.message = Some((text.clone(), false));
             let now = self.egui_ctx.input(|i| i.time);
@@ -1988,6 +2219,7 @@ impl App {
     }
 
     /// AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel]
+    /// [:open][:menu][:replace][:folded][:favorites]
     /// [:tab=legacy|aurora|luts][:search=<text>][:set=<n>,<v>,…], with
     /// AURORA_DEMO_SNAPSHOT: the looks stacked in that order (`Sepia`,
     /// `aurora:vhs`, `lut:<file>`, `lut:demo` for a warm table written
@@ -1996,8 +2228,10 @@ impl App {
     /// default), the before / after line in the middle, the viewfinder's
     /// filter panel open on the chosen look's tab or the one given, a
     /// search typed, the chosen Aurora look's settings set (the photo
-    /// window's settings scrolled to the filters). Without it, the
-    /// scenarios start with no look.
+    /// window's settings scrolled to the filters), the cards open to their
+    /// settings, the last card's ⋯ actions shown, Replace on, the catalogue
+    /// folded, the stack's looks starred with the ★ list shown. Without it,
+    /// the scenarios start with no look.
     fn photo_look_demo(&mut self) {
         let value = std::env::var("AURORA_DEMO_PHOTO_LOOK").unwrap_or_default();
         let mut parts: Vec<&str> = value.split('+').collect();
@@ -2029,7 +2263,7 @@ impl App {
         let ui = &mut self.snapshots.ui.looks;
         ui.selected = s.looks.len().saturating_sub(1);
         ui.compare = None;
-        ui.mode = looks::Mode::Replace;
+        ui.replace = false;
         if let Some(layer) = s.looks.last() {
             ui.tab = looks::tab_of(&layer.id);
         }
@@ -2051,6 +2285,20 @@ impl App {
                 }
                 _ => match part {
                     "compare" => ui.compare = Some(0.5),
+                    "replace" => ui.replace = true,
+                    "open" => {
+                        for layer in &s.looks {
+                            ui.open_card(&layer.id);
+                        }
+                    }
+                    "menu" => ui.show_menu(s.looks.len().saturating_sub(1)),
+                    "folded" => ui.folded = true,
+                    "favorites" => {
+                        for layer in &s.looks {
+                            looks::toggle_favorite(&mut s.look_favorites, &layer.id);
+                        }
+                        ui.favorites = true;
+                    }
                     "panel" => {
                         self.snapshots.vf.looks = true;
                         self.snapshots.vf.hinted = true;
@@ -2064,6 +2312,7 @@ impl App {
                 },
             }
         }
+        looks::sanitize(&mut s.looks);
         for layer in &s.looks {
             log::info!("photo look demo: {} at {} %", layer.id, layer.strength);
         }
@@ -2108,6 +2357,9 @@ LUT_3D_SIZE {n}
     /// What the photo is doing, for a progress line: details loading, the
     /// drawing, the save, the upload.
     fn photo_busy_line(&self) -> Option<(f32, String)> {
+        if let Some(line) = self.capture_360.busy_line() {
+            return Some(line);
+        }
         let s = &self.snapshots;
         if let Some(t) = s.detail_wait {
             let wait = snapshot::quality::DETAIL_WAIT.as_secs_f32();
@@ -2269,10 +2521,20 @@ LUT_3D_SIZE {n}
                 profile_posted: self.snapshots.message_profile,
                 email,
                 exposure: self.settings.exposure,
+                shadow_quality: self.settings.shadow_quality,
+                ambient_occlusion: self.settings.ssao,
+                quality_boost: self.settings.photo_held.is_some(),
                 hdr: self.settings.hdr_emissive,
+                shadows: self.photo_shadow_view(),
                 env: env_view(&env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
+                free_refused: self.world.rlva.camera_view_held(),
                 quality_reduced,
+                pano: self.capture_360.shown().map(|shown| crate::ui::snapshot::PanoShown {
+                    image: shown.image.clone(),
+                    yaw: shown.yaw,
+                    serial: shown.serial,
+                }),
             };
             // (under the reel's quick view, nothing of the viewfinder acts:
             // no focus by a click, no shutter)
@@ -2298,7 +2560,9 @@ LUT_3D_SIZE {n}
             let mut state = std::mem::take(&mut self.snapshots.ui);
             let tiles = self.photo_tiles(renderer, photo).len();
             let s = &self.snapshots;
-            let busy = if let Some(t) = s.detail_wait {
+            let busy = if let Some(line) = self.capture_360.busy_line() {
+                Some(line)
+            } else if let Some(t) = s.detail_wait {
                 let wait = snapshot::quality::DETAIL_WAIT.as_secs_f32();
                 Some((
                     (t.elapsed().as_secs_f32() / wait).min(1.0) * 0.5,
@@ -2346,10 +2610,20 @@ LUT_3D_SIZE {n}
                 profile_posted: s.message_profile,
                 email,
                 exposure: self.settings.exposure,
+                shadow_quality: self.settings.shadow_quality,
+                ambient_occlusion: self.settings.ssao,
+                quality_boost: self.settings.photo_held.is_some(),
                 hdr: self.settings.hdr_emissive,
+                shadows: self.photo_shadow_view(),
                 env: env_view(&self.env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
+                free_refused: self.world.rlva.camera_view_held(),
                 quality_reduced,
+                pano: self.capture_360.shown().map(|shown| crate::ui::snapshot::PanoShown {
+                    image: shown.image.clone(),
+                    yaw: shown.yaw,
+                    serial: shown.serial,
+                }),
             };
             let mut open = self.panels.snapshot;
             actions.extend(state.show(
@@ -2380,6 +2654,9 @@ LUT_3D_SIZE {n}
             self.snapshots.reel.quick.close();
         }
         if !self.panels.snapshot {
+            // (a closed window leaves the 360° format, and its panorama is let go)
+            self.snapshots.ui.set_pano(false);
+            self.capture_360.release_shown();
             self.snapshots.quality_ask = false;
             self.snapshots.ui.full_frame = false;
             if self.snapshots.held.take().is_some() {
@@ -2387,6 +2664,15 @@ LUT_3D_SIZE {n}
                 self.snapshots.reel.held = None;
             }
         }
+    }
+
+    /// The frozen photo let go, as "Freeze frame" switched off does.
+    pub(super) fn photo_release_freeze(&mut self) {
+        self.snapshots.ui.freeze = false;
+        self.snapshots.held = None;
+        self.snapshots.held_view = None;
+        self.snapshots.reel.held = None;
+        self.snapshots.preview_wanted = true;
     }
 
     /// The held photo over the world (drawn first, under the windows).
@@ -2404,6 +2690,38 @@ LUT_3D_SIZE {n}
     /// interface.
     pub(super) fn photo_full_frame(&self) -> bool {
         self.panels.snapshot && (self.snapshots.ui.full_frame || self.viewfinder_on())
+    }
+
+    /// Ctrl+Shift+S (Action::PhotoWindow) and the menu's Photo. Port of the
+    /// "Take Snapshot" menu item, `Floater.Show` "snapshot" (menu_viewer.xml),
+    /// and of LLFloaterSnapshot::onOpen (indra/newview/llfloatersnapshot.cpp):
+    /// opens the photo window, or brings an open one forward with a fresh
+    /// preview, and never closes it (#4625); the viewfinder is the exception
+    /// ([`photo_shortcut`]). The toolbar button stays a toggle
+    /// ([`Self::photo_window_toggle`]).
+    pub(super) fn photo_window_shortcut(&mut self) {
+        let style = self.photo_style();
+        match photo_shortcut(self.panels.snapshot, style) {
+            PhotoShortcut::Leave => self.panels.snapshot = false,
+            PhotoShortcut::Show => {
+                let id = photo_window_id(style);
+                if self.panels.snapshot {
+                    crate::ui::widgets::bring_floater_front(&self.egui_ctx, id);
+                } else {
+                    crate::ui::widgets::open_floater(&self.egui_ctx, id, &mut self.panels.snapshot);
+                }
+                // (the viewfinder needs none: its view is live)
+                self.snapshots.preview_wanted = true;
+            }
+        }
+    }
+
+    /// The toolbar's Photo button (the snapshot command, `Floater.Toggle`,
+    /// commands.xml): the window of the chosen style, a minimized one
+    /// expanded.
+    pub(super) fn photo_window_toggle(&mut self) {
+        let id = photo_window_id(self.photo_style());
+        crate::ui::widgets::toggle_floater(&self.egui_ctx, id, &mut self.panels.snapshot);
     }
 
     /// Escape leaves the full-frame view, then brings the free camera back,
@@ -2475,7 +2793,14 @@ LUT_3D_SIZE {n}
             // the next opening of the window starts on the avatar
             self.snapshots.ui.free.on = false;
         }
-        let want = self.panels.snapshot && self.snapshots.ui.free.on && self.in_world();
+        // RLVa holds the view: the free camera ends and does not start
+        // (`Rlva::camera_view_held`)
+        if self.world.rlva.camera_view_held() {
+            self.snapshots.ui.free.on = false;
+            self.director.free = false;
+        }
+        // (the Director's window has the same switch, `director.free`)
+        let want = ((self.panels.snapshot && self.snapshots.ui.free.on) || self.director.free) && self.in_world();
         if want && !flying {
             let mouselook = self.camera.mouselook();
             self.camera.start_free(&mut self.world.agent, &self.settings.camera);
@@ -2500,6 +2825,7 @@ LUT_3D_SIZE {n}
     fn photo_free_finish(&mut self) {
         self.snapshots.free_flying = false;
         self.snapshots.ui.free.on = false;
+        self.director.free = false;
         if std::mem::take(&mut self.snapshots.free_opened_controls) {
             self.panels.camera_controls = false;
             self.panels.movement_controls = false;
@@ -2567,8 +2893,21 @@ LUT_3D_SIZE {n}
     /// The photo's quick light (`snapshot::light`) while the window is open;
     /// the user's own as soon as it closes.
     fn photo_light(&mut self) {
+        // the Director's keyframes give the sun while its track plays: over
+        // the photo's own light, on the local environment alone
+        if let Some(sun) = self.director_sun() {
+            let under = if self.panels.snapshot {
+                self.snapshots.ui.light.env
+            } else {
+                crate::world::eep_photo::PhotoChoice::default()
+            };
+            self.world
+                .eep
+                .set_photo(crate::world::eep_photo::PhotoChoice { sun: Some(sun), ..under });
+            return;
+        }
         if !self.panels.snapshot {
-            self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+            self.snapshots.ui.light = self.snapshots.ui.light.closed();
             // the outfit's auto portrait in its studio light
             if let Some(studio) = self.outfit_portrait_light() {
                 self.world.eep.set_photo(studio);
@@ -2588,6 +2927,15 @@ LUT_3D_SIZE {n}
         self.scene.attached_lights = light.attached_lights;
     }
 
+    /// "Keep this light" (the photo window's button and Phototools'
+    /// banner): the photo's environment becomes the user's own, and only it
+    /// (`EnvSelector::keep_photo`).
+    pub(super) fn keep_photo_light(&mut self) {
+        if self.world.eep.keep_photo() {
+            self.snapshots.ui.light.env = Default::default();
+        }
+    }
+
     /// The lists of the Light section load like the environment window's.
     fn photo_env_lists(&mut self, ctx: &egui::Context) {
         if !self.env_scan {
@@ -2597,12 +2945,45 @@ LUT_3D_SIZE {n}
         self.env_ui.refresh(ctx, &self.world.inventory);
     }
 
+    /// The shadow quality the world is drawn with (`snapshot::light`).
+    pub(super) fn photo_shadow_quality(&self) -> u8 {
+        snapshot::light::drawn_levels(&self.settings, &self.snapshots.ui.light, self.panels.snapshot).0
+    }
+
+    /// The ambient occlusion the world is drawn with (`snapshot::light`).
+    pub(super) fn photo_ambient_occlusion(&self) -> u8 {
+        snapshot::light::drawn_levels(&self.settings, &self.snapshots.ui.light, self.panels.snapshot).1
+    }
+
+    /// The render settings with the photo's levels (`snapshot::light::render_settings`).
+    pub(super) fn photo_render_settings(&self) -> aurora_render::RenderSettings {
+        snapshot::light::render_settings(&self.settings, &self.snapshots.ui.light, self.panels.snapshot)
+    }
+
     /// The exposure the frame is drawn with: the photo's, else Preferences'.
     pub(super) fn photo_exposure(&self) -> f32 {
         self.snapshots.ui.light.exposure.unwrap_or(self.settings.exposure)
     }
 
-    /// The photo's light holds the clouds still.
+    /// The sun's shadows the frame is drawn with (softness, intensity): the
+    /// photo's while its window is open, else Preferences'.
+    pub(super) fn photo_shadows(&self) -> (f32, f32) {
+        snapshot::light::drawn_shadows(&self.settings, &self.snapshots.ui.light, self.panels.snapshot)
+    }
+
+    /// Preferences' shadow values and the soft shadows' state, for the
+    /// Light section's rows.
+    fn photo_shadow_view(&self) -> crate::ui::snapshot::ShadowView {
+        crate::ui::snapshot::ShadowView {
+            softness: self.settings.shadow_softness,
+            intensity: self.settings.shadow_intensity,
+            soft: self.settings.soft_shadows,
+        }
+    }
+
+    /// The clouds are held still: a switch of the session (never saved)
+    /// shared by the photo window and Phototools, kept when the photo
+    /// window closes (`PhotoLight::closed`).
     pub(super) fn photo_clouds_paused(&self) -> bool {
         self.snapshots.ui.light.clouds_paused
     }
@@ -3136,8 +3517,34 @@ LUT_3D_SIZE {n}
     }
 }
 
+/// LLAgentUI::buildLocationString(LOCATION_FORMAT_FULL), the place a photo
+/// is named after (LLSnapshotLivePreview::saveTexture): under RLVa
+/// `@showloc` "(Hidden parcel), (Hidden region) - Maturity", no position
+/// (the restriction turns FULL into LOCATION_FORMAT_NO_COORDS,
+/// indra/newview/llagentui.cpp).
+pub(crate) fn photo_place(w: &crate::world::World) -> String {
+    let maturity = w
+        .main()
+        .and_then(|r| r.info.as_ref())
+        .map(|i| crate::ui::bars::maturity_name(i.sim_access))
+        .unwrap_or("");
+    if w.rlva.has("showloc") {
+        let mut s = format!(
+            "{}, {}",
+            aurora_i18n::tr!("rlva-hidden-parcel"),
+            aurora_i18n::tr!("rlva-hidden-region")
+        );
+        if !maturity.is_empty() {
+            s.push_str(" - ");
+            s.push_str(maturity);
+        }
+        return s;
+    }
+    inventory::location(&w.parcel_name, &w.region_name(), w.agent.position, maturity)
+}
+
 /// The Light section's view of the environment beneath the photo's.
-fn env_view<'a>(
+pub(super) fn env_view<'a>(
     env_ui: &'a crate::ui::environment::EnvironmentUi,
     eep: &crate::world::eep_env::EnvSelector,
 ) -> crate::ui::snapshot::EnvView<'a> {
@@ -3149,5 +3556,91 @@ fn env_view<'a>(
         sun: crate::ui::environment::azimuth_elevation(sun),
         locked: eep.rlva_locked,
         loading: eep.photo_loading(),
+    }
+}
+
+/// What Ctrl+Shift+S does to the photo mode ([`App::photo_window_shortcut`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PhotoShortcut {
+    /// Open the window, or bring it forward with a fresh preview.
+    Show,
+    /// Leave the viewfinder.
+    Leave,
+}
+
+/// The Legacy and Panel windows only open, as the Legacy Viewer's
+/// `Floater.Show`. The viewfinder (the Aurora style) is a full-screen mode
+/// with a live view and no preview to refresh: the key that entered it
+/// leaves it, as M does mouselook.
+fn photo_shortcut(open: bool, style: crate::settings::PhotoWindowStyle) -> PhotoShortcut {
+    if open && style == crate::settings::PhotoWindowStyle::Aurora {
+        PhotoShortcut::Leave
+    } else {
+        PhotoShortcut::Show
+    }
+}
+
+/// `open` rose since the last frame; `was` follows it.
+fn just_opened(was: &mut bool, open: bool) -> bool {
+    let opened = open && !*was;
+    *was = open;
+    opened
+}
+
+/// The floater of a photo window style: the Legacy one has its own.
+fn photo_window_id(style: crate::settings::PhotoWindowStyle) -> &'static str {
+    if style == crate::settings::PhotoWindowStyle::Legacy {
+        crate::ui::snapshot::CLASSIC_WINDOW
+    } else {
+        crate::ui::snapshot::WINDOW
+    }
+}
+
+/// A picture shared with another reader (the photo window's panorama),
+/// handed to the texture encoder without a copy.
+struct SharedRgba(std::sync::Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for SharedRgba {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::PhotoWindowStyle;
+
+    /// Ctrl+Shift+S opens the windowed photo styles and keeps them open
+    /// (#4625); only the viewfinder is left by it.
+    #[test]
+    fn photo_shortcut_opens_and_never_closes_a_photo_window() {
+        for style in [PhotoWindowStyle::Legacy, PhotoWindowStyle::Panel, PhotoWindowStyle::Aurora] {
+            assert_eq!(photo_shortcut(false, style), PhotoShortcut::Show, "{style:?} closed");
+        }
+        assert_eq!(photo_shortcut(true, PhotoWindowStyle::Legacy), PhotoShortcut::Show);
+        assert_eq!(photo_shortcut(true, PhotoWindowStyle::Panel), PhotoShortcut::Show);
+        assert_eq!(photo_shortcut(true, PhotoWindowStyle::Aurora), PhotoShortcut::Leave);
+    }
+
+    /// Only the frame the window opens asks a preview (#4625: the toolbar's
+    /// opening refreshes it too).
+    #[test]
+    fn photo_window_opening_is_seen_once() {
+        let mut was = false;
+        assert!(!just_opened(&mut was, false));
+        assert!(just_opened(&mut was, true));
+        assert!(!just_opened(&mut was, true), "still open");
+        assert!(!just_opened(&mut was, false));
+        assert!(just_opened(&mut was, true), "opened again");
+    }
+
+    /// The Legacy style's window is its own floater: the toolbar and the
+    /// shortcut expand that one when it is minimized.
+    #[test]
+    fn photo_window_id_follows_the_style() {
+        assert_eq!(photo_window_id(PhotoWindowStyle::Legacy), crate::ui::snapshot::CLASSIC_WINDOW);
+        assert_eq!(photo_window_id(PhotoWindowStyle::Panel), crate::ui::snapshot::WINDOW);
+        assert_eq!(photo_window_id(PhotoWindowStyle::Aurora), crate::ui::snapshot::WINDOW);
     }
 }

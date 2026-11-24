@@ -89,7 +89,7 @@ async fn mesh_fee_errors_keep_http_and_validation_reasons_without_private_respon
                 "errors"=>Llsd::Array(vec![llsd_map! {"message"=>"Degenerate triangles"},llsd_map! {"message"=>"Degenerate triangles"}])
             }}),
         ]).await;
-        let error = mesh::quote(&reqwest::Client::new(), &base, &base, &mesh_request())
+        let error = mesh::quote(&crate::test_http_client(), &base, &base, &mesh_request())
             .await
             .err()
             .expect("fee rejected");
@@ -108,7 +108,7 @@ async fn mesh_fee_errors_keep_http_and_validation_reasons_without_private_respon
 #[tokio::test]
 async fn failed_mesh_transfer_preserves_the_reason_and_an_uncertain_outcome_without_retrying() {
     let (base, task) = server(|_| vec![(500, llsd_map! {"error"=>llsd_map! {"message"=>"Mesh processing unavailable"}})]).await;
-    let error = crate::inventory::mesh_upload::upload(&reqwest::Client::new(), base.clone(), Uuid::nil(), 10, mesh_request())
+    let error = crate::inventory::mesh_upload::upload(&crate::test_http_client(), base.clone(), Uuid::nil(), 10, mesh_request())
         .await
         .expect_err("uncertain outcome");
     let Error::Uncertain(reason) = error else {
@@ -152,7 +152,7 @@ async fn paid_assets_negotiate_send_binary_and_use_authoritative_inventory() {
     })
     .await;
     let receipt = upload(
-        &reqwest::Client::new(),
+        &crate::test_http_client(),
         &base,
         &format!("{base}/fetch"),
         Uuid::from_u128(4),
@@ -210,9 +210,15 @@ async fn a_photo_uploads_as_a_snapshot_texture_with_its_permissions() {
         },
         ..request()
     };
-    let receipt = upload(&reqwest::Client::new(), &base, &format!("{base}/fetch"), Uuid::from_u128(4), photo)
-        .await
-        .expect("upload");
+    let receipt = upload(
+        &crate::test_http_client(),
+        &base,
+        &format!("{base}/fetch"),
+        Uuid::from_u128(4),
+        photo,
+    )
+    .await
+    .expect("upload");
     assert_eq!(receipt.item.inv_type, 15);
     assert_eq!(receipt.cost, 10);
     let requests = task.await.expect("server");
@@ -247,7 +253,7 @@ async fn large_texture_upload_keeps_confirmed_fee_when_preliminary_price_is_lowe
             };
             let expected_data = upload_request.data.clone();
             let receipt = upload(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &base,
                 &format!("{base}/fetch"),
                 Uuid::from_u128(4),
@@ -276,7 +282,7 @@ async fn negative_preliminary_upload_fee_prevents_binary_transfer() {
     })
     .await;
     assert_eq!(
-        upload(&reqwest::Client::new(), &base, &base, Uuid::nil(), request())
+        upload(&crate::test_http_client(), &base, &base, Uuid::nil(), request())
             .await
             .expect_err("invalid price"),
         Error::Response
@@ -294,7 +300,7 @@ async fn changed_fee_prevents_binary_transfer_and_unknown_outcome_never_retries(
     })
     .await;
     assert_eq!(
-        upload(&reqwest::Client::new(), &base, &base, Uuid::nil(), request())
+        upload(&crate::test_http_client(), &base, &base, Uuid::nil(), request())
             .await
             .expect_err("price"),
         Error::PriceChanged(Some(40))
@@ -307,7 +313,7 @@ async fn changed_fee_prevents_binary_transfer_and_unknown_outcome_never_retries(
         ]
     })
     .await;
-    let error = upload(&reqwest::Client::new(), &base, &base, Uuid::nil(), request())
+    let error = upload(&crate::test_http_client(), &base, &base, Uuid::nil(), request())
         .await
         .expect_err("unknown");
     assert_eq!(error, Error::Unknown);
@@ -331,7 +337,7 @@ async fn mesh_permission_quote_and_llsd_transfer_create_an_object() {
     let (base,task) = server(|base|vec![(200,llsd_map! {"mesh_upload_status"=>"valid"}),
         (200,llsd_map! {"state"=>"upload","uploader"=>format!("{base}/mesh"),"upload_price"=>17,"data"=>llsd_map! {"resource_cost"=>2.0}}),
         (200,llsd_map! {"state"=>"complete","new_inventory_item"=>Uuid::from_u128(2),"new_asset"=>asset, "new_next_owner_mask"=>123, "new_group_mask"=>32, "new_everyone_mask"=>16, "inventory_flags"=>256})]).await;
-    let client = reqwest::Client::new();
+    let client = crate::test_http_client();
     let offer = mesh::quote(&client, &base, &format!("{base}/permission"), &upload)
         .await
         .expect("quote");
@@ -369,7 +375,7 @@ async fn mesh_refuses_unqualified_accounts_without_a_fee_query() {
         timeout_secs: 600,
     };
     assert_eq!(
-        mesh::quote(&reqwest::Client::new(), &base, &base, &upload).await.err(),
+        mesh::quote(&crate::test_http_client(), &base, &base, &upload).await.err(),
         Some(Error::MeshPermission)
     );
     assert_eq!(task.await.expect("server").len(), 1);
@@ -386,7 +392,7 @@ async fn completed_mesh_uses_legacy_creation_defaults_and_never_fetches_or_reupl
         )]
     })
     .await;
-    let receipt = crate::inventory::mesh_upload::upload(&reqwest::Client::new(), base, owner, 11, mesh_request())
+    let receipt = crate::inventory::mesh_upload::upload(&crate::test_http_client(), base, owner, 11, mesh_request())
         .await
         .expect("confirmed creation");
     assert_eq!(receipt.item.asset_id, asset);
@@ -408,7 +414,7 @@ async fn incomplete_mesh_acknowledgements_stay_uncertain_without_reuploading() {
         llsd_map! {"state"=>"upload", "new_inventory_item"=>Uuid::from_u128(2), "new_asset"=>Uuid::from_u128(3)},
     ] {
         let (base, task) = server(|_| vec![(200, ack)]).await;
-        let error = crate::inventory::mesh_upload::upload(&reqwest::Client::new(), base, Uuid::from_u128(4), 11, mesh_request())
+        let error = crate::inventory::mesh_upload::upload(&crate::test_http_client(), base, Uuid::from_u128(4), 11, mesh_request())
             .await
             .expect_err("unconfirmed creation");
         assert!(matches!(error, Error::Uncertain(_)));

@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora LiveMesh", "author": "Aurora Viewer contributors",
-    "version": (0, 14, 10), "blender": (2, 93, 0),
+    "version": (0, 16, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged and static mesh edits live in Aurora Viewer",
 }
@@ -253,6 +253,9 @@ def _update():
             _geometry_dirty = False
             _warnings = {}
             messages = [polling_error] if polling_error else []
+            # The same messages for Aurora's cards, untranslated: the viewer
+            # words them in its own language.
+            object_warnings = []
             for entry in prefs.objects:
                 valid = tracking.valid(scene, entry.object)
                 message = errors.get(entry.object.as_pointer(), "") if valid else ""
@@ -261,6 +264,10 @@ def _update():
                     message = message[len(prefix):]
                 text = pgettext_iface(message) if message else ""
                 warning = warnings.get(entry.object.as_pointer(), "") if valid else ""
+                if message:
+                    object_warnings.append(client.object_warning(entry.source_id, entry.name, "not-sent", message))
+                elif warning:
+                    object_warnings.append(client.object_warning(entry.source_id, entry.name, "textures", warning))
                 if warning and not text:
                     # The mesh still syncs; say why its textures are missing.
                     text = pgettext_iface("Textures skipped, plain color shown: {reason}").format(
@@ -273,6 +280,10 @@ def _update():
             # Texture painting can change pixels without a depsgraph event.
             # Compare the prepared payload, sharing its buffers with the worker,
             # so idle paint ticks and unrelated notifications send no revisions.
+            # replaced every capture: a material-only snapshot copies the last one
+            value = {key: item for key, item in value.items() if key != "warnings"}
+            if object_warnings:
+                value["warnings"] = object_warnings
             content = {key: item for key, item in value.items() if key != "revision"}
             if forced or content != _last_snapshot:
                 _revision += 1
@@ -584,6 +595,8 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "The requested source is no longer in this scene's live list": "L’objet demandé ne figure plus dans la liste live de cette scène",
     "Waiting for Aurora: Update Aurora Viewer to use live PBR materials":
         "Mettez à jour Aurora Viewer pour utiliser les matériaux PBR live",
+    "Waiting for Aurora: Enable preview in Aurora's LiveMesh window":
+        "En attente d’Aurora : activez l’aperçu dans la fenêtre LiveMesh d’Aurora",
     "Live materials use the mesh's active UV map": "Les matériaux live utilisent la carte UV active du maillage",
     "Use UV coordinates for live image textures": "Utilisez les coordonnées UV pour les textures image live",
     "Live UV mapping supports Z rotation only": "Le mapping UV live accepte uniquement la rotation autour de Z",

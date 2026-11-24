@@ -5,68 +5,143 @@ use crate::{
     world::{bridge::QueryState, poser_consent},
 };
 
-pub(super) fn allowed(world: &World, id: Uuid) -> bool {
+/// Where you stand, for the subjects' distance: computed once per menu
+/// frame by the caller rather than once per object.
+pub(super) fn own_position(world: &World) -> Option<Vec3> {
+    let index = world.objects.index_of_uuid(&world.agent_id)?;
+    Scene::object_transform(world, index, Instant::now(), 0).map(|t| t.0)
+}
+/// An animesh's own skeleton root (`animesh::owner`): a linkset root, rezzed
+/// or worn, flagged animated. A plain test for the cheap flag comes first.
+fn animesh_root(world: &World, index: usize, object: &crate::world::objects::Object) -> bool {
+    object.extra.extended_mesh_flags.unwrap_or(0) & aurora_prim::extra::EXTENDED_MESH_ANIMATED != 0
+        && Scene::skeleton_owner(world, index).is_some_and(|(owner, root)| owner == object.full_id && root == index)
+}
+pub(super) fn eligibility_reason(world: &World, id: Uuid) -> Option<&'static str> {
+    eligibility_reason_from(world, id, own_position(world))
+}
+/// `eligibility_reason` with your position already known (`own_position`):
+/// the cheap tests first, the object's own transform last.
+pub(super) fn eligibility_reason_from(world: &World, id: Uuid, own_at: Option<Vec3>) -> Option<&'static str> {
     if id == world.agent_id {
-        return !id.is_nil();
+        return id.is_nil().then_some("not-owned");
     }
     let Some(index) = world.objects.index_of_uuid(&id) else {
-        return false;
+        return Some("not-owned");
     };
-    let Some(object) = world.objects.get(index) else { return false };
+    let Some(object) = world.objects.get(index) else {
+        return Some("not-owned");
+    };
     if object.is_avatar() {
-        return world.poser_consent.can_pose(world, id);
+        return (!world.poser_consent.can_pose(world, id)).then_some("no-consent");
+    }
+    if !animesh_root(world, index, object) {
+        return Some("not-root");
+    }
+    if !owned(world, object) {
+        return Some("not-owned");
     }
     let Some(own) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get(i)) else {
-        return false;
+        return Some("not-owned");
     };
-    object.owner_id == world.agent_id
-        && object.key.region == own.key.region
-        && Some(object.key.region) == world.main_region
-        && Scene::object_transform(world, index, Instant::now(), 0)
-            .zip(
-                world
-                    .objects
-                    .index_of_uuid(&world.agent_id)
-                    .and_then(|i| Scene::object_transform(world, i, Instant::now(), 0)),
-            )
-            .is_some_and(|(a, b)| a.0.distance(b.0) <= 50.0)
-        && !world.mutes.is_muted_id(&id)
-        && Scene::skeleton_owner(world, index).is_some_and(|(owner, root)| owner == id && root == index)
+    if object.key.region != own.key.region || Some(object.key.region) != world.main_region {
+        return Some("other-region");
+    }
+    if world.mutes.is_muted_id(&id) {
+        return Some("muted");
+    }
+    if !distance_from(world, index, own_at).is_some_and(|d| d <= 50.0) {
+        return Some("too-far");
+    }
+    None
 }
-pub(super) fn subject_name(world: &World, id: Uuid) -> String {
+/// Whether an object is yours to pose. The simulator leaves OwnerID empty
+/// in most object updates and fills it only with ObjectProperties (a
+/// selection), while the update flags say "you own this" for every prim:
+/// the Legacy Viewer's `permYouOwner` (llviewerobject.cpp) reads that flag
+/// alone. A group-owned animesh you may manage carries the flag with its
+/// group as owner, so the flag is trusted for a nil owner and for one of
+/// your groups. Stricter than the Legacy Viewer: an owner that is known and
+/// is neither you nor one of your groups wins over the flag.
+fn owned(world: &World, object: &crate::world::objects::Object) -> bool {
+    let owner = object.owner_id;
+    if owner == world.agent_id {
+        return true;
+    }
+    object.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
+        && (owner.is_nil() || world.groups.groups.iter().any(|g| g.id == owner))
+}
+/// How far an object is from you (`own_position`), in metres.
+fn distance_from(world: &World, index: usize, own_at: Option<Vec3>) -> Option<f32> {
+    Scene::object_transform(world, index, Instant::now(), 0)
+        .zip(own_at)
+        .map(|(a, b)| a.0.distance(b))
+}
+/// Whether the poser can open on this subject now: an animesh whose
+/// skeleton is not posed yet (its rigged mesh still loading) has no frame,
+/// and the poser window would show nothing for it.
+pub(super) fn has_frame(world: &World, id: Uuid) -> bool {
+    id == world.agent_id || Frame::subject(world, id).is_some()
+}
+pub(super) fn allowed(world: &World, id: Uuid) -> bool {
+    eligibility_reason(world, id).is_none()
+}
+/// A subject's name: "You", a resident's name, or an animesh's worn item
+/// name, else its object name from ObjectProperties (`names`), else
+/// "Animesh". The Legacy Viewer (`FSFloaterPoser::getControlAvatarName`,
+/// fsfloaterposer.cpp) also takes the worn item's name, but names a rezzed
+/// animesh "AO_<uuid>" (`LLControlAvatar::getFullname`); the object name is
+/// a deliberate difference.
+pub(super) fn subject_name(world: &World, names: &HashMap<Uuid, String>, id: Uuid) -> String {
     if id == world.agent_id {
         return aurora_i18n::tr!("poser-you").to_string();
     }
     if let Some(object) = world.objects.index_of_uuid(&id).and_then(|i| world.objects.get(i))
         && !object.is_avatar()
     {
-        return format!("{} {}", aurora_i18n::text("poser-animesh"), object.key.local_id);
+        if let Some(item) = object.attachment_item_id().and_then(|item| world.inventory.items.get(&item)) {
+            return item.name.clone();
+        }
+        return names
+            .get(&id)
+            .cloned()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| aurora_i18n::tr!("poser-animesh").to_string());
     }
     poser_consent::name(world, id)
 }
 /// The short name of a subject, for a narrow place (the compact window's
 /// head, a picture's initials): a resident's display name alone, without
-/// the account that `subject_name` adds.
-pub(super) fn subject_short_name(world: &World, id: Uuid) -> String {
+/// the account that `subject_name` adds; an animesh's name as there.
+pub(super) fn subject_short_name(world: &World, names: &HashMap<Uuid, String>, id: Uuid) -> String {
     if id == world.agent_id {
         return world.own_name();
     }
-    let names = &world.social.avatar_names;
-    names
+    let avatars = &world.social.avatar_names;
+    avatars
         .get(&id)
-        .map(|n| n.display(&names.options))
-        .unwrap_or_else(|| subject_name(world, id))
+        .map(|n| n.display(&avatars.options))
+        .unwrap_or_else(|| subject_name(world, names, id))
 }
 impl Editor {
     pub(in crate::ik_edit) fn editor_frame(&self, world: &World) -> Option<Frame> {
         let id = if self.poser.active && !self.poser.subject.is_nil() {
             self.poser.subject
         } else {
-            world.agent_id
+            // couple mode: the person the animation editor works on
+            self.edited_subject(world)
         };
         Frame::subject(world, id)
     }
     pub fn pose_layers(&mut self, world: &World) -> std::collections::HashMap<Uuid, Arc<SubjectPose>> {
+        self.pose_layers_with_base(world, |_| None)
+    }
+
+    pub fn pose_layers_with_base(
+        &mut self,
+        world: &World,
+        mut base_for: impl FnMut(Uuid) -> Option<Arc<crate::scene::anim::SkeletonBase>>,
+    ) -> std::collections::HashMap<Uuid, Arc<SubjectPose>> {
         if !self.poser.active {
             return Default::default();
         }
@@ -84,6 +159,11 @@ impl Editor {
             && let Some(pose) = SubjectPose::capture(&world.avatar_lib.rig, &frame)
         {
             self.poser.sessions.insert(self.poser.subject, data::Session::new(pose));
+        }
+        for (id, session) in &mut self.poser.sessions {
+            if let Some(base) = base_for(*id) {
+                session.rebase(base);
+            }
         }
         self.poser
             .sessions
@@ -109,9 +189,12 @@ impl Editor {
         ids
     }
     pub(super) fn pick_subject(&mut self, world: &World, id: Uuid) {
-        if !allowed(world, id) {
+        // without a frame the poser window shows nothing (`show_poser`)
+        if !allowed(world, id) || !has_frame(world, id) {
             return;
         }
+        // a Ctrl + click in the world names it as the menu does
+        self.request_subject_name(world, id);
         self.poser.subject = id;
         self.selected = None;
         self.poser.unselected = false;
@@ -120,6 +203,30 @@ impl Editor {
         self.drag = None;
         self.gizmo.cancel();
         self.pose_layers(world);
+    }
+    /// Asks the simulator for an animesh's object name (`Request::ObjectName`)
+    /// when it has none yet, at most once every 30 seconds: from the subject
+    /// menu and from a pick in the world. A resident is named elsewhere, and a
+    /// worn animesh by its inventory item.
+    pub(super) fn request_subject_name(&mut self, world: &World, id: Uuid) {
+        let Some(object) = world.objects.index_of_uuid(&id).and_then(|i| world.objects.get(i)) else {
+            return;
+        };
+        let worn_name = object
+            .attachment_item_id()
+            .is_some_and(|item| world.inventory.items.contains_key(&item));
+        if id == world.agent_id || object.is_avatar() || worn_name || self.poser.subject_names.contains_key(&id) {
+            return;
+        }
+        if self
+            .poser
+            .subject_name_requested
+            .get(&id)
+            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(30))
+        {
+            self.poser.subject_name_requested.insert(id, Instant::now());
+            self.poser.requests.push(Request::ObjectName(id));
+        }
     }
     pub(in crate::ik_edit) fn commit_poser_manipulation(&mut self, rig: &Rig, frame: &Frame, rotate: bool) -> bool {
         let Some(bone) = self.selected else { return false };
@@ -179,6 +286,7 @@ impl Editor {
                 {
                     edited.rotations[other] = data::mirrored(rig, rotation, changed, other);
                     edited.origin[other] = data::mirrored(rig, edited.origin[changed], changed, other);
+                    edited.hold_rotation[other] = edited.hold_rotation[changed];
                     edited.locks.remove(&other);
                 }
             }
@@ -188,13 +296,20 @@ impl Editor {
             self.poser.drag_checkpoint = true;
         }
         session.pose = Arc::new(edited);
+        if self.clip.active && self.clip.document.as_ref().is_some_and(|document| document.auto_keyframe) {
+            self.clip.modified.insert(bone);
+            if !rotate {
+                self.clip.translations.insert(bone);
+            }
+            self.clip.auto_key_pending = true;
+        }
         true
     }
     /// The subject button: picture, name and kind, opening the subject menu
     /// (you and your animesh, then the nearby avatars with their consent
     /// action; the consent itself is the app's, through `Request`).
     pub(super) fn subject_button(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World) {
-        let name = subject_name(world, self.poser.subject);
+        let name = subject_name(world, &self.poser.subject_names, self.poser.subject);
         let kind = if self.poser.subject == world.agent_id {
             world.own_name()
         } else if world
@@ -252,6 +367,14 @@ impl Editor {
     /// distance and a square button for the consent (Ask, Asked, Accepted,
     /// Refused), and the privacy setting.
     pub(super) fn subject_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World) {
+        self.poser
+            .subject_name_requested
+            .retain(|_, at| at.elapsed() < std::time::Duration::from_secs(300));
+        self.poser
+            .subject_skip_logged
+            .retain(|_, at| at.elapsed() < std::time::Duration::from_secs(300));
+        // the names of objects that are gone
+        self.poser.subject_names.retain(|id, _| world.objects.index_of_uuid(id).is_some());
         use crate::world::poser_consent::Status;
         ui.set_width(MENU_W);
         let now = ui.input(|i| i.time);
@@ -283,26 +406,46 @@ impl Editor {
         {
             pick = Some(world.agent_id);
         }
-        for (_, object) in world.objects.iter() {
-            if object.full_id != world.agent_id && !object.is_avatar() && allowed(world, object.full_id) {
-                let count = aurora_i18n::tr!("poser-edited-count", count = edited(self, object.full_id)).to_string();
-                let current = self.poser.subject == object.full_id;
-                let name = subject_name(world, object.full_id);
-                let count = Detail { text: count, end: None };
-                if person_row(
-                    ui,
-                    p,
-                    object.full_id,
-                    Avatar::Icon("accessible-filled"),
-                    &name,
-                    &count,
-                    current,
-                    None,
-                )
-                .0
-                {
-                    pick = Some(object.full_id);
+        // your position once per frame, not once per object
+        let own_at = own_position(world);
+        for (index, object) in world.objects.iter() {
+            let id = object.full_id;
+            // an animesh is an animated linkset root: every other prim
+            // (most of what you own) stops at these two plain tests
+            if id == world.agent_id || object.is_avatar() || !animesh_root(world, index, object) {
+                continue;
+            }
+            // a rigged mesh still loading has no pose yet: the poser would
+            // open on nothing (`Frame::subject`), so it waits in the log
+            let reason = eligibility_reason_from(world, id, own_at).or_else(|| (!has_frame(world, id)).then_some("no-pose"));
+            match reason {
+                None => {
+                    self.request_subject_name(world, id);
+                    let count = aurora_i18n::tr!("poser-edited-count", count = edited(self, id)).to_string();
+                    let current = self.poser.subject == id;
+                    let name = subject_name(world, &self.poser.subject_names, id);
+                    // the distance, as the nearby residents' rows: it tells
+                    // apart several animesh whose names are not known yet
+                    let end = distance_from(world, index, own_at).map(|d| {
+                        let away = aurora_i18n::tr!("poser-distance", distance = aurora_i18n::number(f64::from(d), 1)).to_string();
+                        (away, range_color(p, d))
+                    });
+                    let count = Detail { text: count, end };
+                    if person_row(ui, p, id, Avatar::Icon("accessible-filled"), &name, &count, current, None).0 {
+                        pick = Some(id);
+                    }
                 }
+                Some(reason)
+                    if self
+                        .poser
+                        .subject_skip_logged
+                        .get(&id)
+                        .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(30)) =>
+                {
+                    log::debug!("poser animesh {} not offered: {reason}", object.key.local_id);
+                    self.poser.subject_skip_logged.insert(id, Instant::now());
+                }
+                Some(_) => {}
             }
         }
         ui.add_space(4.0);
@@ -407,10 +550,6 @@ impl Editor {
             {
                 self.poser.requests.push(Request::RepairBridge);
             }
-        }
-        menu::separator(ui, p);
-        if menu::item(ui, p, "lock-filled", aurora_i18n::text("poser-privacy")) {
-            self.poser.requests.push(Request::OpenPrivacy);
         }
         if let Some(id) = pick {
             self.pick_subject(world, id);

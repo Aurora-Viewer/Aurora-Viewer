@@ -26,6 +26,9 @@ fn mode() -> Option<&'static str> {
 impl App {
     pub(super) fn world_click_demo_steps(&mut self) {
         let Some(spec) = mode().filter(|_| self.demo) else { return };
+        if spec.starts_with("avatar-ignore") && spec.ends_with("-ready") && self.frame_count > 600 {
+            return; // Leave the placed screen and the mouse to the tester.
+        }
         let mode = spec.strip_suffix("-keep-camera").unwrap_or(spec);
         // `-held`: the touch is held and the cursor slides over the
         // attachment, as a script reading the touch position expects
@@ -248,9 +251,10 @@ impl App {
                 .and_then(|idx| self.world.objects.get(idx))
                 .map(|o| o.key.local_id);
             log::info!(
-                "demo world click result: mode={mode}, focus={focus:?}, target={target:?}, held={}, steer={}",
+                "demo world click result: mode={mode}, focus={focus:?}, target={target:?}, held={}, steer={}, keep_orbit={}",
                 self.interactions.held.is_some(),
-                self.mouse_mode == MouseMode::Steer
+                self.mouse_mode == MouseMode::Steer,
+                self.mouse_mode == MouseMode::AvatarKeepOrbit,
             );
             if mode.starts_with("photo-") {
                 let hud_touched = self
@@ -427,6 +431,24 @@ impl App {
                 if let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0) {
                     self.settings.set_render_exception(id, 2);
                     let focus = pos + Vec3::new(-0.3, 0.2, 0.5);
+                    if mode.starts_with("avatar-ignore") {
+                        let chest = pos + Vec3::Z * 0.4;
+                        let toward_eye = (focus + Vec3::new(1.7, -2.3, 0.9) - chest).normalize();
+                        let mut panel =
+                            crate::demo::action_overlay(981, chest + toward_eye, glam::Quat::from_rotation_arc(Vec3::X, toward_eye));
+                        if mode.contains("-mask")
+                            && let NetEvent::ObjectUpdates { objects, .. } = &mut panel
+                        {
+                            for o in objects {
+                                if let Some(te) = o.texture_entry.as_mut() {
+                                    for face in &mut Arc::make_mut(te).faces {
+                                        face.material_id = crate::demo::MAT_MASK;
+                                    }
+                                }
+                            }
+                        }
+                        self.world.apply(panel);
+                    }
                     self.camera.set_view(
                         focus + Vec3::new(1.7, -2.3, 0.9),
                         focus,

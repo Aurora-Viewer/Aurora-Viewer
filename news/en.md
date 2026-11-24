@@ -26,6 +26,56 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-23 — Aurora 0.9.13: ray tracing, windows outside the viewer and faster textures
+Deluxe (RT) is a new graphics level for cards with ray tracing: the shadows of the sun, the moon and the lamps are traced, exact where things touch, coloured glass tints the light and the light bounces into rooms. Any window can go outside the viewer, to another screen. Textures decode faster with aurora-j2k, Aurora's own JPEG 2000 decoder. Versions before 0.9.13 must update, within 12 hours. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.13)
+
+## 2026-11-23 — Building, photos and avatars
+LiveMesh is rebuilt, with live thumbnails, Quick look, a weight bend test and an Undo button. Photo filters become cards you drag, with a catalogue that previews each effect, and Phototools gets its Light and DoF & glow tabs. A Mini AO window stays open and shows what is playing, voice chat can use its own output device, and your own environment can stay on a parcel. Soft sun shadows and planet curvature are new experimental options.
+
+## 2026-11-23 — More like the Legacy Viewer
+Show in inventory for the objects you rezzed, Delete on worn items, groups beside your friends in Contacts, Rendering features › UI, the small camera window, the Bento idle pose, and RLVa checked again in every domain. Updates now install only when signed by the Release workflow. Thanks to AiAiCaptainn, anakima, anne-skydancer, baddawge, circuskid, ClifHofmann, Diviniity, etherealkeshii, Gaalrauch, Glychd, iGao, Izusl, KanikaBreed, KuraiKitsune, Marakiinfinity, Memekiller, MrBollie, Nowalski, Odessa-Draekavik, p1u3o, PumpkinSpicePanda, Ramius1701, RheaMercury.
+
+## 2026-11-21 — Aurora 0.9.12: fifteen languages, Game Controls and a look for the world
+Aurora now speaks fifteen languages: German, Spanish, Italian, Polish, Turkish, Russian, Ukrainian, Norwegian, Portuguese and Chinese join English, French and Japanese, built on the community's translations. Game Controls let a game controller drive the avatar, the camera and scripts, like the LL viewer 26.5. Photo looks and LUTs can stay on the world, with 30 new looks by JuicyBomb. Versions before 0.9.12 must update, within 12 hours. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.12)
+
+## 2026-11-21 — Chat, avatars and inventory
+Direct messages sent from another device, the mobile app included, now show up in the conversation. Avatars you have already seen show at once from a local copy while the region sends them. The inventory gets a Gallery view, notecards get find and replace, and the Second camera window keeps your avatar in view. The Aurora Weather window is redesigned and holds every weather setting. A Second Life account can be created from the login screen, and Linux installs its updates in place.
+
+## 2026-11-21 — More like the Legacy Viewer
+The Phototools window, media and sounds heard from the avatar, the microphone closed while muted, permissions set on objects inside objects, Disable glass for accessibility, and RLVa as in the Legacy Viewer. Thanks to anne-skydancer, circuskid, ClifHofmann, dash-sl, Gaalrauch, Glychd, Izusl, KanikaBreed, Marakiinfinity, Memekiller, Nowalski, Odessa-Draekavik, PumpkinSpicePanda, and to the translators 00JackWild00, 1615424277, DDynamic-Evolution, deontodi-ctrl, SmurfCat1234, wolfosbournesl.
+
+## 2026-11-18 — Aurora 0.9.11: a complete Director, Gaming mode and 360° pictures
+The Director becomes a full machinima tool: ready-made shots, renders up to 4K, films with their sound, montages, the photo looks and LUTs, handles on the cameras, and ffmpeg downloaded in one click. Gaming mode lets Aurora step back while you play: the world stops drawing and gives the video memory and RAM back, while chat and sounds go on. The photo window takes 360° pictures. Versions before 0.9.11 must update, within 12 hours. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.11)
+
+## 2026-11-18 — Photos, inventory and chat
+The photo window keeps its tilt in presets, lets you and others look at the camera, and has shadow and ambient occlusion controls; 360° pictures open as panoramas. The inventory can show two panels side by side, Favorite wearables get picture rows and a Wear button, and sounds play locally or in-world. The Omnifilter hides, replaces or answers unwanted chat. The chat bar can be always shown, shown when typing or left to the Conversations window, and the chat keys can be changed.
+
+## 2026-11-18 — More like the Legacy Viewer
+The pose stand, a target frame rate (Autotune), proxy settings, script sync with outside editors, saved poses from the Legacy Viewer and Alchemy, the missing interface sounds and many RLVa fixes. Thanks to anne-skydancer, Bruica, chrzang, circuskid, ClifHofmann, dash-sl, Diviniity, emmelinedevere, Gaalrauch, Glychd, iGao, Izusl, KanikaBreed, lambskin, Marakiinfinity, Memekiller, MilkIsPrettyGood, Nowalski, nybyl, Odessa-Draekavik, RheaMercury, tasia-ai, vexxbyte, wolfosbournesl, Xevian and zdub0is.
+
+## 2026-11-16 — Aurora 0.9.10: the Director, transparency in its true order, and weather that reaches farther
+The Director lets you film in the world: keep camera views as keyframes on a timeline, play them back as one smooth shot with the world alone, and record a video with your own ffmpeg. Glass, curtains and the layers of mesh hair now show in their true order at every pixel (Preferences › Graphics, Order of transparent surfaces); thanks to Anne Skydancer for the Stochastic choice. Aurora Weather reaches farther, with steadier snow. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.10)
+
+## 2026-11-16 — Chat, people and the world
+The Conversation log and the conversation options work like the Legacy Viewer. People › Contact sets is redesigned, with drag and drop and Quick sort. Nearby chat from beyond chat range is dimmed, and a blocked resident's chat can stay hidden, collapsed or greyed. Name tags can show the distance, radar marks take a colour of your choice, and beacons show light boxes, region corners and chat range spheres. Draw distance goes up to 1024 m.
+
+## 2026-11-16 — Building, avatars and more like the Legacy Viewer
+Save objects as Collada or OBJ, Select faces with this texture, a Build › Options sub-menu, and number fields that take the mouse wheel. The Animation Speed menu, Doppler on moving world sounds, MMO-style mouse buttons (off by default) and mouselook combat aids. An update no longer rolls back when the cache is busy. Thanks to anne-skydancer, circuskid, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Memekiller, Nowalski, Odessa-Draekavik and RheaMercury.
+
+## 2026-11-13 — Aurora 0.9.9: Aurora Weather, Avatar Studio and Lua scripts
+Aurora Weather brings rain, snow, wind, thunder and northern lights, with puddles, lying snow and footprints: choose yours in the Environment window, or let regions set it (off by default). Avatar Studio is a calm space to dress, pose and photograph your avatar, with its own animation editor: keyframes, a timeline, ANIM and BVH import. SLua scripts get a real editor, with Lua colours, completion and help. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.9)
+
+## 2026-11-13 — Gamepad, VR, building and avatars
+With a gamepad, on the desktop or in VR, switch between First Person, Avatar Mode and Flycam. The camera can follow an animated body part. When others edit, grab or give something, their beam shows, and yours is seen. Drag an item out of Contents to rez it, save an object back into the contents it came from, and tick Animated Mesh on a whole linkset. Mesh heads no longer get black eyebrows on AMD cards or after a graphics card reset, and AO walks and runs loop again.
+
+## 2026-11-13 — More like the Legacy Viewer
+Opacity sliders for windows, bars and menus (Preferences › Appearance), the nearby media list under the media button, every don't-ask-again answer in Preferences › Confirmations, Maximum nearby lights, moderator options in group chats, a ban from all your groups, parcel music that fades between stations, and the sun and moon drawn like the Legacy Viewer. Thanks to AiAiCaptainn, circuskid, Gaalrauch, Izusl, KanikaBreed, lambskin, Memekiller, Nowalski, Odessa-Draekavik, RheaMercury and voidel.
+
 ## 2026-11-12 — Aurora 0.9.8: fixes for building, chat and AMD cards
 Select face picks the faces of what you wear again, and Derender with Edit linked parts hides only the selected part. The channel selector shows by every nearby chat input and keeps the channel you chose. On AMD cards, tree leaves are no longer drawn as squares and mesh hair has no more streaks, and blended eyelashes stay visible behind mesh hair. The cache is cleared once at the first start and fills again by itself; your settings are kept.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.8)

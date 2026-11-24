@@ -253,9 +253,13 @@ impl Timeline {
 
 /// The GPU effects and quality switches on, as the report's fixed words
 /// (`EFFECT_WORDS` in crash/watchdog.rs): what tells a hang caused by an effect
-/// from one that is not. Conditions follow the renderer: the contact shadows
-/// need the shadows, the indirect light needs the GTAO.
-pub(super) fn effects(settings: &crate::settings::Settings, vr: bool) -> String {
+/// from one that is not. Conditions follow the renderer: the contact and the
+/// soft shadows need the shadows, the indirect light needs the GTAO, ray
+/// tracing needs the shadows and its reflections SSR (what the settings ask:
+/// the graphics card may trace none). `drawn` is the shadow quality and the
+/// ambient occlusion the world is drawn with (the photo window's over
+/// Preferences', `App::photo_shadow_quality`).
+pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr: bool) -> String {
     use std::fmt::Write;
     let mut out = String::new();
     let mut word = |on: bool, text: std::fmt::Arguments| {
@@ -266,12 +270,22 @@ pub(super) fn effects(settings: &crate::settings::Settings, vr: bool) -> String 
             let _ = out.write_fmt(text);
         }
     };
-    let shadows = settings.shadow_quality > 0;
-    let ao = settings.ssao > 0;
-    word(shadows, format_args!("shadows{}", settings.shadow_quality));
+    let (shadow_quality, ssao) = drawn;
+    let shadows = shadow_quality > 0;
+    let ao = ssao > 0;
+    word(shadows, format_args!("shadows{shadow_quality}"));
     word(shadows && settings.projector_shadows, format_args!("projector-shadows"));
     word(shadows && settings.contact_shadows, format_args!("contact-shadows"));
-    word(ao && settings.ao_method == 0, format_args!("ao-legacy{}", settings.ssao));
+    word(shadows && settings.soft_shadows, format_args!("soft-shadows"));
+    let traced = shadows && settings.ray_tracing.enabled;
+    word(traced, format_args!("ray-tracing"));
+    word(traced && settings.ray_tracing.lights, format_args!("rt-lights"));
+    word(traced && settings.ray_tracing.indirect, format_args!("rt-indirect"));
+    word(
+        traced && settings.ssr && settings.ray_tracing.reflections,
+        format_args!("rt-reflections"),
+    );
+    word(ao && settings.ao_method == 0, format_args!("ao-legacy{ssao}"));
     word(ao && settings.ao_method == 1, format_args!("ao-gtao{}", settings.gtao_quality));
     word(settings.ssr, format_args!("ssr"));
     match settings.antialiasing {
@@ -284,7 +298,9 @@ pub(super) fn effects(settings: &crate::settings::Settings, vr: bool) -> String 
         7 => word(true, format_args!("aa-fsr{}", settings.fsr_quality)),
         _ => {}
     }
+    word(settings.blend_order > 0, format_args!("blend-exact{}", settings.blend_order));
     word(settings.bloom, format_args!("bloom"));
+    word(settings.planet_curvature, format_args!("curvature"));
     word(settings.glow, format_args!("glow"));
     word(
         ao && settings.ao_method == 1 && settings.screen_indirect_light,
@@ -480,13 +496,14 @@ impl App {
             regions: self.world.regions.len(),
             ..Default::default()
         };
-        state.effects = effects(&self.settings, renderer.vr_engaged());
+        let drawn = (self.photo_shadow_quality(), self.photo_ambient_occlusion());
+        state.effects = effects(&self.settings, drawn, renderer.vr_engaged());
         live.apply(&mut state);
         state.window_state = if window.is_minimized().unwrap_or(false) {
             "minimized"
         } else if self.occluded {
             "occluded"
-        } else if !self.focused {
+        } else if !self.in_front() {
             "background"
         } else {
             "focused"
@@ -591,21 +608,25 @@ mod tests {
         let mut settings = crate::settings::Settings {
             shadow_quality: 3,
             contact_shadows: true,
+            soft_shadows: true,
             ssao: 2,
             ao_method: 1,
             gtao_quality: 2,
             antialiasing: 6,
             bloom: true,
             screen_indirect_light: true,
+            planet_curvature: true,
             ..Default::default()
         };
-        let list = effects(&settings, true);
+        let list = effects(&settings, (settings.shadow_quality, settings.ssao), true);
         for word in [
             "shadows3",
             "contact-shadows",
+            "soft-shadows",
             "ao-gtao2",
             "aa-smaa",
             "bloom",
+            "curvature",
             "indirect-light",
             "vr",
             "scale",
@@ -613,10 +634,13 @@ mod tests {
         ] {
             assert!(list.split(',').any(|w| w.starts_with(word)), "{word} missing in {list}");
         }
+        // the photo window's shadows off: the report says what is drawn
+        let list = effects(&settings, (0, settings.ssao), false);
+        assert!(!list.split(',').any(|w| w.starts_with("shadows")), "{list}");
         // the contact shadows and the indirect light need what they ride on
         settings.shadow_quality = 0;
         settings.ssao = 0;
-        let list = effects(&settings, false);
+        let list = effects(&settings, (settings.shadow_quality, settings.ssao), false);
         assert!(
             !list.contains("contact-shadows") && !list.contains("indirect-light") && !list.contains("shadows"),
             "{list}"
@@ -641,7 +665,7 @@ mod tests {
             antialiasing: 3,
             ..Default::default()
         };
-        let mut list = effects(&settings, true);
+        let mut list = effects(&settings, (settings.shadow_quality, settings.ssao), true);
         add_photo(&mut list);
         assert!(crate::crash::summary_state_value(&list).is_some(), "{list}");
         for element in aurora_render::GpuElement::ALL {
@@ -652,10 +676,19 @@ mod tests {
         }
     }
 
+    /// `elements`: every GPU element but the weather's (which these cases
+    /// leave at 0), in `GpuElement::ALL`'s order.
     fn stats(gpu_ms: f32, elements: [f32; 7]) -> aurora_render::RenderStats {
+        let mut all = [0.0; aurora_render::GpuElement::ALL.len()];
+        let mut given = elements.into_iter();
+        for (slot, element) in all.iter_mut().zip(aurora_render::GpuElement::ALL) {
+            if element != aurora_render::GpuElement::Weather {
+                *slot = given.next().unwrap_or(0.0);
+            }
+        }
         aurora_render::RenderStats {
             gpu_ms: Some(gpu_ms),
-            gpu_elements: Some(elements),
+            gpu_elements: Some(all),
             ..Default::default()
         }
     }

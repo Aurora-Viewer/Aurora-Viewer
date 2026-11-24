@@ -31,14 +31,40 @@ New-Item -ItemType Directory -Force -Path $rel -ErrorAction Stop | Out-Null
 # GitHub's main, and only then falls back to the repository's copy, which
 # it also runs when src is no longer a Git worktree (recreated below).
 # Only written once: cmd reads a .bat from disk while running it.
-$bat = Join-Path $rel 'build-release.bat'
-if (-not (Test-Path -LiteralPath $bat)) {
+# PSModulePath is emptied for Windows PowerShell to rebuild it: from PowerShell
+# 7, cmd hands down that edition's module paths, which hide cmdlets from 5.1.
+# On Linux the same launcher is build-release.sh.
+$bat = Join-Path $rel $(if ($IsLinux) { 'build-release.sh' } else { 'build-release.bat' })
+if ($IsLinux -and -not (Test-Path -LiteralPath $bat)) {
+    @(
+        '#!/bin/sh'
+        'self=$(readlink -f -- "$0")'
+        '# double-clicked: open a terminal, as Windows opens a console for a .bat'
+        'if [ ! -t 1 ] && [ -z "$AURORA_TOOLS_IN_TERMINAL" ] && { [ -n "$WAYLAND_DISPLAY" ] || [ -n "$DISPLAY" ]; }; then'
+        '    export AURORA_TOOLS_IN_TERMINAL=1'
+        '    for t in ${TERMINAL:+"$TERMINAL -e"} xdg-terminal-exec "konsole -e" "gnome-terminal --" "kgx --" "ptyxis --" kitty foot "alacritty -e" "wezterm start --" "ghostty -e" "xterm -e"; do'
+        '        command -v "${t%% *}" >/dev/null 2>&1 && exec $t "$self" "$@"'
+        '    done'
+        'fi'
+        'd=$(dirname -- "$self")'
+        's=$d/src/scripts/build-release.ps1'
+        '[ -f "$s" ] || { git -C "$d/src" fetch origin main --quiet && git -C "$d/src" checkout --detach --force --quiet origin/main; }'
+        'git -C "$d/src" rev-parse --git-dir >/dev/null 2>&1 || s='
+        "[ -f `"`$s`" ] || s='$((Join-Path $p.Main 'scripts/build-release.ps1') -replace "'", "'\''")'"
+        'pwsh -NoProfile -File "$s" "$@"'
+        'printf "Press Enter to close. "; read -r _'
+    ) -join "`n" | Set-Content -LiteralPath $bat -NoNewline -ErrorAction Stop
+    Add-Content -LiteralPath $bat -Value '' -ErrorAction Stop
+    chmod +x $bat
+}
+if (-not $IsLinux -and -not (Test-Path -LiteralPath $bat)) {
     @(
         '@echo off'
         'set "S=%~dp0src\scripts\build-release.ps1"'
         'if not exist "%S%" (git -C "%~dp0src" fetch origin main --quiet && git -C "%~dp0src" checkout --detach --force --quiet origin/main)'
         'git -C "%~dp0src" rev-parse --git-dir >nul 2>nul || set "S="'
         "if not exist `"%S%`" set `"S=$(Join-Path $p.Main 'scripts\build-release.ps1')`""
+        'set "PSModulePath="'
         'powershell -NoProfile -ExecutionPolicy Bypass -File "%S%" %*'
         'pause'
     ) | Set-Content -LiteralPath $bat -Encoding ASCII -ErrorAction Stop
@@ -68,7 +94,7 @@ if (Test-Path -LiteralPath $src) {
         if ($LASTEXITCODE -ne 0) { $common = $null }
     }
     if (-not $common -or [IO.Path]::GetFullPath($common.Trim()) -ne [IO.Path]::GetFullPath((Join-Path $p.Main '.git'))) {
-        Write-Host 'RELEASE\src is no longer a worktree of this repository: recreating it (its build cache is kept).' -ForegroundColor Yellow
+        Write-Host "$(Join-Path 'RELEASE' 'src') is no longer a worktree of this repository: recreating it (its build cache is kept)." -ForegroundColor Yellow
         $srcTarget = Join-Path $src 'target'
         if ((Test-Path -LiteralPath $srcTarget) -and -not (Test-Path -LiteralPath $kept)) {
             Move-Item -LiteralPath $srcTarget -Destination $kept -ErrorAction Stop
@@ -94,18 +120,43 @@ Push-Location $src
 # A shell inherited from a release job must not stamp another commit with
 # its tag. The local build resolves the version from this checkout's Git.
 $previousVersionTag = [Environment]::GetEnvironmentVariable('AURORA_VERSION_TAG', 'Process')
+# The OpenXR loader built in, like the published exe (release.yml): without
+# it, VR depends on an openxr_loader.dll found on the PC, which a headset
+# software update can remove. Building it needs CMake (docs/VR_WINDOWS.md).
+# On Linux the published binary has neither (release.yml): no static loader,
+# and its debug info stripped (about 490 MB with it), as here.
+$features = @()
+$previousStrip = $env:CARGO_PROFILE_RELEASE_STRIP
+if ($IsLinux) {
+    $env:CARGO_PROFILE_RELEASE_STRIP = 'debuginfo'
+} elseif (Get-Command cmake -ErrorAction SilentlyContinue) {
+    $features = '--features', 'xr-static-loader'
+} else {
+    Write-Host 'CMake not found: the OpenXR loader is not built in, VR will need an openxr_loader.dll on this PC. Install CMake (winget install Kitware.CMake) to build it in.' -ForegroundColor Yellow
+}
 try {
-    [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $null, 'Process')
-    Invoke-Checked 'cargo build' { cargo build --release --locked -p aurora-viewer }
+    # Removed, not emptied: PowerShell 7 passes $null to a .NET string as
+    # '', and an empty AURORA_VERSION_TAG is a tag the build refuses.
+    Remove-Item -LiteralPath Env:AURORA_VERSION_TAG -ErrorAction SilentlyContinue
+    # the Rust version this commit names, one install at a time for the PC
+    Install-RustVersion $src
+    Invoke-Checked 'cargo build' { cargo build --release --locked -p aurora-viewer @features }
 } finally {
-    [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')
+    if ($null -ne $previousVersionTag) {
+        [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')
+    }
+    if ($IsLinux) {
+        if ($null -eq $previousStrip) { Remove-Item -LiteralPath Env:CARGO_PROFILE_RELEASE_STRIP -ErrorAction SilentlyContinue }
+        else { $env:CARGO_PROFILE_RELEASE_STRIP = $previousStrip }
+    }
     Pop-Location
 }
 
 # Use the built commit's verifier when available, just like package.ps1.
 # Older revisions do not understand --version: invoking it would open a
 # viewer, so keep their existing packaging path without querying the exe.
-$builtExe = Join-Path $src 'target\release\aurora-viewer.exe'
+$exeName = if ($IsLinux) { 'aurora-viewer' } else { 'aurora-viewer.exe' }
+$builtExe = Join-Path $src "target\release\$exeName"
 $reportedVersion = $null
 $verifyVersion = Join-Path $src 'scripts\verify-version.ps1'
 if (Test-Path -LiteralPath $verifyVersion) {
@@ -121,7 +172,7 @@ if (Test-Path -LiteralPath $verifyVersion) {
 $package = Join-Path $src 'scripts\package.ps1'
 if (-not (Test-Path -LiteralPath $package)) { $package = Join-Path $PSScriptRoot 'package.ps1' }
 if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force -ErrorAction Stop }
-& $package -Exe (Join-Path $src 'target\release\aurora-viewer.exe') -Out $out -Source $src
+& $package -Exe $builtExe -Out $out -Source $src
 @(
     if ($reportedVersion) { $reportedVersion }
     "${what}: $((git -C $src log -1 --format='%h %s (%ci)').Trim())"
@@ -129,5 +180,5 @@ if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force
 ) | Set-Content -LiteralPath (Join-Path $out 'version.txt') -Encoding UTF8 -ErrorAction Stop
 
 Write-Host ""
-Write-Host "Ready in $([math]::Floor($sw.Elapsed.TotalMinutes)) min $($sw.Elapsed.Seconds) s: $out\aurora-viewer.exe" -ForegroundColor Green
-Write-Host "Double-click $bat to rebuild (build-release.bat 42: PR 42)."
+Write-Host "Ready in $([math]::Floor($sw.Elapsed.TotalMinutes)) min $($sw.Elapsed.Seconds) s: $(Join-Path $out $exeName)" -ForegroundColor Green
+Write-Host "Double-click $bat to rebuild ($(Split-Path $bat -Leaf) 42: PR 42)."

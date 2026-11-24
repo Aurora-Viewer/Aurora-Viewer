@@ -1,5 +1,5 @@
 use super::*;
-use crate::{demo, scene::avatar::AvatarLibrary, world::rig_graph::Target};
+use crate::{demo, scene::avatar::AvatarLibrary};
 use aurora_net::NetEvent;
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ fn fixture() -> (World, Editor) {
     world.main_region = Some(1);
     world.apply(NetEvent::ObjectUpdates {
         handle: 1,
-        objects: demo::hand_ik::objects(0.0, true),
+        objects: vec![demo::action_avatar(false)],
     });
     let matrices = lib
         .rig
@@ -21,8 +21,6 @@ fn fixture() -> (World, Editor) {
     );
     let mut editor = Editor::default();
     editor.toggle();
-    editor.library_demo(&world, "");
-    assert!(editor.add_profile(false, &world, &Frame::new(&world).unwrap()));
     (world, editor)
 }
 
@@ -41,209 +39,141 @@ fn evaluate(world: &mut World, state: &mut ik::Pose, editor: &Editor) -> ik::Loc
 }
 
 #[test]
-fn toggling_limb_ik_keeps_the_selected_chain_root_and_exported_binding() {
-    for format in 0..3 {
-        for name in ["mWristLeft", "mWristRight", "mAnkleLeft", "mAnkleRight"] {
-            let (world, mut editor) = fixture();
-            let rig = &world.avatar_lib.rig;
-            let frame = Frame::new(&world).unwrap();
-            let bone = rig.names[name];
-            let root = ik::default_root(rig, bone);
+fn toggling_limb_ik_keeps_the_selected_chain_root() {
+    for name in ["mWristLeft", "mWristRight", "mAnkleLeft", "mAnkleRight"] {
+        let (world, mut editor) = fixture();
+        let rig = &world.avatar_lib.rig;
+        let frame = Frame::new(&world).unwrap();
+        let bone = rig.names[name];
+        let root = ik::default_root(rig, bone);
+        editor.enable_limb(bone, true, rig, &frame);
+        editor.root = root;
+        editor.commit();
+        for _ in 0..3 {
+            editor.enable_limb(bone, false, rig, &frame);
             editor.enable_limb(bone, true, rig, &frame);
-            editor.root = root;
-            editor.commit();
-            if format == 1 {
-                editor.target = Some(demo::action_id(demo::hand_ik::LEFT));
-                editor.target_name = "Left".into();
-                editor.attach(&world, &frame);
-            } else if format == 2 {
-                assert!(editor.bind_target(
-                    &world,
-                    &frame,
-                    bone,
-                    Target::Prim {
-                        id: demo::action_id(demo::hand_ik::LEFT),
-                        name: "Left".into(),
-                    }
-                ));
-            }
-            for _ in 0..3 {
-                editor.enable_limb(bone, false, rig, &frame);
-                editor.enable_limb(bone, true, rig, &frame);
-                editor.update_bindings(&world, &frame);
-                editor.update_graph(&world, &frame);
-                assert_eq!(editor.root, root, "format={format}, bone={name}");
-                assert_eq!(editor.goals.iter().find(|g| g.bone == bone).unwrap().root, root);
-                if format == 1 {
-                    assert_eq!(
-                        editor.bindings[0].definition.root.as_deref(),
-                        Some(rig.canonical_names[root].as_str())
-                    );
-                } else if format == 2 {
-                    let export = editor.graph_definition();
-                    assert_eq!(export.bindings[0].root.as_deref(), Some(rig.canonical_names[root].as_str()));
-                }
-            }
+            assert_eq!(editor.root, root, "bone={name}");
+            assert_eq!(editor.goals.iter().find(|g| g.bone == bone).unwrap().root, root);
         }
     }
 }
 
 #[test]
-fn released_limbs_accept_direct_edits_without_reenabling_ik_or_losing_bindings() {
-    for format in 0..3 {
-        for name in ["mWristLeft", "mWristRight", "mAnkleLeft", "mAnkleRight"] {
-            let (mut world, mut editor) = fixture();
-            let lib = world.avatar_lib.clone();
-            let rig = &lib.rig;
-            let bone = rig.names[name];
-            let base = Frame::new(&world).unwrap();
-            editor.enable_limb(bone, true, rig, &base);
-            editor.position += Vec3::new(0.08, 0.02, 0.04);
-            editor.set_rotation(Quat::from_rotation_y(0.2) * editor.rotation());
-            editor.commit();
-            if format == 1 {
-                editor.target = Some(demo::action_id(demo::hand_ik::LEFT));
-                editor.target_name = "Left".into();
-                editor.attach(&world, &base);
-            } else if format == 2 {
-                assert!(editor.bind_target(
-                    &world,
-                    &base,
-                    bone,
-                    Target::Prim {
-                        id: demo::action_id(demo::hand_ik::LEFT),
-                        name: "Left".into(),
-                    }
-                ));
-            }
-            editor.update_bindings(&world, &base);
-            editor.update_graph(&world, &base);
-            let mut state = ik::Pose::default();
-            evaluate(&mut world, &mut state, &editor);
-            let active = Frame::new(&world).unwrap();
-            let saved_position = editor.goals.iter().find(|g| g.bone == bone).unwrap().position;
-            editor.enable_limb(bone, false, rig, &active);
-            let released = evaluate(&mut world, &mut state, &editor);
-            assert_eq!(released.rotations, rig.local_rot);
-            assert_eq!(released.positions, rig.local_pos);
-            let frame = Frame::new(&world).unwrap();
-            editor.update_bindings(&world, &frame);
-            editor.update_graph(&world, &frame);
-            editor.select(bone, rig, &frame);
-            editor.set_binding_weight(bone, rig, 0.7);
-            editor.set_binding_weight(bone, rig, 1.0);
-            assert!(
-                !editor.enabled(bone),
-                "passive refresh/selection/strength must not reactivate {name}"
-            );
-            assert!(editor.request().goals.is_empty());
-            editor.refresh = false;
-            editor.enable_limb(bone, true, rig, &frame);
-            assert_eq!(
-                editor.mode,
-                Mode::Ik,
-                "restoring an existing pin must synchronize the selected editor"
-            );
-            assert_eq!(editor.root, editor.goals.iter().find(|g| g.bone == bone).unwrap().root);
-            assert!(editor.position.distance(saved_position) < 0.0003);
-            editor.enable_limb(bone, false, rig, &frame);
-            editor.select(bone, rig, &frame);
-            assert!(
-                editor
-                    .goals
-                    .iter()
-                    .find(|g| g.bone == bone)
-                    .unwrap()
-                    .position
-                    .distance(saved_position)
-                    < 0.0003
-            );
-            let displayed = frame.model.inverse() * frame.joints[bone];
-            assert!(editor.position.distance(displayed.transform_point3(editor.contact)) < 0.0003);
-            assert_eq!(editor.mode, Mode::Ik, "release must not detach {name}");
-            let root = frame.model.inverse().transform_point3(frame.joints[editor.root].w_axis.truncate());
-            editor.position = editor.position.lerp(root, 0.1) + Vec3::X * 0.03;
-            editor.set_rotation(Quat::from_rotation_z(0.15) * editor.rotation());
-            editor.commit();
-            editor.update_bindings(&world, &frame);
-            editor.update_graph(&world, &frame);
-            assert!(editor.limb_enabled(bone), "an explicit parented edit reactivates its chain");
-            assert_eq!(editor.request().goals[0].mode, Mode::Ik);
-            let local = evaluate(&mut world, &mut state, &editor);
-            assert_eq!(
-                local.positions, rig.local_pos,
-                "format={format} {name}: release must not stretch segments"
-            );
-            let matrices = rig.world_with(&local.rotations, Vec3::ZERO, &local.positions, &rig.scale);
-            assert!(
-                matrices[bone].w_axis.truncate().distance(editor.position) < 0.003,
-                "format={format} {name}: released edit must move"
-            );
-            editor.enable_limb(bone, false, rig, &Frame::new(&world).unwrap());
-            evaluate(&mut world, &mut state, &editor);
-            editor.select(bone, rig, &Frame::new(&world).unwrap());
-            assert_eq!(editor.mode, Mode::Ik);
-            // Free translation is an explicit creator choice, never a release default.
-            editor.mode = Mode::Direct;
-            editor.position += Vec3::new(0.09, -0.02, 0.04);
-            editor.set_rotation(Quat::from_rotation_z(0.3) * editor.rotation());
-            let desired = (editor.position, editor.rotation());
-            editor.commit();
-            editor.update_bindings(&world, &frame);
-            editor.update_graph(&world, &frame);
-            assert!(editor.enabled(bone));
-            assert!(!editor.limb_enabled(bone), "manual posing must not turn the limb IK switch back on");
-            let request = editor.request();
-            assert_eq!(request.goals.len(), 1, "format={format} {name}");
-            assert_eq!(request.goals[0].mode, Mode::Direct);
-            let local = evaluate(&mut world, &mut state, &editor);
-            let matrices = rig.world_with(&local.rotations, Vec3::ZERO, &local.positions, &rig.scale);
-            assert!(
-                matrices[bone].transform_point3(editor.contact).distance(desired.0) < 0.0003,
-                "format={format} {name}"
-            );
-            assert!(matrices[bone].to_scale_rotation_translation().1.dot(desired.1).abs() > 0.99999);
-            for (j, q) in local.rotations.iter().enumerate().filter(|(j, _)| *j != bone) {
-                assert!(q.dot(rig.local_rot[j]).abs() > 0.99999, "direct posing only changes its own joint");
-            }
-            if format == 2 {
-                let binding = &editor.graph.definition.bindings[0];
-                assert!(binding.enabled && binding.mode == Mode::Direct);
-            }
-            let frame = Frame::new(&world).unwrap();
-            editor.enable(bone, false, rig, &frame);
-            editor.select(bone, rig, &frame);
-            assert_eq!(editor.mode, Mode::Direct, "an explicit Detach choice survives release/selection");
-            editor.enable_limb(bone, true, rig, &frame);
-            editor.update_bindings(&world, &frame);
-            editor.update_graph(&world, &frame);
-            assert!(editor.limb_enabled(bone));
-            assert_eq!(
-                editor.goals.iter().find(|g| g.bone == bone).unwrap().root,
-                ik::extended_root(rig, bone).unwrap()
-            );
-            assert_eq!(editor.request().goals[0].mode, Mode::Ik);
-            editor.enable_limb(bone, false, rig, &frame);
-            let released = evaluate(&mut world, &mut state, &editor);
-            assert_eq!(released.rotations, rig.local_rot);
-            assert_eq!(released.positions, rig.local_pos);
+fn released_limbs_accept_direct_edits_without_reenabling_ik() {
+    for name in ["mWristLeft", "mWristRight", "mAnkleLeft", "mAnkleRight"] {
+        let (mut world, mut editor) = fixture();
+        let lib = world.avatar_lib.clone();
+        let rig = &lib.rig;
+        let bone = rig.names[name];
+        let base = Frame::new(&world).unwrap();
+        editor.enable_limb(bone, true, rig, &base);
+        editor.position += Vec3::new(0.08, 0.02, 0.04);
+        editor.set_rotation(Quat::from_rotation_y(0.2) * editor.rotation());
+        editor.commit();
+        let mut state = ik::Pose::default();
+        evaluate(&mut world, &mut state, &editor);
+        let active = Frame::new(&world).unwrap();
+        let saved_position = editor.goals.iter().find(|g| g.bone == bone).unwrap().position;
+        editor.enable_limb(bone, false, rig, &active);
+        let released = evaluate(&mut world, &mut state, &editor);
+        assert_eq!(released.rotations, rig.local_rot);
+        assert_eq!(released.positions, rig.local_pos);
+        let frame = Frame::new(&world).unwrap();
+        editor.select(bone, rig, &frame);
+        assert!(!editor.enabled(bone), "passive selection must not reactivate {name}");
+        assert!(editor.request().goals.is_empty());
+        editor.enable_limb(bone, true, rig, &frame);
+        assert_eq!(
+            editor.mode,
+            Mode::Ik,
+            "restoring an existing pin must synchronize the selected editor"
+        );
+        assert_eq!(editor.root, editor.goals.iter().find(|g| g.bone == bone).unwrap().root);
+        assert!(editor.position.distance(saved_position) < 0.0003);
+        editor.enable_limb(bone, false, rig, &frame);
+        editor.select(bone, rig, &frame);
+        assert!(
+            editor
+                .goals
+                .iter()
+                .find(|g| g.bone == bone)
+                .unwrap()
+                .position
+                .distance(saved_position)
+                < 0.0003
+        );
+        let displayed = frame.model.inverse() * frame.joints[bone];
+        assert!(editor.position.distance(displayed.transform_point3(editor.contact)) < 0.0003);
+        assert_eq!(editor.mode, Mode::Ik, "release must not detach {name}");
+        let root = frame.model.inverse().transform_point3(frame.joints[editor.root].w_axis.truncate());
+        editor.position = editor.position.lerp(root, 0.1) + Vec3::X * 0.03;
+        editor.set_rotation(Quat::from_rotation_z(0.15) * editor.rotation());
+        editor.commit();
+        assert!(editor.limb_enabled(bone), "an explicit parented edit reactivates its chain");
+        assert_eq!(editor.request().goals[0].mode, Mode::Ik);
+        let local = evaluate(&mut world, &mut state, &editor);
+        assert_eq!(local.positions, rig.local_pos, "{name}: release must not stretch segments");
+        let matrices = rig.world_with(&local.rotations, Vec3::ZERO, &local.positions, &rig.scale);
+        assert!(
+            matrices[bone].w_axis.truncate().distance(editor.position) < 0.003,
+            "{name}: released edit must move"
+        );
+        editor.enable_limb(bone, false, rig, &Frame::new(&world).unwrap());
+        evaluate(&mut world, &mut state, &editor);
+        editor.select(bone, rig, &Frame::new(&world).unwrap());
+        assert_eq!(editor.mode, Mode::Ik);
+        // Free translation is an explicit creator choice, never a release default.
+        editor.mode = Mode::Direct;
+        editor.position += Vec3::new(0.09, -0.02, 0.04);
+        editor.set_rotation(Quat::from_rotation_z(0.3) * editor.rotation());
+        let desired = (editor.position, editor.rotation());
+        editor.commit();
+        assert!(editor.enabled(bone));
+        assert!(!editor.limb_enabled(bone), "manual posing must not turn the limb IK switch back on");
+        let request = editor.request();
+        assert_eq!(request.goals.len(), 1, "{name}");
+        assert_eq!(request.goals[0].mode, Mode::Direct);
+        let local = evaluate(&mut world, &mut state, &editor);
+        let matrices = rig.world_with(&local.rotations, Vec3::ZERO, &local.positions, &rig.scale);
+        assert!(
+            matrices[bone].transform_point3(editor.contact).distance(desired.0) < 0.0003,
+            "{name}"
+        );
+        assert!(matrices[bone].to_scale_rotation_translation().1.dot(desired.1).abs() > 0.99999);
+        for (j, q) in local.rotations.iter().enumerate().filter(|(j, _)| *j != bone) {
+            assert!(q.dot(rig.local_rot[j]).abs() > 0.99999, "direct posing only changes its own joint");
         }
+        let frame = Frame::new(&world).unwrap();
+        editor.enable(bone, false, rig, &frame);
+        editor.select(bone, rig, &frame);
+        assert_eq!(editor.mode, Mode::Direct, "an explicit Detach choice survives release/selection");
+        editor.enable_limb(bone, true, rig, &frame);
+        assert!(editor.limb_enabled(bone));
+        assert_eq!(
+            editor.goals.iter().find(|g| g.bone == bone).unwrap().root,
+            ik::extended_root(rig, bone).unwrap()
+        );
+        assert_eq!(editor.request().goals[0].mode, Mode::Ik);
+        editor.enable_limb(bone, false, rig, &frame);
+        let released = evaluate(&mut world, &mut state, &editor);
+        assert_eq!(released.rotations, rig.local_rot);
+        assert_eq!(released.positions, rig.local_pos);
     }
 }
 
 #[test]
-fn unchecking_detach_restores_a_real_limb_chain_after_direct_binding_refresh() {
+fn unchecking_detach_restores_a_real_limb_chain() {
     for name in ["mWristLeft", "mWristRight", "mAnkleLeft", "mAnkleRight"] {
         let (world, mut editor) = fixture();
         let rig = &world.avatar_lib.rig;
         let bone = rig.names[name];
         let frame = Frame::new(&world).unwrap();
         editor.select(bone, rig, &frame);
+        // A direct goal whose chain root is its own bone.
         editor.mode = Mode::Direct;
+        editor.root = bone;
         editor.position += Vec3::new(0.03, 0.0, 0.02);
-        editor.target = Some(demo::action_id(demo::hand_ik::LEFT));
-        editor.attach(&world, &frame);
-        editor.update_bindings(&world, &frame);
+        editor.commit();
         editor.select(bone, rig, &frame);
         assert_eq!(editor.root, bone);
         let desired = editor.position;
@@ -283,7 +213,6 @@ fn unchecking_detach_restores_a_real_limb_chain_after_direct_binding_refresh() {
             );
             output.textures_delta.clear();
         }
-        editor.update_bindings(&world, &frame);
         let goal = editor.goals.iter().find(|g| g.bone == bone).unwrap();
         assert_eq!(goal.mode, Mode::Ik);
         assert_eq!(goal.root, ik::extended_root(rig, bone).unwrap());

@@ -21,6 +21,16 @@
 //! Potato and Low have none of these; outside the levels they are all off by
 //! default.
 //!
+//! Deluxe became "Deluxe (RT)" in settings version 46 (decided by the
+//! human on 2026-11-22): High's values, with the shadows of the sun and of
+//! the local lights and the indirect light traced by the graphics card
+//! (`RayTracingSettings::DELUXE`, aurora-render's rt_*.rs), and the
+//! projectors' shadows on as in the former Deluxe (a tester's report: the
+//! rays skip a projector whose shadows are off). No other level
+//! traces. The former Deluxe is kept as [`deluxe_v45`] for the migrations
+//! and the photo's maxima; a profile still exactly on it moves to High once
+//! ([`upgrade_deluxe_to_high`]). The Legacy Viewer has no traced level.
+//!
 //! The avatar physics detail follows the Legacy Viewer's lists too (0 in
 //! Potato, 0.75 in Low, 1 above); the physics switch itself is not a level's.
 //! So does the maximum texture resolution (RenderMaxTextureResolution: 512
@@ -107,6 +117,7 @@ impl Preset {
                 reflection_probes: 0,
                 probe_count: 8,
                 antialiasing: 0,
+                blend_order: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
                 // never written by a level (`apply`): the default
@@ -114,6 +125,8 @@ impl Preset {
                 avatar_physics_detail: 0.0,
                 hdr_emissive: false,
                 max_texture_resolution: 512,
+                // RenderLocalLightCount 8
+                local_light_count: 8,
                 effects: Effects::OFF,
             },
             // "LowMid": 96 m, LOD 2, 5 avatars at 100 k, 2,048 particles,
@@ -137,12 +150,14 @@ impl Preset {
                 reflection_probes: 0,
                 probe_count: 32,
                 antialiasing: 0,
+                blend_order: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
                 glow: true,
                 avatar_physics_detail: 0.75,
                 hdr_emissive: false,
                 max_texture_resolution: 1024,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::OFF,
             },
             // "Mid": 128 m, 7 avatars at 200 k, 4,096 particles, FXAA,
@@ -167,12 +182,14 @@ impl Preset {
                 reflection_probes: 1,
                 probe_count: 64,
                 antialiasing: 1,
+                blend_order: 4,
                 anisotropy: 8,
                 sharpen: 0.0,
                 glow: true,
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::OFF,
             },
             // "High": 11 avatars at 300 k, sun and moon shadows (detail 1:
@@ -199,51 +216,24 @@ impl Preset {
                 reflection_probes: 2,
                 probe_count: 128,
                 antialiasing: 6,
+                blend_order: 4,
                 anisotropy: 8,
                 sharpen: 0.4,
                 glow: true,
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::HIGH,
             },
-            // "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
-            // projectors too (detail 2), the whole scene in the probes; the
-            // rest is "the most that stays reasonable": 192 m instead of
-            // Ultra's 256 (a busy place costs far less), the complexity of
-            // "HighUltra" (Ultra keeps the user's), the highest shadow
-            // quality, ambient occlusion by GTAO at Ultra quality (Aurora's
-            // method, beyond the Legacy Viewer's SSAO of Ultra), water
-            // reflection at half resolution (full costs a second scene),
-            // Aurora's mirrors as by default and 16x anisotropy;
-            // screen-space reflections stay off, as in every Legacy Viewer
-            // level; and Aurora's own effects (module comment)
+            // Deluxe (RT): High, with the shadows and the indirect light
+            // traced (module comment), and the projectors' shadows on as
+            // the former Deluxe had them: the rays trace a projector only
+            // when they are (aurora-render rt_shadows.rs `traced_lights`)
             Preset::Deluxe => Values {
-                draw_distance: 192.0,
-                lod_factor: 3.0,
-                tree_lod_factor: 1.0,
-                max_avatars: 16,
-                max_complexity: 350_000,
-                max_particles: 8192,
-                shadow_quality: 4,
-                projector_shadows: true,
-                projector_shadow_limit: 2,
-                ssao: 2,
-                ao_method: 1,
-                gtao_quality: 3,
-                water_reflections: 2,
-                mirrors: 1,
-                ssr: false,
-                reflection_probes: 3,
-                probe_count: 256,
-                antialiasing: 6,
-                anisotropy: 16,
-                sharpen: 0.4,
-                glow: true,
-                avatar_physics_detail: 1.0,
-                hdr_emissive: true,
-                max_texture_resolution: MAX_TEXTURE_RESOLUTION,
                 effects: Effects::DELUXE,
+                projector_shadows: true,
+                ..Preset::High.values()
             },
         }
     }
@@ -292,7 +282,21 @@ impl Preset {
             ..self.values()
         }
         .write(s);
+        crate::settings::autotune::Hold::chosen(s);
         s.graphics_saved_active = None;
+        // the weather's quality follows the level, but is not one of its
+        // values: choosing it in the Weather section keeps the level shown
+        s.weather.quality = self.weather_quality();
+    }
+
+    /// The Weather quality a level sets.
+    pub fn weather_quality(self) -> crate::weather::WeatherQuality {
+        use crate::weather::WeatherQuality;
+        match self {
+            Preset::Potato | Preset::Low => WeatherQuality::Low,
+            Preset::Medium => WeatherQuality::Medium,
+            Preset::High | Preset::Deluxe => WeatherQuality::High,
+        }
     }
 
     /// The level whose settings are exactly those of `s`, if any.
@@ -381,6 +385,51 @@ pub(crate) mod mac_mid_high {
     }
 }
 
+/// The Deluxe of settings version 45, before it became Deluxe (RT):
+/// the Legacy Viewer's
+/// "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
+/// projectors too (detail 2), the whole scene in the probes; the
+/// rest is "the most that stays reasonable": 192 m instead of
+/// Ultra's 256 (a busy place costs far less), the complexity of
+/// "HighUltra" (Ultra keeps the user's), the highest shadow
+/// quality, ambient occlusion by GTAO at Ultra quality (Aurora's
+/// method, beyond the Legacy Viewer's SSAO of Ultra), water
+/// reflection at half resolution (full costs a second scene),
+/// Aurora's mirrors as by default and 16x anisotropy;
+/// screen-space reflections stay off, as in every Legacy Viewer
+/// level; and Aurora's own effects (module comment)
+pub(crate) fn deluxe_v45() -> Values {
+    Values {
+        draw_distance: 192.0,
+        lod_factor: 3.0,
+        tree_lod_factor: 1.0,
+        max_avatars: 16,
+        max_complexity: 350_000,
+        max_particles: 8192,
+        shadow_quality: 4,
+        projector_shadows: true,
+        projector_shadow_limit: 2,
+        ssao: 2,
+        ao_method: 1,
+        gtao_quality: 3,
+        water_reflections: 2,
+        mirrors: 1,
+        ssr: false,
+        reflection_probes: 3,
+        probe_count: 256,
+        antialiasing: 6,
+        blend_order: 4,
+        anisotropy: 16,
+        sharpen: 0.4,
+        glow: true,
+        avatar_physics_detail: 1.0,
+        hdr_emissive: true,
+        max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+        local_light_count: ALL_LIGHTS,
+        effects: Effects::DELUXE_V45,
+    }
+}
+
 /// The Deluxe of settings version 20: 256 m, GTAO at High and the contact
 /// shadows only. The older Deluxes below are written from it, so that they
 /// stay what those files hold whatever the levels of now become.
@@ -394,8 +443,32 @@ pub(crate) fn deluxe_v20() -> Values {
             contact_shadows: true,
             ..Effects::OFF
         },
-        ..Preset::Deluxe.values()
+        ..deluxe_v45()
     }
+}
+
+/// Settings files written before Deluxe became Deluxe (RT) (version 46),
+/// once their ray tracing is off (`Settings::sanitized`): a profile still
+/// exactly on the former Deluxe moves to High, the level nearest to what
+/// it drew without ray tracing; any other keeps its values.
+pub(crate) fn upgrade_deluxe_to_high(s: &mut Settings) {
+    if Values::read(s).as_shown() == deluxe_v45().as_shown() {
+        Preset::High.apply(s);
+    }
+}
+
+/// The former Deluxe written as its level did (`Preset::apply`): the
+/// earlier migrations moved a profile to the Deluxe of their time, which
+/// the version 46 one then moves to High.
+fn apply_former_deluxe(s: &mut Settings) {
+    Values {
+        glow: s.glow,
+        ..deluxe_v45()
+    }
+    .write(s);
+    crate::settings::autotune::Hold::chosen(s);
+    s.graphics_saved_active = None;
+    s.weather.quality = Preset::Deluxe.weather_quality();
 }
 
 /// The High of settings version 20: GTAO at Medium, none of the effects.
@@ -437,7 +510,7 @@ pub(crate) fn upgrade_deluxe(s: &mut Settings) {
         ..deluxe_v18()
     };
     if Values::read(s).as_shown() == former.as_shown() {
-        Preset::Deluxe.apply(s);
+        apply_former_deluxe(s);
     }
 }
 
@@ -460,7 +533,7 @@ pub(crate) fn deluxe_v19() -> Values {
 /// they were.
 pub(crate) fn upgrade_deluxe_effects(s: &mut Settings) {
     if Values::read(s).as_shown() == deluxe_v18().as_shown() {
-        Preset::Deluxe.apply(s);
+        apply_former_deluxe(s);
     }
 }
 
@@ -469,7 +542,7 @@ pub(crate) fn upgrade_deluxe_effects(s: &mut Settings) {
 /// that Deluxe moves to the Deluxe of now (both off); any other keeps them.
 pub(crate) fn upgrade_deluxe_experimental(s: &mut Settings) {
     if Values::read(s).as_shown() == deluxe_v19().as_shown() {
-        Preset::Deluxe.apply(s);
+        apply_former_deluxe(s);
     }
 }
 
@@ -504,7 +577,11 @@ pub(crate) fn upgrade_levels_v21(s: &mut Settings) {
         (deluxe_v20(), Preset::Deluxe),
     ] {
         if current == former.as_shown() {
-            preset.apply(s);
+            if preset == Preset::Deluxe {
+                apply_former_deluxe(s);
+            } else {
+                preset.apply(s);
+            }
             return;
         }
     }
@@ -525,6 +602,7 @@ pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -546,6 +624,7 @@ pub(crate) fn upgrade_hdr_emissive(s: &mut Settings) {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -565,6 +644,7 @@ pub(crate) fn upgrade_max_texture_resolution(s: &mut Settings) {
         let current = Values {
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -579,10 +659,11 @@ pub(crate) fn upgrade_max_texture_resolution(s: &mut Settings) {
 /// takes the level's (0 and 1, the Legacy Viewer's Low and Ultra); any
 /// other keeps 0.5.
 pub(crate) fn upgrade_tree_detail(s: &mut Settings) {
-    for preset in [Preset::Potato, Preset::Deluxe] {
-        let level = preset.values();
+    // (the Deluxe of then: the former one)
+    for level in [Preset::Potato.values(), deluxe_v45()] {
         let current = Values {
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -592,6 +673,41 @@ pub(crate) fn upgrade_tree_detail(s: &mut Settings) {
     }
 }
 
+/// Settings files written before the levels set the nearby lights (version
+/// 38), all with every light: a profile exactly on Potato apart from it
+/// takes its 8 (the Legacy Viewer's Low); any other keeps them all. (The
+/// earlier upgrades leave the lights aside too: files of then hold none.)
+pub(crate) fn upgrade_local_light_count(s: &mut Settings) {
+    let level = Preset::Potato.values();
+    let current = Values {
+        local_light_count: level.local_light_count,
+        ..Values::read(s)
+    };
+    if current.as_shown() == level.as_shown() {
+        s.local_light_count = level.local_light_count;
+    }
+}
+
+/// Settings files written before the order of the blended faces was a
+/// setting (version 39), all sorted: a profile exactly on Potato or Low
+/// keeps the sorted order, as these levels now say; any other takes the
+/// exact order at its finest, the default.
+pub(crate) fn upgrade_blend_order(s: &mut Settings) {
+    let on_level = |level: Preset| {
+        let level = level.values();
+        let current = Values {
+            blend_order: level.blend_order,
+            ..Values::read(s)
+        };
+        current.as_shown() == level.as_shown()
+    };
+    s.blend_order = if on_level(Preset::Potato) || on_level(Preset::Low) {
+        0
+    } else {
+        BLEND_ORDER_FULL
+    };
+}
+
 /// Aurora's effects beyond the Legacy Viewer's levels, which High and
 /// Deluxe turn on.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -599,8 +715,25 @@ pub struct Effects {
     pub bloom: bool,
     pub bloom_strength: f32,
     pub contact_shadows: bool,
+    /// Soft sun shadows, experimental: off in every level. A backup or a
+    /// saved preset written before them holds none: off, the default size.
+    #[serde(default)]
+    pub soft_shadows: bool,
+    #[serde(default = "shadow_softness")]
+    pub shadow_softness: f32,
     pub screen_indirect_light: bool,
     pub screen_indirect_intensity: f32,
+    /// Ray tracing: the shadows and the indirect light traced in Deluxe
+    /// (RT) only, where the card can; off in the others, so the safe
+    /// graphics turn it off. The reflections, experimental, in none. A
+    /// backup or a saved preset written before it holds none: off, as it
+    /// drew.
+    #[serde(default)]
+    pub ray_tracing: crate::settings::RayTracingSettings,
+}
+
+fn shadow_softness() -> f32 {
+    crate::settings::SHADOW_SOFTNESS
 }
 
 impl Effects {
@@ -609,17 +742,29 @@ impl Effects {
         bloom: false,
         bloom_strength: crate::settings::BLOOM_STRENGTH,
         contact_shadows: false,
+        soft_shadows: false,
+        shadow_softness: crate::settings::SHADOW_SOFTNESS,
         screen_indirect_light: false,
         screen_indirect_intensity: crate::settings::SCREEN_INDIRECT_INTENSITY,
+        ray_tracing: crate::settings::RayTracingSettings::OFF,
     };
     /// High's: the contact shadows.
     pub const HIGH: Effects = Effects {
         contact_shadows: true,
         ..Effects::OFF
     };
-    /// Deluxe's: the contact shadows and the indirect light at its default
-    /// intensity; the bloom, experimental, stays off.
+    /// Deluxe (RT)'s: High's, with the shadows and the indirect light
+    /// traced (the traced indirect light takes the screen-space one's
+    /// place, which stays off).
     pub const DELUXE: Effects = Effects {
+        ray_tracing: crate::settings::RayTracingSettings::DELUXE,
+        ..Effects::HIGH
+    };
+    /// The former Deluxe's, before Deluxe (RT): the contact shadows and
+    /// the screen-space indirect light at its default intensity, nothing
+    /// traced (what its files hold: `Settings::sanitized` turns ray
+    /// tracing off before comparing).
+    pub const DELUXE_V45: Effects = Effects {
         contact_shadows: true,
         screen_indirect_light: true,
         ..Effects::OFF
@@ -653,6 +798,11 @@ pub struct Values {
     pub reflection_probes: u8,
     pub probe_count: u32,
     pub antialiasing: u8,
+    /// `Settings::blend_order`: the sorted order in Potato and Low, the exact
+    /// one at its finest above (a backup or a saved preset written before
+    /// it holds none: the finest, the default then).
+    #[serde(default = "blend_order_full")]
+    pub blend_order: u8,
     pub anisotropy: u16,
     pub sharpen: f32,
     /// RenderGlow. Kept by a saved profile and the safe graphics backup; a
@@ -670,7 +820,61 @@ pub struct Values {
     /// default then).
     #[serde(default = "max_texture_resolution")]
     pub max_texture_resolution: u32,
+    /// RenderLocalLightCount: 8 in Low, all the lights the renderer holds
+    /// above (the Legacy Viewer's 256 to 8192 are more than its 64; a backup
+    /// or a saved preset written before it holds none: all, the default).
+    #[serde(default = "all_lights")]
+    pub local_light_count: u32,
     pub effects: Effects,
+}
+
+/// Every local light the renderer holds: the levels above Potato.
+const ALL_LIGHTS: u32 = crate::scene::lights::MAX_LIGHTS as u32;
+
+fn all_lights() -> u32 {
+    ALL_LIGHTS
+}
+
+/// `Settings::blend_order`: the exact order at its finest precision.
+pub(crate) const BLEND_ORDER_FULL: u8 = 4;
+/// `Settings::blend_order`: the stochastic transparency (aurora-render
+/// oit_stochastic.rs), an estimate of the exact order that is also drawn
+/// under MSAA.
+pub(crate) const BLEND_ORDER_STOCHASTIC: u8 = 5;
+
+fn blend_order_full() -> u8 {
+    BLEND_ORDER_FULL
+}
+
+/// The method behind a `Settings::blend_order`, as the preferences show it:
+/// one choice for the exact order, whose precision (1 fast to 4 full) is
+/// set beside it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum BlendMethod {
+    Standard,
+    Exact,
+    Stochastic,
+}
+
+impl BlendMethod {
+    pub(crate) fn of(order: u8) -> Self {
+        match order {
+            0 => Self::Standard,
+            BLEND_ORDER_STOCHASTIC => Self::Stochastic,
+            _ => Self::Exact,
+        }
+    }
+
+    /// `Settings::blend_order` for this method; `precision`: the exact
+    /// order's (the full one when it is none of them).
+    pub(crate) fn order(self, precision: u8) -> u8 {
+        match self {
+            Self::Standard => 0,
+            Self::Exact if (1..=BLEND_ORDER_FULL).contains(&precision) => precision,
+            Self::Exact => BLEND_ORDER_FULL,
+            Self::Stochastic => BLEND_ORDER_STOCHASTIC,
+        }
+    }
 }
 
 fn default_projector_shadow_limit() -> u8 {
@@ -697,7 +901,8 @@ impl Values {
     /// The method and quality of the occlusion only count while it is on,
     /// and GTAO's quality only under GTAO (the page greys them out); the
     /// same for the effects: the contact shadows only with the shadows, the
-    /// indirect light only with GTAO, a strength only while its effect is on.
+    /// indirect light only with GTAO, a strength only while its effect is on,
+    /// ray tracing only with the shadows, and its reflections only with SSR.
     /// The Glow switch never counts: no level sets it, so turning it off
     /// keeps the level lit instead of "Custom".
     fn as_shown(self) -> Values {
@@ -706,6 +911,7 @@ impl Values {
         let ao_method = if self.ssao == 0 { 0 } else { self.ao_method };
         let e = self.effects;
         let indirect = ao_method == 1 && e.screen_indirect_light;
+        let traced = self.shadow_quality > 0 && e.ray_tracing.enabled;
         let effects = Effects {
             bloom: e.bloom,
             bloom_strength: if e.bloom {
@@ -714,11 +920,24 @@ impl Values {
                 Effects::OFF.bloom_strength
             },
             contact_shadows: self.shadow_quality > 0 && e.contact_shadows,
+            soft_shadows: self.shadow_quality > 0 && e.soft_shadows,
+            // a size only while the effect is on
+            shadow_softness: if self.shadow_quality > 0 && e.soft_shadows {
+                round(e.shadow_softness, 0.05)
+            } else {
+                Effects::OFF.shadow_softness
+            },
             screen_indirect_light: indirect,
             screen_indirect_intensity: if indirect {
                 round(e.screen_indirect_intensity, 0.1)
             } else {
                 Effects::OFF.screen_indirect_intensity
+            },
+            ray_tracing: crate::settings::RayTracingSettings {
+                enabled: traced,
+                lights: traced && e.ray_tracing.lights,
+                indirect: traced && e.ray_tracing.indirect,
+                reflections: traced && self.ssr && e.ray_tracing.reflections,
             },
         };
         Values {
@@ -742,11 +961,18 @@ impl Values {
     }
 
     pub(crate) fn read(s: &Settings) -> Values {
+        // while Autotune holds them, the user's draw distance and avatars:
+        // the level shown, a profile saved and the photo quality's own
+        // hold are the user's, not the tuned values (settings/autotune.rs)
+        let tuned = s
+            .autotune_hold
+            .as_ref()
+            .map_or_else(|| crate::settings::autotune::Tuned::read(s), |h| h.shown(s));
         Values {
-            draw_distance: s.draw_distance,
+            draw_distance: tuned.draw_distance,
             lod_factor: s.lod_factor,
             tree_lod_factor: s.tree_lod_factor,
-            max_avatars: s.max_avatars,
+            max_avatars: tuned.max_avatars,
             max_complexity: s.max_complexity,
             max_particles: s.max_particles,
             shadow_quality: s.shadow_quality,
@@ -761,18 +987,23 @@ impl Values {
             reflection_probes: s.reflection_probes,
             probe_count: s.probe_count,
             antialiasing: s.antialiasing,
+            blend_order: s.blend_order,
             anisotropy: s.anisotropy,
             sharpen: s.sharpen,
             glow: s.glow,
             avatar_physics_detail: s.avatar_physics_detail,
             hdr_emissive: s.hdr_emissive,
             max_texture_resolution: s.max_texture_resolution,
+            local_light_count: s.local_light_count,
             effects: Effects {
                 bloom: s.bloom,
                 bloom_strength: s.bloom_strength,
                 contact_shadows: s.contact_shadows,
+                soft_shadows: s.soft_shadows,
+                shadow_softness: s.shadow_softness,
                 screen_indirect_light: s.screen_indirect_light,
                 screen_indirect_intensity: s.screen_indirect_intensity,
+                ray_tracing: s.ray_tracing,
             },
         }
     }
@@ -799,6 +1030,7 @@ impl Values {
         s.reflection_probes = self.reflection_probes;
         s.probe_count = self.probe_count;
         s.antialiasing = self.antialiasing;
+        s.blend_order = self.blend_order;
         s.anisotropy = self.anisotropy;
         s.sharpen = self.sharpen;
         s.glow = self.glow;
@@ -806,22 +1038,82 @@ impl Values {
         s.hdr_emissive = self.hdr_emissive;
         // (a saved profile edited by hand: the nearest choice of the combo)
         s.max_texture_resolution = crate::settings::max_texture_resolution_choice(self.max_texture_resolution);
+        // (a saved profile edited by hand: no more than the renderer holds)
+        s.local_light_count = self.local_light_count.min(ALL_LIGHTS);
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
+        s.soft_shadows = self.effects.soft_shadows;
+        s.shadow_softness = self.effects.shadow_softness;
         s.screen_indirect_light = self.effects.screen_indirect_light;
         s.screen_indirect_intensity = self.effects.screen_indirect_intensity;
+        s.ray_tracing = self.effects.ray_tracing;
     }
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn projector_shadow_budget_is_saved_with_custom_presets_and_old_presets_keep_two() {
+    fn the_soft_shadows_are_off_in_every_level_at_the_default_size() {
+        for preset in Preset::ALL {
+            let e = preset.values().effects;
+            assert!(!e.soft_shadows, "{preset:?}");
+            assert_eq!(e.shadow_softness, crate::settings::SHADOW_SOFTNESS, "{preset:?}");
+            let mut settings = Settings {
+                soft_shadows: true,
+                shadow_softness: 1.7,
+                ..Settings::default()
+            };
+            preset.apply(&mut settings);
+            assert!(!settings.soft_shadows && settings.shadow_softness == crate::settings::SHADOW_SOFTNESS);
+        }
+    }
+
+    #[test]
+    fn a_preset_saved_before_the_soft_shadows_reads_them_off_and_a_size_counts_only_while_on() {
         let mut settings = Settings::default();
         Preset::Deluxe.apply(&mut settings);
+        let mut saved = serde_json::to_value(Values::read(&settings)).expect("save preset");
+        let effects = saved.get_mut("effects").and_then(|e| e.as_object_mut()).expect("effects");
+        effects.remove("soft_shadows");
+        effects.remove("shadow_softness");
+        let old: Values = serde_json::from_value(saved).expect("older preset");
+        assert!(!old.effects.soft_shadows);
+        assert_eq!(old.effects.shadow_softness, crate::settings::SHADOW_SOFTNESS);
+        // the size shown is the default while the effect is off
+        let mut v = Values::read(&settings);
+        v.effects.shadow_softness = 1.7;
+        v.effects.soft_shadows = false;
+        assert_eq!(v.as_shown().effects.shadow_softness, crate::settings::SHADOW_SOFTNESS);
+        v.effects.soft_shadows = true;
+        assert!((v.as_shown().effects.shadow_softness - 1.7).abs() < 0.03);
+    }
+
+    #[test]
+    fn the_shadow_softness_and_intensity_are_sanitised() {
+        for (softness, intensity) in [(f32::NAN, f32::NAN), (-3.0, -1.0), (50.0, 9.0), (f32::INFINITY, f32::NEG_INFINITY)] {
+            let s = Settings {
+                shadow_softness: softness,
+                shadow_intensity: intensity,
+                ..Settings::default()
+            }
+            .sanitized();
+            assert!(
+                (0.0..=crate::settings::SHADOW_SOFTNESS_MAX).contains(&s.shadow_softness),
+                "{softness}"
+            );
+            assert!((0.0..=1.0).contains(&s.shadow_intensity), "{intensity}");
+        }
+    }
+
+    #[test]
+    fn projector_shadow_budget_is_saved_with_custom_presets_and_old_presets_keep_two() {
+        // (the former Deluxe: the one level that had the projectors' shadows)
+        let mut settings = Settings::default();
+        deluxe_v45().write(&mut settings);
+        let level = Values::read(&settings).as_shown();
         settings.projector_shadow_limit = 10;
-        assert_eq!(Preset::matching(&settings), None);
+        assert_ne!(Values::read(&settings).as_shown(), level);
         let saved = serde_json::to_value(Values::read(&settings)).expect("save custom preset");
         let restored: Values = serde_json::from_value(saved.clone()).expect("restore custom preset");
         Preset::Low.apply(&mut settings);
@@ -834,6 +1126,36 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_exact_order_is_one_choice_that_keeps_its_precision() {
+        // every saved value comes back from its method and its own precision
+        for order in 0..=BLEND_ORDER_STOCHASTIC {
+            assert_eq!(BlendMethod::of(order).order(order), order);
+        }
+        assert_eq!(BlendMethod::of(2), BlendMethod::Exact);
+        // chosen again after another method: the precision it was left at
+        assert_eq!(BlendMethod::Exact.order(2), 2);
+        // or the full one, the default, when none was
+        assert_eq!(BlendMethod::Exact.order(0), BLEND_ORDER_FULL);
+        assert_eq!(BlendMethod::Exact.order(BLEND_ORDER_STOCHASTIC), BLEND_ORDER_FULL);
+        assert_eq!(BlendMethod::Standard.order(3), 0);
+        assert_eq!(BlendMethod::Stochastic.order(3), BLEND_ORDER_STOCHASTIC);
+    }
+
+    #[test]
+    fn levels_set_the_weather_quality_and_choosing_it_keeps_the_level() {
+        use crate::weather::WeatherQuality;
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::Low);
+        s.weather.quality = WeatherQuality::High;
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        Preset::Medium.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::Medium);
+        Preset::Deluxe.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::High);
+    }
 
     #[test]
     fn each_level_matches_itself_after_applying() {
@@ -1056,14 +1378,79 @@ mod tests {
             assert!(a.anisotropy <= b.anisotropy);
             assert!(a.avatar_physics_detail <= b.avatar_physics_detail);
             assert!(a.max_texture_resolution <= b.max_texture_resolution);
+            assert!(a.local_light_count <= b.local_light_count);
         }
+    }
+
+    /// RenderLocalLightCount 8 in the Legacy Viewer's Low (featuretable.txt);
+    /// 256 to 8192 above, more than the 64 the renderer holds: all of them.
+    #[test]
+    fn potato_draws_eight_nearby_lights_like_the_legacy_viewer_low() {
+        let lights = |p: Preset| p.values().local_light_count;
+        assert_eq!(lights(Preset::Potato), 8);
+        for p in [Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+            assert_eq!(lights(p), ALL_LIGHTS, "{p:?}");
+        }
+        assert_eq!(Settings::default().local_light_count, ALL_LIGHTS);
+        // changed by hand: custom
+        let mut s = Settings::default();
+        Preset::High.apply(&mut s);
+        s.local_light_count = 20;
+        assert_eq!(Preset::matching(&s), None);
+        // a file of version 37 exactly on Potato (all the lights then)
+        // takes its 8; one from before version 24 too, through the earlier
+        // upgrades, which leave the lights aside
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        assert_eq!(Preset::matching(&s), None);
+        upgrade_local_light_count(&mut s);
+        assert_eq!(s.local_light_count, 8);
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        s.max_texture_resolution = 2048;
+        s.hdr_emissive = true;
+        s.avatar_physics_detail = 1.0;
+        s.tree_lod_factor = 0.5;
+        upgrade_physics_detail(&mut s);
+        upgrade_hdr_emissive(&mut s);
+        upgrade_max_texture_resolution(&mut s);
+        upgrade_tree_detail(&mut s);
+        upgrade_local_light_count(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        // a custom profile and the other levels keep every light
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        s.draw_distance = 300.0;
+        upgrade_local_light_count(&mut s);
+        assert_eq!(s.local_light_count, ALL_LIGHTS);
+        for p in [Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+            p.apply(&mut s);
+            upgrade_local_light_count(&mut s);
+            assert_eq!(s.local_light_count, ALL_LIGHTS, "{p:?}");
+            assert_eq!(Preset::matching(&s), Some(p));
+        }
+        // a safe graphics backup or a saved preset written before it holds
+        // none: every light
+        let mut json = serde_json::to_value(Preset::Potato.values()).expect("values serialize");
+        json.as_object_mut().expect("an object").remove("local_light_count");
+        let read: Values = serde_json::from_value(json).expect("backup without the field");
+        assert_eq!(read.local_light_count, ALL_LIGHTS);
+        // a saved profile edited by hand: no more than the renderer holds
+        let mut odd = Preset::Medium.values();
+        odd.local_light_count = 256;
+        odd.write(&mut s);
+        assert_eq!(s.local_light_count, ALL_LIGHTS);
     }
 
     #[test]
     fn values_stay_inside_what_the_page_offers() {
         for preset in Preset::ALL {
             let v = preset.values();
-            assert!((32.0..=512.0).contains(&v.draw_distance));
+            assert!((crate::settings::DRAW_DISTANCE_MIN..=crate::settings::DRAW_DISTANCE_MAX).contains(&v.draw_distance));
             assert!((0.5..=4.0).contains(&v.lod_factor));
             assert!((1..=100).contains(&v.max_avatars));
             assert!(v.max_particles <= 8192);
@@ -1098,13 +1485,16 @@ mod tests {
     #[test]
     fn gtao_from_medium_up_and_the_levels_below_none() {
         let ao = |p: Preset| (p.values().ssao, p.values().ao_method, p.values().gtao_quality);
-        assert_eq!(ao(Preset::Deluxe), (2, 1, 3));
+        assert_eq!(ao(Preset::Deluxe), (1, 1, 2), "Deluxe (RT) is High's");
+        let former = deluxe_v45();
+        assert_eq!((former.ssao, former.ao_method, former.gtao_quality), (2, 1, 3));
         assert_eq!(ao(Preset::High), (1, 1, 2));
         assert_eq!(ao(Preset::Medium), (1, 1, 0));
         for p in [Preset::Potato, Preset::Low] {
             assert_eq!(p.values().ssao, 0, "{p:?}");
         }
-        assert_eq!(Preset::Deluxe.values().draw_distance, 192.0);
+        assert_eq!(Preset::Deluxe.values().draw_distance, 128.0);
+        assert_eq!(deluxe_v45().draw_distance, 192.0);
         // the default method outside the levels stays Legacy
         assert_eq!(Settings::default().ao_method, 0);
     }
@@ -1131,7 +1521,7 @@ mod tests {
         assert_eq!(Preset::matching(&s), None);
         // Deluxe with another GTAO quality, or the Legacy method, is custom
         Preset::Deluxe.apply(&mut s);
-        s.gtao_quality = 2;
+        s.gtao_quality = 1;
         assert_eq!(Preset::matching(&s), None);
         Preset::Deluxe.apply(&mut s);
         s.ao_method = 0;
@@ -1147,7 +1537,8 @@ mod tests {
         s.ao_method = 0;
         upgrade_deluxe(&mut s);
         assert_eq!((s.ao_method, s.gtao_quality), (1, 3));
-        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        // to the Deluxe of then, which version 46 moves to High
+        assert_eq!(Values::read(&s).as_shown(), deluxe_v45().as_shown());
         // a custom profile close to it keeps its occlusion
         let mut custom = Settings::default();
         deluxe_v18().write(&mut custom);
@@ -1169,7 +1560,24 @@ mod tests {
     fn high_and_deluxe_turn_on_their_effects_and_no_other_level_does() {
         let mut s = Settings::default();
         Preset::Deluxe.apply(&mut s);
-        // contact shadows and indirect light; the experimental bloom off
+        // High's contact shadows, the shadows and the indirect light traced
+        // in the screen-space light's place; the experimental bloom off
+        assert!(s.contact_shadows && !s.bloom && !s.screen_indirect_light);
+        assert_eq!(s.ray_tracing, crate::settings::RayTracingSettings::DELUXE);
+        assert_eq!(
+            Preset::Deluxe.values(),
+            Values {
+                effects: Effects::DELUXE,
+                projector_shadows: true,
+                ..Preset::High.values()
+            }
+        );
+        // the projectors cast, as in the former Deluxe: the rays trace a
+        // projector only with its shadows on
+        assert!(s.projector_shadows && s.shadow_quality > 0);
+        assert!(deluxe_v45().projector_shadows && !Preset::High.values().projector_shadows);
+        // the former Deluxe: contact shadows and the screen-space indirect light
+        deluxe_v45().write(&mut s);
         assert!(s.contact_shadows && !s.bloom && s.screen_indirect_light);
         assert_eq!(s.bloom_strength, crate::settings::BLOOM_STRENGTH);
         assert_eq!(s.screen_indirect_intensity, crate::settings::SCREEN_INDIRECT_INTENSITY);
@@ -1180,9 +1588,84 @@ mod tests {
             assert_eq!(p.values().effects, Effects::OFF, "{p:?}");
             assert!(!s.bloom && !s.contact_shadows && !s.screen_indirect_light, "{p:?}");
         }
-        // outside the levels, all off
+        // outside the levels, all off, nothing traced
         let d = Settings::default();
         assert!(!d.bloom && !d.contact_shadows && !d.screen_indirect_light);
+        assert_eq!(d.ray_tracing, crate::settings::RayTracingSettings::OFF);
+    }
+
+    #[test]
+    fn the_levels_with_shadows_trace_them_and_ray_tracing_counts_only_with_what_it_needs() {
+        use crate::settings::RayTracingSettings;
+        let all = RayTracingSettings {
+            enabled: true,
+            lights: true,
+            indirect: true,
+            reflections: true,
+        };
+        // Deluxe (RT) traces the shadows, the sun's and the local lights',
+        // and the indirect light; the others nothing, the safe graphics'
+        // Potato included; the reflections, experimental, in none
+        for (p, traced) in [
+            (Preset::Potato, RayTracingSettings::OFF),
+            (Preset::Low, RayTracingSettings::OFF),
+            (Preset::Medium, RayTracingSettings::OFF),
+            (Preset::High, RayTracingSettings::OFF),
+            (Preset::Deluxe, RayTracingSettings::DELUXE),
+        ] {
+            let mut s = Settings {
+                ray_tracing: all,
+                ..Default::default()
+            };
+            p.apply(&mut s);
+            assert_eq!(s.ray_tracing, traced, "{p:?}");
+        }
+        // Low has no shadows: what is left on traces nothing, the level stays
+        let mut s = Settings::default();
+        Preset::Low.apply(&mut s);
+        s.ray_tracing = all;
+        assert_eq!(Preset::matching(&s), Some(Preset::Low));
+        // High has them: ray tracing turned on there is custom
+        Preset::High.apply(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        s.ray_tracing = RayTracingSettings::SHADOWS;
+        assert_eq!(Preset::matching(&s), None);
+        // Deluxe (RT): back to the shadow maps is custom (High with the
+        // projectors' shadows), and High once they are off too; the local
+        // lights or the indirect light off is custom; the reflections,
+        // without the screen-space ones there, do not count
+        Preset::Deluxe.apply(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        s.ray_tracing = RayTracingSettings { enabled: false, ..all };
+        assert_eq!(Preset::matching(&s), None);
+        s.projector_shadows = false;
+        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        s.projector_shadows = true;
+        for changed in [
+            RayTracingSettings {
+                lights: false,
+                ..RayTracingSettings::DELUXE
+            },
+            RayTracingSettings::SHADOWS,
+        ] {
+            s.ray_tracing = changed;
+            assert_eq!(Preset::matching(&s), None, "{changed:?}");
+        }
+        s.ray_tracing = all;
+        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        // a saved profile and the safe graphics' backup keep it, and one
+        // written before it reads as off
+        let kept = Values::read(&s);
+        assert_eq!(kept.effects.ray_tracing, all);
+        let mut json = serde_json::to_value(kept).expect("the values serialize");
+        let back: Values = serde_json::from_value(json.clone()).expect("the values read back");
+        assert_eq!(back, kept);
+        json["effects"]
+            .as_object_mut()
+            .expect("the effects are an object")
+            .remove("ray_tracing");
+        let before: Values = serde_json::from_value(json).expect("values written before ray tracing read");
+        assert_eq!(before.effects.ray_tracing, RayTracingSettings::OFF);
     }
 
     #[test]
@@ -1226,14 +1709,14 @@ mod tests {
         Preset::High.apply(&mut s);
         s.bloom = true;
         assert_eq!(Preset::matching(&s), None);
-        // Deluxe with its contact shadows or indirect light off, or the
-        // bloom on, or another indirect intensity, is custom; the strength of
-        // the bloom, off, does not count
+        // Deluxe with its contact shadows or traced indirect light off, or
+        // the screen-space indirect light or the bloom on, is custom; the
+        // strength of the bloom, off, does not count
         for change in [
             |s: &mut Settings| s.contact_shadows = false,
-            |s: &mut Settings| s.screen_indirect_light = false,
+            |s: &mut Settings| s.ray_tracing.indirect = false,
+            |s: &mut Settings| s.screen_indirect_light = true,
             |s: &mut Settings| s.bloom = true,
-            |s: &mut Settings| s.screen_indirect_intensity = 2.0,
         ] {
             Preset::Deluxe.apply(&mut s);
             change(&mut s);
@@ -1242,9 +1725,14 @@ mod tests {
         Preset::Deluxe.apply(&mut s);
         s.bloom_strength = 0.8;
         assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
-        // on, the strength the slider shows reads as its own value
+        // the screen-space light's strength, off there, does not count
         s.screen_indirect_intensity = 1.5000001;
         assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        // on, the strength the slider shows reads as its own value
+        deluxe_v45().write(&mut s);
+        let shown = Values::read(&s).as_shown();
+        s.screen_indirect_intensity = crate::settings::SCREEN_INDIRECT_INTENSITY + 0.0000001;
+        assert_eq!(Values::read(&s).as_shown(), shown);
     }
 
     #[test]
@@ -1253,8 +1741,9 @@ mod tests {
         deluxe_v18().write(&mut s);
         assert_eq!(Preset::matching(&s), None);
         upgrade_deluxe_effects(&mut s);
-        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
-        // straight to the Deluxe of now: the experimental bloom stays off
+        // to the Deluxe of then, which version 46 moves to High
+        assert_eq!(Values::read(&s).as_shown(), deluxe_v45().as_shown());
+        // straight to the former Deluxe: the experimental bloom stays off
         assert!(s.contact_shadows && !s.bloom && s.screen_indirect_light);
         // a custom profile close to it keeps its effects off
         let mut custom = Settings::default();
@@ -1285,7 +1774,8 @@ mod tests {
         assert!(s.bloom && s.contact_shadows && s.screen_indirect_light);
         assert_eq!(Preset::matching(&s), None);
         upgrade_deluxe_experimental(&mut s);
-        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        // to the Deluxe of then, which version 46 moves to High
+        assert_eq!(Values::read(&s).as_shown(), deluxe_v45().as_shown());
         assert!(s.contact_shadows && !s.bloom && s.screen_indirect_light);
         // a custom profile close to it keeps its bloom and indirect light
         let mut custom = Settings::default();
@@ -1305,6 +1795,31 @@ mod tests {
             p.apply(&mut s);
             let before = Values::read(&s);
             upgrade_deluxe_experimental(&mut s);
+            assert_eq!(Values::read(&s), before, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn a_profile_on_the_former_deluxe_moves_to_high_and_no_other() {
+        // the former Deluxe, its ray tracing off (version 46): to High
+        let mut s = Settings::default();
+        deluxe_v45().write(&mut s);
+        assert_eq!(Preset::matching(&s), None);
+        upgrade_deluxe_to_high(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        // a custom profile close to it keeps its values
+        let mut custom = Settings::default();
+        deluxe_v45().write(&mut custom);
+        custom.draw_distance = 300.0;
+        let before = Values::read(&custom);
+        upgrade_deluxe_to_high(&mut custom);
+        assert_eq!(Values::read(&custom), before);
+        // the levels of now are untouched, Deluxe (RT) included
+        for p in Preset::ALL {
+            let mut s = Settings::default();
+            p.apply(&mut s);
+            let before = Values::read(&s);
+            upgrade_deluxe_to_high(&mut s);
             assert_eq!(Values::read(&s), before, "{p:?}");
         }
     }
@@ -1347,7 +1862,12 @@ mod tests {
             former.write(&mut s);
             assert_eq!(Preset::matching(&s), None, "{preset:?}");
             upgrade_levels_v21(&mut s);
-            assert_eq!(Preset::matching(&s), Some(preset));
+            if preset == Preset::Deluxe {
+                // the Deluxe of then, which version 46 moves to High
+                assert_eq!(Values::read(&s).as_shown(), deluxe_v45().as_shown());
+            } else {
+                assert_eq!(Preset::matching(&s), Some(preset));
+            }
             // customized on that level: kept
             let mut custom = Settings::default();
             former.write(&mut custom);

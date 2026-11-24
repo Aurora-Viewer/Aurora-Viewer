@@ -5,9 +5,76 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+impl CameraSettings {
+    /// While posing with "Keep the camera still while posing" on (Aurora,
+    /// #2477): the camera does not move on its own.
+    pub fn keeps_still(&self, posing: bool) -> bool {
+        posing && self.still_while_posing
+    }
+
+    /// The settings a camera frame uses: while the camera keeps still for
+    /// the poser, the focus tracking, the movement reset, the body-part
+    /// follow and the first-person eye follow are off; otherwise unchanged.
+    pub fn while_posing(&self, posing: bool) -> CameraSettings {
+        let mut s = self.clone();
+        if self.keeps_still(posing) {
+            s.track_focus_object = false;
+            s.reset_on_movement = false;
+            s.third_person_follow_joint = None;
+            s.mouselook_follow_eyes = false;
+        }
+        s
+    }
+}
+
 #[cfg(test)]
 mod first_person_tests {
     use super::*;
+
+    #[test]
+    fn posing_with_the_camera_kept_still_stops_every_automatic_follow() {
+        let chosen = CameraSettings {
+            track_focus_object: true,
+            reset_on_movement: true,
+            mouselook_follow_eyes: true,
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            still_while_posing: true,
+            ..CameraSettings::default()
+        };
+        assert!(chosen.keeps_still(true));
+        let still = chosen.while_posing(true);
+        assert!(!still.track_focus_object && !still.reset_on_movement && !still.mouselook_follow_eyes);
+        assert_eq!(still.third_person_follow_joint, None, "the camera does not follow a posed joint");
+        // not posing, or the option at its default: today's follows stay
+        let default_still = CameraSettings {
+            still_while_posing: false,
+            ..chosen.clone()
+        };
+        assert!(!chosen.keeps_still(false) && !default_still.keeps_still(true));
+        for unchanged in [chosen.while_posing(false), default_still.while_posing(true)] {
+            assert!(unchanged.track_focus_object && unchanged.reset_on_movement && unchanged.mouselook_follow_eyes);
+            assert_eq!(unchanged.third_person_follow_joint, Some(CameraFollowJoint::Head));
+        }
+    }
+
+    #[test]
+    fn the_poser_camera_options_default_to_todays_behaviour_and_keep_a_saved_choice() {
+        // an existing settings file, and a fresh one: no framing, the
+        // camera's own moves while posing as before (#2477)
+        let migrated: CameraSettings = serde_json::from_str("{}").unwrap();
+        for s in [&migrated, &CameraSettings::default()] {
+            assert!(!s.frame_while_posing, "the poser does not frame unless asked");
+            assert!(!s.still_while_posing, "the automatic moves while posing stay as before");
+            assert!(!s.keeps_still(true));
+        }
+        let chosen = CameraSettings {
+            frame_while_posing: true,
+            still_while_posing: true,
+            ..migrated
+        };
+        let loaded: CameraSettings = serde_json::from_str(&serde_json::to_string(&chosen).unwrap()).unwrap();
+        assert!(loaded.frame_while_posing && loaded.still_while_posing);
+    }
 
     #[test]
     fn vr_preferences_ignore_old_view_and_keep_comfort_options() {
@@ -367,6 +434,15 @@ pub struct CameraSettings {
     pub disable_wheel_zoom: bool,
     /// ClickOnAvatarKeepsCamera.
     pub click_avatar_keeps_camera: bool,
+    /// Aurora's, not the Legacy Viewer's (#2477; its poser, FSFloaterPoser,
+    /// never moves the camera): opening the poser frames the avatar, and a
+    /// click that selects a joint frames that joint. Off by default.
+    pub frame_while_posing: bool,
+    /// Aurora's, not the Legacy Viewer's (#2477): while a pose is edited the
+    /// camera stops moving on its own (focus tracking, the reset on
+    /// movement, the body-part and eye follows). Off by default: those moves
+    /// stay as in the Legacy Viewer.
+    pub still_while_posing: bool,
     /// FSResetCameraOnMovement.
     pub reset_on_movement: bool,
     /// FSResetCameraOnTP.
@@ -398,6 +474,13 @@ pub struct CameraSettings {
     pub mouselook_alt_right_menu: bool,
     /// FSShowMouselookInstructions: "Press Esc to return to world view".
     pub show_mouselook_instructions: bool,
+    /// FSMouselookCombatFeatures (off): the name and distance of the avatar
+    /// ahead under the crosshair; ExodusMouselookIFF (off): arrows toward
+    /// the avatars out of view within ExodusMouselookIFFRange (380 m)
+    /// (`ui::mouselook_combat`).
+    pub mouselook_combat: bool,
+    pub mouselook_iff: bool,
+    pub mouselook_iff_range: f32,
     /// FSShowInterfaceInMouselook (FIRE-8868, off): the bars stay in
     /// mouselook; otherwise they go (LLAgent::changeCameraToMouselook) and
     /// the chat bar only shows with text in it.
@@ -469,6 +552,8 @@ impl Default for CameraSettings {
             ignore_sim_constraints: false,
             disable_wheel_zoom: false,
             click_avatar_keeps_camera: false,
+            frame_while_posing: false,
+            still_while_posing: false,
             reset_on_movement: true,
             reset_on_teleport: true,
             reset_view_turns_avatar: false,
@@ -484,6 +569,9 @@ impl Default for CameraSettings {
             mouselook_zoom_fov: None,
             mouselook_alt_right_menu: false,
             show_mouselook_instructions: true,
+            mouselook_combat: false,
+            mouselook_iff: false,
+            mouselook_iff_range: 380.0,
             show_interface_in_mouselook: false,
             vr_at_start: false,
             vr: VrSettings::default(),
@@ -625,6 +713,7 @@ impl CameraSettings {
         self.zoom_time = fix(self.zoom_time, 0.0, 4.0, d.zoom_time);
         self.smoothing = fix(self.smoothing, *SMOOTHING_RANGE.start(), *SMOOTHING_RANGE.end(), d.smoothing);
         self.dynamic_strength = fix(self.dynamic_strength, 0.0, 30.0, d.dynamic_strength);
+        self.mouselook_iff_range = fix(self.mouselook_iff_range, 0.0, 500.0, d.mouselook_iff_range);
         self
     }
 }

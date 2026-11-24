@@ -519,6 +519,14 @@ impl LandUi {
             self.show_once = true;
             return;
         }
+        // "Visibility and search", unfolded (its name, description and
+        // picture rows; the demo parcel then has a long description)
+        if key == "visibility" {
+            self.page = Page::Manage;
+            self.manage_nav.go(manage::Section::Visibility);
+            self.manage_open.insert(manage::Section::Visibility);
+            return;
+        }
         if key == "owners" {
             self.page = Page::People;
             self.refresh_owners_once = true;
@@ -957,14 +965,14 @@ fn dim(ui: &mut egui::Ui, p: &Palette, s: impl Into<String>) -> egui::Response {
 /// A resident's name that opens the profile (LLSLURL "agent ... inspect").
 fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) {
     world.social.want_name(id);
-    let name = world.social.name_of(&id);
+    let name = world.social.name_in(crate::world::names::NameScope::Roster, &id);
     if ui
         .add(egui::Label::new(RichText::new(name).size(12.0).color(p.violet_light)).sense(egui::Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
         .clicked()
     {
-        super::profile::request_open(ui.ctx(), id);
+        super::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, id);
     }
 }
 
@@ -1045,7 +1053,12 @@ fn maturity(ui: &mut egui::Ui, p: &Palette, v: &View) {
 /// rule, like the bars' clock): (year, month, day, weekday 0 = Sunday, hour,
 /// minute, second).
 pub(crate) fn slt_parts(secs: i64) -> (i64, usize, i64, usize, i64, i64, i64) {
-    let t = secs + crate::world::chat_log::format::pacific_offset_hours(secs) * 3600;
+    parts_at(secs, crate::world::chat_log::format::pacific_offset_hours(secs) * 3600)
+}
+
+/// The same parts at `offset` seconds from UTC (`clock::offset` of a zone).
+pub(crate) fn parts_at(secs: i64, offset: i64) -> (i64, usize, i64, usize, i64, i64, i64) {
+    let t = secs + offset;
     let days = t.div_euclid(86400);
     let tod = t.rem_euclid(86400);
     let (y, m, d) = aurora_net::profile::civil_from_days(days);

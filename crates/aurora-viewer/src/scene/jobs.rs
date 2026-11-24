@@ -215,7 +215,7 @@ pub enum JobResult {
 /// (frame_par.rs) and the encoder threads would otherwise wait for a core
 /// behind them (frames of 2.4 ms stretched to 5–8 ms in AURORA_DEMO_STREAM).
 /// Idle cores still go to the jobs, so loading is not slower.
-fn below_normal_priority() {
+pub(crate) fn below_normal_priority() {
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
@@ -347,11 +347,18 @@ impl Jobs {
     pub fn new() -> (Jobs, Receiver<JobResult>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        // (the texture decoder shares a large texture with this pool's idle
+        // threads: each thread tells it where the pool counts its jobs)
+        let counted = in_flight.clone();
         // (without a panic handler, rayon ends the process when a job panics)
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads.saturating_sub(2).max(1))
             .thread_name(|i| format!("aurora-jobs-{i}"))
-            .start_handler(|_| below_normal_priority())
+            .start_handler(move |_| {
+                below_normal_priority();
+                aurora_assets::j2k::pool_thread(counted.clone());
+            })
             .panic_handler(job_stopped)
             .build()
             .map(Arc::new)
@@ -369,7 +376,7 @@ impl Jobs {
         (
             Jobs {
                 tx,
-                in_flight: Arc::new(AtomicUsize::new(0)),
+                in_flight,
                 pool,
                 trash: start_trash_thread(),
             },

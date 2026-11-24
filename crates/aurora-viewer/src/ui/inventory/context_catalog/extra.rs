@@ -224,7 +224,14 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             super::Command::Extra(Command::ShowMain(id)),
         );
     }
-    if folder && folder_window || all {
+    // LLFolderBridge::addOpenFolderMenuOptions: "Open" only where the list
+    // is a single folder (`comb_single_folder_inv`), not in the folder's tree
+    // of "Show in a new window". Aurora's explorer (its medium and wide
+    // widths) is that mode, the menus of its rows' buttons included.
+    let explorer = st
+        .aurora
+        .is_some_and(|frame| frame.layout != super::super::aurora::Layout::Compact && !st.result_view());
+    if folder && (st.lists_flat() || explorer) || all {
         c.add(
             "open-current",
             TEXT,
@@ -437,14 +444,22 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             .filter(|entry| matches!(entry.id.as_str(), "wear" | "add") || entry.id.starts_with("attach:"))
             .map(|entry| entry.id.clone())
             .collect();
+        let wear_entries: Vec<_> = ids
+            .iter()
+            .filter_map(|&id| {
+                let original = rules::original(inv, id)?;
+                Some((original, crate::world::appearance::wear_entry(inv, id, original)))
+            })
+            .collect();
         for key in keys {
             let point = key.strip_prefix("attach:").and_then(|point| point.parse().ok()).unwrap_or(0);
             let replace_items = key == "wear";
             let mut batch = Vec::new();
-            let ordinary: Vec<_> = selected
+            let ordinary: Vec<_> = wear_entries
                 .iter()
-                .filter(|item| !rules::library(inv, item.id))
-                .map(|item| item.id)
+                .copied()
+                .filter(|(original, _)| !rules::library(inv, *original))
+                .map(|(_, entry)| entry)
                 .collect();
             if !ordinary.is_empty() {
                 batch.push(InvAction::Appearance(Wear::WearItems {
@@ -462,15 +477,15 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             }
             if selected.len() > 1 && selected.iter().any(|item| rules::library(inv, item.id)) {
                 batch = vec![InvAction::WearSelection {
-                    items: selected.iter().map(|item| item.id).collect(),
+                    items: wear_entries.iter().map(|&(_, entry)| entry).collect(),
                     replace: replace_items,
                     point,
                 }];
             }
             // RLVa greys what a lock forbids, as LLObjectBridge and
             // LLWearableBridge::buildContextMenu do with ERlvWearMask.
-            let unlocked = selected.iter().all(|item| {
-                let wear = facts.rlva.wear(inv, item.id, point);
+            let unlocked = wear_entries.iter().all(|&(_, entry)| {
+                let wear = facts.rlva.wear(inv, entry, point);
                 if replace_items { wear.replace } else { wear.add }
             });
             let enabled = wearable
@@ -514,6 +529,12 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             "play-sound",
             complete_selection && selected.iter().all(|item| item.asset_type == 1 && !item.asset_id.is_nil()),
             super::Command::Batch(selected.iter().map(|item| InvAction::Sound(item.asset_id)).collect()),
+        );
+        replace(
+            c,
+            "play-sound-world",
+            complete_selection && selected.iter().all(|item| item.asset_type == 1 && !item.asset_id.is_nil()),
+            super::Command::Batch(selected.iter().map(|item| InvAction::TriggerSound(item.asset_id)).collect()),
         );
         replace(
             c,
@@ -563,7 +584,8 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             );
         }
         for (kind, key, label, local) in [
-            (1, "play-sound", aurora_i18n::tr!("common-play"), true),
+            (1, "play-sound", aurora_i18n::tr!("common-play-locally"), true),
+            (1, "play-sound-world", aurora_i18n::tr!("common-play-in-world"), false),
             (
                 20,
                 "play-world",
@@ -577,7 +599,11 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
                     .iter()
                     .map(|item| {
                         if kind == 1 {
-                            InvAction::Sound(item.asset_id)
+                            if local {
+                                InvAction::Sound(item.asset_id)
+                            } else {
+                                InvAction::TriggerSound(item.asset_id)
+                            }
                         } else {
                             InvAction::Animation {
                                 asset: item.asset_id,
@@ -590,7 +616,7 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
                 c.add(
                     key,
                     TEXT,
-                    "player-play-filled",
+                    if local { "player-play-filled" } else { "world-filled" },
                     label,
                     selected.iter().all(|item| !item.asset_id.is_nil()),
                     super::Command::Batch(batch),
@@ -752,11 +778,14 @@ pub(super) fn execute(
         Command::ShowMain(id) => {
             actions.push(InvAction::ShowMain(id));
         }
+        // LLInventorySingleFolderPanel::doToSelected("open_in_current_window"):
+        // the single folder list goes into the folder (changeFolderRoot).
         Command::OpenCurrent(id) => {
             if inv.folders.contains_key(&id) {
-                st.navigate_to = Some(id);
+                st.browse = id;
                 st.search.clear();
-                st.view = Default::default();
+                st.selection.clear();
+                st.selected = None;
             }
         }
         Command::NewOutfit(parent) => {
@@ -766,7 +795,7 @@ pub(super) fn execute(
                     operations: vec![Operation::Folder {
                         id,
                         parent,
-                        name: aurora_i18n::tr!("inventory-new-outfit").into(),
+                        name: crate::text_validation::default_name("inventory-new-outfit").into(),
                         type_default: 47,
                     }],
                     refresh: vec![parent, id],
@@ -853,6 +882,32 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn inventory_wear_and_add_pass_the_clothing_link_from_the_selected_outfit() {
+        let mut inv = seed();
+        crate::world::appearance::seed_demo(&mut inv, Uuid::from_u128(2));
+        let shirt = Uuid::from_u128(722);
+        let folder = Uuid::from_u128(704);
+        let entry = inv.folders[&folder].items[0];
+        let link = inv.items.get_mut(&entry).unwrap();
+        link.asset_id = shirt;
+        link.desc = "@400".into();
+        let menu = super::super::build(
+            &inv,
+            entry,
+            &InventoryUi::default(),
+            &InventoryPreferences::default(),
+            &Facts::default(),
+        );
+        for (key, replace) in [("wear", true), ("add", false)] {
+            let command = menu.entries.iter().find(|e| e.id == key && e.enabled).expect("wearable menu entry");
+            let Kind::Action(index) = command.kind else { panic!("action") };
+            assert!(matches!(&menu.commands[index], Some(super::super::Command::Batch(batch))
+                if matches!(&batch[..], [InvAction::Appearance(Wear::WearItems { items, replace: mode, point: 0 })]
+                    if items == &[entry] && *mode == replace)));
         }
     }
 

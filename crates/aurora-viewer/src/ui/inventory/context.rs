@@ -55,7 +55,12 @@ pub(super) fn double_click(
     }
     let original = rules::original(inv, id);
     match original.and_then(|original| inv.items.get(&original)) {
-        Some(it) if matches!(it.asset_type, 5 | 6 | 13) => match wear_toggle(it, facts.worn.contains(&it.id), prefs) {
+        Some(it) if matches!(it.asset_type, 5 | 6 | 13) => match wear_toggle(
+            it,
+            facts.worn.contains(&it.id),
+            prefs,
+            crate::world::appearance::wear_entry(inv, id, it.id),
+        ) {
             Some(Wear::WearItem { item, replace, .. }) if rules::library(inv, item) => {
                 actions.push(InvAction::WearCopy { item, replace });
             }
@@ -78,7 +83,7 @@ pub(super) fn double_click(
 /// not worn is put on, added or replacing as the double-click preferences
 /// say (FSDoubleClickAddInventoryObjects / FSDoubleClickAddInventoryClothing);
 /// physics and body parts always replace.
-pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs: &InventoryPreferences) -> Option<Wear> {
+pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs: &InventoryPreferences, entry: Uuid) -> Option<Wear> {
     if worn {
         return (it.asset_type != 13).then_some(Wear::Remove(it.id));
     }
@@ -88,7 +93,7 @@ pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs
         _ => true,
     };
     Some(Wear::WearItem {
-        item: it.id,
+        item: entry,
         replace,
         point: 0,
     })
@@ -100,11 +105,14 @@ pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs
 /// llinventoryfunctions.cpp): nothing wearable is opened, so worn, from the
 /// listings, active or not. The Legacy Viewer checks it on "open" only, and
 /// a double-click there still wears the item: here neither does.
-fn listing_wear(inv: &Inventory, id: Uuid, st: &mut InventoryUi) -> bool {
+pub(super) fn listing_wear(inv: &Inventory, id: Uuid, st: &mut InventoryUi) -> bool {
     let wearable = rules::original(inv, id)
         .and_then(|original| inv.items.get(&original))
-        .is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13));
-    if wearable && crate::world::marketplace::root(inv).is_some_and(|root| rules::under(inv, id, root)) {
+        .filter(|it| matches!(it.asset_type, 5 | 6 | 13));
+    if let Some(item) = wearable
+        && let Some(root) = crate::world::marketplace::root(inv)
+        && (rules::under(inv, id, root) || (item.id != id && rules::under(inv, item.id, root)))
+    {
         st.message = aurora_i18n::tr!("marketplace-alert-cannot-wear").into();
         return true;
     }
@@ -123,7 +131,7 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mu
     }
     // Resource windows are independent of document editors and their drafts.
     if let Some(item) = crate::ui::texture_library::catalogue::resource(inv, id) {
-        actions.push(InvAction::Preview(item.id));
+        actions.push(InvAction::Preview(item.id, Some(clipboard::focus_id(st))));
         return;
     }
     let Some(original) = rules::original(inv, id) else {
@@ -142,25 +150,42 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mu
     } else if it.asset_type == 3 && !it.asset_id.is_nil() {
         actions.push(InvAction::TeleportLandmark(it.asset_id));
     } else if it.asset_type == 10 {
-        actions.push(InvAction::Preview(original));
+        actions.push(InvAction::Preview(original, Some(clipboard::focus_id(st))));
     } else if it.asset_type == 56 && crate::world::env_select::SettingsKind::from_flags(it.flags).is_some() {
         // LLSettingsBridgeAction: a sky, water or day cycle opens its editor
         actions.push(InvAction::EditEnvironment(original));
     } else {
-        actions.push(InvAction::Preview(original));
+        actions.push(InvAction::Preview(original, Some(clipboard::focus_id(st))));
     }
 }
+/// Remember the exact folder requested by the toolbar or shortcut. The
+/// Marketplace guard can defer or cancel the edit before submission.
+pub(super) fn new_folder(st: &mut InventoryUi, actions: &mut Vec<InvAction>, parent: Uuid, in_all: bool) {
+    let plan = rules::create_folder(parent, crate::text_validation::default_name("common-new-folder"));
+    if let Ok(change) = &plan
+        && let [aurora_net::inventory::operations::Operation::Folder { id, .. }] = change.operations.as_slice()
+        && in_all
+    {
+        st.new_folder_in_all = Some(*id);
+    }
+    submit(st, actions, plan);
+}
+
+/// The "+" menu: what it creates goes in `id`. `in_all`: its new folder is
+/// shown on the All tab, search cleared (`InventoryUi::show_created`).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn new_menu(
     ui: &mut egui::Ui,
     p: &Palette,
     id: Uuid,
     enabled: bool,
+    in_all: bool,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     actions: &mut Vec<InvAction>,
 ) {
     if menu::item_if(ui, p, "folder-filled", aurora_i18n::tr!("common-new-folder"), enabled) {
-        submit(st, actions, rules::create_folder(id, aurora_i18n::tr!("common-new-folder")));
+        new_folder(st, actions, id, in_all);
     }
     for (kind, icon, name) in [
         (NewItem::Script, "code", aurora_i18n::tr!("common-new-script")),
@@ -325,7 +350,40 @@ pub(super) fn show(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
-    let mut catalog = super::context_catalog::build(inv, id, st, prefs, facts);
+    let catalog = super::context_catalog::build(inv, id, st, prefs, facts);
+    show_catalog(ui, p, inv, id, catalog, st, prefs, facts, actions);
+}
+
+/// The menu of the explorer's empty space, for the folder it shows
+/// (`context_catalog::build_background`), arranged with the same
+/// customizable layout as the others.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn show_background(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    folder: Uuid,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let catalog = super::context_catalog::build_background(inv, folder, st, prefs, facts);
+    show_catalog(ui, p, inv, folder, catalog, st, prefs, facts, actions);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn show_catalog(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    id: Uuid,
+    mut catalog: super::context_catalog::Catalog,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
     let scope = super::context_catalog::scope(inv, id);
     prefs.context_menus.unify();
     st.menu_editor
@@ -407,7 +465,7 @@ mod tests {
             }]);
             let mut actions = Vec::new();
             open(&inv, id, &mut st, &mut actions);
-            assert!(matches!(actions.as_slice(), [InvAction::Preview(item)] if *item == id));
+            assert!(matches!(actions.as_slice(), [InvAction::Preview(item, _)] if *item == id));
             assert_eq!(st.preview, Some(document));
             assert!(st.preview_dirty);
             assert_eq!(st.preview_text, Some(Ok("unsaved draft".into())));

@@ -60,7 +60,12 @@ impl World {
         let index = self.worn_attachment(&item).or_else(|| self.objects.index_of_uuid(&item))?;
         let object = self.objects.get(index)?;
         let parent = self.objects.parent_of(object).and_then(|i| self.objects.get(i))?;
-        if object.is_avatar() || object.attachment_point() == 0 || !parent.is_avatar() || parent.full_id != self.agent_id {
+        if object.is_avatar()
+            || object.is_client_preview()
+            || object.attachment_point() == 0
+            || !parent.is_avatar()
+            || parent.full_id != self.agent_id
+        {
             return None;
         }
         Some(NetCommand::DetachObject {
@@ -172,9 +177,12 @@ impl World {
                 .attachment_inventory
                 .last_link
                 .is_some_and(|at| now.saturating_duration_since(at) < RETRY_GAP)
-            || !self
-                .main()
-                .is_some_and(|r| r.caps.contains_key("InventoryAPIv3") && r.caps.contains_key("FetchInventoryDescendents2"))
+            // With or without AIS: without it the links go out as
+            // LinkInventoryItem (link_inventory_array, llviewerinventory.cpp),
+            // and the fetch service reads them back. Waiting for AIS left
+            // every object an outfit change put on unlinked on OpenSim, so
+            // the next login wore none of them.
+            || !self.main().is_some_and(|r| r.caps.contains_key("FetchInventoryDescendents2"))
         {
             return commands;
         }
@@ -407,6 +415,30 @@ mod tests {
     }
 
     #[test]
+    fn an_arrival_is_linked_on_a_grid_without_ais() {
+        // OpenSim: no InventoryAPIv3. The outfit change left the object out
+        // of the COF until it arrived; without its link the next login
+        // wears nothing (an empty COF after every outfit change).
+        let (mut world, _object, item) = fixture();
+        world.ensure_region(1, (256, 256)).caps = Arc::new(
+            ["FetchInventory2", "FetchInventoryDescendents2"]
+                .into_iter()
+                .map(|name| (name.to_owned(), "x".to_owned()))
+                .collect(),
+        );
+        world.inventory.add_items(vec![item.clone()]);
+        let cof = appearance::cof(&world.inventory).expect("COF");
+        let commands = world.update_attachment_inventory(Instant::now(), true);
+        let [NetCommand::EditInventory { request, change }] = &commands[..] else {
+            panic!("register the arrival without AIS: {commands:?}")
+        };
+        assert!(matches!(&change.operations[..], [Operation::Links { parent, links }]
+            if *parent == cof && links.len() == 1 && links[0].target == item.id));
+        world.attachment_inventory_result(*request, Ok(linked_reply(&world, &item)));
+        assert!(super::super::outfit::cof_objects(&world.inventory, cof).contains(&item.id));
+    }
+
+    #[test]
     fn attachment_inventory_recovers_an_unexpected_item_and_registers_it_once() {
         let (mut world, object, item) = fixture();
         let now = Instant::now();
@@ -466,6 +498,7 @@ mod tests {
         }
         assert!(world.update_attachment_inventory(now + RETRY_GAP * 10, true).is_empty());
         world.apply(NetEvent::InventoryUpdated {
+            bulk: false,
             folders: Vec::new(),
             items: vec![item],
         });
@@ -823,6 +856,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@addattach=n".to_owned(),
         };
@@ -1032,6 +1066,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: message.to_owned(),
         }));
@@ -1216,6 +1251,7 @@ mod tests {
             let lost = with_lost_folder(&mut world, &item);
             item.parent = Uuid::nil();
             let notification = NetEvent::InventoryUpdated {
+                bulk: false,
                 folders: Vec::new(),
                 items: vec![item.clone()],
             };

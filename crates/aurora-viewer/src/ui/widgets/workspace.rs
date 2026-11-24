@@ -3,10 +3,13 @@
 use super::*;
 use egui::AtomExt;
 
+/// The padding around a row's label in the user tree and object contents.
+pub(crate) const INVENTORY_LABEL_PADDING: egui::Vec2 = egui::vec2(2.0, 1.0);
+
 /// The user tree and object contents share row density and interaction styling.
 pub(crate) fn inventory_spacing(ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing.y = 1.0;
-    ui.spacing_mut().button_padding = egui::vec2(2.0, 1.0);
+    ui.spacing_mut().button_padding = INVENTORY_LABEL_PADDING;
     ui.spacing_mut().interact_size.y = 20.0;
 }
 
@@ -333,6 +336,48 @@ pub(crate) fn organization_drop_target(ui: &egui::Ui, p: &Palette, rect: egui::R
     }
 }
 
+/// The width of a form row's label column ([`form_row`]).
+pub const FORM_LABEL_W: f32 = 112.0;
+/// The width of a form row's slider, before its value box.
+pub const FORM_SLIDER_W: f32 = 120.0;
+
+/// A label and its controls on one row, the label column [`FORM_LABEL_W`]
+/// wide (wider for a long label). When the row is too narrow for a slider
+/// and its value box at the active text size, the controls go under the
+/// label: the Director's form, shared by the tool windows built like it.
+pub fn form_row<R>(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let font = super::control_font(ui, 12.5);
+    let label_width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), p.ink)
+        .size()
+        .x
+        .max(FORM_LABEL_W);
+    // Leave a slider and its editable value room at the active text size.
+    // Shorter fields use the same breakpoint, keeping the form consistent.
+    let value_width = ui
+        .painter()
+        .layout_no_wrap("000.0".to_owned(), egui::TextStyle::Button.resolve(ui.style()), p.ink)
+        .size()
+        .x
+        + ui.spacing().button_padding.x * 2.0;
+    let field_width = FORM_SLIDER_W + ui.spacing().item_spacing.x + value_width;
+    let label = egui::Label::new(RichText::new(label).font(font).color(p.ink)).wrap();
+    if label_width + ui.spacing().item_spacing.x + field_width > ui.available_width() {
+        ui.vertical(|ui| {
+            ui.add(label);
+            ui.horizontal_wrapped(add).inner
+        })
+        .inner
+    } else {
+        ui.horizontal_top(|ui| {
+            ui.add_sized(Vec2::new(label_width, 0.0), label);
+            add(ui)
+        })
+        .inner
+    }
+}
+
 pub fn section_header(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str) {
     ui.horizontal(|ui| {
         glyph(ui, icon, p.violet_light, 17.0);
@@ -527,6 +572,10 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     if id.starts_with("build_tools") {
         return "box";
     }
+    // One window per contents item: task_item_props_<object>_<item>.
+    if id.starts_with("task_item_props") {
+        return "file-info-filled";
+    }
     if id == super::super::animation_explorer::WINDOW {
         return "run";
     }
@@ -534,10 +583,13 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "appearance" | "appearance_item_profile" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",
         "chat_history" => "history",
+        // the toolbar's conversation_log command
+        "conversation_log" => "file-text-filled",
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "group_invite" | "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",
         "region_tracker" => "location-filled",
+        "wearable_favorites" => "hanger-2-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
@@ -545,8 +597,11 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "environment_selector" | "personal_lighting" => "sun-filled",
         "perf" | "performance" => "gauge-filled",
         "photo" | "photo_classic" => "camera-filled",
-        "controls" | "camera_controls" => "video-filled",
+        "controls" | "camera_controls" | "camera_controls_small" => "video-filled",
+        "director" => "movie",
+        "second_camera" => "device-cctv-filled",
         "movement_controls" => "walk",
+        "camera_position" => "adjustments-horizontal-filled",
         "display_name" => "id-filled",
         "object_purchase" => "shopping-cart-filled",
         "object_payment" | "buy_currency" | "pay" | "pay_classic" => "coin-filled",
@@ -557,7 +612,6 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "media_settings" => "device-tv-filled",
         "bulk_perms" => "lock-filled",
         "region_restarting" => "alert-triangle-filled",
-        "task_item_props" => "file-info-filled",
         "asset_imports_v3" | "asset_imports_v4" | "asset_imports_v5" | "asset_imports_v6" | "import_launcher" => "file-upload-filled",
         "import_textures" => "photo-filled",
         "import_sounds" => "file-music-filled",
@@ -575,23 +629,41 @@ pub(super) fn window_icon(id: &str) -> &'static str {
 /// Reserve a drawing slot before the content, then resolve its exact bounds
 /// after layout. The opaque skin remains available with panel_alpha = 255.
 pub(crate) fn finish_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx, rect: egui::Rect, p: &Palette, radius: f32) {
+    finish_glass_faded(painter, slot, rect, p, radius, 1.0);
+}
+
+/// `finish_glass` of a see-through window (`ui::surface_opacity`).
+pub(crate) fn finish_glass_faded(
+    painter: &egui::Painter,
+    slot: egui::layers::ShapeIdx,
+    rect: egui::Rect,
+    p: &Palette,
+    radius: f32,
+    opacity: f32,
+) {
     if p.panel_alpha < 255 {
-        painter.set(
-            slot,
-            aurora_render::glass_panel(
-                rect.shrink(1.0),
-                radius,
-                Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
-            ),
-        );
+        painter.set(slot, faded_glass(rect.shrink(1.0), radius, p.panel, p.panel_alpha, opacity));
+    }
+}
+
+/// The blur and the tint of `color` at `opacity` of a surface's own alpha.
+fn faded_glass(rect: egui::Rect, radius: f32, color: Color32, alpha: u8, opacity: f32) -> egui::Shape {
+    let (blur, alpha) = crate::ui::surface_opacity::glass(alpha, opacity);
+    let tint = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
+    match blur {
+        Some(blur) => aurora_render::glass_panel_faded(rect, radius, tint, blur),
+        None => egui::Shape::rect_filled(rect, radius, tint),
     }
 }
 
 /// Glass of the top and bottom bars: the windows' blur under the `bar` color.
 pub(crate) fn finish_bar_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx, rect: egui::Rect, p: &Palette) {
+    let opacity = crate::ui::surface_opacity::bars();
+    crate::ui::surface_opacity::fade_after(painter.ctx(), painter.layer_id(), slot, p, opacity);
     if p.panel_alpha < 255 {
-        let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha);
-        painter.with_clip_rect(rect).set(slot, aurora_render::glass_panel(rect, 0.0, tint));
+        painter
+            .with_clip_rect(rect)
+            .set(slot, faded_glass(rect, 0.0, p.bar, p.panel_alpha, opacity));
     }
 }
 
@@ -604,14 +676,18 @@ pub(crate) fn finish_bar_glass(painter: &egui::Painter, slot: egui::layers::Shap
 pub(crate) fn island_shape(ctx: &egui::Context, p: &Palette, rect: egui::Rect) -> egui::Shape {
     let visuals = &ctx.global_style().visuals;
     let radius = visuals.window_corner_radius;
-    let shadow = visuals.window_shadow.as_shape(rect, radius);
+    let opacity = crate::ui::surface_opacity::bars();
+    let shadow = egui::Shadow {
+        color: visuals.window_shadow.color.gamma_multiply(opacity),
+        ..visuals.window_shadow
+    }
+    .as_shape(rect, radius);
     let border = super::border_stroke(p, Stroke::new(1.0, p.ink.gamma_multiply(0.07)));
     let face = if p.panel_alpha < 255 {
         let alpha = (f32::from(p.panel_alpha) * ISLAND_TINT).round() as u8;
-        let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), alpha);
-        aurora_render::glass_panel(rect.shrink(1.0), f32::from(radius.nw), tint)
+        faded_glass(rect.shrink(1.0), f32::from(radius.nw), p.bar, alpha, opacity)
     } else {
-        egui::Shape::rect_filled(rect, radius, p.bar)
+        egui::Shape::rect_filled(rect, radius, p.bar.gamma_multiply(opacity))
     };
     egui::Shape::Vec(vec![
         shadow.into(),
@@ -705,13 +781,13 @@ impl ModalGround {
 
     /// For the modals of this frame, drawn after this call.
     pub fn set(self, ctx: &egui::Context) {
-        let frame = ctx.cumulative_frame_nr();
+        let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ctx.data_mut(|d| d.insert_temp(Self::id(), (frame, self)));
     }
 
     fn current(ctx: &egui::Context) -> Option<Self> {
         let (frame, ground) = ctx.data(|d| d.get_temp::<(u64, Self)>(Self::id()))?;
-        (frame == ctx.cumulative_frame_nr()).then_some(ground)
+        (frame == ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)).then_some(ground)
     }
 
     /// The shapes for a modal on `rect`: the part of the picture under it.
@@ -803,6 +879,14 @@ impl Modal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_contents_item_properties_window_keeps_its_icon() {
+        let object = uuid::Uuid::from_u128(0xa1);
+        let item = uuid::Uuid::from_u128(0xb2);
+        assert_eq!(window_icon(&format!("task_item_props_{object}_{item}")), "file-info-filled");
+        assert_eq!(window_icon("task_item_props"), "file-info-filled");
+    }
 
     #[test]
     fn a_modal_ground_shows_the_part_of_the_picture_under_it() {

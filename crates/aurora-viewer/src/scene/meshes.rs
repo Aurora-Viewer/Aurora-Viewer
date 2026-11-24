@@ -524,6 +524,7 @@ impl MeshStreamer {
                     physics_convex: None,
                     physics_mesh: None,
                     version: 1,
+                    creator: uuid::Uuid::nil(),
                 }),
                 stage: Stage::Known,
                 local: true,
@@ -1151,6 +1152,11 @@ impl MaterialStreamer {
         self.entry(id).material.clone()
     }
 
+    /// The material is loaded, without requesting it.
+    pub fn is_loaded(&self, id: &Uuid) -> bool {
+        self.entries.get(id).is_some_and(|e| e.material.is_some())
+    }
+
     /// Where the material stands; requests it when it is new.
     pub fn resolve(&mut self, id: &Uuid) -> MaterialStatus {
         Self::status_of(self.entry(id))
@@ -1493,6 +1499,7 @@ mod tests {
             physics_convex: None,
             physics_mesh: None,
             version: 1,
+            creator: uuid::Uuid::nil(),
         };
         streamer.entries.insert(
             id,

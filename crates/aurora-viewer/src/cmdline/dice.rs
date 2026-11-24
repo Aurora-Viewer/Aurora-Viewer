@@ -225,7 +225,9 @@ mod tests {
     fn limits_and_errors() {
         assert_eq!(roll_dice("rolld", "0 6", seq(&[0])).len(), 1);
         assert!(roll_dice("rolld", "1 6 +5", seq(&[0]))[0] == invalid_modifiers("rolld"));
-        assert!(roll_dice("rolld", "1 6 x 5", seq(&[0]))[0].contains("\"rolld 1 20 + 5\""));
+        // the example, whatever quotes the language writes around it
+        let hint = &roll_dice("rolld", "1 6 x 5", seq(&[0]))[0];
+        assert!(hint.contains("rolld 1 20 + 5"), "{hint}");
         let endless = roll_dice("rolld", "1 6 !> 0", seq(&[0]));
         assert!(
             endless

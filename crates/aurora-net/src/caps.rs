@@ -25,12 +25,18 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "CopyInventoryFromNotecard",
     // a new folder on a grid without AIS (LLInventoryModel::createNewCategory)
     "CreateInventoryCategory",
+    // a new script or notecard made in an object's contents
+    // (LLPanelContents::createTaskInventoryItemHelper)
+    "CreateTaskInventoryItem",
     "DeclineFriendship",
     "DeclineGroupInvite",
     // the Region / Estate window (llviewerregion.cpp buildCapabilityNames):
     // the General panel's "Apply", the estate lists, the Estate panel's
     // "Apply", the region's experiences and its restart schedule
     "DispatchRegionInfo",
+    // the "Region settings" tab of Aurora-Sim based grids
+    // (LLPanelRegionOpenSettingsInfo, buildCapabilityNames)
+    "DispatchOpenRegionSettings",
     "EnvironmentSettings",
     "EstateAccess",
     "EstateChangeInfo",
@@ -50,6 +56,10 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetExperiences",
     "GetDisplayNames",
     "GetExperienceInfo",
+    // the experience profile's Edit (LLFloaterExperienceProfile::
+    // experienceIsAdmin, LLExperienceCache::updateExperience)
+    "IsExperienceAdmin",
+    "UpdateExperience",
     "GetMesh",
     "GetMesh2",
     "GetMetadata",
@@ -69,6 +79,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // rebake (LLAppearanceMgr::syncCofVersionAndRefresh, Firestorm's
     // buildCapabilityNames)
     "IncrementCOFVersion",
+    // the 360° snapshot's "send everything" mode
+    // (LLViewerRegion::setInterestListMode)
+    "InterestList",
     "InventoryAPIv3",
     "InventoryThumbnailUpload",
     // the scripts of a parcel (LLFloaterScriptLimits)
@@ -91,6 +104,10 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // Legacy Viewer: LLViewerRegionImpl::buildCapabilityNames (llviewerregion.cpp).
     "ParcelPropertiesUpdate",
     "ParcelVoiceInfoRequest",
+    // the grid's one-to-one IM history, listed then paged
+    // (LLChatServiceHistory, LL viewer 26.5)
+    "PersistentChatConversationsRequest",
+    "PersistentChatHistoryRequest",
     "ProvisionVoiceAccountRequest",
     // instant messages kept while offline (LLIMProcessing::requestOfflineMessages)
     "ReadOfflineMsgs",
@@ -103,6 +120,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",
+    // the LSL and SLua keywords together, ahead of LSLSyntax (LLSyntaxDefCache)
+    "ScriptDefinitions",
     // the clicks of a classified (LLPanelProfileClassified)
     "SearchStatRequest",
     "SearchStatTracking",
@@ -161,6 +180,11 @@ pub fn maturity_preference_body(maturity: u8) -> Llsd {
     llsd_map! { "access_prefs" => llsd_map! { "max" => crate::search::access_short_string(maturity) } }
 }
 
+/// LLViewerRegion::setInterestListMode: the InterestList capability's body.
+pub fn interest_list_body(mode: crate::InterestListMode) -> Llsd {
+    llsd_map! { "mode" => mode.as_str() }
+}
+
 /// LLAgent::processMaturityPreferenceFromServer: the preference the server
 /// kept, `access_prefs.max` ("PG", "M", "A"); SIM_ACCESS_MIN when missing.
 pub fn maturity_preference_reply(reply: &Llsd) -> u8 {
@@ -212,6 +236,7 @@ mod language_tests {
     fn the_region_estate_capabilities_are_requested() {
         for cap in [
             "DispatchRegionInfo",
+            "DispatchOpenRegionSettings",
             "EstateAccess",
             "EstateChangeInfo",
             "RegionExperiences",
@@ -235,6 +260,7 @@ mod language_tests {
     fn the_minor_simulator_capabilities_are_requested() {
         for cap in [
             "LSLSyntax",
+            "ScriptDefinitions",
             "SendPostcard",
             "ServerReleaseNotes",
             "SimConsoleAsync",
@@ -402,9 +428,11 @@ pub async fn resolve_seed(
     still_wanted: impl Fn() -> bool,
 ) -> Result<HashMap<String, String>, CapsError> {
     let req = Llsd::Array(REQUESTED_CAPS.iter().map(|s| Llsd::from(*s)).collect());
+    // The seed itself may omit the scheme. libcurl would still POST it.
+    let seed = crate::curl_url::ensure_scheme(seed);
     let mut last_err = CapsError::Status(0);
     for attempt in 1..=retry.attempts.max(1) {
-        let reply = match tokio::time::timeout(retry.timeout, post_llsd(http, seed, &req)).await {
+        let reply = match tokio::time::timeout(retry.timeout, post_llsd(http, &seed, &req)).await {
             Ok(reply) => reply,
             Err(_) => Err(CapsError::Http(format!("no reply in {} s", retry.timeout.as_secs()))),
         };
@@ -415,7 +443,9 @@ pub async fn resolve_seed(
                     for (k, val) in m {
                         let s = val.to_string_value();
                         if !s.is_empty() {
-                            caps.insert(k.clone(), s);
+                            // `CURLOPT_URL` with no default protocol: libcurl 7.54.1's
+                            // guess (`parseurlandfillconn`, lib/url.c; see curl_url.rs).
+                            caps.insert(k.clone(), crate::curl_url::ensure_scheme_owned(s));
                         }
                     }
                     if attempt > 1 {
@@ -850,6 +880,49 @@ mod tests {
                 "the seed must supply {name} before About Land can query script resources"
             );
         }
+    }
+
+    /// A grid may send a capability with no scheme. libcurl would still fetch it.
+    #[tokio::test]
+    async fn a_schemeless_viewer_asset_cap_is_stored_with_http() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local seed server");
+        let seed = format!("http://{}/seed", listener.local_addr().expect("local address"));
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("seed client");
+            let mut request = Vec::new();
+            loop {
+                let mut buf = [0; 1024];
+                let n = socket.read(&mut buf).await.expect("read seed request");
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..n]);
+                if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let body = to_xml(&llsd_map! { "ViewerAsset" => "127.0.0.1:8003/cap/asset" });
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(headers.as_bytes()).await.expect("write headers");
+            socket.write_all(&body).await.expect("write LLSD");
+            crate::test_http::finish(socket);
+        });
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("HTTP client");
+        let resolved = resolve_seed(&http, &seed, SeedRetry::FIRESTORM, || true)
+            .await
+            .expect("seed response");
+        server.await.expect("seed server");
+        assert_eq!(
+            resolved.get("ViewerAsset").map(String::as_str),
+            Some("http://127.0.0.1:8003/cap/asset")
+        );
     }
 
     /// A simulator that answers each seed request in turn with one of

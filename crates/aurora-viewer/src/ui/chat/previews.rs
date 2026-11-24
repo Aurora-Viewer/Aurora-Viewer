@@ -58,6 +58,9 @@ const DEFAULT_ASPECT: f32 = 16.0 / 9.0;
 const MIN_VIDEO_CARD: f32 = 200.0;
 /// The player window's id (its place and size are remembered).
 const PLAYER_WINDOW: &str = "link_preview_player";
+/// The key of a video the viewer plays itself (`Previews::play_video`): no
+/// link of the chat has it.
+const OWN_VIDEO: u64 = u64::MAX;
 
 /// A picture made into textures.
 #[derive(Clone)]
@@ -569,6 +572,52 @@ impl Previews {
             .fold(0.0, f32::max)
     }
 
+    /// A video of the viewer's own choosing may play in the player window:
+    /// the resident did not hide YouTube's previews. (The media plugins
+    /// are the app's to check.)
+    pub fn can_play_video(&self) -> bool {
+        !self.settings.hidden_sites.iter().any(|site| site.contains("youtube"))
+    }
+
+    /// Plays a video of YouTube in the player window from `start` seconds
+    /// in, its page telling where the video is (`lp::video_time`): the
+    /// music of the viewer's own show (`crate::oiia`), not a link of the
+    /// chat. False when it may not (`can_play_video`).
+    pub fn play_video(&mut self, id: &str, start: u32, title: &str) -> bool {
+        if !self.can_play_video() {
+            return false;
+        }
+        let mut options = self.settings.player_options(aurora_i18n::language());
+        options.clock = true;
+        lp::forget_video_time();
+        let mut web = WebView::default();
+        web.navigate(&lp::Video { id: id.to_owned(), start }.player_page(&options));
+        self.playing = Some(Playing {
+            key: OWN_VIDEO,
+            link: format!("https://www.youtube.com/watch?v={id}&t={start}"),
+            title: title.to_owned(),
+            web,
+            window: true,
+            drawn: 0,
+            aspect: DEFAULT_ASPECT,
+            fitted: false,
+            chrome: Vec2::new(0.0, TITLE_BAR),
+        });
+        true
+    }
+
+    /// The video `play_video` started is still in its window.
+    pub fn own_video_playing(&self) -> bool {
+        self.playing.as_ref().is_some_and(|v| v.key == OWN_VIDEO)
+    }
+
+    /// Closes the video `play_video` started.
+    pub fn stop_own_video(&mut self) {
+        if self.own_video_playing() {
+            self.playing = None;
+        }
+    }
+
     /// The video playing in a window: its window; the one of a card no
     /// longer drawn (conversation closed or changed, scrolled away) stops.
     /// Every frame, from the app.
@@ -576,7 +625,7 @@ impl Previews {
         if self.image_window.as_mut().is_some_and(|view| view.window(ctx, p)) {
             self.image_window = None;
         }
-        let pass = ctx.cumulative_pass_nr();
+        let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
         if self.playing.as_ref().is_some_and(|v| !v.window && pass > v.drawn + 2) {
             self.playing = None;
         }
@@ -611,7 +660,12 @@ impl Previews {
         // every frame of a drag (#941); outside a drag its height follows
         // its width when another video starts in it, or when the title
         // bar measured differently
-        let outer = ctx.memory(|m| m.area_rect(egui::Id::unique(PLAYER_WINDOW)));
+        // (in a window outside the picture keeps its shape in whatever room
+        // the user gives the window, which takes its shape once per video:
+        // `Floater::show_outside`)
+        let outer = ctx
+            .memory(|m| m.area_rect(egui::Id::unique(PLAYER_WINDOW)))
+            .filter(|_| !crate::outside::wanted(ctx, egui::Id::unique(PLAYER_WINDOW)));
         if let (Some(body), Some(outer)) = (body, outer)
             && !crate::ui::widgets::floater_minimized(ctx, PLAYER_WINDOW)
         {
@@ -756,7 +810,7 @@ pub(super) fn cards(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, text:
 }
 
 fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, target: &Target, start: Start) {
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let width = pv.settings.size.width().min(ui.available_width().max(80.0));
     if pv.hidden.contains(&k) {
         hidden_line(ui, p, pv, k);
@@ -1173,7 +1227,7 @@ fn too_large(ui: &mut egui::Ui, p: &Palette, url: &str, size: Option<u64>, width
 /// its title and channel (a clip: its site); playing, the player in place of
 /// the picture with its buttons under it.
 fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, video: Option<&lp::Video>, width: f32) {
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let Some(Cached {
         entry: Entry::Video {
             title,
@@ -1466,6 +1520,9 @@ mod tests {
             kind: crate::world::ChatKind::Im,
             source: uuid::Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         };
         let mut pv = Previews::default();
         let visible = |pv: &Previews, line: &ChatLine| text(Some(pv), line, &line.text, 320.0).into_owned();
@@ -1553,6 +1610,9 @@ mod tests {
             kind: crate::world::ChatKind::Im,
             source: uuid::Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         };
         assert_eq!(text(Some(&pv), &line, &line.text, 340.0), urls[3]);
         assert_eq!(

@@ -1,6 +1,6 @@
 name: Release
 
-# A version tag (SemVer: v0.2.0, v0.2.1…) pushed by a human builds the
+# A version tag (SemVer: v0.2.0, v0.2.1…) pushed by an admin builds the
 # viewer and publishes the release with notes grouped by PR label: the
 # Windows zip (the one the updater installs) and its crash symbols, then the
 # Linux archive and the macOS application. A pull request that changes these
@@ -13,7 +13,11 @@ name: Release
 # a pre-release part is published as a GitHub pre-release.
 # The three build jobs run with a read-only token and hand their files to
 # the publish jobs as the run's artifacts; only the publish jobs, which never
-# run on a pull request, can write the release. A dry run signs the macOS
+# run on a pull request, can write the release. They sign each package's
+# .sha256 file and the update policy first (scripts/sign-release.ps1, the
+# key of the `release` environment, which only main and the stable tags can
+# use): the updater installs nothing else (docs/UPDATES.md, "Signed
+# updates"). A dry run signs the macOS
 # application ad hoc, whatever the repository's signing setup.
 on:
   push:
@@ -33,6 +37,7 @@ on:
       - scripts/package-macos.ps1
       - assets/branding/aurora.icns
       - scripts/verify-version.ps1
+      - scripts/sign-release.ps1
 
 # a new push to a pull request stops its previous dry run; a release (a
 # tag, or the nightly's call) is never cancelled: its group is its own run
@@ -44,17 +49,44 @@ permissions:
   contents: read
 
 jobs:
+  # Only an admin publishes: a beta tag pushed by hand, the Nightly run by
+  # hand or a run started again by someone else stops here (the stable tags'
+  # ruleset already refuses the others). A re-run of the failed jobs alone
+  # keeps this job's result: it only publishes what the run already built.
+  authorize:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - uses: ./.github/actions/release-admin
+
   windows:
+    needs: authorize
+    if: ${{ !cancelled() && (needs.authorize.result == 'success' || github.event_name == 'pull_request') }}
     runs-on: windows-latest
+    permissions:
+      contents: read
+      # SignPath reads the job and downloads the unsigned exe (Sign below)
+      actions: read
+    outputs:
+      signed: ${{ steps.signed.outputs.signed }}
     env:
       TAG: ${{ inputs.tag || github.event_name == 'push' && github.ref_name || 'dry-run' }}
+      # Code signing (docs/UPDATES.md, "Code signing"): a stable tag only,
+      # once the repository turns it on with the SIGNPATH_SIGN_RELEASES
+      # variable. A beta (a tag with a pre-release part, the nightly's) stays
+      # unsigned: each signature waits for an approver in SignPath.
+      SIGN: ${{ github.event_name != 'pull_request' && vars.SIGNPATH_SIGN_RELEASES == 'true' && !contains(inputs.tag || github.ref_name, '-') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Rust stable
-        run: rustup update stable
+        run: rustup toolchain install --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # the version comes from the tag; a dry run keeps the one Git describes
       # (aurora-version refuses a tag that is not the checked-out commit's)
@@ -67,7 +99,10 @@ jobs:
       - name: Verify compiled version
         if: env.TAG != 'dry-run'
         shell: pwsh
-        run: ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer.exe -Tag $env:TAG
+        run: |
+          ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer.exe -Tag $env:TAG
+          # the exe's ProductVersion (build.rs), which SignPath checks
+          "VERSION=$($env:TAG -replace '^v', '')" >> $env:GITHUB_ENV
       # Breakpad symbols of the exe for the crash reports (docs/BUG_REPORTING.md):
       # the release profile's line-tables-only PDB, read through the path the
       # exe records, stored as <file>.pdb/<debug id>/<file>.sym, the layout
@@ -87,6 +122,29 @@ jobs:
           Get-ChildItem symbols -Recurse -File | ForEach-Object { "$($_.FullName.Substring((Resolve-Path symbols).Path.Length + 1)) $([math]::Round($_.Length / 1MB)) MB" }
           "zip $([math]::Round((Get-Item $zip).Length / 1MB)) MB"
           "SYMBOLS=$zip" >> $env:GITHUB_ENV
+      # after the symbols: signing does not change the code nor the debug
+      # id, so they still match the published exe. Up to an hour for an
+      # approver to accept the request in SignPath (link in the step's log);
+      # a refused or expired request fails the run before anything is
+      # published.
+      - name: Sign (SignPath)
+        if: env.SIGN == 'true'
+        uses: ./.github/actions/signpath-sign
+        with:
+          exe: target/release/aurora-viewer.exe
+          version: ${{ env.VERSION }}
+          signing-policy: release-signing
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          trusted: 'true'
+          timeout: '3600'
+      - name: Verify signed version
+        id: signed
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer.exe -Tag $env:TAG
+          "signed=true" >> $env:GITHUB_OUTPUT
       - name: Package
         if: env.TAG != 'dry-run'
         shell: pwsh
@@ -132,18 +190,30 @@ jobs:
     needs: windows
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     env:
       TAG: ${{ inputs.tag || github.event_name == 'push' && github.ref_name || 'dry-run' }}
+      SIGNED: ${{ needs.windows.outputs.signed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: .github
+          # the signing script and the keys the viewer trusts
+          sparse-checkout: |
+            .github
+            scripts
+            crates/aurora-updater/src
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-windows
+      - name: Sign for the updater
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_SIGNING_KEY_NEXT: ${{ secrets.UPDATE_SIGNING_KEY_NEXT }}
+        run: ./scripts/sign-release.ps1 -Files "Aurora-Viewer-$env:TAG-windows-x64.zip.sha256", aurora-update-policy.json
       - name: Publish
         shell: pwsh
         env:
@@ -153,7 +223,15 @@ jobs:
           $v = $env:TAG
           $zip = "Aurora-Viewer-$v-windows-x64.zip"
           $symbols = "Aurora-Viewer-$v-windows-x64-symbols.zip"
-          $ghArgs = @($v, $zip, "$zip.sha256", $symbols, "$symbols.sha256", 'aurora-update-policy.json', '--title', "Aurora Viewer $v", '--notes-file', '.github/release-notes-header.md', '--generate-notes', '--verify-tag')
+          $notes = '.github/release-notes-header.md'
+          # a signed release names its signing first: the SignPath
+          # Foundation's terms ask for it on the download pages
+          if ($env:SIGNED -eq 'true') {
+            $line = 'The Windows executable is signed. Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org). [Code signing policy](https://aurora-viewer.org/code-signing/)'
+            $notes = Join-Path $env:RUNNER_TEMP 'release-notes-header.md'
+            Set-Content -LiteralPath $notes -Value @($line, '', (Get-Content -Raw -LiteralPath '.github/release-notes-header.md')) -Encoding utf8NoBOM
+          }
+          $ghArgs = @($v, $zip, "$zip.sha256", "$zip.sha256.sig", $symbols, "$symbols.sha256", 'aurora-update-policy.json', 'aurora-update-policy.json.sig', '--title', "Aurora Viewer $v", '--notes-file', $notes, '--generate-notes', '--verify-tag')
           if ($v -match '-') { $ghArgs += '--prerelease' }   # v0.3.0-beta.1
           gh release create @ghArgs
 
@@ -179,7 +257,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
       - name: Rust stable
-        run: rustup update stable
+        run: rustup toolchain install --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # the version comes from the tag; a dry run keeps the one Git describes
       # (aurora-version refuses a tag that is not the checked-out commit's)
@@ -207,6 +285,22 @@ jobs:
           $hash = (Get-FileHash -LiteralPath "$dir.tar.gz" -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $dir.tar.gz" | Set-Content -LiteralPath "$dir.tar.gz.sha256" -Encoding utf8NoBOM
           "ARCHIVE=$dir.tar.gz" >> $env:GITHUB_ENV
+      # the publish jobs sign with the release key, which a pull request
+      # cannot read: its dry run signs with a key of its own, and a key the
+      # viewer does not trust must stop the script
+      - name: Dry-run signature
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $key = Join-Path $env:RUNNER_TEMP 'dry-run-key.pem'
+          $der = Join-Path $env:RUNNER_TEMP 'dry-run-key.der'
+          openssl genpkey -algorithm ed25519 -out $key
+          openssl pkey -in $key -pubout -outform DER -out $der
+          $public = -join ([IO.File]::ReadAllBytes($der)[12..43] | ForEach-Object { $_.ToString('x2') })
+          ./scripts/sign-release.ps1 -Files "$env:ARCHIVE.sha256" -KeyFile $key -PublicKey $public
+          $refused = $false
+          try { ./scripts/sign-release.ps1 -Files "$env:ARCHIVE.sha256" -KeyFile $key -PublicKey ('00' * 32) } catch { $refused = $true }
+          if (-not $refused) { throw 'A key the viewer does not trust was accepted.' }
       - name: Release files
         if: env.TAG != 'dry-run'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -232,21 +326,34 @@ jobs:
     needs: [linux, publish-windows]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     env:
       TAG: ${{ inputs.tag || github.event_name == 'push' && github.ref_name || 'dry-run' }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            scripts
+            crates/aurora-updater/src
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-linux
+      - name: Sign for the updater
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_SIGNING_KEY_NEXT: ${{ secrets.UPDATE_SIGNING_KEY_NEXT }}
+        run: ./scripts/sign-release.ps1 -Files "Aurora-Viewer-$env:TAG-linux-x64.tar.gz.sha256"
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           archive="Aurora-Viewer-$TAG-linux-x64.tar.gz"
-          gh release upload "$TAG" "$archive" "$archive.sha256"
+          gh release upload "$TAG" "$archive" "$archive.sha256" "$archive.sha256.sig"
 
   # The macOS application (Apple Silicon) joins the release like the Linux
   # archive: "Aurora Viewer.app" in a disk image, next to a link to
@@ -270,7 +377,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Rust stable
-        run: rustup update stable
+        run: rustup toolchain install --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # (see the Linux job: the tag's version, no debug info in the binary)
       - name: Build
@@ -367,22 +474,37 @@ jobs:
             ${{ env.ARCHIVE }}.sha256
           compression-level: 0
 
+  # the disk image is signed too: a Mac viewer points only to a release
+  # whose image is genuine, though it does not install it
   publish-macos:
     needs: [macos, publish-windows]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     env:
       TAG: ${{ inputs.tag || github.event_name == 'push' && github.ref_name || 'dry-run' }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            scripts
+            crates/aurora-updater/src
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-macos
+      - name: Sign for the updater
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_SIGNING_KEY_NEXT: ${{ secrets.UPDATE_SIGNING_KEY_NEXT }}
+        run: ./scripts/sign-release.ps1 -Files "Aurora-Viewer-$env:TAG-macos-arm64.dmg.sha256"
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           dmg="Aurora-Viewer-$TAG-macos-arm64.dmg"
-          gh release upload "$TAG" "$dmg" "$dmg.sha256"
+          gh release upload "$TAG" "$dmg" "$dmg.sha256" "$dmg.sha256.sig"

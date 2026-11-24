@@ -196,8 +196,23 @@ impl LoginResponse {
 pub enum LoginError {
     #[error("network error: {0}")]
     Http(String),
+    /// The login server answered with an HTTP error status (a 500 when it
+    /// fails on its side). The Legacy Viewer shows its "server_is_down"
+    /// text for it (LLXMLRPCTransaction::Impl::setStatus,
+    /// indra/newview/llxmlrpctransaction.cpp), not the raw status; the code
+    /// stays in the text for support.
+    #[error("{}", server_error_text(*.0))]
+    Server(u16),
     #[error("{0}")]
     XmlRpc(#[from] xmlrpc::XmlRpcError),
+    /// The address answered (HTTP 200), but not with an XML-RPC login reply:
+    /// most often a web page, when the grid's web site address was given as
+    /// its login URI (#3884). The Legacy Viewer shows its catch-all
+    /// "server_is_down" text there (StatusXMLRPCError with no message,
+    /// LLXMLRPCTransaction::Impl::setStatus, indra/newview/llxmlrpctransaction.cpp),
+    /// never the parser's words; the parser's error goes to the log.
+    #[error("{}", aurora_i18n::tr!("login-not-a-login-server"))]
+    NotALoginServer,
     #[error("login refused ({reason}): {message}")]
     Refused {
         reason: String,
@@ -221,6 +236,11 @@ pub enum LoginError {
     /// The login was not sent on (`NextServer::Refuse`).
     #[error("{0}")]
     Stopped(&'static str),
+}
+
+/// The user's text for an HTTP error status of the login server.
+fn server_error_text(status: u16) -> String {
+    aurora_i18n::tr!("login-server-error", status = status.to_string())
 }
 
 impl LoginError {
@@ -529,7 +549,9 @@ fn parse_success(v: Llsd) -> Result<LoginResponse, LoginError> {
         region_y: v["region_y"].as_u32(),
         region_size_x: size("region_size_x"),
         region_size_y: size("region_size_y"),
-        seed_capability: v["seed_capability"].as_str().to_owned(),
+        // The login seed is handed to `CURLOPT_URL` as received
+        // (`LLViewerRegion::setSeedCapability`). A missing scheme is guessed.
+        seed_capability: crate::curl_url::ensure_scheme(v["seed_capability"].as_str()).into_owned(),
         look_at: parse_ll_vector(v["look_at"].as_str()).unwrap_or(Vec3::X),
         message: v["message"].as_str().to_owned(),
         agent_appearance_service: v["agent_appearance_service"].as_str().to_owned(),
@@ -575,9 +597,17 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
         }
         let bytes = resp.bytes().await.map_err(|e| LoginError::Http(e.without_url().to_string()))?;
         if !status.is_success() {
-            return Err(LoginError::Http(format!("HTTP {status}")));
+            return Err(LoginError::Server(status.as_u16()));
         }
-        let v = xmlrpc::parse_response(&bytes)?;
+        let v = match xmlrpc::parse_response(&bytes) {
+            Ok(v) => v,
+            // a fault is the login server's own answer
+            Err(fault @ xmlrpc::XmlRpcError::Fault { .. }) => return Err(fault.into()),
+            Err(e) => {
+                log::warn!("the login address did not send a login reply ({e}; {} bytes)", bytes.len());
+                return Err(LoginError::NotALoginServer);
+            }
+        };
         match v["login"].to_string_value().as_str() {
             "true" => return parse_success(v),
             "indeterminate" => {
@@ -606,6 +636,17 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_login_seed_without_a_scheme_is_fetched_as_http() {
+        let mut m = Map::new();
+        m.insert("agent_id".into(), Llsd::Uuid(Uuid::from_u128(1)));
+        m.insert("sim_ip".into(), "127.0.0.1".into());
+        m.insert("sim_port".into(), 9000.into());
+        m.insert("seed_capability".into(), "grid.example:8002/cap/seed".into());
+        let login = parse_success(Llsd::Map(m)).expect("login");
+        assert_eq!(login.seed_capability, "http://grid.example:8002/cap/seed");
+    }
 
     #[test]
     fn username_split() {
@@ -957,7 +998,11 @@ mod tests {
 
     #[tokio::test]
     async fn another_server_gets_the_login_only_once_agreed() {
-        let http = reqwest::Client::builder().redirect(redirect_policy()).build().expect("client");
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
         // "indeterminate" to another server: nothing sent there, the user is asked
         let (other, other_hits) = login_server(vec![("200 OK", String::new(), wrong_password())]).await;
         let next = answer(&[
@@ -991,9 +1036,60 @@ mod tests {
         assert_eq!(other_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
+    /// #3884: a grid's web site given as its login URI answers 200 with a
+    /// page, and the login error was the XML parser's ("mismatched end tag").
+    #[tokio::test]
+    async fn a_web_page_instead_of_a_login_reply_is_told_as_a_wrong_address() {
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
+        let page = "<!DOCTYPE html><html><head><title>A grid</title></head><body><p>Welcome<br></body></html>";
+        let not_a_reply = "<?xml version=\"1.0\"?><rss><channel/></rss>";
+        for body in [page, not_a_reply, ""] {
+            let (grid, _) = login_server(vec![("200 OK", String::new(), body.to_owned())]).await;
+            let failed = login(&http, &synthetic_request(&grid, &[])).await;
+            assert!(matches!(failed, Err(LoginError::NotALoginServer)), "{body:?}: {failed:?}");
+            let text = failed.expect_err("an error").to_string();
+            assert_eq!(text, aurora_i18n::tr!("login-not-a-login-server").to_string());
+            assert!(!text.contains("xml") && !text.contains("byte"), "{text}");
+        }
+        // a fault stays the login server's own answer
+        let fault = "<?xml version=\"1.0\"?><methodResponse><fault><value><struct>\
+            <member><name>faultCode</name><value><int>4</int></value></member>\
+            <member><name>faultString</name><value><string>Too many parameters.</string></value></member>\
+            </struct></value></fault></methodResponse>";
+        let (grid, _) = login_server(vec![("200 OK", String::new(), fault.to_owned())]).await;
+        let failed = login(&http, &synthetic_request(&grid, &[])).await;
+        assert!(
+            matches!(failed, Err(LoginError::XmlRpc(xmlrpc::XmlRpcError::Fault { code: 4, .. }))),
+            "{failed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_http_error_of_the_login_server_is_told_as_the_server_s_problem() {
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
+        let (grid, _) = login_server(vec![("500 Internal Server Error", String::new(), String::new())]).await;
+        let failed = login(&http, &synthetic_request(&grid, &[])).await;
+        assert!(matches!(failed, Err(LoginError::Server(500))), "{failed:?}");
+        let text = failed.expect_err("an error").to_string();
+        assert!(text.contains("500"), "{text}");
+        assert!(!text.contains("Internal Server Error"), "{text}");
+    }
+
     #[tokio::test]
     async fn the_same_server_is_followed_without_a_question() {
-        let http = reqwest::Client::builder().redirect(redirect_policy()).build().expect("client");
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
         // a 307 to another path, then a relative next_url: the same server
         let (grid, hits) = login_server(vec![
             ("307 Temporary Redirect", "Location: /login2\r\n".into(), String::new()),

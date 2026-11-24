@@ -81,6 +81,9 @@ pub struct GpuInfo {
     /// The Vulkan driver's version and limits (Linden Lab's viewer
     /// statistics); None on another backend.
     pub vulkan: Option<VulkanLimits>,
+    /// Whether this device ray-traces (Preferences › Graphics › Ray
+    /// tracing).
+    pub ray_tracing: crate::RayTracingSupport,
 }
 
 impl GpuInfo {
@@ -207,8 +210,27 @@ pub struct Renderer {
     /// (`motion_history.rs`). The same size, unless video memory was full
     /// when the palettes grew.
     prev_palette_buffer: wgpu::Buffer,
+    /// What `palette_buffer` holds, kept when the device traces: the
+    /// ray-traced shadows build a skeleton again only when it moved
+    /// (rt_shadows.rs).
+    rt_palettes: Vec<[[f32; 4]; 4]>,
+    /// Its entries written since the ray tracer last read it.
+    rt_written: Vec<std::ops::Range<usize>>,
+    rt_poses: crate::rt_shadows::PoseTracker,
+    /// The last frame's `Faces::waiting` and `Faces::behind`.
+    rt_waiting: (u32, f32),
     /// The next frame starts the motion history again (`cut_motion_history`).
     motion_cut: bool,
+    /// `shift_world`'s moves not yet sent with a frame.
+    world_shift: [f32; 2],
+    /// `rebase_world` was called since the last frame.
+    rt_rebased: bool,
+    /// The last frame gathered the faces to trace.
+    rt_gathered: bool,
+    /// The ray tracer the render thread last drew with (`FrameResult::rt`,
+    /// 0 without one), and the one the faces were last gathered for.
+    rt_made: u32,
+    rt_followed: u32,
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     /// Bytes of vertices deformed in place this frame (profile).
@@ -226,6 +248,7 @@ pub struct Renderer {
     vsync: bool,
     settings: RenderSettings,
     msaa_supported: Vec<u32>,
+    blend_exact_supported: bool,
     /// The surface can be read back (captures).
     can_capture: bool,
     output_format: wgpu::TextureFormat,
@@ -244,6 +267,9 @@ pub struct Renderer {
     pick_ticket: u64,
     /// The same for the faces drawn under a pixel (`request_drawn`).
     drawn_requests: Vec<crate::drawn_pick::DrawnRequest>,
+    /// Those already handed over and given up since: told to the render
+    /// thread with the next frame.
+    drawn_forgotten: Vec<u64>,
     drawn_answers: Vec<crate::drawn_pick::DrawnAnswer>,
     /// The poser's part pick read back last (`take_part_pick`).
     part_pick: Option<(u32, [u32; 2])>,
@@ -272,18 +298,45 @@ pub struct Renderer {
     /// they leave with the next one (a lost font atlas update would leave
     /// glyphs missing for the rest of the session).
     held_textures: HeldTextures,
+    /// The instance the device comes from: the surfaces of the interface's
+    /// windows outside the viewer's are made from it (outside.rs).
+    instance: wgpu::Instance,
+    /// Windows outside opened and closed, and their frames, since the last
+    /// frame handed over; they leave with the next one.
+    outside: crate::outside::Packet,
+    /// What the render thread answered about them, until the caller takes it.
+    outside_events: Vec<crate::OutsideEvent>,
     /// Set to request a copy of the next presented frame.
     pub capture_request: bool,
     /// Capture the 3D view without the interface (next frame) into `captured`.
     pub capture_scene: bool,
     /// Last captured frame (width, height, RGBA8).
     pub captured: Option<(u32, u32, Vec<u8>)>,
+    /// A frame of a film for the next frame (film_readback.rs): not waited
+    /// for, its pixels come in `films` with a later frame. A photo asked
+    /// meanwhile goes first.
+    pub film_request: Option<crate::FilmRequest>,
+    /// The film frames read back, in the order they were asked: the
+    /// caller takes them.
+    pub films: Vec<crate::FilmFrame>,
+    /// Film frames sent and answered, for `films_in_flight`.
+    films_sent: u64,
+    films_answered: u64,
     /// A photo for the next frame: it is drawn offscreen at its own size
-    /// (see `frame_size`), waited for, and its image put in `snapshot`.
+    /// (see `frame_size`), waited for, and its image put in `snapshot`. A
+    /// face of a 360° capture (`SnapshotSpec::cube`) is not waited for: it is
+    /// taken out of this slot when the frame carrying it is sent, and stays
+    /// on the GPU.
     pub snapshot_request: Option<crate::SnapshotSpec>,
     /// The answer to the last photo: its image (width, height, RGBA8), or
     /// None when it could not be drawn.
     pub snapshot: Option<Option<(u32, u32, Vec<u8>)>>,
+    /// The panorama to project from the six faces the cube holds, with the
+    /// next frame (equirect.rs); it comes in `equirect` a few frames later.
+    pub equirect_request: Option<Box<crate::EquirectJob>>,
+    /// The answer to the last panorama asked (width, height, RGBA8), or
+    /// None when it could not be made.
+    pub equirect: Option<crate::EquirectAnswer>,
     /// The photo asked left with a frame the GPU had not finished within
     /// `CAPTURE_WAIT`: its answer comes with a later frame, which does not
     /// draw it again (a second answer would be taken for the next part).
@@ -295,6 +348,15 @@ pub struct Renderer {
     pub histogram_request: Option<f32>,
     /// The last histogram counted, from black to white.
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
+    /// A small picture of the next frame's 3D view without the interface,
+    /// tagged by the caller; it comes in `thumbnails` a few frames later
+    /// (thumbnail.rs), or never when it could not be made.
+    pub thumbnail_request: Option<u64>,
+    /// The small pictures made, until the caller takes them.
+    pub thumbnails: Vec<crate::Thumbnail>,
+    /// The second camera's view to draw after the next frame
+    /// (second_view.rs); asked again every frame the window is open.
+    pub second_view: Option<crate::second_view::SecondViewJob>,
     /// Set by the device-lost callback (device_lost.rs).
     lost: DeviceLost,
     /// AURORA_DEMO_GPU_LOST: the frame the device is taken as lost at.
@@ -321,6 +383,10 @@ impl Renderer {
     /// driver of their own that crashes the start on PCs that never use VR
     /// (#2309: SteamVR's `vrclient` into AMD's `amdlvr64`). VR then asks
     /// for a restart (`VrState::Unavailable`).
+    ///
+    /// The device is opened with ray queries where the graphics card has
+    /// them, whatever the settings ask (`GpuInfo::ray_tracing`): ray
+    /// tracing turned on later needs no other device.
     pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str, xr: bool) -> Result<Renderer, RenderError>
     where
         W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
@@ -547,6 +613,7 @@ impl Renderer {
             timestamps,
             adapter_specific,
             max_textures,
+            ray_tracing,
         } = o;
         let adapters: Vec<String> = candidates.into_iter().filter(|c| c.surface).map(|c| c.name).collect();
         // The same error every frame (a write into a buffer that could not
@@ -600,6 +667,7 @@ impl Renderer {
             adapters,
             notice,
             vulkan: vulkan_limits(&adapter),
+            ray_tracing,
         };
 
         // ---- the scene's stores; what they write at creation is replayed
@@ -622,8 +690,18 @@ impl Renderer {
         let palette_buffer = Self::make_palette_buffer(&device, 64 * 160);
         let prev_palette_buffer = device.create_buffer(&Self::prev_palette_desc(64 * 160));
         let skin_bind_buffer = Self::make_skin_bind_buffer(&device, 256);
-        // staging memory of the streamed uploads, created once here
-        let uploads = UploadQueue::new(&device, info.integrated || info.vram_mb.is_some_and(|mb| mb < 4096));
+        // staging memory of the streamed uploads, created once here: fewer
+        // chunks where the CPU can map little video memory (no Resizable
+        // BAR), which the large pool would fill alone (#2171)
+        let mappable_mb = crate::vram::mappable_mb(&adapter);
+        let pool_size = crate::upload::PoolSize::choose(info.integrated, info.vram_mb, mappable_mb);
+        let uploads = UploadQueue::sized(&device, pool_size);
+        log::info!(
+            "staging pool: {} MB in {} MB chunks (mappable video memory: {})",
+            uploads.pool().bytes() >> 20,
+            uploads.pool().max_region_bytes() >> 20,
+            mappable_mb.map_or_else(|| "none".to_owned(), |mb| format!("{mb} MB"))
+        );
         let gpu_cull = GpuCull::supported(&device);
         log::info!(
             "draw lists: {}",
@@ -679,6 +757,8 @@ impl Renderer {
             adapter_specific,
             gpu_cull,
             tex_layout: textures.layout.clone(),
+            tex_layout_entries: textures.layout_entries.clone(),
+            instance_flags: desc().flags,
             scene: scene_gpu(
                 &records,
                 &cull,
@@ -693,6 +773,7 @@ impl Renderer {
             lost: lost.clone(),
         })?;
         let msaa_supported = backend.msaa_supported().to_vec();
+        let blend_exact_supported = backend.blend_exact_supported();
         let can_capture = backend.can_capture();
         let output_format = backend.output_format();
         let host = Host::new(
@@ -728,7 +809,16 @@ impl Renderer {
             palette_buffer,
             prev_palette_buffer,
             motion_cut: false,
+            world_shift: [0.0; 2],
+            rt_rebased: false,
+            rt_gathered: false,
+            rt_made: 0,
+            rt_followed: 0,
             palettes_uploaded: 0,
+            rt_palettes: Vec::new(),
+            rt_written: Vec::new(),
+            rt_poses: Default::default(),
+            rt_waiting: (0, 0.0),
             vertices_uploaded: 0,
             geometry_uploaded: 0,
             skin_bind_buffer,
@@ -738,6 +828,7 @@ impl Renderer {
             vsync,
             settings: RenderSettings::default(),
             msaa_supported,
+            blend_exact_supported,
             can_capture,
             output_format,
             anim_clock,
@@ -749,6 +840,7 @@ impl Renderer {
             pick_answers: Vec::new(),
             pick_ticket: 0,
             drawn_requests: Vec::new(),
+            drawn_forgotten: Vec::new(),
             drawn_answers: Vec::new(),
             part_pick: None,
             frames: 0,
@@ -763,15 +855,27 @@ impl Renderer {
             failed: false,
             stalled: false,
             held_textures: HeldTextures::default(),
+            instance,
+            outside: Default::default(),
+            outside_events: Vec::new(),
             capture_request: false,
             capture_scene: false,
             captured: None,
+            film_request: None,
+            films: Vec::new(),
+            films_sent: 0,
+            films_answered: 0,
             snapshot_request: None,
             snapshot: None,
+            equirect_request: None,
+            equirect: None,
             snapshot_sent: false,
             snapshot_dropped: false,
             histogram_request: None,
             histogram: None,
+            thumbnail_request: None,
+            thumbnails: Vec::new(),
+            second_view: None,
             lost,
             // one of the list for each renderer of the run (a recovery's
             // counts its frames from 0 again)
@@ -908,6 +1012,7 @@ impl Renderer {
                     self.writes.write_buffer(buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
                 }
             }
+            self.mirror_palettes(mats, a, ((slot + 1) * per).min(fits));
         }
     }
 
@@ -917,6 +1022,66 @@ impl Renderer {
     /// ones as the previous ones before drawing it.
     pub fn cut_motion_history(&mut self) {
         self.motion_cut = true;
+    }
+
+    /// Every position moved by `by` (a border crossing: they are relative
+    /// to the new region now). What the renderer keeps in world positions
+    /// from frame to frame (the wetness and snow memory, the footprints'
+    /// map) moves with them, so the crossing changes nothing on the ground:
+    /// left where it was, the memory read 256 m off, and all of it was new
+    /// to it (the snow and the wet ground started again, in a hard line).
+    pub fn shift_world(&mut self, by: Vec3) {
+        self.world_shift[0] += by.x;
+        self.world_shift[1] += by.y;
+    }
+
+    /// The main region changed (a border crossing, a teleport): the scene
+    /// writes every position again, relative to the new one, over the next
+    /// frames. The ray-traced shadows then take a face's new place as an
+    /// arrival and not as a move (rt_shadows.rs `StillTracker::rebase`).
+    pub fn rebase_world(&mut self) {
+        self.rt_rebased = true;
+    }
+
+    /// The skeletons whose ray-traced level had to be built again last
+    /// frame and waits for a later one, and the farthest one of them stands
+    /// from where its level shows it (m; a level follows its anchor, so
+    /// this is what its pose moved it): how far behind it its traced
+    /// shadow is.
+    pub fn rt_skeletons_waiting(&self) -> (u32, f32) {
+        self.rt_waiting
+    }
+
+    /// The same distance for one avatar, the one whose palette starts at
+    /// matrix `base`: 0 when its levels are those of last frame's pose.
+    pub fn rt_avatar_behind(&self, base: u32) -> f32 {
+        self.rt_poses.behind(base, &self.rt_palettes)
+    }
+
+    /// Our avatar's palette (its first matrix), whose traced levels are
+    /// built again before any other's (rt_shadows.rs `choose_rebuilds`).
+    pub fn set_rt_own_palette(&mut self, base: Option<u32>) {
+        self.rt_poses.own = base;
+    }
+
+    /// Whether the ray tracer drew the last frame that came back: not while
+    /// it is being made, after ray tracing was turned on.
+    pub fn rt_tracing(&self) -> bool {
+        self.rt_made != 0
+    }
+
+    /// Keeps `mats[a..b]`, just written to the palettes, for the ray-traced
+    /// shadows (`rt_palettes`).
+    fn mirror_palettes(&mut self, mats: &[[[f32; 4]; 4]], a: usize, b: usize) {
+        let b = b.min(mats.len());
+        if a >= b || !self.device.features().contains(crate::rt_shadows::FEATURES) {
+            return;
+        }
+        if self.rt_palettes.len() < b {
+            self.rt_palettes.resize(b, glam::Mat4::IDENTITY.to_cols_array_2d());
+        }
+        self.rt_palettes[a..b].copy_from_slice(&mats[a..b]);
+        self.rt_written.push(a..b);
     }
 
     /// Upload joint palettes (column-major matrices). Indices referenced by
@@ -947,6 +1112,7 @@ impl Renderer {
         let mats = &mats[..mats.len().min(self.palette_buffer.size() as usize / 64)];
         self.writes.write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(mats));
         self.palettes_uploaded += (mats.len() * 64) as u64;
+        self.mirror_palettes(mats, 0, mats.len());
     }
 
     /// Upload only some palettes (`per` matrices each, by slot index): the
@@ -974,6 +1140,7 @@ impl Renderer {
                 self.writes
                     .write_buffer(&self.palette_buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
                 self.palettes_uploaded += ((b - a) * 64) as u64;
+                self.mirror_palettes(mats, a, b);
             }
         }
     }
@@ -991,6 +1158,7 @@ impl Renderer {
             self.writes
                 .write_buffer(&self.palette_buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
             self.palettes_uploaded += ((b - a) * 64) as u64;
+            self.mirror_palettes(mats, a, b);
         }
     }
 
@@ -1034,6 +1202,12 @@ impl Renderer {
     /// Supported MSAA sample counts (besides 1).
     pub fn msaa_supported(&self) -> &[u32] {
         &self.msaa_supported
+    }
+
+    /// Whether the device can draw the blended faces in the exact order of
+    /// their fragments (`RiggedBlendDepth::Exact`).
+    pub fn blend_exact_supported(&self) -> bool {
+        self.blend_exact_supported
     }
 
     /// Frames are drawn by the render thread (false: AURORA_RENDER_THREAD=0).
@@ -1105,12 +1279,24 @@ impl Renderer {
     }
 
     /// Apply quality settings: pipelines and targets are rebuilt by the
-    /// backend with the next frame, only when needed.
+    /// backend with the next frame, only when needed. The lamps' quality
+    /// `AURORA_RT_LAMPS` forces is applied here, so that the settings the
+    /// frames report are the ones kept (`settings_applied`).
     pub fn apply_settings(&mut self, s: RenderSettings) {
+        let s = RenderSettings {
+            rt_tuning: crate::rt_shadows::forced_tuning(s.rt_tuning),
+            ..s
+        };
         if s.anisotropy != self.settings.anisotropy {
             self.textures.set_anisotropy(&self.device, s.anisotropy);
         }
         self.settings = s;
+    }
+
+    /// Rain prototype: keep the G-buffer while it rains (pipelines and
+    /// targets follow with a later frame, as with any setting).
+    pub fn set_rain_surfaces(&mut self, on: bool) {
+        self.settings.rain_surfaces = on;
     }
 
     pub fn set_vsync(&mut self, vsync: bool) {
@@ -1125,6 +1311,13 @@ impl Renderer {
     /// reported it with the last frame it finished (None before the first).
     pub fn present_mode(&self) -> Option<wgpu::PresentMode> {
         self.last_stats.present_mode
+    }
+
+    /// Aurora Weather: snow lay on the ground in the last frame the backend
+    /// finished. The app's footprints and snow work wait for it, or for snow
+    /// falling.
+    pub fn snow_lying(&self) -> bool {
+        self.last_stats.snow_lying
     }
 
     /// The last frame the backend finished was drawn with the settings last
@@ -1240,6 +1433,7 @@ impl Renderer {
         }
         self.pick_answers.append(&mut r.picks);
         self.drawn_answers.append(&mut r.drawn);
+        self.outside_events.append(&mut r.outside);
         if let Some(joint) = r.part_pick {
             self.part_pick = Some(joint);
         }
@@ -1253,6 +1447,14 @@ impl Renderer {
             self.drawn_answers.drain(..self.drawn_answers.len() - KEPT);
         }
         self.cull.last = r.cull;
+        // (a caller that stopped taking them keeps the last few only)
+        self.thumbnails.append(&mut r.thumbnails);
+        if self.thumbnails.len() > KEPT {
+            self.thumbnails.drain(..self.thumbnails.len() - KEPT);
+        }
+        if let Some(e) = r.equirect.take() {
+            self.equirect = Some(e);
+        }
         if r.snapshot && std::mem::take(&mut self.snapshot_dropped) {
             // the answer of a photo given up: a photo asked since is drawn
             // with the next frame
@@ -1266,11 +1468,20 @@ impl Renderer {
             self.capture_request = false;
             self.capture_scene = false;
         }
+        self.films_answered += r.films.len() as u64;
+        self.films.append(&mut r.films);
         self.last_stats = r.stats;
+        self.rt_made = r.rt;
         self.fresh = true;
         if self.spare.len() < SPARE_PACKETS {
             self.spare.push(r.spent);
         }
+    }
+
+    /// Film frames asked (`film_request`) whose pixels have not come back:
+    /// a film asks for no more than a few at a time.
+    pub fn films_in_flight(&self) -> u64 {
+        self.films_sent.saturating_sub(self.films_answered) + u64::from(self.film_request.is_some())
     }
 
     fn fail(&mut self) {
@@ -1287,6 +1498,7 @@ impl Renderer {
         self.pick_answers.extend(asked);
         let asked = self.drawn_requests.drain(..).map(|(ticket, _, _, _)| (ticket, Default::default()));
         self.drawn_answers.extend(asked);
+        self.drawn_forgotten.clear();
     }
 
     /// Close the frame and have it drawn: with a render thread the packet
@@ -1308,6 +1520,14 @@ impl Renderer {
     pub fn vr_head_pose(&self) -> Option<crate::HeadPose> {
         self.vr.head_pose()
     }
+    /// The VR runtime announced it is closing (SteamVR quit by the user): VR
+    /// is over for this renderer. The device was opened through the runtime,
+    /// which ends the process a few seconds later unless this renderer is
+    /// dropped by then: the viewer replaces it with one opened without the
+    /// runtime (aurora-viewer's `gpu_recovery.rs`).
+    pub fn vr_runtime_lost(&self) -> bool {
+        self.vr.runtime_lost()
+    }
     pub fn vr_focused(&self) -> bool {
         self.vr.focused()
     }
@@ -1317,6 +1537,58 @@ impl Renderer {
 
     pub fn render(&mut self, params: FrameParams, lists: &DrawLists, ui: Option<crate::EguiFrame>) -> RenderStats {
         self.render_output(params, lists, ui, None)
+    }
+
+    /// A window of the interface outside the viewer's (outside.rs): a
+    /// surface on `window`, drawn by this renderer from the next frame on.
+    /// `key` names it in the calls below. `sync` synchronizes it with its
+    /// screen, which a window outside never is otherwise: only to measure.
+    /// The render thread answers a surface it cannot draw to with
+    /// [`crate::OutsideEvent::Failed`].
+    pub fn open_outside<W>(&mut self, key: u64, window: Arc<W>, width: u32, height: u32, sync: bool) -> Result<(), RenderError>
+    where
+        W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
+    {
+        // SAFETY: `window` goes with the surface, in the change then in the
+        // backend's entry, and both drop the surface first (their field
+        // order, outside.rs).
+        let surface = unsafe {
+            let target =
+                wgpu::SurfaceTargetUnsafe::from_display_and_window(&*window, &*window).map_err(|e| RenderError::Surface(e.to_string()))?;
+            self.instance.create_surface_unsafe(target)
+        }
+        .map_err(|e| RenderError::Surface(e.to_string()))?;
+        self.outside.changes.push(crate::outside::Change::Open {
+            key,
+            surface,
+            keep: window,
+            width,
+            height,
+            sync,
+        });
+        Ok(())
+    }
+
+    /// The window outside `key` is over: its surface is destroyed by the
+    /// render thread, which answers [`crate::OutsideEvent::Closed`]. The
+    /// native window is kept until then.
+    pub fn close_outside(&mut self, key: u64) {
+        self.outside.frames.retain(|(k, _)| *k != key);
+        self.outside.changes.push(crate::outside::Change::Close(key));
+    }
+
+    /// What the window outside `key` shows from now on: drawn after the
+    /// next frame of the viewer. Hand one when what it shows changed. The
+    /// texture changes of its pass leave with the viewer's own interface,
+    /// before it is drawn.
+    pub fn draw_outside(&mut self, key: u64, mut frame: crate::OutsideFrame) {
+        self.held_textures.0.append(std::mem::take(&mut frame.ui.textures_delta));
+        self.outside.hand(key, frame);
+    }
+
+    /// What became of the windows outside since the last call.
+    pub fn outside_events(&mut self) -> Vec<crate::OutsideEvent> {
+        std::mem::take(&mut self.outside_events)
     }
 
     /// Draw a frame into a caller-owned texture instead of presenting the window.
@@ -1446,11 +1718,52 @@ impl Renderer {
         // for the answer of a photo still on the GPU)
         let capture = match self.snapshot_request {
             Some(_) if self.snapshot_sent => None,
+            // a face of a 360° capture is sent and forgotten: nothing comes
+            // back for it, the next face can be asked at once
+            Some(s) if s.cube.is_some() => {
+                self.snapshot_request = None;
+                Some(crate::packet::Capture::Snapshot(s))
+            }
             Some(s) => Some(crate::packet::Capture::Snapshot(s)),
-            None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
+            // a film's frame next, sent and not waited for (film_readback.rs)
+            None => match self.film_request.take() {
+                Some(film) => {
+                    self.films_sent += 1;
+                    let spec = film.size.map(|(width, height)| crate::SnapshotSpec {
+                        width,
+                        height,
+                        interface: false,
+                        huds: film.huds,
+                        photo: (width, height),
+                        cube: None,
+                    });
+                    Some(crate::packet::Capture::Film(film.tag, spec))
+                }
+                None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
+            },
         };
         self.last_inv_vp = (params.proj * params.view).inverse();
         self.last_view = params.view;
+        let rt_camera = params.camera_pos;
+        let rt_far = params.shadow_distance;
+        let rt_shifted = std::mem::take(&mut self.rt_rebased) || self.world_shift != [0.0; 2];
+        // Gathered for the ray tracer the render thread has: none while its
+        // worker makes it (renderer.rs `RtBuild`). The levels a frame's
+        // faces ask for are built by the one that draws it, and are not
+        // asked for again while they stand.
+        let rt_on = crate::rt_shadows::traced(&self.device, false, self.settings.ray_tracing).shadows && self.rt_made != 0;
+        if !rt_on || self.rt_made != self.rt_followed {
+            // turned off, or another ray tracer: nothing is followed for
+            // it, and it starts from nothing
+            if std::mem::take(&mut self.rt_gathered) {
+                self.records.unwatch_changes();
+                self.cull.objects.unwatch();
+                self.rt_poses = Default::default();
+            }
+            self.rt_written.clear();
+        }
+        self.rt_followed = self.rt_made;
+        self.rt_gathered = rt_on;
         let index = self.frames;
         let packet = FramePacket {
             output,
@@ -1461,6 +1774,7 @@ impl Renderer {
             params,
             lists: spent.lists,
             ui,
+            outside: std::mem::take(&mut self.outside),
             surface: SurfaceState {
                 width: self.size.0,
                 height: self.size.1,
@@ -1470,10 +1784,32 @@ impl Renderer {
             hover: self.hover_request.take(),
             picks: std::mem::take(&mut self.pick_requests),
             drawn: std::mem::take(&mut self.drawn_requests),
+            drawn_forgotten: std::mem::take(&mut self.drawn_forgotten),
             capture,
+            equirect: self.equirect_request.take(),
             histogram: self.histogram_request.take(),
+            thumbnail: self.thumbnail_request.take(),
+            second_view: self.second_view.take(),
             motion_cut: std::mem::take(&mut self.motion_cut),
+            world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
+            rt: rt_on.then(|| {
+                let mut faces = crate::rt_shadows::Faces::default();
+                crate::rt_shadows::gather(
+                    &mut self.records,
+                    &mut self.cull,
+                    &self.rt_palettes,
+                    &mut self.rt_written,
+                    rt_camera,
+                    rt_far,
+                    rt_shifted,
+                    crate::rt_shadows::posed_ceiling(&self.device.limits()),
+                    &mut self.rt_poses,
+                    &mut faces,
+                );
+                self.rt_waiting = (faces.waiting, faces.behind);
+                std::sync::Arc::new(faces)
+            }),
         };
         self.frames += 1;
         let built = t0.elapsed();
@@ -1496,7 +1832,10 @@ impl Renderer {
                     }
                     Err(_) => gone = true,
                 }
-                if capture.is_some() && !gone {
+                // (nor a film's frame: its pixels come back with a later frame)
+                let cube_face = matches!(capture, Some(crate::packet::Capture::Snapshot(s)) if s.cube.is_some())
+                    || matches!(capture, Some(crate::packet::Capture::Film(..)));
+                if capture.is_some() && !cube_face && !gone {
                     // the capture is read right after this call; a GPU that
                     // stops answering in it leaves it for a later frame
                     let t = Instant::now();
@@ -1539,6 +1878,7 @@ impl Renderer {
                 video_memory_full: self.last_stats.video_memory_full,
                 gpu_ms: self.last_stats.gpu_ms,
                 gpu_pixels: self.last_stats.gpu_pixels,
+                gpu_photo_ms: self.last_stats.gpu_photo_ms,
                 gpu_elements: self.last_stats.gpu_elements,
                 shadow: ShadowStats {
                     gpu_ms: self.last_stats.shadow.gpu_ms,
@@ -1547,8 +1887,11 @@ impl Renderer {
                 gpu_depth: self.last_stats.gpu_depth,
                 gpu_ssao: self.last_stats.gpu_ssao,
                 gpu_contact: self.last_stats.gpu_contact,
+                gpu_clouds: self.last_stats.gpu_clouds,
+                gpu_soft: self.last_stats.gpu_soft,
                 gpu_bloom: self.last_stats.gpu_bloom,
                 gpu_effects: self.last_stats.gpu_effects,
+                gpu_weather: self.last_stats.gpu_weather,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,
@@ -1720,10 +2063,15 @@ impl Renderer {
         self.part_pick.take()
     }
 
-    /// Give up a [`Self::request_drawn`] nobody waits for any more.
+    /// Give up a [`Self::request_drawn`] nobody waits for any more: here,
+    /// and on the render thread when it has left with a frame.
     pub fn forget_drawn(&mut self, ticket: u64) {
+        let held = self.drawn_requests.len() + self.drawn_answers.len();
         self.drawn_requests.retain(|(t, _, _, _)| *t != ticket);
         self.drawn_answers.retain(|(t, _)| *t != ticket);
+        if self.drawn_requests.len() + self.drawn_answers.len() == held {
+            self.drawn_forgotten.push(ticket);
+        }
     }
 
     /// Like [`Self::request_pick`], waiting for the answer: for the frame in
@@ -1808,6 +2156,8 @@ impl Renderer {
 
     /// Project a world position to screen pixels (None if behind camera).
     pub fn project(&self, f: &FrameParams, p: Vec3) -> Option<(f32, f32, f32)> {
+        // where it is drawn, on the curved planet if any (curvature.rs)
+        let p = crate::curvature::Curvature::new(f.camera_pos, f.curvature).bend(p);
         let c = f.proj * f.view * p.extend(1.0);
         if c.w <= 0.01 {
             return None;
@@ -1832,6 +2182,19 @@ struct OpenedDevice {
     timestamps: bool,
     adapter_specific: bool,
     max_textures: u32,
+    ray_tracing: crate::RayTracingSupport,
+}
+
+/// Whether a device ray-traces: `card` has ray queries, the device was
+/// `opened` with them, and it is the VR runtime's (`vr`).
+fn ray_tracing_support(card: bool, opened: bool, vr: bool) -> crate::RayTracingSupport {
+    use crate::RayTracingSupport as Support;
+    match (vr, card, opened) {
+        (true, ..) => Support::Vr,
+        (false, true, true) => Support::Ready,
+        (false, true, false) => Support::NotOpened,
+        (false, false, _) => Support::Unsupported,
+    }
 }
 
 /// The blocks of video memory wgpu's allocator carves resources out of
@@ -1883,6 +2246,16 @@ fn open_device(
             alim.max_storage_buffers_per_shader_stage
         )));
     }
+    // ray tracing (rt_shadows.rs), not with VR: its ray queries from the
+    // start, so that turning it on needs no other device
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    let vr = xr.is_some();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    let vr = false;
+    let ray_queries = afeat.contains(crate::rt_shadows::FEATURES);
+    if !vr && ray_queries && crate::rt_shadows::wanted_at_open() {
+        features |= crate::rt_shadows::FEATURES;
+    }
     let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
     if timestamps {
         features |= wgpu::Features::TIMESTAMP_QUERY;
@@ -1920,12 +2293,26 @@ fn open_device(
     if afeat.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
         features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
     }
+    // depth-based stochastic transparency (oit_stochastic.rs): the triangle
+    // in the seed of a fragment's mask
+    if afeat.contains(wgpu::Features::PRIMITIVE_INDEX) {
+        features |= wgpu::Features::PRIMITIVE_INDEX;
+    }
     // GPU draw lists (gpu_cull.rs): draw counts written by the GPU
     if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
         features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
     }
+    // The depth test before the fragment shader that files blended
+    // fragments (blend_exact.rs): only what shows is filed
+    features |= afeat & crate::blend_exact::EARLY_TEST;
+    // and their pass over the screen in one draw
+    features |= afeat & crate::blend_exact::TWO_SOURCES;
+    // and the places of their haze whole in its target
+    features |= afeat & crate::blend_exact::WIDE_RANGE;
     // Aurora's own pipeline cache on disk (pipeline_cache.rs)
     features |= crate::pipeline_cache::feature(afeat);
+    // naga's SampleMask built-in fixed on Vulkan (spirv_fix.rs)
+    features |= crate::spirv_fix::feature(afeat);
     let in_all_pools = descriptors_in_all_pools(adapter);
     let max_textures = texture_page_limit(&alim, in_all_pools);
     if max_textures < texture_page_limit(&alim, None) {
@@ -1942,26 +2329,48 @@ fn open_device(
         alim.max_sampled_textures_per_shader_stage,
         in_all_pools.map_or_else(|| "unknown".to_string(), |n| n.to_string()),
     );
-    let descriptor = wgpu::DeviceDescriptor {
+    let descriptor = |features: wgpu::Features| wgpu::DeviceDescriptor {
         label: Some("aurora"),
         required_features: features,
         required_limits: alim.clone(),
-        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        experimental_features: if features.contains(crate::rt_shadows::FEATURES) {
+            // SAFETY: wgpu's ray queries are experimental (its API may still
+            // change). The device takes them on every card that has them, so
+            // that ray tracing turns on without a new device; a ray is only
+            // traced while that option, itself experimental, is on.
+            unsafe { wgpu::ExperimentalFeatures::enabled() }
+        } else {
+            wgpu::ExperimentalFeatures::disabled()
+        },
         memory_hints: wgpu::MemoryHints::Manual {
             suballocated_device_memory_block_size: MEMORY_BLOCK..MEMORY_BLOCK,
         },
         trace: wgpu::Trace::Off,
     };
+    // A driver that lists ray queries and does not open with them keeps its
+    // card: the device is opened without, and ray tracing is not offered.
+    let asked = features;
+    let mut request = || match pollster::block_on(adapter.request_device(&descriptor(features))) {
+        Err(e) if features.contains(crate::rt_shadows::FEATURES) => {
+            log::warn!("the GPU device does not open with ray queries ({e}): opened without them, no ray tracing");
+            features.remove(crate::rt_shadows::FEATURES);
+            pollster::block_on(adapter.request_device(&descriptor(features))).map_err(|e| RenderError::Device(e.to_string()))
+        }
+        opened => opened.map_err(|e| RenderError::Device(e.to_string())),
+    };
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     let (device, queue) = if let Some(xr) = xr {
-        let graphics = xr.open(adapter, &descriptor).map_err(|e| RenderError::Device(e.to_string()))?;
+        let graphics = xr
+            .open(adapter, &descriptor(asked))
+            .map_err(|e| RenderError::Device(e.to_string()))?;
         log::info!("OpenXR-compatible viewer graphics device: {}", adapter.get_info().name);
         graphics
     } else {
-        pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?
+        request()?
     };
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    let (device, queue) = pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?;
+    let (device, queue) = request()?;
+    let ray_queries = ray_queries && features.contains(crate::rt_shadows::FEATURES) == asked.contains(crate::rt_shadows::FEATURES);
     Ok(OpenedDevice {
         device,
         queue,
@@ -1970,6 +2379,7 @@ fn open_device(
         timestamps,
         adapter_specific,
         max_textures,
+        ray_tracing: ray_tracing_support(ray_queries, features.contains(crate::rt_shadows::FEATURES), vr),
     })
 }
 

@@ -41,6 +41,8 @@ enum Output {
     /// Saved outside the library by Save as…
     SavedTo(PathBuf),
     Prepared(clip::Prepared),
+    /// A folder of Legacy Viewer poses converted into the library.
+    ImportedFolder(legacy_pose::Imported),
     Failed(String),
     Cancelled,
 }
@@ -48,7 +50,10 @@ pub(super) enum Job {
     List,
     Load(Option<PathBuf>, LoadMode, Uuid),
     Save(Save),
-    Import(Arc<SubjectPose>, Vec<usize>, String, i32),
+    Import(Arc<SubjectPose>, String, i32),
+    /// Convert a folder of Legacy Viewer or Alchemy poses into the library:
+    /// the one given, or the one chosen in the folder dialog.
+    ImportLegacyFolder(Option<PathBuf>),
 }
 /// Whether a library entry named `name` shows under the search `filter`
 /// (case-insensitive, anywhere in the name).
@@ -126,7 +131,18 @@ impl Default for Service {
         }
     }
 }
-fn read(path: &Path) -> Result<Vec<u8>, String> {
+/// Write `bytes` to `path` in `dir` through a temporary file, so that a
+/// failure leaves no half-written pose in the library.
+pub(super) fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let temp = dir.join(format!("{}.tmp", Uuid::new_v4()));
+    std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+pub(super) fn read(path: &Path) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .map_err(|e| e.to_string())?
@@ -138,23 +154,52 @@ fn read(path: &Path) -> Result<Vec<u8>, String> {
     }
     Ok(bytes)
 }
-pub(super) fn native(rig: &Rig, pose: &SubjectPose, translations: &[usize], name: String, priority: i32) -> Result<clip::Prepared, String> {
-    let mut document = clip::document::Document::new();
-    document.name = name;
-    document.meta.base_priority = priority;
-    let frame = Frame {
-        model: Mat4::IDENTITY,
-        joints: pose.matrices(rig, Mat4::IDENTITY),
-        at: Instant::now(),
-    };
-    document
-        .record(rig, &frame, 0, &(0..rig.len()).collect::<Vec<_>>(), translations)
-        .map_err(|k| aurora_i18n::text(k).to_owned())?;
-    let animation = document.animation().map_err(|k| aurora_i18n::text(k).to_owned())?;
+/// Encode the local channels returned by Session::authored. As with the
+/// Legacy BVH importer's reference frame, a joint at rest needs no track.
+/// Rotation and translation are independent in the native animation format.
+pub(super) fn native(rig: &Rig, pose: &SubjectPose, name: String, priority: i32) -> Result<clip::Prepared, String> {
+    use aurora_assets::anim::{JointMotion, PosKey, RotKey};
+    let mut animation = clip::document::Document::new().meta;
+    animation.base_priority = priority;
+    let times = [0.0, animation.duration];
+    for (bone, joint_name) in rig.canonical_names.iter().enumerate().filter(|(_, name)| name.starts_with('m')) {
+        let rotation = pose.rotations[bone];
+        let rest = rig.local_rot[bone];
+        // q and -q encode the same rotation. Compare their components to
+        // retain small facial edits below the resolution of a quaternion dot.
+        let rotated = pose.hold_rotation[bone] || (rotation - rest).length_squared().min((rotation + rest).length_squared()) > 1e-10;
+        let offset = pose.positions[bone] - rig.local_pos[bone];
+        // A complete native pose also anchors the pelvis at its neutral
+        // offset. Ordinary rotation-only poses leave its translation free.
+        let moved = offset.length_squared() > 1e-10 || (bone == rig.pelvis && pose.hold_rotation[bone]);
+        if rotated || moved {
+            let position = if bone == rig.pelvis { offset } else { pose.positions[bone] };
+            if moved && position.abs().max_element() > 5.0 {
+                return Err(aurora_i18n::text("anim-edit-pelvis-bound").to_owned());
+            }
+            animation.joints.push(JointMotion {
+                joint_name: joint_name.clone(),
+                priority: -1,
+                rot_keys: if rotated {
+                    times.map(|time| RotKey { time, rotation }).to_vec()
+                } else {
+                    Vec::new()
+                },
+                pos_keys: if moved {
+                    times.map(|time| PosKey { time, position }).to_vec()
+                } else {
+                    Vec::new()
+                },
+            });
+        }
+    }
+    if animation.joints.is_empty() {
+        return Err(aurora_i18n::text("anim-edit-no-bones").to_owned());
+    }
     let bytes = aurora_assets::import_animation::encode(&animation).map_err(|e| e.to_string())?;
     let animation = aurora_assets::anim::parse_animation_upload(&bytes).map_err(|e| e.to_string())?;
     Ok(clip::Prepared {
-        name: document.name,
+        name,
         bytes: Arc::new(bytes),
         animation: Arc::new(animation),
     })
@@ -164,7 +209,8 @@ fn list(root: &Path, rig: &Rig) -> Result<Vec<Entry>, String> {
     if !root.exists() {
         return Ok(out);
     }
-    for entry in std::fs::read_dir(root).map_err(|e| e.to_string())?.take(512) {
+    // the library of a long-time Legacy Viewer user can hold thousands of poses
+    for entry in std::fs::read_dir(root).map_err(|e| e.to_string())?.take(4096) {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.is_file()
             && path.file_name().is_some_and(|n| n.to_string_lossy().ends_with(".aurora-pose.json"))
@@ -233,6 +279,18 @@ impl Service {
                     let path = path.display().to_string();
                     self.message = Some(aurora_i18n::tr!("poser-saved-to", path = path.as_str()).to_string());
                 }
+                Output::ImportedFolder(imported) => {
+                    self.ready = false;
+                    self.message = Some(
+                        aurora_i18n::tr!(
+                            "poser-imported",
+                            added = imported.added,
+                            kept = imported.kept,
+                            unreadable = imported.unreadable
+                        )
+                        .to_string(),
+                    );
+                }
                 Output::Failed(message) => {
                     self.message = Some(message);
                     self.ready = true;
@@ -264,7 +322,7 @@ impl Service {
                                     dialog = dialog.set_directory(&root);
                                 }
                                 let Some(p) = dialog
-                                    .add_filter(aurora_i18n::tr!("poser-file-filter"), &["json", "anim", "bvh"])
+                                    .add_filter(aurora_i18n::tr!("poser-file-filter"), &["json", "xml", "anim", "bvh"])
                                     .pick_file()
                                 else {
                                     return Ok(Output::Cancelled);
@@ -292,6 +350,9 @@ impl Service {
                                     mode,
                                 ),
                             )
+                        } else if legacy_pose::is_pose_file(&path) {
+                            let document = legacy_pose::document(&bytes, legacy_pose::pose_name(&path), &rig)?;
+                            Output::Loaded(subject, Loaded::Pose(document, mode))
                         } else {
                             let document: Document = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
                             if !document.valid(&rig) {
@@ -335,12 +396,7 @@ impl Service {
                         let bvh = if bvh { Some(bvh::encode(&rig, &pose, unlock)?) } else { None };
                         let dir = path.parent().unwrap_or(&root);
                         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-                        let temp = dir.join(format!("{}.tmp", Uuid::new_v4()));
-                        std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
-                        if let Err(e) = std::fs::rename(&temp, &path) {
-                            let _ = std::fs::remove_file(&temp);
-                            return Err(e.to_string());
-                        }
+                        write_atomic(dir, &path, &bytes)?;
                         if let Some(bvh) = bvh {
                             std::fs::write(&bvh_path, bvh).map_err(|e| e.to_string())?;
                         }
@@ -350,8 +406,22 @@ impl Service {
                             Output::Saved(path)
                         }
                     }
-                    Job::Import(pose, translations, name, priority) => {
-                        Output::Prepared(native(&rig, &pose, &translations, name, priority)?)
+                    Job::Import(pose, name, priority) => Output::Prepared(native(&rig, &pose, name, priority)?),
+                    Job::ImportLegacyFolder(folder) => {
+                        let folder = match folder {
+                            Some(folder) => folder,
+                            None => {
+                                let mut dialog = rfd::FileDialog::new().set_title(aurora_i18n::tr!("poser-import-legacy-title"));
+                                if let Some(dir) = legacy_pose::default_folder() {
+                                    dialog = dialog.set_directory(dir);
+                                }
+                                let Some(folder) = dialog.pick_folder() else {
+                                    return Ok(Output::Cancelled);
+                                };
+                                folder
+                            }
+                        };
+                        Output::ImportedFolder(legacy_pose::import_folder(&folder, &root, &rig)?)
                     }
                 })
             };

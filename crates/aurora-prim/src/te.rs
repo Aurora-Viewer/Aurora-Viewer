@@ -14,6 +14,10 @@ pub const TRANSPARENT_TEXTURE: Uuid = Uuid::from_u128(0x8dcd4a48_2d37_4909_9f78_
 pub const WATER_EXCLUSION_TEXTURE: Uuid = Uuid::from_u128(0xe97cf410_8e61_7005_ec06_629eba4cd1fb);
 /// Blank (white) texture.
 pub const BLANK_TEXTURE: Uuid = Uuid::from_u128(0x5748decc_f629_461c_9a36_a35a221fe21f);
+/// Flat grey the Legacy Viewer paints locally (`IMG_DEFAULT`,
+/// `indra_constants.cpp`). `@setcam_textures` with an empty value uses this
+/// id (`rlvhelper.cpp`), not the plywood `DEFAULT_TEXTURE`.
+pub const IMG_DEFAULT: Uuid = Uuid::from_u128(0xd2114404_dd59_4a4d_8e6c_49359e91bbf0);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextureFace {

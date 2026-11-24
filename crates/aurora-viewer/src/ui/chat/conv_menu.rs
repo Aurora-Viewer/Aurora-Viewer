@@ -14,7 +14,7 @@
 use super::sidebar::{self, Kind};
 use super::{ChatUi, ConvAction, close_tip};
 use crate::theme::Palette;
-use crate::ui::context::{self, AvatarList, CtxAction};
+use crate::ui::context::{self, CtxAction};
 use crate::ui::menu;
 use crate::world::World;
 use uuid::Uuid;
@@ -43,15 +43,20 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
     };
     // in its own window, or back into Conversations (`popout.rs`)
     super::popout::menu_row(ui, p, actions, conversation);
-    // CONV_SESSION_NEARBY: its transcript only
+    if let Some(id) = conversation
+        && menu::item(ui, p, "x", close_tip(world, &id))
+    {
+        actions.push(ConvAction::Close(id));
+    }
+    if super::close_all::menu_item(ui, p, !world.social.ims.is_empty()) {
+        actions.push(ConvAction::CloseAll);
+    }
+    // Nearby chat itself always stays open.
     let Some(id) = conversation else {
         history(ui);
         return;
     };
     let kind = sidebar::kind(world, &id);
-    if menu::item(ui, p, "x", close_tip(world, &id)) {
-        actions.push(ConvAction::Close(id));
-    }
     // "Snooze Session" of a group's chiclet menu (menu_fs_imchiclet_group.xml)
     if super::can_snooze(world, &id) && menu::item(ui, p, super::SNOOZE_ICON, aurora_i18n::tr!("ui-chat-snooze")) {
         actions.push(ConvAction::Snooze(id));
@@ -60,7 +65,8 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
     match kind {
         Kind::Private => {
             menu::separator(ui, p);
-            context::avatar_list_menu(ui, p, world, id, AvatarList::Name);
+            // an IM names its person whoever is around
+            context::avatar_name_menu(ui, p, world, id, crate::world::names::NameScope::Roster);
             // the conversation item's rows the name's menu does not have
             // (buildParticipantMenuOptions)
             menu::separator(ui, p);
@@ -69,7 +75,13 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
                 act(CtxAction::ShowOnMap(id));
             }
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
-            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+            if menu::item_if(
+                ui,
+                p,
+                "coin-filled",
+                aurora_i18n::tr!("common-pay"),
+                crate::ui::context::can_pay_resident(world),
+            ) {
                 act(CtxAction::PayResident(id));
             }
         }
@@ -80,14 +92,17 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
                 crate::ui::group_profile::request_open(ui.ctx(), id);
             }
             // can_activate_group: not the active one already; leaving and
-            // the chat's block need the membership
+            // the chat's block need the membership. Under @setgroup the
+            // active group is neither changed nor left
+            // (FS_RGSTR_CHK_GROUP_NOT_ACTIVE and FS_RGSTR_CHK_CAN_LEAVE_GROUP,
+            // indra/newview/fscommon.cpp).
             let member = world.groups.is_member(&id);
             if menu::item_if(
                 ui,
                 p,
                 "circle-check-filled",
                 aurora_i18n::tr!("ui-chat-menu-activate-group"),
-                member && world.groups.active != id,
+                member && world.groups.active != id && world.rlva_can_change_group(),
             ) {
                 act(CtxAction::ActivateGroup(id));
             }
@@ -100,7 +115,13 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
             ) {
                 actions.push(ConvAction::BlockGroupChat(id));
             }
-            if menu::item_if(ui, p, "logout", aurora_i18n::tr!("ui-contacts-leave-group"), member) {
+            if menu::item_if(
+                ui,
+                p,
+                "logout",
+                aurora_i18n::tr!("ui-contacts-leave-group"),
+                member && world.rlva_can_leave_group(id),
+            ) {
                 act(CtxAction::LeaveGroup(id));
             }
         }

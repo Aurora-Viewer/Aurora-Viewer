@@ -15,7 +15,9 @@ use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::widgets::{self, ActionKind};
 use crate::ui::{menu, presence};
 use crate::world::World;
+use crate::world::names::NameScope;
 use crate::world::social::{Friend, rights};
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
 
@@ -104,6 +106,7 @@ pub(super) fn show(
     data: &RadarData,
     st: &mut PeopleUi,
     id: Uuid,
+    scope: NameScope,
     nearby_tab: bool,
     closable: bool,
     actions: &mut Vec<PeopleAction>,
@@ -112,20 +115,34 @@ pub(super) fn show(
     let row = found.as_ref();
     let friend = world.social.friends.iter().find(|f| f.id == id).cloned();
     let (content, bottom) = frame(ui, p);
+    // The friendship action can need a second row (translations or large
+    // text). Reserve the measured footer above the sheet's bottom edge.
+    let mut inner = child(ui, content.union(bottom), ("people-sheet-inner", id));
+    inner.spacing_mut().item_spacing.y = 8.0;
+    let (above, foot) = widgets::above_footer(&mut inner);
     if !data.pics.contains_key(&id) {
         st.want_pic(id, ui.input(|i| i.time));
     }
     // The head stays put above what scrolls.
-    let (top, rest) = split_head(content);
-    let closed = head(&mut child(ui, top, ("people-sheet-head", id)), p, world, data, id, row, closable);
+    let (top, rest) = split_head(above.max_rect());
+    let closed = head(
+        &mut child(ui, top, ("people-sheet-head", id)),
+        p,
+        world,
+        data,
+        id,
+        scope,
+        row,
+        closable,
+    );
     egui::ScrollArea::vertical()
         .id_salt(("people-sheet-scroll", id))
         .auto_shrink([false, false])
         .show(&mut child(ui, rest, ("people-sheet-body", id)), |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            buttons(ui, p, world, st, id, friend.as_ref(), actions);
+            buttons(ui, p, world, st, id, scope, friend.as_ref(), actions);
             if let Some(f) = &friend {
-                let name = world.social.display_name_of(&id);
+                let name = world.social.display_name_in(scope, &id);
                 ui.add_space(12.0);
                 granted(ui, p, f, &name, actions);
                 ui.add_space(10.0);
@@ -147,24 +164,30 @@ pub(super) fn show(
                 }
             }
         });
-    let mut foot = ui.new_child(
-        egui::UiBuilder::new()
-            .id_salt(("people-sheet-foot", id))
-            .max_rect(bottom)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    footer(&mut foot, p, world, id, friend.as_ref());
+    foot.show(&mut inner, |ui| {
+        ui.horizontal_wrapped(|ui| footer(ui, p, world, id, friend.as_ref()));
+    });
     closed
 }
 
 /// The picture with its status dot, the names, and the cross.
-fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uuid, row: Option<&Row>, closable: bool) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn head(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    data: &RadarData,
+    id: Uuid,
+    scope: NameScope,
+    row: Option<&Row>,
+    closable: bool,
+) -> bool {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::hover());
     let names = &world.social.avatar_names;
-    let display = world.social.display_name_of(&id);
+    let display = world.social.display_name_in(scope, &id);
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 20.0, rect.center().y), Vec2::splat(40.0));
     widgets::avatar_disc(ui, p, disc, data.pics.get(&id), &display, row.is_some_and(|r| r.muted));
-    let status = presence::of(world, &id);
+    let status = presence::of_in(world, scope, &id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.panel);
     }
@@ -185,7 +208,7 @@ fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uui
     let width = (right - left).max(20.0);
     // "Legacy Name · account name" under the display name: who they are
     // whatever the name preferences
-    let sub = names.get(&id).map(|n| {
+    let sub = names.get_in(scope, &id).map(|n| {
         let legacy = crate::world::social::format_name(&n.legacy_first, &n.legacy_last);
         if n.is_default || legacy.is_empty() {
             n.username.clone()
@@ -209,16 +232,19 @@ fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uui
     closed
 }
 
-/// The permanent inline panel keeps its place when no friend matches.
-pub(super) fn empty(ui: &mut egui::Ui, p: &Palette) {
+/// The permanent inline panel keeps its place when no friend matches, or
+/// no group is chosen (`group`: Conversations › Contacts › Groups).
+pub(super) fn empty(ui: &mut egui::Ui, p: &Palette, group: bool) {
     let (content, _) = frame(ui, p);
     let center = content.center();
     let icon = Rect::from_center_size(center - Vec2::new(0.0, 22.0), Vec2::splat(32.0));
-    super::radar::icon(ui, "user-filled", icon, 32.0, p.muted_dim);
-    let mut job = egui::text::LayoutJob::single_section(
-        aurora_i18n::tr!("people-contact-details-empty").to_owned(),
-        egui::TextFormat::simple(FontId::proportional(13.0), p.muted),
-    );
+    let (glyph, text) = if group {
+        ("users-group", aurora_i18n::tr!("people-group-details-empty"))
+    } else {
+        ("user-filled", aurora_i18n::tr!("people-contact-details-empty"))
+    };
+    super::radar::icon(ui, glyph, icon, 32.0, p.muted_dim);
+    let mut job = egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(FontId::proportional(13.0), p.muted));
     job.wrap.max_width = content.width();
     let galley = ui.painter().layout_job(job);
     widgets::paint_ink_centered(ui.painter(), galley, center + Vec2::new(0.0, 16.0), p.muted);
@@ -231,6 +257,7 @@ fn buttons(
     world: &World,
     st: &mut PeopleUi,
     id: Uuid,
+    scope: NameScope,
     friend: Option<&Friend>,
     actions: &mut Vec<PeopleAction>,
 ) {
@@ -264,7 +291,10 @@ fn buttons(
             context::request(ui.ctx(), CtxAction::Call(id));
         }
         if widgets::action_button(ui, p, "user-filled", aurora_i18n::tr!("common-profile"), ActionKind::Flat, size).clicked() {
-            actions.push(PeopleAction::Profile(id));
+            actions.push(match scope {
+                NameScope::Roster => PeopleAction::RosterProfile(id),
+                _ => PeopleAction::Profile(id),
+            });
         }
         let tp = widgets::action_button_if(
             ui,
@@ -273,7 +303,8 @@ fn buttons(
             aurora_i18n::tr!("ui-profile-aurora-offer-tp"),
             ActionKind::Flat,
             size,
-            online && !own,
+            // LLInspectAvatar::enableTeleportOffer (LLAvatarActions::canOfferTeleport)
+            online && !own && world.rlva_can_offer_teleport(id),
         );
         if tp.clicked() {
             actions.push(PeopleAction::OfferTeleport(id));
@@ -282,7 +313,10 @@ fn buttons(
             .on_hover_text(aurora_i18n::tr!("ui-chat-more"));
         let kind = if friend.is_some() { AvatarList::Friend } else { AvatarList::Nearby };
         let open = menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            context::avatar_list_menu(ui, p, world, id, kind);
+            match scope {
+                NameScope::Roster => context::avatar_roster_menu(ui, p, world, id, kind),
+                _ => context::avatar_list_menu(ui, p, world, id, kind),
+            }
             if !own {
                 // the contact sets' last button (FSPanelContactSets)
                 menu::separator(ui, p);
@@ -307,7 +341,7 @@ fn buttons(
 /// The title of a part of the sheet, in small capitals.
 pub(super) fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
     ui.label(
-        egui::RichText::new(title.to_uppercase())
+        egui::RichText::new(title.ui_upper())
             .font(FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
             .color(p.muted_dim),
     );
@@ -574,11 +608,23 @@ fn footer(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, friend: Optio
     ui.spacing_mut().item_spacing.x = 5.0;
     let size = Vec2::new(0.0, BUTTON_H);
     // a friend who lets us see them on the map can be shown there from afar
-    let mappable = world.can_locate_avatar(id);
+    let mappable = world.can_locate_avatar(id) && context::can_show_on_map(world);
     if widgets::action_button_if(ui, p, "map", aurora_i18n::tr!("common-map"), ActionKind::Flat, size, mappable).clicked() {
         context::request(ui.ctx(), CtxAction::ShowOnMap(id));
     }
-    if widgets::action_button(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, size).clicked() {
+    // LLInspectAvatar::enablePay
+    let payable = context::can_pay_resident(world);
+    if widgets::action_button_if(
+        ui,
+        p,
+        "coin-filled",
+        aurora_i18n::tr!("common-pay"),
+        ActionKind::Flat,
+        size,
+        payable,
+    )
+    .clicked()
+    {
         context::request(ui.ctx(), CtxAction::PayResident(id));
     }
     if friend.is_some() {
@@ -638,8 +684,9 @@ pub(super) fn scroll_bar_crossings(height: f32, mut draw: impl FnMut(&mut egui::
     let crossing = rects
         .iter()
         .map(|w| w.rect)
-        // the bar itself and the containers around it
-        .filter(|r| *r != bar && !r.contains_rect(bar) && r.area() > 0.0)
+        // The bar itself and its containers. Nested layouts can round their
+        // shared right edge differently by a fraction of a pixel.
+        .filter(|r| *r != bar && !r.expand(0.5).contains_rect(bar) && r.area() > 0.0)
         .filter(|r| r.intersect(bar).area() > 0.0)
         .collect();
     (Some(bar), crossing)
@@ -649,6 +696,66 @@ pub(super) fn scroll_bar_crossings(height: f32, mut draw: impl FnMut(&mut egui::
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn friendship_footer_keeps_its_text_inside_the_sheet() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let friend = Friend {
+            id: Uuid::from_u128(2),
+            online: true,
+            rights_given: 3,
+            rights_has: 7,
+        };
+        world.social.friends.push(friend.clone());
+        let radar = crate::world::radar::Radar::default();
+        let mut settings = super::super::RadarSettings::default();
+        let (voice, pics) = (HashMap::new(), HashMap::new());
+        let data = RadarData {
+            radar: &radar,
+            settings: &mut settings,
+            voice: &voice,
+            draw_distance: 64.0,
+            second_life: true,
+            now: 0.0,
+            pics: &pics,
+        };
+        let mut st = PeopleUi::default();
+        let mut actions = Vec::new();
+        for scale in [1.0, 1.5, 2.0] {
+            let mut frames = Frames::new();
+            theme.apply(&frames.ctx, scale);
+            let rect = Rect::from_min_size(Pos2::new(40.0, 40.0), Vec2::new(super::super::nearby::SHEET_W, 400.0));
+            let mut texts = Vec::new();
+            for _ in 0..4 {
+                texts = frames.run(Vec::new(), |ui| {
+                    let mut sheet = child(ui, rect, "footer-test");
+                    show(
+                        &mut sheet,
+                        &p,
+                        &world,
+                        &data,
+                        &mut st,
+                        friend.id,
+                        NameScope::Roster,
+                        false,
+                        true,
+                        &mut actions,
+                    );
+                });
+            }
+            for key in ["common-map", "common-pay", "ui-profile-aurora-remove-friend"] {
+                let text = painted(&texts, aurora_i18n::text(key));
+                assert!(
+                    !text.cut && rect.contains_rect(text.rect),
+                    "{scale}: {key} at {:?} in {rect:?}",
+                    text.rect
+                );
+            }
+        }
+    }
 
     /// A sheet shorter than its content: its scroll bar is there, in a
     /// strip of its own, crossing no switch, button, value nor the cross,
@@ -684,7 +791,7 @@ mod tests {
         let mut actions = Vec::new();
         for height in [220.0, 300.0, 380.0] {
             let (bar, crossing) = scroll_bar_crossings(height, |ui| {
-                show(ui, &p, &world, &data, &mut st, friend, false, true, &mut actions);
+                show(ui, &p, &world, &data, &mut st, friend, NameScope::Roster, false, true, &mut actions);
             });
             assert!(bar.is_some(), "{height}: the content overflows, the bar shows");
             assert!(crossing.is_empty(), "{height}: the bar {bar:?} crosses {crossing:?}");

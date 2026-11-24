@@ -45,6 +45,44 @@ use std::time::{Duration, Instant};
 /// mips is 22 MB), or 4 × 16 MB on a GPU with little memory.
 const CHUNKS: (usize, u64) = (8, 32 << 20);
 const CHUNKS_SMALL: (usize, u64) = (4, 16 << 20);
+/// Where the CPU can map little video memory (`vram::SMALL_MAPPABLE_MB`):
+/// the total of the small pool, in chunks of the large one, so that the
+/// largest upload stays what it is on the same card with Resizable BAR.
+const CHUNKS_WINDOW: (usize, u64) = (2, 32 << 20);
+
+/// Which staging pool a GPU gets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoolSize {
+    /// 8 × 32 MB.
+    Large,
+    /// 4 × 16 MB: a GPU with little memory (integrated, or under 4 GB).
+    Small,
+    /// 2 × 32 MB: a GPU with memory to spare whose mappable video memory
+    /// the large pool would fill alone (no Resizable BAR, #2171).
+    Window,
+}
+
+impl PoolSize {
+    /// The pool of a GPU: `vram_mb` its video memory, `mappable_mb` the
+    /// part of it the CPU can map (`vram::mappable_mb`), None when unknown.
+    pub fn choose(integrated: bool, vram_mb: Option<u64>, mappable_mb: Option<u64>) -> Self {
+        if integrated || vram_mb.is_some_and(|mb| mb < 4096) {
+            PoolSize::Small
+        } else if mappable_mb.is_some_and(|mb| mb < crate::vram::SMALL_MAPPABLE_MB) {
+            PoolSize::Window
+        } else {
+            PoolSize::Large
+        }
+    }
+
+    fn chunks(self) -> (usize, u64) {
+        match self {
+            PoolSize::Large => CHUNKS,
+            PoolSize::Small => CHUNKS_SMALL,
+            PoolSize::Window => CHUNKS_WINDOW,
+        }
+    }
+}
 /// When every chunk is in use, a job waits this long for one to come back
 /// (they do within a few frames) before keeping its data for a main-thread
 /// write: under a burst (thousands of textures decoded at once) the jobs
@@ -168,9 +206,13 @@ impl StagingPool {
 
     /// `small`: a GPU with little memory (integrated, or under 4 GB).
     pub fn new(device: &wgpu::Device, small: bool) -> Arc<Self> {
+        Self::sized(device, if small { PoolSize::Small } else { PoolSize::Large })
+    }
+
+    pub fn sized(device: &wgpu::Device, size: PoolSize) -> Arc<Self> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let (count, chunk_bytes) = if small { CHUNKS_SMALL } else { CHUNKS };
+        let (count, chunk_bytes) = size.chunks();
         let free = (0..count)
             .map(|_| {
                 Arc::new(Chunk {
@@ -638,8 +680,12 @@ pub struct UploadQueue {
 
 impl UploadQueue {
     pub fn new(device: &wgpu::Device, small: bool) -> Self {
+        Self::sized(device, if small { PoolSize::Small } else { PoolSize::Large })
+    }
+
+    pub fn sized(device: &wgpu::Device, size: PoolSize) -> Self {
         UploadQueue {
-            pool: StagingPool::new(device, small),
+            pool: StagingPool::sized(device, size),
             encoder: None,
         }
     }
@@ -760,6 +806,35 @@ impl FrameUploads {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pool of a GPU: small on little memory, 64 MB in full-size
+    /// chunks where only the mappable window is small (#2171), large
+    /// elsewhere and when the window is unknown.
+    #[test]
+    fn pool_size_follows_the_memory_the_cpu_can_map() {
+        // Resizable BAR, or no reading (macOS, no such memory type)
+        assert_eq!(PoolSize::choose(false, Some(16_000), Some(16_000)), PoolSize::Large);
+        assert_eq!(PoolSize::choose(false, Some(16_000), None), PoolSize::Large);
+        assert_eq!(PoolSize::choose(false, None, None), PoolSize::Large);
+        // no Resizable BAR: the window, up to the threshold
+        assert_eq!(PoolSize::choose(false, Some(16_000), Some(246)), PoolSize::Window);
+        assert_eq!(PoolSize::choose(false, Some(16_000), Some(0)), PoolSize::Window);
+        let limit = crate::vram::SMALL_MAPPABLE_MB;
+        assert_eq!(PoolSize::choose(false, Some(16_000), Some(limit - 1)), PoolSize::Window);
+        assert_eq!(PoolSize::choose(false, Some(16_000), Some(limit)), PoolSize::Large);
+        // little memory wins: these GPUs keep the pool they had
+        assert_eq!(PoolSize::choose(true, Some(16_000), Some(16_000)), PoolSize::Small);
+        assert_eq!(PoolSize::choose(true, None, Some(246)), PoolSize::Small);
+        assert_eq!(PoolSize::choose(false, Some(2048), Some(246)), PoolSize::Small);
+        assert_eq!(PoolSize::choose(false, Some(4096), Some(246)), PoolSize::Window);
+        // the window pool is the small one's total in the large one's
+        // chunks: a 2048² texture with its mips (22 MB) still fits one
+        let total = |size: PoolSize| size.chunks().0 as u64 * size.chunks().1;
+        assert_eq!(total(PoolSize::Window), total(PoolSize::Small));
+        assert_eq!(PoolSize::Window.chunks().1, PoolSize::Large.chunks().1);
+        assert!(PoolSize::Window.chunks().1 >= 2048 * 2048 * 4 * 4 / 3);
+        assert!(total(PoolSize::Window) << 2 <= 256 << 20);
+    }
 
     /// The main thread's staging never waits: with every chunk in use, or
     /// a job writing, it gives up at once where `stage` would wait 100 ms

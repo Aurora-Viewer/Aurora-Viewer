@@ -100,7 +100,7 @@ const OPEN_ID: &str = "emoji_picker_open";
 /// Another picker of the Conversations field (the GIF picker) was drawn in
 /// this pass: Escape is its own too ([`picker_open`]).
 pub fn note_picker_shown(ctx: &egui::Context) {
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(OPEN_ID), pass));
 }
 
@@ -108,7 +108,7 @@ pub fn note_picker_shown(ctx: &egui::Context) {
 /// (the window events come before the pass that would consume the key).
 pub fn picker_open(ctx: &egui::Context) -> bool {
     let shown: Option<u64> = ctx.data(|d| d.get_temp(egui::Id::unique(OPEN_ID)));
-    shown.is_some_and(|p| p + 1 >= ctx.cumulative_pass_nr())
+    shown.is_some_and(|p| p + 1 >= ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT))
 }
 
 /// The font is part of the executable (10.7 MB): no folder of the
@@ -443,16 +443,19 @@ impl Emoji {
         let edit = egui::TextEdit::multiline(text).desired_rows(1).return_key(None);
         let out = build(edit.layouter(&mut layouter)).show(ui);
         let painter = ui.painter().with_clip_rect(out.text_clip_rect);
+        // A glyph's `chr` is the first character of its shaped cluster: the
+        // variation selector of ❤️ (U+2764 U+FE0F) is a glyph of its own
+        // that also says ❤, and had a second picture. egui keeps one glyph
+        // per character, so the text tells which character each glyph is.
+        let mut chars = out.galley.text().chars();
         for placed in &out.galley.rows {
             let mid_y = out.galley_pos.y + placed.pos.y + placed.row.size.y / 2.0;
-            if mid_y + picture_side < out.text_clip_rect.top() || mid_y - picture_side > out.text_clip_rect.bottom() {
-                continue;
-            }
-            for g in &placed.row.glyphs {
-                if !self.has(g.chr) {
+            let visible = mid_y + picture_side >= out.text_clip_rect.top() && mid_y - picture_side <= out.text_clip_rect.bottom();
+            for (g, c) in placed.row.glyphs.iter().zip(&mut chars) {
+                if !visible || !self.has(c) {
                     continue;
                 }
-                if let Some(t) = self.texture(ui.ctx(), g.chr) {
+                if let Some(t) = self.texture(ui.ctx(), c) {
                     let mid_x = out.galley_pos.x + placed.pos.x + g.pos.x + g.advance_width / 2.0;
                     let size = t.size_vec2() * (picture_side / t.size_vec2().max_elem());
                     painter.image(
@@ -462,6 +465,9 @@ impl Emoji {
                         crate::ui::widgets::PICTURE_TINT,
                     );
                 }
+            }
+            if placed.ends_with_newline {
+                chars.next(); // egui omits a hard newline from the row's glyphs
             }
         }
         out
@@ -526,7 +532,7 @@ impl Emoji {
     /// it, and returned for the caller to close the picker.
     /// `favorites` is `None` while they are turned off: no star tab, no menu.
     pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, favorites: Option<&[char]>) -> Picked {
-        let pass = ui.ctx().cumulative_pass_nr();
+        let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
         let opened = self.shown_pass.is_none_or(|last| last + 1 < pass);
         self.shown_pass = Some(pass);
         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(OPEN_ID), pass));
@@ -679,6 +685,50 @@ mod tests {
         for text in ["", "   ", "hi 😀", "😀!", "1", ":)", "😀 a", &"🎉".repeat(JUMBO_MAX + 1)] {
             assert!(!emoji.only_emoji(text), "{text:?} is not emoji alone");
             assert_eq!(emoji.message_size(text, 13.5), 13.5);
+        }
+    }
+
+    /// The emoji pictures `text_field` paints for `text`, and the characters
+    /// of its laid-out glyphs.
+    fn field_pictures(text: &str) -> (usize, Vec<char>) {
+        let ctx = egui::Context::default();
+        let mut emoji = Emoji::load();
+        let mut text = text.to_owned();
+        let mut glyphs = Vec::new();
+        let mut pictures = 0;
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let out = emoji.text_field(ui, &mut text, |edit| edit.desired_width(400.0));
+                    glyphs = out.galley.rows.iter().flat_map(|r| r.row.glyphs.iter().map(|g| g.chr)).collect();
+                },
+            );
+            pictures = output
+                .shapes
+                .iter()
+                .filter(|s| matches!(&s.shape, egui::epaint::Shape::Mesh(m) if m.texture_id != egui::TextureId::default()))
+                .count();
+            output.textures_delta.clear();
+        }
+        (pictures, glyphs)
+    }
+
+    /// ❤️ is U+2764 and its variation selector: one picture, as 😀.
+    #[test]
+    fn the_field_draws_one_picture_per_emoji() {
+        for (text, expected) in [
+            ("a 😀 :b", 1),
+            ("a\n✌️ b ❤️", 2),
+            ("a \u{2764}\u{FE0F} :b", 1),
+            ("\u{2764}\u{FE0F}\u{2764}\u{FE0F}", 2),
+            ("\u{2764} x", 1),
+        ] {
+            let (pictures, glyphs) = field_pictures(text);
+            assert_eq!(pictures, expected, "{text:?}: glyphs {glyphs:?}");
         }
     }
 
