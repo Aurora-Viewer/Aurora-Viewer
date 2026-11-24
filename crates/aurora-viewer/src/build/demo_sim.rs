@@ -358,6 +358,7 @@ impl DemoSim {
                     .into_iter()
                     .collect();
                 let mut events = vec![NetEvent::InventoryUpdated {
+                    bulk: false,
                     folders: Vec::new(),
                     items,
                 }];
@@ -951,7 +952,7 @@ impl DemoSim {
             let child_id = Uuid::new_v4();
             let mut child = object.clone();
             child.full_id = child_id;
-            child.local_id = child_id.as_u128() as u32;
+            child.local_id = crate::demo::next_rez_local_id();
             child.parent_id = object.local_id;
             // (a child's position is its parent's frame)
             child.position = glam::Vec3::new(0.6 * (n as f32 + 1.0), 0.0, 0.0);

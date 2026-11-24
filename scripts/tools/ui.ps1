@@ -6,6 +6,9 @@
 $Vt = $Host.UI.SupportsVirtualTerminal -and -not [Console]::IsOutputRedirected
 $Interactive = -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected
 $Esc = [char]27
+# In the paths the screens name, and the launcher's name, as this system has them.
+$DirSep = [IO.Path]::DirectorySeparatorChar
+$LauncherName = if ($IsLinux) { 'aurora-tools.sh' } else { 'aurora-tools.cmd' }
 
 # Aurora palette (docs/BRANDING.md).
 $Palette = @{
@@ -50,6 +53,34 @@ function Write-Aurora([string]$Text) {
         $out += "$Esc[38;2;$($c[0]);$($c[1]);$($c[2])m$($Text[$i])"
     }
     Write-Host "$out$Esc[0m"
+}
+
+# Starts a program away from this terminal (Linux): its own session, nothing
+# inherited, so it survives the tools and writes nothing over the menu.
+function Start-Detached([string]$Program, [string[]]$Arguments = @()) {
+    sh -c 'exec setsid -f "$@" </dev/null >/dev/null 2>&1' sh $Program @Arguments
+}
+
+# A folder or a URL, in the program the desktop has for it.
+function Open-External([string]$Target) {
+    if ($IsLinux) { Start-Detached 'xdg-open' @($Target) } else { Start-Process $Target }
+}
+
+# $false when this machine has nothing to copy with (Linux without wl-clipboard,
+# xclip or xsel).
+function Copy-ToClipboard([string]$Text) {
+    if (-not $IsLinux) { Set-Clipboard -Value $Text; return $true }
+    $tools = @(
+        if ($env:WAYLAND_DISPLAY) { , @('wl-copy') }
+        , @('xclip', '-selection', 'clipboard')
+        , @('xsel', '--clipboard', '--input')
+    )
+    foreach ($t in $tools) {
+        if (-not (Get-Command $t[0] -CommandType Application -ErrorAction SilentlyContinue)) { continue }
+        sh -c 'text=$1; shift; printf %s "$text" | "$@"' sh $Text @t
+        if ($LASTEXITCODE -eq 0) { return $true }
+    }
+    $false
 }
 
 function Set-CursorVisible([bool]$Visible) {
@@ -112,7 +143,9 @@ function Write-Footer([string]$Hints) {
     $raw = $Host.UI.RawUI
     $w = $raw.WindowSize.Width - 1
     $y = $raw.WindowPosition.Y + $raw.WindowSize.Height - 1
-    if ($w -lt 20 -or $y -lt $raw.CursorPosition.Y) { return }
+    # Not on the cursor's row either: long output (a build) leaves it on the last
+    # line, and a question waiting there would be drawn over and look frozen.
+    if ($w -lt 20 -or $y -le $raw.CursorPosition.Y) { return }
     $status = @(if ($FooterStatus) { & $FooterStatus })
     # one segment comes unrolled: ('text', 'color'); plain text: one muted segment
     if ($status.Count -and $status[0] -isnot [array]) {

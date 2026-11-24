@@ -38,9 +38,80 @@ impl Cargo {
     }
 }
 
+/// DRAG_N_DROP_DISTANCE_THRESHOLD (indra/llui/llui.h): how far, in points,
+/// the pointer travels from where it was pressed before a drag starts.
+const DRAG_THRESHOLD: f32 = 3.0;
+
+/// Port of LLFolderView::isOverDragThreshold (indra/llui/llfolderview.cpp):
+/// strictly farther than the threshold from the press point.
+pub(super) fn over_threshold(press: egui::Pos2, pointer: egui::Pos2) -> bool {
+    press.distance_sq(pointer) > DRAG_THRESHOLD * DRAG_THRESHOLD
+}
+
+/// Whether the current press already started a drag. The Legacy Viewer
+/// starts one drag per press (LLFolderViewItem::handleMouseDown captures the
+/// mouse, handleHover starts the drag once), and a press that dragged is no
+/// click. Every new press clears it, at the start of its frame.
+#[derive(Default)]
+struct PressLatch {
+    dragged: bool,
+}
+
+impl egui::Plugin for PressLatch {
+    fn debug_name(&self) -> &'static str {
+        "InventoryDragPress"
+    }
+
+    fn on_begin_pass(&mut self, ui: &mut egui::Ui) {
+        if ui.input(|i| i.pointer.primary_pressed()) {
+            self.dragged = false;
+        }
+    }
+}
+
+fn latch(ctx: &egui::Context) -> egui::plugin::TypedPluginHandle<PressLatch> {
+    ctx.plugin_or_default::<PressLatch>()
+}
+
+/// Whether a drag from `r` starts this frame: the left button was pressed on
+/// it and the pointer is now past the threshold from the press point
+/// (LLFolderViewItem::handleMouseDown keeps the press, handleHover starts
+/// the drag). egui's own `drag_started` also fires after the button is held
+/// 0.8 s without moving, or as soon as the pointer slips onto the next row,
+/// so a long or sloppy click moved a folder into its neighbour (#4057).
+/// Only once per press: a drag cancelled with Escape does not start again
+/// while the button stays down. Every inventory drag source goes through it.
+pub(super) fn begins(ui: &egui::Ui, r: &egui::Response) -> bool {
+    let latch = latch(ui.ctx());
+    let dragged = latch.lock().dragged;
+    let begins = !dragged
+        && r.is_pointer_button_down_on()
+        && !egui::DragAndDrop::has_any_payload(ui.ctx())
+        && ui.input(|i| {
+            i.pointer.primary_down()
+                && !i.key_pressed(egui::Key::Escape)
+                && i.pointer
+                    .press_origin()
+                    .zip(i.pointer.latest_pos())
+                    .is_some_and(|(press, pointer)| over_threshold(press, pointer))
+        });
+    if begins {
+        latch.lock().dragged = true;
+    }
+    begins
+}
+
+/// Whether the press now held or just released started a drag: its release
+/// is a drop, not a click, even when it stayed within egui's click distance.
+/// The Legacy Viewer keeps the selection after a drag and opens a notecard's
+/// embedded item only on a press that did not move.
+pub(super) fn dragged_this_press(ctx: &egui::Context) -> bool {
+    latch(ctx).lock().dragged
+}
+
 pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, st: &mut InventoryUi) {
     record_row(ui.ctx(), st.ui_id, id, r.rect);
-    if !r.drag_started() {
+    if !begins(ui, r) {
         return;
     }
     // Pressing a selected row must keep a Ctrl/Shift selection until the drag
@@ -56,11 +127,11 @@ pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, 
     ui.ctx().data_mut(|d| d.insert_temp(right_drag_id(), right));
     let ids = st.selected_ids(id);
     if ids.len() > 1 {
-        r.dnd_set_drag_payload(SelectionDrag(ids));
+        egui::DragAndDrop::set_payload(ui.ctx(), SelectionDrag(ids));
     } else if folder {
-        r.dnd_set_drag_payload(FolderDrag(id));
+        egui::DragAndDrop::set_payload(ui.ctx(), FolderDrag(id));
     } else {
-        r.dnd_set_drag_payload(InvDrag(id));
+        egui::DragAndDrop::set_payload(ui.ctx(), InvDrag(id));
     }
 }
 
@@ -290,6 +361,25 @@ fn feedback_id() -> egui::Id {
     egui::Id::unique("inventory_move_drag_feedback")
 }
 
+/// The pointer is over the world: inside the viewer's window, and over no
+/// window of the interface. A held drag still tells where the pointer is
+/// beyond the edges of the window it began in; nothing of the world is
+/// there, and what is let go of there is carried to the viewer's other
+/// windows (`outside::carry`), not dropped.
+pub(crate) fn over_world(ctx: &egui::Context) -> bool {
+    in_world(
+        ctx.is_pointer_over_egui(),
+        ctx.input(|i| i.pointer.interact_pos()),
+        ctx.content_rect(),
+    )
+}
+
+/// `over_world`, from what the interface says: a window of the interface
+/// is under the pointer, where the pointer is, and the viewer's window.
+pub(crate) fn in_world(over_interface: bool, at: Option<egui::Pos2>, window: egui::Rect) -> bool {
+    !over_interface && at.is_none_or(|at| window.contains(at))
+}
+
 /// How many entries a drag of inventory carries while one is in progress (a
 /// folder counts as one). Used by drop targets that take inventory cargo.
 pub(crate) fn carried_count(ctx: &egui::Context) -> Option<usize> {
@@ -322,7 +412,7 @@ pub(crate) fn carried_ids(ctx: &egui::Context) -> Option<Vec<Uuid>> {
 /// The cursor a destination outside the inventory windows gives the cargo
 /// held over it this pass (an object's Contents tab).
 pub(crate) fn feedback(ctx: &egui::Context, cursor: egui::CursorIcon) {
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         d.insert_temp(
             feedback_id(),
@@ -359,7 +449,7 @@ pub(crate) fn give_target_on(ctx: &egui::Context, layer: egui::LayerId, zone: eg
         return None;
     }
     let ids = give_ids(ctx)?;
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         d.insert_temp(
             feedback_id(),
@@ -391,7 +481,7 @@ pub(super) fn target(
     actions: &mut Vec<InvAction>,
 ) {
     let Some(cargo) = Cargo::hover(ui, r) else { return };
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     if ui
         .ctx()
         .data(|d| d.get_temp::<Feedback>(feedback_id()).is_some_and(|f| f.pass == pass))
@@ -488,6 +578,10 @@ pub(super) fn drop_cargo(
                 actions.push(InvAction::Drop(change));
             }
             Ok(_) => {}
+            // A folder let go on its own row is a click that slipped past
+            // the threshold: refused without a word, as the Legacy Viewer
+            // only shows TooltipDragOntoSelf while hovering.
+            Err(_) if ids == [to] => {}
             Err(reason) => st.message = reason,
         },
         DropMode::Copy | DropMode::Link => {
@@ -530,10 +624,10 @@ pub(crate) fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
     // the flag is read before `input`: egui's context is locked inside it,
     // and reading its data there would wait on itself forever
     let right = right_drag(ctx);
-    if !ctx.input(|i| i.pointer.primary_down() || (i.pointer.secondary_down() && right)) {
+    if !(crate::outside::carry::dragging(ctx) || (right && ctx.input(|i| i.pointer.secondary_down()))) {
         return None;
     }
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<Feedback>(feedback_id()))
         .filter(|f| f.pass == pass)
         .map(|f| f.cursor)
@@ -547,7 +641,7 @@ pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
     // (Esc ends a drag without dropping: egui's DragAndDrop does it)
     // (read outside `input`, which holds egui's context lock)
     let right = right_drag(ctx);
-    let held = ctx.input(|i| i.pointer.primary_down() || (i.pointer.secondary_down() && right));
+    let held = crate::outside::carry::dragging(ctx) || (right && ctx.input(|i| i.pointer.secondary_down()));
     let Some(pointer) = ctx.input(|i| i.pointer.interact_pos().filter(|_| held)) else {
         return;
     };
@@ -556,7 +650,7 @@ pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
     // a single entry moved says nothing, as before
     // over an inventory folder that takes it, what that folder would do;
     // elsewhere (the world, a conversation) the keys mean what that place says
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let mode = ctx
         .data(|d| d.get_temp::<Feedback>(feedback_id()))
         .filter(|f| f.pass == pass)

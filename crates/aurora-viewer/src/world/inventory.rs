@@ -440,6 +440,27 @@ impl Inventory {
         }
     }
 
+    /// A BulkUpdateInventory (a delivery, a gift, an unpack): applied like
+    /// any server change, then each of its folders not read yet is read
+    /// (#3025). The Legacy Viewer dates a folder by its loaded children
+    /// (llfolderviewmodelinventory.cpp) and, in
+    /// LLInventoryModel::processBulkUpdateInventory, only fetches a known
+    /// folder whose version is unknown or a new folder's parent, so a
+    /// delivered folder waits for an expand there before it sorts by date.
+    /// Aurora reads the delivered folder at once so that it sorts with its
+    /// contents: one FetchInventoryDescendents2 per delivered folder, a
+    /// small and deliberate difference in what is sent. Folders created,
+    /// moved or recovered through `server_updated` are not read.
+    pub fn bulk_updated(&mut self, folders: Vec<InvFolder>, items: Vec<InvItem>) {
+        let delivered: Vec<Uuid> = folders.iter().map(|folder| folder.id).collect();
+        self.server_updated(folders, items);
+        for id in delivered {
+            if self.folders.get(&id).is_some_and(|f| !matches!(f.state, FetchState::Fetched)) {
+                self.request(id);
+            }
+        }
+    }
+
     /// LLInventoryModel::accountForUpdate / updateItem / updateCategory:
     /// apply server changes immediately, and advance each loaded parent's
     /// version once per update. Repeated records do not advance it again.
@@ -1150,6 +1171,62 @@ mod tests {
             assert_eq!(inv.folders[&child].items, vec![copied.id]);
             assert!(inv.items.contains_key(&Uuid::from_u128(723)), "copy keeps the original");
         }
+    }
+
+    /// #3025: a folder delivered by BulkUpdate must be fetched so its date
+    /// (newest descendant) sorts it with its contents, without waiting for expand.
+    #[test]
+    fn bulk_updated_folders_are_queued_for_fetch() {
+        let mut inv = fixture();
+        let id = Uuid::from_u128(9801);
+        inv.bulk_updated(
+            vec![InvFolder {
+                id,
+                parent: inv.root,
+                name: "Gift folder".into(),
+                type_default: -1,
+                version: -1,
+                ..Default::default()
+            }],
+            Vec::new(),
+        );
+        assert_eq!(inv.folders[&id].state, FetchState::Fetching);
+        assert!(
+            inv.queue.iter().any(|(queued, _)| *queued == id),
+            "descendent fetch queued: {:?}",
+            inv.queue
+        );
+    }
+
+    /// Only a BulkUpdateInventory reads its folders: a folder AIS just
+    /// created, one announced during a copy and a folder moved elsewhere
+    /// send no FetchInventoryDescendents2, as in the Legacy Viewer.
+    #[test]
+    fn created_and_moved_folders_are_not_queued_for_fetch() {
+        let mut inv = fixture();
+        let folder = |id: u128, parent: Uuid| InvFolder {
+            id: Uuid::from_u128(id),
+            parent,
+            name: format!("Folder {id}"),
+            type_default: -1,
+            version: 1,
+            ..Default::default()
+        };
+        let root = inv.root;
+        inv.created_folders(vec![folder(9811, root)]);
+        assert!(inv.queue.is_empty(), "created folder: {:?}", inv.queue);
+        assert_eq!(inv.folders[&Uuid::from_u128(9811)].state, FetchState::Fetched);
+
+        // copied without AIS (announce_folder) and never opened
+        inv.server_updated(vec![folder(9812, root)], Vec::new());
+        assert!(inv.queue.is_empty(), "announced folder: {:?}", inv.queue);
+
+        // moved under another folder
+        let mut moved = folder(9812, Uuid::from_u128(9811));
+        moved.version = -1;
+        inv.server_updated(vec![moved], Vec::new());
+        assert!(inv.queue.is_empty(), "moved folder: {:?}", inv.queue);
+        assert!(inv.folders[&Uuid::from_u128(9811)].children.contains(&Uuid::from_u128(9812)));
     }
 
     #[test]

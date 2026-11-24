@@ -33,6 +33,7 @@ impl InventoryUi {
     /// Cancel the shared cut in every inventory window. Copy remains reusable.
     pub fn cancel_cut(&mut self) {
         if self.cut {
+            self.clipboard_edited = true;
             self.clipboard.clear();
             self.cut = false;
             self.consume_clipboard = false;
@@ -119,7 +120,7 @@ pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
 /// for one more) so the list takes it once nothing is above it.
 pub(super) fn return_focus(ctx: &egui::Context, st: &mut InventoryUi) {
     request_focus_ctx(ctx, st);
-    st.list_focus_frame = Some(ctx.cumulative_frame_nr() + 2);
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) + 2);
     // run those passes now, not at the next input
     ctx.request_repaint();
 }
@@ -135,7 +136,7 @@ type PendingFocus = (egui::Id, u64);
 /// above it is gone. A document lives in a window state of its own, so the
 /// request waits in the context for the list that opened it to take it.
 pub(crate) fn return_focus_to(ctx: &egui::Context, focus: egui::Id) {
-    let at = ctx.cumulative_frame_nr() + 2;
+    let at = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) + 2;
     ctx.data_mut(|d| d.insert_temp(pending_focus_id(), Some((focus, at))));
     ctx.request_repaint();
 }
@@ -148,7 +149,7 @@ pub(super) fn return_document_focus(ctx: &egui::Context, st: &mut InventoryUi) {
 }
 
 fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
-    st.list_focus_frame = Some(ctx.cumulative_frame_nr());
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT));
     ctx.memory_mut(|m| {
         m.request_focus(focus_id(st));
         m.set_focus_lock_filter(focus_id(st), list_filter(st));
@@ -252,7 +253,7 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     // A document opened from this list closed: take the keyboard back once
     // the window above is gone and no other widget holds it. The window can
     // outlive the close by a pass or two, so the request stays a few passes.
-    let now = ui.ctx().cumulative_frame_nr();
+    let now = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let focused = ui.memory(|m| m.focused());
     if let Some((focus, at)) = ui.ctx().data(|d| d.get_temp::<Option<PendingFocus>>(pending_focus_id())).flatten() {
         if focus == focus_id(st) {
@@ -281,7 +282,9 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
         && ui.is_enabled()
         && st.dialog.is_none()
         && !egui::Popup::is_any_open(ui.ctx())
-        && st.list_focus_frame.is_some_and(|frame| ui.ctx().cumulative_frame_nr() <= frame + 1)
+        && st
+            .list_focus_frame
+            .is_some_and(|frame| ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) <= frame + 1)
         && ui.memory(|m| m.focused().is_none() && m.allows_interaction(ui.layer_id()));
     if response.clicked() || response.has_focus() || restore {
         request_focus(ui, st);
@@ -308,6 +311,7 @@ pub(super) fn store(ctx: &egui::Context, st: &mut InventoryUi, ids: Vec<Uuid>, c
     }
     st.clipboard = ids;
     st.cut = cut;
+    st.clipboard_edited = true;
     st.consume_clipboard = false;
 }
 
@@ -600,7 +604,7 @@ pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) 
         // the list's clip, within a pixel: a row scrolled to the bottom ends
         // on the clip's edge. A wide row runs past the clip sideways.
         let shown = (
-            response.ctx.cumulative_frame_nr(),
+            response.ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT),
             response.interact_rect.height() + 1.0 >= response.rect.height(),
         );
         response.ctx.data_mut(|data| {
@@ -812,7 +816,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
                 log::info!(
                     "demo inventory keyboard down: frame={frame}, selected={:?}, drawn_whole={}",
                     st.selected,
-                    shown.is_some_and(|(drawn, whole)| whole && drawn + 1 >= ctx.cumulative_frame_nr())
+                    shown.is_some_and(|(drawn, whole)| whole && drawn + 1 >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
                 );
             }
             if !(660..=688).contains(&frame) || !frame.is_multiple_of(4) {
@@ -1401,6 +1405,61 @@ mod tests {
             h.frame(vec![arrow(true, false)]);
             assert_ne!(h.dual.selected, Some(id(8100)));
             assert_eq!(h.st.selected, Some(id(8100)));
+        }
+    }
+
+    /// #4570: a Copy or Cut in the right pane of the dual layout reaches
+    /// the shared clipboard, so it survives the next frame and pastes in
+    /// either pane.
+    #[test]
+    fn dual_pane_copy_and_cut_reach_the_shared_clipboard() {
+        for cut in [false, true] {
+            let mut h = Harness::new();
+            h.prefs.dual_panel = true;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(1400.0, 900.0));
+            h.dual.show_original(&h.world.inventory, id(8100));
+            h.dual.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let row = h
+                .ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", h.dual.ui_id, id(8100)))))
+                .expect("right pane row");
+            h.click(row.left_center() + egui::vec2(80.0, 0.0), Default::default());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.dual))));
+            assert!(h.st.clipboard.is_empty());
+            h.frame(vec![if cut { Event::Cut } else { Event::Copy }]);
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            assert_eq!(h.st.clipboard, vec![id(8100)], "cut: {cut}");
+            assert_eq!(h.st.cut, cut);
+            assert_eq!(h.dual.clipboard, vec![id(8100)], "the right pane keeps it too");
+            assert_eq!(h.dual.cut, cut);
+            assert!(holds_marker(&h.st, &id(8100).to_string()), "Ctrl+V finds its marker");
+            h.st.show_original(&h.world.inventory, id(8001));
+            h.st.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let dest = h
+                .ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", h.st.ui_id, id(8001)))))
+                .expect("left destination row");
+            h.click(dest.left_center() + egui::vec2(80.0, 0.0), Default::default());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st))));
+            let actions = h.paste();
+            let [InvAction::Edit(change)] = &actions[..] else {
+                panic!("one paste in the left pane")
+            };
+            if cut {
+                assert!(change.copies.is_empty());
+                assert!(
+                    matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Patch { id: item, folder: false, body }] if *item == id(8100) && body["parent_id"].as_uuid() == id(8001))
+                );
+            } else {
+                assert!(change.copies.len() == 1 && change.copies[0].parent == id(8001));
+            }
         }
     }
 

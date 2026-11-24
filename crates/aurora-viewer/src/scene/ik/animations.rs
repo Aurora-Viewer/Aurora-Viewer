@@ -76,7 +76,8 @@ pub fn apply(rig: &Rig, pose: &mut LocalPose, pelvis: Vec3, samples: &[Sample]) 
             pose.rotations[bone] = q;
         }
         if let Some((_, p)) = positions[bone] {
-            pose.positions[bone] = if bone == rig.pelvis { rig.local_pos[bone] + p - pelvis } else { p };
+            let local = rig.key_origin(bone) + p;
+            pose.positions[bone] = if bone == rig.pelvis { local - pelvis } else { local };
         }
     }
 }
