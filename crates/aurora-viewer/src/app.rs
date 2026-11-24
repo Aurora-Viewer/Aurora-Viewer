@@ -5916,6 +5916,8 @@ impl App {
         };
         let hit = if alt {
             picked.visible_point()
+        } else if picked.through_ignored && !self.build.open {
+            ray.and_then(|r| self.scene.drawn_action_point(&self.world, r, depth, self.settings.draw_distance))
         } else {
             self.scene
                 .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance)
@@ -8321,6 +8323,18 @@ impl App {
                 crate::demo::action_overlay(if id == 980 { 980 } else { 981 }, pos + direction * 1.0, rotation)
             });
         }
+        // Exercise action-only changes after the panel already has GPU records.
+        if ((self.frame_count == 270 && mode.starts_with("ignore-alt-switch"))
+            || (self.frame_count == 275 && mode == "ignore-alt-switch-on"))
+            && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(981))
+            && let Some(panel) = self.world.objects.get_mut(idx)
+        {
+            panel.set_click_action(if self.frame_count == 270 {
+                crate::interaction::code::DISABLED
+            } else {
+                crate::interaction::code::IGNORE
+            });
+        }
         if self.frame_count == 275 && (mode == "pause" || mode == "open-media-playing") {
             self.media.play_parcel(&self.world, &self.settings.media);
         }
@@ -8353,6 +8367,17 @@ impl App {
             } else if mode.starts_with("buy-touch-menu") {
                 self.on_ctx_action(ui::context::CtxAction::Buy(crate::demo::action_id(id)));
                 log::info!("demo menu purchase: prim={id}, dialog={}", self.interactions.dialog.is_some());
+            } else if mode.starts_with("ignore-alt") || mode == "ignore-object-view" {
+                if mode.ends_with("-build") {
+                    self.build.open_build(crate::build::Tool::Edit);
+                }
+                self.alt = mode.starts_with("ignore-alt");
+                if mode == "ignore-object-view" {
+                    self.panels.camera_controls = true;
+                    self.object_view = true;
+                }
+                self.on_left_press();
+                self.alt = false;
             } else if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
                 self.click(click_pick::Click::Build);
@@ -11085,6 +11110,10 @@ impl App {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
             crate::demo::snow_spin::tick(&mut self.world, self.frame_count);
+            crate::demo::footprints::tick(&mut self.scene, self.frame_count);
+            if let Some((eye, at)) = crate::demo::footprints::view(self.frame_count) {
+                self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
+            }
             if let Some((eye, at)) = crate::demo::snow_spin::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
@@ -11427,6 +11456,7 @@ impl App {
         self.update_weather_now();
         if self.demo {
             crate::demo::snow_spin::weather(self.frame_count, &mut self.weather_now);
+            crate::demo::footprints::weather(self.frame_count, &mut self.weather_now);
         }
         self.update_audio();
         self.update_wind_sound(dt);

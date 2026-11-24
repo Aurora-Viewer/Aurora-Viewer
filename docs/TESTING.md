@@ -2604,6 +2604,10 @@ Preferences › Camera › Behavior › “Click my avatar: keep camera” for t
 a plain body click must preserve position and lens (no snap behind) and aim
 the focus at the clicked body point (`LLToolCamera::pickCallback`).
 `avatar-return` disables the option and must return to avatar follow.
+`avatar-ignore-drag` and `avatar-ignore-mask-drag` put an opaque or Mask
+Ignore Object panel between the camera and the chest. Holding the press and
+dragging must turn the avatar through the panel as in `avatar-drag`.
+For a manual press, replace `-drag` with `-ready`.
 `avatar-gap-head` / `avatar-gap-legs` put a scripted panel behind our avatar
 and click beside its head / between its legs, inside the former body box.
 Both must log `demo touch_start: prim=975` and leave the camera unchanged;
@@ -3140,7 +3144,9 @@ No real L$ and no connection to a grid.
 - `none` / `touch` send press, move and release; `grab` simulates the
   physical move.
 - `ignore` goes through a visible screen and opens Buy behind it; `disabled`
-  stops the click without touching; `ignore-build` selects this screen in
+  stops the click without touching. `ignore-alt` and `ignore-object-view` focus the Buy cube (971),
+  while `ignore-alt-build` focuses the screen (981). After changing the click action on the existing panel,
+  `ignore-alt-switch-off` focuses 981 and `ignore-alt-switch-on` focuses 971. `ignore-build` selects this screen in
   build mode.
 - `open` shows three simulated content items.
 - `open-multi` (#1410): the Open window receives Ctrl+A at frame 420;
@@ -4918,6 +4924,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SNOW_ROOF=1` | Four canopies in the snow: plain, open at the top, glass, leaves |
 | `AURORA_DEMO_SNOW_SPIN=1\|settles-off` | Boxes turning slowly, fast and by a script's steps in the lying snow |
 | `AURORA_DEMO_SNOW_SPIN=timer` | The same, the script's box stepped every 10 s (a move's hold between steps) |
+| `AURORA_DEMO_FOOTPRINTS_OFF=<frame>` | A trail of footprints in the snow, then Footprints turned off at this frame, for the run only |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground (`=snow`: why the snow lies or not) |
 | `AURORA_THUNDER_AT=<s>[:<m>]` | A lightning strike this many seconds after the start, 1 km away or `<m>` metres |
@@ -4972,7 +4979,13 @@ both open states and the selection count. Capture at frame 620.
   off at frame 700 (that run only, never the settings): the snow lying
   goes at once instead of melting away in view. Capture both with the
   shadows on and off (the shelter map is redrawn once a second with them
-  off). `AURORA_RAIN_DEBUG=1` colours the
+  off). `AURORA_DEMO_FOOTPRINTS_OFF=<frame>` (with `AURORA_SNOW` and
+  `AURORA_SNOW_LYING`) presses a trail of sixteen steps in the snow north
+  of the arrival at frame 300 and looks at it from above, then turns
+  Footprints off at that frame, for that run only (never the settings):
+  the trail must go at once, none left frozen on the ground (#4019).
+  Capture before and after that frame (`=500`: frames 450 and 650).
+  `AURORA_RAIN_DEBUG=1` colours the
   ground by its wetness memory: yellow, outside the memory; red, only
   assumed open (seen beyond the shelter map); green, wet; blue, dry under
   cover; brighter, the wetter. `AURORA_RAIN_DEBUG=snow` colours it by why
@@ -5557,7 +5570,13 @@ both open states and the selection count. Capture at frame 620.
   the Precipitation or Wind switch greys its own card (Precipitation
   greys On the ground and Thunder too). Capture after frame 300 at `AURORA_TEXT_SIZE=1`
   and `1.5`, with `--language fr`, `en` and `ja`: no label runs under its
-  switch or value.
+  switch or value. Resize the window by its edges and corners: the summary
+  stays on top and Quality, Clean up and Fill with snow at the bottom, the
+  cards scrolling between them; narrowed, the right columns go under the
+  left ones down to one (360 × 320 at least), the summary compacts and the
+  foot's buttons take a row of their own when they no longer fit beside
+  Quality; widened, up to five columns. The window follows the pointer both
+  ways, at 127 % too, and never holds a width or a height of its own.
 - **`AURORA_DEMO_ENV_EDITOR=sky|clouds|clouds-picker|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame
@@ -10090,6 +10109,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Button widths tighten when needed, with unchanged icon sizes and the
   avatar still available for row clicks. The
   details action before More opens the resident sheet.
+  Pax stands 153.4 m away (`AURORA_DEMO_PEOPLE_FILTER=Pax`), and the
+  `crowd`'s Lumens reach 125.4 m (`AURORA_DEMO_PEOPLE_FILTER=Lumen`): the
+  range column widens to the widest range of the list, so every range
+  keeps its gap from the badges, the age and the arrival time (#4594).
   `legacy`: the same
   residents in Firestorm's table, for this run only (the preference is
   not changed). Capture `crowd` at frame 900 or later: the profiles
@@ -10473,7 +10496,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `experiences`, `environment` (or their index); Aurora's window opens a
   tab's section of "Manage", scrolled to and unfolded (`options` on "What
   visitors can do", `general` on "Sale and ownership", `covenant` on the
-  overview); `people` asks for the object owners as Refresh does, `owners`
+  overview); `visibility` opens "Visibility and search" with its
+  advanced rows unfolded and a five-paragraph parcel description (the
+  description field taller than its label, #4647; with `:owner`, since a
+  member sees the field greyed); `people` asks for the
+  object owners as Refresh does, `owners`
   also scrolls down to them; `environment-picker` and `experience-picker`
   open the settings picker (the demo library's skies, waters and days, also
   listed without `AURORA_DEMO_ENV_SELECT`) and the experience picker with

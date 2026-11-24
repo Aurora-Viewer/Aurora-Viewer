@@ -224,7 +224,7 @@ struct FrameU {
     /// y: the share of the light the sun's shadows let through
     /// (1 - the shadow intensity), in every pass; z: the projectors'
     /// light size in metres for their soft shadows (0 = the 5-tap filter of
-    /// before), main view only.
+    /// before), main view only. In the pick view w excludes Ignore Object.
     soft: [f32; 4],
     /// The soles' heights of `snow_stamps` (m), four to a vec4.
     snow_stamp_z: [[f32; 4]; crate::types::SNOW_STAMPS / 4],
@@ -2878,11 +2878,16 @@ struct SnowTrail {
 
 impl SnowTrail {
     /// One frame, `on` while footprints are kept (snow lying, the setting
-    /// on).
+    /// on). Off, the frame's `snow_trail` goes to zero (its size 0: no map,
+    /// env.wgsl), so the shaders stop reading the map left from the last
+    /// frame it was drawn (#4019: the trails stayed, frozen, with
+    /// Footprints off, and wherever a teleport took me); on again, the map
+    /// is drawn from the region's prints, as every frame.
     fn advance(&mut self, on: bool, snowing: f32, at: Vec2, fallen: f32, extent: f32) {
         if !on {
             self.origin = None;
             self.last = None;
+            self.uniform = [0.0; 4];
             return;
         }
         let now = Instant::now();
@@ -9802,11 +9807,12 @@ impl Backend {
         } else {
             None
         };
-        if let Some((x, y, _)) = drawn_px {
+        if let Some((x, y, mode)) = drawn_px {
             let narrow = crate::drawn_pick::narrow(x, y, self.config.width, self.config.height);
             let mut u = main;
             // (its group binds no soft shadow mask)
             u.soft[0] = 0.0;
+            u.soft[3] = u8::from(mode.through_ignored()) as f32;
             u.view_proj = (narrow * main_vp).to_cols_array_2d();
             u.eye_view_proj = (narrow * Mat4::from_cols_array_2d(&main.eye_view_proj)).to_cols_array_2d();
             self.queue.write_buffer(&self.refl_buffers[6], 0, bytemuck::bytes_of(&u));
@@ -10685,6 +10691,102 @@ impl Backend {
             }
         };
 
+        // ---- faces drawn under a clicked pixel: opaque and masked, then
+        // blended ones in front of them (only in the frame of a click)
+        let draw_pick = |encoder: &mut wgpu::CommandEncoder, mode: crate::DrawnMode| {
+            let mode = mode.alpha_mode();
+            let blend_pick = match mode {
+                crate::DrawnMode::Visible => &self.pipelines.pick_visible,
+                crate::DrawnMode::LeftVisible => &self.pipelines.pick_left_visible,
+                crate::DrawnMode::Left => &self.pipelines.pick_left,
+                _ => &self.pipelines.pick,
+            };
+            let left = matches!(mode, crate::DrawnMode::Left | crate::DrawnMode::LeftVisible);
+            let mask_interaction = mode == crate::DrawnMode::Left;
+            let (solid_pick, solid_pick_2s) = if left {
+                (&self.pipelines.pick_left, &self.pipelines.pick_left_2s)
+            } else {
+                (&self.pipelines.pick, &self.pipelines.pick_2s)
+            };
+            let layers: [&[(&wgpu::RenderPipeline, (u64, u32), Option<usize>)]; 2] = [
+                &[
+                    (&self.pipelines.pick_terrain, rg.terrain, None),
+                    (&self.pipelines.pick_terrain, rg.terrain_pbr, None),
+                    (&self.pipelines.pick_terrain_mask, rg.terrain_mask, None),
+                    (solid_pick, rg.opaque, Some(0)),
+                    (solid_pick_2s, rg.opaque_2s, Some(1)),
+                    (solid_pick, rg.mask, Some(2)),
+                    (solid_pick_2s, rg.mask_2s, Some(3)),
+                ],
+                &[
+                    (blend_pick, rg.blend, None),
+                    // under the water too: found by a click from above
+                    (blend_pick, rg.blend_under, None),
+                    // LLToolPie's transparent pick reaches Mask cutouts too.
+                    // Keep the visible opaque answer underneath, so a passive
+                    // mask cannot hide a posed attachment's actionable face.
+                    // HUDs and camera/menu queries do not enter these ranges.
+                    (
+                        &self.pipelines.pick_mask,
+                        if mask_interaction { rg.mask } else { (0, 0) },
+                        mask_interaction.then_some(2),
+                    ),
+                    (
+                        &self.pipelines.pick_mask_2s,
+                        if mask_interaction { rg.mask_2s } else { (0, 0) },
+                        mask_interaction.then_some(3),
+                    ),
+                    // LLViewerWindow::pickAsync / pickImmediate: debug alpha
+                    // makes transparent surfaces pickable. Reuse the actual
+                    // overlay lists, including hidden faces and only the
+                    // rigged geometry enabled for display, with their full
+                    // two-sided triangles instead of their texture cutouts.
+                    (&self.pipelines.pick_overlay, rg.debug_red, None),
+                    (&self.pipelines.pick_overlay, rg.debug_blue, None),
+                ],
+            ];
+            for (k, draws) in layers.iter().enumerate() {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("drawn pick"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.drawn_pick.views[k],
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.drawn_pick.depth,
+                        depth_ops: Some(wgpu::Operations {
+                            // the blended faces behind the opaque ones stay hidden
+                            load: if k == 0 { wgpu::LoadOp::Clear(0.0) } else { wgpu::LoadOp::Load },
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.refl[6]);
+                for (pipe, range, bin) in draws.iter() {
+                    draw(&mut pass, pipe, *range);
+                    if let Some(b) = bin {
+                        draw_bin(&mut pass, Some(pipe), *b, *b);
+                    }
+                }
+            }
+            self.drawn_pick.encode_copy(encoder);
+        };
+        // Hi-Z zeros draws hidden behind opaque walls, including ignored
+        // ones. Only a press through such a volume needs the original lists.
+        if let Some((_, _, mode)) = drawn_px
+            && mode.through_ignored()
+        {
+            draw_pick(&mut encoder, mode);
+        }
         prof.mark("setup");
         // GPU timestamps between and inside passes (time by kind of element)
         let marks = self
@@ -12723,93 +12825,10 @@ impl Backend {
             }
         }
         mark(&mut encoder, MARK_SCENE_END);
-        // ---- faces drawn under a clicked pixel: opaque and masked, then
-        // blended ones in front of them (only in the frame of a click)
-        if drawn_px.is_some() {
-            let blend_pick = match drawn_px.map(|(_, _, mode)| mode) {
-                Some(crate::DrawnMode::Visible) => &self.pipelines.pick_visible,
-                Some(crate::DrawnMode::LeftVisible) => &self.pipelines.pick_left_visible,
-                Some(crate::DrawnMode::Left) => &self.pipelines.pick_left,
-                _ => &self.pipelines.pick,
-            };
-            let left = drawn_px.is_some_and(|(_, _, mode)| matches!(mode, crate::DrawnMode::Left | crate::DrawnMode::LeftVisible));
-            let mask_interaction = drawn_px.is_some_and(|(_, _, mode)| mode == crate::DrawnMode::Left);
-            let (solid_pick, solid_pick_2s) = if left {
-                (&self.pipelines.pick_left, &self.pipelines.pick_left_2s)
-            } else {
-                (&self.pipelines.pick, &self.pipelines.pick_2s)
-            };
-            let layers: [&[(&wgpu::RenderPipeline, (u64, u32), Option<usize>)]; 2] = [
-                &[
-                    (&self.pipelines.pick_terrain, rg.terrain, None),
-                    (&self.pipelines.pick_terrain, rg.terrain_pbr, None),
-                    (&self.pipelines.pick_terrain_mask, rg.terrain_mask, None),
-                    (solid_pick, rg.opaque, Some(0)),
-                    (solid_pick_2s, rg.opaque_2s, Some(1)),
-                    (solid_pick, rg.mask, Some(2)),
-                    (solid_pick_2s, rg.mask_2s, Some(3)),
-                ],
-                &[
-                    (blend_pick, rg.blend, None),
-                    // under the water too: found by a click from above
-                    (blend_pick, rg.blend_under, None),
-                    // LLToolPie's transparent pick reaches Mask cutouts too.
-                    // Keep the visible opaque answer underneath, so a passive
-                    // mask cannot hide a posed attachment's actionable face.
-                    // HUDs and camera/menu queries do not enter these ranges.
-                    (
-                        &self.pipelines.pick_mask,
-                        if mask_interaction { rg.mask } else { (0, 0) },
-                        mask_interaction.then_some(2),
-                    ),
-                    (
-                        &self.pipelines.pick_mask_2s,
-                        if mask_interaction { rg.mask_2s } else { (0, 0) },
-                        mask_interaction.then_some(3),
-                    ),
-                    // LLViewerWindow::pickAsync / pickImmediate: debug alpha
-                    // makes transparent surfaces pickable. Reuse the actual
-                    // overlay lists, including hidden faces and only the
-                    // rigged geometry enabled for display, with their full
-                    // two-sided triangles instead of their texture cutouts.
-                    (&self.pipelines.pick_overlay, rg.debug_red, None),
-                    (&self.pipelines.pick_overlay, rg.debug_blue, None),
-                ],
-            ];
-            for (k, draws) in layers.iter().enumerate() {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("drawn pick"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.drawn_pick.views[k],
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.drawn_pick.depth,
-                        depth_ops: Some(wgpu::Operations {
-                            // the blended faces behind the opaque ones stay hidden
-                            load: if k == 0 { wgpu::LoadOp::Clear(0.0) } else { wgpu::LoadOp::Load },
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                bind_mesh(&mut pass, &self.groups.refl[6]);
-                for (pipe, range, bin) in draws.iter() {
-                    draw(&mut pass, pipe, *range);
-                    if let Some(b) = bin {
-                        draw_bin(&mut pass, Some(pipe), *b, *b);
-                    }
-                }
-            }
-            self.drawn_pick.encode_copy(&mut encoder);
+        if let Some((_, _, mode)) = drawn_px
+            && !mode.through_ignored()
+        {
+            draw_pick(&mut encoder, mode);
         }
         // depth under the cursor, read back in a later frame
         self.depth_pick.encode_hover(
@@ -14102,6 +14121,23 @@ mod tests {
         assert!(wet.soak >= soak && wet.level >= level);
         assert_eq!(wet.step[3], wet.soak);
         assert_eq!(wet.uniform[2], 256.0);
+    }
+
+    /// Footprints off (the setting, or no snow lying any more): the frame
+    /// says there is no map, so no frozen trail is drawn (#4019); on again,
+    /// the map is back in the frame.
+    #[test]
+    fn footprints_off_leave_no_trail_map_in_the_frame() {
+        let mut trail = SnowTrail::default();
+        trail.advance(true, 1.0, Vec2::new(100.0, 60.0), 5.0, 48.0);
+        assert!(trail.active());
+        assert_eq!(trail.uniform[2], 48.0);
+        trail.advance(false, 1.0, Vec2::new(100.0, 60.0), 5.0, 48.0);
+        assert!(!trail.active());
+        assert_eq!(trail.uniform, [0.0; 4]);
+        trail.advance(true, 1.0, Vec2::new(100.0, 60.0), 5.0, 48.0);
+        assert!(trail.active());
+        assert_eq!(trail.uniform[2], 48.0);
     }
 
     #[test]
