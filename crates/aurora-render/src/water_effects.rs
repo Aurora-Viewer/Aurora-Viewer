@@ -416,7 +416,7 @@ struct Uniform {
     previous: [f32; 4], // old origin xy, reset, dt
     clock: [f32; 4],    // now, previous time, fine-wake origin xy
     counts: [u32; 4],   // events, contacts, flags, quality
-    sea_area: [f32; 4], // sea grid origin xy, extent
+    sea_area: [f32; 4], // sea grid origin xy, extent, caustics' focus
     sea: Sea,           // the wind's sea (water_sea.rs, WaterSea)
 }
 
@@ -848,7 +848,12 @@ impl WaterGpu {
                 if valid_ground { flags } else { 0 },
                 settings.quality.min(3) as u32,
             ],
-            sea_area: [ground.sea_origin[0], ground.sea_origin[1], ground.sea_extent.max(1.0), 0.0],
+            sea_area: [
+                ground.sea_origin[0],
+                ground.sea_origin[1],
+                ground.sea_extent.max(1.0),
+                crate::water_sea::caustic_focus(sea.frame[3], sea.look[1]),
+            ],
             sea: *sea,
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));

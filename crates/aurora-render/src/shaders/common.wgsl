@@ -3409,19 +3409,31 @@ fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(!water_fx_on(32u) || frame.misc.w>0.5){return vec3<f32>(0.0);}
     if(!camera_underwater() && water_excluded(pos)){return vec3<f32>(0.0);}
     let bed=water_fx_bed(pos.xy);let depth=bed.y-pos.z;
+// They follow the sea above (water_sea.rs `caustic_focus`, `caustic_drift`):
+// on glassy water, broad soft light wandering slowly, in patches where a
+// breath of wind ripples it; under a breeze, the sharp net, drifting
+// downwind; in a gale, a quick, torn, dimmer light that the swell sways.
+// Behind a reef or in a short fetch, the water is as calm as it is there.
     if(depth<0.03 || depth>18.0 || frame.sky_sun.z<0.05 || frame.sun_dir.w<0.01){return vec3<f32>(0.0);}
     let light=normalize(frame.sun_dir.xyz);
     let ray=refract(-light,vec3<f32>(0.0,0.0,1.0),0.7501875);
     var project=pos.xy-ray.xy*depth/max(-ray.z,0.2);
     // (the spectrum's chop left out: the micro waves' map draws the short
     // caustics, and its texture reads would cost every lit pixel underwater)
-    project-=water_sea(project,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,water_fx_sea_at(project),WATER_OCEAN_NONE,0.0).gradient*min(depth,7.0)*0.25;
-    // about 11 m across, drifting at a few centimetres a second
+    project-=water_sea(project,frame.camera_pos.w,water_fx.counts.w,sea,at,WATER_OCEAN_NONE,0.0).gradient*min(depth,7.0)*0.25;
+    // how rough the water is above: the wind's, as much as the fetch and
+    // what shelters it leave
+    let rough=clamp(sea.frame.w*clamp(at.chop,0.0,1.0)*clamp(at.shelter,0.0,1.0),0.0,1.0);
+    // the ripples' drift downwind (m), and a slow wander of its own
+    let sea=water_fx.sea;
+    let at=water_fx_sea_at(project);
     let time=frame.camera_pos.w;
-    let warp_at=project*0.09;
-    project+=(vec2<f32>(water_fx_noise(warp_at+vec2<f32>(time*0.021,0.0)),water_fx_noise(warp_at+vec2<f32>(4.7,3.1-time*0.017)))-0.5)*2.4;
+    let drift=sea.look.zw+vec2<f32>(time*0.011,-time*0.007);
+    // about 11 m across, torn further as the sea roughens
+    let warp_at=(project-drift)*0.09;
+    project+=(vec2<f32>(water_fx_noise(warp_at),water_fx_noise(warp_at+vec2<f32>(4.7,3.1)+vec2<f32>(-drift.y,drift.x)*0.03))-0.5)*(1.8+3.2*rough);
     let uv=project/16.0;
-    let second=water_caustic_tap((WATER_CAUSTIC_TURN*project)/WATER_CAUSTIC_TILE2+vec2<f32>(time*0.0041,-time*0.0029),depth);
+    let second=water_caustic_tap((WATER_CAUSTIC_TURN*(project-drift*0.35))/WATER_CAUSTIC_TILE2,depth);
     var focus:vec3<f32>;
     if(water_fx.counts.w==0u){focus=vec3<f32>(water_caustic_tap(uv,depth));}
     else{
@@ -3432,7 +3444,14 @@ fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
             (water_caustic_tap(uv+WATER_CAUSTIC_FILTER,depth)+water_caustic_tap(uv-WATER_CAUSTIC_FILTER,depth))*0.5,
             water_caustic_tap(uv-spread,depth));
     }
-    let energy=max(water_caustic_combine(focus,second)-vec3<f32>(0.9),vec3<f32>(0.0))*0.42;
+    // a rough sea's light is less focused (whitecaps, bubbles, a torn
+    // surface): a lower threshold, a lower gain
+    let threshold=0.9-0.08*rough;
+    var energy=max(water_caustic_combine(focus,second)-vec3<f32>(threshold),vec3<f32>(0.0))*(0.42*(1.0-0.2*rough));
+    // patches some 30 m across drifting downwind, where gusts ripple the
+    // water more than beside them: plain on calm water, less in a gale
+    let gusty=smoothstep(0.15,0.85,water_fx_noise((project-drift*1.6)*0.034+vec2<f32>(9.2,1.7)));
+    energy*=mix(1.0,0.3+1.4*gusty,0.65-0.35*rough);
     let extinction=exp(-depth*(0.13+frame.water_fog.w*0.025));
     return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
 }

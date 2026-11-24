@@ -57,7 +57,8 @@ pub struct Sea {
     /// x: how much foam the whitecaps make (`SeaTune::foam`, 1 by
     /// default); y: the scale of the spectrum's chop (`SeaTune::chop` under
     /// the height limit; its maps are drawn unscaled, so a change shows the
-    /// same frame); the rest reserved.
+    /// same frame); z, w: how far the caustics' ripples have drifted with
+    /// the wind (m, `caustic_drift`).
     pub look: [f32; 4],
 }
 
@@ -70,6 +71,22 @@ impl Default for Sea {
         sea.shape(Vec2::new(0.88, 0.475), 5.0);
         sea
     }
+}
+
+/// How fast the caustics' ripples drift downwind (m/s) on a sea of
+/// `rough`ness: a slow wander when glassy, a quick one in a gale.
+pub fn caustic_drift(rough: f32) -> f32 {
+    0.08 + 0.5 * rough.clamp(0.0, 1.0)
+}
+
+/// How hard the ripples' lenses focus the sun into caustics
+/// (water_caustics.wgsl), on a sea of `rough`ness whose chop is scaled by
+/// `chop`: soft, broad light on glassy water, sharp tight lines under a
+/// breeze, tighter in a gale (whose light the bed's lookup then breaks up).
+pub fn caustic_focus(rough: f32, chop: f32) -> f32 {
+    let rough = if rough.is_finite() { rough.clamp(0.0, 1.0) } else { 0.0 };
+    let chop = if chop.is_finite() { chop.clamp(0.0, 2.0) } else { 1.0 };
+    (0.5 + 0.6 * rough) * (0.6 + 0.4 * chop.min(1.5))
 }
 
 impl Sea {
@@ -606,6 +623,10 @@ impl SeaDriver {
         sea.wind[3] = sea.trains.iter().map(|t| t[3]).sum::<f32>() + sea.trains[0][3];
         sea.look[0] = finite(tune.foam, 1.0);
         sea.look[1] = chop_scale * limit;
+        // the caustics' ripples drift downwind, faster as it blows harder
+        let drift = heading * caustic_drift(sea.frame[3]) * dt;
+        sea.look[2] += drift.x;
+        sea.look[3] += drift.y;
         if let Some((job, kind)) = self.ocean.take() {
             // Its FFTs take a millisecond or so: on a worker, during the
             // frame before, for this frame's time (the last step taken as
@@ -651,6 +672,24 @@ impl SeaDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caustics_focus_and_drift_with_the_sea() {
+        // glassy water focuses softly, a breeze sharper, a gale sharper still
+        let (glassy, breeze, gale) = (caustic_focus(0.0, 1.0), caustic_focus(0.3, 1.0), caustic_focus(1.0, 1.0));
+        assert!(glassy < breeze && breeze < gale, "{glassy} {breeze} {gale}");
+        assert!(caustic_focus(0.3, 0.0) < breeze, "no chop, softer");
+        assert!(caustic_focus(f32::NAN, f32::NAN).is_finite());
+        assert!(caustic_drift(0.0) > 0.0 && caustic_drift(1.0) > caustic_drift(0.2));
+        // the ripples drift downwind as the sea advances
+        let mut driver = SeaDriver::default();
+        driver.advance(0.0, Vec2::new(8.0, 0.0), Vec2::ZERO);
+        let mut sea = driver.advance(0.5, Vec2::new(8.0, 0.0), Vec2::ZERO);
+        for i in 1..20 {
+            sea = driver.advance(0.5 + i as f32 * 0.5, Vec2::new(8.0, 0.0), Vec2::ZERO);
+        }
+        assert!(sea.look[2] > 0.5 && sea.look[3].abs() < 0.05, "{:?}", sea.look);
+    }
 
     #[test]
     fn the_spectrum_takes_over_the_chop_and_the_depth_still_caps_it() {
