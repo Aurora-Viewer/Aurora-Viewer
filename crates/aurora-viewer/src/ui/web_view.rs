@@ -119,6 +119,9 @@ pub struct WebView {
     failed: Option<String>,
     /// The page has the keyboard (clicked; a click elsewhere releases it).
     pub focused: bool,
+    /// The window of the viewer that had the system's focus at the last
+    /// frame (`outside::focused_window`).
+    focus_seen: Option<egui::ViewportId>,
     nav_started: Option<Instant>,
     /// "Load time: N seconds" (LLPanelProfileWeb::handleMediaEvent).
     pub load_secs: Option<f32>,
@@ -540,6 +543,15 @@ impl WebView {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
             }
         }
+        // a click in another window of the viewer is a click elsewhere too,
+        // and this window's pointer does not show it: the keys typed there
+        // would still go to the page
+        let window = crate::outside::focused_window(ui.ctx());
+        if crate::outside::focus_went_elsewhere(ui.ctx().viewport_id(), self.focus_seen, window) && self.focused {
+            self.focused = false;
+            p.focus(false);
+        }
+        self.focus_seen = window;
         if enabled && let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
             let (pressed, released) = ui.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_released()));
             let inside = rect.contains(pos);

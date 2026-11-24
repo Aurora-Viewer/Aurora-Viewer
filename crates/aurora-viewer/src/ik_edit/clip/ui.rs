@@ -630,16 +630,22 @@ impl Editor {
         checkpoint_needed |= checkpoint_on_edit(&response);
         let duration = end.saturating_sub(start) as f32 / fps as f32;
         egui::Grid::new("native-animation-timing").num_columns(2).show(ui, |ui| {
-            for (key, value) in [
-                ("import-loop-in", &mut meta.loop_in),
-                ("import-loop-out", &mut meta.loop_out),
-                ("import-ease-in", &mut meta.ease_in),
-                ("import-ease-out", &mut meta.ease_out),
+            let max_ease = if meta.looping {
+                crate::imports::animation::MAX_LOOP_FADE_INPUT
+            } else {
+                duration
+            };
+            for (key, value, limit, clamp_existing) in [
+                ("import-loop-in", &mut meta.loop_in, duration, true),
+                ("import-loop-out", &mut meta.loop_out, duration, true),
+                ("import-ease-in", &mut meta.ease_in, max_ease, !meta.looping),
+                ("import-ease-out", &mut meta.ease_out, max_ease, !meta.looping),
             ] {
                 ui.label(aurora_i18n::text(key));
                 let response = ui.add(
                     egui::DragValue::new(value)
-                        .range(0.0..=duration)
+                        .range(0.0..=limit)
+                        .clamp_existing_to_range(clamp_existing)
                         .speed(1.0 / f64::from(fps))
                         .suffix(" s"),
                 );

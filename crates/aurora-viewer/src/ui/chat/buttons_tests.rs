@@ -20,6 +20,36 @@ const MEETING: Uuid = Uuid::from_u128(0xC0);
 const ALL: [ChatStyle; 4] = [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy];
 
 #[test]
+fn chat_header_username_follows_preferences_and_saved_names_stay_frozen() {
+    let mut h = H::new(ChatStyle::Aurora);
+    let names = &mut h.world.social.avatar_names;
+    names.options.legacy_format = false;
+    names.options.use_display_names = true;
+    names.options.show_usernames = true;
+    names.on_display_names(
+        &[aurora_net::AvatarNameData {
+            id: JANE,
+            username: "janedoe".into(),
+            display_name: "Jane".into(),
+            ..Default::default()
+        }],
+        &[],
+        None,
+    );
+    let mut message = line("Jane", JANE, ChatKind::Im, "/me waves");
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane (janedoe)");
+    assert_eq!(
+        super::line_body(&message, &super::sender_name(&h.world, "", &message)).0,
+        "Jane waves"
+    );
+    message.origin = Origin::Log;
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
+    message.origin = Origin::Live;
+    h.world.social.avatar_names.options.show_usernames = false;
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
+}
+
+#[test]
 fn teleport_invitation_paints_one_destination_in_every_style() {
     use crate::world::teleport_invites::{Answer, Invite, InviteKind, Place, Rating};
     for style in ALL {
@@ -575,6 +605,18 @@ fn the_head_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
             "{style:?}: close"
         );
+        // its neighbour in the list shows next (#4373)
+        let order = if style.workspace() {
+            super::sidebar::tab_order(&h.world, &h.st)
+        } else {
+            super::keys::legacy_order(&h.world, &h.st)
+        };
+        let next = super::keys::after_close(&order, BOB);
+        assert!(next.is_some() && next != Some(BOB), "{style:?}: a conversation beside Bob");
+        assert_eq!(h.st.selected, next, "{style:?}: the neighbour shown");
+        // the harness keeps the closed conversation: back to Bob's
+        h.st.selected = Some(BOB);
+        h.settle();
         h.press(control_id("head-search-filled"));
         assert!(h.st.searches.get(&Some(BOB)).is_some_and(|s| s.find.is_some()), "{style:?}: find");
         h.press(control_id("head-search-filled"));
@@ -2615,6 +2657,18 @@ fn the_window_of_tabs_still_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
             "{style:?}: close"
         );
+        // its neighbour in the list shows next (#4373)
+        let order = if style.workspace() {
+            super::sidebar::tab_order(&h.world, &h.st)
+        } else {
+            super::keys::legacy_order(&h.world, &h.st)
+        };
+        let next = super::keys::after_close(&order, BOB);
+        assert!(next.is_some() && next != Some(BOB), "{style:?}: a conversation beside Bob");
+        assert_eq!(h.st.selected, next, "{style:?}: the neighbour shown");
+        // the harness keeps the closed conversation: back to Bob's
+        h.st.selected = Some(BOB);
+        h.settle();
         h.press(classic_id("phone-filled"));
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::Call(id) if *id == BOB)),

@@ -254,9 +254,11 @@ impl Timeline {
 /// The GPU effects and quality switches on, as the report's fixed words
 /// (`EFFECT_WORDS` in crash/watchdog.rs): what tells a hang caused by an effect
 /// from one that is not. Conditions follow the renderer: the contact and the
-/// soft shadows need the shadows, the indirect light needs the GTAO. `drawn` is the shadow
-/// quality and the ambient occlusion the world is drawn with (the photo
-/// window's over Preferences', `App::photo_shadow_quality`).
+/// soft shadows need the shadows, the indirect light needs the GTAO, ray
+/// tracing needs the shadows and its reflections SSR (what the settings ask:
+/// the graphics card may trace none). `drawn` is the shadow quality and the
+/// ambient occlusion the world is drawn with (the photo window's over
+/// Preferences', `App::photo_shadow_quality`).
 pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr: bool) -> String {
     use std::fmt::Write;
     let mut out = String::new();
@@ -275,6 +277,14 @@ pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr:
     word(shadows && settings.projector_shadows, format_args!("projector-shadows"));
     word(shadows && settings.contact_shadows, format_args!("contact-shadows"));
     word(shadows && settings.soft_shadows, format_args!("soft-shadows"));
+    let traced = shadows && settings.ray_tracing.enabled;
+    word(traced, format_args!("ray-tracing"));
+    word(traced && settings.ray_tracing.lights, format_args!("rt-lights"));
+    word(traced && settings.ray_tracing.indirect, format_args!("rt-indirect"));
+    word(
+        traced && settings.ssr && settings.ray_tracing.reflections,
+        format_args!("rt-reflections"),
+    );
     word(ao && settings.ao_method == 0, format_args!("ao-legacy{ssao}"));
     word(ao && settings.ao_method == 1, format_args!("ao-gtao{}", settings.gtao_quality));
     word(settings.ssr, format_args!("ssr"));
@@ -493,7 +503,7 @@ impl App {
             "minimized"
         } else if self.occluded {
             "occluded"
-        } else if !self.focused {
+        } else if !self.in_front() {
             "background"
         } else {
             "focused"

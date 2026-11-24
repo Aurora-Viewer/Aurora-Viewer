@@ -10,6 +10,8 @@ mod contents_keyboard_tests;
 mod layout_tests;
 #[path = "legacy_tests.rs"]
 mod legacy_tests;
+#[path = "name_focus_tests.rs"]
+mod name_focus_tests;
 
 /// Whether a painted text is the heading of the former labelled navigation
 /// ("OBJECT"). In Japanese that heading is オブジェクト, the very word of
@@ -2168,10 +2170,7 @@ fn pbr_number_scrubbing_keeps_the_chosen_inspector_width() {
 
 #[test]
 fn material_numbers_commit_typed_values_once_without_resetting_the_inspector() {
-    for label in [
-        aurora_i18n::tr!("build-ui-texture-shininess"),
-        aurora_i18n::tr!("common-environment"),
-    ] {
+    for label in [aurora_i18n::tr!("build-legacy-glossiness"), aurora_i18n::tr!("common-environment")] {
         for finish in [egui::Key::Enter, egui::Key::Tab, egui::Key::Escape] {
             let mut inspector = material_inspector();
             inspector.settings.transform_expanded = false;
@@ -2265,6 +2264,28 @@ fn material_numbers_commit_typed_values_once_without_resetting_the_inspector() {
             );
         }
     }
+}
+
+/// Issue #4484: the Blinn-Phong shininess menu (None / Low / Medium / High)
+/// is captioned "Shininess" and the specular exponent "Glossiness", as the
+/// labels "label shininess" and "label glossiness" of panel_tools_texture.xml.
+#[test]
+fn blinn_phong_captions_follow_the_legacy_panel() {
+    let mut inspector = material_inspector();
+    inspector.settings.transform_expanded = false;
+    inspector.tool.tab = 3;
+    for _ in 0..5 {
+        inspector.show(vec![]);
+    }
+    let (_, texts) = inspector.show(vec![]);
+    let caption = |key: &str| texts.iter().find(|(text, _)| text == key).map(|(_, rect)| *rect);
+    let shininess = caption(aurora_i18n::tr!("build-ui-texture-shininess")).expect("a Shininess caption");
+    let glossiness = caption(aurora_i18n::tr!("build-legacy-glossiness")).expect("a Glossiness caption");
+    assert!(shininess.top() < glossiness.top(), "the menu comes before the exponent");
+    assert!(
+        caption(aurora_i18n::tr!("common-brightness")).is_none(),
+        "no Brightness caption on the Blinn-Phong tab"
+    );
 }
 
 #[test]
@@ -2476,6 +2497,69 @@ fn empty_legacy_texture_channels_can_be_selected_and_their_scale_edited() {
             },
             2.5
         );
+    }
+}
+
+#[test]
+fn sphere_dimple_drag_previews_then_sends_the_shape_once() {
+    use aurora_net::{NetCommand, build::BuildCmd};
+    use aurora_prim::params::{LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF};
+
+    for legacy in [false, true] {
+        let mut inspector = Inspector::new();
+        inspector.settings.legacy_window = legacy;
+        inspector.settings.transform_expanded = false;
+        inspector.tool.tab = 5;
+        inspector.screen = vec2(1600.0, 1400.0);
+        let key = inspector.tool.selection[0];
+        let idx = inspector.world.objects.index_of(&key).unwrap();
+        let v = &mut inspector.world.objects.get_mut(idx).unwrap().volume;
+        v.path.curve_type = LL_PCODE_PATH_CIRCLE;
+        v.profile.curve_type = LL_PCODE_PROFILE_CIRCLE_HALF;
+        v.profile.begin = 0.173;
+        let (_, texts) = resize_inspector(&mut inspector, vec2(700.0, 1190.0));
+        let point = texts
+            .iter()
+            .find(|(t, _)| aurora_i18n::parse_number(t) == Some(0.173))
+            .expect("dimple begin")
+            .1
+            .center();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: Default::default(),
+        };
+        inspector.tool.out.clear();
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        inspector.show(vec![button(point, true)]);
+        let end = point + vec2(32.0, 0.0);
+        inspector.show(vec![egui::Event::PointerMoved(point + vec2(14.0, 0.0))]);
+        inspector.show(vec![egui::Event::PointerMoved(end)]);
+        inspector.show(vec![]);
+        let preview = inspector.world.objects.get(idx).unwrap().volume;
+        assert!(preview.profile.begin > 0.173);
+        assert!(
+            inspector
+                .tool
+                .out
+                .iter()
+                .all(|cmd| !matches!(cmd, NetCommand::Build(BuildCmd::SetShape { .. })))
+        );
+        inspector.show(vec![button(end, false)]);
+        inspector.show(vec![]);
+        let sent: Vec<_> = inspector
+            .tool
+            .out
+            .iter()
+            .filter_map(|cmd| match cmd {
+                NetCommand::Build(BuildCmd::SetShape { local_ids, shape, .. }) => Some((local_ids, shape)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent.len(), 1, "legacy={legacy}");
+        assert_eq!(sent[0].0, &[key.local_id]);
+        assert_eq!(sent[0].1.profile_begin, preview.to_raw().profile_begin);
     }
 }
 
@@ -3495,8 +3579,7 @@ fn typed_value_over_the_other_mixed_texture_fields_reaches_every_face() {
             let caption = match field {
                 Field::Glow => aurora_i18n::tr!("build-ui-texture-glow"),
                 Field::RepeatsPerMeter => aurora_i18n::tr!("build-ui-texture-repeats-meter"),
-                Field::Glossiness if legacy => aurora_i18n::tr!("build-legacy-glossiness"),
-                Field::Glossiness => aurora_i18n::tr!("build-ui-texture-shininess"),
+                Field::Glossiness => aurora_i18n::tr!("build-legacy-glossiness"),
                 Field::Environment => aurora_i18n::tr!("common-environment"),
                 Field::MaskCutoff => aurora_i18n::tr!("build-ui-texture-mask-cutoff"),
             };
@@ -4157,4 +4240,42 @@ fn compact_object_shape_fields_stay_inside_at_large_text_size() {
             );
         }
     }
+}
+
+#[test]
+fn one_selected_object_has_its_contents_listed_whatever_the_tab() {
+    // LLFloaterTools::refresh → LLPanelObjectInventory::refresh: a no-copy
+    // or no-transfer choice can then go into the contents at the first try.
+    use aurora_net::{NetCommand, build::BuildCmd};
+    let mut inspector = Inspector::new();
+    let idx = inspector.tool.contents_target(&inspector.world).unwrap();
+    let object = inspector.world.objects.get(idx).unwrap().full_id;
+    let asked = |tool: &BuildTool, id: uuid::Uuid| {
+        tool.out
+            .iter()
+            .filter(|c| matches!(c, NetCommand::Build(BuildCmd::RequestTaskInventory { object_id, .. }) if *object_id == id))
+            .count()
+    };
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "asked once the object is selected");
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "not again while it loads");
+    inspector.tool.on_task_inventory(&inspector.world, object, Some(1), Vec::new());
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "not again once listed");
+    // Two objects: nothing is listed until a choice needs it.
+    let other = (0..inspector.world.objects.len())
+        .find(|&i| {
+            i != idx && crate::build::root_of(&inspector.world, i) == i && inspector.world.objects.get(i).is_some_and(|o| o.pcode == 9)
+        })
+        .unwrap();
+    let other_id = inspector.world.objects.get(other).unwrap().full_id;
+    inspector
+        .tool
+        .click_select(&mut inspector.world, &inspector.settings, Some(other), true);
+    assert_eq!(inspector.tool.roots(&inspector.world).len(), 2);
+    inspector.tool.out.clear();
+    inspector.show(vec![]);
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object) + asked(&inspector.tool, other_id), 0);
 }

@@ -215,7 +215,7 @@ fn next_holder(holder: Option<egui::Id>, window: egui::Id, events: FocusEvents) 
 pub fn window(ctx: &egui::Context, id: &str, chat: bool) -> f32 {
     let window = egui::Id::unique(id);
     let holder_id = egui::Id::unique("active_window");
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let seen = window.with("opacity_seen");
     let had_keyboard = window.with("opacity_had_keyboard");
     let keyboard = super::widgets::floater_holds_keyboard(ctx, id);
