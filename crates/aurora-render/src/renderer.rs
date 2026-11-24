@@ -13171,14 +13171,17 @@ impl Backend {
         // timestamp goes to whichever pass really ends it
         let draws_selection = rg.select_faces.1 > 0 && self.selection.is_some();
         let draws_part = rg.part_faces.1 > 0 && self.part_lit && self.part.is_some() && self.part_depth.is_some();
+        let draws_fit = rg.fit_garment.1 > 0 && rg.fit_body.1 > 0 && self.fit_clip.is_some();
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds && !draws_selection && !draws_part => Some(wgpu::RenderPassTimestampWrites {
-                    query_set: &t.query_set,
-                    beginning_of_pass_write_index: None,
-                    end_of_pass_write_index: Some(1),
-                }),
+                (Some(t), Some(_)) if !draw_huds && !draws_selection && !draws_part && !draws_fit => {
+                    Some(wgpu::RenderPassTimestampWrites {
+                        query_set: &t.query_set,
+                        beginning_of_pass_write_index: None,
+                        end_of_pass_write_index: Some(1),
+                    })
+                }
                 _ => None,
             };
             // with SMAA the post pass fills its gamma-encoded input image
@@ -13252,7 +13255,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.selection_mask, rg.select_faces);
             drop(pass);
             let timestamps = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds && !draws_part => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_part && !draws_fit => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -13321,7 +13324,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.part_mask, rg.part_faces);
             drop(pass);
             let timestamps = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_fit => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -13345,7 +13348,15 @@ impl Backend {
             bind_mesh(&mut pass, &self.groups.b);
             draw(&mut pass, &self.pipelines.fit_body, rg.fit_body);
             drop(pass);
-            fit.encode(&self.device, &mut encoder, scene_target, post_depth);
+            let timestamps = match (&self.timer, timer_slot) {
+                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                    query_set: &t.query_set,
+                    beginning_of_pass_write_index: None,
+                    end_of_pass_write_index: Some(1),
+                }),
+                _ => None,
+            };
+            fit.encode(&self.device, &mut encoder, scene_target, post_depth, timestamps);
             calls.set(calls.get() + 3);
         }
 

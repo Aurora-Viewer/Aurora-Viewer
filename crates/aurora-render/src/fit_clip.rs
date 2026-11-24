@@ -216,7 +216,14 @@ impl FitClip {
 
     /// The map over `target` (the finished image, at `size`), from the
     /// coverage, the scene's depth and the garment's.
-    pub fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, depth: &wgpu::TextureView) {
+    pub fn encode(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    ) {
         // (the scene's depth view changes with the upscaler and the size:
         // a group of this frame's, two textures and a buffer)
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -253,7 +260,9 @@ impl FitClip {
                 },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            // (the frame's last pass when no HUD follows: its end closes
+            // the frame's GPU time)
+            timestamp_writes: timestamps,
             occlusion_query_set: None,
             multiview_mask: None,
         });
