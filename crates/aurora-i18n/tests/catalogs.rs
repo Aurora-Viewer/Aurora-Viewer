@@ -399,9 +399,7 @@ fn the_demo_block_list_keeps_the_server_file_format() {
 
 #[test]
 fn english_regional_locales_respect_system_and_saved_preferences() {
-    let codes: Vec<_> = aurora_i18n::available_languages()
-        .map(|(code, _)| code)
-        .collect();
+    let codes: Vec<_> = aurora_i18n::available_languages().map(|(code, _)| code).collect();
 
     for (locale, expected) in [
         ("en-US", "en"),
@@ -447,21 +445,9 @@ fn english_regional_locales_use_consistent_spelling() {
 #[test]
 fn english_regional_locales_preserve_technical_terms() {
     for locale in ["en", "en-AU", "en-GB"] {
-        assert_eq!(
-            aurora_i18n::text_in(locale, "ui-options-commands-cmd-meters"),
-            "cmd meters"
-        );
-        assert_eq!(
-            aurora_i18n::text_in(locale, "omnifilter-source-dialog"),
-            "Dialog"
-        );
-        assert_eq!(
-            aurora_i18n::text_in(locale, "common-apply"),
-            "Apply"
-        );
-        assert!(
-            aurora_i18n::text_in(locale, "favorites-empty-text")
-                .contains("Favorites folder")
-        );
+        assert_eq!(aurora_i18n::text_in(locale, "ui-options-commands-cmd-meters"), "cmd meters");
+        assert_eq!(aurora_i18n::text_in(locale, "omnifilter-source-dialog"), "Dialog");
+        assert_eq!(aurora_i18n::text_in(locale, "common-apply"), "Apply");
+        assert!(aurora_i18n::text_in(locale, "favorites-empty-text").contains("Favorites folder"));
     }
 }
