@@ -274,6 +274,17 @@ pub(super) fn finish(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: 
     }
 }
 
+/// Whether the window of a detached `block` (shown by its button) is on
+/// screen: a section with the main window, the Position / Size / Rotation
+/// block while something is selected to edit (no window at all without
+/// one, human request 2026-11-24).
+fn window_shown(tool: &BuildTool, block: Block) -> bool {
+    match block {
+        Block::Transform => !tool.selection.is_empty() && matches!(tool.main_tool(), Some(Tool::Edit | Tool::Create)),
+        _ => tool.main_tool() == Some(Tool::Edit),
+    }
+}
+
 fn default_size(tool: &BuildTool, block: Block) -> Vec2 {
     let height = match block {
         Block::Transform => tool.ui.transform_height.unwrap_or(190.0) + 18.0,
@@ -305,11 +316,8 @@ pub(super) fn windows(
     let blocks: Vec<Block> = s.detached.iter().filter(|(_, shown)| **shown).map(|(block, _)| *block).collect();
     let mut reattach = None;
     for block in blocks {
-        let shown = match block {
-            Block::Transform => matches!(tool.main_tool(), Some(Tool::Edit | Tool::Create)),
-            _ => tool.main_tool() == Some(Tool::Edit),
-        };
-        if !shown {
+        if !window_shown(tool, block) {
+            tool.ui.detach_press.remove(&block);
             continue;
         }
         let id = floater_id(block);
@@ -416,12 +424,9 @@ fn body(
     block: Block,
 ) -> Option<f32> {
     let Some(tab) = block.tab() else {
-        if tool.selection.is_empty() {
-            common::small(ui, p, aurora_i18n::tr!("build-ui-tools-nothing-selected"));
-        } else {
-            let arrange = super::object::TransformArrange::for_width(ui.available_width());
-            super::object::show_transform_arranged(ui, p, tool, world, s, mods, arrange, false);
-        }
+        // (only shown with a selection: `window_shown`)
+        let arrange = super::object::TransformArrange::for_width(ui.available_width());
+        super::object::show_transform_arranged(ui, p, tool, world, s, mods, arrange, false);
         return None;
     };
     let width = widgets::scrolled_width(ui).max(1.0);
@@ -474,6 +479,21 @@ mod tests {
         assert!(tool.ui.detached_shown.is_empty(), "a section shows with the main window only");
         hide(&mut tool);
         assert!(tool.ui.detached_tabs.is_empty() && tool.ui.detached_shown.is_empty());
+    }
+
+    #[test]
+    fn the_detached_transform_block_shows_only_while_something_is_selected() {
+        let mut tool = BuildTool::default();
+        tool.open_build(Tool::Edit);
+        assert!(!window_shown(&tool, Block::Transform), "nothing selected: no window, no message");
+        assert!(window_shown(&tool, Block::General), "a section shows its own empty state");
+        tool.selection.push(crate::world::objects::ObjKey { region: 1, local_id: 7 });
+        assert!(window_shown(&tool, Block::Transform));
+        tool.main_open = false;
+        assert!(!window_shown(&tool, Block::Transform), "with the main window only");
+        tool.main_open = true;
+        tool.selection.clear();
+        assert!(!window_shown(&tool, Block::Transform), "hidden again once the selection is gone");
     }
 
     #[test]
