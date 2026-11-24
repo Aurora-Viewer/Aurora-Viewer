@@ -9,6 +9,10 @@ use aurora_llsd::{Llsd, llsd_map};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// How long a batch's read-back may take, well under the viewer's own wait
+/// for its answer (Auto-sort's two minutes).
+const READ_BACK_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[derive(Debug, Clone)]
 pub struct CopyItem {
     pub item: Uuid,
@@ -86,6 +90,35 @@ pub enum UdpEdit {
     RemoveItem(Uuid),
     RemoveFolder(Uuid),
     Purge(Uuid),
+}
+
+/// Items read back fifty to a `FetchInventory2` request, one request at a
+/// time (LLInventoryModel::fetchItemHttp): a batch of two hundred moves is
+/// four requests, never two hundred.
+/// Also returns the items a successful answer left out (never those of a
+/// request that failed: a busy server is waited for, not given up on).
+async fn read_items_in_bulk(http: &reqwest::Client, fetch: &str, owner: Uuid, ids: &[Uuid]) -> (super::ais::ItemReads, Vec<Uuid>) {
+    let mut reads = super::ais::ItemReads::default();
+    let mut omitted = Vec::new();
+    for chunk in ids.chunks(50) {
+        let body = super::fetch_items_body(chunk, owner);
+        match crate::caps::post_llsd_as(http, fetch, &body, crate::probe::HttpKind::Inventory).await {
+            Ok(answer) => {
+                let read = super::item_reads(&answer, chunk);
+                reads.items.extend(read.items);
+                // left out of an answer is weaker than a 404: read again,
+                // never taken as deleted (the batch would count it done)
+                omitted.extend_from_slice(&read.missing);
+                reads.failed.extend(read.missing);
+                reads.failed.extend(read.failed);
+            }
+            Err(error) => {
+                log::warn!("auto-sort read-back: {error}");
+                reads.failed.extend_from_slice(chunk);
+            }
+        }
+    }
+    (reads, omitted)
 }
 
 /// Waits until a folder made over the circuit shows in its parent. The
@@ -279,6 +312,15 @@ pub struct Mutation {
     /// Interactive inventory commands can display AIS-created folders before
     /// fetching their contents. Dependent construction jobs keep readback.
     pub defer_folder_contents: bool,
+    /// A batch of new folders and moves (Auto-sort): each moved entry is
+    /// read back by itself (AIS item and category records), never its
+    /// destination's whole contents, which grow to thousands of entries over
+    /// a large run and would be sent again with every batch.
+    pub confirm_each: bool,
+    /// The `FetchInventory2` capability, set by the session for a
+    /// `confirm_each` batch: its items are read back fifty to a request
+    /// (LLInventoryModel::fetchItemHttp), not one request each.
+    pub confirm_with: Option<String>,
 }
 
 impl Mutation {
@@ -301,6 +343,14 @@ pub struct Reply {
     pub copies: Vec<CopyItem>,
     pub removed: Vec<Uuid>,
     pub created: HashMap<Uuid, Uuid>,
+    /// The moved entries as the server now has them (`confirm_each`), for
+    /// the inventory to place them without reading their folders.
+    pub moved_items: Vec<super::InvItem>,
+    pub moved_folders: Vec<super::InvFolder>,
+    /// Moves of a `confirm_each` batch the server did not show at their
+    /// destination: the batch is answered with what it read (the server's
+    /// records, applied as they are) and these are not counted as done.
+    pub unconfirmed: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -471,7 +521,13 @@ where
     EFut: std::future::Future<Output = Result<(), String>>,
     P: FnMut(Progress),
 {
-    if change.operations.len() > 2048 || change.copies.len() > 2048 || change.refresh.is_empty() {
+    // (a delete-only change may read nothing back: a long purge's pieces
+    // are settled by their own answers, never by reading the huge folder
+    // they empty)
+    let deletes_only = !change.operations.is_empty()
+        && change.copies.is_empty()
+        && change.operations.iter().all(|op| matches!(op, Operation::Delete { .. }));
+    if change.operations.len() > 2048 || change.copies.len() > 2048 || change.refresh.is_empty() && !deletes_only {
         return Err(aurora_i18n::tr!("inventory-operations-the-selection-is-empty-or-too-large").into());
     }
     let cap = cap.trim_end_matches('/');
@@ -610,7 +666,30 @@ where
             }
             Operation::Delete { id, folder } => {
                 let kind = if *folder { "category" } else { "item" };
-                ais(http.delete(format!("{cap}/{kind}/{id}")), &Llsd::new_map(), step).await?;
+                // (already gone, 410 GONE: the delete is done, as
+                // llaisapi.cpp's AISAPI::InvokeAISCommandCoro takes it. A
+                // piece of a long purge whose answer was lost, or that failed
+                // after deleting part of it, is sent again and settles at
+                // once. A 404 is no proof: a capability gone stale after a
+                // teleport answers it too)
+                match crate::outfits::send_detailed(http.delete(format!("{cap}/{kind}/{id}")), &Llsd::new_map()).await {
+                    Err(refusal) if refusal.status == Some(410) => {
+                        log::debug!("inventory delete of {kind} {id}: already gone");
+                    }
+                    Err(refusal) => {
+                        log::warn!(
+                            "inventory operation {}/{} ({}) failed: HTTP {}, error_code={:?}, error_description={:?}",
+                            step.0 + 1,
+                            step.1,
+                            describe(step.2),
+                            refusal.status.map_or_else(|| "no reply".into(), |s| s.to_string()),
+                            refusal.code,
+                            refusal.description,
+                        );
+                        return Err(refusal.message);
+                    }
+                    Ok(_) => {}
+                }
             }
             Operation::Purge(id) => {
                 ais(http.delete(format!("{cap}/category/{id}/children")), &Llsd::new_map(), step).await?;
@@ -642,6 +721,9 @@ where
             copies,
             removed: change.removed,
             created,
+            moved_items: Vec::new(),
+            moved_folders: Vec::new(),
+            unconfirmed: Vec::new(),
         });
     }
     progress(Progress {
@@ -649,6 +731,108 @@ where
         completed: 0,
         total: refresh.len(),
     });
+    // Auto-sort's batches: each moved entry read back by itself
+    if change.confirm_each
+        && udp.is_none()
+        && change.operations.iter().all(|op| {
+            matches!(op, Operation::Folder { .. })
+                || matches!(op, Operation::Patch { body, .. } if body.as_map().is_some_and(|m| m.len() == 1 && m.contains_key("parent_id")))
+        })
+    {
+        let expected: Vec<(Uuid, bool, Uuid)> = change
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                Operation::Patch { id, folder, body } => {
+                    Some((resolve(&created, *id), *folder, resolve(&created, body["parent_id"].as_uuid())))
+                }
+                _ => None,
+            })
+            .collect();
+        let wanted: HashMap<Uuid, Uuid> = expected.iter().map(|(id, _, parent)| (*id, *parent)).collect();
+        let mut items: Vec<Uuid> = expected.iter().filter(|(_, folder, _)| !folder).map(|(id, _, _)| *id).collect();
+        let mut moved: Vec<Uuid> = expected.iter().filter(|(_, folder, _)| *folder).map(|(id, _, _)| *id).collect();
+        // the server's latest record of each entry read, placed or not: the
+        // inventory takes them as they are (an entry still in its folder is
+        // shown there again, never left where it was only sent)
+        let mut item_records: HashMap<Uuid, super::InvItem> = HashMap::new();
+        let mut folder_records: HashMap<Uuid, super::InvFolder> = HashMap::new();
+        // (the whole read-back ends well before the viewer gives the batch
+        // up, so its answer always settles the batch; what is not read by
+        // then is answered as unconfirmed)
+        let deadline = tokio::time::Instant::now() + READ_BACK_LIMIT;
+        // (an item a FetchInventory2 answer leaves out twice is given up:
+        // deleted meanwhile, or not readable there; never retried for half
+        // a minute)
+        let mut omitted: HashMap<Uuid, u32> = HashMap::new();
+        let mut given_up: Vec<Uuid> = Vec::new();
+        for attempt in 0..=5u32 {
+            // (items and folders each within the deadline: what one read
+            // gave is kept when the other runs out of time)
+            let items_read = async {
+                match change.confirm_with.as_deref() {
+                    Some(fetch) => read_items_in_bulk(http, fetch, owner, &items).await,
+                    None => (super::ais::read_items(http, cap, owner, &items).await, Vec::new()),
+                }
+            };
+            let Ok((mut read_items, left_out)) = tokio::time::timeout_at(deadline, items_read).await else {
+                log::warn!("inventory: the read-back of a move ran out of time");
+                break;
+            };
+            let read_folders = match tokio::time::timeout_at(deadline, super::ais::read_folders(http, cap, &moved)).await {
+                Ok(read) => read,
+                Err(_) => {
+                    log::warn!("inventory: the read-back of a move ran out of time");
+                    for it in read_items.items {
+                        item_records.insert(it.id, it);
+                    }
+                    break;
+                }
+            };
+            // (an AIS read's 404 is no proof a moved item is gone, a stale
+            // capability answers it too: read again, never counted as done)
+            read_items.failed.extend(std::mem::take(&mut read_items.missing));
+            // a read the server did not answer (busy, throttled): the next
+            // attempt waits longer, never hammering it
+            let refused = !read_items.failed.is_empty() || read_folders.len() < moved.len();
+            for it in read_items.items {
+                item_records.insert(it.id, it);
+            }
+            for f in read_folders {
+                folder_records.insert(f.id, f);
+            }
+            for id in &left_out {
+                *omitted.entry(*id).or_default() += 1;
+            }
+            // only what is not placed yet is read again
+            items.retain(|id| item_records.get(id).is_none_or(|it| Some(&it.parent) != wanted.get(id)));
+            moved.retain(|id| folder_records.get(id).is_none_or(|f| Some(&f.parent) != wanted.get(id)));
+            given_up.extend(items.iter().copied().filter(|id| omitted.get(id).is_some_and(|n| *n >= 2)));
+            items.retain(|id| omitted.get(id).is_none_or(|n| *n < 2));
+            if items.is_empty() && moved.is_empty() || attempt == 5 {
+                break;
+            }
+            // a move can show a moment after its request: read again, never
+            // write again
+            let pause = std::time::Duration::from_millis(if refused { 1000 } else { 200 } << attempt.min(3));
+            if tokio::time::Instant::now() + pause >= deadline {
+                break;
+            }
+            tokio::time::sleep(pause).await;
+        }
+        return Ok(Reply {
+            contents: Vec::new(),
+            folders,
+            moves_queued: false,
+            refresh,
+            copies,
+            removed: change.removed,
+            created,
+            moved_items: item_records.into_values().collect(),
+            moved_folders: folder_records.into_values().collect(),
+            unconfirmed: items.into_iter().chain(moved).chain(given_up).collect(),
+        });
+    }
     let mut contents = Vec::new();
     let favorite_changed = change
         .operations
@@ -733,6 +917,9 @@ where
         copies,
         removed: change.removed,
         created,
+        moved_items: Vec::new(),
+        moved_folders: Vec::new(),
+        unconfirmed: Vec::new(),
     })
 }
 
@@ -1339,6 +1526,90 @@ mod tests {
             requests
         });
         (url, task)
+    }
+
+    /// A `confirm_each` batch (Auto-sort's) reads back each moved entry by
+    /// itself: the moved item and the moved folder, never a destination's
+    /// whole contents (no FetchInventoryDescendents2 request at all).
+    #[tokio::test]
+    async fn a_confirm_each_batch_reads_back_only_what_it_moved() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("test server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let mut lines = Vec::new();
+            // one read of the item and one of the folder
+            for _ in 0..2 {
+                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                    .await
+                    .expect("request timeout")
+                    .expect("request");
+                let mut bytes = Vec::new();
+                loop {
+                    let mut chunk = [0u8; 4096];
+                    let n = socket.read(&mut chunk).await.expect("read");
+                    bytes.extend_from_slice(&chunk[..n]);
+                    if n == 0 || bytes.windows(4).any(|b| b == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let line = String::from_utf8_lossy(&bytes).lines().next().unwrap_or_default().to_owned();
+                let reply = if line.contains("/item/") {
+                    llsd_map! {
+                        "item_id" => id(10), "parent_id" => id(20), "type" => 6, "inv_type" => 6,
+                        "asset_id" => id(11), "name" => "Chair",
+                        "permissions" => llsd_map! { "owner_id" => id(2), "owner_mask" => 0x7fffffff }
+                    }
+                } else {
+                    llsd_map! { "category_id" => id(30), "parent_id" => id(20), "name" => "Box", "type_default" => -1, "version" => 3 }
+                };
+                let body = aurora_llsd::to_xml(&reply);
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(header.as_bytes()).await.expect("header");
+                socket.write_all(&body).await.expect("body");
+                crate::test_http::finish(socket);
+                lines.push(line);
+            }
+            lines
+        });
+        let change = Mutation {
+            operations: vec![
+                Operation::Patch {
+                    id: id(10),
+                    folder: false,
+                    body: llsd_map! { "parent_id" => id(20) },
+                },
+                Operation::Patch {
+                    id: id(30),
+                    folder: true,
+                    body: llsd_map! { "parent_id" => id(20) },
+                },
+            ],
+            refresh: vec![id(20)],
+            confirm_each: true,
+            ..Default::default()
+        };
+        let http = reqwest::Client::new();
+        let reply = mutate_with_moves(&http, &url, &format!("{url}/fetch"), id(2), change, |_| async { Ok(()) })
+            .await
+            .expect("confirmed");
+        let lines = server.await.expect("server");
+        assert!(lines.iter().all(|l| l.starts_with("GET ")), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("/item/")) && lines.iter().any(|l| l.contains("/category/")));
+        assert!(!lines.iter().any(|l| l.contains("/fetch")), "no folder read again");
+        assert!(reply.unconfirmed.is_empty(), "every move seen at its place");
+        assert!(reply.contents.is_empty());
+        assert_eq!(
+            reply.moved_items.iter().map(|it| (it.id, it.parent)).collect::<Vec<_>>(),
+            vec![(id(10), id(20))]
+        );
+        assert_eq!(
+            reply.moved_folders.iter().map(|f| (f.id, f.parent)).collect::<Vec<_>>(),
+            vec![(id(30), id(20))]
+        );
     }
 
     fn firestorm_embedded_headers(data: &[u8]) -> bool {

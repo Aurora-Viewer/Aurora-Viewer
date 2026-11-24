@@ -346,6 +346,9 @@ mod tests {
             ..item.clone()
         });
         Reply {
+            moved_items: Vec::new(),
+            moved_folders: Vec::new(),
+            unconfirmed: Vec::new(),
             contents: vec![FolderContents {
                 folder_id: cof,
                 owner_id: world.agent_id,

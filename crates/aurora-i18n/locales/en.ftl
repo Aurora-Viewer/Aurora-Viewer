@@ -14971,6 +14971,417 @@ inventory-bulk-adjust = Adjust item permissions
 inventory-bulk-reading = Reading selected folders and subfolders…
 inventory-bulk-load-failed = Could not read all selected folders. No permissions were changed. Try again.
 inventory-bulk-unchanged = No eligible item needs a permission update.
+inventory-sorter-title = Auto-sort
+inventory-sorter-menu = Auto-sort…
+inventory-sorter-base = Sort into
+inventory-sorter-base-hint = A folder at the root of My Inventory
+inventory-sorter-folders = Sort folders too, each as a whole (unpacked deliveries)
+inventory-sorter-rules = My rules
+inventory-sorter-rule-add = Add a rule
+inventory-sorter-rule-remove = Remove this rule
+inventory-sorter-preview = Where everything goes
+inventory-sorter-not-recognised = Not recognised, stays in place
+inventory-sorter-moves = { $count ->
+    [one] 1 entry to move
+   *[other] { $count } entries to move
+    }
+inventory-sorter-unpackers = { $count ->
+    [one] including 1 unpacker
+   *[other] including { $count } unpackers
+    }
+inventory-sorter-kept = { $count ->
+    [one] 1 worn, linked or locked entry stays in place
+   *[other] { $count } worn, linked or locked entries stay in place
+    }
+inventory-sorter-loading = Loading the folder…
+inventory-sorter-nothing = Nothing to sort in this folder.
+inventory-sorter-start = { $count ->
+    [one] Sort 1 entry
+   *[other] Sort { $count } entries
+    }
+inventory-sorter-progress = Sorting: { $done } of { $total }
+inventory-sorter-done = { $count ->
+    [one] 1 entry sorted.
+   *[other] { $count } entries sorted.
+    }
+inventory-sorter-default-base = Sorted
+inventory-sorter-several-bodies = Several bodies
+inventory-sorter-tattoos = Tattoos
+inventory-sorter-skins = Skins
+inventory-sorter-makeup = Makeup
+inventory-sorter-hair = Hair
+inventory-sorter-eyes = Eyes
+inventory-sorter-nails = Nails
+inventory-sorter-shoes = Shoes
+inventory-sorter-stockings = Stockings & socks
+inventory-sorter-lingerie = Lingerie
+inventory-sorter-swimwear = Swimwear
+inventory-sorter-bodysuits = Bodysuits
+inventory-sorter-dresses = Dresses
+inventory-sorter-skirts = Skirts
+inventory-sorter-pants = Pants
+inventory-sorter-shorts = Shorts
+inventory-sorter-jackets = Jackets & coats
+inventory-sorter-tops = Tops
+inventory-sorter-sleepwear = Robes & sleepwear
+inventory-sorter-gloves = Gloves
+inventory-sorter-jewelry = Jewelry
+inventory-sorter-accessories = Accessories
+inventory-sorter-body-addons = Body add-ons
+inventory-sorter-shapes = Shapes
+inventory-sorter-animations = Animations & poses
+inventory-sorter-furniture = Furniture
+inventory-sorter-decor = Decor
+inventory-sorter-outfits = Outfits & sets
+inventory-sorter-landmarks = Landmarks
+inventory-sorter-notecards = Notecards
+inventory-sorter-scripts = Scripts
+inventory-sorter-sounds = Sounds
+inventory-sorter-textures = Textures
+inventory-sorter-environment = Environment
+inventory-sorter-materials = Materials
+inventory-sorter-animated-objects = Animated objects
+inventory-sorter-gestures = Gestures
+inventory-sorter-intro = Moves loose items and folders into folders by body and by kind, read from their names. Nothing is copied, renamed or changed: entries only move.
+inventory-sorter-rules-hint = Your rules come first, from the top: the first one that matches a name decides where it goes.
+inventory-sorter-rule-words = When the name has
+inventory-sorter-rule-folder = Folder path, such as Home/Chairs
+inventory-sorter-menu-entries = Auto-sort
+inventory-sorter-undo-stays = { $count ->
+    [one] 1 entry stays where it is: moved on by hand, gone, or in a place Auto-sort may not touch.
+   *[other] { $count } entries stay where they are: moved on by hand, gone, or in a place Auto-sort may not touch.
+    }
+inventory-sorter-undo-nothing = Nothing of the last runs can be put back: their entries were moved on by hand, are gone, or are in places Auto-sort may not touch.
+inventory-sorter-undo-loading = Loading the folders the last runs moved things into; the Undo preview opens once they are loaded.
+inventory-sorter-busy-elsewhere = Auto-sort is already running in another inventory window: wait for it to finish there.
+inventory-sorter-history-loading = Auto-sort's history is still being read; try again in a moment.
+inventory-sorter-trash-gone = (no longer in the inventory)
+inventory-sorter-trash-more = …and { $count } more
+inventory-sorter-vocab-title = Vocabulary check
+inventory-sorter-vocab-summary = { $ok } of { $total } names sort as expected
+inventory-sorter-vocab-name = Name
+inventory-sorter-vocab-expected = Expected
+inventory-sorter-vocab-got = Result
+inventory-sorter-vocab-stays = (stays)
+inventory-sorter-menu-creator = Auto-sort by this creator
+inventory-sorter-by-creator = By { $name }
+inventory-sorter-creator-unknown = an unknown creator
+inventory-sorter-hint-store-optional = Store folder (optional)
+inventory-sorter-hint-store-optional-tip = Leave empty to use the store name read from the item names (when Sort by store is on); type one to put this creator's items in that store folder.
+inventory-sorter-open = Auto-sort: file loose items into folders by body and kind
+inventory-sorter-source = Folder to sort
+inventory-sorter-selection = { $count ->
+    [one] 1 selected entry
+   *[other] { $count } selected entries
+    }
+inventory-sorter-change = Change…
+inventory-sorter-options = Options
+inventory-sorter-rule-enabled = Use this rule
+inventory-sorter-rule-number = Rule { $n }
+inventory-sorter-rule-up = Move up: tried earlier
+inventory-sorter-rule-down = Move down: tried later
+inventory-sorter-rule-words-hint = Words, such as chair black
+inventory-sorter-match-all = All the words
+inventory-sorter-match-any = Any word
+inventory-sorter-match-phrase = Exact phrase
+inventory-sorter-rule-to = Move it to
+inventory-sorter-to-new = A folder in the sort folder
+inventory-sorter-to-mine = One of my folders
+inventory-sorter-folder-missing = This folder no longer exists
+inventory-sorter-rule-incomplete = Add words and a destination to use this rule.
+inventory-sorter-pick-title = Choose a folder
+inventory-sorter-pick-search = Search folders
+inventory-sorter-heads = Heads
+inventory-sorter-huds = HUDs
+inventory-sorter-vehicles = Vehicles
+inventory-sorter-pets = Pets
+inventory-sorter-pre-trash = Pre-Trash
+inventory-sorter-variant-squish = Squish
+inventory-sorter-stores = Stores
+inventory-sorter-by-store = A folder per store
+inventory-sorter-by-store-hint = Reads the store from the creator's tag ([Store] +, *Store*, Store - …) and files below the category, such as Furniture / Store.
+inventory-sorter-excluded = Folders never touched
+inventory-sorter-excluded-hint = Auto-sort takes nothing from these folders or from anything inside them. The Trash and Marketplace Listings are never touched anyway.
+inventory-sorter-exclude-add = Add a folder…
+inventory-sorter-exclude-remove = Remove from the list
+inventory-sorter-own = My folders
+inventory-sorter-own-hint = A whole-inventory sort opens these folders and sorts what is inside, even when their name looks like a product’s (Hair Collection, Lingerie Drawer). They are never moved whole: sorting a folder that holds one leaves it where it is. Default and protected folders cannot be listed.
+inventory-sorter-own-add = Add a folder…
+inventory-sorter-own-remove = Remove from the list
+inventory-sorter-own-refused = { $path } (not used: no longer one of your own folders)
+inventory-sorter-whole = Whole inventory
+inventory-sorter-whole-tip = Sort the loose items of My Inventory, Objects and your own folders
+inventory-sorter-whole-intro = Sorts the loose items of My Inventory, the contents of Objects and of your own folders, and the default folders you allowed in Options; deliveries move whole, never opened. Never touched: the other default folders (Clothing, Body Parts, Landmarks…), Lost and Found unless its switch is on, outfits, the Trash, Marketplace, Received Items, #RLV, #Firestorm, #Aurora and Animation Overrides (other # folders are your own), excluded and locked folders.
+inventory-sorter-whole-title = Sort the whole inventory?
+inventory-sorter-whole-text = { $count ->
+    [one] 1 entry from across your inventory will move into the sort folders. Folders move as a whole and nothing is deleted.
+   *[other] { $count } entries from across your inventory will move into the sort folders. Folders move as a whole and nothing is deleted, but putting them back by hand takes a while.
+    }
+inventory-sorter-whole-check = I checked the preview and want to sort my whole inventory
+inventory-sorter-to-pre-trash = Pre-Trash
+inventory-sorter-rule-pre-trash-hint = Checks everything in the folder you sort, sorted or not, at any depth. Matches wait in Pre-Trash until you confirm.
+inventory-sorter-rule-pre-trash-unsorted-hint = Checks everything in the folder you sort, at any depth, except the { $folder } folder. Matches wait in Pre-Trash until you confirm.
+inventory-sorter-look-in = Look in
+inventory-sorter-rule-inside-deliveries = Match only items, including those inside deliveries
+inventory-sorter-look-all = Everywhere
+inventory-sorter-look-unsorted = Everywhere except Sorted
+inventory-sorter-pre-trash-waiting = { $count ->
+    [one] 1 entry waits in Pre-Trash
+   *[other] { $count } entries wait in Pre-Trash
+    }
+inventory-sorter-pre-trash-hint = Open the Pre-Trash folder in your inventory and move out what you want to keep. The rest goes to the Trash when you confirm.
+inventory-sorter-pre-trash-loading = Pre-Trash is still loading: the button is ready once all it holds is known.
+inventory-sorter-pre-trash-empty = Move to Trash
+inventory-sorter-pre-trash-title = Move Pre-Trash to the Trash?
+inventory-sorter-pre-trash-text = { $count ->
+    [one] 1 entry of the Pre-Trash folder goes to the Trash. You can still take it back from the Trash until it is emptied.
+   *[other] { $count } entries of the Pre-Trash folder go to the Trash. You can still take them back from the Trash until it is emptied.
+    }
+inventory-cleanup-tab = Clean up
+inventory-cleanup-intro = Send everything acquired before a date to Pre-Trash, or to the Trash. A delivery folder is never split: it goes whole, or stays whole.
+inventory-cleanup-when = Acquired before
+inventory-cleanup-age-1 = Older than 1 year
+inventory-cleanup-age-2 = 2 years
+inventory-cleanup-age-3 = 3 years
+inventory-cleanup-age-5 = 5 years
+inventory-cleanup-age-custom = Custom
+inventory-cleanup-before = Acquired before { $date }
+inventory-cleanup-date = { $day } { $month } { $year }
+inventory-cleanup-month-1 = January
+inventory-cleanup-month-2 = February
+inventory-cleanup-month-3 = March
+inventory-cleanup-month-4 = April
+inventory-cleanup-month-5 = May
+inventory-cleanup-month-6 = June
+inventory-cleanup-month-7 = July
+inventory-cleanup-month-8 = August
+inventory-cleanup-month-9 = September
+inventory-cleanup-month-10 = October
+inventory-cleanup-month-11 = November
+inventory-cleanup-month-12 = December
+inventory-cleanup-types = Types
+inventory-cleanup-all = All
+inventory-cleanup-none = None
+inventory-cleanup-kind-objects = Objects
+inventory-cleanup-kind-clothing = Clothing
+inventory-cleanup-kind-body-parts = Body parts
+inventory-cleanup-kind-notecards = Notecards
+inventory-cleanup-kind-landmarks = Landmarks
+inventory-cleanup-kind-textures = Textures and snapshots
+inventory-cleanup-kind-scripts = Scripts
+inventory-cleanup-kind-sounds = Sounds
+inventory-cleanup-kind-animations = Animations
+inventory-cleanup-kind-gestures = Gestures
+inventory-cleanup-kind-materials = Materials and settings
+inventory-cleanup-kind-calling-cards = Calling cards
+inventory-cleanup-where = Where
+inventory-cleanup-whole = Whole inventory
+inventory-cleanup-this-folder = This folder
+inventory-cleanup-include-sorted = Include the { $folder } folder
+inventory-cleanup-never = Never touched: the default folders other than Objects (unless you allowed them in Options), Lost and Found unless its switch is on, the Trash, Marketplace, the Library, outfits, Favorites, Received Items, #RLV, #Firestorm, #Aurora, Animation Overrides, excluded and locked folders, worn items and links.
+inventory-cleanup-loading = { $count ->
+    [one] Loading 1 folder…
+   *[other] Loading { $count } folders…
+    }
+inventory-cleanup-summary = { $count ->
+    [one] 1 item acquired before { $date }
+   *[other] { $count } items acquired before { $date }
+    }
+inventory-cleanup-nothing = Nothing of these types was acquired before { $date }.
+inventory-cleanup-folders = Folders, taken whole
+inventory-cleanup-folder-items = { $count ->
+    [one] 1 item
+   *[other] { $count } items
+    }
+inventory-cleanup-more = { $count ->
+    [one] …and 1 more
+   *[other] …and { $count } more
+    }
+inventory-cleanup-keep-tip = Uncheck to keep it
+inventory-cleanup-to-pre-trash = { $count ->
+    [one] Move 1 to Pre-Trash
+   *[other] Move { $count } to Pre-Trash
+    }
+inventory-cleanup-to-trash = { $count ->
+    [one] Move 1 to Trash…
+   *[other] Move { $count } to Trash…
+    }
+inventory-cleanup-trash-title = Move to the Trash?
+inventory-cleanup-trash-text = { $count ->
+    [one] 1 entry goes to the Trash. It stays recoverable there until the Trash is emptied.
+   *[other] { $count } entries go to the Trash. They stay recoverable there until the Trash is emptied.
+    }
+inventory-cleanup-trash-progress = Moving to the Trash: { $done } / { $total }
+inventory-cleanup-trash-done = { $count ->
+    [one] 1 entry moved to the Trash
+   *[other] { $count } entries moved to the Trash
+    }
+inventory-sorter-kinds = Types to sort
+inventory-sorter-kinds-hint = Unticked types stay where they are. A right-click on an item sorts it whatever its type.
+inventory-sorter-hints = Store hints
+inventory-sorter-hints-hint = For stores whose names don't say what they sell: their items go to the category you choose.
+inventory-sorter-hint-store = Store name
+inventory-sorter-hint-remove = Remove this hint
+inventory-sorter-hint-add = Add a store hint
+inventory-cleanup-empty-folders = Include empty folders
+inventory-purge-hint = For a folder too large to empty at once (the server refuses it): deleted for good a few entries at a time, paced, with Pause and Stop.
+inventory-purge-trash-name = Trash
+inventory-purge-steps = Empty { $folder } in small steps ({ $count })
+inventory-purge-loading = Loading { $folder } first…
+inventory-purge-title = Delete everything in { $folder } for good?
+inventory-purge-text = { $count ->
+    [one] 1 entry in { $folder } will be deleted permanently. This cannot be undone.
+   *[other] { $count } entries in { $folder } will be deleted permanently, a few at a time. This cannot be undone.
+}
+inventory-purge-go = Delete for good
+inventory-purge-progress = Deleting for good: { $done } / { $total }
+inventory-purge-done = { $count } deleted for good, { $failed } left (refused, or in folders that could not be read).
+inventory-purge-unreadable = { $folder } could not be read: try again later
+inventory-purge-refused = The server refused 20 pieces in a row: stopped after { $count } deleted for good, { $failed } left. Try again later.
+inventory-purge-stopped = Stopped: { $count } deleted for good, { $failed } left.
+inventory-purge-worn = { $folder } holds a worn item: take it off first.
+inventory-cleanup-locked = { $count ->
+    [one] 1 item in locked default folders (Clothing, Body Parts…) is not looked at.
+   *[other] { $count } items in locked default folders (Clothing, Body Parts…) are not looked at.
+}
+inventory-cleanup-locked-options = Unlock in Options
+inventory-cleanup-find-old = Old items
+inventory-cleanup-find-duplicates = Duplicates
+inventory-cleanup-duplicates-intro = Find the items you hold more than once. One copy of each stays where it is (one already in your sorted or own folders first, else the oldest); the others go to Pre-Trash for you to look at. Nothing is deleted.
+inventory-cleanup-duplicates-no-copy = Include no-copy items (gacha doubles kept to trade are left by default)
+inventory-cleanup-duplicates-landmarks = Include loose landmarks (never those inside a delivery)
+inventory-cleanup-duplicates-notecards = Include loose notecards (never those inside a delivery)
+inventory-cleanup-duplicates-whole-hint = A delivery is never opened: only a second identical delivery goes, whole. Looked for: objects, clothing, body parts, gestures and animations.
+inventory-cleanup-duplicates-nothing = No item of these types is held more than once.
+inventory-cleanup-duplicates-summary = { $count ->
+    [one] 1 extra copy of { $items } items
+   *[other] { $count } extra copies of { $items } items
+}
+inventory-cleanup-find-demos = Demos
+inventory-cleanup-demos-intro = Find the demo copies stores give to try things on (a name with the word DEMO, never Demon). They go to Pre-Trash for you to look at; a demo folder goes whole. Nothing is deleted.
+inventory-cleanup-demos-nothing = No demo of these types found.
+inventory-cleanup-demos-summary = { $count ->
+    [one] 1 demo ({ $items } items)
+   *[other] { $count } demos ({ $items } items)
+}
+inventory-cleanup-empty-group = Empty folders
+inventory-cleanup-empty-summary = { $count ->
+    [one] One empty folder selected
+   *[other] { $count } empty folders selected
+    }
+inventory-cleanup-empty-nothing = No empty folders found.
+inventory-cleanup-empty-intro = Find folders with no items at any depth and move the selected folders to Pre-Trash.
+inventory-share-section = Share my settings
+inventory-share-section-hint = Hand your rules, store hints and options to someone else as text, for a notecard or a chat.
+inventory-share-open = Share…
+inventory-import-open = Import…
+inventory-share-title = Share Auto-sort settings
+inventory-share-hint = Untick what you want to keep to yourself. Rules to your own folders and excluded folders are never shared.
+inventory-share-private = Only in your inventory
+inventory-share-my-folder = my folder
+inventory-share-base = Sort folder name: { $name }
+inventory-share-copy = Copy to clipboard
+inventory-share-copied = Copied. Paste it in a notecard or a chat.
+inventory-import-title = Import Auto-sort settings
+inventory-import-hint = Paste the shared text here (Ctrl+V), then tick what you want.
+inventory-import-nothing = No Auto-sort settings found in this text.
+inventory-import-changes = { $count ->
+    [one] This file changes 1 of your defaults
+   *[other] This file changes { $count } of your defaults
+    }
+inventory-import-pre-trash = sends to Pre-Trash
+inventory-import-folders = Sort folders too
+inventory-import-none = none
+inventory-import-skipped = { $count ->
+    [one] 1 line could not be read and was skipped
+   *[other] { $count } lines could not be read and were skipped
+    }
+inventory-import-already = already in yours
+inventory-import-add = Add to mine
+inventory-import-replace = Replace mine
+inventory-import-done = Imported.
+inventory-import-replace-title = Replace your rules and store hints?
+inventory-import-replace-text = Your rules and store hints that are not in this text are removed, and the ticked rules, hints and options are added. Your rules to your own folders and your excluded folders stay.
+inventory-sorter-kept-worn = Stays: worn, or holds something worn
+inventory-sorter-kept-link = Stays: links (they belong to their folder)
+inventory-sorter-kept-locked = Stays: in a locked folder
+inventory-sorter-kept-excluded = Stays: in an excluded folder
+inventory-sorter-kept-own = Stays: My folders and the folders holding one, never moved whole
+inventory-sorter-kept-protected = Stays: system and protected folders
+inventory-sorter-kept-loading = Stays for now: folders still loading (they move once loaded)
+inventory-sorter-kept-unreadable = Stays: a folder inside could not be read, so it never moves whole
+inventory-sorter-kept-delivery = Stays inside delivery folders
+inventory-sorter-done-skipped = { $count } sorted; { $skipped ->
+        [one] { $skipped } skipped because it changed since the preview.
+       *[other] { $skipped } skipped because they changed since the preview.
+    }
+inventory-sorter-retrying = { $error } (trying again, attempt { $attempt })
+inventory-sorter-done-failed = { $count } sorted; { $skipped } skipped (changed since the preview); { $failed ->
+        [one] { $failed } refused by the server and left in place.
+       *[other] { $failed } refused by the server and left in place.
+    }
+inventory-sorter-paused = Paused: { $done } / { $total }
+inventory-sorter-eta = about { $minutes } min left
+inventory-sorter-pause = Pause
+inventory-sorter-resume = Resume
+inventory-sorter-undo-source = Undo of the last run
+inventory-sorter-resume-source = The run that was stopped
+inventory-sorter-snapshot-source = The layout of { $date }
+inventory-sorter-undo-section = Undo and snapshots
+inventory-sorter-undo-hint = Every run is remembered and a snapshot of your layout is taken before it. Each of these opens its preview first.
+inventory-sorter-resume-run = Resume the stopped run ({ $count ->
+        [one] { $count } move left
+       *[other] { $count } moves left
+    })
+inventory-sorter-undo-run = Undo the last run ({ $count ->
+        [one] { $count } move
+       *[other] { $count } moves
+    }, { $date })
+inventory-sorter-undo-none = No run to undo yet.
+inventory-sorter-snapshots = Snapshots
+inventory-sorter-snapshot-take = Take a snapshot now
+inventory-sorter-share-layout = Save my inventory layout to share…
+inventory-sorter-share-layout-hint = Saves folder and item names, their locations, and item types to a file on your Desktop. The file excludes account names and original identifiers, including asset IDs. It also excludes the Trash, Lost and Found, calling cards, and landmarks. Saving leaves your inventory in place.
+inventory-sorter-share-layout-loading = Reading your whole inventory first…
+inventory-sorter-share-layout-progress = { $read } of { $total } folders read, { $failed } could not be read
+inventory-sorter-share-layout-now = Save what's loaded now
+inventory-sorter-share-layout-saving = Saving…
+inventory-sorter-share-layout-saved = Saved to { $path }
+inventory-sorter-share-layout-unread = { $count ->
+        [one] { $count } folder could not be read: it is marked as unknown in the file.
+       *[other] { $count } folders could not be read: they are marked as unknown in the file.
+    }
+inventory-sorter-share-layout-show = Show in folder
+inventory-sorter-share-layout-failed = The layout could not be saved: { $error }
+inventory-sorter-snapshot-restore = Put this layout back…
+inventory-sorter-snapshot-unreadable = This snapshot could not be read.
+inventory-sorter-snapshot-loading = Reading the snapshot…
+inventory-sorter-current-base = Current destination: { $path }
+inventory-sorter-layout-import = Import layout…
+inventory-sorter-layout-export = Export backup…
+inventory-sorter-layout-exported = Layout backup saved.
+inventory-sorter-layout-file-error = The layout file could not be opened or saved.
+inventory-sorter-layout-confirm = Restore this shared layout?
+inventory-sorter-layout-by-name = This shared file omitted inventory IDs. The preview matches exact, unique item names and existing folder paths. Use a file from your own inventory. Matching names can still refer to different items.
+inventory-sorter-layout-check = I checked these matches and want to restore them
+inventory-sorter-layout-matches = { $count } entries could not be matched or moved. Folders stay in place.
+inventory-sorter-layout-incomplete = { $count } folders could not load. All folders must load before matching a shared layout.
+inventory-sorter-moved-by-hand = Moved by hand since
+inventory-sorter-restore-summary = Left as they are: { $new } new since the snapshot, { $trashed } in the Trash, { $gone } deleted or whose folder is gone, { $kept } worn, linked, protected, excluded or not loaded yet. { $hand } moved by hand are listed apart.
+inventory-sorter-snapshot-other-account = This snapshot belongs to another account: it is not restored here.
+inventory-sorter-held = Waiting for the teleport: { $done } / { $total }
+inventory-sorter-no-answer = The server did not answer
+inventory-sorter-defaults = Default folders
+inventory-sorter-defaults-hint = Auto-sort never touches your default folders except Objects. You can allow one, at your own risk. The Trash, Marketplace, outfits, the Current Outfit, Received Items, Favorites, the Library, #RLV, #Firestorm, #Aurora and Animation Overrides (the AO's folders) can never be allowed.
+inventory-sorter-lost-found = Include Lost and Found
+inventory-sorter-lost-found-tip = Sorts Lost and Found like your own folders: what landed there moves out to the sort folders.
+inventory-sorter-unlock = Allow…
+inventory-sorter-unlock-remove = Allowed: lock again
+inventory-sorter-unlock-title = Allow Auto-sort in { $folder }?
+inventory-sorter-unlock-text = Auto-sort will then move items out of { $folder } into the sort folders, like from your own folders. Some scripts, HUDs and other viewers expect things in { $folder }: they may not find them any more. Worn items, links and active gestures stay where they are, delivery folders move whole and are never opened, the folder itself never moves, and your recent runs can be undone.
+inventory-sorter-unlock-confirm = Allow it
+inventory-sorter-unlocked-list = Unlocked by you: { $folders }
+inventory-sorter-updating = Your inventory is still changing: the preview is made again once it settles.
 parcel-visibility-mode = Hide content outside the current parcel
 parcel-visibility-help = Keep the terrain, your avatar and your HUDs. Objects, other avatars and their visual effects outside the parcel are hidden. The list chooses where this filter applies.
 parcel-visibility-always = Everywhere

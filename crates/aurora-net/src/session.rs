@@ -2514,6 +2514,9 @@ impl Session<'_> {
                         NetEvent::InventoryEdited {
                             request,
                             result: Ok(crate::inventory::operations::Reply {
+                                moved_items: Vec::new(),
+                                moved_folders: Vec::new(),
+                                unconfirmed: Vec::new(),
                                 contents: Vec::new(),
                                 folders: Vec::new(),
                                 moves_queued: false,
@@ -2526,7 +2529,9 @@ impl Session<'_> {
                     );
                     return;
                 }
-                if change.move_only() {
+                // an Auto-sort batch is read back entry by entry (AIS): never
+                // answered before the server shows its moves
+                if change.move_only() && !(change.confirm_each && self.main_cap("InventoryAPIv3").is_some()) {
                     let result = change
                         .operations
                         .iter()
@@ -2545,6 +2550,9 @@ impl Session<'_> {
                             })
                         })
                         .map(|()| crate::inventory::operations::Reply {
+                            moved_items: Vec::new(),
+                            moved_folders: Vec::new(),
+                            unconfirmed: Vec::new(),
                             contents: Vec::new(),
                             folders: Vec::new(),
                             moves_queued: true,
@@ -2595,6 +2603,10 @@ impl Session<'_> {
                 } else {
                     self.main_cap("FetchInventoryDescendents2")
                 };
+                let mut change = change;
+                if change.confirm_each {
+                    change.confirm_with = self.main_cap("FetchInventory2");
+                }
                 let Some((cap, fetch_cap)) = self.main_cap("InventoryAPIv3").zip(fetch) else {
                     emit(
                         self.sh,
@@ -2919,7 +2931,7 @@ impl Session<'_> {
                 }
             }
             NetCommand::CopyInventoryItem { request, copy } => self.copy_inventory_item(request, copy),
-            NetCommand::FinishInventoryCopies { request, reply } => self.start_inventory_copies(request, reply),
+            NetCommand::FinishInventoryCopies { request, reply } => self.start_inventory_copies(request, *reply),
             NetCommand::CopyNotecardInventory {
                 editor,
                 open,

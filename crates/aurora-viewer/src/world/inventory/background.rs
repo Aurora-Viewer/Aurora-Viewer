@@ -140,6 +140,31 @@ impl BackgroundFetch {
         self.legacy = [inventory, library];
     }
 
+    /// Read what is left below these folders' parents, once the walk is
+    /// idle (LLInventoryModelBackgroundFetch::start(cat_id, recursive), as
+    /// Auto-sort's layout to share needs the whole tree): each parent's
+    /// unread folders in the walk's own batches (20 subtrees a read, 19 in
+    /// flight, Marketplace Listings left to its window), never one read a
+    /// folder, never past a folder waiting for its retry.
+    pub fn fetch_subtrees(&mut self, inv: &Inventory, folders: &[Uuid]) {
+        if !self.started {
+            self.start(inv);
+        }
+        if !self.is_idle() {
+            return;
+        }
+        let mut parents: Vec<Uuid> = folders
+            .iter()
+            .filter_map(|id| inv.folders.get(id).map(|f| f.info.parent))
+            .filter(|p| inv.folders.contains_key(p))
+            .collect();
+        parents.sort_unstable();
+        parents.dedup();
+        for parent in parents {
+            self.queue.push_back((parent, Kind::ContentRecursive));
+        }
+    }
+
     pub fn is_idle(&self) -> bool {
         self.queue.is_empty() && self.in_flight.is_empty() && self.orphans_pending.is_none() && self.retries.is_empty()
     }

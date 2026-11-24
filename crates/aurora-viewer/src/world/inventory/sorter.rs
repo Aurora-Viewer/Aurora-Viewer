@@ -1,0 +1,5977 @@
+//! Inventory auto-sort: files the loose entries of one folder into
+//! `<base>/<body>/<category>` folders, from the names creators give them.
+//!
+//! The Legacy Viewer has no such tool; it is an Aurora feature. Moving only
+//! changes an entry's parent, through the same mutations as a drag in the
+//! inventory (`actions::move_selection`): no copy, no rename, no permission
+//! change. What a drag may not move (`actions::relocatable`: system, locked,
+//! Library, Current Outfit, Received Items) or what is worn stays where it is.
+//!
+//! The classifier is pure: [`classify`] reads a name and the asset type,
+//! [`destination`] turns that into a folder path, [`plan`] lists the moves of a
+//! folder and [`step`] builds the next bounded mutation, creating the missing
+//! folders in the same request (the network layer maps their new ids).
+
+use super::{FetchState, Inventory, actions};
+use aurora_llsd::llsd_map;
+use aurora_net::inventory::InvItem;
+use aurora_net::inventory::operations::{Mutation, Operation};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet, VecDeque};
+use uuid::Uuid;
+use vocab::{BodyWords, VOCABULARY};
+
+/// Moves sent in one mutation: well under the 2048 operations the network
+/// layer accepts, and small enough for steady progress on a large inventory.
+pub const BATCH: usize = 200;
+
+/// How a rule's words meet a name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Match {
+    /// Every word, in any order.
+    #[default]
+    All,
+    /// At least one of the words.
+    Any,
+    /// The words together, in this order.
+    Phrase,
+}
+
+/// A user rule, tried in order before the built-in body and category rules.
+/// It takes an entry by its words (dates belong to Clean up: `before` is
+/// only read so older settings still load, and never matched).
+/// Its destination is the Pre-Trash folder (`pre_trash`), one of the user's
+/// own folders (`target`) when set, otherwise `folder`, a path below the
+/// sort folder (`Home/Chairs`) created when missing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Rule {
+    pub enabled: bool,
+    pub words: String,
+    #[serde(rename = "match")]
+    pub mode: Match,
+    pub folder: String,
+    pub target: Option<Uuid>,
+    /// The first version's date filter, kept so older settings load; never
+    /// matched (a rule takes entries by its words only).
+    pub before: String,
+    /// Send what it takes to the Pre-Trash folder, checked before the Trash.
+    pub pre_trash: bool,
+    /// Leave the sort folder's tree out of the rule's search.
+    pub skip_sorted: bool,
+    /// Match only individual items, including those inside deliveries.
+    pub inside_deliveries: bool,
+}
+
+impl Default for Rule {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            words: String::new(),
+            mode: Match::All,
+            folder: String::new(),
+            target: None,
+            before: String::new(),
+            pre_trash: false,
+            skip_sorted: false,
+            inside_deliveries: false,
+        }
+    }
+}
+
+/// The start of a day typed as `YYYY`, `YYYY-MM` or `YYYY-MM-DD` (also with
+/// `/` or `.`), in seconds since 1970, UTC: what an item's acquired date
+/// (`created_at`, the date its Properties show) is compared with.
+pub fn date_start(text: &str) -> Option<i64> {
+    let parts: Vec<&str> = text.trim().split(['-', '/', '.']).collect();
+    if parts.is_empty() || parts.len() > 3 || parts.iter().any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit())) {
+        return None;
+    }
+    let year: i32 = parts[0].parse().ok().filter(|y| (2003..=2100).contains(y))?;
+    let month: u32 = parts.get(1).map_or(Some(1), |m| m.parse().ok())?;
+    let day: u32 = parts.get(2).map_or(Some(1), |d| d.parse().ok())?;
+    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+    Some(date.and_hms_opt(0, 0, 0)?.and_utc().timestamp())
+}
+
+impl Rule {
+    /// The rule can take entries: words, and somewhere to put them. The
+    /// date of the first version (`before`) is no longer read: dates belong
+    /// to Clean up ([`Cleanup`]), and an old dated rule without words stays
+    /// incomplete rather than taking everything.
+    pub fn usable(&self) -> bool {
+        self.enabled
+            && !read_rule(&self.words, |r| r.joined.is_empty())
+            && (self.pre_trash || self.target.is_some() || !read_path(&self.folder))
+    }
+
+    /// The rule's words meet the name's.
+    pub fn matches(&self, name_words: &[String], _created: Option<i64>) -> bool {
+        self.named(name_words)
+    }
+
+    fn destination(&self) -> Dest {
+        match self.target {
+            _ if self.pre_trash => Dest::PreTrash,
+            Some(id) => Dest::Folder(id),
+            None => Dest::Path(split_path(&self.folder)),
+        }
+    }
+
+    /// The words alone.
+    pub fn named(&self, name_words: &[String]) -> bool {
+        // a rule's own words are read joined (`women's` is `womens`): its
+        // parts (`s`) would meet every name with an apostrophe
+        read_rule(&self.words, |r| {
+            !r.joined.is_empty()
+                && match self.mode {
+                    Match::All => r.joined.iter().all(|w| name_words.contains(w)),
+                    Match::Any => r.joined.iter().any(|w| name_words.contains(w)),
+                    // a phrase reads both ways, like the name: `red women's`
+                    // meets `red women's dress` as it always did
+                    Match::Phrase => has(name_words, &r.joined_phrase) || has(name_words, &r.split_phrase),
+                }
+        })
+    }
+}
+
+/// A rule's words, read once (not once per entry of a 400,000-item plan).
+struct RuleWords {
+    joined: Vec<String>,
+    joined_phrase: String,
+    split_phrase: String,
+}
+
+thread_local! {
+    /// Per planning thread: rules are few, entries many, and nothing is
+    /// shared between threads (no lock in the parallel reading of names).
+    static RULE_WORDS: std::cell::RefCell<HashMap<String, std::rc::Rc<RuleWords>>> = Default::default();
+    static RULE_PATHS: std::cell::RefCell<HashMap<String, bool>> = Default::default();
+}
+
+/// `f` of the rule words `text`, read once per thread.
+fn read_rule<R>(text: &str, f: impl FnOnce(&RuleWords) -> R) -> R {
+    let read = RULE_WORDS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() > 4096 {
+            cache.clear();
+        }
+        if let Some(read) = cache.get(text) {
+            return std::rc::Rc::clone(read);
+        }
+        let joined = joined_words(text);
+        let read = std::rc::Rc::new(RuleWords {
+            joined_phrase: joined.join(" "),
+            split_phrase: words(text).join(" "),
+            joined,
+        });
+        cache.insert(text.to_owned(), std::rc::Rc::clone(&read));
+        read
+    });
+    f(&read)
+}
+
+/// A rule's folder path makes no folder, read once per thread.
+fn read_path(path: &str) -> bool {
+    RULE_PATHS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() > 4096 {
+            cache.clear();
+        }
+        if let Some(empty) = cache.get(path) {
+            return *empty;
+        }
+        let empty = split_path(path).is_empty();
+        cache.insert(path.to_owned(), empty);
+        empty
+    })
+}
+
+/// Saved with the inventory preferences.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Preferences {
+    /// The folder at the root of My Inventory that receives the sorted
+    /// folders; empty uses the translated default name.
+    pub base: String,
+    /// The existing destination in this account, even if renamed.
+    #[serde(skip)]
+    pub base_id: Option<Uuid>,
+    /// Remembered destinations keyed by account. These IDs are local
+    /// preferences and are omitted from shared Auto-sort settings.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub base_ids: HashMap<Uuid, Uuid>,
+    /// Sort folders too (an unpacked delivery arrives as a folder), as a
+    /// whole: their contents are never split.
+    pub folders: bool,
+    pub rules: Vec<Rule>,
+    /// A folder per store below the category (`Furniture/North Oak`), read
+    /// from the creator's tag ([`store`]).
+    pub stores: bool,
+    /// Folders Auto-sort never takes anything from, at any depth.
+    pub excluded: Vec<Uuid>,
+    /// The user's own folders, whatever their name: a whole sort opens and
+    /// sorts them, never moves them whole as one product (`Hair
+    /// Collection`, `Lingerie Drawer`). Only [`own_allowed`] ones count.
+    /// Kept per account, never shared nor imported.
+    pub own: Vec<Uuid>,
+    /// The Clean up tab's choices.
+    pub cleanup: Cleanup,
+    /// The item kinds a sort moves; the others stay where they are (a
+    /// right-click on chosen entries sorts them whatever their kind).
+    pub kinds: Vec<Kind>,
+    /// Store → category, for the stores whose names say nothing.
+    pub store_hints: Vec<StoreHint>,
+    /// Default folders the user allowed Auto-sort into, with a warning:
+    /// only [`unlockable`] ones count. Kept per account with the other
+    /// options, never shared nor imported.
+    pub unlocked: Vec<Uuid>,
+    /// Lost and Found's own switch, off by default.
+    pub include_lost_found: bool,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            base: String::new(),
+            base_id: None,
+            base_ids: HashMap::new(),
+            folders: true,
+            rules: Vec::new(),
+            stores: false,
+            excluded: Vec::new(),
+            own: Vec::new(),
+            cleanup: Cleanup::default(),
+            kinds: Kind::ALL.to_vec(),
+            store_hints: Vec::new(),
+            unlocked: Vec::new(),
+            include_lost_found: false,
+        }
+    }
+}
+
+impl Preferences {
+    pub fn select_account_base(&mut self, inv: &Inventory, account: Uuid) {
+        self.base_id = self.base_ids.get(&account).copied();
+        if !account.is_nil()
+            && let Some(id) = base_folder(inv, self)
+        {
+            self.base_ids.insert(account, id);
+            self.base_id = Some(id);
+        }
+    }
+
+    /// The folders the hands-off rule opens for the user: the unlocked
+    /// ones that may be, and Lost and Found when its switch is on.
+    pub fn unlocked_set(&self, inv: &Inventory) -> HashSet<Uuid> {
+        let mut set: HashSet<Uuid> = self
+            .unlocked
+            .iter()
+            .copied()
+            .filter(|id| inv.folders.get(id).is_some_and(|f| unlockable(f.info.type_default)))
+            .collect();
+        if self.include_lost_found
+            && let Some(lost) = actions::system(inv, LOST_AND_FOUND)
+        {
+            set.insert(lost);
+        }
+        set
+    }
+
+    /// The sort folder's name, as the inventory keeps it. A name that would
+    /// reach somewhere it must not (a `#` viewer folder, the Pre-Trash
+    /// folder, a default folder's name) is refused for the default one:
+    /// typed or imported, it never puts the sort in a hands-off place.
+    pub fn base_name(&self) -> String {
+        let default = inventory_name(aurora_i18n::tr!("inventory-sorter-default-base"), "Sorted");
+        let name = inventory_name(self.base.trim(), &default);
+        if base_refused(&name) { default } else { name }
+    }
+
+    /// `id` is an excluded folder or inside one.
+    pub fn excludes(&self, inv: &Inventory, id: Uuid) -> bool {
+        !self.excluded.is_empty() && actions::ancestors(inv, id).any(|a| self.excluded.contains(&a))
+    }
+}
+
+/// The folder at the root of My Inventory that receives what the Pre-Trash
+/// rules take: nothing goes to the Trash before the user checks it there.
+pub fn pre_trash_name() -> String {
+    inventory_name(aurora_i18n::tr!("inventory-sorter-pre-trash"), "Pre-Trash")
+}
+
+/// The names a sort folder may not take: a viewer folder, Pre-Trash (in any
+/// language Aurora speaks), My Inventory's default folders.
+pub fn base_refused(name: &str) -> bool {
+    const DEFAULTS: &[&str] = &[
+        "pre-trash",
+        "pre-corbeille",
+        "trash",
+        "objects",
+        "clothing",
+        "body parts",
+        "landmarks",
+        "notecards",
+        "textures",
+        "scripts",
+        "sounds",
+        "animations",
+        "gestures",
+        "photo album",
+        "calling cards",
+        "favorites",
+        "materials",
+        "settings",
+        "lost and found",
+        "my outfits",
+        "current outfit",
+        "received items",
+        "marketplace listings",
+        "library",
+        "my inventory",
+    ];
+    let lower = name.trim().to_lowercase();
+    lower.is_empty()
+        || VIEWER_FOLDERS.iter().any(|name| name.eq_ignore_ascii_case(&lower))
+        || pre_trash_names().iter().any(|pre| pre.eq_ignore_ascii_case(&lower))
+        || DEFAULTS.contains(&lower.as_str())
+}
+
+/// A folder name Auto-sort gives, in every language the viewer speaks, as
+/// the inventory keeps it: after a change of language, the folders made in
+/// the old one are still recognised.
+fn every_language(key: &'static str, fallback: &str) -> Vec<String> {
+    let mut names: Vec<String> = aurora_i18n::available_languages()
+        .map(|(code, _)| inventory_name(aurora_i18n::text_in(code, key), fallback))
+        .filter(|name| !name.is_empty())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Pre-Trash's name in every language the viewer speaks (read once).
+fn pre_trash_names() -> &'static [String] {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| every_language("inventory-sorter-pre-trash", "Pre-Trash"))
+}
+
+/// The default sort folder's name in every language (read once).
+fn default_base_names() -> &'static [String] {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| every_language("inventory-sorter-default-base", "Sorted"))
+}
+
+/// The Pre-Trash folder, when it exists: at the root, by its name in the
+/// language in use, else in another one the viewer speaks.
+pub fn pre_trash(inv: &Inventory) -> Option<Uuid> {
+    child(inv, inv.root, &pre_trash_name()).or_else(|| pre_trash_names().iter().find_map(|name| child(inv, inv.root, name)))
+}
+
+/// Two store names are one store: as folder names when both have one,
+/// else as written (two Cyrillic names never match as two empty ones).
+fn same_store(a: &str, b: &str) -> bool {
+    let (x, y) = (inventory_name(a.trim(), ""), inventory_name(b.trim(), ""));
+    // (letters and digits only: `Mila Rose`, `MilaRose`, `Mila_Rose` and
+    // `Mila-Rose` are one store)
+    // (`&` kept: `A&B` is not `AB`)
+    // (or the same words, `&` and `and` aside: `Bloom & Co`, `Bloom Co.`)
+    let named = |s: &str| {
+        s.split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| !w.is_empty() && !w.eq_ignore_ascii_case("and"))
+            .map(str::to_ascii_lowercase)
+            .collect::<Vec<_>>()
+    };
+    if named(&x).len() > 1 && named(&x) == named(&y) {
+        return true;
+    }
+    let bare = |s: &str| {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '&')
+            .collect::<String>()
+            .to_ascii_lowercase()
+    };
+    if !bare(&x).is_empty() && !bare(&y).is_empty() {
+        return bare(&x) == bare(&y);
+    }
+    if x.is_empty() || y.is_empty() {
+        a.trim().to_lowercase() == b.trim().to_lowercase()
+    } else {
+        x.eq_ignore_ascii_case(&y)
+    }
+}
+
+/// Every Pre-Trash folder: the one in use, and those made in another
+/// language at the root (never read as a source, never taken whole).
+/// Worked out once per plan, never per entry.
+pub fn pre_trash_folders(inv: &Inventory) -> HashSet<Uuid> {
+    let in_use = pre_trash_name();
+    let mut found: HashSet<Uuid> = inv
+        .folders
+        .get(&inv.root)
+        .map(|root| {
+            root.children
+                .iter()
+                .copied()
+                .filter(|id| {
+                    inv.folders.get(id).is_some_and(|f| {
+                        let name = f.info.name.trim();
+                        f.info.type_default == -1
+                            && (name.eq_ignore_ascii_case(&in_use) || pre_trash_names().iter().any(|n| name.eq_ignore_ascii_case(n)))
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    found.extend(pre_trash(inv));
+    found
+}
+
+/// A remembered destination must still be an ordinary folder at the root.
+fn valid_base(inv: &Inventory, id: Uuid) -> bool {
+    inv.folders
+        .get(&id)
+        .is_some_and(|f| f.info.parent == inv.root && f.info.type_default == -1 && !base_refused(&f.info.name) && folder_open(inv, id))
+}
+
+/// The sort folder by ID first, then by its configured or translated name.
+pub fn base_folder(inv: &Inventory, prefs: &Preferences) -> Option<Uuid> {
+    if let Some(id) = prefs.base_id.filter(|id| valid_base(inv, *id)) {
+        return Some(id);
+    }
+    if let Some(id) = child(inv, inv.root, &prefs.base_name()) {
+        return Some(id);
+    }
+    if !prefs.base.trim().is_empty() {
+        return None;
+    }
+    if let Some(id) = default_base_names().iter().find_map(|name| child(inv, inv.root, name)) {
+        return Some(id);
+    }
+    // Older versions saved only the name. Recover a single decorated
+    // default name when the exact default does not exist.
+    let mut decorated = inv.folders.get(&inv.root)?.children.iter().copied().filter(|id| {
+        valid_base(inv, *id)
+            && default_base_names().iter().any(|name| {
+                inv.folders[id]
+                    .info
+                    .name
+                    .trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace())
+                    .eq_ignore_ascii_case(name)
+            })
+    });
+    decorated.next().filter(|_| decorated.next().is_none())
+}
+
+/// The sort folder's name as the inventory has it (an existing one made in
+/// another language included), else the name it will be given.
+pub fn base_name_in(inv: &Inventory, prefs: &Preferences) -> String {
+    base_folder(inv, prefs)
+        .and_then(|id| inv.folders.get(&id))
+        .map_or_else(|| prefs.base_name(), |f| f.info.name.clone())
+}
+
+/// What waits in the Pre-Trash folder: its direct contents.
+pub fn pre_trash_entries(inv: &Inventory) -> Vec<Uuid> {
+    pre_trash(inv)
+        .and_then(|id| inv.folders.get(&id))
+        .map(|f| f.items.iter().chain(&f.children).copied().collect())
+        .unwrap_or_default()
+}
+
+/// A body (or the several bodies of a fatpack). Its folder carries the
+/// creators' own name of the body, the same in every language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Body {
+    Named(&'static str),
+    Several,
+}
+
+impl Body {
+    pub fn folder(self) -> String {
+        match self {
+            Body::Named(name) => name.to_owned(),
+            Body::Several => inventory_name(aurora_i18n::tr!("inventory-sorter-several-bodies"), "Several bodies"),
+        }
+    }
+}
+
+/// The category folders. The vocabulary's order (`vocabulary.json`) is the
+/// order they are tried: the first match wins (a "Lingerie Set" is
+/// lingerie), unless another category has a longer phrase built on the word
+/// that matched (a "Hair Bow" is an accessory). Sets come last.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Category {
+    Tattoos,
+    Skins,
+    Makeup,
+    Hair,
+    Eyes,
+    Nails,
+    Shoes,
+    Stockings,
+    Lingerie,
+    Swimwear,
+    Bodysuits,
+    Dresses,
+    Skirts,
+    Pants,
+    Shorts,
+    Jackets,
+    Tops,
+    Sleepwear,
+    Gloves,
+    Jewelry,
+    Accessories,
+    BodyAddons,
+    Heads,
+    Shapes,
+    Animations,
+    Huds,
+    Furniture,
+    Decor,
+    Vehicles,
+    Pets,
+    Outfits,
+    Landmarks,
+    Notecards,
+    Scripts,
+    Sounds,
+    Textures,
+    Gestures,
+    Environment,
+    Materials,
+    AnimatedObjects,
+}
+
+impl Category {
+    pub fn folder(self) -> &'static str {
+        match self {
+            Category::Tattoos => aurora_i18n::tr!("inventory-sorter-tattoos"),
+            Category::Skins => aurora_i18n::tr!("inventory-sorter-skins"),
+            Category::Makeup => aurora_i18n::tr!("inventory-sorter-makeup"),
+            Category::Hair => aurora_i18n::tr!("inventory-sorter-hair"),
+            Category::Eyes => aurora_i18n::tr!("inventory-sorter-eyes"),
+            Category::Nails => aurora_i18n::tr!("inventory-sorter-nails"),
+            Category::Shoes => aurora_i18n::tr!("inventory-sorter-shoes"),
+            Category::Stockings => aurora_i18n::tr!("inventory-sorter-stockings"),
+            Category::Lingerie => aurora_i18n::tr!("inventory-sorter-lingerie"),
+            Category::Swimwear => aurora_i18n::tr!("inventory-sorter-swimwear"),
+            Category::Bodysuits => aurora_i18n::tr!("inventory-sorter-bodysuits"),
+            Category::Dresses => aurora_i18n::tr!("inventory-sorter-dresses"),
+            Category::Skirts => aurora_i18n::tr!("inventory-sorter-skirts"),
+            Category::Pants => aurora_i18n::tr!("inventory-sorter-pants"),
+            Category::Shorts => aurora_i18n::tr!("inventory-sorter-shorts"),
+            Category::Jackets => aurora_i18n::tr!("inventory-sorter-jackets"),
+            Category::Tops => aurora_i18n::tr!("inventory-sorter-tops"),
+            Category::Sleepwear => aurora_i18n::tr!("inventory-sorter-sleepwear"),
+            Category::Gloves => aurora_i18n::tr!("inventory-sorter-gloves"),
+            Category::Jewelry => aurora_i18n::tr!("inventory-sorter-jewelry"),
+            Category::Accessories => aurora_i18n::tr!("inventory-sorter-accessories"),
+            Category::BodyAddons => aurora_i18n::tr!("inventory-sorter-body-addons"),
+            Category::Heads => aurora_i18n::tr!("inventory-sorter-heads"),
+            Category::Huds => aurora_i18n::tr!("inventory-sorter-huds"),
+            Category::Vehicles => aurora_i18n::tr!("inventory-sorter-vehicles"),
+            Category::Pets => aurora_i18n::tr!("inventory-sorter-pets"),
+            Category::Shapes => aurora_i18n::tr!("inventory-sorter-shapes"),
+            Category::Animations => aurora_i18n::tr!("inventory-sorter-animations"),
+            Category::Furniture => aurora_i18n::tr!("inventory-sorter-furniture"),
+            Category::Decor => aurora_i18n::tr!("inventory-sorter-decor"),
+            Category::Outfits => aurora_i18n::tr!("inventory-sorter-outfits"),
+            Category::Landmarks => aurora_i18n::tr!("inventory-sorter-landmarks"),
+            Category::Notecards => aurora_i18n::tr!("inventory-sorter-notecards"),
+            Category::Scripts => aurora_i18n::tr!("inventory-sorter-scripts"),
+            Category::Sounds => aurora_i18n::tr!("inventory-sorter-sounds"),
+            Category::Textures => aurora_i18n::tr!("inventory-sorter-textures"),
+            Category::Gestures => aurora_i18n::tr!("inventory-sorter-gestures"),
+            Category::Environment => aurora_i18n::tr!("inventory-sorter-environment"),
+            Category::Materials => aurora_i18n::tr!("inventory-sorter-materials"),
+            Category::AnimatedObjects => aurora_i18n::tr!("inventory-sorter-animated-objects"),
+        }
+    }
+
+    /// The category of an asset type when its name says nothing: a
+    /// notecard is a notecard. Clothing and body parts read their wearable
+    /// type from the item's flags (LLWearableType::EType in the low byte).
+    fn of_asset(asset_type: i32, flags: u32) -> Option<Category> {
+        Some(match asset_type {
+            // Legacy image formats share the texture destination (LLAssetType).
+            0 | 12 | 18 | 19 => Category::Textures,
+            1 => Category::Sounds,
+            3 => Category::Landmarks,
+            7 => Category::Notecards,
+            4 | 10 | 11 => Category::Scripts,
+            20 => Category::Animations,
+            21 => Category::Gestures,
+            56 => Category::Environment,
+            57 => Category::Materials,
+            5 | 13 => match flags & 0xff {
+                0 => Category::Shapes,
+                1 => Category::Skins,
+                2 => Category::Hair,
+                3 => Category::Eyes,
+                4 | 10 => Category::Tops,
+                5 => Category::Pants,
+                6 => Category::Shoes,
+                7 => Category::Stockings,
+                8 => Category::Jackets,
+                9 => Category::Gloves,
+                11 => Category::Lingerie,
+                12 => Category::Skirts,
+                13 | 15 | 16 if asset_type == 5 => Category::BodyAddons,
+                14 => Category::Tattoos,
+                _ => return None,
+            },
+            _ => return None,
+        })
+    }
+}
+
+/// What a name says: the body, the category, and whether the entry is an
+/// unpacker (a box to wear or rez that gives the real items).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Classified {
+    pub body: Option<Body>,
+    pub category: Option<Category>,
+    pub unpacker: bool,
+    /// A Squish or Squeeze version (`Reborn bra black sq`).
+    pub squish: bool,
+    /// Made for Reborn's Waifus mod (`Reborn Waifus - Bra`).
+    pub waifus: bool,
+}
+
+/// The lowercase words of a name: creators separate them with anything
+/// (`.QW.`, `[REBORN]`, `FemAvg_Dress_Cut_Long_Reborn_F`, `Reborn+Luma`).
+pub fn words(name: &str) -> Vec<String> {
+    // a word with an apostrophe is read both ways: its parts (`kat`, `s`,
+    // as rules written before matched it) then the joined word (`kats`,
+    // `womens`), so `women's boots` still reads `womens boots`
+    let mut out = Vec::new();
+    for chunk in name.split(|c: char| !c.is_alphanumeric() && !matches!(c, '\'' | '’')) {
+        let parts: Vec<String> = chunk.split(['\'', '’']).filter(|w| !w.is_empty()).map(str::to_lowercase).collect();
+        if parts.len() > 1 {
+            out.extend(parts.iter().cloned());
+            out.push(parts.concat());
+        } else {
+            out.extend(parts);
+        }
+    }
+    out
+}
+
+/// The words of a rule or a tag: an apostrophe joins its word (`women's`
+/// is `womens`), never split into parts that would meet any name.
+pub fn joined_words(name: &str) -> Vec<String> {
+    name.split(|c: char| !c.is_alphanumeric() && !matches!(c, '\'' | '’'))
+        .map(|chunk| {
+            chunk
+                .chars()
+                .filter(|c| !matches!(c, '\'' | '’'))
+                .collect::<String>()
+                .to_lowercase()
+        })
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Two folder names are the same, case and outer spaces aside; `lower` is
+/// lowercase already.
+fn same_name(name: &str, lower: &str) -> bool {
+    let name = name.trim();
+    if name.is_ascii() && lower.is_ascii() {
+        name.eq_ignore_ascii_case(lower)
+    } else {
+        name.to_lowercase() == lower
+    }
+}
+
+/// `phrase` (one or more words) appears in `words`, whole words in order.
+/// The tables are lowercase already: nothing is allocated per test, which
+/// runs for every phrase of every entry of a large folder.
+fn has(words: &[String], phrase: &str) -> bool {
+    let len = phrase.split(' ').count();
+    words.windows(len).any(|w| w.iter().zip(phrase.split(' ')).all(|(a, b)| a == b))
+}
+
+/// A name's words less its permission tags: `NO MOD`, `Copy/Mod`,
+/// `mod/trans` say what the owner may do, not that it is a body mod.
+const BODY_PARTS: [&str; 15] = [
+    "belly", "boobs", "breasts", "breast", "butt", "thigh", "thighs", "nipples", "body", "waifu", "waifus", "bump", "hips", "chest",
+    "booty",
+];
+
+fn without_permissions(words: Vec<String>) -> Vec<String> {
+    const PERMS: [&str; 7] = ["no", "copy", "trans", "transfer", "mod", "mods", "modify"];
+    let perm = |i: usize| words.get(i).is_some_and(|w| PERMS.contains(&w.as_str()));
+    let modify = |w: &str| matches!(w, "mod" | "mods" | "modify");
+    let keep: Vec<bool> = (0..words.len())
+        .map(|i| {
+            let w = words[i].as_str();
+            // (`mod` beside another permission word, or `no`/`copy`/`trans`
+            // beside a `mod`)
+            let tagged = |j: Option<usize>| j.is_some_and(|j| perm(j) && (modify(w) || modify(&words[j])));
+            // (a lone `mod`, `Floor Lamp (Mod)`, is a permission too, unless a
+            // body part comes before it: `Belly Mod`)
+            let lone = modify(w) && i.checked_sub(1).is_none_or(|j| !BODY_PARTS.contains(&words[j].as_str()));
+            !(PERMS.contains(&w) && (tagged(i.checked_sub(1)) || tagged(Some(i + 1)) || lone))
+        })
+        .collect();
+    words.into_iter().zip(keep).filter_map(|(w, k)| k.then_some(w)).collect()
+}
+
+/// In a dual-rendering title, a bare Legacy names the old material
+/// format. Keep separately stated body fits and version-independent names.
+fn rendering_legacy(words: &[String], at: usize, clothing: bool) -> bool {
+    let before = at.checked_sub(1).and_then(|i| words.get(i)).map(String::as_str);
+    let after = words.get(at + 1).map(String::as_str);
+    if matches!(before, Some("for" | "fits" | "fit"))
+        || matches!(
+            after,
+            Some("f" | "m" | "male" | "body" | "perky" | "pinup" | "men" | "mens" | "boy")
+        )
+    {
+        return false;
+    }
+    let connector = |word| matches!(word, Some("and" | "or" | "plus"));
+    let version = before
+        .and_then(|word| word.strip_prefix('v'))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()));
+    !clothing && version
+        || connector(before) && at.checked_sub(2).is_some_and(|i| words[i] == "pbr")
+        || connector(after) && words.get(at + 2).is_some_and(|word| word == "pbr")
+}
+
+fn body_for_product(words: &[String], name: &str, category: Option<Category>, allow_weak: bool) -> Option<Body> {
+    let fit = clothing_fit_label(name, category);
+    if !has(words, "pbr") || !has(words, "legacy") {
+        return body(words, fit, allow_weak);
+    }
+    let clothing = clothing_fit_category(category);
+    let with_connectors;
+    let words = if name.contains('&') {
+        with_connectors = without_permissions(self::words(&name.replace('&', " and ")));
+        with_connectors.as_slice()
+    } else {
+        words
+    };
+    let mut body_words = words.to_vec();
+    for (at, word) in body_words.iter_mut().enumerate() {
+        if word == "legacy" && rendering_legacy(words, at, clothing) {
+            word.clear();
+        }
+    }
+    body(&body_words, fit, allow_weak)
+}
+
+fn body(words: &[String], fit_label: Option<&str>, allow_weak: bool) -> Option<Body> {
+    let bodies = &VOCABULARY.bodies;
+    let strong: Vec<&'static BodyWords> = bodies
+        .iter()
+        .filter(|body| {
+            body.strong.iter().any(|word| has(words, word))
+                || body.fit_aliases.iter().any(|alias| {
+                    fit_label.is_some_and(|label| label.eq_ignore_ascii_case(alias))
+                        || words.windows(2).any(|pair| {
+                            matches!(pair[0].as_str(), "for" | "fits" | "fit") && pair[1] == *alias
+                                || pair[0] == *alias && pair[1] == "body"
+                        })
+                })
+        })
+        .collect();
+    let found = if allow_weak && strong.is_empty() {
+        bodies.iter().filter(|b| b.weak.iter().any(|w| has(words, w))).collect()
+    } else {
+        strong
+    };
+    let hidden: HashSet<&str> = found.iter().flat_map(|b| b.hides.iter().map(String::as_str)).collect();
+    let mut bodies = found.iter().map(|b| b.body.as_str()).filter(|b| !hidden.contains(b));
+    match (bodies.next(), bodies.next()) {
+        (Some(one), None) => Some(Body::Named(one)),
+        (Some(_), Some(_)) => Some(Body::Several),
+        _ => None,
+    }
+}
+
+fn clothing_fit_category(category: Option<Category>) -> bool {
+    matches!(
+        category,
+        Some(
+            Category::Shoes
+                | Category::Stockings
+                | Category::Lingerie
+                | Category::Swimwear
+                | Category::Bodysuits
+                | Category::Dresses
+                | Category::Skirts
+                | Category::Pants
+                | Category::Shorts
+                | Category::Jackets
+                | Category::Tops
+                | Category::Sleepwear
+                | Category::Gloves
+        )
+    )
+}
+
+/// A trailing fit label on rigged clothing or footwear. With no separator,
+/// require the model directly after the garment word (`Dress Isis`).
+fn clothing_fit_label(name: &str, category: Option<Category>) -> Option<&str> {
+    if !clothing_fit_category(category) {
+        return None;
+    }
+    let name = name.trim_end();
+    for (open, close) in [('[', ']'), ('(', ')')] {
+        if let Some((product, label)) = name.strip_suffix(close).and_then(|head| head.rsplit_once(open))
+            && !product.trim().is_empty()
+        {
+            return Some(label.trim());
+        }
+    }
+    if let Some((_, label)) = name.rsplit_once('/') {
+        let label = label.trim();
+        if !label.contains(char::is_whitespace) {
+            return Some(label);
+        }
+    }
+    let mut tail = name.split_whitespace().rev();
+    let alias = tail.next()?;
+    let garment = tail.next()?;
+    if !VOCABULARY
+        .bodies
+        .iter()
+        .any(|b| b.fit_aliases.iter().any(|w| w.eq_ignore_ascii_case(alias)))
+    {
+        return None;
+    }
+    VOCABULARY
+        .categories
+        .iter()
+        .any(|(kind, terms)| Some(*kind) == category && terms.iter().any(|word| word.eq_ignore_ascii_case(garment)))
+        .then_some(alias)
+}
+
+pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
+    let words = without_permissions(words(name));
+    // A texture, a sound, a notecard… is that, whatever its name says
+    // ("Bar texture (without chair shadows)" is no chair). Objects,
+    // wearables and folders are read from their names first.
+    let typed = (!matches!(asset_type, -1 | 5 | 6 | 13))
+        .then(|| Category::of_asset(asset_type, flags))
+        .flatten();
+    let category = typed
+        .or_else(|| {
+            // the first category in the vocabulary's order, unless another
+            // has a longer phrase built on the word it matched: `hair bow`
+            // is an accessory, not hair; `dress shirt` a top; `cat eye`
+            // sunglasses, not eyes. Another category's own words never
+            // override it (`tattoo … evo x` stays a tattoo).
+            let categories = &VOCABULARY.categories;
+            let (first, keys) = categories.iter().find(|(_, keys)| keys.iter().any(|k| has(&words, k)))?;
+            let matched: Vec<&String> = keys.iter().filter(|k| has(&words, k)).collect();
+            let longer = categories
+                .iter()
+                .filter(|(c, _)| c != first)
+                .flat_map(|(c, keys)| keys.iter().map(move |k| (*c, k)))
+                // (a phrase found in the name first: nothing is allocated
+                // for the others)
+                .filter(|(_, k)| k.contains(' ') && has(&words, k))
+                .filter(|(_, k)| {
+                    let phrase: Vec<String> = k.split(' ').map(str::to_owned).collect();
+                    // the word it extends, and nowhere else in the name
+                    // (`Kiara Hair w/ Hair Flower` is still hair)
+                    matched.iter().any(|m| {
+                        m.split(' ').count() < phrase.len()
+                            && has(&phrase, m)
+                            && words.iter().filter(|w| *w == *m).count() <= phrase.iter().filter(|w| *w == *m).count()
+                    })
+                })
+                .max_by_key(|(_, k)| k.split(' ').count());
+            Some(longer.map_or(*first, |(c, _)| c))
+        })
+        .or_else(|| Category::of_asset(asset_type, flags));
+    // A maintenance HUD or shoe giver HUD has its own function even when
+    // it names the product.
+    let standalone_hud = matches!(asset_type, -1 | 6)
+        && (["hud update", "update hud", "hud updater", "redelivery hud"]
+            .iter()
+            .any(|term| has(&words, term))
+            || category == Some(Category::Shoes) && has(&words, "giver") && has(&words, "hud"));
+    let category = if standalone_hud { Some(Category::Huds) } else { category };
+    // (a worn thing's display piece: `Velvet Heels Decor`, `Handbag (decor)`,
+    // `Kitchen Decor . Glasses 8`: a name that says decor is decor, never
+    // worn glasses; hair decor is the hair's)
+    let category = match category {
+        Some(c)
+            if typed.is_none()
+                && words.iter().any(|w| w == "decor")
+                && !has(&words, "hair decor")
+                && !matches!(c, Category::Furniture | Category::Decor | Category::Vehicles | Category::Pets) =>
+        {
+            Some(Category::Decor)
+        }
+        other => other,
+    };
+    // (flexi hair, platform shoes: only when no other word says what it is,
+    // `Flexi Gown` is a dress, `Skybox Platform` a build)
+    let category = category.or_else(|| {
+        if has(&words, "flexi") {
+            Some(Category::Hair)
+        } else if has(&words, "platform") && body(&words, None, true).is_some() {
+            Some(Category::Shoes)
+        } else {
+            None
+        }
+    });
+    // Makeup and a head's own content (EvoX, the head's standard) are the
+    // head's, never a body's: `Isis Eyeshadow EvoX BOM` names a product,
+    // not Belleza's Isis body.
+    // (a head's name, `Genus Addon`, makes an add-on the head's too)
+    let head_named = ["lelutka", "catwa", "genus", "evox", "evo x", "akeruka"]
+        .iter()
+        .any(|h| has(&words, h));
+    // (a costume or an outfit named for a decor thing, `Christmas Tree
+    // Costume`, `Flag Outfit`, is an outfit; a name that says decor stays)
+    let category = match category {
+        Some(Category::Decor) if !has(&words, "decor") && (has(&words, "costume") || has(&words, "outfit")) => Some(Category::Outfits),
+        // (a worn layer named for a decor thing is its layer, `Brazil Flag
+        // Face Paint`; poses or a HUD named for one are poses or a HUD,
+        // `Christmas Tree Poses`, `Flag HUD`; a rezzed piece stays decor,
+        // `Red Truck with Christmas Tree`, `Lady Head Vase`; a name that
+        // says decor stays)
+        Some(Category::Decor) if !has(&words, "decor") => matches!(asset_type, 5 | 13)
+            .then(|| Category::of_asset(asset_type, flags))
+            .flatten()
+            .or_else(|| {
+                VOCABULARY
+                    .categories
+                    .iter()
+                    .find(|(c, keys)| matches!(c, Category::Animations | Category::Huds) && keys.iter().any(|k| has(&words, k)))
+                    .map(|(c, _)| *c)
+            })
+            .or(category),
+        other => other,
+    };
+    // (a head's skin: `Ruellia Lel Evo X Tone Rose`, `Mavis / Ghost / No
+    // Brows / Evo X`, `Body+EVOX Overlay`: a tone, a no-brows version or an
+    // overlay beside a head's name is a skin, not the head's add-on nor its
+    // makeup, unless a makeup word of its own says so, `Tone Blush`)
+    let skin_signs =
+        has(&words, "tone") || has(&words, "no brows") || has(&words, "overlay") || VOCABULARY.skin_tones.iter().any(|k| has(&words, k));
+    const MAKEUP_OWN: [&str; 20] = [
+        "brow",
+        "brows",
+        "eyebrow",
+        "eyebrows",
+        "lash",
+        "lashes",
+        "eyelash",
+        "eyelashes",
+        "freckles",
+        "blush",
+        "highlighter",
+        "lipstick",
+        "lipgloss",
+        "lip gloss",
+        "eyeshadow",
+        "eyeliner",
+        "liner",
+        "contour",
+        "makeup",
+        "lip stain",
+    ];
+    let category = match category {
+        Some(Category::BodyAddons) if head_named => Some(Category::Heads),
+        Some(Category::Heads) if head_named && skin_signs => Some(Category::Skins),
+        // (`no brows` is a skin's version, never its makeup)
+        Some(Category::Makeup)
+            if head_named
+                && skin_signs
+                && !MAKEUP_OWN
+                    .iter()
+                    .any(|m| has(&words, m) && !(m.starts_with("brow") && has(&words, "no brows"))) =>
+        {
+            Some(Category::Skins)
+        }
+        other => other,
+    };
+    // (makeup and a head's own content are never a body's; beside a head's
+    // name only a body's own name counts, `Tattoo EVO-X [REBORN]`, never a
+    // weak word that is also a product's, `Venus Freckles EvoX`)
+    let body = if matches!(category, Some(Category::Makeup | Category::Heads)) {
+        None
+    } else {
+        body_for_product(&words, name, category, !head_named)
+    };
+    // A body skin says which body and how it looks, not what it is:
+    // `The "Harbor Body" for eBody Reborn (Porcelain)`.
+    let category = category.or_else(|| {
+        let skin = has(&words, "body for") || VOCABULARY.skin_tones.iter().any(|k| has(&words, k));
+        (body.is_some() && skin).then_some(Category::Skins)
+    });
+    let category = category.or_else(|| {
+        if !matches!(asset_type, -1 | 6) {
+            return None;
+        }
+        let held_prop = ["holdable", "held prop", "handheld prop", "hand held prop"]
+            .iter()
+            .any(|term| has(&words, term));
+        let sided_hold = asset_type == 6
+            && [
+                "hold left",
+                "hold right",
+                "left hold",
+                "right hold",
+                "hold l",
+                "hold r",
+                "l hold",
+                "r hold",
+                "personal hold",
+            ]
+            .iter()
+            .any(|term| has(&words, term));
+        let food = ["tumbler", "popsicle", "lollipop", "lolli", "cotton candy", "ice cream"]
+            .iter()
+            .any(|term| has(&words, term));
+        let held_food = food && ["hold", "held", "bento", "mouth", "tongue"].iter().any(|term| has(&words, term));
+        let chat_attachment = asset_type == 6 && has(&words, "typer");
+        (held_prop || sided_hold || held_food || chat_attachment).then_some(Category::Accessories)
+    });
+    Classified {
+        body,
+        category,
+        unpacker: VOCABULARY.unpackers.iter().any(|k| has(&words, k)),
+        squish: VOCABULARY.variants.squish.iter().any(|k| has(&words, k)),
+        waifus: VOCABULARY.variants.waifus.iter().any(|k| has(&words, k)),
+    }
+}
+
+/// A user's hint for a store whose names say nothing of what it sells:
+/// its items without a category of their own go to `category`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StoreHint {
+    pub store: String,
+    pub category: Category,
+    /// A creator hint: the items this resident made belong to `store`
+    /// (their folder per store) and to `category` when their name gives
+    /// none; it beats the store read from the name. A creator's id is
+    /// public (Properties shows it), never an asset id.
+    pub creator: Option<Uuid>,
+    /// The creator's name as it was shown when the hint was made.
+    pub creator_name: String,
+}
+
+impl Default for StoreHint {
+    fn default() -> Self {
+        Self {
+            store: String::new(),
+            category: Category::Furniture,
+            creator: None,
+            creator_name: String::new(),
+        }
+    }
+}
+
+impl Category {
+    /// Every category, in folder order, for the store hints' list.
+    pub const ALL: [Category; 40] = [
+        Category::Tattoos,
+        Category::Skins,
+        Category::Makeup,
+        Category::Hair,
+        Category::Eyes,
+        Category::Nails,
+        Category::Shoes,
+        Category::Stockings,
+        Category::Lingerie,
+        Category::Swimwear,
+        Category::Bodysuits,
+        Category::Dresses,
+        Category::Skirts,
+        Category::Pants,
+        Category::Shorts,
+        Category::Jackets,
+        Category::Tops,
+        Category::Sleepwear,
+        Category::Gloves,
+        Category::Jewelry,
+        Category::Accessories,
+        Category::BodyAddons,
+        Category::Heads,
+        Category::Shapes,
+        Category::Animations,
+        Category::Huds,
+        Category::Furniture,
+        Category::Decor,
+        Category::Vehicles,
+        Category::Pets,
+        Category::Outfits,
+        Category::Landmarks,
+        Category::Notecards,
+        Category::Scripts,
+        Category::Sounds,
+        Category::Textures,
+        Category::Gestures,
+        Category::Environment,
+        Category::Materials,
+        Category::AnimatedObjects,
+    ];
+}
+
+/// The first usable user rule that takes `name`, whole words, any case.
+pub fn rule_for<'a>(rules: &'a [Rule], name: &str, created: Option<i64>) -> Option<&'a Rule> {
+    let words = words(name);
+    rules.iter().find(|rule| rule.usable() && rule.matches(&words, created))
+}
+
+/// A folder path typed by the user (`Furniture / Chairs`), cleaned the way
+/// a new folder's name is.
+pub fn split_path(path: &str) -> Vec<String> {
+    path.split(['/', '\\'])
+        .filter_map(|part| actions::clean_name(part).ok())
+        // accents first (`Robes d'été` → `Robes d'ete`), never `?`
+        .map(|part| {
+            // accents become letters, letter by letter: one the table lacks
+            // (`Ł` of `Ładne rzeczy`) is left out, never a `?`, and the
+            // rest of the part stays (`adne rzeczy`)
+            let latin: String = part
+                .chars()
+                .map(|c| match c {
+                    c if c.is_ascii() => c.to_string(),
+                    c if c.is_whitespace() => " ".to_owned(),
+                    '’' | '‘' => "'".to_owned(),
+                    '–' | '—' => "-".to_owned(),
+                    c => inventory_name(c.encode_utf8(&mut [0; 4]), ""),
+                })
+                .collect();
+            let latin = latin.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !latin.chars().any(char::is_alphanumeric) {
+                return String::new();
+            }
+            inventory_name(&crate::text_validation::generated_name(&latin, 63), "")
+        })
+        .filter(|part| !part.is_empty())
+        // a rule's path is a few folders, never a hundred nested ones
+        .take(MAX_PATH_DEPTH)
+        .collect()
+}
+
+/// Folders asked for at once while a folder to move waits for its tree.
+const LOADS_AT_ONCE: usize = 16;
+
+/// The most folders a rule's path makes below the sort folder.
+const MAX_PATH_DEPTH: usize = 8;
+
+/// Where an entry goes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Dest {
+    /// A path below the sort folder, made when missing.
+    Path(Vec<String>),
+    /// One of the user's own folders, chosen in a rule.
+    Folder(Uuid),
+    /// The Pre-Trash folder at the root, made when missing.
+    PreTrash,
+}
+
+/// The folder path below the base folder, or None when nothing in the name
+/// tells where it goes: such entries stay where they are.
+#[cfg(test)]
+pub fn destination(name: &str, asset_type: i32, flags: u32, rules: &[Rule]) -> Option<Vec<String>> {
+    match target(name, asset_type, flags, None, rules, false)? {
+        Dest::Path(path) => Some(path),
+        Dest::Folder(_) | Dest::PreTrash => None,
+    }
+}
+
+/// Where `name` goes: a user rule first, then the body and the category,
+/// and always a Squish folder below them for a Squish or Squeeze version.
+/// `created` is an item's acquired date, for the dated rules.
+pub fn target(name: &str, asset_type: i32, flags: u32, created: Option<i64>, rules: &[Rule], stores: bool) -> Option<Dest> {
+    target_with(name, asset_type, flags, created, rules, stores, &[])
+}
+
+/// [`target`] with the user's store hints: a store's items whose names give
+/// no category take the hint's.
+pub fn target_with(
+    name: &str,
+    asset_type: i32,
+    flags: u32,
+    created: Option<i64>,
+    rules: &[Rule],
+    stores: bool,
+    hints: &[StoreHint],
+) -> Option<Dest> {
+    target_by(name, asset_type, flags, created, rules, stores, hints, None, None)
+}
+
+/// [`target_with`] knowing who made the entry: a creator hint gives its
+/// store and, when the name gives no category, its category.
+#[allow(clippy::too_many_arguments)]
+pub fn target_by(
+    name: &str,
+    asset_type: i32,
+    flags: u32,
+    created: Option<i64>,
+    rules: &[Rule],
+    stores: bool,
+    hints: &[StoreHint],
+    creator: Option<Uuid>,
+    observed_store: Option<&str>,
+) -> Option<Dest> {
+    if let Some(rule) = rule_for(rules, name, created).filter(|r| asset_type != -1 || !r.inside_deliveries) {
+        return Some(rule.destination());
+    }
+    let mut found = classify(name, asset_type, flags);
+    found.category = category_past_store(name, asset_type, found.category);
+    target_classified(name, found, stores, hints, creator, observed_store)
+}
+
+fn target_classified(
+    name: &str,
+    mut found: Classified,
+    stores: bool,
+    hints: &[StoreHint],
+    creator: Option<Uuid>,
+    observed_store: Option<&str>,
+) -> Option<Dest> {
+    let by_creator = creator.and_then(|c| hints.iter().find(|h| h.creator == Some(c)));
+    let mut shop = observed_store
+        .map(str::to_owned)
+        .or_else(|| (stores || !hints.is_empty()).then(|| store(name)).flatten());
+    if let Some(hint) = by_creator {
+        if !hint.store.trim().is_empty() {
+            shop = Some(hint.store.trim().to_owned());
+        }
+        if found.category.is_none() {
+            found.category = Some(hint.category);
+        }
+    }
+    if found.category.is_none()
+        && let Some(shop) = &shop
+        && let Some(hint) = hints.iter().find(|h| h.creator.is_none() && same_store(&h.store, shop))
+    {
+        found.category = Some(hint.category);
+    }
+    let mut path = Vec::new();
+    // a body says who wears it: a sofa, a car, a notecard has none
+    // (`Hourglass Vase` is no Slink item)
+    let worn = !matches!(
+        found.category,
+        Some(
+            Category::Furniture
+                | Category::Decor
+                | Category::Vehicles
+                | Category::Pets
+                | Category::Landmarks
+                | Category::Notecards
+                | Category::Scripts
+                | Category::Sounds
+                | Category::Textures
+                | Category::Environment
+                | Category::Materials
+                | Category::AnimatedObjects
+        )
+    );
+    path.extend(found.body.filter(|_| worn).map(Body::folder));
+    path.extend(found.category.map(category_folder));
+    // By store (`stores`): below the category, or in Stores when the name
+    // says nothing else.
+    // a creator hint names a store on purpose: its folder is made even with
+    // the store option off
+    let hinted = by_creator.is_some_and(|h| !h.store.trim().is_empty());
+    if (stores || hinted)
+        && let Some(shop) = shop
+    {
+        // a store name with no letter the inventory keeps (`[桜屋]`) gets
+        // no folder of its own, and no bare Stores folder either
+        let shop = inventory_name(&shop, "");
+        if !shop.is_empty() {
+            if path.is_empty() {
+                path.push(stores_folder());
+            }
+            path.push(shop);
+        }
+    }
+    // Waifus and Squish versions of clothes get their folder below the
+    // category; the Waifus mod itself is a body add-on and gets none.
+    let variant_category = !matches!(
+        found.category,
+        Some(Category::BodyAddons | Category::Environment | Category::Materials | Category::AnimatedObjects)
+    );
+    if !path.is_empty() && variant_category && (found.squish || found.waifus) {
+        path.push(variant_folder(found.waifus, found.squish));
+    }
+    (!path.is_empty()).then_some(Dest::Path(path))
+}
+
+/// `Waifus`, `Squish` or `Waifus Squish`: creators' words, like the bodies.
+fn variant_folder(waifus: bool, squish: bool) -> String {
+    match (waifus, squish) {
+        (true, true) => format!("{WAIFUS} {}", squish_folder()),
+        (true, false) => WAIFUS.to_owned(),
+        _ => squish_folder(),
+    }
+}
+
+const WAIFUS: &str = "Waifus";
+
+/// The store a creator's name starts with: `[North Oak] + Table`,
+/// `*Opal&Ash* Dress`, `.QZ. Apron`, `Velmora - Hex Dress`,
+/// `zph // Boots`. A tag that is a body, a category or an unpacker word
+/// (`[REBORN] Skirt`, `Dress - Reborn`) is not a store; neither is a long
+/// phrase before a dash, which is a product name.
+pub fn store<'a>(name: &'a str) -> Option<String> {
+    // (a numbered series of one store's deliveries, `12. Snug&Co`, `#4
+    // Snug&Co`, `(3) Snug&Co`, `04 - Snug&Co`: the number is the delivery's)
+    let text = without_number(name.trim());
+    let first = text.chars().next()?;
+    // `hey-you: Thigh Socks`, `THISTLE: The Body`: a store and a colon
+    let tags = &VOCABULARY.store_tags;
+    // `**Store** Dress`, `..::Store::.. Top`: the opening run of marks is
+    // skipped before the closing one is looked for
+    let enclosed = tags.enclosed.iter().find(|(open, _)| *open == first).and_then(|(open, close)| {
+        let rest = text[open.len_utf8()..].trim_start_matches(|c: char| c == *open || (!c.is_alphanumeric() && c != '&'));
+        // the tag, and the name after it
+        rest.find(*close)
+            .map(|end| (&rest[..end], rest[end + close.len_utf8()..].trim_start()))
+    });
+    let separated = |text: &'a str| {
+        tags.separators
+            .iter()
+            .filter_map(|sep| text.find(sep).map(|at| &text[..at]))
+            .min_by_key(|tag| tag.len())
+    };
+    // each way of writing a store in turn: `(Mesh) Velmora - Dress` is no
+    // store in its brackets, then one before its dash after them
+    [
+        enclosed.map(|(t, _)| (t, true)),
+        enclosed.and_then(|(_, after)| separated(after)).map(|t| (t, false)),
+        separated(text).map(|t| (t, false)),
+        underscore_store(text).map(|t| (t, false)),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|(tag, enclosed)| store_tag(tag, enclosed))
+    // (a numbered series named only for its store, `12. Snug&Co`: the
+    // rest of the name is the store, so the series meets in one folder)
+    .or_else(|| (text != name.trim()).then(|| store_tag(text, false)).flatten())
+}
+
+/// [`store`] from a tag only: a numbered name's rest (`02. Casual`) is no
+/// sign of a delivery, the user numbers their own shelves too.
+fn store_tagged(name: &str) -> Option<String> {
+    let found = store(name)?;
+    (without_number(name.trim()) == name.trim() || store(without_number(name.trim()).trim()).is_some()).then_some(found)
+}
+
+/// A name less a leading number of a series: `12. `, `#4 `, `(3) `, `04 - `,
+/// `1) `; never a name that is only a number, nor one that goes on with a
+/// unit or a word glued to it (`3D Ears`, `2nd Life`).
+fn without_number(name: &str) -> &str {
+    let (rest, opened) = match name.strip_prefix('#').or_else(|| name.strip_prefix('(')) {
+        Some(rest) => (rest, true),
+        None => (name, false),
+    };
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    if digits == 0 || digits > 3 {
+        return name;
+    }
+    let after = &rest[digits..];
+    // (a mark must end the number: `12.`, `1)`, `04 -`, `3:`; or it opened
+    // with `#` or `(`. A bare number is a word of the name: `100 Roses`)
+    let closed = after.strip_prefix(')');
+    let spaced = after.trim_start_matches(' ');
+    let marked = match closed.or_else(|| spaced.strip_prefix(['.', '-', ':'])) {
+        Some(rest) => rest,
+        None if opened && after.starts_with(' ') => after,
+        None => return name,
+    };
+    let marked = marked.trim_start_matches([' ', '-', '.']);
+    if marked.is_empty() {
+        return name;
+    }
+    marked
+}
+
+/// A name that opens with an enclosed tag (`[Store] rest`, `**Store**
+/// rest`): the tag and the rest of the name.
+fn enclosed_tag(name: &str) -> Option<(&str, &str)> {
+    // (the name as it is first, `(2 Moons Hair) rest`, when its tag reads as
+    // a store; then past a series number, as `store` reads it: `01. [Store]
+    // rest`, `(3) [Store] rest`)
+    tag_at(name.trim())
+        .filter(|(tag, _)| store_tag(tag, true).is_some())
+        .or_else(|| tag_at(without_number(name.trim()).trim_start()))
+}
+
+fn tag_at(text: &str) -> Option<(&str, &str)> {
+    let first = text.chars().next()?;
+    let (open, close) = VOCABULARY.store_tags.enclosed.iter().find(|(open, _)| *open == first)?;
+    // (the opening run of marks skipped, as `store` does: `..::Store::..`)
+    let inner = text[first.len_utf8()..].trim_start_matches(|c: char| c == *open || (!c.is_alphanumeric() && c != '&'));
+    let end = inner.find(*close)?;
+    let rest = inner[end + close.len_utf8()..].trim_start_matches(|c: char| !c.is_alphanumeric());
+    (!rest.is_empty()).then_some((&inner[..end], rest))
+}
+
+/// The category, a store's own bracketed name set aside (`[Moon Hair] Ada
+/// Dress` is a dress): read from the rest's words when the tag reads as a
+/// store, the whole name's otherwise, or when the rest says nothing, or
+/// when the whole name finds a head outside the tag (`[LeLutka] Bento
+/// Addon`).
+fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> Option<Category> {
+    // (a name that says decor anywhere decides, the store's own name
+    // included: `[Fancy Decor] Rain Boots` is a display piece; a decor
+    // thing in a store's name does not, `[Willow Tree] Ada Poses`; an
+    // outfit is the last category, nothing the rest says comes after it)
+    let says_decor = name.split(|c: char| !c.is_alphanumeric()).any(|w| w.eq_ignore_ascii_case("decor"));
+    if whole == Some(Category::Outfits) || (whole == Some(Category::Decor) && says_decor) {
+        return whole;
+    }
+    // (a texture, a sound… is what its type says, whatever its name)
+    if !matches!(asset_type, -1 | 5 | 6 | 13) {
+        return whole;
+    }
+    let Some((tag, rest)) = enclosed_tag(name) else {
+        return whole;
+    };
+    // (a tag that names the kind, `[Hair] Mia Bow`, is no store's name)
+    if store_tag(tag, true).is_none() {
+        return whole;
+    }
+    // (a head found outside the tag decides; one only in a store's tag,
+    // `[Red Head] Ada HUD`, does not)
+    if whole == Some(Category::Heads) && classify(tag, -1, 0).category != Some(Category::Heads) {
+        return whole;
+    }
+    // (the rest by its words only: a wearable's layer would always answer)
+    let piece = classify(rest, -1, 0).category;
+    // (a set's piece under a set's bracketed name, `[Summer Bikini] Top -
+    // Black`, is that set: the tag was its name, not a store's; `{Skin
+    // Deep} Bikini` is still a bikini, `[Lace Lingerie] Ada Dress` a dress)
+    let set = matches!(
+        classify(tag, -1, 0).category,
+        Some(Category::Lingerie | Category::Swimwear | Category::Sleepwear)
+    );
+    if set && matches!(piece, Some(Category::Tops | Category::Pants | Category::Shorts | Category::Skirts)) {
+        return whole;
+    }
+    // (a pack word, `[Moon Hair] Ada Fatpack`, `[Store Jewelry] Lily Set`,
+    // says how it is sold, not what it is: only an outfit or a costume
+    // named in the rest is one)
+    if piece == Some(Category::Outfits) && !names_an_outfit(rest) {
+        return whole;
+    }
+    // (only a thing sold on its own names what the item is; what it fits
+    // or goes on, a head (`[Ink Tattoo] Ada LeLutka EvoX`), an add-on or
+    // an applier, a body part (`[Gem Jewelry] Ada Ear Cuff`), a look's
+    // parts (`[Doll Makeup] Smoky Eyes`), leaves the whole name's reading)
+    let product = matches!(
+        piece,
+        Some(
+            Category::Hair
+                | Category::Shoes
+                | Category::Stockings
+                | Category::Lingerie
+                | Category::Swimwear
+                | Category::Bodysuits
+                | Category::Dresses
+                | Category::Skirts
+                | Category::Pants
+                | Category::Shorts
+                | Category::Jackets
+                | Category::Tops
+                | Category::Sleepwear
+                | Category::Gloves
+                | Category::Jewelry
+                | Category::Animations
+                | Category::Huds
+                | Category::Furniture
+                | Category::Decor
+                | Category::Vehicles
+                | Category::Pets
+                | Category::Outfits
+        )
+    );
+    // (a tattoo store's layers draw jewelry too: `[Ink Tattoo] Ada Choker`)
+    if !product || (piece == Some(Category::Jewelry) && classify(tag, -1, 0).category == Some(Category::Tattoos)) {
+        return whole;
+    }
+    piece.or(whole)
+}
+
+fn names_an_outfit(name: &str) -> bool {
+    name.split(|c: char| !c.is_alphanumeric()).any(|word| {
+        ["outfit", "outfits", "costume", "costumes"]
+            .iter()
+            .any(|kind| word.eq_ignore_ascii_case(kind))
+    })
+}
+
+/// A bracketed tag says more than a status and what the item is: `[Moon
+/// Hair]` keeps `moon`, `[Mesh Dress]` or `[Rigged Hair]` nothing.
+fn names_more_than_kind(tag_words: &[String]) -> bool {
+    let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    tag_words.len() >= 2 && tag_words.iter().any(|w| !VOCABULARY.store_stopwords.contains(w) && !is_kind(w))
+}
+
+/// `tag` read as a store's name, when it is one.
+fn store_tag(tag: &str, enclosed: bool) -> Option<String> {
+    let tag = tag.trim_matches(|c: char| !c.is_alphanumeric() && c != '&').trim();
+    // (a name in spaced letters, `. z o r i n a .`, is the store `zorina`)
+    let spaced: String;
+    let tag = if tag.split_whitespace().count() >= 3 && tag.split_whitespace().all(|w| w.chars().count() == 1) {
+        spaced = tag.split_whitespace().collect();
+        spaced.as_str()
+    } else {
+        tag
+    };
+    let tag_words = joined_words(tag);
+    let found = classify(tag, -1, 0);
+    // a body mod maker's tag (`VELA.mods`) names its trade, not a product
+    let maker = tag_words.last().is_some_and(|w| w == "mods" || w == "mod");
+    let reads = (2..=32).contains(&tag.chars().count())
+        && (1..=4).contains(&tag_words.len())
+        && tag.chars().any(char::is_alphabetic)
+        && found.body.is_none()
+        // `[Moon Hair]`, `[Mila Poses]`: a bracketed name of a few words
+        // is the store's, even with a category word in it
+        && (found.category.is_none() || maker || enclosed && names_more_than_kind(&tag_words))
+        && !found.unpacker
+        && !found.squish
+        && !found.waifus
+        // `(Mesh)`, `[DEMO]`, `*NEW*`: a status, not a store
+        && !tag_words.iter().all(|w| VOCABULARY.store_stopwords.contains(w))
+        // `~ Fave Rings ~`, `[My Rings]`: a shelf's name in decoration
+        // (`Clothes - Winter`, `Gifts: Mia` neither, before a dash)
+        && !(tag_words.iter().all(|w| {
+                SHELF_WORDS.contains(&w.as_str())
+                    || VOCABULARY.store_stopwords.contains(w)
+                    || VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w))
+            }));
+    reads.then(|| tag.to_owned())
+}
+
+/// `OnlyShop_Sign_F`: a name with no space, its parts joined by `_`, starts
+/// with its store when that first part is written like a brand (inner
+/// capitals, `OnlyShop`, or all capitals, `XYZ`), not like a word (`Akira`).
+fn underscore_store(text: &str) -> Option<&str> {
+    if text.contains(' ') {
+        return None;
+    }
+    let (first, rest) = text.split_once('_')?;
+    let letters: Vec<char> = first.chars().filter(|c| c.is_alphabetic()).collect();
+    let inner_capital = letters.iter().skip(1).any(|c| c.is_uppercase()) && letters.iter().any(|c| c.is_lowercase());
+    let all_capitals = letters.len() >= 2 && letters.iter().all(|c| c.is_uppercase());
+    (!rest.is_empty() && (inner_capital || all_capitals)).then_some(first)
+}
+
+fn stores_folder() -> String {
+    inventory_name(aurora_i18n::tr!("inventory-sorter-stores"), "Stores")
+}
+
+fn squish_folder() -> String {
+    inventory_name(aurora_i18n::tr!("inventory-sorter-variant-squish"), "Squish")
+}
+
+/// The names of a folder and its parents, for the preview
+/// (`My Inventory / Home / Chairs`).
+pub fn folder_path(inv: &Inventory, id: Uuid) -> String {
+    let mut names: Vec<String> = actions::ancestors(inv, id)
+        .filter_map(|a| inv.folders.get(&a).map(|f| f.info.name.clone()))
+        .collect();
+    names.reverse();
+    names.join(" / ")
+}
+
+/// A folder a rule may send entries to: the user's own, not a system
+/// folder that refuses moves (`actions::destination`).
+pub fn target_allowed(inv: &Inventory, id: Uuid) -> bool {
+    folder_open(inv, id) && actions::destination(inv, id) && !in_pre_trash(inv, id) && !in_default_folder(inv, id)
+}
+
+/// `id` is a default folder other than Objects (Clothing, Lost and Found…)
+/// or inside one. Unlocking such a folder lets Auto-sort take entries out
+/// of it, never file entries into it: a rule never sends anything there.
+fn in_default_folder(inv: &Inventory, id: Uuid) -> bool {
+    std::iter::once(id)
+        .chain(actions::ancestors(inv, id))
+        .filter(|a| *a != inv.root)
+        .any(|a| {
+            inv.folders
+                .get(&a)
+                .is_some_and(|f| !matches!(f.info.type_default, -1 | OPEN_DEFAULT))
+        })
+}
+
+/// [`target_allowed`] for many folders: the Pre-Trash folders are found
+/// once (the picker asks for every folder).
+pub fn target_check(inv: &Inventory) -> impl Fn(Uuid) -> bool + '_ {
+    let waiting = pre_trash_folders(inv);
+    move |id| {
+        folder_open(inv, id)
+            && actions::destination(inv, id)
+            && !waiting.iter().any(|p| id == *p || actions::under(inv, id, *p))
+            && !in_default_folder(inv, id)
+    }
+}
+
+/// `id` is the Pre-Trash folder or inside it: what is there is on its way
+/// to the Trash, never a place to file things.
+fn in_pre_trash(inv: &Inventory, id: Uuid) -> bool {
+    pre_trash_folders(inv).iter().any(|p| id == *p || actions::under(inv, id, *p))
+}
+
+/// Where Undo or a snapshot may put an entry back: any rule destination,
+/// and the Pre-Trash folder itself (undoing "Move to Trash" puts its
+/// entries back there, where the user left them).
+pub fn restore_target_allowed(inv: &Inventory, id: Uuid) -> bool {
+    // (inside an unlocked default folder too: an entry goes back where it
+    // was taken from)
+    folder_open(inv, id) && actions::destination(inv, id) && !in_pre_trash(inv, id)
+        || pre_trash(inv) == Some(id) && folder_open(inv, id) && actions::destination(inv, id)
+        // the ordinary default folder an entry came from (Animations,
+        // Clothing…), locked again since the run: putting it back is a drag
+        // back where it was. Never the critical ones (the Trash, outfits,
+        // Marketplace…), which are not unlockable.
+        || inv.folders.get(&id).is_some_and(|f| {
+            !f.library
+                && f.info.parent == inv.root
+                && (unlockable(f.info.type_default) || f.info.type_default == LOST_AND_FOUND)
+                && actions::destination(inv, id)
+        })
+}
+
+/// A folder below `id` that Auto-sort may not carry along when `id` moves
+/// or goes to the Trash whole: a default or typed folder (an outfit, a
+/// stock folder…), a viewer folder, or one the user excluded.
+fn holds_closed(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
+    let Some(top) = inv.folders.get(&id) else { return false };
+    // not loaded: a worn item or a typed folder could be inside, unseen
+    if top.state != FetchState::Fetched {
+        return true;
+    }
+    let mut stack: Vec<Uuid> = top.children.clone();
+    let mut seen = HashSet::new();
+    while let Some(child) = stack.pop() {
+        if !seen.insert(child) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&child) else { continue };
+        if f.info.type_default != -1 || f.library || excluded.contains(&child) || f.state != FetchState::Fetched {
+            return true;
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    false
+}
+
+/// How far the whole inventory is read, for the layout to share: the
+/// folders of My Inventory the background walk reads (never the Trash's,
+/// Received Items' nor Marketplace Listings' trees, nor the Library), read,
+/// failed or too large for the server, and still to come.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ReadProgress {
+    pub total: usize,
+    pub read: usize,
+    pub failed: usize,
+    pub pending: usize,
+}
+
+/// The folders still to read whose parent is read: each one asked with all
+/// it holds reads the rest below it (at most `limit`).
+pub fn unread_tops(inv: &Inventory, limit: usize) -> Vec<Uuid> {
+    let mut out = Vec::new();
+    let mut stack = vec![inv.root];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if out.len() >= limit || !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { continue };
+        if f.library || matches!(f.info.type_default, 14 | 50 | 53) || inv.too_big.contains(&id) {
+            continue;
+        }
+        if f.state == FetchState::Unknown {
+            out.push(id);
+            continue;
+        }
+        if f.state == FetchState::Fetched {
+            stack.extend(f.children.iter().copied());
+        }
+    }
+    out
+}
+
+pub fn read_progress(inv: &Inventory) -> ReadProgress {
+    let mut progress = ReadProgress::default();
+    let mut stack = vec![inv.root];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { continue };
+        // (the same trees the background walk reads; Marketplace Listings
+        // is read by its own window)
+        if f.library || matches!(f.info.type_default, 14 | 50 | 53) {
+            continue;
+        }
+        progress.total += 1;
+        match (f.state, inv.too_big.contains(&id)) {
+            // The loader cannot fetch past this boundary. Cached children
+            // underneath it cannot keep the snapshot waiting for reads.
+            (FetchState::Failed, _) | (_, true) => progress.failed += 1,
+            (FetchState::Fetched, false) => {
+                progress.read += 1;
+                stack.extend(f.children.iter().copied());
+            }
+            (FetchState::Unknown | FetchState::Fetching, false) => progress.pending += 1,
+        }
+    }
+    progress
+}
+
+/// A folder at or below `id` the server failed to give (its contents are
+/// unknown, never taken as empty): a folder holding one never moves whole,
+/// it may carry what no one has seen (something worn, a locked folder).
+pub fn failed_below(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
+    let mut stack = vec![id];
+    let mut seen = HashSet::new();
+    while let Some(folder) = stack.pop() {
+        if !seen.insert(folder) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&folder) else { continue };
+        if f.state == FetchState::Failed {
+            return true;
+        }
+        if f.state == FetchState::Fetched {
+            stack.extend(f.children.iter().copied().filter(|c| !excluded.contains(c)));
+        }
+    }
+    false
+}
+
+/// The folders below `id` (itself included) not loaded yet: a folder moves
+/// whole once they are, so they are asked for. One the server failed to
+/// give is not listed: it keeps its parent where it is (`holds_closed`)
+/// and is never asked for again in a loop.
+pub fn unloaded_below(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> Vec<Uuid> {
+    let mut out = Vec::new();
+    let mut stack = vec![id];
+    let mut seen = HashSet::new();
+    while let Some(folder) = stack.pop() {
+        if !seen.insert(folder) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&folder) else { continue };
+        if f.state != FetchState::Fetched {
+            if f.state != FetchState::Failed {
+                out.push(folder);
+            }
+            continue;
+        }
+        // (an excluded folder is never read)
+        stack.extend(f.children.iter().copied().filter(|c| !excluded.contains(c)));
+    }
+    out
+}
+
+/// One entry to move.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Move {
+    pub id: Uuid,
+    pub folder: bool,
+    pub name: String,
+    /// The folder it is in now: a move whose entry left it is dropped.
+    pub from: Uuid,
+    pub to: Dest,
+    /// The destination as the preview names it.
+    pub label: String,
+    pub unpacker: bool,
+    /// Undo or a snapshot's layout: the entry goes back to a place it was,
+    /// out of the Trash included; it is checked like a drag rather than
+    /// by the hands-off rule, which still guards where it goes.
+    #[serde(default)]
+    pub restore: bool,
+    /// An Undo of a Trash run: the only move ever allowed to take an entry
+    /// out of the Trash (a sort's Undo or a layout leaves what is in the
+    /// Trash now where it is).
+    #[serde(default)]
+    pub from_trash: bool,
+    /// A snapshot's layout restore: it honours the folders excluded since,
+    /// like a sort (an Undo puts back what its run moved).
+    #[serde(default)]
+    pub snapshot: bool,
+    /// Cleanup may move this folder only while its tree is empty.
+    #[serde(default)]
+    pub only_if_empty: bool,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Plan {
+    pub moves: Vec<Move>,
+    /// How many moves are unpackers, counted by [`order`](Self::order).
+    pub unpacker_count: usize,
+    /// The destination groups (ranges of `moves`) in the preview's order,
+    /// worked out once by [`order`](Self::order).
+    pub groups: Vec<std::ops::Range<usize>>,
+    /// Names that say nothing the sorter knows.
+    pub unknown: Vec<String>,
+    /// Entries that cannot move: worn, links, locked or system folders.
+    pub kept: usize,
+    /// Those entries by name, and why each stays: the preview shows them.
+    pub kept_list: Vec<(String, Kept)>,
+    /// Folders a Pre-Trash rule would read that are not loaded yet: the
+    /// window asks for them and the preview fills in.
+    pub unfetched: Vec<Uuid>,
+    /// Restore details shown above the file's proposed moves.
+    pub layout_summary: Option<String>,
+}
+
+impl Plan {
+    /// The destination folders and how many entries each receives, by path;
+    /// Pre-Trash first, so what would leave is seen before the rest.
+    #[cfg(test)]
+    pub fn groups(&self) -> Vec<(String, usize)> {
+        self.grouped()
+            .into_iter()
+            .map(|(label, rows)| (label.to_owned(), rows.len()))
+            .collect()
+    }
+
+    /// The moves by destination, in [`groups`](Self::groups)' order. The
+    /// moves are sorted by destination when the plan is made, so each
+    /// group is one slice: nothing is copied or counted per frame.
+    pub fn grouped(&self) -> Vec<(&str, &[Move])> {
+        // in the order worked out once by `order` (off the frame); a plan
+        // not ordered yet is ordered here
+        if !self.groups.is_empty() {
+            return self
+                .groups
+                .iter()
+                .map(|r| (self.moves[r.start].label.as_str(), &self.moves[r.clone()]))
+                .collect();
+        }
+        let mut groups: Vec<(&str, &[Move])> = self
+            .moves
+            .chunk_by(|a, b| a.label == b.label)
+            .map(|rows| (rows[0].label.as_str(), rows))
+            .collect();
+        groups.sort_by_cached_key(|(label, rows)| (rows[0].to != Dest::PreTrash, crate::natural_order::key(label)));
+        groups
+    }
+
+    /// How many destination groups the preview has.
+    pub fn group_count(&self) -> usize {
+        if self.groups.is_empty() {
+            self.moves.chunk_by(|a, b| a.label == b.label).count()
+        } else {
+            self.groups.len()
+        }
+    }
+
+    /// What stays, by reason, each reason one slice of `kept_list` (in
+    /// order once [`order`](Self::order) ran): nothing copied per frame.
+    pub fn kept_by_reason(&self) -> Vec<(Kept, &[(String, Kept)])> {
+        self.kept_list.chunk_by(|a, b| a.1 == b.1).map(|rows| (rows[0].1, rows)).collect()
+    }
+
+    /// Ready for the preview, once per plan (off the frame for a large
+    /// one): what stays sorted by reason, keeping each reason's order.
+    pub fn order(&mut self) {
+        self.kept_list.sort_by_key(|(_, why)| *why);
+        self.unpacker_count = self.unpackers();
+        let mut groups: Vec<std::ops::Range<usize>> = Vec::new();
+        let mut at = 0;
+        for rows in self.moves.chunk_by(|a, b| a.label == b.label) {
+            groups.push(at..at + rows.len());
+            at += rows.len();
+        }
+        groups.sort_by_cached_key(|r| {
+            let first = &self.moves[r.start];
+            (first.to != Dest::PreTrash, crate::natural_order::key(&first.label))
+        });
+        self.groups = groups;
+    }
+
+    pub fn unpackers(&self) -> usize {
+        self.moves.iter().filter(|m| m.unpacker).count()
+    }
+}
+
+/// The existing ordinary folder named `name` (any case) in `parent`.
+pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
+    let name = name.trim().to_lowercase();
+    inv.folders
+        .get(&parent)?
+        .children
+        .iter()
+        .filter_map(|id| inv.folders.get(id))
+        .filter(|f| !f.library && f.info.parent == parent && f.info.type_default == -1 && same_name(&f.info.name, &name))
+        .map(|f| f.info.id)
+        .min()
+}
+
+/// Kept for the callers that ask about the Trash and Marketplace Listings:
+/// both are hands-off, like every default folder but Objects.
+pub fn untouchable(inv: &Inventory, id: Uuid) -> bool {
+    hands_off(inv, id) || actions::in_type(inv, id, 14) || actions::in_type(inv, id, 53)
+}
+
+/// A folder the user may list as their own ([`Preferences::own`]): one of
+/// their folders in an open place, never My Inventory, a default, viewer or
+/// protected folder, nor the sort folder, Pre-Trash or a folder in them.
+pub fn own_allowed(inv: &Inventory, prefs: &Preferences, id: Uuid) -> bool {
+    own_check(inv, prefs)(id)
+}
+
+/// [`own_allowed`] for many folders: the sort folder and the Pre-Trash
+/// folders are found once (the picker asks for every folder).
+pub fn own_check<'a>(inv: &'a Inventory, prefs: &Preferences) -> impl Fn(Uuid) -> bool + 'a {
+    let (base, waiting) = (base_folder(inv, prefs), pre_trash_folders(inv));
+    move |id| {
+        id != inv.root
+            && inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1 && !f.library)
+            && folder_open(inv, id)
+            && !untouchable(inv, id)
+            && !actions::ancestors(inv, id).any(|a| Some(a) == base || waiting.contains(&a))
+    }
+}
+
+/// The folders listed as the user's own that still may be (and are not
+/// excluded: an exclusion wins), and every folder holding one below My
+/// Inventory.
+#[derive(Debug, Default)]
+pub struct OwnFolders {
+    /// The listed folders: opened and sorted.
+    listed: HashSet<Uuid>,
+    /// The listed folders and their holders: none moves whole. A holder is
+    /// not opened for them (a delivery holding the user's `My Edits` keeps
+    /// its own contents).
+    holds: HashSet<Uuid>,
+}
+
+impl OwnFolders {
+    /// `id` is listed, or holds a listed folder: never moved whole.
+    pub fn contains(&self, id: &Uuid) -> bool {
+        self.holds.contains(id)
+    }
+
+    /// `id` is listed: opened and sorted.
+    pub fn opens(&self, id: &Uuid) -> bool {
+        self.listed.contains(id)
+    }
+
+    /// The listed folders below `holder` with no other listed folder
+    /// between (the deeper ones are reached through those).
+    fn listed_below(&self, inv: &Inventory, holder: Uuid) -> Vec<Uuid> {
+        // (sorted: the same order on every run)
+        let mut below: Vec<Uuid> = self
+            .listed
+            .iter()
+            .copied()
+            .filter(|id| {
+                *id != holder
+                    && actions::ancestors(inv, *id)
+                        .skip(1)
+                        .find(|a| *a == holder || self.listed.contains(a))
+                        .is_some_and(|a| a == holder)
+            })
+            .collect();
+        below.sort_unstable();
+        below
+    }
+}
+
+/// The user's listed folders ([`OwnFolders`]), worked out once per plan.
+pub fn own_folders(inv: &Inventory, prefs: &Preferences) -> OwnFolders {
+    let mut own = OwnFolders::default();
+    if prefs.own.is_empty() {
+        return own;
+    }
+    let allowed = own_check(inv, prefs);
+    for id in prefs.own.iter().copied().filter(|id| allowed(*id) && !prefs.excludes(inv, *id)) {
+        own.listed.insert(id);
+        own.holds.extend(actions::ancestors(inv, id).take_while(|a| *a != inv.root));
+    }
+    own
+}
+
+/// Whether the sorter can run on `source`: My Inventory, Objects, or one of
+/// the user's own folders, in an open place ([`folder_open`]).
+pub fn source_allowed(inv: &Inventory, source: Uuid) -> bool {
+    folder_open(inv, source) && actions::mutable(inv, source)
+}
+
+/// A product's folder: an unpacked delivery, a fatpack with its HUD and
+/// card. It is never opened: it moves whole or stays. It is a folder of the
+/// user's (not one Auto-sort made) whose name has a store's tag or name, or
+/// names one product (never a shelf: `My Shoes`, `Dresses 2024`), or that
+/// holds only versions of it (bodies, Squish, its name again).
+///
+/// The sorter's folder names (`reserved`) are worked out once by the caller,
+/// for loops over thousands of folders.
+fn product_folder_in(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) -> bool {
+    // judged once per folder and inventory change on each planning thread:
+    // a plan asks several times (sources, Pre-Trash, Clean up) about the
+    // same 30,000 folders
+    thread_local! {
+        static JUDGED: std::cell::RefCell<((u64, usize, usize, usize, usize), HashMap<Uuid, bool>)> = Default::default();
+    }
+    // (the inventory's address and size too: a copy of another one, or a
+    // test's, may share its generation)
+    // (the reserved names themselves: renaming the sort folder keeps their
+    // count)
+    let names = reserved.iter().fold(0u64, |acc, name| {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        name.hash(&mut hasher);
+        acc ^ hasher.finish()
+    });
+    let key = (
+        inv.generation,
+        std::ptr::from_ref(inv) as usize,
+        inv.folders.len(),
+        inv.items.len(),
+        names as usize,
+    );
+    if let Some(known) = JUDGED.with(|j| {
+        let j = j.borrow();
+        (j.0 == key).then(|| j.1.get(&folder).copied()).flatten()
+    }) {
+        return known;
+    }
+    let judged = judge_product_folder(inv, folder, reserved);
+    JUDGED.with(|j| {
+        let mut j = j.borrow_mut();
+        if j.0 != key {
+            *j = (key, HashMap::new());
+        }
+        j.1.insert(folder, judged);
+    });
+    judged
+}
+
+fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) -> bool {
+    let Some(f) = inv.folders.get(&folder) else { return false };
+    let name = f.info.name.trim();
+    if f.info.type_default != -1 || reserved.contains(&name.to_lowercase()) {
+        return false;
+    }
+    if skin_tone_delivery(inv, f) || tiled_texture_pack(inv, f) {
+        return true;
+    }
+    let has_folders = f.children.iter().any(|c| inv.folders.contains_key(c));
+    if has_folders && shelf_of_products(inv, f, name, reserved) {
+        return false;
+    }
+    // a store before a dash (`Clothes - Winter`) is too weak a sign for a
+    // folder of the user's: only a tag (`[Store]`, `*Store*`) makes it one
+    let store_named = store_tagged(name).is_some();
+    let tagged = store_named && VOCABULARY.store_tags.enclosed.iter().any(|(open, _)| name.starts_with(*open));
+    let named = target(name, -1, 0, None, &[], false).is_some();
+    // an unpacked delivery whatever it sells: an unpacker's marks in its
+    // name, a version tag, or its items carrying its brand (never a folder
+    // the user marks as a shelf: `My Stuff`, `Unpacked`)
+    // (an unpacker's marks win over a shelf word in a long product name:
+    // `Face Slapper {Unpacker/backup} v1.0.3`)
+    // (a lone letter is no mark in a long name: `Cateyes I`)
+    let name_words = words(name);
+    let shelf_marked = name_words
+        .iter()
+        .any(|w| SHELF_MARKERS.contains(&w.as_str()) && !(w.chars().count() == 1 && name_words.len() > 2));
+    let delivered = match delivery_mark(name) {
+        Some(Mark::Strong) => true,
+        Some(Mark::Plain) => !shelf_marked && !words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str())),
+        // (a shelf word inside a product's name does not stop its brand:
+        // `Zorin. My Little Book` holding `Zorin. My Little Book
+        // Curvy`; `My Stuff`'s things never start with `my`)
+        None => (!shelf_marked || brand_first(inv, f, name)) && shares_its_name(inv, f, name),
+    };
+    if delivered {
+        return true;
+    }
+    // A backdrop shelf may contain outfits and their props. A kind word
+    // elsewhere in a folder called "stuff" does not make it a delivery.
+    if !store_named && name_words.last().is_some_and(|word| word == "stuff") && !has(&name_words, "box") {
+        return false;
+    }
+    if has_folders {
+        // a folder of folders is the user's own (`My Dresses`, `Reborn
+        // Stuff`, `Party Outfits`) unless it reads as a store's product: a
+        // tag, a store and what it is (`Velmora - Hex Dress`), or what it
+        // is with its versions inside (`Hex Dress` holding `Maitreya`,
+        // `Reborn`, `Hex Dress Legacy`, `Squish`)
+        tagged
+            || store_named && named
+            || versions_only(inv, f, name, named || store_named)
+            || delivery_by_default(inv, f, name, named, store_named)
+    } else {
+        // a folder of items alone is a product when its name says what or
+        // whose it is (`Hex Dress`, `[Velmora] Hex`); a shelf is opened even
+        // named for a kind or a body (`Stuff`, `2024`, `Hunt Gifts`, `My
+        // Shoes`, `Old Hair`, `Reborn Stuff`)
+        let fatpack = !shelf_marked && name_words.iter().any(|w| w == "fatpack");
+        tagged || store_named || named && (fatpack || names_a_product(name) && one_product_named(inv, f, name))
+    }
+}
+
+/// A shelf of the user's holding other products, whose own name says
+/// nothing Auto-sort knows (`Nookery` holding `Nookery. cemetery sign
+/// [box]` and `Nookery. rude bouquet [box]`; `Velmira` holding only
+/// `[Velmira] Glossy Dress (unpacked)`). Kept whole, it could only stay as
+/// not recognized with everything in it: it is opened instead, and each
+/// product in it still moves whole.
+///
+/// Delivery parts (`HUD`, `Textures`, a body's version, `Gold`) and
+/// products that differ only by finish keep a package intact. A shelf
+/// with loose items needs independently marked products under its own
+/// store name. A lone product counts for an otherwise empty store shelf.
+fn shelf_of_products(inv: &Inventory, f: &super::Folder, name: &str, reserved: &HashSet<String>) -> bool {
+    let tag = store_tagged(name);
+    // A tag by itself is a label for a store's shelf. A tag followed by
+    // product words belongs to the delivery and keeps it together.
+    let bare_tag = tag.as_deref().is_some_and(|tag| same_store(name, tag));
+    if tag.is_some() && !bare_tag || matches!(delivery_mark(name), Some(Mark::Strong)) || target(name, -1, 0, None, &[], false).is_some() {
+        return false;
+    }
+    let subs: Vec<&super::Folder> = f.children.iter().filter_map(|c| inv.folders.get(c)).collect();
+    if subs.is_empty() || f.children.len() != subs.len() {
+        return false;
+    }
+    let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
+    let part = |sub: &str| {
+        let sub_words = words(sub);
+        reserved.contains(&sub.to_lowercase())
+            || classify(sub, -1, 0).body.is_some() && product_words(sub).is_empty()
+            || sub_words.iter().all(|w| {
+                VERSION_WORDS.contains(&w.as_str())
+                    || DELIVERY_PARTS.contains(&w.as_str())
+                    || FINISHES.contains(&w.as_str())
+                    || tone(w)
+                    || w.chars().all(|c| c.is_ascii_digit())
+            })
+    };
+    if subs.iter().any(|s| part(s.info.name.trim())) {
+        return false;
+    }
+    let own: HashSet<String> = if bare_tag { joined_words(name) } else { product_words(name) }
+        .into_iter()
+        .collect();
+    let rest = |sub: &str| -> Vec<String> {
+        let mut rest: Vec<String> = product_words(sub)
+            .into_iter()
+            .filter(|w| !own.contains(w) && !FINISHES.contains(&w.as_str()) && !tone(w))
+            .collect();
+        rest.sort_unstable();
+        rest.dedup();
+        rest
+    };
+    if !f.items.is_empty() {
+        let prefix = joined_words(tag.as_deref().unwrap_or(name));
+        if prefix.is_empty() || subs.len() < 2 {
+            return false;
+        }
+        let signature = |title: &str| {
+            let words = joined_words(without_number(title.trim()));
+            let suffix = words.strip_prefix(prefix.as_slice())?;
+            // An internal dash may introduce a colour. Read the product
+            // after the shelf's label before interpreting its separators.
+            let mut words = rest(&suffix.join(" "));
+            words.retain(|word| {
+                word.chars().count() > 1
+                    && !matches!(
+                        word.as_str(),
+                        "pack" | "unbox" | "unboxed" | "unpack" | "unpacker" | "me" | "rez" | "wear"
+                    )
+                    && !VOCABULARY.unpackers.contains(word)
+                    && !VOCABULARY.bodies.iter().any(|body| body.fit_aliases.contains(word))
+            });
+            Some(words)
+        };
+        // A loose main object may belong to a package named for itself.
+        if f.items.iter().any(|id| {
+            inv.items.get(id).is_some_and(|it| {
+                matches!(it.asset_type, 5 | 6 | 13 | 20 | 21) && signature(&it.name).is_some_and(|words| words.is_empty())
+            })
+        }) {
+            return false;
+        }
+        let mut products = subs.iter().filter_map(|sub| {
+            let title = sub.info.name.trim();
+            if sub.info.type_default != -1 || delivery_mark(title) != Some(Mark::Strong) || demos::is_demo(title) {
+                return None;
+            }
+            signature(title).filter(|words| !words.is_empty())
+        });
+        return products.next().is_some_and(|first| products.any(|other| other != first));
+    }
+    let products: Vec<&&super::Folder> = subs.iter().filter(|s| product_folder_in(inv, s.info.id, reserved)).collect();
+    if let [only] = subs.as_slice() {
+        let sub = only.info.name.trim();
+        let sub_words = words(sub);
+        if products.is_empty() {
+            // (a delivery's inner folder carries its name again)
+            return !sub_words.iter().any(|w| own.contains(w));
+        }
+        // The product may have only a kind and finish after its store tag:
+        // `[Velmira] Glossy Dress Black (unpacked)` has no distinct word
+        // left after stripping kinds, finishes, and delivery markers.
+        let marked_product = store_tagged(sub).is_some_and(|store| same_store(name, &store))
+            && matches!(delivery_mark(sub), Some(Mark::Strong))
+            && target(sub, -1, 0, None, &[], false).is_some();
+        return !own.is_empty() && own.iter().all(|w| sub_words.contains(w)) && (!rest(sub).is_empty() || marked_product);
+    }
+    if products.is_empty() {
+        return false;
+    }
+    let named: Vec<Vec<String>> = products
+        .iter()
+        .map(|s| {
+            let sub = s.info.name.trim();
+            let mut signature = rest(sub);
+            if store_tagged(sub).is_some_and(|store| same_store(name, &store))
+                && matches!(delivery_mark(sub), Some(Mark::Strong))
+                && let Some(category) = classify(sub, -1, 0).category
+            {
+                // A dress and a skirt are distinct products even if they
+                // have no name except the kind and finish.
+                signature.push(category.key().to_owned());
+            }
+            signature
+        })
+        .filter(|r| !r.is_empty())
+        .collect();
+    let distinct: HashSet<&Vec<String>> = named.iter().collect();
+    (distinct.len() >= 2 || products.len() < subs.len()) && named.len() * 2 >= products.len()
+}
+
+/// A folder of loose items names one product with a word of its own: not
+/// a shelf marker (`Shoes Backup`), nor a colour or a material beside a
+/// plural kind (`Black Dresses`, `Leather Jackets`: the user's shelf of
+/// them), unless an item carries the folder's whole name (`Black Dresses
+/// HUD`).
+fn one_product_named(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
+    let name_words = words(name);
+    let many = name_words
+        .iter()
+        .any(|w| (plural_kind(w) || loose_plural(w)) && !SOLD_AS_MANY.contains(&w.as_str()));
+    let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
+    let own = product_words(name)
+        .iter()
+        .any(|w| !SHELF_MARKERS.contains(&w.as_str()) && !(many && (FINISHES.contains(&w.as_str()) || tone(w))));
+    own || f.items.iter().filter_map(|i| inv.items.get(i)).any(|it| {
+        let item_words = words(&it.name);
+        name_words.iter().all(|w| item_words.contains(w))
+    })
+}
+
+/// How a name shows an unpacker: `Strong` marks (a bracketed `(unpacked)`,
+/// `[BOXED]`, `{Unpacker}`, `wear to unpack`, `add me`, a version tag)
+/// win over a shelf word in a long product name; a plain `Boxed` does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    Strong,
+    Plain,
+}
+
+fn delivery_mark(name: &str) -> Option<Mark> {
+    const PHRASES: [&[&str]; 6] = [
+        &["to", "unpack"],
+        &["auto", "unpack"],
+        &["wear", "me"],
+        &["add", "me"],
+        &["touch", "me"],
+        &["unpacker"],
+    ];
+    let name_words = words(name);
+    if name_words.len() < 2 {
+        return None;
+    }
+    // what brackets hold: `(unpacked)`, `[BOXED]`, `{Unpacker/backup}`
+    let mut inside = Vec::new();
+    let mut depth = 0usize;
+    let mut segment = String::new();
+    let mut outside = String::new();
+    for c in name.chars() {
+        match c {
+            '(' | '[' | '{' => {
+                depth += 1;
+                segment.clear();
+            }
+            ')' | ']' | '}' if depth > 0 => {
+                depth -= 1;
+                inside.push(std::mem::take(&mut segment));
+            }
+            _ if depth > 0 => segment.push(c),
+            _ => outside.push(c),
+        }
+    }
+    // (a bracket of marks only, `(Wear)`, `[BOXED]`, `(add me)`, or one
+    // naming the unpacker; never `(Casual Wear)`, `(Add-Ons)`, `(Gift Box)`)
+    const MARK_WORDS: [&str; 12] = [
+        "unpacked", "unpacker", "unpack", "boxed", "box", "wear", "add", "me", "addme", "to", "auto", "touch",
+    ];
+    let marked = inside.iter().any(|s| {
+        let segment = words(s);
+        !segment.is_empty()
+            && (segment.iter().any(|w| matches!(w.as_str(), "unpacked" | "unpacker" | "boxed"))
+                || segment.iter().all(|w| MARK_WORDS.contains(&w.as_str())))
+    });
+    // (a mark beside shelf words only is the user's pile: `My Stuff
+    // (unpacked)`, `To Unpack`)
+    let rest_is_shelf = name_words
+        .iter()
+        .all(|w| MARK_WORDS.contains(&w.as_str()) || SHELF_MARKERS.contains(&w.as_str()) || SHELF_WORDS.contains(&w.as_str()));
+    if rest_is_shelf {
+        return (marked || version_tag(name)).then_some(Mark::Plain);
+    }
+    // (beside a product's name only: `Dresses [Unpacked]`, `To Unpack` are
+    // the user's piles)
+    let product = names_a_product(outside.trim());
+    if marked && product {
+        return Some(Mark::Strong);
+    }
+    if product
+        && PHRASES.iter().any(|phrase| {
+            name_words
+                .windows(phrase.len())
+                .any(|w| w.iter().map(String::as_str).eq(phrase.iter().copied()))
+        })
+    {
+        return Some(Mark::Strong);
+    }
+    if version_tag(name) {
+        return Some(Mark::Strong);
+    }
+    // a hunt's numbered prize (`THF14 025 of 110 Brindle`), or one gift or
+    // prize beside a name of its own (`Gift from Brindle`, `Brindle March
+    // Group Gift`, `Easter Basket (hunt item)`): one creator's delivery;
+    // `Gifts`, `Hunt Prizes` stay the user's shelves
+    let numbered = name_words.windows(3).any(|w| {
+        w[1] == "of"
+            && [&w[0], &w[2]]
+                .iter()
+                .all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    });
+    if numbered {
+        return Some(Mark::Strong);
+    }
+    const ONE_GIFT: [&str; 4] = ["gift", "prize", "reward", "item"];
+    const MANY_GIFTS: [&str; 4] = ["gifts", "prizes", "rewards", "items"];
+    let one_gift =
+        name_words.iter().any(|w| ONE_GIFT[..3].contains(&w.as_str())) || name_words.windows(2).any(|w| w[0] == "hunt" && w[1] == "item");
+    if one_gift
+        && !name_words.iter().any(|w| MANY_GIFTS.contains(&w.as_str()))
+        && name_words.iter().any(|w| {
+            w.chars().count() >= 3
+                && !w.chars().all(|c| c.is_ascii_digit())
+                && !ONE_GIFT.contains(&w.as_str())
+                && !SHELF_WORDS.contains(&w.as_str())
+                && !SHELF_MARKERS.contains(&w.as_str())
+                && !OCCASION_WORDS.contains(&w.as_str())
+                && !matches!(w.as_str(), "from" | "for" | "the" | "group" | "free")
+        })
+    {
+        return Some(Mark::Strong);
+    }
+    // (`Brindle Old Milk Cans Unboxed`: the unpacker's own word after a
+    // product's name; `Unboxed Items`, `Unpacked Stuff` stay piles)
+    if let Some((last, rest)) = name_words.split_last()
+        && matches!(last.as_str(), "unboxed" | "unpacked")
+        && rest.len() >= 2
+        && names_a_product(&rest.join(" "))
+    {
+        return Some(Mark::Strong);
+    }
+    name_words.iter().any(|w| w == "boxed").then_some(Mark::Plain)
+}
+
+/// A version tag: `v4`, `v1.2`, `V0.08`, `v.4`; `(1.0.4)`, `[6.0]`. Never a
+/// date, bracketed or not (`10.12.2016`, `(12.2023)`, `[24.12]`).
+fn version_tag(name: &str) -> bool {
+    name.to_lowercase().split_whitespace().any(|token| {
+        let bracketed = token.starts_with(['(', '[', '{']) && token.ends_with([')', ']', '}']);
+        let inner = token.trim_matches(|c: char| matches!(c, '(' | ')' | '[' | ']' | '{' | '}'));
+        let parts = |s: &str| -> Option<Vec<usize>> {
+            let lens: Option<Vec<usize>> = s
+                .split('.')
+                .map(|part| (!part.is_empty() && part.chars().all(|c| c.is_ascii_digit())).then_some(part.len()))
+                .collect();
+            lens.filter(|l| !l.is_empty())
+        };
+        // (a year, or two-digit parts only, is a date)
+        let date = |lens: &[usize]| lens.contains(&4) || lens.len() >= 2 && lens.iter().all(|l| *l == 2);
+        let versioned = |s: &str| parts(s).is_some_and(|lens| lens.len() <= 4 && !date(&lens));
+        inner.strip_prefix('v').is_some_and(|rest| versioned(rest.trim_start_matches('.')))
+            || bracketed && inner.contains('.') && versioned(inner)
+    })
+}
+
+/// Most of a folder's items carry a word of its own name that names no kind
+/// (`Kira Boots` holding `Kira Boots Legacy`, `Kira HUD`; `Polo by Lotus`
+/// holding `Poloshirt XS by Lotus`): a creator's delivery, its brand on
+/// everything.
+fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
+    const PLAIN: [&str; 14] = [
+        "the", "and", "for", "with", "demo", "demos", "copy", "box", "pack", "set", "gift", "gifts", "free", "new",
+    ];
+    let is_kind = |w: &str| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let own: Vec<String> = words(name)
+        .into_iter()
+        .filter(|w| {
+            w.chars().count() >= 3
+                && !w.chars().all(|c| c.is_ascii_digit())
+                && !PLAIN.contains(&w.as_str())
+                && !SHELF_WORDS.contains(&w.as_str())
+                && !VERSION_WORDS.contains(&w.as_str())
+                && !FINISHES.contains(&w.as_str())
+                && !OCCASION_WORDS.contains(&w.as_str())
+                // (a body's name on every item is the user's shelf of it:
+                // `Lara` holding `Hex Dress Lara`, `Kira Top Lara X`)
+                && !VOCABULARY.bodies.iter().any(|b| b.strong.iter().chain(b.weak.iter()).any(|s| s == w))
+                && !VOCABULARY.variants.squish.iter().chain(VOCABULARY.variants.waifus.iter()).any(|s| s == w)
+                && !is_kind(w)
+                && !plural_kind(w)
+                && !loose_plural(w)
+        })
+        .collect();
+    // (a dated name is the user's: `Zoe & Me 10.12.2016`)
+    // (whole tokens of digits and dots only: `v1.0.2024` is a version)
+    let dated = name
+        .split(|c: char| c.is_whitespace() || "()[]{}".contains(c))
+        .filter(|token| !token.is_empty() && token.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .any(|token| {
+            let parts: Vec<&str> = token.split('.').filter(|p| !p.is_empty()).collect();
+            parts.len() >= 2 && (parts.iter().any(|p| p.len() == 4) || parts.iter().all(|p| p.len() == 2))
+        });
+    if own.is_empty() || f.items.is_empty() || dated {
+        return false;
+    }
+    let items: Vec<&str> = f.items.iter().filter_map(|i| inv.items.get(i)).map(|it| it.name.as_str()).collect();
+    // (a box's folder holding just the product: `Harvester mesh BOX`
+    // holding `Harvester mesh`, two of its words at least)
+    if let [only] = items.as_slice() {
+        let item_words = words(only);
+        let held = own.iter().filter(|w| item_words.contains(w)).count();
+        // (one word of its own is enough beside a box's word: `Harvester
+        // mesh BOX` holding `Harvester mesh table`)
+        return held >= 2 || held == 1 && classify(name, -1, 0).unpacker;
+    }
+    // (beside a shelf word, `Group Gifts`, `Rare Gacha`, only an item whose
+    // first word is the folder's own: a creator puts the brand first)
+    let shelf_named = words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str()));
+    let sharing = items
+        .iter()
+        .filter(|n| {
+            let item_words = words(n);
+            if shelf_named {
+                item_words.first().is_some_and(|w| own.contains(w))
+            } else {
+                item_words.iter().any(|w| own.contains(w))
+            }
+        })
+        .count();
+    // (two in five: a delivery's notecards, landmarks and add-ons carry
+    // other names; a shelf's things come from many creators)
+    sharing >= 2 && sharing * 5 >= items.len() * 2
+}
+
+/// Most of a folder's items start with the folder's own first word, a
+/// brand's place (`Zorin. My Little Book` holding `Zorin. My Little
+/// Book - Curvy`).
+fn brand_first(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
+    let Some(first) = words(name).into_iter().next() else {
+        return false;
+    };
+    if first.chars().count() < 3 || SHELF_MARKERS.contains(&first.as_str()) || SHELF_WORDS.contains(&first.as_str()) {
+        return false;
+    }
+    let items: Vec<&str> = f.items.iter().filter_map(|i| inv.items.get(i)).map(|it| it.name.as_str()).collect();
+    let starting = items.iter().filter(|n| words(n).first() == Some(&first)).count();
+    starting >= 2 && starting * 5 >= items.len() * 3
+}
+
+/// Kinds sold as one product though written as many (`Winter Boots`): an
+/// occasion beside them still names a product.
+const SOLD_AS_MANY: [&str; 16] = [
+    "shoes",
+    "boots",
+    "heels",
+    "sandals",
+    "sneakers",
+    "stockings",
+    "socks",
+    "tights",
+    "pants",
+    "shorts",
+    "jeans",
+    "leggings",
+    "gloves",
+    "earrings",
+    "ears",
+    "pajamas",
+];
+
+/// Kinds with no plural (`Hair`, `Makeup`): never one thing named.
+const MASS_KINDS: [&str; 10] = [
+    "hair",
+    "makeup",
+    "jewelry",
+    "jewellery",
+    "lingerie",
+    "swimwear",
+    "sleepwear",
+    "decor",
+    "furniture",
+    "clutter",
+];
+
+/// A set's versions by finish, colour, material or season (`Vesper Ring
+/// Sets` holding `Gold`, `Silver`; `Nimbus Hair Packs` holding `Blondes`,
+/// `Reds`).
+const FINISHES: [&str; 116] = [
+    "gold",
+    "silver",
+    "rose",
+    "platinum",
+    "copper",
+    "black",
+    "white",
+    "pearl",
+    "brass",
+    "chrome",
+    "red",
+    "reds",
+    "blue",
+    "blues",
+    "green",
+    "greens",
+    "pink",
+    "pinks",
+    "purple",
+    "yellow",
+    "orange",
+    "brown",
+    "browns",
+    "grey",
+    "gray",
+    "navy",
+    "beige",
+    "cream",
+    "nude",
+    "nudes",
+    "blacks",
+    "blonde",
+    "blondes",
+    "brunettes",
+    "naturals",
+    "pastels",
+    "ombres",
+    "neutrals",
+    "brights",
+    "darks",
+    "lights",
+    "gunmetal",
+    "steel",
+    "titanium",
+    "diamond",
+    "diamonds",
+    "emerald",
+    "ruby",
+    "sapphire",
+    "amethyst",
+    "topaz",
+    "onyx",
+    "crystal",
+    "gem",
+    "gems",
+    "gemstone",
+    "two",
+    "tone",
+    "antique",
+    "matte",
+    "glossy",
+    "shiny",
+    "metallic",
+    "floral",
+    "plain",
+    "print",
+    "prints",
+    "solid",
+    "solids",
+    "striped",
+    "plaid",
+    "leather",
+    "fabric",
+    "velvet",
+    "satin",
+    "lace",
+    "denim",
+    "fall",
+    "spring",
+    "summer",
+    "autumn",
+    "winter",
+    "vol",
+    "volume",
+    "edition",
+    "multi",
+    "mixed",
+    "teal",
+    "olive",
+    "burgundy",
+    "khaki",
+    "camel",
+    "charcoal",
+    "lavender",
+    "mint",
+    "coral",
+    "corals",
+    "berry",
+    "berries",
+    "pewter",
+    "nickel",
+    "jade",
+    "turquoise",
+    "ginger",
+    "gingers",
+    "auburn",
+    "auburns",
+    "peach",
+    "mauve",
+    "taupe",
+    "wine",
+    "rust",
+    "mustard",
+    "lilac",
+    "aqua",
+    "ivory",
+];
+
+/// The pack words of a name that sell many of one thing (`Kyoto Kimono
+/// Sets`, `Opal Jewelry Collections`): a pack word after a singular kind, in
+/// a name with a word of its own. They say nothing of a shelf; `Makeup Sets`
+/// or `Pose Packs`, with no word of their own, stay shelves.
+fn pack_of_one(name: &str) -> Vec<usize> {
+    const PACKS: [&str; 4] = ["sets", "packs", "bundles", "collections"];
+    if product_words(name).is_empty() {
+        return Vec::new();
+    }
+    let is_kind = |w: &str| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let name_words = words(name);
+    (1..name_words.len())
+        .filter(|&i| {
+            let before = &name_words[i - 1];
+            PACKS.contains(&name_words[i].as_str()) && is_kind(before) && !plural_kind(before) && !loose_plural(before)
+        })
+        .collect()
+}
+
+/// A word that is a kind's plural, written loosely: the word less its `s`
+/// or `es` is a kind (`Tops`, `Sets`, `Dresses`).
+fn loose_plural(w: &str) -> bool {
+    let is_kind = |w: &str| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let less = |n: usize| w.len() > n && w.is_char_boundary(w.len() - n) && is_kind(&w[..w.len() - n]);
+    w.ends_with("es") && less(2) || w.ends_with('s') && less(1)
+}
+
+/// Folders a user marks a shelf of their own with: a folder of folders so
+/// named is never kept whole as one product.
+const SHELF_MARKERS: [&str; 29] = [
+    "stuff",
+    "misc",
+    "my",
+    "various",
+    "random",
+    "unpacked",
+    "unboxed",
+    "temp",
+    "sorted",
+    "unsorted",
+    "unorganized",
+    "unorganised",
+    "unfiled",
+    "backup",
+    "archive",
+    "archives",
+    "inventory",
+    "saved",
+    "favorites",
+    "favourites",
+    "others",
+    "other",
+    "i",
+    "sets",
+    "packs",
+    "bundles",
+    "collections",
+    "fave",
+    "faves",
+];
+
+/// A folder of folders named for one product is a delivery unless it shows
+/// a shelf's sign: a folder of unknown subfolders (`Animesh Corgi Pet`
+/// holding `Food`, `Toys`, `Manual`) stays whole, never scattered. The
+/// signs: every subfolder a plural kind (`Fantasy` holding `Heads`,
+/// `Skins`), a subfolder that is a delivery itself (a store's shelf), an
+/// occasion and a plural kind (`Party Dresses`), or a shelf word (`Stuff`).
+fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bool, store_named: bool) -> bool {
+    let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let name_words = words(name);
+    let occasion = name_words.iter().any(|w| OCCASION_WORDS.contains(&w.as_str()));
+    // one thing named (`Kimono Set`, `Old Hat 2009`)
+    // (never beside a shelf word: `Skin Gifts`, `Skin Demos`)
+    let singular_kind = named
+        && !name_words.iter().any(|w| SHELF_WORDS.contains(&w.as_str()))
+        && name_words
+            .iter()
+            .any(|w| is_kind(w) && !plural_kind(w) && !MASS_KINDS.contains(&w.as_str()))
+        && !name_words.iter().any(|w| plural_kind(w))
+        && !occasion;
+    if !(names_a_product(name) || store_named || singular_kind) {
+        return false;
+    }
+    let packs = pack_of_one(name);
+    if name_words
+        .iter()
+        .enumerate()
+        .any(|(i, w)| SHELF_MARKERS.contains(&w.as_str()) && !packs.contains(&i))
+    {
+        return false;
+    }
+    let own = product_words(name);
+    let subs: Vec<&super::Folder> = f.children.iter().filter_map(|c| inv.folders.get(c)).collect();
+    // a set of one thing shows it in its subfolders: a body, a kind, a
+    // finish (`Vesper Ring Sets` holding `Gold`, `Silver`); a shelf of
+    // sets holds products named their own way (`Best Ring Sets` holding
+    // `Vesper`, `Opal`)
+    if !packs.is_empty() {
+        let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
+        let number = |w: &String| w.chars().all(|c| c.is_ascii_digit());
+        // a part only a delivery has (a body, a kind, a HUD), or a version
+        // by finish, colour or season (`Gold`, `Reds`, `Fall 2024`)
+        let own_part = |s: &&super::Folder, structural: bool| {
+            let sub = s.info.name.trim();
+            let sub_words = words(sub);
+            if sub_words.is_empty() || sub_words.iter().all(number) {
+                return false;
+            }
+            if classify(sub, -1, 0).body.is_some() || is_kind(&sub_words.join(" ")) {
+                return true;
+            }
+            // (a number dates a kind, `Ring 2`, a finish's; beside a delivery's
+            // own part, `HUD 2`, `Scripts 2`, it is that part's)
+            let kind_word = sub_words
+                .iter()
+                .any(|w| is_kind(w) && !VERSION_WORDS.contains(&w.as_str()) && !DELIVERY_PARTS.contains(&w.as_str()));
+            sub_words.iter().all(|w| {
+                VERSION_WORDS.contains(&w.as_str())
+                    || DELIVERY_PARTS.contains(&w.as_str())
+                    || is_kind(w)
+                    || number(w) && (!structural || !kind_word)
+                    || !structural && (FINISHES.contains(&w.as_str()) || tone(w))
+            })
+        };
+        // (one `Gold` folder beside `Vesper` and `Opal` is a shelf's: finishes
+        // keep a set whole when there are two or more and most folders are
+        // one, a `Burgundy` or a `Demo` beside `Black` and `White` included)
+        let finishes = subs.iter().filter(|s| own_part(s, false)).count();
+        if !(subs.iter().any(|s| own_part(s, true)) || finishes == subs.len() || finishes >= 2 && finishes * 2 > subs.len()) {
+            return false;
+        }
+    }
+    let kind_only = |sub_words: &[String]| {
+        !sub_words.is_empty()
+            && (is_kind(&sub_words.join(" ")) || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w)))
+    };
+    let named_seen = subs.iter().any(|s| words(s.info.name.trim()).iter().any(|w| own.contains(w)));
+    let by_kind = subs.iter().all(|s| kind_only(&words(s.info.name.trim())))
+        && subs.iter().any(|s| words(s.info.name.trim()).iter().any(|w| plural_kind(w)))
+        && !(named && named_seen);
+    // a subfolder that is a delivery of its own: a store's shelf
+    // (never beside a delivery's own working folder: `Rez Box`, `HUD`; a
+    // store's shelf holds none)
+    let parts_seen = subs.iter().any(|s| {
+        let sub_words = words(s.info.name.trim());
+        !sub_words.is_empty()
+            && sub_words
+                .iter()
+                .all(|w| DELIVERY_PARTS.contains(&w.as_str()) || VERSION_WORDS.contains(&w.as_str()))
+    });
+    // (another store's tagged delivery always shows a shelf)
+    // (the folder's own store tag on a subfolder says nothing: `Mila - Photo
+    // Studio` holding `[Mila] Poses`)
+    let name_store = store_tagged(name);
+    // (a name ending in one set's word, `Boho Bedroom Set` holding `Bed` and
+    // `Night Table`, `Vesper Bridal Set` holding `Pearl Necklace`: its
+    // folders are its parts, another store's tag alone shows a shelf)
+    let one_set = name_words
+        .last()
+        .is_some_and(|w| matches!(w.as_str(), "set" | "kit" | "bundle" | "pack" | "collection"));
+    let holds_deliveries = subs.iter().any(|s| {
+        let sub = s.info.name.trim();
+        if let Some(tag) = store_tagged(sub)
+            && !name_store.as_deref().is_some_and(|own| same_store(own, &tag))
+        {
+            return true;
+        }
+        if parts_seen || one_set {
+            return false;
+        }
+        let read = classify(sub, -1, 0);
+        read.body.is_none()
+            && read.category.is_some_and(|c| {
+                !matches!(
+                    c,
+                    Category::Huds | Category::BodyAddons | Category::Shapes | Category::Skins | Category::Eyes | Category::Heads
+                )
+            })
+            && names_a_product(sub)
+            && product_words(sub)
+                .iter()
+                .any(|w| !own.contains(w) && !OCCASION_WORDS.contains(&w.as_str()))
+    });
+    // a plural kind in the name: a shelf of them (`Work Outfits`, `Poses
+    // for Photos`), unless sold as one (`Winter Boots`); a delivery named so
+    // (`Mila Poses Pack`) was kept by its versions above
+    // (`Lingerie Sets` too: a kind's word less its `s`)
+    let plural_shelf = name_words
+        .iter()
+        .enumerate()
+        .any(|(i, w)| !packs.contains(&i) && (plural_kind(w) || loose_plural(w)) && !SOLD_AS_MANY.contains(&w.as_str()));
+    !(by_kind || holds_deliveries || plural_shelf)
+}
+
+/// Every subfolder of `f` is a version of the product named `name`: a body,
+/// a Squish or Waifus variant, or the product's name again.
+/// Only for a name that names one product (`Hex Dress`), never a kind or a
+/// shelf of the user's (`Dresses`, `Shoes`, `My Dresses`, `Dresses 2024`).
+/// `named`: the name says what it is (`Hex Dress`): its HUD and textures
+/// folders alone keep it whole; a name saying no kind (`Velmora -
+/// Aphrodite`) needs a body or named version inside.
+fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) -> bool {
+    // a name that fails only for its occasion word (`Winter Boots`) is
+    // judged by what it holds, like any product's
+    let occasion = words(name).iter().any(|w| OCCASION_WORDS.contains(&w.as_str()));
+    if !names_a_product(name) && !occasion {
+        return false;
+    }
+    // an occasion beside a plural kind is a shelf (`Party Dresses`,
+    // `Christmas Sweaters`), unless that kind is a pair or a set sold as one
+    // product (`Winter Boots`, `Summer Shorts`)
+    if occasion && words(name).iter().any(|w| plural_kind(w) && !SOLD_AS_MANY.contains(&w.as_str())) {
+        return false;
+    }
+    let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    // the product's own words (`aphrodite`, `hex`): a subfolder sharing one
+    // is a version of it (`Aphrodite HUD`, `Hex HUD`), the store's name
+    // aside
+    // (an occasion is no product's own word, and beside a shelf word only a
+    // subfolder starting with one counts: `Group Gifts` holding `Kira
+    // GROUP GIFT Boots`, `Christmas` holding `Kira Christmas Dress` are
+    // shelves of other stores' deliveries)
+    let shelf_named = words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str()));
+    let own: Vec<String> = product_words(name)
+        .into_iter()
+        .filter(|w| !OCCASION_WORDS.contains(&w.as_str()))
+        .collect();
+    // (a subfolder repeating the whole name, `Christmas Sweater HUD`, is a
+    // version even when an occasion is the name's only word of its own)
+    let name_words = words(name);
+    let whole_name = name_words.len() >= 2
+        && name_words
+            .iter()
+            .any(|w| !OCCASION_WORDS.contains(&w.as_str()) && !SHELF_WORDS.contains(&w.as_str()) && !w.chars().all(|c| c.is_ascii_digit()));
+    let mut versions = false;
+    // the subfolders named only for a kind: one thing each (`Top`, `Head`,
+    // `Shape`) are a delivery's parts; all of them plural (`Heads`,
+    // `Skins`, `Boots`) are a shelf sorted by kind
+    let (mut singular, mut plural) = (0, 0);
+    let mut fatpack_seen = false;
+    let mut part_seen = false;
+    let mut named_seen = false;
+    let all = f.children.iter().filter_map(|c| inv.folders.get(c)).all(|sub| {
+        let sub_name = sub.info.name.trim();
+        let sub_words = words(sub_name);
+        let read = classify(sub_name, -1, 0);
+        // (a skin's tones too: `Light`, `Tan`, `Dark`)
+        let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
+        // (beside a shelf word, the subfolder's first word past shelf and
+        // occasion words: `Gift Starlight Top` under `Gift Starlight Outfit`)
+        let lead = sub_words
+            .iter()
+            .find(|w| !SHELF_WORDS.contains(&w.as_str()) && !OCCASION_WORDS.contains(&w.as_str()));
+        let named_again = if shelf_named {
+            lead.is_some_and(|w| own.contains(w))
+        } else {
+            sub_words.iter().any(|w| own.contains(w))
+        } || whole_name
+            // (the whole name, after a colour or a finish too: `Red
+            // Christmas Sweater` under `Christmas Sweater`)
+            && (0..sub_words.len()).any(|i| {
+                sub_words[i..].starts_with(&name_words)
+                    && sub_words[..i].iter().all(|w| FINISHES.contains(&w.as_str()) || tone(w))
+            });
+        // a fatpack's own folders (`HUDs`, `Textures`, `Appliers`)
+        let fatpack = !sub_words.is_empty() && sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || tone(w));
+        // (a kind written as a phrase: `Hair Base`)
+        let phrase_kind = is_kind(&sub_words.join(" "));
+        let kind_only = !fatpack
+            && !sub_words.is_empty()
+            && (phrase_kind || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w)));
+        let many = kind_only && sub_words.iter().any(|w| plural_kind(w));
+        // a body's or a head's version (`Lelutka`, `Catwa EvoX`), Squish,
+        // Waifus, or the product's own name again
+        let version = named_again || read.body.is_some() || read.category == Some(Category::Heads) && !many || read.squish || read.waifus;
+        versions |= version;
+        fatpack_seen |= fatpack;
+        named_seen |= named_again;
+        // (`Kira Boots` holding `Boots`: its own pair, no shelf of them)
+        let own_pair = sub_words.len() == 1 && SOLD_AS_MANY.contains(&sub_words[0].as_str()) && words(name).contains(&sub_words[0]);
+        if kind_only && !version && !own_pair {
+            if many {
+                plural += 1;
+            } else {
+                singular += 1;
+            }
+        }
+        // a delivery's own working parts (`Teeth`, an AO's `Stands` and
+        // `Walks`, `Scripts`, a tattoo's `Opacity`, a prefab's `Rez Box`):
+        // they keep it whole only beside a name of its own
+        let part = sub_words.iter().any(|w| DELIVERY_PARTS.contains(&w.as_str()))
+            && sub_words
+                .iter()
+                .all(|w| DELIVERY_PARTS.contains(&w.as_str()) || VERSION_WORDS.contains(&w.as_str()) || tone(w));
+        part_seen |= part;
+        version || fatpack || kind_only || part
+    });
+    // (a product named for what it is, with a folder repeating its name,
+    // keeps its plural extras: `Lelutka Avalon Head` holding `Avalon HUD`,
+    // `Skins`, `Shapes`)
+    // (nor a delivery with a version of its own beside them, `Kira Avatar`
+    // holding `Head` and `Eyes`, or a named one or a body with its HUD:
+    // `Orion Head` holding `HUDs`, `Shapes`, `Skins`)
+    // (only for a name of one product: `Work Outfits` holding `HUD` and
+    // `Tops`, `Fantasy Heads` holding `Skins` stay shelves)
+    let body_named = words(name).last().is_some_and(|w| w == "body");
+    // (`Kitsune Ears Set`: a name ending on one thing names one product)
+    let ends_one = words(name)
+        .last()
+        .is_some_and(|w| is_kind(w) && !loose_plural(w) && !plural_kind(w));
+    let packs = pack_of_one(name);
+    let many_named = !ends_one && words(name).iter().enumerate().any(|(i, w)| !packs.contains(&i) && loose_plural(w));
+    let delivery_extras = names_a_product(name) && !many_named && (versions || (named || body_named) && fatpack_seen);
+    let shelf_by_kind = plural > 0 && singular == 0 && !(named && named_seen) && !delivery_extras;
+    // (a HUD or textures folder is a delivery's: no one keeps one on a shelf)
+    all && !shelf_by_kind && (versions || named && !occasion || (singular > 0 || fatpack_seen || part_seen) && names_a_product(name))
+}
+
+/// A kind word written as many (`Dresses`, `Shoes`, `Heads`): the word
+/// less its `s` or `es` is a kind too.
+fn plural_kind(w: &str) -> bool {
+    let is_kind = |w: &str| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let less = |n: usize| w.len() > n && w.is_char_boundary(w.len() - n) && is_kind(&w[..w.len() - n]);
+    is_kind(w) && (w.ends_with("es") && less(2) || w.ends_with('s') && less(1))
+}
+
+/// The words of a name that are its own: not a kind, a body's name, a
+/// shelf word, a number or the store's name.
+fn product_words(name: &str) -> Vec<String> {
+    let store_words = store_tagged(name).map(|s| joined_words(&s)).unwrap_or_default();
+    let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    words(name)
+        .into_iter()
+        .filter(|w| {
+            !is_kind(w)
+                && !store_words.contains(w)
+                && !SHELF_WORDS.contains(&w.as_str())
+                && !VERSION_WORDS.contains(&w.as_str())
+                && !w.chars().all(|c| c.is_ascii_digit())
+                && !VOCABULARY.bodies.iter().any(|b| b.strong.iter().any(|s| s == w))
+        })
+        .collect()
+}
+
+/// The folders a product's delivery holds beside its body versions.
+const VERSION_WORDS: [&str; 39] = [
+    "hud",
+    "huds",
+    "textures",
+    "texture",
+    "colors",
+    "colours",
+    "color",
+    "colour",
+    "extras",
+    "extra",
+    "addons",
+    "add",
+    "ons",
+    "fatpack",
+    "materials",
+    "pbr",
+    "petite",
+    "perky",
+    "pinup",
+    "sizes",
+    "alpha",
+    "alphas",
+    "bom",
+    "omega",
+    "applier",
+    "appliers",
+    "body",
+    "head",
+    "hands",
+    "feet",
+    "pg",
+    "adult",
+    "singles",
+    "couples",
+    "bento",
+    "no",
+    "with",
+    "without",
+    "only",
+];
+
+/// A delivery's working parts: with a name of its own (`Elegance AO`
+/// holding `Stands`, `Walks`, `Sits`) they keep it whole; on a shelf
+/// (`Builds` holding `Textures`, `Scripts`) they say nothing.
+const DELIVERY_PARTS: [&str; 10] = [
+    "teeth", "stands", "walks", "sits", "scripts", "script", "opacity", "rez", "box", "props",
+];
+
+/// Words a user names a shelf of their own with, never a product.
+const SHELF_WORDS: [&str; 60] = [
+    "my",
+    "old",
+    "new",
+    "misc",
+    "stuff",
+    "other",
+    "others",
+    "more",
+    "all",
+    "various",
+    "random",
+    "extra",
+    "extras",
+    "mine",
+    "saved",
+    "archive",
+    "archives",
+    "fav",
+    "favs",
+    "favorites",
+    "favourites",
+    "unpacked",
+    "temp",
+    "sorted",
+    "unsorted",
+    "unorganized",
+    "unorganised",
+    "unfiled",
+    "favorite",
+    "favourite",
+    "gacha",
+    "hunt",
+    "gift",
+    "gifts",
+    "freebie",
+    "freebies",
+    "clothes",
+    "clothing",
+    "bodies",
+    "avatar",
+    "mesh",
+    "faces",
+    "body",
+    "avatars",
+    "face",
+    "sets",
+    "packs",
+    "bundles",
+    "collections",
+    "fave",
+    "faves",
+    "female",
+    "male",
+    "women",
+    "womens",
+    "men",
+    "mens",
+    "unisex",
+    "gachas",
+    "demos",
+];
+
+/// Occasions and seasons: a shelf's word beside a plural kind or alone
+/// (`Party Dresses`, `Christmas`), a product's beside a singular one
+/// (`Party Dress`, `Christmas Sweater`).
+const OCCASION_WORDS: [&str; 19] = [
+    "party",
+    "casual",
+    "formal",
+    "evening",
+    "everyday",
+    "cute",
+    "sexy",
+    "beach",
+    "holiday",
+    "halloween",
+    "christmas",
+    "summer",
+    "winter",
+    "spring",
+    "autumn",
+    "xmas",
+    "easter",
+    "valentine",
+    "valentines",
+];
+
+/// A name with a word of its own beyond kinds, bodies, shelf words and
+/// numbers: `Hex Dress` names a product, `Dresses`, `My Dresses` or
+/// `Dresses 2024` a shelf.
+fn names_a_product(name: &str) -> bool {
+    let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let name_words = words(name);
+    // one thing named (`Dress`, `Sweater`), not a shelf of them (`Dresses`,
+    // `Tops`: the word less its `s` or `es` is a kind too)
+    let plural = |w: &String| {
+        let less = |n: usize| w.len() > n && is_kind(&w[..w.len() - n].to_owned());
+        w.ends_with("es") && less(2) || w.ends_with('s') && less(1)
+    };
+    // (a word with no plural, `Hair`, `Makeup`, `Decor`, names a kind of
+    // things: `Halloween Makeup` is a shelf)
+    let mass = [
+        "hair",
+        "makeup",
+        "jewelry",
+        "jewellery",
+        "lingerie",
+        "swimwear",
+        "sleepwear",
+        "decor",
+        "furniture",
+        "clutter",
+    ];
+    let singular_kind = name_words.iter().any(|w| is_kind(w) && !plural(w) && !mass.contains(&w.as_str()));
+    name_words.iter().any(|w| {
+        (singular_kind || !OCCASION_WORDS.contains(&w.as_str()))
+            && !is_kind(w)
+            && !SHELF_WORDS.contains(&w.as_str())
+            && !w.chars().all(|c| c.is_ascii_digit())
+            // a body's own name (`maitreya`), not a word some bodies share
+            // with products (`venus`, `freya`, `lara`)
+            && !VOCABULARY.bodies.iter().any(|b| b.strong.iter().any(|s| s == w))
+    })
+}
+
+/// What a whole-inventory sort reads, in an open place only: the loose
+/// items of My Inventory, the contents of Objects, and the contents of the
+/// user's own folders (not excluded, not the sort folder nor Pre-Trash),
+/// including nested shelves. A product's folder moves
+/// whole, never opened. No other default folder is read (see
+/// [`folder_open`]).
+#[cfg(test)]
+pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
+    let places = Places::of(inv, prefs);
+    sort_sources(inv, inv.root, prefs, &places, &HashSet::new())
+}
+
+fn sort_sources(inv: &Inventory, scope: Uuid, prefs: &Preferences, places: &Places, protected: &HashSet<Uuid>) -> Vec<Uuid> {
+    let mut sources = vec![scope];
+    if !folder_open(inv, scope)
+        || prefs.excludes(inv, scope)
+        || actions::ancestors(inv, scope).any(|id| protected.contains(&id) || places.pre_trash.contains(&id))
+    {
+        return sources;
+    }
+    let mut seen = HashSet::from([scope]);
+    let mut pending = vec![scope];
+    // User-designated shelves are opened even inside a delivery.
+    for id in prefs.own.iter().copied().filter(|id| places.own.opens(id)) {
+        if !actions::under(inv, id, scope)
+            || !folder_open(inv, id)
+            || prefs.excludes(inv, id)
+            || actions::ancestors(inv, id).any(|a| protected.contains(&a))
+        {
+            continue;
+        }
+        if seen.insert(id) {
+            sources.push(id);
+            pending.push(id);
+        }
+    }
+    // Only the actual sort tree is reserved. A folder named after a body
+    // or category elsewhere is a shelf, even several levels down.
+    while let Some(parent) = pending.pop() {
+        let Some(folder) = inv.folders.get(&parent).filter(|f| f.state == FetchState::Fetched) else {
+            continue;
+        };
+        for id in folder.children.iter().copied() {
+            let Some(f) = inv.folders.get(&id) else { continue };
+            if seen.contains(&id)
+                || Some(id) == places.base
+                || places.pre_trash.contains(&id)
+                || !folder_open(inv, id)
+                || prefs.excludes(inv, id)
+                || protected.contains(&id)
+                || (parent != inv.root && f.info.type_default != -1)
+                || f.state == FetchState::Failed
+                || inv.too_big.contains(&id)
+            {
+                continue;
+            }
+            if f.state == FetchState::Fetched && !places.own.opens(&id) && product_folder_in(inv, id, &places.reserved) {
+                continue;
+            }
+            seen.insert(id);
+            sources.push(id);
+            pending.push(id);
+        }
+    }
+    sources
+}
+
+/// What every folder of a plan is compared with, worked out once: the sort
+/// folder, the Pre-Trash folder and the names of the folders Auto-sort
+/// makes (a scan over 40,000 folders must not look them up for each one).
+struct Places {
+    base: Option<Uuid>,
+    waiting: Option<Uuid>,
+    /// Every Pre-Trash folder, other languages' included.
+    pre_trash: HashSet<Uuid>,
+    reserved: HashSet<String>,
+    /// The user's own folders and the folders holding one ([`own_folders`]).
+    own: OwnFolders,
+}
+
+impl Places {
+    fn of(inv: &Inventory, prefs: &Preferences) -> Self {
+        Self {
+            base: base_folder(inv, prefs),
+            waiting: pre_trash(inv),
+            pre_trash: pre_trash_folders(inv),
+            reserved: sorter_folder_names(prefs),
+            own: own_folders(inv, prefs),
+        }
+    }
+}
+
+/// The plan of a whole-inventory sort (see [`whole_sources`]). Its
+/// Pre-Trash rules read all of My Inventory's open places, at any depth
+/// ([`scan_rules`]). The default and viewer folders at the root are
+/// listed as kept, so the preview names what is never touched.
+pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
+    let places = Places::of(inv, prefs);
+    let sources = sort_sources(inv, inv.root, prefs, &places, protected);
+    let (mut entries, unread) = source_contents(inv, &sources, prefs.folders, &places);
+    let sources: HashSet<_> = sources.into_iter().collect();
+    // a product's folder at the root moves whole
+    if prefs.folders
+        && let Some(root) = inv.folders.get(&inv.root)
+    {
+        entries.extend(root.children.iter().copied().filter(|id| {
+            !sources.contains(id)
+                && Some(*id) != places.base
+                && Some(*id) != places.waiting
+                && folder_open(inv, *id)
+                && !places.own.contains(id)
+                && product_folder_in(inv, *id, &places.reserved)
+        }));
+    }
+    let scan = scan_rules(inv, prefs, inv.root, protected, worn);
+    let mut plan = plan_with(inv, entries, scan, prefs, protected, worn, true);
+    // every list of folders to load: the plan's own, the scan's, the
+    // sources'
+    plan.unfetched.extend(unread);
+    plan.unfetched.sort_unstable();
+    plan.unfetched.dedup();
+    if let Some(root) = inv.folders.get(&inv.root) {
+        for id in &root.children {
+            if let Some(f) = inv.folders.get(id)
+                && hands_off(inv, *id)
+                && !folder_open(inv, *id)
+            {
+                plan.kept += 1;
+                plan.kept_list.push((f.info.name.clone(), Kept::Protected));
+            }
+        }
+    }
+    plan
+}
+/// A folder name Auto-sort creates or looks up, as the inventory keeps it.
+/// Inventory names are ASCII (LLInventoryObject::correctInventoryName,
+/// indra/llinventory/llinventory.cpp; `operations::folder_name`): a name with
+/// accents loses them (`Trié` → `Trie`, `Café` → `Cafe`) instead of having
+/// them replaced by spaces, and a name that keeps no letter (Japanese) takes
+/// `fallback`. Both the lookup and the creation use this name, so a run
+/// finds the folders it made and never builds a second tree.
+pub fn inventory_name(name: &str, fallback: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            c if c.is_ascii() => out.push(c),
+            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => out.push('a'),
+            'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' => out.push('A'),
+            'ç' => out.push('c'),
+            'Ç' => out.push('C'),
+            'è' | 'é' | 'ê' | 'ë' => out.push('e'),
+            'È' | 'É' | 'Ê' | 'Ë' => out.push('E'),
+            'ì' | 'í' | 'î' | 'ï' => out.push('i'),
+            'Ì' | 'Í' | 'Î' | 'Ï' => out.push('I'),
+            'ñ' => out.push('n'),
+            'Ñ' => out.push('N'),
+            'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' => out.push('o'),
+            'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'Ø' => out.push('O'),
+            'ù' | 'ú' | 'û' | 'ü' => out.push('u'),
+            'Ù' | 'Ú' | 'Û' | 'Ü' => out.push('U'),
+            'ý' | 'ÿ' => out.push('y'),
+            'Ý' => out.push('Y'),
+            'œ' => out.push_str("oe"),
+            'Œ' => out.push_str("OE"),
+            'æ' => out.push_str("ae"),
+            'Æ' => out.push_str("AE"),
+            'ß' => out.push_str("ss"),
+            '’' | '‘' => out.push('\''),
+            '–' | '—' => out.push('-'),
+            ' ' | '\u{3000}' => out.push(' '),
+            // a script with no ASCII spelling: the whole name falls back
+            _ => return aurora_net::inventory::operations::folder_name(fallback),
+        }
+    }
+    let name = aurora_net::inventory::operations::folder_name(&out);
+    if name.chars().any(|c| c.is_ascii_alphanumeric()) {
+        name
+    } else {
+        aurora_net::inventory::operations::folder_name(fallback)
+    }
+}
+
+/// A category's folder as the inventory names it, English when the
+/// language's name has no ASCII spelling.
+pub fn category_folder(category: Category) -> String {
+    let key = category.key().replace('-', " ");
+    let mut english = key[..1].to_uppercase();
+    english.push_str(&key[1..]);
+    inventory_name(category.folder(), &english)
+}
+
+/// The default folder whose contents Auto-sort may read: Objects, where
+/// deliveries land. Every other default folder is hands-off.
+const OPEN_DEFAULT: i32 = 6;
+
+/// A folder Auto-sort may read inside, move entries out of, or put entries
+/// into: My Inventory itself (its loose items), Objects, and the user's own
+/// folders, not in the Library. One shared rule for every path (sort, whole
+/// inventory, right-click, Pre-Trash rules, Clean up, empty folders, the
+/// Trash steps), checked when planning and again before each batch: no
+/// setting, rule or imported text can reach past it.
+fn open_container(inv: &Inventory, folder: &super::Folder) -> bool {
+    !folder.library
+        && (folder.info.id == inv.root
+            || matches!(folder.info.type_default, -1 | OPEN_DEFAULT)
+            || (unlockable(folder.info.type_default) || folder.info.type_default == LOST_AND_FOUND)
+                && inv.sorter_unlocked.contains(&folder.info.id))
+}
+
+/// The default folders the user may allow Auto-sort into, one by one, with
+/// a warning: Textures, Sounds, Calling Cards, Landmarks, Clothing,
+/// Notecards, Scripts, Body Parts, Photo Album, Animations, Gestures,
+/// Settings, Materials. Lost and Found opens by its own switch only
+/// (`Preferences::include_lost_found`). Never: the Trash, Marketplace
+/// Listings and its folders, the Current Outfit, My Outfits and the
+/// outfits, the Library, Received Items, Favorites, the viewer folders.
+pub fn unlockable(kind: i32) -> bool {
+    matches!(kind, 0 | 1 | 2 | 3 | 5 | 7 | 10 | 13 | 15 | 20 | 21 | 56 | 57)
+}
+
+/// The move has happened: the entry is in the folder `m` sends it to
+/// (its path resolved below the sort folder `base`), not where it was. A
+/// batch the server applied late, or in part, is known by this.
+pub fn arrived(inv: &Inventory, base: SortBase<'_>, m: &Move) -> bool {
+    let Some(parent) = actions::parent(inv, m.id) else { return false };
+    if parent == m.from {
+        return false;
+    }
+    match &m.to {
+        Dest::Folder(target) => parent == *target,
+        Dest::PreTrash => Some(parent) == pre_trash(inv),
+        Dest::Path(path) => base.existing(inv).and_then(|id| resolve_existing(inv, id, path)) == Some(parent),
+    }
+}
+
+/// Show an entry in `parent` locally, as the inventory does when a move is
+/// sent (`NetEvent::InventoryMoved`): a refused batch's entry goes back
+/// where it was until the server says otherwise.
+pub fn show_in(inv: &mut Inventory, id: Uuid, folder: bool, parent: Uuid) {
+    if actions::parent(inv, id) == Some(parent) || !inv.folders.contains_key(&parent) {
+        return;
+    }
+    if folder {
+        if let Some(f) = inv.folders.get(&id) {
+            let mut moved = f.info.clone();
+            moved.parent = parent;
+            inv.server_updated(vec![moved], Vec::new());
+        }
+    } else if let Some(item) = inv.items.get(&id) {
+        let mut moved = item.clone();
+        moved.parent = parent;
+        inv.server_updated(Vec::new(), vec![moved]);
+    }
+}
+
+/// The sort folder or an existing folder of `path` below it is excluded.
+pub fn path_excluded(inv: &Inventory, base: Uuid, path: &[String], prefs: &Preferences) -> bool {
+    let mut at = base;
+    if prefs.excludes(inv, at) {
+        return true;
+    }
+    for part in path {
+        let Some(next) = child(inv, at, part) else { return false };
+        if prefs.excludes(inv, next) {
+            return true;
+        }
+        at = next;
+    }
+    false
+}
+
+/// `id` is in the Trash, at any depth.
+fn in_trash(inv: &Inventory, id: Uuid) -> bool {
+    actions::system(inv, 14).is_some_and(|t| actions::under(inv, id, t))
+}
+
+/// Lost and Found, semi-protected: closed unless its switch is on.
+const LOST_AND_FOUND: i32 = 16;
+
+/// The items, at any depth, of the default folders still locked: what a
+/// whole-inventory Clean up or sort never looks at until Options unlocks it.
+pub fn locked_items(inv: &Inventory) -> usize {
+    unlockable_folders(inv)
+        .into_iter()
+        .filter(|id| !folder_open(inv, *id))
+        .map(|id| folder_items(inv, id).0)
+        .sum()
+}
+
+/// The default folders of My Inventory's root the user may unlock.
+pub fn unlockable_folders(inv: &Inventory) -> Vec<Uuid> {
+    inv.folders
+        .get(&inv.root)
+        .map(|root| {
+            root.children
+                .iter()
+                .copied()
+                .filter(|id| inv.folders.get(id).is_some_and(|f| !f.library && unlockable(f.info.type_default)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The viewer folders at the root, never touched and never unlockable:
+/// RLVa reads `#RLV` (RlvInventory::getSharedRootID), the AO and the
+/// scripting bridge live in `#Firestorm` and `#Aurora`, and the AO reads
+/// another viewer's `Animation Overrides` (ao::inventory::ALCHEMY_FOLDER).
+/// Any other folder whose name starts with `#` is an ordinary folder of the
+/// user's.
+pub const VIEWER_FOLDERS: [&str; 4] = ["#RLV", "#Firestorm", "#Aurora", crate::ao::inventory::ALCHEMY_FOLDER];
+
+fn viewer_folder(inv: &Inventory, folder: &super::Folder) -> bool {
+    folder.info.parent == inv.root && VIEWER_FOLDERS.iter().any(|name| folder.info.name.trim().eq_ignore_ascii_case(name))
+}
+
+/// `folder` and every folder above it are open: nothing in it is hands-off
+/// by place. Hands-off at any depth: every default folder but Objects
+/// (Clothing, Body Parts, Landmarks, Calling Cards, Favorites, Materials,
+/// Settings, Lost and Found, Photo Album…), My Outfits and each outfit, the
+/// Current Outfit, the Trash, Marketplace Listings and its stock and version
+/// folders, the old Merchant Outbox, Received Items, the Library, and the
+/// `#` viewer folders.
+pub fn folder_open(inv: &Inventory, folder: Uuid) -> bool {
+    // the inventory's root not known yet: nothing is open
+    if inv.root.is_nil() {
+        return false;
+    }
+    for id in actions::ancestors(inv, folder) {
+        if id == inv.root {
+            return true;
+        }
+        let Some(f) = inv.folders.get(&id) else { return false };
+        if !open_container(inv, f) || viewer_folder(inv, f) {
+            return false;
+        }
+    }
+    // not under My Inventory (the Library, an orphan, a cycle)
+    false
+}
+
+/// An entry (item or folder) Auto-sort must never move, trash or open: a
+/// default folder itself (it never moves, Objects included), a `#` viewer
+/// folder, or anything in a hands-off folder ([`folder_open`]).
+pub fn hands_off(inv: &Inventory, id: Uuid) -> bool {
+    if let Some(f) = inv.folders.get(&id)
+        && (f.info.type_default != -1 || f.library || viewer_folder(inv, f) || id == inv.root)
+    {
+        return true;
+    }
+    actions::parent(inv, id).is_none_or(|parent| !folder_open(inv, parent))
+}
+
+/// Re-checked just before an entry goes to the Trash (Clean up, Empty
+/// Pre-Trash): it is still where the confirmed list saw it, nowhere
+/// hands-off, not excluded, and movable (nothing worn in it, no link, no
+/// locked folder above or below it). What changed since is skipped.
+pub fn trash_ready(
+    inv: &Inventory,
+    id: Uuid,
+    from: Uuid,
+    prefs: &Preferences,
+    protected: &HashSet<Uuid>,
+    holds_worn: &HashSet<Uuid>,
+) -> bool {
+    actions::parent(inv, id) == Some(from)
+        && !hands_off(inv, id)
+        && !prefs.excludes(inv, id)
+        && !holds_closed(inv, id, &prefs.excluded)
+        && movable(inv, id, protected, holds_worn)
+}
+
+/// An entry Undo or a snapshot may put back: movable by a drag (out of the
+/// Trash or Pre-Trash too), nothing worn in it, no link, no locked folder
+/// above or below it, never a default or viewer folder itself.
+pub fn restorable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, holds_worn: &HashSet<Uuid>) -> bool {
+    let own_folder = inv
+        .folders
+        .get(&id)
+        .is_none_or(|f| f.info.type_default == -1 && !viewer_folder(inv, f));
+    // it leaves an open place, the Trash or Pre-Trash only: never an outfit,
+    // the Current Outfit or any other hands-off folder
+    let trash = actions::system(inv, 14);
+    let leaves = actions::parent(inv, id).is_some_and(|p| folder_open(inv, p) || trash.is_some_and(|t| actions::under(inv, p, t)));
+    own_folder
+        && leaves
+        && !inv.folders.get(&id).is_some_and(|f| f.library)
+        && !actions::library(inv, id)
+        && actions::relocatable(inv, id, protected)
+        && !holds_worn.contains(&id)
+        && inv.items.get(&id).is_none_or(|it| !matches!(it.asset_type, 24 | 25))
+        && !actions::ancestors(inv, id).any(|a| protected.contains(&a))
+        && !protected.iter().any(|p| actions::under(inv, *p, id))
+        // an outfit or another typed folder inside never travels with it
+        && !holds_closed(inv, id, &[])
+}
+
+/// The preview of saved moves (Undo, a snapshot's layout, a run to resume):
+/// each re-checked against the inventory now, what can no longer go is
+/// listed as kept.
+pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
+    let holds_worn = actions::worn_ancestors(inv, worn);
+    let mut plan = Plan::default();
+    let base = base_folder(inv, prefs);
+    let own = own_folders(inv, prefs);
+    // a run's move into a folder excluded since (a rule's, or one on the way
+    // below the sort folder) stays
+    let into_excluded = |m: &Move| match &m.to {
+        Dest::Folder(target) => prefs.excludes(inv, *target),
+        Dest::Path(path) => base.is_some_and(|base| path_excluded(inv, base, path, prefs)),
+        Dest::PreTrash => false,
+    };
+    for m in moves {
+        let here = actions::parent(inv, m.id) == Some(m.from);
+        // a folder whose tree is still loading: kept for now, asked for
+        // (only one that could move: never excluded, locked, worn or
+        // protected, nor a tree loaded only to be skipped)
+        if here
+            && m.folder
+            && (m.restore && !m.snapshot || !prefs.excludes(inv, m.id) && !into_excluded(m))
+            && actions::relocatable(inv, m.id, protected)
+            && !holds_worn.contains(&m.id)
+            && match m.to {
+                Dest::Folder(target) if m.restore => restore_target_allowed(inv, target),
+                Dest::Folder(target) => target_allowed(inv, target),
+                Dest::Path(_) | Dest::PreTrash => true,
+            }
+        {
+            // (an Undo puts back what its run moved, a folder excluded since
+            // inside it included: its tree is read like any)
+            let undo = m.restore && !m.snapshot;
+            let unloaded = unloaded_below(inv, m.id, if undo { &[] } else { &prefs.excluded });
+            if !unloaded.is_empty() {
+                // the run waits for its tree before it goes (step), so it is
+                // never left out of a Resume or an Undo
+                plan.unfetched.extend(unloaded);
+                plan.moves.push(m.clone());
+                continue;
+            }
+        }
+        // a folder excluded since (or an entry in one) stays, like any sort's
+        // (an Undo puts back what its run moved, whatever was excluded since;
+        // a snapshot's restore leaves excluded folders out, see
+        // `journal::restore_moves`)
+        let sorts = !m.restore || m.snapshot;
+        if here && sorts && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded) || into_excluded(m)) {
+            plan.kept += 1;
+            plan.kept_list.push((m.name.clone(), Kept::Excluded));
+            continue;
+        }
+        // a folder listed as the user's own since (or holding one) is never
+        // moved whole by a sort; an Undo or a snapshot puts it back
+        if here && !m.restore && m.folder && own.contains(&m.id) {
+            plan.kept += 1;
+            plan.kept_list.push((m.name.clone(), Kept::Own));
+            continue;
+        }
+        let ok = here
+            && (!m.restore || m.from_trash || !in_trash(inv, m.id))
+            && if m.restore {
+                restorable(inv, m.id, protected, &holds_worn)
+            } else {
+                movable(inv, m.id, protected, &holds_worn)
+            }
+            && match m.to {
+                Dest::Folder(target) if m.restore => restore_target_allowed(inv, target),
+                Dest::Folder(target) => target_allowed(inv, target),
+                Dest::Path(_) | Dest::PreTrash => true,
+            };
+        if ok {
+            plan.moves.push(m.clone());
+        } else if here {
+            plan.kept += 1;
+            plan.kept_list.push((m.name.clone(), Kept::Protected));
+        }
+    }
+    plan.moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
+    plan
+}
+
+/// Who an item comes from: its creator (Properties' Creator), or, for an
+/// object whose parts or contents have several creators (the simulator
+/// sends none then: "unknown / multiple", LLPermissions::accumulate), the
+/// account it came from (its last owner: the store's vendor or Marketplace
+/// account), never its owner.
+fn maker(inv: &Inventory, it: &InvItem) -> Option<Uuid> {
+    if !it.creator.is_nil() {
+        return Some(it.creator);
+    }
+    let own = it.last_owner == it.owner || it.last_owner == inv.owner;
+    (!it.last_owner.is_nil() && !own).then_some(it.last_owner)
+}
+
+/// Who made an entry: an item's [`maker`], or for a folder (a fatpack) the
+/// maker of most of its items.
+pub fn creator_of(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    if let Some(it) = inv.items.get(&id) {
+        return maker(inv, it);
+    }
+    let folder = inv.folders.get(&id)?;
+    let mut counts: HashMap<Uuid, usize> = HashMap::new();
+    for it in folder.items.iter().filter_map(|i| inv.items.get(i)) {
+        if let Some(who) = maker(inv, it) {
+            *counts.entry(who).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(creator, count)| (*count, std::cmp::Reverse(*creator)))
+        .map(|(creator, _)| creator)
+}
+
+/// Use a bare brand prefix only when the same creator also uses it as an
+/// explicit store tag. A bracketed multiword tag still names its own shop.
+fn bare_store_prefix(name: &str) -> Option<&str> {
+    let prefix = without_number(name.trim()).split_whitespace().next()?;
+    let mut chars = prefix.chars();
+    chars
+        .next()
+        .is_some_and(char::is_alphabetic)
+        .then_some(prefix)
+        .filter(|_| chars.all(|c| c.is_alphanumeric() || c == '&'))
+}
+
+/// What a plan reads of the inventory, copied for a background planner:
+/// the folders, the items, the roots and what decides the hands-off and
+/// held places (Marketplace holds, unlocked default folders, broken links).
+/// The fetch queue, caches and repair state stay with the live inventory.
+pub fn snapshot(inv: &Inventory) -> Inventory {
+    Inventory {
+        owner: inv.owner,
+        root: inv.root,
+        lib_root: inv.lib_root,
+        lib_owner: inv.lib_owner,
+        folders: inv.folders.clone(),
+        items: inv.items.clone(),
+        generation: inv.generation,
+        missing_items: inv.missing_items.clone(),
+        too_big: inv.too_big.clone(),
+        listing_holds: inv.listing_holds.clone(),
+        sorter_unlocked: inv.sorter_unlocked.clone(),
+        ..Default::default()
+    }
+}
+
+/// The creator hint the right-click "Sort by this creator" adds for `id`:
+/// its creator (a folder's majority creator), the store its name gives and
+/// the category its name gives (Furniture when it says nothing; the user
+/// picks another in Options). None when nobody is known to have made it.
+pub fn creator_hint(inv: &Inventory, id: Uuid, creator_name: &str) -> Option<StoreHint> {
+    let creator = creator_of(inv, id)?;
+    let (name, asset_type, flags) = match (inv.folders.get(&id), inv.items.get(&id)) {
+        (Some(f), _) => (f.info.name.as_str(), -1, 0),
+        (None, Some(it)) => (it.name.as_str(), it.asset_type, it.flags),
+        _ => return None,
+    };
+    Some(StoreHint {
+        store: store(name).unwrap_or_default(),
+        category: category_past_store(name, asset_type, classify(name, asset_type, flags).category)
+            .unwrap_or(StoreHint::default().category),
+        creator: Some(creator),
+        creator_name: creator_name.chars().take(64).collect(),
+    })
+}
+
+/// Why an entry the preview lists stays where it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Kept {
+    /// Worn, or a folder holding something worn.
+    Worn,
+    /// A link: it belongs to its folder (an outfit's).
+    Link,
+    /// A locked folder, or inside one.
+    Locked,
+    /// In a folder the user excluded.
+    Excluded,
+    /// One of the user's own folders (My folders), or holding one: never
+    /// moved whole.
+    Own,
+    /// A system folder, the Trash, Marketplace Listings, the Library, the
+    /// Current Outfit, a viewer folder (#RLV…): what a drag may not move.
+    Protected,
+    /// A folder whose subfolders are not loaded yet: it moves whole once
+    /// they are (the preview asks for them).
+    Loading,
+    /// A folder holding one the server failed to give: its contents are
+    /// unknown, so it never moves whole.
+    Unreadable,
+    /// An item kept inside a delivery that could not be classified as a unit.
+    Delivery,
+}
+
+impl Kept {
+    pub fn label(self) -> &'static str {
+        match self {
+            Kept::Worn => aurora_i18n::tr!("inventory-sorter-kept-worn"),
+            Kept::Link => aurora_i18n::tr!("inventory-sorter-kept-link"),
+            Kept::Locked => aurora_i18n::tr!("inventory-sorter-kept-locked"),
+            Kept::Excluded => aurora_i18n::tr!("inventory-sorter-kept-excluded"),
+            Kept::Own => aurora_i18n::tr!("inventory-sorter-kept-own"),
+            Kept::Protected => aurora_i18n::tr!("inventory-sorter-kept-protected"),
+            Kept::Loading => aurora_i18n::tr!("inventory-sorter-kept-loading"),
+            Kept::Unreadable => aurora_i18n::tr!("inventory-sorter-kept-unreadable"),
+            Kept::Delivery => aurora_i18n::tr!("inventory-sorter-kept-delivery"),
+        }
+    }
+}
+
+fn kept_reason(inv: &Inventory, id: Uuid, prefs: &Preferences, protected: &HashSet<Uuid>, holds_worn: &HashSet<Uuid>) -> Kept {
+    if prefs.excludes(inv, id) {
+        Kept::Excluded
+    } else if holds_worn.contains(&id) {
+        Kept::Worn
+    } else if inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 24 | 25)) {
+        Kept::Link
+    } else if actions::ancestors(inv, id).any(|a| protected.contains(&a)) || protected.contains(&id) {
+        Kept::Locked
+    } else {
+        Kept::Protected
+    }
+}
+
+/// Can `id` leave its folder for the sorted ones? The rules of a drag
+/// (`relocatable`), nothing worn and no link (an outfit's link belongs to
+/// its folder).
+fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, holds_worn: &HashSet<Uuid>) -> bool {
+    actions::relocatable(inv, id, protected)
+        && !untouchable(inv, id)
+        && !holds_worn.contains(&id)
+        && inv.items.get(&id).is_none_or(|it| !matches!(it.asset_type, 24 | 25))
+        // a locked folder keeps all it holds, and a folder holding a locked
+        // one never moves whole with it
+        && !actions::ancestors(inv, id).any(|a| protected.contains(&a))
+        && (!inv.folders.contains_key(&id) || !protected.iter().any(|p| actions::under(inv, *p, id)))
+        // an outfit, a stock folder or any other typed folder inside never
+        // travels with it
+        && !holds_closed(inv, id, &[])
+}
+
+/// The names the sorter gives its own folders: a folder already named like
+/// one is a sorted folder, never moved into another.
+fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
+    let mut names: HashSet<String> = VOCABULARY.bodies.iter().map(|b| b.body.to_lowercase()).collect();
+    names.insert(Body::Several.folder().to_lowercase());
+    names.insert(prefs.base_name().to_lowercase());
+    names.insert(pre_trash_name().to_lowercase());
+    for (waifus, squish) in [(true, false), (false, true), (true, true)] {
+        names.insert(variant_folder(waifus, squish).to_lowercase());
+    }
+    names.insert(stores_folder().to_lowercase());
+    for category in Category::ALL {
+        names.insert(category_folder(category).to_lowercase());
+    }
+    for rule in prefs.rules.iter().filter(|r| r.target.is_none()) {
+        names.extend(split_path(&rule.folder).into_iter().map(|p| p.to_lowercase()));
+    }
+    names
+}
+
+/// Sort the shelves below an explicitly chosen folder. Product folders
+/// still go whole. Choosing My Inventory uses the root-only preview until
+/// the user confirms Whole inventory.
+pub fn plan(inv: &Inventory, source: Uuid, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
+    let places = Places::of(inv, prefs);
+    let (entries, unread) = if source == inv.root {
+        let entries = contents_in(inv, source, prefs.folders, &places);
+        (open_store_shelves(inv, entries, prefs, &places, protected), Vec::new())
+    } else {
+        let sources = sort_sources(inv, source, prefs, &places, protected);
+        source_contents(inv, &sources, prefs.folders, &places)
+    };
+    let scan = scan_rules(inv, prefs, source, protected, worn);
+    let mut plan = plan_with(inv, entries, scan, prefs, protected, worn, true);
+    plan.unfetched.extend(unread);
+    plan.unfetched.sort_unstable();
+    plan.unfetched.dedup();
+    plan
+}
+
+/// What explicit rules find beyond the direct contents of a sort.
+#[derive(Debug, Default, Clone)]
+struct RuleScan {
+    /// Items and intact folders with their first applicable rule's destination.
+    found: HashMap<Uuid, Dest>,
+    kept: HashSet<Uuid>,
+    /// Folders not loaded yet, skipped for now.
+    unfetched: Vec<Uuid>,
+}
+
+/// System folders a rule never reads: Favorites, the Current
+/// Outfit, an outfit and My Outfits (the Trash and Marketplace Listings are
+/// [`untouchable`], the Library is not the agent's).
+const NEVER_READ: &[i32] = &[23, 46, 47, 48];
+
+/// The rules that apply to an entry: in the sort folder's tree, a
+/// rule set to "Everywhere except Sorted" does not.
+fn rules_for_place(rules: &[Rule], sorted: bool) -> Vec<&Rule> {
+    rules.iter().filter(|r| r.usable() && !(sorted && r.skip_sorted)).collect()
+}
+
+fn first_rule<'a>(rules: &[&'a Rule], name_words: &[String], created: Option<i64>) -> Option<&'a Rule> {
+    rules.iter().copied().find(|rule| rule.matches(name_words, created))
+}
+
+/// Search the chosen tree and Sorted for explicit rules. An opted-in item
+/// rule can reach into a delivery, while matches kept inside one are
+/// visible separately. A whole-folder match takes precedence over its parts.
+fn scan_rules(inv: &Inventory, prefs: &Preferences, source: Uuid, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> RuleScan {
+    let mut scan = RuleScan::default();
+    if !prefs.rules.iter().any(Rule::usable) {
+        return scan;
+    }
+    let base = base_folder(inv, prefs);
+    let in_sorted = |id: Uuid| base.is_some_and(|b| id == b || actions::under(inv, id, b));
+    let mut stack = Vec::new();
+    let sorted_rules = rules_for_place(&prefs.rules, true);
+    let other_rules = rules_for_place(&prefs.rules, false);
+    // Keep the existing extra search for Pre-Trash rules on a scoped sort.
+    if let Some(base) = base
+        && source != inv.root
+        && sorted_rules.iter().any(|r| r.pre_trash)
+    {
+        stack.push((base, false, true));
+    }
+    stack.push((source, false, false));
+    let reserved = sorter_folder_names(prefs);
+    let own = own_folders(inv, prefs);
+    let holds_worn = actions::worn_ancestors(inv, worn);
+    let pre_trash_at = pre_trash(inv);
+    let waiting_all = pre_trash_folders(inv);
+    let closed = |id: Uuid| {
+        inv.folders
+            .get(&id)
+            .is_none_or(|f| f.library || NEVER_READ.contains(&f.info.type_default))
+            || Some(id) == pre_trash_at
+            || waiting_all.contains(&id)
+            || !protected.is_empty() && actions::ancestors(inv, id).any(|a| protected.contains(&a))
+            || prefs.excludes(inv, id)
+            || !folder_open(inv, id)
+    };
+    let rules_at = |id| {
+        if in_sorted(id) { &sorted_rules } else { &other_rules }
+    };
+    let mut seen = HashSet::new();
+    while let Some((id, delivery, pre_trash_only)) = stack.pop() {
+        if !seen.insert(id) || closed(id) {
+            continue;
+        }
+        let Some(folder) = inv.folders.get(&id) else { continue };
+        let rules = rules_at(id);
+        if rules.is_empty() {
+            continue;
+        }
+        if folder.state != FetchState::Fetched {
+            if !inv.too_big.contains(&id) && (!delivery || rules.iter().any(|rule| rule.inside_deliveries)) {
+                scan.unfetched.push(id);
+            }
+            continue;
+        }
+        for item in &folder.items {
+            if let Some(it) = inv.items.get(item)
+                && kind_wanted(prefs, it.asset_type)
+                && movable(inv, *item, protected, &holds_worn)
+                && let Some(rule) = first_rule(rules, &words(&it.name), Some(it.created_at))
+                && (!pre_trash_only || rule.pre_trash)
+            {
+                if delivery && !rule.inside_deliveries {
+                    scan.kept.insert(*item);
+                } else {
+                    scan.found.insert(*item, rule.destination());
+                }
+            }
+        }
+        for sub in &folder.children {
+            let Some(f) = inv.folders.get(sub) else { continue };
+            if closed(*sub) {
+                continue;
+            }
+            let name = f.info.name.trim();
+            // the sort folder itself is never one entry to take whole
+            let system = f.info.type_default != -1 || Some(*sub) == base;
+            let made = reserved.contains(&name.to_lowercase())
+                || prefs.stores && in_sorted(*sub) && store_tagged(name).is_none() && target(name, -1, 0, None, &[], false).is_none();
+            // (nor one of the user's own: it is opened, its contents read)
+            if !delivery && !system && !made && !own.contains(sub) && movable(inv, *sub, protected, &holds_worn) {
+                let name_words = words(name);
+                if let Some(rule) = first_rule(rules_at(*sub), &name_words, None)
+                    && (rule.pre_trash || prefs.folders && !pre_trash_only)
+                    && !rule.inside_deliveries
+                {
+                    scan.found.insert(*sub, rule.destination());
+                    continue;
+                }
+            }
+            // a product's folder stays whole: its old items are not pulled out
+            let product = !system && !made && !own.opens(sub) && product_folder_in(inv, *sub, &reserved);
+            stack.push((*sub, (delivery || product) && !own.opens(sub), pre_trash_only));
+        }
+    }
+    scan.unfetched.sort_unstable();
+    scan.unfetched.dedup();
+    scan
+}
+
+/// Every item in `folder`, at any depth, passes `keep`, and there is at
+/// least one. A folder not loaded yet answers no (and is listed in
+/// `unfetched`).
+fn all_items(inv: &Inventory, folder: Uuid, unfetched: &mut Vec<Uuid>, keep: impl Fn(&InvItem) -> bool) -> bool {
+    let mut stack = vec![folder];
+    let mut seen = HashSet::new();
+    let mut any = false;
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { return false };
+        // a typed folder inside (an outfit…) keeps the whole folder out
+        if id != folder && f.info.type_default != -1 {
+            return false;
+        }
+        if f.state != FetchState::Fetched {
+            unfetched.push(id);
+            return false;
+        }
+        for item in &f.items {
+            match inv.items.get(item) {
+                Some(it) if keep(it) => any = true,
+                _ => return false,
+            }
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    any
+}
+
+/// The item kinds Clean up filters on, by asset type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Kind {
+    Objects,
+    Clothing,
+    BodyParts,
+    Notecards,
+    Landmarks,
+    Textures,
+    Scripts,
+    Sounds,
+    Animations,
+    Gestures,
+    Materials,
+    CallingCards,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 12] = [
+        Kind::Objects,
+        Kind::Clothing,
+        Kind::BodyParts,
+        Kind::Notecards,
+        Kind::Landmarks,
+        Kind::Textures,
+        Kind::Scripts,
+        Kind::Sounds,
+        Kind::Animations,
+        Kind::Gestures,
+        Kind::Materials,
+        Kind::CallingCards,
+    ];
+
+    /// The kind of an asset type; links (24, 25) and the rest have none and
+    /// are never cleaned up.
+    pub fn of(asset_type: i32) -> Option<Kind> {
+        Some(match asset_type {
+            6 => Kind::Objects,
+            5 => Kind::Clothing,
+            13 => Kind::BodyParts,
+            7 => Kind::Notecards,
+            3 => Kind::Landmarks,
+            0 | 12 | 18 | 19 => Kind::Textures,
+            4 | 10 | 11 => Kind::Scripts,
+            1 => Kind::Sounds,
+            20 => Kind::Animations,
+            21 => Kind::Gestures,
+            56 | 57 => Kind::Materials,
+            2 => Kind::CallingCards,
+            _ => return None,
+        })
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Objects => aurora_i18n::tr!("inventory-cleanup-kind-objects"),
+            Kind::Clothing => aurora_i18n::tr!("inventory-cleanup-kind-clothing"),
+            Kind::BodyParts => aurora_i18n::tr!("inventory-cleanup-kind-body-parts"),
+            Kind::Notecards => aurora_i18n::tr!("inventory-cleanup-kind-notecards"),
+            Kind::Landmarks => aurora_i18n::tr!("inventory-cleanup-kind-landmarks"),
+            Kind::Textures => aurora_i18n::tr!("inventory-cleanup-kind-textures"),
+            Kind::Scripts => aurora_i18n::tr!("inventory-cleanup-kind-scripts"),
+            Kind::Sounds => aurora_i18n::tr!("inventory-cleanup-kind-sounds"),
+            Kind::Animations => aurora_i18n::tr!("inventory-cleanup-kind-animations"),
+            Kind::Gestures => aurora_i18n::tr!("inventory-cleanup-kind-gestures"),
+            Kind::Materials => aurora_i18n::tr!("inventory-cleanup-kind-materials"),
+            Kind::CallingCards => aurora_i18n::tr!("inventory-cleanup-kind-calling-cards"),
+        }
+    }
+}
+
+/// How old Clean up's entries are: a chip of the tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Age {
+    #[default]
+    OneYear,
+    TwoYears,
+    ThreeYears,
+    FiveYears,
+    /// The year and month chosen in the tab.
+    Custom,
+}
+
+/// Clean up: everything acquired before a date, of the chosen kinds, sent to
+/// Pre-Trash or the Trash. Saved with the inventory preferences.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Cleanup {
+    pub age: Age,
+    /// The custom date: acquired before the first day of `month` (1–12) of
+    /// `year`.
+    pub year: i32,
+    pub month: u32,
+    pub kinds: Vec<Kind>,
+    /// All of My Inventory rather than the folder the window sorts.
+    pub whole: bool,
+    /// Read the sort folder's tree too.
+    pub include_sorted: bool,
+    /// Take the user's empty folders too (nothing in them at any depth).
+    pub empty_folders: bool,
+    /// What Clean up looks for: old entries, or the extra copies of items
+    /// held more than once.
+    pub find: Find,
+    /// The duplicate finder takes no-copy items too (gacha doubles, kept
+    /// to trade, are left by default).
+    pub no_copy_duplicates: bool,
+    /// The duplicate finder takes loose landmarks too (never one inside a
+    /// delivery).
+    pub landmark_duplicates: bool,
+    /// The duplicate finder takes loose notecards too (never one inside a
+    /// delivery).
+    pub notecard_duplicates: bool,
+}
+
+/// What Clean up looks for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Find {
+    /// Everything acquired before a date.
+    #[default]
+    Old,
+    /// The extra copies of an item held more than once ([`plan_duplicates`]).
+    Duplicates,
+    /// A store's demo copies ([`plan_demos`]).
+    Demos,
+    /// Fully read folders with no items anywhere below them.
+    EmptyFolders,
+}
+
+impl Default for Cleanup {
+    fn default() -> Self {
+        Self {
+            age: Age::default(),
+            year: 2020,
+            month: 1,
+            kinds: Kind::ALL.to_vec(),
+            whole: true,
+            include_sorted: true,
+            empty_folders: false,
+            find: Find::Old,
+            no_copy_duplicates: false,
+            landmark_duplicates: false,
+            notecard_duplicates: false,
+        }
+    }
+}
+
+impl Cleanup {
+    /// The cutoff in seconds since 1970, UTC: entries acquired strictly
+    /// before it go. The chips count back from `now`'s day (29 February
+    /// falls back to the 28th).
+    pub fn cutoff(&self, now: i64) -> Option<i64> {
+        use chrono::Datelike;
+        let years = match self.age {
+            Age::OneYear => 1,
+            Age::TwoYears => 2,
+            Age::ThreeYears => 3,
+            Age::FiveYears => 5,
+            Age::Custom => return date_start(&format!("{}-{:02}", self.year, self.month.clamp(1, 12))),
+        };
+        let today = chrono::DateTime::from_timestamp(now, 0)?.date_naive();
+        let year = today.year() - years;
+        let day = today
+            .with_year(year)
+            .or_else(|| chrono::NaiveDate::from_ymd_opt(year, today.month(), 28))?;
+        Some(day.and_hms_opt(0, 0, 0)?.and_utc().timestamp())
+    }
+
+    fn takes(&self, it: &InvItem, cutoff: i64) -> bool {
+        it.created_at > 0 && it.created_at < cutoff && Kind::of(it.asset_type).is_some_and(|k| self.kinds.contains(&k))
+    }
+}
+
+/// One entry Clean up would take: an item, or a folder that goes whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanupRow {
+    pub id: Uuid,
+    pub folder: bool,
+    pub from: Uuid,
+    pub name: String,
+    /// The item's kind; a folder has none.
+    pub kind: Option<Kind>,
+    /// The acquired date; for a folder, its newest item's.
+    pub created: i64,
+    /// The items a folder holds, at any depth (1 for an item).
+    pub items: usize,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct CleanupPlan {
+    /// In [`CleanupRow::group`] order.
+    pub rows: Vec<CleanupRow>,
+    /// The items all rows hold.
+    pub items: usize,
+    pub cutoff: i64,
+    /// Folders not loaded yet: the window asks for them, the list fills in.
+    pub unfetched: Vec<Uuid>,
+    /// Where each group ends in `rows`, worked out once with the plan.
+    pub ends: Vec<usize>,
+    /// Each row's place in `rows`, by id.
+    pub index: HashMap<Uuid, usize>,
+    /// The duplicate finder's items held more than once (each keeps one
+    /// copy; the rows are the others).
+    pub duplicated: usize,
+    /// The items of the default folders still locked (Options unlocks
+    /// them), never looked at: told on screen, so that a short list is not
+    /// taken for the whole inventory.
+    pub locked_items: usize,
+    /// The duplicate finder's whole deliveries held twice (rows that are
+    /// folders).
+    pub whole_deliveries: usize,
+}
+
+impl CleanupRow {
+    /// The list's group: folders with items (they go whole), empty
+    /// folders, then each kind in the filter's order.
+    pub fn group(&self) -> usize {
+        match (self.folder, self.kind) {
+            (true, _) if self.items > 0 => 0,
+            (true, _) => 1,
+            (false, Some(kind)) => 2 + Kind::ALL.iter().position(|k| *k == kind).unwrap_or(Kind::ALL.len()),
+            (false, None) => 2 + Kind::ALL.len(),
+        }
+    }
+}
+
+impl CleanupPlan {
+    /// The rows by group, each one slice of `rows`.
+    pub fn groups(&self) -> impl Iterator<Item = &[CleanupRow]> {
+        let starts = std::iter::once(0).chain(self.ends.iter().copied());
+        starts.zip(self.ends.iter().copied()).map(|(a, b)| &self.rows[a..b])
+    }
+
+    /// The rows of `ids` (the few unticked), without a pass over every row.
+    pub fn rows_of<'a>(&'a self, ids: &'a HashSet<Uuid>) -> impl Iterator<Item = &'a CleanupRow> + 'a {
+        ids.iter().filter_map(|id| self.index.get(id).and_then(|i| self.rows.get(*i)))
+    }
+
+    /// The moves to Pre-Trash of the rows not in `skipped`.
+    pub fn moves(&self, skipped: &HashSet<Uuid>) -> Vec<Move> {
+        self.rows
+            .iter()
+            .filter(|r| !skipped.contains(&r.id))
+            .map(|r| Move {
+                id: r.id,
+                folder: r.folder,
+                name: r.name.clone(),
+                from: r.from,
+                to: Dest::PreTrash,
+                label: pre_trash_name(),
+                unpacker: false,
+                restore: false,
+                from_trash: false,
+                snapshot: false,
+                only_if_empty: r.folder && r.items == 0,
+            })
+            .collect()
+    }
+}
+
+/// What Clean up takes from `source` (My Inventory for `cleanup.whole`), at
+/// any depth: the items acquired before the cutoff and of the chosen kinds.
+/// Folders are read like the Pre-Trash rules read them
+/// ([`scan_rules`]): a folder whose items all match goes whole and is
+/// not opened; a product's folder (its name reads as a product: a delivery,
+/// a fatpack) with one item that does not match stays whole, old items
+/// included; the user's own folders, the system folders and the folders
+/// Auto-sort made are opened and their matching items go one by one. Never
+/// read: the Trash, Marketplace Listings, the Library, Favorites, outfits,
+/// the Current Outfit, the Pre-Trash folder, excluded and locked folders,
+/// and the sort folder's tree unless `include_sorted`; worn entries and
+/// links stay.
+pub fn plan_cleanup(
+    inv: &Inventory,
+    prefs: &Preferences,
+    cleanup: &Cleanup,
+    source: Uuid,
+    now: i64,
+    protected: &HashSet<Uuid>,
+    worn: &HashSet<Uuid>,
+) -> CleanupPlan {
+    let mut plan = CleanupPlan::default();
+    let empty_only = cleanup.find == Find::EmptyFolders;
+    let cutoff = if empty_only {
+        0
+    } else {
+        let Some(cutoff) = cleanup.cutoff(now) else { return plan };
+        cutoff
+    };
+    plan.cutoff = cutoff;
+    if !empty_only && cleanup.kinds.is_empty() && !cleanup.empty_folders {
+        return plan;
+    }
+    let source = if cleanup.whole { inv.root } else { source };
+    let base = base_folder(inv, prefs);
+    let reserved = sorter_folder_names(prefs);
+    let own = own_folders(inv, prefs);
+    let holds_worn = actions::worn_ancestors(inv, worn);
+    let pre_trash_at = pre_trash(inv);
+    let waiting_all = pre_trash_folders(inv);
+    let closed = |id: Uuid| {
+        inv.folders
+            .get(&id)
+            .is_none_or(|f| f.library || NEVER_READ.contains(&f.info.type_default))
+            || Some(id) == pre_trash_at
+            || waiting_all.contains(&id)
+            || protected.contains(&id)
+            || prefs.excludes(inv, id)
+            || !folder_open(inv, id)
+            || !cleanup.include_sorted && base.is_some_and(|b| id == b || actions::under(inv, id, b))
+    };
+    let mut stack = vec![source];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) || closed(id) {
+            continue;
+        }
+        let Some(folder) = inv.folders.get(&id) else { continue };
+        if folder.state != FetchState::Fetched {
+            plan.unfetched.push(id);
+            continue;
+        }
+        for item in &folder.items {
+            if let Some(it) = inv.items.get(item)
+                && !empty_only
+                && cleanup.takes(it, cutoff)
+                && movable(inv, *item, protected, &holds_worn)
+            {
+                plan.rows.push(CleanupRow {
+                    id: *item,
+                    folder: false,
+                    from: id,
+                    name: it.name.clone(),
+                    kind: Kind::of(it.asset_type),
+                    created: it.created_at,
+                    items: 1,
+                });
+            }
+        }
+        for sub in &folder.children {
+            let Some(f) = inv.folders.get(sub) else { continue };
+            if closed(*sub) {
+                continue;
+            }
+            let name = f.info.name.trim();
+            // the sort folder itself is never one entry to take whole
+            let system = f.info.type_default != -1 || Some(*sub) == base;
+            let made = reserved.contains(&name.to_lowercase());
+            // an empty folder (nothing at any depth), the user's or one
+            // Auto-sort made, never the sort folder itself
+            if (cleanup.empty_folders || empty_only)
+                && !system
+                && !own.contains(sub)
+                && Some(*sub) != base
+                && movable(inv, *sub, protected, &holds_worn)
+                && !holds_closed(inv, *sub, &prefs.excluded)
+                && empty_tree(inv, *sub, &mut plan.unfetched)
+            {
+                plan.rows.push(CleanupRow {
+                    id: *sub,
+                    folder: true,
+                    from: id,
+                    name: f.info.name.clone(),
+                    kind: None,
+                    created: 0,
+                    items: 0,
+                });
+                continue;
+            }
+            if !empty_only
+                && !system
+                && !made
+                // (the user's own folders give up their items one by one)
+                && !own.contains(sub)
+                && movable(inv, *sub, protected, &holds_worn)
+                // an excluded folder inside keeps the whole folder out
+                && !holds_closed(inv, *sub, &prefs.excluded)
+                && all_items(inv, *sub, &mut plan.unfetched, |it| cleanup.takes(it, cutoff))
+            {
+                let (count, newest) = folder_items(inv, *sub);
+                plan.rows.push(CleanupRow {
+                    id: *sub,
+                    folder: true,
+                    from: id,
+                    name: f.info.name.clone(),
+                    kind: None,
+                    created: newest,
+                    items: count,
+                });
+                continue;
+            }
+            // a product's folder stays whole: its old items are not pulled out
+            let product = !system && !made && !own.opens(sub) && product_folder_in(inv, *sub, &reserved);
+            if !product {
+                stack.push(*sub);
+            } else if own.contains(sub) {
+                // (a delivery holding a listed folder: only that one is read)
+                stack.extend(own.listed_below(inv, *sub));
+            }
+        }
+    }
+    plan.unfetched.sort_unstable();
+    plan.unfetched.dedup();
+    if source == inv.root {
+        plan.locked_items = locked_items(inv);
+    }
+    // by group (the list's order, so each group is one slice, never
+    // filtered again per frame), then oldest first
+    plan.rows.sort_by(|a, b| {
+        a.group()
+            .cmp(&b.group())
+            .then_with(|| a.created.cmp(&b.created))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    plan.items = plan.rows.iter().map(|r| r.items).sum();
+    plan.ends = (1..=plan.rows.len())
+        .filter(|&i| i == plan.rows.len() || plan.rows[i].group() != plan.rows[i - 1].group())
+        .collect();
+    plan.index = plan.rows.iter().enumerate().map(|(i, r)| (r.id, i)).collect();
+    plan
+}
+
+/// `folder` holds no item at any depth (only empty folders, or nothing). A
+/// folder not loaded yet answers no (and is listed in `unfetched`).
+fn empty_tree(inv: &Inventory, folder: Uuid, unfetched: &mut Vec<Uuid>) -> bool {
+    let mut stack = vec![folder];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { return false };
+        if f.state != FetchState::Fetched || inv.too_big.contains(&id) {
+            if !inv.too_big.contains(&id) {
+                unfetched.push(id);
+            }
+            return false;
+        }
+        if !f.items.is_empty()
+            || f.children
+                .iter()
+                .any(|c| inv.folders.get(c).is_some_and(|c| c.info.type_default != -1))
+        {
+            return false;
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    true
+}
+
+/// How many items `folder` holds at any depth, and the newest acquired date.
+fn folder_items(inv: &Inventory, folder: Uuid) -> (usize, i64) {
+    let mut stack = vec![folder];
+    let mut seen = HashSet::new();
+    let (mut count, mut newest) = (0, 0);
+    while let Some(id) = stack.pop() {
+        let Some(f) = inv.folders.get(&id).filter(|_| seen.insert(id)) else {
+            continue;
+        };
+        for it in f.items.iter().filter_map(|i| inv.items.get(i)) {
+            count += 1;
+            newest = newest.max(it.created_at);
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    (count, newest)
+}
+
+/// Read the opened shelves and retain their deliveries as indivisible entries.
+fn source_contents(inv: &Inventory, sources: &[Uuid], folders: bool, places: &Places) -> (Vec<Uuid>, Vec<Uuid>) {
+    let mut entries = Vec::new();
+    let mut unread = Vec::new();
+    for &source in sources {
+        match inv.folders.get(&source).map(|folder| folder.state) {
+            Some(FetchState::Fetched) => entries.extend(contents_in(inv, source, folders && source != inv.root, places)),
+            Some(FetchState::Unknown | FetchState::Fetching) if !inv.too_big.contains(&source) => unread.push(source),
+            _ => {}
+        }
+    }
+    let opened: HashSet<_> = sources.iter().copied().collect();
+    entries.retain(|id| !opened.contains(id));
+    (entries, unread)
+}
+
+/// The direct contents of `source` a sort reads: its items, and its folders
+/// when `folders`, less the sorted folders themselves.
+fn contents_in(inv: &Inventory, source: Uuid, folders: bool, places: &Places) -> Vec<Uuid> {
+    let Some(folder) = inv.folders.get(&source) else {
+        return Vec::new();
+    };
+    let (base, reserved) = (places.base, &places.reserved);
+    let mut entries: Vec<Uuid> = folder.items.clone();
+    if source == inv.root {
+        // My Inventory's own folders are never moved by a sort of it, but a
+        // product's folder lying loose at the root goes whole
+        if folders {
+            entries.extend(folder.children.iter().copied().filter(|id| {
+                Some(*id) != base
+                    && Some(*id) != places.waiting
+                    && !places.own.contains(id)
+                    && inv
+                        .folders
+                        .get(id)
+                        .is_some_and(|f| product_folder_in(inv, *id, reserved) || shelf_of_products(inv, f, f.info.name.trim(), reserved))
+            }));
+        }
+        return entries;
+    }
+    if folders {
+        // the sorted folders themselves stay where they are, and the user's
+        // own folders (never moved whole)
+        entries.extend(folder.children.iter().copied().filter(|id| {
+            Some(*id) != base
+                && !places.own.contains(id)
+                && inv
+                    .folders
+                    .get(id)
+                    .is_some_and(|f| !reserved.contains(&f.info.name.trim().to_lowercase()))
+        }));
+    }
+    entries
+}
+
+/// Open recognized store shelves in a scoped sort, preserving deliveries
+/// and all the normal exclusions. Explicitly selected items count once.
+fn open_store_shelves(inv: &Inventory, entries: Vec<Uuid>, prefs: &Preferences, places: &Places, protected: &HashSet<Uuid>) -> Vec<Uuid> {
+    let mut pending = entries;
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let shelf = inv.folders.get(&id).is_some_and(|f| {
+            f.state == FetchState::Fetched
+                && f.info.type_default == -1
+                && Some(id) != places.base
+                && !places.pre_trash.contains(&id)
+                && folder_open(inv, id)
+                && !prefs.excludes(inv, id)
+                && !actions::ancestors(inv, id).any(|a| protected.contains(&a))
+                && shelf_of_products(inv, f, f.info.name.trim(), &places.reserved)
+        });
+        if shelf {
+            let folder = &inv.folders[&id];
+            pending.extend(folder.items.iter().chain(&folder.children).copied());
+        } else {
+            result.push(id);
+        }
+    }
+    result
+}
+
+/// The moves of chosen entries, wherever they are: the selection a
+/// right-click sorts at once. Deliveries remain whole.
+pub fn plan_entries(inv: &Inventory, entries: &[Uuid], prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
+    let entries = open_store_shelves(inv, entries.to_vec(), prefs, &Places::of(inv, prefs), protected);
+    plan_with(inv, entries, RuleScan::default(), prefs, protected, worn, false)
+}
+
+/// The sort's type filter takes `asset_type` (a folder, or an item of no
+/// known kind, always).
+fn kind_wanted(prefs: &Preferences, asset_type: i32) -> bool {
+    asset_type == -1 || Kind::of(asset_type).is_none_or(|k| prefs.kinds.contains(&k))
+}
+
+/// Drop the unpacker's words at the end of a product or numbered style.
+fn delivery_title(name: &str) -> Vec<String> {
+    let mut title = words(name);
+    while title.last().is_some_and(|word| {
+        matches!(
+            word.as_str(),
+            "add" | "me" | "addme" | "boxed" | "box" | "unpacked" | "unpack" | "wear" | "rez"
+        )
+    }) {
+        title.pop();
+    }
+    title
+}
+
+/// A pack can ship a named object in each numbered style, alongside many
+/// overlays for that object. Use the named object across the styles as the
+/// evidence for the entire delivery, while leaving the overlays in it.
+fn numbered_product_category(inv: &Inventory, root: &super::Folder) -> Option<Category> {
+    if root.children.len() > 24
+        || root.children.len() == 1
+        || root.children.is_empty() && root.items.len() < 2
+        || delivery_mark(&root.info.name) != Some(Mark::Strong)
+    {
+        return None;
+    }
+    let stem = delivery_title(&root.info.name);
+    if stem.len() < 3 {
+        return None;
+    }
+    let kind = |descriptor: &[String]| {
+        // A lone horn word is ambiguous outside an explicitly numbered
+        // product component (vehicle horn, a horn-tip tattoo, and so on).
+        if descriptor.len() == 1 && descriptor[0] == "horn" {
+            Some(Category::Accessories)
+        } else {
+            let title = descriptor.join(" ");
+            classify(&title, -1, 0)
+                .category
+                .filter(|kind| !matches!(kind, Category::Huds | Category::Outfits))
+        }
+    };
+    let number = |value: &str| value.parse::<u32>().ok();
+    let mut agreed = None;
+    let mut observed = HashSet::new();
+    if root.children.is_empty() {
+        for item in root.items.iter().filter_map(|id| inv.items.get(id)) {
+            if matches!(item.asset_type, 3 | 4 | 7 | 10 | 11) {
+                continue;
+            }
+            if item.asset_type != 6 {
+                return None;
+            }
+            let (name, label) = item.name.trim().strip_suffix(']')?.rsplit_once('[')?;
+            if words(name) != stem {
+                return None;
+            }
+            let label = words(label);
+            let (style, descriptor) = label.split_last()?;
+            let category = kind(descriptor)?;
+            if !observed.insert(number(style)?) || agreed.is_some_and(|other| other != category) {
+                return None;
+            }
+            agreed = Some(category);
+        }
+        return (observed.len() >= 2).then_some(agreed).flatten();
+    }
+    let mut styles = HashSet::new();
+    for id in &root.children {
+        let child = inv.folders.get(id)?;
+        let title = delivery_title(&child.info.name);
+        let [marker, style] = title.strip_prefix(stem.as_slice())? else {
+            return None;
+        };
+        let style = number(style)?;
+        if marker != "style" || !styles.insert(style) {
+            return None;
+        }
+        for item in child
+            .items
+            .iter()
+            .filter_map(|id| inv.items.get(id))
+            .filter(|item| item.asset_type == 6)
+        {
+            let title = words(&item.name);
+            let Some([descriptor @ .., marker, ending]) = title.strip_prefix(stem.as_slice()) else {
+                continue;
+            };
+            if marker != "style" || number(ending) != Some(style) {
+                continue;
+            }
+            let Some(category) = kind(descriptor) else { continue };
+            if agreed.is_some_and(|other| other != category) {
+                return None;
+            }
+            observed.insert(style);
+            agreed = Some(category);
+        }
+    }
+    (observed.len() >= 2 && observed.len() * 3 >= styles.len() * 2)
+        .then_some(agreed)
+        .flatten()
+}
+
+/// A body add-on kit can ship mesh pieces and a matching set of appearance
+/// layers. Use the distinct mesh components as evidence for the delivery
+/// when every other item in the vote is explicitly part of the same kit.
+fn body_addon_kit(root: &super::Folder, samples: &[(&InvItem, Classified)]) -> bool {
+    if !root.children.is_empty() || !(2..=48).contains(&root.items.len()) {
+        return false;
+    }
+    let title = delivery_title(&root.info.name);
+    let [stem @ .., kind, package] = title.as_slice() else {
+        return false;
+    };
+    if stem.len() < 2 || package != "kit" || kind.len() < 3 {
+        return false;
+    }
+    let singular = kind.strip_suffix('s').unwrap_or(kind);
+    let same_kind = |word: &str| word == kind || word == singular;
+    let mut components = HashSet::new();
+    for (item, found) in samples {
+        let title = words(&item.name);
+        let Some(label) = title.strip_prefix(stem) else {
+            // Some instructions omit the shop name. The product and kind
+            // must still match the kit title.
+            if let [about, product, subject, package] = title.as_slice()
+                && about == "about"
+                && stem.last() == Some(product)
+                && same_kind(subject)
+                && package == "kit"
+            {
+                continue;
+            }
+            return false;
+        };
+        if label.first().is_some_and(|word| same_kind(word))
+            && (found.category == Some(Category::Huds) && has(label, "hud")
+                || matches!(found.category, None | Some(Category::Tattoos | Category::Makeup | Category::Skins))
+                    && ["bom", "overlay", "applier", "alpha"].iter().any(|role| has(label, role)))
+        {
+            continue;
+        }
+        let Some(at) = label.iter().position(|word| same_kind(word)) else {
+            return false;
+        };
+        if at == 0 || item.asset_type != 6 || found.category != Some(Category::BodyAddons) || demos::is_demo(&item.name) {
+            return false;
+        }
+        components.insert(label[..at].join(" "));
+    }
+    components.len() >= 2
+}
+
+/// A modular floor can be titled by its finish, with dimensions as the
+/// only part names. Require different, small footprints under the exact
+/// floor title so that image resolutions and unrelated objects do not vote.
+fn modular_floor(root: &super::Folder, samples: &[(&InvItem, Classified)]) -> bool {
+    if !root.children.is_empty() || !(2..=96).contains(&root.items.len()) {
+        return false;
+    }
+    let Some((name, pack)) = root.info.name.trim().strip_suffix(']').and_then(|title| title.rsplit_once('[')) else {
+        return false;
+    };
+    let stem = words(name);
+    if stem.len() < 2 || !stem.last().is_some_and(|word| word == "floor") || !words(pack).last().is_some_and(|word| word == "pack") {
+        return false;
+    }
+    let edge = |value: &str| value.parse::<u8>().ok().filter(|n| (1..=32).contains(n));
+    let mut sizes = HashSet::new();
+    for (item, found) in samples {
+        let title = words(&item.name);
+        let Some((size, finish)) = title.strip_prefix(stem.as_slice()).and_then(|label| label.split_first()) else {
+            return false;
+        };
+        let Some((width, depth)) = size.split_once('x').and_then(|(x, y)| Some((edge(x)?, edge(y)?))) else {
+            return false;
+        };
+        if item.asset_type != 6
+            || found.category.is_some_and(|category| category != Category::Decor)
+            || ["texture", "normal", "specular", "diffuse", "roughness", "albedo", "metallic"]
+                .iter()
+                .any(|role| has(finish, role))
+        {
+            return false;
+        }
+        sizes.insert((width, depth));
+    }
+    sizes.len() >= 2
+}
+
+/// Repeated brow and no-brow versions of the same tone identify a skin pack.
+/// A single version label can also appear on a cosmetic or a mixed shelf.
+fn skin_tone_pack(inv: &Inventory, root: &super::Folder) -> bool {
+    if !root.children.is_empty() || !(6..=200).contains(&root.items.len()) {
+        return false;
+    }
+    let Some(prefix) = skin_pack_prefix(&root.info.name) else {
+        return false;
+    };
+    let mut tones = HashMap::<Vec<String>, (bool, bool)>::new();
+    for item in root.items.iter().filter_map(|id| inv.items.get(id)) {
+        if !matches!(item.asset_type, 5 | 6 | 13) {
+            continue;
+        }
+        let Some((name, label)) = item.name.trim().strip_suffix(']').and_then(|part| part.rsplit_once('[')) else {
+            continue;
+        };
+        let label = label.trim().to_ascii_lowercase();
+        let without = match label.as_str() {
+            "brow" | "brows" => false,
+            "nb" | "no brow" | "no brows" => true,
+            _ => continue,
+        };
+        let tone = words(name);
+        if !tone.starts_with(&prefix)
+            || tone.len() <= prefix.len()
+            || !matches!(classify(name, -1, 0).category, None | Some(Category::Skins | Category::Makeup))
+            || !matches!(
+                Category::of_asset(item.asset_type, item.flags),
+                None | Some(Category::Skins | Category::Tattoos)
+            )
+        {
+            return false;
+        }
+        let pair = tones.entry(tone).or_default();
+        if without {
+            pair.1 = true;
+        } else {
+            pair.0 = true;
+        }
+    }
+    let pairs = tones.values().filter(|&&(with, without)| with && without).count();
+    pairs >= 3 && pairs * 4 >= root.items.len()
+}
+
+fn skin_pack_prefix(name: &str) -> Option<Vec<String>> {
+    let mut title = delivery_title(name);
+    let marked = has(&title, "fatpack")
+        || has(&title, "fat pack")
+        || title.last().is_some_and(|word| word == "fp")
+        || delivery_mark(name) == Some(Mark::Strong);
+    let prefix_len = enclosed_tag(name).map_or(2, |(tag, _)| words(tag).len() + 1);
+    if !marked || title.len() <= prefix_len {
+        return None;
+    }
+    title.truncate(prefix_len);
+    Some(title)
+}
+
+/// A delivery may bundle tone ranges in separate subfolders. Require the
+/// same product name and paired brow variants in every range.
+fn skin_tone_delivery(inv: &Inventory, root: &super::Folder) -> bool {
+    if root.children.is_empty() {
+        return skin_tone_pack(inv, root);
+    }
+    if !(2..=8).contains(&root.children.len()) {
+        return false;
+    }
+    let Some(prefix) = skin_pack_prefix(&root.info.name) else {
+        return false;
+    };
+    if !root.children.iter().all(|id| {
+        inv.folders.get(id).is_some_and(|range| {
+            range.state == FetchState::Fetched && skin_pack_prefix(&range.info.name).as_ref() == Some(&prefix) && skin_tone_pack(inv, range)
+        })
+    }) {
+        return false;
+    }
+    let mut related = 0;
+    let mut objects = 0;
+    for item in root.items.iter().filter_map(|id| inv.items.get(id)) {
+        if matches!(item.asset_type, 3 | 7 | 24 | 25) {
+            continue;
+        }
+        objects += 1;
+        related += usize::from(words(&item.name).starts_with(&prefix));
+    }
+    related * 4 >= objects * 3
+}
+
+/// One terrain texture pack can be named only for a season and resolution.
+/// Require native images with different coordinates on the same named grid.
+fn tiled_texture_pack(inv: &Inventory, root: &super::Folder) -> bool {
+    if !root.children.is_empty() || !(6..=200).contains(&root.items.len()) {
+        return false;
+    }
+    let mut title = delivery_title(&root.info.name);
+    let scale_tag = title.last().is_some_and(|word| matches!(word.as_str(), "prim" | "sim"));
+    if scale_tag {
+        title.pop();
+    }
+    let Some((size, name)) = title.split_last() else { return false };
+    if !matches!(size.as_str(), "256" | "512" | "1024" | "2048") {
+        return false;
+    }
+    let stem = match name.iter().rposition(|word| word == "terrain") {
+        Some(terrain) => &name[terrain + 1..],
+        None if scale_tag => name,
+        None => return false,
+    };
+    if stem.is_empty() {
+        return false;
+    }
+    let mut coordinates = HashSet::new();
+    for item in root.items.iter().filter_map(|id| inv.items.get(id)) {
+        if matches!(item.asset_type, 3 | 7) {
+            continue;
+        }
+        if Category::of_asset(item.asset_type, item.flags) != Some(Category::Textures) {
+            return false;
+        }
+        let words = words(&item.name);
+        let Some([resolution, x, y]) = words.get(stem.len()..) else {
+            return false;
+        };
+        if resolution != size || !words.starts_with(stem) {
+            return false;
+        }
+        let (Ok(x), Ok(y)) = (x.parse::<u16>(), y.parse::<u16>()) else {
+            return false;
+        };
+        if !coordinates.insert((x, y)) {
+            return false;
+        }
+    }
+    coordinates.len() >= 6
+}
+
+/// Where a folder whose name says nothing goes, from what it holds: the
+/// destination most of its objects, clothing, body parts, animations and
+/// gestures read as when at least three in five agree. A pack already
+/// named as a set changes category only if its payload agrees throughout.
+/// Asset-only packs can also be identified from their native types.
+fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: Option<&str>, named_set: bool) -> Option<Dest> {
+    const READ: usize = 200;
+    if let Some(category) = inv.folders.get(&folder).and_then(|root| {
+        skin_tone_delivery(inv, root)
+            .then_some(Category::Skins)
+            .or_else(|| (!named_set).then(|| numbered_product_category(inv, root)).flatten())
+    }) {
+        let mut path = vec![category_folder(category)];
+        path.extend(shop.map(str::to_owned));
+        return Some(Dest::Path(path));
+    }
+    let mut votes: HashMap<Vec<String>, usize> = HashMap::new();
+    let mut counted = 0;
+    let mut bulk_types = HashSet::new();
+    let mut bulk_count = 0;
+    let mut unsupported_bulk = false;
+    let mut scripts = 0;
+    let mut notecards = 0;
+    let mut landmarks = 0;
+    let mut samples = Vec::new();
+    let mut stack = vec![folder];
+    let mut seen = HashSet::new();
+    'walk: while let Some(id) = stack.pop() {
+        let Some(f) = inv.folders.get(&id).filter(|_| seen.insert(id)) else {
+            continue;
+        };
+        for it in f.items.iter().filter_map(|i| inv.items.get(i)) {
+            if !matches!(it.asset_type, 5 | 6 | 13 | 20 | 21) {
+                match it.asset_type {
+                    0 | 1 | 12 | 18 | 19 | 56 | 57 => {
+                        if let Some(category) = Category::of_asset(it.asset_type, it.flags) {
+                            bulk_types.insert(category);
+                            bulk_count += 1;
+                        }
+                    }
+                    // These can accompany a product or be the pack itself.
+                    3 => landmarks += 1,
+                    7 => notecards += 1,
+                    4 | 10 | 11 => scripts += 1,
+                    24 | 25 => {}
+                    _ => unsupported_bulk = true,
+                }
+                continue;
+            }
+            counted += 1;
+            let mut found = classify(&it.name, it.asset_type, it.flags);
+            found.category = category_past_store(&it.name, it.asset_type, found.category);
+            samples.push((it, found));
+            // A vendor HUD can be the last thing left in a clothing set.
+            if (!named_set || found.category.is_some_and(|category| category != Category::Huds))
+                && let Some(Dest::Path(path)) =
+                    target_classified(&it.name, found, prefs.stores && shop.is_none(), &prefs.store_hints, None, None)
+            {
+                *votes.entry(path).or_default() += 1;
+            }
+            if counted >= READ {
+                if named_set {
+                    return None;
+                }
+                break 'walk;
+            }
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    if counted == 0 && !unsupported_bulk {
+        let kind = match (bulk_count, scripts, notecards, landmarks) {
+            (2.., _, _, _) if bulk_types.len() == 1 => bulk_types.iter().copied().next(),
+            // PBR deliveries can include bitmap fallbacks for older renderers.
+            (2.., _, _, _)
+                if bulk_types.len() == 2
+                    && bulk_types.contains(&Category::Materials)
+                    && bulk_types.contains(&Category::Textures)
+                    && inv.folders.get(&folder).is_some_and(|root| has(&words(&root.info.name), "pbr")) =>
+            {
+                Some(Category::Materials)
+            }
+            // A script kit can also ship installation notes or landmarks.
+            (0, 2.., _, _) => Some(Category::Scripts),
+            (0, 0, 2.., 0) => Some(Category::Notecards),
+            (0, 0, 0, 2..) => Some(Category::Landmarks),
+            _ => None,
+        };
+        if let Some(category) = kind {
+            let mut path = vec![category_folder(category)];
+            path.extend(shop.map(str::to_owned));
+            return Some(Dest::Path(path));
+        }
+    }
+    let required = if named_set { counted } else { (counted * 3).div_ceil(5) };
+    if let Some((mut path, best)) = votes.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+        && best >= required
+        && path.first() != Some(&stores_folder())
+    {
+        if let Some(shop) = shop {
+            let variant = path.last().is_some_and(|last| {
+                [(true, false), (false, true), (true, true)]
+                    .into_iter()
+                    .any(|(waifus, squish)| *last == variant_folder(waifus, squish))
+            });
+            path.insert(path.len() - usize::from(variant), shop.to_owned());
+        }
+        return Some(Dest::Path(path));
+    }
+    let matched_parts = (!named_set).then(|| inv.folders.get(&folder)).flatten().and_then(|root| {
+        if body_addon_kit(root, &samples) {
+            Some(Category::BodyAddons)
+        } else {
+            modular_floor(root, &samples).then_some(Category::Decor)
+        }
+    });
+    if let Some(category) = matched_parts {
+        let mut path = vec![category_folder(category)];
+        path.extend(shop.map(str::to_owned));
+        return Some(Dest::Path(path));
+    }
+    // The same product for multiple bodies can agree on a category even
+    // when neither body has a majority. Demo variants alone cannot make
+    // a shop folder holding a demo and a full purchase look like one pack.
+    let mut kinds: HashMap<Category, (usize, HashSet<Body>)> = HashMap::new();
+    for (item, found) in samples.into_iter().filter(|(it, _)| !demos::is_demo(&it.name)) {
+        if let Some(category) = found.category
+            && (clothing_fit_category(Some(category))
+                || matches!(category, Category::Skins | Category::Tattoos | Category::BodyAddons)
+                    && Category::of_asset(item.asset_type, item.flags) == Some(category))
+        {
+            let (count, bodies) = kinds.entry(category).or_default();
+            *count += 1;
+            bodies.extend(found.body);
+        }
+    }
+    let (category, (count, bodies)) = kinds.into_iter().max_by_key(|(category, (count, _))| (*count, *category))?;
+    if count < required || bodies.len() < 2 {
+        return None;
+    }
+    let mut path = vec![Body::Several.folder(), category_folder(category)];
+    if let Some(shop) = shop {
+        path.push(shop.to_owned());
+    }
+    Some(Dest::Path(path))
+}
+
+/// A manual category is evidence only on an open shelf. A parent inside a
+/// delivery cannot inherit a label from the shelves outside it.
+fn manual_shelf_category(
+    inv: &Inventory,
+    from: Uuid,
+    categories: &HashMap<Vec<String>, Category>,
+    reserved: &HashSet<String>,
+    own: &OwnFolders,
+) -> Option<(Uuid, Category)> {
+    for id in actions::ancestors(inv, from) {
+        let folder = inv.folders.get(&id)?;
+        if folder.info.type_default != -1 || folder.state != FetchState::Fetched {
+            break;
+        }
+        if let Some(category) = categories.get(&words(&folder.info.name)) {
+            return Some((id, *category));
+        }
+        if !own.opens(&id) && product_folder_in(inv, id, reserved) {
+            break;
+        }
+    }
+    None
+}
+
+/// A manual shelf cannot override explicit evidence inside an intact pack.
+/// Documentation, links and distribution scripts can accompany any product.
+fn delivery_fits_category(inv: &Inventory, id: Uuid, category: Category, family: Option<&[String]>) -> bool {
+    let mut products = 0;
+    let mut related = 0;
+    let mut stack = vec![id];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        let Some(folder) = inv.folders.get(&id).filter(|_| seen.insert(id)) else {
+            continue;
+        };
+        for item in folder.items.iter().filter_map(|id| inv.items.get(id)) {
+            if matches!(item.asset_type, 0 | 3 | 4 | 7 | 10 | 11 | 12 | 18 | 19 | 24 | 25) {
+                continue;
+            }
+            let classified = classify(&item.name, item.asset_type, item.flags);
+            match category_past_store(&item.name, item.asset_type, classified.category) {
+                Some(other) if other != category => return false,
+                Some(_) => {}
+                None if item.asset_type == 6 => {}
+                None => return false,
+            }
+            products += 1;
+            related += usize::from(family.is_some_and(|stem| words(&item.name).starts_with(stem)));
+        }
+        stack.extend(folder.children.iter().copied());
+    }
+    products > 0 && (family.is_none() || related * 5 >= products * 4)
+}
+
+/// A retailer can label a product family separately from the contents of
+/// each box: `Orchid {Night Bloom} horns`, `Orchid {Night Bloom} fades`.
+/// The exact seller and multi-word product label must both agree. A bare
+/// colour or variant word does not identify a product anywhere else.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ProductFamily {
+    prefix: Vec<String>,
+    seller_words: usize,
+}
+
+fn bracketed_family(name: &str) -> Option<(ProductFamily, bool)> {
+    let (seller, group) = name.split_once('{')?;
+    let (title, rest) = group.split_once('}')?;
+    let mut prefix = words(seller);
+    let title = words(title);
+    if !(1..=3).contains(&prefix.len()) || !(2..=6).contains(&title.len()) || prefix.iter().all(|w| w.chars().all(|c| !c.is_alphabetic())) {
+        return None;
+    }
+    let rest = words(rest);
+    let qualifier = rest.first()?;
+    let seller_words = prefix.len();
+    prefix.extend(title);
+    let variant = matches!(
+        qualifier.as_str(),
+        "fade" | "fades" | "tips" | "recolors" | "recolours" | "colorways" | "colourways"
+    );
+    Some((ProductFamily { prefix, seller_words }, variant))
+}
+
+struct ReadEntry {
+    id: Uuid,
+    folder: bool,
+    from: Uuid,
+    name: String,
+    to: Option<Dest>,
+    unpacker: bool,
+    contextual: bool,
+    category: Option<Category>,
+}
+
+fn plan_with(
+    inv: &Inventory,
+    mut entries: Vec<Uuid>,
+    scan: RuleScan,
+    prefs: &Preferences,
+    protected: &HashSet<Uuid>,
+    worn: &HashSet<Uuid>,
+    filtered: bool,
+) -> Plan {
+    let RuleScan {
+        found: rule_moves,
+        kept: rule_kept,
+        unfetched,
+    } = scan;
+    let mut plan = Plan {
+        unfetched,
+        ..Plan::default()
+    };
+    let item_rule_ancestors: HashSet<Uuid> = rule_moves
+        .keys()
+        .copied()
+        .filter(|id| inv.items.get(id).is_some_and(|it| !filtered || kind_wanted(prefs, it.asset_type)))
+        .flat_map(|id| actions::ancestors(inv, id).skip(1))
+        .collect();
+    let rule_folders: HashSet<Uuid> = rule_moves.keys().copied().filter(|id| inv.folders.contains_key(id)).collect();
+    if !rule_folders.is_empty() {
+        entries.retain(|id| !actions::ancestors(inv, *id).skip(1).any(|a| rule_folders.contains(&a)));
+    }
+    let mut known: HashSet<Uuid> = entries.iter().copied().collect();
+    entries.extend(rule_moves.keys().copied().filter(|id| known.insert(*id)));
+    let holds_worn = actions::worn_ancestors(inv, worn);
+    let base = base_folder(inv, prefs);
+    // in the sort folder's tree, the "Everywhere except Sorted" rules are
+    // left out
+    let sorted_rules: Vec<Rule> = prefs.rules.iter().filter(|r| !r.skip_sorted).cloned().collect();
+    let waiting_all = pre_trash_folders(inv);
+    let own = own_folders(inv, prefs);
+    let by_creator = prefs.stores || prefs.store_hints.iter().any(|h| h.creator.is_some());
+    let mut candidates = Vec::new();
+    for id in entries.iter().copied() {
+        let (name, asset_type, flags, created, is_folder) = match (inv.folders.get(&id), inv.items.get(&id)) {
+            (Some(f), _) => (f.info.name.clone(), -1, 0, None, true),
+            (None, Some(it)) => (it.name.clone(), it.asset_type, it.flags, Some(it.created_at), false),
+            _ => continue,
+        };
+        let Some(from) = actions::parent(inv, id) else { continue };
+        if filtered && !kind_wanted(prefs, asset_type) {
+            // a kind left out of the sort stays where it is, unlisted
+            continue;
+        }
+        if is_folder && item_rule_ancestors.contains(&id) && !rule_folders.contains(&id) {
+            continue;
+        }
+        if Some(id) == base || waiting_all.contains(&id) {
+            // the sort folder or Pre-Trash, chosen by hand: they stay
+            plan.kept += 1;
+            plan.kept_list.push((name, Kept::Protected));
+            continue;
+        }
+        // an excluded folder is never read, not even to judge it
+        if prefs.excludes(inv, id) {
+            plan.kept += 1;
+            plan.kept_list.push((name, Kept::Excluded));
+            continue;
+        }
+        // one of the user's own folders (or one holding one) never moves
+        // whole, chosen by hand neither
+        if is_folder && own.contains(&id) {
+            plan.kept += 1;
+            plan.kept_list.push((name, Kept::Own));
+            continue;
+        }
+        if is_folder {
+            let unloaded = unloaded_below(inv, id, &prefs.excluded);
+            if !unloaded.is_empty() {
+                // moved whole once all it holds is loaded (and seen not worn)
+                plan.unfetched.extend(unloaded);
+                plan.kept += 1;
+                plan.kept_list.push((name, Kept::Loading));
+                continue;
+            }
+            if failed_below(inv, id, &prefs.excluded) {
+                plan.kept += 1;
+                plan.kept_list.push((name, Kept::Unreadable));
+                continue;
+            }
+        }
+        if movable(inv, id, protected, &holds_worn) && !prefs.excludes(inv, id) && !holds_closed(inv, id, &prefs.excluded) {
+            let sorted = base.is_some_and(|b| from == b || actions::under(inv, from, b));
+            let creator = if by_creator { creator_of(inv, id) } else { None };
+            candidates.push((id, is_folder, from, name, asset_type, flags, created, sorted, creator));
+        } else {
+            plan.kept += 1;
+            plan.kept_list.push((name, kept_reason(inv, id, prefs, protected, &holds_worn)));
+        }
+    }
+    let mut observed_stores = HashMap::new();
+    if prefs.stores {
+        for (_, _, _, name, _, _, _, _, creator) in &candidates {
+            let Some((creator, prefix)) = creator.zip(bare_store_prefix(name)) else {
+                continue;
+            };
+            if prefix.chars().skip(1).any(char::is_uppercase)
+                && prefix.chars().any(char::is_lowercase)
+                && store(name).is_some_and(|shop| shop.eq_ignore_ascii_case(prefix))
+            {
+                observed_stores.entry((creator, prefix.to_lowercase())).or_insert(prefix.to_owned());
+            }
+        }
+    }
+    let reserved = sorter_folder_names(prefs);
+    // Reading thousands of names against every phrase is the heavy part:
+    // it runs on all cores, the inventory itself is only read above.
+    use rayon::prelude::*;
+    let stores_root = stores_folder();
+    let outfits_root = category_folder(Category::Outfits);
+    let mut read: Vec<_> = candidates
+        .into_par_iter()
+        .map(|(id, folder, from, name, asset_type, flags, created, sorted, creator)| {
+            let rules = if sorted { &sorted_rules } else { &prefs.rules };
+            let rule_target = rule_moves.get(&id).cloned().or_else(|| {
+                rule_for(rules, &name, created)
+                    .filter(|r| !folder || !r.inside_deliveries)
+                    .map(Rule::destination)
+            });
+            let contextual = !sorted && rule_target.is_none() && matches!(asset_type, -1 | 6);
+            let mut found = classify(&name, asset_type, flags);
+            let to = if let Some(to) = rule_target {
+                Some(to)
+            } else {
+                found.category = if folder && inv.folders.get(&id).is_some_and(|root| tiled_texture_pack(inv, root)) {
+                    Some(Category::Textures)
+                } else {
+                    category_past_store(&name, asset_type, found.category)
+                };
+                let observed_store = creator
+                    .zip(bare_store_prefix(&name))
+                    .and_then(|(creator, prefix)| observed_stores.get(&(creator, prefix.to_lowercase())))
+                    .map(String::as_str);
+                let to = target_classified(&name, found, prefs.stores, &prefs.store_hints, creator, observed_store);
+                let named_set = folder && found.category == Some(Category::Outfits) && !names_an_outfit(&name);
+                let surface = found
+                    .category
+                    .filter(|category| folder && matches!(category, Category::Textures | Category::Materials) && has(&words(&name), "pbr"))
+                    .map(category_folder);
+                let shop = match &to {
+                    Some(Dest::Path(path)) if path.first() == Some(&stores_root) => path.get(1).map(String::as_str),
+                    Some(Dest::Path(path)) if named_set || surface.is_some() => {
+                        let has_variant = (found.squish || found.waifus) && found.category != Some(Category::Materials);
+                        let end = path.len() - usize::from(has_variant);
+                        let category = surface.as_ref().unwrap_or(&outfits_root);
+                        path[..end]
+                            .iter()
+                            .position(|part| part == category)
+                            .and_then(|at| path[..end].get(at + 1))
+                            .map(String::as_str)
+                    }
+                    _ => None,
+                };
+                if folder && (to.is_none() || shop.is_some() || named_set || surface.is_some()) && product_folder_in(inv, id, &reserved) {
+                    let inferred = target_from_items(inv, id, prefs, shop, named_set);
+                    if surface.is_some() && to.is_some() {
+                        inferred
+                            .filter(|dest| {
+                                matches!(dest, Dest::Path(path) if path.first().is_some_and(|part| {
+                                    *part == category_folder(Category::Textures) || *part == category_folder(Category::Materials)
+                                }))
+                            })
+                            .or(to)
+                    } else {
+                        inferred.or(to)
+                    }
+                } else {
+                    to
+                }
+            };
+            let category = if contextual { found.category } else { None };
+            ReadEntry {
+                id,
+                folder,
+                from,
+                name,
+                to,
+                unpacker: found.unpacker,
+                contextual,
+                category,
+            }
+        })
+        .collect();
+    // A shelf's explicit label and the recognizable neighbors must agree.
+    // This keeps unknown names in mixed personal archives for review.
+    let mut votes = HashMap::new();
+    let mut totals = HashMap::new();
+    for entry in &read {
+        if let Some(category) = entry.category {
+            *votes.entry((entry.from, category)).or_insert(0usize) += 1;
+            *totals.entry(entry.from).or_insert(0usize) += 1;
+        }
+    }
+    let categories: HashMap<_, _> = Category::ALL
+        .into_iter()
+        .filter(|&category| {
+            clothing_fit_category(Some(category))
+                || matches!(
+                    category,
+                    Category::Accessories
+                        | Category::Jewelry
+                        | Category::Decor
+                        | Category::Furniture
+                        | Category::Pets
+                        | Category::Vehicles
+                        | Category::AnimatedObjects
+                        | Category::Hair
+                )
+        })
+        .flat_map(|category| [(words(category.key()), category), (words(&category_folder(category)), category)])
+        .collect();
+    let merge_family = |known: &mut Option<(Category, Option<Uuid>)>, category, creator| {
+        if let Some((other, owner)) = known {
+            if *other != category || owner.zip(creator).is_some_and(|(a, b)| a != b) {
+                *known = None;
+            } else {
+                *owner = owner.or(creator);
+            }
+        }
+    };
+    let mut families = HashMap::new();
+    let mut requested = HashSet::new();
+    for entry in &read {
+        if !entry.contextual || !entry.folder {
+            continue;
+        }
+        let Some((family, variant)) = bracketed_family(&entry.name) else {
+            continue;
+        };
+        if variant && entry.category.is_none() {
+            requested.insert(family);
+        } else if !variant
+            && let Some(category) = entry.category.filter(|&kind| kind != Category::Outfits)
+            && product_folder_in(inv, entry.id, &reserved)
+        {
+            let creator = creator_of(inv, entry.id);
+            families
+                .entry((entry.from, family))
+                .and_modify(|known| merge_family(known, category, creator))
+                .or_insert(Some((category, creator)));
+        }
+    }
+    // A moved product still corroborates its variants when its sorted
+    // category is explicit and matches the user's manual category.
+    let mut sorted_families = HashMap::new();
+    if let Some(base) = base.filter(|_| !requested.is_empty()) {
+        for folder in inv.folders.values() {
+            let id = folder.info.id;
+            if folder.info.type_default != -1
+                || folder.state != FetchState::Fetched
+                || !folder.info.name.contains('{')
+                || !actions::under(inv, id, base)
+                || prefs.excludes(inv, id)
+                || actions::ancestors(inv, id)
+                    .any(|a| protected.contains(&a) || inv.folders.get(&a).is_some_and(|parent| parent.state != FetchState::Fetched))
+            {
+                continue;
+            }
+            let Some((family, false)) = bracketed_family(&folder.info.name) else {
+                continue;
+            };
+            if !requested.contains(&family) {
+                continue;
+            }
+            let Some(category) = actions::ancestors(inv, folder.info.parent)
+                .take_while(|&a| a != base)
+                .filter_map(|a| inv.folders.get(&a))
+                .find_map(|f| categories.get(&words(&f.info.name)).copied())
+            else {
+                continue;
+            };
+            let found = classify(&folder.info.name, -1, 0);
+            if category_past_store(&folder.info.name, -1, found.category) != Some(category) || !product_folder_in(inv, id, &reserved) {
+                continue;
+            }
+            let creator = creator_of(inv, id);
+            sorted_families
+                .entry((category, family))
+                .and_modify(|known| merge_family(known, category, creator))
+                .or_insert(Some((category, creator)));
+        }
+    }
+    let mut shelves = HashMap::new();
+    for entry in &mut read {
+        let shop = match &entry.to {
+            None => None,
+            Some(Dest::Path(path)) if path.first() == Some(&stores_root) => path.get(1).cloned(),
+            _ => continue,
+        };
+        if !entry.contextual || entry.category.is_some() {
+            continue;
+        }
+        if entry.folder
+            && let Some((family, true)) = bracketed_family(&entry.name)
+        {
+            let same_shelf = families.get(&(entry.from, family.clone()));
+            let evidence = same_shelf.or_else(|| {
+                if sorted_families.is_empty() {
+                    return None;
+                }
+                let shelf = shelves
+                    .entry(entry.from)
+                    .or_insert_with(|| manual_shelf_category(inv, entry.from, &categories, &reserved, &own));
+                shelf.and_then(|(_, category)| sorted_families.get(&(category, family.clone())))
+            });
+            if let Some(Some((category, creator))) = evidence
+                && creator.zip(creator_of(inv, entry.id)).is_none_or(|(a, b)| a == b)
+                && product_folder_in(inv, entry.id, &reserved)
+                && delivery_fits_category(inv, entry.id, *category, Some(&family.prefix))
+            {
+                let mut path = vec![category_folder(*category)];
+                path.extend(shop);
+                entry.to = Some(Dest::Path(path));
+                continue;
+            }
+        }
+        if totals.get(&entry.from).copied().unwrap_or(0) < 2 {
+            continue;
+        }
+        let shelf = shelves
+            .entry(entry.from)
+            .or_insert_with(|| manual_shelf_category(inv, entry.from, &categories, &reserved, &own));
+        let Some((anchor, category)) = *shelf else { continue };
+        // The nearest label directly describes its loose entries. Deeper
+        // down, only named deliveries under their own store shelf inherit it.
+        if entry.from != anchor {
+            let prefix = words(&inv.folders[&entry.from].info.name);
+            let title = words(without_number(entry.name.trim()));
+            if !entry.folder
+                || !prefix.iter().any(|word| word.chars().filter(|c| c.is_alphabetic()).count() >= 2)
+                || !title.starts_with(&prefix)
+                || title.len() == prefix.len()
+            {
+                continue;
+            }
+        }
+
+        let count = votes.get(&(entry.from, category)).copied().unwrap_or(0);
+        if count < 2 || count * 3 < totals[&entry.from] * 2 {
+            continue;
+        }
+        if entry.folder && (!product_folder_in(inv, entry.id, &reserved) || !delivery_fits_category(inv, entry.id, category, None)) {
+            continue;
+        }
+        let mut path = vec![category_folder(category)];
+        path.extend(shop);
+        entry.to = Some(Dest::Path(path));
+    }
+    let base_name = base_name_in(inv, prefs);
+    let pre_trash_at = pre_trash(inv);
+    let pre_trash_label = format!("{} / {}", folder_path(inv, inv.root), pre_trash_name());
+    let mut explained = HashSet::new();
+    let mut held_items = rule_kept;
+    let mut child_review = Vec::new();
+    let mut unknown = |plan: &mut Plan, id, folder: bool, name| {
+        plan.unknown.push(name);
+        if !folder {
+            return;
+        }
+        // Account for a delivery's contents without splitting it.
+        let mut pending = vec![id];
+        while let Some(id) = pending.pop() {
+            let Some(f) = inv.folders.get(&id).filter(|_| explained.insert(id)) else {
+                continue;
+            };
+            child_review.extend(f.items.iter().filter_map(|id| {
+                inv.items.get(id).filter(|it| {
+                    !known.contains(id)
+                        && !held_items.contains(id)
+                        && !matches!(it.asset_type, 24 | 25)
+                        && (!filtered || kind_wanted(prefs, it.asset_type))
+                })
+            }));
+            pending.extend(f.children.iter().copied());
+        }
+    };
+    for ReadEntry {
+        id,
+        folder,
+        from,
+        name,
+        to,
+        unpacker,
+        ..
+    } in read
+    {
+        let Some(to) = to else {
+            unknown(&mut plan, id, folder, name);
+            continue;
+        };
+        let label = match &to {
+            // already sorted: its folder is the destination
+            Dest::Path(path) if base.is_some_and(|base| resolve_existing(inv, base, path) == Some(from)) => continue,
+            Dest::Folder(target) if *target == from || *target == id => continue,
+            Dest::PreTrash if pre_trash_at == Some(from) || pre_trash_at == Some(id) => continue,
+            Dest::PreTrash => pre_trash_label.clone(),
+            Dest::Path(path) if base.is_some_and(|base| path_excluded(inv, base, path, prefs)) => {
+                // the sort folder, or a folder on the way, excluded: nothing
+                // is filed into it
+                plan.kept += 1;
+                plan.kept_list.push((name, Kept::Excluded));
+                continue;
+            }
+            Dest::Folder(target) if prefs.excludes(inv, *target) => {
+                // a folder the user excluded receives nothing either
+                plan.kept += 1;
+                plan.kept_list.push((name, Kept::Excluded));
+                continue;
+            }
+            Dest::Folder(target) if !target_allowed(inv, *target) || actions::under(inv, *target, id) => {
+                // the rule's folder is gone or cannot receive it
+                unknown(&mut plan, id, folder, name);
+                continue;
+            }
+            Dest::Path(path) => std::iter::once(base_name.as_str())
+                .chain(path.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" / "),
+            Dest::Folder(target) => folder_path(inv, *target),
+        };
+        plan.moves.push(Move {
+            id,
+            folder,
+            name,
+            from,
+            to,
+            label,
+            unpacker,
+            restore: false,
+            from_trash: false,
+            snapshot: false,
+            only_if_empty: false,
+        });
+    }
+    let reviewed: Vec<_> = child_review
+        .into_par_iter()
+        .map(|it| {
+            let creator = by_creator.then(|| maker(inv, it)).flatten();
+            let recognized = target_by(
+                &it.name,
+                it.asset_type,
+                it.flags,
+                None,
+                &[],
+                false,
+                &prefs.store_hints,
+                creator,
+                None,
+            )
+            .is_some();
+            (it, recognized)
+        })
+        .collect();
+    for (it, recognized) in reviewed {
+        if recognized {
+            held_items.insert(it.id);
+        } else {
+            plan.unknown.push(it.name.clone());
+        }
+    }
+    plan.kept += held_items.len();
+    plan.kept_list.extend(
+        held_items
+            .into_iter()
+            .filter_map(|id| inv.items.get(&id).map(|it| (it.name.clone(), Kept::Delivery))),
+    );
+    plan.moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
+    plan.unknown.sort_by_cached_key(|n| crate::natural_order::key(n));
+    plan
+}
+
+fn resolve_existing(inv: &Inventory, base: Uuid, path: &[String]) -> Option<Uuid> {
+    path.iter().try_fold(base, |parent, part| child(inv, parent, part))
+}
+
+/// What the next step of a running sort is.
+#[derive(Debug)]
+pub enum Step {
+    /// The next mutation, and the moves of the queue it carries (put back
+    /// at the front if the batch is refused or never sent).
+    Change(Box<Mutation>, Vec<Move>),
+    /// A destination folder is loading: ask again next frame.
+    Wait,
+    /// A folder to move whole is loading its subfolders: ask again next
+    /// frame (only that move gives up after a while).
+    Loading,
+    Done,
+}
+
+/// The identity of an existing sort folder, and the name to create it with
+/// when a run starts without one.
+#[derive(Clone, Copy)]
+pub struct SortBase<'a> {
+    pub id: Option<Uuid>,
+    pub name: &'a str,
+}
+
+impl SortBase<'_> {
+    fn existing(self, inv: &Inventory) -> Option<Uuid> {
+        self.id
+            .filter(|id| valid_base(inv, *id))
+            .or_else(|| child(inv, inv.root, self.name))
+    }
+}
+
+/// The next mutation of a sort: at most [`BATCH`] moves from the front of
+/// `queue`, with the folders they need. A folder that exists (any case) is
+/// reused; a missing one is created in the same mutation under a new id
+/// that later operations name. Entries that can no longer move (worn,
+/// deleted, moved away from its folder meanwhile) are dropped.
+#[cfg(test)]
+pub fn step(
+    inv: &mut Inventory,
+    base_name: &str,
+    queue: &mut VecDeque<Move>,
+    protected: &HashSet<Uuid>,
+    worn: &HashSet<Uuid>,
+    skipped: &mut usize,
+) -> Step {
+    step_with(
+        inv,
+        SortBase { id: None, name: base_name },
+        queue,
+        protected,
+        worn,
+        skipped,
+        &|_, _| false,
+    )
+}
+
+/// [`step`], with what the window refuses since the run was planned (a
+/// folder excluded, or listed in My folders, during the run): every move
+/// the batch takes is checked, however many stale ones it skips first.
+pub fn step_with(
+    inv: &mut Inventory,
+    base: SortBase<'_>,
+    queue: &mut VecDeque<Move>,
+    protected: &HashSet<Uuid>,
+    worn: &HashSet<Uuid>,
+    skipped: &mut usize,
+    refused: &dyn Fn(&Inventory, &Move) -> bool,
+) -> Step {
+    let holds_worn = actions::worn_ancestors(inv, worn);
+    let mut change = Mutation::default();
+    // folders known in this mutation: (parent, lowercase name) → id
+    let mut made: HashMap<(Uuid, String), Uuid> = HashMap::new();
+    let mut fresh: HashSet<Uuid> = HashSet::new();
+    let mut sent: Vec<Move> = Vec::new();
+    let base_id = base.existing(inv);
+    let base_name = base_id.map_or(base.name, |id| &inv.folders[&id].info.name).to_owned();
+    let base_path = [base_name.clone()];
+    // a sort folder name read back from disk (a resumed run) is checked
+    // again: never a viewer folder, a system folder or Pre-Trash
+    let base_ok = !base_refused(&base_name);
+    // the nearest existing folder above each folder made in this batch
+    let mut anchor: HashMap<Uuid, Uuid> = HashMap::new();
+    // what this batch moves and where it sends, for the moves after
+    let mut sent_folders: Vec<Uuid> = Vec::new();
+    let mut used: Vec<Uuid> = Vec::new();
+    // (a few batches' worth of skipped moves a frame at most: a folder of
+    // 400,000 excluded mid-run, or an Undo of entries all moved by hand
+    // since, is skipped over several frames, never in one)
+    let skipped_before = *skipped;
+    'moves: while sent.len() < BATCH {
+        if *skipped - skipped_before >= 4 * BATCH {
+            if change.operations.is_empty() {
+                return Step::Wait;
+            }
+            break 'moves;
+        }
+        let Some(next) = queue.front() else { break };
+        // (refused since the plan: skipped before anything is loaded for it)
+        if refused(inv, next) {
+            queue.pop_front();
+            *skipped += 1;
+            continue;
+        }
+        // a folder whose tree is still loading waits for it (Resume and
+        // Undo read runs in folders not opened this session): skipped only
+        // once it is loaded and still cannot move
+        // (the cheap checks first: a worn, locked or protected folder is
+        // never loaded only to be skipped)
+        if next.folder
+            && actions::parent(inv, next.id) == Some(next.from)
+            && actions::relocatable(inv, next.id, protected)
+            && !holds_worn.contains(&next.id)
+        {
+            let loading = unloaded_below(inv, next.id, &[]);
+            if !loading.is_empty() {
+                // a few at a time beside the inventory's own loading, never
+                // a whole deep tree in one frame
+                let reading = loading
+                    .iter()
+                    .filter(|id| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetching))
+                    .count();
+                let ask: Vec<Uuid> = loading
+                    .iter()
+                    .copied()
+                    .filter(|id| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Unknown))
+                    .take(LOADS_AT_ONCE.saturating_sub(reading))
+                    .collect();
+                for id in ask {
+                    inv.request(id);
+                }
+                if change.operations.is_empty() {
+                    return Step::Loading;
+                }
+                break 'moves;
+            }
+            // (a folder inside that could not be read: it never moves whole)
+            if failed_below(inv, next.id, &[]) {
+                queue.pop_front();
+                *skipped += 1;
+                continue;
+            }
+        }
+        let still_here = actions::parent(inv, next.id) == Some(next.from)
+            && inv.folders.contains_key(&next.id) == next.folder
+            && (!next.only_if_empty || next.folder && empty_tree(inv, next.id, &mut Vec::new()))
+            // a restore goes back to a folder, never along a path or to
+            // Pre-Trash (a run file edited by hand cannot make it)
+            && (!next.restore || matches!(next.to, Dest::Folder(_)))
+            // out of the Trash: an Undo of a Trash run only (an entry trashed
+            // while a sort's Undo or a layout runs stays there)
+            && (!next.restore || next.from_trash || !in_trash(inv, next.id))
+            && if next.restore {
+                restorable(inv, next.id, protected, &holds_worn)
+            } else {
+                movable(inv, next.id, protected, &holds_worn)
+            };
+        if !still_here {
+            queue.pop_front();
+            *skipped += 1;
+            continue;
+        }
+        let path: Vec<String> = match &next.to {
+            Dest::Folder(target) => {
+                let allowed = if next.restore {
+                    restore_target_allowed(inv, *target)
+                } else {
+                    target_allowed(inv, *target)
+                };
+                if !allowed || next.restore && actions::ancestors(inv, *target).any(|id| protected.contains(&id)) {
+                    queue.pop_front();
+                    *skipped += 1;
+                    continue;
+                }
+                Vec::new()
+            }
+            Dest::Path(_) if !base_ok => {
+                queue.pop_front();
+                *skipped += 1;
+                continue;
+            }
+            Dest::Path(path) if base_id.is_some() => path.clone(),
+            Dest::Path(path) => base_path.iter().chain(path).cloned().collect(),
+            // the Pre-Trash folder as it is named, in any language
+            Dest::PreTrash => vec![
+                pre_trash(inv)
+                    .and_then(|p| inv.folders.get(&p))
+                    .map_or_else(pre_trash_name, |f| f.info.name.clone()),
+            ],
+        };
+        let to_pre_trash = matches!(next.to, Dest::PreTrash);
+        let mut parent = match next.to {
+            Dest::Folder(target) => target,
+            Dest::Path(_) => base_id.unwrap_or(inv.root),
+            Dest::PreTrash => inv.root,
+        };
+        // The folders this move would create: kept apart until the whole
+        // path resolves, so a wait leaves no half-made path in `change`.
+        let mut new_folders = Vec::new();
+        // every existing folder the path goes through (the start included)
+        let mut walked = vec![parent];
+        for part in path {
+            let key = (parent, part.to_lowercase());
+            if let Some(id) = made.get(&key) {
+                parent = *id;
+                walked.push(anchor.get(id).copied().unwrap_or(*id));
+                continue;
+            }
+            if !fresh.contains(&parent) {
+                match inv.folders.get(&parent).map(|f| f.state) {
+                    Some(FetchState::Fetched) => {}
+                    Some(FetchState::Failed) | None => {
+                        // the destination cannot be read: this entry stays
+                        queue.pop_front();
+                        *skipped += 1;
+                        continue 'moves;
+                    }
+                    Some(FetchState::Unknown | FetchState::Fetching) => {
+                        inv.request(parent);
+                        if change.operations.is_empty() {
+                            return Step::Wait;
+                        }
+                        break 'moves;
+                    }
+                }
+                if let Some(id) = child(inv, parent, &part) {
+                    // an existing folder on the way is re-checked like a
+                    // rule's destination: open, and not in Pre-Trash
+                    // (unless the move goes to Pre-Trash itself)
+                    let open = folder_open(inv, id) && (to_pre_trash || !in_pre_trash(inv, id));
+                    if !open {
+                        queue.pop_front();
+                        *skipped += 1;
+                        continue 'moves;
+                    }
+                    made.insert(key, id);
+                    walked.push(id);
+                    parent = id;
+                    continue;
+                }
+            }
+            let id = Uuid::new_v4();
+            anchor.insert(id, anchor.get(&parent).copied().unwrap_or(parent));
+            new_folders.push(Operation::Folder {
+                id,
+                parent,
+                name: part,
+                type_default: -1,
+            });
+            made.insert(key, id);
+            fresh.insert(id);
+            parent = id;
+        }
+        // One batch is applied all at once: a move whose way goes through a
+        // folder this batch moves, or a folder holding a place this batch
+        // sends to, waits for the next batch, where it is checked against
+        // the inventory as it then is (never into Pre-Trash's tree or into
+        // itself by the back door).
+        if let Some(next) = queue.front() {
+            let through_moved = walked
+                .iter()
+                .any(|w| sent_folders.iter().any(|s| *w == *s || actions::under(inv, *w, *s)));
+            let holds_used = next.folder && used.iter().any(|u| *u == next.id || actions::under(inv, *u, next.id));
+            if (through_moved || holds_used) && !change.operations.is_empty() {
+                break 'moves;
+            }
+        }
+        let Some(m) = queue.pop_front() else { break };
+        // a folder sent to the root never takes a name the viewer or Auto-sort
+        // reads there (#RLV, Pre-Trash, the sort folder…)
+        if m.folder
+            && parent == inv.root
+            && inv.folders.get(&m.id).is_some_and(|f| {
+                let name = f.info.name.trim();
+                base_refused(name)
+                    || name.eq_ignore_ascii_case(&base_name)
+                    || default_base_names().iter().any(|n| n.eq_ignore_ascii_case(name))
+            })
+        {
+            *skipped += 1;
+            continue;
+        }
+        // into itself, or into a folder made inside itself: every existing
+        // folder on the way is checked, a new one has none of its own
+        let into_itself = walked.iter().any(|w| *w == m.id || actions::under(inv, *w, m.id));
+        if parent == m.id || into_itself || actions::under(inv, parent, m.id) {
+            // into itself: dropped before any folder is made for it
+            for op in &new_folders {
+                if let Operation::Folder { id, .. } = op {
+                    made.retain(|_, made_id| made_id != id);
+                    fresh.remove(id);
+                }
+            }
+            *skipped += 1;
+            continue;
+        }
+        // the new folders' parents are read back too, so a folder made by a
+        // batch that fails later is still found by the next run; a source is
+        // not (a folder of 100,000 items read again each batch)
+        // (a new folder is listed only once its move joins the batch: one
+        // the batch ends before is never made)
+        for op in &new_folders {
+            if let Operation::Folder { id, parent: above, .. } = op {
+                change.refresh.push(*above);
+                change.refresh.push(*id);
+            }
+        }
+        change.operations.append(&mut new_folders);
+        change.operations.push(Operation::Patch {
+            id: m.id,
+            folder: m.folder,
+            body: llsd_map! { "parent_id" => parent },
+        });
+        change.refresh.push(parent);
+        if m.folder {
+            sent_folders.push(m.id);
+        }
+        used.extend(walked.iter().copied());
+        sent.push(m);
+    }
+    if change.operations.is_empty() {
+        return Step::Done;
+    }
+    // each move read back by itself, never a destination's whole contents
+    change.confirm_each = true;
+    change.refresh.sort_unstable();
+    change.refresh.dedup();
+    Step::Change(Box::new(change), sent)
+}
+
+#[path = "sorter_demo.rs"]
+pub mod demo;
+
+#[path = "sorter_share.rs"]
+pub mod share;
+#[path = "sorter_vocab.rs"]
+pub mod vocab;
+
+#[path = "sorter_journal.rs"]
+pub mod journal;
+
+#[path = "sorter_duplicates.rs"]
+mod duplicates;
+pub use duplicates::plan_duplicates;
+
+#[path = "sorter_demos.rs"]
+mod demos;
+#[cfg(test)]
+use demos::is_demo;
+pub use demos::plan_demos;
+
+#[path = "sorter_purge.rs"]
+pub mod purge;
+
+#[cfg(test)]
+#[path = "sorter_tests.rs"]
+mod tests;

@@ -6802,7 +6802,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, Auto-sort, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_SORTER_TAB=preview\|rules\|options\|cleanup\|cleanup-custom\|cleanup-duplicates\|cleanup-demos\|share\|import\|picker\|confirm-whole\|preview-stores\|purge-confirm` | With a `sorter` inventory mode: sample rules and store hints, and Auto-sort on one tab, window or confirmation |
+| `AURORA_SORTER_VOCAB=<path>` | Development builds: Auto-sort reads this vocabulary file instead of the built-in one |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open\|delete` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
@@ -7780,6 +7782,48 @@ failure. Grid validation and any paid upload are performed by the human.
   in front). `aurora-folder-colors-follow`: the palette follows the selection;
   Clothing selected at 700, an item at 780: capture 750 (Clothing named, its
   pink outlined) and 830 ("Select a folder to color it.", palette greyed).
+- **`AURORA_DEMO_INVENTORY=sorter|aurora-sorter|sorter-big|sorter-run|sorter-vocab`**: an Objects
+  folder of about 700 entries named the way creators name them (made-up stores,
+  body tags such as `[REBORN]`, `eBODY Reborn`, `Legacy F`, `Lara X`, unpackers,
+  Squish and Squeeze versions, `[Store] +` and `*Store*` tags, acquired dates
+  spread over 2008–2026, a texture named like a chair, a FATPACK folder with
+  its HUD, card and landmark, furniture, names nothing can read), 24 unpacked
+  delivery folders, clothing
+  layers that only their wearable type names, and a `Sorted/Reborn` folder from
+  an earlier run. Auto-sort opens on Objects: its preview lists each destination
+  (`Reborn / Skirts (12)`) and what stays. `sorter` and `sorter-run` use the
+  Legacy window, `aurora-sorter` Aurora's; `sorter-big` has eight times the
+  entries; `sorter-run` starts the sort by itself (capture after about 900
+  frames). What to look for: `Sorted` and `Reborn` reused, not doubled; each
+  folder created once; worn, locked or linked entries kept; Objects left with
+  only the names nothing can read; the FATPACK folder moved whole. In Options,
+  verify the current sort destination. Take a layout snapshot, export its private
+  backup, sort the demo inventory and import the backup. Confirm that the preview
+  returns the moved entries to their original folders. Import a shared JSON from
+  this same demo inventory and check the name-matching summary and confirmation.
+  A Pre-Trash
+  word rule fills a root `Pre-Trash` folder that only its own confirmation sends
+  to the Trash; Whole inventory asks twice. `AURORA_DEMO_SORTER_TAB` (with one of these
+  modes) fills the demo's own Auto-sort settings with three rules (a path, one of my
+  folders, Pre-Trash), two store hints, a creator hint and an excluded folder, then opens a tab
+  (`preview`, `rules`, `options`, `cleanup`; `preview-stores` is the preview with a folder per store; `purge-confirm` shows Empty in small steps' confirmation for the Trash, with no folder behind it; `cleanup-duplicates` opens Clean up › Duplicates; `cleanup-demos` opens Clean up › Demos; `cleanup-custom` picks June 2013, three
+  types and empty folders), the Share or Import window (`import` pastes a friend's
+  text: rules and hints already there, a new rule, a new Pre-Trash rule shown in red and
+  unticked, a sort folder renamed `Tidy` (unticked) and the store option flipped, each
+  listed old → new under "This file changes N of your defaults", and a broken line), the
+  folder picker or the
+  whole-inventory confirmation. Capture after about 700 frames. The Clean up tab: a delivery folder
+  entirely from 2010 (`Retro Mall`) taken whole, the mixed Hex Dress FATPACK left
+  whole, and two root folders (`Old freebies`, `Places I liked`) with every
+  item type, whose old items are listed one by one. `sorter-vocab` opens the
+  Vocabulary check: every name of the golden corpus
+  (`assets/auto-sort/corpus.json`), where it should go and where the vocabulary
+  in use sends it, differences first in the warning colour, and how many match.
+  With **`AURORA_SORTER_VOCAB=<path>`** a development build (any profile but
+  `release`) reads that vocabulary file instead of the built-in one: change a
+  word, relaunch, and the window shows what moved. A file that does not read is
+  ignored, with the reason in the log. See
+  [Auto-sort vocabulary](AUTO_SORT_VOCABULARY.md).
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory

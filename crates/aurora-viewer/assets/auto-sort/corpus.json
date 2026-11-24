@@ -1,0 +1,1009 @@
+{
+ "about": "Auto-sort's golden corpus: names as creators write them, and the path each one sorts to with a folder per store and no rules. {category} is a category's folder (its key in vocabulary.json), {stores} the Stores folder; null: the name says nothing and the entry stays. type: the asset type (6 object, -1 a folder). The test vocabulary_corpus prints every difference.",
+ "cases": [
+  {
+   "name": "MedBootsC PBR Legacy Brown2",
+   "type": 6,
+   "expect": "Legacy"
+  },
+  {
+   "name": "PBR & Legacy Dress [Reborn]",
+   "type": 6,
+   "expect": "Reborn/{dresses}"
+  },
+  {
+   "name": "PBR & Legacy Serein Pack (unpacked)",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "Sandy Beach V2 (Legacy) and V3.01 [PBR]",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "Sandy Beach Building Set V3.01 [PBR]",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Slate Tile Texture v2 PBR & Legacy",
+   "type": -1,
+   "expect": "{textures}"
+  },
+  {
+   "name": "PBR Dress [Legacy F]",
+   "type": 6,
+   "expect": "Legacy/{dresses}"
+  },
+  {
+   "name": "Legacy F PBR Dress",
+   "type": 6,
+   "expect": "Legacy/{dresses}"
+  },
+  {
+   "name": "PBR & Legacy Dress [Legacy F]",
+   "type": 6,
+   "expect": "Legacy/{dresses}"
+  },
+  {
+   "name": "Isola Pathway [Limestone]",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Limestone Pathway Diffuse",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Elegant Patio Build Kit",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Spooky Lawn Worms",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Wooden Garden Shed",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Star Floor [Black & White Pack]",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "Eudora Moth Halo [Black]",
+   "type": -1,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Moth Halo Ambient Sound",
+   "type": 1,
+   "expect": "{sounds}"
+  },
+  {
+   "name": "Brass Timepiece Halo",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Gilded Head Wings",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Velvet Winter Fur Boa",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Abhorrent Tome Book Accessory",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Siren Hand Fins [unrigged]",
+   "type": 6,
+   "expect": "{body-addons}"
+  },
+  {
+   "name": "Siren Ear Fins [add]",
+   "type": 6,
+   "expect": "{body-addons}"
+  },
+  {
+   "name": "Fiberglass Surfboard Fin Kit",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Faux Fur Boa - Short",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Stage Feather Boa",
+   "type": -1,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Boa Constrictor",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Blood Moon Vampire Tooth PACK",
+   "type": -1,
+   "expect": "{body-addons}"
+  },
+  {
+   "name": "Vampire Tooth Install Guide",
+   "type": 7,
+   "expect": "{notecards}"
+  },
+  {
+   "name": "Friendly Fangs",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Stone Steps A2",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Stone Steps Diffuse",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Copper Rain Chains",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Reclaimed Wood Floor Panel",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Floor Panel Concrete NORMAL",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Vintage Phone Typer",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Vintage Phone Typer",
+   "type": 20,
+   "expect": "{animations}"
+  },
+  {
+   "name": "Typers / Bumpers / Dancers",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "Walnut Daybed [boxed]",
+   "type": -1,
+   "expect": "{furniture}"
+  },
+  {
+   "name": "Velvet Arm Cuffs",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Creamy Lolli Hold 3",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Creamy Lolli Hold 3",
+   "type": 20,
+   "expect": "{animations}"
+  },
+  {
+   "name": "Creamy Lolli",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Arctic Ice Skates [boxed]",
+   "type": -1,
+   "expect": "{shoes}"
+  },
+  {
+   "name": "Arctic Ice Skate Glide",
+   "type": 20,
+   "expect": "{animations}"
+  },
+  {
+   "name": "Roller skate giver with fancy HUD",
+   "type": -1,
+   "expect": "{huds}"
+  },
+  {
+   "name": "Roller Skates with Color HUD",
+   "type": -1,
+   "expect": "{shoes}"
+  },
+  {
+   "name": "Mossy Stepping Stones",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Vintage Fishing Rod",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Vintage Fishing Rod Manual",
+   "type": 7,
+   "expect": "{notecards}"
+  },
+  {
+   "name": "Treasure Chest",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "Oak Decorative Treasure Chest",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Nightwater Stompers-SINGLE-HUD_UPDATE",
+   "type": 6,
+   "expect": "{huds}"
+  },
+  {
+   "name": "Welkin Stompers [boxed]",
+   "type": -1,
+   "expect": "{shoes}"
+  },
+  {
+   "name": "Granite Waterfall Base Piece",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Granite Waterfall Sounds",
+   "type": 1,
+   "expect": "{sounds}"
+  },
+  {
+   "name": "Old Cedar Chicken Coop",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Sparkly Flying Butterflies [boxed]",
+   "type": -1,
+   "expect": "{animated-objects}"
+  },
+  {
+   "name": "Sparkly Flying Butterflies - Product Ad",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Sparkly Flying Butterflies Halo Headpiece",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Basil Springs Normalmap",
+   "type": 6,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Amethyst Picnic Parcel / Right Hold",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Amethyst Picnic Parcel / Right Hold",
+   "type": 20,
+   "expect": "{animations}"
+  },
+  {
+   "name": "Amethyst Picnic Parcel",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Silver Nose Chain",
+   "type": 6,
+   "expect": "{jewelry}"
+  },
+  {
+   "name": "Silver Moth Antennae",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Apple Pie Mop and Bucket",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Basil Springs",
+   "type": 19,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Copper Spark",
+   "type": 11,
+   "expect": "{scripts}"
+  },
+  {
+   "name": "Vine Cuffs",
+   "type": -1,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Winter Mesh Snowman Set",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Rigged Purity Seals Pack",
+   "type": -1,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Bayside Skybox [boxed]",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Overgrown Photography Backdrop",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Ivy Garden Arch",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Summer Wall Vines",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Vine Nose Piercing",
+   "type": 6,
+   "expect": "{jewelry}"
+  },
+  {
+   "name": "Photography Backdrop Instructions",
+   "type": 7,
+   "expect": "{notecards}"
+  },
+  {
+   "name": "Cedar Skybox Vendor Photo",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Vine Street Shop Mainstore Landmark",
+   "type": 3,
+   "expect": "{landmarks}"
+  },
+  {
+   "name": "Neutral Environment for PBR",
+   "type": 6,
+   "expect": "{environment}"
+  },
+  {
+   "name": "Bronze Hinge Rotation Script [boxed]",
+   "type": -1,
+   "expect": "{scripts}"
+  },
+  {
+   "name": "Floating Text Script Pack",
+   "type": 6,
+   "expect": "{scripts}"
+  },
+  {
+   "name": "Bronze Hinge Rotation Script Instructions",
+   "type": 7,
+   "expect": "{notecards}"
+  },
+  {
+   "name": "Unreborn Stop Sign",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Meadow Directional Sign [PBR]",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Bracken Greenhouse [boxed]",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Bracken Greenhouse Dress",
+   "type": 6,
+   "expect": "{dresses}"
+  },
+  {
+   "name": "Ivy Kitchen Stove",
+   "type": 6,
+   "expect": "{furniture}"
+  },
+  {
+   "name": "Ruched Gorget",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Cascade PBR EEP",
+   "type": -1,
+   "expect": "{environment}"
+  },
+  {
+   "name": "Cascade PBR Skirt",
+   "type": 6,
+   "expect": "{skirts}"
+  },
+  {
+   "name": "Granite Normal Map [boxed]",
+   "type": -1,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Stage Face Glitter",
+   "type": 6,
+   "expect": "{makeup}"
+  },
+  {
+   "name": "Cobalt Polaroid Holders (unpacked)",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Zodiac Sign Necklace",
+   "type": 6,
+   "expect": "{jewelry}"
+  },
+  {
+   "name": "Meadow Terrain Textures",
+   "type": -1,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Bayou Toad Animesh",
+   "type": -1,
+   "expect": "{animated-objects}"
+  },
+  {
+   "name": "Corgi Pet Animesh",
+   "type": 6,
+   "expect": "{pets}"
+  },
+  {
+   "name": "Hearth Air Dancer [boxed]",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Hearth Air Dancer Costume",
+   "type": 6,
+   "expect": "{outfits}"
+  },
+  {
+   "name": "Amethyst Tumbler Hold 2",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Amethyst Popsicle Hold 2",
+   "type": 20,
+   "expect": "{animations}"
+  },
+  {
+   "name": "Spooky Fangs and Tusks Kit",
+   "type": -1,
+   "expect": "{body-addons}"
+  },
+  {
+   "name": "Moon Network Redelivery Script",
+   "type": 6,
+   "expect": "{scripts}"
+  },
+  {
+   "name": "Harbor Logo",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Velvet Logo Dress",
+   "type": 6,
+   "expect": "{dresses}"
+  },
+  {
+   "name": "Nomad Pendant Planter",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Prairie Ring Hanger",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Birch Kokedama Bowl Set (unpacked)",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "[Moss Vale] Crystal Nose Stud",
+   "type": 6,
+   "expect": "{jewelry}/Moss Vale"
+  },
+  {
+   "name": "[Moss Vale] Velvet Hairpins",
+   "type": 6,
+   "expect": "{accessories}/Moss Vale"
+  },
+  {
+   "name": "[Moss Vale] DJ Stage - Accent Light",
+   "type": 6,
+   "expect": "{decor}/Moss Vale"
+  },
+  {
+   "name": "[Moss Vale] Garden Building Kit (unpacked)",
+   "type": -1,
+   "expect": "{decor}/Moss Vale"
+  },
+  {
+   "name": "Brindlewood // Bento Money Envelope (Packed)",
+   "type": -1,
+   "expect": "{stores}/Brindlewood",
+   "why": "a delivery folder: store from the // tag"
+  },
+  {
+   "name": "TUMBLINGPUPPET",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "ZyLo 1.2.5 Box",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "hey-you: Pip Candy Striped Thigh Socks  - Aniseed (Wear)",
+   "type": -1,
+   "expect": "{stockings}/hey-you",
+   "why": "a store and a colon"
+  },
+  {
+   "name": "StratusEdge Combat System V27.514",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "{RW} Such a S****y Strike Hud [boxed]",
+   "type": -1,
+   "expect": "{huds}/RW"
+  },
+  {
+   "name": "~JJ~ The Lizard Glow Set",
+   "type": -1,
+   "expect": "{outfits}/JJ"
+  },
+  {
+   "name": "[XQ][GESTURES][1] PRAIRIE PEACH TART PACK (ADD+CLICK)",
+   "type": 6,
+   "expect": "{gestures}/XQ",
+   "why": "a gesture pack worn as an object"
+  },
+  {
+   "name": "Velmora - Ryu Jeans - FATPACK",
+   "type": 6,
+   "expect": "{pants}/Velmora"
+  },
+  {
+   "name": "LeLUTKA Otto Head 4.0",
+   "type": 6,
+   "expect": "{heads}"
+  },
+  {
+   "name": "MossPixel_Terminal_Office_High1",
+   "type": 6,
+   "expect": "{stores}/MossPixel",
+   "why": "underscore names: a brand-like first part"
+  },
+  {
+   "name": "MossPx_Sign_F",
+   "type": 6,
+   "expect": "{stores}/MossPx"
+  },
+  {
+   "name": "Object",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "[Thornlace] Rebellion Jacket // Fatpack",
+   "type": 6,
+   "expect": "{jackets}/Thornlace"
+  },
+  {
+   "name": "Ashgrove Homes ~ Eclipse (ADD)",
+   "type": 6,
+   "expect": "{stores}/Ashgrove Homes"
+  },
+  {
+   "name": "MossPixel Deposit HUD",
+   "type": 6,
+   "expect": "{huds}"
+  },
+  {
+   "name": "Q_Scanner_Briny",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Nyla - Slow Unwind - Bom Bandages Fatpack",
+   "type": 6,
+   "expect": "{tattoos}/Nyla"
+  },
+  {
+   "name": "[Thornlace] Trauma Tee // Fatpack Hud",
+   "type": 6,
+   "expect": "{tops}/Thornlace",
+   "why": "a product's HUD goes with the product"
+  },
+  {
+   "name": "[Thornlace] Trauma Tee // Fatpack // LegacyM+AT",
+   "type": 6,
+   "expect": "Legacy Male/{tops}/Thornlace",
+   "why": "LegacyM: the Legacy Male body"
+  },
+  {
+   "name": "QuillFox Willy Wrappers - Glove",
+   "type": 6,
+   "expect": "{gloves}/QuillFox Willy Wrappers"
+  },
+  {
+   "name": "Garden Party Invitation",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Mouth Sprinkler (Light Pink)",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Waifu REBORN - Waifus - Addon v2.0",
+   "type": 6,
+   "expect": "Reborn/{body-addons}",
+   "why": "the Waifus mod itself is an add-on"
+  },
+  {
+   "name": "Reborn Feat. Marlowe - Waifu Bikini - Top Slim",
+   "type": 6,
+   "expect": "Reborn/{swimwear}/Waifus"
+  },
+  {
+   "name": "Larkspur - Lovesick Darling - Reborn Waifus - Bra",
+   "type": 6,
+   "expect": "Reborn/{lingerie}/Larkspur/Waifus"
+  },
+  {
+   "name": "Fenwick - Marisol Top - Black - [Waifus size Squish]",
+   "type": 6,
+   "expect": "Reborn/{tops}/Fenwick/Waifus Squish"
+  },
+  {
+   "name": "THISTLE: The \"Harbor Body\" for eBody Reborn (Porcelain)",
+   "type": 6,
+   "expect": "Reborn/{skins}/THISTLE",
+   "why": "a body skin named by body and tone"
+  },
+  {
+   "name": "VELA.mods - Soft Thighs V4.2 - eBody Reborn",
+   "type": 6,
+   "expect": "Reborn/{body-addons}/VELA.mods",
+   "why": "a body mod maker's tag"
+  },
+  {
+   "name": "Velvet Lounge Chair",
+   "type": 6,
+   "expect": "{furniture}"
+  },
+  {
+   "name": "Moonlit Gown - Red",
+   "type": 6,
+   "expect": "{dresses}"
+  },
+  {
+   "name": "[Fernhollow] Leather Boots",
+   "type": 6,
+   "expect": "{shoes}/Fernhollow"
+  },
+  {
+   "name": "Cozy Knit Sweater (Fatpack)",
+   "type": 6,
+   "expect": "{tops}"
+  },
+  {
+   "name": "Silver Hoop Earrings",
+   "type": 6,
+   "expect": "{jewelry}"
+  },
+  {
+   "name": "Freckles BOM Layer",
+   "type": 6,
+   "expect": "{makeup}"
+  },
+  {
+   "name": "Short Bob Hair - Naturals",
+   "type": 6,
+   "expect": "{hair}"
+  },
+  {
+   "name": "Starter AO v3",
+   "type": 6,
+   "expect": "{animations}"
+  },
+  {
+   "name": "Garden Plant Pot Set",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Little Puppy Companion",
+   "type": 6,
+   "expect": "{pets}"
+  },
+  {
+   "name": "Speedster Car HUD",
+   "type": 6,
+   "expect": "{vehicles}"
+  },
+  {
+   "name": "Rez to Unpack - Porch Set",
+   "type": 6,
+   "expect": "{outfits}"
+  },
+  {
+   "name": "Maitreya Lara X - Denim Shorts",
+   "type": 6,
+   "expect": "Maitreya/{shorts}"
+  },
+  {
+   "name": "Legacy Perky - Bikini sq",
+   "type": 6,
+   "expect": "Legacy/{swimwear}/Squish"
+  },
+  {
+   "name": "Kupra - Satin Robe",
+   "type": 6,
+   "expect": "Kupra/{sleepwear}"
+  },
+  {
+   "name": "eBODY Classic - Lace Bra",
+   "type": 6,
+   "expect": "eBODY/{lingerie}"
+  },
+  {
+   "name": "Gianni - Cargo Pants",
+   "type": 6,
+   "expect": "Gianni/{pants}"
+  },
+  {
+   "name": "Belleza Jake Tank Top",
+   "type": 6,
+   "expect": "Belleza Jake/{tops}"
+  },
+  {
+   "name": "Slink Hourglass Nails",
+   "type": 6,
+   "expect": "Slink/{nails}"
+  },
+  {
+   "name": "Bedroom Clutter Pack",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Neon Sign",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Welcome Notecard",
+   "type": 7,
+   "expect": "{notecards}"
+  },
+  {
+   "name": "Bow Gesture",
+   "type": 21,
+   "expect": "{gestures}"
+  },
+  {
+   "name": "Wave Hello",
+   "type": 20,
+   "expect": "{animations}"
+  },
+  {
+   "name": "Sunset Landmark",
+   "type": 3,
+   "expect": "{landmarks}"
+  },
+  {
+   "name": "Door Script",
+   "type": 10,
+   "expect": "{scripts}"
+  },
+  {
+   "name": "Rain Loop",
+   "type": 1,
+   "expect": "{sounds}"
+  },
+  {
+   "name": "Plaid Mini Skirt",
+   "type": 6,
+   "expect": "{skirts}"
+  },
+  {
+   "name": "Oversized Hoodie [Fernhollow]",
+   "type": 6,
+   "expect": "{tops}"
+  },
+  {
+   "name": "*Fernhollow* Pleated Skirt sq",
+   "type": 6,
+   "expect": "{skirts}/Fernhollow/Squish"
+  },
+  {
+   "name": "Reborn Squeeze Leggings",
+   "type": 6,
+   "expect": "Reborn/{pants}/Squish"
+  },
+  {
+   "name": "Mesh Head Shape",
+   "type": 6,
+   "expect": "{shapes}"
+  },
+  {
+   "name": "Fishnet Tights",
+   "type": 6,
+   "expect": "{stockings}"
+  },
+  {
+   "name": "Lace Garter Belt",
+   "type": 6,
+   "expect": "{lingerie}"
+  },
+  {
+   "name": "Bunny Ears Headband",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Wooden Rowing Boat",
+   "type": 6,
+   "expect": "{vehicles}"
+  },
+  {
+   "name": "Unpacker - Wedding Gown",
+   "type": 6,
+   "expect": "{dresses}"
+  },
+  {
+   "name": "Ornate Mirror",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Dining Table Set",
+   "type": 6,
+   "expect": "{furniture}"
+  },
+  {
+   "name": "Silk Pajama Set",
+   "type": 6,
+   "expect": "{sleepwear}"
+  },
+  {
+   "name": "Body Vitiligo - Full Body - Tint",
+   "type": 6,
+   "expect": "{skins}"
+  },
+  {
+   "name": "Angry Nose Tape - Black",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Pumpkin Phone Case BOX (Add Me)",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Hula Hoop [Add Me]",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Floral Bouquet Vines - White",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Fortune Teller Circus Tent",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Circus Tent Canvas",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Rustic Wood Stove",
+   "type": 6,
+   "expect": "{furniture}"
+  },
+  {
+   "name": "Winter Wolf Rideable",
+   "type": 6,
+   "expect": "{pets}"
+  },
+  {
+   "name": "Fieldstone Archway",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Overgrown Brick Texture Set",
+   "type": -1,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Celestial Bodychain",
+   "type": 6,
+   "expect": "{jewelry}"
+  },
+  {
+   "name": "Side Gash BOM",
+   "type": 6,
+   "expect": "{tattoos}"
+  },
+  {
+   "name": "Riverside Swamp Kit [Add Me]",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Autumn Stone Path Building Set",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Autumnal Terrain Texture Pack",
+   "type": -1,
+   "expect": "{textures}"
+  }
+ ]
+}
