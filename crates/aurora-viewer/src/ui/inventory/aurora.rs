@@ -125,6 +125,9 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             }
             "aurora-wide"
             | "aurora-gallery"
+            | "aurora-system-folders"
+            | "aurora-gallery-system-folders"
+            | "aurora-filtered"
             | "aurora-gallery-large"
             | "aurora-combination"
             | "aurora-worn-wide"
