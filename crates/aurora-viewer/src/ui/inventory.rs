@@ -1089,7 +1089,11 @@ impl InventoryUi {
     /// of "Show in a new window" (fs_partial_inventory) are left alone.
     /// The windows made from tabs show the whole inventory: they close too.
     pub fn close_showinv_windows(&mut self) {
-        for w in self.windows.iter_mut().filter(|w| w.additional || w.state.torn_off || w.state.single_folder.is_some()) {
+        for w in self
+            .windows
+            .iter_mut()
+            .filter(|w| w.additional || w.state.torn_off || w.state.single_folder.is_some())
+        {
             w.open = false;
         }
     }
