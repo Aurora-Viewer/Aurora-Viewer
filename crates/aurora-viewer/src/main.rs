@@ -181,6 +181,9 @@ fn main() -> anyhow::Result<()> {
     // the stochastic transparency's measurement switches that weaken it
     // (AURORA_ST_GUARDS) are read by development builds alone
     aurora_render::oit_stochastic::set_development_build(env!("AURORA_BUILD_PROFILE") != "release");
+    // the shader reload (Dev Toolbox T2, AURORA_SHADER_RELOAD) reads the
+    // source checkout: development builds alone
+    aurora_render::shader_reload::set_development_build(env!("AURORA_BUILD_PROFILE") != "release");
     // without a window: before the crash watcher, the logs and the link
     // hand-off
     if cli::get().uninstall {

@@ -2,6 +2,11 @@
 
 use crate::pipeline_cache::CachedPipelines;
 
+/// The swept wake's source (water_wake.wgsl).
+pub(crate) fn source() -> std::borrow::Cow<'static, str> {
+    crate::water_shader_source(&["water_wake.wgsl"], include_str!("shaders/water_wake.wgsl"))
+}
+
 pub(crate) struct WakeGpu {
     pipeline: wgpu::RenderPipeline,
     group: wgpu::BindGroup,
@@ -11,10 +16,7 @@ impl WakeGpu {
     pub fn new(device: &wgpu::Device, uniform: &wgpu::Buffer, events: &wgpu::Buffer, ground: &wgpu::TextureView) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("swept avatar water displacement"),
-            source: wgpu::ShaderSource::Wgsl(crate::water_shader_source(
-                &["water_wake.wgsl"],
-                include_str!("shaders/water_wake.wgsl"),
-            )),
+            source: wgpu::ShaderSource::Wgsl(source()),
         });
         let additive = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::One,

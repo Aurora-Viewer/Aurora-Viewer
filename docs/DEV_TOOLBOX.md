@@ -118,7 +118,7 @@ Message templates:
 
 Kinds: **toggle** (on until pressed again, not saved), **copy** (builds a
 text in Send a diagnostic), **live** (a text kept up to date there),
-**window** (opens a window or a menu).
+**window** (opens a window or a menu), **action** (does one thing at once).
 
 | ID | Tool | Kind | What it gives |
 |---|---|---|---|
@@ -168,6 +168,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | P6 | Profile in the log | toggle | `perf summary:` and `net summary:` lines |
 | M1 | Media debug | toggle | `media objects:` lines |
 | T1 | RLVa self-test | window | Development builds only: a pass / fail report of RLVa on the grid the human is logged in to ([below](#the-rlva-self-test)) |
+| T2 | Reload shaders | action | Development builds only: the scene and water WGSL read again from the source checkout and their pipelines rebuilt in place, keeping the session; a file that does not validate keeps the old look and says why in nearby chat (docs/TESTING.md, `AURORA_SHADER_RELOAD`) |
 
 A tool that goes away leaves its identifier unused; a new tool takes a new
 identifier.

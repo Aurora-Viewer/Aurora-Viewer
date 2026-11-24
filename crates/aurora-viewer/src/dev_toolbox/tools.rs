@@ -16,6 +16,8 @@ pub enum Kind {
     Live,
     /// Opens a window (or a short menu of actions).
     Window,
+    /// Does one thing at once (T2 reloads the shaders).
+    Action,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -125,7 +127,10 @@ const TOOLS: &[Tool] = &[
 /// The tools of development builds only (`dev`, `ci`, `debugging`): a
 /// published build neither lists them nor finds them, and drops them from a
 /// saved layout.
-const DEV_TOOLS: &[Tool] = &[t("T1", K::Window, "flask-filled", G::Reports)];
+const DEV_TOOLS: &[Tool] = &[
+    t("T1", K::Window, "flask-filled", G::Reports),
+    t("T2", K::Action, "refresh", G::Rendering),
+];
 
 /// Every tool of this build, in catalogue order.
 pub fn all() -> impl Iterator<Item = &'static Tool> {
@@ -193,6 +198,7 @@ pub fn label(id: &str) -> &'static str {
         "P6" => tr!("dev-toolbox-p6"),
         "M1" => tr!("dev-toolbox-m1"),
         "T1" => tr!("dev-toolbox-t1"),
+        "T2" => tr!("dev-toolbox-t2"),
         _ => "?",
     }
 }
@@ -205,6 +211,7 @@ pub fn kind_label(kind: Kind) -> &'static str {
         Kind::Copy => tr!("dev-toolbox-kind-copy"),
         Kind::Live => tr!("dev-toolbox-kind-live"),
         Kind::Window => tr!("dev-toolbox-kind-window"),
+        Kind::Action => tr!("dev-toolbox-kind-action"),
     }
 }
 
