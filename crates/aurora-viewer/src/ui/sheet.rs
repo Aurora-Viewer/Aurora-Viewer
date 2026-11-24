@@ -10,6 +10,7 @@
 use crate::theme::Palette;
 use crate::ui::{presence, widgets};
 use crate::world::World;
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Shape, Vec2};
 use uuid::Uuid;
 
@@ -561,8 +562,20 @@ pub fn srow_ext(ui: &mut egui::Ui, p: &Palette, text: &RowText<'_>, controls_w: 
         }),
     };
     let text_h = name_g.size().y + desc_g.as_ref().map_or(0.0, |(g, _)| 1.0 + g.size().y);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, text_h.max(26.0) + PAD * 2.0), Sense::hover());
-    let top = rect.center().y - text_h / 2.0;
+    // The controls' height of the last frame: a control taller than the
+    // text (a multi-line field) makes the row taller instead of running
+    // over the rows below it (#4647).
+    let controls_id = ui.next_auto_id().with("srow_controls_h");
+    let controls_h: f32 = ui.ctx().data(|d| d.get_temp(controls_id)).unwrap_or(0.0);
+    let row_h = row_height(text_h, controls_h, PAD);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, row_h), Sense::hover());
+    // centred on the controls, or at the top of a row that a taller
+    // control (a multi-line field) makes taller than the text
+    let top = if controls_h > text_h.max(26.0) {
+        rect.top() + PAD
+    } else {
+        rect.center().y - text_h / 2.0
+    };
     let name_h = name_g.size().y;
     let name_end = name_g.rows.last().map_or(0.0, |r| r.rect().right());
     let first_row_h = name_g.rows.first().map_or(name_h, |r| r.rect().height());
@@ -584,7 +597,13 @@ pub fn srow_ext(ui: &mut egui::Ui, p: &Palette, text: &RowText<'_>, controls_w: 
             clicked = paint_linked(ui, g, pos, link_at, p.muted);
         }
     }
-    let slot = Rect::from_min_max(egui::pos2(rect.left() + text_w + GAP, rect.top()), rect.max);
+    // the slot leaves out the row's padding, so that controls filling it
+    // measure the content height, not the row's (no growth from frame to
+    // frame)
+    let slot = Rect::from_min_max(
+        egui::pos2(rect.left() + text_w + GAP, rect.top() + PAD),
+        egui::pos2(rect.right(), rect.bottom() - PAD),
+    );
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(slot)
@@ -592,7 +611,22 @@ pub fn srow_ext(ui: &mut egui::Ui, p: &Palette, text: &RowText<'_>, controls_w: 
     );
     child.spacing_mut().item_spacing.x = 8.0;
     controls(&mut child);
+    let used = child.min_rect().height();
+    if (used - controls_h).abs() > 0.5 {
+        ui.ctx().data_mut(|d| d.insert_temp(controls_id, used));
+        // the row takes its new height in this frame's next pass: the
+        // height is kept by the row's place, which a section folded or
+        // unfolded above it shifts, and a frame drawn with another row's
+        // height would cover the rows below
+        ui.ctx().request_discard("a settings row changed height");
+    }
     clicked
+}
+
+/// A row's height: its text or its controls, whichever is taller, at least
+/// 26 points, with `pad` above and below.
+fn row_height(text_h: f32, controls_h: f32, pad: f32) -> f32 {
+    text_h.max(controls_h).max(26.0) + pad * 2.0
 }
 
 /// The bar under a section whose settings wait for "Apply", like
@@ -859,13 +893,15 @@ pub fn list_title(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str, count
     });
 }
 
-/// A resident's display name and user name (when the settings show both).
+/// A resident's display name and user name (when the settings show both),
+/// as the land and estate windows name their people: whoever is around,
+/// `@shownames` hides no one there (`NameScope::Roster`).
 pub fn names(world: &mut World, id: &Uuid) -> (String, Option<String>) {
     world.social.want_name(*id);
     let names = &world.social.avatar_names;
-    match names.get(id) {
+    match names.get_in(crate::world::names::NameScope::Roster, id) {
         Some(n) => (n.display(&names.options), n.chat_username(&names.options)),
-        None => (world.social.name_of(id), None),
+        None => (world.social.name_in(crate::world::names::NameScope::Roster, id), None),
     }
 }
 
@@ -915,7 +951,7 @@ pub fn person_head(ui: &mut egui::Ui, p: &Palette, width: f32, name: &str, mid: 
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 18.0), Sense::hover());
     let (mid_x, exp_x) = columns(rect.right());
     for (text, x) in [(name, rect.left() + NAME_X), (mid, mid_x), (exp, exp_x)] {
-        let g = ui.painter().layout_job(semibold(ui, &text.to_uppercase(), 10.5, p.muted_dim));
+        let g = ui.painter().layout_job(semibold(ui, &text.ui_upper(), 10.5, p.muted_dim));
         let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
         ui.painter().galley(at, g, p.muted_dim);
     }
@@ -931,6 +967,7 @@ pub struct RowAnswer {
 /// the right end. A double click opens the profile.
 pub fn person_row(ui: &mut egui::Ui, p: &Palette, world: &World, row: &Person<'_>, width: f32) -> RowAnswer {
     let (rect, r) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click());
+    widgets::reveal_search_selection(ui, &r, row.selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if row.selected {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
@@ -1022,6 +1059,51 @@ pub fn person_row(ui: &mut egui::Ui, p: &Palette, world: &World, row: &Person<'_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_row_is_as_tall_as_its_text_or_its_controls() {
+        // one line of text, a button: the text's height (26 at least)
+        assert_eq!(row_height(18.0, 22.0, 7.0), 26.0 + 14.0);
+        // a name and its explanation over two lines
+        assert_eq!(row_height(40.0, 22.0, 7.0), 40.0 + 14.0);
+        // a multi-line field taller than its label (#4647)
+        assert_eq!(row_height(18.0, 120.0, 7.0), 120.0 + 14.0);
+    }
+
+    /// The land and estate windows name their people whoever is around:
+    /// `@shownames` hides none of them (issue #3547).
+    #[test]
+    fn the_land_and_estate_windows_name_a_resident_under_shownames() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let agent = world.agent_id;
+        let id = world.objects.avatars().map(|(_, o)| o.full_id).find(|id| *id != agent).unwrap();
+        let name = aurora_net::AvatarNameData {
+            id,
+            username: "jane.doe".into(),
+            display_name: "Jane Doe".into(),
+            legacy_first: "Jane".into(),
+            legacy_last: "Doe".into(),
+            ..Default::default()
+        };
+        world.social.avatar_names.on_display_names(&[name], &[], None);
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Privacy fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        assert_ne!(world.social.name_of(&id), "Jane Doe", "the world's name is hidden");
+        assert_eq!(names(&mut world, &id).0, "Jane Doe");
+    }
 
     /// A header's picture keeps its aspect: a square picture fills the
     /// width and loses its top and bottom.

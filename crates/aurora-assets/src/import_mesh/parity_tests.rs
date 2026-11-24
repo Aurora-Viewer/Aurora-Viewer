@@ -143,7 +143,7 @@ fn mesh_import_parity_more_than_256_instances_and_deep_gltf_hierarchy() {
     let scene = gltf::parse(&document, &crate::Skeleton::default()).expect("deep hierarchy and many instances");
     assert_eq!(scene.instances.len(), 300);
     let visual = (0..300).map(|_| "<node><instance_geometry url=\"#a\"/></node>").collect::<String>();
-    let dae = super::tests::collada_objects(&visual, false);
+    let dae = super::tests::collada_objects(&visual, false, false, false);
     let scene = collada::parse(dae.as_bytes(), &crate::Skeleton::default()).expect("many DAE instances");
     assert_eq!(scene.instances.len(), 300);
 }
@@ -244,6 +244,8 @@ fn mesh_import_parity_rigged_dae_keeps_authored_binds_and_bone_offsets_for_each_
         let dae = super::tests::collada_objects(
             "<node sid=\"mPelvis\" type=\"JOINT\"><translate sid=\"location\">1 2 3</translate></node>",
             true,
+            false,
+            false,
         )
         .replace("Z_UP", axis);
         let scene = collada::parse(dae.as_bytes(), &rig).expect("rigged DAE");
@@ -315,6 +317,42 @@ fn mesh_import_parity_gltf_binds_use_parent_rest_and_missing_sl_bones() {
     );
     assert!(skin.inverse_bind[0].abs_diff_eq(rig.joints[pelvis].world.inverse(), 0.0001));
     assert!(skin.inverse_bind[1].abs_diff_eq(rig.joints[torso].world.inverse(), 0.0001));
+}
+
+#[test]
+fn mesh_import_parity_gltf_bind_turned_from_rest_lands_where_the_file_rests() {
+    // LLGLTFLoader::computeViewerBindMatrix: an exporter's joints carry no
+    // rotation of their own (Y-up), and the torso is bound turned about the
+    // source's Z axis, the way an A-pose arm is. At the viewer rest, the
+    // vertex must land where the file's own rest pose puts it, with the
+    // ordinary axes and with the XY turn of checkForXYrotation.
+    let rig = skeleton();
+    let ordinary = Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    let pelvis = rig.find("mPelvis").expect("pelvis");
+    let torso = rig.find("mTorso").expect("torso");
+    for basis in [ordinary, Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2) * ordinary] {
+        let at = |joint: usize| Mat4::from_translation(basis.inverse().transform_point3(rig.joints[joint].world_position()));
+        let (pelvis_global, torso_global) = (at(pelvis), at(torso));
+        let turn = Mat4::from_rotation_z(0.7);
+        let bytes: Vec<_> = [pelvis_global.inverse(), (torso_global * turn).inverse()]
+            .into_iter()
+            .flat_map(|m| m.to_cols_array().into_iter().flat_map(f32::to_le_bytes))
+            .collect();
+        let json = json!({"asset":{"version":"2.0"},"buffers":[{"uri":"bind.bin","byteLength":bytes.len()}],
+        "bufferViews":[{"buffer":0,"byteLength":bytes.len()}],"accessors":[{"bufferView":0,"componentType":5126,"count":2,"type":"MAT4"}],
+        "nodes":[{"name":"mPelvis","matrix":pelvis_global.to_cols_array(),"children":[1]},
+            {"name":"mTorso","matrix":(pelvis_global.inverse()*torso_global).to_cols_array()}],
+        "skins":[{"joints":[0,1],"inverseBindMatrices":0}]});
+        let doc = Document::parse_mesh(json.to_string().as_bytes(), |_| Ok(bytes.clone())).expect("document");
+        let nodes = doc.json["nodes"].as_array().expect("nodes");
+        let globals = gltf_skin::globals(nodes).expect("global rests");
+        let skin = gltf_skin::read(&doc, 0, nodes, &globals, basis, &rig, &mut Vec::new()).expect("converted skin");
+        let bound = Vec3::new(0.1, 0.2, 0.3);
+        let file_rest = basis.transform_point3((torso_global * (torso_global * turn).inverse()).transform_point3(bound));
+        let viewer_rest = (rig.joints[torso].world * skin.inverse_bind[1]).transform_point3(basis.transform_point3(bound));
+        assert!(viewer_rest.distance(file_rest) < 0.0001, "{viewer_rest:?} != {file_rest:?}");
+        assert!(skin.inverse_bind[0].abs_diff_eq(rig.joints[pelvis].world.inverse(), 0.0001));
+    }
 }
 
 #[test]

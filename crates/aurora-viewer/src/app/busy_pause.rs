@@ -85,13 +85,13 @@ impl App {
     /// The 3D drawing pauses: behind past the driver's memory budget
     /// (texture_budget::Background), or behind on a busy card (this module).
     pub(super) fn drawing_paused(&self) -> bool {
-        self.scene.textures.drawing_paused() || self.busy_pause.paused()
+        self.scene.textures.drawing_paused() || self.busy_pause.paused() || self.gaming_mode_pauses()
     }
 
     /// Every frame, after the render: the pause follows the GPU time.
     pub(super) fn busy_pause_frame(&mut self, vr: bool) {
         let mut timed = self.capture.is_some() || self.frame_profile.enabled();
-        let (mut behind, mut gpu_ms) = (!self.focused, self.last_render.gpu_ms);
+        let (mut behind, mut gpu_ms) = (!self.in_front(), self.last_render.gpu_ms);
         if self.demo && !self.busy_pause.demo_released && demo_from().is_some_and(|from| self.frame_count >= from) {
             // (a new measure each frame)
             let ms = SLOW_MS * 2.0 + (self.frame_count % 2) as f32;
@@ -112,7 +112,10 @@ impl App {
 
     /// The notice over the paused world.
     pub(super) fn busy_pause_notice(&self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        if !self.busy_pause.paused() {
+        let gaming = self.gaming_mode_pauses();
+        // (video memory full: no world behind to pause, and its own notice
+        // takes the same place; the title still says both)
+        if (!self.busy_pause.paused() && !gaming) || self.last_render.video_memory_full {
             return;
         }
         // The paused world, blurred and darkened (the modals' blur, ui_blur.rs:
@@ -134,11 +137,34 @@ impl App {
             .interactable(false)
             .show(ctx, |ui| {
                 crate::ui::widgets::overlay(ui, p, egui::Margin::symmetric(16, 10), |ui| {
-                    let text = if self.busy_pause.forced {
+                    let text = if gaming {
+                        self.gaming_mode_notice()
+                    } else if self.busy_pause.forced {
                         aurora_i18n::tr!("busy-pause-forced-notice")
                     } else {
                         aurora_i18n::tr!("busy-pause-notice")
                     };
+                    ui.label(egui::RichText::new(text).color(p.amber));
+                });
+            });
+    }
+
+    /// Video memory is full and the render targets could not be made
+    /// (`RenderStats::video_memory_full`): what the black world behind the
+    /// interface means, until they can be. Not in the Legacy Viewer.
+    pub(super) fn video_memory_notice(&self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        if !self.last_render.video_memory_full {
+            return;
+        }
+        let room = crate::ui::layout::work_area(ctx);
+        egui::Area::new(egui::Id::unique("video-memory-notice"))
+            .order(egui::Order::Background)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .fixed_pos(room.center())
+            .interactable(false)
+            .show(ctx, |ui| {
+                crate::ui::widgets::overlay(ui, p, egui::Margin::symmetric(16, 10), |ui| {
+                    let text = aurora_i18n::tr!("video-memory-full-notice");
                     ui.label(egui::RichText::new(text).color(p.amber));
                 });
             });

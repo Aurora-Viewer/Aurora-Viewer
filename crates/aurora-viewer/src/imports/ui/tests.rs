@@ -1,111 +1,217 @@
 use super::*;
 
-#[test]
-fn texture_size_switch_updates_both_axes_preview_and_price() {
-    let ctx = egui::Context::default();
-    let theme = crate::theme::Theme::default();
-    theme.apply(&ctx, 1.0);
-    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    let pixels = crate::imports::tests::image(2048, 1024);
-    let entry = Entry::new(
-        "large.png".into(),
-        Ok(Source::Texture(pixels.clone())),
-        import_texture::Options {
-            max_width: 2048,
-            max_height: 2048,
+struct ImageLimitFixture {
+    ctx: egui::Context,
+    theme: crate::theme::Theme,
+    world: crate::world::World,
+    imports: Imports,
+    prefs: Preferences,
+    pixels: Arc<DecodedImage>,
+}
+
+impl ImageLimitFixture {
+    fn new(material: bool, separate: bool) -> Self {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let pixels = crate::imports::tests::image(4096, 2048);
+        let source = if material {
+            Source::Material {
+                value: PbrMaterial::default(),
+                images: Box::new([Some(files::local_image((*pixels).clone(), "Base color".into())), None, None, None]),
+            }
+        } else {
+            Source::Texture(pixels.clone())
+        };
+        let entry = Entry::new(
+            if material { "large.gltf" } else { "large.png" }.into(),
+            Ok(source),
+            Default::default(),
+        );
+        let mut imports = Imports {
+            open: !separate,
+            active: Some(entry.id),
+            entries: vec![entry],
             ..Default::default()
-        },
-    );
-    let id = entry.id;
-    let mut imports = Imports {
-        open: true,
-        choice: Choice::Texture,
-        active: Some(id),
-        entries: vec![entry],
-        ..Default::default()
-    };
-    let prices = Prices {
-        texture: Some(10),
-        large_texture: Some(50),
-        ..Default::default()
-    };
-    let mut prefs = Preferences::default();
-    let frame = |imports: &mut Imports, prefs: &mut Preferences, events| {
-        let mut actions = Vec::new();
-        let mut output = ctx.run_ui(
+        };
+        if separate {
+            imports.open_type_window(&ctx, if material { Choice::Material } else { Choice::Texture });
+        }
+        Self {
+            ctx,
+            theme,
+            world: crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load())),
+            imports,
+            prefs: Default::default(),
+            pixels,
+        }
+    }
+
+    fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
+        let mut output = self.ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1440.0, 1000.0))),
                 events,
                 ..Default::default()
             },
-            |ui| actions = show(ui.ctx(), &theme.palette(), imports, prefs, &world, &Default::default()),
+            |ui| {
+                show(
+                    ui.ctx(),
+                    &self.theme.palette(),
+                    &mut self.imports,
+                    &mut self.prefs,
+                    &self.world,
+                    &Default::default(),
+                );
+            },
         );
         output.textures_delta.clear();
-        (output, actions)
-    };
-    for _ in 0..8 {
-        drop(frame(&mut imports, &mut prefs, Vec::new()));
+        output
     }
-    for (limit, dimensions, cost) in [(true, (1024, 512), 10), (false, (2048, 1024), 50), (true, (1024, 512), 10)] {
-        let (output, _) = frame(&mut imports, &mut prefs, Vec::new());
-        let pos = output
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-max-size") => {
-                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()).center())
-                }
-                _ => None,
-            })
-            .expect("one size-limit switch");
-        let generation = imports.entries[0].preview_generation;
-        let mut preview_requested = false;
-        for pressed in [true, false] {
-            let (_, actions) = frame(
-                &mut imports,
-                &mut prefs,
-                vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
-            );
-            preview_requested |= actions
-                .iter()
-                .any(|action| matches!(action, Action::Preview(entry) if *entry == id));
+
+    fn settle(&mut self) -> egui::FullOutput {
+        for _ in 0..5 {
+            self.frame(Vec::new());
         }
-        let options = imports.entries[0].options;
-        let maximum = if limit { 1024 } else { 2048 };
-        assert_eq!((options.max_width, options.max_height), (maximum, maximum));
-        assert_eq!(import_texture::dimensions(pixels.width, pixels.height, options), dimensions);
-        assert_eq!(imports.total(&prices), Some(cost));
-        assert_eq!(prefs.limit_texture_size, limit);
-        assert!(preview_requested && imports.entries[0].preview_generation > generation);
+        self.frame(Vec::new())
     }
-    for (width, height, visible) in [
-        (240, 180, false),
-        (1024, 1024, false),
-        (1792, 800, false),
-        (1793, 800, true),
-        (2048, 512, true),
-        (512, 2048, true),
-    ] {
-        imports.entries[0].source = Some(Source::Texture(crate::imports::tests::image(width, height)));
-        let (output, _) = frame(&mut imports, &mut prefs, Vec::new());
-        let shown = output.shapes.iter().any(|shape| {
-            matches!(&shape.shape,
-            egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-max-size"))
-        });
-        assert_eq!(
-            shown, visible,
-            "visibility uses the unrestricted encoded size of {width} × {height}"
+
+    fn click(&mut self, rect: egui::Rect) {
+        for pressed in [true, false] {
+            self.frame(vec![
+                egui::Event::PointerMoved(rect.center()),
+                egui::Event::PointerButton {
+                    pos: rect.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        self.settle();
+    }
+
+    fn global(&mut self, limit: bool) {
+        let (rect, clip, enabled) = self
+            .ctx
+            .data(|data| data.get_temp::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_image_size_global")))
+            .expect("general size control");
+        assert!(enabled && clip.contains_rect(rect));
+        self.click(rect);
+        let choice = self
+            .ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("import_image_size_global_choice", limit))))
+            .expect("general size choice");
+        self.click(choice);
+        assert_eq!(self.prefs.limit_texture_size, limit);
+    }
+
+    fn individual(&mut self, limit: ImageSizeLimit) {
+        let id = self.imports.entries[0].id;
+        let rect = self
+            .ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("import_image_size_limit", id))))
+            .expect("individual size control");
+        self.click(rect);
+        self.assert_global_choice_label(if self.prefs.limit_texture_size { 1024 } else { 2048 });
+        let choice = self
+            .ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("import_image_size_choice", id, limit))))
+            .expect("individual size choice");
+        self.click(choice);
+        assert_eq!(self.imports.entries[0].image_size_limit, limit);
+    }
+
+    fn assert_global_choice_label(&mut self, maximum: u32) {
+        let label = aurora_i18n::tr!("import-image-size-inherit", size = maximum);
+        let output = self.frame(Vec::new());
+        assert!(
+            output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Text(text) if text.galley.text() == label
+                && shape.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))),
+            "the inherited choice visibly names the current global limit: {label}"
         );
-        assert!(prefs.limit_texture_size, "viewing a file must not replace the remembered choice");
     }
+
+    fn assert_upload(&self, maximum: u32, cost: i32) {
+        let entry = &self.imports.entries[0];
+        let options = self.imports.options(entry);
+        assert_eq!((options.max_width, options.max_height), (maximum, maximum));
+        assert_eq!(
+            import_texture::dimensions(self.pixels.width, self.pixels.height, options),
+            (maximum, maximum / 2)
+        );
+        let prices = Prices {
+            texture: Some(10),
+            large_texture: Some(50),
+            ..Default::default()
+        };
+        let material_cost = if matches!(entry.source, Some(Source::Material { .. })) {
+            prices.cost(Kind::Material, (0, 0)).expect("material fee")
+        } else {
+            0
+        };
+        assert_eq!(self.imports.total(&prices), Some(cost + material_cost));
+        assert!(matches!(entry.status, Status::Ready));
+        assert!(self.imports.message.is_empty());
+    }
+}
+
+#[test]
+fn image_size_menus_share_the_general_limit_and_keep_texture_and_material_overrides() {
+    for material in [false, true] {
+        for separate in [false, true] {
+            let mut f = ImageLimitFixture::new(material, separate);
+            f.settle();
+            assert_eq!(f.imports.entries[0].image_size_limit, ImageSizeLimit::Default);
+            f.assert_global_choice_label(2048);
+            f.assert_upload(2048, 50);
+            let generation = f.imports.entries[0].preview_generation;
+            f.global(true);
+            f.assert_global_choice_label(1024);
+            f.assert_upload(1024, 10);
+            assert!(f.imports.entries[0].preview_generation > generation);
+
+            f.individual(ImageSizeLimit::Size2048);
+            f.assert_upload(2048, 50);
+            assert!(f.prefs.limit_texture_size, "an override does not replace the general choice");
+            let generation = f.imports.entries[0].preview_generation;
+            f.global(false);
+            f.assert_upload(2048, 50);
+            assert_eq!(f.imports.entries[0].preview_generation, generation);
+
+            f.individual(ImageSizeLimit::Size1024);
+            f.assert_upload(1024, 10);
+            f.global(true);
+            f.global(false);
+            f.assert_upload(1024, 10);
+
+            f.individual(ImageSizeLimit::Default);
+            f.assert_global_choice_label(2048);
+            f.assert_upload(2048, 50);
+            f.global(true);
+            f.assert_global_choice_label(1024);
+            f.assert_upload(1024, 10);
+        }
+    }
+}
+
+#[test]
+fn a_small_image_keeps_the_individual_size_choice_visible_without_changing_the_general_setting() {
+    let mut f = ImageLimitFixture::new(false, false);
+    f.prefs.limit_texture_size = true;
+    f.pixels = crate::imports::tests::image(240, 180);
+    f.imports.entries[0].source = Some(Source::Texture(f.pixels.clone()));
+    let output = f.settle();
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-image-size-single"))));
+    f.individual(ImageSizeLimit::Size2048);
+    assert!(f.prefs.limit_texture_size);
+    let entry = &f.imports.entries[0];
+    assert_eq!(
+        entry.source.as_ref().expect("source").dimensions(f.imports.options(entry)),
+        (256, 128)
+    );
 }
 
 #[test]
@@ -250,7 +356,7 @@ fn settings_only_show_permissions_and_payment_and_sharing_clicks_are_per_type() 
         );
     }
     for label in [
-        aurora_i18n::tr!("import-max-size"),
+        aurora_i18n::tr!("import-image-size-limit"),
         aurora_i18n::tr!("import-lossless"),
         aurora_i18n::tr!("import-preview-own-avatar"),
         aurora_i18n::tr!("import-auto-weights"),
@@ -299,7 +405,11 @@ fn mesh_palette_uses_the_shared_picker_and_applies_every_color_without_rebuildin
     theme.apply(&ctx, 1.0);
     let mut draft = crate::imports::tests::mesh_fixture();
     draft.preview_physics = true;
-    let mut entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+    let mut entry = Entry::new(
+        "mesh.dae".into(),
+        Ok(Source::Mesh(Box::new(draft))),
+        Preferences::default().texture(),
+    );
     entry.model = Some(Arc::new(aurora_render::preview::Model {
         parts: Vec::new(),
         center: glam::Vec3::ZERO,
@@ -510,7 +620,7 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
             },
             images: Box::new(std::array::from_fn(|_| Some(map.clone()))),
         }),
-        Default::default(),
+        Preferences::default().texture(),
     );
     entry.model = Some(Arc::new(aurora_render::preview::Model {
         parts: Vec::new(),
@@ -671,28 +781,68 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
         assert_eq!(pair[0].left(), pair[1].left(), "one column of maps");
         assert!(pair[1].top() > pair[0].bottom());
     }
-    drop(frame(
-        vec![
-            egui::Event::PointerMoved(cards[1].center()),
-            egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                delta: Vec2::new(0.0, -200.0),
-                phase: egui::TouchPhase::Move,
-                source: egui::MouseWheelSource::Unknown,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ],
-        &mut imports,
-    ));
-    for _ in 0..60 {
-        drop(frame(Vec::new(), &mut imports));
+    let slots = [0, 2, 3, 1];
+    let mut visible = [false; 4];
+    let mut output = frame(Vec::new(), &mut imports);
+    let viewport = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if slots.iter().any(|&slot| text.galley.text() == map_label(slot)) => Some(shape.clip_rect),
+            _ => None,
+        })
+        .expect("a material map heading identifies the scroll viewport");
+    // A wrapping footer leaves less room for the cards. Each heading must be
+    // reachable, without assuming that all four fit at the same scroll offset.
+    for step in 0..=12 {
+        for (index, slot) in slots.into_iter().enumerate() {
+            visible[index] |= output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(text)
+                if text.galley.text() == map_label(slot)
+                    && shape.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))
+            });
+        }
+        if visible.iter().all(|&seen| seen) || step == 12 {
+            break;
+        }
+        let pointer = slots
+            .iter()
+            .find_map(|&slot| {
+                let card = ctx
+                    .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("material_card", imports.entries[0].id, slot))))
+                    .expect("map card");
+                let shown = card.intersect(viewport);
+                (shown.width() > 1.0 && shown.height() > 1.0).then(|| shown.center())
+            })
+            .expect("wheel input must target a visible part of a material map card");
+        drop(frame(
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: Vec2::new(0.0, -120.0),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            &mut imports,
+        ));
+        for _ in 0..60 {
+            drop(frame(Vec::new(), &mut imports));
+        }
+        output = frame(Vec::new(), &mut imports);
     }
-    let output = frame(Vec::new(), &mut imports);
-    for slot in [0, 2, 3, 1] {
-        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
-            if text.galley.text() == map_label(slot) && shape.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))),
-            "all four map headings remain reachable with enlarged thumbnails");
-    }
+    let missing: Vec<_> = slots
+        .into_iter()
+        .zip(visible)
+        .filter(|(_, seen)| !*seen)
+        .map(|(slot, _)| map_label(slot))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "material map headings remain unreachable after bounded scrolling: {missing:?}; viewport: {viewport:?}"
+    );
 }
 
 #[test]
@@ -1090,6 +1240,7 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
         loop_in: 0.0,
         loop_out: 2.0,
         looping: false,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         hand_pose: 0,

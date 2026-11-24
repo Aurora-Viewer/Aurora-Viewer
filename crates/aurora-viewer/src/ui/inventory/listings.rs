@@ -133,7 +133,7 @@ impl Panel<'_> {
     }
 
     pub fn interact(&mut self, ui: &egui::Ui, inv: &Inventory, id: Uuid, response: &egui::Response) {
-        if response.clicked() || response.secondary_clicked() {
+        if (response.clicked() && !super::drag::dragged_this_press(ui.ctx())) || response.secondary_clicked() {
             // The same selection rules, with the order of this hosted tree.
             self.state.select(ui, id, response.secondary_clicked());
         }
@@ -307,7 +307,7 @@ mod tests {
         execute("show-window", demo::HOODIE, &inv, &mut state, &mut prefs);
         assert!(state.windows.iter().any(|window| window.root == demo::HOODIE && window.open));
         assert!(
-            matches!(execute("reload", demo::HOODIE, &inv, &mut state, &mut prefs).as_slice(), [InvAction::Preview(id)] if *id == demo::HOODIE)
+            matches!(execute("reload", demo::HOODIE, &inv, &mut state, &mut prefs).as_slice(), [InvAction::Preview(id, _)] if *id == demo::HOODIE)
         );
     }
 
@@ -355,6 +355,7 @@ mod tests {
                     &Icons::default(),
                     &mut world,
                     &mut main,
+                    None,
                     &mut InventoryPreferences::default(),
                     &mut false,
                     false,
@@ -418,6 +419,7 @@ mod tests {
                         &Icons::default(),
                         &mut world,
                         &mut main,
+                        None,
                         &mut prefs,
                         &mut false,
                         false,

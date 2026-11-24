@@ -4,7 +4,11 @@
 //! the filled one. Legacy Firestorm icon names are mapped onto Tabler ones;
 //! skins can override any icon with a PNG or SVG of the same name.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Mutex;
+
+use super::inventory::category;
 
 macro_rules! svg_list {
     ($dir:literal, $suffix:literal: $($name:literal),* $(,)?) => {
@@ -54,12 +58,15 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "chart-line",
     "check",
     "chevron-down",
+    "chevron-up",
     "chevron-left",
     "chevron-right",
     "chevrons-down",
     "chevrons-right",
     "chevrons-up",
     "circle-minus",
+    "cloud-rain",
+    "cloud-storm",
     "code",
     "code-asterisk",
     "code-off",
@@ -81,6 +88,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "diaper",
     "door-enter",
     "door-exit",
+    "eraser",
     "external-link",
     "eye-closed",
     "eye-off",
@@ -89,6 +97,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "focus-2",
     "focus-centered",
     "fingerprint",
+    "flip-horizontal",
     "gavel",
     "gif",
     "grid-3x3",
@@ -99,10 +108,12 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "hand-click",
     "hand-finger",
     "hand-stop",
+    "hanger",
     "heart-handshake",
     "heart-rate-monitor",
     "history",
     "home-check",
+    "ice-skating",
     "id-off",
     "inbox",
     "indent-decrease",
@@ -113,10 +124,12 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "layers-subtract",
     "layers-union",
     "layout-columns",
+    "library-photo",
     "license",
     "link",
     "loader-2",
     "lock-open",
+    "lock-cog",
     "pencil-off",
     "login-2",
     "logout",
@@ -128,6 +141,8 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "message-off",
     "microphone-off",
     "minimize",
+    "mouse",
+    "mouse-2",
     "movie",
     "music",
     "network",
@@ -145,11 +160,15 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "question-mark",
     "radio",
     "refresh",
+    "refresh-dot",
     "refresh-off",
     "reload",
     "repeat",
     "restore",
     "rotate-2",
+    "resize",
+    "ripple",
+    "rotate-3d",
     "rotate-360",
     "rotate-clockwise",
     "rotate-clockwise-2",
@@ -178,10 +197,13 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "stack-2",
     "stopwatch",
     "stretching",
+    "sun-moon",
 
     "swimming",
     "terminal-2",
     "text-size",
+    "timeline",
+    "tree",
     "typography",
     "unlink",
     "upload",
@@ -199,6 +221,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "user-x",
     "users",
     "users-group",
+    "users-minus",
     "users-plus",
     "vector",
     "volume",
@@ -209,6 +232,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "wand",
     "wave-sine",
     "wifi-off",
+    "wind",
     "world-search",
     "x",
 );
@@ -254,6 +278,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "calendar",
     "calendar-event",
     "camera",
+    "car",
     "caret-down",
     "caret-left",
     "caret-right",
@@ -268,22 +293,28 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "circle-plus",
     "circle-x",
     "click",
+    "clipboard-data",
     "clipboard-text",
     "clock",
     "cloud",
     "cloud-data-connection",
     "code-circle",
     "coin",
+    "columns-2",
+    "columns-3",
     "compass",
+    "contrast",
     "confetti",
     "copy",
     "crown",
     "current-location",
     "dashboard",
     "database",
+    "device-cctv",
     "device-desktop",
     "device-floppy",
     "device-gamepad",
+    "device-gamepad-2",
     "device-vision-pro",
     "credit-card",
     "device-speaker",
@@ -319,11 +350,13 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "heart",
     "help-circle",
     "home",
+    "home-2",
     "hourglass",
     "id",
     "info-circle",
     "key",
     "keyboard",
+    "keyframe",
     "label",
     "layout",
     "layout-align-bottom",
@@ -332,8 +365,12 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "layout-align-middle",
     "layout-align-right",
     "layout-align-top",
+    "layout-board-split",
     "layout-bottombar",
+    "layout-cards",
     "layout-dashboard",
+    "layout-sidebar-left-collapse",
+    "layout-sidebar-left-expand",
     "layout-sidebar-right",
     "layout-grid",
     "layout-navbar-collapse",
@@ -359,8 +396,12 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "microphone",
     "mood-smile",
     "moon",
+    // Aurora-drawn Luau mark for SLua scripts, after the Legacy Viewer's
+    // Inv_Script_Luau: Tabler has no such icon (decision on PR #2802, docs/BRANDING.md)
+    "luau",
     "mountain",
     "mouse",
+    "navigation",
     "paint",
     "palette",
     "panorama-horizontal",
@@ -377,7 +418,12 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "player-eject",
     "player-pause",
     "player-play",
+    "player-record",
+    "player-skip-back",
+    "player-skip-forward",
     "player-stop",
+    "player-track-next",
+    "player-track-prev",
     "playlist",
     "point",
     "pointer",
@@ -387,6 +433,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "replace",
     "rosette-discount-check",
     "search",
+    "seedling",
     "send",
     "settings",
     "shield",
@@ -447,11 +494,14 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "square-number-7",
     "square-number-8",
     "square-number-9",
+    "square-rounded-minus",
     "square-rounded-chevron-right",
     "square-rounded-chevrons-down",
     "square-rounded-chevrons-up",
+    "square-rounded-plus",
     "stack",
     "star",
+    "steering-wheel",
     "stack-2",
     "sun",
     "sun-high",
@@ -463,6 +513,8 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "ticket",
     "toggle-right",
     "trash",
+    "trash-x",
+    "umbrella",
     "user",
     "video",
     "world",
@@ -478,7 +530,9 @@ const BRAND_SVGS: &[(&str, &[u8])] = &[("wolf", include_bytes!("../../../../asse
 /// Raster images kept as PNG (brand logo).
 const PNGS: &[(&str, &[u8])] = &[("phoenix_18", include_bytes!("../../assets/icons/phoenix_18.png"))];
 
-/// Firestorm icon names used by skins / layouts -> Tabler icon.
+/// Legacy Viewer icon names used by skins / layouts -> Tabler icon. The
+/// inventory's category symbols (`Inv_Texture`…) and the hand-drawn clothing
+/// icons are in `inventory::category`; see `alias_target`.
 const ALIASES: &[(&str, &str)] = &[
     ("Command_Chat_Icon", "messages-filled"),
     ("Command_Speak_Icon", "microphone-filled"),
@@ -496,7 +550,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("Command_Preferences_Icon", "settings-filled"),
     ("Command_Build_Icon", "box"),
     ("Command_Gestures_Icon", "hand-move"),
-    ("Command_HowTo_Icon", "help-circle-filled"),
     ("Command_Environments_Icon", "sunset-2-filled"),
     ("Command_Places_Icon", "map-pin-filled"),
     ("groundsit", "armchair"),
@@ -508,38 +561,25 @@ const ALIASES: &[(&str, &str)] = &[
     ("Stop_Off", "player-stop-filled"),
     ("Inv_FolderClosed", "folder-filled"),
     ("Inv_FolderOpen", "folder-open-filled"),
-    ("Inv_Object", "box"),
     ("Inv_Object_Multi", "packages"),
-    ("Inv_Texture", "photo-filled"),
-    ("Inv_Notecard", "file-text-filled"),
-    ("Inv_Landmark", "map-pin-filled"),
-    ("Inv_Clothing", "shirt-filled"),
-    ("Inv_BodyShape", "man-filled"),
     ("Inv_Skin", "fingerprint"),
     ("Inv_Hair", "scissors"),
     ("Inv_Eye", "eye-filled"),
     ("Inv_Shirt", "shirt-filled"),
-    ("Inv_Pants", "walk"),
     ("Inv_Shoe", "shoe"),
     ("Inv_Socks", "sock"),
     ("Inv_Jacket", "jacket"),
     ("Inv_Gloves", "hand-stop"),
-    ("Inv_Undershirt", "shirt-sport"),
-    ("Inv_Underpants", "diaper"),
-    ("Inv_Skirt", "woman-filled"),
     ("Inv_Alpha", "layers-subtract"),
     ("Inv_Tattoo", "needle"),
     ("Inv_Physics", "wave-sine"),
     ("Inv_Universal", "layers-union"),
-    ("Inv_Script", "code"),
-    ("Inv_Sound", "file-music-filled"),
-    ("Inv_Animation", "run"),
-    ("Inv_Gesture", "hand-move"),
+    ("Inv_Script_Luau", "luau-filled"),
     ("Inv_Snapshot", "camera-filled"),
-    ("Inv_Mesh", "cube-3d-sphere"),
-    ("Inv_Material", "droplet-filled"),
-    ("Inv_Settings", "sun-filled"),
-    ("Inv_CallingCard", "id-filled"),
+    // settings items by kind (LLSettingsType, llinventoryicon.cpp)
+    ("Inv_SettingsSky", "cloud-filled"),
+    ("Inv_SettingsWater", "ripple"),
+    ("Inv_SettingsDay", "sun-moon"),
     ("Inv_LinkItem", "link-filled"),
     ("Inv_LinkFolder", "link-filled"),
     ("Inv_TrashClosed", "trash-filled"),
@@ -605,7 +645,7 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
     ),
     (
         "Inv_Pants_Link",
-        include_bytes!("../../../../assets/tabler-icons/outline/walk-link.svg"),
+        include_bytes!("../../../../assets/icons/aurora/links/pants-link.svg"),
     ),
     (
         "Inv_Shoe_Link",
@@ -625,15 +665,15 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
     ),
     (
         "Inv_Undershirt_Link",
-        include_bytes!("../../../../assets/tabler-icons/outline/shirt-sport-link.svg"),
+        include_bytes!("../../../../assets/icons/aurora/links/undershirt-link.svg"),
     ),
     (
         "Inv_Underpants_Link",
-        include_bytes!("../../../../assets/tabler-icons/outline/diaper-link.svg"),
+        include_bytes!("../../../../assets/icons/aurora/links/underpants-link.svg"),
     ),
     (
         "Inv_Skirt_Link",
-        include_bytes!("../../../../assets/tabler-icons/filled/woman-link.svg"),
+        include_bytes!("../../../../assets/icons/aurora/links/skirt-link.svg"),
     ),
     (
         "Inv_Alpha_Link",
@@ -654,6 +694,10 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
     (
         "Inv_Script_Link",
         include_bytes!("../../../../assets/tabler-icons/outline/code-link.svg"),
+    ),
+    (
+        "Inv_Script_Luau_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/luau-link.svg"),
     ),
     (
         "Inv_Sound_Link",
@@ -677,11 +721,23 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
     ),
     (
         "Inv_Material_Link",
-        include_bytes!("../../../../assets/tabler-icons/filled/droplet-link.svg"),
+        include_bytes!("../../../../assets/icons/aurora/links/sphere-link.svg"),
     ),
     (
         "Inv_Settings_Link",
         include_bytes!("../../../../assets/tabler-icons/filled/sun-link.svg"),
+    ),
+    (
+        "Inv_SettingsSky_Link",
+        include_bytes!("../../../../assets/icons/aurora/links/cloud-filled-link.svg"),
+    ),
+    (
+        "Inv_SettingsWater_Link",
+        include_bytes!("../../../../assets/icons/aurora/links/ripple-link.svg"),
+    ),
+    (
+        "Inv_SettingsDay_Link",
+        include_bytes!("../../../../assets/icons/aurora/links/sun-moon-link.svg"),
     ),
     (
         "Inv_CallingCard_Link",
@@ -729,6 +785,7 @@ pub(crate) fn inventory_link_name(base: &str) -> &'static str {
         "Inv_Physics" => "Inv_Physics_Link",
         "Inv_Universal" => "Inv_Universal_Link",
         "Inv_Script" => "Inv_Script_Link",
+        "Inv_Script_Luau" => "Inv_Script_Luau_Link",
         "Inv_Sound" => "Inv_Sound_Link",
         "Inv_Animation" => "Inv_Animation_Link",
         "Inv_Gesture" => "Inv_Gesture_Link",
@@ -736,21 +793,56 @@ pub(crate) fn inventory_link_name(base: &str) -> &'static str {
         "Inv_Mesh" => "Inv_Mesh_Link",
         "Inv_Material" => "Inv_Material_Link",
         "Inv_Settings" => "Inv_Settings_Link",
+        "Inv_SettingsSky" => "Inv_SettingsSky_Link",
+        "Inv_SettingsWater" => "Inv_SettingsWater_Link",
+        "Inv_SettingsDay" => "Inv_SettingsDay_Link",
         "Inv_CallingCard" => "Inv_CallingCard_Link",
         "Inv_TrashClosed" => "Inv_TrashClosed_Link",
         "Inv_SysClosed" => "Inv_SysClosed_Link",
         "Inv_Invalid" => "Inv_Invalid_Link",
-        _ => "Inv_LinkItem",
+        _ => category::folder_link(base).unwrap_or("Inv_LinkItem"),
     }
 }
 
 /// Whether `name` is an embedded icon or one of the skin's aliases.
 pub(crate) fn embedded(name: &str) -> bool {
-    OUTLINE.iter().chain(FILLED).chain(INVENTORY_LINKS).any(|(n, _)| *n == name) || ALIASES.iter().any(|(alias, _)| *alias == name)
+    OUTLINE.iter().chain(FILLED).chain(INVENTORY_LINKS).any(|(n, _)| *n == name)
+        || alias_target(name).is_some()
+        || generated_folder(name).is_some()
+}
+
+/// The embedded icon an alias stands for: the Legacy Viewer's names of `ALIASES`,
+/// the inventory's item icons by category and the clothing icons' stand-ins.
+pub(crate) fn alias_target(name: &str) -> Option<&'static str> {
+    ALIASES
+        .iter()
+        .copied()
+        .chain(
+            category::CLOTHING_DRAWINGS
+                .iter()
+                .map(|clothing| (clothing.item, clothing.stand_in)),
+        )
+        .find(|(alias, _)| *alias == name)
+        .map(|(_, target)| target)
+        .or_else(|| category::ROWS.iter().find(|row| row.item == Some(name)).map(|row| row.symbol))
+}
+
+/// A system folder's generated SVG and whether it carries the shortcut
+/// corner (a link to the folder), by icon name.
+fn generated_folder(name: &str) -> Option<(&'static [u8], bool)> {
+    category::drawn_folders()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, svg, shortcut)| (svg, shortcut))
 }
 
 /// Raster size of SVG icons (crisp up to ~2x UI scale at 24 px).
 const RASTER_PX: u32 = 64;
+
+/// Raster size of the large copies of inventory icons (`Icons::large`):
+/// the gallery draws a tile's icon up to 92 points, 184 pixels at 200%.
+/// The UI renderer has no mipmaps, so the small icons keep `RASTER_PX`
+/// rather than one raster for both sizes.
+const LARGE_RASTER_PX: u32 = 192;
 
 /// Raster size of the brand wolf, drawn at 18 px (twice that at most with the
 /// UI scale). Sampled down from far larger without mipmaps, its thin aurora
@@ -769,6 +861,19 @@ pub fn global(name: &str) -> Option<egui::TextureHandle> {
 #[derive(Default)]
 pub struct Icons {
     map: HashMap<String, egui::TextureHandle>,
+    /// SVG of each icon by name (aliases included, a skin's files over the
+    /// embedded ones), for `large`.
+    sources: HashMap<String, Source>,
+    /// Large copies made so far (`None`: the icon has no SVG).
+    large: Mutex<HashMap<String, Option<egui::TextureHandle>>>,
+}
+
+#[derive(Clone)]
+enum Source {
+    Svg(Cow<'static, [u8]>),
+    Shortcut(&'static [u8]),
+    /// A skin's PNG: no larger copy.
+    Png,
 }
 
 fn rasterize_svg(bytes: &[u8], px: u32) -> Option<egui::ColorImage> {
@@ -842,7 +947,9 @@ impl Icons {
     pub fn load(ctx: &egui::Context, override_dir: Option<&std::path::Path>) -> Icons {
         let mut map: HashMap<String, egui::TextureHandle> = HashMap::new();
         let opts = egui::TextureOptions::LINEAR;
+        let mut sources: HashMap<String, Source> = HashMap::new();
         for (name, bytes) in OUTLINE.iter().chain(FILLED) {
+            sources.insert((*name).to_owned(), Source::Svg(Cow::Borrowed(*bytes)));
             match rasterize_svg(bytes, RASTER_PX) {
                 Some(ci) => {
                     map.insert((*name).to_owned(), ctx.load_texture(*name, ci, opts));
@@ -850,11 +957,20 @@ impl Icons {
                 None => log::warn!("icon {name}: invalid SVG"),
             }
         }
-        for (name, bytes) in INVENTORY_LINKS {
-            if let Some(ci) = rasterize_mask(bytes, RASTER_PX, true) {
-                map.insert((*name).to_owned(), ctx.load_texture(*name, ci, opts));
+        let folders = category::drawn_folders();
+        for (name, bytes, shortcut) in INVENTORY_LINKS.iter().map(|(name, bytes)| (*name, *bytes, true)).chain(folders) {
+            sources.insert(
+                name.to_owned(),
+                if shortcut {
+                    Source::Shortcut(bytes)
+                } else {
+                    Source::Svg(Cow::Borrowed(bytes))
+                },
+            );
+            if let Some(ci) = rasterize_mask(bytes, RASTER_PX, shortcut) {
+                map.insert(name.to_owned(), ctx.load_texture(name, ci, opts));
             } else {
-                log::warn!("icon {name}: invalid shortcut SVG");
+                log::warn!("icon {name}: invalid SVG");
             }
         }
         for (name, bytes) in BRAND_SVGS {
@@ -867,11 +983,29 @@ impl Icons {
                 map.insert((*name).to_owned(), ctx.load_texture(*name, ci, opts));
             }
         }
-        for (alias, target) in ALIASES {
-            if let Some(t) = map.get(*target).cloned() {
-                map.insert((*alias).to_owned(), t);
+        let items = category::ROWS.iter().filter_map(|row| row.item.map(|item| (item, row.symbol)));
+        let clothing = category::CLOTHING_DRAWINGS
+            .iter()
+            .map(|clothing| (clothing.item, clothing.stand_in));
+        for (alias, target) in ALIASES.iter().copied().chain(clothing).chain(items) {
+            if let Some(t) = map.get(target).cloned() {
+                map.insert(alias.to_owned(), t);
+            }
+            if let Some(source) = sources.get(target).cloned() {
+                sources.insert(alias.to_owned(), source);
             }
         }
+        // hand-drawn clothing icons replace their stand-ins
+        for clothing in category::CLOTHING_DRAWINGS {
+            if let Some(bytes) = clothing.drawing
+                && let Some(ci) = rasterize_svg(bytes, RASTER_PX)
+            {
+                map.insert(clothing.item.to_owned(), ctx.load_texture(clothing.item, ci, opts));
+                sources.insert(clothing.item.to_owned(), Source::Svg(Cow::Borrowed(bytes)));
+            }
+        }
+        // the names the skin gives an image of its own
+        let mut skinned = std::collections::HashSet::new();
         if let Some(dir) = override_dir
             && let Ok(rd) = std::fs::read_dir(dir)
         {
@@ -890,18 +1024,74 @@ impl Icons {
                     _ => None,
                 };
                 if let Some(ci) = ci {
+                    skinned.insert(stem.to_owned());
                     map.insert(stem.to_owned(), ctx.load_texture(stem, ci, opts));
+                    let source = if ext.as_deref() == Some("svg") {
+                        Source::Svg(Cow::Owned(bytes))
+                    } else {
+                        Source::Png
+                    };
+                    sources.insert(stem.to_owned(), source);
                 }
+            }
+        }
+        // a skin made for the Legacy Viewer: its images of a system folder's
+        // Legacy names (Inv_LookFolder*, Inv_Sys*, Inv_Folder*) win over
+        // Aurora's own icon for that folder (`category::skin_image`)
+        for (name, _, _) in category::drawn_folders() {
+            if let Some(image) = category::skin_image(name, |n| skinned.contains(n)).filter(|image| *image != name)
+                && let (Some(t), Some(source)) = (map.get(image).cloned(), sources.get(image).cloned())
+            {
+                map.insert(name.to_owned(), t);
+                sources.insert(name.to_owned(), source);
             }
         }
         if let Ok(mut g) = GLOBAL.write() {
             *g = Some(map.clone());
         }
-        Icons { map }
+        Icons {
+            map,
+            sources,
+            large: Mutex::default(),
+        }
     }
 
     pub fn get(&self, name: &str) -> Option<&egui::TextureHandle> {
         self.map.get(name)
+    }
+
+    /// The icon for drawing `points` wide: well past the usual raster's
+    /// pixels, its large raster (`large`); below, the usual one. The UI
+    /// renderer has no mipmaps, so the switch sits at 1.5x: neither raster is
+    /// shrunk more than 2x nor stretched more than 1.5x up to 288 pixels.
+    pub fn sized(&self, ctx: &egui::Context, name: &str, points: f32) -> Option<egui::TextureHandle> {
+        if points * ctx.pixels_per_point() > RASTER_PX as f32 * 1.5 {
+            self.large(ctx, name)
+        } else {
+            self.get(name).cloned()
+        }
+    }
+
+    /// The icon rasterized for drawing large (the gallery's tiles), made the
+    /// first time it is asked for; the usual one when it has no SVG.
+    pub fn large(&self, ctx: &egui::Context, name: &str) -> Option<egui::TextureHandle> {
+        let made = self.large.lock().ok().and_then(|large| large.get(name).cloned());
+        let texture = match made {
+            Some(texture) => texture,
+            None => {
+                let image = match self.sources.get(name) {
+                    Some(Source::Svg(bytes)) => rasterize_svg(bytes, LARGE_RASTER_PX),
+                    Some(Source::Shortcut(bytes)) => rasterize_mask(bytes, LARGE_RASTER_PX, true),
+                    Some(Source::Png) | None => None,
+                };
+                let texture = image.map(|ci| ctx.load_texture(format!("{name}@large"), ci, egui::TextureOptions::LINEAR));
+                if let Ok(mut large) = self.large.lock() {
+                    large.insert(name.to_owned(), texture.clone());
+                }
+                texture
+            }
+        };
+        texture.or_else(|| self.get(name).cloned())
     }
 }
 
@@ -933,11 +1123,140 @@ mod tests {
     }
 
     #[test]
+    fn the_rendering_types_menu_icons_are_embedded() {
+        let names: Vec<&str> = OUTLINE.iter().chain(FILLED).map(|(name, _)| *name).collect();
+        for icon in crate::ui::bars::RENDER_TYPE_ICONS {
+            assert!(names.contains(&icon), "{icon} is not embedded");
+        }
+    }
+
+    #[test]
     fn aliases_point_to_embedded_icons() {
         let names: Vec<&str> = OUTLINE.iter().chain(FILLED).map(|(name, _)| *name).collect();
         for (alias, target) in ALIASES {
             assert!(names.contains(target), "{alias} -> {target} is not embedded");
         }
+        for clothing in category::CLOTHING_DRAWINGS {
+            assert!(
+                names.contains(&clothing.stand_in),
+                "{} -> {} is not embedded",
+                clothing.item,
+                clothing.stand_in
+            );
+        }
+        for row in category::ROWS {
+            assert!(names.contains(&row.symbol), "{:?} -> {} is not embedded", row.category, row.symbol);
+        }
+    }
+
+    #[test]
+    fn category_icons_and_legacy_aliases_do_not_overlap() {
+        // one name, one source: `alias_target` and `Icons::load` would
+        // otherwise disagree on which wins
+        let rows: Vec<&str> = category::ROWS
+            .iter()
+            .flat_map(|row| [Some(row.closed), Some(row.open), Some(row.link), row.item])
+            .flatten()
+            .chain(category::CLOTHING_DRAWINGS.iter().map(|clothing| clothing.item))
+            .collect();
+        for (alias, _) in ALIASES {
+            assert!(!rows.contains(alias), "{alias} is both an alias and a category icon");
+        }
+        for (name, _) in INVENTORY_LINKS {
+            assert!(!rows.contains(name), "{name} is both a link and a category icon");
+        }
+    }
+
+    #[test]
+    fn hand_drawn_clothing_icons_replace_their_stand_ins() {
+        let ctx = egui::Context::default();
+        let icons = Icons::load(&ctx, None);
+        for clothing in category::CLOTHING_DRAWINGS {
+            let drawing = clothing.drawing.expect("drawn");
+            let image = rasterize_svg(drawing, RASTER_PX).expect("clothing SVG");
+            assert!(image.pixels.iter().any(|p| p.a() > 0), "{} is empty", clothing.item);
+            let item = icons.get(clothing.item).expect("loaded");
+            let stand_in = icons.get(clothing.stand_in).expect("stand-in");
+            assert_ne!(item.id(), stand_in.id(), "{} still shows its stand-in", clothing.item);
+            assert!(icons.large(&ctx, clothing.item).is_some_and(|t| t.size() == [192, 192]));
+        }
+    }
+
+    #[test]
+    fn generated_folder_links_keep_the_shortcut_outline_as_a_gap() {
+        // the same corner as the hand-made links (see the test above)
+        for row in category::ROWS {
+            let image = rasterize_mask(row.svgs[2], 240, true).expect("link SVG");
+            assert_eq!(image.pixels[230 * 240 + 3].a(), 0, "outline {}", row.link);
+            assert_eq!(image.pixels[230 * 240 + 10].a(), 255, "arrow {}", row.link);
+        }
+    }
+
+    #[test]
+    fn a_skins_legacy_folder_images_reach_auroras_system_folders() {
+        let dir = std::env::temp_dir().join(format!("aurora-skin-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("skin dir");
+        let square = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24"/></svg>"#;
+        for name in ["Inv_LookFolderClosed", "Inv_StockFolderOpen", "Inv_SysClosed"] {
+            std::fs::write(dir.join(format!("{name}.svg")), square).expect("skin icon");
+        }
+        let ctx = egui::Context::default();
+        let skinned = Icons::load(&ctx, Some(&dir));
+        let plain = Icons::load(&ctx, None);
+        let _ = std::fs::remove_dir_all(&dir);
+        let id = |icons: &Icons, name: &str| icons.get(name).map(|t| t.id());
+        // Current outfit takes the skin's look folder, Marketplace listings its
+        // system folder, the stock folder its own image
+        assert_eq!(id(&skinned, "Inv_CurrentOutfitClosed"), id(&skinned, "Inv_LookFolderClosed"));
+        assert_eq!(id(&skinned, "Inv_MarketplaceClosed"), id(&skinned, "Inv_SysClosed"));
+        assert!(id(&skinned, "Inv_StockFolderOpen").is_some());
+        // what the skin does not draw keeps Aurora's own icon
+        assert_ne!(id(&skinned, "Inv_CurrentOutfitOpen"), id(&skinned, "Inv_LookFolderClosed"));
+        assert_ne!(id(&skinned, "Inv_VersionFolderClosed"), id(&skinned, "Inv_SysClosed"));
+        // with no skin, the stock and version folders are the Marketplace's
+        for name in [
+            "Inv_StockFolderClosed",
+            "Inv_StockFolderOpen",
+            "Inv_VersionFolderClosed",
+            "Inv_VersionFolderOpen",
+        ] {
+            assert!(plain.get(name).is_some() && embedded(name), "{name}");
+        }
+        assert_eq!(inventory_link_name("Inv_StockFolderClosed"), "Inv_MarketplaceClosed_Link");
+    }
+
+    #[test]
+    fn generated_folder_icons_load_with_a_hole_and_a_large_copy() {
+        let ctx = egui::Context::default();
+        let icons = Icons::load(&ctx, None);
+        for row in category::ROWS {
+            for name in [row.closed, row.open, row.link] {
+                assert!(icons.get(name).is_some(), "missing {name}");
+                assert!(icons.large(&ctx, name).is_some_and(|t| t.size() == [192, 192]), "no large {name}");
+            }
+            // the symbol is cut out of the folder: the middle of the
+            // folder's body is see-through somewhere, unlike a plain folder
+            let (svg, _) = generated_folder(row.closed).expect("generated");
+            let image = rasterize_svg(svg, 96).expect("folder SVG");
+            let plain = rasterize_svg(include_bytes!("../../assets/icons/tabler/filled/folder.svg"), 96).expect("folder");
+            let holes = |ci: &egui::ColorImage| {
+                (36..68)
+                    .flat_map(|y| (30..66).map(move |x| (x, y)))
+                    .filter(|(x, y)| ci.pixels[y * 96 + x].a() < 128)
+                    .count()
+            };
+            assert_eq!(holes(&plain), 0);
+            assert!(holes(&image) > 20, "{:?}: no symbol cut out", row.category);
+        }
+        // drawn small, the usual raster; past its pixels, the large one
+        assert_eq!(icons.sized(&ctx, "Inv_TexturesClosed", 16.0).map(|t| t.size()), Some([64, 64]));
+        assert_eq!(icons.sized(&ctx, "Inv_TexturesClosed", 90.0).map(|t| t.size()), Some([64, 64]));
+        assert_eq!(icons.sized(&ctx, "Inv_TexturesClosed", 100.0).map(|t| t.size()), Some([192, 192]));
+        // aliases share their target's SVG
+        assert_eq!(icons.large(&ctx, "Inv_Texture").map(|t| t.size()), Some([192, 192]));
+        // icons with no SVG of their own fall back on the usual raster
+        assert!(icons.large(&ctx, "phoenix_18").is_some());
+        assert!(icons.large(&ctx, "no-such-icon").is_none());
     }
 
     #[test]
@@ -946,7 +1265,7 @@ mod tests {
         for kind in 0..=16 {
             let asset_type = if kind < 4 { 13 } else { 5 };
             let name = crate::ui::inventory::item_icon(asset_type, 18, kind);
-            let target = ALIASES.iter().find(|(alias, _)| *alias == name).expect("wearable icon alias").1;
+            let target = alias_target(name).expect("wearable icon alias");
             assert!(targets.insert(target), "wearable type {kind} repeats {target}");
             assert!(OUTLINE.iter().chain(FILLED).any(|(name, _)| *name == target));
             assert_eq!(crate::ui::inventory::item_icon(asset_type, 18, kind | 0xffff_ff00), name);
@@ -954,5 +1273,8 @@ mod tests {
         assert_eq!(crate::ui::inventory::item_icon(5, 18, 255), "Inv_Clothing");
         assert_eq!(crate::ui::inventory::item_icon(13, 18, 255), "Inv_BodyShape");
         assert_eq!(crate::ui::inventory::item_icon(24, 24, 14), "Inv_LinkItem");
+        assert_eq!(crate::ui::inventory::item_icon(10, 10, 0), "Inv_Script");
+        assert_eq!(crate::ui::inventory::item_icon(10, 10, 1), "Inv_Script_Luau");
+        assert_eq!(inventory_link_name("Inv_Script_Luau"), "Inv_Script_Luau_Link");
     }
 }

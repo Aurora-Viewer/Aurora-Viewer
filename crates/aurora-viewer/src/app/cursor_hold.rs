@@ -6,10 +6,17 @@
 //!
 //! While held the cursor is the tool's (the mouse capture of LLToolGun and
 //! LLToolCamera): the windows neither see it hover, nor get its clicks or its
-//! wheel. Windows and X11 cannot lock it, only confine it to the window, so
-//! mouselook brings it back to the centre whenever it moves
+//! wheel. Mouselook brings it back to the centre whenever it moves
 //! (LLToolGun::handleHover → LLViewerWindow::moveCursorToCenter,
-//! indra/newview/lltoolgun.cpp): it never drifts over a window (#1343).
+//! indra/newview/lltoolgun.cpp): X11 cannot lock it, only confine it to the
+//! window, and there it never drifts over a window (#1343); on Wayland the
+//! move under the lock is the hint of where it shows when given back.
+//! Except on macOS: a warp there couples the cursor to the mouse again,
+//! undoing the lock, and the warp back came in as an equal and opposite raw
+//! motion that turned the view back where mouselook began (#3310). The
+//! Legacy Viewer does not warp a decoupled cursor there either
+//! (LLViewerWindow::moveCursorToCenter, isWrapMouse is !mCursorDecoupled,
+//! indra/llwindow/llwindowmacosx.h).
 
 use super::App;
 use winit::event::{ElementState, WindowEvent};
@@ -62,11 +69,44 @@ pub(super) struct CursorHold {
     /// it while the interface is built): done as soon as the frame gives the
     /// window back, so the cursor is never left hidden and locked.
     pending: Option<bool>,
+    /// macOS locked the cursor: a warp would undo the lock, so mouselook
+    /// never brings it back to the centre.
+    warp_unlocks: bool,
+    /// The next raw motion is dropped: on macOS the first one after the lock
+    /// still carries the warp to the centre that preceded it
+    /// (LLWindowMacOSX::adjustCursorDecouple sets mCursorIgnoreNextDelta,
+    /// indra/llwindow/llwindowmacosx.cpp).
+    skip_motion: bool,
 }
 
 impl CursorHold {
     pub(super) fn held(&self) -> bool {
         self.kind.is_some()
+    }
+
+    /// The system answered the lock asked after `take`. `warped`: the cursor
+    /// was just moved to the centre, a move macOS reports in the next raw
+    /// motion.
+    pub(super) fn locked(&mut self, locked: bool, warped: bool) {
+        self.lock_answer(locked, warped, cfg!(target_os = "macos"));
+    }
+
+    /// `locked`, the system given (`macos`) so that the tests cover both.
+    fn lock_answer(&mut self, locked: bool, warped: bool, macos: bool) {
+        self.warp_unlocks = locked && macos;
+        self.skip_motion = self.warp_unlocks && warped;
+    }
+
+    /// The held cursor moved: whether mouselook must bring it back to the
+    /// centre (everywhere but a cursor macOS locked).
+    pub(super) fn recenters(&self) -> bool {
+        self.kind == Some(HoldKind::Mouselook) && !self.warp_unlocks
+    }
+
+    /// A raw motion arrived: false when it is the warp's and must not turn
+    /// the view.
+    pub(super) fn take_motion(&mut self) -> bool {
+        !std::mem::take(&mut self.skip_motion)
     }
 
     /// Take the cursor; None when it is already held (a drag that turns into
@@ -93,6 +133,8 @@ impl CursorHold {
     /// window lost the focus, the cursor stays where the system left it.
     pub(super) fn give_back(&mut self, focus_lost: bool) -> Option<Return> {
         self.pending = None;
+        self.warp_unlocks = false;
+        self.skip_motion = false;
         let kind = self.kind.take()?;
         Some(match kind {
             _ if focus_lost => Return::Stay,
@@ -153,12 +195,28 @@ impl AltCursor {
 }
 
 impl App {
+    pub(super) fn mouselook_capture_enabled(&self) -> bool {
+        if self.vr_camera.is_some() {
+            self.settings.camera.vr.mouse_look
+                && matches!(
+                    self.vr_mode,
+                    Some(crate::camera::VrView::FirstPerson | crate::camera::VrView::Avatar)
+                )
+        } else {
+            self.camera.mouselook()
+        }
+    }
+
     /// Once a frame, before mouselook takes a cursor it does not hold: Alt
     /// frees it or gives it back to the gun.
     pub(super) fn mouselook_alt_cursor(&mut self) {
         // (AURORA_DEMO_CAMERA scripts the keys: the window needs no focus)
         let focused = self.focused || self.demo && std::env::var_os("AURORA_DEMO_CAMERA").is_some();
-        let mouselook = self.camera.mouselook() && focused && !self.exit_prompt.open;
+        let capture = self.mouselook_capture_enabled();
+        if !capture && self.cursor_hold.kind == Some(HoldKind::Mouselook) {
+            self.release_cursor(false);
+        }
+        let mouselook = capture && focused && !self.exit_prompt.open;
         match self.alt_cursor.update(mouselook, self.alt && !self.alt_gr_alone()) {
             Some(AltSwitch::Free) => self.release_cursor(false),
             Some(AltSwitch::Take) => self.set_mouselook_grab(true),
@@ -187,43 +245,57 @@ impl App {
         self.hold_cursor(true);
     }
 
+    /// Hide and lock the cursor for a drag that began at `origin`: it comes
+    /// back there (the right button's orbit, which only holds it once it
+    /// moves past a click's jitter).
+    pub(super) fn hold_drag_cursor(&mut self, origin: (f32, f32)) {
+        self.hold_cursor_from(false, origin);
+    }
+
     fn hold_cursor(&mut self, focus: bool) {
+        self.hold_cursor_from(focus, self.cursor_pos);
+    }
+
+    fn hold_cursor_from(&mut self, focus: bool, origin: (f32, f32)) {
         if self.gfx.is_none() || self.clicks.scripted() {
             // AURORA_DEMO_CLICKS: several camera drags a second must not
             // take the real cursor of someone using the PC
             return;
         }
-        let mouselook = self.camera.mouselook();
-        let Some(kind) = self.cursor_hold.take(mouselook, focus, self.cursor_pos) else {
+        // the camera's hold takes over from a pointer hidden by typing
+        self.typing_pointer.show();
+        let mouselook = self.mouselook_capture_enabled();
+        let Some(kind) = self.cursor_hold.take(mouselook, focus, origin) else {
             return;
         };
-        if kind == HoldKind::Mouselook {
+        let warped = kind == HoldKind::Mouselook;
+        if warped {
             // LLToolGun::handleSelect: the hidden cursor waits at the centre,
-            // not over the button that started mouselook
+            // not over the button that started mouselook. Before the lock:
+            // on macOS a warp undoes it.
             self.move_cursor_to_center();
         }
         let Some(g) = &self.gfx else {
             return;
         };
-        if let Err(e) = g
-            .window
-            .set_cursor_grab(CursorGrabMode::Locked)
-            .or_else(|_| g.window.set_cursor_grab(CursorGrabMode::Confined))
-        {
+        let locked = g.window.set_cursor_grab(CursorGrabMode::Locked).is_ok();
+        if !locked && let Err(e) = g.window.set_cursor_grab(CursorGrabMode::Confined) {
             log::warn!("camera: the cursor could not be locked ({e}), it is only hidden");
         }
         g.window.set_cursor_visible(false);
+        self.cursor_hold.locked(locked, warped);
         // the windows stop seeing it now: a window it was over loses its hover
         if let Some(g) = &mut self.gfx {
             g.egui_state.egui_input_mut().events.push(egui::Event::PointerGone);
         }
     }
 
-    /// The hidden mouselook cursor moved (it can only be confined): back to
-    /// the centre, like LLToolGun::handleHover. The view turns from the raw
-    /// motion, which the move back does not produce.
+    /// The hidden mouselook cursor moved: back to the centre, like
+    /// LLToolGun::handleHover. The view turns from the raw motion, which the
+    /// move back does not produce outside macOS, where a locked cursor is
+    /// left alone (see the module comment).
     pub(super) fn recenter_mouselook_cursor(&mut self) {
-        if self.cursor_hold.kind != Some(HoldKind::Mouselook) {
+        if !self.cursor_hold.recenters() {
             return;
         }
         let Some(g) = &self.gfx else {
@@ -381,6 +453,55 @@ mod tests {
         assert!(!alt.free());
         // back with Alt still held: freed again once mouselook took it
         assert_eq!(alt.update(true, true), Some(AltSwitch::Free));
+    }
+
+    #[test]
+    fn only_a_cursor_macos_locked_is_left_off_the_centre() {
+        // Windows and Wayland lock it, X11 only confines it: recentred as
+        // before (on Wayland the move is where it shows when given back)
+        for (locked, macos) in [(true, false), (false, false), (false, true)] {
+            let mut hold = CursorHold::default();
+            hold.take(true, false, (0.0, 0.0));
+            hold.lock_answer(locked, true, macos);
+            assert!(hold.recenters(), "locked {locked}, macOS {macos}");
+            assert!(hold.take_motion(), "locked {locked}, macOS {macos}");
+        }
+        // macOS locked it: a warp would undo the lock (#3310)
+        let mut hold = CursorHold::default();
+        hold.take(true, false, (0.0, 0.0));
+        hold.lock_answer(true, true, true);
+        assert!(!hold.recenters());
+        // given back and taken again (Alt), the lock refused this time
+        hold.give_back(false);
+        hold.take(true, false, (0.0, 0.0));
+        hold.lock_answer(false, true, true);
+        assert!(hold.recenters());
+        // a camera drag is never recentred
+        let mut drag = CursorHold::default();
+        drag.take(false, false, (40.0, 50.0));
+        drag.lock_answer(false, false, false);
+        assert!(!drag.recenters());
+    }
+
+    #[test]
+    fn the_warp_before_a_macos_lock_does_not_turn_the_view() {
+        let mut hold = CursorHold::default();
+        hold.take(true, false, (0.0, 0.0));
+        hold.lock_answer(true, true, true);
+        // the first raw motion after it carries the warp: dropped, once
+        assert!(!hold.take_motion());
+        assert!(hold.take_motion());
+        // no warp before the lock (a camera drag): nothing is dropped
+        hold.give_back(false);
+        hold.take(false, false, (0.0, 0.0));
+        hold.lock_answer(true, false, true);
+        assert!(hold.take_motion());
+        // a give-back forgets a motion still to drop
+        hold.give_back(false);
+        hold.take(true, false, (0.0, 0.0));
+        hold.lock_answer(true, true, true);
+        hold.give_back(false);
+        assert!(hold.take_motion());
     }
 
     #[test]

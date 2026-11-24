@@ -201,12 +201,7 @@ impl App {
             let avatar = own || object.is_some_and(|o| o.is_avatar());
             let region = object.map(|o| o.key.region);
             let name = if avatar {
-                self.world.social.want_name(entry.source);
-                if self.world.rlva_can_name(entry.source) {
-                    self.world.social.name_of(&entry.source)
-                } else {
-                    crate::world::rlva::privacy::anonymous(entry.source).display_name.clone()
-                }
+                avatar_name(&self.world, entry.source)
             } else if let Some(name) = self.known_object_name(&entry.source) {
                 name
             } else {
@@ -302,5 +297,33 @@ impl App {
             self.panels.animation_explorer = false;
             self.panels.asset_blacklist = true;
         }
+    }
+}
+
+/// The avatar that played an animation, by its complete name:
+/// AnimationExplorer::updateList (indra/newview/animationexplorer.cpp) asks
+/// LLAvatarNameCache with no RLVa test (`NameScope::Roster`).
+fn avatar_name(world: &crate::world::World, id: uuid::Uuid) -> String {
+    world.social.avatar_names.want(&id);
+    world.social.name_in(crate::world::names::NameScope::Roster, &id)
+}
+
+#[cfg(test)]
+mod rlva_tests {
+    /// The animation explorer names the avatar under `@shownames` too.
+    #[test]
+    fn the_animation_explorer_names_avatars_under_shownames() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = uuid::Uuid::from_u128(0x7e59);
+        world.social.avatar_names.on_legacy(id, "Dance", "Tester");
+        world.rlva.configure(true);
+        world.rlva_console_input("@shownames=n");
+        world.refresh_rlva_privacy();
+        assert!(!world.rlva_can_name(id));
+        let name = super::avatar_name(&world, id);
+        assert!(name.contains("Dance Tester"), "{name}");
     }
 }

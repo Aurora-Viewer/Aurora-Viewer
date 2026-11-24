@@ -30,6 +30,10 @@ const TEAM: &[Uuid] = &[
     uuid::uuid!("d94d9882-b0bb-400b-9299-e51e021e921e"),
     uuid::uuid!("64043ec6-40a2-44f2-8b50-d88c82b00548"),
     uuid::uuid!("79e97f63-2410-43d0-aab2-92486a31b309"),
+    uuid::uuid!("b62dc313-c65b-44dd-9553-5dc222143024"),
+    uuid::uuid!("56d7b1aa-4153-4d71-971b-c908993f818b"),
+    uuid::uuid!("9ef25c56-4c18-42c4-b660-791ad002cca4"),
+    uuid::uuid!("14875901-87e0-4078-b5b7-199d155b1012"),
 ];
 
 /// Whose staff a resident is.

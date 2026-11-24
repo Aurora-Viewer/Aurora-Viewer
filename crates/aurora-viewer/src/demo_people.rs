@@ -17,7 +17,8 @@
 //! first one pinned and its sheet open, the market's chat blocked), `sets`
 //! (Family, Clubbing and Shop, a nickname and a non-friend, a row under the
 //! pointer), `recent` (four residents met lately) and `blocked` (a resident
-//! blocked in full, one for voice and text, an object for its sounds).
+//! blocked in full, one for voice and text, an object for its sounds;
+//! `blocked-empty`: nobody blocked, the server's "emptymutelist" answer).
 
 use super::{DEMO_LOUP, HANDLE, IDLE_ANIM, floor_at, prim, shape, te};
 use crate::world::radar::{ANIM_AGENT_SIT_GROUND, ANIM_AGENT_TYPE};
@@ -57,13 +58,61 @@ pub fn mode() -> Option<Mode> {
             "sheet" | "fiche" => Some(Mode::Sheet),
             "legacy" => Some(Mode::Legacy),
             "friends" | "amis" | "friends-symbols" => Some(Mode::Friends),
-            "groups" | "groupes" => Some(Mode::Groups),
+            "groups" | "groupes" | "groups-hover" | "groups-hover-active" => Some(Mode::Groups),
             "sets" | "sets-import" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
             "recent" | "récent" => Some(Mode::Recent),
-            "blocked" | "bloqué" => Some(Mode::Blocked),
+            "blocked" | "bloqué" | "blocked-empty" => Some(Mode::Blocked),
+            name if name.starts_with("sets-") => Some(Mode::Sets),
             _ => Some(Mode::Rows),
         }
     })
+}
+
+/// What a `sets-…` scenario opens over People's contact sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetsScene {
+    /// The Family set's editor at a tab, its badges unfolded, scrolled to
+    /// its marker.
+    Editor {
+        tab: crate::ui::contacts::EditorTab,
+        badges: bool,
+        marker: bool,
+    },
+    /// The Family set's editor in a thin window: its preview on top.
+    ThinEditor,
+    QuickSort,
+    Options,
+    /// Two members chosen: the selection's bar.
+    Select,
+}
+
+pub fn sets_scene() -> Option<SetsScene> {
+    use crate::ui::contacts::EditorTab;
+    let value = std::env::var("AURORA_DEMO_PEOPLE").ok()?;
+    let editor = |tab, badges| {
+        Some(SetsScene::Editor {
+            tab,
+            badges,
+            marker: false,
+        })
+    };
+    match value.split(':').next()?.trim() {
+        "sets-editor" => editor(EditorTab::Look, false),
+        "sets-editor-badges" => editor(EditorTab::Look, true),
+        "sets-editor-marker" => Some(SetsScene::Editor {
+            tab: EditorTab::Look,
+            badges: false,
+            marker: true,
+        }),
+        "sets-editor-thin" => Some(SetsScene::ThinEditor),
+        "sets-editor-behaviour" => editor(EditorTab::Behaviour, false),
+        "sets-editor-replies" => editor(EditorTab::Replies, false),
+        "sets-editor-members" => editor(EditorTab::Members, false),
+        "sets-sort" => Some(SetsScene::QuickSort),
+        "sets-options" => Some(SetsScene::Options),
+        "sets-select" => Some(SetsScene::Select),
+        _ => None,
+    }
 }
 
 /// An explicit list width for offline responsive-layout checks.
@@ -102,7 +151,7 @@ pub fn window_size() -> Option<(f32, f32)> {
     match mode()? {
         Mode::Sheet | Mode::Friends => Some((860.0, 600.0)),
         Mode::Groups => Some((860.0, 500.0)),
-        Mode::Sets => Some((520.0, 430.0)),
+        Mode::Sets => Some((560.0, 640.0)),
         Mode::Recent | Mode::Blocked => Some((420.0, 300.0)),
         _ => None,
     }
@@ -114,7 +163,7 @@ const fn buddy(n: u128) -> Uuid {
 }
 
 /// The mock-up's non-friend of the family set, and the blocked residents.
-const ORION_EXAMPLE: Uuid = buddy(102);
+pub const ORION_EXAMPLE: Uuid = buddy(102);
 pub const ZED: Uuid = id(30);
 const KAEL: Uuid = id(31);
 const NOISY_SELLER: Uuid = id(32);
@@ -137,6 +186,12 @@ fn contacts_name(agent: &Uuid) -> Option<(&'static str, &'static str, &'static s
 /// The buddies of the demo's list the tabs leave out: they have their own.
 pub fn hides_buddy(id: &Uuid) -> bool {
     contacts_mode() && *id == ORION_EXAMPLE
+}
+
+/// AURORA_DEMO_PEOPLE=blocked-empty: the Blocked tab, the server answering
+/// the request with "emptymutelist" (a resident who blocks nobody).
+pub fn server_empty_mute_list() -> bool {
+    std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|value| value.split(':').next().is_some_and(|mode| mode.trim() == "blocked-empty"))
 }
 
 /// AURORA_DEMO_PEOPLE=blocked|groups: the block list (a set flag means "not
@@ -171,6 +226,9 @@ pub fn seed(world: &mut crate::world::World) {
         return;
     }
     let mut sets = crate::world::contact_sets::ContactSets::default();
+    // the default colour of a real account's store, so that a set made in
+    // the demo looks as it would on the grid
+    sets.set_default_color(crate::world::contact_sets::GREY);
     let friends: Vec<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
     let is_friend = |id: &Uuid| friends.contains(id);
     for (name, color, members) in [
@@ -194,9 +252,36 @@ pub fn seed(world: &mut crate::world::World) {
         sets.set_color(name, color);
         sets.add_to_set(&members, name, is_friend);
     }
-    // the contact sets tab: the wolf's display name is his nickname
+    // the contact sets tab: the wolf's display name is his nickname; each
+    // set its badge and look, so that their tiles show the four cases
     if mode() == Some(Mode::Sets) {
+        use crate::world::contact_sets::{MarkerScope, Visuals};
         sets.set_pseudonym(&[DEMO_LOUP], aurora_i18n::tr!("demo-orion-the-great"), is_friend);
+        if !visuals() {
+            for (name, icon, border, background, marker) in [
+                (aurora_i18n::tr!("demo-family"), 0, true, true, MarkerScope::Region),
+                ("Clubbing", 10, false, true, MarkerScope::Off),
+                (aurora_i18n::tr!("demo-shop"), 7, true, false, MarkerScope::Off),
+            ] {
+                sets.set_visuals(
+                    name,
+                    Visuals {
+                        icon: Some(icon),
+                        border,
+                        background,
+                        nameplate_name: true,
+                        ui_name: true,
+                        chat_name: true,
+                        minimap: true,
+                        marker,
+                        ..Default::default()
+                    },
+                );
+            }
+            // Nova in two sets: her chips
+            sets.add_to_set(&[NOVA], "Clubbing", is_friend);
+            sets.move_priority_to(aurora_i18n::tr!("demo-family"), 0);
+        }
     }
     if visuals() {
         use crate::world::contact_sets::{PlateSize, Visuals};
@@ -216,6 +301,8 @@ pub fn seed(world: &mut crate::world::World) {
                 minimap: true,
                 icon: Some(0),
                 size: PlateSize::Reduced,
+                marker: crate::world::contact_sets::MarkerScope::Region,
+                marker_fade: Some(10),
                 ..Default::default()
             },
         );
@@ -296,7 +383,8 @@ fn every_badge(state: &mut State) {
 
 /// `legacy`: Firestorm's table for this run, whatever the preference says.
 pub fn legacy() -> bool {
-    mode() == Some(Mode::Legacy)
+    // AURORA_DEMO_RADAR_MARKS=legacy shows its marks in the same table
+    mode() == Some(Mode::Legacy) || crate::ui::avatar_marks::demo_legacy()
 }
 
 /// The first friend of the demo buddy list (a display name "Nova ♪").
@@ -456,7 +544,7 @@ fn rich() -> Vec<Resident> {
         far(9, "Vega", Some(63.0), 31.0),
         far(10, "Kiri", Some(88.0), 35.0),
         far(11, "Oda", Some(96.0), 41.0),
-        far(12, "Pax", Some(108.0), 47.0),
+        far(12, "Pax", Some(153.4), 47.0),
         far(13, "Rhea", Some(116.0), 52.0),
         far(14, "Zed", Some(119.0), 58.0),
         far(15, "Wren", None, 64.0),
@@ -560,6 +648,17 @@ pub fn hovered() -> Option<Uuid> {
         Mode::CrowdHover => Some(id(100)),
         Mode::Sets => Some(NOVA),
         Mode::Blocked => Some(ZED),
+        Mode::Groups => groups_hover(),
+        _ => None,
+    }
+}
+
+/// `groups-hover`: the Northern Wolves under the pointer, its Activate out;
+/// `groups-hover-active`: the active Aurora Builders, its Deactivate.
+fn groups_hover() -> Option<Uuid> {
+    match std::env::var("AURORA_DEMO_PEOPLE").ok()?.split(':').next()?.trim() {
+        "groups-hover" => Some(super::DEMO_GROUP2),
+        "groups-hover-active" => Some(super::DEMO_GROUP1),
         _ => None,
     }
 }
@@ -651,6 +750,38 @@ fn place(k: usize, range: f32) -> Vec3 {
     me
 }
 
+/// The k-th resident's avatar object, standing at `pos`.
+fn avatar(k: usize, r: &Resident, pos: Vec3) -> aurora_net::objects::ObjectUpdate {
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let mut a = prim(
+        120_000 + k as u32,
+        pos,
+        Quat::from_rotation_z(k as f32 * 0.9),
+        Vec3::new(0.45, 0.6, 1.9),
+        boxp,
+        te([1.0; 4], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    a.pcode = LL_PCODE_LEGACY_AVATAR;
+    a.full_id = r.id;
+    a.name_values = format!("FirstName STRING RW SV {}\nLastName STRING RW SV {}", r.first, r.last);
+    a
+}
+
+/// The first far resident (coarse location only, with a height), and the
+/// update that draws it where its coarse location put it, as when the
+/// simulator finally sends a far avatar (AURORA_DEMO_CAMERA=zoom-unloaded).
+pub fn drawn_late() -> Option<(Uuid, Vec<NetEvent>)> {
+    let (k, r) = residents().iter().enumerate().find(|(_, r)| !r.drawn && r.range.is_some())?;
+    let pos = place(k, r.range?);
+    let events = vec![NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![avatar(k, r, pos)],
+    }];
+    Some((r.id, events))
+}
+
 /// The residents: the drawn ones, then where everyone stands for the region
 /// (its coarse locations, which also give their status dots). The wolf of
 /// the plaza keeps his place, 4.7 m away.
@@ -658,7 +789,6 @@ pub fn events() -> Vec<NetEvent> {
     if mode().is_none() {
         return Vec::new();
     }
-    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let mut objects = Vec::new();
     let mut coarse = Vec::new();
     for (k, r) in residents().iter().enumerate() {
@@ -667,20 +797,7 @@ pub fn events() -> Vec<NetEvent> {
         if !r.drawn || r.id == DEMO_LOUP {
             continue;
         }
-        let mut a = prim(
-            120_000 + k as u32,
-            pos,
-            Quat::from_rotation_z(k as f32 * 0.9),
-            Vec3::new(0.45, 0.6, 1.9),
-            boxp,
-            te([1.0; 4], 0, false, 0.0),
-            ExtraParams::default(),
-            "",
-        );
-        a.pcode = LL_PCODE_LEGACY_AVATAR;
-        a.full_id = r.id;
-        a.name_values = format!("FirstName STRING RW SV {}\nLastName STRING RW SV {}", r.first, r.last);
-        objects.push(a);
+        objects.push(avatar(k, r, pos));
     }
     vec![
         NetEvent::ObjectUpdates { handle: HANDLE, objects },

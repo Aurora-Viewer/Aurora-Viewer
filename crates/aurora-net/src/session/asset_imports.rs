@@ -6,7 +6,7 @@ use super::*;
 use crate::inventory::{
     InvItem,
     operations::{Mutation, Operation},
-    upload::{Error, Kind, Receipt, Request},
+    upload::{Error, Kind, Receipt, Rejection, Request},
 };
 
 #[derive(Default)]
@@ -70,12 +70,21 @@ struct SettingsCreate {
     asset_type: i32,
 }
 
+fn material_save_error(reason: String) -> Error {
+    let rejection = Rejection::from_message(&reason);
+    log::warn!("material inventory save did not confirm: {rejection:?}");
+    Error::Uncertain(rejection)
+}
+
 /// PERM_COPY (llpermissionsflags.h).
 const PERM_COPY: u32 = 0x8000;
 /// LLFloaterPerms::getNextOwnerPerms("Settings") with Firestorm's defaults:
 /// PERM_MOVE, plus SettingsNextOwnerModify and SettingsNextOwnerTransfer
 /// (on); SettingsNextOwnerCopy is not defined, so it reads as off.
 const SETTINGS_NEXT_OWNER: u32 = 0x0008_0000 | 0x4000 | 0x2000;
+/// PERM_MOVE | PERM_TRANSFER, LLScriptRecoverQueue::recoverNext's next
+/// owner rights for a recovered script.
+const SCRIPT_RECOVERY_NEXT_OWNER: u32 = 0x0008_0000 | 0x2000;
 
 struct Pending {
     started: Instant,
@@ -371,6 +380,19 @@ impl Session<'_> {
             );
             return;
         };
+        // Refused before CreateInventoryItem, so no empty material is left behind
+        // and the reason is certain (nothing was sent).
+        if let Err(reason) = crate::inventory::operations::material_content_check(&upload.data) {
+            log::warn!("material {} not uploaded: {reason}", upload.name);
+            emit(
+                self.sh,
+                NetEvent::AssetUploaded {
+                    request,
+                    result: Err(Error::Refused(Rejection::from_message(&reason))),
+                },
+            );
+            return;
+        }
         if self.asset_imports.creates.len() >= 8 || upload.expected_cost != 0 {
             emit(
                 self.sh,
@@ -526,6 +548,84 @@ impl Session<'_> {
         self.send_main(&message, true);
     }
 
+    /// LLScriptRecoverQueue::recoverNext (indra/newview/
+    /// llfloaterscriptrecover.cpp): a script item under `parent` with
+    /// PERM_MOVE | PERM_TRANSFER for the next owner and no transaction, its
+    /// text uploaded once the callback names it (onCreateScript).
+    pub(super) fn create_script_item(&mut self, request: Uuid, parent: Uuid, name: String, description: String, source: String) {
+        let cap = self.main_cap("UpdateScriptAgent");
+        let valid = !parent.is_nil() && !name.trim().is_empty() && name.len() <= 255 && source.len() <= crate::scripts::MAX_SOURCE;
+        let Some(cap) = cap.filter(|_| valid && self.asset_imports.settings.len() < 8) else {
+            emit(
+                self.sh,
+                NetEvent::InventoryContentSaved {
+                    request,
+                    item: Uuid::nil(),
+                    result: Err(aurora_i18n::tr!("script-save-unavailable").into()),
+                },
+            );
+            return;
+        };
+        let callback = self.inventory_callback(false);
+        let mut message = CreateInventoryItem::default();
+        message.agent_data.agent_id = self.agent_id();
+        message.agent_data.session_id = self.session_id();
+        message.inventory_block.folder_id = parent;
+        message.inventory_block.callback_id = callback;
+        message.inventory_block.next_owner_mask = SCRIPT_RECOVERY_NEXT_OWNER;
+        // AT_LSL_TEXT, IT_LSL, NO_INV_SUBTYPE
+        message.inventory_block.type_ = 10;
+        message.inventory_block.inv_type = 10;
+        message.inventory_block.wearable_type = 0;
+        message.inventory_block.name = str_field(&name);
+        message.inventory_block.description = str_field(&description);
+        self.asset_imports.settings.insert(
+            callback,
+            SettingsCreate {
+                started: Instant::now(),
+                request,
+                folder: parent,
+                data: source.into_bytes(),
+                // the text goes up through UpdateScriptAgent alone
+                caps: (cap, String::new()),
+                asset_type: 10,
+            },
+        );
+        self.send_main(&message, true);
+    }
+
+    /// onCreateScript / onSavedScript: the recovered text, compiled for Mono.
+    /// A script that does not compile is saved all the same, as the Legacy
+    /// Viewer does (only an HTTP failure fails the recovery).
+    fn recovered_script_created(&mut self, pending: SettingsCreate, item: &InvItem) {
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        let mut item = item.clone();
+        tokio::spawn(async move {
+            let target = crate::scripts::ScriptTarget {
+                object: Uuid::nil(),
+                item: item.id,
+            };
+            let options = crate::scripts::ScriptOptions {
+                compile: crate::scripts::CompileTarget::for_item(item.flags),
+                running: false,
+                experience: Uuid::nil(),
+            };
+            let source = String::from_utf8_lossy(&pending.data).into_owned();
+            let result = crate::scripts::save(&http, &pending.caps.0, target, options, source)
+                .await
+                .map(|saved| {
+                    item.asset_id = saved.asset;
+                    item.clone()
+                });
+            let _ = events.send(NetEvent::InventoryContentSaved {
+                request: pending.request,
+                item: item.id,
+                result,
+            });
+        });
+    }
+
     /// onInventoryItemCreated: everyone may copy the new settings item, then its asset
     /// goes up (updateInventoryItem).
     fn settings_created(&mut self, pending: SettingsCreate, item: &InvItem) {
@@ -539,6 +639,10 @@ impl Session<'_> {
                     result: Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into()),
                 },
             );
+            return;
+        }
+        if pending.asset_type == 10 {
+            self.recovered_script_created(pending, item);
             return;
         }
         if pending.asset_type == 56 && item.everyone_mask != PERM_COPY {
@@ -657,12 +761,15 @@ impl Session<'_> {
                     refresh: vec![item.parent],
                     ..Default::default()
                 };
-                crate::inventory::operations::mutate(&http, &ais, &descendants, owner, change)
-                    .await
-                    .map_err(|_| Error::Verification)?;
+                // LLObjectsMaterialItemCallback::fire (indra/newview/llmaterialeditor.cpp)
+                // uploads the material whatever becomes of the name and rights
+                // update: an item left without its material would never load.
+                if let Err(reason) = crate::inventory::operations::mutate(&http, &ais, &descendants, owner, change).await {
+                    log::warn!("material item name and rights not confirmed, its material is sent anyway: {reason}");
+                }
                 let saved = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, item.id, 57, pending.upload.data)
                     .await
-                    .map_err(|_| Error::Unknown)?;
+                    .map_err(material_save_error)?;
                 if saved.id != item.id
                     || saved.parent != item.parent
                     || saved.owner != owner
@@ -701,6 +808,7 @@ impl Session<'_> {
             if pending.started.elapsed() < Duration::from_secs(60) {
                 return true;
             }
+            log::warn!("asset import creation timed out before the simulator confirmed inventory item creation");
             emit(
                 self.sh,
                 NetEvent::AssetUploaded {
@@ -716,6 +824,18 @@ impl Session<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_save_error_keeps_the_server_reason() {
+        assert_eq!(
+            material_save_error("server rejected blend map".into()),
+            Error::Uncertain(Rejection {
+                status: None,
+                identifier: String::new(),
+                messages: vec!["server rejected blend map".into()],
+            })
+        );
+    }
 
     #[test]
     fn creation_defaults_only_update_the_expected_owned_item_and_preserve_owner_rights() {

@@ -147,7 +147,7 @@ function New-AuroraRelease($Repo) {
     if (-not $policy) { return }
     Show-Logo 'Confirmation of the release'
     Write-Color "  $tag, on the latest main$(if ($pre) { ', as a pre-release' }): the Release workflow builds the viewer and publishes the Windows zip with the notes, then adds the Linux archive." ink
-    Write-Color "  Update: $(if ($policy.minimum_supported_version) { 'required for versions before ' + $policy.minimum_supported_version + ' (login blocked until they update)' } else { 'optional for every version' })." ink
+    Write-Color "  Update: $(if ($policy.minimum_supported_version) { 'required for versions before ' + $policy.minimum_supported_version + " ($(Get-GraceText $policy.grace_hours) until they update)" } else { 'optional for every version' })." ink
     Write-Color "  Cache: $(if ($policy.cache_invalidation_before) { 'cleared for versions before ' + $policy.cache_invalidation_before } else { 'kept' })." ink
     Write-Color "  Settings: $(if ($policy.settings_reset_before) { 'reset for versions before ' + $policy.settings_reset_before } else { 'kept and migrated automatically if needed' })." ink
     if (-not (Read-YesNo "Create the release ${tag}?")) { return }
@@ -185,7 +185,7 @@ function New-AuroraRelease($Repo) {
         if ($LASTEXITCODE -eq 0) {
             $url = gh release view $tag -R $Repo.Slug --json url --jq .url 2>$null
             Write-Color "  Release published: $url" success
-            if ($url -and (Read-YesNo 'Open it in the browser?')) { Start-Process $url }
+            if ($url -and (Read-YesNo 'Open it in the browser?')) { Open-External $url }
         } else {
             $url = gh release view $tag -R $Repo.Slug --json url --jq .url 2>$null
             if ($url) {

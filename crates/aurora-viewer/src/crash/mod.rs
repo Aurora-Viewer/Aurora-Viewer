@@ -9,10 +9,12 @@ pub mod github;
 #[cfg(target_os = "linux")]
 mod linux;
 mod native;
+mod open_files;
+mod os_events;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
 // mod report;
-mod software;
+pub(crate) mod software;
 mod summary;
 mod threads;
 mod watchdog;
@@ -123,6 +125,9 @@ pub fn helper() -> anyhow::Result<bool> {
         return Ok(false);
     };
     let id = args.get(index + 1).ok_or_else(|| anyhow::anyhow!("missing crash session"))?;
+    // a report it sends follows the viewer's proxy rule (Preferences ›
+    // Network › Proxy): this process reads it for itself
+    crate::proxy::install(&crate::settings::Settings::load().proxy);
     let dir = session_dir(&root(), id)?;
     let record = load(&dir)?;
     if args[index] == "--crash-watch" {
@@ -198,10 +203,13 @@ pub fn start() {
 }
 
 fn start_inner() -> anyhow::Result<()> {
+    // the census of open files at a GPU loss needs its directory opened
+    // while descriptors are still free (open_files.rs, #2970)
+    open_files::prime();
     std::fs::create_dir_all(root())?;
     recover();
     let settings = crate::settings::Settings::load();
-    aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
+    crate::language_file::select(&settings.language, settings.custom_language);
     let dir = root().join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir(&dir)?;
     let record = Record {
@@ -254,15 +262,20 @@ fn start_inner() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The Vulkan layers on offer go to `vulkan-layers.txt` as soon as they are
-/// known, on a thread of their own: a crash while Vulkan starts, before any
-/// note of the state, is where the report needs them most (#2241).
+/// Loader-enumerated and known-eligible Vulkan layers are recorded on a
+/// worker. Installed enumeration is available even before instance creation.
 fn note_vulkan_layers(dir: &Path) {
     let dir = dir.to_owned();
     let spawned = std::thread::Builder::new().name("aurora-crash-facts".into()).spawn(move || {
         let names = aurora_render::vulkan_layers::loaded_names();
+        let eligible = aurora_render::vulkan_layers::eligible_known_names(
+            &names,
+            |variable| std::env::var_os(variable).is_some(),
+            std::env::var("VK_LOADER_LAYERS_DISABLE").ok().as_deref(),
+        );
         if !names.is_empty() {
             let _ = std::fs::write(dir.join("vulkan-layers.txt"), names.join(","));
+            let _ = std::fs::write(dir.join("vulkan-layers-eligible.txt"), eligible.join(","));
         }
     });
     if let Err(error) = spawned {
@@ -303,6 +316,14 @@ pub fn out_of_memory(size: usize) {
     native::out_of_memory(size);
 }
 
+/// The renderer was dropped and its driver is being unloaded: a fatal
+/// signal the driver gave a handler of its own comes back to the crash
+/// handler before that handler's code is gone (crash/linux.rs).
+#[cfg(target_os = "linux")]
+pub fn renderer_dropped() {
+    native::reclaim();
+}
+
 /// The long-lived thread whose panic means the session cannot go on
 /// (`threads.rs`): the app ends the session when it sees one.
 pub fn thread_died() -> Option<&'static str> {
@@ -311,9 +332,22 @@ pub fn thread_died() -> Option<&'static str> {
 
 pub fn finished(success: bool) {
     if let Some(session) = SESSION.get() {
-        let marker = if success { "normal" } else { "failed" };
-        let _ = std::fs::write(session.dir.join(marker), []);
+        end_session(&session.dir, success, GPU_LOST.get().map(Vec::as_slice));
     }
+}
+
+/// The session's end marker. A device lost for good ends it as failed
+/// whatever the event loop returned, with the loss marked again: when the
+/// loss came from running out of open files (#2970), the markers written
+/// at the loss failed, and only `normal` would have reached the disk, a
+/// clean close whose folder the next start deletes.
+fn end_session(dir: &Path, success: bool, gpu_lost: Option<&[u8]>) {
+    if let Some(when) = gpu_lost {
+        write_gpu_lost(dir, when);
+        return;
+    }
+    let marker = if success { "normal" } else { "failed" };
+    let _ = std::fs::write(dir.join(marker), []);
 }
 
 pub fn failure(message: &str) {
@@ -335,7 +369,44 @@ pub fn gpu_stalled(seconds: u64) {
 /// The GPU device is lost for good (app/gpu_stall.rs): the session, which
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
+    gpu_loss_snapshot();
     mark_gpu_lost(b"");
+}
+
+/// The viewer noticed a device loss (app/gpu_stall.rs), once per loss: an
+/// open-file limit reached looks like video memory out (#2970), so the
+/// log says what held the descriptors, for the crash report.
+pub fn open_files_at_loss() {
+    open_files::log_at_loss();
+}
+
+/// The renderer reported a confirmed device loss, including one the viewer
+/// may recover from. Keep only the first loss snapshot for this session.
+pub fn gpu_loss_snapshot() {
+    crate::overlay_hooks::loss_snapshot();
+}
+
+#[cfg(windows)]
+pub(crate) fn overlay_hooks_at_loss(files: &[&str]) {
+    if let Some(session) = SESSION.get() {
+        write_first_overlay_loss_snapshot(&session.dir, files);
+    }
+}
+
+#[cfg(any(windows, test))]
+fn write_first_overlay_loss_snapshot(dir: &Path, files: &[&str]) {
+    let known: Vec<_> = files
+        .iter()
+        .filter(|file| crate::overlay_hooks::known(file).is_some())
+        .copied()
+        .collect();
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join("overlay-hooks-loss.txt"))
+    {
+        let _ = file.write_all(known.join("\n").as_bytes());
+    }
 }
 
 /// A GPU device loss the viewer recovered from (app/gpu_recovery.rs), `ms`
@@ -365,15 +436,26 @@ const GPU_LOST_AT_START: &str = "start";
 /// The same before the first frame (app.rs): reported under its own title,
 /// apart from the driver resets of a running session.
 pub fn gpu_lost_at_start() {
+    open_files_at_loss();
+    gpu_loss_snapshot();
     mark_gpu_lost(GPU_LOST_AT_START.as_bytes());
 }
 
+/// The device was lost for good, with the text of `gpu-lost.txt`: kept in
+/// memory as well, for [`finished`] to write again ([`end_session`]).
+static GPU_LOST: OnceLock<Vec<u8>> = OnceLock::new();
+
 fn mark_gpu_lost(when: &[u8]) {
+    let _ = GPU_LOST.set(when.to_vec());
     if let Some(session) = SESSION.get() {
-        let _ = std::fs::write(session.dir.join("gpu-lost.txt"), when);
-        let _ = std::fs::write(session.dir.join("failed"), []);
-        ending_in_gpu_trouble(&session.dir);
+        write_gpu_lost(&session.dir, when);
     }
+}
+
+fn write_gpu_lost(dir: &Path, when: &[u8]) {
+    let _ = std::fs::write(dir.join("gpu-lost.txt"), when);
+    let _ = std::fs::write(dir.join("failed"), []);
+    ending_in_gpu_trouble(dir);
 }
 
 /// In the session folder while the photo window's "Photo quality" holds
@@ -565,6 +647,7 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     let record = load(dir)?;
+    collect_os_events_once(dir);
     // What a crash report would publish, kept beside the private files.
     let summary = summary::build(&record, dir);
     if let Err(error) = std::fs::write(dir.join("public-report.md"), format!("# {}\n\n{}", summary.title, summary.body)) {
@@ -577,6 +660,25 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
     }
     std::fs::write(dir.join("acknowledged"), [])?;
     Ok(())
+}
+
+/// The OS's own GPU reset records around the crash, read once per crash by
+/// the process that shows the report (the watcher right after the exit, or
+/// the helper a later start spawns), never by the viewer's own start: the
+/// queries may take up to their two-second budget.
+fn collect_os_events_once(dir: &Path) {
+    if dir.join("os-gpu-events.status").exists() {
+        return;
+    }
+    let stopped = read_limited(&dir.join("stopped-unix.txt"), 32)
+        .ok()
+        .and_then(|s| s.trim().parse().ok());
+    let tick = watchdog::read_alive(dir)
+        .iter()
+        .find(|(k, _)| k == "tick")
+        .and_then(|(_, v)| v.parse().ok())
+        .or_else(|| watchdog::alive_written(dir));
+    os_events::collect(dir, stopped.or(tick));
 }
 
 fn trace(dir: &Path) -> String {
@@ -656,6 +758,18 @@ pub fn demo_freeze() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_hook_loss_snapshot_is_private_to_known_names_and_keeps_the_first_loss() {
+        let dir = scratch_root();
+        write_first_overlay_loss_snapshot(&dir, &["DiscordHook64.dll", "C:\\Users\\Private\\evil.dll"]);
+        write_first_overlay_loss_snapshot(&dir, &["RTSSHooks64.dll"]);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("overlay-hooks-loss.txt")).unwrap(),
+            "DiscordHook64.dll"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn session_snapshot_survives_language_theme_changes_and_rejects_unknown_formats() {
@@ -899,6 +1013,30 @@ mod tests {
         assert!(!closed.exists());
         assert!(killed.join("recovery-attempted").exists());
         assert!(!running.join("recovery-attempted").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_session_ending_after_a_lost_device_is_reported_as_one() {
+        let root = std::env::temp_dir().join(format!("aurora-crash-test-{}", uuid::Uuid::new_v4()));
+        let dir = root.join("session");
+        std::fs::create_dir_all(&dir).unwrap();
+        // the markers written at the loss failed (no open file left, #2970);
+        // the event loop then returned Ok
+        end_session(&dir, true, Some(b""));
+        assert!(!dir.join("normal").exists());
+        assert!(dir.join("failed").exists());
+        assert!(dir.join("gpu-lost.txt").exists());
+        // (on Windows the watcher marks it once the viewer is gone)
+        #[cfg(not(windows))]
+        assert!(root.join(GPU_TROUBLE).exists());
+        assert!(should_report(&dir, 0));
+        // with no loss, the same end is a clean close
+        let clean = root.join("clean");
+        std::fs::create_dir(&clean).unwrap();
+        end_session(&clean, true, None);
+        assert!(clean.join("normal").exists());
+        assert!(!should_report(&clean, 0));
         std::fs::remove_dir_all(root).unwrap();
     }
 

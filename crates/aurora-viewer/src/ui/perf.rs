@@ -336,6 +336,12 @@ fn monitor_rect_id() -> egui::Id {
     egui::Id::unique(("perf", "monitor-rect"))
 }
 
+/// "Reset window positions and sizes": the full view opens again at its
+/// default place and size.
+pub(crate) fn forget_monitor_rect(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<Rect>(monitor_rect_id()));
+}
+
 /// Performance opened from the system island of Aurora's bars (its frame
 /// rate, its tooltip's network row, the traffic indicator, its right
 /// click): the full view 8 px under the island, its right edge on the
@@ -683,7 +689,7 @@ pub fn last_rates(d: &PerfData) -> (f32, f32) {
 
 /// The GPU parts of a frame, in [`GpuElement::ALL`] order: name and help
 /// (the resource monitor's breakdown).
-pub(crate) fn gpu_part_names() -> [(&'static str, &'static str); 7] {
+pub(crate) fn gpu_part_names() -> [(&'static str, &'static str); GpuElement::ALL.len()] {
     GpuElement::ALL.map(|el| match el {
         GpuElement::ShadowsDepth => (
             aurora_i18n::tr!("ui-perf-shadows-and-depth"),
@@ -708,6 +714,10 @@ pub(crate) fn gpu_part_names() -> [(&'static str, &'static str); 7] {
         GpuElement::Transparent => (
             aurora_i18n::tr!("ui-perf-transparent-objects-and-particles"),
             aurora_i18n::tr!("ui-perf-semi-transparent-faces-and-particles"),
+        ),
+        GpuElement::Weather => (
+            aurora_i18n::tr!("ui-perf-weather"),
+            aurora_i18n::tr!("ui-perf-rain-and-wet-surfaces"),
         ),
         GpuElement::Post => (
             aurora_i18n::tr!("ui-perf-post-processing"),
@@ -803,6 +813,7 @@ mod tests {
             adapters: vec!["Test GPU".into()],
             notice: None,
             vulkan: None,
+            ray_tracing: Default::default(),
         };
         let data = PerfData::default();
         for tab in super::super::monitor::Tab::ALL {

@@ -4,7 +4,7 @@
 use super::{common, compact, floaters, notecards};
 use crate::build::{
     BuildSettings, BuildTool, EditMode, Mods, Tool,
-    layout::{Item, Panel},
+    layout::{FooterColumn, FooterRow, Item, Panel},
 };
 use crate::theme::Palette;
 use crate::ui::widgets;
@@ -18,11 +18,60 @@ pub struct State {
     pub drag: Option<Item>,
     pub targets: Vec<(Item, Panel, Rect)>,
     pub zones: Vec<(Panel, Rect)>,
+    pub footer_cells: Vec<FooterDropCell>,
+    /// Measured at the current width, including wrapped two-column options.
+    pub footer_height: Option<f32>,
+}
+
+#[derive(Clone, Copy)]
+pub struct FooterDropCell {
+    pub rect: Rect,
+    pub column: FooterColumn,
+    pub row: FooterRow,
+    append: Option<(Option<Item>, bool)>,
+    actions_only: bool,
+}
+
+impl FooterDropCell {
+    fn accepts(self, item: Item) -> bool {
+        item.accepts(Panel::Footer) && (item == Item::Actions) == self.actions_only
+    }
+
+    fn destination(self, item: Item, pos: egui::Pos2) -> (Option<Item>, bool) {
+        if self.actions_only {
+            return self.append.unwrap_or((None, false));
+        }
+        if item.footer_column_item()
+            && let Some(destination) = self.append
+        {
+            return destination;
+        }
+        let after = pos.y >= self.rect.center().y;
+        let column = self.column;
+        match self.row {
+            FooterRow::Full(target) => (Some(target), after),
+            FooterRow::Cells(cells) if item.footer_column_item() => {
+                if let Some(target) = cells[column.index()] {
+                    (Some(target), after)
+                } else {
+                    (cells[1 - column.index()], true)
+                }
+            }
+            FooterRow::Cells(cells) => {
+                let mut items = cells.into_iter().flatten().filter(|target| *target != item);
+                (if after { items.next_back() } else { items.next() }, after)
+            }
+        }
+    }
 }
 
 pub(super) fn title(item: Item) -> &'static str {
     match item {
         Item::Manipulators => aurora_i18n::tr!("build-layout-manipulators"),
+        Item::MoveMode => aurora_i18n::tr!("build-compact-mode-move"),
+        Item::RotateMode => aurora_i18n::tr!("build-compact-mode-rotate"),
+        Item::StretchMode => aurora_i18n::tr!("build-compact-mode-stretch"),
+        Item::AlignMode => aurora_i18n::tr!("build-compact-mode-align"),
         Item::Actions => aurora_i18n::tr!("build-layout-actions"),
         Item::Face => aurora_i18n::tr!("build-compact-select-face"),
         Item::StretchTextures => aurora_i18n::tr!("build-compact-stretch-textures"),
@@ -37,6 +86,7 @@ pub(super) fn title(item: Item) -> &'static str {
         Item::Surrounding => aurora_i18n::tr!("build-compact-surrounding"),
         Item::LandGroup => aurora_i18n::tr!("rez-under-land-group"),
         Item::FollowEdit => aurora_i18n::tr!("build-ui-tools-follow-edit-object"),
+        Item::WheelOnHover => aurora_i18n::tr!("build-wheel-on-hover"),
         Item::General => aurora_i18n::tr!("build-compact-general"),
         Item::Shape => aurora_i18n::tr!("build-compact-shape"),
         Item::Materials => aurora_i18n::tr!("build-compact-materials"),
@@ -70,6 +120,16 @@ pub(super) fn mode(item: Item) -> Option<Tool> {
         _ => None,
     }
 }
+
+fn manipulation_mode(item: Item) -> Option<EditMode> {
+    match item {
+        Item::MoveMode => Some(EditMode::Move),
+        Item::RotateMode => Some(EditMode::Rotate),
+        Item::StretchMode => Some(EditMode::Stretch),
+        Item::AlignMode => Some(EditMode::Align),
+        _ => None,
+    }
+}
 pub(super) fn icon(item: Item) -> &'static str {
     match item {
         Item::General => "info-circle-filled",
@@ -86,13 +146,13 @@ pub(super) fn icon(item: Item) -> &'static str {
     }
 }
 
-pub(super) fn gear(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool) {
-    if compact::icon_button(ui, p, "settings-filled", aurora_i18n::tr!("build-layout-settings"), true).clicked() {
-        tool.ui.layout.open = !tool.ui.layout.open;
-        if !tool.ui.layout.open {
-            tool.ui.layout.organizing = false;
-            tool.ui.layout.drag = None;
-        }
+/// The build settings panel opened or closed: the gear under UUID in the
+/// Aurora window's header.
+pub(super) fn toggle_settings(tool: &mut BuildTool) {
+    tool.ui.layout.open = !tool.ui.layout.open;
+    if !tool.ui.layout.open {
+        tool.ui.layout.organizing = false;
+        tool.ui.layout.drag = None;
     }
 }
 
@@ -109,8 +169,27 @@ pub(super) fn row(
     panel: Panel,
 ) {
     let organizing = tool.ui.layout.organizing;
-    let height = if item.navigation() {
+    let height = if item == Item::Snap && !s.legacy_window {
+        widgets::TEXT_BUTTON_HEIGHT
+    } else if panel == Panel::Footer && !matches!(item, Item::Manipulators | Item::Actions | Item::Snap) {
+        let width = ui.available_width();
+        let compact = !s.legacy_window;
+        let padding = ui.spacing().icon_width + ui.spacing().icon_spacing;
+        let width = (width - padding).max(1.0);
+        let text = RichText::new(title(item)).size(common::BODY);
+        let height = egui::WidgetText::from(text)
+            .into_galley(ui, Some(egui::TextWrapMode::Wrap), width, egui::TextStyle::Button)
+            .size()
+            .y;
+        if compact {
+            height.max(widgets::TEXT_BUTTON_HEIGHT)
+        } else {
+            height.max(22.0) + 2.0
+        }
+    } else if item.navigation() {
         34.0
+    } else if manipulation_mode(item).is_some() || (item == Item::Actions && !s.legacy_window) {
+        widgets::TEXT_BUTTON_HEIGHT
     } else if matches!(item, Item::Manipulators | Item::Actions) {
         28.0
     } else if item == Item::Snap && !organizing && s.snap_mode() == crate::build::SnapMode::Objects {
@@ -128,34 +207,99 @@ pub(super) fn row(
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     child.set_clip_rect(ui.clip_rect().intersect(rect));
+    if panel == Panel::Footer {
+        child.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+    }
     child.spacing_mut().item_spacing.x = 3.0;
-    child.spacing_mut().interact_size.y = 22.0;
+    child.spacing_mut().interact_size.y =
+        if !s.legacy_window && (panel == Panel::Footer || manipulation_mode(item).is_some() || item == Item::Snap) {
+            widgets::TEXT_BUTTON_HEIGHT
+        } else {
+            22.0
+        };
     if organizing {
         child.visuals_mut().disabled_alpha = 1.0;
         child.disable();
     }
     if item.navigation() {
-        if panel == Panel::Navigation {
-            let active = section(item).is_some_and(|tab| tool.tool == Tool::Edit && tool.tab == tab)
-                || mode(item).is_some_and(|mode| tool.tool == mode);
-            if compact::rail_button(&mut child, p, icon(item), title(item), active, height) {
-                if let Some(tab) = section(item) {
+        if panel.bar() {
+            let block = crate::build::layout::Block::of_item(item);
+            let detached = block.filter(|block| super::detach::is_detached(s, *block));
+            let (active, tip) = match detached {
+                Some(block) => {
+                    let shown = tool.tool == Tool::Edit && s.detached.get(&block).copied().unwrap_or(false);
+                    (shown, super::detach::toggle_hint(block, shown))
+                }
+                None => (
+                    section(item).is_some_and(|tab| tool.tool == Tool::Edit && tool.tab == tab)
+                        || mode(item).is_some_and(|mode| tool.tool == mode),
+                    title(item).to_owned(),
+                ),
+            };
+            // the second section, lit at half (second_tab.rs)
+            let second = detached.is_none() && section(item).is_some_and(|tab| super::second_tab::shown(tool, s) == Some(tab));
+            let response = compact::navigation_button_marked(
+                &mut child,
+                p,
+                icon(item),
+                title(item),
+                &tip,
+                s.layout.display(item),
+                active || second,
+                detached.is_some(),
+                second,
+                height,
+            );
+            display_menu(&response, p, s, item);
+            if detached.is_some() {
+                super::detach::mark(ui, p, rect);
+            }
+            if response.clicked() && child.is_enabled() {
+                if let Some(block) = detached {
+                    super::detach::toggle(tool, s, block);
+                } else if let Some(tab) = section(item) {
                     if tool.tool != Tool::Edit {
                         tool.set_tool(Tool::Edit);
                     }
-                    tool.tab = tab;
+                    if s.legacy_window {
+                        tool.tab = tab;
+                    } else {
+                        super::second_tab::click(tool, tab, mods.shift);
+                    }
                 } else if let Some(mode) = mode(item)
                     && tool.tool != mode
                 {
                     tool.set_tool(mode);
                 }
             }
+            // Inventory held over a section's button opens that section,
+            // unless it is in a window of its own (the build floater's
+            // open_tabs_on_drag_and_drop, floater_tools.xml).
+            if let Some(tab) = section(item)
+                && crate::ui::inventory::drag::navigation::tab_held_over(
+                    &child,
+                    response.rect,
+                    egui::Id::unique("build-drag-open").with(tab),
+                )
+                && detached.is_none()
+                && child.is_enabled()
+            {
+                if tool.tool != Tool::Edit {
+                    tool.set_tool(Tool::Edit);
+                }
+                tool.tab = tab;
+            }
+            if let Some(block) = block
+                && detached.is_none()
+            {
+                super::detach::source(ui, p, tool, s, block, "rail", rect);
+            }
         } else {
             widgets::glyph(&mut child, icon(item), p.muted, 18.0);
             common::label(&mut child, p, title(item));
         }
     } else {
-        control(&mut child, p, tool, world, s, mods, item);
+        control(&mut child, p, tool, world, s, mods, item, panel);
     }
     let visible = rect.intersect(ui.clip_rect());
     if visible.is_positive() {
@@ -163,26 +307,94 @@ pub(super) fn row(
     }
     if organizing {
         let response = ui
-            .interact(rect, ui.scope_id().with(("organize", item)), egui::Sense::click_and_drag())
+            .interact(
+                rect,
+                egui::Id::unique(("build-layout-organize", item)),
+                egui::Sense::click_and_drag(),
+            )
             .on_hover_cursor(egui::CursorIcon::Grab);
+        let response = if tool.ui.layout.drag.is_none() {
+            response.on_hover_text(aurora_i18n::tr!("build-layout-drag-hint"))
+        } else {
+            response
+        };
+        widgets::organization_source(
+            ui,
+            p,
+            rect,
+            item.footer_column_item() && (item != Item::Snap || (panel == Panel::Footer && !s.legacy_window)),
+            tool.ui.layout.drag == Some(item) || (tool.ui.layout.drag.is_none() && (response.hovered() || response.has_focus())),
+        );
         if response.drag_started() {
             tool.ui.layout.drag = Some(item);
         }
         if response.clicked() {
             response.request_focus();
         }
+        if response.clicked() || response.has_focus() {
+            ui.memory_mut(|memory| {
+                memory.set_focus_lock_filter(
+                    response.id,
+                    egui::EventFilter {
+                        vertical_arrows: true,
+                        horizontal_arrows: panel.bar() || (panel == Panel::Footer && item.footer_column_item()),
+                        ..Default::default()
+                    },
+                );
+            });
+        }
         if response.has_focus() {
+            if panel == Panel::Footer && item.footer_column_item() {
+                let column = ui.input_mut(|i| {
+                    if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft) {
+                        Some(FooterColumn::Left)
+                    } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight) {
+                        Some(FooterColumn::Right)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(column) = column {
+                    s.layout.place_in_footer(item, column, Some(item), false);
+                    // egui queues directional focus before the row consumes
+                    // its first arrow event, before its focus filter is active.
+                    ui.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+                }
+            }
             let direction = ui.input_mut(|i| {
-                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+                    || (panel.bar() && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft))
+                {
                     -1
-                } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+                    || (panel.bar() && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight))
+                {
                     1
                 } else {
                     0
                 }
             });
-            let items = s.layout.in_panel(panel);
-            if direction != 0
+            let items: Vec<_> = s
+                .layout
+                .in_panel(panel)
+                .into_iter()
+                .filter(|other| {
+                    panel != Panel::Footer
+                        || !item.footer_column_item()
+                        || !other.footer_column_item()
+                        || s.layout.footer_columns.get(other) == s.layout.footer_columns.get(&item)
+                })
+                .collect();
+            if direction != 0 {
+                ui.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+            }
+            if direction != 0 && panel == Panel::Footer && item == Item::Actions {
+                let columns: Vec<_> = items.iter().copied().filter(|item| item.footer_column_item()).collect();
+                let target = if direction < 0 { columns.first() } else { columns.last() };
+                if let Some(target) = target {
+                    s.layout.place(item, panel, Some(*target), direction > 0);
+                }
+            } else if direction != 0
                 && let Some(index) = items.iter().position(|key| *key == item)
                 && let Some(target) = items.get(index.wrapping_add_signed(direction))
             {
@@ -192,7 +404,11 @@ pub(super) fn row(
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) || i.consume_key(egui::Modifiers::NONE, egui::Key::Space)
             }) {
                 let next = if item.navigation() {
-                    if panel == Panel::Hidden { Panel::Navigation } else { Panel::Hidden }
+                    if panel == Panel::Hidden {
+                        item.default_panel()
+                    } else {
+                        Panel::Hidden
+                    }
                 } else {
                     match panel {
                         Panel::Footer => Panel::Settings,
@@ -203,19 +419,250 @@ pub(super) fn row(
                 s.layout.place(item, next, None, false);
             }
         }
-        if let Some(drag) = tool.ui.layout.drag.filter(|drag| *drag != item && drag.accepts(panel))
-            && let Some(pos) = ui.ctx().pointer_interact_pos().filter(|pos| rect.contains(*pos))
+        if panel != Panel::Footer
+            && let Some(drag) = tool.ui.layout.drag.filter(|drag| *drag != item && drag.accepts(panel))
         {
             let _ = drag;
-            let y = if pos.y < rect.center().y { rect.top() } else { rect.bottom() };
-            ui.painter().hline(rect.x_range(), y, egui::Stroke::new(2.0, p.violet_light));
+            let pos = ui.ctx().pointer_interact_pos().filter(|pos| rect.contains(*pos));
+            widgets::organization_drop_target(
+                ui,
+                p,
+                rect.shrink(0.5),
+                None,
+                if panel.bar() {
+                    None
+                } else {
+                    pos.map(|pos| pos.y >= rect.center().y)
+                },
+            );
+            if panel.bar()
+                && let Some(pos) = pos
+            {
+                let x = if pos.x < rect.center().x { rect.left() } else { rect.right() };
+                ui.painter().vline(x, rect.y_range(), egui::Stroke::new(2.0, p.violet_light));
+            }
         }
     }
 }
 
+/// Full-width controls and an entirely empty footer expose both column targets.
+fn footer_drop_row(ui: &egui::Ui, p: &Palette, tool: &mut BuildTool, start: egui::Pos2, row: FooterRow, actions_top: bool) {
+    let rect = Rect::from_min_max(start, egui::pos2(ui.max_rect().right(), ui.cursor().min.y));
+    for column in [FooterColumn::Left, FooterColumn::Right] {
+        let mut half = rect;
+        if column == FooterColumn::Left {
+            half.max.x = rect.center().x;
+        } else {
+            half.min.x = rect.center().x;
+        }
+        let cell = FooterDropCell {
+            rect: half.intersect(ui.clip_rect()),
+            column,
+            row,
+            append: (row == FooterRow::Full(Item::Actions)).then_some((Some(Item::Actions), actions_top)),
+            actions_only: false,
+        };
+        footer_drop_cell(ui, p, tool, cell);
+    }
+}
+
+fn footer_drop_cell(ui: &egui::Ui, p: &Palette, tool: &mut BuildTool, mut cell: FooterDropCell) {
+    cell.rect = cell.rect.intersect(ui.clip_rect());
+    if !cell.rect.is_positive() {
+        return;
+    }
+    if tool.ui.layout.drag.is_some_and(|item| !cell.accepts(item)) {
+        return;
+    }
+    tool.ui.layout.footer_cells.push(cell);
+    if !tool.ui.layout.organizing {
+        return;
+    }
+    let Some(drag) = tool.ui.layout.drag.filter(|item| item.accepts(Panel::Footer)) else {
+        return;
+    };
+    let empty = matches!(cell.row, FooterRow::Cells(cells) if cells[cell.column.index()].is_none());
+    let hovered = ui.ctx().pointer_interact_pos().filter(|pos| cell.rect.contains(*pos));
+    let insertion = hovered.map(|pos| cell.destination(drag, pos).1);
+    let preview = if hovered.is_some() && !drag.footer_column_item() {
+        Rect::from_min_max(
+            egui::pos2(ui.max_rect().left(), cell.rect.top()),
+            egui::pos2(ui.max_rect().right(), cell.rect.bottom()),
+        )
+    } else {
+        cell.rect
+    };
+    widgets::organization_drop_target(
+        ui,
+        p,
+        preview.shrink2(egui::vec2(ui.spacing().item_spacing.x * 0.25, 1.0)),
+        empty.then(|| aurora_i18n::tr!("build-layout-drop-here")),
+        insertion,
+    );
+}
+
+/// The action bar can only bracket the complete options block. These strips
+/// reuse its existing top/bottom edges and never allocate another row.
+fn footer_action_targets(ui: &egui::Ui, p: &Palette, tool: &mut BuildTool, s: &BuildSettings, empty: Rect) {
+    tool.ui.layout.footer_cells.clear();
+    let bounds = tool
+        .ui
+        .layout
+        .targets
+        .iter()
+        .filter(|(item, panel, _)| *panel == Panel::Footer && item.footer_column_item())
+        .map(|(_, _, rect)| *rect)
+        .reduce(|a, b| a.union(b));
+    let columns: Vec<_> = s
+        .layout
+        .in_panel(Panel::Footer)
+        .into_iter()
+        .filter(|item| item.footer_column_item())
+        .collect();
+    if let (Some(bounds), Some(&first), Some(&last)) = (bounds, columns.first(), columns.last()) {
+        for (target, after, top, bottom) in [
+            (first, false, bounds.top() - 2.0, bounds.top() + 8.0),
+            (last, true, bounds.bottom() - 8.0, bounds.bottom() + 2.0),
+        ] {
+            footer_drop_cell(
+                ui,
+                p,
+                tool,
+                FooterDropCell {
+                    rect: Rect::from_min_max(egui::pos2(ui.max_rect().left(), top), egui::pos2(ui.max_rect().right(), bottom)),
+                    column: FooterColumn::Left,
+                    row: FooterRow::Full(target),
+                    append: Some((Some(target), after)),
+                    actions_only: true,
+                },
+            );
+        }
+    } else if s.layout.in_panel(Panel::Footer).is_empty() {
+        footer_drop_cell(
+            ui,
+            p,
+            tool,
+            FooterDropCell {
+                rect: empty,
+                column: FooterColumn::Left,
+                row: FooterRow::Cells([None; 2]),
+                append: Some((None, false)),
+                actions_only: true,
+            },
+        );
+    }
+}
+
+/// Each column owns its vertical stack. A wrapped label or insertion in one
+/// column must not add a spacer or change the positions in its neighbour.
+fn footer_columns(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    mods: Mods,
+    rows: &[[Option<Item>; 2]],
+    before: Option<Item>,
+) {
+    let bounds = ui.max_rect();
+    let mut ends = [ui.cursor().min.y; 2];
+    let mut last = [None; 2];
+    let mut targets = Vec::new();
+    ui.columns(2, |columns| {
+        for (index, column) in columns.iter_mut().enumerate() {
+            let side = if index == 0 { FooterColumn::Left } else { FooterColumn::Right };
+            let x = if index == 0 {
+                bounds.left()..=bounds.center().x
+            } else {
+                bounds.center().x..=bounds.right()
+            };
+            for &cells in rows {
+                if let Some(item) = cells[index] {
+                    let top = column.cursor().min.y;
+                    row(column, p, tool, world, s, mods, item, Panel::Footer);
+                    targets.push(FooterDropCell {
+                        rect: Rect::from_min_max(egui::pos2(*x.start(), top), egui::pos2(*x.end(), column.cursor().min.y)),
+                        column: side,
+                        row: FooterRow::Cells(cells),
+                        append: None,
+                        actions_only: false,
+                    });
+                    last[index] = Some(item);
+                }
+            }
+            ends[index] = column.cursor().min.y;
+        }
+    });
+    let bottom = ui.cursor().min.y;
+    for (index, column) in [FooterColumn::Left, FooterColumn::Right].into_iter().enumerate() {
+        if bottom - ends[index] > 1.0 {
+            let mut cells = [None; 2];
+            cells[1 - index] = last[1 - index];
+            let (left, right) = if index == 0 {
+                (bounds.left(), bounds.center().x)
+            } else {
+                (bounds.center().x, bounds.right())
+            };
+            targets.push(FooterDropCell {
+                rect: Rect::from_min_max(egui::pos2(left, ends[index]), egui::pos2(right, bottom)),
+                column,
+                row: FooterRow::Cells(cells),
+                // An empty tail appends to this column's own last item, or
+                // before its following full-width row when the column is empty.
+                append: Some(last[index].map_or((before, false), |item| (Some(item), true))),
+                actions_only: false,
+            });
+        }
+    }
+    for cell in targets {
+        footer_drop_cell(ui, p, tool, cell);
+    }
+}
+
 /// The Snap item's three lines in Objects mode, Place on surface and its
-/// rotation under the choice (`snap_mode`).
+/// rotation under the choice in Legacy settings (`snap_mode`).
 const SNAP_ROWS_HEIGHT: f32 = 84.0;
+
+fn compact_snap(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+    use crate::build::SnapMode;
+    ui.spacing_mut().item_spacing.x = 2.0;
+    let mut enabled = s.snap_mode() != SnapMode::Off;
+    if widgets::checkbox(ui, p, &mut enabled, RichText::new(title(Item::Snap)).size(common::BODY)).changed() {
+        s.set_snap_enabled(enabled);
+    }
+    let preferred = s.snap_choice();
+    for (index, (mode, label)) in [
+        (SnapMode::Grid, aurora_i18n::tr!("build-snap-grid")),
+        (SnapMode::Objects, aurora_i18n::tr!("build-snap-objects")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        ui.label(RichText::new(if index == 0 { "-" } else { "/" }).size(common::BODY).color(p.muted));
+        let selected = enabled && preferred == mode;
+        let text = RichText::new(label).size(common::BODY);
+        let text = if selected {
+            text.strong().underline().color(p.violet_light)
+        } else {
+            text.color(p.muted)
+        };
+        let response = ui
+            .add(egui::Label::new(text).truncate().sense(egui::Sense::click()))
+            .on_hover_text(label)
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, ui.is_enabled(), selected, label));
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique(("build_snap_choice", index)), response.rect));
+        #[cfg(not(test))]
+        let _ = index;
+        if response.clicked() {
+            s.set_snap_mode(mode);
+            ui.ctx().request_repaint();
+        }
+    }
+}
 
 /// "Snap": off, to the grid or to objects, one at a time
 /// (`BuildSettings::snap_mode`); under it in Objects mode, "Place on
@@ -249,10 +696,12 @@ fn snap_rows(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
             }
         },
     );
-    // Place on surface goes with the object snap
-    if s.snap_mode() != crate::build::SnapMode::Objects {
-        return;
+    if s.snap_mode() == crate::build::SnapMode::Objects {
+        snap_placement(ui, p, tool, world, s);
     }
+}
+
+fn snap_placement(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &mut BuildSettings) {
     ui.allocate_ui_with_layout(
         Vec2::new(ui.available_width(), 24.0),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -324,7 +773,13 @@ pub(super) fn control(
     s: &mut BuildSettings,
     mods: Mods,
     item: Item,
+    panel: Panel,
 ) {
+    if let Some(mode) = manipulation_mode(item) {
+        let size = Vec2::new(ui.available_width(), ui.available_height().max(widgets::TEXT_BUTTON_HEIGHT));
+        compact::manipulation_choice(ui, p, tool, world, s, mods, mode, size);
+        return;
+    }
     if item == Item::Manipulators {
         compact::manipulation(ui, p, tool, world, s, mods);
         return;
@@ -334,7 +789,11 @@ pub(super) fn control(
         return;
     }
     if item == Item::Snap {
-        snap_mode(ui, p, tool, world, s);
+        if s.legacy_window {
+            snap_mode(ui, p, tool, world, s);
+        } else {
+            compact_snap(ui, p, s);
+        }
         return;
     }
     let mut value = match item {
@@ -350,16 +809,58 @@ pub(super) fn control(
         Item::Surrounding => s.select_surrounding,
         Item::LandGroup => s.rez_under_land_group,
         Item::FollowEdit => s.follow_edit_object,
+        Item::WheelOnHover => s.wheel_on_hover,
         _ => return,
     };
-    let navigation = matches!(item, Item::Face | Item::Linked);
-    let width = if navigation {
-        (ui.available_width() - 79.0).max(1.0)
+    let compact_footer = panel == Panel::Footer && !s.legacy_window;
+    let width = ui.available_width();
+    let height = if compact_footer {
+        ui.available_height().max(widgets::TEXT_BUTTON_HEIGHT)
     } else {
-        ui.available_width()
+        22.0
     };
-    ui.allocate_ui_with_layout(Vec2::new(width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-        if widgets::checkbox(ui, p, &mut value, RichText::new(title(item)).size(common::BODY)).changed() {
+    // Aurora: "Edit linked parts", once on, reads "Link n" with its ◄ ►,
+    // in place of the footer's link selector (the human's trial,
+    // 2026-11-22); the row keeps its height
+    let link = (item == Item::Linked && value && !s.legacy_window).then(|| tool.selected_link_number(world));
+    ui.allocate_ui_with_layout(Vec2::new(width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_width(width);
+        let label = match link {
+            Some(number) => aurora_i18n::tr!(
+                "build-compact-link-value",
+                number = number.map_or_else(|| "-".to_string(), |n| n.to_string())
+            ),
+            None => title(item).to_string(),
+        };
+        let response = widgets::checkbox(ui, p, &mut value, RichText::new(label).size(common::BODY));
+        if let Some(number) = link {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for next in [true, false] {
+                    let arrow = widgets::action_button_if(
+                        ui,
+                        p,
+                        if next { "caret-right-filled" } else { "caret-left-filled" },
+                        "",
+                        widgets::ActionKind::Flat,
+                        Vec2::splat(LINK_ARROW),
+                        number.is_some(),
+                    )
+                    .on_hover_text(if next {
+                        aurora_i18n::tr!("build-compact-next")
+                    } else {
+                        aurora_i18n::tr!("build-compact-previous")
+                    });
+                    #[cfg(test)]
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(egui::Id::unique(("build_link_arrow", next)), arrow.rect));
+                    if arrow.clicked() {
+                        tool.select_next_link(world, s, next, mods.shift);
+                    }
+                }
+            });
+        }
+        if response.changed() {
             match item {
                 Item::Face => tool.set_edit_mode(world, s, if value { EditMode::Face } else { EditMode::Move }),
                 Item::Linked => tool.set_edit_linked(world, s, value),
@@ -373,46 +874,217 @@ pub(super) fn control(
                 Item::Surrounding => s.select_surrounding = value,
                 Item::LandGroup => s.rez_under_land_group = value,
                 Item::FollowEdit => s.follow_edit_object = value,
+                Item::WheelOnHover => s.wheel_on_hover = value,
                 _ => {}
             }
         }
     });
-    if navigation {
-        // Reserve the same 76 pixels when off; its row never changes height.
-        let rect = ui.allocate_exact_size(Vec2::new(76.0, 22.0), egui::Sense::hover()).0;
-        if value {
-            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    let enabled = !tool.selection.is_empty();
-                    if compact::icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("build-compact-previous"), enabled).clicked() {
-                        if item == Item::Linked {
-                            tool.select_next_link(world, s, false, mods.shift);
-                        } else {
-                            tool.select_next_part(world, s, false, mods.shift);
-                        }
-                    }
-                    let number = if item == Item::Face {
-                        tool.selected_face_numbers(world)
-                    } else {
-                        tool.selected_link_number(world).map_or_else(|| "—".into(), |n| n.to_string())
-                    };
-                    ui.add_sized(
-                        [30.0, 22.0],
-                        egui::Label::new(RichText::new(&number).size(common::SMALL).color(p.violet_pale)).truncate(),
-                    )
-                    .on_hover_text(&number);
-                    if compact::icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("build-compact-next"), enabled).clicked() {
-                        if item == Item::Linked {
-                            tool.select_next_link(world, s, true, mods.shift);
-                        } else {
-                            tool.select_next_part(world, s, true, mods.shift);
-                        }
-                    }
-                });
-            });
+}
+
+/// The ◄ ► of the face selector.
+pub(super) const NAV_ARROW: f32 = widgets::TEXT_BUTTON_HEIGHT;
+/// The ◄ ► of "Link n" in its option row.
+const LINK_ARROW: f32 = 18.0;
+/// Global / Local / Reference and the face buttons beside them.
+pub(super) const FOOTER_BUTTON: f32 = 26.0;
+/// The face buttons at their full size, with their arrows.
+pub(super) const FACE_SELECTOR: f32 = 2.0 * NAV_ARROW + 4.0 + crate::build::face_buttons::FACE_BUTTONS as f32 * (FOOTER_BUTTON + 2.0) - 2.0;
+
+/// The footer's face selector: ◄, the face buttons, ►.
+pub(super) fn face_navigation(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    edit_linked: bool,
+    mods: Mods,
+    width: f32,
+) {
+    // the face arrows step faces wherever the face buttons pick them
+    let enabled = !tool.selection.is_empty() && tool.face_picking();
+    // as tall as Global / Local / Reference beside them (the human's
+    // request, 2026-11-22)
+    let height = FOOTER_BUTTON;
+    let response = ui.allocate_ui_with_layout(Vec2::new(width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        ui.spacing_mut().interact_size.y = widgets::TEXT_BUTTON_HEIGHT;
+        for next in [false, true] {
+            if next {
+                face_buttons(
+                    ui,
+                    p,
+                    tool,
+                    world,
+                    mods,
+                    Vec2::new((width - 2.0 * NAV_ARROW - 4.0).max(1.0), height),
+                );
+            }
+            if widgets::action_button_if(
+                ui,
+                p,
+                if next { "caret-right-filled" } else { "caret-left-filled" },
+                "",
+                widgets::ActionKind::Flat,
+                Vec2::new(NAV_ARROW, height),
+                enabled,
+            )
+            .on_hover_text(if next {
+                aurora_i18n::tr!("build-compact-next")
+            } else {
+                aurora_i18n::tr!("build-compact-previous")
+            })
+            .clicked()
+            {
+                tool.select_next_face(world, edit_linked, next, mods.shift);
+            }
+        }
+    });
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::unique(("build_part_navigation", Item::Face)), response.response.rect));
+    #[cfg(not(test))]
+    let _ = response;
+}
+
+/// The face buttons 0 to 8 (`build::face_buttons`), in place of the face
+/// number between ◄ ►, in both window styles: greyed in Align, under the
+/// other tools and for a face no selected prim has.
+pub(super) fn face_buttons(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, mods: Mods, size: Vec2) {
+    use crate::build::face_buttons::FaceButton;
+    let active = tool.face_picking() && !tool.selection.is_empty();
+    let states = tool.face_buttons(world).map(|state| match state {
+        _ if !active => widgets::IndexState::Disabled,
+        FaceButton::Absent => widgets::IndexState::Disabled,
+        FaceButton::Off => widgets::IndexState::Off,
+        FaceButton::Mixed => widgets::IndexState::Mixed,
+        FaceButton::On => widgets::IndexState::On,
+    });
+    let (clicked, rects) = widgets::index_buttons(ui, p, size, &states, |face| {
+        aurora_i18n::tr!("build-face-button", number = face.to_string())
+    });
+    if let Some(face) = clicked {
+        tool.pick_face_button(world, face as u8, mods.shift);
+    }
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("build_face_buttons"), rects));
+    #[cfg(not(test))]
+    let _ = rects;
+}
+
+/// Invert and All after the face buttons (the human's request,
+/// 2026-11-22), in both window styles, active where the buttons are:
+/// `BuildTool::invert_faces` and `select_all_faces`.
+pub(super) fn face_actions(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, size: Vec2) {
+    let enabled = tool.face_picking() && !tool.selection.is_empty();
+    for (invert, icon, tip) in [
+        (true, "contrast-filled", aurora_i18n::tr!("build-face-invert")),
+        (false, "select-all", aurora_i18n::tr!("build-face-all")),
+    ] {
+        let response = widgets::action_button_if(ui, p, icon, "", widgets::ActionKind::Flat, size, enabled).on_hover_text(tip);
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique(("build_face_action", invert)), response.rect));
+        if response.clicked() {
+            if invert {
+                tool.invert_faces(world);
+            } else {
+                tool.select_all_faces(world);
+            }
         }
     }
+}
+
+/// The right-click menu of a bar button: its icon, its label or both.
+fn display_menu(response: &egui::Response, p: &Palette, s: &mut BuildSettings, item: Item) {
+    use crate::build::layout::ButtonDisplay;
+    crate::ui::menu::context_menu(response, p, |ui| {
+        let current = s.layout.display(item);
+        for (display, glyph, label) in [
+            (ButtonDisplay::Icon, "photo-filled", aurora_i18n::tr!("build-layout-button-icon")),
+            (ButtonDisplay::Label, "typography", aurora_i18n::tr!("build-layout-button-label")),
+            (
+                ButtonDisplay::Both,
+                "list-details-filled",
+                aurora_i18n::tr!("build-layout-button-both"),
+            ),
+        ] {
+            if crate::ui::menu::check(ui, p, glyph, label, current == display, true) {
+                s.layout.set_display(item, display);
+            }
+        }
+    });
+}
+
+pub(super) fn navigation(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    mods: Mods,
+    tools: bool,
+) {
+    let bar = if tools { Panel::Tools } else { Panel::Navigation };
+    let items = s.layout.in_panel(bar);
+    let start = ui.cursor().min;
+    if items.is_empty() {
+        // An empty bar shows only while a button is carried, as the place
+        // it can be dropped.
+        if !bar_drop_open(tool, s, bar) {
+            return;
+        }
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), egui::Sense::hover());
+        widgets::organization_drop_target(ui, p, rect.shrink(1.0), None, None);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            aurora_i18n::tr!("build-layout-drop-here"),
+            egui::FontId::proportional(common::SMALL),
+            p.muted,
+        );
+    } else {
+        // Each button takes the room its icon or label wants; what is left
+        // is shared evenly (icons alone: equal columns, as before), and a
+        // bar too narrow for its labels narrows each button in proportion.
+        let gap = ui.spacing().item_spacing.x;
+        let wants: Vec<f32> = items
+            .iter()
+            .map(|item| compact::navigation_button_width(ui, title(*item), s.layout.display(*item)))
+            .collect();
+        let room = (ui.available_width() - gap * (items.len() as f32 - 1.0)).max(1.0);
+        let total: f32 = wants.iter().sum();
+        let widths: Vec<f32> = if total >= room {
+            wants.iter().map(|want| want * room / total).collect()
+        } else {
+            let extra = (room - total) / items.len() as f32;
+            wants.iter().map(|want| want + extra).collect()
+        };
+        let (line, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), egui::Sense::hover());
+        let mut left = line.left();
+        for (item, width) in items.into_iter().zip(widths) {
+            let cell = Rect::from_min_size(egui::pos2(left, line.top()), Vec2::new(width, line.height()));
+            let mut column = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(("build-bar-button", item))
+                    .max_rect(cell)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            row(&mut column, p, tool, world, s, mods, item, bar);
+            left += width + gap;
+        }
+    }
+    let end = ui.cursor().min.y.max(start.y + 30.0);
+    tool.ui
+        .layout
+        .zones
+        .push((bar, Rect::from_min_max(start, egui::pos2(ui.max_rect().right(), end))));
+}
+
+/// Whether the bar `bar` is drawn: it has buttons, or one is carried while
+/// the window is being organized and it would take it.
+pub(super) fn bar_drop_open(tool: &BuildTool, s: &BuildSettings, bar: Panel) -> bool {
+    !s.layout.in_panel(bar).is_empty()
+        || (tool.ui.layout.organizing && tool.ui.layout.drag.is_some_and(|item| item.navigation() && item.accepts(bar)))
 }
 
 pub(super) fn panel(
@@ -424,48 +1096,149 @@ pub(super) fn panel(
     mods: Mods,
     panel: Panel,
 ) {
+    if panel.bar() {
+        navigation(ui, p, tool, world, s, mods, panel == Panel::Tools);
+        return;
+    }
     let start = ui.cursor().min;
     if panel == Panel::Hidden && s.layout.in_panel(panel).is_empty() {
+        let hint = if tool.ui.layout.drag.is_some_and(|item| item.accepts(panel)) {
+            aurora_i18n::tr!("build-layout-drop-hidden")
+        } else {
+            ""
+        };
         ui.add_sized(
             [ui.available_width(), 30.0],
-            egui::Label::new(
-                egui::RichText::new(aurora_i18n::tr!("build-layout-drop-hidden"))
-                    .size(common::SMALL)
-                    .color(p.muted),
-            ),
+            egui::Label::new(egui::RichText::new(hint).size(common::SMALL).color(p.muted)),
         );
     }
-    for item in s.layout.in_panel(panel) {
-        row(ui, p, tool, world, s, mods, item, panel);
+    let items = s.layout.in_panel(panel);
+    if panel == Panel::Footer {
+        ui.spacing_mut().item_spacing.y = 1.0;
+        tool.ui.layout.footer_cells.clear();
+        let rows = s.layout.footer_rows();
+        // An empty footer still needs a destination, but a populated footer
+        // uses its existing cells and row edges without a trailing blank row.
+        if tool.ui.layout.organizing && rows.is_empty() {
+            let top = ui.cursor().min;
+            ui.allocate_space(Vec2::new(ui.available_width(), widgets::TEXT_BUTTON_HEIGHT));
+            footer_drop_row(ui, p, tool, top, FooterRow::Cells([None; 2]), s.layout.footer_actions_top());
+        }
+        let mut columns = Vec::new();
+        for footer_row in rows {
+            match footer_row {
+                FooterRow::Full(item) => {
+                    if !columns.is_empty() {
+                        footer_columns(ui, p, tool, world, s, mods, &columns, Some(item));
+                        columns.clear();
+                    }
+                    if !s.legacy_window && item == Item::Actions {
+                        ui.add_space(compact::ACTION_GAP);
+                    }
+                    let top = ui.cursor().min;
+                    row(ui, p, tool, world, s, mods, item, panel);
+                    footer_drop_row(ui, p, tool, top, footer_row, s.layout.footer_actions_top());
+                }
+                FooterRow::Cells(cells) => columns.push(cells),
+            }
+        }
+        if !columns.is_empty() {
+            footer_columns(ui, p, tool, world, s, mods, &columns, None);
+        }
+        tool.ui.layout.footer_height = Some(ui.cursor().min.y - start.y + 12.0);
+    } else {
+        for &item in &items {
+            row(ui, p, tool, world, s, mods, item, panel);
+        }
     }
     let end = ui.cursor().min.y.max(start.y + 30.0);
     let rect = Rect::from_min_max(start, egui::pos2(ui.max_rect().right(), end));
-    if tool.ui.layout.organizing && panel != Panel::Hidden && s.layout.in_panel(panel).is_empty() {
+    if tool.ui.layout.organizing && tool.ui.layout.drag == Some(Item::Actions) && panel == Panel::Footer {
+        footer_action_targets(ui, p, tool, s, rect);
+    }
+    if tool.ui.layout.organizing
+        && panel != Panel::Footer
+        && items.is_empty()
+        && tool.ui.layout.drag.is_some_and(|item| item.accepts(panel))
+    {
+        widgets::organization_drop_target(
+            ui,
+            p,
+            rect.shrink(1.0),
+            (panel != Panel::Hidden).then(|| aurora_i18n::tr!("build-layout-drop-here")),
+            None,
+        );
+    }
+    if tool.ui.layout.organizing && panel == Panel::Settings && s.layout.in_panel(panel).is_empty() {
         ui.allocate_space(Vec2::new(rect.width(), 30.0));
     }
     tool.ui.layout.zones.push((panel, rect));
 }
 
-pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
-    if !tool.ui.layout.open || !tool.open {
+/// The settings panel's width where it has the room.
+pub(super) const SETTINGS_WIDTH: f32 = 340.0;
+/// Its frame draws its border around that width.
+const SETTINGS_BORDER: f32 = 2.0;
+/// The room the panel takes at that width, in a window outside.
+pub(super) const SETTINGS_ROOM: f32 = SETTINGS_WIDTH + SETTINGS_BORDER;
+
+/// Where the settings panel is drawn.
+#[derive(Clone, Copy)]
+pub(super) enum Beside {
+    /// Beside the build window, in the viewer's window.
+    Window,
+    /// In the room the build window's own window keeps at its right,
+    /// outside the viewer's (`widgets::side_room_outside`): None until the
+    /// system has made it.
+    Outside(Option<egui::Rect>),
+}
+
+/// Whether the settings panel is up: the room its window outside keeps
+/// for it follows this.
+pub(super) fn settings_shown(ctx: &egui::Context, tool: &BuildTool) -> bool {
+    tool.ui.layout.open && tool.open && !widgets::floater_minimized(ctx, super::INSPECTOR_ID)
+}
+
+pub(super) fn settings(
+    ctx: &egui::Context,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    mods: Mods,
+    beside: Beside,
+) {
+    if !settings_shown(ctx, tool) {
         return;
     }
-    let Some(anchor) = ctx.memory(|m| m.area_rect(egui::Id::unique(super::INSPECTOR_ID))) else {
-        return;
+    let (work, x, width, bottom) = match beside {
+        Beside::Window => {
+            let Some(anchor) = ctx.memory(|m| m.area_rect(egui::Id::unique(super::INSPECTOR_ID))) else {
+                return;
+            };
+            // Follow the editor in the same movement room: floating bars leave space
+            // outside the smaller first-launch work area too.
+            let work = crate::ui::layout::move_area(ctx);
+            let right = anchor.center().x <= work.center().x + 1.0;
+            let available = if right {
+                work.right() - anchor.right()
+            } else {
+                anchor.left() - work.left()
+            } - 8.0;
+            let width = available.clamp(160.0, SETTINGS_WIDTH).min(work.width());
+            let x = if right { anchor.right() + 8.0 } else { anchor.left() - width - 8.0 }
+                .clamp(work.left(), (work.right() - width).max(work.left()));
+            (work, x, width, anchor.bottom().min(work.bottom()))
+        }
+        Beside::Outside(None) => return,
+        // the room is the panel's: as wide and as tall as it at most
+        Beside::Outside(Some(room)) => (
+            room,
+            room.left(),
+            (room.width() - SETTINGS_BORDER).min(SETTINGS_WIDTH),
+            room.bottom(),
+        ),
     };
-    // Follow the editor in the same movement room: floating bars leave space
-    // outside the smaller first-launch work area too.
-    let work = crate::ui::layout::move_area(ctx);
-    let right = anchor.center().x <= work.center().x + 1.0;
-    let available = if right {
-        work.right() - anchor.right()
-    } else {
-        anchor.left() - work.left()
-    } - 8.0;
-    let width = available.clamp(160.0, 340.0).min(work.width());
-    let x =
-        if right { anchor.right() + 8.0 } else { anchor.left() - width - 8.0 }.clamp(work.left(), (work.right() - width).max(work.left()));
-    let bottom = anchor.bottom().min(work.bottom());
     let area = egui::Area::new(egui::Id::unique("construction-settings"))
         .order(egui::Order::Middle)
         .pivot(egui::Align2::LEFT_BOTTOM)
@@ -503,8 +1276,9 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                             Item::Surrounding,
                             Item::LandGroup,
                             Item::FollowEdit,
+                            Item::WheelOnHover,
                         ] {
-                            control(ui, p, tool, world, s, mods, item);
+                            control(ui, p, tool, world, s, mods, item, Panel::Settings);
                         }
                         widgets::divider(ui, p);
                         common::section(ui, p, aurora_i18n::tr!("build-layout-ruler"));
@@ -515,6 +1289,9 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                         widgets::divider(ui, p);
                         common::section(ui, p, aurora_i18n::tr!("build-layout-handles"));
                         floaters::handle_controls(ui, p, s);
+                        widgets::divider(ui, p);
+                        common::section(ui, p, aurora_i18n::tr!("build-layout-clicks"));
+                        floaters::click_controls(ui, p, s);
                         return;
                     }
                     if tool.ui.layout.organizing {
@@ -553,6 +1330,22 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                                 tool.ui.notecards.message.clear();
                             }
                         }
+                        if widgets::action_button(
+                            ui,
+                            p,
+                            "restore",
+                            aurora_i18n::tr!("ui-options-reset-all"),
+                            widgets::ActionKind::Flat,
+                            Vec2::new(ui.available_width(), 28.0),
+                        )
+                        .clicked()
+                        {
+                            s.layout = Default::default();
+                            tool.ui.layout.drag = None;
+                            tool.ui.layout.footer_height = None;
+                            tool.ui.notecards.pending_load = None;
+                            tool.ui.notecards.message.clear();
+                        }
                         widgets::divider(ui, p);
                         common::section(ui, p, aurora_i18n::tr!("build-layout-settings"));
                     }
@@ -573,6 +1366,18 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                     .clicked()
                     {
                         tool.ui.layout.organizing = !tool.ui.layout.organizing;
+                    }
+                    // Surface placement stays available in settings without
+                    // changing the compact Snap row in the editable columns.
+                    if s.snap_mode() == crate::build::SnapMode::Objects {
+                        widgets::divider(ui, p);
+                        common::section(ui, p, aurora_i18n::tr!("build-snap-placement-settings"));
+                        ui.scope(|ui| {
+                            if tool.ui.layout.organizing {
+                                ui.disable();
+                            }
+                            snap_placement(ui, p, tool, world, s);
+                        });
                     }
                     widgets::divider(ui, p);
                     common::section(ui, p, aurora_i18n::tr!("build-layout-ruler"));
@@ -601,6 +1406,15 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                         }
                         floaters::handle_controls(ui, p, s);
                     });
+                    widgets::divider(ui, p);
+                    common::section(ui, p, aurora_i18n::tr!("build-layout-clicks"));
+                    ui.scope(|ui| {
+                        if tool.ui.layout.organizing {
+                            ui.visuals_mut().disabled_alpha = 1.0;
+                            ui.disable();
+                        }
+                        floaters::click_controls(ui, p, s);
+                    });
                     if !tool.ui.notecards.message.is_empty() {
                         common::small(ui, p, &tool.ui.notecards.message);
                     }
@@ -611,34 +1425,67 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
 
 pub(super) fn finish(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: &mut BuildSettings) {
     if let Some(item) = tool.ui.layout.drag {
+        let demo_hold = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 700
+            && ctx.data(|data| data.get_temp::<Item>(egui::Id::unique("build-demo-layout-drag"))) == Some(item);
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
         if let Some(pos) = ctx.pointer_interact_pos() {
             widgets::organization_drag_preview(ctx, p, egui::Id::unique("build-layout-drag"), title(item));
-            if ctx.input(|i| i.pointer.any_released()) {
-                if let Some((target, panel, rect)) = tool
+            if item == Item::Actions
+                && tool
+                    .ui
+                    .layout
+                    .zones
+                    .iter()
+                    .any(|(panel, rect)| *panel == Panel::Footer && rect.contains(pos))
+                && !tool
+                    .ui
+                    .layout
+                    .footer_cells
+                    .iter()
+                    .any(|cell| cell.accepts(item) && cell.rect.contains(pos))
+            {
+                ctx.set_cursor_icon(egui::CursorIcon::NotAllowed);
+            }
+            if !demo_hold && ctx.input(|i| i.pointer.any_released()) {
+                if let Some(cell) = tool
+                    .ui
+                    .layout
+                    .footer_cells
+                    .iter()
+                    .find(|cell| cell.accepts(item) && cell.rect.contains(pos))
+                    .copied()
+                {
+                    let (target, after) = cell.destination(item, pos);
+                    s.layout.place_in_footer(item, cell.column, target, after);
+                } else if let Some((target, panel, rect)) = tool
                     .ui
                     .layout
                     .targets
                     .iter()
                     .rev()
-                    .find(|(target, panel, rect)| *target != item && item.accepts(*panel) && rect.contains(pos))
+                    .find(|(target, panel, rect)| *panel != Panel::Footer && *target != item && item.accepts(*panel) && rect.contains(pos))
                     .copied()
                 {
-                    s.layout.place(item, panel, Some(target), pos.y >= rect.center().y);
+                    let after = if panel.bar() {
+                        pos.x >= rect.center().x
+                    } else {
+                        pos.y >= rect.center().y
+                    };
+                    s.layout.place(item, panel, Some(target), after);
                 } else if let Some((panel, _)) = tool
                     .ui
                     .layout
                     .zones
                     .iter()
                     .rev()
-                    .find(|(panel, rect)| item.accepts(*panel) && rect.contains(pos))
+                    .find(|(panel, rect)| *panel != Panel::Footer && item.accepts(*panel) && rect.contains(pos))
                 {
                     s.layout.place(item, *panel, None, false);
                 }
                 tool.ui.layout.drag = None;
             }
         }
-        if !ctx.input(|i| i.pointer.primary_down()) {
+        if !demo_hold && !ctx.input(|i| i.pointer.primary_down()) {
             tool.ui.layout.drag = None;
         }
     }

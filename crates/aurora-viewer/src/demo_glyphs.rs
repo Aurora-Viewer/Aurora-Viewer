@@ -41,7 +41,7 @@ pub const SAMPLES: &[Sample] = &[
     Sample {
         title: "★彡 ♛ Queen ♛ 彡★",
         display_name: "꧁༺ Ⓝⓞⓥⓐ ༻꧂",
-        chat: "Symbols: ░▒▓█ ╔═╗ → ⇒ ➳ ✞ ☠ ⚡ ⎝⎠ ◆ ⠁⠃ ①② ⅓ ™ ∞ ✿ ❀ ♪",
+        chat: "Symbols: ░▒▓█ ╔═╗ → ⇒ ➳ ♱ ♰ ✞ ☠ ⚡ ⎝⎠ ◆ ⠁⠃ ①② ⅓ ™ ∞ ✿ ❀ ♪",
     },
     // already drawn by the embedded fonts: must not change
     Sample {
@@ -61,8 +61,10 @@ pub const SAMPLES: &[Sample] = &[
     },
     Sample {
         title: "ᗩᑌᖇOᖇᗩ ᏔᎾᏞᎰ",
-        display_name: "ᴀᴜʀᴏʀᴀ ωσℓƒ ツ",
-        chat: "Other scripts: नमस्ते ॐ · สวัสดี ๑ · ஐ · ༒ · ꋬ · ጀ · ᚱᚢᚾ · ᬅᬓ",
+        display_name: "ᴀᴜʀᴏʀᴀ ᴄᴅᴇꜰᴊᴋᴏᴘꜱᴜᴠᴡᴢ ᴥ",
+        // 𐙚 𖤐 ꨄ: Linux Noto files only, squares on Windows
+        // (`fallback::NOT_ON_WINDOWS`)
+        chat: "Other scripts: ಠ ୨୧ অ અ ਅ അ అ අ · 𓆩 ꕤ ᥫ 𐙚 𖤐 ꨄ · नमस्ते ॐ · สวัสดี ๑ · ஐ · ༒ · ꋬ · ጀ · ᚱᚢᚾ · ᬅᬓ",
     },
     Sample {
         title: "🐺 Wolf Pack 🌙",
@@ -207,6 +209,7 @@ pub fn events(mode: Mode) -> Vec<NetEvent> {
             owner_id: Uuid::nil(),
             source_type: aurora_net::ChatSourceType::Agent,
             chat_type: aurora_net::ChatType::Normal,
+            region: Some(crate::demo::HANDLE),
             position: Vec3::ZERO,
             message: sample.chat.into(),
         }));

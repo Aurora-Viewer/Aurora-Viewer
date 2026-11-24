@@ -35,6 +35,7 @@ pub(super) fn select(settings: &mut Settings, form: &mut LoginForm, index: usize
     form.error = None;
     form.tos_message = None;
     form.critical_message = None;
+    form.forget_next_server();
 }
 
 fn snapshot(ctx: &Context, layer: LayerId, rect: Rect, action: Rect) -> derez::Snapshot {
@@ -123,7 +124,8 @@ pub fn show(
         }
         return LoginAction::None;
     }
-    if form.error.is_some() || form.show_mfa || form.tos_message.is_some() || form.critical_message.is_some() {
+    if form.error.is_some() || form.show_mfa || form.tos_message.is_some() || form.critical_message.is_some() || form.next_server.is_some()
+    {
         form.editing = true;
     }
     let first_account = form.accounts.is_empty();
@@ -144,12 +146,7 @@ pub fn show(
     // answer (success, error, MFA or terms) the identity typed in the Add
     // form is the one sent, challenged and saved, never a saved card's.
     if !form.editing && !form.adding && !form.busy && form.selection_shown_for.as_ref() != Some(&current_key) {
-        let index = if !paginated && form.selection_shown_for.is_none() && form.pending_connect.is_none() && !form.busy {
-            (!visible.is_empty()).then_some(visible.len() / 2)
-        } else {
-            form.accounts.iter().position(|account| account.key() == current_key)
-        };
-        if let Some(index) = index.or_else(|| (!visible.is_empty()).then_some(visible.len() / 2)) {
+        if let Some(index) = selection_to_show(settings, form).or_else(|| (!visible.is_empty()).then_some(visible.len() / 2)) {
             if index != index_of(settings, form).unwrap_or(usize::MAX) {
                 select(settings, form, index);
                 current_key = form.accounts[index].key();
@@ -176,6 +173,7 @@ pub fn show(
     let mut arrow_direction = 0;
     let mut centred = None;
     let enter_shortcut = !grids_open
+        && !form.signup_open
         && !egui::Popup::is_any_open(&ctx)
         && ctx.input(|i| i.modifiers == egui::Modifiers::NONE && i.key_pressed(egui::Key::Enter));
     let available_height = (screen.height() - if first_account { 84.0 } else { 148.0 }).max(100.0);
@@ -621,20 +619,7 @@ pub fn show(
                     )
                     .clicked()
                     {
-                        form.add_return = Some((settings.login_uri(), settings.username.trim().to_lowercase()));
-                        form.adding = true;
-                        settings.username.clear();
-                        settings.remember_username = true;
-                        settings.remember_password = false;
-                        settings.mfa_hash.clear();
-                        form.password.clear();
-                        form.stored = None;
-                        form.stored_for = None;
-                        form.mfa_authorization = None;
-                        form.mfa_for = None;
-                        form.remember_mfa = false;
-                        form.editing = true;
-                        form.focused = false;
+                        begin_adding(settings, form);
                     }
                 });
             });
@@ -648,10 +633,11 @@ pub fn show(
             account.apply(settings);
         }
         if std::env::var_os("AURORA_DEMO").is_none() {
-            form.accounts = crate::login_accounts::replace(&previous, account);
+            crate::login_accounts::replace(&mut form.accounts, &previous, account);
         }
     }
     if !grids_open
+        && !form.signup_open
         && !form.busy
         && !form.editing
         && !form.managing
@@ -746,11 +732,43 @@ pub fn show(
     action
 }
 
+/// "Add an account": an empty form over the cards, which returns to the
+/// selected card when cancelled.
+pub(super) fn begin_adding(settings: &mut Settings, form: &mut LoginForm) {
+    form.add_return = Some((settings.login_uri(), settings.username.trim().to_lowercase()));
+    form.adding = true;
+    settings.username.clear();
+    settings.remember_username = true;
+    settings.remember_password = false;
+    settings.mfa_hash.clear();
+    form.password.clear();
+    form.stored = None;
+    form.stored_for = None;
+    form.mfa_authorization = None;
+    form.mfa_for = None;
+    form.remember_mfa = false;
+    form.editing = true;
+    form.focused = false;
+}
+
 fn reveal(form: &mut LoginForm, index: usize, per_page: usize) {
     let count = form.accounts.len();
     if count > 0 && (index + count - form.page) % count >= per_page {
         form.page = if index < form.page { index } else { index + 1 - per_page };
     }
+}
+
+/// The card to select: when the cards first show, the account of the last
+/// login (FSPanelLogin::addUsersToCombo selects UserLoginInfo,
+/// indra/newview/fspanellogin.cpp), in every layout, never the last account
+/// added; then, or when that account is gone, the one the fields name.
+fn selection_to_show(settings: &Settings, form: &LoginForm) -> Option<usize> {
+    let first = form.selection_shown_for.is_none() && form.pending_connect.is_none();
+    first
+        .then_some(settings.last_login.as_ref())
+        .flatten()
+        .and_then(|last| form.accounts.iter().position(|account| account.key() == *last))
+        .or_else(|| index_of(settings, form))
 }
 
 fn index_of(settings: &Settings, form: &LoginForm) -> Option<usize> {
@@ -1042,6 +1060,48 @@ mod tests {
     }
 
     #[test]
+    fn the_last_login_is_selected_and_enter_logs_it_in_on_one_page_and_in_the_carousel() {
+        // The fields name the last account added (left by browsing before
+        // quitting); the last login is neither that one nor the middle card.
+        for (count, last) in [(1, 0), (2, 0), (3, 0), (3, 2), (4, 1), (8, 5)] {
+            let ctx = Context::default();
+            let (mut settings, mut form) = fixture(count);
+            settings.username = format!("synthetic-{}", count - 1);
+            settings.last_login = Some(form.accounts[last].key());
+            let mut output = draw_fixture(&ctx, &mut settings, &mut form, 0, vec![]);
+            for frame in 1..8 {
+                output = draw_fixture(&ctx, &mut settings, &mut form, frame, vec![]);
+            }
+            assert_eq!(settings.username, format!("synthetic-{last}"), "{count} cards");
+            if count > 3 {
+                assert_centred(&output, &form, last);
+            }
+            draw_fixture(&ctx, &mut settings, &mut form, 8, vec![key(egui::Key::Enter)]);
+            assert_eq!(form.pending_connect, Some(last), "Enter logs in the last login ({count} cards)");
+            assert_eq!(settings.username, format!("synthetic-{last}"));
+        }
+    }
+
+    #[test]
+    fn a_removed_last_login_falls_back_and_browsing_is_not_pulled_back() {
+        let ctx = Context::default();
+        let (mut settings, mut form) = fixture(3);
+        settings.username = "synthetic-2".into();
+        settings.last_login = Some((settings.login_uri(), "synthetic-removed".into()));
+        for frame in 0..8 {
+            draw_fixture(&ctx, &mut settings, &mut form, frame, vec![]);
+        }
+        assert_eq!(settings.username, "synthetic-2", "the account the fields name");
+        settings.last_login = Some(form.accounts[0].key());
+        draw_fixture(&ctx, &mut settings, &mut form, 8, vec![key(egui::Key::ArrowLeft)]);
+        for frame in 9..12 {
+            draw_fixture(&ctx, &mut settings, &mut form, frame, vec![]);
+        }
+        assert_eq!(settings.username, "synthetic-1", "a browsed card stays selected");
+        assert!(form.pending_connect.is_none());
+    }
+
+    #[test]
     fn three_or_fewer_cards_stay_fixed_for_keys_wheel_and_drag() {
         for count in 1..=3 {
             let ctx = Context::default();
@@ -1054,7 +1114,8 @@ mod tests {
                 .map(|index| text_rect(&output, &format!("synthetic-{index}")).unwrap())
                 .collect::<Vec<_>>();
             draw_fixture(&ctx, &mut settings, &mut form, 8, vec![key(egui::Key::ArrowRight)]);
-            assert_eq!(settings.username, format!("synthetic-{}", (count - 1).min(count / 2 + 1)));
+            // from the account the fields name (synthetic-0) to its neighbour
+            assert_eq!(settings.username, format!("synthetic-{}", (count - 1).min(1)));
             let at = form.motion.viewport.left_top() + Vec2::new(120.0, 45.0);
             draw_fixture(
                 &ctx,
@@ -1249,6 +1310,8 @@ mod tests {
     fn hover_lights_the_surface_without_moving_or_selecting_it() {
         let ctx = Context::default();
         let (mut settings, mut form) = fixture(3);
+        // the hovered card (synthetic-0) is not the selected one
+        settings.last_login = Some(form.accounts[1].key());
         let mut before = draw_fixture(&ctx, &mut settings, &mut form, 0, vec![]);
         for frame in 1..8 {
             before = draw_fixture(&ctx, &mut settings, &mut form, frame, vec![]);
@@ -1758,7 +1821,7 @@ mod tests {
     #[test]
     fn wide_login_restores_information_and_keeps_actions_near_growing_cards() {
         let mut spacing = Vec::new();
-        for size in [Vec2::new(1600.0, 900.0), Vec2::new(2560.0, 1440.0)] {
+        for size in [Vec2::new(1600.0, 900.0), Vec2::new(2560.0, 1440.0), Vec2::new(1440.0, 620.0)] {
             let ctx = Context::default();
             let theme = crate::theme::Theme::default();
             theme.apply(&ctx, 1.0);
@@ -1807,6 +1870,12 @@ mod tests {
             ] {
                 assert!(text_rect(&output, label).is_some(), "missing {label}");
             }
+            let area = |id| ctx.memory(|m| m.area_rect(egui::Id::unique(id))).expect("login area");
+            let version = area("login_version");
+            for id in ["login_settings", "login_accessibility"] {
+                assert!(area(id).bottom() < version.top(), "{size:?}: {id} overlaps version");
+            }
+            assert!(version.bottom() < area("login_news").top());
             let alpha = text_rect(&output, "synthetic-alpha").expect("first card");
             let beta = text_rect(&output, "synthetic-beta").expect("second card");
             spacing.push(beta.left() - alpha.left());

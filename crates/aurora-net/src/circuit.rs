@@ -1,6 +1,8 @@
 //! Reliable UDP circuit bookkeeping (port of the essentials of
 //! `llmessage/llcircuit.cpp`): sequence numbers, resends, acks, dedupe.
 
+use crate::circuit_socket::DatagramOut;
+use crate::packet_loss::PacketLoss;
 use crate::stats::NetStats;
 use aurora_msg::packet::{PacketFlags, build_raw};
 use aurora_msg::{Msg, Writer};
@@ -8,11 +10,39 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
-use tokio::net::UdpSocket;
 
-const MAX_RESENDS: u8 = 4;
+/// Resends of an ordinary reliable packet before it is given up.
+/// `LL_DEFAULT_RELIABLE_RETRIES` (indra/llmessage/message.h): three resends,
+/// then one more wait (`LLCircuitData::resendUnackedPackets`).
+const MAX_RESENDS: u8 = 3;
 const DEDUPE_WINDOW: usize = 2048;
 const ACK_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+/// `mHeartbeatInterval` of `LLCircuitData`: the time between two pings, the
+/// session's `PING_INTERVAL` (5 s, as `LLStartUp` sets it, llstartup.cpp).
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+
+/// `LL_AVERAGED_PING_MAX` (indra/llmessage/llcircuit.h).
+const PING_MAX: Duration = Duration::from_secs(2);
+/// `LL_AVERAGED_PING_MIN`.
+const PING_MIN: Duration = Duration::from_millis(100);
+/// `INITIAL_PING_VALUE_MSEC`: the averaged ping of a new circuit.
+const INITIAL_PING: Duration = Duration::from_secs(1);
+
+/// Wait before an ordinary reliable packet is resent, from the averaged ping
+/// known when it is sent or resent (`Circuit::ping_delay_averaged_at`).
+///
+/// `LLMessageSystem::sendReliable` (indra/llmessage/message.cpp) and
+/// `LLCircuitData::resendUnackedPackets` (llcircuit.cpp) use
+/// `max(LL_MINIMUM_RELIABLE_TIMEOUT_SECONDS, LL_RELIABLE_TIMEOUT_FACTOR *
+/// getPingDelayAveraged())`: at least 1 s, five times the averaged ping
+/// (at most 2 s, so 10 s at most). A new circuit (1 s) waits 5 s; after a
+/// reply the average is at least 1.6 s (`Circuit::set_ping_delay`), so
+/// 8 s or more; with a ping unanswered it is 2 s, so 10 s.
+fn reliable_timeout(ping_delay_averaged: Duration) -> Duration {
+    /// `LL_MINIMUM_RELIABLE_TIMEOUT_SECONDS`.
+    const MINIMUM: Duration = Duration::from_secs(1);
+    (ping_delay_averaged.min(PING_MAX) * 5).max(MINIMUM)
+}
 
 /// Resend policy of a reliable packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,12 +66,33 @@ impl Resend {
     };
 }
 
+/// Kept on the packet so removing the circuit or exhausting its retries
+/// closes the channel without confusing either case with an acknowledgment.
+struct OfferReceipt {
+    sender: crossbeam_channel::Sender<crate::InventoryOfferStatus>,
+    transmitted: bool,
+}
+
+impl OfferReceipt {
+    fn transmitted(&mut self) {
+        if !self.transmitted {
+            self.transmitted = true;
+            let _ = self.sender.try_send(crate::InventoryOfferStatus::Transmitted);
+        }
+    }
+}
+
 struct Unacked {
     payload: Vec<u8>,
     zerocoded: bool,
     sent: Instant,
+    /// Wait after `sent` before the next resend, fixed when the packet is
+    /// sent and at each resend from the ping known then, as the Legacy
+    /// Viewer's `mExpirationTime` (message.cpp, llcircuit.cpp).
+    wait: Duration,
     retries: u8,
     policy: Resend,
+    offer: Option<OfferReceipt>,
 }
 
 pub struct Circuit {
@@ -53,19 +104,31 @@ pub struct Circuit {
     recent: VecDeque<u32>,
     recent_set: HashSet<u32>,
     pub last_recv: Instant,
+    /// Smoothed round trip of the answered pings, for the statistics and
+    /// the packet-loss grace; not the Legacy average below.
     pub rtt: Duration,
+    /// `mPingDelayAveraged` (llcircuit.cpp): fast attack, slow decay, between
+    /// 100 ms and 2 s (`Circuit::set_ping_delay`). It sets the resend wait.
+    ping_delay_averaged: Duration,
+    /// `mLastPingID`: the id of the latest ping sent.
     ping_id: u8,
-    ping_sent: Option<(u8, Instant)>,
+    /// When the latest ping went out, until it is answered: the round trip
+    /// measured for `rtt`.
+    ping_sent: Option<Instant>,
+    /// Oldest ping still unanswered: new pings must not shorten the loss
+    /// grace during a stall (getPingInTransitTime, llcircuit.cpp).
+    ping_wait_started: Option<Instant>,
+    /// `mPingsInTransit`: pings sent after the last answered one
+    /// (`pingTimerStart` adds one, `pingTimerStop` sets it to how many
+    /// were sent after the ping it answers).
+    pings_in_transit: u32,
+    /// `mPingTime`: when the latest ping went out.
+    last_ping_at: Option<Instant>,
     buf: Vec<u8>,
     /// Reliable packets given up on since the last `take_dropped`.
     dropped: Vec<u32>,
-    /// Highest sequence number received, for the loss counters.
-    highest_seq: Option<u32>,
+    packet_loss: PacketLoss,
 }
-
-/// A sequence number this far below the highest one is the simulator
-/// starting over, not a late packet.
-const SEQUENCE_RESET: u32 = 100_000;
 
 impl Circuit {
     pub fn new(addr: SocketAddr) -> Self {
@@ -79,61 +142,111 @@ impl Circuit {
             recent_set: HashSet::with_capacity(DEDUPE_WINDOW),
             last_recv: Instant::now(),
             rtt: Duration::from_millis(300),
+            ping_delay_averaged: INITIAL_PING,
             ping_id: 0,
             ping_sent: None,
+            ping_wait_started: None,
+            pings_in_transit: 0,
+            last_ping_at: None,
             buf: Vec::with_capacity(1500),
             dropped: Vec::new(),
-            highest_seq: None,
+            packet_loss: PacketLoss::default(),
         }
     }
 
-    /// Count what the sequence number of a new packet tells about losses:
-    /// the numbers it skips (`seq_gaps`), or that it comes after a later
-    /// one (`seq_late`: a resend or a reordered packet filling a gap).
-    pub fn note_sequence(&mut self, seq: u32, stats: &NetStats) {
-        match self.highest_seq {
-            Some(high) if seq > high => {
-                stats.seq_gaps.fetch_add(u64::from(seq - high - 1), Ordering::Relaxed);
-                self.highest_seq = Some(seq);
-            }
-            Some(high) if high - seq > SEQUENCE_RESET => self.highest_seq = Some(seq),
-            Some(high) if seq < high => {
-                stats.seq_late.fetch_add(1, Ordering::Relaxed);
-            }
-            Some(_) => {}
-            None => self.highest_seq = Some(seq),
+    /// Record provisional holes and recoveries; only the circuit tick
+    /// confirms losses after the ping-dependent grace period.
+    pub fn note_sequence(&mut self, seq: u32, resent: bool, stats: &NetStats) {
+        let (gaps, late) = self.packet_loss.receive(seq, resent, Instant::now());
+        if gaps > 0 {
+            stats.seq_gaps.fetch_add(gaps, Ordering::Relaxed);
+        }
+        if late > 0 {
+            stats.seq_late.fetch_add(late, Ordering::Relaxed);
         }
     }
 
-    fn raw_send(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    fn raw_send(&self, sock: &impl DatagramOut, stats: &NetStats) -> bool {
         match sock.try_send_to(&self.buf, self.addr) {
             Ok(n) => {
                 stats.packets_out.fetch_add(1, Ordering::Relaxed);
                 stats.bytes_out.fetch_add(n as u64, Ordering::Relaxed);
+                true
             }
             Err(e) => {
                 log::trace!("udp send to {} failed: {e}", self.addr);
                 stats.send_errors.fetch_add(1, Ordering::Relaxed);
+                false
             }
         }
     }
 
     /// Encode and send a message, piggybacking pending acks. Returns the sequence number.
-    pub fn send<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, reliable: bool) -> u32 {
-        self.send_with(sock, stats, msg, reliable.then_some(Resend::DEFAULT))
+    pub fn send<M: Msg>(&mut self, sock: &impl DatagramOut, stats: &NetStats, msg: &M, reliable: bool) -> u32 {
+        self.send_with(sock, stats, msg, reliable.then_some(Resend::DEFAULT), None)
     }
 
     /// Send a reliable message with its own resend policy.
-    pub fn send_reliable_with<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, policy: Resend) -> u32 {
-        self.send_with(sock, stats, msg, Some(policy))
+    pub fn send_reliable_with<M: Msg>(&mut self, sock: &impl DatagramOut, stats: &NetStats, msg: &M, policy: Resend) -> u32 {
+        self.send_with(sock, stats, msg, Some(policy), None)
     }
 
-    fn send_with<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, reliable: Option<Resend>) -> u32 {
+    pub(crate) fn send_offer<M: Msg>(
+        &mut self,
+        sock: &impl DatagramOut,
+        stats: &NetStats,
+        msg: &M,
+        receipt: crossbeam_channel::Sender<crate::InventoryOfferStatus>,
+    ) -> u32 {
+        let offer = OfferReceipt {
+            sender: receipt,
+            transmitted: false,
+        };
+        self.send_with(sock, stats, msg, Some(Resend::DEFAULT), Some(offer))
+    }
+
+    fn send_with<M: Msg>(
+        &mut self,
+        sock: &impl DatagramOut,
+        stats: &NetStats,
+        msg: &M,
+        reliable: Option<Resend>,
+        mut offer: Option<OfferReceipt>,
+    ) -> u32 {
         let mut w = Writer::new();
         M::ID.encode(&mut w.buf);
         msg.encode_body(&mut w);
+        let payload = w.buf;
+        let zerocoded = M::ZEROCODED;
         let seq = self.next_seq;
-        self.send_payload(sock, stats, w.buf, M::ZEROCODED, reliable);
+        self.next_seq = self.next_seq.wrapping_add(1);
+        let mut buf = std::mem::take(&mut self.buf);
+        let n = build_raw(&payload, zerocoded, seq, reliable.is_some(), false, &self.pending_acks, &mut buf);
+        self.pending_acks.drain(..n);
+        crate::probe::message_out(&payload, buf.len());
+        self.buf = buf;
+        if self.raw_send(sock, stats)
+            && let Some(receipt) = &mut offer
+        {
+            receipt.transmitted();
+        }
+        if let Some(policy) = reliable {
+            let now = Instant::now();
+            // `sendReliable`: the expiry is fixed now, from the ping known now.
+            let wait = policy.timeout.unwrap_or_else(|| reliable_timeout(self.ping_delay_averaged_at(now)));
+            self.unacked.insert(
+                seq,
+                Unacked {
+                    payload,
+                    zerocoded,
+                    sent: now,
+                    wait,
+                    retries: 0,
+                    policy,
+                    offer,
+                },
+            );
+        }
         seq
     }
 
@@ -142,38 +255,13 @@ impl Circuit {
         self.unacked.contains_key(&seq)
     }
 
-    fn send_payload(&mut self, sock: &UdpSocket, stats: &NetStats, payload: Vec<u8>, zerocoded: bool, reliable: Option<Resend>) {
-        let seq = self.next_seq;
-        self.next_seq = self.next_seq.wrapping_add(1);
-        let mut buf = std::mem::take(&mut self.buf);
-        let n = build_raw(&payload, zerocoded, seq, reliable.is_some(), false, &self.pending_acks, &mut buf);
-        self.pending_acks.drain(..n);
-        crate::probe::message_out(&payload, buf.len());
-        self.buf = buf;
-        self.raw_send(sock, stats);
-        if let Some(policy) = reliable {
-            self.unacked.insert(
-                seq,
-                Unacked {
-                    payload,
-                    zerocoded,
-                    sent: Instant::now(),
-                    retries: 0,
-                    policy,
-                },
-            );
-        }
-    }
-
     /// Process the header of an incoming packet (the acks it carries).
     /// Returns `false` for a resend of a packet already processed: it is
     /// acked again to stop further resends and must not be processed.
     /// A new packet is acked only once processed, see [`Circuit::accept`].
     pub fn on_receive(&mut self, flags: u8, seq: u32, acks: &[u32]) -> bool {
         self.last_recv = Instant::now();
-        for a in acks {
-            self.unacked.remove(a);
-        }
+        self.ack_received(acks.iter().copied());
         // Like LL (message.cpp), only packets flagged RESENT can be duplicates;
         // this also survives a simulator resetting its sequence numbers.
         if flags & PacketFlags::RESENT != 0 && self.recent_set.contains(&seq) {
@@ -212,7 +300,12 @@ impl Circuit {
 
     pub fn ack_received(&mut self, ids: impl IntoIterator<Item = u32>) {
         for id in ids {
-            self.unacked.remove(&id);
+            if let Some(packet) = self.unacked.remove(&id)
+                && let Some(receipt) = packet.offer
+                && receipt.transmitted
+            {
+                let _ = receipt.sender.try_send(crate::InventoryOfferStatus::Acknowledged);
+            }
         }
     }
 
@@ -221,13 +314,23 @@ impl Circuit {
     }
 
     /// Resend timed-out reliable packets and flush standalone acks.
-    pub fn tick(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    pub fn tick(&mut self, sock: &impl DatagramOut, stats: &NetStats) {
         let now = Instant::now();
-        let ping_timeout = (self.rtt * 3).clamp(Duration::from_millis(500), Duration::from_secs(3));
+        let loss_rtt = self
+            .ping_wait_started
+            .map_or(self.rtt, |at| self.rtt.max(now.saturating_duration_since(at)));
+        let lost = self.packet_loss.expire(now, loss_rtt);
+        if lost > 0 {
+            stats.packets_lost.fetch_add(lost, Ordering::Relaxed);
+        }
+        // Each packet waits what was fixed when it was sent or last resent
+        // (`resendUnackedPackets`); a resend fixes the next wait from the
+        // ping known now. A fixed policy (the login circuit code) keeps its own.
+        let ping_timeout = reliable_timeout(self.ping_delay_averaged_at(now));
         let mut to_resend = Vec::new();
         let mut to_drop = Vec::new();
         for (seq, u) in &self.unacked {
-            if now.duration_since(u.sent) > u.policy.timeout.unwrap_or(ping_timeout) {
+            if now.duration_since(u.sent) > u.wait {
                 if u.retries >= u.policy.max_retries {
                     to_drop.push(*seq);
                 } else {
@@ -245,12 +348,20 @@ impl Circuit {
                 continue;
             };
             u.retries += 1;
+            // New expiration, as `resendUnackedPackets` sets after each resend.
             u.sent = now;
+            u.wait = u.policy.timeout.unwrap_or(ping_timeout);
             let mut buf = std::mem::take(&mut self.buf);
             build_raw(&u.payload, u.zerocoded, seq, true, true, &[], &mut buf);
             crate::probe::message_out(&u.payload, buf.len());
             self.buf = buf;
-            self.raw_send(sock, stats);
+            let offer = u.offer.as_ref().is_some_and(|receipt| !receipt.transmitted);
+            if self.raw_send(sock, stats)
+                && offer
+                && let Some(receipt) = self.unacked.get_mut(&seq).and_then(|u| u.offer.as_mut())
+            {
+                receipt.transmitted();
+            }
             stats.resent.fetch_add(1, Ordering::Relaxed);
         }
         if !self.pending_acks.is_empty() && now.duration_since(self.last_ack_flush) >= ACK_FLUSH_INTERVAL {
@@ -258,7 +369,7 @@ impl Circuit {
         }
     }
 
-    pub fn flush_acks(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    pub fn flush_acks(&mut self, sock: &impl DatagramOut, stats: &NetStats) {
         self.last_ack_flush = Instant::now();
         while !self.pending_acks.is_empty() {
             let n = self.pending_acks.len().min(250);
@@ -282,34 +393,149 @@ impl Circuit {
     /// Start a ping; returns the ping id and the oldest unacked sequence.
     pub fn next_ping(&mut self) -> (u8, u32) {
         self.ping_id = self.ping_id.wrapping_add(1);
-        self.ping_sent = Some((self.ping_id, Instant::now()));
+        let now = Instant::now();
+        self.ping_sent = Some(now);
+        self.ping_wait_started.get_or_insert(now);
+        // LLCircuitData::pingTimerStart
+        self.pings_in_transit += 1;
+        self.last_ping_at = Some(now);
         let oldest = self.unacked.keys().min().copied().unwrap_or(self.next_seq);
         (self.ping_id, oldest)
     }
 
-    pub fn on_ping_reply(&mut self, id: u8) -> Option<Duration> {
-        if let Some((pid, at)) = self.ping_sent
-            && pid == id
-        {
-            let rtt = at.elapsed();
-            // Smooth like TCP's SRTT.
-            self.rtt = (self.rtt * 7 + rtt) / 8;
-            self.ping_sent = None;
-            return Some(rtt);
+    /// `LLCircuitData::getPingInTransitTime` (indra/llmessage/llcircuit.cpp):
+    /// with pings out, `pings × heartbeat − 1 s + time since the latest ping`,
+    /// so one unanswered ping already counts 4 s; zero with none.
+    fn ping_in_transit_time(&self, now: Instant) -> Duration {
+        match self.last_ping_at {
+            Some(at) if self.pings_in_transit > 0 => {
+                (HEARTBEAT_INTERVAL * self.pings_in_transit).saturating_sub(Duration::from_secs(1)) + now.saturating_duration_since(at)
+            }
+            _ => Duration::ZERO,
         }
-        None
+    }
+
+    /// `LLCircuitData::getPingDelayAveraged`: the average, raised to the
+    /// time a ping has been out, at most 2 s.
+    fn ping_delay_averaged_at(&self, now: Instant) -> Duration {
+        self.ping_in_transit_time(now).max(self.ping_delay_averaged).min(PING_MAX)
+    }
+
+    /// `LLCircuitData::setPingDelay`: the larger of the sample and
+    /// `getPingDelayAveraged` (2 s while the answered ping was still counted
+    /// in transit, which it always is), then 4/5 of that plus 1/5 of the
+    /// sample, kept between 100 ms and 2 s.
+    fn set_ping_delay(&mut self, ping: Duration, now: Instant) {
+        let average = ping.max(self.ping_delay_averaged_at(now));
+        self.ping_delay_averaged = ((average * 4 + ping) / 5).clamp(PING_MIN, PING_MAX);
+    }
+
+    /// A CompletePingCheck. Returns the round trip of the latest ping when
+    /// it is the one answered, for the statistics.
+    pub fn on_ping_reply(&mut self, id: u8) -> Option<Duration> {
+        self.on_ping_reply_at(id, Instant::now())
+    }
+
+    /// Port of `LLCircuitData::pingTimerStop` (indra/llmessage/llcircuit.cpp):
+    /// a reply to any of our pings counts, older ones included. The sample
+    /// is `pings sent after it × heartbeat + time since the latest ping`,
+    /// and those later pings are what is left in transit.
+    fn on_ping_reply_at(&mut self, id: u8, now: Instant) -> Option<Duration> {
+        // No ping sent yet: nothing to time the reply against.
+        let latest = self.last_ping_at?;
+        let delta = u32::from(self.ping_id.wrapping_sub(id));
+        let sample = HEARTBEAT_INTERVAL * delta + now.saturating_duration_since(latest);
+        // `U32Milliseconds`: whole milliseconds.
+        let sample = Duration::from_millis(u64::try_from(sample.as_millis()).unwrap_or(u64::MAX));
+        // Before `mPingsInTransit` is reset, as `pingTimerStop` does.
+        self.set_ping_delay(sample, now);
+        self.pings_in_transit = delta;
+        if delta > 0 {
+            // Later pings are still out: the loss grace keeps waiting, and
+            // the round trip of this older ping is not known exactly.
+            return None;
+        }
+        self.ping_wait_started = None;
+        let at = self.ping_sent.take()?;
+        let rtt = now.saturating_duration_since(at);
+        // Smooth like TCP's SRTT.
+        self.rtt = (self.rtt * 7 + rtt) / 8;
+        Some(rtt)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::UdpSocket;
 
     const RELIABLE: u8 = PacketFlags::RELIABLE;
     const RESENT: u8 = PacketFlags::RELIABLE | PacketFlags::RESENT;
 
     fn circuit() -> Circuit {
         Circuit::new("127.0.0.1:9".parse().expect("address"))
+    }
+
+    #[tokio::test]
+    async fn inventory_offer_receipts_require_a_real_write_and_an_ack_on_the_same_circuit() {
+        use crate::InventoryOfferStatus::{Acknowledged, Transmitted};
+        use crossbeam_channel::{TryRecvError, unbounded};
+
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket");
+        socket.writable().await.expect("writable socket");
+        let peer = UdpSocket::bind("127.0.0.1:0").await.expect("simulator socket");
+        let stats = NetStats::default();
+        let packet = aurora_msg::msgs::ImprovedInstantMessage::default();
+        // An IPv4 socket cannot write to an IPv6 address. The reliable packet
+        // is still queued: a later successful retry is its first transmission.
+        let mut circuit = Circuit::new("[::1]:9".parse().unwrap());
+        let (send, receipt) = unbounded();
+        let seq = circuit.send_offer(&socket, &stats, &packet, send);
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Empty));
+        circuit.addr = peer.local_addr().unwrap();
+        circuit.unacked.get_mut(&seq).unwrap().sent -= Duration::from_secs(6);
+        circuit.tick(&socket, &stats);
+        assert_eq!(receipt.try_recv(), Ok(Transmitted));
+
+        let mut neighbour = Circuit::new(peer.local_addr().unwrap());
+        let (send, second) = unbounded();
+        let other_seq = neighbour.send_offer(&socket, &stats, &packet, send);
+        assert_eq!(other_seq, seq, "sequence numbers belong to the circuit");
+        assert_eq!(second.try_recv(), Ok(Transmitted));
+        neighbour.ack_received([seq, seq]);
+        assert_eq!(second.try_recv(), Ok(Acknowledged));
+        assert_eq!(second.try_recv(), Err(TryRecvError::Disconnected));
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Empty));
+        assert!(circuit.on_receive(0, 98, &[seq, seq])); // piggyback
+        assert_eq!(receipt.try_recv(), Ok(Acknowledged));
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
+    #[tokio::test]
+    async fn an_inventory_offer_circuit_drop_or_retry_exhaustion_cannot_emit_an_ack() {
+        use crate::InventoryOfferStatus::Transmitted;
+        use crossbeam_channel::{TryRecvError, unbounded};
+
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket");
+        socket.writable().await.expect("writable socket");
+        let peer = UdpSocket::bind("127.0.0.1:0").await.expect("simulator socket");
+        let stats = NetStats::default();
+        for exhausted in [false, true] {
+            let mut circuit = Circuit::new(peer.local_addr().unwrap());
+            let (send, receipt) = unbounded();
+            let seq = circuit.send_offer(&socket, &stats, &aurora_msg::msgs::ImprovedInstantMessage::default(), send);
+            assert_eq!(receipt.try_recv(), Ok(Transmitted));
+            if exhausted {
+                for _ in 0..=MAX_RESENDS {
+                    circuit.unacked.get_mut(&seq).unwrap().sent -= Duration::from_secs(6);
+                    circuit.tick(&socket, &stats);
+                }
+                assert_eq!(circuit.take_dropped(), [seq]);
+                circuit.ack_received([seq]); // a late ACK cannot revive an expired offer
+            }
+            drop(circuit);
+            assert_eq!(receipt.try_recv(), Err(TryRecvError::Disconnected));
+        }
     }
 
     #[test]
@@ -342,21 +568,21 @@ mod tests {
         let mut c = circuit();
         let seen = |stats: &NetStats| (stats.seq_gaps.load(Ordering::Relaxed), stats.seq_late.load(Ordering::Relaxed));
         // the first packet is where the count starts, whatever its number
-        c.note_sequence(10, &stats);
-        c.note_sequence(11, &stats);
+        c.note_sequence(10, false, &stats);
+        c.note_sequence(11, false, &stats);
         assert_eq!(seen(&stats), (0, 0));
         // 12 and 13 are missing, then 12 arrives (resent): one still missing
-        c.note_sequence(14, &stats);
-        c.note_sequence(12, &stats);
+        c.note_sequence(14, false, &stats);
+        c.note_sequence(12, true, &stats);
         assert_eq!(seen(&stats), (2, 1));
         // the same number twice is neither
-        c.note_sequence(14, &stats);
+        c.note_sequence(14, false, &stats);
         assert_eq!(seen(&stats), (2, 1));
         // the simulator starts its numbers over: not a late packet
-        c.note_sequence(500_000, &stats);
+        c.note_sequence(500_000, false, &stats);
         let gaps = stats.seq_gaps.load(Ordering::Relaxed);
-        c.note_sequence(1, &stats);
-        c.note_sequence(2, &stats);
+        c.note_sequence(1, false, &stats);
+        c.note_sequence(2, false, &stats);
         assert_eq!(seen(&stats), (gaps, 1));
     }
 
@@ -369,14 +595,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn packet_loss_circuit_tick_confirms_a_loss_without_more_datagrams() {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let stats = NetStats::default();
+        let mut c = circuit();
+        let before = Instant::now() - Duration::from_secs(10);
+        c.packet_loss.receive(1, false, before);
+        c.packet_loss.receive(3, false, before);
+        assert_eq!(stats.snapshot().packets_lost, 0);
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 1);
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 1);
+    }
+
+    #[tokio::test]
+    async fn packet_loss_an_unanswered_ping_extends_the_grace_until_a_reply() {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let stats = NetStats::default();
+        let mut c = circuit();
+        c.rtt = Duration::from_millis(10);
+        let before = Instant::now() - Duration::from_secs(2);
+        c.packet_loss.receive(1, false, before);
+        c.packet_loss.receive(3, false, before);
+        c.ping_wait_started = Some(before);
+        let (id, _) = c.next_ping();
+        assert_eq!(c.ping_wait_started, Some(before), "a newer ping must not reset the wait");
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 0);
+        assert!(c.on_ping_reply(id).is_some());
+        assert!(c.ping_wait_started.is_none());
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 1);
+    }
+
+    #[tokio::test]
     async fn login_use_circuit_code_keeps_its_own_resend_policy() {
         let sock = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
         let stats = NetStats::default();
         let mut c = circuit();
+        c.ping_delay_averaged = PING_MIN;
         let m = aurora_msg::msgs::UseCircuitCode::default();
         let login = c.send_reliable_with(&sock, &stats, &m, Resend::LOGIN_USE_CIRCUIT_CODE);
         let other = c.send(&sock, &stats, &m, true);
-        // 4 s later: past the ping-based timeout, not yet the 5 s one
+        // 4 s later: past the ping-based timeout (1 s), not yet the 5 s one
         for u in c.unacked.values_mut() {
             u.sent -= Duration::from_secs(4);
         }
@@ -391,5 +653,224 @@ mod tests {
         assert!(!c.is_unacked(login));
         assert_eq!(c.take_dropped(), vec![login]);
         assert!(c.take_dropped().is_empty());
+    }
+
+    #[test]
+    fn reliable_timeout_matches_the_legacy_formula() {
+        // `LL_AVERAGED_PING_MIN` × 5 is under the 1 s minimum.
+        assert_eq!(reliable_timeout(PING_MIN), Duration::from_secs(1));
+        // A new circuit: `INITIAL_PING_VALUE_MSEC`.
+        assert_eq!(reliable_timeout(INITIAL_PING), Duration::from_secs(5));
+        // After the first reply to a 100 ms ping (1,620 ms averaged).
+        assert_eq!(reliable_timeout(Duration::from_millis(1_620)), Duration::from_millis(8_100));
+        // The averaged ping stops at 2 s, so five times that is 10 s.
+        assert_eq!(reliable_timeout(PING_MAX), Duration::from_secs(10));
+        assert_eq!(reliable_timeout(Duration::from_secs(9)), Duration::from_secs(10));
+    }
+
+    /// `getPingInTransitTime`: `pings × 5 s − 1 s + time since the latest
+    /// ping`, zero once answered.
+    #[test]
+    fn ping_in_transit_time_follows_the_legacy_formula() {
+        let mut c = circuit();
+        let now = Instant::now();
+        assert_eq!(c.ping_in_transit_time(now), Duration::ZERO);
+        let _ = c.next_ping();
+        let sent = c.last_ping_at.expect("ping time");
+        // one ping out: 5 s − 1 s, plus the time since it went out
+        assert_eq!(c.ping_in_transit_time(sent), Duration::from_secs(4));
+        assert_eq!(
+            c.ping_in_transit_time(sent + Duration::from_millis(300)),
+            Duration::from_millis(4_300)
+        );
+        // a second ping without a reply: 2 × 5 s − 1 s from the latest one
+        let (id2, _) = c.next_ping();
+        let sent2 = c.last_ping_at.expect("ping time");
+        assert_eq!(c.ping_in_transit_time(sent2), Duration::from_secs(9));
+        // a reply to the latest ping: nothing in transit
+        assert!(c.on_ping_reply(id2).is_some());
+        assert_eq!(c.ping_in_transit_time(Instant::now()), Duration::ZERO);
+    }
+
+    /// `setPingDelay` runs while the answered ping still counts in transit,
+    /// so the larger value is the 2 s cap: 0.8 × 2,000 + 0.2 × 100 ms.
+    #[test]
+    fn the_first_reply_to_a_100_ms_ping_averages_1620_ms() {
+        let mut c = circuit();
+        assert_eq!(c.ping_delay_averaged, INITIAL_PING);
+        let (id, _) = c.next_ping();
+        let sent = c.last_ping_at.expect("ping time");
+        let reply = sent + Duration::from_millis(100);
+        assert_eq!(c.on_ping_reply_at(id, reply), Some(Duration::from_millis(100)));
+        assert_eq!(c.ping_delay_averaged, Duration::from_millis(1_620));
+        assert_eq!(c.pings_in_transit, 0);
+        assert_eq!(c.ping_delay_averaged_at(reply), Duration::from_millis(1_620));
+        assert_eq!(reliable_timeout(c.ping_delay_averaged_at(reply)), Duration::from_millis(8_100));
+        // a ping above 2 s is kept at the cap
+        let (id, _) = c.next_ping();
+        let sent = c.last_ping_at.expect("ping time");
+        let _ = c.on_ping_reply_at(id, sent + Duration::from_secs(3));
+        assert_eq!(c.ping_delay_averaged, PING_MAX);
+    }
+
+    /// `pingTimerStop` takes a reply to an older ping too: the pings sent
+    /// after it are what is left in transit, and they count 5 s each.
+    #[test]
+    fn a_late_reply_to_an_older_ping_leaves_the_later_ones_in_transit() {
+        let mut c = circuit();
+        let (first, _) = c.next_ping();
+        let started = c.ping_wait_started;
+        let _ = c.next_ping();
+        let _ = c.next_ping();
+        assert_eq!(c.pings_in_transit, 3);
+        let latest = c.last_ping_at.expect("ping time");
+        let reply = latest + Duration::from_millis(50);
+        assert_eq!(c.on_ping_reply_at(first, reply), None, "its round trip is not known exactly");
+        assert_eq!(c.pings_in_transit, 2);
+        // 2 × 5 s + 50 ms, kept at the 2 s cap
+        assert_eq!(c.ping_delay_averaged, PING_MAX);
+        assert_eq!(c.ping_wait_started, started, "the loss grace keeps waiting");
+        assert_eq!(c.ping_in_transit_time(reply), Duration::from_millis(9_050));
+        // the id wraps: ping 255 answered after ping 1 went out
+        let mut c = circuit();
+        c.ping_id = 254;
+        let (old, _) = c.next_ping();
+        let _ = c.next_ping();
+        let _ = c.next_ping();
+        assert_eq!((old, c.ping_id), (255, 1));
+        let latest = c.last_ping_at.expect("ping time");
+        let _ = c.on_ping_reply_at(old, latest);
+        assert_eq!(c.pings_in_transit, 2);
+    }
+
+    fn rewind(c: &mut Circuit, age: Duration) {
+        let sent = Instant::now() - age;
+        for packet in c.unacked.values_mut() {
+            packet.sent = sent;
+        }
+    }
+
+    async fn bound() -> UdpSocket {
+        UdpSocket::bind("127.0.0.1:0").await.expect("bind")
+    }
+
+    fn one_reliable(c: &mut Circuit, sock: &UdpSocket, stats: &NetStats) -> u32 {
+        let message = aurora_msg::msgs::UseCircuitCode::default();
+        c.send(sock, stats, &message, true)
+    }
+
+    /// A 1 ms ping used to resend at 0.5 s (`rtt * 3` clamped up to 500 ms).
+    /// The lowest average (100 ms) waits the 1 s minimum, and a resend
+    /// starts that wait again.
+    #[tokio::test]
+    async fn lan_ping_does_not_resend_a_reliable_packet_before_one_second() {
+        let sock = bound().await;
+        let stats = NetStats::default();
+        let mut c = circuit();
+        c.ping_delay_averaged = PING_MIN;
+        let seq = one_reliable(&mut c, &sock, &stats);
+        rewind(&mut c, Duration::from_millis(600));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 0, "the lowest average still waits out the 1 s minimum");
+        rewind(&mut c, Duration::from_millis(1_001));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1);
+        // Same moment: the resend's clock was just started.
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1, "a resend starts its wait again");
+        rewind(&mut c, Duration::from_millis(600));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1);
+    }
+
+    /// A new circuit (1 s averaged) waits 5 s; 1,620 ms waits 8.1 s; 2 s waits 10 s.
+    #[tokio::test]
+    async fn averaged_ping_sets_the_reliable_resend_wait() {
+        let sock = bound().await;
+        let stats = NetStats::default();
+        for (average, wait) in [
+            (INITIAL_PING, Duration::from_secs(5)),
+            (Duration::from_millis(1_620), Duration::from_millis(8_100)),
+            (PING_MAX, Duration::from_secs(10)),
+        ] {
+            let mut c = circuit();
+            c.ping_delay_averaged = average;
+            let seq = one_reliable(&mut c, &sock, &stats);
+            assert_eq!(c.unacked[&seq].wait, wait);
+            rewind(&mut c, wait - Duration::from_millis(100));
+            c.tick(&sock, &stats);
+            assert_eq!(c.unacked[&seq].retries, 0, "{average:?} waits {wait:?}");
+            rewind(&mut c, wait + Duration::from_millis(1));
+            c.tick(&sock, &stats);
+            assert_eq!(c.unacked[&seq].retries, 1);
+        }
+    }
+
+    /// `getPingDelayAveraged` is at least `getPingInTransitTime`: with one
+    /// ping out it already counts 4 s, capped at 2 s, so a packet sent then
+    /// waits 10 s. A packet sent before the ping keeps the wait it was given.
+    #[tokio::test]
+    async fn an_unanswered_ping_lengthens_the_reliable_resend_wait() {
+        let sock = bound().await;
+        let stats = NetStats::default();
+        let mut c = circuit();
+        c.ping_delay_averaged = PING_MIN;
+        let before = one_reliable(&mut c, &sock, &stats);
+        let _ = c.next_ping();
+        let during = one_reliable(&mut c, &sock, &stats);
+        assert_eq!(c.unacked[&before].wait, Duration::from_secs(1));
+        assert_eq!(c.unacked[&during].wait, Duration::from_secs(10));
+        rewind(&mut c, Duration::from_millis(9_900));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&before].retries, 1, "its wait was fixed before the ping");
+        assert_eq!(c.unacked[&during].retries, 0, "one unanswered ping makes the wait 10 s");
+        // the resend of the first one was given the 10 s of the ping out
+        assert_eq!(c.unacked[&before].wait, Duration::from_secs(10));
+        rewind(&mut c, Duration::from_millis(10_001));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&during].retries, 1);
+    }
+
+    /// The expiry is fixed at the send: a reply to the ping does not shorten
+    /// the 10 s of a packet sent while it was out; its resend takes the new
+    /// average (1,620 ms, so 8.1 s).
+    #[tokio::test]
+    async fn a_packet_sent_while_a_ping_is_out_keeps_its_wait_after_the_reply() {
+        let sock = bound().await;
+        let stats = NetStats::default();
+        let mut c = circuit();
+        let (id, _) = c.next_ping();
+        let seq = one_reliable(&mut c, &sock, &stats);
+        assert_eq!(c.unacked[&seq].wait, Duration::from_secs(10));
+        let sent = c.last_ping_at.expect("ping time");
+        let _ = c.on_ping_reply_at(id, sent + Duration::from_millis(100));
+        assert_eq!(c.ping_delay_averaged, Duration::from_millis(1_620));
+        rewind(&mut c, Duration::from_millis(9_000));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 0, "the reply does not shorten its 10 s");
+        rewind(&mut c, Duration::from_millis(10_001));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1);
+        assert_eq!(c.unacked[&seq].wait, Duration::from_millis(8_100));
+    }
+
+    /// `LL_DEFAULT_RELIABLE_RETRIES` is 3: three resends, then one more wait, then give up.
+    #[tokio::test]
+    async fn three_resends_then_the_reliable_packet_is_given_up() {
+        let sock = bound().await;
+        let stats = NetStats::default();
+        let mut c = circuit();
+        c.ping_delay_averaged = PING_MIN;
+        let seq = one_reliable(&mut c, &sock, &stats);
+        for n in 1..=3 {
+            rewind(&mut c, Duration::from_millis(1_001));
+            c.tick(&sock, &stats);
+            assert_eq!(c.unacked[&seq].retries, n);
+        }
+        rewind(&mut c, Duration::from_millis(1_001));
+        c.tick(&sock, &stats);
+        assert!(!c.is_unacked(seq), "given up after the third resend's wait");
+        assert_eq!(c.take_dropped(), vec![seq]);
+        assert_eq!(stats.resent.load(Ordering::Relaxed), 3);
     }
 }

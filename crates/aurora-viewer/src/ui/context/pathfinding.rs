@@ -106,8 +106,7 @@ impl PathfindingUi {
         floater.show(ctx, p, &mut open, |ui| {
             ui.label(world.regions.get(&self.region).map_or_else(String::new, |r| r.name.clone()));
             ui.horizontal(|ui| {
-                if ui
-                    .add(egui::TextEdit::singleline(&mut self.query).hint_text(aurora_i18n::tr!("common-search")))
+                if crate::ui::widgets::search_text_edit(ui, p, &mut self.query, |edit| edit.hint_text(aurora_i18n::tr!("common-search")))
                     .changed()
                 {
                     self.filter();
@@ -131,9 +130,11 @@ impl PathfindingUi {
                 ui.label(aurora_i18n::tr!("scene-nav-selected-missing"));
             }
             let mut scroll = egui::ScrollArea::vertical().max_height((ui.available_height() - 235.0).max(80.0));
-            if self.reveal {
+            if self.reveal || widgets::search_cleared(ui) {
                 if let Some(index) = self.filtered.iter().position(|&i| Some(self.rows[i].id) == self.selected) {
-                    scroll = scroll.vertical_scroll_offset(index as f32 * 28.0);
+                    scroll = scroll
+                        .animated(false)
+                        .vertical_scroll_offset(index as f32 * (24.0 + ui.spacing().item_spacing.y));
                 }
                 self.reveal = false;
             }

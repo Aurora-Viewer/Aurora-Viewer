@@ -35,9 +35,12 @@ query($o: String!, $r: String!) {
 }
 '@
 
-# A PR a human put on hold carries this label (AGENTS.md section 9): the
-# tools hide it until the label is removed, unless it is in the merge queue.
+# A PR a human put on hold carries this label (AGENTS.md section 9), and an
+# outside contributor's PR waiting for a review slot the other (Review slots
+# workflow): the tools hide both until the label is removed, unless the PR
+# is in the merge queue.
 $OnHoldLabel = 'on-hold'
+$HiddenLabels = @($OnHoldLabel, 'waiting-for-slot')
 
 # Shared with the background runspace: the last answer, its time, an error.
 $GitHub = [hashtable]::Synchronized(@{ Data = $null; Error = $null; Updated = $null; Version = 0; Force = $false; Stop = $false })
@@ -222,7 +225,7 @@ function Get-PrRows {
             QueueState = $queueState; Queue = $queue; QueueColor = $queueColor; QueueSince = $queueSince; QueuePosition = $position
             ReviewState = $reviewState; Verdict = $verdict; VerdictColor = $verdictColor; Status = $status
             Waiting = $waiting
-            OnHold = -not $queueState -and [bool]@($p.labels.nodes | Where-Object { $_.name -eq $OnHoldLabel }).Count
+            OnHold = -not $queueState -and [bool]@($p.labels.nodes | Where-Object { $HiddenLabels -contains $_.name }).Count
         }
     }
 }
@@ -274,8 +277,17 @@ function Get-PrSummary {
     $segments
 }
 
-# A Windows notification (toast); a beep when they are not available.
+# A desktop notification (a toast on Windows); a beep when they are not available.
 function Send-Toast([string]$Title, [string]$Text) {
+    if ($IsLinux) {
+        $sent = $false
+        if (Get-Command notify-send -CommandType Application -ErrorAction SilentlyContinue) {
+            notify-send --app-name='Aurora Tools' -- $Title $Text 2>$null
+            $sent = $LASTEXITCODE -eq 0
+        }
+        if (-not $sent) { [Console]::Beep() }
+        return
+    }
     try {
         [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
         [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
@@ -406,7 +418,7 @@ function Show-PrPanel {
                     'UpArrow' { if ($rows) { $sel = ($sel - 1 + $rows.Count) % $rows.Count } }
                     'DownArrow' { if ($rows) { $sel = ($sel + 1) % $rows.Count } }
                     { $_ -in 'Escape', 'Backspace' } { return }
-                    { $_ -in 'Enter', 'O' } { if ($rows) { Start-Process $rows[[Math]::Min($sel, $rows.Count - 1)].Url } }
+                    { $_ -in 'Enter', 'O' } { if ($rows) { Open-External $rows[[Math]::Min($sel, $rows.Count - 1)].Url } }
                     'R' { $GitHub.Force = $true }
                 }
                 $lastDraw = [DateTime]::MinValue

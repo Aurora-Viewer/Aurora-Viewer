@@ -55,6 +55,9 @@ pub struct State {
     pub preset: &'static str,
     pub vram_used_mb: Option<u64>,
     pub vram_budget_mb: Option<u64>,
+    /// The tightest headroom of the last minute: budget less usage,
+    /// negative while the viewer was past the budget (vram.rs).
+    pub vram_headroom_min_mb: Option<i64>,
     /// Texture memory pressure step and its maximum.
     pub texture_pressure: (u32, u32),
     pub objects: usize,
@@ -115,6 +118,11 @@ pub const EFFECT_WORDS: &[&str] = &[
     "shadows",
     "projector-shadows",
     "contact-shadows",
+    "soft-shadows",
+    "ray-tracing",
+    "rt-lights",
+    "rt-indirect",
+    "rt-reflections",
     "ao-legacy",
     "ao-gtao",
     "ssr",
@@ -122,6 +130,7 @@ pub const EFFECT_WORDS: &[&str] = &[
     "aa-msaa",
     "aa-taa",
     "aa-smaa",
+    "blend-exact",
     "bloom",
     "glow",
     "indirect-light",
@@ -148,6 +157,9 @@ impl State {
         let _ = writeln!(out, "preset={}", self.preset);
         if let (Some(used), Some(budget)) = (self.vram_used_mb, self.vram_budget_mb) {
             let _ = writeln!(out, "vram_mb={used}/{budget}");
+        }
+        if let Some(headroom) = self.vram_headroom_min_mb {
+            let _ = writeln!(out, "vram_headroom_60s_mb={headroom}");
         }
         let _ = writeln!(out, "texture_pressure={}/{}", self.texture_pressure.0, self.texture_pressure.1);
         let _ = writeln!(out, "objects={}", self.objects);
@@ -289,6 +301,10 @@ fn run(dir: &Path, main: Option<&super::native::Thread>) {
     let mut written: Option<Instant> = None;
     loop {
         std::thread::sleep(TICK);
+        // A graphics driver gives a fatal signal its own handler when it
+        // first compiles a shader, at any time in the session.
+        #[cfg(target_os = "linux")]
+        super::native::reclaim_lasting();
         let window = WINDOW.load(Ordering::Relaxed);
         if window != 0 {
             if window_hung(window) {
@@ -327,6 +343,15 @@ fn write_alive(dir: &Path, responsive: Option<u64>) {
     }
     if let Some(memory) = crate::sys_probe::process_memory() {
         let _ = writeln!(text, "ram_mb={}", memory.working_set >> 20);
+        // committed, resident or not: the working set alone said 97 MB of
+        // a viewer whose memory Windows had paged out (#2998)
+        let _ = writeln!(text, "private_mb={}", memory.private >> 20);
+    }
+    if let Some(pc) = crate::sys_probe::system_memory() {
+        let _ = writeln!(text, "pc_ram_mb={}/{}", pc.available >> 20, pc.total >> 20);
+        if pc.commit_limit > 0 {
+            let _ = writeln!(text, "pc_commit_mb={}/{}", pc.committed >> 20, pc.commit_limit >> 20);
+        }
     }
     if let Some(state) = STATE.try_lock().ok().and_then(|s| s.clone()) {
         state.lines(&mut text);
@@ -443,4 +468,19 @@ pub fn read_alive(dir: &Path) -> Vec<(String, String)> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// When `alive.txt` was last written, in Unix seconds: the last sign of life
+/// when its content is lost. The file is renamed into place without a flush
+/// (every 5 s, a flush would cost the disk): a system that stops at once
+/// (Windows crash, power cut, forced restart) can leave it empty or full of
+/// zeros, while its date, journaled with the rename, survives. The pending
+/// copy counts too: a rename lost with the system leaves only it.
+pub fn alive_written(dir: &Path) -> Option<u64> {
+    ["alive.txt", "alive.pending"]
+        .iter()
+        .filter_map(|name| std::fs::metadata(dir.join(name)).and_then(|m| m.modified()).ok())
+        .filter_map(|at| at.duration_since(UNIX_EPOCH).ok())
+        .map(|at| at.as_secs())
+        .max()
 }

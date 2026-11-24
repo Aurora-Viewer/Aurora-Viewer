@@ -1,8 +1,7 @@
-//! The tabs of the Aurora profile after Profile (the tabs mock-up, variant A
-//! of each, human choice of 2026-10-14): Favorite places as a featured
-//! place over thumbnails, Classifieds as cards that unfold, First life as a
+//! The Aurora profile tabs show the featured pick above its thumbnails,
+//! classifieds as cards that unfold, First life as a
 //! portrait beside its text, Web in a browser card, Notes in the turquoise
-//! card of the Profile tab. The data and the actions are Firestorm's
+//! card of the Profile tab. The data and the actions follow the Legacy Viewer
 //! (LLPanelProfilePicks / LLPanelProfilePick, LLPanelProfileClassifieds /
 //! LLPanelProfileClassified with LLPublishClassifiedFloater,
 //! LLPanelProfileFirstLife, LLPanelProfileWeb, LLPanelProfileNotes in
@@ -27,7 +26,7 @@ use egui::{Color32, FontId, Rect, RichText, Sense, Vec2, pos2};
 use glam::DVec3;
 use uuid::Uuid;
 
-/// Heights of the featured place's picture and of a thumbnail's.
+/// Heights of the featured pick's picture and of a thumbnail's.
 const FEATURE_H: f32 = 196.0;
 const FEATURE_W: f32 = 300.0;
 const THUMB_IMG_H: f32 = 62.0;
@@ -250,9 +249,9 @@ fn strip(ui: &mut egui::Ui, p: &Palette, color: Color32, body: impl FnOnce(&mut 
     let _ = p;
 }
 
-// ------------------------------------------------------------- favorite places
+// ------------------------------------------------------------- picks
 
-/// What the featured place shows.
+/// What the featured pick shows.
 struct PickView {
     name: String,
     desc: String,
@@ -317,7 +316,7 @@ fn pick_view(env: &mut Env, w: &mut Window, id: Uuid) -> Option<PickView> {
 
 /// Start a new pick at our position (LLPanelProfilePicks::onClickNewBtn).
 fn start_new_pick(w: &mut Window, world: &World) {
-    if world.rlva.has("showloc") {
+    if world.rlva.has("showloc") || w.pick_save_waits() {
         return;
     }
     w.editing = true;
@@ -326,7 +325,7 @@ fn start_new_pick(w: &mut Window, world: &World) {
     w.confirm_delete = false;
 }
 
-/// Favorite places: the chosen one featured, the others as thumbnails under
+/// Picks: the chosen one featured, the others as thumbnails under
 /// it; our own edited in place (name, description, snapshot, our position
 /// here, delete), with the account's limit on the card that adds one.
 pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool) {
@@ -348,7 +347,7 @@ pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, 
         items.push((Uuid::nil(), e.name.clone()));
     }
     if items.is_empty() {
-        let name = display_name(world, &w.id);
+        let name = display_name(world, w.scope, &w.id);
         let count = aurora_i18n::tr!("ui-profile-aurora-picks-count", count = 0, limit = limit as i64);
         let clicked = if own {
             empty(
@@ -386,21 +385,7 @@ pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, 
     }
     // our selected pick is edited in a copy of the server's
     if editing && let Some(i) = world.profiles.picks.get(&sel) {
-        let server = PickEdit {
-            id: i.id,
-            name: i.name.clone(),
-            desc: i.desc.clone(),
-            snapshot: i.snapshot,
-            pos: i.pos_global,
-            location: None,
-        };
-        let follow = match &w.pick_edit {
-            Some((e, base)) => e.id != i.id || (e == base && *base != server),
-            None => true,
-        };
-        if follow {
-            w.pick_edit = Some((server.clone(), server));
-        }
+        w.follow_pick(i);
     }
     match pick_view(env, w, sel) {
         Some(v) => feature(ui, env, w, &v, editing, compact),
@@ -421,11 +406,15 @@ pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, 
             None => {}
         }
     }
-    let add = editing && !world.rlva.has("showloc") && pr.picks.len() < limit && !items.iter().any(|(id, _)| id.is_nil());
+    // LLPanelProfilePicks::updateButtons greys New under @showloc; here the
+    // add tile is hidden instead (the human's choice, 2026-11-20): no new
+    // pick either way, only the look differs
+    let add =
+        editing && !w.pick_save_waits() && !world.rlva.has("showloc") && pr.picks.len() < limit && !items.iter().any(|(id, _)| id.is_nil());
     thumbs(ui, env, w, &items, add.then_some((pr.picks.len(), limit)), compact);
 }
 
-/// The featured place: its snapshot and rating, name, place, description
+/// The featured pick: its snapshot and rating, name, place, description
 /// and actions; the edit form on our own when editing.
 fn feature(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView, editing: bool, compact: bool) {
     let p = env.p;
@@ -506,7 +495,7 @@ fn pick_read(ui: &mut egui::Ui, env: &mut Env, v: &PickView, compact: bool) {
     let top = ui.cursor().top();
     ui.spacing_mut().item_spacing.y = 6.0;
     ui.label(RichText::new(&v.name).font(semibold(ui, 16.0)).color(p.ink));
-    place_row(ui, p, &world.rlva_filter_text(&v.place));
+    place_row(ui, p, &v.place);
     if !v.desc.trim().is_empty() {
         rich(ui, p, env.emoji, world, env.want_names, &v.desc);
     }
@@ -517,6 +506,10 @@ fn pick_read(ui: &mut egui::Ui, env: &mut Env, v: &PickView, compact: bool) {
 }
 
 /// "map-pin" and the place, in the muted color.
+/// A pick's or a classified's place, as it is written: the Legacy Viewer's
+/// LLPanelProfilePick::setPickLocation and LLPanelProfileClassified
+/// (indra/newview/llpanelprofilepicks.cpp, llpanelprofileclassifieds.cpp)
+/// show it with no RLVa filter (`@showloc` only takes New away).
 fn place_row(ui: &mut egui::Ui, p: &Palette, place: &str) {
     if place.is_empty() {
         return;
@@ -612,7 +605,7 @@ fn pick_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView) {
             false,
         );
     });
-    place_row(ui, p, &world.rlva_filter_text(&v.place));
+    place_row(ui, p, &v.place);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         let size = Vec2::new(0.0, 28.0);
@@ -630,6 +623,7 @@ fn pick_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView) {
             // onClickSetLocation: our position, parcel and region now
             let here = new_pick(world);
             e.pos = here.pos;
+            e.parcel = here.parcel;
             e.location = here.location;
         }
         let has_pos = e.pos != DVec3::ZERO;
@@ -657,7 +651,7 @@ fn pick_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView) {
     });
 }
 
-/// The other places as thumbnails; the card that adds one, with the
+/// The other picks as thumbnails; the card that adds one, with the
 /// account's limit (LLAgentBenefitsMgr picks_limit).
 fn thumbs(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, items: &[(Uuid, String)], add: Option<(usize, usize)>, compact: bool) {
     let p = env.p;
@@ -715,7 +709,7 @@ fn thumbs(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, items: &[(Uuid, Stri
         }
         if let Some((count, limit)) = add {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(col_w, THUMB_IMG_H + 40.0), Sense::click());
-            dashed(ui, rect, p.violet_light.gamma_multiply(0.45));
+            crate::ui::widgets::dashed_outline(ui.painter(), rect, p.violet_light.gamma_multiply(0.45));
             let c = rect.center();
             paint_icon(ui, "plus", c - Vec2::new(0.0, 22.0), 18.0, p.violet_light);
             let g = ui.painter().layout(
@@ -750,14 +744,6 @@ fn thumbs(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, items: &[(Uuid, Stri
     if adding {
         start_new_pick(w, env.world);
     }
-}
-
-/// A dashed outline (the cards that add something, the Give zone).
-fn dashed(ui: &egui::Ui, rect: Rect, color: Color32) {
-    let r = rect.shrink(0.75);
-    let path = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
-    ui.painter()
-        .extend(egui::Shape::dashed_line(&path, egui::Stroke::new(1.5, color), 5.0, 4.0));
 }
 
 // ------------------------------------------------------------------ classifieds
@@ -826,7 +812,7 @@ pub(in super::super) fn classifieds(ui: &mut egui::Ui, env: &mut Env, w: &mut Wi
         ids.push(Uuid::nil());
     }
     if ids.is_empty() {
-        let name = display_name(world, &w.id);
+        let name = display_name(world, w.scope, &w.id);
         let clicked = if own {
             empty(
                 ui,
@@ -1096,7 +1082,7 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
                 let (r, _) = ui.allocate_exact_size(Vec2::new(12.0, 16.0), Sense::hover());
                 paint_icon(ui, "map-pin-filled", r.center(), 11.0, p.muted);
                 ui.label(
-                    RichText::new(world.rlva_filter_text(&place_line(&c.parcel_name, &c.sim_name, c.pos_global, &world.map)))
+                    RichText::new(place_line(&c.parcel_name, &c.sim_name, c.pos_global, &world.map))
                         .size(11.5)
                         .color(p.muted),
                 );
@@ -1429,7 +1415,6 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         .location
         .clone()
         .unwrap_or_else(|| place_line(&e.parcel_name, &e.sim_name, e.pos, &env.world.map));
-    let place = world.rlva_filter_text(&place);
     let mut here = false;
     let mut renew = e.auto_renew;
     row(
@@ -1437,16 +1422,18 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         &mut |ui| {
             field(ui, p, aurora_i18n::tr!("ui-profile-aurora-place"), |ui| {
                 ui.horizontal(|ui| {
-                    ui.add(egui::Label::new(RichText::new(place.as_ref()).size(12.0).color(p.muted)).truncate());
+                    ui.add(egui::Label::new(RichText::new(place.as_str()).size(12.0).color(p.muted)).truncate());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        here = widgets::action_button_if(
+                        // LLPanelProfileClassified::onSetLocationClick
+                        // (llpanelprofileclassifieds.cpp): no RLVa test, under
+                        // @showloc too (a pick's is greyed under it)
+                        here = widgets::action_button(
                             ui,
                             p,
                             "current-location-filled",
                             aurora_i18n::tr!("ui-profile-aurora-here"),
                             ActionKind::Flat,
                             Vec2::new(0.0, 24.0),
-                            !world.rlva.has("showloc"),
                         )
                         .clicked();
                     });
@@ -1566,7 +1553,7 @@ pub(in super::super) fn first_life(ui: &mut egui::Ui, env: &mut Env, w: &mut Win
         env.wanted_images.insert(image);
     }
     if !editing && image.is_nil() && w.fl_about.text.trim().is_empty() {
-        let name = display_name(world, &w.id);
+        let name = display_name(world, w.scope, &w.id);
         let (title, text) = if own {
             (
                 aurora_i18n::tr!("ui-profile-aurora-first-life-empty-own"),
@@ -1598,7 +1585,7 @@ pub(in super::super) fn first_life(ui: &mut egui::Ui, env: &mut Env, w: &mut Win
         match env.images.get(&image).filter(|_| !image.is_nil()) {
             Some(t) => cover(ui, t, rect, radius),
             None => {
-                dashed(ui, rect, env.p.ink.gamma_multiply(0.16));
+                crate::ui::widgets::dashed_outline(ui.painter(), rect, env.p.ink.gamma_multiply(0.16));
                 paint_icon(ui, "camera-filled", rect.center() - Vec2::new(0.0, 14.0), 22.0, env.p.muted_dim);
                 ui.painter().text(
                     rect.center() + Vec2::new(0.0, 12.0),
@@ -1744,7 +1731,7 @@ pub(in super::super) fn web(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
         );
         return;
     };
-    let Some(username) = web_username(world, &w.id) else {
+    let Some(username) = web_username(world, w.scope, &w.id) else {
         loading(ui, p);
         return;
     };
@@ -1778,7 +1765,7 @@ pub(in super::super) fn web(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
                     )
                     .clicked()
                     {
-                        context::request(ui.ctx(), CtxAction::OpenUrl(page.clone()));
+                        context::request(ui.ctx(), CtxAction::OpenUrlExternal(page.clone()));
                     }
                     if widgets::action_button(ui, p, "refresh", "", ActionKind::Flat, Vec2::new(28.0, 24.0))
                         .on_hover_text(aurora_i18n::tr!("ui-profile-aurora-reload"))
@@ -1811,7 +1798,7 @@ pub(in super::super) fn notes(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) 
         loading(ui, p);
         return;
     }
-    let name = display_name(world, &w.id);
+    let name = display_name(world, w.scope, &w.id);
     let dirty = w.notes.dirty();
     let saved = w.notes_saved && !dirty;
     let mut save = false;

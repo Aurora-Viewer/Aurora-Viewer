@@ -13,9 +13,12 @@ pub mod background;
 pub mod demo;
 pub mod items;
 mod lost;
+pub(crate) mod outgoing;
 mod parents;
 pub mod preview;
 mod system;
+pub mod trash_origins;
+pub mod undo;
 pub mod wearable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +52,7 @@ pub struct Inventory {
     pub lib_owner: Uuid,
     pub folders: HashMap<Uuid, Folder>,
     pub items: items::Items,
+    pub(crate) outgoing: outgoing::Outgoing,
     /// Folders waiting to be fetched (id, library).
     pub queue: Vec<(Uuid, bool)>,
     /// Folders asked for while the cache file is being read (`hold_requests`).
@@ -59,6 +63,12 @@ pub struct Inventory {
     /// after `ITEM_FETCH_ATTEMPTS`: broken links, which outfits skip instead
     /// of waiting for them (LLViewerInventoryItem::getIsBrokenLink).
     pub missing_items: HashSet<Uuid>,
+    /// Folders the server refuses even at depth 0: over its per-folder reply
+    /// limit (the Legacy Viewer's InventoryLimitReachedAIS). Their direct
+    /// items cannot be read; search and refresh do not ask again in a loop.
+    pub too_big: HashSet<Uuid>,
+    /// When each folder's last read failed (`shown_needs_fetch`).
+    pub(crate) failed_at: HashMap<Uuid, std::time::Instant>,
     /// Failed item reads (network, server error), by attempt.
     pub item_failures: HashMap<Uuid, u8>,
     /// Failed item reads to ask for again (`take_item_retries`).
@@ -75,12 +85,26 @@ pub struct Inventory {
     pub(crate) hierarchy_repaired: bool,
     pub(crate) deferred_lost_folders: bool,
     pub(crate) lost_folder_retry_generation: u64,
+    /// Undo and redo of the session's inventory changes, shared by every
+    /// inventory window (`undo`); a new login starts it empty.
+    pub undo: undo::History,
+    /// The folder each entry of the Trash came from (`trash_origins`),
+    /// loaded for the account at login.
+    pub trash_origins: trash_origins::TrashOrigins,
 }
 
 /// Reads of one item before it counts as a broken link's original. A failed
 /// read proves nothing; the Legacy Viewer treats a link still unresolved once
 /// its background fetch ended as broken (LLAppearanceMgr::updateAppearanceFromCOF).
 pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
+
+/// The pause before a folder shown open whose read failed is asked for
+/// again (`Inventory::shown_needs_fetch`).
+pub const SHOWN_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
+
+// v3 could store a no-copy original as removed even when the offer never
+// reached a simulator. The folder version alone cannot distinguish that cache.
+const CACHE_VERSION: i32 = 4;
 
 fn first_id(v: &Llsd, key: &str) -> Uuid {
     v.at(0)[key].as_uuid()
@@ -163,6 +187,12 @@ impl Inventory {
                     f.favorite = existing.info.favorite;
                     f.favorite_known = existing.info.favorite_known;
                 }
+                // Neither can a skeleton, a legacy listing or a UDP update
+                // say the thumbnail is gone: they do not carry it (#2716).
+                if !f.thumbnail_known && f.thumbnail.is_nil() {
+                    f.thumbnail = existing.info.thumbnail;
+                    f.thumbnail_known = existing.info.thumbnail_known;
+                }
                 // A parent listing can carry older/unknown child versions.
                 // Keep the version of the contents already confirmed locally.
                 let version = existing.info.version;
@@ -217,6 +247,11 @@ impl Inventory {
         }
     }
 
+    /// Folder requests wait for the cache file to be read.
+    pub fn requests_held(&self) -> bool {
+        self.held.is_some()
+    }
+
     /// Queue a folder fetch if not fetched yet.
     pub fn request(&mut self, id: Uuid) {
         if let Some(held) = &mut self.held {
@@ -233,9 +268,27 @@ impl Inventory {
         }
     }
 
-    pub fn apply(&mut self, contents: Vec<FolderContents>) {
+    /// Whether a folder shown open should be asked for now: one never read,
+    /// or one whose last read failed `SHOWN_RETRY` ago or more. The windows
+    /// ask every frame; without the pause, a folder the server is busy with
+    /// (a large link creation still running) or refuses at once was asked
+    /// again and again, and stayed "loading" for good.
+    pub fn shown_needs_fetch(&self, id: Uuid, now: std::time::Instant) -> bool {
+        match self.folders.get(&id).map(|f| f.state) {
+            Some(FetchState::Unknown) => true,
+            Some(FetchState::Failed) => self.failed_at.get(&id).is_none_or(|at| now.duration_since(*at) >= SHOWN_RETRY),
+            _ => false,
+        }
+    }
+
+    /// Apply folder snapshots. A snapshot older than the contents already
+    /// confirmed locally is not applied: the folder is queued again, like
+    /// AISUpdate::parseCategory's stale-folder refetch (llaisapi.cpp).
+    /// Returns the folders that were stale and queued.
+    pub fn apply(&mut self, contents: Vec<FolderContents>) -> Vec<Uuid> {
         self.generation += 1;
         let mut refreshed: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
+        let mut stale = Vec::new();
         for mut c in contents {
             // Inventory versions advance as copies arrive (Firestorm's
             // LLInventoryModel::accountForUpdate). A delayed pre-copy HTTP
@@ -245,6 +298,7 @@ impl Inventory {
                 .get(&c.folder_id)
                 .is_some_and(|f| f.state == FetchState::Fetched && c.version < f.info.version)
             {
+                stale.push(c.folder_id);
                 continue;
             }
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
@@ -291,6 +345,9 @@ impl Inventory {
                 f.state = FetchState::Fetched;
                 f.info.version = c.version;
             }
+            // A folder that fits again (the resident split it, or a later read
+            // succeeded) is no longer over the limit.
+            self.too_big.remove(&c.folder_id);
             self.repair_item_parents(&mut c.items, parents::ItemSource::Snapshot);
             self.add_items_inner(c.items);
             self.sort_children(c.folder_id);
@@ -320,6 +377,13 @@ impl Inventory {
             self.pending_parent_repairs.retain(|id| self.repaired_parents.contains_key(id));
             self.deferred_parents.retain(|id, _| self.items.contains_key(id));
         }
+        for id in &stale {
+            if let Some(folder) = self.folders.get_mut(id) {
+                folder.state = FetchState::Unknown;
+            }
+            self.request(*id);
+        }
+        stale
     }
 
     /// Items fetched by id (FetchInventory2), listed in their folder when
@@ -373,6 +437,27 @@ impl Inventory {
                 f.items.insert(at, it.id);
             }
             self.items.insert(it.id, it);
+        }
+    }
+
+    /// A BulkUpdateInventory (a delivery, a gift, an unpack): applied like
+    /// any server change, then each of its folders not read yet is read
+    /// (#3025). The Legacy Viewer dates a folder by its loaded children
+    /// (llfolderviewmodelinventory.cpp) and, in
+    /// LLInventoryModel::processBulkUpdateInventory, only fetches a known
+    /// folder whose version is unknown or a new folder's parent, so a
+    /// delivered folder waits for an expand there before it sorts by date.
+    /// Aurora reads the delivered folder at once so that it sorts with its
+    /// contents: one FetchInventoryDescendents2 per delivered folder, a
+    /// small and deliberate difference in what is sent. Folders created,
+    /// moved or recovered through `server_updated` are not read.
+    pub fn bulk_updated(&mut self, folders: Vec<InvFolder>, items: Vec<InvItem>) {
+        let delivered: Vec<Uuid> = folders.iter().map(|folder| folder.id).collect();
+        self.server_updated(folders, items);
+        for id in delivered {
+            if self.folders.get(&id).is_some_and(|f| !matches!(f.state, FetchState::Fetched)) {
+                self.request(id);
+            }
         }
     }
 
@@ -519,10 +604,15 @@ impl Inventory {
     }
 
     pub fn failed(&mut self, folders: &[Uuid]) {
+        self.failed_at_time(folders, std::time::Instant::now());
+    }
+
+    fn failed_at_time(&mut self, folders: &[Uuid], now: std::time::Instant) {
         self.generation += 1;
         for id in folders {
             if let Some(f) = self.folders.get_mut(id) {
                 f.state = FetchState::Failed;
+                self.failed_at.insert(*id, now);
             }
         }
     }
@@ -544,6 +634,13 @@ impl Inventory {
 
     pub fn item_count(&self) -> usize {
         self.items.len()
+    }
+
+    /// Loaded items and folders, including both roots, the Library and links.
+    /// Follows LLPanelMainInventory::updateItemcountText and
+    /// LLInventoryModel::{getItemCount,getCategoryCount} (indra/newview).
+    pub fn total_count(&self) -> usize {
+        self.item_count() + self.folders.len()
     }
 
     /// AIS deletions remove descendants too; retain no stale search results.
@@ -579,7 +676,12 @@ impl Inventory {
         use aurora_llsd::llsd_map;
         let mut folders = Vec::new();
         let mut items = Vec::new();
-        for f in self.folders.values().filter(|f| f.state == FetchState::Fetched) {
+        let excluded = self.outgoing.uncached_folders(&self.items);
+        for f in self
+            .folders
+            .values()
+            .filter(|f| f.state == FetchState::Fetched && !excluded.contains(&f.info.id))
+        {
             folders.push(llsd_map! {
                 "id" => f.info.id,
                 "parent" => f.info.parent,
@@ -616,21 +718,28 @@ impl Inventory {
                 }
             }
         }
-        if folders.is_empty() {
+        if folders.is_empty() && excluded.is_empty() {
             return;
         }
         let doc = llsd_map! {
-            "version" => 3,
+            "version" => CACHE_VERSION,
             "folders" => Llsd::Array(folders),
             "items" => Llsd::Array(items),
         };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let tmp = path.with_extension("tmp");
-        if crate::cache::write(&tmp, &aurora_llsd::to_binary(&doc)).is_ok() {
-            let _ = std::fs::rename(&tmp, path);
-        }
+        // The document is the snapshot; its encoding, sealing and writing
+        // go to a save thread (saves.rs): a large inventory on a slow disk
+        // held the frame for over a minute at exit (#3466). The exit waits
+        // for it with a bound, and the next login's read waits for it.
+        let path = path.to_path_buf();
+        crate::saves::replace(path.clone(), move || {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let tmp = path.with_extension("tmp");
+            if crate::cache::write(&tmp, &aurora_llsd::to_binary(&doc)).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+        });
     }
 
     /// Restore cached folders whose version still matches the login
@@ -641,8 +750,12 @@ impl Inventory {
     /// to the fetch.
     pub fn apply_cache(&mut self, cache: CachedInventory) -> usize {
         let touched: HashSet<Uuid> = self.items.values().map(|it| it.parent).collect();
+        let excluded = self.outgoing.uncached_folders(&self.items);
         let mut valid = 0;
         for c in cache.folders {
+            if excluded.contains(&c.id) {
+                continue;
+            }
             let Some(cur) = self.folders.get_mut(&c.id) else {
                 continue;
             };
@@ -723,11 +836,18 @@ pub struct CachedInventory {
 /// the file, its LLSD document, the items and their order in each folder,
 /// as `sort_children` gives it.
 pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
+    read_cache_with_timeout(path, std::time::Duration::from_secs(10))
+}
+
+fn read_cache_with_timeout(path: &std::path::Path, timeout: std::time::Duration) -> Option<CachedInventory> {
+    // A slow logout save may still be replacing a snapshot with different
+    // no-copy originals. The login can fetch these folders from the server.
+    if !crate::saves::wait_for(path, timeout) {
+        return None;
+    }
     let bytes = crate::cache::read_touch(path).ok()?;
     let (doc, _) = aurora_llsd::from_binary_local(&bytes).ok()?;
-    // Older files were populated by legacy reads that could discard other
-    // favorites. Reload those folders through AIS once, even at equal versions.
-    if doc["version"].as_i32() != 3 {
+    if doc["version"].as_i32() != CACHE_VERSION {
         return None;
     }
     let mut by_parent: HashMap<Uuid, Vec<InvItem>> = HashMap::new();
@@ -801,6 +921,80 @@ pub fn read_cache_in_background(path: std::path::PathBuf) -> crossbeam_channel::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_total_counts_folders_library_trash_and_links() {
+        let id = Uuid::from_u128;
+        let mut inv = Inventory {
+            root: id(1),
+            lib_root: id(2),
+            ..Default::default()
+        };
+        assert_eq!(inv.total_count(), 0);
+        for (n, parent, kind, library) in [
+            (1, 0, 8, false),
+            (2, 0, 8, true),
+            (3, 1, 14, false),
+            (4, 2, -1, true),
+            (5, 1, -1, false),
+        ] {
+            inv.folders.insert(
+                id(n),
+                Folder {
+                    info: InvFolder {
+                        id: id(n),
+                        parent: id(parent),
+                        type_default: kind,
+                        ..Default::default()
+                    },
+                    children: Vec::new(),
+                    items: Vec::new(),
+                    state: FetchState::Unknown,
+                    library,
+                },
+            );
+        }
+        inv.add_items(
+            [
+                (100, 1, 6, 0),
+                (101, 4, 6, 0),
+                (102, 1, 24, 100),
+                (103, 1, 24, 999),
+                (104, 1, 25, 5),
+                (105, 3, 6, 0),
+            ]
+            .into_iter()
+            .map(|(n, parent, asset_type, target)| InvItem {
+                id: id(n),
+                parent: id(parent),
+                asset_type,
+                asset_id: id(target),
+                ..Default::default()
+            })
+            .collect(),
+        );
+        inv.items_missing(vec![id(999)]);
+        assert_eq!(inv.item_count(), 6, "item-only consumers retain their count");
+        assert_eq!(
+            inv.total_count(),
+            11,
+            "five folders plus six records, including aliases and a broken link"
+        );
+        // Moving a record or receiving it again never counts it twice.
+        let mut moved = inv.items[&id(100)].clone();
+        moved.parent = id(5);
+        inv.add_items(vec![moved.clone(), moved]);
+        assert_eq!(inv.total_count(), 11);
+        inv.remove(&[id(3)]);
+        assert_eq!(inv.total_count(), 9, "removing Trash removes its category and contained item");
+        let folder = InvFolder {
+            id: id(6),
+            parent: inv.root,
+            ..Default::default()
+        };
+        inv.created_folders(vec![folder.clone(), folder]);
+        assert_eq!(inv.total_count(), 10, "a new empty folder counts once");
+    }
 
     fn fixture() -> Inventory {
         let mut inv = Inventory {
@@ -979,6 +1173,62 @@ mod tests {
         }
     }
 
+    /// #3025: a folder delivered by BulkUpdate must be fetched so its date
+    /// (newest descendant) sorts it with its contents, without waiting for expand.
+    #[test]
+    fn bulk_updated_folders_are_queued_for_fetch() {
+        let mut inv = fixture();
+        let id = Uuid::from_u128(9801);
+        inv.bulk_updated(
+            vec![InvFolder {
+                id,
+                parent: inv.root,
+                name: "Gift folder".into(),
+                type_default: -1,
+                version: -1,
+                ..Default::default()
+            }],
+            Vec::new(),
+        );
+        assert_eq!(inv.folders[&id].state, FetchState::Fetching);
+        assert!(
+            inv.queue.iter().any(|(queued, _)| *queued == id),
+            "descendent fetch queued: {:?}",
+            inv.queue
+        );
+    }
+
+    /// Only a BulkUpdateInventory reads its folders: a folder AIS just
+    /// created, one announced during a copy and a folder moved elsewhere
+    /// send no FetchInventoryDescendents2, as in the Legacy Viewer.
+    #[test]
+    fn created_and_moved_folders_are_not_queued_for_fetch() {
+        let mut inv = fixture();
+        let folder = |id: u128, parent: Uuid| InvFolder {
+            id: Uuid::from_u128(id),
+            parent,
+            name: format!("Folder {id}"),
+            type_default: -1,
+            version: 1,
+            ..Default::default()
+        };
+        let root = inv.root;
+        inv.created_folders(vec![folder(9811, root)]);
+        assert!(inv.queue.is_empty(), "created folder: {:?}", inv.queue);
+        assert_eq!(inv.folders[&Uuid::from_u128(9811)].state, FetchState::Fetched);
+
+        // copied without AIS (announce_folder) and never opened
+        inv.server_updated(vec![folder(9812, root)], Vec::new());
+        assert!(inv.queue.is_empty(), "announced folder: {:?}", inv.queue);
+
+        // moved under another folder
+        let mut moved = folder(9812, Uuid::from_u128(9811));
+        moved.version = -1;
+        inv.server_updated(vec![moved], Vec::new());
+        assert!(inv.queue.is_empty(), "moved folder: {:?}", inv.queue);
+        assert!(inv.folders[&Uuid::from_u128(9811)].children.contains(&Uuid::from_u128(9812)));
+    }
+
     #[test]
     fn stale_folder_snapshots_do_not_erase_confirmed_copy_contents() {
         let mut inv = fixture();
@@ -1145,5 +1395,41 @@ mod tests {
         assert!(read_cache(&path).is_none());
         std::fs::remove_file(&path).expect("synthetic cache cleanup");
         assert!(read_cache_in_background(path).recv().expect("one answer").is_none());
+    }
+
+    fn outfit(id: u128, thumbnail: u128, known: bool) -> InvFolder {
+        InvFolder {
+            id: Uuid::from_u128(id),
+            parent: Uuid::from_u128(48),
+            name: "Outfit".into(),
+            type_default: 47,
+            version: 3,
+            thumbnail: Uuid::from_u128(thumbnail),
+            thumbnail_known: known,
+            ..Default::default()
+        }
+    }
+
+    /// A legacy listing of My Outfits, as saving or renaming an outfit reads
+    /// it, says nothing of thumbnails: its children keep theirs (#2716).
+    #[test]
+    fn a_record_without_a_thumbnail_keeps_the_one_known() {
+        let mut inv = Inventory::default();
+        inv.add_folders(vec![outfit(1, 9, true)], false);
+        let picture = Uuid::from_u128(9);
+        inv.add_folders(vec![outfit(1, 0, false)], false);
+        assert_eq!(inv.folders[&Uuid::from_u128(1)].info.thumbnail, picture);
+        // and a new one replaces it, known or not
+        inv.add_folders(vec![outfit(1, 8, false)], false);
+        assert_eq!(inv.folders[&Uuid::from_u128(1)].info.thumbnail, Uuid::from_u128(8));
+    }
+
+    /// A complete AIS record, or the removal of the picture, does clear it.
+    #[test]
+    fn a_complete_record_without_a_thumbnail_clears_it() {
+        let mut inv = Inventory::default();
+        inv.add_folders(vec![outfit(1, 9, true)], false);
+        inv.add_folders(vec![outfit(1, 0, true)], false);
+        assert!(inv.folders[&Uuid::from_u128(1)].info.thumbnail.is_nil());
     }
 }

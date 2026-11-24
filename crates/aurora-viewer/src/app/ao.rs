@@ -23,6 +23,7 @@ impl App {
                 .map(|a| a.animations.clone())
                 .unwrap_or_default();
             self.ao_runtime = runtime::Runtime::with_choices(choices);
+            self.ao_held_changes.clear();
             self.ao_ui = Default::default();
             self.ao_missing.clear();
             self.ao_default_applied = false;
@@ -43,6 +44,8 @@ impl App {
         }
         if self.demo && self.frame_count == 360 {
             match self.ao_demo.as_deref() {
+                // the Mini AO window alone, without the manager
+                Some("mini") => self.panels.ao = false,
                 Some(mode) if mode.starts_with("quick") => {
                     self.panels.ao = false;
                     self.toolbar_ui.ao_quick.open = true;
@@ -395,6 +398,20 @@ impl App {
                 Some(crate::ao::State::Walking | crate::ao::State::Running | crate::ao::State::CrouchWalk)
             );
         self.world.ao_pose = Some(pose);
+        // After a teleport to another region the pose follows the AO at once,
+        // but what it sends waits for that region's first list of our
+        // animations: sent earlier, the stops reach a region that does not
+        // play the animations yet and are lost (#2700).
+        if self.world.awaiting_own_animations(now) {
+            runtime::hold_changes(&mut self.ao_held_changes, commands);
+            self.save_ao_choices();
+            return;
+        }
+        if !self.ao_held_changes.is_empty() {
+            let mut held = std::mem::take(&mut self.ao_held_changes);
+            runtime::hold_changes(&mut held, commands);
+            commands = held;
+        }
         for (anim, start) in &commands {
             log::debug!("AO animation {} {anim}", if *start { "start" } else { "stop" });
         }
@@ -478,6 +495,14 @@ impl App {
                     migration.source.reload(&mut self.world.inventory);
                     migration.message.clear();
                 }
+            }
+            Action::FinishRecovery(recovery) => match inventory::finish_recovery(&self.world.inventory, recovery) {
+                Ok(change) => self.apply_ao_action(Action::Edit(change, None)),
+                Err(reason) => self.ao_ui.message = reason,
+            },
+            Action::ShowRecovery(id) => {
+                self.inventory_ui.show_folder(&self.world.inventory, id);
+                self.panels.inventory = true;
             }
             Action::Edit(change, select) => self.queue_ao_edit(change, select, None),
             Action::EditContainer(change, target) => self.queue_ao_edit(change, None, Some(target)),

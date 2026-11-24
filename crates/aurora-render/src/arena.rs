@@ -2,7 +2,7 @@
 //! a storage buffer of draw records, all sub-allocated on the CPU side.
 
 use crate::gpu_alloc::{Backoff, fallback_capacities, try_buffer};
-use crate::gpu_cull::{CullFace, DirtyChunks, GpuTable};
+use crate::gpu_cull::{CullFace, DirtyChunks, GpuTable, Touched};
 use crate::types::{DrawRecord, SkinVertex, Vertex};
 use crate::upload::{StagedMesh, UploadQueue};
 use crate::writes::GpuWrites;
@@ -222,11 +222,22 @@ impl GeometryArena {
     }
 
     fn make(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
-        device.create_buffer(&Self::desc(label, size, usage))
+        device.create_buffer(&Self::desc(label, size, Self::traced(device, usage)))
     }
 
     fn try_make(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> Result<wgpu::Buffer, String> {
-        try_buffer(device, &Self::desc(label, size, usage))
+        try_buffer(device, &Self::desc(label, size, Self::traced(device, usage)))
+    }
+
+    /// The ray-traced shadows build their bottom levels from the arena and
+    /// pose the avatars from it in a compute pass (rt_shadows.rs): the
+    /// buffers say so when the device traces.
+    fn traced(device: &wgpu::Device, usage: wgpu::BufferUsages) -> wgpu::BufferUsages {
+        if device.features().contains(crate::rt_shadows::FEATURES) {
+            usage | wgpu::BufferUsages::BLAS_INPUT | wgpu::BufferUsages::STORAGE
+        } else {
+            usage
+        }
     }
 
     fn desc(label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::BufferDescriptor<'_> {
@@ -604,6 +615,8 @@ pub struct RecordStore {
     mirror: Blocks<DrawRecord>,
     free: Vec<u32>,
     dirty: DirtyChunks,
+    /// The records that changed, for `take_changed`.
+    touched: Touched,
     live: u32,
     /// Set when the buffer was reallocated (bind group must be rebuilt).
     pub generation: u64,
@@ -624,6 +637,7 @@ impl RecordStore {
             mirror: Blocks::new(),
             free: Vec::new(),
             dirty: DirtyChunks::default(),
+            touched: Touched::default(),
             live: 0,
             generation: 0,
             uploaded: 0,
@@ -707,6 +721,26 @@ impl RecordStore {
 
     fn mark(&mut self, idx: usize) {
         self.dirty.mark(idx);
+        self.touched.mark(idx);
+    }
+
+    /// Follows the records and the faces that change, for `take_changed`:
+    /// whether it already did.
+    pub(crate) fn watch_changes(&mut self) -> bool {
+        self.touched.watch() & self.faces.watch(|a, b| a != b)
+    }
+
+    /// Stops following them (`watch_changes`).
+    pub(crate) fn unwatch_changes(&mut self) {
+        self.touched.unwatch();
+        self.faces.unwatch();
+    }
+
+    /// Adds to `into` the records that changed since the last call, or
+    /// whose face did (one that did both is there twice).
+    pub(crate) fn take_changed(&mut self, into: &mut Vec<u32>) {
+        self.touched.take(into);
+        self.faces.take_touched(into);
     }
 
     pub fn set(&mut self, id: u32, rec: DrawRecord) {
@@ -972,7 +1006,7 @@ mod tests {
             let sk: Vec<SkinVertex> = (0..vcount)
                 .map(|k| SkinVertex {
                     joints: [i as u8, k as u8, 0, 0],
-                    weights: [255, 0, 0, 0],
+                    weights: [u16::MAX, 0, 0, 0],
                 })
                 .collect();
             let idx: Vec<u16> = (0..icount).map(|k| (k % vcount) as u16).collect();
@@ -1005,7 +1039,7 @@ mod tests {
         let read = |buffer: &wgpu::Buffer, offset: u64, size: u64| -> Vec<u8> {
             let out = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
-                size,
+                size: crate::readback::readback_size(size),
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
@@ -1014,7 +1048,7 @@ mod tests {
             queue.submit([enc.finish()]);
             out.map_async(wgpu::MapMode::Read, .., |r| r.expect("map"));
             device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
-            out.get_mapped_range(..).expect("mapped").to_vec()
+            out.get_mapped_range(..size).expect("mapped payload").to_vec()
         };
         for (i, m, skinned) in live {
             let (v, sk, idx) = mesh(i, m.vertex_count, m.index_count);
@@ -1111,7 +1145,7 @@ mod tests {
         // records and upload the new ones after that copy in the journal.
         let out = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size,
+            size: crate::readback::readback_size(size),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -1122,7 +1156,7 @@ mod tests {
         device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
         {
             let bytes = out.get_mapped_range(..).expect("mapped");
-            assert_eq!(bytemuck::from_bytes::<DrawRecord>(&bytes).base_color[0], 19_999.0);
+            assert_eq!(crate::readback::pods::<DrawRecord>(&bytes)[0].base_color[0], 19_999.0);
         }
         out.unmap();
         let previous = (store.buffer.clone(), store.prev_models.clone());
@@ -1211,7 +1245,7 @@ mod tests {
         let size = (ids.len() * std::mem::size_of::<DrawRecord>()) as u64;
         let out = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size,
+            size: crate::readback::readback_size(size),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -1221,7 +1255,7 @@ mod tests {
         out.map_async(wgpu::MapMode::Read, .., |r| r.expect("map"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
         let bytes = out.get_mapped_range(..).expect("mapped").to_vec();
-        let got: &[DrawRecord] = bytemuck::cast_slice(&bytes);
+        let got = crate::readback::pods::<DrawRecord>(&bytes);
         for &id in &ids {
             let expected = store.get(id).copied().expect("record");
             assert!(

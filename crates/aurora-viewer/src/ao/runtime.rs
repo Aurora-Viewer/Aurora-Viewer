@@ -7,6 +7,12 @@ use crate::world::PlayingAnimation;
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
+/// Longest the last complete selection is kept while its replacement
+/// downloads. A replacement that never loads (a missing or broken asset in
+/// the set, retried every 30 s) would otherwise hold a Swimming Up / Down
+/// pose for as long as the avatar stays in the water.
+const LOADING_HOLD: Duration = Duration::from_secs(3);
+
 pub struct Frame<'a> {
     pub raw: &'a [PlayingAnimation],
     /// Movement enhancer's bounded ground-contact grace; never changes raw signals.
@@ -59,6 +65,42 @@ pub struct Runtime {
     restoring: Option<(State, PlayingAnimation, Instant)>,
     anchor_blend: super::anchor_blend::Blend,
     anchor_signal: Option<PlayingAnimation>,
+    hold_since: Option<Instant>,
+}
+
+/// Whether a replaced stock signal is stopped on the simulator, decided for
+/// each special hold. The Legacy Viewer stops no default motion on the region
+/// while it plays an override (`LLVOAvatar::startMotion`,
+/// indra/newview/llvoavatar.cpp), except once at `AOEngine::enable`
+/// (aoengine.cpp). Aurora keeps that for ordinary movement, which also avoids
+/// OpenSimulator resetting a stopped movement default to STAND. Its own
+/// choices on top: a replaced stand or turn is stopped (the stock sit is not,
+/// see `steady` in `update`), and so is the movement a special hold owns:
+/// - swimming, water walking, a water recovery and the anchored ground sit
+///   own the whole pose, so their stock flight / walk is stopped;
+/// - the run hold bridges a brief loss of ground contact: only the stock fall
+///   it hides is stopped, its own run stays on the region;
+/// - the native running hand-off owns no stop at all.
+pub(super) fn stop_region_signal(state: State, frame: &Frame<'_>) -> bool {
+    let movement = matches!(
+        state,
+        State::Walking
+            | State::Running
+            | State::Crouching
+            | State::CrouchWalk
+            | State::Falling
+            | State::FlyingDown
+            | State::FlyingUp
+            | State::Flying
+            | State::FlyingSlow
+            | State::Hovering
+    );
+    !movement
+        || frame.swim_hold.is_some()
+        || frame.water_walk_hold.is_some()
+        || frame.swim_outro
+        || frame.anchor_hold.is_some()
+        || (frame.run_hold.is_some() && state == State::Falling)
 }
 
 impl Default for Runtime {
@@ -85,8 +127,20 @@ impl Default for Runtime {
             restoring: None,
             anchor_blend: Default::default(),
             anchor_signal: None,
+            hold_since: None,
         }
     }
+}
+
+/// Folds this frame's animation changes into the ones held back while
+/// `World::awaiting_own_animations`: the last change of each animation wins,
+/// stops before starts as `Runtime::update_with_easing` orders them.
+pub fn hold_changes(held: &mut Vec<(Uuid, bool)>, changes: Vec<(Uuid, bool)>) {
+    for (id, start) in changes {
+        held.retain(|(other, _)| *other != id);
+        held.push((id, start));
+    }
+    held.sort_by_key(|(_, start)| *start);
 }
 
 impl Runtime {
@@ -378,9 +432,7 @@ impl Runtime {
             self.suppressed.clear();
             self.restoring = None;
         }
-        self.restoring = self
-            .restoring
-            .filter(|(state, _, _)| !frame.on_object || (*state == State::Sitting && !frame.seat_animations));
+        self.restoring = self.restoring.filter(|_| !frame.on_object);
         let mut primary = frame
             .raw
             .iter()
@@ -410,7 +462,7 @@ impl Runtime {
             // that selected the AO. A new stock signal still takes precedence.
             primary = self
                 .raw_hold
-                .filter(|(state, signal)| self.suppressed.contains_key(&signal.id) && (!frame.on_object || *state == State::Sitting))
+                .filter(|(_, signal)| self.suppressed.contains_key(&signal.id) && !frame.on_object)
                 .or_else(|| {
                     self.restoring
                         .filter(|(_, _, sent)| now.saturating_duration_since(*sent) < Duration::from_secs(2))
@@ -569,6 +621,14 @@ impl Runtime {
             && !desired.is_empty()
             && (previous_state == self.current || (water_loop(previous_state) && water_loop(self.current)))
             && desired.iter().any(|id| !ready(id));
+        // Each change of state gets its own LOADING_HOLD: two water
+        // transitions in a row do not share one.
+        let fresh = previous_state != self.current;
+        self.hold_since = holding.then(|| if fresh { now } else { self.hold_since.unwrap_or(now) });
+        let holding = holding
+            && self
+                .hold_since
+                .is_some_and(|since| now.saturating_duration_since(since) < LOADING_HOLD);
         if holding {
             // Keep the last complete selection while a cycle/continuous swim
             // replacement downloads. Network and local selection change together.
@@ -708,15 +768,25 @@ impl Runtime {
             })
             .collect();
         pose.extend(loaded);
-        // Suppress replaced standard clips for observers too, rather than
-        // depending on upload priorities. Keep jump/landing control motions
-        // intact (requestStopMotion finish flags), as in the Legacy AO.
+        // Stop a replaced stand or turn on the region for observers too (an
+        // Aurora choice: the Legacy Viewer leaves them running), rather than
+        // depending on upload priorities; ordinary movement defaults stay on
+        // the region unless a special hold owns them (`stop_region_signal`).
+        // Keep jump/landing control motions intact (requestStopMotion finish
+        // flags).
+        // The stock sit stays to the simulator too, as with the Legacy AO:
+        // LLVOAvatar::startMotion (indra/newview/llvoavatar.cpp) only starts
+        // the override (AOEngine::override, aoengine.cpp), and the
+        // simulator's stop of the stock sit, at a stand-up or a teleport,
+        // ends it. Stopped by us, its echo looked like the sit ending, and the
+        // AO had to hold the sit itself, which a teleport left stuck (#2700).
         let steady = |state| {
             !matches!(
                 state,
                 State::Jumping
                     | State::PreJumping
                     | State::Typing
+                    | State::Sitting
                     | State::GroundSit
                     | State::Landing
                     | State::SoftLanding
@@ -739,19 +809,31 @@ impl Runtime {
         let mut suppressed = HashMap::new();
         if let Some((state, signal)) = self.raw_hold {
             if overrides(state) && !self.active.iter().any(|a| a.id == signal.id) {
-                let old = self.suppressed.get(&signal.id).copied().unwrap_or_else(|| {
-                    commands.push((signal.id, false));
-                    signal
-                });
-                suppressed.insert(signal.id, old);
-                self.restoring = None;
-            } else if self.suppressed.contains_key(&signal.id) && !(state == State::Sitting && frame.on_object && frame.seat_animations) {
+                if stop_region_signal(state, &frame) {
+                    let old = self.suppressed.get(&signal.id).copied().unwrap_or_else(|| {
+                        commands.push((signal.id, false));
+                        signal
+                    });
+                    suppressed.insert(signal.id, old);
+                    self.restoring = None;
+                } else {
+                    // Left out of `suppressed`: a signal a special hold stopped
+                    // earlier is forgotten without a START of the stock motion,
+                    // as AOEngine::enable (aoengine.cpp) only ever stops them.
+                    // A hold that flickers must not send START / STOP pairs.
+                    self.restoring = None;
+                }
+            } else if self.suppressed.contains_key(&signal.id) {
                 commands.push((signal.id, true));
                 self.restoring = Some((state, signal, now));
             }
         }
         for signal in frame.raw {
-            if State::from_motion(signal.id).is_some_and(overrides) && !self.active.iter().any(|a| a.id == signal.id) {
+            if let Some(state) = State::from_motion(signal.id)
+                && overrides(state)
+                && !self.active.iter().any(|a| a.id == signal.id)
+                && stop_region_signal(state, &frame)
+            {
                 if self
                     .suppressed
                     .get(&signal.id)

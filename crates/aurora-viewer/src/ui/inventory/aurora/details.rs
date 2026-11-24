@@ -3,7 +3,8 @@
 //! creator, your rights and the next owner's, the main actions) and the
 //! details pane of the wide width, which also sets the next owner's rights
 //! as the properties do (LLSidepanelItemInfo, LLFloaterProperties). The
-//! main action is the one a double-click does (wear, open, teleport…).
+//! main action is the one a double-click does (wear, open, teleport, play a
+//! sound in world…); a sound also offers its local audition beside it.
 
 use super::super::permissions::{Permissions, Rights};
 use super::super::*;
@@ -56,7 +57,7 @@ impl Main {
             Self::TakeOff => ("hanger-2-filled", aurora_i18n::tr!("inventory-take-off")),
             Self::Open => ("folder-open-filled", aurora_i18n::tr!("common-open")),
             Self::Teleport => ("map-pin-filled", aurora_i18n::tr!("common-teleport")),
-            Self::Play => ("player-play-filled", aurora_i18n::tr!("common-play")),
+            Self::Play => ("world-filled", aurora_i18n::tr!("common-play-in-world")),
             Self::Activate(true) => ("player-play-filled", aurora_i18n::tr!("gesture-activate")),
             Self::Activate(false) => ("player-stop-filled", aurora_i18n::tr!("gesture-deactivate")),
             Self::Profile => ("user-filled", aurora_i18n::tr!("inventory-profile")),
@@ -75,13 +76,15 @@ impl Main {
         let original = rules::original(inv, id);
         match self {
             Self::Wear | Self::TakeOff => context::double_click(inv, id, st, prefs, facts, actions),
+            // LLSoundBridge::performAction("sound_play") and the double-click
+            // (LLSoundBridgeAction): the sound plays in world for everyone.
             Self::Play => {
                 if let Some(asset) = original
                     .and_then(|id| inv.items.get(&id))
                     .map(|it| it.asset_id)
                     .filter(|a| !a.is_nil())
                 {
-                    actions.push(InvAction::Sound(asset));
+                    actions.push(InvAction::TriggerSound(asset));
                 }
             }
             Self::Activate(on) => {
@@ -91,6 +94,24 @@ impl Main {
             }
             Self::Open | Self::Teleport | Self::Profile => context::open(inv, id, st, actions),
         }
+    }
+}
+
+/// The local audition beside the world playback of the main action
+/// (LLPreviewSound::auditionSound, indra/newview/llpreviewsound.cpp).
+fn sound_local_button(ui: &mut egui::Ui, p: &Palette, asset: Uuid, ready: bool, actions: &mut Vec<InvAction>) {
+    if widgets::action_button_if(
+        ui,
+        p,
+        "player-play-filled",
+        aurora_i18n::tr!("common-play-locally"),
+        widgets::ActionKind::Flat,
+        Vec2::new(0.0, BUTTON),
+        ready && !asset.is_nil(),
+    )
+    .clicked()
+    {
+        actions.push(InvAction::Sound(asset));
     }
 }
 
@@ -104,14 +125,14 @@ fn can_add(inv: &Inventory, id: Uuid, facts: &Facts, st: &InventoryUi) -> bool {
             && !rules::in_type(inv, it.id, 14)
             && !facts.appearance_busy
             && st.pending.is_none()
-            && facts.rlva_allows(inv, it.id, true)
+            && facts.rlva_allows(inv, crate::world::appearance::wear_entry(inv, id, it.id), true)
     })
 }
 
 fn add(inv: &Inventory, id: Uuid, actions: &mut Vec<InvAction>) {
     if let Some(original) = rules::original(inv, id) {
         actions.push(InvAction::Appearance(Wear::WearItems {
-            items: vec![original],
+            items: vec![crate::world::appearance::wear_entry(inv, id, original)],
             replace: false,
             point: 0,
         }));
@@ -129,7 +150,8 @@ fn can_give(inv: &Inventory, ids: &[Uuid], st: &InventoryUi, facts: &Facts) -> b
 
 fn give(st: &mut InventoryUi, ids: Vec<Uuid>) {
     st.share_items = ids;
-    st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
+    // LLAvatarActions::shareWithAvatars: allow_multiple true
+    st.share_picker.open(&format!("inventory_share_{}", st.ui_id), true);
 }
 
 /// The ids the actions act on: the selection, or the row shown.
@@ -170,7 +192,7 @@ fn picture(
         |it| inventory_item_icon(inv, it, p),
     );
     let size = (rect.height() * 0.42).clamp(20.0, 44.0);
-    if let Some(texture) = icons.get(icon) {
+    if let Some(texture) = icons.sized(ui.ctx(), icon, size) {
         ui.painter().image(
             texture.id(),
             Rect::from_center_size(rect.center(), Vec2::splat(size)),
@@ -187,28 +209,38 @@ fn more(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, id: Uuid) {
         .on_hover_text(aurora_i18n::tr!("inventory-more-actions"));
     if response.clicked() {
         st.row_menu = Some((id, response.rect.left_bottom()));
+        st.background_menu = false;
     }
 }
 
-/// The name of a resident, or "You".
-fn resident(facts: &Facts, id: Uuid) -> String {
+/// A resident and the field that shows them (`resident_scopes`).
+type Resident = (Uuid, crate::world::names::NameScope);
+
+/// The name of a resident, or "You": the stand-in where RLVa's `@shownames`
+/// hides them in that field.
+fn resident_name(facts: &Facts, resident: Resident) -> String {
+    let (id, _) = resident;
     if id == facts.agent && !id.is_nil() {
         aurora_i18n::tr!("inventory-owner-you").to_owned()
     } else if id.is_nil() {
         aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple").to_owned()
     } else {
         facts
-            .names
-            .get(&id)
+            .hidden_names
+            .get(&resident)
+            .or_else(|| facts.names.get(&id))
             .cloned()
             .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned())
     }
 }
 
 /// A resident as a link to their profile.
-fn resident_link(ui: &mut egui::Ui, p: &Palette, facts: &Facts, id: Uuid, size: f32, actions: &mut Vec<InvAction>) {
-    let name = resident(facts, id);
-    if id.is_nil() {
+fn resident_link(ui: &mut egui::Ui, p: &Palette, facts: &Facts, resident: Resident, size: f32, actions: &mut Vec<InvAction>) {
+    let name = resident_name(facts, resident);
+    let (id, _) = resident;
+    // no resident, or one RLVa's `@shownames` hides: the stand-in opens no
+    // profile (LLSidepanelItemInfo::onClickCreator / onClickOwner)
+    if id.is_nil() || facts.hidden_names.contains_key(&resident) {
         ui.label(egui::RichText::new(name).size(size).color(p.muted));
         return;
     }
@@ -341,7 +373,7 @@ pub(super) fn strip(
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(egui::RichText::new(rows::kind_name(inv, id)).size(12.0).color(p.muted));
         ui.label(egui::RichText::new("·").size(12.0).color(p.muted_dim));
-        resident_link(ui, p, facts, original.creator, 12.0, actions);
+        resident_link(ui, p, facts, crate::ui::inventory::resident_scopes(original)[1], 12.0, actions);
     });
     if let Some(permissions) = Permissions::inventory(inv, id) {
         body.horizontal(|ui| {
@@ -373,6 +405,9 @@ pub(super) fn strip(
                 main.run(inv, id, st, prefs, facts, actions);
             }
         }
+        if original.asset_type == 1 {
+            sound_local_button(ui, p, original.asset_id, st.pending.is_none(), actions);
+        }
         if can_add(inv, id, facts, st)
             && widgets::action_button(
                 ui,
@@ -390,10 +425,15 @@ pub(super) fn strip(
             ui,
             p,
             "info-circle-filled",
-            aurora_i18n::tr!("common-properties"),
+            if original.asset_type == 1 {
+                ""
+            } else {
+                aurora_i18n::tr!("common-properties")
+            },
             widgets::ActionKind::Flat,
             Vec2::new(0.0, BUTTON),
         )
+        .on_hover_text(aurora_i18n::tr!("common-properties"))
         .clicked()
         {
             st.property_edit = None;
@@ -509,7 +549,167 @@ pub(super) fn pane(
         }
         return;
     };
-    // The picture: a click changes it.
+    // Alt+P: what the selection holds, in place of its picture
+    if prefs.preview_pane && preview(ui, p, inv, id, facts, images, &mut st.wanted_images, actions) {
+        return details_below(ui, p, inv, st, prefs, facts, actions, id);
+    }
+    details_below_picture(ui, p, icons, inv, st, prefs, facts, images, actions, id);
+}
+
+/// How long a notecard stays selected before the preview pane asks for its
+/// text: arrowing down a folder of notecards fetches only where it stops.
+const PANE_TEXT_SETTLE: f64 = 0.25;
+
+/// Whether the notecard `id` has been the one this pane previews for
+/// `PANE_TEXT_SETTLE` (each pane its own: a folder window, the other side
+/// of the dual panel); until then a repaint is asked for that moment.
+fn settled(ui: &egui::Ui, id: Uuid) -> bool {
+    let ctx = ui.ctx();
+    let key = ui.scope_id().with("aurora_preview_settle");
+    let now = ctx.input(|i| i.time);
+    let since = ctx.data_mut(|d| {
+        let entry = d.get_temp_mut_or_insert_with(key, || (id, now));
+        if entry.0 != id {
+            *entry = (id, now);
+        }
+        entry.1
+    });
+    let left = PANE_TEXT_SETTLE - (now - since);
+    if left > 0.0 {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(left));
+    }
+    left <= 0.0
+}
+
+/// What the preview pane shows of an item (Alt+P; Windows Explorer's
+/// preview pane): a texture whole, its own image even when its item
+/// carries another picture (nothing under RLVa's @viewtexture), a notecard's text when the
+/// agent may read it (`preview::can_read`), a sound to play here. False
+/// for anything else, which keeps its picture.
+#[allow(clippy::too_many_arguments)]
+fn preview(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    id: Uuid,
+    facts: &Facts,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    wanted: &mut HashSet<Uuid>,
+    actions: &mut Vec<InvAction>,
+) -> bool {
+    let Some(original) = rules::original(inv, id).and_then(|id| inv.items.get(&id)) else {
+        return false;
+    };
+    let width = ui.available_width();
+    let height = (ui.available_height() * 0.5).clamp(176.0, 420.0);
+    match original.asset_type {
+        0 => {
+            // the texture itself, not the picture its item may carry (as
+            // LLPreviewTexture shows it); the tooltips' rule otherwise
+            let own = (inv.can_preview(0) && !original.asset_id.is_nil()).then_some(original.asset_id);
+            let Some(asset) = own.or_else(|| super::super::hover::asset(inv, original.id)) else {
+                return false;
+            };
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.panel);
+            wanted.insert(asset);
+            match images.get(&asset) {
+                Some(texture) => {
+                    let size = texture.size_vec2();
+                    let scale = (rect.width() / size.x.max(1.0)).min(rect.height() / size.y.max(1.0));
+                    let shown = Rect::from_center_size(rect.center(), size * scale);
+                    ui.painter().image(
+                        texture.id(),
+                        shown,
+                        Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        widgets::PICTURE_TINT,
+                    );
+                }
+                None => {
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        aurora_i18n::tr!("common-loading-2"),
+                        egui::FontId::proportional(13.0),
+                        p.muted,
+                    );
+                }
+            }
+            true
+        }
+        7 => {
+            let key = crate::ui::inventory::pane_key(inv, original.id, facts.god_level);
+            let text = key.and_then(|key| facts.pane_texts.get(&key));
+            if text.is_none() && settled(ui, original.id) {
+                actions.push(InvAction::PaneText(original.id));
+            }
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.panel);
+            let mut inner = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rect.shrink(8.0))
+                    .id_salt(("aurora_preview_text", original.id)),
+            );
+            match text {
+                Some(PaneText::Text(text)) => {
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut inner, |ui| {
+                        // the embedded items' marks, one character each
+                        let shown: String = text
+                            .chars()
+                            .map(|c| if ('\u{F0000}'..='\u{10FFFF}').contains(&c) { '•' } else { c })
+                            .collect();
+                        #[cfg(test)]
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(egui::Id::unique("inventory_preview_text"), shown.clone()));
+                        ui.add(egui::Label::new(egui::RichText::new(shown).size(12.5).color(p.ink)).wrap());
+                    });
+                }
+                Some(PaneText::Unavailable(reason)) => {
+                    inner.label(egui::RichText::new(reason).size(12.5).color(p.muted));
+                }
+                _ => {
+                    inner.label(egui::RichText::new(aurora_i18n::tr!("common-loading-2")).size(12.5).color(p.muted));
+                }
+            }
+            true
+        }
+        1 if !original.asset_id.is_nil() => {
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 120.0), Sense::hover());
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.panel);
+            let button = Rect::from_center_size(rect.center(), Vec2::new(160.0, 34.0));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(button));
+            if widgets::action_button(
+                &mut child,
+                p,
+                "player-play-filled",
+                aurora_i18n::tr!("common-play-locally"),
+                widgets::ActionKind::Flat,
+                button.size(),
+            )
+            .clicked()
+            {
+                actions.push(InvAction::Sound(original.asset_id));
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The pane under its picture: the picture first, a click changing it.
+#[allow(clippy::too_many_arguments)]
+fn details_below_picture(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    actions: &mut Vec<InvAction>,
+    id: Uuid,
+) {
     let width = ui.available_width();
     let (picture_rect, _) = ui.allocate_exact_size(Vec2::new(width, 176.0), Sense::hover());
     let writable =
@@ -523,6 +723,22 @@ pub(super) fn pane(
             st.thumbnail.open(id);
         }
     }
+    details_below(ui, p, inv, st, prefs, facts, actions, id);
+}
+
+/// The pane under its picture or preview: the name, what it is, its
+/// actions and facts.
+#[allow(clippy::too_many_arguments)]
+fn details_below(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+    id: Uuid,
+) {
     // The name, and its renaming.
     let name = if id == inv.root || id == inv.lib_root {
         folder_name(inv, id)
@@ -581,17 +797,24 @@ pub(super) fn pane(
     let Some(it) = inv.items.get(&id) else { return };
     let original = rules::original(inv, id).and_then(|id| inv.items.get(&id)).unwrap_or(it);
     // The actions.
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         if let Some(main) = Main::of(inv, id, facts) {
             let (icon, label) = main.label();
             let enabled = st.pending.is_none()
                 && !(matches!(main, Main::Wear | Main::TakeOff) && facts.appearance_busy)
                 && !(main == Main::Teleport && facts.landmark_blocked);
-            let width = (ui.available_width() - 2.0 * (28.0 + 6.0) - if can_add(inv, id, facts, st) { 80.0 } else { 0.0 }).max(90.0);
+            let width = if main == Main::Play {
+                0.0
+            } else {
+                (ui.available_width() - 2.0 * (28.0 + 6.0) - if can_add(inv, id, facts, st) { 80.0 } else { 0.0 }).max(90.0)
+            };
             if widgets::action_button_if(ui, p, icon, label, widgets::ActionKind::Primary, Vec2::new(width, 28.0), enabled).clicked() {
                 main.run(inv, id, st, prefs, facts, actions);
             }
+        }
+        if original.asset_type == 1 {
+            sound_local_button(ui, p, original.asset_id, st.pending.is_none(), actions);
         }
         if can_add(inv, id, facts, st)
             && widgets::action_button(
@@ -624,11 +847,12 @@ pub(super) fn pane(
     });
     widgets::divider(ui, p);
     // The facts.
+    let [owner, creator] = crate::ui::inventory::resident_scopes(original);
     fact(ui, p, aurora_i18n::tr!("inventory-details-creator"), |ui| {
-        resident_link(ui, p, facts, original.creator, 12.5, actions);
+        resident_link(ui, p, facts, creator, 12.5, actions);
     });
     fact(ui, p, aurora_i18n::tr!("inventory-details-owner"), |ui| {
-        let owner = resident(facts, original.owner);
+        let owner = resident_name(facts, owner);
         ui.label(egui::RichText::new(owner).size(12.5).color(p.ink));
     });
     fact(ui, p, aurora_i18n::tr!("inventory-details-acquired"), |ui| {
@@ -644,7 +868,7 @@ pub(super) fn pane(
     heading(ui, p, aurora_i18n::tr!("inventory-details-next-owner"));
     for (bit, label) in [
         (rules::COPY, aurora_i18n::tr!("common-copy-2")),
-        (rules::MODIFY, aurora_i18n::tr!("common-edit")),
+        (rules::MODIFY, aurora_i18n::tr!("common-modify")),
         (rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
     ] {
         let editable = next_editable(inv, original, bit, st) && original.id == it.id;
@@ -679,6 +903,78 @@ mod tests {
             next_owner_mask: rules::COPY | rules::MODIFY | rules::TRANSFER,
             base_mask: rules::COPY | rules::MODIFY | rules::TRANSFER,
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn sound_details_offer_distinct_local_and_world_buttons_in_both_layouts() {
+        for wide in [false, true] {
+            let ctx = egui::Context::default();
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            let sound = Uuid::from_u128(8105);
+            let asset = inv.items[&sound].asset_id;
+            let mut st = InventoryUi {
+                selected: Some(sound),
+                selection: [sound].into(),
+                ..Default::default()
+            };
+            let mut frame = |events| {
+                let mut actions = vec![];
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(if wide { 300.0 } else { 440.0 }, 600.0))),
+                        focused: true,
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let p = crate::theme::Theme::default().palette();
+                        let draw = if wide { pane } else { strip };
+                        draw(
+                            ui,
+                            &p,
+                            &Icons::default(),
+                            &inv,
+                            &mut st,
+                            &mut InventoryPreferences::default(),
+                            &Facts::default(),
+                            &Default::default(),
+                            &mut actions,
+                        );
+                    },
+                );
+                (headless_output(output), actions)
+            };
+            for _ in 0..5 {
+                frame(vec![]);
+            }
+            for (label, local) in [
+                (aurora_i18n::tr!("common-play-locally"), true),
+                (aurora_i18n::tr!("common-play-in-world"), false),
+            ] {
+                let (output, _) = frame(vec![]);
+                let pos = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos + text.galley.size() * 0.5),
+                        _ => None,
+                    })
+                    .expect("sound playback label");
+                let button = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                frame(vec![egui::Event::PointerMoved(pos), button(true)]);
+                let (_, actions) = frame(vec![button(false)]);
+                assert!(
+                    matches!(&actions[..], [InvAction::Sound(id)] if local && *id == asset)
+                        || matches!(&actions[..], [InvAction::TriggerSound(id)] if !local && *id == asset)
+                );
+            }
         }
     }
 

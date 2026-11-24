@@ -1,4 +1,4 @@
-//! Native file selection and bounded loading, off the frame thread.
+//! Native file selection and validated loading, off the frame thread.
 
 use super::*;
 use aurora_assets::{
@@ -11,15 +11,23 @@ use std::{fs::File, io::Read, path::Path};
 
 mod folder;
 mod lods;
+pub(super) mod texture_names;
 pub(super) use folder::load as load_folder;
 
 enum Selection {
-    Files,
+    Files(Option<Choice>),
     Folder,
     Paths(Vec<PathBuf>),
 }
 
 pub(super) fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
+    if path.extension().is_some_and(|e| {
+        ["png", "jpg", "jpeg", "bmp", "tga", "j2c", "j2k", "jp2"]
+            .iter()
+            .any(|ext| e.eq_ignore_ascii_case(ext))
+    }) {
+        return read_image(path);
+    }
     if path
         .extension()
         .is_some_and(|e| ["dae", "gltf", "glb"].iter().any(|ext| e.eq_ignore_ascii_case(ext)))
@@ -37,19 +45,68 @@ pub(super) fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
     Ok(bytes)
 }
 
+fn read_image(path: &Path) -> Result<Vec<u8>, AssetError> {
+    // A large uncompressed local source is still a valid 1K/2K upload.
+    // Reserve fallibly, including when the file grows while being read;
+    // format and pixel-layout validation belongs to import_texture::decode.
+    let mut file = File::open(path).map_err(|_| AssetError::invalid("file cannot be opened"))?;
+    let size = file
+        .metadata()
+        .ok()
+        .and_then(|metadata| usize::try_from(metadata.len()).ok())
+        .ok_or_else(|| AssetError::invalid("image file size cannot be read"))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size)
+        .map_err(|_| AssetError::invalid("not enough memory to read image file"))?;
+    let mut block = [0_u8; 64 * 1024];
+    loop {
+        let length = file.read(&mut block).map_err(|_| AssetError::invalid("file read failed"))?;
+        if length == 0 {
+            return Ok(bytes);
+        }
+        bytes
+            .try_reserve(length)
+            .map_err(|_| AssetError::invalid("not enough memory to read image file"))?;
+        bytes.extend_from_slice(&block[..length]);
+    }
+}
+
 fn read_mesh(path: &Path) -> Result<Vec<u8>, AssetError> {
+    read_document(path, false)
+}
+
+fn read_document(path: &Path, external: bool) -> Result<Vec<u8>, AssetError> {
     let mut file = File::open(path).map_err(|_| AssetError::invalid("file cannot be opened"))?;
     let size = file
         .metadata()
         .ok()
         .and_then(|m| usize::try_from(m.len()).ok())
         .ok_or(AssetError::TooLarge("mesh file"))?;
+    if external {
+        aurora_assets::import_gltf::check_external_size(size as u64)?;
+    }
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(size)
         .map_err(|_| AssetError::TooLarge("mesh file memory"))?;
-    file.read_to_end(&mut bytes).map_err(|_| AssetError::invalid("file read failed"))?;
+    if external {
+        // Check before allocation and after reading: a source can grow meanwhile.
+        file.take(aurora_assets::import_gltf::MAX_EXTERNAL_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| AssetError::invalid("file read failed"))?;
+        aurora_assets::import_gltf::check_external_size(bytes.len() as u64)?;
+    } else {
+        file.read_to_end(&mut bytes).map_err(|_| AssetError::invalid("file read failed"))?;
+    }
     Ok(bytes)
+}
+
+pub(super) fn load_error(error: AssetError) -> String {
+    match error {
+        AssetError::GltfResourceSize { bytes, limit } => aurora_i18n::tr!("import-gltf-resource-limit", bytes = bytes, limit = limit),
+        error => error.to_string(),
+    }
 }
 
 fn decode_uri(uri: &str) -> Result<String, AssetError> {
@@ -85,7 +142,7 @@ fn relative_path(root: &Path, uri: &str) -> Result<PathBuf, AssetError> {
     Ok(target)
 }
 fn relative(root: &Path, uri: &str) -> Result<Vec<u8>, AssetError> {
-    read(&relative_path(root, uri)?)
+    read_document(&relative_path(root, uri)?, true)
 }
 fn collada_image_path(root: &Path, uri: &str) -> Result<PathBuf, AssetError> {
     // LLDAELoader accepts both relative texture paths and exporter file URIs.
@@ -176,7 +233,7 @@ pub(super) fn mesh_scene(
     } else {
         let doc = match document {
             Some(doc) => doc,
-            None => Document::parse_mesh(data, |uri| read_mesh(&relative_path(&root, uri)?))?,
+            None => Document::parse_mesh(data, |uri| relative(&root, uri))?,
         };
         let mut scene = aurora_assets::import_mesh::gltf::parse_with_options(&doc, &skeleton, model_limit)?;
         for key in ["buffers", "images"] {
@@ -250,7 +307,7 @@ pub(super) fn load(
             .ok_or_else(|| AssetError::invalid("asset directory"))?
             .canonicalize()
             .map_err(|_| AssetError::invalid("asset directory"))?;
-        Some(Document::parse_mesh(&data, |uri| read_mesh(&relative_path(&root, uri)?))?)
+        Some(Document::parse_mesh(&data, |uri| relative(&root, uri))?)
     } else {
         None
     };
@@ -365,7 +422,8 @@ pub(super) fn load(
                                         path: None,
                                         key: Uuid::from_bytes(id),
                                         empty_alpha: import_texture::empty_alpha(&pixels),
-                                        name: format!("{}_{}", path.file_stem().unwrap_or_default().to_string_lossy(), index + 1),
+                                        // Named per slot below.
+                                        name: String::new(),
                                         pixels,
                                         asset: None,
                                     };
@@ -375,6 +433,7 @@ pub(super) fn load(
                             }
                         };
                         let mut image = image;
+                        image.name = texture_names::texture_name(&texture_names::image_label(&doc, index), texture_names::SLOT_TYPES[slot]);
                         if choice == Choice::Local {
                             let mut hash = Sha256::new();
                             hash.update(path.as_os_str().to_string_lossy().as_bytes());
@@ -411,10 +470,12 @@ pub(super) fn load(
                     occlusion.as_ref(),
                     material.occlusion.is_some(),
                 )? {
+                    // An occlusion map alone keeps the Legacy Viewer's default
+                    // metallic-roughness name (MATERIAL_METALLIC_DEFAULT_NAME).
                     let name = images[2]
                         .as_ref()
                         .map(|i| i.name.clone())
-                        .unwrap_or_else(|| format!("{}_ORM", path.file_stem().unwrap_or_default().to_string_lossy()));
+                        .unwrap_or_else(|| texture_names::SLOT_TYPES[2].to_owned());
                     images[2] = Some(local_image(packed, name));
                 }
                 if choice == Choice::Local {
@@ -453,7 +514,8 @@ pub(super) fn load(
                     63,
                 );
                 entry.material_index = index;
-                entry.selected = choice != Choice::Material || index == 0;
+                // Keep every material checked, as do_bulk_upload does for
+                // each model material (indra/newview/llviewermenufile.cpp).
                 entry.local = choice == Choice::Local;
                 if entry.local {
                     entry.watch = Some(local::Watch::new(dependencies(&doc, &root, path)));
@@ -508,12 +570,7 @@ fn load_selected(
                 .any(|entry| matches!(&entry.source, Some(Source::Mesh(draft)) if draft.scene.materials.len() > 1))
             {
                 match load(path, Choice::Material, options, sound_limit, prefs, local) {
-                    Ok(mut materials) => {
-                        for material in &mut materials {
-                            material.selected = true;
-                        }
-                        entries.extend(materials);
-                    }
+                    Ok(materials) => entries.extend(materials),
                     Err(error) => entries.push(Entry::new(path.to_owned(), Err(error.to_string()), options)),
                 }
             }
@@ -526,9 +583,13 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
     for entry in entries {
         entry.local = true;
         entry.local_assume_meters = prefs.local_assume_meters;
+        // Some loaders already know source dependencies that are not retained
+        // on decoded image data (notably glTF material map URIs). Keep those
+        // watches when the entry is made local.
+        let mut paths = entry.watch.take().map_or_else(|| vec![entry.path.clone()], |watch| watch.paths);
         if let Some(Source::Mesh(draft)) = &entry.source {
             entry.local_live = prefs.local_mesh_auto_reload;
-            let mut paths = mesh_dependencies(&entry.path, &draft.scene);
+            paths.extend(mesh_dependencies(&entry.path, &draft.scene));
             for lod in &draft.lods {
                 if let Some(path) = &lod.path {
                     paths.extend(
@@ -546,10 +607,12 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
                         .map_or_else(|| vec![path.clone()], |scene| mesh_dependencies(path, scene)),
                 );
             }
-            paths.sort();
-            paths.dedup();
-            entry.watch = Some(super::local::Watch::new(paths));
+        } else if let Some(Source::Material { images, .. }) = &entry.source {
+            paths.extend(images.iter().flatten().filter_map(|image| image.path.clone()));
         }
+        paths.sort();
+        paths.dedup();
+        entry.watch = Some(super::local::Watch::new(paths));
     }
 }
 
@@ -575,7 +638,7 @@ pub(super) fn encode(source: &Source, options: import_texture::Options, sound_op
             if bvh.is_some() {
                 import_animation::encode(animation)
             } else {
-                Ok(bytes.as_ref().clone())
+                aurora_assets::rewrite_animation_upload(bytes, animation)
             }
         }
         Source::Material { value, .. } => value.encode_asset(),
@@ -589,16 +652,21 @@ impl Imports {
     /// normal inspector, including its price confirmation and retries.
     pub(crate) fn choose_material_map_upload(
         &mut self,
-        jobs: &crate::scene::jobs::Jobs,
+        _jobs: &crate::scene::jobs::Jobs,
         ctx: &egui::Context,
         options: import_texture::Options,
     ) -> Option<Uuid> {
-        if self.pending_files.is_some() || self.busy() || self.entries.len() >= 512 {
+        if self.pending_files.is_some() || self.busy() {
             return None;
         }
         let request = Uuid::new_v4();
         let entry_id = Uuid::new_v4();
         self.pending_files = Some(request);
+        let cancellation = file_picker::Cancellation::default();
+        self.pending_picker = Some(file_picker::Pending {
+            owner: Some(Choice::Bulk),
+            cancellation: cancellation.clone(),
+        });
         self.open(Choice::Texture);
         self.active = Some(entry_id);
         for entry in &mut self.entries {
@@ -607,12 +675,17 @@ impl Imports {
         let prefs = self.load_preferences.clone();
         let tx = self.tx.clone();
         let wake = ctx.clone();
-        jobs.execute(move || {
+        file_picker::spawn(request, tx, wake, move || {
             let mut entries = Vec::new();
-            if let Some(path) = rfd::FileDialog::new()
-                .set_title(aurora_i18n::tr!("import-title"))
-                .add_filter(Choice::Texture.label(), &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"])
-                .pick_file()
+            if let Some(path) = cancellation
+                .select(
+                    file_picker::Kind::File,
+                    aurora_i18n::tr!("import-title"),
+                    Choice::Texture.label(),
+                    &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
+                )
+                .into_iter()
+                .next()
             {
                 entries = load(&path, Choice::Texture, options, 30, &prefs, false)
                     .unwrap_or_else(|reason| vec![Entry::new(path, Err(reason.to_string()), options)]);
@@ -620,20 +693,23 @@ impl Imports {
                     entry.id = entry_id;
                 }
             }
-            let _ = tx.send(Worker::Loaded(request, entries));
-            wake.request_repaint();
+            entries
         });
         Some(entry_id)
     }
     pub fn map_file(&mut self, id: Uuid, slot: usize, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
-        let Some(entry) = self.entries.iter().find(|e| e.id == id) else {
+        let Some(request) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == id)
+            .and_then(|entry| entry.begin_map_file_request(slot))
+        else {
             return;
         };
-        let generation = entry.preview_generation;
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
-            if let Some(path) = rfd::FileDialog::new()
+            let result = if let Some(path) = rfd::FileDialog::new()
                 .set_title(aurora_i18n::tr!("import-choose-files"))
                 .add_filter(
                     aurora_i18n::tr!("import-texture"),
@@ -641,17 +717,19 @@ impl Imports {
                 )
                 .pick_file()
             {
-                let result = read(&path)
+                read(&path)
                     .and_then(|data| import_texture::decode_map(&data))
                     .map(|pixels| {
                         let mut image = local_image(pixels, path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
                         image.path = Some(path);
-                        image
+                        Some(image)
                     })
-                    .map_err(|e| e.to_string());
-                let _ = tx.send(Worker::Map(id, generation, slot, result));
-                wake.request_repaint();
-            }
+                    .map_err(|e| e.to_string())
+            } else {
+                Ok(None)
+            };
+            let _ = tx.send(Worker::Map(id, request, slot, result));
+            wake.request_repaint();
         });
     }
     pub fn mesh_file(&mut self, id: Uuid, level: usize, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
@@ -688,13 +766,18 @@ impl Imports {
             wake.request_repaint();
         });
     }
-    pub fn reload(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
-        if self.busy() {
-            return;
-        }
-        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && !e.reloading && !e.from_live) else {
-            return;
+    /// Whether a reload started. Local previews never join an upload, so a
+    /// running one does not hold their reload back (see choose_local_files).
+    pub fn reload(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) -> bool {
+        let busy = self.busy();
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.id == id && !e.reloading && !e.from_live && (e.local || !busy))
+        else {
+            return false;
         };
+        entry.material_map_requests = [None; 4];
         entry.reloading = true;
         entry.status = Status::Preparing;
         let path = entry.path.clone();
@@ -734,9 +817,19 @@ impl Imports {
             ));
             wake.request_repaint();
         });
+        true
     }
     pub fn choose_files(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
-        self.choose_type_files(jobs, ctx, options, self.choice);
+        if !self.busy() {
+            self.load_files(
+                jobs,
+                ctx,
+                options,
+                self.choice,
+                self.choice == Choice::Local,
+                Selection::Files(Some(Choice::Bulk)),
+            );
+        }
     }
 
     pub fn choose_type_files(
@@ -749,7 +842,7 @@ impl Imports {
         if self.busy() {
             return;
         }
-        self.load_files(jobs, ctx, options, choice, choice == Choice::Local, Selection::Files);
+        self.load_files(jobs, ctx, options, choice, choice == Choice::Local, Selection::Files(Some(choice)));
     }
     pub fn choose_folder(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
         if self.busy() || self.pending_files.is_some() {
@@ -773,7 +866,7 @@ impl Imports {
             return;
         }
         let choice = if materials { Choice::Material } else { Choice::Texture };
-        self.load_files(jobs, ctx, options, choice, true, Selection::Files);
+        self.load_files(jobs, ctx, options, choice, true, Selection::Files(None));
         self.picker_files = true;
     }
     /// The Local tab's "Upload" (onBtnUpload): the importer opens on the
@@ -811,28 +904,27 @@ impl Imports {
         self.pending_files = Some(request);
         self.picker_files = false;
         self.pending_file_choice = Some(if local { Choice::Local } else { choice });
+        let native = !matches!(selection, Selection::Paths(_));
+        let cancellation = file_picker::Cancellation::default();
+        if native {
+            self.pending_picker = Some(file_picker::Pending {
+                owner: match selection {
+                    Selection::Files(owner) => owner,
+                    _ => Some(Choice::Bulk),
+                },
+                cancellation: cancellation.clone(),
+            });
+        }
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
-        let mut retained = self
-            .entries
-            .iter()
-            .filter_map(|e| e.source.as_ref())
-            .filter(|source| !matches!(source, Source::Mesh(_)))
-            .map(Source::retained_bytes)
-            .sum::<usize>();
-        let existing = self.entries.len();
         let filters = self.type_filters;
         let tx = self.tx.clone();
         let wake = ctx.clone();
-        jobs.execute(move || {
+        let work = move || {
             let paths = match selection {
                 Selection::Paths(paths) => paths,
-                Selection::Folder => rfd::FileDialog::new()
-                    .set_title(aurora_i18n::tr!("import-choose-folder"))
-                    .pick_folder()
-                    .into_iter()
-                    .collect(),
-                Selection::Files => {
+                Selection::Folder => cancellation.select(file_picker::Kind::Folder, aurora_i18n::tr!("import-choose-folder"), "", &[]),
+                Selection::Files(_) => {
                     let filter: &[&str] = match choice {
                         Choice::Texture => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
                         Choice::Sound => &["wav"],
@@ -844,57 +936,174 @@ impl Imports {
                         ],
                         Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "dae", "gltf", "glb"],
                     };
-                    rfd::FileDialog::new()
-                        .set_title(aurora_i18n::tr!("import-title"))
-                        .add_filter(choice.label(), filter)
-                        .pick_files()
-                        .unwrap_or_default()
+                    cancellation.select(file_picker::Kind::Files, aurora_i18n::tr!("import-title"), choice.label(), filter)
                 }
             };
             if paths.len() == 1 && paths[0].is_dir() {
-                let entries = load_folder(&paths[0], &prefs, options, sound_limit, existing, retained);
-                let _ = tx.send(Worker::Loaded(request, entries));
-                wake.request_repaint();
-                return;
+                return load_folder(&paths[0], &prefs, options, sound_limit);
             }
-            let mut entries = Vec::new();
-            for (index, path) in paths.into_iter().enumerate() {
-                if index >= 256 || existing + entries.len() >= 512 {
-                    entries.push(Entry::new(path, Err(aurora_i18n::tr!("import-batch-limit").into()), options));
-                    break;
-                }
-                match load_selected(&path, choice, options, sound_limit, &prefs, local, filters) {
-                    Ok(mut loaded) => {
-                        let size = loaded
-                            .iter()
-                            .filter_map(|e| e.source.as_ref())
-                            .filter(|source| !matches!(source, Source::Mesh(_)))
-                            .map(Source::retained_bytes)
-                            .sum::<usize>();
-                        // Preserve a failed row instead of silently truncating
-                        // the selection or allowing the draft to exhaust RAM.
-                        if retained.saturating_add(size) > 1024 * 1024 * 1024 || existing + entries.len() + loaded.len() > 512 {
-                            entries.push(Entry::new(path, Err(aurora_i18n::tr!("import-batch-limit").into()), options));
-                            break;
-                        }
-                        retained += size;
-                        entries.append(&mut loaded);
-                    }
-                    Err(error) => entries.push(Entry::new(path, Err(error.to_string()), options)),
-                }
-            }
-            if local {
-                localize(&mut entries, &prefs);
-            }
-            let _ = tx.send(Worker::Loaded(request, entries));
-            wake.request_repaint();
-        });
+            load_paths(paths, choice, options, sound_limit, &prefs, local, filters)
+        };
+        if native {
+            file_picker::spawn(request, tx, wake, work);
+        } else {
+            jobs.execute(move || file_picker::complete(request, tx, wake, work));
+        }
     }
+}
+
+/// do_bulk_upload / LLMaterialEditor::loadMaterial: accept all materials in
+/// each selected document. A decoded-memory budget must not reject valid files
+/// after their images have already been allocated (#4211).
+pub(super) fn load_paths(
+    paths: Vec<PathBuf>,
+    choice: Choice,
+    options: import_texture::Options,
+    sound_limit: u32,
+    prefs: &Preferences,
+    local: bool,
+    filters: [bool; 5],
+) -> Vec<Entry> {
+    let mut entries = Vec::new();
+    for path in paths {
+        match load_selected(&path, choice, options, sound_limit, prefs, local, filters) {
+            Ok(mut loaded) => entries.append(&mut loaded),
+            Err(error) => entries.push(Entry::new(path, Err(load_error(error)), options)),
+        }
+    }
+    if local {
+        localize(&mut entries, prefs);
+    }
+    let bytes: usize = entries
+        .iter()
+        .filter_map(|entry| entry.source.as_ref())
+        .map(Source::retained_bytes)
+        .sum();
+    log::info!("import sources loaded: {} assets, {} decoded bytes", entries.len(), bytes);
+    entries
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_uncompressed_image_over_256_mib_loads_and_resizes_before_upload() {
+        use std::io::Write;
+        let files = Files::new();
+        let path = files.0.join("large.TGA");
+        let mut header = [0_u8; 18];
+        header[2] = 2;
+        header[12..14].copy_from_slice(&8192_u16.to_le_bytes());
+        header[14..16].copy_from_slice(&8192_u16.to_le_bytes());
+        header[16] = 32;
+        header[17] = 0x28;
+        let mut file = File::create(&path).expect("large image fixture");
+        file.write_all(&header).expect("TGA header");
+        file.set_len(18 + 8192 * 8192 * 4).expect("zero-filled RGBA pixels");
+        drop(file);
+        let prefs = Preferences::default();
+        let entries = load(&path, Choice::Texture, prefs.texture(), 30, &prefs, false).expect("large file import");
+        let Some(Source::Texture(source)) = &entries[0].source else {
+            panic!("texture source")
+        };
+        assert_eq!((source.width, source.height, source.components), (8192, 8192, 4));
+        let options = import_texture::Options {
+            max_width: 1024,
+            max_height: 1024,
+            ..Default::default()
+        };
+        let pixels = import_texture::prepare(source, options).expect("resize large source");
+        assert_eq!((pixels.width, pixels.height, pixels.components), (1024, 1024, 4));
+        assert!(pixels.data.iter().all(|&value| value == 0));
+    }
+
+    #[test]
+    fn material_file_and_folder_imports_keep_more_than_256_files_and_512_entries() {
+        let root = std::env::temp_dir().join(format!("aurora-material-batch-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let paths: Vec<_> = (0..257)
+            .map(|index| {
+                let path = root.join(format!("material-{index}.gltf"));
+                std::fs::write(&path, br#"{"asset":{"version":"2.0"},"materials":[{},{},{}]}"#).unwrap();
+                path
+            })
+            .collect();
+        let prefs = Preferences::default();
+        let entries = load_paths(paths.clone(), Choice::Material, prefs.texture(), 30, &prefs, false, [true; 5]);
+        assert_eq!(entries.len(), 771);
+        assert!(entries.iter().all(|entry| matches!(entry.source, Some(Source::Material { .. }))));
+        assert!(entries.iter().all(|entry| entry.selected));
+        let material_only = load_paths(
+            paths,
+            Choice::Bulk,
+            prefs.texture(),
+            30,
+            &prefs,
+            false,
+            [false, false, false, true, false],
+        );
+        assert_eq!(material_only.len(), entries.len());
+        assert!(material_only.iter().all(|entry| entry.selected));
+        let folder = load_folder(&root, &prefs, prefs.texture(), 30);
+        assert_eq!(folder.len(), entries.len());
+        assert!(folder.iter().all(|entry| matches!(entry.source, Some(Source::Material { .. }))));
+        assert!(folder.iter().all(|entry| entry.selected));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn oversized_external_resource_is_rejected_before_reading_with_measured_size() {
+        let path = std::env::temp_dir().join(format!("aurora-gltf-external-{}.bin", Uuid::new_v4()));
+        let bytes = aurora_assets::import_gltf::MAX_EXTERNAL_BYTES + 1;
+        // A sparse file exercises the metadata guard without a multi-GiB allocation.
+        let file = File::create(&path).unwrap();
+        file.set_len(bytes).unwrap();
+        drop(file);
+        let error = read_document(&path, true).unwrap_err();
+        assert!(matches!(
+            error,
+            AssetError::GltfResourceSize {
+                bytes: 2147483648,
+                limit: 2147483647
+            }
+        ));
+        assert_eq!(
+            load_error(error),
+            aurora_i18n::tr!(
+                "import-gltf-resource-limit",
+                bytes = bytes,
+                limit = aurora_assets::import_gltf::MAX_EXTERNAL_BYTES
+            )
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "loads the large local material fixture named by AURORA_DEMO_IMPORT_FILE"]
+    fn large_material_fixture_passes_the_ordinary_file_import() {
+        let path = PathBuf::from(std::env::var_os("AURORA_DEMO_IMPORT_FILE").expect("local material fixture"));
+        let prefs = Preferences::default();
+        let started = std::time::Instant::now();
+        let entries = load_paths(vec![path], Choice::Material, prefs.texture(), 30, &prefs, false, [true; 5]);
+        assert!(
+            entries.iter().all(|entry| matches!(entry.source, Some(Source::Material { .. }))),
+            "every material loaded"
+        );
+        assert!(entries.iter().all(|entry| entry.selected), "every imported material checked");
+        let bytes: usize = entries
+            .iter()
+            .filter_map(|entry| entry.source.as_ref())
+            .map(Source::retained_bytes)
+            .sum();
+        assert!(bytes > 1024 * 1024 * 1024, "fixture must exercise the former decoded-pixel cap");
+        eprintln!(
+            "Loaded {} materials, {} decoded bytes in {:.2}s",
+            entries.len(),
+            bytes,
+            started.elapsed().as_secs_f64()
+        );
+    }
 
     #[test]
     fn add_files_gltf_respects_material_and_mesh_choices_and_explicit_windows() {
@@ -1127,6 +1336,174 @@ mod tests {
         );
     }
     #[test]
+    fn local_textures_and_materials_watch_their_source_files() {
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png");
+        let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
+        localize(&mut entries, &Preferences::default());
+
+        let entry = &entries[0];
+        assert!(entry.local);
+        assert!(entry.local_live);
+        let watch = entry.watch.as_ref().expect("local texture file watch");
+        assert_eq!(watch.paths.as_slice(), std::slice::from_ref(&path));
+        let before = watch.stamp.clone();
+
+        image::save_buffer(&path, &[180u8; 16 * 16 * 4], 16, 16, image::ColorType::Rgba8).expect("change source image");
+        assert_ne!(before, super::super::local::stamp(&watch.paths));
+
+        let material_path = files.0.join("material-demo.gltf");
+        let mut materials = files.load("material-demo.gltf", Choice::Local);
+        localize(&mut materials, &Preferences::default());
+        let entry = &materials[0];
+        assert!(matches!(entry.source, Some(Source::Material { .. })));
+        let watch = entry.watch.as_ref().expect("local material file watch");
+        assert!(watch.paths.contains(&material_path));
+        let map_path = files.0.join("texture-demo.png").canonicalize().expect("map path");
+        assert!(
+            watch.paths.contains(&map_path),
+            "watched paths: {:?}; expected map: {map_path:?}",
+            watch.paths
+        );
+    }
+    /// LLLocalBitmap::updateSelf: an export caught half written keeps the
+    /// last good texture and is retried, a change seen while a reload runs
+    /// is not lost, and the same entry is updated in place.
+    #[test]
+    fn local_texture_reloads_retry_a_half_written_export_and_never_skip_a_change() {
+        let ctx = egui::Context::default();
+        let (jobs, _results) = crate::scene::jobs::Jobs::new();
+        let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png");
+        let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
+        localize(&mut entries, &Preferences::default());
+        let id = entries[0].id;
+        let mut imports = Imports {
+            entries,
+            ..Default::default()
+        };
+        let width = |imports: &Imports| match &imports.entries[0].source {
+            Some(Source::Texture(image)) => image.width,
+            _ => panic!("texture source"),
+        };
+        let original = width(&imports);
+        let watch = |imports: &mut Imports| {
+            let paths = imports.entries[0].watch.as_ref().expect("watch").paths.clone();
+            imports
+                .tx
+                .send(Worker::Watch(id, super::super::local::stamp(&paths)))
+                .expect("send");
+            imports.poll(&ctx, &jobs, &world, &Default::default());
+            for _ in 0..1000 {
+                if !imports.entries[0].reloading {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                imports.poll(&ctx, &jobs, &world, &Default::default());
+            }
+            assert!(!imports.entries[0].reloading, "reload finishes");
+        };
+
+        // A change noticed while a reload is running stays unseen until the
+        // next check, instead of being taken as loaded.
+        image::save_buffer(&path, &[90u8; 8 * 8 * 4], 8, 8, image::ColorType::Rgba8).expect("export");
+        let before = imports.entries[0].watch.as_ref().expect("watch").stamp.clone();
+        imports.entries[0].reloading = true;
+        let paths = imports.entries[0].watch.as_ref().expect("watch").paths.clone();
+        imports
+            .tx
+            .send(Worker::Watch(id, super::super::local::stamp(&paths)))
+            .expect("send");
+        imports.poll(&ctx, &jobs, &world, &Default::default());
+        assert_eq!(imports.entries[0].watch.as_ref().expect("watch").stamp, before);
+        imports.entries[0].reloading = false;
+        watch(&mut imports);
+        assert_eq!(width(&imports), 8, "the next check loads the export");
+        assert_eq!(imports.entries.len(), 1);
+        assert_eq!(imports.entries[0].id, id, "updated in place");
+
+        // Half written: the last good texture stays, without an error, and
+        // the unchanged file is tried again at each check.
+        std::fs::write(&path, b"\x89PNG\r\n\x1a\n").expect("partial export");
+        for attempt in 1..=super::super::local::RELOAD_RETRIES {
+            watch(&mut imports);
+            assert_eq!(width(&imports), 8);
+            assert!(matches!(imports.entries[0].status, Status::Ready), "attempt {attempt}");
+            assert_eq!(imports.entries[0].watch.as_ref().expect("watch").failures, attempt);
+        }
+        // Once finished, the export loads into the same entry.
+        image::save_buffer(&path, &[200u8; 4 * 4 * 4], 4, 4, image::ColorType::Rgba8).expect("export");
+        watch(&mut imports);
+        assert_eq!(width(&imports), 4);
+        assert_eq!(imports.entries[0].watch.as_ref().expect("watch").failures, 0);
+        assert_ne!(original, 4);
+
+        // A file that stays unreadable shows its error once the retries are
+        // spent, and is not reloaded again until it changes.
+        std::fs::write(&path, b"broken").expect("broken export");
+        for _ in 0..=super::super::local::RELOAD_RETRIES {
+            watch(&mut imports);
+        }
+        assert!(matches!(imports.entries[0].status, Status::Error(_)));
+        assert_eq!(width(&imports), 4, "the face keeps the last good texture");
+        let watched = imports.entries[0].watch.as_ref().expect("watch");
+        assert_eq!(
+            watched.stamp,
+            super::super::local::stamp(&watched.paths),
+            "given up until the next change"
+        );
+    }
+    /// A press on Reload answers at once: a broken file shows its error
+    /// without the watch's quiet retries, and a good one is not loaded a
+    /// second time by the next check.
+    #[test]
+    fn a_manual_reload_shows_a_broken_file_at_once_and_is_not_repeated_by_the_watch() {
+        let ctx = egui::Context::default();
+        let (jobs, _results) = crate::scene::jobs::Jobs::new();
+        let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png");
+        let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
+        localize(&mut entries, &Preferences::default());
+        let id = entries[0].id;
+        let mut imports = Imports {
+            entries,
+            ..Default::default()
+        };
+        let settle = |imports: &mut Imports| {
+            imports.poll(&ctx, &jobs, &world, &Default::default());
+            for _ in 0..1000 {
+                if !imports.entries[0].reloading {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                imports.poll(&ctx, &jobs, &world, &Default::default());
+            }
+            assert!(!imports.entries[0].reloading, "reload finishes");
+        };
+
+        // A changed export, reloaded by hand: the next check finds nothing new.
+        image::save_buffer(&path, &[90u8; 8 * 8 * 4], 8, 8, image::ColorType::Rgba8).expect("export");
+        assert!(imports.reload(id, &jobs, &ctx), "manual reload starts");
+        settle(&mut imports);
+        assert!(matches!(imports.entries[0].status, Status::Ready));
+        let paths = imports.entries[0].watch.as_ref().expect("watch").paths.clone();
+        imports
+            .tx
+            .send(Worker::Watch(id, super::super::local::stamp(&paths)))
+            .expect("send");
+        imports.poll(&ctx, &jobs, &world, &Default::default());
+        assert!(!imports.entries[0].reloading, "the watch does not load the same file again");
+
+        // A broken file, reloaded by hand: its error shows on the first press.
+        std::fs::write(&path, b"broken").expect("broken export");
+        assert!(imports.reload(id, &jobs, &ctx), "manual reload starts");
+        settle(&mut imports);
+        assert!(matches!(imports.entries[0].status, Status::Error(_)), "the error shows at once");
+        assert_eq!(imports.entries[0].watch.as_ref().expect("watch").failures, 0, "no quiet retry");
+    }
+    #[test]
     fn long_wav_sources_enable_bounded_splitting_instead_of_uploading_an_oversized_asset() {
         let files = Files::new();
         let mut wav = std::fs::read(files.0.join("sound-demo.wav")).expect("WAV fixture");
@@ -1190,6 +1567,30 @@ mod tests {
             encode(native.source.as_ref().expect("animation"), native.options, native.sound.options).expect("encode"),
             read(&native.path).expect("bytes")
         );
+        let Some(Source::Animation { bytes, animation, bvh }) = native.source.as_ref() else {
+            panic!("native animation")
+        };
+        let mut edited = animation.as_ref().clone();
+        edited.base_priority = 6;
+        edited.looping = false;
+        let edited_source = Source::Animation {
+            bytes: bytes.clone(),
+            animation: Arc::new(edited),
+            bvh: *bvh,
+        };
+        let uploaded = encode(&edited_source, native.options, native.sound.options).expect("encode edited animation");
+        let uploaded_animation = aurora_assets::parse_animation_upload(&uploaded).expect("parse edited upload");
+        assert_eq!(uploaded_animation.base_priority, 6);
+        assert!(!uploaded_animation.looping);
+        let mut motion = animation.joints.clone();
+        for (joint, priority) in motion
+            .iter_mut()
+            .zip(aurora_assets::native_joint_priorities(bytes, 6).expect("joint priorities"))
+        {
+            joint.priority = priority;
+        }
+        assert!(motion.iter().all(|joint| joint.priority == 6), "the joints follow the priority");
+        assert_eq!(uploaded_animation.joints, motion, "editing upload options preserves the motion");
         assert!(
             load(
                 &files.0.join("animation-demo.bvh"),

@@ -111,13 +111,13 @@ fn top_id() -> egui::Id {
 /// top row, or room in the Legacy Viewer's navigation bar.
 pub fn reserve_top(ctx: &egui::Context, rect: Rect, size: f32, island: bool) {
     // (the frame read outside: the context is locked within `data_mut`)
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(top_id(), (frame, Slot { rect, size, island })));
 }
 
 /// What `reserve_top` left this frame.
 fn top_slot(ctx: &egui::Context) -> Option<Slot> {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<(u64, Slot)>(top_id()))
         .filter(|(f, _)| *f == frame)
         .map(|(_, s)| s)
@@ -180,7 +180,7 @@ pub fn prepare(st: &mut ChatUi, world: &World, place: ChatThumbnails, flash: boo
 /// or its own window (`popout.rs`) shown?
 fn shown(ctx: &egui::Context, st: &ChatUi, conversations_open: bool, id: Uuid) -> bool {
     if st.popped.contains(Some(id)) {
-        st.popped.shown(Some(id)) && !crate::ui::widgets::floater_minimized(ctx, &super::popout::floater_id(Some(id)))
+        super::popout::in_sight(ctx, &st.popped).any(|conversation| conversation == Some(id))
     } else {
         conversations_open && !crate::ui::widgets::floater_minimized(ctx, "conversations") && st.selected == Some(id) && !st.contacts
     }
@@ -199,8 +199,7 @@ fn toggle(ctx: &egui::Context, world: &mut World, st: &mut ChatUi, panels: &mut 
             st.popped.raise(Some(id), true);
         }
         (false, false) => {
-            world.social.focus_im = Some(id);
-            st.conv_focus_request = true;
+            world.focus_conversation(id, true);
             crate::ui::notifications::open_conversations(ctx, &mut panels.chat);
         }
     }

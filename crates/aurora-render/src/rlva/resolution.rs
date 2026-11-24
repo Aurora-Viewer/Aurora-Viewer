@@ -2,7 +2,8 @@
 //! (pipeline.cpp, originally LGPL 2.1). Only the 3D targets shrink; HUDs,
 //! world labels, overlays and viewer controls retain their window resolution.
 //! The user scale follows RenderResolutionMultiplier in the same reference:
-//! an RLVa divisor takes precedence over the optional multiplier.
+//! an RLVa divisor takes precedence over the optional multiplier. User scaling
+//! combines reconstruction and CAS sharpening; RLVa keeps nearest pixels.
 
 use crate::pipeline_cache::CachedPipelines;
 
@@ -34,12 +35,21 @@ pub(crate) fn render_size(window: (u32, u32), divisor: u32, percent: u32) -> (u3
     )
 }
 
+/// The CAS strength of the post pass and of the world's upscale, in that
+/// order: one of them sharpens, never both. `cas` is off without HDR (the
+/// Legacy Viewer's gammaCorrect skips CAS) and under FSR (its own RCAS).
+pub(crate) fn sharpening(strength: f32, cas: bool, spatial_upscale: bool) -> (f32, f32) {
+    let strength = if cas { strength.clamp(0.0, 1.0) } else { 0.0 };
+    if spatial_upscale { (0.0, strength) } else { (strength, 0.0) }
+}
+
 pub(crate) struct Scaled {
     pub smooth: bool,
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pipeline: wgpu::RenderPipeline,
     group: wgpu::BindGroup,
+    params: wgpu::Buffer,
 }
 
 impl Scaled {
@@ -70,7 +80,10 @@ impl Scaled {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[("spatial_upscale", if smooth { 1.0 } else { 0.0 })],
+                    constants: &[
+                        ("spatial_upscale", f64::from(smooth)),
+                        ("encoded_input", f64::from(!format.is_srgb())),
+                    ],
                     ..Default::default()
                 },
                 targets: &[Some(wgpu::ColorTargetState {
@@ -85,10 +98,11 @@ impl Scaled {
             multiview_mask: None,
             cache: None,
         });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
+        let params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("world upscale sharpness"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("RLVa reduced scene"),
@@ -100,7 +114,7 @@ impl Scaled {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
+                    resource: params.as_entire_binding(),
                 },
             ],
         });
@@ -110,6 +124,7 @@ impl Scaled {
             view,
             pipeline,
             group,
+            params,
         }
     }
 
@@ -117,7 +132,8 @@ impl Scaled {
         (self.texture.width(), self.texture.height())
     }
 
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+    pub fn encode(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, sharpness: f32) {
+        queue.write_buffer(&self.params, 0, bytemuck::cast_slice(&[sharpness.clamp(0.0, 1.0), 0.0, 0.0, 0.0]));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("RLVa scene upscale"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -159,5 +175,17 @@ mod tests {
         assert_eq!(render_size((1441, 1001), 4, 75), (360, 250));
         assert_eq!(render_size((1, 0), u32::MAX, 0), (1, 1));
         assert_eq!(pixel((1728, 1056), (3456, 2112), (1728, 1056)), (864, 528));
+    }
+
+    #[test]
+    fn sharpening_runs_once_and_hdr_off_disables_it() {
+        assert_eq!(sharpening(0.4, true, false), (0.4, 0.0));
+        assert_eq!(sharpening(0.4, true, true), (0.0, 0.4));
+        assert_eq!(sharpening(1.5, true, true), (0.0, 1.0));
+        assert_eq!(sharpening(-1.0, true, false), (0.0, 0.0));
+        for scaled in [false, true] {
+            assert_eq!(sharpening(0.8, false, scaled), (0.0, 0.0));
+            assert_eq!(sharpening(0.0, true, scaled), (0.0, 0.0));
+        }
     }
 }

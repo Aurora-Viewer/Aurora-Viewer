@@ -17,7 +17,7 @@ use crate::world::eep;
 use crate::world::env_apply::{self, Target};
 use crate::world::env_day_edit::{self, DayDoc, LegacyError, LegacyFolder};
 use crate::world::env_select::SettingsKind;
-use crate::world::land::{AgentRights, EnvState};
+use crate::world::land::EnvState;
 use crate::world::notifications::{Data, Kind};
 use crate::world::windlight_presets;
 use aurora_llsd::Llsd;
@@ -103,14 +103,16 @@ impl App {
                 .is_some_and(|r| r.caps.contains_key("ExtEnvironment"))
     }
 
-    /// LLAgent::canManageEstate (we are never godlike): an estate manager or
-    /// the region's owner.
+    /// LLViewerRegion::canManageEstate: a god, an estate manager or the
+    /// region's owner.
     pub(super) fn can_manage_estate(&self) -> bool {
-        self.world
-            .main_region
-            .and_then(|h| self.world.regions.get(&h))
-            .and_then(|r| r.info.as_ref())
-            .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
+        self.world.god_level > 0
+            || self
+                .world
+                .main_region
+                .and_then(|h| self.world.regions.get(&h))
+                .and_then(|r| r.info.as_ref())
+                .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
     }
 
     /// LLViewerParcelMgr::getAgentOrSelectedParcel: About Land's selection,
@@ -131,10 +133,7 @@ impl App {
                 || self.world.main_region.and_then(|h| self.world.regions.get(&h)).is_some_and(|r| {
                     r.caps.contains_key("UpdateSettingsAgentInventory") && r.caps.contains_key("UpdateSettingsTaskInventory")
                 });
-        let rights = AgentRights {
-            id: self.world.agent_id,
-            groups: &self.world.groups.groups,
-        };
+        let rights = self.world.agent_rights();
         let extended = self.extended_environment();
         EditorAccess {
             inventory,
@@ -187,6 +186,8 @@ impl App {
             (self.settings.night_sky == crate::world::night_sky::NightSky::Real).then_some(crate::ui::environment::NightSkyPick {
                 place: self.settings.night_sky_place,
                 latitude: self.settings.night_sky_latitude,
+                longitude: self.settings.night_sky_longitude,
+                real_time: self.settings.night_sky_hour == crate::world::night_sky::StarHour::RealTime,
                 changed: false,
             });
         let reset = self.env_ui.show_lighting(ctx, p, &mut self.world.eep, &mut open);
@@ -198,6 +199,7 @@ impl App {
         if let Some(night) = self.env_ui.night.take().filter(|n| n.changed) {
             self.settings.night_sky_place = night.place;
             self.settings.night_sky_latitude = night.latitude;
+            self.settings.night_sky_longitude = night.longitude;
             self.settings.sync_night_sky();
             self.night_sky_unsaved = true;
         }
@@ -213,6 +215,11 @@ impl App {
     /// The environment lists' and Personal Lighting's choices.
     pub(super) fn env_actions(&mut self, actions: impl IntoIterator<Item = crate::ui::environment::EnvAction>) {
         use crate::ui::environment::EnvAction;
+        // @setenv: the lists and presets are greyed, and whatever still
+        // asks changes nothing, neither now nor once the restriction lifts
+        if self.world.eep.rlva_locked {
+            return;
+        }
         for action in actions {
             match action {
                 EnvAction::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
@@ -221,8 +228,40 @@ impl App {
                     self.panels.time_of_day = 0;
                 }
                 EnvAction::Preset(n) => self.panels.time_of_day = n,
+                EnvAction::SaveParcel => self.world.save_parcel_environment(),
+                EnvAction::ForgetParcel => self.world.parcel_env.forget_here(),
             }
         }
+    }
+
+    /// The environments saved for parcels, each frame.
+    pub(super) fn parcel_environment_frame(&mut self) {
+        use crate::ui::environment::ParcelChoice;
+        use crate::world::parcel_env::Outcome;
+        match self.world.parcel_environment_frame() {
+            Outcome::Nothing => {}
+            Outcome::Saved(entry) => {
+                log::info!(
+                    "environment saved for parcel {} of region {}",
+                    entry.place.local_id,
+                    entry.place.region
+                );
+            }
+            Outcome::NotSaved => self.env_alert(
+                aurora_i18n::tr!("common-environment"),
+                aurora_i18n::tr!("parcel-environment-not-saved"),
+            ),
+            Outcome::Left => self.env_alert(aurora_i18n::tr!("common-environment"), aurora_i18n::tr!("parcel-environment-left")),
+        }
+        let saved_here = self.world.parcel_env.saved_here();
+        let savable = self.world.parcel.is_some() && (self.world.eep.has_local() || self.panels.time_of_day != 0);
+        self.env_ui.parcel_choice = if saved_here && !(savable && self.world.parcel_environment_changed()) {
+            ParcelChoice::Saved
+        } else if savable {
+            ParcelChoice::Save
+        } else {
+            ParcelChoice::Nothing
+        };
     }
 
     /// The sunbeacon / moonbeacon settings, saved when changed.
@@ -504,6 +543,10 @@ impl App {
     /// Open the day cycle editor on a parcel's or region's day, or on
     /// Firestorm's default day when there is none (onBtnEdit).
     fn open_day_editor_in(&mut self, context: DayContext, day: Option<DayDoc>, timing: (i32, i32)) {
+        // env_edit_extdaycycle is filtered under @setenv (rlvhandler.cpp)
+        if self.rlva_environment_windows_locked() {
+            return;
+        }
         self.day_editor.close();
         self.day_fetch = None;
         let extended = self.extended_environment();
@@ -578,10 +621,7 @@ impl App {
         let (Some(local_id), EnvState::Ready(summary)) = (sel.local_id(), &sel.env) else {
             return;
         };
-        let rights = AgentRights {
-            id: self.world.agent_id,
-            groups: &self.world.groups.groups,
-        };
+        let rights = self.world.agent_rights();
         let enabled = sel
             .parcel
             .as_ref()

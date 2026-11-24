@@ -2,9 +2,10 @@
 //! LLPanelObjectInventory::handleKeyHere and LLFolderView selection/renamer
 //! (Firestorm llpanelobjectinventory.cpp / llfolderview.cpp, LGPL 2.1).
 
+use crate::build::contents::item_renameable;
 use crate::build::{BuildTool, Tool};
 use crate::world::World;
-use aurora_net::build::{TaskItem, perm};
+use aurora_net::build::TaskItem;
 use egui::{Id, Key};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -25,17 +26,18 @@ fn rename_id(edit: &Rename) -> Id {
 
 pub(super) fn begin_rename(tool: &mut BuildTool, world: &World, object: Uuid, item: Uuid) {
     let Some(idx) = world.objects.index_of_uuid(&object) else { return };
-    if !tool.contents_editable(world, idx) || tool.ui.contents_selection.items.len() != 1 {
+    if !tool.contents_items_editable(world, idx) || tool.ui.contents_selection.items.len() != 1 {
         return;
     }
     if tool.ui.contents_selection.object != Some(object) || !tool.ui.contents_selection.items.contains(&item) {
         return;
     }
-    let Some(item) = tool.contents.objects.get(&object).and_then(|inv| {
-        inv.items
-            .iter()
-            .find(|it| it.item_id == item && !it.is_folder && it.owner_mask & perm::MODIFY != 0)
-    }) else {
+    let Some(item) = tool
+        .contents
+        .objects
+        .get(&object)
+        .and_then(|inv| inv.items.iter().find(|it| it.item_id == item && item_renameable(world, it)))
+    else {
         return;
     };
     tool.ui.rename = Some(Rename {
@@ -57,14 +59,15 @@ pub(super) fn finish_rename(tool: &mut BuildTool, world: &World) {
     let Some(idx) = world.objects.index_of_uuid(&edit.object) else {
         return;
     };
-    if !tool.contents_editable(world, idx) {
+    if !tool.contents_items_editable(world, idx) {
         return;
     }
-    let Some(item) = tool.contents.objects.get(&edit.object).and_then(|inv| {
-        inv.items
-            .iter()
-            .find(|it| it.item_id == edit.item && !it.is_folder && it.owner_mask & perm::MODIFY != 0)
-    }) else {
+    let Some(item) = tool
+        .contents
+        .objects
+        .get(&edit.object)
+        .and_then(|inv| inv.items.iter().find(|it| it.item_id == edit.item && item_renameable(world, it)))
+    else {
         return;
     };
     let Ok(name) = crate::world::inventory::actions::clean_name(&edit.text) else {
@@ -89,7 +92,7 @@ pub(super) fn finish_if_hidden_or_blurred(ctx: &egui::Context, tool: &mut BuildT
     }
     let visible = tool.open
         && (tool.tool == Tool::Edit || (tool.ui.legacy_window && tool.tool != Tool::Land))
-        && tool.tab == 4
+        && tool.section_visible(4)
         && tool
             .contents_target(world)
             .and_then(|idx| world.objects.get(idx))
@@ -106,7 +109,7 @@ pub(super) fn rename_row(ui: &mut egui::Ui, tool: &mut BuildTool, world: &World,
     let id = rename_id(edit);
     // TextEdit consumes Escape/Enter while changing focus. Keep the user's
     // intent before adding it, so Escape cannot become a blur commit.
-    let cancel = ui.input(|i| i.key_pressed(Key::Escape));
+    let cancel = super::common::escape_pressed(ui);
     let enter = ui.input(|i| i.key_pressed(Key::Enter));
     let r = crate::ui::widgets::restricted_text_field(ui, true, &mut edit.text, crate::ui::widgets::TextPolicy::PrintableNoPipe, |b, _| {
         egui::TextEdit::singleline(b).id(id).desired_width(160.0).char_limit(63)
@@ -180,7 +183,7 @@ pub(super) fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &World
     finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open
         || (tool.tool != Tool::Edit && !(tool.ui.legacy_window && tool.tool != Tool::Land))
-        || tool.tab != 4
+        || (tool.tab != 4 && tool.ui.second.shown != Some(4))
         || ctx.text_edit_focused()
     {
         return false;
@@ -196,12 +199,25 @@ pub(super) fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &World
             .contents_target(world)
             .and_then(|idx| world.objects.get(idx))
             .is_some_and(|o| o.full_id == object);
+    // Ctrl+1–5 follow the key position (LLKeyboardWin32 constructor,
+    // llkeyboardwin32.cpp; menu_viewer.xml control|1…5). AZERTY Digit4
+    // arrives as logical Quote. Ctrl+B stays the typed letter.
     if allowed
         && ctx.input(|i| {
-            i.events.iter().any(|event| {
-                matches!(event,
-        egui::Event::Key { key: Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::B, pressed: true, modifiers, .. }
-            if (modifiers.command || modifiers.ctrl) && !modifiers.shift && !modifiers.alt)
+            i.events.iter().any(|event| match event {
+                egui::Event::Key {
+                    key,
+                    physical_key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if (modifiers.command || modifiers.ctrl) && !modifiers.shift && !modifiers.alt => {
+                    matches!(
+                        super::keyboard::position_key(*key, *physical_key),
+                        Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::B
+                    )
+                }
+                _ => false,
             })
         })
     {

@@ -3,8 +3,9 @@ use super::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum LoadMode {
+    #[default]
     All,
     Rotations,
     Selective,
@@ -19,10 +20,11 @@ pub(super) struct Joint {
     scale: [f32; 3],
     locked: bool,
     /// `rotation` is a change to apply on the destination's own origin, like
-    /// the Legacy Viewer's diff; a complete rotation otherwise. Absent in
-    /// complete joints and in the files saved before it existed.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    change: bool,
+    /// the Legacy Viewer's diff. Both false and absent remain absolute
+    /// for older readers. An explicit false also keeps a neutral key for
+    /// a deliberate T-pose; absence keeps older files sparse on upload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    change: Option<bool>,
     /// Absent in existing pose files; all joints used to be enabled.
     #[serde(default = "enabled_by_default", skip_serializing_if = "is_enabled")]
     enabled: bool,
@@ -33,6 +35,64 @@ fn enabled_by_default() -> bool {
 fn is_enabled(enabled: &bool) -> bool {
     *enabled
 }
+impl Joint {
+    pub fn new(name: String, rotation: Quat, translation: Vec3, scale: Vec3, locked: bool, change: bool) -> Self {
+        Self {
+            name,
+            rotation: rotation.to_array(),
+            translation: translation.to_array(),
+            scale: scale.to_array(),
+            locked,
+            change: change.then_some(true),
+            enabled: true,
+        }
+    }
+    /// The joint left out of the posing, or in it: a Legacy file's `enabled`.
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+#[cfg(test)]
+impl Joint {
+    pub fn rotation(&self) -> Quat {
+        Quat::from_array(self.rotation)
+    }
+    pub fn translation(&self) -> Vec3 {
+        Vec3::from_array(self.translation)
+    }
+    pub fn locked(&self) -> bool {
+        self.locked
+    }
+    pub fn change(&self) -> bool {
+        self.change.unwrap_or(false)
+    }
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+/// What a document's translations and scales are measured from. Aurora's
+/// own: a translation added to and a scale multiplied by the destination's
+/// starting pose. The Legacy Viewer's pose files (`legacy_pose`) add their
+/// scale instead (FSJointState::getTargetScale, `mScale + mBaseScale`), and
+/// before their version 4 give the joint's whole position and scale
+/// (FSPoserAnimator::loadJointPosition and loadJointScale without
+/// `loadPositionAsDelta`, indra/newview/fsposeranimator.cpp), the pelvis's
+/// excepted: its whole position is measured from the Legacy Viewer's rest at
+/// zero (LLAvatarAppearance::buildCharacter), so it is added like a change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Channels {
+    #[default]
+    Aurora,
+    LegacyDelta,
+    LegacyAbsolute,
+}
+impl Channels {
+    fn is_aurora(&self) -> bool {
+        *self == Self::Aurora
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Document {
@@ -40,8 +100,20 @@ pub(super) struct Document {
     pub name: String,
     pub priority: i32,
     pub joints: Vec<Joint>,
+    /// Absent in Aurora's own files.
+    #[serde(default, skip_serializing_if = "Channels::is_aurora")]
+    pub channels: Channels,
 }
 impl Document {
+    pub fn new(name: String, priority: i32, joints: Vec<Joint>, channels: Channels) -> Self {
+        Self {
+            version: 1,
+            name,
+            priority,
+            joints,
+            channels,
+        }
+    }
     pub fn capture(rig: &Rig, session: &data::Session, name: String, priority: i32) -> Self {
         Self {
             version: 1,
@@ -58,7 +130,9 @@ impl Document {
                     let complete = origin.dot(rig.local_rot[bone]).abs() > 0.9999999;
                     Joint {
                         name: name.clone(),
-                        rotation: if complete {
+                        rotation: if session.pose.hold_rotation[bone] {
+                            session.pose.authored_rotation(rig, bone)
+                        } else if complete {
                             rotation
                         } else {
                             (origin.inverse() * rotation).normalize()
@@ -67,11 +141,16 @@ impl Document {
                         translation: (session.pose.positions[bone] - session.base.positions[bone]).to_array(),
                         scale: (session.pose.scales[bone] / session.base.scales[bone]).to_array(),
                         locked: session.pose.locks.contains_key(&bone),
-                        change: !complete,
+                        change: if session.pose.hold_rotation[bone] {
+                            Some(false)
+                        } else {
+                            (!complete).then_some(true)
+                        },
                         enabled: session.pose.enabled[bone],
                     }
                 })
                 .collect(),
+            channels: Channels::Aurora,
         }
     }
     pub fn valid(&self, rig: &Rig) -> bool {
@@ -93,7 +172,11 @@ impl Document {
                     && (0.99..=1.01).contains(&q.length_squared())
                     && p.is_finite()
                     && p.abs().max_element() <= 100.0
-                    && data::scale_valid(s)
+                    && match self.channels {
+                        // an added scale is zero where nothing changed
+                        Channels::LegacyDelta => s.is_finite() && s.abs().max_element() <= 100.0,
+                        Channels::Aurora | Channels::LegacyAbsolute => data::scale_valid(s),
+                    }
             })
     }
     pub fn apply(&self, rig: &Rig, session: &mut data::Session, mode: LoadMode, model: Mat4) -> bool {
@@ -110,15 +193,26 @@ impl Document {
                 continue;
             }
             let rotation = Quat::from_array(joint.rotation).normalize();
-            if joint.change {
+            if joint.change == Some(true) {
                 pose.rotations[bone] = (pose.origin[bone] * rotation).normalize();
             } else {
                 pose.rotations[bone] = rotation;
                 pose.origin[bone] = rig.local_rot[bone];
+                pose.hold_rotation[bone] = joint.change == Some(false);
             }
             if !rotations_only {
-                pose.positions[bone] = session.base.positions[bone] + Vec3::from_array(joint.translation);
-                pose.scales[bone] = session.base.scales[bone] * Vec3::from_array(joint.scale);
+                let (translation, scale) = (Vec3::from_array(joint.translation), Vec3::from_array(joint.scale));
+                let base = (session.base.positions[bone], session.base.scales[bone]);
+                let (position, scale) = match self.channels {
+                    Channels::Aurora => (base.0 + translation, base.1 * scale),
+                    Channels::LegacyDelta => (base.0 + translation, base.1 + scale),
+                    Channels::LegacyAbsolute if bone == rig.pelvis => (base.0 + translation, scale),
+                    Channels::LegacyAbsolute => (translation, scale),
+                };
+                pose.positions[bone] = position;
+                // a scale the poser cannot keep leaves the joint's own, not
+                // the whole pose refused
+                pose.scales[bone] = if data::scale_valid(scale) { scale } else { base.1 };
             }
             pose.locks.remove(&bone);
             // The Legacy Viewer's selective load re-enables each loaded joint.

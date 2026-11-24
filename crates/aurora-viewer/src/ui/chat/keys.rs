@@ -1,10 +1,15 @@
 //! The keyboard of the Conversations window's tabs (#651).
 //!
-//! Alt + Up or Left shows the conversation above in the list, Alt + Down or
-//! Right the one below, round the list, while the keyboard is in the window
-//! (LLFloaterIMContainer::handleKeyHere, indra/newview/llfloaterimcontainer.cpp;
-//! LLTabContainer::handleKeyHere and selectNextTab, which goes round,
-//! indra/llui/lltabcontainer.cpp, originally LGPL 2.1). Its field takes the
+//! Next conversation shows the conversation below in the list, Previous
+//! conversation the one above, round the list, while the keyboard is in
+//! the window. Their keys are the user's (`shortcuts.rs`): Ctrl + Tab and
+//! Alt + Down, Ctrl + Shift + Tab and Alt + Up by default, as in the
+//! Legacy Viewer (LLFloaterIMContainer::handleKeyHere,
+//! indra/newview/llfloaterimcontainer.cpp; LLTabContainer::handleKeyHere
+//! and selectNextTab, which goes round, indra/llui/lltabcontainer.cpp,
+//! originally LGPL 2.1). Its Alt + Left / Right no longer cycle: a shortcut
+//! holds two keys (human choice of 2026-11-15), and they stay the field's
+//! (Option + Left / Right move by word on macOS). Its field takes the
 //! keyboard, so the next press goes on; elsewhere these keys stay the
 //! camera's. Contacts is not a conversation and is left out.
 //!
@@ -54,6 +59,24 @@ pub(super) fn after_close(order: &[Tab], closed: Uuid) -> Tab {
         .flatten()
 }
 
+/// Whether a pressed key cycles the conversations, and which way: `true`
+/// goes to the one below in the list, `false` to the one above.
+pub(super) fn cycle(
+    keys: &super::shortcuts::ChatKeys,
+    key: egui::Key,
+    physical: Option<egui::Key>,
+    modifiers: egui::Modifiers,
+) -> Option<bool> {
+    use crate::keybinds::Action;
+    if keys.hit(Action::ChatNextConversation, key, physical, modifiers) {
+        Some(true)
+    } else if keys.hit(Action::ChatPreviousConversation, key, physical, modifiers) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// The keys of this frame, before the window's field reads them. `order`:
 /// the conversations as the list shows them.
 pub(super) fn handle(ctx: &egui::Context, st: &mut ChatUi, order: &[Tab], actions: &mut Vec<ConvAction>) {
@@ -80,22 +103,26 @@ pub(super) fn handle(ctx: &egui::Context, st: &mut ChatUi, order: &[Tab], action
         return;
     }
     // (held down, each repeat goes one further, as in a list)
-    let forward = [
-        (egui::Key::ArrowUp, false),
-        (egui::Key::ArrowLeft, false),
-        (egui::Key::ArrowDown, true),
-        (egui::Key::ArrowRight, true),
-    ]
-    .into_iter()
-    .find(|(key, _)| {
-        let alone = ctx.input(|i| {
-            i.events.iter().any(|e| {
-                matches!(e, egui::Event::Key { key: k, pressed: true, modifiers, .. } if k == key && modifiers.matches_exact(egui::Modifiers::ALT))
-            })
+    let keys = super::shortcuts::get(ctx);
+    let mut forward = None;
+    ctx.input_mut(|i| {
+        i.events.retain(|event| {
+            if let egui::Event::Key {
+                key,
+                physical_key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+                && let Some(next) = cycle(&keys, *key, *physical_key, *modifiers)
+            {
+                forward.get_or_insert(next);
+                false
+            } else {
+                true
+            }
         });
-        alone && ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, *key))
-    })
-    .map(|(_, forward)| forward);
+    });
     if let Some(tab) = forward.and_then(|forward| step(order, current, forward)) {
         st.select_tab(tab);
         st.reveal = tab;
@@ -116,6 +143,42 @@ mod tests {
     const A: Uuid = Uuid::from_u128(1);
     const B: Uuid = Uuid::from_u128(2);
     const C: Uuid = Uuid::from_u128(3);
+
+    #[test]
+    fn the_cycling_keys_are_ctrl_tab_and_alt_up_down() {
+        use egui::Modifiers;
+        let keys = super::super::shortcuts::ChatKeys::of(&crate::keybinds::KeyBindings::default());
+        let cycle = |key, modifiers| cycle(&keys, key, None, modifiers);
+        let ctrl = Modifiers::CTRL;
+        let ctrl_shift = ctrl | Modifiers::SHIFT;
+        let alt = Modifiers::ALT;
+        // a real Command press on macOS
+        let cmd = Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Modifiers::NONE
+        };
+        // Physical Control on macOS reaches egui as Ctrl + Command.
+        let mac_ctrl = Modifiers {
+            ctrl: true,
+            command: true,
+            ..Modifiers::NONE
+        };
+        assert_eq!(cycle(egui::Key::Tab, ctrl), Some(true));
+        assert_eq!(cycle(egui::Key::Tab, ctrl_shift), Some(false));
+        assert_eq!(cycle(egui::Key::Tab, mac_ctrl), Some(true));
+        // Command is the Legacy Viewer's MASK_CONTROL there: Command+Tab is
+        // Ctrl+Tab (macOS takes it first for its app switcher)
+        assert_eq!(cycle(egui::Key::Tab, cmd), Some(true));
+        assert_eq!(cycle(egui::Key::ArrowUp, alt), Some(false));
+        assert_eq!(cycle(egui::Key::ArrowDown, alt), Some(true));
+        // Alt+Left / Right stay the field's (two keys per shortcut)
+        assert_eq!(cycle(egui::Key::ArrowLeft, alt), None);
+        assert_eq!(cycle(egui::Key::ArrowRight, alt), None);
+        assert_eq!(cycle(egui::Key::ArrowUp, alt | Modifiers::SHIFT), None);
+        assert_eq!(cycle(egui::Key::ArrowUp, alt | ctrl), None);
+        assert_eq!(cycle(egui::Key::Tab, ctrl | alt), None);
+    }
 
     #[test]
     fn alt_arrows_go_round_the_list() {

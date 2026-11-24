@@ -8,16 +8,70 @@ import time
 import zlib
 import array
 import base64
+import os
 import sys
 
-MAGIC = b"AURBLD1\n"
+MAGIC = b"AURBLD2\n"
+TOKEN_LENGTH = 64
 MAX_BYTES = 64 * 1024 * 1024
 MAX_DECODED_BYTES = 256 * 1024 * 1024
 COMPRESS_THRESHOLD = 1024 * 1024
 MAX_REPLY = 8 * 1024 * 1024 + 4096
+NO_TOKEN = "Enable preview in Aurora's LiveMesh window"
+
+
+def token_path(port):
+    """The secret Aurora writes each time its preview starts, in the viewer's
+    data folder (ProjectDirs "org", "Aurora", "AuroraViewer" of the directories
+    crate, crates/aurora-viewer/src/blender_live/token.rs)."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+        data = os.path.join(base, "Aurora", "AuroraViewer", "data")
+    elif sys.platform == "darwin":
+        data = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "org.Aurora.AuroraViewer")
+    else:
+        base = os.environ.get("XDG_DATA_HOME", "")
+        if not os.path.isabs(base):
+            base = os.path.join(os.path.expanduser("~"), ".local", "share")
+        data = os.path.join(base, "auroraviewer")
+    return os.path.join(data, "blender-live", "{}.token".format(port))
+
+
+def read_token(port):
+    """Read again at every connection: each start of Aurora's preview draws a
+    new secret."""
+    try:
+        with open(token_path(port), "rb") as file:
+            token = file.read(TOKEN_LENGTH + 1).strip()
+    except OSError:
+        raise ValueError(NO_TOKEN) from None
+    if len(token) != TOKEN_LENGTH:
+        raise ValueError(NO_TOKEN)
+    return token
+
+
+# Per-object warnings travel only to a viewer that asked for them: v1 peers
+# reject unknown snapshot fields. Bounded like the viewer's parser.
+MAX_WARNINGS = 64
+MAX_WARNING_TEXT = 512
+
+
+def object_warning(source_id, name, kind, reason):
+    """One entry of the snapshot's `warnings` list: `kind` is "textures" (the
+    object syncs in its plain colour) or "not-sent" (it is not in this
+    revision); `reason` is the untranslated export message."""
+    value = {"name": str(name)[:MAX_WARNING_TEXT], "kind": kind, "reason": str(reason)[:MAX_WARNING_TEXT]}
+    if source_id:
+        value["source_id"] = str(source_id)
+    return value
 
 
 def wire_snapshot(snapshot, features):
+    if "warnings" in snapshot:
+        if "object-warnings" in features and snapshot["warnings"]:
+            snapshot = dict(snapshot, warnings=snapshot["warnings"][:MAX_WARNINGS])
+        else:
+            snapshot = {key: value for key, value in snapshot.items() if key != "warnings"}
     if "static-meshes" not in features and any(mesh.get("joints") == [] for mesh in snapshot.get("meshes", [])):
         raise ValueError("Update Aurora Viewer to preview non-rigged meshes")
     if not {"object-links", "source-ids"}.issubset(features) and any(mesh.get("link") for mesh in snapshot.get("meshes", [])):
@@ -128,6 +182,16 @@ def prepare_frame(snapshot, hello):
             else:
                 accepted.append(mesh)
                 payload = candidate
+        if issues and "object-warnings" in hello.get("features", []):
+            # the viewer lists what this revision left out, and why
+            dropped = [object_warning(mesh.get("source_id"), mesh["name"], "not-sent",
+                                      issues[mesh.get("source_id", mesh["name"])])
+                       for mesh in snapshot.get("meshes", []) if mesh.get("source_id", mesh["name"]) in issues]
+            try:
+                payload = _encode(dict(_subset(snapshot, accepted),
+                                       warnings=list(snapshot.get("warnings", [])) + dropped), hello)
+            except SnapshotSizeError:
+                pass
         return payload, issues
 
 
@@ -255,6 +319,7 @@ class Client:
     def _run(self):
         while not self._stop.is_set():
             try:
+                token = read_token(self.port)
                 with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as connection:
                     with self._lock:
                         self._connection = connection
@@ -262,7 +327,7 @@ class Client:
                         break
                     connection.settimeout(5.0)
                     connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                    connection.sendall(MAGIC)
+                    connection.sendall(MAGIC + token)
                     with connection.makefile("rb") as reader:
                         hello = self._line(reader)
                         if hello.get("protocol") != 1 or not hello.get("joints"):

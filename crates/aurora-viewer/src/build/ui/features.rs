@@ -2,14 +2,16 @@
 //! originally LGPL 2.1): animated mesh, flexible path, light (and its
 //! projector texture), reflection probe, physics shape and material.
 
-use super::common::{Edit, check, color_swatch, combo, label, linear_to_srgb, row, small, spin};
+use super::common::{Edit, check, color_swatch, combo, label, linear_to_srgb, row, small};
 use super::{Confirm, Env, FeaturesClip, PickTarget};
-use crate::build::edits::{CLICK_ACTION_SIT, CLICK_ACTION_TOUCH, Extra, FLEX_DEFAULT, LIGHT_DEFAULT, LIGHT_IMAGE_DEFAULT, PROBE_DEFAULT};
+use crate::build::edits::{
+    CLICK_ACTION_SIT, CLICK_ACTION_TOUCH, Extra, FLEX_DEFAULT, LIGHT_DEFAULT, LIGHT_IMAGE_DEFAULT, PHYSICS_SHAPE_NONE, PROBE_DEFAULT,
+};
 use crate::build::{BuildSettings, BuildTool};
 use crate::theme::Palette;
 use crate::ui::widgets::collapsing;
 use crate::world::World;
-use aurora_prim::extra::{EXTENDED_MESH_ANIMATED, ReflectionProbeParams};
+use aurora_prim::extra::{EXTENDED_MESH_ANIMATED, FlexibleParams, ReflectionProbeParams};
 use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_PATH_LINE};
 
 /// LL_MCODE_* in the "Material" combo order (material_codes.h).
@@ -39,23 +41,96 @@ fn physics_shapes() -> [(&'static str, u8); 3] {
     ]
 }
 
+/// The shapes the combo offers. The Legacy Viewer always lists None
+/// (LLPanelVolume::refresh, indra/newview/llpanelvolume.cpp), but the
+/// simulator refuses it on a root prim and the choice snaps back. Aurora lists
+/// None only when a child prim of a linkset is selected (stricter, the same
+/// final state), and keeps it while a prim already shows None.
+///
+/// Prim is listed for a prim, and for a mesh only when it has a physics shape
+/// of its own (LLPanelVolume::refresh: `gMeshRepo.hasPhysicsShape`); like
+/// None, it stays while the prim already shows it.
+fn physics_shape_choices(child_selected: bool, prim_allowed: bool, current: Option<u8>) -> Vec<(&'static str, u8)> {
+    physics_shapes()
+        .into_iter()
+        .filter(|&(_, v)| match v {
+            PHYSICS_SHAPE_NONE => child_selected || current == Some(v),
+            PHYSICS_SHAPE_PRIM => prim_allowed || current == Some(v),
+            _ => true,
+        })
+        .collect()
+}
+
+/// PHYSICS_SHAPE_PRIM (LLViewerObject::PHYSICS_SHAPE_*).
+const PHYSICS_SHAPE_PRIM: u8 = 0;
+
 /// Reflection probe flags (LLReflectionProbeParams).
 const PROBE_BOX: u8 = 0x01;
 const PROBE_DYNAMIC: u8 = 0x02;
+const PROBE_MIRROR: u8 = 0x04;
+const PROBE_UPDATE: u8 = PROBE_DYNAMIC | PROBE_MIRROR;
+
+fn probe_updates() -> [(&'static str, u8); 4] {
+    [
+        (aurora_i18n::tr!("build-ui-features-probe-static"), 0),
+        (aurora_i18n::tr!("build-ui-features-dynamic"), PROBE_DYNAMIC),
+        (aurora_i18n::tr!("build-ui-features-probe-mirror-environment"), PROBE_MIRROR),
+        (aurora_i18n::tr!("build-ui-features-probe-mirror-everything"), PROBE_UPDATE),
+    ]
+}
+
+/// LLPanelVolume::onCommitProbe: mirrors are boxes; keep unrelated flags.
+fn probe_update_flags(flags: u8, update: u8) -> u8 {
+    let flags = (flags & !PROBE_UPDATE) | (update & PROBE_UPDATE);
+    if flags & PROBE_MIRROR != 0 { flags | PROBE_BOX } else { flags }
+}
+
+#[cfg(test)]
+#[test]
+fn probe_modes_preserve_unknown_flags_and_keep_mirrors_boxed() {
+    for flags in 0..=u8::MAX {
+        for mode in [0, PROBE_DYNAMIC, PROBE_MIRROR, PROBE_UPDATE] {
+            let changed = probe_update_flags(flags, mode);
+            assert_eq!(changed & PROBE_UPDATE, mode);
+            assert_eq!(changed & !(PROBE_UPDATE | PROBE_BOX), flags & !(PROBE_UPDATE | PROBE_BOX));
+            assert_eq!(changed & PROBE_BOX != 0, flags & PROBE_BOX != 0 || mode & PROBE_MIRROR != 0);
+            assert_eq!(probe_update_flags(changed, mode), changed);
+        }
+    }
+}
 
 const W: f32 = 56.0;
+
+// LLPanelVolume::getState (indra/newview/llpanelvolume.cpp) clears disabled
+// flexible, light and probe parameters. Physics values remain readable.
+fn spin(
+    ui: &mut egui::Ui,
+    value: &mut f32,
+    increment: f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+    width: f32,
+    mixed: bool,
+) -> Edit {
+    if ui.is_enabled() {
+        super::common::spin(ui, value, increment, range, decimals, width, mixed)
+    } else {
+        super::common::empty_spin(ui, width)
+    }
+}
 
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
     let Some(o) = world.objects.get(idx) else { return };
     let single = tool.sel_prims(world).len() == 1;
-    let editable = tool.can_modify(world, idx);
+    let editable = tool.can_modify(world, idx) && !crate::build::linking::permanent(world, crate::build::root_of(world, idx));
     let enabled = editable && single;
-    let (extra, volume, material, is_root, click) = (o.extra.clone(), o.volume, o.prim_material, o.parent_id == 0, o.click_action);
+    let (extra, volume, material, click, flexible) = (o.extra.clone(), o.volume, o.prim_material, o.click_action, o.has_flexible_path());
     let mesh = volume.is_mesh();
-    let legacy_canvas =
-        super::legacy::active(ui).then(|| egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 460.0)));
+    let probe_height = 110.0 * super::common::font_scale(ui);
+    let legacy_canvas = super::legacy::active(ui)
+        .then(|| egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 380.0 + probe_height)));
 
     ui.horizontal(|ui| {
         small(
@@ -81,7 +156,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             if super::common::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("build-ui-features-copy-attributes"), enabled) {
                 let (light_image, keep_light_image) = light_image_copy(world, extra.light_image);
                 tool.ui.features_clipboard = Some(FeaturesClip {
-                    flexible: extra.flexible,
+                    flexible: flexible.then_some(extra.flexible.unwrap_or(FLEX_DEFAULT)),
                     light: extra.light,
                     light_image,
                     keep_light_image,
@@ -100,7 +175,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         animated,
         false,
         aurora_i18n::tr!("build-ui-features-animated-mesh"),
-        enabled && is_root && mesh,
+        tool.animated_mesh_editable(world),
     ) {
         let flags = extra.extended_mesh_flags.unwrap_or(0);
         let f = if v {
@@ -110,7 +185,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         };
         tool.set_extra(world, idx, Extra::ExtendedMesh(Some(f)));
     }
-    let (flexibility, open) = (aurora_i18n::tr!("build-ui-features-flexibility"), extra.flexible.is_some());
+    let (flexibility, open) = (aurora_i18n::tr!("build-ui-features-flexibility"), flexible);
     feature_group(
         ui,
         p,
@@ -124,20 +199,24 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             if let Some(v) = check(
                 ui,
                 p,
-                extra.flexible.is_some(),
+                flexible,
                 false,
                 aurora_i18n::tr!("build-ui-features-flexibility"),
                 enabled && can_flex,
             ) {
                 set_flexible(tool, world, idx, v, click);
             }
-            let flex_on = extra.flexible.is_some() && enabled;
+            let flex_on = flexible && enabled && !mesh;
             let mut f = extra.flexible.unwrap_or(FLEX_DEFAULT);
             let mut e = Edit::default();
             ui.add_enabled_ui(flex_on, |ui| {
                 let mut soft = f.softness as i32;
                 row(ui, p, aurora_i18n::tr!("build-ui-features-softness"), 70.0, |ui| {
-                    let r = super::common::spin_i(ui, &mut soft, 0..=3, W);
+                    let r = if flex_on {
+                        super::common::spin_i(ui, &mut soft, 0..=3, W)
+                    } else {
+                        super::common::empty_spin(ui, W)
+                    };
                     e = e.or(r);
                 });
                 f.softness = soft as u8;
@@ -187,9 +266,38 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         |ui| {
             label(ui, p, aurora_i18n::tr!("build-ui-features-physics-shape-type"));
             let phys = tool.physics.get(&key.local_id).copied();
+            let shape = phys.map(|x| x.shape_type);
+            let roots: Vec<bool> = tool
+                .sel_prims(world)
+                .into_iter()
+                .map(|i| crate::build::root_of(world, i) == i)
+                .collect();
+            let (child_selected, root_selected) = (roots.contains(&false), roots.contains(&true));
+            let mesh_id = volume.sculpt.filter(|sc| sc.is_mesh()).map(|sc| sc.texture);
+            let prim_allowed = mesh_id.is_none_or(|id| {
+                let meshes = &env.scene.meshes;
+                let lookup = || {
+                    let view = meshes.view(&id)?;
+                    let convex = view.header.physics_convex.and_then(|r| view.bytes.section(r));
+                    aurora_assets::mesh_physics::has_physics_shape(&view.header, convex)
+                };
+                tool.mesh_physics.ask(id, lookup) == Some(true)
+            });
+            let shapes = physics_shape_choices(child_selected, prim_allowed, shape);
             ui.horizontal(|ui| {
-                if let Some(t) = combo(ui, "physics_shape", phys.map(|x| x.shape_type), &physics_shapes(), 110.0, editable) {
+                if let Some(t) = combo(ui, "physics_shape", shape, &shapes, 110.0, editable) {
                     tool.set_physics(world, |x| x.shape_type = t);
+                }
+                if root_selected {
+                    // why None is missing, or why a whole linkset set to None
+                    // still shows the root's shape: only child prims take it
+                    let _ = super::common::icon_button(
+                        ui,
+                        p,
+                        "info-circle-filled",
+                        aurora_i18n::tr!("build-ui-features-physics-none-root-hint"),
+                        true,
+                    );
                 }
                 let eye = if s.show_physics_shape { "eye-filled" } else { "eye-off" };
                 if super::common::icon_button(
@@ -224,16 +332,16 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             let mut e = Edit::default();
             ui.add_enabled_ui(editable && phys.is_some(), |ui| {
                 row(ui, p, aurora_i18n::tr!("build-ui-features-gravity"), 70.0, |ui| {
-                    e = e.or(spin(ui, &mut ph.gravity_multiplier, 1.0, -1.0..=28.0, 3, W, false))
+                    e = e.or(super::common::spin(ui, &mut ph.gravity_multiplier, 1.0, -1.0..=28.0, 3, W, false))
                 });
                 row(ui, p, aurora_i18n::tr!("common-friction"), 70.0, |ui| {
-                    e = e.or(spin(ui, &mut ph.friction, 0.1, 0.0..=255.0, 3, W, false))
+                    e = e.or(super::common::spin(ui, &mut ph.friction, 0.1, 0.0..=255.0, 3, W, false))
                 });
                 row(ui, p, aurora_i18n::tr!("build-ui-features-density-in-100-kg-m-3"), 70.0, |ui| {
-                    e = e.or(spin(ui, &mut ph.density, 0.1, 1.0..=22587.0, 2, W, false))
+                    e = e.or(super::common::spin(ui, &mut ph.density, 0.1, 1.0..=22587.0, 2, W, false))
                 });
                 row(ui, p, aurora_i18n::tr!("common-restitution"), 70.0, |ui| {
-                    e = e.or(spin(ui, &mut ph.restitution, 0.01, 0.0..=1.0, 3, W, false))
+                    e = e.or(super::common::spin(ui, &mut ph.restitution, 0.01, 0.0..=1.0, 3, W, false))
                 });
             });
             if e.commit && Some(ph) != phys {
@@ -267,7 +375,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         probe,
         open,
         legacy_canvas,
-        [0.0, 360.0, 275.0, 80.0],
+        [0.0, 360.0, 275.0, probe_height],
         |ui| {
             probe_section(ui, p, tool, world, idx, &extra, enabled && !mesh);
         },
@@ -277,8 +385,8 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
 }
 
-/// The reference volume panel keeps all groups exposed, including their
-/// disabled values. Aurora retains its independent folding sections.
+/// The reference volume panel keeps all groups exposed, with unavailable
+/// parameters cleared. Aurora retains its independent folding sections.
 #[allow(clippy::too_many_arguments)]
 fn feature_group(
     ui: &mut egui::Ui,
@@ -344,14 +452,28 @@ fn light_section(
         ui.add_space(12.0);
         // the swatch shows sRGB; the wire carries linear (setLightSRGBColor)
         let srgb = [linear_to_srgb(l.color[0]), linear_to_srgb(l.color[1]), linear_to_srgb(l.color[2])];
-        let swatch = color_swatch(
-            ui,
-            p,
-            srgb,
-            if legacy { "" } else { aurora_i18n::tr!("common-color") },
-            swatch_size,
-            on,
-        )
+        let swatch = if on {
+            color_swatch(
+                ui,
+                p,
+                srgb,
+                if legacy { "" } else { aurora_i18n::tr!("common-color") },
+                swatch_size,
+                on,
+            )
+        } else {
+            super::common::swatch(
+                ui,
+                p,
+                env.images,
+                &mut tool.ui.wanted_images,
+                None,
+                if legacy { "" } else { aurora_i18n::tr!("common-color") },
+                swatch_size,
+                false,
+                false,
+            )
+        }
         .on_hover_text(aurora_i18n::tr!("common-color"));
         if let Some(object) = world.objects.get(idx) {
             tool.color_swatch_response(world, env, super::ColorTarget::Light(object.full_id), srgb, swatch);
@@ -364,6 +486,7 @@ fn light_section(
             world
                 .objects
                 .get(idx)
+                .filter(|_| on)
                 .and_then(|object| object.visual_light_image())
                 .map(|image| image.texture),
             if legacy { "" } else { aurora_i18n::tr!("common-texture") },
@@ -470,21 +593,31 @@ fn probe_section(
                 tool.set_extra(world, idx, Extra::Probe(None));
             }
         }
-        if let Some(b) = combo(ui, "probe_shape", Some(pr.flags & PROBE_BOX), &shape_items, 90.0, on) {
+        if let Some(b) = combo(
+            ui,
+            "probe_shape",
+            probe.map(|_| pr.flags & PROBE_BOX),
+            &shape_items,
+            90.0,
+            on && pr.flags & PROBE_MIRROR == 0,
+        ) {
             np.flags = (pr.flags & !PROBE_BOX) | b;
             send = true;
         }
     });
     ui.add_enabled_ui(on, |ui| {
-        if let Some(d) = check(
+        // Unlike LLPanelVolume, keep the mode visible even when graphics
+        // mirrors are disabled: editing an object's flags does not need them.
+        label(ui, p, aurora_i18n::tr!("build-ui-features-probe-update"));
+        if let Some(update) = combo(
             ui,
-            p,
-            pr.flags & PROBE_DYNAMIC != 0,
-            false,
-            aurora_i18n::tr!("build-ui-features-dynamic"),
+            "probe_update",
+            probe.map(|_| pr.flags & PROBE_UPDATE),
+            &probe_updates(),
+            ui.available_width(),
             on,
         ) {
-            np.flags = if d { np.flags | PROBE_DYNAMIC } else { np.flags & !PROBE_DYNAMIC };
+            np.flags = probe_update_flags(np.flags, update);
             send = true;
         }
         let mut e = Edit::default();
@@ -496,20 +629,27 @@ fn probe_section(
             };
             row(ui, p, name, 70.0, |ui| spin(ui, value, 0.05, 0.0..=max, 3, W, false))
         };
-        if super::legacy::active(ui) {
-            ui.columns(2, |columns| {
-                e = e.or(field(&mut columns[0], true));
-                e = e.or(field(&mut columns[1], false));
-            });
-        } else {
-            ui.vertical(|ui| {
-                e = e.or(field(ui, true));
-                e = e.or(field(ui, false));
-            });
-        }
+        ui.add_enabled_ui(np.flags & PROBE_MIRROR == 0, |ui| {
+            if super::legacy::active(ui) {
+                ui.columns(2, |columns| {
+                    e = e.or(field(&mut columns[0], true));
+                    e = e.or(field(&mut columns[1], false));
+                });
+            } else {
+                ui.vertical(|ui| {
+                    e = e.or(field(ui, true));
+                    e = e.or(field(ui, false));
+                });
+            }
+        });
         send |= e.commit;
     });
     if send && np != pr && on {
+        // LLPanelVolume::onCommitProbe turns a spherical probe into a box
+        // when Mirror is chosen. Its volume must agree with its probe flag.
+        if pr.flags & PROBE_BOX == 0 && np.flags & PROBE_BOX != 0 && np.flags & PROBE_MIRROR != 0 {
+            tool.set_shape(world, idx, crate::build::shapes::shapes()[0].raw().to_params());
+        }
         tool.set_extra(world, idx, Extra::Probe(Some(np)));
     }
 }
@@ -554,11 +694,31 @@ pub(super) fn light_image_copy(
 }
 
 /// "Paste" of the features (LLPanelVolume::onPasteFeatures).
-fn paste_features(tool: &mut BuildTool, world: &mut World, idx: usize, c: FeaturesClip) {
-    let current = world.objects.get(idx).map(|o| o.extra.clone()).unwrap_or_default();
-    if current.flexible != c.flexible {
-        tool.set_extra(world, idx, Extra::Flexible(c.flexible));
+/// LLPanelVolume::onPasteFeatures: copied flexibility makes a line or
+/// flexible path flexible (LLVOVolume::setIsFlexible), then takes the copied
+/// parameters; a paste without it turns a flexible path back into a line.
+/// The path, not the block, decides, as for the checkbox.
+fn paste_flexible(tool: &mut BuildTool, world: &mut World, idx: usize, clip: Option<FlexibleParams>) {
+    let Some(o) = world.objects.get(idx) else { return };
+    let (was, click) = (o.has_flexible_path(), o.click_action);
+    let can = matches!(o.volume.path.curve_type, LL_PCODE_PATH_LINE | LL_PCODE_PATH_FLEXIBLE);
+    match clip {
+        Some(f) if can => {
+            if !was {
+                set_flexible(tool, world, idx, true, click);
+            }
+            if world.objects.get(idx).is_some_and(|o| o.extra.flexible != Some(f)) {
+                tool.set_extra(world, idx, Extra::Flexible(Some(f)));
+            }
+        }
+        _ if was => set_flexible(tool, world, idx, false, click),
+        _ => {}
     }
+}
+
+fn paste_features(tool: &mut BuildTool, world: &mut World, idx: usize, c: FeaturesClip) {
+    paste_flexible(tool, world, idx, c.flexible);
+    let current = world.objects.get(idx).map(|o| o.extra.clone()).unwrap_or_default();
     if current.light != c.light {
         tool.set_extra(world, idx, Extra::Light(c.light));
     }
@@ -577,6 +737,31 @@ fn paste_features(tool: &mut BuildTool, world: &mut World, idx: usize, c: Featur
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prim_is_offered_only_for_a_mesh_with_its_own_physics_shape() {
+        let values = |v: Vec<(&str, u8)>| v.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
+        // a mesh without one (or not known yet): None and Convex hull
+        assert_eq!(values(physics_shape_choices(true, false, Some(2))), [PHYSICS_SHAPE_NONE, 2]);
+        assert_eq!(values(physics_shape_choices(false, false, Some(2))), [2]);
+        // a mesh already showing Prim keeps it in the list
+        assert_eq!(values(physics_shape_choices(false, false, Some(0))), [0, 2]);
+    }
+
+    #[test]
+    fn none_is_offered_only_for_a_child_prim() {
+        let values = |v: Vec<(&str, u8)>| v.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
+        // root or lone prim: Prim and Convex hull only
+        assert_eq!(values(physics_shape_choices(false, true, Some(0))), [0, 2]);
+        assert_eq!(values(physics_shape_choices(false, true, None)), [0, 2]);
+        // a child prim in the selection: None too, in the Legacy Viewer's order
+        assert_eq!(values(physics_shape_choices(true, true, Some(0))), [PHYSICS_SHAPE_NONE, 0, 2]);
+        // a root already showing None keeps it in the list, so the combo can name it
+        assert_eq!(
+            values(physics_shape_choices(false, true, Some(PHYSICS_SHAPE_NONE))),
+            [PHYSICS_SHAPE_NONE, 0, 2]
+        );
+    }
 
     #[test]
     fn a_projector_the_agent_cannot_copy_leaves_the_target_its_own() {
@@ -605,5 +790,75 @@ mod tests {
             },
         );
         assert_eq!(light_image_copy(&w, image), (image, false));
+    }
+
+    /// A demo box the agent may edit, selected, on a line path.
+    fn editable_box() -> (World, BuildTool, usize) {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for event in crate::demo::events() {
+            if matches!(event, aurora_net::NetEvent::ObjectUpdates { .. }) {
+                world.apply(event);
+            }
+        }
+        let idx = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == 118)
+            .map(|(idx, _)| idx)
+            .unwrap();
+        let mut tool = BuildTool::default();
+        let o = world.objects.get_mut(idx).unwrap();
+        o.owner_id = world.agent_id;
+        o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+        o.volume.path.curve_type = LL_PCODE_PATH_LINE;
+        o.volume.sculpt = None;
+        o.extra = Default::default();
+        tool.selection.push(o.key);
+        (world, tool, idx)
+    }
+
+    #[test]
+    fn pasted_flexibility_follows_the_path_like_the_legacy_viewer() {
+        let own = FlexibleParams {
+            softness: 3,
+            gravity: -1.0,
+            ..FLEX_DEFAULT
+        };
+        let path = |w: &World, idx: usize| w.objects.get(idx).unwrap().volume.path.curve_type;
+
+        // Copied flexibility makes a line path flexible with the copied block.
+        let (mut w, mut tool, idx) = editable_box();
+        paste_flexible(&mut tool, &mut w, idx, Some(own));
+        assert_eq!(path(&w, idx), LL_PCODE_PATH_FLEXIBLE);
+        assert_eq!(w.objects.get(idx).unwrap().extra.flexible, Some(own));
+
+        // A paste without it turns the path back into a line, block or not.
+        paste_flexible(&mut tool, &mut w, idx, None);
+        assert_eq!(path(&w, idx), LL_PCODE_PATH_LINE);
+        assert_eq!(w.objects.get(idx).unwrap().extra.flexible, None);
+        let o = w.objects.get_mut(idx).unwrap();
+        o.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        paste_flexible(&mut tool, &mut w, idx, None);
+        assert_eq!(path(&w, idx), LL_PCODE_PATH_LINE, "a flexible path that came without the block");
+
+        // A flexible sculpt keeps its path and takes the copied block.
+        let o = w.objects.get_mut(idx).unwrap();
+        o.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        o.volume.sculpt = Some(aurora_prim::params::SculptParams::default());
+        o.extra.flexible = Some(FLEX_DEFAULT);
+        paste_flexible(&mut tool, &mut w, idx, Some(own));
+        assert_eq!(path(&w, idx), LL_PCODE_PATH_FLEXIBLE);
+        assert_eq!(w.objects.get(idx).unwrap().extra.flexible, Some(own));
+
+        // Another path cannot be flexible: nothing changes.
+        let o = w.objects.get_mut(idx).unwrap();
+        o.volume.sculpt = None;
+        o.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_CIRCLE;
+        o.extra.flexible = None;
+        let sent = tool.out.len();
+        paste_flexible(&mut tool, &mut w, idx, Some(own));
+        assert_eq!(path(&w, idx), aurora_prim::params::LL_PCODE_PATH_CIRCLE);
+        assert_eq!(tool.out.len(), sent);
     }
 }

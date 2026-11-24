@@ -10,6 +10,8 @@ mod app;
 mod atomic_file;
 mod autopilot;
 mod autoreplace;
+mod avatar_align;
+mod avatar_studio;
 mod blender_live;
 // Bug report form, disabled for now: "Report a bug" (login screen, top bar,
 // crash window) opens GitHub's issue chooser in the browser instead
@@ -32,13 +34,28 @@ mod credentials;
 mod cursors;
 mod deep_profile;
 mod demo;
+mod destination_guide;
 mod dev_toolbox;
+mod director;
+mod director_anim;
+mod director_capture;
+mod director_ffmpeg;
+mod director_keys;
+mod director_library;
+mod director_montage;
+mod director_render;
+mod director_thumbs;
+mod director_titles;
+mod disable_glass;
 mod disk_io;
 mod dof;
+mod editor_sync;
 mod external_url;
 mod fast_hash;
+mod film_sound;
 mod frame_par;
 mod frame_profile;
+mod game_control;
 mod gestures;
 mod gif_search;
 mod gpu_driver;
@@ -56,6 +73,7 @@ mod interface_colors;
 mod joystick;
 mod keybinds;
 mod keywords;
+mod language_file;
 mod legacy_profile;
 mod link_preview;
 mod link_trust;
@@ -69,18 +87,28 @@ mod login_wait;
 mod lsl_keywords;
 #[cfg(target_os = "macos")]
 mod mac_quit;
+#[cfg(target_os = "macos")]
+mod mac_window_menu;
 mod machine_id;
 mod media;
 mod movement;
 mod natural_order;
 mod net_adapters;
 mod net_profile;
+mod oiia;
+mod omnifilter;
 mod open_path;
+mod outside;
 mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
+mod pose_stand;
+mod proxy;
 mod raw_mouse;
+mod recorder;
 mod report_abuse;
+mod save_retry;
+mod saves;
 mod scene;
 mod screen_rate;
 mod settings;
@@ -90,6 +118,7 @@ mod slurl;
 mod slurl_handoff;
 mod snapshot;
 mod spelling;
+mod splash;
 mod stream_title;
 mod sys_probe;
 mod system_info;
@@ -104,6 +133,9 @@ mod updater;
 mod url_scheme;
 mod voice;
 mod wearable_editor;
+mod weather;
+#[cfg(any(windows, test))]
+mod wide_chars;
 mod window_hold;
 mod window_show;
 mod world;
@@ -133,10 +165,22 @@ fn main() -> anyhow::Result<()> {
     let vulkan_layers_off = unsafe { aurora_render::vulkan_layers::disable(allow_overlays) };
     // SAFETY: as above, no other thread yet.
     let dozen_off = unsafe { aurora_render::vulkan_drivers::disable() };
-    if aurora_updater::install::run_helper()? {
+    // the switch to a new version shows the startup splash's window
+    // throughout (splash/), handed to the new viewer's own splash
+    let mut update_window = splash::UpdateWindow::default();
+    if aurora_updater::install::run_helper(&mut |version, stage| update_window.stage(version, stage))? {
+        return Ok(());
+    }
+    drop(update_window);
+    // a window and nothing else: before the checks of an isolated update
+    // test, as the update helper runs it from outside the test installation
+    if splash::helper()? {
         return Ok(());
     }
     cli::get();
+    // the stochastic transparency's measurement switches that weaken it
+    // (AURORA_ST_GUARDS) are read by development builds alone
+    aurora_render::oit_stochastic::set_development_build(env!("AURORA_BUILD_PROFILE") != "release");
     // without a window: before the crash watcher, the logs and the link
     // hand-off
     if cli::get().uninstall {
@@ -161,9 +205,20 @@ fn main() -> anyhow::Result<()> {
     {
         return Ok(());
     }
+    // on screen at once, while the renderer prepares (splash/)
+    splash::start();
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
+    // Preferences › Network › Proxy: before the first connection of the
+    // viewer (LLStartUp::startLLProxy, at startup)
+    proxy::install(&settings::Settings::load().proxy);
+    // the interface language file, read with the settings before the log
+    language_file::report();
+    splash::settings();
+    // started by an update: its helper waits while the start moves on
+    splash::report_to_update();
+    splash::test_slow_start();
     // The loader scans the layer manifests (and may call their pre-instance
     // hooks): on a thread of its own, like the crash report's list of layers
     // (crash/mod.rs), so the window never waits for this log line
@@ -281,11 +336,15 @@ fn run_viewer() -> anyhow::Result<()> {
         .build_global();
 
     let mut event_loop = winit::event_loop::EventLoop::builder();
-    // the absolute positions of remote desktops made motions (raw_mouse.rs)
+    // the absolute positions of remote desktops made motions (raw_mouse.rs),
+    // and their emoji typed as two halves were lost (wide_chars.rs)
     #[cfg(windows)]
     raw_mouse::install(&mut event_loop);
     let event_loop = event_loop.build()?;
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+    // the cache clear an update could not do while the cache was held
+    // (aurora-updater user_data.rs), before anything opens it
+    aurora_updater::clear_deferred_cache();
     // the cache folder of this run, before anything uses it
     cache_location::init();
     // private browser profiles a crash left behind (search web tab)
@@ -318,12 +377,17 @@ fn run_viewer() -> anyhow::Result<()> {
     // the pipelines compiled since the last save (made after the start:
     // another anti-aliasing, the photo passes…)
     aurora_render::pipeline_cache::flush(std::time::Duration::from_secs(2));
-    // a save asked on a way out other than `shutdown` (settings/saver.rs)
-    settings::Settings::wait_saved(std::time::Duration::from_secs(5));
+    // a save asked on a way out other than `shutdown` (saves.rs)
+    saves::wait(std::time::Duration::from_secs(5));
     // the browsers stop with the app; their private profiles are removed
     // while the plugins let go of their files
+    let restart_vr = app.requested_vr_restart();
     drop(app);
     media::private_profile::finish(std::time::Duration::from_secs(8));
+    world::tphistory::finish_writes();
     result?;
+    if let Some(mode) = restart_vr {
+        app::restart_with_vr(mode);
+    }
     Ok(())
 }

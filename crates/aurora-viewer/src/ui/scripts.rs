@@ -5,20 +5,23 @@
 
 use super::widgets::{Floater, flat_button};
 use crate::theme::Palette;
-use aurora_net::scripts::{MAX_SOURCE, ScriptOptions, ScriptSaved, ScriptTarget};
+use aurora_net::scripts::{CompileTarget, MAX_SOURCE, ScriptOptions, ScriptSaved, ScriptTarget};
 use egui::Vec2;
 use uuid::Uuid;
 
+pub mod backup;
 mod colors;
 mod debug;
 mod dialogs;
-mod editing;
+pub(crate) mod editing;
 mod experiences;
 mod files;
+pub(crate) use files::live_folder;
 mod focus;
 mod folding;
 mod indent;
 mod preprocessor;
+pub mod recovery;
 mod reference;
 pub mod settings;
 mod syntax;
@@ -29,6 +32,11 @@ pub(crate) use syntax::highlight as highlight_lsl;
 
 pub enum Action {
     Debug,
+    /// Rename only the inventory/task item metadata, never the source text.
+    Rename {
+        target: ScriptTarget,
+        name: String,
+    },
     Include {
         request: Uuid,
         name: String,
@@ -60,13 +68,15 @@ pub enum Action {
 struct PendingSave {
     request: Uuid,
     source: String,
-    mono: bool,
+    compile: CompileTarget,
     experience: Option<Uuid>,
     running: bool,
 }
 
 pub struct Editor {
     pub target: ScriptTarget,
+    /// Inventory list that opened this editor, if any.
+    pub(crate) inventory_owner: Option<egui::Id>,
     pub name: String,
     pub source: String,
     highlighter: syntax::Highlighter,
@@ -79,9 +89,10 @@ pub struct Editor {
     pub can_read: bool,
     pub can_edit: bool,
     pub can_reset: bool,
-    pub mono: bool,
-    baseline_mono: bool,
+    pub compile: CompileTarget,
+    baseline_compile: CompileTarget,
     experience: experiences::State,
+    lua_scripts: bool,
     running: Option<bool>,
     status: String,
     errors: Vec<String>,
@@ -98,8 +109,19 @@ pub struct Editor {
 }
 
 impl Editor {
+    /// SLua source: Lua colors, words and help.
+    fn lua(&self) -> bool {
+        self.compile == CompileTarget::Luau
+    }
+
+    /// The number of the first line: Lua counts from 1, LSL from 0
+    /// (LLScriptEditor::drawLineNumbers, LLScriptEdCore::updateDynamicHelp).
+    fn first_line(&self) -> usize {
+        usize::from(self.lua())
+    }
+
     fn dirty(&self) -> bool {
-        self.loaded && (self.source != self.baseline || self.mono != self.baseline_mono || self.experience.dirty())
+        self.loaded && (self.source != self.baseline || self.compile != self.baseline_compile || self.experience.dirty())
     }
 
     fn can_save(&self) -> bool {
@@ -122,14 +144,15 @@ impl Editor {
         self.saving = Some(PendingSave {
             request,
             source: self.source.clone(),
-            mono: self.mono,
+            compile: self.compile,
             experience: self.experience.selected,
             running: self.running.unwrap_or(false),
         });
         self.status = aurora_i18n::tr!("script-saving").into();
         self.errors.clear();
         self.tools.diagnostics_processed = false;
-        if self.processor_settings.preprocessor {
+        // the LSL preprocessor would mangle SLua source
+        if self.processor_settings.preprocessor && self.compile != CompileTarget::Luau {
             self.status = aurora_i18n::tr!("script-preproc-processing").into();
             self.processing = Some(preprocessor::start(
                 self.source.clone(),
@@ -143,7 +166,7 @@ impl Editor {
             request,
             target: self.target,
             options: ScriptOptions {
-                mono: self.mono,
+                compile: self.compile,
                 running: self.running.unwrap_or(false),
                 experience: self.experience.selected.unwrap_or_default(),
             },
@@ -154,14 +177,45 @@ impl Editor {
 
 #[derive(Default)]
 pub struct Editors {
-    pub rlva_hidden: bool,
     pub documents: Vec<Editor>,
     panels: dialogs::Panels,
     debug: debug::Debug,
     includes: std::collections::HashMap<Uuid, PendingInclude>,
     pub agent: Uuid,
     pub agent_name: String,
+    /// The region runs SLua: the Lua compile targets can be chosen.
+    pub lua_scripts: bool,
+    /// The account's folder of copies of the unsaved scripts (backup.rs);
+    /// `None` keeps none.
+    pub backup_dir: Option<std::path::PathBuf>,
+    pub backups: backup::Book,
+    /// The saves of scripts sent to the external editor, for the editor
+    /// sync (`crate::editor_sync`), taken once a frame.
+    compiled: Vec<Compiled>,
 }
+
+/// A script sent to the external editor (or on its way there), which the
+/// editor sync may let an editor follow.
+pub struct Synced<'a> {
+    pub target: ScriptTarget,
+    pub name: &'a str,
+    pub lua: bool,
+    pub can_edit: bool,
+}
+
+/// A save's result (LLScriptEdContainer::sendCompileResults).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Compiled {
+    pub target: ScriptTarget,
+    pub compiled: bool,
+    /// An object's script runs; false in the inventory.
+    pub running: bool,
+    pub errors: Vec<String>,
+    pub lua: bool,
+}
+
+/// Saves kept for the editor sync between two frames.
+const MAX_COMPILED: usize = 32;
 
 struct PendingInclude {
     owner: ScriptTarget,
@@ -177,7 +231,56 @@ impl Editors {
         self.debug.open = true;
     }
 
+    /// Copy the unsaved scripts (backup.rs), at most every
+    /// `backup::INTERVAL`, off the frame thread.
+    pub fn back_up(&mut self) {
+        self.back_up_now(false);
+    }
+
+    /// The viewer closing: as [`Self::back_up`], and a copy whose last
+    /// write was refused is tried again now rather than at the interval.
+    pub fn back_up_before_exit(&mut self) {
+        self.back_up_now(backup::any_refused());
+    }
+
+    fn back_up_now(&mut self, force: bool) {
+        let docs = self.documents.iter().map(|e| backup::Doc {
+            target: e.target,
+            name: &e.name,
+            source: &e.source,
+            unsaved: e.loaded && e.source != e.baseline,
+            editable: e.loaded && e.can_edit,
+        });
+        let jobs = self
+            .backups
+            .plan(self.backup_dir.as_deref(), docs, std::time::Instant::now(), force);
+        backup::run(jobs);
+    }
+
+    /// The scripts sent to the external editor.
+    pub fn synced(&self) -> impl Iterator<Item = Synced<'_>> {
+        self.documents
+            .iter()
+            .filter(|e| !e.closed && (e.tools.external.is_some() || e.tools.external_starting))
+            .map(|e| Synced {
+                target: e.target,
+                name: &e.name,
+                lua: e.lua(),
+                can_edit: e.can_edit,
+            })
+    }
+
+    /// The saves since the last call.
+    pub fn take_compiled(&mut self) -> Vec<Compiled> {
+        std::mem::take(&mut self.compiled)
+    }
+
     pub fn disconnected(&mut self) {
+        // the latest text is copied, and the copies stay for the next login
+        // whatever the editors do now (LLScriptEdContainer's destructor
+        // keeps the file when there is no region)
+        self.back_up_now(true);
+        self.backups.release();
         self.includes.clear();
         self.documents.retain(|e| e.dirty() || e.saving.is_some());
         for e in &mut self.documents {
@@ -187,6 +290,7 @@ impl Editors {
             e.saving = None;
             e.processing = None;
             e.tools.external = None;
+            e.tools.external_starting = false;
             e.can_read = false;
             e.can_edit = false;
             e.can_reset = false;
@@ -213,6 +317,14 @@ impl Editors {
         let e = self.documents.iter_mut().find(|e| e.target == target)?;
         e.source = source;
         if save { e.save() } else { None }
+    }
+
+    /// AURORA_DEMO_EDITOR_SYNC: the script counts as sent to the external
+    /// editor without launching one (the demo's editor is a socket client).
+    pub fn demo_external(&mut self, target: ScriptTarget) {
+        if let Some(e) = self.documents.iter_mut().find(|e| e.target == target && e.can_edit) {
+            e.tools.external_starting = true;
+        }
     }
 
     pub fn demo_experience(&mut self, target: ScriptTarget, experience: Uuid) -> Option<Action> {
@@ -437,7 +549,10 @@ impl Editors {
         true
     }
 
-    pub fn open(&mut self, target: ScriptTarget, name: String, can_read: bool, can_edit: bool) -> Option<Uuid> {
+    /// Opens the editor of a script item, or raises it. `flags` are the
+    /// item's: its language sets the target of a new editor only, so a
+    /// reopened one keeps what was chosen and saved (`CompileTarget::for_item`).
+    pub fn open(&mut self, target: ScriptTarget, name: String, can_read: bool, can_edit: bool, flags: u32) -> Option<Uuid> {
         for editor in &mut self.documents {
             editor.tools.focus_start = false;
         }
@@ -449,6 +564,7 @@ impl Editors {
         let request = can_read.then(Uuid::new_v4);
         self.documents.push(Editor {
             target,
+            inventory_owner: None,
             name,
             source: String::new(),
             highlighter: syntax::Highlighter::default(),
@@ -461,9 +577,10 @@ impl Editors {
             can_read,
             can_edit,
             can_reset: !target.object.is_nil(),
-            mono: true,
-            baseline_mono: true,
+            compile: CompileTarget::for_item(flags),
+            baseline_compile: CompileTarget::for_item(flags),
             experience: experiences::State::default(),
+            lua_scripts: false,
             running: None,
             status: if can_read {
                 aurora_i18n::tr!("common-loading-2")
@@ -546,10 +663,31 @@ impl Editors {
             return false;
         };
         let Some(pending) = e.saving.take() else { return false };
+        // finishedLSLUpload / failedLSLUpload: the result goes to the
+        // editor that follows the script
+        if (e.tools.external.is_some() || e.tools.external_starting) && self.compiled.len() < MAX_COMPILED {
+            let lua = pending.compile == CompileTarget::Luau;
+            self.compiled.push(match result {
+                Ok(saved) => Compiled {
+                    target,
+                    compiled: saved.compiled,
+                    running: !target.object.is_nil() && pending.running,
+                    errors: saved.errors.clone(),
+                    lua,
+                },
+                Err(reason) => Compiled {
+                    target,
+                    compiled: false,
+                    running: false,
+                    errors: vec![aurora_i18n::tr!("script-sync-upload-failed", reason = reason.as_str())],
+                    lua,
+                },
+            });
+        }
         match result {
             Ok(saved) => {
                 e.baseline = pending.source;
-                e.baseline_mono = pending.mono;
+                e.baseline_compile = pending.compile;
                 e.experience.baseline = pending.experience;
                 e.compile_failed = !saved.compiled;
                 e.errors.clone_from(&saved.errors);
@@ -571,13 +709,18 @@ impl Editors {
         true
     }
 
-    pub fn running(&mut self, target: ScriptTarget, running: bool, mono: Option<bool>) {
+    pub fn running(&mut self, target: ScriptTarget, running: bool, compile: Option<CompileTarget>) {
         if let Some(e) = self.documents.iter_mut().find(|e| e.target == target) {
+            // LLLiveLSLEditor::processScriptRunningReply: the first reply
+            // names the VM. A Lua source (its item subtype, which set Luau
+            // when the editor opened) stays Lua whatever the reply says:
+            // saved as LSL it would fail or break.
             if e.running.is_none()
-                && let Some(mono) = mono
+                && e.baseline_compile != CompileTarget::Luau
+                && let Some(compile) = compile
             {
-                e.mono = mono;
-                e.baseline_mono = mono;
+                e.compile = compile;
+                e.baseline_compile = compile;
             }
             e.running = Some(running);
         }
@@ -622,9 +765,6 @@ impl Editors {
         settings: &mut settings::ScriptSettings,
         color_prefs: &mut super::color_picker::Preferences,
     ) -> Vec<Action> {
-        if self.rlva_hidden {
-            return Vec::new();
-        }
         let colors_before = color_prefs.clone();
         let mut actions = Vec::new();
         if self.panels.preferences.show(ctx, p, settings) {
@@ -640,6 +780,7 @@ impl Editors {
                 e.processor_settings.clone_from(settings);
             }
             e.processor_environment.agent = self.agent;
+            e.lua_scripts = self.lua_scripts;
             if e.processor_environment.agent_name != self.agent_name {
                 e.processor_environment.agent_name.clone_from(&self.agent_name);
             }
@@ -667,10 +808,13 @@ impl Editors {
                         e.tools.has_processed = true;
                         e.tools.diagnostics_processed = true;
                         e.tools.processed_source = output.uploaded.clone();
-                        if let Some(mono) = output.mono {
-                            e.mono = mono;
+                        // LLPreviewLSL::saveIfNeeded: //mono and //lsl2 only choose between the LSL VMs
+                        if let Some(mono) = output.mono
+                            && matches!(e.compile, CompileTarget::Mono | CompileTarget::Lsl2)
+                        {
+                            e.compile = if mono { CompileTarget::Mono } else { CompileTarget::Lsl2 };
                             if let Some(pending) = e.saving.as_mut() {
-                                pending.mono = mono;
+                                pending.compile = e.compile;
                             }
                         }
                         e.errors = output.warnings;
@@ -679,7 +823,7 @@ impl Editors {
                                 request: pending.request,
                                 target: e.target,
                                 options: ScriptOptions {
-                                    mono: pending.mono,
+                                    compile: pending.compile,
                                     running: pending.running,
                                     experience: pending.experience.unwrap_or_default(),
                                 },
@@ -714,6 +858,7 @@ impl Editors {
             )
             .cascade(super::widgets::CascadeGroup::Script)
             .allow_partial_outside()
+            .rename_title(e.name.clone(), e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none())
             .show(ctx, p, &mut open, |ui| {
                 view::body(
                     ui,
@@ -725,6 +870,15 @@ impl Editors {
                     &mut actions,
                 );
             });
+            if let Some(name) = super::widgets::take_title_rename(ctx, &id)
+                && e.can_edit
+                && e.loaded
+                && e.saving.is_none()
+                && e.loading.is_none()
+                && name != e.name
+            {
+                actions.push(Action::Rename { target: e.target, name });
+            }
             view::dialogs(
                 ctx,
                 p,
@@ -796,7 +950,14 @@ impl Editors {
                 }
             }
         }
-        self.documents.retain(|e| !e.closed);
+        self.documents.retain(|e| {
+            if e.closed
+                && let Some(owner) = e.inventory_owner
+            {
+                crate::ui::inventory::return_focus_to(ctx, owner);
+            }
+            !e.closed
+        });
         focus::find(ctx, &mut self.documents, &mut self.panels.search);
         // Draw the singleton after every editor has handled its commands. A
         // search opened in a later document must not also draw on the old one.
@@ -945,6 +1106,155 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_f_then_replace_changes_the_selected_word_whichever_way_it_was_selected() {
+        // egui shrinks the editor's selection to its moving end once Find
+        // takes the keyboard: the start of a word selected right to left.
+        for (anchor, caret) in [(11, 16), (16, 11)] {
+            let ctx = egui::Context::default();
+            let mut editors = Editors::default();
+            let t = target(1);
+            let load = editors.open(t, "Replace selected".into(), true, true, 0).unwrap();
+            editors.loaded(load, t, Ok("count = 1;\ncount += 2;\ncount_max = 3;".into()));
+            settle(&ctx, &mut editors);
+            let id = source_id(t);
+            let mut state = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(anchor),
+                egui::text::CCursor::new(caret),
+            )));
+            state.store(&ctx, id);
+            ctx.memory_mut(|m| m.request_focus(id));
+            settle(&ctx, &mut editors);
+            frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            settle(&ctx, &mut editors);
+            assert_eq!(editors.panels.search.query, "count");
+            assert_eq!(
+                editors.panels.search.active_range(&ctx, id, &editors.documents[0].source),
+                Some(11..16),
+                "{anchor}..{caret}: the selected word stays the active match"
+            );
+            editors.panels.search.replacement = "total".into();
+            // The Replace button, not the replacement field's label of the same text.
+            let output = frame(&ctx, &mut editors, vec![]);
+            let pos = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-replace") => {
+                        Some(t.pos + t.galley.size() * 0.5)
+                    }
+                    _ => None,
+                })
+                .max_by(|a, b| a.y.total_cmp(&b.y))
+                .expect("visible Replace button");
+            for pressed in [true, false] {
+                frame(
+                    &ctx,
+                    &mut editors,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert_eq!(
+                editors.documents[0].source, "count = 1;\ntotal += 2;\ncount_max = 3;",
+                "{anchor}..{caret}"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_f_after_find_keeps_the_found_match_for_replace_inline_and_floating() {
+        fn click_text(ctx: &egui::Context, editors: &mut Editors, settings: &mut settings::ScriptSettings, label: &str) {
+            // The lowest text of that label: the button, not the field label
+            // "Replace" beside the floating window's replacement field.
+            let output = frame_settings(ctx, editors, settings, vec![]);
+            let pos = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.job.text == label => Some(t.pos + t.galley.size() * 0.5),
+                    _ => None,
+                })
+                .max_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)))
+                .expect("visible button");
+            for pressed in [true, false] {
+                frame_settings(
+                    ctx,
+                    editors,
+                    settings,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+        }
+        for inline in [true, false] {
+            let ctx = egui::Context::default();
+            let mut editors = Editors::default();
+            let t = ScriptTarget {
+                object: Uuid::from_u128(77),
+                item: Uuid::from_u128(5),
+            };
+            let load = editors.open(t, "Find then Ctrl+F".into(), true, true, 0).unwrap();
+            editors.loaded(load, t, Ok("default\n{\n    count\n    llSay(0, \"x\");\n    count\n}\n".into()));
+            let mut settings = settings::ScriptSettings {
+                search_inline: inline,
+                ..Default::default()
+            };
+            super::super::widgets::place_floater(&ctx, &window(t), egui::pos2(100.0, 100.0), Vec2::new(900.0, 650.0));
+            for _ in 0..4 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            let id = source_id(t);
+            editing::select(&ctx, id, 2..2, true);
+            frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            for _ in 0..3 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            editors.panels.search.query = "count".into();
+            editors.panels.search.replacement = "hi".into();
+            for _ in 0..2 {
+                click_text(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-find"));
+            }
+            let second = 43..48;
+            assert_eq!(
+                editors.panels.search.active_range(&ctx, id, &editors.documents[0].source),
+                Some(second.clone()),
+                "inline {inline}: Find went to the second count"
+            );
+            // Ctrl+F again: egui has shrunk the editor's selection to a caret,
+            // which must not drop the match Find went to.
+            frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            for _ in 0..3 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            assert_eq!(
+                editors.panels.search.active_range(&ctx, id, &editors.documents[0].source),
+                Some(second),
+                "inline {inline}: Ctrl+F keeps the active match"
+            );
+            click_text(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-replace"));
+            assert_eq!(
+                editors.documents[0].source, "default\n{\n    count\n    llSay(0, \"x\");\n    hi\n}\n",
+                "inline {inline}"
+            );
+        }
+    }
+
+    #[test]
     fn opening_scripts_focuses_character_zero_and_late_loads_do_not_steal_focus() {
         for object in [Uuid::nil(), Uuid::from_u128(22)] {
             let ctx = egui::Context::default();
@@ -957,9 +1267,9 @@ mod tests {
                 object,
                 item: Uuid::from_u128(2),
             };
-            let pending = editors.open(first, "First".into(), true, true).unwrap();
+            let pending = editors.open(first, "First".into(), true, true, 0).unwrap();
             settle(&ctx, &mut editors);
-            let load = editors.open(second, "Second".into(), true, true).unwrap();
+            let load = editors.open(second, "Second".into(), true, true, 0).unwrap();
             editors.loaded(load, second, Ok("é source".into()));
             settle(&ctx, &mut editors);
             assert!(ctx.memory(|m| m.has_focus(source_id(second))));
@@ -973,7 +1283,7 @@ mod tests {
             editing::select(&ctx, source_id(first), 3..7, false);
             ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((window(first), "minimized")), true));
             settle(&ctx, &mut editors);
-            editors.open(first, "First".into(), true, true);
+            editors.open(first, "First".into(), true, true, 0);
             settle(&ctx, &mut editors);
             assert!(!super::super::widgets::floater_minimized(&ctx, &window(first)));
             assert!(ctx.memory(|m| m.has_focus(source_id(first))));
@@ -992,11 +1302,11 @@ mod tests {
             item: Uuid::from_u128(2),
         };
         for target in [first, second] {
-            let load = editors.open(target, "Search owner".into(), true, true).unwrap();
+            let load = editors.open(target, "Search owner".into(), true, true, 0).unwrap();
             editors.loaded(load, target, Ok("first needle\nsecond needle".into()));
         }
         settle(&ctx, &mut editors);
-        editors.open(first, "Search owner".into(), true, true);
+        editors.open(first, "Search owner".into(), true, true, 0);
         settle(&ctx, &mut editors);
         frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
         settle(&ctx, &mut editors);
@@ -1011,7 +1321,7 @@ mod tests {
                 editors.panels.search.open = false;
                 ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((dialogs::Search::WINDOW, "minimized")), true));
             }
-            editors.open(second, "Search owner".into(), true, true);
+            editors.open(second, "Search owner".into(), true, true, 0);
             settle(&ctx, &mut editors);
             frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
             settle(&ctx, &mut editors);
@@ -1023,16 +1333,19 @@ mod tests {
             assert!(editors.panels.search.up);
             assert!(!super::super::widgets::floater_minimized(&ctx, dialogs::Search::WINDOW));
             assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
-            let output = frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            settle(&ctx, &mut editors);
             assert!(editor_focused(&ctx));
-            assert_eq!(
-                output
-                    .shapes
-                    .iter()
-                    .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
-                    .count(),
-                1
+            assert!(
+                editors.panels.search.owns(source_id(second)),
+                "Ctrl+F keeps Find open for the same editor"
             );
+            assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
+
+            frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            settle(&ctx, &mut editors);
+            assert!(editors.panels.search.owns(source_id(second)), "repeated Ctrl+F keeps Find open");
+            assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
             frame(&ctx, &mut editors, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
             assert_eq!(
                 editing::cursor(&ctx, source_id(second)).as_sorted_char_range(),
@@ -1062,7 +1375,7 @@ mod tests {
             let ctx = egui::Context::default();
             let mut editors = Editors::default();
             let target = target(1);
-            let load = editors.open(target, "Select search query".into(), true, true).unwrap();
+            let load = editors.open(target, "Select search query".into(), true, true, 0).unwrap();
             editors.loaded(load, target, Ok("source".into()));
             let mut settings = settings::ScriptSettings {
                 search_inline: inline,
@@ -1097,6 +1410,13 @@ mod tests {
                 for _ in 0..3 {
                     frame_settings(&ctx, &mut editors, &mut settings, vec![]);
                 }
+                assert!(editors.panels.search.owns(source_id(target)), "Ctrl+F keeps Find open");
+                assert!(ctx.memory(|m| m.has_focus(query_id)));
+                frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+                for _ in 0..3 {
+                    frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+                }
+                assert!(editors.panels.search.owns(source_id(target)));
                 assert!(ctx.memory(|m| m.has_focus(query_id)));
                 assert_eq!(editors.panels.search.query, "étoile 🌟");
                 assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 0.into()..8.into());
@@ -1123,7 +1443,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut editors = Editors::default();
         let target = target(1);
-        let load = editors.open(target, "Anchored".into(), true, true).unwrap();
+        let load = editors.open(target, "Anchored".into(), true, true, 0).unwrap();
         editors.loaded(load, target, Ok("source".into()));
         settle(&ctx, &mut editors);
         frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
@@ -1156,7 +1476,7 @@ mod tests {
                 .iter()
                 .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
         );
-        editors.open(target, "Anchored".into(), true, true);
+        editors.open(target, "Anchored".into(), true, true, 0);
         settle(&ctx, &mut editors);
         assert!(editors.panels.search.open);
         editors.demo_close_clean(target);
@@ -1166,10 +1486,41 @@ mod tests {
 
     #[test]
     fn search_moves_between_left_floating_and_inline_without_losing_fields_or_focus() {
+        // Whether the toolbar fits inline depends on the width of the labels,
+        // so on the interface language. That language is process-wide and
+        // follows the PC's by default: English in the CI, French on a French
+        // PC, where a 840 px window fitted one and not the other. Run alone and
+        // check each maintained catalogue, so every PC checks the same layouts.
+        const ALONE: &str = "AURORA_TEST_SCRIPT_SEARCH_LANGUAGES_ALONE";
+        if std::env::var_os(ALONE).is_none() {
+            let path = concat!(
+                module_path!(),
+                "::search_moves_between_left_floating_and_inline_without_losing_fields_or_focus"
+            );
+            let (_, name) = path.split_once("::").expect("test module path");
+            let run = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+                .args([name, "--exact", "--test-threads=1"])
+                .env(ALONE, "1")
+                .output()
+                .expect("the test binary starts");
+            let stdout = String::from_utf8_lossy(&run.stdout);
+            let stderr = String::from_utf8_lossy(&run.stderr);
+            assert!(run.status.success(), "the run in each language failed:\n{stdout}\n{stderr}");
+            assert!(stdout.contains("1 passed"), "the run in each language ran this test:\n{stdout}");
+            return;
+        }
+        for language in ["en", "fr", "ja"] {
+            aurora_i18n::select(language, None);
+            assert_eq!(aurora_i18n::language(), language);
+            search_moves_between_left_floating_and_inline_in_the_current_language();
+        }
+    }
+
+    fn search_moves_between_left_floating_and_inline_in_the_current_language() {
         let ctx = egui::Context::default();
         let mut editors = Editors::default();
         let target = target(1);
-        let load = editors.open(target, "Responsive search".into(), true, true).unwrap();
+        let load = editors.open(target, "Responsive search".into(), true, true, 0).unwrap();
         editors.loaded(load, target, Ok("needle needle".into()));
         let mut settings = settings::ScriptSettings {
             search_prefer_left: true,
@@ -1196,7 +1547,8 @@ mod tests {
         assert!((search.right() - parent.left()).abs() < 1.5, "{parent:?} / {search:?}");
         assert_eq!(ctx.read_response(query_id).unwrap().layer_id.id, search_id);
         editing::select(&ctx, query_id, 2..2, true);
-        for width in [840.0, 1250.0, 660.0, 840.0] {
+        // Wide cases must fit every inline control, including Whole words.
+        for (width, expected_inline) in [(1000.0, true), (1250.0, true), (660.0, false), (1000.0, true)] {
             super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(100.0, 120.0), Vec2::new(width, 650.0));
             settings.search_inline = false;
             for _ in 0..4 {
@@ -1209,8 +1561,8 @@ mod tests {
             }
             let output = frame_settings(&ctx, &mut editors, &mut settings, vec![]);
             let query = ctx.read_response(query_id).unwrap();
-            assert_eq!(query.layer_id.id, if width > 800.0 { parent_id } else { search_id });
-            if width > 800.0 {
+            assert_eq!(query.layer_id.id, if expected_inline { parent_id } else { search_id });
+            if expected_inline {
                 let parent = ctx.memory(|m| m.area_rect(parent_id)).unwrap();
                 let source_after = ctx.read_response(source_id(target)).unwrap().rect;
                 assert!(parent.contains_rect(query.rect) && query.rect.left() > parent.left() + parent.width() / 3.0);
@@ -1234,15 +1586,21 @@ mod tests {
             assert_eq!(editors.panels.search.query, "needle");
             assert_eq!(editors.panels.search.replacement, "thread");
             assert!(!editors.panels.search.insensitive && editors.panels.search.up);
-            assert_eq!(
+            // The Find button shows in both modes; only the floating panel
+            // labels the query field. Some languages use one word for both.
+            let texts = |label: &str| {
                 output
                     .shapes
                     .iter()
-                    .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-query")))
-                    .count(),
-                if width > 800.0 { 1 } else { 2 } // Text Find button; floating mode also has a query label.
-            );
-            if width > 800.0 {
+                    .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == label))
+                    .count()
+            };
+            let query_label = aurora_i18n::tr!("script-search-query");
+            let find_label = aurora_i18n::tr!("script-search-find");
+            let same_word = usize::from(query_label == find_label);
+            assert_eq!(texts(query_label), usize::from(!expected_inline) + same_word);
+            assert_eq!(texts(find_label), 1 + usize::from(!expected_inline) * same_word);
+            if expected_inline {
                 let label_pos = |label| {
                     output
                         .shapes
@@ -1292,7 +1650,7 @@ mod tests {
         let first = target(1);
         let second = target(2);
         for target in [first, second] {
-            let load = editors.open(target, "Layer ordering".into(), true, true).unwrap();
+            let load = editors.open(target, "Layer ordering".into(), true, true, 0).unwrap();
             editors.loaded(load, target, Ok("source".into()));
         }
         settle(&ctx, &mut editors);
@@ -1325,7 +1683,7 @@ mod tests {
             let ctx = egui::Context::default();
             let mut editors = Editors::default();
             let target = target(1);
-            let load = editors.open(target, "Reachable".into(), true, true).unwrap();
+            let load = editors.open(target, "Reachable".into(), true, true, 0).unwrap();
             editors.loaded(load, target, Ok("source".into()));
             settle(&ctx, &mut editors);
             let id = egui::Id::unique(window(target));
@@ -1407,7 +1765,7 @@ mod tests {
         let first = target(1);
         let second = target(2);
         for (target, x) in [(first, 50.0), (second, 780.0)] {
-            let load = editors.open(target, "Activation".into(), true, true).unwrap();
+            let load = editors.open(target, "Activation".into(), true, true, 0).unwrap();
             editors.loaded(load, target, Ok("source".into()));
             super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(x, 100.0), Vec2::new(660.0, 520.0));
         }
@@ -1439,7 +1797,7 @@ mod tests {
                     let label = if area == "menu" {
                         aurora_i18n::tr!("script-menu-file")
                     } else {
-                        "Mono"
+                        aurora_i18n::tr!("script-target-mono")
                     };
                     show(&ctx, &mut editors, vec![])
                         .shapes
@@ -1517,10 +1875,53 @@ mod tests {
     }
 
     #[test]
+    fn a_lua_script_is_saved_for_luau_without_the_lsl_preprocessor() {
+        let target = target(80);
+        let mut editors = Editors::default();
+        // SST_LUA in the item's low byte; other flag bits do not count
+        let load = editors.open(target, "Lua".into(), true, true, 0x0100_0001).unwrap();
+        editors.loaded(load, target, Ok("print(\"hi\")".into()));
+        // A running reply that says Mono does not turn a Lua source into LSL.
+        editors.running(target, true, Some(CompileTarget::Mono));
+        let e = &mut editors.documents[0];
+        e.processor_settings.preprocessor = true;
+        e.source = "#include \"x\"
+print(\"bye\")"
+            .into();
+        let Some(Action::Save { options, source, .. }) = e.save() else {
+            panic!("a Lua source is saved at once, not preprocessed")
+        };
+        assert!(e.processing.is_none());
+        assert_eq!(
+            source,
+            "#include \"x\"
+print(\"bye\")"
+        );
+        assert_eq!(options.compile, CompileTarget::Luau);
+    }
+
+    #[test]
+    fn an_lsl_script_on_the_luau_vm_keeps_it_and_the_first_reply_wins() {
+        let target = target(81);
+        let mut editors = Editors::default();
+        let load = editors.open(target, "LSL on Luau".into(), true, true, 0).unwrap();
+        editors.loaded(load, target, Ok("default {}".into()));
+        editors.running(target, true, Some(CompileTarget::LslLuau));
+        editors.running(target, false, None);
+        let e = &mut editors.documents[0];
+        e.source = "default { state_entry() {} }".into();
+        let Some(Action::Save { options, .. }) = e.save() else {
+            panic!("save")
+        };
+        assert_eq!(options.compile, CompileTarget::LslLuau);
+        assert!(!options.running);
+    }
+
+    #[test]
     fn asynchronous_preprocessing_loads_includes_and_saves_a_snapshot_that_reopens_as_original_source() {
         let target = target(70);
         let mut editors = Editors::default();
-        let load = editors.open(target, "Main".into(), true, true).unwrap();
+        let load = editors.open(target, "Main".into(), true, true, 0).unwrap();
         editors.loaded(load, target, Ok("default {}".into()));
         let original = "#include \"library.lsl\"\ndefault { state_entry() { greet(); } }";
         let settings = settings::ScriptSettings {
@@ -1574,7 +1975,7 @@ mod tests {
         );
         assert!(editors.documents[0].closed);
         editors.documents.clear();
-        let load = editors.open(target, "Main".into(), true, true).unwrap();
+        let load = editors.open(target, "Main".into(), true, true, 0).unwrap();
         editors.loaded(load, target, Ok(uploaded));
         assert_eq!(editors.documents[0].source, original);
         assert!(!editors.documents[0].dirty());
@@ -1584,7 +1985,7 @@ mod tests {
     fn failed_preprocessing_keeps_the_draft_and_emits_no_network_save() {
         let target = target(80);
         let mut editors = Editors::default();
-        let load = editors.open(target, "Main".into(), true, true).unwrap();
+        let load = editors.open(target, "Main".into(), true, true, 0).unwrap();
         editors.loaded(load, target, Ok("default {}".into()));
         let mut settings = settings::ScriptSettings {
             preprocessor: true,
@@ -1626,9 +2027,9 @@ mod tests {
             object: Uuid::from_u128(20),
             item: Uuid::from_u128(1),
         };
-        let request = editors.open(target, "Test".into(), true, true).expect("load");
+        let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
         editors.loaded(request, target, Ok("original".into()));
-        editors.running(target, true, Some(true));
+        editors.running(target, true, Some(CompileTarget::Mono));
         let Action::Experiences { request, .. } = editors.load_experiences(target).expect("experiences") else {
             panic!("load experiences")
         };
@@ -1674,9 +2075,9 @@ mod tests {
             object: Uuid::from_u128(20),
             item: Uuid::from_u128(1),
         };
-        let request = editors.open(target, "Test".into(), true, true).expect("load");
+        let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
         editors.loaded(request, target, Ok("original".into()));
-        editors.running(target, true, Some(true));
+        editors.running(target, true, Some(CompileTarget::Mono));
         editors.documents[0].source.push_str(" // edit");
         let Action::Experiences { request, .. } = editors.load_experiences(target).expect("experiences") else {
             panic!("load")
@@ -1718,7 +2119,7 @@ mod tests {
                 item: Uuid::from_u128(1),
             };
             let source = "default { state_entry() { llSay(0, \"Saved source\"); } }";
-            let request = editors.open(target, "Test".into(), true, true).expect("request existing script");
+            let request = editors.open(target, "Test".into(), true, true, 0).expect("request existing script");
             assert!(editors.documents[0].source.is_empty());
             assert!(!editors.documents[0].can_save());
             editors.loaded(request, target, Ok(source.into()));
@@ -1726,7 +2127,7 @@ mod tests {
             assert!(!editors.documents[0].dirty());
             assert!(editors.prepare_exit());
             assert!(editors.demo_close_clean(target));
-            let next = editors.open(target, "Test".into(), true, true).expect("request again");
+            let next = editors.open(target, "Test".into(), true, true, 0).expect("request again");
             assert_ne!(request, next);
             assert!(editors.documents[0].source.is_empty());
             editors.loaded(request, target, Ok("stale".into()));
@@ -1759,7 +2160,7 @@ mod tests {
         ];
         let mut frame = 0;
         for target in targets {
-            let request = editors.open(target, "Script".into(), true, true).expect("load");
+            let request = editors.open(target, "Script".into(), true, true, 0).expect("load");
             editors.loaded(request, target, Ok("default { state_entry() {} }".into()));
             for _ in 0..8 {
                 frame += 1;
@@ -1787,7 +2188,7 @@ mod tests {
             .collect();
         assert!(((rects[1].min - rects[0].min) - egui::Vec2::splat(32.0)).length() < 1.0);
         editors.documents[0].source.push_str("\n// Unsaved draft");
-        assert!(editors.open(targets[0], "Script".into(), true, true).is_none());
+        assert!(editors.open(targets[0], "Script".into(), true, true, 0).is_none());
         assert_eq!(editors.documents.len(), 2);
         assert!(editors.documents[0].dirty());
         assert!(editors.documents[0].source.ends_with("// Unsaved draft"));
@@ -1797,7 +2198,7 @@ mod tests {
     fn load_and_save_replies_are_scoped_to_the_request_and_document() {
         let mut editors = Editors::default();
         let target = target(1);
-        let request = editors.open(target, "Test".into(), true, true).expect("load");
+        let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
         editors.loaded(Uuid::new_v4(), target, Ok("stale".into()));
         assert!(editors.documents[0].source.is_empty());
         editors.loaded(request, target, Ok("original".into()));
@@ -1825,7 +2226,7 @@ mod tests {
     fn compiler_errors_keep_the_editor_open_but_track_the_saved_source() {
         let mut editors = Editors::default();
         let target = target(1);
-        let request = editors.open(target, "Test".into(), true, true).expect("load");
+        let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
         editors.loaded(request, target, Ok("original".into()));
         editors.documents[0].source = "invalid source".into();
         let Action::Save { request, .. } = editors.documents[0].save().expect("save script") else {
@@ -1850,6 +2251,82 @@ mod tests {
     }
 
     #[test]
+    fn reopening_a_script_keeps_the_target_it_was_saved_with() {
+        let mut editors = Editors::default();
+        let slua = target(1);
+        let request = editors.open(slua, "SLua".into(), true, true, 1).expect("load");
+        editors.loaded(request, slua, Ok("ll.Say(0, 'hi')".into()));
+        assert_eq!(editors.documents[0].compile, CompileTarget::Luau, "an SLua item opens as Lua");
+        let lsl = target(3);
+        let request = editors.open(lsl, "LSL".into(), true, true, 0).expect("load");
+        editors.loaded(request, lsl, Ok("default {}".into()));
+        editors.documents[1].compile = CompileTarget::Lsl2;
+        let Some(Action::Save { request, options, .. }) = editors.documents[1].save() else {
+            panic!("save action")
+        };
+        assert_eq!(options.compile, CompileTarget::Lsl2);
+        editors.saved(
+            request,
+            lsl,
+            &Ok(ScriptSaved {
+                asset: Uuid::from_u128(4),
+                compiled: true,
+                checked: true,
+                errors: vec![],
+            }),
+        );
+        // raised, not created again: the item's flags do not reset the choice
+        assert!(editors.open(lsl, "LSL".into(), true, true, 0).is_none());
+        assert_eq!(editors.documents[1].compile, CompileTarget::Lsl2);
+        assert!(!editors.documents[1].dirty());
+        // an object's script: the running reply wins over the item
+        let object = ScriptTarget {
+            object: Uuid::from_u128(2),
+            ..slua
+        };
+        editors.open(object, "LSL on Luau".into(), true, true, 0);
+        assert_eq!(editors.documents[2].compile, CompileTarget::Mono);
+        editors.running(object, true, Some(CompileTarget::LslLuau));
+        editors.open(object, "LSL on Luau".into(), true, true, 0);
+        assert_eq!(editors.documents[2].compile, CompileTarget::LslLuau);
+    }
+
+    #[test]
+    fn a_mono_line_does_not_move_lsl_on_lua_off_luau() {
+        let target = target(80);
+        let mut editors = Editors::default();
+        let load = editors.open(target, "Main".into(), true, true, 0).unwrap();
+        editors.loaded(load, target, Ok("default {}".into()));
+        let mut settings = settings::ScriptSettings {
+            preprocessor: true,
+            ..Default::default()
+        };
+        let e = &mut editors.documents[0];
+        e.processor_settings = settings.clone();
+        e.compile = CompileTarget::LslLuau;
+        e.source = "//mono\ndefault { state_entry() { llOwnerSay(\"hi\"); } }".into();
+        assert!(e.save().is_none(), "preprocessed first");
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut saved = None;
+        while std::time::Instant::now() < until && saved.is_none() {
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                actions = editors.show(ui.ctx(), &p, &mut settings, &mut crate::ui::color_picker::Preferences::default())
+            });
+            output.textures_delta.clear();
+            saved = actions.into_iter().find_map(|action| match action {
+                Action::Save { options, .. } => Some(options.compile),
+                _ => None,
+            });
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(saved, Some(CompileTarget::LslLuau));
+        assert_eq!(editors.documents[0].compile, CompileTarget::LslLuau);
+    }
+
+    #[test]
     fn same_item_uuid_in_inventory_and_object_has_independent_editors_and_exit_guard() {
         let mut editors = Editors::default();
         let inventory = target(1);
@@ -1858,13 +2335,13 @@ mod tests {
             ..inventory
         };
         for target in [inventory, object] {
-            let request = editors.open(target, "Test".into(), true, true).expect("load");
+            let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
             editors.loaded(request, target, Ok("original".into()));
         }
-        editors.running(object, false, Some(false));
+        editors.running(object, false, Some(CompileTarget::Lsl2));
         editors.documents[0].source = "inventory edit".into();
         editors.documents[1].source = "object edit".into();
-        assert!(editors.open(inventory, "Again".into(), true, true).is_none());
+        assert!(editors.open(inventory, "Again".into(), true, true, 0).is_none());
         assert_eq!(editors.documents.len(), 2);
         assert!(!editors.prepare_exit());
         assert!(editors.documents.iter().all(|e| e.close_prompt));
@@ -1883,14 +2360,14 @@ mod tests {
         );
         assert!(!editors.documents[0].dirty());
         assert!(editors.documents[1].dirty());
-        assert!(!editors.documents[1].mono);
+        assert_eq!(editors.documents[1].compile, CompileTarget::Lsl2);
     }
 
     #[test]
     fn disconnect_keeps_unsaved_source_and_rejects_the_previous_sessions_reply() {
         let mut editors = Editors::default();
         let target = target(1);
-        let request = editors.open(target, "Test".into(), true, true).expect("load");
+        let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
         editors.loaded(request, target, Ok("original".into()));
         editors.documents[0].source = "unsaved".into();
         let Action::Save { request, .. } = editors.documents[0].save().expect("save") else {

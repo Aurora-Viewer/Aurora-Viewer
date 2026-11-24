@@ -2,7 +2,7 @@
 //! Follows LLFloaterProperties / LLFloaterInventory (Firestorm, LGPL 2.1).
 
 use super::*;
-use crate::ui::widgets::{Floater, flat_button};
+use crate::ui::widgets::{self, Floater, Modal, flat_button};
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::Operation;
 
@@ -20,9 +20,9 @@ pub(super) fn show(
     let Some(mut dialog) = st.dialog.take() else {
         return;
     };
-    if let EditDialog::Share(ids, resident) = &dialog {
-        let picture = facts.pictures.get(resident);
-        if !share(ctx, p, icons, inv, prefs, facts, picture, st.ui_id, ids, *resident, actions) {
+    if let EditDialog::Share(ids, residents) = &dialog {
+        let picture = residents.first().and_then(|id| facts.pictures.get(id));
+        if !share(ctx, p, icons, inv, prefs, facts, picture, st.ui_id, ids, residents, actions) {
             st.dialog = Some(dialog);
         }
         return;
@@ -39,6 +39,7 @@ pub(super) fn show(
         EditDialog::Properties(..) => aurora_i18n::tr!("ui-inventory-dialogs-object-properties"),
         EditDialog::Delete(_, true) => aurora_i18n::tr!("ui-inventory-dialogs-purge-selection"),
         EditDialog::Delete(_, false) => aurora_i18n::tr!("ui-inventory-dialogs-delete-selection"),
+        EditDialog::DetachDelete(_) => aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
         EditDialog::Empty(_) => aurora_i18n::tr!("common-empty-trash"),
         EditDialog::Ungroup(_) => aurora_i18n::tr!("ui-inventory-dialogs-ungroup-folder"),
         EditDialog::Discard(..) | EditDialog::SaveEmbedded(..) => aurora_i18n::tr!("ui-inventory-dialogs-save-changes"),
@@ -51,7 +52,7 @@ pub(super) fn show(
         dialog,
         EditDialog::Discard(_) | EditDialog::CopyEmbedded(..) | EditDialog::SaveEmbedded(_)
     );
-    let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::Empty(_));
+    let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::DetachDelete(_) | EditDialog::Empty(_));
     let window_id = format!(
         "inventory_{}_{}",
         if properties {
@@ -63,29 +64,7 @@ pub(super) fn show(
         },
         st.ui_id
     );
-    let mut floater = if properties {
-        super::properties::window(ctx, &window_id)
-    } else {
-        Floater::new(
-            &window_id,
-            title,
-            ctx.content_rect().center()
-                - if document_confirmation {
-                    egui::vec2(220.0, 70.0)
-                } else {
-                    egui::vec2(210.0, 130.0)
-                },
-            if document_confirmation {
-                Vec2::new(440.0, 140.0)
-            } else {
-                Vec2::new(420.0, 260.0)
-            },
-        )
-    };
-    if confirmation || document_confirmation {
-        floater = floater.fixed();
-    }
-    floater.show(ctx, p, &mut open, |ui| {
+    let mut body = |ui: &mut egui::Ui| {
         match &mut dialog {
             EditDialog::Properties(id) => {
                 done = super::properties::show(ui, p, icons, inv, st, facts, images, *id, actions);
@@ -97,7 +76,7 @@ pub(super) fn show(
                         .add_enabled(
                             !st.save_pending
                                 && st.preview_can_edit
-                                && crate::world::inventory::preview::can_edit(inv, *id)
+                                && crate::world::inventory::preview::can_edit(inv, *id, facts.god_level)
                                 && st.preview_text.as_ref().is_some_and(|r| {
                                     r.as_ref().is_ok_and(|t| {
                                         inv.items.get(id).is_none_or(|it| it.asset_type != 7)
@@ -165,7 +144,9 @@ pub(super) fn show(
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
-                            !st.save_pending && st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, *notecard),
+                            !st.save_pending
+                                && st.preview_can_edit
+                                && crate::world::inventory::preview::can_edit(inv, *notecard, facts.god_level),
                             egui::Button::new(aurora_i18n::tr!("common-save")),
                         )
                         .clicked()
@@ -203,6 +184,23 @@ pub(super) fn show(
                 } else {
                     aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")
                 });
+                // a purge is the one change the inventory's Undo never takes
+                // back (`world::inventory::undo`)
+                if *purge {
+                    ui.label(aurora_i18n::tr!("inventory-purge-no-undo"));
+                }
+                // DeleteItems ignore box; PurgeSelectedItems has none (#2344).
+                if !*purge {
+                    ui.add_space(8.0);
+                    super::super::widgets::checkbox(
+                        ui,
+                        p,
+                        &mut st.delete_dont_ask,
+                        RichText::new(aurora_i18n::tr!("ui-context-do-not-show-again"))
+                            .size(12.5)
+                            .color(p.muted),
+                    );
+                }
                 if confirmation_buttons(
                     ui,
                     p,
@@ -213,50 +211,60 @@ pub(super) fn show(
                         aurora_i18n::tr!("common-delete")
                     },
                     &mut done,
+                    st.ui_id,
                 ) {
-                    let plan = if *purge {
-                        let ids = rules::roots(inv, ids);
-                        let refresh = ids.iter().filter_map(|id| rules::parent(inv, *id)).collect();
-                        let operations = ids
-                            .iter()
-                            .map(|id| Operation::Delete {
-                                id: *id,
-                                folder: inv.folders.contains_key(id),
-                            })
-                            .collect();
-                        let holds_worn = rules::worn_ancestors(inv, &facts.worn);
-                        if ids.iter().all(|id| {
-                            rules::removable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, 14) && !holds_worn.contains(id)
-                        }) {
-                            Ok(Mutation {
-                                operations,
-                                refresh,
-                                removed: ids,
-                                ..Default::default()
-                            })
-                        } else {
-                            Err(aurora_i18n::tr!("ui-inventory-dialogs-the-selection-can-no-longer-be-purged").into())
-                        }
-                    } else {
-                        rules::system(inv, 14)
-                            .ok_or_else(|| aurora_i18n::tr!("common-trash-folder-not-found").to_owned())
-                            .and_then(|to| rules::move_selection(inv, ids, to, &prefs.protected, &facts.worn))
-                    };
-                    match plan {
+                    let silence = !*purge && st.delete_dont_ask;
+                    match super::delete::plan(inv, ids, *purge, prefs, facts) {
                         Ok(change) => {
-                            actions.push(InvAction::Edit(change));
+                            if silence {
+                                actions.push(InvAction::StopConfirmingDelete);
+                            }
+                            actions.push(InvAction::Delete(Box::new(super::DeleteRequest::new(inv, st, ids, change))));
                             done = true;
                         }
                         Err(reason) => st.message = reason,
                     }
                 }
             }
+            // "DeleteWornItems" (notifications.xml): no ignore box.
+            EditDialog::DetachDelete(ids) => {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(if ids.len() == 1 {
+                        aurora_i18n::tr!("ui-inventory-dialogs-delete", value0 = rules::name(inv, ids[0]).to_string())
+                    } else {
+                        aurora_i18n::tr!("ui-inventory-dialogs-delete-the-selected-items", value0 = format!("{}", ids.len()))
+                    })
+                    .strong()
+                    .color(p.ink),
+                );
+                ui.add_space(4.0);
+                ui.label(aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete-body"));
+                if confirmation_buttons(
+                    ui,
+                    p,
+                    st.pending.is_none(),
+                    aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
+                    &mut done,
+                    st.ui_id,
+                ) {
+                    super::delete::start_detach(inv, st, prefs, facts, actions, std::mem::take(ids));
+                    done = true;
+                }
+            }
             EditDialog::Empty(id) => {
                 ui.label(aurora_i18n::tr!(
                     "ui-inventory-dialogs-all-items-in-trash-will-be-permanently-deleted"
                 ));
-                if confirmation_buttons(ui, p, st.pending.is_none(), aurora_i18n::tr!("common-empty-trash"), &mut done)
-                    && let Some(f) = inv.folders.get(id)
+                ui.label(aurora_i18n::tr!("inventory-purge-no-undo"));
+                if confirmation_buttons(
+                    ui,
+                    p,
+                    st.pending.is_none(),
+                    aurora_i18n::tr!("common-empty-trash"),
+                    &mut done,
+                    st.ui_id,
+                ) && let Some(f) = inv.folders.get(id)
                     && f.info.type_default == 14
                     && f.state == FetchState::Fetched
                 {
@@ -308,9 +316,55 @@ pub(super) fn show(
         {
             done = true;
         }
-    });
+    };
+    if confirmation {
+        // Port of the DeleteItems, PurgeSelectedItems and ConfirmEmptyTrash
+        // alerts (indra/newview/llinventoryfunctions.cpp,
+        // skins/default/xui/en/notifications.xml): modal, with the affirmative
+        // answer as the default button, so Enter confirms and Escape cancels.
+        Modal::new(egui::Id::unique(window_id.as_str())).show(ctx, |ui| {
+            ui.set_width(384.0);
+            widgets::section_header(ui, p, "trash-filled", title);
+            body(ui);
+        });
+        // Only Escape or a button closes it: a click on the dimmed world
+        // behind answers nothing (LLModalDialog::handleMouseDown,
+        // indra/llui/llmodaldialog.cpp). Once answered, the list gets the
+        // keyboard back (LLToastAlertPanel restores the focus it saved,
+        // indra/newview/lltoastalertpanel.cpp), so arrows, Delete and the
+        // clipboard keys work again without a click.
+        if done {
+            super::clipboard::return_focus(ctx, st);
+        }
+    } else {
+        let mut floater = if properties {
+            super::properties::window(ctx, &window_id)
+        } else {
+            Floater::new(
+                &window_id,
+                title,
+                ctx.content_rect().center()
+                    - if document_confirmation {
+                        egui::vec2(220.0, 70.0)
+                    } else {
+                        egui::vec2(210.0, 130.0)
+                    },
+                if document_confirmation {
+                    Vec2::new(440.0, 140.0)
+                } else {
+                    Vec2::new(420.0, 260.0)
+                },
+            )
+        };
+        if document_confirmation {
+            floater = floater.fixed();
+        }
+        floater.show(ctx, p, &mut open, body);
+    }
     if open && !done {
         st.dialog = Some(dialog);
+    } else if matches!(dialog, EditDialog::Delete(..)) {
+        st.delete_dont_ask = false;
     }
 }
 
@@ -326,6 +380,28 @@ enum Fate {
     /// Not given: no transfer permission (LLGiveInventory::
     /// isInventoryGiveAcceptable), or another reason `rules::offer` names.
     Excluded,
+}
+
+/// How many names fit as a comma list before switching to "+ N people".
+const RESIDENTS_LISTED: usize = 2;
+
+/// Label for the give confirmation's recipients, and an optional hover with
+/// every name (when the label only keeps the first ones).
+fn residents_label(names: &[&str]) -> (String, Option<String>) {
+    if names.is_empty() {
+        return (String::new(), None);
+    }
+    if names.len() <= RESIDENTS_LISTED {
+        return (names.join(", "), None);
+    }
+    let more = names.len() - 1;
+    let label = aurora_i18n::tr!(
+        "ui-inventory-dialogs-give-to-many",
+        name = names[0].to_string(),
+        count = more as i64,
+        number = aurora_i18n::integer(more as i64)
+    );
+    (label, Some(names.join(", ")))
 }
 
 /// The confirmation of a give, from an inventory window or a drop on a
@@ -349,10 +425,17 @@ fn share(
     picture: Option<&egui::TextureHandle>,
     ui_id: Uuid,
     ids: &[Uuid],
-    resident: Uuid,
+    residents: &[Uuid],
     actions: &mut Vec<InvAction>,
 ) -> bool {
-    let name = facts.names.get(&resident).map_or("…", String::as_str);
+    if residents.is_empty() {
+        return true;
+    }
+    // LLAvatarActions::buildResidentsString joins every name; a long multi-
+    // select overflows the modal, so we keep one or two names then "+ N people"
+    let names: Vec<&str> = residents.iter().map(|id| facts.names.get(id).map_or("…", String::as_str)).collect();
+    let (name, name_tip) = residents_label(&names);
+    let first = residents[0];
     // ((icon, tint), name, fate, tag, why)
     let rows: Vec<((&str, egui::Color32), String, Fate, &str, String)> = ids
         .iter()
@@ -367,6 +450,18 @@ fn share(
                 |it| inventory_item_icon(inv, it, p),
             );
             let (fate, tag, why) = match rules::offer(inv, *id, &facts.worn) {
+                // A no-copy item leaves the inventory with its first give, so
+                // it can reach one resident only. The Legacy Viewer
+                // (give_inventory_cb, indra/newview/llavataractions.cpp) gives
+                // it to the first resident after CannotCopyWarning and stops
+                // there, leaving the others with nothing; Aurora leaves the
+                // no-copy item out and still gives the rest to everyone
+                // (stricter for the item, clearer for the user).
+                Ok(bucket) if rules::offer_has_no_copy(inv, &bucket) && residents.len() > 1 => (
+                    Fate::Excluded,
+                    aurora_i18n::tr!("ui-inventory-dialogs-no-copy"),
+                    aurora_i18n::tr!("ui-inventory-dialogs-no-copy-one-resident").to_owned(),
+                ),
                 Ok(bucket) if rules::offer_has_no_copy(inv, &bucket) => {
                     (Fate::NoCopy, aurora_i18n::tr!("ui-inventory-dialogs-no-copy"), String::new())
                 }
@@ -393,7 +488,7 @@ fn share(
         ui.set_width(360.0);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(36.0), egui::Sense::hover());
-            crate::ui::widgets::avatar_disc(ui, p, rect, picture, name, false);
+            crate::ui::widgets::avatar_disc(ui, p, rect, picture, facts.names.get(&first).map_or("…", String::as_str), false);
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
@@ -402,7 +497,10 @@ fn share(
                         .size(12.0)
                         .color(p.muted),
                 );
-                ui.add(egui::Label::new(RichText::new(name).size(15.0).strong().color(p.ink)).truncate());
+                let label = ui.add(egui::Label::new(RichText::new(&name).size(15.0).strong().color(p.ink)).truncate());
+                if let Some(tip) = &name_tip {
+                    label.on_hover_text(tip);
+                }
             });
         });
         ui.add_space(10.0);
@@ -492,7 +590,10 @@ fn share(
         });
     });
     if give {
-        actions.push(InvAction::Share { items: given, resident });
+        actions.push(InvAction::Share {
+            items: given,
+            residents: residents.to_vec(),
+        });
     }
     give || cancel || modal.should_close()
 }
@@ -515,7 +616,7 @@ fn share_note(ui: &mut egui::Ui, icon: &str, color: egui::Color32, fill: Option<
     });
 }
 
-fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &str, done: &mut bool) -> bool {
+fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &str, done: &mut bool, window: Uuid) -> bool {
     ui.add_space(16.0);
     crate::ui::widgets::divider(ui, p);
     ui.add_space(6.0);
@@ -523,7 +624,17 @@ fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &s
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(enabled, |ui| {
-                confirm = super::super::widgets::flat_button_sized(ui, p, label, Vec2::new(120.0, 28.0)).clicked();
+                // the Legacy Viewer's default="true" OK: Enter clicks it
+                // 120 px, wider when the label needs it ("Detach and Delete")
+                let font = widgets::control_font(ui, 12.0);
+                let text = ui.painter().layout_no_wrap(label.to_owned(), font, p.ink).size().x;
+                let width = (text + 2.0 * ui.spacing().button_padding.x + 8.0).max(120.0);
+                let response = widgets::default_button_sized(ui, p, label, Vec2::new(width, 28.0));
+                if cfg!(test) || super::delete::demo_enabled() {
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_delete_confirm", window)), response.rect.center()));
+                }
+                confirm = response.clicked();
             });
             if super::super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(96.0, 28.0)).clicked() {
                 *done = true;
@@ -543,28 +654,32 @@ pub(super) fn preview(
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     prefs: &mut InventoryPreferences,
     script_settings: &crate::ui::scripts::settings::ScriptSettings,
+    god_level: u8,
     actions: &mut Vec<InvAction>,
 ) {
     let Some(id) = st.preview else {
+        // A successful asynchronous save or a confirmed discard can also close the document.
+        super::clipboard::return_document_focus(ctx, st);
         return;
     };
     let Some(it) = inv.items.get(&id) else {
         st.preview = None;
+        super::clipboard::return_document_focus(ctx, st);
         return;
     };
     if it.asset_type == 20 {
         animation(ctx, p, inv, st, it, actions);
         return;
     }
-    if !inv.can_preview(it.asset_type) {
-        return;
-    }
+    // (RLVa's @viewnote, @viewscript and @viewtexture refuse to open a
+    // preview, `InvAction::Preview`; one already open stays, as
+    // RlvUIEnabler::filterFloaterViewXXX validates the opening alone)
     let mut view = if it.asset_type == 7 {
         *st.notecard_view.get_or_insert(prefs.notecard_view)
     } else {
         Default::default()
     };
-    let editable = st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, id);
+    let editable = st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, id, god_level);
     if it.asset_type == 7
         && view != super::markdown::View::Markdown
         && !st.save_pending
@@ -592,7 +707,41 @@ pub(super) fn preview(
         size,
     )
     .cascade(crate::ui::widgets::CascadeGroup::inventory(it.asset_type))
+    .rename_title(
+        it.name.clone(),
+        it.asset_type == 7 && editable && rules::renameable(inv, id) && st.pending.is_none() && !st.save_pending,
+    )
     .show(ctx, p, &mut open, |ui| {
+        if it.asset_type == 7 {
+            let editor_id = egui::Id::unique(("inventory_document_text", st.ui_id, id));
+            let holder = ui.interact(
+                ui.available_rect_before_wrap(),
+                editor_id.with("notecard_window_focus"),
+                egui::Sense::focusable_noninteractive(),
+            );
+            // A read-only document owns the shortcut, not an editing caret.
+            // A click on its window also reactivates it after using another
+            // viewer panel, without taking the key from an overlaid floater.
+            // Reactivate the notecard text only for clicks inside its body.
+            // The title's inline rename field shares the window layer and
+            // must retain focus when its caret is moved by clicking.
+            let clicked_here = ui
+                .input(|input| input.pointer.any_pressed().then(|| input.pointer.interact_pos()).flatten())
+                .is_some_and(|pos| holder.rect.contains(pos) && ctx.layer_id_at(pos) == Some(ui.layer_id()));
+            if st.preview_text.as_ref().is_some_and(Result::is_ok)
+                && !ui.is_sizing_pass()
+                && ctx.memory(|memory| memory.top_modal_layer().is_none())
+                && !st.notecard_find.open
+                && (st.notecard_focus_pending || clicked_here)
+            {
+                st.notecard_focus_pending = false;
+                if editable && !st.save_pending && view != super::markdown::View::Markdown {
+                    ctx.memory_mut(|memory| memory.request_focus(editor_id));
+                } else {
+                    holder.request_focus();
+                }
+            }
+        }
         if it.asset_type == 0 {
             st.wanted_images.insert(it.asset_id);
             if let Some(t) = images.get(&it.asset_id) {
@@ -604,8 +753,8 @@ pub(super) fn preview(
                         .fit_to_original_size(1.0)
                         .sense(egui::Sense::click_and_drag()),
                 );
-                if drag_inventory.items.get(&id).is_some_and(|item| item.asset_type == 0) {
-                    response.dnd_set_drag_payload(InvDrag(id));
+                if drag_inventory.items.get(&id).is_some_and(|item| item.asset_type == 0) && super::drag::begins(ui, &response) {
+                    egui::DragAndDrop::set_payload(ui.ctx(), InvDrag(id));
                 }
                 ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_texture_preview", st.ui_id, id)), response.rect));
             } else {
@@ -616,36 +765,18 @@ pub(super) fn preview(
                     .size(10.0)
                     .color(p.muted),
             );
-        } else if matches!(it.asset_type, 20 | 1) {
-            if flat_button(ui, p, aurora_i18n::tr!("common-play")).clicked() {
-                if it.asset_type == 20 {
-                    actions.push(InvAction::Animation {
-                        asset: it.asset_id,
-                        local: false,
-                        start: true,
-                    });
-                } else {
+        } else if it.asset_type == 1 {
+            // LLPreviewSound::{playSound,auditionSound} (indra/newview/llpreviewsound.cpp,
+            // floater_preview_sound.xml): "Play Inworld" first, through the inventory
+            // double-click trigger, then the local audition.
+            ui.horizontal(|ui| {
+                if flat_button(ui, p, aurora_i18n::tr!("common-play-in-world")).clicked() {
+                    actions.push(InvAction::TriggerSound(it.asset_id));
+                }
+                if flat_button(ui, p, aurora_i18n::tr!("common-play-locally")).clicked() {
                     actions.push(InvAction::Sound(it.asset_id));
                 }
-            }
-            if it.asset_type == 20 {
-                if flat_button(ui, p, aurora_i18n::tr!("common-play-locally")).clicked() {
-                    actions.push(InvAction::Animation {
-                        asset: it.asset_id,
-                        local: true,
-                        start: true,
-                    });
-                }
-                if flat_button(ui, p, aurora_i18n::tr!("common-stop")).clicked()
-                    && let Some((asset, local)) = st.playing
-                {
-                    actions.push(InvAction::Animation {
-                        asset,
-                        local,
-                        start: false,
-                    });
-                }
-            }
+            });
         } else {
             if it.asset_type == 7 {
                 notecard_description(ui, inv, st, it, actions);
@@ -655,8 +786,8 @@ pub(super) fn preview(
                 prefs.notecard_view = view;
                 let editor = egui::Id::unique(("inventory_document_text", st.ui_id, id));
                 ctx.memory_mut(|m| {
-                    m.request_focus(if view == super::markdown::View::Markdown {
-                        editor.with("markdown")
+                    m.request_focus(if !editable || view == super::markdown::View::Markdown {
+                        editor.with("notecard_window_focus")
                     } else {
                         editor
                     })
@@ -667,10 +798,42 @@ pub(super) fn preview(
                 actions.push(InvAction::Environment(it.asset_id, it.flags));
             }
             let mut edited = super::embedded::EditorResult::default();
+            let mut find_changed = false;
+            let text_editable = editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_)));
+            let editor_id = egui::Id::unique(("inventory_document_text", st.ui_id, id));
             match &mut st.preview_text {
                 Some(Ok(text)) => {
                     if matches!(it.asset_type, 7 | 10) && !editable {
                         ui.label(RichText::new(aurora_i18n::tr!("notecard-read-only")).color(p.muted));
+                    }
+                    if it.asset_type == 7 {
+                        // LLPreviewNotecard::handleKeyHere: Ctrl+F in the
+                        // window opens its find, wherever its keyboard is
+                        let preview_id = editor_id.with("markdown");
+                        let mut fields = vec![editor_id, preview_id, editor_id.with("notecard_window_focus")];
+                        fields.extend(super::find::field_ids(editor_id));
+                        fields.extend(super::find::field_ids(preview_id));
+                        let shortcut = crate::ui::find_shortcut::take(ui, &fields);
+                        // Ctrl+F always opens or refocuses Find, as in the Legacy Viewer.
+                        let opening = shortcut;
+                        // the Markdown view is read-only: its find searches
+                        // the text it shows, and replaces nothing
+                        if view == super::markdown::View::Markdown {
+                            if (shortcut || st.notecard_find.open)
+                                && let Some(rendered) = st.notecard_markdown.get(ui.ctx(), text)
+                            {
+                                let mut shown = rendered.text.clone();
+                                if opening {
+                                    st.notecard_find.begin(ui.ctx(), preview_id, &shown);
+                                }
+                                st.notecard_find.bar(ui, p, preview_id, &mut shown, false);
+                            }
+                        } else {
+                            if opening {
+                                st.notecard_find.begin(ui.ctx(), editor_id, text);
+                            }
+                            find_changed = st.notecard_find.bar(ui, p, editor_id, text, text_editable);
+                        }
                     }
                     let documents = matches!(it.asset_type, 7 | 10);
                     // the Save row is as tall as its button: its text and
@@ -707,10 +870,10 @@ pub(super) fn preview(
                             ui,
                             p,
                             icons,
-                            egui::Id::unique(("inventory_document_text", st.ui_id, id)),
+                            editor_id,
                             text,
                             st.preview_source.as_mut(),
-                            editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))),
+                            text_editable,
                             editor_size,
                             view,
                             &mut st.notecard_markdown,
@@ -763,7 +926,7 @@ pub(super) fn preview(
                     st.preview_message = aurora_i18n::tr!("common-item-not-found").into();
                 }
             }
-            if edited.changed {
+            if edited.changed || find_changed {
                 st.document_changed();
             }
             if let Some(marker) = edited.open {
@@ -777,6 +940,16 @@ pub(super) fn preview(
             if let Some(marker) = edited.copy {
                 st.dialog = Some(EditDialog::CopyEmbedded(id, marker));
             }
+            if let Some(marker) = edited.drag {
+                egui::DragAndDrop::set_payload(
+                    ui.ctx(),
+                    super::NotecardDrag {
+                        editor: st.ui_id,
+                        notecard: id,
+                        marker,
+                    },
+                );
+            }
             let valid_size = st.preview_text.as_ref().is_some_and(|r| {
                 r.as_ref()
                     .is_ok_and(|text| it.asset_type != 7 || aurora_net::inventory::notecard::Notecard::validate_text(text).is_ok())
@@ -784,6 +957,7 @@ pub(super) fn preview(
             let can_save =
                 editable && st.preview_dirty && !st.save_pending && valid_size && !matches!(st.dialog, Some(EditDialog::Discard(_)));
             let mut clicked_save = false;
+            let mut clicked_find = false;
             if matches!(it.asset_type, 7 | 10) {
                 ui.horizontal(|ui| {
                     clicked_save = ui
@@ -792,6 +966,11 @@ pub(super) fn preview(
                         })
                         .inner
                         .clicked();
+                    // LLPreviewNotecard::onSearchButtonClicked (FIRE-13969)
+                    if it.asset_type == 7 {
+                        let loaded = matches!(st.preview_text, Some(Ok(_)));
+                        clicked_find = widgets::icon_button(ui, p, "search-filled", aurora_i18n::tr!("script-search-title"), loaded);
+                    }
                     if st.save_pending {
                         ui.spinner();
                         ui.label(aurora_i18n::tr!("notecard-saving"));
@@ -807,6 +986,15 @@ pub(super) fn preview(
                         );
                     }
                 });
+            }
+            if clicked_find && let Some(Ok(text)) = &st.preview_text {
+                if view == super::markdown::View::Markdown {
+                    let shown = st.notecard_markdown.get(ui.ctx(), text).map(|rendered| rendered.text.clone());
+                    st.notecard_find
+                        .begin(ui.ctx(), editor_id.with("markdown"), shown.as_deref().unwrap_or_default());
+                } else {
+                    st.notecard_find.begin(ui.ctx(), editor_id, text);
+                }
             }
             if can_save
                 && (clicked_save || edited.save)
@@ -829,6 +1017,18 @@ pub(super) fn preview(
             }
         }
     });
+    if it.asset_type == 7 {
+        let window = super::document::preview_window_id(st.ui_id, id, it.asset_type);
+        if let Some(name) = widgets::take_title_rename(ctx, &window)
+            && editable
+            && rules::renameable(inv, id)
+            && st.pending.is_none()
+            && !st.save_pending
+            && let Ok(change) = rules::patch(inv, id, llsd_map! { "name" => name })
+        {
+            actions.push(InvAction::Edit(change));
+        }
+    }
     super::embedded::preview(ctx, p, st, images);
     if !open {
         if st.save_pending {
@@ -841,6 +1041,9 @@ pub(super) fn preview(
         }
         st.preview = None;
         st.reset_document();
+        // The closed document gives the list that opened it its keyboard
+        // back (LLToastAlertPanel restores the focus it saved).
+        super::clipboard::return_document_focus(ctx, st);
         if let Some((asset, local)) = st.playing {
             actions.push(InvAction::Animation {
                 asset,
@@ -1018,6 +1221,9 @@ fn animation(
     });
     if !open {
         st.preview = None;
+        // The closed document gives the list that opened it its keyboard
+        // back (LLToastAlertPanel restores the focus it saved).
+        super::clipboard::return_document_focus(ctx, st);
         if let Some((asset, local)) = st.playing.filter(|(asset, _)| *asset == it.asset_id) {
             actions.push(InvAction::Animation {
                 asset,
@@ -1090,6 +1296,7 @@ mod tests {
                     &Default::default(),
                     prefs,
                     &Default::default(),
+                    0,
                     &mut actions,
                 );
             },
@@ -1136,6 +1343,7 @@ mod tests {
                     &Default::default(),
                     &mut InventoryPreferences::default(),
                     &Default::default(),
+                    0,
                     &mut actions,
                 );
             },
@@ -1276,6 +1484,28 @@ mod tests {
     }
 
     #[test]
+    fn sound_preview_separates_local_playback_from_the_inventory_world_trigger() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let item = Uuid::from_u128(8105);
+        let asset = inv.items[&item].asset_id;
+        let mut st = InventoryUi {
+            preview: Some(item),
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            document_frame(&ctx, &inv, &mut st, vec![]);
+        }
+        let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
+        let local = label_center(&output, aurora_i18n::tr!("common-play-locally"));
+        let world = label_center(&output, aurora_i18n::tr!("common-play-in-world"));
+        assert!(matches!(&click_document(&ctx, &inv, &mut st, local)[..], [InvAction::Sound(id)] if *id == asset));
+        assert!(matches!(&click_document(&ctx, &inv, &mut st, world)[..], [InvAction::TriggerSound(id)] if *id == asset));
+        assert_eq!(st.preview, Some(item));
+    }
+
+    #[test]
     fn editing_and_ctrl_s_emit_the_current_draft_for_its_own_editor() {
         let ctx = egui::Context::default();
         let (inv, mut st) = note_fixture();
@@ -1307,6 +1537,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ctrl_f_refocuses_notecard_find_in_editable_and_read_only_views() {
+        use super::super::NotecardView;
+
+        for can_edit in [true, false] {
+            for view in [NotecardView::Classic, NotecardView::Edit] {
+                let ctx = egui::Context::default();
+                let (inv, mut st) = note_fixture();
+                st.preview_can_edit = can_edit;
+                st.notecard_view = Some(view);
+
+                for _ in 0..5 {
+                    document_frame(&ctx, &inv, &mut st, vec![]);
+                }
+
+                let editor = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("notecard")));
+                let focus = if can_edit { editor } else { editor.with("notecard_window_focus") };
+
+                ctx.memory_mut(|m| m.request_focus(focus));
+
+                let ctrl_f = || egui::Event::Key {
+                    key: egui::Key::F,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                };
+
+                document_frame(&ctx, &inv, &mut st, vec![ctrl_f()]);
+                assert!(st.notecard_find.open, "{can_edit:?} {view:?}: open");
+
+                document_frame(&ctx, &inv, &mut st, vec![ctrl_f()]);
+                assert!(st.notecard_find.open, "{can_edit:?} {view:?}: repeated Ctrl+F");
+                assert_eq!(
+                    ctx.memory(|m| m.focused()),
+                    Some(editor.with("find_query")),
+                    "{can_edit:?} {view:?}: Find has focus"
+                );
+
+                // Return to the notecard and invoke Find again.
+                ctx.memory_mut(|m| m.request_focus(focus));
+                document_frame(&ctx, &inv, &mut st, vec![ctrl_f()]);
+                assert!(st.notecard_find.open, "{can_edit:?} {view:?}: refocus");
+                assert_eq!(
+                    ctx.memory(|m| m.focused()),
+                    Some(editor.with("find_query")),
+                    "{can_edit:?} {view:?}: Find regains focus"
+                );
+                assert!(!st.preview_dirty);
+            }
+        }
+    }
     #[test]
     fn notecard_view_choices_seed_new_windows_without_overwriting_open_drafts() {
         use super::super::NotecardView;
@@ -1356,7 +1638,7 @@ mod tests {
             let fresh_ctx = egui::Context::default();
             let mut inventory = InventoryUi::default();
             let item = st.preview.expect("item");
-            inventory.open_document(&fresh_ctx, item, 7);
+            inventory.open_document(&fresh_ctx, item, 7, None);
             let new_note = &mut inventory.windows[0].state;
             new_note.load_document(7, true, &Ok(b"New note".to_vec()));
             let mut object_note = InventoryUi::document(item);
@@ -2031,6 +2313,52 @@ mod tests {
     }
 
     #[test]
+    fn escape_discards_the_unconfirmed_delete_ignore_choice() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut st = InventoryUi {
+            dialog: Some(EditDialog::Delete(vec![Uuid::from_u128(8100)], false)),
+            delete_dont_ask: true,
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        let _ = headless_output(ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+                ..Default::default()
+            },
+            |_ui| {
+                show(
+                    &ctx,
+                    &p,
+                    &Icons::default(),
+                    &inv,
+                    &mut st,
+                    &InventoryPreferences::default(),
+                    &Facts::default(),
+                    &Default::default(),
+                    &mut actions,
+                );
+            },
+        ));
+        assert!(st.dialog.is_none(), "Escape closes the delete confirmation");
+        assert!(actions.is_empty(), "cancelling changes neither inventory nor the preference");
+        assert!(
+            !st.delete_dont_ask,
+            "an unconfirmed ignore choice must not leak into the next dialog"
+        );
+    }
+
+    #[test]
     fn deletion_confirmation_places_both_buttons_in_one_footer_row() {
         let ctx = egui::Context::default();
         let p = crate::theme::Theme::default().palette();
@@ -2089,12 +2417,15 @@ mod tests {
         };
         let cancel = text(aurora_i18n::tr!("common-cancel"));
         let delete = text(aurora_i18n::tr!("common-delete"));
+        let message = text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash"));
+        let dont_ask = text(aurora_i18n::tr!("ui-context-do-not-show-again"));
         assert!((cancel.y - delete.y).abs() < 1.0);
         assert!(cancel.x < delete.x);
-        assert!(delete.y > text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")).y);
+        assert!(dont_ask.y > message.y);
+        assert!(delete.y > dont_ask.y);
         assert!(
-            delete.y - text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")).y < 65.0,
-            "footer must stay close to the message"
+            delete.y - message.y < 100.0,
+            "footer must stay close to the message (with the do-not-ask row between)"
         );
         assert!(
             !output
@@ -2102,6 +2433,295 @@ mod tests {
                 .iter()
                 .any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t) if t.galley.text() == "Fermer / Annuler"))
         );
+    }
+
+    /// One pass of the delete and Empty Trash confirmations, with `events`.
+    fn confirmation_pass(ctx: &egui::Context, inv: &Inventory, st: &mut InventoryUi, events: Vec<egui::Event>) -> Vec<InvAction> {
+        confirmation_frame(ctx, inv, st, events).0
+    }
+
+    fn confirmation_frame(
+        ctx: &egui::Context,
+        inv: &Inventory,
+        st: &mut InventoryUi,
+        events: Vec<egui::Event>,
+    ) -> (Vec<InvAction>, egui::FullOutput) {
+        let p = crate::theme::Theme::default().palette();
+        let mut actions = Vec::new();
+        let output = headless_output(ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                events,
+                ..Default::default()
+            },
+            |_ui| {
+                show(
+                    ctx,
+                    &p,
+                    &Icons::default(),
+                    inv,
+                    st,
+                    &InventoryPreferences::default(),
+                    &Facts::default(),
+                    &Default::default(),
+                    &mut actions,
+                );
+            },
+        ));
+        (actions, output)
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn confirmation_shows_the_enter_target_before_tab_and_follows_keyboard_focus() {
+        fn accented(output: &egui::FullOutput, label: &str, fill: egui::Color32) -> bool {
+            // Empty Trash repeats the button label in the dialog's header.
+            output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == label => Some(t.pos + t.galley.size() * 0.5),
+                    _ => None,
+                })
+                .any(|center| {
+                    output
+                        .shapes
+                        .iter()
+                        .any(|s| matches!(&s.shape, egui::epaint::Shape::Rect(r) if r.fill == fill && r.rect.contains(center)))
+                })
+        }
+
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let trash = rules::system(&inv, 14).expect("demo trash");
+        for empty in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            // Compare final colors independently of the modal's opening fade.
+            ctx.global_style_mut(|style| style.animation_time = 0.0);
+            let fill = ctx.global_style().visuals.widgets.active.weak_bg_fill;
+            let label = if empty {
+                aurora_i18n::tr!("common-empty-trash")
+            } else {
+                aurora_i18n::tr!("common-delete")
+            };
+            let cancel = aurora_i18n::tr!("common-cancel");
+            let mut st = InventoryUi {
+                dialog: Some(if empty {
+                    EditDialog::Empty(trash)
+                } else {
+                    EditDialog::Delete(vec![Uuid::from_u128(8100)], false)
+                }),
+                pending: Some(Uuid::from_u128(1)),
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            let (_, output) = confirmation_frame(&ctx, &inv, &mut st, Vec::new());
+            assert!(!accented(&output, label, fill), "a disabled action has no Enter hint");
+            st.pending = None;
+            // egui 0.37 styles a widget from its previous pass's state.
+            confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            let (_, output) = confirmation_frame(&ctx, &inv, &mut st, Vec::new());
+            assert!(
+                accented(&output, label, fill),
+                "{label}: expected the default Enter face {fill:?}; painted fills: {:?}",
+                output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::epaint::Shape::Rect(r) => Some(r.fill),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            );
+            assert!(!accented(&output, cancel, fill));
+            assert!(
+                ctx.memory(|m| m.focused()).is_some(),
+                "the visible Enter action must own keyboard focus"
+            );
+            confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
+            confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            let (_, output) = confirmation_frame(&ctx, &inv, &mut st, Vec::new());
+            assert!(!accented(&output, label, fill), "Cancel owns Enter after Tab");
+            assert!(accented(&output, cancel, fill));
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(actions.is_empty() && st.dialog.is_none(), "the accented Cancel answers Enter alone");
+        }
+    }
+
+    /// The Legacy Viewer's DeleteItems and ConfirmEmptyTrash alerts answer
+    /// OK on Return (`default="true"`): Enter confirms, Escape cancels, and
+    /// Enter does nothing while an earlier change is still pending.
+    #[test]
+    fn enter_confirms_a_deletion_and_empty_trash_and_escape_cancels() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let trash = rules::system(&inv, 14).expect("demo trash");
+        if let Some(folder) = inv.folders.get_mut(&trash) {
+            folder.state = FetchState::Fetched;
+        }
+        for empty in [false, true] {
+            let dialog = || {
+                if empty {
+                    EditDialog::Empty(trash)
+                } else {
+                    EditDialog::Delete(vec![Uuid::from_u128(8100), Uuid::from_u128(8109)], false)
+                }
+            };
+            let name = if empty { "Empty Trash" } else { "Delete" };
+            // Enter
+            let ctx = egui::Context::default();
+            let mut st = InventoryUi {
+                dialog: Some(dialog()),
+                ..Default::default()
+            };
+            let mut opening = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+            for _ in 0..3 {
+                opening.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            }
+            assert!(opening.is_empty() && st.dialog.is_some(), "{name}: opening Enter must not confirm");
+            let mut held = key(egui::Key::Enter);
+            if let egui::Event::Key { repeat, .. } = &mut held {
+                *repeat = true;
+            }
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![held]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(
+                actions.is_empty() && st.dialog.is_some(),
+                "{name}: holding opening Enter must not confirm"
+            );
+            let mut release = key(egui::Key::Enter);
+            if let egui::Event::Key { pressed, .. } = &mut release {
+                *pressed = false;
+            }
+            assert!(confirmation_pass(&ctx, &inv, &mut st, vec![release]).is_empty());
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(
+                if empty {
+                    matches!(&actions[..], [InvAction::Edit(_)])
+                } else {
+                    matches!(&actions[..], [InvAction::Delete(_)])
+                },
+                "{name}: Enter confirms once"
+            );
+            assert!(st.dialog.is_none(), "{name}: the dialog closes");
+            // Escape
+            let ctx = egui::Context::default();
+            st.dialog = Some(dialog());
+            for _ in 0..3 {
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Escape)]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(actions.is_empty() && st.dialog.is_none(), "{name}: Escape cancels");
+            // a change still pending greys the button out: Enter waits
+            let ctx = egui::Context::default();
+            st.dialog = Some(dialog());
+            st.pending = Some(Uuid::from_u128(1));
+            for _ in 0..3 {
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(actions.is_empty() && st.dialog.is_some(), "{name}: nothing while pending");
+            st.pending = None;
+        }
+    }
+
+    /// Tab reaches the buttons (`LLPanel::handleKeyHere`: a focused button
+    /// clicks itself on Return). Focus starts on Delete, then Cancel, then
+    /// the ignore choice when offered. Purge has no ignore choice.
+    #[test]
+    fn tab_moves_between_the_confirmation_buttons_and_enter_answers_the_focused_one() {
+        for (purge, tabs, deletes) in [
+            (false, 0, true),
+            (false, 1, false),
+            (false, 3, true),
+            (false, 4, false),
+            (true, 0, true),
+            (true, 1, false),
+            (true, 2, true),
+            (true, 3, false),
+        ] {
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            if purge {
+                let mut item = inv.items[&Uuid::from_u128(8100)].clone();
+                item.parent = rules::system(&inv, 14).expect("demo trash");
+                inv.server_updated(Vec::new(), vec![item]);
+            }
+            let ctx = egui::Context::default();
+            let mut st = InventoryUi {
+                dialog: Some(EditDialog::Delete(vec![Uuid::from_u128(8100)], purge)),
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            for _ in 0..tabs {
+                confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert_eq!(
+                actions.len(),
+                usize::from(deletes),
+                "purge={purge}, {tabs} Tab: Enter answers the focused button"
+            );
+            assert!(st.dialog.is_none());
+        }
+    }
+
+    #[test]
+    fn delete_confirmation_tabs_cycle_from_the_visible_default_in_both_directions() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let ctx = egui::Context::default();
+        let mut st = InventoryUi {
+            dialog: Some(EditDialog::Delete(vec![Uuid::from_u128(8100)], false)),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+        }
+        let default = ctx.memory(|m| m.focused()).expect("initial Delete focus");
+        let tab = |st: &mut InventoryUi, shift| {
+            let mut event = key(egui::Key::Tab);
+            if let egui::Event::Key { modifiers, .. } = &mut event {
+                *modifiers = if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::NONE };
+            }
+            assert!(confirmation_pass(&ctx, &inv, st, vec![event]).is_empty());
+            assert!(confirmation_pass(&ctx, &inv, st, Vec::new()).is_empty());
+            ctx.memory(|m| m.focused()).expect("focused confirmation control")
+        };
+        let cancel = tab(&mut st, false);
+        let ignore = tab(&mut st, false);
+        assert_ne!(cancel, default);
+        assert_ne!(ignore, cancel);
+        assert_ne!(ignore, default);
+        assert!(confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Space)]).is_empty());
+        assert!(
+            st.delete_dont_ask && st.dialog.is_some(),
+            "the third stop toggles the ignore choice only"
+        );
+        assert_eq!(tab(&mut st, false), default);
+        assert_eq!(tab(&mut st, true), ignore);
+        assert_eq!(tab(&mut st, true), cancel);
+        assert_eq!(tab(&mut st, true), default);
     }
 
     /// The give confirmation (#627): the resident by name, the entries with
@@ -2169,7 +2789,7 @@ mod tests {
         let mut asked = ids.clone();
         asked.push(no_transfer);
         let mut st = InventoryUi {
-            dialog: Some(EditDialog::Share(asked.clone(), resident)),
+            dialog: Some(EditDialog::Share(asked.clone(), vec![resident])),
             ..Default::default()
         };
         let mut texts = Vec::new();
@@ -2182,6 +2802,24 @@ mod tests {
         for id in &ids {
             assert!(shown(&rules::name(&inv, *id)), "each entry listed");
         }
+        // many recipients: first name + count, not a truncated comma list
+        let crowd_names: Vec<&str> = (1..=5).map(|_| "Orion Example").collect();
+        let (many, tip) = residents_label(&crowd_names);
+        assert_eq!(
+            many,
+            aurora_i18n::tr!(
+                "ui-inventory-dialogs-give-to-many",
+                name = "Orion Example".to_string(),
+                count = 4i64,
+                number = aurora_i18n::integer(4)
+            )
+        );
+        assert_eq!(
+            tip.as_deref(),
+            Some("Orion Example, Orion Example, Orion Example, Orion Example, Orion Example")
+        );
+        assert_eq!(residents_label(&["A", "B"]).0, "A, B");
+        assert!(residents_label(&["A", "B"]).1.is_none());
         assert!(shown(aurora_i18n::tr!("ui-inventory-dialogs-no-copy")), "the no-copy entry marked");
         assert!(shown(&aurora_i18n::tr!(
             "ui-inventory-dialogs-no-copy-will-leave",
@@ -2211,8 +2849,51 @@ mod tests {
         frame(&mut st, vec![egui::Event::PointerMoved(give), button(true)]);
         let (_, actions) = frame(&mut st, vec![button(false)]);
         assert!(
-            matches!(&actions[..], [InvAction::Share { items, resident: to }] if *items == ids && *to == resident),
+            matches!(&actions[..], [InvAction::Share { items, residents }] if *items == ids && residents == &[resident]),
             "Give gives all but the entry left out"
+        );
+        assert!(st.dialog.is_none());
+        // several residents at once (LLAvatarActions::shareWithAvatars, #3074)
+        let crowd: Vec<Uuid> = (1..=5)
+            .map(|n| Uuid::from_u128(0xA0E0_5A4E_0000_0000_0000_0000_0000_0000 | n))
+            .collect();
+        st.dialog = Some(EditDialog::Share(ids.clone(), crowd.clone()));
+        let mut texts = Vec::new();
+        for _ in 0..4 {
+            texts = frame(&mut st, Vec::new()).0;
+        }
+        // a no-copy item reaches one resident only: with several it is left
+        // out (give_inventory_cb stops after the first resident), and the
+        // copyable items still go to everyone
+        let shown = |s: &str| texts.iter().any(|t| t == s);
+        assert!(shown(&aurora_i18n::tr!(
+            "ui-inventory-dialogs-not-given",
+            count = 1usize,
+            number = "1"
+        )));
+        assert!(
+            !shown(&aurora_i18n::tr!(
+                "ui-inventory-dialogs-no-copy-will-leave",
+                count = 1usize,
+                number = "1"
+            )),
+            "nothing leaves the inventory: {texts:?}"
+        );
+        let give_many = ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_share_give", st.ui_id))))
+            .expect("give button")
+            .center();
+        let press = |pressed, pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(&mut st, vec![egui::Event::PointerMoved(give_many), press(true, give_many)]);
+        let (_, actions) = frame(&mut st, vec![press(false, give_many)]);
+        assert!(
+            matches!(&actions[..], [InvAction::Share { items, residents }] if *items == ids[..1] && residents == &crowd),
+            "The confirmed gift keeps every recipient and only the copyable item"
         );
         assert!(st.dialog.is_none());
         // nothing that can be given: Enter gives nothing
@@ -2223,14 +2904,14 @@ mod tests {
             repeat: false,
             modifiers: Default::default(),
         };
-        st.dialog = Some(EditDialog::Share(vec![no_transfer], resident));
+        st.dialog = Some(EditDialog::Share(vec![no_transfer], vec![resident]));
         for _ in 0..3 {
             frame(&mut st, Vec::new());
         }
         let (_, actions) = frame(&mut st, vec![enter]);
         assert!(actions.is_empty() && st.dialog.is_some(), "nothing to give");
         // Escape
-        st.dialog = Some(EditDialog::Share(ids.clone(), resident));
+        st.dialog = Some(EditDialog::Share(ids.clone(), vec![resident]));
         for _ in 0..3 {
             frame(&mut st, Vec::new());
         }

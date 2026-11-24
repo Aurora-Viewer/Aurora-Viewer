@@ -84,6 +84,92 @@ fn correction(corners: [Vec3; 4], supports: [Option<Surface>; 4]) -> Option<f32>
         .reduce(f32::max)
 }
 
+/// How far a corner's support may rise above the plane under the ankle and
+/// still carry the foot: kerbs, uneven tiles and mesh noise, not a stair.
+const RISER: f32 = 0.05;
+/// How far a higher step may reach into a footprint, from its edge, and
+/// still be the riser in front of or behind the foot rather than its floor.
+const RISER_OVERLAP: f32 = 0.05;
+/// How far both authored feet may sink below the floor together and be
+/// carried by the body rather than by the knees (`Placement::apply`).
+const COMMON_SINK: f32 = 0.02;
+/// Fastest change of that shared sink, in metres per second.
+const SINK_RATE: f32 = 0.1;
+/// Knee circle radius over which a bending knee moves from the source's bend
+/// plane to the source's side offset in metres (`hinge`).
+const PLANE_BLEND: f32 = 0.1;
+/// Spacing of the anchors placement works around (`Placement::apply`).
+const ANCHOR_GRID: f32 = 16.0;
+
+/// The point of the sole under the ankle.
+fn under_ankle(corners: [Vec3; 4], sole: [Vec3; 4]) -> Vec3 {
+    let span = sole[2].x - sole[0].x;
+    let t = if span > 1e-5 { (-sole[0].x / span).clamp(0.0, 1.0) } else { 0.5 };
+    let heel = (corners[0] + corners[1]) * 0.5;
+    heel + ((corners[2] + corners[3]) * 0.5 - heel) * t
+}
+
+/// The floor a standing foot may not climb above: its absolute height and
+/// the normal of its support.
+type Ceiling = (f32, Vec3);
+
+/// The supports under a footprint's corners, without the edge of a higher
+/// step the foot does not stand on, and whether a corner was dropped. A
+/// heel swaying a few millimetres over the tread of the step behind
+/// touches its riser: lifting the whole foot onto that tread pumped the leg
+/// up and down by the step's height and swung the bent knee across the
+/// other leg. A higher support still carries the foot when it is under the
+/// ankle, reaches further than `RISER_OVERLAP` into the footprint, or is
+/// the level the foot already stands on (`current`, its absolute floor
+/// height): a foot stepping off a ledge keeps its heel on it until the heel
+/// leaves. Without a support under the ankle (a gap between two prims)
+/// every corner counts.
+///
+/// With a `ceiling`, any support more than `RISER` above that floor's plane
+/// is a riser too, even under the ankle: a standing avatar's lifted foot
+/// moving into a higher step hits it, it is not carried onto its top.
+///
+/// Only a `standing` avatar's feet touch risers: walking up stairs, a toe
+/// over the next tread lifts the foot onto it, as before.
+fn footing(
+    corners: [Vec3; 4],
+    sole: [Vec3; 4],
+    current: Option<f32>,
+    ceiling: Option<Ceiling>,
+    standing: bool,
+    query: &dyn Fn(Vec3) -> Option<Surface>,
+) -> ([Option<Surface>; 4], bool) {
+    let mut hits = corners.map(query);
+    let under = under_ankle(corners, sole);
+    let mut dropped = false;
+    if let Some((floor, normal)) = ceiling {
+        let plane = under.with_z(floor);
+        let normal = normal.normalize_or(Vec3::Z);
+        for hit in &mut hits {
+            if hit.is_some_and(|hit| (hit.position - plane).dot(normal) > RISER) {
+                *hit = None;
+                dropped = true;
+            }
+        }
+    }
+    let Some(base) = query(under).filter(|_| standing) else {
+        return (hits, dropped);
+    };
+    let raised = |hit: &Surface| {
+        (hit.position - base.position).dot(base.normal) > RISER && current.is_none_or(|floor| hit.position.z > floor + RISER)
+    };
+    for (hit, corner) in hits.iter_mut().zip(corners) {
+        if hit.as_ref().is_some_and(raised) {
+            let inward = corner + (under - corner).with_z(0.0).normalize_or_zero() * RISER_OVERLAP;
+            if !query(inward).is_some_and(|inner| raised(&inner)) {
+                *hit = None;
+                dropped = true;
+            }
+        }
+    }
+    (hits, dropped)
+}
+
 #[derive(Clone, Copy)]
 struct Leg {
     joints: [usize; 3],
@@ -146,6 +232,11 @@ struct Foot {
     landing: f32,
     normal: Vec3,
     elevation: Option<Height>,
+    /// A higher step stopped this foot while the avatar stood still; it
+    /// stays on its floor until it leaves that step or the avatar moves.
+    blocked: bool,
+    /// The previous frame's point of the sole under the ankle.
+    under: Option<Vec3>,
 }
 
 impl Foot {
@@ -242,7 +333,28 @@ fn hinge(hip: Vec3, knee: Vec3, ankle: Vec3, target: Vec3, side: Vec3) -> Option
     // Intersect the knee circle with the source hinge's lateral coordinate.
     // Transporting a pole toward a near-folded leg would rotate its forward
     // flexion medially; preserve the source knee's side offset in metres.
-    let bias = ((upper.dot(side) - along * axis.dot(side)) / side_reach).clamp(-radius, radius);
+    // Near straight that offset no longer fits the small circle: clamped to
+    // its radius, the forward flexion vanished about 5 degrees short of
+    // straight and the bend plane turned some 40 degrees within a millimetre
+    // of foot motion, the knee jerk of a locked standing leg. Near the
+    // source's own bend, keep the source's share of side offset instead, so
+    // the knee straightens within the source's bend plane, and move to the
+    // offset in metres over the next `PLANE_BLEND` of radius (a crouch).
+    let source_axis = (ankle - hip).normalize_or_zero();
+    let source_offset = upper - source_axis * upper.dot(source_axis);
+    let source_side = (side - source_axis * source_axis.dot(side)).normalize_or_zero();
+    let share = if source_offset.length() > 1e-6 {
+        source_offset.dot(source_side) / source_offset.length()
+    } else {
+        0.0
+    };
+    let metres = ((upper.dot(side) - along * axis.dot(side)) / side_reach).clamp(-radius, radius);
+    let proportional = radius * share.clamp(-0.98, 0.98);
+    // A source knee within a centimetre of its hip-ankle line has no
+    // reliable bend direction (its share flips as it passes straight):
+    // there the offset in metres is kept, as before.
+    let reliable = cubic_step(source_offset.length() / 0.01);
+    let bias = metres + (proportional - metres) * reliable * (1.0 - cubic_step((radius - source_offset.length()) / PLANE_BLEND));
     let bend = hip + axis * along + lateral * bias + forward * (radius * radius - bias * bias).max(0.0).sqrt();
     let hip_delta = precise_arc(upper / a, (bend - hip).normalize());
     let knee_delta = precise_arc((hip_delta * lower).normalize(), (hip + axis * reach - bend).normalize());
@@ -273,9 +385,28 @@ pub(super) struct Placement {
     deltas: Vec<Quat>,
     release: Option<Release>,
     acquired: Option<Acquisition>,
+    /// The world point the positions below are relative to.
+    anchor: Option<Vec3>,
+    /// The authored sink both feet share, carried by the body.
+    sink: f32,
 }
 
 impl Placement {
+    /// Carry the absolute heights and points kept between frames over to an
+    /// anchor `delta` lower.
+    fn rebase(&mut self, delta: Vec3) {
+        for foot in &mut self.feet {
+            foot.departure = foot.departure.map(|floor| floor + delta.z);
+            if let Some(elevation) = &mut foot.elevation {
+                elevation.value += delta.z;
+            }
+            foot.under = foot.under.map(|point| point + delta);
+        }
+        if let Some(height) = &mut self.height {
+            height.value += delta.z;
+        }
+    }
+
     pub(super) fn resume(&mut self, duration: Duration) {
         self.sampled = self.sampled.and_then(|at| at.checked_add(duration));
         if let Some(release) = &mut self.release {
@@ -388,7 +519,31 @@ impl Placement {
                 .min(0.1)
         };
         self.sampled = Some(now);
-        let previous_frame = self.previous_frame.replace(frame);
+        // Near 2,500 m (skyboxes) an f32 position only varies in steps of
+        // 0.24 mm, rounded separately for each joint and target: a nearly
+        // straight knee turned that noise into a degree of flicker per frame
+        // while the feet stood still. Work relative to an anchor near the
+        // avatar, a multiple of `ANCHOR_GRID` metres, and rebase the heights
+        // kept between frames when it changes; the terrain queries add it back.
+        let anchor = (frame.to_world.w_axis.truncate() / ANCHOR_GRID).floor() * ANCHOR_GRID;
+        if let Some(old) = self.anchor.replace(anchor)
+            && old != anchor
+        {
+            self.rebase(old - anchor);
+        }
+        let shift = Mat4::from_translation(-anchor);
+        let previous_frame = self.previous_frame.replace(frame).map(|previous| Frame {
+            to_world: shift * previous.to_world,
+            ..previous
+        });
+        let frame = Frame {
+            to_world: shift * frame.to_world,
+            ..frame
+        };
+        // Walking, not a stand's sway or turning in place.
+        let moving = previous_frame.is_some_and(|previous| {
+            dt > 1e-5 && (frame.to_world.w_axis - previous.to_world.w_axis).truncate().truncate().length() > 0.1 * dt
+        });
         let setup = self.setup.as_ref()?;
         let source = rig.world_with(pose.rotations, pose.pelvis, pose.positions, &base.scale);
         // Contact thresholds are submillimetre. Measure before adding the
@@ -405,11 +560,39 @@ impl Placement {
                 .into_iter()
                 .fold(f32::INFINITY, f32::min)
         });
-        let source: Vec<Mat4> = source.into_iter().map(|matrix| frame.to_world * matrix).collect();
+        // Many stands move the pelvis a few millimetres on locked knees, so
+        // the authored feet sink into the floor and rise off it with each
+        // breath. Planting them by bending the knees flexed nearly straight
+        // legs several degrees per millimetre, in time with the bob: the
+        // legs stuttered. The sink both feet share lifts the whole source
+        // instead, and the body with it; a deeper sink still bends the
+        // knees. Clearances are continuous, so a foot that lifts eases it
+        // out. Feet without a known support keep the source as it is.
+        // It moves at most `SINK_RATE`, faster than a breath's bob: the full
+        // sink is only known once both feet have support, and taking it at
+        // once popped the body up as placement began.
+        let sink_goal = if pose.allowed.iter().all(|allowed| *allowed) && self.feet.iter().all(|foot| foot.departure.is_some()) {
+            clearances
+                .iter()
+                .map(|clearance| (-clearance).max(0.0))
+                .fold(f32::INFINITY, f32::min)
+                .min(COMMON_SINK)
+        } else {
+            0.0
+        };
+        let sink = self.sink + (sink_goal - self.sink).clamp(-SINK_RATE * dt, SINK_RATE * dt);
+        self.sink = sink;
+        let clearances = clearances.map(|clearance| clearance + sink);
+        let lifted = Mat4::from_translation(Vec3::Z * sink) * frame.to_world;
+        let source: Vec<Mat4> = source.into_iter().map(|matrix| lifted * matrix).collect();
         let reference_floor = frame.to_world.transform_point3(Vec3::Z * setup.floor + pose.reference_offset).z;
         let inverse_frame = frame.to_world.inverse();
         let query = |point: Vec3| {
-            ground(point)
+            ground(point + anchor)
+                .map(|hit| Surface {
+                    position: hit.position - anchor,
+                    ..hit
+                })
                 .filter(|hit| hit.normal.z > 0.2 && hit.position.distance(point) <= crate::settings::MAX_GROUND_FEET_HEIGHT + MARGIN * 2.0)
         };
         if let Some(seed) = seed {
@@ -427,10 +610,13 @@ impl Placement {
                 rotations[side] = orientation(visible) * orientation(source[ankle]).inverse();
                 self.feet[side].normal = rotations[side] * Vec3::Z;
                 let corners = footprint(visible.w_axis.truncate(), orientation(visible), leg.sole);
-                penetration[side] = correction(corners, corners.map(query)).unwrap_or(0.0).max(0.0);
+                let current = self.feet[side].elevation.map(|height| height.value);
+                penetration[side] = correction(corners, footing(corners, leg.sole, current, None, !moving, &query).0)
+                    .unwrap_or(0.0)
+                    .max(0.0);
             }
             self.height = Some(Height {
-                value: reference_floor + frame.to_world.transform_vector3(seed.pelvis).z,
+                value: reference_floor + frame.to_world.transform_vector3(seed.pelvis).z - sink,
                 velocity: 0.0,
             });
             self.acquired = Some(Acquisition {
@@ -461,7 +647,35 @@ impl Placement {
             }
             let corners = footprint(ankle, authored, leg.sole);
             let height = clearances[side];
-            let hits = corners.map(query);
+            // A standing avatar's lifted foot does not climb a higher step it
+            // moves into, nor does a foot such a step already stopped. The
+            // floor under the ankle's previous position tells a foot moving
+            // into a step (still low there) from a support rising under it
+            // (high there too), which collision still lifts. Feet that
+            // slide on the floor and moving avatars still climb.
+            let under = under_ankle(corners, leg.sole);
+            let foot = &mut self.feet[side];
+            if moving {
+                foot.blocked = false;
+            }
+            let ceiling = foot.elevation.filter(|_| !moving).and_then(|elevation| {
+                // Without a previous position (just enabled) nothing entered.
+                let entering = height > 0.0005
+                    && foot
+                        .under
+                        .is_some_and(|previous| query(previous).is_none_or(|previous| previous.position.z <= elevation.value + RISER));
+                (foot.blocked || entering).then_some((elevation.value, foot.normal))
+            });
+            foot.under = Some(under);
+            let (hits, dropped) = footing(
+                corners,
+                leg.sole,
+                self.feet[side].elevation.map(|height| height.value),
+                ceiling,
+                !moving,
+                &query,
+            );
+            self.feet[side].blocked = ceiling.is_some() && dropped;
             supported[side] = hits.iter().any(Option::is_some);
             let normal = hits
                 .iter()
@@ -491,7 +705,10 @@ impl Placement {
                         let previous = previous.to_world.transform_point3(inverse_frame.transform_point3(point));
                         point + (point - previous).with_z(0.0) * (0.22 / dt)
                     });
-                    if let Some(lift) = correction(ahead, ahead.map(query)) {
+                    if let Some(lift) = correction(
+                        ahead,
+                        footing(ahead, leg.sole, foot.elevation.map(|height| height.value), ceiling, !moving, &query).0,
+                    ) {
                         let next = reference_floor + lift;
                         // A ledge is not a stair tread. Preparing a large
                         // drop while the heels still have support would
@@ -538,7 +755,10 @@ impl Placement {
                 // Query the actual oriented footprint before deriving body
                 // reach, so a toe crossing an edge is part of that constraint.
                 let corners = footprint(targets[side], rotations[side], leg.sole);
-                if let Some(lift) = correction(corners, corners.map(query)) {
+                if let Some(lift) = correction(
+                    corners,
+                    footing(corners, leg.sole, Some(elevation.value), ceiling, !moving, &query).0,
+                ) {
                     // Ease the initial penetration by elapsed time, rather
                     // than a per-frame fraction. New collision remains hard
                     // once the avatar has joined the selected set.
@@ -594,9 +814,10 @@ impl Placement {
             };
         }
         let offset = Vec3::Z * (height.value - reference_floor);
+        let (mut knees, mut stretch) = ([f32::NAN; 2], [f32::NAN; 2]);
         let mut result = Placed {
             rotations: pose.rotations.to_vec(),
-            pelvis: inverse_frame.transform_vector3(offset),
+            pelvis: inverse_frame.transform_vector3(offset + Vec3::Z * sink),
         };
         for (side, leg) in setup.legs.iter().enumerate() {
             if !pose.allowed[side] {
@@ -613,6 +834,15 @@ impl Placement {
             let Some((a, b)) = hinge(p(hip), p(knee), p(ankle), targets[side], orientation(source[knee]) * Vec3::Y) else {
                 continue;
             };
+            if log::log_enabled!(target: "aurora_viewer::foot_placement", log::Level::Trace) {
+                // Solved knee angle (180 = straight) and the target's distance
+                // as a share of the leg's length: a stretched leg magnifies
+                // millimetres of target motion into degrees of knee motion.
+                let upper = a * (p(knee) - p(hip));
+                let lower = b * a * (p(ankle) - p(knee));
+                knees[side] = (-upper).angle_between(lower).to_degrees();
+                stretch[side] = p(hip).distance(targets[side]) / (upper.length() + lower.length());
+            }
             let hip_rotation = a * orientation(source[hip]);
             let knee_rotation = b * a * orientation(source[knee]);
             let parent = rig.parent[hip].map_or(orientation(frame.to_world), |j| orientation(source[j]));
@@ -626,8 +856,8 @@ impl Placement {
             .zip(pose.rotations)
             .map(|(&placed, &raw)| placed * raw.inverse())
             .collect();
-        log::trace!(target: "aurora_viewer::foot_placement", "terrain anchor={} body={:.5} reference={reference_floor:.5} contact={:?} targets={targets:?}",
-            frame.standing_anchor, height.value, self.feet.each_ref().map(|foot| foot.contact));
+        log::trace!(target: "aurora_viewer::foot_placement", "terrain origin={anchor:?} anchor={} body={:.5} reference={reference_floor:.5} contact={:?} targets={targets:?} knees={knees:.2?} stretch={stretch:.4?} blocked={:?}",
+            frame.standing_anchor, height.value + sink, self.feet.each_ref().map(|foot| foot.contact), self.feet.each_ref().map(|foot| foot.blocked));
         self.held = Some(result.clone());
         Some(result)
     }
@@ -705,6 +935,33 @@ mod tests {
             frame: Frame,
             ground: &dyn Fn(Vec3) -> Option<Surface>,
         ) -> Vec<Mat4> {
+            self.check_with(placement, placed, raw, pelvis, frame, ground, false)
+        }
+
+        /// `check` for a standing avatar, whose feet may touch a riser.
+        fn check_standing(
+            &self,
+            placement: &Placement,
+            placed: &Placed,
+            raw: &[Quat],
+            pelvis: Vec3,
+            frame: Frame,
+            ground: &dyn Fn(Vec3) -> Option<Surface>,
+        ) -> Vec<Mat4> {
+            self.check_with(placement, placed, raw, pelvis, frame, ground, true)
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn check_with(
+            &self,
+            placement: &Placement,
+            placed: &Placed,
+            raw: &[Quat],
+            pelvis: Vec3,
+            frame: Frame,
+            ground: &dyn Fn(Vec3) -> Option<Surface>,
+            standing: bool,
+        ) -> Vec<Mat4> {
             let source = self.rig.world_with(raw, pelvis, &self.base.local_pos, &self.base.scale);
             let output = self
                 .rig
@@ -723,9 +980,20 @@ mod tests {
                 );
                 let matrix = frame.to_world * output[ankle];
                 let mut nearest = f32::INFINITY;
-                for point in footprint(matrix.w_axis.truncate(), orientation(matrix), leg.sole) {
+                let corners = footprint(matrix.w_axis.truncate(), orientation(matrix), leg.sole);
+                let under = under_ankle(corners, leg.sole);
+                for point in corners {
                     if let Some(hit) = ground(point) {
                         let distance = (point - hit.position).dot(hit.normal);
+                        // The edge of a higher step may reach this far into the
+                        // footprint: the foot touches its riser (`footing`).
+                        let inward = point + (under - point).with_z(0.0).normalize_or_zero() * RISER_OVERLAP;
+                        if standing
+                            && distance <= -0.0015
+                            && ground(inward).is_none_or(|inner| (point - inner.position).dot(inner.normal) > -0.0015)
+                        {
+                            continue;
+                        }
                         assert!(distance > -0.0015, "foot {side} penetrates by {distance}");
                         nearest = nearest.min(distance);
                     }
@@ -1298,7 +1566,9 @@ mod tests {
                     now + Duration::from_secs_f32(i as f32 / fps as f32),
                     &ground,
                 );
-                let world = f.check(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, &ground);
+                // Turning in place is standing: a toe may touch the side step's
+                // riser before the foot is carried onto it.
+                let world = f.check_standing(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, &ground);
                 let body = world[f.rig.pelvis].w_axis.z;
                 if let Some(previous) = previous {
                     assert!(
@@ -1341,6 +1611,269 @@ mod tests {
                     placed.pelvis
                 );
             }
+        }
+    }
+
+    #[test]
+    fn grounding_a_skybox_solves_the_legs_as_precisely_as_the_ground() {
+        // The same breathing, swaying stand at ground level and 2,502 m up,
+        // where an f32 world position only varies in 0.24 mm steps: the
+        // nearly straight knees must not pick up that rounding.
+        let f = Fixture::new();
+        let now = Instant::now();
+        let knee = |world: &[Mat4], side: &str| {
+            let at = |bone: &str| world[f.rig.names[&format!("m{bone}{side}")]].w_axis.truncate();
+            (at("Hip") - at("Knee")).angle_between(at("Ankle") - at("Knee")).to_degrees()
+        };
+        let sky = Vec3::new(181.37, 57.91, 2502.37);
+        let low = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(0.0),
+                normal: Vec3::Z,
+            })
+        };
+        let high = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(sky.z),
+                normal: Vec3::Z,
+            })
+        };
+        let mut worst = 0.0_f32;
+        for fps in [30, 60, 144] {
+            let (mut ground_level, mut skybox) = (Placement::default(), Placement::default());
+            for i in 0..=fps * 6 {
+                let t = i as f32 / fps as f32;
+                let sway = Vec3::X * 0.012 * (t * std::f32::consts::PI).sin();
+                let pelvis = Vec3::Z * 0.003 * (t * std::f32::consts::TAU * 0.7).sin();
+                let at = now + Duration::from_secs_f32(t);
+                let a = f.sample(&mut ground_level, &f.rig.local_rot, pelvis, Some(f.frame(sway, 0.3)), at, &low);
+                let b = f.sample(&mut skybox, &f.rig.local_rot, pelvis, Some(f.frame(sky + sway, 0.3)), at, &high);
+                let a = f.rig.world_with(&a.rotations, pelvis + a.pelvis, &f.base.local_pos, &f.base.scale);
+                let b = f.rig.world_with(&b.rotations, pelvis + b.pelvis, &f.base.local_pos, &f.base.scale);
+                for side in ["Left", "Right"] {
+                    worst = worst.max((knee(&a, side) - knee(&b, side)).abs());
+                }
+            }
+        }
+        // World-space solving: 1.07 degrees. What is left is the rounding of
+        // the root and floor heights themselves, which arrive as f32.
+        assert!(worst < 0.25, "the knees differ by up to {worst} degrees 2,502 m up");
+    }
+
+    #[test]
+    fn grounding_a_straightening_knee_keeps_its_bend_plane() {
+        // Pull the foot from a bent knee to a straight leg in 0.01 mm steps:
+        // the knee straightens within one plane, as the source's, instead of
+        // swinging sideways in the last degrees before straight.
+        let f = Fixture::new();
+        let rest = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+        for side_name in ["Left", "Right"] {
+            let at = |bone: &str| rest[f.rig.names[&format!("m{bone}{side_name}")]].w_axis.truncate();
+            let (hip, knee, ankle) = (at("Hip"), at("Knee"), at("Ankle"));
+            let side = orientation(rest[f.rig.names[&format!("mKnee{side_name}")]]) * Vec3::Y;
+            let length = hip.distance(knee) + knee.distance(ankle);
+            let axis = (ankle - hip).normalize();
+            let plane = |stretch: f32| {
+                let target = hip + axis * length * stretch;
+                let (upper, _) = hinge(hip, knee, ankle, target, side).expect("solvable");
+                let bend = hip + upper * (knee - hip);
+                (bend - hip - axis * (bend - hip).dot(axis)).normalize()
+            };
+            let source = plane(hip.distance(ankle) / length);
+            let mut previous = plane(0.985);
+            for i in 1..=1499 {
+                let stretch = 0.985 + i as f32 * 0.00001;
+                let current = plane(stretch);
+                let step = previous.angle_between(current).to_degrees();
+                assert!(
+                    step < 0.2,
+                    "the {side_name} knee's bend plane turned {step} degrees at stretch {stretch}"
+                );
+                if stretch * length > hip.distance(ankle) {
+                    let drift = source.angle_between(current).to_degrees();
+                    assert!(
+                        drift < 1.0,
+                        "the straightening {side_name} knee left its bend plane by {drift} degrees at stretch {stretch}"
+                    );
+                }
+                previous = current;
+            }
+        }
+    }
+
+    /// Lowest and highest ankle offsets from the source over six seconds of
+    /// a 1.2 cm standing sway, root on `level`, beside a 20 cm step edge.
+    fn swaying_lift(f: &Fixture, level: f32, ground: &dyn Fn(Vec3) -> Option<Surface>, fps: u32) -> (f32, f32) {
+        let now = Instant::now();
+        let mut placement = Placement::default();
+        let (mut low, mut high) = (f32::INFINITY, f32::NEG_INFINITY);
+        for i in 0..=fps * 6 {
+            let t = i as f32 / fps as f32;
+            let frame = f.frame(Vec3::new(0.012 * (t * std::f32::consts::PI).sin(), 0.0, level), 0.0);
+            let placed = f.sample(
+                &mut placement,
+                &f.rig.local_rot,
+                Vec3::ZERO,
+                Some(frame),
+                now + Duration::from_secs_f32(t),
+                ground,
+            );
+            f.check_standing(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, ground);
+            let output = f.rig.world_with(&placed.rotations, placed.pelvis, &f.base.local_pos, &f.base.scale);
+            let source = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+            for name in ["mAnkleLeft", "mAnkleRight"] {
+                let joint = f.rig.names[name];
+                let lift = frame
+                    .to_world
+                    .transform_vector3((output[joint].w_axis - source[joint].w_axis).truncate())
+                    .z;
+                low = low.min(lift);
+                high = high.max(lift);
+            }
+        }
+        (low, high)
+    }
+
+    /// The rest pose's sole corners behind the ankles, along the avatar's X.
+    fn rest_heel_x(f: &Fixture) -> f32 {
+        let rest = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+        let setup = Setup::new(&f.rig, &f.base, None).expect("humanoid");
+        setup
+            .legs
+            .iter()
+            .map(|leg| rest[leg.joints[2]].w_axis.x + leg.sole[0].x)
+            .fold(f32::INFINITY, f32::min)
+    }
+
+    #[test]
+    fn grounding_a_breathing_stand_keeps_its_straight_knees() {
+        // A stand that bobs the pelvis on locked knees sinks its authored
+        // feet into the floor: the body carries that sink, not the knees.
+        let f = Fixture::new();
+        let now = Instant::now();
+        let knee = |world: &[Mat4], side: &str| {
+            let at = |bone: &str| world[f.rig.names[&format!("m{bone}{side}")]].w_axis.truncate();
+            (at("Hip") - at("Knee")).angle_between(at("Ankle") - at("Knee")).to_degrees()
+        };
+        for fps in [30, 60, 144] {
+            for (bob, sway) in [(0.003_f32, 0.0_f32), (0.01, 0.012)] {
+                let mut placement = Placement::default();
+                for i in 0..=fps * 6 {
+                    let t = i as f32 / fps as f32;
+                    let frame = f.frame(Vec3::new(sway * (t * std::f32::consts::PI).sin(), 0.0, 0.0), 0.0);
+                    let pelvis = Vec3::Z * bob * (t * std::f32::consts::TAU * 0.7).sin();
+                    let placed = f.sample(
+                        &mut placement,
+                        &f.rig.local_rot,
+                        pelvis,
+                        Some(frame),
+                        now + Duration::from_secs_f32(t),
+                        &flat,
+                    );
+                    f.check(&placement, &placed, &f.rig.local_rot, pelvis, frame, &flat);
+                    let output = f
+                        .rig
+                        .world_with(&placed.rotations, pelvis + placed.pelvis, &f.base.local_pos, &f.base.scale);
+                    let source = f.rig.world_with(&f.rig.local_rot, pelvis, &f.base.local_pos, &f.base.scale);
+                    for side in ["Left", "Right"] {
+                        let bend = knee(&source, side) - knee(&output, side);
+                        // Without the shared sink: 4.7 degrees for 3 mm, 11 for
+                        // 10 mm. What is left is the foot height's smoothing.
+                        assert!(
+                            bend.abs() < 0.5,
+                            "a {bob} m bob bent the {side} knee by {bend} degrees at {fps} fps, time {t}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grounding_heel_against_a_higher_step_behind_stays_on_its_tread() {
+        // The sway brings the heel corners 6 mm over the tread of a 20 cm
+        // step behind: a riser, not a floor the whole foot climbs onto.
+        let f = Fixture::new();
+        let edge = rest_heel_x(&f) + 0.006;
+        let ground = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(if p.x < edge { 0.2 } else { 0.0 }),
+                normal: Vec3::Z,
+            })
+        };
+        for fps in [30, 60, 144] {
+            let (low, high) = swaying_lift(&f, 0.0, &ground, fps);
+            assert!(
+                low > -0.01 && high < 0.01,
+                "the feet left their tread at {fps} fps: {low} to {high} m"
+            );
+        }
+    }
+
+    #[test]
+    fn grounding_heel_on_a_ledge_with_the_toes_over_the_drop_stays_up() {
+        // Standing at the top of a 20 cm step, ankles 2 cm short of its edge:
+        // the support under the ankles carries the feet, toes over the drop.
+        let f = Fixture::new();
+        let edge = rest_heel_x(&f) + 0.06;
+        let ground = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(if p.x < edge { 0.2 } else { 0.0 }),
+                normal: Vec3::Z,
+            })
+        };
+        for fps in [30, 60, 144] {
+            let (low, high) = swaying_lift(&f, 0.2, &ground, fps);
+            assert!(
+                low > -0.01 && high < 0.01,
+                "the feet dropped off the ledge at {fps} fps: {low} to {high} m"
+            );
+        }
+    }
+
+    #[test]
+    fn grounding_a_standing_foot_lifted_into_a_higher_step_is_not_carried_onto_it() {
+        // A stand lifts the left foot while the avatar drifts back at 3 cm/s
+        // (a stand's shuffle, not walking) towards a 30 cm step behind that
+        // foot: its ankle crosses the step's edge in the air. The foot hits
+        // the riser: neither popped onto the top in flight nor at landing.
+        let f = Fixture::new();
+        let clip = crate::demo::grounding::lifting_animation();
+        let now = Instant::now();
+        let rest = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+        let left = f.rig.names["mAnkleLeft"];
+        let edge = rest[left].w_axis.x - 0.03;
+        let ground = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(if p.x < edge && p.y > 0.0 { 0.3 } else { 0.0 }),
+                normal: Vec3::Z,
+            })
+        };
+        for fps in [30, 60, 144] {
+            let mut placement = Placement::default();
+            let mut worst = 0.0_f32;
+            for i in 0..=fps * 4 {
+                let t = i as f32 / fps as f32;
+                let frame = f.frame(Vec3::X * -0.03 * t, 0.0);
+                let mut raw = f.rig.local_rot.clone();
+                for joint in &clip.joints {
+                    if let (Some(&j), Some(r)) = (f.rig.names.get(&joint.joint_name), joint.rotation_at_loop(t, clip.loop_range())) {
+                        raw[j] = r;
+                    }
+                }
+                let placed = f.sample(
+                    &mut placement,
+                    &raw,
+                    Vec3::ZERO,
+                    Some(frame),
+                    now + Duration::from_secs_f32(t),
+                    &ground,
+                );
+                let output = f.rig.world_with(&placed.rotations, placed.pelvis, &f.base.local_pos, &f.base.scale);
+                let source = f.rig.world_with(&raw, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+                worst = worst.max(output[left].w_axis.z - source[left].w_axis.z);
+            }
+            assert!(worst < RISER, "the lifted foot was carried {worst} m onto the step at {fps} fps");
         }
     }
 
@@ -1880,7 +2413,6 @@ mod tests {
 
         let target = expected[ankle].w_axis.truncate() + Vec3::new(0.06, 0.0, 0.1);
         controller.ik.edit.goals.push(Goal {
-            follow: None,
             weight: 1.0,
             bone: ankle,
             root: ankle,
@@ -1910,48 +2442,6 @@ mod tests {
             );
         }
         assert!(Mat4::from_cols_array_2d(&output[ankle]).w_axis.z < expected[ankle].w_axis.z - 0.15);
-    }
-
-    #[test]
-    fn explicit_ik_contacts_override_grounding_and_release_back_to_it() {
-        use crate::scene::ik::{Goal, Mode};
-
-        let f = Fixture::new();
-        let now = Instant::now();
-        let ankle = f.rig.names["mAnkleLeft"];
-        let mut controller = Controller {
-            aurora_feet: true,
-            ground: Some(f.frame(Vec3::Z * 0.2, 0.0)),
-            ..Default::default()
-        };
-        let mut output = vec![Mat4::IDENTITY.to_cols_array_2d(); f.rig.len()];
-        controller.evaluate_on_ground(&f.rig, now, Some(&f.base), &mut output, flat);
-        let placed = Mat4::from_cols_array_2d(&output[ankle]);
-        let target = placed.w_axis.truncate() + Vec3::new(0.05, 0.0, 0.08);
-        let rotation = Quat::from_rotation_y(0.35);
-        controller.ik.targets.push(Goal {
-            follow: None,
-            weight: 1.0,
-            bone: ankle,
-            root: ankle,
-            position: target,
-            rotation: Some(rotation),
-            contact: Vec3::ZERO,
-            pole: None,
-            mode: Mode::Direct,
-        });
-        for step in 1..=8 {
-            controller.evaluate_on_ground(&f.rig, now + Duration::from_millis(step * 40), Some(&f.base), &mut output, flat);
-        }
-        let contact = Mat4::from_cols_array_2d(&output[ankle]);
-        assert!(contact.w_axis.truncate().distance(target) < 1e-5);
-        assert!(orientation(contact).dot(rotation).abs() > 0.99999);
-        controller.ik.targets.clear();
-        for step in 9..=16 {
-            controller.evaluate_on_ground(&f.rig, now + Duration::from_millis(step * 40), Some(&f.base), &mut output, flat);
-        }
-        assert!(Mat4::from_cols_array_2d(&output[ankle]).abs_diff_eq(placed, 1e-5));
-        assert!(controller.rot[ankle].abs_diff_eq(f.rig.local_rot[ankle], 1e-5));
     }
 
     #[test]

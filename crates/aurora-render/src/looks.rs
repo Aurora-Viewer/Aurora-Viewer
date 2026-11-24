@@ -46,8 +46,10 @@ pub const MAX_OPS: usize = 64;
 /// Layers of a frame at most.
 pub const MAX_LAYERS: usize = 8;
 /// Passes of a frame at most (one per convolution, and the first of each
-/// layer).
-const MAX_PASSES: usize = 128;
+/// layer): room for `MAX_LAYERS` of the heaviest look, the viewer letting
+/// the same look be stacked as often as there are layers
+/// (`eight_of_the_heaviest_look_fit_in_a_frame`).
+const MAX_PASSES: usize = 256;
 /// Histogram curves of one look at most.
 const MAX_CURVES: usize = 8;
 /// Histogram curves of a frame at most.
@@ -253,6 +255,31 @@ impl LookOp {
         matches!(self, LookOp::Linearize { .. } | LookOp::Posterize { .. })
     }
 
+    /// The result at a pixel depends on that pixel's colour alone: not on its
+    /// place in the frame, its neighbours, its depth, nor on the frame's
+    /// histogram. The six faces of a 360° snapshot are looked at one by one,
+    /// and only such an operation leaves them joining without a seam: a
+    /// vignette, a grain, a blur, a distortion, bars, a frame, a depth effect
+    /// or a histogram stretch would differ from one face to the next.
+    pub fn is_pointwise(&self) -> bool {
+        matches!(
+            self,
+            LookOp::Sepia
+                | LookOp::GrayScale
+                | LookOp::Saturate(_)
+                | LookOp::Rotate(_)
+                | LookOp::Gamma { .. }
+                | LookOp::Colorize { .. }
+                | LookOp::Contrast { .. }
+                | LookOp::Brightness { .. }
+                | LookOp::ColorTransform(_)
+                | LookOp::Selective { .. }
+                | LookOp::GradientMap(_)
+                | LookOp::Split { .. }
+                | LookOp::Lut
+        )
+    }
+
     /// The operation's numbers in the order of its fields, colours as
     /// three: what the interface's settings change (`param`, `set_param`).
     fn slots(&mut self) -> Vec<&mut f32> {
@@ -342,6 +369,13 @@ pub struct LookLayer {
     pub lut: Option<Arc<Lut>>,
 }
 
+impl LookLayer {
+    /// All its operations are pointwise (`LookOp::is_pointwise`).
+    pub fn is_pointwise(&self) -> bool {
+        self.ops.iter().all(LookOp::is_pointwise)
+    }
+}
+
 /// The looks of the frame (`FrameParams::look`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhotoLook {
@@ -363,6 +397,30 @@ pub struct PhotoLook {
     /// The focus distance of the depth operations (m); None: the scene's at
     /// the middle of the photo.
     pub focus: Option<f32>,
+}
+
+impl PhotoLook {
+    /// A look that changes nothing (one layer at 0 %): the frame routed
+    /// through the looks' input, where the catalogue pictures' still is
+    /// taken (look_thumbs.rs).
+    pub(crate) fn pass_through(size: (u32, u32)) -> PhotoLook {
+        PhotoLook {
+            layers: vec![LookLayer {
+                ops: vec![LookOp::Brightness {
+                    step: 0.0,
+                    alpha: [0.0; 3],
+                }]
+                .into(),
+                intensity: 0.0,
+                lut: None,
+            }],
+            compare: None,
+            image: [0.0, 0.0, size.0 as f32, size.1 as f32],
+            scale: 1.0,
+            hold: false,
+            focus: None,
+        }
+    }
 }
 
 /// Frames the images of the passes are kept after the last look (the
@@ -971,6 +1029,17 @@ impl Looks {
             inter,
             layers,
         });
+    }
+
+    /// The images let go now (refused by a full video memory).
+    pub(crate) fn release(&mut self) {
+        self.targets = None;
+    }
+
+    /// Whether `prepare` would make new images.
+    pub(crate) fn needs_targets(&self, format: wgpu::TextureFormat, size: (u32, u32)) -> bool {
+        let size = (size.0.max(1), size.1.max(1));
+        self.targets.as_ref().is_none_or(|t| t.size != size || t.format != format)
     }
 
     /// A frame without a look: the images are let go after a while.

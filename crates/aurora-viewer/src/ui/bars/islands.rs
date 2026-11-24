@@ -50,6 +50,18 @@ pub fn favorites_row_bottom(ctx: &egui::Context) -> Option<f32> {
     ctx.data(|d| d.get_temp::<f32>(Id::unique("bars_favorites_row_bottom")))
 }
 
+/// Save or clear the row edge shared by both top-bar styles.
+pub(crate) fn set_favorites_row_bottom(ctx: &egui::Context, bottom: Option<f32>) {
+    let id = Id::unique("bars_favorites_row_bottom");
+    ctx.data_mut(|d| {
+        if let Some(bottom) = bottom {
+            d.insert_temp(id, bottom);
+        } else {
+            d.remove_temp::<f32>(id);
+        }
+    });
+}
+
 /// The rectangle of an island between `left` and `right` on the row.
 fn row(screen: Rect, left: f32, right: f32) -> Rect {
     let top = screen.top() + MARGIN;
@@ -224,7 +236,7 @@ fn readout_width(text_w: f32) -> f32 {
 
 /// Demo captures (`AURORA_DEMO_BARS`): the menu to open once, at frame 300.
 pub(super) fn demo_open(ctx: &egui::Context, resp: &egui::Response, which: super::demo::Open) {
-    if super::demo::get().open == Some(which) && ctx.cumulative_frame_nr() == 300 {
+    if super::demo::get().open == Some(which) && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 {
         egui::Popup::open_id(ctx, egui::Popup::default_response_id(resp));
     }
 }
@@ -254,7 +266,7 @@ pub fn top(
     right = bell_rect.left() - MARGIN;
     let sys_rect = row(screen, right - system_width(ui, st), right);
     right = sys_rect.left() - MARGIN;
-    let acc_rect = row(screen, right - account_width(ui, p, st), right);
+    let acc_rect = row(screen, right - account_width(ui, st), right);
     right = acc_rect.left() - MARGIN;
     // the conversations' thumbnails in an island of their own, left of the
     // account, where the Legacy Viewer's chiclets stand (#1134); the place
@@ -358,15 +370,14 @@ pub fn top(
     });
     // the favourites' row (F2) under the place island: the windows stay
     // under it too
-    let row_id = Id::unique("bars_favorites_row_bottom");
     if st.favorites.access == crate::settings::FavoritesAccess::Row {
         let (row, a) = super::favorites::row(&ctx, p, icons, st.favorites, place_rect);
         if let Some(a) = a {
             action = a;
         }
-        ctx.data_mut(|d| d.insert_temp(row_id, row.bottom()));
+        set_favorites_row_bottom(&ctx, Some(row.bottom()));
     } else {
-        ctx.data_mut(|d| d.remove_temp::<f32>(row_id));
+        set_favorites_row_bottom(&ctx, None);
     }
     (action, audio_action)
 }
@@ -393,9 +404,11 @@ pub(crate) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect
         .constrain(false)
         .fade_in(false)
         .show(ctx, |ui| {
-            ui.painter().add(crate::ui::widgets::island_shape(ui.ctx(), p, rect));
+            let surface = ui.painter().add(crate::ui::widgets::island_shape(ui.ctx(), p, rect));
             ui.set_min_size(rect.size());
-            body(ui)
+            let out = body(ui);
+            crate::ui::surface_opacity::fade_after(ui.ctx(), ui.layer_id(), surface, p, crate::ui::surface_opacity::bars());
+            out
         })
         .inner
 }
@@ -403,32 +416,34 @@ pub(crate) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect
 /// The account's picture.
 const DISC: f32 = 22.0;
 
-fn balance_galley(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> Option<std::sync::Arc<egui::Galley>> {
-    let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+fn balance_font(ui: &egui::Ui) -> FontId {
+    FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()))
+}
+
+/// The balance as it reads, and how wide it stands.
+fn balance_text(ui: &egui::Ui, st: &StatusInfo) -> Option<(String, f32)> {
     st.balance.filter(|_| st.show_balance).map(|b| {
-        ui.painter().layout_no_wrap(
-            format!("{} {}", aurora_i18n::integer(i64::from(b)), aurora_i18n::currency()),
-            font,
-            p.ink,
-        )
+        let text = format!("{} {}", aurora_i18n::integer(i64::from(b)), aurora_i18n::currency());
+        let width = crate::ui::balance_gains::number_width(ui.painter(), &text, &balance_font(ui));
+        (text, width)
     })
 }
 
 /// The account's slot: 4 before the picture, 6 between, 8 after the text.
-fn account_slot_width(balance: Option<&std::sync::Arc<egui::Galley>>) -> f32 {
-    4.0 + DISC + balance.map_or(0.0, |g| 6.0 + g.size().x.ceil()) + 8.0
+fn account_slot_width(balance: Option<f32>) -> f32 {
+    4.0 + DISC + balance.map_or(0.0, |width| 6.0 + width.ceil()) + 8.0
 }
 
-fn account_width(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> f32 {
-    PAD * 2.0 + account_slot_width(balance_galley(ui, p, st).as_ref())
+fn account_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
+    PAD * 2.0 + account_slot_width(balance_text(ui, st).map(|(_, width)| width))
 }
 
 /// The account island: our picture with the online status on it (a click
 /// opens the status menu), the balance (a click buys L$). A right click on
 /// either shows or hides the balance (#1340): hidden, the picture stays.
 fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action: &mut BarAction) {
-    let balance = balance_galley(ui, p, st);
-    let w = account_slot_width(balance.as_ref());
+    let balance = balance_text(ui, st);
+    let w = account_slot_width(balance.as_ref().map(|(_, width)| *width));
     let rect = Rect::from_min_size(Pos2::new(island.left() + PAD, island.center().y - SLOT / 2.0), Vec2::new(w, SLOT));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 4.0 + DISC / 2.0, rect.center().y), Vec2::splat(DISC));
     // the picture and its status: one target; the balance: another
@@ -451,26 +466,34 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
     let col = status_color(p, &st.status);
     ui.painter().circle_filled(dot, 4.5, p.bar);
     crate::ui::presence::paint_mark(ui.painter(), dot, 3.0, status_shape(&st.status), col, p.bar);
-    if let Some(g) = balance {
-        crate::ui::widgets::paint_ink_left(ui.painter(), g, Pos2::new(disc.right() + 6.0, rect.center().y), p.ink);
+    if let Some((text, width)) = balance {
+        let font = balance_font(ui);
+        let left = Pos2::new(disc.right() + 6.0, rect.center().y);
+        crate::ui::balance_gains::paint_number(ui.painter(), &text, &font, left, st.balance_ink);
+        let anchor = crate::ui::balance_gains::Anchor {
+            right: left.x + width,
+            text_top: rect.center().y - font.size / 2.0,
+            top: island.bottom() + MARGIN,
+        };
+        crate::ui::balance_gains::paint(ui.ctx(), p, &st.balance_gains, &anchor, font);
     }
     if let Some(money) = money {
         if money.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        menu::context_menu(&money, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+        menu::context_menu(&money, p, |ui| super::balance_menu(ui, p, st, action));
         if money.on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l")).clicked() {
             *action = BarAction::BuyCurrency;
         }
     }
-    menu::context_menu_of_button(&status, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+    menu::context_menu_of_button(&status, p, |ui| super::balance_menu(ui, p, st, action));
     // the demo cannot right-click: the same menu under the island
     let ctx = ui.ctx().clone();
-    if super::demo::get().open == Some(super::demo::Open::Account) && ctx.cumulative_frame_nr() >= 300 {
+    if super::demo::get().open == Some(super::demo::Open::Account) && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300 {
         let id = Id::unique("bars_account_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         let at = Pos2::new(rect.left(), island.bottom() + MARGIN);
-        menu::popup_at(&ctx, id, at, &mut open, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+        menu::popup_at(&ctx, id, at, &mut open, p, |ui| super::balance_menu(ui, p, st, action));
         ctx.data_mut(|d| d.insert_temp(id, open));
     }
     demo_open(ui.ctx(), &status, super::demo::Open::Status);
@@ -702,7 +725,7 @@ fn system(
         .is_some_and(|pos| !back.secondary_clicked() && island.contains(pos) && ctx.layer_id_at(pos) == Some(ui.layer_id()));
     menu::context_menu_also(&back, p, on_button, |ui| system_menu(ui, p, panels, st, island, action));
     // the demo cannot right-click: the same menu where the pointer would be
-    if super::demo::get().open == Some(super::demo::Open::System) && ctx.cumulative_frame_nr() >= 300 {
+    if super::demo::get().open == Some(super::demo::Open::System) && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300 {
         let id = Id::unique("bars_system_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         // under the island at its right end, as the mockup draws it
@@ -713,7 +736,7 @@ fn system(
     // the demo cannot click: Performance opened from the island at frame
     // 300, by its frame rate or its network
     let demo = super::demo::get().perf;
-    if demo.is_some() && ctx.cumulative_frame_nr() == 300 && !panels.perf {
+    if demo.is_some() && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 && !panels.perf {
         crate::ui::perf::place_under(&ctx, island);
         if demo == Some(super::demo::Perf::Network) {
             *action = BarAction::NetworkGraph;
@@ -1033,25 +1056,33 @@ fn tip_body(
         *action = BarAction::NetworkGraph;
     }
 
-    let music = if !media.music_available {
-        aurora_i18n::tr!("ui-bars-tip-music-none")
-    } else if media.music_playing {
-        aurora_i18n::tr!("ui-bars-tip-music-playing")
-    } else {
-        aurora_i18n::tr!("ui-bars-tip-music-stopped")
-    };
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, TIP_ROW), Sense::hover());
+    let music = ui
+        .painter()
+        .layout(media.music_status.text(), FontId::proportional(11.5), p.muted, (w - 22.0).max(1.0));
+    // Failure reasons and consent messages need wrapping, unlike a short
+    // "playing" value. Keep them below the label in this narrow tooltip.
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, TIP_ROW + music.size().y), Sense::hover());
+    let label_rect = Rect::from_min_size(rect.min, Vec2::new(w, TIP_ROW));
     paint_tip_row(
         ui,
         p,
         icons,
-        rect,
+        label_rect,
         "radio",
         aurora_i18n::tr!("ui-bars-tip-music"),
-        music,
+        "",
         p.muted,
         11.5,
     );
+    ui.painter()
+        .galley(Pos2::new(rect.left() + 22.0, rect.top() + TIP_ROW), music, p.muted);
+    // the station's failed certificate, in red as on the radio button
+    if let Some(issue) = media.music_status.certificate() {
+        ui.scope(|ui| {
+            ui.set_max_width(w);
+            crate::ui::audio::warning_line(ui, p, icons, &crate::ui::audio::certificate_warning(issue), 11.5);
+        });
+    }
 
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 11.0), Sense::hover());
     ui.painter()
@@ -1112,6 +1143,18 @@ mod tests {
     use super::super::{IslandsLook, StatusInfo};
     use super::*;
 
+    #[test]
+    fn favorites_row_bottom_is_shared_and_clears_when_hidden() {
+        let ctx = egui::Context::default();
+        assert_eq!(favorites_row_bottom(&ctx), None);
+        set_favorites_row_bottom(&ctx, Some(86.0));
+        assert_eq!(favorites_row_bottom(&ctx), Some(86.0));
+        // Classic and island bars both use this shared report. Clearing it
+        // on a hidden row or chrome-style switch prevents stale reservation.
+        set_favorites_row_bottom(&ctx, None);
+        assert_eq!(favorites_row_bottom(&ctx), None);
+    }
+
     fn status(stretch: bool, bug: bool) -> StatusInfo<'static> {
         StatusInfo {
             location_hidden: false,
@@ -1129,9 +1172,13 @@ mod tests {
             fps: 60.0,
             flying: false,
             seated: false,
+            clouds_paused: false,
             ping_ms: 38,
             balance: Some(1000),
             show_balance: true,
+            balance_gains: Vec::new(),
+            balance_ink: crate::theme::Theme::default().palette().ink,
+            balance_rows: crate::ui::balance_gains::Shown::BOTH,
             voice: (crate::voice::VoiceLight::Off, String::new()),
             slurl: String::new(),
             status: Default::default(),
@@ -1142,14 +1189,25 @@ mod tests {
             double_click: Default::default(),
             quickjump: false,
             friends_only: false,
+            show_name_tags: true,
             fly_override: false,
             quiet_snapshots: false,
+            animation_speed: 1.0,
+            slow_motion_animations: false,
+            release_keys: false,
             marketplace: false,
+            avatar_welcome: false,
+            linden_home: false,
+            destinations: false,
             parcel_landmark: None,
             can_set_home: false,
             can_go_home: true,
+            home_entry: true,
             release_notes: false,
             region_console: false,
+            god_level: 0,
+            admin_objects: false,
+            admin_requests: true,
             motd: false,
             grid_help: None,
             classic_bars: false,
@@ -1174,10 +1232,15 @@ mod tests {
             interface_keys: String::new(),
             ik_keys: String::new(),
             edit_particles: false,
+            save_to_contents: false,
+            build_options: Default::default(),
             health: Default::default(),
             hover_tips: Default::default(),
             world_overlays: Default::default(),
             show_transparency: false,
+            hidden_types: Default::default(),
+            render_type_keys: Default::default(),
+            ui_feature_keys: Default::default(),
             conversation_thumbnails: 0,
         }
     }
@@ -1527,9 +1590,7 @@ mod tests {
         let mut st = status(true, true);
         let width = |st: &StatusInfo| {
             let mut w = 0.0;
-            let mut out = ctx.run_ui(Default::default(), |ui| {
-                w = account_width(ui, &crate::theme::Theme::default().palette(), st)
-            });
+            let mut out = ctx.run_ui(Default::default(), |ui| w = account_width(ui, st));
             out.textures_delta.clear();
             w
         };
@@ -1548,6 +1609,25 @@ mod tests {
         let account = ctx.memory(|m| m.area_rect(Id::unique(("bars_island", "account")))).unwrap();
         assert_eq!(account.width(), hidden);
         assert_eq!(system_rect(&ctx).left() - account.right(), MARGIN);
+    }
+
+    /// The balance ticking does not resize the island (#2675): one digit
+    /// is as wide as another, only a new digit takes more room.
+    #[test]
+    fn the_account_island_keeps_its_width_while_the_balance_ticks() {
+        let ctx = egui::Context::default();
+        let mut st = status(true, true);
+        let mut width = |balance: i32| {
+            st.balance = Some(balance);
+            let mut w = 0.0;
+            let mut out = ctx.run_ui(Default::default(), |ui| w = account_width(ui, &st));
+            out.textures_delta.clear();
+            w
+        };
+        let first = width(11_111);
+        assert_eq!(width(88_888), first);
+        assert_eq!(width(10_750), first);
+        assert!(width(111_111) > first);
     }
 
     /// A readout keeps the widest width it needed in the last `HOLD`
@@ -1856,6 +1936,7 @@ mod tests {
             adapters: Vec::new(),
             notice: None,
             vulkan: None,
+            ray_tracing: Default::default(),
         };
         let input = egui::RawInput {
             screen_rect: Some(screen),
@@ -2025,5 +2106,56 @@ mod tests {
             frame(&ctx, &mut open);
         }
         assert_eq!(perf_rect(&ctx).width(), compact_w, "the frame rate opens the compact view");
+    }
+
+    /// LLLocationInputCtrl::changeLocationPresentation
+    /// (indra/newview/lllocationinputctrl.cpp): under @showloc the location
+    /// field still opens on the SLURL, "(Hidden region)" in it, and the
+    /// place menu copies it (LLStatusBar::onContextMenuItemClicked "copy").
+    #[test]
+    fn showloc_keeps_the_location_field_open_on_the_hidden_slurl() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let skin = crate::ui::skin::Layout::default();
+        let settings = crate::settings::Settings::default();
+        let mut panels = Panels::from_settings(&settings);
+        let mut audio = settings.audio.clone();
+        let mut audio_ui = crate::ui::audio::AudioUi::default();
+        let mut notif = crate::ui::notifications::NotifUi::default();
+        let hidden = "http://maps.secondlife.com/secondlife/(Hidden region)".to_owned();
+        let mut st = status(false, false);
+        st.classic_bars = true;
+        st.location_hidden = true;
+        st.region = "(Hidden region)";
+        st.parcel = "(Hidden parcel)";
+        st.slurl = hidden.clone();
+        assert!(super::super::place::slurl_copy_enabled(&st), "the hidden SLURL is copied");
+        panels.nav_edit = Some(hidden.clone());
+        panels.nav_edit_new = true;
+        for frame in 0..4 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0))),
+                time: Some(0.1 * f64::from(frame)),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                super::super::top_bars(
+                    ui,
+                    &p,
+                    &icons,
+                    &skin,
+                    &mut panels,
+                    &st,
+                    &mut audio,
+                    &mut audio_ui,
+                    Default::default(),
+                    &mut notif,
+                    BellState::default(),
+                );
+            });
+            out.textures_delta.clear();
+        }
+        assert_eq!(panels.nav_edit.as_deref(), Some(hidden.as_str()), "the field stays open");
     }
 }

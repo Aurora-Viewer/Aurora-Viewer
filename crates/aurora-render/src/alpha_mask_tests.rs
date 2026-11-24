@@ -69,7 +69,13 @@ fn vertex(i:u32,inst:u32)->VsOut {{
     });
     let mut records = Vec::new();
     for cutoff in [0.0_f32, 0.33, 0.5, 1.0] {
-        for (left, right) in [(0.0, 0.0), (0.0, 1.0), (cutoff, cutoff), (1.0, 1.0)] {
+        for (left, right) in [
+            (0.0, 0.0),
+            (0.0, 1.0),
+            (cutoff, cutoff),
+            (1.0, 1.0),
+            ((cutoff - 1.0 / 255.0).max(0.0), (cutoff - 1.0 / 255.0).max(0.0)),
+        ] {
             records.push([left, right, 0.0, cutoff]);
         }
     }
@@ -173,7 +179,7 @@ fn vertex(i:u32,inst:u32)->VsOut {{
                 });
                 let readback = device.create_buffer(&wgpu::BufferDescriptor {
                     label: None,
-                    size: u64::from(height) * 256 * 2,
+                    size: crate::readback::readback_size(u64::from(height) * 256 * 2),
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 });
@@ -236,6 +242,22 @@ fn vertex(i:u32,inst:u32)->VsOut {{
                 images[0], images[1],
                 "Mask colour/gbuffer/sample depth: samples={samples}, gbuffer={gbuffer}"
             );
+            let pixel = |row: usize| {
+                let offset = (row * 16 + 8) * 256 + 32 * 4;
+                &images[0][offset..offset + 3]
+            };
+            for (row, &[left, right, _, cutoff]) in records.iter().enumerate() {
+                if left == right && left == cutoff {
+                    assert_eq!(
+                        pixel(row),
+                        pixel(0),
+                        "flat alpha at cutoff {cutoff} must fully cover the background"
+                    );
+                }
+                if left == right && left < cutoff {
+                    assert!(pixel(row)[1] > 180, "flat alpha below cutoff must show the background");
+                }
+            }
             assert!(
                 images[0].as_chunks::<4>().0.iter().any(|p| p[1] > 180),
                 "transparent pixels reveal the background"

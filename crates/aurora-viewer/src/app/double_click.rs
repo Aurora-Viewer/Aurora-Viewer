@@ -1,11 +1,21 @@
 //! The double click on the ground (src/autopilot.rs): walk, run or
-//! teleport to the point clicked, as Firestorm's `walk_to` / `teleport_to`
+//! teleport to the point clicked, as the Legacy Viewer's `walk_to` / `teleport_to`
 //! double-click bindings do (LLToolPie::walkToClickedLocation and
 //! teleportToClickedLocation, indra/newview/lltoolpie.cpp, originally LGPL
 //! 2.1), and the walk itself, frame after frame (LLAgent::autoPilot).
 
 use super::*;
 use crate::autopilot::{self, AutoPilot, DoubleClick, Finish};
+
+/// AURORA_DEMO_RT_WALK: where the walk began; the frames in which our
+/// avatar's ray-traced levels were left waiting and the farthest it stood
+/// from them (m); the same for any skeleton.
+#[derive(Default)]
+pub(super) struct RtWalkDemo {
+    from: Option<Vec3>,
+    own: (u32, f32),
+    any: (u32, f32),
+}
 
 impl App {
     /// What a double click on the ground does in this session.
@@ -37,19 +47,22 @@ impl App {
         if self.demo && std::env::var_os("AURORA_DEMO_DOUBLECLICK").is_some() {
             log::info!("demo double click: {action:?} at {point:?}");
         }
-        // LLToolPie::walkToClickedLocation / teleportToClickedLocation: under
-        // RLVa a point that a local teleport may not reach (@tplocal, @sittp,
-        // @unsit while seated) is refused, walking there included
         let global = self
             .world
             .main_origin()
             .map(|(x, y)| glam::DVec3::new(x as f64, y as f64, 0.0) + point.as_dvec3());
-        if action != DoubleClick::Nothing && global.is_some_and(|g| !self.world.rlva_can_teleport_global(g)) {
-            self.world.system_notice(
-                aurora_i18n::tr!("rlva-blocked-autopilot"),
-                crate::world::notice_topics::Topic::Warning,
-            );
-            return;
+        match self.world.rlva_double_click(global) {
+            crate::world::rlva::DoubleClickRlva::Go => {}
+            crate::world::rlva::DoubleClickRlva::Ignored => return,
+            crate::world::rlva::DoubleClickRlva::Blocked => {
+                if action != DoubleClick::Nothing {
+                    self.world.system_notice(
+                        aurora_i18n::tr!("rlva-blocked-autopilot"),
+                        crate::world::notice_topics::Topic::Warning,
+                    );
+                }
+                return;
+            }
         }
         match action {
             DoubleClick::Nothing => {}
@@ -59,9 +72,54 @@ impl App {
         }
     }
 
+    /// The second press of a double click on a prim with a one-click
+    /// `target` (a touch script, a click action): with "Allow double-click
+    /// action on scripted objects" (FSAllowDoubleClickOnScriptedObjects,
+    /// LLToolPie::handleDoubleClick and teleportToClickedLocation), the
+    /// double-click action takes it instead of the prim's own action, except
+    /// on a Sit prim, a HUD or something we wear. The HUDs' presses return
+    /// earlier in `world_press`: that guard only keeps the rule whole. The
+    /// first press of the double click has already had the prim's action.
+    /// True when it took the press.
+    pub(super) fn scripted_double_click(
+        &mut self,
+        double: bool,
+        idx: usize,
+        target: &crate::interaction::Target,
+        point: Vec3,
+        on_avatar: bool,
+    ) -> bool {
+        if !double || !self.settings.double_click_scripted || self.double_click_action() == DoubleClick::Nothing {
+            return false;
+        }
+        let pick = crate::interaction::double_click_pick(&self.world, idx, Some(target));
+        let pick = autopilot::ObjectPick {
+            hud_or_self: pick.hud_or_self || on_avatar,
+            ..pick
+        };
+        if !autopilot::object_takes_double_click(pick, true) || !autopilot::non_zero_global_pick(self.world.main_origin(), point) {
+            return false;
+        }
+        self.double_click_ground(point);
+        true
+    }
+
+    /// A double click that fell through to the ground path (no one-click
+    /// target took it): whether the prim under it, if any, lets the action
+    /// run, by the same rule as `scripted_double_click`. Once we sit, a Sit
+    /// prim has no Sit target left and lands here: the Legacy Viewer still
+    /// sees its click action and does not teleport us off the seat. The
+    /// land, and an object without a click action, always let it through.
+    pub(super) fn ground_double_click_allowed(&self, idx: Option<usize>) -> bool {
+        idx.is_none_or(|idx| {
+            let pick = crate::interaction::double_click_pick(&self.world, idx, None);
+            autopilot::object_takes_double_click(pick, self.settings.double_click_scripted)
+        })
+    }
+
     /// walkToClickedLocation: not while flying or manually sitting. Our own
     /// idle anchor releases before the walk and does not cancel its handover.
-    fn walk_to(&mut self, point: Vec3, run: bool) {
+    pub(super) fn walk_to(&mut self, point: Vec3, run: bool) {
         let agent = &self.world.agent;
         if agent.flying || self.native_anchor.blocks_walk(agent.seated, agent.ground_sit) || !point.is_finite() {
             return;
@@ -250,6 +308,8 @@ impl App {
             || i.strafe_right
             || i.up
             || i.down
+            // stop_moving also cancels the autopilot (llviewerinput.cpp)
+            || i.stop
             || i.joystick_yaw.abs() > 0.001
             || i.joystick_pitch.abs() > 0.001;
         let agent = &self.world.agent;
@@ -331,7 +391,7 @@ impl App {
             self.input.nudge_fb = step.flags & control::FAST_AT == 0;
             self.input.up |= step.flags & control::UP_POS != 0;
             self.input.down |= step.flags & control::UP_NEG != 0;
-            self.input.run |= run;
+            self.input.run |= run && !self.world.rlva.has("temprun");
         }
     }
 
@@ -394,6 +454,54 @@ impl App {
                     modifiers: egui::Modifiers::NONE,
                 });
             }
+        }
+    }
+
+    /// AURORA_DEMO_RT_WALK=1: our avatar, heavy and hatted
+    /// (`demo::rt_walk_events`), walks 8 m from frame 700 and the log says at
+    /// frame 940 whether the ray tracer followed it: at each frame, how far
+    /// our avatar stood from the levels its shadow is traced from
+    /// (`Renderer::rt_avatar_behind`), and the same for the farthest of all
+    /// the skeletons (`Renderer::rt_skeletons_waiting`).
+    pub(super) fn demo_rt_walk_steps(&mut self) {
+        const START: u64 = 700;
+        const END: u64 = 940;
+        if !crate::demo::rt_walk() || !(START..=END).contains(&self.frame_count) || !matches!(self.screen, Screen::World) {
+            return;
+        }
+        let at = self.world.agent.position;
+        if self.frame_count == START {
+            self.rt_walk_demo = RtWalkDemo {
+                from: Some(at),
+                ..Default::default()
+            };
+            self.walk_to(at + Vec3::new(8.0, 1.0, 0.0), false);
+            return;
+        }
+        let Some(from) = self.rt_walk_demo.from else {
+            return;
+        };
+        let Some(g) = &self.gfx else {
+            return;
+        };
+        let own = self
+            .scene
+            .palette_of(&self.world.agent_id)
+            .map_or(0.0, |base| g.renderer.rt_avatar_behind(base));
+        let (waiting, any) = g.renderer.rt_skeletons_waiting();
+        let d = &mut self.rt_walk_demo;
+        d.own = (d.own.0 + u32::from(own > 0.0), d.own.1.max(own));
+        d.any = (d.any.0 + u32::from(waiting > 0), d.any.1.max(any));
+        if self.frame_count == END {
+            log::info!(
+                "demo rt walk: the avatar walked {:.1} m in {} frames; its traced levels were left waiting in {} of them, {:.2} m behind at most (any skeleton's: {} frames, {:.2} m)",
+                at.distance(from),
+                END - START,
+                d.own.0,
+                d.own.1,
+                d.any.0,
+                d.any.1,
+            );
         }
     }
 

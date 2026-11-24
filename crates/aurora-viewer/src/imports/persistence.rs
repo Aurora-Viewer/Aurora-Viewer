@@ -59,6 +59,8 @@ pub struct Asset {
     material_index: usize,
     parameters: Option<Parameters>,
     size: [u32; 2],
+    #[serde(default)]
+    image_size_limit: Option<ImageSizeLimit>,
     lossless: bool,
     strip_alpha: bool,
     live: bool,
@@ -66,6 +68,8 @@ pub struct Asset {
     active: bool,
     model: usize,
     use_scale: bool,
+    #[serde(default)]
+    scene: bool,
     texture_target: usize,
     camera: [f32; 3],
     pan: [f32; 2],
@@ -129,6 +133,7 @@ impl Asset {
             material_index: entry.material_index,
             parameters,
             size: [entry.options.max_width, entry.options.max_height],
+            image_size_limit: Some(entry.image_size_limit),
             lossless: entry.options.lossless_small,
             strip_alpha: entry.options.strip_alpha,
             live: entry.local_live,
@@ -136,6 +141,7 @@ impl Asset {
             active: entry.local_published || entry.local_restore_active,
             model: entry.local_model,
             use_scale: entry.local_use_scale,
+            scene: entry.local_scene,
             texture_target: entry.texture_target,
             camera: [entry.view.yaw, entry.view.pitch, entry.view.distance],
             pan: entry.view.pan,
@@ -148,12 +154,14 @@ impl Asset {
         entry.id = self.id;
         entry.name = self.name.clone();
         entry.material_index = self.material_index;
+        entry.image_size_limit = self.image_size_limit();
         entry.local = true;
         entry.local_live = self.live;
         entry.local_assume_meters = self.meters;
         entry.local_restore_active = self.active;
         entry.local_model = self.model;
         entry.local_use_scale = self.use_scale;
+        entry.local_scene = self.scene;
         entry.texture_target = self.texture_target.min(9);
         [entry.view.yaw, entry.view.pitch, entry.view.distance] = self.camera;
         entry.view.pan = self.pan;
@@ -163,10 +171,26 @@ impl Asset {
         entry.watch = Some(local::Watch::new(paths.into_iter().chain(self.watched.iter().cloned()).collect()));
         entry.local_saved = Some(self.clone());
     }
+    fn image_size_limit(&self) -> ImageSizeLimit {
+        self.image_size_limit.unwrap_or_else(|| {
+            // Older materials used a fixed maximum rather than a user choice.
+            // Texture rows did remember an individual choice: preserve it.
+            if matches!(self.parameters, Some(Parameters::Texture)) {
+                if self.size[0].max(self.size[1]) <= 1024 {
+                    ImageSizeLimit::Size1024
+                } else {
+                    ImageSizeLimit::Size2048
+                }
+            } else {
+                ImageSizeLimit::Default
+            }
+        })
+    }
     pub fn restore(&self, prefs: &Preferences) -> Result<Entry, String> {
+        let maximum = self.image_size_limit().maximum(prefs.limit_texture_size);
         let options = import_texture::Options {
-            max_width: self.size[0],
-            max_height: self.size[1],
+            max_width: maximum,
+            max_height: maximum,
             lossless_small: self.lossless,
             strip_alpha: self.strip_alpha,
         };
@@ -183,7 +207,7 @@ impl Asset {
         if !self.path.is_file() {
             return Err(aurora_i18n::tr!("import-local-file-missing").into());
         }
-        let mut loaded = files::load(&self.path, choice, options, 30, &prefs, true).map_err(|error| error.to_string())?;
+        let mut loaded = files::load(&self.path, choice, options, 30, &prefs, true).map_err(files::load_error)?;
         if self.material_index >= loaded.len() {
             return Err(aurora_i18n::tr!("import-reload-material-count").into());
         }
@@ -291,6 +315,8 @@ impl Asset {
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Profile {
     meshes: Vec<(Uuid, local::Target)>,
+    #[serde(default)]
+    attachments: Vec<(Uuid, super::attachments::Identity)>,
     appearances: Vec<(Uuid, Option<u8>, crate::world::objects::LocalAppearance)>,
     #[serde(default)]
     appearance_expirations: Vec<(Uuid, Option<u8>, u64)>,
@@ -337,8 +363,10 @@ pub struct State {
     last: Vec<u8>,
     observed: Option<u64>,
     next: Option<Instant>,
-    appearance_expirations: HashMap<(Uuid, Option<u8>), u64>,
-    next_expiration: u64,
+    pub(super) appearance_expirations: HashMap<(Uuid, Option<u8>), u64>,
+    pub(super) attachments: HashMap<Uuid, super::attachments::Identity>,
+    pub(super) attachment_next: Option<Instant>,
+    pub(super) next_expiration: u64,
 }
 impl Drop for State {
     fn drop(&mut self) {
@@ -376,7 +404,7 @@ fn read_registry(path: &Path) -> Result<Registry, ()> {
         return Err(());
     }
     let registry: Registry = serde_json::from_slice(&bytes).map_err(|_| ())?;
-    if registry.version != 1 || registry.assets.len() > 512 {
+    if registry.version != 1 {
         return Err(());
     }
     let mut ids = HashSet::new();
@@ -420,20 +448,10 @@ impl Imports {
                 for profile in registry.profiles.values_mut() {
                     profile.expire_appearances(now);
                 }
-                let mut retained = 0usize;
                 let entries = registry
                     .assets
                     .iter()
-                    .map(|asset| {
-                        let entry = asset.restore(&prefs).unwrap_or_else(|message| asset.unavailable(message));
-                        let bytes = entry.source.as_ref().map_or(0, Source::retained_bytes);
-                        if retained.saturating_add(bytes) > 1024 * 1024 * 1024 {
-                            asset.unavailable(aurora_i18n::tr!("import-batch-limit").into())
-                        } else {
-                            retained += bytes;
-                            entry
-                        }
-                    })
+                    .map(|asset| asset.restore(&prefs).unwrap_or_else(|message| asset.unavailable(message)))
                     .collect();
                 Restored { registry, entries }
             });
@@ -477,10 +495,11 @@ impl Imports {
         };
         self.persistence.reader = None;
         match result {
-            Ok(restored) => {
+            Ok(mut restored) => {
                 self.persistence.registry = restored.registry;
                 if let Some(profile) = self.persistence.registry.profiles.get(&self.persistence.profile) {
                     self.local_targets.extend(profile.meshes.iter().cloned());
+                    self.persistence.attachments.extend(profile.attachments.iter().cloned());
                     self.local_appearance_targets.extend(
                         profile
                             .appearances
@@ -495,7 +514,11 @@ impl Imports {
                     );
                     self.persistence.next_expiration = 0;
                 }
-                self.entries.extend(restored.entries);
+                restored.entries.append(&mut self.entries);
+                self.entries = restored.entries;
+                for entry in &mut self.entries {
+                    entry.sync_image_size(self.load_preferences.limit_texture_size);
+                }
                 if self.active.is_none() {
                     self.active = self.entries.iter().find(|entry| self.choice.accepts(entry)).map(|entry| entry.id);
                 }
@@ -541,6 +564,7 @@ impl Imports {
                     entry.local_published || entry.local_restore_active,
                     entry.local_model,
                     entry.local_use_scale,
+                    entry.local_scene,
                     entry.texture_target,
                 ),
                 (
@@ -548,6 +572,7 @@ impl Imports {
                     entry.options.max_height,
                     entry.options.strip_alpha,
                     entry.options.lossless_small,
+                    entry.image_size_limit,
                 ),
             )
                 .hash(&mut hash);
@@ -568,6 +593,15 @@ impl Imports {
         for ((object, face), appearance) in &self.local_appearance_targets {
             (object, face, appearance, self.persistence.appearance_expirations[&(*object, *face)]).hash(&mut hash);
         }
+        let mut attachments: Vec<_> = self
+            .persistence
+            .attachments
+            .iter()
+            .filter(|(object, _)| self.local_appearance_targets.keys().any(|(id, _)| id == *object))
+            .map(|(id, identity)| (*id, identity.clone()))
+            .collect();
+        attachments.sort_by_key(|(id, _)| *id);
+        attachments.hash(&mut hash);
         let observed = hash.finish();
         if !force && self.persistence.observed == Some(observed) {
             return;
@@ -596,6 +630,7 @@ impl Imports {
             self.persistence.profile.clone(),
             Profile {
                 meshes,
+                attachments,
                 appearances,
                 appearance_expirations,
             },
@@ -708,6 +743,29 @@ impl Imports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_registry_keeps_more_than_512_materials() {
+        let files = Files::new();
+        let entry = files.entry("material-demo.gltf");
+        let template = Asset::capture(&entry);
+        let registry = Registry {
+            version: 1,
+            assets: (0..513)
+                .map(|_| {
+                    let mut asset = template.clone();
+                    asset.id = Uuid::new_v4();
+                    asset
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let path = files.0.join(FILE);
+        write_registry(&path, &serde_json::to_vec(&registry).unwrap()).unwrap();
+        let saved = read_registry(&path).expect("large local registry");
+        assert_eq!(saved.assets.len(), 513);
+        assert_eq!(saved.assets[512].id, registry.assets[512].id);
+    }
     struct Files(PathBuf);
     impl Files {
         fn new() -> Self {
@@ -956,6 +1014,115 @@ mod tests {
     }
 
     #[test]
+    fn saved_material_local_maps_resolve_to_the_same_files_after_restart() {
+        let files = Files::new();
+        let path = files.0.join(FILE);
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let account = profile(Uuid::from_u128(10), "grid-one");
+        let mut imports = restored(path.clone(), &account, &jobs);
+        for slot in 0..4 {
+            let name = format!("saved-map-{slot}.png");
+            image::save_buffer(files.0.join(&name), &[20 + slot as u8, 40, 80, 255], 1, 1, image::ColorType::Rgba8).expect("map file");
+            let mut entry = files.entry(&name);
+            entry.local_published = true;
+            imports.entries.push(entry);
+        }
+        let ids: Vec<_> = imports.entries.iter().map(|entry| entry.id).collect();
+        let material = PbrMaterial {
+            base_color_texture: Some(ids[0]),
+            normal_texture: Some(ids[1]),
+            metallic_roughness_texture: Some(ids[2]),
+            emissive_texture: Some(ids[3]),
+            ..Default::default()
+        };
+        let saved = material.encode_asset().expect("saved inventory material");
+        imports.flush_local_registry();
+        drop(imports);
+        let restarted = restored(path, &account, &jobs);
+        let saved = aurora_assets::parse_material_asset(&saved).expect("reopened material");
+        for (slot, id) in maps::ids(&saved).into_iter().enumerate() {
+            let entry = restarted
+                .entries
+                .iter()
+                .find(|entry| Some(entry.id) == id)
+                .expect("restored local ID");
+            let Some(Source::Texture(pixels)) = &entry.source else {
+                panic!("restored texture")
+            };
+            assert_eq!(pixels.data[0], 20 + slot as u8);
+            assert!(entry.local_restore_active, "publish the same local ID after login");
+        }
+        image::save_buffer(files.0.join("saved-map-0.png"), &[200, 40, 80, 255], 1, 1, image::ColorType::Rgba8).expect("edit map");
+        let reloaded = Asset::capture(&restarted.entries[0])
+            .restore(&Preferences::default())
+            .expect("reload file");
+        assert_eq!(Some(reloaded.id), saved.base_color_texture);
+        let Some(Source::Texture(pixels)) = reloaded.source else {
+            panic!("reloaded texture")
+        };
+        assert_eq!(pixels.data[0], 200, "file edits keep the material's texture ID");
+    }
+
+    #[test]
+    fn saved_image_overrides_survive_restoration_and_defaults_follow_current_preferences() {
+        let files = Files::new();
+        for path in ["texture-demo.png", "material-demo.gltf"] {
+            for choice in [ImageSizeLimit::Default, ImageSizeLimit::Size1024, ImageSizeLimit::Size2048] {
+                let mut entry = files.entry(path);
+                entry.image_size_limit = choice;
+                entry.sync_image_size(false);
+                let bytes = serde_json::to_vec(&Asset::capture(&entry)).expect("save image override");
+                let saved: Asset = serde_json::from_slice(&bytes).expect("read image override");
+                for shared in [true, false] {
+                    let prefs = Preferences {
+                        limit_texture_size: shared,
+                        ..Default::default()
+                    };
+                    let restored = saved.restore(&prefs).expect("restore original file");
+                    let maximum = choice.maximum(shared);
+                    assert_eq!(restored.image_size_limit, choice);
+                    assert_eq!((restored.options.max_width, restored.options.max_height), (maximum, maximum));
+                    assert_eq!(restored.id, entry.id);
+                    let unavailable = saved.unavailable("Temporarily missing".into());
+                    assert_eq!(unavailable.image_size_limit, choice, "a missing source retains its future override");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_saved_textures_keep_their_choice_and_materials_take_the_shared_limit() {
+        let files = Files::new();
+        for path in ["texture-demo.png", "material-demo.gltf"] {
+            for old_size in [1024, 2048] {
+                let entry = files.entry(path);
+                let mut json = serde_json::to_value(Asset::capture(&entry)).expect("old saved entry");
+                json.as_object_mut().expect("object").remove("image_size_limit");
+                json["size"] = serde_json::json!([old_size, old_size]);
+                let saved: Asset = serde_json::from_value(json).expect("read old format");
+                for shared in [true, false] {
+                    let prefs = Preferences {
+                        limit_texture_size: shared,
+                        ..Default::default()
+                    };
+                    let restored = saved.restore(&prefs).expect("restore old entry");
+                    let expected = if path.ends_with(".png") {
+                        if old_size == 1024 {
+                            ImageSizeLimit::Size1024
+                        } else {
+                            ImageSizeLimit::Size2048
+                        }
+                    } else {
+                        ImageSizeLimit::Default
+                    };
+                    assert_eq!(restored.image_size_limit, expected);
+                    assert_eq!(restored.options.max_width, expected.maximum(shared));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn restart_preserves_all_types_settings_and_bindings_and_removal_never_deletes_sources() {
         let files = Files::new();
         let path = files.0.join(FILE);
@@ -965,7 +1132,8 @@ mod tests {
         let mut imports = restored(path.clone(), &account, &jobs);
         let mut texture = files.entry("texture-demo.png");
         texture.name = "Remembered image".into();
-        texture.options.max_width = 128;
+        texture.image_size_limit = ImageSizeLimit::Size1024;
+        texture.sync_image_size(false);
         texture.options.strip_alpha = false;
         texture.local_live = false;
         texture.local_published = true;
@@ -986,6 +1154,8 @@ mod tests {
         map.path = Some(custom.clone());
         images[0] = Some(map);
         material.local_published = true;
+        material.image_size_limit = ImageSizeLimit::Size1024;
+        material.sync_image_size(false);
         let mut mesh = files.entry("mesh-demo.dae");
         mesh.local_published = true;
         mesh.local_use_scale = true;
@@ -1020,7 +1190,8 @@ mod tests {
                 .all(|entry| entry.local_restore_active && !entry.local_published)
         );
         assert_eq!(restarted.entries[0].name, "Remembered image");
-        assert_eq!(restarted.entries[0].options.max_width, 128);
+        assert_eq!(restarted.entries[0].options.max_width, 1024);
+        assert_eq!(restarted.entries[0].image_size_limit, ImageSizeLimit::Size1024);
         assert!(!restarted.entries[0].options.strip_alpha && !restarted.entries[0].local_live);
         assert_eq!(restarted.entries[0].view.yaw, 0.7);
         assert_eq!(restarted.entries[0].texture_target, 7);
@@ -1031,6 +1202,12 @@ mod tests {
         assert_eq!(value.roughness_factor, 0.8);
         assert_eq!(images[0].as_ref().expect("custom map").path.as_ref(), Some(&custom));
         assert!(restarted.entries[1].watch.as_ref().expect("watch").paths.contains(&custom));
+        assert_eq!(
+            (restarted.entries[1].options.max_width, restarted.entries[1].options.max_height),
+            (1024, 1024),
+            "a saved material's explicit 1K choice survives a restart"
+        );
+        assert_eq!(restarted.entries[1].image_size_limit, ImageSizeLimit::Size1024);
         let Some(Source::Mesh(draft)) = &restarted.entries[2].source else {
             panic!("restored mesh")
         };
@@ -1038,6 +1215,8 @@ mod tests {
         assert_eq!(draft.lods[1].error, 0.037);
         assert!(draft.lods[1].error_mode);
         assert_eq!(draft.preview_lod, 1);
+        assert!(restarted.entries[2].local_scene, "remember the complete-file choice");
+        assert!(restarted.local_targets[&object].scene, "restore the complete-file binding");
         assert_eq!(restarted.local_targets[&object].entry, ids[2]);
         assert_eq!(restarted.local_appearance_targets[&(object, Some(1))].entry(), ids[1]);
         let other = restored(path.clone(), &other_grid, &jobs);
@@ -1099,5 +1278,95 @@ mod tests {
         let key = profile(Uuid::from_u128(10), "https://grid.example/login");
         assert!(!key.contains("https") && !key.contains("grid.example"));
         assert_ne!(key, profile(Uuid::from_u128(11), "https://grid.example/login"));
+    }
+
+    #[test]
+    fn creator_attachment_bindings_survive_restart_and_new_object_ids() {
+        let files = Files::new();
+        let path = files.0.join(FILE);
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let mut imports = restored(path.clone(), "account", &jobs);
+        let entry = files.entry("texture-demo.png");
+        let texture = entry.id;
+        imports.entries.push(entry);
+        let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for event in crate::demo::events().into_iter().chain(crate::demo::worn::events()) {
+            world.apply(event);
+        }
+        let root = world.worn_attachment(&crate::demo::worn::item_id()).unwrap();
+        let family = crate::build::family(&world, root);
+        let ids: Vec<_> = family.iter().map(|i| world.objects.get(*i).unwrap().full_id).collect();
+        for id in &ids {
+            imports.target_local(texture, *id, &[0], false);
+        }
+        imports.sync_attachment_targets(&world);
+        let deadlines = imports.persistence.appearance_expirations.clone();
+        assert_eq!(imports.persistence.attachments.len(), 2);
+        imports.flush_local_registry();
+        let mut restarted = restored(path, "account", &jobs);
+        restarted.entries[0].local_published = true;
+        for i in family {
+            world.objects.remove_idx(i);
+        }
+        let aurora_net::NetEvent::ObjectUpdates { handle, mut objects } = crate::demo::worn::events().remove(0) else {
+            panic!("objects")
+        };
+        let new_root = objects[0].local_id + 100;
+        for (n, object) in objects.iter_mut().enumerate() {
+            object.local_id += 100;
+            object.full_id = Uuid::from_u128(0xabcdef00 + n as u128);
+            if n != 0 {
+                object.parent_id = new_root;
+            }
+        }
+        let new_ids: Vec<_> = objects.iter().map(|o| o.full_id).collect();
+        objects.reverse(); // Network arrival order must not determine the part.
+        world.apply(aurora_net::NetEvent::ObjectUpdates { handle, objects });
+        restarted.sync_attachment_targets(&world);
+        restarted.apply_appearance_targets(&mut world.objects);
+        for (old, new) in ids.iter().zip(&new_ids) {
+            assert!(!restarted.local_appearance_targets.contains_key(&(*old, Some(0))));
+            assert_eq!(
+                restarted.local_appearance_targets[&(*new, Some(0))],
+                crate::world::objects::LocalAppearance::Texture(texture)
+            );
+            assert_eq!(
+                restarted.persistence.appearance_expirations[&(*new, Some(0))],
+                deadlines[&(*old, Some(0))]
+            );
+            let object = world.objects.get(world.objects.index_of_uuid(new).unwrap()).unwrap();
+            assert_eq!(
+                object.local_texture(0, crate::world::objects::LocalTextureSlot::Diffuse),
+                Some(texture)
+            );
+            assert_ne!(object.te.as_ref().unwrap().face(0).texture, texture);
+        }
+    }
+
+    #[test]
+    fn creator_local_file_retries_after_transient_failure_without_timestamp_change() {
+        let files = Files::new();
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let ctx = egui::Context::default();
+        let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut entry = files.entry("texture-demo.png");
+        let id = entry.id;
+        let stamp = entry.watch.as_ref().unwrap().stamp.clone();
+        entry.source = None;
+        entry.status = Status::Error("Temporary file access failure".into());
+        let mut imports = Imports {
+            entries: vec![entry],
+            ..Default::default()
+        };
+        imports.tx.send(Worker::Watch(id, stamp)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while imports.entries[0].source.is_none() && Instant::now() < deadline {
+            imports.poll(&ctx, &jobs, &world, &Default::default());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(matches!(imports.entries[0].source, Some(Source::Texture(_))));
+        assert_eq!(imports.entries[0].id, id);
+        assert!(imports.entries[0].local);
     }
 }

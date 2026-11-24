@@ -36,6 +36,66 @@ pub(super) fn step(set: &Set, state: State, index: usize) -> Uuid {
 }
 
 #[test]
+fn movement_defaults_stay_running_on_region_except_for_special_pose_owners() {
+    let now = Instant::now();
+    let movement = [
+        State::Walking,
+        State::Running,
+        State::Crouching,
+        State::CrouchWalk,
+        State::Falling,
+        State::FlyingDown,
+        State::FlyingUp,
+        State::Flying,
+        State::FlyingSlow,
+        State::Hovering,
+    ];
+    let raw = [];
+    let ordinary = frame(&raw);
+    for state in movement {
+        assert!(!runtime::stop_region_signal(state, &ordinary), "{state:?}");
+    }
+    for state in [
+        State::Standing,
+        State::Sitting,
+        State::GroundSit,
+        State::Jumping,
+        State::TurningLeft,
+    ] {
+        assert!(runtime::stop_region_signal(state, &ordinary), "{state:?}");
+    }
+
+    // Each special hold decides for itself: the water and anchor holds own
+    // the whole pose, the run hold only the fall it bridges, and the native
+    // running hand-off nothing.
+    let hold = signal(State::Walking, now);
+    let mut swim = frame(&raw);
+    swim.swim_hold = Some((State::SwimmingForward, hold));
+    let mut water_walk = frame(&raw);
+    water_walk.water_walk_hold = Some((State::Walking, hold));
+    let mut outro = frame(&raw);
+    outro.swim_outro = true;
+    let mut anchor = frame(&raw);
+    anchor.anchor_hold = Some(hold);
+    for special in [&swim, &water_walk, &outro, &anchor] {
+        for state in movement {
+            assert!(runtime::stop_region_signal(state, special), "{state:?}");
+        }
+    }
+    let mut run = frame(&raw);
+    run.run_hold = Some(signal(State::Running, now));
+    run.native_running = true;
+    for state in movement {
+        assert_eq!(runtime::stop_region_signal(state, &run), state == State::Falling, "{state:?}");
+    }
+    let mut native = frame(&raw);
+    native.native_running = true;
+    for state in movement {
+        assert!(!runtime::stop_region_signal(state, &native), "{state:?}");
+    }
+}
+
+#[test]
 fn ao_choices_survive_settings_restart_reordering_groups_tracks_and_inactive_states() {
     let (_, mut set) = fixture();
     let config = set.states.get_mut(&State::Standing).expect("standing");
@@ -73,6 +133,7 @@ fn ao_choices_survive_settings_restart_reordering_groups_tracks_and_inactive_sta
         Account {
             enabled: true,
             selected: set.id,
+            mini_open: true,
             animations: runtime.take_choices(Some(&set)).expect("new selection"),
         },
     );
@@ -86,6 +147,7 @@ fn ao_choices_survive_settings_restart_reordering_groups_tracks_and_inactive_sta
     assert_eq!(account.animations[&standing_folder], group);
     assert_eq!(account.animations[&track_id], track_link);
     assert_eq!(account.animations[&walking_folder], walk);
+    assert!(account.mini_open, "the mini window preference survives a restart");
     let standing = set.states.get_mut(&State::Standing).expect("standing");
     standing.steps.swap(0, 1);
     standing.tracks[0].members.swap(0, 1);
@@ -776,18 +838,113 @@ fn locomotion_changes_stop_owned_and_replaced_system_animations_and_preserve_ges
     );
     let raw = [signal(State::Walking, now + Duration::from_secs(2)), gesture];
     let (_, cmd) = runtime.update(Some(&set), frame(&raw), now + Duration::from_secs(2), |_| true, |_| 0);
-    assert_eq!(
-        cmd,
-        vec![
-            (old.id, false),
-            (State::Walking.motion(), false),
-            (step(&set, State::Walking, 0), true)
-        ]
-    );
+    assert_eq!(cmd, vec![(old.id, false), (step(&set, State::Walking, 0), true)]);
     runtime.paused = true;
     let (pose, cmd) = runtime.update(Some(&set), frame(&raw), now + Duration::from_secs(3), |_| true, |_| 0);
     assert_eq!(pose, raw);
-    assert_eq!(cmd, vec![(step(&set, State::Walking, 0), false), (State::Walking.motion(), true)]);
+    assert_eq!(cmd, vec![(step(&set, State::Walking, 0), false)]);
+}
+
+#[test]
+fn ordinary_walk_and_run_overrides_leave_region_movement_running() {
+    let (_, set) = fixture();
+    let now = Instant::now();
+    for state in [State::Walking, State::Running] {
+        let mut runtime = Runtime::default();
+        let mut raw = vec![signal(state, now)];
+        let (pose, commands) = runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
+        assert!(pose.iter().any(|animation| animation.id == step(&set, state, 0)));
+        let mut stopped_default = commands.contains(&(state.motion(), false));
+        echo_simulator_commands(&mut raw, &commands, state, now);
+
+        // OpenSimulator changes a default animation to STAND when it receives
+        // STOP. Since ordinary walk/run must never be stopped, repeated
+        // simulator echoes leave the selected locomotion state intact.
+        for elapsed in [100, 1_000, 3_000] {
+            let at = now + Duration::from_millis(elapsed);
+            let (pose, commands) = runtime.update(Some(&set), frame(&raw), at, |_| true, |_| 0);
+            assert_eq!(runtime.current, Some(state));
+            assert!(pose.iter().any(|animation| animation.id == step(&set, state, 0)));
+            stopped_default |= commands.contains(&(state.motion(), false));
+            echo_simulator_commands(&mut raw, &commands, state, at);
+        }
+        assert!(!stopped_default);
+    }
+}
+
+#[test]
+fn ordinary_ground_run_with_the_run_hold_leaves_the_stock_run_on_the_region() {
+    // A normal run on supported ground: the movement enhancer's run hold and
+    // the native running hand-off are both set for the whole run.
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let run = signal(State::Running, now);
+    let mut runtime = Runtime::default();
+    let mut raw = vec![run];
+    let mut stopped_default = false;
+    for elapsed in [0, 100, 1_000, 3_000] {
+        let at = now + Duration::from_millis(elapsed);
+        let mut f = frame(&raw);
+        f.run_hold = Some(run);
+        f.native_running = true;
+        let (pose, commands) = runtime.update(Some(&set), f, at, |_| true, |_| 0);
+        assert_eq!(runtime.current, Some(State::Running));
+        assert!(pose.iter().any(|animation| animation.id == step(&set, State::Running, 0)));
+        assert!(!pose.iter().any(|animation| animation.id == run.id), "the local AO masks stock RUN");
+        stopped_default |= commands.contains(&(run.id, false));
+        echo_simulator_commands(&mut raw, &commands, State::Running, at);
+    }
+    assert!(!stopped_default, "a STOP of RUN resets OpenSimulator to STAND");
+    assert!(raw.contains(&run), "observers keep the region's run");
+}
+
+#[test]
+fn a_flickering_run_hold_never_starts_the_stock_fall_again() {
+    // Bumpy ground: the run hold comes and goes while the region reports a
+    // fall. The fall the hold stopped is forgotten without a START.
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let run = signal(State::Running, now);
+    let fall = signal(State::Falling, now + Duration::from_millis(50));
+    let mut runtime = Runtime::default();
+    let mut f = frame(std::slice::from_ref(&run));
+    f.run_hold = Some(run);
+    runtime.update(Some(&set), f, now, |_| true, |_| 0);
+    let mut raw = vec![fall];
+    let mut starts = 0;
+    let mut stops = 0;
+    for (i, hold) in [true, false, true, false, true].into_iter().enumerate() {
+        let at = now + Duration::from_millis(100 + 100 * i as u64);
+        let mut f = frame(&raw);
+        f.run_hold = hold.then_some(run);
+        let (_, commands) = runtime.update(Some(&set), f, at, |_| true, |_| 0);
+        starts += commands.iter().filter(|change| **change == (fall.id, true)).count();
+        stops += commands.iter().filter(|change| **change == (fall.id, false)).count();
+        // Second Life ends a stopped fall without a replacement default.
+        for (id, start) in &commands {
+            if !*start {
+                raw.retain(|animation| animation.id != *id);
+            }
+        }
+    }
+    assert_eq!(starts, 0, "no START of a stock motion");
+    assert_eq!(stops, 1, "one STOP, not a START / STOP pair per flicker");
+}
+
+fn echo_simulator_commands(raw: &mut Vec<PlayingAnimation>, commands: &[(Uuid, bool)], state: State, now: Instant) {
+    for (id, start) in commands {
+        if *start {
+            if *id != state.motion() && !raw.iter().any(|animation| animation.id == *id) {
+                raw.push(PlayingAnimation::from_signal(*id, 2, now, None));
+            }
+        } else if *id == state.motion() {
+            // OpenSimulator resets a stopped default movement animation to STAND.
+            raw.retain(|animation| animation.id != state.motion() && animation.id != State::Standing.motion());
+            raw.push(signal(State::Standing, now));
+        } else {
+            raw.retain(|animation| animation.id != *id);
+        }
+    }
 }
 
 #[test]
@@ -870,7 +1027,7 @@ fn typing_is_concurrent_and_completed_nonloops_do_not_restart() {
     r.finished(walk);
     let raw = [raw[0], signal(State::Typing, now + Duration::from_secs(1))];
     let (_, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(1), |_| true, |_| 0);
-    assert_eq!(cmd, vec![(step(&set, State::Typing, 0), true), (State::Walking.motion(), true)]);
+    assert_eq!(cmd, vec![(step(&set, State::Typing, 0), true)]);
     let (pose, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(2), |_| true, |_| 0);
     assert!(cmd.is_empty());
     assert!(!pose.iter().any(|a| a.id == walk));
@@ -954,7 +1111,7 @@ fn animation_groups_and_tracks_cycle_independently_of_locomotion() {
     let raw = [signal(State::Walking, now)];
     let (pose, cmd) = r.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
     assert_eq!(cmd.iter().filter(|(_, start)| *start).count(), 4);
-    assert!(cmd.contains(&(State::Walking.motion(), false)));
+    assert!(!cmd.contains(&(State::Walking.motion(), false)));
     assert!(pose.iter().any(|p| p.id == a));
     assert!(pose.iter().any(|p| p.id == b));
     let (_, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(1), |_| true, |_| 0);
@@ -1105,6 +1262,67 @@ fn adding_to_a_swimming_list_appends_without_replacing_links_or_originals() {
 }
 
 #[test]
+fn adding_to_an_ordered_state_sends_only_the_link() {
+    use crate::world::inventory::actions;
+    use aurora_net::inventory::operations::Operation;
+    let (mut inv, set) = fixture();
+    let reload = |inv: &mut Inventory| {
+        let mut catalog = inventory::Catalog::default();
+        catalog.refresh(inv);
+        catalog.selected(set.id).expect("set").clone()
+    };
+    let patches = |ops: &[Operation]| -> Vec<(Uuid, String)> {
+        ops.iter()
+            .filter_map(|op| match op {
+                Operation::Patch { id, body, .. } => {
+                    Some((*id, format!("{}{}", body["desc"].to_string_value(), body["name"].to_string_value())))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let walk = set.states[&State::Walking].steps[0].members[0].original;
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    actions::demo_mutate(&mut inv, Uuid::from_u128(1), change).expect("saved");
+    let mut set = reload(&mut inv);
+    let steps = set.states[&State::Standing].steps.clone();
+    assert_eq!(steps.iter().map(|s| s.order).collect::<Vec<_>>(), [0, 1, 2]);
+    // AOEngine::addAnimation: one link, no rewrite of the stands already there
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    assert!(
+        matches!(change.operations.as_slice(), [Operation::Links { links, .. }] if links[0].desc == "3"),
+        "{:?}",
+        change.operations
+    );
+    // updateSortOrder rewrites only the entry out of place
+    inv.items.get_mut(&steps[2].id).expect("link").desc = "5".into();
+    set = reload(&mut inv);
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    let rewritten = patches(&change.operations);
+    assert_eq!(rewritten.len(), 1);
+    assert_eq!(rewritten[0], (steps[2].id, "2".into()));
+    assert!(matches!(change.operations.last(), Some(Operation::Links { links, .. }) if links[0].desc == "3"));
+    // the same inside a group, and for the group folder's OR value
+    let selected = steps[..2].iter().map(|s| s.id).collect();
+    let (change, group) = inventory::editor::combine(&inv, &set, State::Standing, "Together", false, &selected).expect("group");
+    let reply = actions::demo_mutate(&mut inv, Uuid::from_u128(1), change).expect("saved");
+    set = reload(&mut inv);
+    let group = reply.created.get(&group).copied().unwrap_or(group);
+    let change = inventory::add(&inv, &set, State::Standing, walk, Some(group)).expect("add to group");
+    assert!(
+        matches!(change.operations.as_slice(), [Operation::Links { links, .. }] if links[0].desc == "2"),
+        "{:?}",
+        change.operations
+    );
+    inv.folders.get_mut(&group).expect("group").info.name = "Together:OR7".into();
+    set = reload(&mut inv);
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    let rewritten = patches(&change.operations);
+    assert_eq!(rewritten.len(), 2, "{rewritten:?}");
+    assert!(rewritten.contains(&(group, "Together:OR1".into())));
+}
+
+#[test]
 fn every_swimming_context_broadcasts_its_selected_animation_and_hands_back_on_exit() {
     let (_, mut set) = fixture();
     for (index, state) in State::SWIMMING.into_iter().enumerate() {
@@ -1210,4 +1428,178 @@ fn an_authored_water_recovery_stops_the_hold_without_starting_priority_six_swimm
     let (_, commands) = runtime.update(Some(&set), f, now + Duration::from_millis(180), |_| true, |_| 0);
     assert!(commands.contains(&(held, false)));
     assert!(commands.iter().all(|(_, start)| !start));
+}
+
+/// Issue #2700: like the Legacy AO (LLVOAvatar::startMotion, then
+/// AOEngine::override), ours leaves the stock sit to the simulator and only
+/// adds its sit and cover. The simulator's lists decide: a failed teleport
+/// keeps the stock sit and the AO's sit; a teleport that unseats us drops the
+/// stock sit, which ends the AO's sit with no stock state restored; an
+/// arrival list still carrying the stock sit keeps it only while listed. A
+/// teleport the simulator started unseats us after the arrival, which is the
+/// same list. A new sit afterwards is an ordinary sit.
+#[test]
+fn the_stock_sit_stays_to_the_simulator_and_its_stop_ends_the_ao_sit() {
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let at = |ms: u64| now + Duration::from_millis(ms);
+    let sit_override = step(&set, State::Sitting, 0);
+    let seated = |r: &mut Runtime, start: Instant| {
+        let raw = [PlayingAnimation::from_signal(State::Sitting.motion(), 1, start, None)];
+        let mut f = frame(&raw);
+        f.on_object = true;
+        let (pose, cmd) = r.update(Some(&set), f, start, |_| true, |_| 0);
+        assert_eq!(cmd, vec![(sit_override, true), (SIT_GENERIC, true)], "the stock sit is not stopped");
+        assert!(
+            !pose.iter().any(|a| a.id == State::Sitting.motion()),
+            "nor drawn under the AO's sit"
+        );
+        // the simulator's echo: the stock sit, our sit and its cover
+        let echo = [
+            raw[0],
+            PlayingAnimation::from_signal(sit_override, 2, start + Duration::from_millis(100), None),
+            PlayingAnimation::from_signal(SIT_GENERIC, 3, start + Duration::from_millis(100), None),
+        ];
+        let mut f = frame(&echo);
+        f.on_object = true;
+        assert!(
+            r.update(Some(&set), f, start + Duration::from_millis(100), |_| true, |_| 0)
+                .1
+                .is_empty()
+        );
+        assert_eq!(r.current, Some(State::Sitting));
+        echo
+    };
+    let ends_the_sit = |cmd: &[(Uuid, bool)]| {
+        cmd.contains(&(sit_override, false))
+            && cmd.contains(&(SIT_GENERIC, false))
+            && !cmd.contains(&(sit_override, true))
+            && !cmd.iter().any(|(id, _)| *id == State::Sitting.motion())
+    };
+
+    let mut r = Runtime::default();
+    let echo = seated(&mut r, now);
+    // a failed teleport: off the seat locally (teleportCore), still seated
+    // for the simulator, which keeps listing the stock sit
+    assert!(r.update(Some(&set), frame(&echo), at(200), |_| true, |_| 0).1.is_empty());
+    assert_eq!(r.current, Some(State::Sitting));
+    // the teleport unseats us: the stock sit leaves the list
+    let after = [echo[1], echo[2]];
+    let (pose, cmd) = r.update(Some(&set), frame(&after), at(3000), |_| true, |_| 0);
+    assert!(ends_the_sit(&cmd), "{cmd:?}");
+    assert_ne!(r.current, Some(State::Sitting));
+    assert!(!pose.iter().any(|a| a.id == sit_override || a.id == SIT_GENERIC));
+    // the next walk is an ordinary walk
+    let walk = [signal(State::Walking, at(4000))];
+    let (_, cmd) = r.update(Some(&set), frame(&walk), at(4000), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Walking));
+    assert!(cmd.contains(&(step(&set, State::Walking, 0), true)));
+
+    // the arrival list still carries the stock sit, then drops it
+    let mut r = Runtime::default();
+    let echo = seated(&mut r, now);
+    let mut f = frame(&echo);
+    f.region = Some(2);
+    r.update(Some(&set), f, at(3000), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Sitting), "overridden while listed");
+    let after = [echo[1], echo[2]];
+    let mut f = frame(&after);
+    f.region = Some(2);
+    let (_, cmd) = r.update(Some(&set), f, at(3200), |_| true, |_| 0);
+    assert!(ends_the_sit(&cmd), "{cmd:?}");
+    let mut f = frame(&[]);
+    f.region = Some(2);
+    r.update(Some(&set), f, at(5000), |_| true, |_| 0);
+    assert_ne!(r.current, Some(State::Sitting), "and stays ended");
+
+    // sitting on an object again is an ordinary sit
+    let echo = seated(&mut r, at(6000));
+    let mut f = frame(&echo);
+    f.on_object = true;
+    assert!(r.update(Some(&set), f, at(9000), |_| true, |_| 0).1.is_empty());
+    assert_eq!(r.current, Some(State::Sitting), "held while the simulator lists it");
+}
+
+/// The changes held back after a teleport to another region are sent as
+/// their net result: the last change of each animation, stops first.
+#[test]
+fn held_changes_keep_the_last_change_of_each_animation() {
+    let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+    let mut held = Vec::new();
+    runtime::hold_changes(&mut held, vec![(a, false), (b, true)]);
+    runtime::hold_changes(&mut held, vec![(b, false), (c, true)]);
+    runtime::hold_changes(&mut held, vec![(a, true)]);
+    assert_eq!(held, vec![(b, false), (c, true), (a, true)]);
+}
+
+/// FloaterAO::handleDragAndDrop takes a selection of animations
+/// (ACCEPT_YES_MULTI): one request links them all after the entries already
+/// there, in name order; one entry that is not an animation refuses the batch.
+#[test]
+fn a_dropped_selection_of_animations_is_linked_in_one_request() {
+    use crate::world::inventory::actions;
+    use aurora_net::inventory::operations::Operation;
+    let (mut inv, set) = fixture();
+    let mut picked: Vec<Animation> = Vec::new();
+    for config in set.states.values() {
+        for a in config.steps.iter().flat_map(|s| &s.members) {
+            if !picked.iter().any(|p| p.name == a.name) {
+                picked.push(a.clone());
+            }
+        }
+    }
+    assert!(picked.len() >= 3, "the demo set has several animations");
+    let picked = &picked[..3];
+    let mut ids: Vec<Uuid> = picked.iter().map(|a| a.original).collect();
+    ids.reverse();
+    let mut names: Vec<String> = picked.iter().map(|a| a.name.clone()).collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    let before = set.states[&State::Standing].steps.len();
+
+    // the same entry twice is linked once
+    let mut doubled = ids.clone();
+    doubled.push(ids[0]);
+    let change = inventory::add_many(&inv, &set, State::Standing, &doubled, None).expect("batch");
+    let [Operation::Links { parent, links }] = change.operations.as_slice() else {
+        panic!("one links request: {:?}", change.operations)
+    };
+    assert_eq!(*parent, set.states[&State::Standing].folder);
+    assert_eq!(links.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), names);
+    assert_eq!(
+        links.iter().map(|l| l.desc.clone()).collect::<Vec<_>>(),
+        (before..before + 3).map(|n| n.to_string()).collect::<Vec<_>>()
+    );
+    assert!(inventory::editable(&inv, &change, &Default::default()));
+    actions::demo_mutate(&mut inv, Uuid::from_u128(1), change).expect("saved");
+    let mut catalog = inventory::Catalog::default();
+    catalog.refresh(&mut inv);
+    let steps = &catalog.selected(set.id).expect("set").states[&State::Standing].steps;
+    assert_eq!(steps.len(), before + 3);
+    assert_eq!(steps[before..].iter().map(|s| s.name.clone()).collect::<Vec<_>>(), names);
+
+    // a folder, an unknown id or nothing at all: the whole batch is refused
+    for refused in [vec![ids[0], set.id], vec![Uuid::from_u128(0xdead), ids[1]], vec![]] {
+        let reason = inventory::add_many(&inv, &set, State::Standing, &refused, None).expect_err("refused");
+        assert_eq!(reason, aurora_i18n::tr!("ao-not-animation"));
+    }
+
+    // a state with no folder yet gets it once, holding the whole batch
+    let empty = State::ALL
+        .into_iter()
+        .find(|s| !set.states.contains_key(s))
+        .expect("a state without a folder");
+    let change = inventory::add_many(&inv, &set, empty, &ids, None).expect("new state");
+    let folders: Vec<Uuid> = change
+        .operations
+        .iter()
+        .filter_map(|op| match op {
+            Operation::Folder { id, parent, .. } if *parent == set.id => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(folders.len(), 1, "{:?}", change.operations);
+    assert!(matches!(
+        change.operations.last(),
+        Some(Operation::Links { parent, links }) if *parent == folders[0] && links.len() == 3 && links[0].desc == "0"
+    ));
 }

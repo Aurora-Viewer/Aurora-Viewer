@@ -1,4 +1,5 @@
 //! Native inventory commands and their current availability, before presentation.
+mod explorer;
 mod extra;
 use super::menu_layout::{Direction, Entry, Kind, LOCK, TEXT, children};
 use super::*;
@@ -13,6 +14,9 @@ pub(super) enum Command {
     Upload(usize, Uuid),
     Empty(Uuid),
     DefaultFolder(Vec<Uuid>),
+    /// Out of the Trash, each to the folder it came from, else to the
+    /// default folder of its type (`trash_origins`).
+    Restore(Vec<Uuid>),
     Delete(Vec<Uuid>, bool),
     Share(Vec<Uuid>),
     Open(Uuid),
@@ -23,10 +27,13 @@ pub(super) enum Command {
     BulkPermissions(Vec<Uuid>),
     Rename(Uuid),
     Image(Uuid),
-    Protect(Uuid),
+    Protect(Vec<Uuid>),
     FolderColor(Vec<Uuid>),
     Reload(Uuid),
-    Window(Uuid),
+    /// "Show in a new window": the folder's tree alone.
+    ShowWindow(Uuid),
+    /// "Open in a new window": a single folder window on it.
+    OpenWindow(Uuid),
     Asset(Uuid),
     Copy(Vec<Uuid>, bool),
     Move(Uuid),
@@ -39,6 +46,7 @@ pub(super) enum Command {
     Favorite(Vec<Uuid>, bool),
     Worn(crate::ui::context::CtxAction),
     Marketplace(Vec<Uuid>, bool),
+    Explorer(explorer::ExplorerCommand),
 }
 
 #[derive(Default)]
@@ -274,7 +282,30 @@ pub(super) fn lock_entry() -> Entry {
 }
 
 pub(super) fn build(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
-    build_mode(inv, id, st, prefs, facts, false)
+    let mut c = build_mode(inv, id, st, prefs, facts, false, false);
+    // Aurora's window: New labelled at the head of every menu, into the
+    // row's folder (a folder's own, an item's parent); the Legacy-style
+    // window keeps the Legacy Viewer's place for it
+    if st.aurora.is_some() {
+        explorer::new_first(&mut c.entries);
+    }
+    c
+}
+
+/// The menu of the explorer's empty space, showing `folder`: what acts on
+/// the folder shown rather than on the folder itself
+/// (`explorer::kept_in_background`).
+pub(super) fn build_background(inv: &Inventory, folder: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
+    let mut c = build_mode(inv, folder, st, prefs, facts, false, true);
+    c.entries.retain(explorer::kept_in_background);
+    // Recent, Worn and Favorites show no folder of their own: what acts on
+    // one goes
+    if st.tab != 0 {
+        c.entries
+            .retain(|e| !matches!(e.id.as_str(), "paste" | "paste-link" | "reload" | "properties" | "show-window"));
+    }
+    explorer::new_first(&mut c.entries);
+    c
 }
 
 /// Reuse the native definitions, independent of inventory contents and selection.
@@ -290,6 +321,7 @@ pub(super) fn editing_entries(live: &[Entry], facts: &Facts) -> Vec<Entry> {
                 &InventoryPreferences::default(),
                 &Facts::default(),
                 true,
+                false,
             )
             .entries
         })
@@ -323,7 +355,16 @@ pub(super) fn editing_entries(live: &[Entry], facts: &Facts) -> Vec<Entry> {
     entries
 }
 
-fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts, all: bool) -> Catalog {
+#[allow(clippy::too_many_arguments)]
+fn build_mode(
+    inv: &Inventory,
+    id: Uuid,
+    st: &InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    all: bool,
+    background: bool,
+) -> Catalog {
     let mut c = Catalog {
         editing: all,
         ..Default::default()
@@ -342,12 +383,22 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
     let worn = target.is_some_and(|id| facts.worn.contains(&id));
     let trash = rules::in_type(inv, id, 14);
     let linked = item.is_some_and(|it| matches!(it.asset_type, 24 | 25));
-    let to = folder.map(|_| id).or_else(|| rules::parent(inv, id));
+    // the empty space of Recent, Worn or Favorites lists no folder: New
+    // goes to its type's own folder (a nil parent, `App::apply_inventory_
+    // action`), as the Legacy Viewer's creation with no real folder
+    // selected (LLPanelMainInventory, findCategoryUUIDForType)
+    let shortcut = background && st.tab != 0;
+    let to = if shortcut {
+        Some(Uuid::nil())
+    } else {
+        folder.map(|_| id).or_else(|| rules::parent(inv, id))
+    };
     let trash_root = folder.is_some_and(|f| f.info.type_default == 14);
     let can_create = ready
-        && single
-        && !trash
-        && to.is_some_and(|to| rules::destination(inv, to) && inv.folders.get(&to).is_some_and(|f| f.info.type_default != 16));
+        && (shortcut
+            || single
+                && !trash
+                && to.is_some_and(|to| rules::destination(inv, to) && inv.folders.get(&to).is_some_and(|f| f.info.type_default != 16)));
     let new = c.group(
         "new",
         "top",
@@ -395,7 +446,8 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         "top",
         "cut",
         aurora_i18n::tr!("common-cut"),
-        ready && movable,
+        // LLInvFVBridge::canMenuCut: removable too, RLVa's folder locks included
+        ready && movable && ids.iter().all(|id| facts.rlva.removable(inv, *id)),
         Command::Copy(ids.clone(), true),
     );
     let paste = ready && single && to.is_some_and(|to| clipboard::paste_allowed(inv, st, to, prefs, facts));
@@ -473,9 +525,9 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             "restore",
             TEXT,
             "restore",
-            aurora_i18n::tr!("ui-inventory-context-restore-object"),
+            &restore_label(inv, &ids, c.editing),
             ready && movable,
-            Command::DefaultFolder(ids.clone()),
+            Command::Restore(ids.clone()),
         );
     }
     if !trash || all {
@@ -563,7 +615,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     c.invoke(
                         "play-world",
                         TEXT,
-                        "player-play-filled",
+                        "world-filled",
                         aurora_i18n::tr!("ui-inventory-context-play-in-second-life"),
                         single && !it.asset_id.is_nil(),
                         InvAction::Animation {
@@ -590,9 +642,17 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                         "play-sound",
                         TEXT,
                         "volume",
-                        aurora_i18n::tr!("common-play"),
+                        aurora_i18n::tr!("common-play-locally"),
                         single && !it.asset_id.is_nil(),
                         InvAction::Sound(it.asset_id),
+                    );
+                    c.invoke(
+                        "play-sound-world",
+                        TEXT,
+                        "world-filled",
+                        aurora_i18n::tr!("common-play-in-world"),
+                        single && !it.asset_id.is_nil(),
+                        InvAction::TriggerSound(it.asset_id),
                     );
                 }
                 if kind == 56 || all {
@@ -603,6 +663,14 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                         aurora_i18n::tr!("common-apply-to-myself-only"),
                         single && !it.asset_id.is_nil(),
                         InvAction::Environment(it.asset_id, it.flags),
+                    );
+                    c.invoke(
+                        "apply-save-parcel",
+                        TEXT,
+                        "map-pin-filled",
+                        aurora_i18n::tr!("parcel-environment-apply-save"),
+                        single && crate::world::inventory::actions::environment_applies_locally(it) && !facts.environment_locked,
+                        InvAction::EnvironmentSaveParcel(it.asset_id, it.flags),
                     );
                 }
             }
@@ -748,20 +816,33 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             share,
             Command::Share(ids.clone()),
         );
-        if all || folder.is_some_and(|f| matches!(f.info.type_default, -1 | 47 | 54) && !f.library) {
+        let lockable: Vec<Uuid> = if all {
+            vec![id]
+        } else {
+            ids.iter()
+                .copied()
+                .filter(|fid| {
+                    inv.folders
+                        .get(fid)
+                        .is_some_and(|f| matches!(f.info.type_default, -1 | 47 | 54) && !f.library)
+                })
+                .collect()
+        };
+        if all || !lockable.is_empty() {
+            let all_locked = !lockable.is_empty() && lockable.iter().all(|fid| prefs.protected.contains(fid));
             c.add(
                 "protect-folder",
                 TEXT,
                 "lock-filled",
                 if all {
                     aurora_i18n::tr!("inventory-menu-editor-protect")
-                } else if prefs.protected.contains(&id) {
+                } else if all_locked {
                     aurora_i18n::tr!("ui-inventory-context-unlock")
                 } else {
                     aurora_i18n::tr!("ui-inventory-context-lock")
                 },
                 true,
-                Command::Protect(id),
+                Command::Protect(lockable),
             );
         }
         if prefs.folder_colors_enabled && (all || folder.is_some()) {
@@ -867,7 +948,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         .filter(|it| !trash && super::context::exposes_asset_uuid(it.asset_type))
         .or_else(|| all.then_some(&placeholder))
     {
-        let asset = super::context::copyable_asset_uuid(inv, it);
+        let asset = super::context::copyable_asset_uuid(inv, it, facts.god);
         c.add(
             "asset-uuid",
             &organize,
@@ -970,17 +1051,23 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         );
     }
     if !trash || all {
+        // LLInvFVBridge::canMenuDelete (isItemRemovable(false)): Delete
+        // stays enabled on a worn selection, and asks to take it off first
+        // ("DeleteWornItems", `confirm_or_run`). No row of its own, as in
+        // the Legacy Viewer.
+        let detach = ready && super::delete::detach_allowed(inv, &ids, prefs, facts);
         c.add(
             "delete",
             "bottom",
             "trash-filled",
             aurora_i18n::tr!("common-delete"),
-            ready && super::delete::allowed(inv, &ids, prefs, facts),
+            ready && (super::delete::allowed(inv, &ids, prefs, facts) || detach),
             Command::Delete(ids, false),
         );
         c.slot("delete", 7);
     }
     extra::build(&mut c, inv, id, st, prefs, facts, all);
+    explorer::build(&mut c, inv, id, st, prefs, facts, all, background);
     if !all {
         super::listings::restrict(&mut c, inv, id);
     }
@@ -1002,7 +1089,7 @@ fn navigation(c: &mut Catalog, inv: &Inventory, id: Uuid, single: bool) {
         "external-link-filled",
         aurora_i18n::tr!("ui-inventory-context-show-in-a-new-window"),
         single,
-        Command::Window(id),
+        Command::ShowWindow(id),
     );
     c.add(
         "open-window",
@@ -1010,7 +1097,7 @@ fn navigation(c: &mut Catalog, inv: &Inventory, id: Uuid, single: bool) {
         "folder-open-filled",
         aurora_i18n::tr!("ui-inventory-context-open-in-a-new-window"),
         single,
-        Command::Window(id),
+        Command::OpenWindow(id),
     );
 }
 
@@ -1064,10 +1151,14 @@ fn item_attachments(
                 && !rules::in_type(inv, *id, 14)
                 && inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13))
         });
+    // The entries clicked (links or items), one per original when the
+    // selection is complete: a link is worn by its own folder's locks.
+    let entries = if selected.len() == ids.len() { ids } else { selected };
     // RLVa: what a lock forbids is greyed (ERlvWearMask in LLObjectBridge
-    // and LLWearableBridge::buildContextMenu, llinventorybridge.cpp).
+    // and LLWearableBridge::buildContextMenu, llinventorybridge.cpp, which
+    // ask for the entry itself: canAttach(item), canWear(item)).
     let rlva = |point: u8, replace: bool| {
-        selected.iter().all(|id| {
+        entries.iter().all(|id| {
             let wear = facts.rlva.wear(inv, *id, point);
             if replace { wear.replace } else { wear.add }
         })
@@ -1092,7 +1183,7 @@ fn item_attachments(
             aurora_i18n::tr!("common-add"),
             wear && rlva(0, false) && selected.iter().all(|id| inv.items.get(id).is_some_and(|it| it.asset_type != 13)),
             InvAction::Appearance(Wear::WearItems {
-                items: selected.to_vec(),
+                items: entries.to_vec(),
                 replace: false,
                 point: 0,
             }),
@@ -1121,7 +1212,7 @@ fn item_attachments(
                         &label,
                         wear && objects && rlva(*point, false),
                         Command::Invoke(InvAction::Appearance(Wear::WearItems {
-                            items: selected.to_vec(),
+                            items: entries.to_vec(),
                             replace: false,
                             point: *point,
                         })),
@@ -1155,6 +1246,53 @@ fn item_attachments(
     }
 }
 
+/// Where Restore puts `id` back: the folder it went to the Trash from
+/// (Windows' Recycle Bin), else the Legacy Viewer's place, the default
+/// folder of its type (LLItemBridge::restoreItem / LLFolderBridge::restoreItem,
+/// indra/newview/llinventorybridge.cpp).
+fn restore_folder(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    inv.trash_origins.origin(inv, id).or_else(|| rules::default_folder(inv, id))
+}
+
+/// "Restore to “Clothes”" when every entry came from one folder still
+/// there, "Restore to their folders" when some came from others, the Legacy
+/// Viewer's "Restore" when none is known.
+fn restore_label(inv: &Inventory, ids: &[Uuid], editing: bool) -> String {
+    let origins: Vec<Option<Uuid>> = ids.iter().map(|id| inv.trash_origins.origin(inv, *id)).collect();
+    match origins.first() {
+        Some(Some(first)) if !editing && origins.iter().all(|o| *o == Some(*first)) => {
+            aurora_i18n::tr!("inventory-restore-to", folder = rules::name(inv, *first))
+        }
+        _ if !editing && origins.iter().any(Option::is_some) => aurora_i18n::tr!("inventory-restore-to-origins").to_owned(),
+        _ => aurora_i18n::tr!("ui-inventory-context-restore-object").to_owned(),
+    }
+}
+
+/// The properties of `ids`, each in a window of its own (one already open
+/// for an item is kept, not doubled), the list free behind them.
+pub(super) fn properties_windows(st: &mut InventoryUi, ids: Vec<Uuid>) {
+    for id in ids {
+        if !st
+            .windows
+            .iter()
+            .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
+        {
+            let state = InventoryUi {
+                ui_id: Uuid::new_v4(),
+                dialog: Some(EditDialog::Properties(id)),
+                ..Default::default()
+            };
+            st.windows.push(InventoryWindow {
+                id: state.ui_id,
+                root: Uuid::nil(),
+                additional: false,
+                state: Box::new(state),
+                open: false,
+            });
+        }
+    }
+}
+
 pub(super) fn execute(
     command: Command,
     ui: &egui::Ui,
@@ -1174,7 +1312,11 @@ pub(super) fn execute(
     match command {
         Command::Extra(command) => extra::execute(command, ui, inv, st, prefs, facts, actions),
         Command::Invoke(action) => actions.push(action),
-        Command::Folder(id) => submit(rules::create_folder(id, aurora_i18n::tr!("common-new-folder"))),
+        // nil: from Recent, Worn or Favorites, at the top
+        Command::Folder(id) => submit(rules::create_folder(
+            if id.is_nil() { inv.root } else { id },
+            crate::text_validation::default_name("common-new-folder"),
+        )),
         Command::Upload(slot, id) => prefs.upload_folders[slot] = id,
         Command::Empty(id) => st.dialog = Some(EditDialog::Empty(id)),
         Command::DefaultFolder(ids) => {
@@ -1187,10 +1329,28 @@ pub(super) fn execute(
             });
             submit(plan);
         }
-        Command::Delete(ids, purge) => st.dialog = Some(EditDialog::Delete(ids, purge)),
+        Command::Restore(ids) => {
+            let plan = ids.iter().try_fold(Mutation::default(), |mut plan, id| {
+                let to = restore_folder(inv, *id).ok_or_else(|| aurora_i18n::tr!("common-folder-not-found").to_owned())?;
+                let change = rules::move_selection(inv, &[*id], to, &prefs.protected, &facts.worn)?;
+                plan.operations.extend(change.operations);
+                plan.refresh.extend(change.refresh);
+                Ok::<_, String>(plan)
+            });
+            submit(plan);
+        }
+        Command::Delete(ids, purge) => {
+            if purge {
+                // Permanent delete always asks (PurgeSelectedItems has no ignore).
+                st.dialog = Some(EditDialog::Delete(ids, true));
+            } else {
+                super::delete::confirm_or_run(inv, st, prefs, facts, actions, ids);
+            }
+        }
         Command::Share(ids) => {
             st.share_items = ids;
-            st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
+            // LLAvatarActions::shareWithAvatars: allow_multiple true
+            st.share_picker.open(&format!("inventory_share_{}", st.ui_id), true);
         }
         Command::Open(id) => super::context::open(inv, id, st, actions),
         Command::OpenMany(ids) => {
@@ -1199,28 +1359,7 @@ pub(super) fn execute(
             }
         }
         Command::Batch(batch) => actions.extend(batch),
-        Command::PropertiesMany(ids) => {
-            for id in ids {
-                if !st
-                    .windows
-                    .iter()
-                    .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
-                {
-                    let state = InventoryUi {
-                        ui_id: Uuid::new_v4(),
-                        dialog: Some(EditDialog::Properties(id)),
-                        ..Default::default()
-                    };
-                    st.windows.push(InventoryWindow {
-                        id: state.ui_id,
-                        root: Uuid::nil(),
-                        additional: false,
-                        state: Box::new(state),
-                        open: false,
-                    });
-                }
-            }
-        }
+        Command::PropertiesMany(ids) => properties_windows(st, ids),
         Command::Properties(id) => {
             st.property_edit = None;
             st.dialog = Some(EditDialog::Properties(id));
@@ -1228,17 +1367,32 @@ pub(super) fn execute(
         Command::BulkPermissions(ids) => st.open_bulk_permissions(ids),
         Command::Rename(id) => st.begin_rename(inv, id),
         Command::Image(id) => st.thumbnail.open(id),
-        Command::Protect(id) => {
-            if !prefs.protected.remove(&id) {
-                prefs.protected.insert(id);
+        Command::Protect(ids) => {
+            // The Legacy Viewer shows Protect and Unprotect as two entries, each
+            // acting on every selected folder: LLInventoryAction::doToSelected
+            // (indra/newview/llinventoryfunctions.cpp) calls LLFolderBridge's
+            // protect_folder / unprotect_folder (indra/newview/llinventorybridge.cpp,
+            // FIRE-29342) for each of them. Aurora keeps one toggle entry and
+            // applies it to the whole selection: all locked -> unlock them all,
+            // otherwise lock them all.
+            let all_locked = !ids.is_empty() && ids.iter().all(|id| prefs.protected.contains(id));
+            if all_locked {
+                for id in ids {
+                    prefs.protected.remove(&id);
+                }
+            } else {
+                for id in ids {
+                    prefs.protected.insert(id);
+                }
             }
         }
         Command::FolderColor(ids) => st.folder_color = Some(super::folder_colors::Picker::new(prefs, ids)),
         Command::Reload(id) => {
             st.message.clear();
-            actions.push(InvAction::Preview(id));
+            actions.push(InvAction::Preview(id, Some(clipboard::focus_id(st))));
         }
-        Command::Window(id) => st.open_folder_window(id),
+        Command::ShowWindow(id) => st.open_folder_window(id),
+        Command::OpenWindow(id) => st.open_single_folder_window(id),
         Command::Asset(id) => ui.ctx().copy_text(id.to_string()),
         Command::Copy(ids, cut) => clipboard::store(ui.ctx(), st, ids, cut),
         Command::Move(id) => st.begin_move_to(id),
@@ -1258,6 +1412,7 @@ pub(super) fn execute(
         }),
         Command::Worn(action) => crate::ui::context::request(ui.ctx(), action),
         Command::Marketplace(ids, copy) => submit(rules::marketplace(inv, &ids, copy, &prefs.protected, &facts.worn)),
+        Command::Explorer(command) => explorer::execute(command, ui, inv, st, prefs, facts, actions),
     }
 }
 
@@ -1284,6 +1439,123 @@ mod tests {
         crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
         inv
     }
+    #[test]
+    fn sound_menu_separates_local_and_world_playback_for_items_links_and_bulk_selection() {
+        let mut inv = inventory();
+        let sound = Uuid::from_u128(8105);
+        let link = Uuid::from_u128(8113);
+        inv.items.get_mut(&link).expect("link").asset_id = sound;
+        let asset = inv.items[&sound].asset_id;
+        for ids in [vec![sound], vec![link], vec![sound, link]] {
+            let mut st = InventoryUi::default();
+            st.selection.extend(ids.iter().copied());
+            let c = build(&inv, ids[0], &st, &InventoryPreferences::default(), &facts());
+            for (key, label, local) in [
+                ("play-sound", aurora_i18n::tr!("common-play-locally"), true),
+                ("play-sound-world", aurora_i18n::tr!("common-play-in-world"), false),
+            ] {
+                let entry = c.entries.iter().find(|e| e.id == key).expect("sound action");
+                assert!(entry.enabled);
+                assert_eq!(entry.label, label);
+                let Kind::Action(index) = entry.kind else { panic!("action") };
+                let actions = match c.commands[index].as_ref().expect("command") {
+                    Command::Invoke(action) => vec![action],
+                    Command::Batch(batch) => batch.iter().collect(),
+                    _ => panic!("sound command"),
+                };
+                assert_eq!(actions.len(), ids.len());
+                assert!(
+                    actions
+                        .iter()
+                        .all(|action| matches!(action, InvAction::Sound(id) if local && *id == asset)
+                            || matches!(action, InvAction::TriggerSound(id) if !local && *id == asset))
+                );
+            }
+        }
+        inv.items.get_mut(&sound).expect("sound").asset_id = Uuid::nil();
+        let c = build(&inv, sound, &InventoryUi::default(), &InventoryPreferences::default(), &facts());
+        for key in ["play-sound", "play-sound-world"] {
+            assert!(!c.entries.iter().find(|e| e.id == key).expect("sound action").enabled);
+        }
+    }
+
+    #[test]
+    fn the_parcel_save_row_is_greyed_while_rlva_holds_the_environment() {
+        let mut inv = inventory();
+        let item = Uuid::from_u128(8103);
+        let settings = inv.items.get_mut(&item).expect("demo item");
+        settings.asset_type = 56;
+        settings.inv_type = 56;
+        settings.asset_id = Uuid::from_u128(4243);
+        let enabled = |facts: &Facts| {
+            let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), facts);
+            c.entries
+                .iter()
+                .find(|e| e.id == "apply-save-parcel")
+                .expect("parcel save row")
+                .enabled
+        };
+        assert!(enabled(&facts()));
+        let locked = Facts {
+            environment_locked: true,
+            ..facts()
+        };
+        assert!(!enabled(&locked));
+    }
+
+    #[test]
+    fn the_parcel_save_row_takes_a_no_copy_or_no_modify_environment() {
+        use crate::world::inventory::actions::{COPY, MODIFY, TRANSFER};
+        let item = Uuid::from_u128(8103);
+        for mask in [MODIFY | TRANSFER, COPY | TRANSFER, 0] {
+            let mut inv = inventory();
+            let settings = inv.items.get_mut(&item).expect("demo item");
+            settings.asset_type = 56;
+            settings.inv_type = 56;
+            settings.asset_id = Uuid::from_u128(4243);
+            settings.base_mask = mask;
+            settings.owner_mask = mask;
+            let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), &facts());
+            let row = c.entries.iter().find(|e| e.id == "apply-save-parcel").expect("parcel save row");
+            assert!(row.enabled, "mask {mask:#x}");
+        }
+    }
+
+    #[test]
+    fn the_parcel_save_row_takes_an_environment_whoever_owns_it() {
+        // AGENTS.md §2's owner cases, with no permission and with all
+        let me = Uuid::from_u128(2);
+        let group = Uuid::from_u128(4244);
+        let item = Uuid::from_u128(8103);
+        let facts = Facts { agent: me, ..facts() };
+        for (case, owner, group_owned, library) in [
+            ("mine", me, false, false),
+            ("group-owned", group, true, false),
+            ("someone else's", Uuid::from_u128(4245), false, false),
+            ("the Library's", Uuid::from_u128(4246), false, true),
+        ] {
+            for mask in [crate::world::inventory::actions::FULL, 0] {
+                let mut inv = inventory();
+                let settings = inv.items.get_mut(&item).expect("demo item");
+                settings.asset_type = 56;
+                settings.inv_type = 56;
+                settings.asset_id = Uuid::from_u128(4243);
+                settings.base_mask = mask;
+                settings.owner_mask = mask;
+                settings.owner = owner;
+                settings.group_owned = group_owned;
+                settings.group_id = if group_owned { group } else { Uuid::nil() };
+                let parent = settings.parent;
+                if library {
+                    inv.folders.get_mut(&parent).expect("demo folder").library = true;
+                }
+                let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), &facts);
+                let row = c.entries.iter().find(|e| e.id == "apply-save-parcel").expect("parcel save row");
+                assert!(row.enabled, "{case}, mask {mask:#x}");
+            }
+        }
+    }
+
     #[test]
     fn landmark_destination_actions_use_link_targets_and_require_one_available_asset() {
         let mut inv = inventory();
@@ -1344,7 +1616,11 @@ mod tests {
         let prefs = InventoryPreferences::default();
         let state = InventoryUi::default();
         assert_eq!(build(&inv, folder, &state, &prefs, &facts()).prepare_outfit, Some(folder));
-        assert!(build_mode(&inv, folder, &state, &prefs, &facts(), true).prepare_outfit.is_none());
+        assert!(
+            build_mode(&inv, folder, &state, &prefs, &facts(), true, false)
+                .prepare_outfit
+                .is_none()
+        );
         let mut multi = InventoryUi::default();
         multi.selection.extend([folder, Uuid::from_u128(8100)]);
         assert!(build(&inv, folder, &multi, &prefs, &facts()).prepare_outfit.is_none());
@@ -1375,6 +1651,7 @@ mod tests {
             &prefs,
             &Facts::default(),
             true,
+            false,
         );
         assert!(metadata.commands.is_empty());
         assert!(
@@ -1390,6 +1667,7 @@ mod tests {
             "play-local",
             "play-sound",
             "apply-environment",
+            "apply-save-parcel",
             "gesture-active",
             "about-landmark",
             "copy-landmark-slurl",
@@ -1542,6 +1820,66 @@ mod tests {
                 .enabled
         );
     }
+    /// #4735: LLFolderBridge::addOpenFolderMenuOptions offers "Open" in a
+    /// single folder list only (the Legacy-style window of "Open in a new
+    /// window" outside a search, Aurora's explorer), never in the tree of a
+    /// "Show in a new window" window or the main tree; the two new-window
+    /// rows run their own command.
+    #[test]
+    fn open_is_offered_only_where_one_folder_is_listed_flat() {
+        let inv = inventory();
+        let folder = Uuid::from_u128(8001);
+        assert!(inv.folders.contains_key(&folder));
+        let prefs = InventoryPreferences::default();
+        let menu = |st: &InventoryUi| build(&inv, folder, st, &prefs, &facts());
+        let has_open = |st: &InventoryUi| menu(st).entries.iter().any(|e| e.id == "open-current");
+        let aurora = |layout| {
+            Some(super::super::aurora::Frame {
+                layout,
+                rights: prefs.rights,
+                columns: prefs.explorer,
+                explorer: false,
+            })
+        };
+        let tree = InventoryUi {
+            scope: Uuid::from_u128(8000),
+            ..Default::default()
+        };
+        assert!(!has_open(&InventoryUi::default()), "the main tree");
+        assert!(!has_open(&tree), "the tree of Show in a new window");
+        let single = InventoryUi {
+            single_folder: Some(super::super::single_folder::Nav::at(Uuid::from_u128(8000))),
+            ..Default::default()
+        };
+        assert!(has_open(&single), "the Legacy-style single folder window");
+        let searching = InventoryUi {
+            search: "hood".into(),
+            ..InventoryUi {
+                single_folder: single.single_folder.clone(),
+                ..Default::default()
+            }
+        };
+        assert!(!has_open(&searching), "its search results are a tree");
+        let medium = InventoryUi {
+            aurora: aurora(super::super::aurora::Layout::Medium),
+            ..Default::default()
+        };
+        assert!(has_open(&medium), "Aurora's explorer");
+        let compact = InventoryUi {
+            aurora: aurora(super::super::aurora::Layout::Compact),
+            ..Default::default()
+        };
+        assert!(!has_open(&compact), "Aurora's tree");
+        let c = menu(&tree);
+        let command = |key: &str| {
+            c.entries.iter().find(|e| e.id == key).and_then(|e| match &e.kind {
+                Kind::Action(index) => c.commands.get(*index).and_then(Option::as_ref),
+                _ => None,
+            })
+        };
+        assert!(matches!(command("show-window"), Some(Command::ShowWindow(id)) if *id == folder));
+        assert!(matches!(command("open-window"), Some(Command::OpenWindow(id)) if *id == folder));
+    }
     #[test]
     fn trash_has_exactly_its_five_commands_and_the_separator_precedes_reload() {
         let mut inv = inventory();
@@ -1605,5 +1943,117 @@ mod tests {
         let reopened: crate::settings::Settings = serde_json::from_str(&saved).unwrap();
         assert_eq!(reopened.inventory.context_menus, settings.inventory.context_menus);
         assert!(!reopened.inventory.context_menus.profiles.contains_key("type:photo"));
+    }
+
+    fn lockable_folder(id: Uuid, parent: Uuid) -> crate::world::inventory::Folder {
+        crate::world::inventory::Folder {
+            info: aurora_net::inventory::InvFolder {
+                id,
+                parent,
+                name: format!("Folder {id}"),
+                type_default: -1,
+                version: 1,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: crate::world::inventory::FetchState::Fetched,
+            library: false,
+        }
+    }
+
+    fn run_protect(ctx: &egui::Context, inv: &Inventory, state: &mut InventoryUi, prefs: &mut InventoryPreferences) {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            let mut catalog = build(inv, state.selected.unwrap_or(Uuid::nil()), state, prefs, &facts());
+            let entry = catalog.entries.iter().find(|e| e.id == "protect-folder").expect("protect-folder");
+            assert!(entry.enabled);
+            let Kind::Action(index) = entry.kind else { panic!("action entry") };
+            let command = catalog.commands[index].take().expect("command");
+            execute(command, ui, inv, state, prefs, &facts(), &mut actions);
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn protect_toggles_every_selected_lockable_folder() {
+        let mut inv = Inventory::default();
+        let a = Uuid::from_u128(9_001);
+        let b = Uuid::from_u128(9_002);
+        inv.folders.insert(a, lockable_folder(a, inv.root));
+        inv.folders.insert(b, lockable_folder(b, inv.root));
+        let mut prefs = InventoryPreferences::default();
+        let mut state = InventoryUi {
+            selected: Some(a),
+            selection: HashSet::from([a, b]),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+
+        // Every selected lockable folder is locked, like the Legacy Viewer's
+        // LLInventoryAction::doToSelected (indra/newview/llinventoryfunctions.cpp).
+        run_protect(&ctx, &inv, &mut state, &mut prefs);
+        assert!(prefs.protected.contains(&a) && prefs.protected.contains(&b));
+        let catalog = build(&inv, a, &state, &prefs, &facts());
+        let entry = catalog.entries.iter().find(|e| e.id == "protect-folder").unwrap();
+        assert_eq!(entry.label, aurora_i18n::tr!("ui-inventory-context-unlock"));
+
+        run_protect(&ctx, &inv, &mut state, &mut prefs);
+        assert!(!prefs.protected.contains(&a) && !prefs.protected.contains(&b));
+    }
+
+    #[test]
+    fn protect_mixed_selection_locks_all_then_unlocks_all() {
+        let mut inv = Inventory::default();
+        let a = Uuid::from_u128(9_011);
+        let b = Uuid::from_u128(9_012);
+        inv.folders.insert(a, lockable_folder(a, inv.root));
+        inv.folders.insert(b, lockable_folder(b, inv.root));
+        let mut prefs = InventoryPreferences::default();
+        prefs.protected.insert(a);
+        let mut state = InventoryUi {
+            selected: Some(a),
+            selection: HashSet::from([a, b]),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+
+        run_protect(&ctx, &inv, &mut state, &mut prefs);
+        assert!(prefs.protected.contains(&a) && prefs.protected.contains(&b), "mixed -> lock all");
+
+        run_protect(&ctx, &inv, &mut state, &mut prefs);
+        assert!(!prefs.protected.contains(&a) && !prefs.protected.contains(&b));
+    }
+
+    #[test]
+    fn protect_ignores_non_lockable_selection_members() {
+        let mut inv = inventory();
+        let folder = Uuid::from_u128(9_021);
+        inv.folders.insert(folder, lockable_folder(folder, inv.root));
+        let item = Uuid::from_u128(8100);
+        let system_folder = Uuid::from_u128(8002);
+        let library_folder = Uuid::from_u128(9_022);
+        inv.add_folders(
+            vec![aurora_net::inventory::InvFolder {
+                id: library_folder,
+                parent: inv.lib_root,
+                type_default: -1,
+                ..Default::default()
+            }],
+            true,
+        );
+        let mut prefs = InventoryPreferences::default();
+        let mut state = InventoryUi {
+            selected: Some(folder),
+            selection: HashSet::from([folder, item, system_folder, library_folder]),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+
+        run_protect(&ctx, &inv, &mut state, &mut prefs);
+        assert!(prefs.protected.contains(&folder));
+        assert!(!prefs.protected.contains(&item));
+        assert!(!prefs.protected.contains(&system_folder));
+        assert!(!prefs.protected.contains(&library_folder));
     }
 }
