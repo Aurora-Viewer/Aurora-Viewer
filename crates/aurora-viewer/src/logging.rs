@@ -584,6 +584,13 @@ pub fn init() {
             log::warn!("wgpu: {info}");
             return;
         }
+        // a renderer made after a device loss on a card that is lost again
+        // meanwhile: the recovery takes it as a failed start
+        // (aurora-render device_lost.rs `start_guarded`, app/gpu_recovery.rs)
+        if aurora_render::in_guarded_start() {
+            log::warn!("GPU recovery: the new renderer failed to start: {info}");
+            return;
+        }
         let bt = std::backtrace::Backtrace::force_capture();
         crate::crash::panic(info, &bt);
         log::error!("panic: {info}\n{bt}");

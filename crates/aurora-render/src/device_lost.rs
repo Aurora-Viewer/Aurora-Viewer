@@ -76,6 +76,41 @@ fn guarded<T>(wait: impl FnOnce() -> T) -> Option<T> {
     }
 }
 
+thread_local! {
+    static STARTING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// True while [`start_guarded`] runs on this thread: the panic hook leaves
+/// a panic now to it (aurora-viewer logging.rs).
+pub fn in_guarded_start() -> bool {
+    STARTING.with(Cell::get)
+}
+
+/// Makes a renderer right after a device loss, a panic in it returned as
+/// its message instead of ending the process. The card may still be
+/// resetting: its new device is then lost while the renderer starts, and
+/// wgpu answers the first buffer made on it (egui's, `create_buffer_init`,
+/// wgpu 30 `util/device.rs`) with a panic, "Buffer with '' label is
+/// invalid", rather than an error (#4508, the second loss "lost while
+/// starting"). The caller takes it as a failed start (gpu_recovery.rs).
+pub fn start_guarded<T>(start: impl FnOnce() -> T) -> Result<T, String> {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            STARTING.with(|g| g.set(false));
+        }
+    }
+    STARTING.with(|g| g.set(true));
+    let _reset = Reset;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(start)).map_err(|payload| {
+        payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+            .unwrap_or_else(|| "panic".to_owned())
+    })
+}
+
 /// Shared between the device-lost callback, the main thread and the render
 /// thread.
 #[derive(Clone, Debug, Default)]
@@ -425,6 +460,44 @@ mod tests {
     /// The tests that touch the process-wide loss details take turns: the
     /// test runner runs them in parallel.
     static DETAILS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn a_panic_while_starting_comes_back_as_its_message() {
+        assert!(!in_guarded_start());
+        assert_eq!(start_guarded(|| 7), Ok(7));
+        let failed = start_guarded(|| -> u32 {
+            assert!(in_guarded_start());
+            panic!("Buffer with '' label is invalid")
+        });
+        assert_eq!(failed, Err("Buffer with '' label is invalid".to_owned()));
+        assert!(!in_guarded_start(), "the flag is cleared after a panic too");
+    }
+
+    /// #4508: a device lost while the renderer starts (the card still
+    /// resetting) makes wgpu panic in the first buffer made on it, egui's;
+    /// `start_guarded` returns that as a failed start.
+    #[test]
+    fn a_buffer_on_a_device_lost_while_starting_is_a_failed_start() {
+        use wgpu::util::DeviceExt;
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        // what a driver reset does to it
+        device.destroy();
+        let started = start_guarded(|| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: &[0; 16],
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+        });
+        let message = started.expect_err("a buffer on a lost device panics in wgpu 30");
+        assert!(message.contains("invalid"), "{message}");
+    }
 
     #[test]
     fn the_callback_s_copy_tells_every_other() {

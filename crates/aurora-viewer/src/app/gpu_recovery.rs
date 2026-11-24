@@ -99,6 +99,12 @@ impl App {
 /// Losses closer than this count together.
 const LOSS_SPAN: Duration = Duration::from_secs(5 * 60);
 
+/// Starts of the renderer after a loss whose device is lost again while it
+/// starts, and the wait between them: time for the driver to finish
+/// resetting the card (#4508).
+const RESTART_ATTEMPTS: u32 = 2;
+const RESTART_WAIT: Duration = Duration::from_secs(2);
+
 /// What a device loss leads to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LossStep {
@@ -257,6 +263,39 @@ impl App {
         true
     }
 
+    /// The renderer after a loss. The card may still be resetting, and its
+    /// new device lost again while the renderer starts (#4508: "loss 2:
+    /// nothing submitted yet"), which wgpu answers with a panic rather than
+    /// an error (`aurora_render::start_guarded`): that start is made again
+    /// once, after `RESTART_WAIT`. None when no renderer could be made: the
+    /// caller closes as before, with the crash report.
+    fn open_renderer_after_loss(&mut self, window: &Arc<Window>) -> Option<Renderer> {
+        // AURORA_DEMO_GPU_RESTART_FAIL=1: the first start fails as on a
+        // device lost while it starts, with wgpu's panic (docs/TESTING.md)
+        let demo_fail = self.demo && std::env::var_os("AURORA_DEMO_GPU_RESTART_FAIL").is_some();
+        for attempt in 1..=RESTART_ATTEMPTS {
+            match aurora_render::start_guarded(|| {
+                if demo_fail && attempt == 1 {
+                    panic!("Failed to get mapped range for buffer created with mapped_at_creation: Buffer with '' label is invalid (AURORA_DEMO_GPU_RESTART_FAIL)");
+                }
+                self.open_renderer(window)
+            }) {
+                Ok(Ok(renderer)) => return Some(renderer),
+                Ok(Err(e)) => {
+                    log::error!("GPU recovery: no new renderer: {e}");
+                    return None;
+                }
+                Err(panic) => {
+                    log::error!("GPU recovery: the new device failed while the renderer started (attempt {attempt}): {panic}");
+                    if attempt < RESTART_ATTEMPTS {
+                        std::thread::sleep(RESTART_WAIT);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// A new window and renderer in place of the current ones, the session
     /// and the world kept, the scene reloaded on the new device; with the
     /// safe graphics level when `safe`. When it began, or None when no new
@@ -293,13 +332,7 @@ impl App {
                 return None;
             }
         };
-        let mut renderer = match self.open_renderer(&window) {
-            Ok(r) => r,
-            Err(e) => {
-                log::error!("GPU recovery: no new renderer: {e}");
-                return None;
-            }
-        };
+        let mut renderer = self.open_renderer_after_loss(&window)?;
         renderer.apply_settings(self.photo_render_settings());
         self.adopt_gpu_scene(&mut renderer);
         self.note_gpus(&renderer);
