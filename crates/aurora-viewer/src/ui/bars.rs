@@ -1981,13 +1981,31 @@ fn build_menu(
     // the shortcuts in the keys column, so that the toolbar buttons keep
     // the short labels (menu_viewer.xml: Ctrl+3, Ctrl+4, Ctrl+5); the menu
     // keys stay those saved interfaces already name
-    for (mode, entry, id, key) in [
-        (1, "entry-pencil-filled", "build_edit", "Digit3"),
-        (2, "entry-circle-plus-filled", "build_create", "Digit4"),
-        (3, "entry-mountain-filled", "build_land", "Digit5"),
+    for (mode, entry, id, label, key) in [
+        (
+            1,
+            "entry-pencil-filled",
+            "build_edit",
+            aurora_i18n::tr!("toolbar-command-build-edit"),
+            "Digit3",
+        ),
+        (
+            2,
+            "entry-circle-plus-filled",
+            "build_create",
+            aurora_i18n::tr!("toolbar-command-build-create"),
+            "Digit4",
+        ),
+        (
+            3,
+            "entry-mountain-filled",
+            "build_land",
+            aurora_i18n::tr!("toolbar-command-build-land"),
+            "Digit5",
+        ),
     ] {
         let keys = crate::keybinds::chord_label(key, true, false, false);
-        if menu::command(ui, p, entry).toolbar_command_keys_if(id, !locked, &keys) {
+        if menu::command(ui, p, entry).toolbar_command_keys_if(id, label, !locked, &keys) {
             *action = BarAction::Build(mode);
         }
     }

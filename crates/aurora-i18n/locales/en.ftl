@@ -15969,8 +15969,11 @@ toolbar-remove-from-menu = Remove from toolbar
 toolbar-command-build-edit = Edit objects
 toolbar-command-build-create = Create prims
 toolbar-command-build-land = Edit land
-toolbar-command-build-focus = Build camera
-toolbar-command-build-grab = Move objects
+toolbar-command-build-tool-focus = Build - Camera
+toolbar-command-build-tool-grab = Build - Move
+toolbar-command-build-tool-edit = Build - Edit
+toolbar-command-build-tool-create = Build - Create
+toolbar-command-build-tool-land = Build - Land
 
 # 360° snapshots: a format of the photo window (LLFloater360Capture, app/capture_360.rs)
 capture-360-quality-preview = Preview (fast)

@@ -2194,19 +2194,21 @@ fn menu_toolbar_stand_up_button_is_greyed_while_standing() {
     assert!(matches!(click(&mut bench, "stand_up"), bars::BarAction::StandUp));
 }
 
-/// The Build modes' buttons carry short labels like every other button; the
-/// menu shows their Ctrl+3/4/5 in its keys column.
+/// The Build modes' buttons carry short labels, "Build - " and the build
+/// window's tool, like every other button; the Build menu names them without
+/// the prefix and shows their Ctrl+3/4/5 in its keys column.
 #[test]
 fn menu_toolbar_build_buttons_have_short_labels() {
     for (id, label) in [
-        ("build_edit", aurora_i18n::tr!("toolbar-command-build-edit")),
-        ("build_create", aurora_i18n::tr!("toolbar-command-build-create")),
-        ("build_land", aurora_i18n::tr!("toolbar-command-build-land")),
-        ("build_focus", aurora_i18n::tr!("toolbar-command-build-focus")),
-        ("build_grab", aurora_i18n::tr!("toolbar-command-build-grab")),
+        ("build_focus", "Build - Camera"),
+        ("build_grab", "Build - Move"),
+        ("build_edit", "Build - Edit"),
+        ("build_create", "Build - Create"),
+        ("build_land", "Build - Land"),
     ] {
         let command = catalogue::find(id).expect("menu command");
-        assert_eq!(command.label(), label);
+        assert_eq!(command.label_in("en"), label);
+        let label = command.label();
         assert!(!label.contains("Ctrl") && !label.contains('('), "{id}: {label}");
     }
 }

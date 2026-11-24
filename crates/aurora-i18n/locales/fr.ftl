@@ -15978,8 +15978,11 @@ toolbar-remove-from-menu = Retirer de la barre d’outils
 toolbar-command-build-edit = Modifier des objets
 toolbar-command-build-create = Créer des prims
 toolbar-command-build-land = Modifier le terrain
-toolbar-command-build-focus = Caméra de construction
-toolbar-command-build-grab = Déplacer des objets
+toolbar-command-build-tool-focus = Construire - Caméra
+toolbar-command-build-tool-grab = Construire - Déplacer
+toolbar-command-build-tool-edit = Construire - Modifier
+toolbar-command-build-tool-create = Construire - Créer
+toolbar-command-build-tool-land = Construire - Terrain
 
 # La fenêtre Photo 360° (LLFloater360Capture, floater_360capture.xml)
 capture-360-quality-preview = Aperçu (rapide)

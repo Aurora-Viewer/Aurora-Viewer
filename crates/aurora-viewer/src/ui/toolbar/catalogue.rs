@@ -113,12 +113,13 @@ pub const COMMANDS: &[Command] = commands![
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
     // Build and Me menu commands that can be added directly to a toolbar.
     "ik_edit", "bone-filled", "ik-edit-title", true;
-    // the build window's Camera and Move tools, with its icons
-    "build_focus", "zoom-filled", "toolbar-command-build-focus", true;
-    "build_grab", "hand-grab", "toolbar-command-build-grab", true;
-    "build_edit", "pencil-filled", "toolbar-command-build-edit", true;
-    "build_create", "circle-plus-filled", "toolbar-command-build-create", true;
-    "build_land", "mountain-filled", "toolbar-command-build-land", true;
+    // the build window's five tools, "Build - " and its tool's name; Camera
+    // and Move with the window's icons
+    "build_focus", "zoom-filled", "toolbar-command-build-tool-focus", true;
+    "build_grab", "hand-grab", "toolbar-command-build-tool-grab", true;
+    "build_edit", "pencil-filled", "toolbar-command-build-tool-edit", true;
+    "build_create", "circle-plus-filled", "toolbar-command-build-tool-create", true;
+    "build_land", "mountain-filled", "toolbar-command-build-tool-land", true;
     "edit_particles", "sparkles-filled", "ui-bars-edit-particles", true;
     "import", "file-upload-filled", "import-menu", true;
     "blender_live", "cube-3d-sphere", "blender-live-title", true;

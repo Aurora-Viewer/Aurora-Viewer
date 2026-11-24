@@ -986,35 +986,36 @@ pub fn item(ui: &mut Ui, p: &Palette, icon: &str, label: &str) -> bool {
 /// its toolbar button. `menu::command(…, key).toolbar_command(id)` gives the
 /// same row a stable menu identity for interface customization.
 pub fn toolbar_command(ui: &mut Ui, p: &Palette, id: &'static str) -> bool {
-    catalogue_row(ui, p, id, true, End::None, "")
+    catalogue_row(ui, p, id, None, true, End::None, "")
 }
 
 pub fn toolbar_command_keys(ui: &mut Ui, p: &Palette, id: &'static str, keys: &str) -> bool {
-    toolbar_command_keys_if(ui, p, id, true, keys)
+    catalogue_row(ui, p, id, None, true, End::Keys(keys), "")
 }
 
 /// A catalogue command with its shortcut in the keys column, greyed out
-/// when `enabled` is false: the button keeps the short label.
-pub fn toolbar_command_keys_if(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, keys: &str) -> bool {
-    catalogue_row(ui, p, id, enabled, End::Keys(keys), "")
+/// when `enabled` is false, under the menu's own `label`: the Build menu's
+/// modes do not repeat the "Build - " their buttons and the catalogue carry.
+pub fn toolbar_command_keys_if(ui: &mut Ui, p: &Palette, id: &'static str, label: &str, enabled: bool, keys: &str) -> bool {
+    catalogue_row(ui, p, id, Some(label), enabled, End::Keys(keys), "")
 }
 
 pub fn toolbar_command_check(ui: &mut Ui, p: &Palette, id: &'static str, checked: bool) -> bool {
-    catalogue_row(ui, p, id, true, End::Check(checked), "")
+    catalogue_row(ui, p, id, None, true, End::Check(checked), "")
 }
 
 pub fn toolbar_command_tip(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, tip: &str) -> bool {
-    catalogue_row(ui, p, id, enabled, End::None, tip)
+    catalogue_row(ui, p, id, None, enabled, End::None, tip)
 }
 
-fn catalogue_row(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, end: End<'_>, tip: &str) -> bool {
+fn catalogue_row(ui: &mut Ui, p: &Palette, id: &'static str, label: Option<&str>, enabled: bool, end: End<'_>, tip: &str) -> bool {
     let Some(command) = super::toolbar::command(id) else { return false };
     // Unavailable actions can still be added to a toolbar for later use.
     let response = row_lead_sensed(
         ui,
         p,
         Lead::Icon(command.icon),
-        command.label(),
+        label.unwrap_or(command.label()),
         enabled,
         end,
         false,
