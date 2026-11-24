@@ -884,6 +884,14 @@ fn fsr_blend_motion() -> bool {
     *ON.get_or_init(|| std::env::var("AURORA_FSR_BLEND_MOTION").map_or(true, |v| v.trim() != "0"))
 }
 
+/// The planar reflections (water, mirror) draw their solid faces' depth
+/// first, then their colour at depth Equal; `AURORA_REFLECTION_PREPASS=0`
+/// keeps the single pass, for comparison (read once).
+fn reflection_prepass() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_REFLECTION_PREPASS").map_or(true, |v| v.trim() != "0"))
+}
+
 /// The replay of a frame's write journal is logged over this (ms).
 const SLOW_WRITES_MS: f32 = 4.0;
 
@@ -1218,6 +1226,11 @@ struct Pipelines {
     refl_terrain: wgpu::RenderPipeline,
     refl_terrain_pbr: wgpu::RenderPipeline,
     refl_obj: wgpu::RenderPipeline,
+    /// The planar reflections' solid faces in two steps
+    /// (`reflection_prepass`): their depth alone (`fs_reflect_depth`), then
+    /// `fs_reflect` at depth Equal.
+    refl_obj_depth: wgpu::RenderPipeline,
+    refl_obj_equal: wgpu::RenderPipeline,
     /// The mirror's blended faces (`fs_reflect_blend`): the rigged ones
     /// writing depth, then the others reading it.
     refl_blend_rigged: wgpu::RenderPipeline,
@@ -6129,6 +6142,22 @@ impl Backend {
             ..pick_desc("mask interaction pick 2s", None)
         });
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
+        let refl_obj_depth = pipe(PipeDesc {
+            vb: Vb::Mesh,
+            cull: None,
+            samples: 1,
+            write_mask: wgpu::ColorWrites::empty(),
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("reflection objects depth", "vs_main", "fs_reflect_depth")
+        });
+        let refl_obj_equal = pipe(PipeDesc {
+            vb: Vb::Mesh,
+            cull: None,
+            samples: 1,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Equal,
+            ..base("reflection objects equal", "vs_main", "fs_reflect")
+        });
         // the mirror's blended faces, as the main view's with
         // `RiggedBlendDepth::Write` (the Legacy Viewer's rule): the rigged
         // write their depth from 1/255 as they are drawn, the others only
@@ -6328,6 +6357,8 @@ impl Backend {
             refl_terrain: refl_terrain.resolve(&mut done),
             refl_terrain_pbr: refl_terrain_pbr.resolve(&mut done),
             refl_obj: refl_obj.resolve(&mut done),
+            refl_obj_depth: refl_obj_depth.resolve(&mut done),
+            refl_obj_equal: refl_obj_equal.resolve(&mut done),
             refl_blend_rigged: refl_blend_rigged.resolve(&mut done),
             refl_blend: refl_blend.resolve(&mut done),
             shadow: shadow.resolve(&mut done),
@@ -11506,8 +11537,18 @@ impl Backend {
             pass.draw(0..3, 0..1);
             draw(&mut pass, &self.pipelines.refl_terrain, terrain.0);
             draw(&mut pass, &self.pipelines.refl_terrain_pbr, terrain.1);
-            draw(&mut pass, &self.pipelines.refl_obj, objects);
-            draw_bin(&mut pass, Some(&self.pipelines.refl_obj), bin, bin);
+            if reflection_prepass() {
+                // depth first: fs_reflect discards after its lighting, so
+                // drawn alone it lights every layer that passes the depth
+                // test at its turn
+                draw(&mut pass, &self.pipelines.refl_obj_depth, objects);
+                draw_bin(&mut pass, Some(&self.pipelines.refl_obj_depth), bin, bin);
+                draw(&mut pass, &self.pipelines.refl_obj_equal, objects);
+                draw_bin(&mut pass, Some(&self.pipelines.refl_obj_equal), bin, bin);
+            } else {
+                draw(&mut pass, &self.pipelines.refl_obj, objects);
+                draw_bin(&mut pass, Some(&self.pipelines.refl_obj), bin, bin);
+            }
             draw(&mut pass, &self.pipelines.refl_blend_rigged, blended[0]);
             draw(&mut pass, &self.pipelines.refl_blend, blended[1]);
         }
