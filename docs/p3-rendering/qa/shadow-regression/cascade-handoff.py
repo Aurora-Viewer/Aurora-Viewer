@@ -70,7 +70,8 @@ def make_atlas(device):
 def production_test_shader(common):
     start = common.index("fn shadow_taps(")
     end = common.index("// Four-level directional shadow sampling", start)
-    factor = re.search(r"^fn shadow_factor\(.*?^\}", common, re.S | re.M).group()
+    factor = "\n".join(re.search(r"^fn " + fn + r"\(.*?^\}", common, re.S | re.M).group()
+                       for fn in ("shadow_factor", "mapped_shadow", "cascade_visibility"))
     constants = "\n".join(
         re.search(r"^const " + name + r":.*?;", common, re.M).group()
         for name in [

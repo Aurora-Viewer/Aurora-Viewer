@@ -2432,6 +2432,20 @@ fn screen_motion(cur: vec4<f32>, prev: vec4<f32>) -> vec2<f32> {
     return (cur.xy / cur.w - prev.xy / prev.w) * vec2<f32>(0.5, -0.5);
 }
 
+// The map's RGB tint identifies the graded cascades, and its alpha is their
+// geometric visibility. Combined visibility includes contact or ray tracing.
+// Lighting also includes the modern sky's shadow-intensity adjustment.
+struct SurfaceShadow {
+    map: vec4<f32>,
+    combined: f32,
+    lighting: f32,
+};
+const UNSHADOWED = SurfaceShadow(vec4<f32>(0.0, 0.0, 0.0, 1.0), 1.0, 1.0);
+
+fn displays_directional_shadow(mode: u32) -> bool {
+    return mode == RC_MODE_SHADOW_MAP_VISIBILITY || mode == RC_MODE_COMBINED_VISIBILITY || mode == RC_MODE_CASCADES;
+}
+
 // The view shown instead of the image (frame.render_controls.x, Preferences ›
 // Graphics › Light › Shadows or Dev Toolbox), or `col`.
 // 1 (also AURORA_DEBUG_SHADOWS): the cascade each pixel reads — red, green,
@@ -2442,19 +2456,19 @@ fn screen_motion(cur: vec4<f32>, prev: vec4<f32>) -> vec2<f32> {
 // 2: the ambient occlusion of the screen alone, light grey where nothing is
 // occluded (and everywhere when the effect is off), whatever the exposure
 // of the sky; cubed, the occlusion being too faint to read as it is.
-fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> vec3<f32> {
+fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, vertex_depth: f32, frag: vec2<f32>, shadow: SurfaceShadow) -> vec3<f32> {
     let view = frame.render_controls.x;
     // Visibility views all use white = lit, black = shadow. The map-only
     // view does not read the contact mask. Effective contact includes each
     // surface's eligibility for the active contact or ray-traced mask.
     if (view == RC_MODE_SHADOW_MAP_VISIBILITY) {
-        return vec3<f32>(shadow_factor(world_pos, n, vertex_depth));
+        return vec3<f32>(shadow.map.a);
     }
     if (view == RC_MODE_CONTACT_VISIBILITY && frame.render_controls.z != RC_BACKEND_NONE) {
         return vec3<f32>(contact_shadow(frag));
     }
     if (view == RC_MODE_COMBINED_VISIBILITY) {
-        return vec3<f32>(sun_visibility(world_pos, n, vertex_depth, frag));
+        return vec3<f32>(shadow.combined);
     }
     // Contact diagnostics use only the active tracer's metadata.
     // Third independent diagnostic view. The normal red contact-shadow
@@ -2528,8 +2542,7 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
     }
     if (view != RC_MODE_CASCADES) { return col; }
     if (frame.detail_params.x > 0.0) {
-        let result = graded_shadow(world_pos, n, graded_distance(world_pos));
-        return result.rgb * (0.12 + 0.88 * result.a);
+        return shadow.map.rgb * (0.12 + 0.88 * shadow.map.a);
     }
     let splits = frame.cascade_splits;
     var own_depth = vertex_depth;
@@ -2551,7 +2564,7 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
             w[k + 1u] = t;
         }
     }
-    return w * (0.12 + 0.88 * sun_shadow(world_pos, n, vertex_depth, frag));
+    return w * (0.12 + 0.88 * shadow.lighting);
 }
 
 // Contact depth includes opaque/masked receivers and half-covered blended
@@ -2632,7 +2645,7 @@ fn shared_light(i: i32, share: vec3<f32>) -> Light {
     return lt;
 }
 
-// The colour the glass gives the sunlight at this pixel, which `sun_shadow`
+// The colour the glass gives the sunlight at this pixel, which `surface_shadow`
 // reads with the traced shadow and the shading multiplies the sun by
 // (`shade_pbr`, the classic sky's `ll_classic_sun_ambient`,
 // `ll_classic_pbr`, a legacy face's highlights): 1 where the sun is not
@@ -2649,33 +2662,36 @@ fn combine_sun_visibility(map_visibility: f32, contact_visibility: f32) -> f32 {
     return min(map_visibility, contact_visibility);
 }
 
-// The map/contact diagnostic reads this geometric result before the artistic
-// intensity adjustment. The ray-traced mask already includes contact; other
-// receivers combine the directional maps with the screen-space contact mask.
-fn sun_visibility(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
-    if (frame.params.z < 0.5) {
-        return 1.0;
+// Evaluate each receiver's directional maps once. A traced receiver needs
+// its fallback maps only when a map diagnostic actually displays them.
+fn surface_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> SurfaceShadow {
+    let mode = frame.render_controls.x;
+    let enabled = frame.params.z >= 0.5;
+    let traced = frame.contact.z > 0.5 && contact_share > 0.0 && !in_reflection_pass();
+    let show_graded = mode == RC_MODE_CASCADES && frame.detail_params.x > 0.0;
+    var shadow = UNSHADOWED;
+    if ((enabled && (!traced || mode == RC_MODE_SHADOW_MAP_VISIBILITY)) || show_graded) {
+        shadow.map = mapped_shadow(world_pos, n, vertex_depth);
     }
-    // the traced mask holds where the surface is the prepass's
-    if (frame.contact.z > 0.5 && contact_share > 0.0 && !in_reflection_pass()) {
-        let p = vec2<i32>(frag);
-        let size = vec2<i32>(textureDimensions(sun_glass_tex));
-        if (contact_glass && all(p >= vec2<i32>(0)) && all(p < size)) {
-            sun_glass = textureLoad(sun_glass_tex, p, 0).rgb;
+    if (enabled) {
+        let contact = contact_shadow(frag);
+        if (traced) {
+            let p = vec2<i32>(frag);
+            let size = vec2<i32>(textureDimensions(sun_glass_tex));
+            if (contact_glass && all(p >= vec2<i32>(0)) && all(p < size)) {
+                sun_glass = textureLoad(sun_glass_tex, p, 0).rgb;
+            }
+            shadow.combined = contact;
+        } else {
+            shadow.combined = combine_sun_visibility(shadow.map.a, contact);
         }
-        return contact_shadow(frag);
+        // Classic sky applies intensity after min(N·L, visibility).
+        shadow.lighting = shadow.combined;
+        if (frame.sky_ll.x < 0.5) {
+            shadow.lighting = shadow_lift(shadow.combined);
+        }
     }
-    let mapped = shadow_factor(world_pos, n, vertex_depth);
-    return combine_sun_visibility(mapped, contact_shadow(frag));
-}
-
-fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
-    let visibility = sun_visibility(world_pos, n, vertex_depth, frag);
-    // Classic sky applies intensity after min(N·L, visibility).
-    if (frame.sky_ll.x < 0.5) {
-        return shadow_lift(visibility);
-    }
-    return visibility;
+    return shadow;
 }
 
 // The shadow with the shadow intensity: the share of the light a shadow lets
@@ -2697,9 +2713,17 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
     if (frame.params.z < 0.5) {
         return 1.0;
     }
+    return mapped_shadow(world_pos, n, vertex_depth).a;
+}
+
+fn mapped_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> vec4<f32> {
     if (frame.detail_params.x > 0.0) {
-        return graded_shadow(world_pos, n, graded_distance(world_pos)).a;
+        return graded_shadow(world_pos, n, graded_distance(world_pos));
     }
+    return vec4<f32>(0.0, 0.0, 0.0, cascade_visibility(world_pos, n, vertex_depth));
+}
+
+fn cascade_visibility(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
     let splits = frame.cascade_splits;
     // The cascade comes from the pixel's own distance to the camera, as for
     // the terrain and the water (and as Firestorm, which reads each pixel's

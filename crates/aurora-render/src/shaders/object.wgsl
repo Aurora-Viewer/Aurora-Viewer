@@ -1742,11 +1742,12 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     let classic = is_classic_sky();
     // Limit native shader expansion by sharing receiver visibility across
     // the sky models. Set the traced glass tint before thin backlighting.
-    var sh = 1.0;
-    if ((rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
-        // softenLightF: scol = max(shadow, emissive)
-        sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
+    var shadow = UNSHADOWED;
+    if ((rec.flags.x & FLAG_FULLBRIGHT) == 0u || displays_directional_shadow(frame.render_controls.x)) {
+        shadow = surface_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
     }
+    // softenLightF: scol = max(shadow, emissive)
+    let sh = max(shadow.lighting, m.unlit);
     // Keep one transmission-shadow callsite across the sky models. The
     // classic branch uses its atmospheric sun colour at this surface.
     var thin_backlight = vec3<f32>(0.0);
@@ -1825,7 +1826,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         col = apply_fog(col, in.world_pos);
     }
     var s: Shaded;
-    col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
+    col = debug_view(col, in.world_pos, in.view_depth, in.clip.xy, shadow);
     // Studio isolation leaves the live avatar and attachments in this pass.
     // Blend the final radiance, preserving material alpha/cutouts and never
     // editing their records. HUDs use fs_hud and scenery carries its own bit.

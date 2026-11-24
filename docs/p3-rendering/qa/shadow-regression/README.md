@@ -17,3 +17,5 @@ Each test compiles rendering functions from the checkout's WGSL and reads back t
 | `blended` | The 50% alpha boundary matches for contact prepass and receivers. Ambient occlusion keeps its own opacity rule. |
 
 These cases isolate shader behavior. Use the separate [bridge pullback](../bridge-pullback/README.md) for contact-filter behavior during camera motion and the [in-viewer matrix](../../VALIDATION.md) to compare actual content and frame time.
+
+The renderer test `shadow_display_reuses_surface_maps` checks the shader call graph for the three directional textures. Surface lighting samples the maps, and the map, combined-visibility and cascade display modes read the same per-surface result. The cascade handoff fixture exercises the scalar visibility used by independent receivers such as transmitted light.

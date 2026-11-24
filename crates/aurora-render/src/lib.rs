@@ -327,6 +327,29 @@ mod shader_tests {
     }
 
     #[test]
+    fn shadow_display_reuses_surface_maps() {
+        let module = naga::front::wgsl::parse_str(crate::COMMON_SHADER).expect("common shader parses");
+        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+            .validate(&module)
+            .expect("common shader validates");
+        let function = |name| module.functions.iter().find(|(_, f)| f.name.as_deref() == Some(name)).unwrap().0;
+        let surface = &info[function("surface_shadow")];
+        let display = &info[function("debug_view")];
+        // Naga includes transitive calls. The debug view must not pull a second
+        // directional filter into the same fragment program as surface lighting.
+        for name in ["shadow_map", "detail_shadow_map", "portrait_shadow_map"] {
+            let map = module
+                .global_variables
+                .iter()
+                .find(|(_, var)| var.name.as_deref() == Some(name))
+                .unwrap()
+                .0;
+            assert!(!surface[map].is_empty(), "surface lighting lost {name}");
+            assert!(display[map].is_empty(), "shadow display resampled {name}");
+        }
+    }
+
+    #[test]
     fn asset_preview_shader_is_valid() {
         validate(include_str!("shaders/preview.wgsl"));
     }

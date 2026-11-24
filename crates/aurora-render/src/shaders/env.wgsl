@@ -949,7 +949,8 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
     let n = normalize(in.normal);
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
     let dist = distance(in.world_pos, frame.camera_pos.xyz);
-    let sh = sun_shadow(in.world_pos, n, dist, in.clip.xy);
+    let shadow = surface_shadow(in.world_pos, n, dist, in.clip.xy);
+    let sh = shadow.lighting;
     var wet_light=vec3<f32>(0.0);
     if(wet>0.0) {
         let l=normalize(frame.sun_dir.xyz);let half_vec=normalize(l+v);
@@ -961,16 +962,16 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
     if (is_classic_sky()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         // (ll_classic_diffuse, its local lights kept aside for water_scene_lit;
-        // a classic sky's `sh` is not lifted: `sun_shadow` leaves that to
+        // a classic sky's `sh` is not lifted: `surface_shadow` leaves that to
         // `classic_shadowed`, so the caustics lift it here)
         let local = ll_local_diffuse(albedo, n, in.world_pos, in.clip.xy);
         let hazed = ll_haze(ll_classic_sun_ambient(albedo, n, sh, in.clip.xy, a) * ll_final_scale() + local + wet_light + albedo*water_caustic_light(in.world_pos,n)*shadow_lift(sh), a);
         var color=water_scene_lit(hazed,local*a.atten,in.world_pos);
         if(water_fogs_source(in.world_pos)){color=apply_fog(color,in.world_pos);}
-        return light_tiles_checked(debug_view(color, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
+        return light_tiles_checked(debug_view(color, in.world_pos, dist, in.clip.xy, shadow), in.world_pos, in.clip.xy);
     }
     let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy, true) + wet_light + albedo*water_caustic_light(in.world_pos,n)*sh;
-    return light_tiles_checked(debug_view(apply_fog(water_scene_lit(col, shade_pbr_local, in.world_pos), in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
+    return light_tiles_checked(debug_view(apply_fog(water_scene_lit(col, shade_pbr_local, in.world_pos), in.world_pos), in.world_pos, dist, in.clip.xy, shadow), in.world_pos, in.clip.xy);
 }
 
 fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
@@ -988,7 +989,8 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
     let n = material.normal;
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
     let dist = distance(in.world_pos, frame.camera_pos.xyz);
-    let sh = sun_shadow(in.world_pos, geo, dist, in.clip.xy);
+    let shadow = surface_shadow(in.world_pos, geo, dist, in.clip.xy);
+    let sh = shadow.lighting;
     let metal = clamp(material.orm.b, 0.0, 1.0);
     // pbrterrainF.glsl writes the material's ORM unchanged. Broadening its
     // roughness from normal derivatives washes out terrain relief.
@@ -1013,7 +1015,7 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
         color += material.color.rgb * water_caustic_light(in.world_pos, n) * sh;
         color = apply_fog(water_scene_lit(color, own, in.world_pos), in.world_pos);
     }
-    color = debug_view(color, in.world_pos, geo, dist, in.clip.xy);
+    color = debug_view(color, in.world_pos, dist, in.clip.xy, shadow);
     return Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
 }
 
