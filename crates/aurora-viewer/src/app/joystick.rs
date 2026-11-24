@@ -181,8 +181,11 @@ impl App {
             self.world.agent.yaw = previous_body_yaw;
             return;
         }
-        let key_yaw = self.input.keyboard_yaw();
-        let yaw_rate = std::mem::take(&mut self.input.joystick_yaw) + key_yaw;
+        let (key_yaw, yaw_rate, consume_turn_keys) = vr_turn_input(
+            self.world.agent.rotate_grabbed,
+            self.input.keyboard_yaw(),
+            std::mem::take(&mut self.input.joystick_yaw),
+        );
         let turn = yaw_rate * dt.clamp(0.0, 0.2);
         let avatar = self.vr_mode == Some(crate::camera::VrView::Avatar);
         self.vr_rig_yaw = self.world.agent.yaw;
@@ -194,9 +197,12 @@ impl App {
         } else {
             self.vr_rig_yaw += turn;
         }
-        // VR consumes turn keys as rig yaw before desktop mouselook can strafe.
-        self.input.turn_left = false;
-        self.input.turn_right = false;
+        // VR consumes turn keys as rig yaw before desktop mouselook can strafe
+        // (not those a script took: they reach it as control flags)
+        if consume_turn_keys {
+            self.input.turn_left = false;
+            self.input.turn_right = false;
+        }
         let translating = self.input.forward || self.input.back || self.input.strafe_left || self.input.strafe_right;
         self.world.agent.yaw = if translating || key_yaw != 0.0 {
             crate::camera::vr_walk_yaw(self.camera.vr_view(self.vr_rig_yaw), self.vr_head_rotation) + if avatar { turn } else { 0.0 }
@@ -1054,8 +1060,28 @@ fn avatar_cycle_index(current: Option<usize>, count: usize, direction: i8) -> Op
     }
 }
 
+/// Standing VR's turn: the turn keys' yaw, the whole yaw rate (keys and
+/// stick) and whether VR consumes the turn keys. While a script holds left
+/// and right (`rotate_grabbed`, #3450) nothing turns the body or the rig, and
+/// the keys are left to reach the script through the control flags.
+fn vr_turn_input(grabbed: bool, key_yaw: f32, stick_yaw: f32) -> (f32, f32, bool) {
+    if grabbed {
+        (0.0, 0.0, false)
+    } else {
+        (key_yaw, stick_yaw + key_yaw, true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// #3450: a script that took left and right also holds them in standing
+    /// VR: no turn from the keys or the stick, and the keys are not consumed.
+    #[test]
+    fn vr_turn_input_leaves_a_grabbed_turn_to_the_script() {
+        assert_eq!(super::vr_turn_input(false, 1.0, 0.5), (1.0, 1.5, true));
+        assert_eq!(super::vr_turn_input(true, 1.0, 0.5), (0.0, 0.0, false));
+    }
+
     use super::*;
 
     #[test]

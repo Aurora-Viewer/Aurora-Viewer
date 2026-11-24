@@ -792,7 +792,13 @@ impl Camera {
         self.free = None;
         self.clear_flycam();
         // the view keeps its direction: the avatar turns to it
-        agent.yaw += self.orbit_yaw;
+        // the view comes back along the body; while a script holds left and
+        // right the body keeps its heading (LLAgentCamera::changeCameraTo-
+        // Mouselook never turns it, and the orbit around the avatar was
+        // LLAgent::yaw, which rotateGrabbed blocks, #3450)
+        if !agent.rotate_grabbed {
+            agent.yaw += self.orbit_yaw;
+        }
         self.orbit_yaw = 0.0;
         agent.pitch = -self.pitch;
         self.pitch = 0.0;
@@ -7844,6 +7850,25 @@ mod tests {
         w.agent.rotate_grabbed = false;
         cam.orbit_around(0.5, &mut w.agent);
         assert!((w.agent.yaw - 0.5).abs() < 1e-6, "released: it turns again");
+    }
+
+    /// Mouselook entered after orbiting the camera around the avatar: the
+    /// body takes the orbit, unless a script holds left and right (#3450).
+    #[test]
+    fn a_grabbed_yaw_keeps_the_heading_on_mouselook_entry() {
+        for grabbed in [true, false] {
+            let (mut w, mut cam, s, _) = focused_object();
+            cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+            settle(&mut cam, &mut w, &s);
+            w.agent.yaw = 0.0;
+            w.agent.rotate_grabbed = grabbed;
+            cam.orbit_yaw = 0.7;
+            cam.toggle_mouselook(&mut w.agent, &s);
+            assert!(cam.mouselook());
+            let expected = if grabbed { 0.0 } else { 0.7 };
+            assert!((w.agent.yaw - expected).abs() < 1e-6, "grabbed={grabbed}: yaw {}", w.agent.yaw);
+            assert_eq!(cam.orbit_yaw, 0.0);
+        }
     }
 
     #[test]
