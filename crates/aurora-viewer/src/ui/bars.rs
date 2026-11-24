@@ -82,6 +82,9 @@ pub enum BarAction {
     BanLines(u8),
     /// Build floater: 0 toggle, 1 edit, 2 create, 3 land.
     Build(u8),
+    /// A Build toolbar button, as [`BarAction::Build`]: a mode's button
+    /// closes the window when its tool is the one shown.
+    BuildButton(u8),
     Logout,
     Quit,
     TeleportHome,
@@ -3040,9 +3043,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         }
         "build" => return BarAction::Build(0),
         "ik_edit" => return BarAction::IkEdit,
-        "build_edit" => return BarAction::Build(1),
-        "build_create" => return BarAction::Build(2),
-        "build_land" => return BarAction::Build(3),
+        "build_edit" => return BarAction::BuildButton(1),
+        "build_create" => return BarAction::BuildButton(2),
+        "build_land" => return BarAction::BuildButton(3),
         "edit_particles" => return BarAction::EditParticles,
         "import" => return BarAction::Import,
         "blender_live" => return BarAction::BlenderLive,
@@ -5245,9 +5248,15 @@ mod tests {
             report_abuse: true,
             marketplace_listings: true,
             teleport_history: true,
+            build_tool: Some(crate::build::Tool::Edit),
         };
         for cmd in commands {
             assert_eq!(all.lit(cmd), Some(true), "{cmd}");
+        }
+        // the build window's modes: only the one it shows lights
+        for (cmd, lit) in [("build_edit", true), ("build_create", false), ("build_land", false)] {
+            assert_eq!(none.lit(cmd), Some(false), "{cmd}");
+            assert_eq!(all.lit(cmd), Some(lit), "{cmd}");
         }
         assert_eq!(all.lit("landmark_here"), None);
         assert_eq!(all.lit("inventory"), None);

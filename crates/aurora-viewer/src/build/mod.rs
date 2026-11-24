@@ -13,6 +13,8 @@ mod admin;
 mod admin_tests;
 pub mod align;
 pub mod anim_pause;
+#[cfg(test)]
+mod bar_click_tests;
 pub mod contents;
 pub mod contents_drop;
 pub mod costs;
@@ -960,6 +962,8 @@ pub struct BuildTool {
     /// The build floater is open (build mode).
     pub open: bool,
     pub tool: Tool,
+    /// The tool the window had when it closed: Build reopens on it.
+    reopen_tool: Tool,
     pub edit_mode: EditMode,
     pub focus_mode: FocusMode,
     pub grab_mode: GrabMode,
@@ -1081,6 +1085,7 @@ impl Default for BuildTool {
             keep_material_tab: false,
             open: false,
             tool: Tool::Edit,
+            reopen_tool: Tool::Create,
             edit_mode: EditMode::Move,
             focus_mode: FocusMode::Zoom,
             grab_mode: GrabMode::Move,
@@ -1422,6 +1427,28 @@ impl BuildTool {
         .is_some_and(|frame| self.manip.pick(&self.cam, &frame, mode, cursor).is_some())
     }
 
+    /// What Build or one of its modes (Edit objects, Create prims, Edit
+    /// land) does: the tool the window opens or switches to, or `None` when
+    /// it closes. Build (`mode` `None`) toggles the window and reopens it on
+    /// the tool it last showed: the Legacy Viewer's enterBuildMode always
+    /// opens on Create, its first opening still does. A mode's toolbar
+    /// button (`button`) closes the window when its tool is the one shown,
+    /// as its lit face says; its menu entry and shortcut only select it
+    /// (Tools.SelectTool).
+    pub fn bar_click(&self, mode: Option<Tool>, button: bool) -> Option<Tool> {
+        match mode {
+            None if self.open => None,
+            None => Some(self.reopen_tool),
+            Some(tool) if button && self.shown_tool() == Some(tool) => None,
+            Some(tool) => Some(tool),
+        }
+    }
+
+    /// The tool the open window shows: its mode's toolbar button lights.
+    pub fn shown_tool(&self) -> Option<Tool> {
+        self.open.then_some(self.tool)
+    }
+
     pub fn open_build(&mut self, tool: Tool) {
         self.open = true;
         // a right-click selection becomes the build selection
@@ -1439,6 +1466,7 @@ impl BuildTool {
         self.cancel_replacement(world);
         self.cancel_color_picker(world);
         self.commit_color_edit();
+        self.reopen_tool = self.tool;
         self.open = false;
         self.place.stop();
         self.manip.cancel();

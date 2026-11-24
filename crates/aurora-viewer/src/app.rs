@@ -16766,17 +16766,21 @@ impl App {
             BarAction::Portals => {
                 ui::widgets::open_floater(&self.egui_ctx, "portals", &mut self.portal_ui.open);
             }
-            BarAction::Build(t) => {
-                match t {
-                    // LLToolMgr::buildEnabledOrActive: under @edit and @rez
-                    // the window does not open; an open one still closes
-                    _ if !self.build.open && !self.world.rlva_can_build() => {}
-                    1 => self.build.open_build(crate::build::Tool::Edit),
-                    2 => self.build.open_build(crate::build::Tool::Create),
-                    3 => self.build.open_build(crate::build::Tool::Land),
-                    _ if self.build.open => self.build.close(&mut self.world, &mut self.settings.build),
-                    // LLToolMgr::enterBuildMode: the Create tool
-                    _ => self.build.open_build(crate::build::Tool::Create),
+            BarAction::Build(t) | BarAction::BuildButton(t) => {
+                let button = matches!(a.bar, BarAction::BuildButton(_));
+                let mode = match t {
+                    1 => Some(crate::build::Tool::Edit),
+                    2 => Some(crate::build::Tool::Create),
+                    3 => Some(crate::build::Tool::Land),
+                    _ => None,
+                };
+                // LLToolMgr::buildEnabledOrActive: under @edit and @rez
+                // the window does not open; an open one still closes
+                if self.build.open || self.world.rlva_can_build() {
+                    match self.build.bar_click(mode, button) {
+                        Some(tool) => self.build.open_build(tool),
+                        None => self.build.close(&mut self.world, &mut self.settings.build),
+                    }
                 }
                 self.flush_build();
             }
@@ -21433,6 +21437,7 @@ impl App {
                 self.toolbar_ui.shown = ui::toolbar::Shown {
                     profile: self.profile_ui.mine_shown(self.world.agent_id),
                     build: self.build.open,
+                    build_tool: self.build.shown_tool(),
                     poser: self.ik_editor.open && self.ik_editor.posing(),
                     report_abuse: self.report_abuse.open,
                     marketplace_listings: self.listings_ui.open,

@@ -194,9 +194,9 @@ fn menu_toolbar_first_batch_dispatches_the_existing_actions_and_windows() {
     let mut panels = Panels::from_settings(&crate::settings::Settings::default());
     for (id, expected) in [
         ("ik_edit", BarAction::IkEdit),
-        ("build_edit", BarAction::Build(1)),
-        ("build_create", BarAction::Build(2)),
-        ("build_land", BarAction::Build(3)),
+        ("build_edit", BarAction::BuildButton(1)),
+        ("build_create", BarAction::BuildButton(2)),
+        ("build_land", BarAction::BuildButton(3)),
         ("edit_particles", BarAction::EditParticles),
         ("import", BarAction::Import),
         ("blender_live", BarAction::BlenderLive),
@@ -210,8 +210,8 @@ fn menu_toolbar_first_batch_dispatches_the_existing_actions_and_windows() {
         assert!(crate::ui::toolbar::command(id).unwrap().ready, "{id}");
         let actual = run_command(&ctx, id, &mut panels);
         assert_eq!(std::mem::discriminant(&actual), std::mem::discriminant(&expected), "{id}");
-        if let BarAction::Build(expected_mode) = expected {
-            assert!(matches!(actual, BarAction::Build(mode) if mode == expected_mode), "{id}");
+        if let BarAction::BuildButton(expected_mode) = expected {
+            assert!(matches!(actual, BarAction::BuildButton(mode) if mode == expected_mode), "{id}");
         }
     }
     panels.experiences = false;
