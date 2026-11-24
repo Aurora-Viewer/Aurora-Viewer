@@ -4315,6 +4315,17 @@ impl Backend {
                 },
                 count: None,
             },
+            // the avatars' wet memory (enhanced water's wet look)
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
         ];
         let records_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("records"),
@@ -4867,6 +4878,10 @@ impl Backend {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: scene.prev_models.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: scene.avatar_wet.as_entire_binding(),
                 },
             ],
         })

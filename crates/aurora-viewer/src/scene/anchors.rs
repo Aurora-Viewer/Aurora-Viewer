@@ -823,13 +823,48 @@ impl Scene {
                 moved.push(range);
             }
         }
-        // the snow on each skeleton (Aurora Weather, none on animesh), sent
-        // whenever it changes: written at the pose, it reached the GPU only
-        // with a skeleton posed that frame, and one that was not kept
-        // whatever its entry held
+        // enhanced water: the avatars wet where they were in the water,
+        // their memory sent as it changes (avatar_wet.rs)
+        let wet_settings = self.avatar_wet.settings;
+        let wet_on = wet_settings.is_some_and(|s| s.enabled && s.wet_avatars);
+        if wet_on || !self.avatar_wet.is_clear() {
+            let avatars: Vec<Uuid> = world.objects.avatars().map(|(_, o)| o.full_id).collect();
+            let settings = wet_settings.unwrap_or_default();
+            let (sea, ground) = (&self.lists.water_sea, &self.lists.water_ground);
+            let mut wet = std::mem::take(&mut self.avatar_wet);
+            let (clock, eye) = (wet.clock, wet.eye);
+            let slots = &self.palette_slots;
+            let uploads = wet.update(
+                wet_on,
+                clock,
+                &self.palettes,
+                PALETTE_JOINTS,
+                |id| slots.get(id).copied(),
+                &avatars,
+                eye,
+                sea.wind[3],
+                |q| {
+                    let [bed, level] = ground.sample(q)?;
+                    let at = ground.sea_point(q, sea, level - bed);
+                    Some((
+                        aurora_render::water_effects::surface_level(q, clock, settings, sea, level, &at),
+                        level,
+                    ))
+                },
+            );
+            self.avatar_wet = wet;
+            for (block, cells) in uploads {
+                renderer.set_avatar_wet(block, &cells);
+            }
+        }
+        // the weather on each skeleton (Aurora Weather's snow, enhanced
+        // water's wet look; none on animesh), sent whenever it changes:
+        // written at the pose, it reached the GPU only with a skeleton
+        // posed that frame, and one that was not kept whatever its entry held
         for (id, slot) in &self.palette_slots {
             let index = *slot as usize * PALETTE_JOINTS + super::anim::AVATAR_SNOW;
-            let entry = super::avatar_snow::palette_entry(self.avatar_snow.amount(id));
+            let (line, block) = self.avatar_wet.entry(id);
+            let entry = super::avatar_snow::palette_entry(self.avatar_snow.amount(id), line, block);
             if let Some(m) = self.palettes.get_mut(index)
                 && *m != entry
             {

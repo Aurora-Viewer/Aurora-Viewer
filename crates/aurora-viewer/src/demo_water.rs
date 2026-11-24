@@ -184,6 +184,7 @@ pub fn update(
         settings.water_effects.interactions = !mode.contains("no-wake") && !mode.contains("waterline") && !mode.contains("optics-");
         settings.water_effects.absorption = !mode.contains("no-absorption");
         settings.water_effects.fresnel = !mode.contains("no-fresnel");
+        settings.water_effects.wet_avatars = !mode.contains("no-wet");
         settings.water_effects.quality = match mode.split(':').next().unwrap_or("") {
             "low" => 0,
             "high" => 2,
@@ -296,6 +297,13 @@ pub fn update(
             (Vec3::new(61.0, 128.7, 22.1), Vec3::new(63.0, 130.0, 19.9))
         } else if mode.contains("avatar") {
             (Vec3::new(58.0, 120.0, 22.0), Vec3::new(60.0, 125.0, 19.7))
+        } else if mode.contains("wet-close") {
+            // close on the sealed suit (the second bather), for its beads
+            (Vec3::new(71.4, 123.9, 21.9), Vec3::new(70.0, 123.0, 21.5))
+        } else if mode.contains("wet") {
+            // the wet look's bathers (`wet_bather`), side by side on the
+            // beach after their soak, from the sunny side
+            (Vec3::new(74.5, 129.0, 22.4), Vec3::new(70.0, 125.0, 21.5))
         } else if mode.contains("sea-floor") {
             // low over the floor laid at the water
             (Vec3::new(58.0, 106.0, 21.6), Vec3::new(48.0, 116.0, 19.9))
@@ -776,6 +784,28 @@ pub fn update(
         avatar.name_values = "FirstName STRING RW SV Water\nLastName STRING RW SV Demo".into();
         objects.push(avatar);
     }
+    if mode.contains("wet") {
+        // the wet look's bathers (scene/avatar_wet.rs): side by side, they
+        // soak chest deep in the lagoon, walk up the beach and stand drying
+        // in the sun, each in another outfit (`WET_OUTFITS`), worn at the
+        // pelvis: how each kind of surface takes the water
+        let x = wet_bather(time);
+        for (n, outfit) in WET_OUTFITS.iter().enumerate() {
+            let id = 99760 + n as u32 * 2;
+            let y = 121.0 + 2.0 * n as f32;
+            let mut avatar = super::action_avatar(false);
+            avatar.local_id = id;
+            avatar.full_id = Uuid::from_u128(u128::from(id));
+            let half = avatar.scale.z.abs() * 0.5;
+            avatar.position = Vec3::new(x, y, super::floor_at(x, y) + half);
+            avatar.rotation = Quat::from_rotation_z(std::f32::consts::PI);
+            avatar.name_values = format!("FirstName STRING RW SV {}\nLastName STRING RW SV Wet", outfit.0);
+            objects.push(avatar);
+            if let Some(look) = wet_outfit(id + 1, id, outfit.1) {
+                objects.push(look);
+            }
+        }
+    }
     if mode.contains("sea") {
         // someone standing on the boat's foredeck (the hull's top is 20.45 m):
         // drawn, they ride with the deck (scene/water_ride.rs)
@@ -800,6 +830,101 @@ pub fn update(
         }
     }
     changed
+}
+
+/// The wet look's bathers: a name, and what each wears at the pelvis (a
+/// cylinder from chest to knees): nothing (the plain body, which has no
+/// material), a sealed glossy suit (PBR, off-white, roughness 0.2: plating, skin with a
+/// material, latex), a dark cloth, a white cloth, and fur (see-through).
+const WET_OUTFITS: [(&str, WetOutfit); 5] = [
+    ("Plain", WetOutfit::None),
+    ("Sealed", WetOutfit::Sealed),
+    ("Cloth", WetOutfit::Cloth(0)),
+    ("White", WetOutfit::Cloth(1)),
+    ("Fur", WetOutfit::Fur),
+];
+
+#[derive(Clone, Copy)]
+enum WetOutfit {
+    None,
+    Sealed,
+    /// Its material in `MAT_WET_CLOTH`.
+    Cloth(usize),
+    Fur,
+}
+
+/// The sealed suit's material and the cloths' (`super::pbr_materials`):
+/// clothing has a material as a rule (a rough PBR one here), which makes it
+/// cloth to the wet look; a face with none is taken as in between.
+pub const MAT_WET_SEALED: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0A01);
+pub const MAT_WET_CLOTH: [Uuid; 2] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0A02),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0A03),
+];
+
+pub fn materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
+    let pbr = |color: [f32; 4], roughness: f32| aurora_assets::PbrMaterial {
+        base_color_factor: color,
+        metallic_factor: 0.0,
+        roughness_factor: roughness,
+        ..Default::default()
+    };
+    vec![
+        (MAT_WET_SEALED, pbr([0.85, 0.85, 0.82, 1.0], 0.2)),
+        (MAT_WET_CLOTH[0], pbr([0.12, 0.16, 0.32, 1.0], 0.95)),
+        (MAT_WET_CLOTH[1], pbr([0.92, 0.92, 0.9, 1.0], 0.95)),
+    ]
+}
+
+/// The outfit `outfit` as local id `id`, worn by the avatar `wearer`.
+fn wet_outfit(id: u32, wearer: u32, outfit: WetOutfit) -> Option<aurora_net::objects::ObjectUpdate> {
+    use aurora_prim::params::{LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE};
+    let (te, extra) = match outfit {
+        WetOutfit::None => return None,
+        WetOutfit::Sealed => (
+            super::te([1.0; 4], 0, false, 0.0),
+            aurora_prim::ExtraParams {
+                render_materials: (0..6).map(|f| (f, MAT_WET_SEALED)).collect(),
+                ..Default::default()
+            },
+        ),
+        WetOutfit::Cloth(k) => (
+            super::te([1.0; 4], 0, false, 0.0),
+            aurora_prim::ExtraParams {
+                render_materials: (0..6).map(|f| (f, MAT_WET_CLOTH[k.min(1)])).collect(),
+                ..Default::default()
+            },
+        ),
+        WetOutfit::Fur => (super::te([0.45, 0.3, 0.18, 0.85], 0, false, 0.0), Default::default()),
+    };
+    let mut o = super::prim(
+        id,
+        Vec3::new(0.0, 0.0, 0.05),
+        Quat::IDENTITY,
+        Vec3::new(0.6, 0.52, 1.1),
+        super::shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 0, 0),
+        te,
+        extra,
+        "",
+    );
+    // worn at the pelvis (attachment point 10)
+    o.parent_id = wearer;
+    o.state = 10u8.rotate_left(4);
+    Some(o)
+}
+
+/// Where the wet look's bather stands along the lagoon at `time` (s), in
+/// a 90 s round: 15 s chest deep in the water, 10 s walking up the beach,
+/// then dry sand until it walks back in.
+fn wet_bather(time: f32) -> f32 {
+    let t = time.rem_euclid(90.0);
+    let (deep, beach) = (58.0, 70.0);
+    match t {
+        t if t < 15.0 => deep,
+        t if t < 25.0 => deep + (beach - deep) * (t - 15.0) / 10.0,
+        t if t < 80.0 => beach,
+        t => beach + (deep - beach) * (t - 80.0) / 10.0,
+    }
 }
 
 /// Local fixture: moving limbs exercise contact emission even without downloaded animations.

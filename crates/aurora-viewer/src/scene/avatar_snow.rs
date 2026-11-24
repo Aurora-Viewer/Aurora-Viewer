@@ -16,18 +16,20 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-/// The palette entry carrying `amount` of snow (0..1) to the shader, with
-/// the mark it needs to read it as snow (`aurora_render::AVATAR_SNOW_MARK`).
-/// No snow (none gathered, or "Snow on avatars" off) is an empty entry
-/// without the mark: the shader leaves the mesh as it is.
-pub fn palette_entry(amount: f32) -> [[f32; 4]; 4] {
-    if amount <= 0.0 {
+/// The avatar's weather entry carrying `amount` of snow (0..1) to the
+/// shader, with enhanced water's water line around it and its block of wet
+/// memory plus one (avatar_wet.rs `AvatarWet::entry`), and the mark it
+/// needs to read it (`aurora_render::AVATAR_SNOW_MARK`). No snow and no
+/// water near (none gathered, the effects off) is an empty entry without
+/// the mark: the shader leaves the mesh as it is.
+pub fn palette_entry(amount: f32, line: [f32; 4], wet_block: f32) -> [[f32; 4]; 4] {
+    if amount <= 0.0 && line[3] <= 0.0 && wet_block <= 0.0 {
         return [[0.0; 4]; 4];
     }
     [
-        [amount, 0.0, 0.0, 0.0],
-        [0.0; 4],
-        [0.0; 4],
+        [amount.max(0.0), 0.0, 0.0, 0.0],
+        line,
+        [wet_block.max(0.0), 0.0, 0.0, 0.0],
         [0.0, 0.0, 0.0, aurora_render::AVATAR_SNOW_MARK],
     ]
 }
@@ -126,11 +128,11 @@ mod tests {
     fn only_a_marked_entry_is_snow() {
         let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
         assert_ne!(identity[3][3], aurora_render::AVATAR_SNOW_MARK);
-        let e = palette_entry(0.4);
+        let e = palette_entry(0.4, [0.0; 4], 0.0);
         assert_eq!(e[3][3], aurora_render::AVATAR_SNOW_MARK);
         assert_eq!(e[0][0], 0.4);
         // no snow (or "Snow on avatars" off): unmarked, left alone
-        assert_ne!(palette_entry(0.0)[3][3], aurora_render::AVATAR_SNOW_MARK);
+        assert_ne!(palette_entry(0.0, [0.0; 4], 0.0)[3][3], aurora_render::AVATAR_SNOW_MARK);
     }
 
     #[test]

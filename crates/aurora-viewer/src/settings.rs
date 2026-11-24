@@ -4451,6 +4451,8 @@ pub struct WaterEffectsSettings {
     pub caustics: bool,
     pub splashes: bool,
     pub bubbles: bool,
+    /// Avatars wet where they were in the water (scene/avatar_wet.rs).
+    pub wet_avatars: bool,
 }
 impl Default for WaterEffectsSettings {
     fn default() -> Self {
@@ -4468,6 +4470,7 @@ impl Default for WaterEffectsSettings {
             caustics: true,
             splashes: true,
             bubbles: true,
+            wet_avatars: true,
         }
     }
 }
@@ -4488,6 +4491,7 @@ impl WaterEffectsSettings {
             caustics: self.caustics,
             splashes: self.splashes,
             bubbles: self.bubbles,
+            wet_avatars: self.wet_avatars,
         }
     }
 }

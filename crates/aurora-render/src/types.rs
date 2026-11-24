@@ -287,8 +287,21 @@ pub const SKELETON_ANCHOR: u32 = 208;
 /// anchors: column `k` is `palettes[base + LIVE_MORPH_WEIGHTS + k / 16][k / 4 % 4][k % 4]`.
 pub const LIVE_MORPH_WEIGHTS: u32 = 256;
 /// The palette entry after a skeleton's live morph weights (four matrices)
-/// holding how much snow is on the avatar (Aurora Weather).
+/// holding the weather on the avatar: x of its first column how much snow
+/// is on it (Aurora Weather); its second column the water line around it
+/// (z = x + y·px + z·py over region coordinates, w the fully wet band
+/// above it, m; zero: no water near), x of its third column its block of
+/// wet memory in `AVATAR_WET` plus one (0: none). Enhanced water's wet
+/// look (scene/avatar_wet.rs).
 pub const AVATAR_SNOW: u32 = 260;
+/// Blocks of wet memory: the avatars that can be wet at once.
+pub const AVATAR_WET_BLOCKS: usize = 32;
+/// Entries per block: one per palette entry of a skeleton up to its
+/// attachment points (joints, then anchors), a `[u32; 4]` each: eight
+/// cells of wetness (unorm8) along the up the water had in the joint's
+/// frame when it got wet (two snorm16 and one), and how far either way
+/// they reach (snorm16, half of it: m).
+pub const AVATAR_WET_JOINTS: usize = 256;
 /// What the snow entry holds in its last element (w of its last column)
 /// when the viewer wrote it: anything else there (the identity a palette
 /// starts with, a joint's matrix, nothing written yet) is no snow. Read

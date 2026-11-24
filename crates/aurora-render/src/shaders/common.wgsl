@@ -346,6 +346,10 @@ struct SkinBind {
 // each record's model matrix.
 @group(1) @binding(3) var<storage, read> prev_palettes: array<mat4x4<f32>>;
 @group(1) @binding(4) var<storage, read> prev_models: array<mat4x4<f32>>;
+// The avatars' wet memory (types.rs AVATAR_WET_BLOCKS, AVATAR_WET_JOINTS;
+// object.wgsl avatar_wet_memory).
+@group(1) @binding(5) var<storage, read> avatar_wet: array<vec4<u32>>;
+const AVATAR_WET_JOINTS: u32 = 256u;
 
 // Bindless textures pooled in pages (textures.rs): a slot's location packs
 // the page (high 16 bits) and its layer (low 16 bits).
@@ -3405,19 +3409,21 @@ fn water_caustic_combine(a:vec3<f32>,b:f32)->vec3<f32> {
 // turned and larger (WATER_CAUSTIC_TURN), through a slow warp of the
 // lookup, and red and blue a little apart along the sun's refracted ray
 // (the water's dispersion, more with the depth).
-fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
-    if(!water_fx_on(32u) || frame.misc.w>0.5){return vec3<f32>(0.0);}
-    if(!camera_underwater() && water_excluded(pos)){return vec3<f32>(0.0);}
-    let bed=water_fx_bed(pos.xy);let depth=bed.y-pos.z;
 // They follow the sea above (water_sea.rs `caustic_focus`, `caustic_drift`):
 // on glassy water, broad soft light wandering slowly, in patches where a
 // breath of wind ripples it; under a breeze, the sharp net, drifting
 // downwind; in a gale, a quick, torn, dimmer light that the swell sways.
 // Behind a reef or in a short fetch, the water is as calm as it is there.
+fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
+    if(!water_fx_on(32u) || frame.misc.w>0.5){return vec3<f32>(0.0);}
+    if(!camera_underwater() && water_excluded(pos)){return vec3<f32>(0.0);}
+    let bed=water_fx_bed(pos.xy);let depth=bed.y-pos.z;
     if(depth<0.03 || depth>18.0 || frame.sky_sun.z<0.05 || frame.sun_dir.w<0.01){return vec3<f32>(0.0);}
     let light=normalize(frame.sun_dir.xyz);
     let ray=refract(-light,vec3<f32>(0.0,0.0,1.0),0.7501875);
     var project=pos.xy-ray.xy*depth/max(-ray.z,0.2);
+    let sea=water_fx.sea;
+    let at=water_fx_sea_at(project);
     // (the spectrum's chop left out: the micro waves' map draws the short
     // caustics, and its texture reads would cost every lit pixel underwater)
     project-=water_sea(project,frame.camera_pos.w,water_fx.counts.w,sea,at,WATER_OCEAN_NONE,0.0).gradient*min(depth,7.0)*0.25;
@@ -3425,8 +3431,6 @@ fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     // what shelters it leave
     let rough=clamp(sea.frame.w*clamp(at.chop,0.0,1.0)*clamp(at.shelter,0.0,1.0),0.0,1.0);
     // the ripples' drift downwind (m), and a slow wander of its own
-    let sea=water_fx.sea;
-    let at=water_fx_sea_at(project);
     let time=frame.camera_pos.w;
     let drift=sea.look.zw+vec2<f32>(time*0.011,-time*0.007);
     // about 11 m across, torn further as the sea roughens

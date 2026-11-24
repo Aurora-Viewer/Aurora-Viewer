@@ -10341,6 +10341,7 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
         list.push((legacy_bump::PBR_MATERIAL, legacy_bump::pbr_material()));
     }
     list.extend(neon_room::materials());
+    list.extend(water::materials());
     for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {
         list.push((
             mat,

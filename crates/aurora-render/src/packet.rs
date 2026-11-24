@@ -82,6 +82,9 @@ pub(crate) struct SceneGpu {
     /// frame was drawn (motion vectors; `motion_history.rs` keeps them).
     pub prev_models: wgpu::Buffer,
     pub prev_palettes: wgpu::Buffer,
+    /// The avatars' wet memory (types.rs `AVATAR_WET_BLOCKS`): made once,
+    /// never reallocated.
+    pub avatar_wet: wgpu::Buffer,
     /// Changes when one of the five buffers above was reallocated.
     pub records_key: (u64, u64),
     /// Face table (one entry per draw record) and object table of the GPU

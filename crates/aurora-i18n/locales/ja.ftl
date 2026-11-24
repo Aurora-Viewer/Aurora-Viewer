@@ -13748,6 +13748,8 @@ water-effects-interactions = オブジェクトとアバターの波紋／航跡
 water-effects-caustics = 水中のコースティクス
 water-effects-splashes = 水しぶき
 water-effects-bubbles = 水中の泡
+water-effects-wet-avatars = 濡れたアバター
+water-effects-wet-avatars-help = 水に浸かった部分のアバターが濡れたままになります。暗く艶やかになり、1分ほどで乾きます。
 
 water-effects-medium = 中
 

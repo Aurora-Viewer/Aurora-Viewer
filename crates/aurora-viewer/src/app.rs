@@ -12872,6 +12872,11 @@ impl App {
                 wind,
                 tune,
             );
+            // the avatars get wet in it (scene/avatar_wet.rs, run as the
+            // anchors are written)
+            self.scene.avatar_wet.settings = Some(self.settings.water_effects.render());
+            self.scene.avatar_wet.clock = world_clock();
+            self.scene.avatar_wet.eye = self.camera.position;
             // floating objects ride the same sea (scene/water_ride.rs)
             let held = self.held_for_water();
             crate::scene::water_ride::update(

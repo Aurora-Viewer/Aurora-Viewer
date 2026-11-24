@@ -158,9 +158,11 @@ fn scene_gpu(
     palettes: &wgpu::Buffer,
     prev_palettes: &wgpu::Buffer,
     skin_binds: &wgpu::Buffer,
+    avatar_wet: &wgpu::Buffer,
     bind_generation: u64,
 ) -> SceneGpu {
     SceneGpu {
+        avatar_wet: avatar_wet.clone(),
         records: records.buffer.clone(),
         palettes: palettes.clone(),
         skin_binds: skin_binds.clone(),
@@ -210,6 +212,9 @@ pub struct Renderer {
     /// (`motion_history.rs`). The same size, unless video memory was full
     /// when the palettes grew.
     prev_palette_buffer: wgpu::Buffer,
+    /// The avatars' wet memory (scene/avatar_wet.rs in the viewer), one
+    /// block per avatar wet at once (types.rs `AVATAR_WET_BLOCKS`).
+    avatar_wet_buffer: wgpu::Buffer,
     /// What `palette_buffer` holds, kept when the device traces: the
     /// ray-traced shadows build a skeleton again only when it moved
     /// (rt_shadows.rs).
@@ -690,6 +695,12 @@ impl Renderer {
         let palette_buffer = Self::make_palette_buffer(&device, 64 * 160);
         let prev_palette_buffer = device.create_buffer(&Self::prev_palette_desc(64 * 160));
         let skin_bind_buffer = Self::make_skin_bind_buffer(&device, 256);
+        let avatar_wet_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("avatar wet memory"),
+            size: (crate::types::AVATAR_WET_BLOCKS * crate::types::AVATAR_WET_JOINTS * 16) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         // staging memory of the streamed uploads, created once here: fewer
         // chunks where the CPU can map little video memory (no Resizable
         // BAR), which the large pool would fill alone (#2171)
@@ -767,6 +778,7 @@ impl Renderer {
                 &palette_buffer,
                 &prev_palette_buffer,
                 &skin_bind_buffer,
+                &avatar_wet_buffer,
                 0,
             ),
             anim_clock,
@@ -808,6 +820,7 @@ impl Renderer {
             writes,
             palette_buffer,
             prev_palette_buffer,
+            avatar_wet_buffer,
             motion_cut: false,
             world_shift: [0.0; 2],
             rt_rebased: false,
@@ -898,6 +911,7 @@ impl Renderer {
             &self.palette_buffer,
             &self.prev_palette_buffer,
             &self.skin_bind_buffer,
+            &self.avatar_wet_buffer,
             self.bind_generation,
         )
     }
@@ -1148,6 +1162,21 @@ impl Renderer {
     /// Upload one range of the palette matrices (the anchors of the objects
     /// an avatar wears, when its joints were not posed again). Everything
     /// when the buffer must grow.
+    /// Write block `block` of the avatars' wet memory (`cells`: at most
+    /// `AVATAR_WET_JOINTS` entries, types.rs).
+    pub fn set_avatar_wet(&mut self, block: usize, cells: &[[u32; 4]]) {
+        use crate::types::{AVATAR_WET_BLOCKS, AVATAR_WET_JOINTS};
+        if block >= AVATAR_WET_BLOCKS || cells.is_empty() {
+            return;
+        }
+        let cells = &cells[..cells.len().min(AVATAR_WET_JOINTS)];
+        self.writes.write_buffer(
+            &self.avatar_wet_buffer,
+            (block * AVATAR_WET_JOINTS * 16) as u64,
+            bytemuck::cast_slice(cells),
+        );
+    }
+
     pub fn set_palette_range(&mut self, mats: &[[[f32; 4]; 4]], range: std::ops::Range<usize>) {
         if (mats.len() * 64) as u64 > self.palette_buffer.size() {
             self.set_palettes(mats);

@@ -13881,6 +13881,8 @@ water-effects-interactions = Object and avatar ripples / wakes
 water-effects-caustics = Underwater caustics
 water-effects-splashes = Splashes and spray
 water-effects-bubbles = Underwater bubbles
+water-effects-wet-avatars = Wet avatars
+water-effects-wet-avatars-help = Avatars stay wet where they were in the water: darker and shiny, drying in a minute or so.
 
 water-effects-medium = Medium
 

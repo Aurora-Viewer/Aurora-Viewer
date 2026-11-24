@@ -13886,6 +13886,8 @@ water-effects-interactions = Remous et sillages des objets et avatars
 water-effects-caustics = Caustiques sous-marines
 water-effects-splashes = Éclaboussures et projections
 water-effects-bubbles = Bulles sous-marines
+water-effects-wet-avatars = Avatars mouillés
+water-effects-wet-avatars-help = Les avatars restent mouillés là où ils étaient dans l'eau : plus sombres et brillants, ils sèchent en une minute environ.
 
 water-effects-medium = Moyenne
 

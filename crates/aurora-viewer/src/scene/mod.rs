@@ -10,6 +10,7 @@ mod auto_hover;
 pub mod avatar;
 pub mod avatar_snow;
 pub mod avatar_studio;
+pub mod avatar_wet;
 pub mod banlines;
 pub mod blend_order;
 mod blender_live;
@@ -874,6 +875,9 @@ pub struct Scene {
     pub snow_detail: snow_detail::SnowDetail,
     /// Aurora Weather: the snow gathered on the avatars near the camera.
     pub avatar_snow: avatar_snow::AvatarSnow,
+    /// Enhanced water: the avatars near the camera wet where they were in
+    /// the water.
+    pub avatar_wet: avatar_wet::AvatarWet,
     /// Aurora Weather: the feet watched for footprints in the snow.
     pub snow_trails: snow_trail::SnowTrails,
     auto_hover: auto_hover::AutoHover,
@@ -1739,6 +1743,7 @@ impl Scene {
         Scene {
             snow_detail: Default::default(),
             avatar_snow: Default::default(),
+            avatar_wet: Default::default(),
             snow_trails: Default::default(),
             jobs,
             job_rx,

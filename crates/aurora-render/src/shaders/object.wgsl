@@ -326,6 +326,18 @@ struct VsOut {
     // pose: the snow stays where it built up as the avatar moves)
     @location(11) @interpolate(flat) snow: f32,
     @location(12) snow_up: f32,
+    // enhanced water's wet look (avatar_wet_on): where the point sits on
+    // the avatar at rest (xyz, m: a rigged mesh's bind pose, a worn prim's
+    // place on its attachment point; the wet look's patches and beads stay
+    // put on the body as it moves) and how wet the memory keeps it (w)
+    @location(13) rest_wet: vec4<f32>,
+    // the water line around the avatar (types.rs AVATAR_SNOW: z = x + y·px
+    // + z·py, w the band above it; none: 0)
+    @location(14) @interpolate(flat) waterline: vec4<f32>,
+    // which way is down in the world, as a direction at rest (unit): the
+    // way running drops go, whatever axes the mesh was made with and
+    // however the avatar stands
+    @location(15) rest_down: vec3<f32>,
 };
 
 fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
@@ -559,6 +571,9 @@ fn vs_land_overlay(in: VsIn) -> VsOut {
     var out: VsOut;
     out.snow = 0.0;
     out.snow_up = 0.0;
+    out.rest_wet = vec4<f32>(0.0);
+    out.waterline = vec4<f32>(0.0);
+    out.rest_down = vec3<f32>(0.0, 0.0, -1.0);
     out.world_pos = (rec.model * vec4<f32>(in.pos, 1.0)).xyz;
     out.record = in.instance;
     if (rec.params.x > 0.5) {
@@ -582,8 +597,33 @@ fn vs_main(in: VsIn) -> VsOut {
     out.normal = cofactor(model) * vertex_normal(rec, in);
     // snow on avatars, judged by the facing just found (before it, the
     // normal was zero: its up a NaN, and no snow ever showed)
-    out.snow = avatar_snow(rec);
+    let weather = avatar_weather(rec);
+    out.snow = clamp(weather[0][0], 0.0, 1.0);
     out.snow_up = 0.0;
+    out.waterline = weather[1];
+    out.rest_wet = vec4<f32>(0.0);
+    out.rest_down = vec3<f32>(0.0, 0.0, -1.0);
+    let wet_block = u32(max(weather[2].x, 0.0) + 0.5);
+    if (wet_block > 0u) {
+        out.rest_wet.w = avatar_wet_memory(rec, in, wet_block - 1u);
+    }
+    if (out.waterline.w > 0.0 || wet_block > 0u) {
+        let rest = vec4<f32>(vertex_position(rec, in), 1.0);
+        let skinned = (rec.flags.x & FLAG_SKINNED) != 0u;
+        out.rest_wet = vec4<f32>(select((rec.model * rest).xyz, rest.xyz, skinned), out.rest_wet.w);
+        // the world's down taken back through what places the rest pose (a
+        // rigged mesh's skinning and anchor, a worn prim's attachment point)
+        var to_world = model;
+        if (!skinned && (rec.flags.x & FLAG_ANCHORED) != 0u) {
+            to_world = palettes[rec.flags.y];
+        }
+        let cof = cofactor(to_world);
+        let det = dot(to_world[0].xyz, cof[0]);
+        let down = transpose(cof) * vec3<f32>(0.0, 0.0, -1.0) * sign(det);
+        if (dot(down, down) > 1e-12) {
+            out.rest_down = normalize(down);
+        }
+    }
     if (out.snow > 0.0) {
         out.snow_up = avatar_rest_up(rec, in, out.normal);
     }
@@ -983,22 +1023,408 @@ fn shadow_normal(m: Material) -> vec3<f32> {
 // its skeleton's palette (AVATAR_SNOW), a rigged mesh's from its base, a
 // worn prim's from its anchor's skeleton (palettes are PALETTE_STRIDE
 // apart); none for the rest.
-fn avatar_snow(rec: DrawRecord) -> f32 {
+// The weather entry of the avatar a record belongs to (types.rs
+// AVATAR_SNOW: its snow, its water line, its wet memory), all zero when
+// it has none.
+fn avatar_weather(rec: DrawRecord) -> mat4x4<f32> {
     var entry = 0u;
     if ((rec.flags.x & FLAG_SKINNED) != 0u) {
         entry = rec.flags.y + AVATAR_SNOW;
     } else if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
         entry = rec.flags.y - rec.flags.y % PALETTE_STRIDE + AVATAR_SNOW;
     } else {
-        return 0.0;
+        return mat4x4<f32>(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
     }
-    // only what the viewer wrote as snow (AVATAR_SNOW_MARK): the identity
-    // a palette starts with read as full snow (a car turned white)
+    // only what the viewer wrote (AVATAR_SNOW_MARK): the identity a
+    // palette starts with read as full snow (a car turned white)
     let m = palettes[entry];
     if (m[3][3] != AVATAR_SNOW_MARK) {
-        return 0.0;
+        return mat4x4<f32>(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
     }
-    return clamp(m[0][0], 0.0, 1.0);
+    return m;
+}
+
+// Enhanced water's wet look (scene/avatar_wet.rs; after Radiance's,
+// rdWetLookF.glsl and rdwetlook.cpp, originally LGPL 2.1): how wet joint
+// `joint` of wet block `block` keeps a point `offset` from it (in the
+// skeleton's frame, `linear` the joint's). Its eight cells lie along the
+// up the water had in the joint's frame when it got wet, either way from
+// the joint, and turn with it: an arm dipped stays wet where it was in
+// the water, wherever it goes.
+fn avatar_wet_joint(block: u32, joint: u32, offset: vec3<f32>, linear: mat3x3<f32>) -> f32 {
+    let d = avatar_wet[block * AVATAR_WET_JOINTS + min(joint, AVATAR_WET_JOINTS - 1u)];
+    if ((d.x | d.y) == 0u) { return 0.0; }
+    let a = unpack2x16snorm(d.z);
+    let b = unpack2x16snorm(d.w);
+    let along = linear * vec3<f32>(a, b.x);
+    let reach = max(b.y * 2.0, 0.05);
+    let t = clamp(dot(offset, along) / max(length(along), 1e-6) / (2.0 * reach) + 0.5, 0.0, 1.0) * 8.0 - 0.5;
+    let i = u32(clamp(floor(t), 0.0, 7.0));
+    let f = clamp(t - f32(i), 0.0, 1.0);
+    let cells = array<vec4<f32>, 2>(unpack4x8unorm(d.x), unpack4x8unorm(d.y));
+    let lo = cells[i / 4u][i % 4u];
+    let j = min(i + 1u, 7u);
+    let hi = cells[j / 4u][j % 4u];
+    return mix(lo, hi, f);
+}
+
+// How wet the memory keeps a vertex: a rigged mesh's, its joints' by their
+// weights (the vertex where each holds it); a worn prim's, its attachment
+// point's. `block`: the wearer's block (types.rs AVATAR_WET_BLOCKS).
+fn avatar_wet_memory(rec: DrawRecord, in: VsIn, block: u32) -> f32 {
+    let pos = vec4<f32>(vertex_position(rec, in), 1.0);
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        var wet = 0.0;
+        var sum = 0.0;
+        for (var k = 0u; k < 4u; k++) {
+            let w = in.weights[k];
+            if (w <= 0.0) { continue; }
+            let b = skin_binds[rec.flags.z + in.joints[k]];
+            let p = palettes[rec.flags.y + b.joint.x];
+            let linear = mat3x3<f32>(p[0].xyz, p[1].xyz, p[2].xyz);
+            let local = (b.inverse_bind * pos).xyz;
+            wet += avatar_wet_joint(block, b.joint.x, linear * local, linear) * w;
+            sum += w;
+        }
+        return wet / max(sum, 1e-4);
+    }
+    if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+        let p = palettes[rec.flags.y];
+        let linear = mat3x3<f32>(p[0].xyz, p[1].xyz, p[2].xyz);
+        return avatar_wet_joint(block, rec.flags.y % PALETTE_STRIDE, linear * (rec.model * pos).xyz, linear);
+    }
+    return 0.0;
+}
+
+// The wet look's grain (rdWetLookF.glsl rad_wet_hash, rad_wet_value_noise,
+// rad_wet_shimmer_layers): smooth value noise, -1 to 1, of a few
+// thousand cells across the face's texture, on a grid tilted against time
+// so the change never pauses, two layers half a step apart.
+fn avatar_wet_hash(cell: vec3<f32>) -> f32 {
+    let q = bitcast<vec3<u32>>(vec3<i32>(cell));
+    var h = (q.x * 1597334677u) ^ (q.y * 3812015801u) ^ (q.z * 2741598923u);
+    h = (h ^ (h >> 16u)) * 2246822519u;
+    h ^= h >> 13u;
+    return f32(h) * (1.0 / 4294967295.0);
+}
+
+fn avatar_wet_value_noise(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = p - i;
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = mix(avatar_wet_hash(i), avatar_wet_hash(i + vec3<f32>(1.0, 0.0, 0.0)), u.x);
+    let b = mix(avatar_wet_hash(i + vec3<f32>(0.0, 1.0, 0.0)), avatar_wet_hash(i + vec3<f32>(1.0, 1.0, 0.0)), u.x);
+    let c = mix(avatar_wet_hash(i + vec3<f32>(0.0, 0.0, 1.0)), avatar_wet_hash(i + vec3<f32>(1.0, 0.0, 1.0)), u.x);
+    let d = mix(avatar_wet_hash(i + vec3<f32>(0.0, 1.0, 1.0)), avatar_wet_hash(i + vec3<f32>(1.0, 1.0, 1.0)), u.x);
+    return mix(mix(a, b, u.y), mix(c, d, u.y), u.z);
+}
+
+fn avatar_wet_layers(cells: vec2<f32>, t: f32) -> f32 {
+    let tilt = mat3x3<f32>(vec3<f32>(0.0, 0.8, 0.6), vec3<f32>(-0.8, 0.36, -0.48), vec3<f32>(-0.6, -0.48, 0.64));
+    let p = tilt * vec3<f32>(cells, t);
+    let a = avatar_wet_value_noise(p) * 2.0 - 1.0;
+    let b = avatar_wet_value_noise(p + vec3<f32>(17.5, 41.5, 0.5)) * 2.0 - 1.0;
+    return (a + b) * 0.7071;
+}
+
+// The grain at texture point `uv` of a point `w` wet: moving while its
+// film is fresh, still from half wet down (rad_wet_shimmer), faded out
+// where its cells get smaller than a pixel (they would flicker).
+fn avatar_wet_shimmer(uv: vec2<f32>, w: f32) -> f32 {
+    let cells = uv * 2000.0;
+    let fine = max(length(dpdx(cells)), length(dpdy(cells)));
+    let seen = 1.0 - smoothstep(0.5, 1.5, fine);
+    if (seen <= 0.0) { return 0.0; }
+    let motion = smoothstep(0.5, 1.0, w);
+    let still = avatar_wet_layers(cells, 0.0);
+    var n = still;
+    if (motion > 0.0) {
+        let moving = avatar_wet_layers(cells, (frame.camera_pos.w % 1000.0));
+        // toward the still pattern as it slows, never running backwards
+        n = mix(still, moving, motion) / sqrt((1.0 - motion) * (1.0 - motion) + motion * motion);
+    }
+    return clamp(n, -1.0, 1.0) * seen;
+}
+
+// How much it shines by its wetness (rad_wet_shine): 0 dry, 1 soaked, 2
+// under a fresh film; and a value blended dry, soaked, fresh by it.
+fn avatar_wet_shine(w: f32) -> f32 {
+    if (w < 0.33) { return 0.35 * w / 0.33; }
+    if (w < 0.75) { return mix(0.35, 1.0, (w - 0.33) / 0.42); }
+    if (w < 0.95) { return mix(1.0, 1.3, (w - 0.75) / 0.2); }
+    return mix(1.3, 2.0, clamp((w - 0.95) / 0.05, 0.0, 1.0));
+}
+
+fn avatar_wet_blend(dry: f32, soaked: f32, fresh: f32, shine: f32) -> f32 {
+    return select(mix(soaked, fresh, shine - 1.0), mix(dry, soaked, shine), shine < 1.0);
+}
+
+// Where the wet look's patches are wetter or drier (0..1): smooth noise of
+// some 20 cm over the body at rest, so a damp shirt or skin dries unevenly
+// instead of fading as a whole.
+fn avatar_wet_patches(rest: vec3<f32>) -> f32 {
+    return avatar_wet_value_noise(rest * 5.0) * 0.65 + avatar_wet_value_noise(rest * 12.0 + vec3<f32>(7.1, 3.3, 5.9)) * 0.35;
+}
+
+// A bead of water at a point of a sealed surface: x how far in it is (0
+// outside, 1 at its centre), yzw which way the point lies from its centre
+// over the body at rest (1 at its rim). One in some cells of about 2.5 cm
+// over the body at rest, as many as `density` (0..1) lets; they stay put
+// (a change of wetness never moves them: that snapped them about).
+fn avatar_wet_bead(rest: vec3<f32>, density: f32) -> vec4<f32> {
+    let q = rest * 40.0;
+    let cell = floor(q);
+    if (avatar_wet_hash(cell) > density) { return vec4<f32>(0.0); }
+    let f = q - cell;
+    let centre = vec3<f32>(0.5) + (vec3<f32>(avatar_wet_hash(cell + vec3<f32>(11.0, 0.0, 0.0)),
+        avatar_wet_hash(cell + vec3<f32>(0.0, 23.0, 0.0)), avatar_wet_hash(cell + vec3<f32>(0.0, 0.0, 37.0))) - 0.5) * 0.5;
+    // (within its cell, wherever the jitter puts it: no bead cut by a cell's edge)
+    let radius = 0.08 + 0.12 * avatar_wet_hash(cell + vec3<f32>(51.0, 7.0, 3.0));
+    let off = (f - centre) / radius;
+    let d = length(off);
+    if (d >= 1.0) { return vec4<f32>(0.0); }
+    return vec4<f32>(sqrt(1.0 - d * d), off);
+}
+
+// A drop running down a sealed surface while it is soaked (`running`,
+// 0..1), the same shape as a bead's (`avatar_wet_bead`): in cells of 5 cm
+// over the body at rest, a few hold one, which slides through it along
+// `down` (the world's down at rest: downhill whatever the mesh's axes) at
+// some 2.5 cm a second (`time`, s), drawn out into a tail behind it, and
+// fades in and out at the cell's edges.
+fn avatar_wet_runner(rest: vec3<f32>, down: vec3<f32>, running: f32, time: f32) -> vec4<f32> {
+    if (running <= 0.0) { return vec4<f32>(0.0); }
+    let q = rest * 20.0;
+    let cell = floor(q);
+    if (avatar_wet_hash(cell + vec3<f32>(91.0, 13.0, 7.0)) > 0.15 * running) { return vec4<f32>(0.0); }
+    let f = q - cell;
+    let phase = fract(avatar_wet_hash(cell + vec3<f32>(73.0, 5.0, 29.0)) + time * 0.5);
+    let radius = 0.08 + 0.05 * avatar_wet_hash(cell + vec3<f32>(51.0, 7.0, 3.0));
+    let jitter = (vec3<f32>(avatar_wet_hash(cell + vec3<f32>(11.0, 0.0, 0.0)),
+        avatar_wet_hash(cell + vec3<f32>(0.0, 23.0, 0.0)), avatar_wet_hash(cell + vec3<f32>(0.0, 0.0, 37.0))) - 0.5) * 0.3;
+    let centre = vec3<f32>(0.5) + jitter + down * (0.7 * phase - 0.35);
+    let off = (f - centre) / radius;
+    // round ahead, a tail four times as long behind (against `down`)
+    let ahead = dot(off, down);
+    let side = off - down * ahead;
+    let along = select(ahead / 4.0, ahead, ahead > 0.0);
+    let shaped = side + down * along;
+    let d = length(shaped);
+    if (d >= 1.0) { return vec4<f32>(0.0); }
+    let fade = smoothstep(0.0, 0.12, phase) * (1.0 - smoothstep(0.82, 1.0, phase)) * running;
+    return vec4<f32>(sqrt(1.0 - d * d) * fade, shaped);
+}
+
+// A direction `v` over the body at rest, as it lies on the surface in the
+// world: through the screen derivatives of both positions (`dr*` at rest,
+// `dw*` in the world), whatever the skinning between them.
+fn avatar_wet_rest_to_world(v: vec3<f32>, drx: vec3<f32>, dry: vec3<f32>, dwx: vec3<f32>, dwy: vec3<f32>) -> vec3<f32> {
+    let a = dot(drx, drx);
+    let b = dot(drx, dry);
+    let c = dot(dry, dry);
+    let det = a * c - b * b;
+    if (abs(det) < 1e-30) { return vec3<f32>(0.0); }
+    let p = dot(drx, v);
+    let q = dot(dry, v);
+    return ((c * p - b * q) * dwx + (a * q - b * p) * dwy) / det;
+}
+
+// Wet on an avatar's material: whatever is under the water line now (with
+// the band above it the waves wash), and what the memory keeps wet
+// (`in.rest_wet.w`), after Radiance's (rdWetLookF.glsl: rad_wet_darken,
+// rad_wet_shine, rad_wet_pbr, rad_wet_legacy, rad_wet_normal). How it shows
+// depends on what the material says the surface is, as water does:
+// - what soaks it up (matte: cloth, felt) darkens most and only takes a
+//   faint sheen; a face with no material is taken as in between;
+// - what it cannot soak into (smooth, glossy: skin with a material, latex,
+//   leather, vinyl) darkens less, its film shines, and beads of water sit
+//   on it, drawn out into trickles while fresh;
+// - what lets light through (hair, fur, lace) darkens and takes a soft
+//   sheen, with no beads.
+// It dries in patches. Under the water it only darkens (skin against water
+// hardly reflects). What lets light through stays as see-through as it was.
+fn avatar_wet_on(m_in: Material, in: VsOut) -> Material {
+    var m = m_in;
+    // (the screen derivatives the beads' domes need, taken before any
+    // branch)
+    let drx = dpdx(in.rest_wet.xyz);
+    let dry = dpdy(in.rest_wet.xyz);
+    let dwx = dpdx(in.world_pos);
+    let dwy = dpdy(in.world_pos);
+    let rec = records[in.record];
+    var live = 0.0;
+    // in the air (1) or under the water (0)
+    var air = 1.0;
+    if (in.waterline.w > 0.0) {
+        let line = in.waterline.x + dot(in.waterline.yz, in.world_pos.xy);
+        live = 1.0 - smoothstep(line, line + in.waterline.w, in.world_pos.z);
+        air = smoothstep(line - 0.02, line + 0.02, in.world_pos.z);
+    }
+    if (max(in.rest_wet.w, live) <= 0.002 || hud_pass || (rec.flags.x & FLAG_FULLBRIGHT) != 0u) { return m; }
+    // drying in patches: some places hold the water longer than others
+    let w = clamp(max(live, in.rest_wet.w * (0.85 + 0.3 * avatar_wet_patches(in.rest_wet.xyz))), 0.0, 1.0);
+    let pbr = (rec.flags.x & FLAG_PBR) != 0u;
+    // what the surface does with water, from its material: 1 soaks it up,
+    // 0 sealed; and whether it lets light through here (hair, fur)
+    let strand = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u || ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < 0.99);
+    // a face with no material says nothing: skin (a baked body) as often as
+    // cloth, so in between: darker, a light sheen, a few beads
+    // judged once for the whole face, from its maps' averages (their
+    // smallest mip): judged pixel by pixel, a skin's specular or roughness
+    // map drew its own pattern into the wetness, as dark patches, under
+    // the water too
+    var absorb = 0.5;
+    var face_metal = 0.0;
+    let avg = sample_tex_level(rec.tex.z, vec2<f32>(0.5), 16.0);
+    if (pbr) {
+        // (skin, plating, leather: a roughness of 0.4 to 0.65; cloth 0.8 and up)
+        face_metal = clamp(rec.params.y * avg.b, 0.0, 1.0);
+        absorb = smoothstep(0.65, 0.95, clamp(rec.params.z * avg.g, 0.03, 1.0)) * (1.0 - face_metal);
+    } else if ((rec.flags.x & FLAG_LEGACY_MAT) != 0u) {
+        // any real specular, at the glossiness most materials keep (their
+        // exponent's default, 51: 0.2), or any environment shine: sealed
+        // (the specular is linear: a map's mid grey, or "Low" shininess,
+        // is some 0.05; a skin's specular map is dark, a few hundredths)
+        let spec = srgb_to_linear(avg.rgb) * rec.spec_color.rgb;
+        let gloss = rec.legacy.z * select(sample_tex_level(rec.tex.y, vec2<f32>(0.5), 16.0).a, 1.0, rec.tex.y == 1u);
+        let sealed_spec = smoothstep(0.04, 0.15, gloss) * smoothstep(0.004, 0.025, max(spec.r, max(spec.g, spec.b)));
+        absorb = 1.0 - max(sealed_spec, smoothstep(0.02, 0.15, rec.legacy.w * avg.a));
+    }
+    if (strand) { absorb = max(absorb, 0.6); }
+    // darker and deeper (rad_wet_darken: nearly all of it by a third wet),
+    // the more the more it soaks; a metal's or an emissive mask's share
+    // left alone; the dimming takes the pale tones the power leaves (a
+    // white shirt soaked goes grey)
+    // what soaks water up stays dark until nearly dry (it wicks), then
+    // dries softly; no hard edge nor tide mark: when the material is
+    // misread (a face's skin taken for cloth), they drew bruises
+    // (only what clearly soaks it up: a partly matte skin darkens a little,
+    // with no edge)
+    let cloth = smoothstep(0.55, 0.9, absorb);
+    let wd = mix(w, smoothstep(0.03, 0.35, w), cloth);
+    let dark = select(0.9 * wd / 0.33, mix(0.9, 1.0, clamp((wd - 0.33) / 0.62, 0.0, 1.0)), wd >= 0.33)
+        * (1.0 - select(m.unlit, face_metal, pbr)) * (0.45 + 0.25 * absorb + 0.3 * cloth + select(0.0, 0.3, strand));
+    // darker, keeping the colour's hue (the power alone deepened skin into
+    // red), a little richer on cloth
+    let c = max(m.color.rgb, vec3<f32>(0.0));
+    // (in linear light: a third darker on screen is about half as bright
+    // here, the sRGB curve hides the rest)
+    let deep = pow(c, vec3<f32>(1.0 + (1.0 + 0.5 * cloth) * dark)) * (1.0 - (0.2 + 0.25 * cloth) * dark);
+    let luma = vec3<f32>(0.2126, 0.7152, 0.0722);
+    let same_hue = c * (dot(deep, luma) / max(dot(c, luma), 1e-4));
+    // never darker than wet cloth gets (about 40 % on screen) or the rest
+    // (some 30 %),
+    // however the face was judged: a soaked sweater went nearly black
+    // (most surfaces but metal and glass darken noticeably wet, richer a
+    // little; cloth the most)
+    let wetted = mix(same_hue, deep, 0.15 + 0.25 * cloth);
+    let floor_ratio = 1.0 - mix(0.5, 0.65, max(absorb, cloth)) * smoothstep(0.0, 0.33, wd);
+    let ratio = dot(wetted, luma) / max(dot(c, luma), 1e-4);
+    m.color = vec4<f32>(wetted * max(floor_ratio / max(ratio, 1e-4), 1.0), m.color.a);
+    // the shine (rad_wet_shine), in the air only: the film's on what is
+    // sealed, a faint sheen on what soaks it up
+    // (little sheen on anything that soaks even partly: a knit misjudged as
+    // half sealed shone like leather)
+    let shine = avatar_wet_shine(w) * air * mix(0.6, 0.08, smoothstep(0.1, 0.5, absorb)) * select(1.0, 0.6, strand);
+    if (shine <= 0.0) { return m; }
+    let sealed = 1.0 - absorb;
+    // what soaks even a little is a fabric: its wet sheen soft and dim, its
+    // weave still showing (a wet shirt read as satin)
+    let fabric = smoothstep(0.05, 0.4, max(absorb, cloth));
+    let film = smoothstep(0.5, 1.0, w);
+    // a full film hides the relief and the grain
+    let cover = smoothstep(0.9, 1.0, w) * air * sealed;
+    // (half the relief at most: a weave or a skin's pores still show)
+    m.n = normalize(mix(m.n, m.geo_n, 0.5 * cover * (1.0 - 0.7 * fabric)));
+    let grain = 1.0 + avatar_wet_shimmer(in.uv, w) * w * air * sealed * (1.0 - cover);
+    // beads on what is sealed and solid here, fewer as it dries, none under
+    // a full film; faded out where they would be smaller than a few pixels
+    var bead = 0.0;
+    var rim = 0.0;
+    // (only on what is clearly sealed: a cloth that half soaks takes none)
+    let beading = smoothstep(0.4, 0.8, sealed);
+    if (!strand && beading > 0.0 && air > 0.0) {
+        // (only where a drop is several pixels across: smaller, each one
+        // was a white speck, a skin of pearls)
+        let fine = max(length(drx), length(dry)) * 40.0;
+        let seen = 1.0 - smoothstep(0.04, 0.09, fine);
+        let density = 0.8 * beading * smoothstep(0.05, 0.45, w) * (1.0 - cover);
+        if (seen > 0.0 && density > 0.0) {
+            // a resting bead, or else a drop running while it is soaked
+            var b = avatar_wet_bead(in.rest_wet.xyz, density);
+            if (b.x <= 0.0) {
+                b = avatar_wet_runner(in.rest_wet.xyz, normalize(in.rest_down), beading * smoothstep(0.3, 0.6, w) * (1.0 - cover), frame.camera_pos.w);
+            }
+            if (b.x > 0.0) {
+                bead = smoothstep(0.0, 0.25, b.x) * seen * air;
+                rim = (1.0 - smoothstep(0.05, 0.45, b.x)) * bead;
+                // its dome catches the sun as a drop does: a small sharp glint
+                // where it turns the sun toward the eye, added over the
+                // light; the surface under it keeps its own shading (a dome
+                // of the surface's normal shaded it as a blister of paint)
+                let out = avatar_wet_rest_to_world(b.yzw, drx, dry, dwx, dwy);
+                let along = out - m.n * dot(out, m.n);
+                if (dot(along, along) > 0.0) {
+                    let d = length(b.yzw);
+                    let dome = normalize(m.n * b.x + normalize(along) * min(d, 1.0));
+                    let v = normalize(frame.camera_pos.xyz - in.world_pos);
+                    // the sky in it, brightest toward its edge (Fresnel)
+                    let edge = pow(1.0 - max(dot(dome, v), 0.0), 5.0);
+                    m.emissive += sky_color(reflect(-v, dome)) * (0.02 + 0.3 * edge) * bead;
+                    if (frame.sun_dir.w > 0.01) {
+                        let l = normalize(frame.sun_dir.xyz);
+                        let glint = pow(max(dot(reflect(-l, dome), v), 0.0), 120.0) * smoothstep(0.0, 0.1, dot(dome, l));
+                        if (glint > 0.001) {
+                            let lit = sun_shadow(in.world_pos, m.geo_n, in.view_depth, in.clip.xy);
+                            m.emissive += frame.sun_color.rgb * frame.sun_dir.w * glint * 1.2 * lit * bead;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // a drop is clear: the surface shows through it a little darker, and its
+    // thin rim refracts darker still
+    m.color = vec4<f32>(m.color.rgb * (1.0 - 0.08 * bead) * (1.0 - 0.3 * rim), m.color.a);
+    if (water_fx_on(2048u)) {
+        // AURORA_WET_DEBUG: red soaks it up, green sealed, blue see-through,
+        // bright where beads sit, by how wet
+        let kind = select(vec3<f32>(absorb, sealed, 0.0), vec3<f32>(0.0, 0.0, 1.0), strand);
+        m.color = vec4<f32>(mix(kind * (0.25 + 0.75 * w), vec3<f32>(1.0), bead), m.color.a);
+        m.unlit = 1.0;
+    }
+    if (pbr) {
+        let r = avatar_wet_blend(m.roughness, min(m.roughness, mix(0.12, 0.38, fabric)), min(m.roughness, mix(0.03, 0.3, fabric)), shine);
+        m.roughness = clamp(mix(r * grain, 0.04, bead), 0.0, 1.0);
+    } else {
+        // the legacy faces' wet sheen is added over their light, their own
+        // specular and environment left as they are: the legacy lighting's
+        // glossy term takes light from a face lit past white (applyGlossEnv,
+        // not clamped), so raising them drew dark patches on sunlit skin,
+        // speckled by the grain; and its environment mixes the face toward
+        // the sky it mirrors (grey blotches under clouds)
+        let amount = clamp(shine * 0.5 * grain, 0.0, 1.0);
+        if (amount > 0.0) {
+            let v = normalize(frame.camera_pos.xyz - in.world_pos);
+            // (a film of water reads by a clear bright sheen over the skin
+            // and a sharp highlight: water's own 2 % of the sky read as no
+            // more than a slightly shinier skin)
+            let fres = 0.06 + 0.94 * pow(1.0 - max(dot(m.n, v), 0.0), 5.0);
+            var sheen = sky_color(reflect(-v, m.n)) * fres * mix(0.8, 0.45, fabric);
+            if (frame.sun_dir.w > 0.01) {
+                let l = normalize(frame.sun_dir.xyz);
+                let h = normalize(l + v);
+                let highlight = pow(max(dot(m.n, h), 0.0), mix(60.0, 500.0, amount) * mix(1.0, 0.4, fabric)) * max(dot(m.n, l), 0.0)
+                    * mix(2.0, 8.0, amount) * mix(1.0, 0.35, fabric);
+                if (highlight > 0.001) {
+                    sheen += frame.sun_color.rgb * frame.sun_dir.w * highlight * 0.6
+                        * sun_shadow(in.world_pos, m.geo_n, in.view_depth, in.clip.xy);
+                }
+            }
+            m.emissive += sheen * amount * m.color.a;
+        }
+    }
+    return m;
 }
 
 // How much a point faces up on its avatar: its facing against the
@@ -1047,7 +1473,7 @@ fn avatar_snow_on(m_in: Material, in: VsOut) -> Material {
 }
 
 fn eval_material(in: VsOut, front: bool) -> Material {
-    return avatar_snow_on(eval_material_base(in, front), in);
+    return avatar_snow_on(avatar_wet_on(eval_material_base(in, front), in), in);
 }
 
 fn eval_material_base(in: VsOut, front: bool) -> Material {

@@ -41,6 +41,9 @@ pub struct WaterEffects {
     pub caustics: bool,
     pub splashes: bool,
     pub bubbles: bool,
+    /// Avatars wet where they were in the water (the viewer's
+    /// scene/avatar_wet.rs; no shader bit: a dry avatar has no wet memory).
+    pub wet_avatars: bool,
 }
 
 impl Default for WaterEffects {
@@ -60,8 +63,17 @@ impl Default for WaterEffects {
             caustics: true,
             splashes: true,
             bubbles: true,
+            wet_avatars: true,
         }
     }
+}
+
+/// `AURORA_WET_DEBUG=1`: the wet look tints what is wet by what its
+/// material says it is (object.wgsl `avatar_wet_on`): red soaks it up,
+/// green sealed, blue see-through; bright where beads sit.
+pub fn wet_debug() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_WET_DEBUG").is_ok_and(|v| v.trim() == "1"))
 }
 
 impl WaterEffects {
@@ -81,6 +93,8 @@ impl WaterEffects {
             self.absorption,
             self.fresnel,
             self.wet_ground,
+            // (bit 11) the wet look's debug view: AURORA_WET_DEBUG
+            self.wet_avatars && wet_debug(),
         ]
         .iter()
         .enumerate()
