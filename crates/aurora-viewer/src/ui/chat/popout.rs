@@ -343,9 +343,9 @@ pub(super) fn pressed_away(ctx: &egui::Context, picker: &egui::Response, buttons
 
 /// The pickers close when the conversation shown changes, or the Contacts
 /// tab takes its place, however it happened (a tab, a name's menu, a
-/// conversation that asked for the front), as the Legacy Viewer's
-/// conversations do on a tab change (FSFloaterIMContainer::tabOpen). The
-/// conversations in their own window never change theirs.
+/// conversation that asked for the front): a picker belongs to the field
+/// it opened from. The conversations in their own window never change
+/// theirs.
 pub(super) fn pickers_follow_view(st: &mut ChatUi) {
     let view = (st.selected, st.contacts);
     if st.picker_view != Some(view) {
