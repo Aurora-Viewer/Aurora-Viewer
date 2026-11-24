@@ -9010,7 +9010,6 @@ build-ui-texture-suction = присоски
 build-ui-texture-weave = плетение
 fetch-redirect-failed = Не удалось перенаправить
 world-mod-declined = отклонено
-fetch-invalid-url = Недопустимый URL
 fetch-request-failed = Запрос не выполнен
 session-land-unreadable-response = не удалось прочитать ответ
 session-land-no-land-resources = В регионе недоступна служба LandResources.

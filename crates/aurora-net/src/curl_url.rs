@@ -2,16 +2,20 @@
 //!
 //! The Legacy Viewer passes a capability string to `CURLOPT_URL`
 //! (`LLCore::HttpOpRequest::prepareRequest`, indra/llcorehttp/_httpoprequest.cpp)
-//! and does not set `CURLOPT_DEFAULT_PROTOCOL`. libcurl then treats a leading
-//! `scheme:/` as absolute (`Curl_is_absolute_url`, guessing mode, lib/urlapi.c).
-//! Otherwise `guess_scheme` uses the host prefix `ftp.`, `dict.`, `ldap.`,
-//! `imap.`, `smtp.` or `pop3.`, and `http` for every other host. A value that
-//! starts with `/` is left alone: libcurl still has no host for it.
+//! and does not set `CURLOPT_DEFAULT_PROTOCOL`. It links libcurl 7.54.1
+//! (`curl` in its autobuild.xml, secondlife/3p-curl v7.54.1-r4), where
+//! `parseurlandfillconn` (lib/url.c) reads a scheme of at most 15 characters
+//! other than `/`, `:` and a line end, followed by `:` and one to three
+//! slashes (`%15[^\n/:]:%3[/]`). Without one, the authority up to `/`, `?`
+//! or `#` is the host, user name included, and its prefix `FTP.`, `DICT.`,
+//! `LDAP.`, `IMAP.`, `SMTP.` or `POP3.` (any case, `checkprefix`) picks that
+//! scheme; every other host gets `http`. A value that starts with `/` is left
+//! alone: libcurl has no host for it either and refuses it.
 
 use std::borrow::Cow;
 
-/// `MAX_SCHEME_LEN` in libcurl's urlapi.
-const MAX_SCHEME_LEN: usize = 40;
+/// The `%15[^\n/:]` of libcurl 7.54.1's scheme.
+const MAX_SCHEME_LEN: usize = 15;
 
 /// The URL libcurl would request. Already-absolute strings and path-only
 /// strings are returned unchanged, without a copy.
@@ -40,30 +44,20 @@ fn with_guessed_scheme(url: &str) -> String {
     out
 }
 
-/// Guessing mode: the scheme is the leading token and the next character is `/`.
-/// `a.example:8003/cap` is a host and a port, not a scheme.
+/// `%15[^\n/:]:%3[/]`: 1 to 15 bytes other than a line end, `/` and `:`,
+/// then `:` and a slash. `a.example:8003/cap` is a host and a port, not a
+/// scheme; a longer token is no scheme either.
 fn has_scheme_slash(url: &str) -> bool {
     let bytes = url.as_bytes();
-    if !bytes.first().is_some_and(|c| c.is_ascii_alphabetic()) {
-        return false;
-    }
-    let mut i = 1;
-    while i < bytes.len() && i < MAX_SCHEME_LEN {
-        let c = bytes[i];
-        if c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.') {
-            i += 1;
-            continue;
-        }
-        break;
-    }
-    bytes.get(i) == Some(&b':') && bytes.get(i + 1) == Some(&b'/')
+    let end = bytes.iter().take(MAX_SCHEME_LEN + 1).position(|c| matches!(c, b'\n' | b'/' | b':'));
+    matches!(end, Some(i) if i > 0 && bytes[i] == b':' && bytes.get(i + 1) == Some(&b'/'))
 }
 
-/// Host inside the authority, after any `user:password@`.
+/// `%[^\n/?#]`: the whole authority, a `user:password@` included (libcurl
+/// 7.54.1 removes it only after the guess).
 fn host_of(url: &str) -> &str {
-    let authority_end = url.find(['/', '?', '#']).unwrap_or(url.len());
-    let authority = &url[..authority_end];
-    authority.rsplit_once('@').map_or(authority, |(_, host)| host)
+    let authority_end = url.find(['\n', '/', '?', '#']).unwrap_or(url.len());
+    &url[..authority_end]
 }
 
 fn guessed_scheme(host: &str) -> &'static str {
@@ -102,15 +96,26 @@ mod tests {
         assert_eq!(ensure_scheme("/cap/x"), "/cap/x");
         assert_eq!(ensure_scheme(""), "");
         assert_eq!(ensure_scheme("FTP.example.com/file"), "ftp://FTP.example.com/file");
+        // 7.54.1 checks the prefix before it removes the user name
         assert_eq!(
             ensure_scheme("user:secret@ftp.example.com/readme"),
-            "ftp://user:secret@ftp.example.com/readme"
+            "http://user:secret@ftp.example.com/readme"
         );
+        assert_eq!(ensure_scheme("ftp.example.com@x/readme"), "ftp://ftp.example.com@x/readme");
         assert_eq!(ensure_scheme("dict.example.org:2628"), "dict://dict.example.org:2628");
         assert_eq!(ensure_scheme("imap.example/inbox"), "imap://imap.example/inbox");
         assert_eq!(ensure_scheme("smtp.example/"), "smtp://smtp.example/");
         assert_eq!(ensure_scheme("pop3.example"), "pop3://pop3.example");
         assert_eq!(ensure_scheme("ldap.example/dc=example"), "ldap://ldap.example/dc=example");
+    }
+
+    /// libcurl 7.54.1's `%15[^\n/:]:%3[/]`.
+    #[test]
+    fn a_scheme_is_at_most_fifteen_bytes_before_a_colon_and_a_slash() {
+        assert_eq!(ensure_scheme("abcdefghijklmno://h/x"), "abcdefghijklmno://h/x");
+        assert_eq!(ensure_scheme("abcdefghijklmnop://h/x"), "http://abcdefghijklmnop://h/x");
+        assert_eq!(ensure_scheme("https:/a.example/cap"), "https:/a.example/cap");
+        assert_eq!(ensure_scheme("1http://a.example/cap"), "1http://a.example/cap");
     }
 
     #[test]
