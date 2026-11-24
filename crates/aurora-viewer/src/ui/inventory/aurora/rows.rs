@@ -38,12 +38,19 @@ fn row_rects(ui: &egui::Ui) -> (Rect, Rect) {
     (rect, Rect::from_x_y_ranges(left..=rect.right(), rect.y_range()))
 }
 
-/// In the explorer's list a row is dragged by its icon and name only, as
-/// in Windows Explorer's Details view: a click anywhere on it selects it,
-/// and a drag from its other columns draws the rubber band
-/// (`marquee`). Elsewhere (the tree) the whole row drags, as before.
+/// Whether a row drags by its icon and name only, as in Windows Explorer's
+/// Details view, a click anywhere on it selecting it and a drag from its
+/// other columns drawing the rubber band (`marquee`): the explorer's
+/// folder, and its lists of Recent, Worn, Favorites and the results at the
+/// medium and wide widths. The narrow window's tree drags by the whole row.
+fn by_name(frame: Frame) -> bool {
+    frame.explorer || frame.layout != Layout::Compact
+}
+
+/// A row's own sense: a click only where its name handle drags it
+/// (`by_name`), a click and a drag otherwise.
 fn row_sense(frame: Frame, draggable: bool) -> Sense {
-    if frame.explorer || !draggable {
+    if by_name(frame) || !draggable {
         Sense::click()
     } else {
         Sense::click_and_drag()
@@ -67,7 +74,7 @@ fn name_handle(
     folder: bool,
     draggable: bool,
 ) {
-    if !frame.explorer || !draggable {
+    if !by_name(frame) || !draggable {
         return;
     }
     let width = ui
@@ -514,9 +521,8 @@ pub(in super::super) fn item(
     ui.advance_cursor_after_rect(rect);
     #[cfg(test)]
     tests::record(ui, id, rect);
-    if frame.explorer {
-        super::marquee::record(st, id, rect);
-    }
+    // the band notes the rows only while it is drawn
+    super::marquee::record(st, id, rect);
     if st.selected == Some(id) {
         st.selected_rect = Some(rect);
     }
@@ -613,8 +619,9 @@ pub(in super::super) fn item(
     }
 }
 
-/// A folder's row: with its caret in a tree, without it in the explorer,
-/// where a double-click goes into the folder.
+/// A folder's row: with its caret in a tree (none when it `branches` not:
+/// `rows::branches`), without it in the explorer, where a double-click goes
+/// into the folder.
 #[allow(clippy::too_many_arguments)]
 pub(in super::super) fn folder(
     ui: &mut egui::Ui,
@@ -623,6 +630,7 @@ pub(in super::super) fn folder(
     inv: &Inventory,
     id: Uuid,
     open: &mut bool,
+    branches: bool,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     facts: &Facts,
@@ -674,16 +682,15 @@ pub(in super::super) fn folder(
     ui.advance_cursor_after_rect(rect);
     #[cfg(test)]
     tests::record(ui, id, rect);
-    if frame.explorer {
-        super::marquee::record(st, id, rect);
-    }
+    // the band notes the rows only while it is drawn
+    super::marquee::record(st, id, rect);
     if st.selected == Some(id) {
         st.selected_rect = Some(rect);
     }
     background(ui, p, full, selected);
     focus_ring(ui, p, full, st, id);
     paint_icon(ui, icons, icon, icon_center, tint);
-    let caret = (!frame.explorer).then(|| {
+    let caret = (!frame.explorer && branches).then(|| {
         let caret_rect = Rect::from_center_size(caret_center, Vec2::splat(CARET + 4.0));
         let caret = ui.interact(caret_rect, ui.make_persistent_id(("inv_caret", id)), Sense::click());
         let color = if caret.hovered() { p.ink } else { p.muted };
@@ -783,9 +790,12 @@ pub(in super::super) fn folder(
             st.browse = id;
             st.selection.clear();
             st.selected = None;
+        } else if r.middle_clicked() {
+            // Explorer's and Dolphin's middle click: a tab behind
+            super::tabs::open(st, prefs, id, false);
         }
         *open = false;
-    } else if r.double_clicked() {
+    } else if r.double_clicked() && branches {
         *open = !*open;
     }
 }

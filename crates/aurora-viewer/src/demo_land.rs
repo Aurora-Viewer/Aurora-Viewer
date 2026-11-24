@@ -149,6 +149,17 @@ fn now() -> i32 {
         .unwrap_or(0)
 }
 
+/// The demo parcel's description: one line, or five paragraphs with
+/// `AURORA_DEMO_LAND=visibility`, taller than the description field.
+fn description() -> String {
+    let line = aurora_i18n::tr!("demo-land-aurora-viewer-s-offline-demo-parcel-visit-the-fountain");
+    if scenario().is_some_and(|s| s.tab == "visibility") {
+        std::iter::repeat_n(line, 5).collect::<Vec<_>>().join("\n\n")
+    } else {
+        line.into()
+    }
+}
+
 fn initial(role: Role) -> ParcelInfo {
     let (owner_id, group_id) = match role {
         Role::Owner => (DEMO_AGENT, DEMO_GROUP1),
@@ -159,7 +170,7 @@ fn initial(role: Role) -> ParcelInfo {
         local_id: 1,
         sequence_id: aurora_net::land::SELECTED_PARCEL_SEQ_ID,
         name: aurora_i18n::tr!("demo-land-aurora-plaza-offline-demo").into(),
-        desc: aurora_i18n::tr!("demo-land-aurora-viewer-s-offline-demo-parcel-visit-the-fountain").into(),
+        desc: description(),
         owner_id,
         group_id,
         is_group_owned: owner_id == group_id,

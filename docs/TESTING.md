@@ -4918,6 +4918,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SNOW_ROOF=1` | Four canopies in the snow: plain, open at the top, glass, leaves |
 | `AURORA_DEMO_SNOW_SPIN=1\|settles-off` | Boxes turning slowly, fast and by a script's steps in the lying snow |
 | `AURORA_DEMO_SNOW_SPIN=timer` | The same, the script's box stepped every 10 s (a move's hold between steps) |
+| `AURORA_DEMO_FOOTPRINTS_OFF=<frame>` | A trail of footprints in the snow, then Footprints turned off at this frame, for the run only |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground (`=snow`: why the snow lies or not) |
 | `AURORA_THUNDER_AT=<s>[:<m>]` | A lightning strike this many seconds after the start, 1 km away or `<m>` metres |
@@ -4972,7 +4973,13 @@ both open states and the selection count. Capture at frame 620.
   off at frame 700 (that run only, never the settings): the snow lying
   goes at once instead of melting away in view. Capture both with the
   shadows on and off (the shelter map is redrawn once a second with them
-  off). `AURORA_RAIN_DEBUG=1` colours the
+  off). `AURORA_DEMO_FOOTPRINTS_OFF=<frame>` (with `AURORA_SNOW` and
+  `AURORA_SNOW_LYING`) presses a trail of sixteen steps in the snow north
+  of the arrival at frame 300 and looks at it from above, then turns
+  Footprints off at that frame, for that run only (never the settings):
+  the trail must go at once, none left frozen on the ground (#4019).
+  Capture before and after that frame (`=500`: frames 450 and 650).
+  `AURORA_RAIN_DEBUG=1` colours the
   ground by its wetness memory: yellow, outside the memory; red, only
   assumed open (seen beyond the shelter map); green, wet; blue, dry under
   cover; brighter, the wetter. `AURORA_RAIN_DEBUG=snow` colours it by why
@@ -5557,7 +5564,13 @@ both open states and the selection count. Capture at frame 620.
   the Precipitation or Wind switch greys its own card (Precipitation
   greys On the ground and Thunder too). Capture after frame 300 at `AURORA_TEXT_SIZE=1`
   and `1.5`, with `--language fr`, `en` and `ja`: no label runs under its
-  switch or value.
+  switch or value. Resize the window by its edges and corners: the summary
+  stays on top and Quality, Clean up and Fill with snow at the bottom, the
+  cards scrolling between them; narrowed, the right columns go under the
+  left ones down to one (360 × 320 at least), the summary compacts and the
+  foot's buttons take a row of their own when they no longer fit beside
+  Quality; widened, up to five columns. The window follows the pointer both
+  ways, at 127 % too, and never holds a width or a height of its own.
 - **`AURORA_DEMO_ENV_EDITOR=sky|clouds|clouds-picker|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame
@@ -7794,6 +7807,39 @@ failure. Grid validation and any paid upload are performed by the human.
   tooltip names F6; a key the list keeps (Enter, an arrow) is refused with a
   notice; Ctrl+Shift+A still opens People when the list does not have the
   keyboard, and unbinding Invert selection gives the chord back to People.
+- **`AURORA_DEMO_INVENTORY=aurora-explorer-undo`**: the wide explorer in
+  the right-click tests folder after a Delete of its notecard and an undone
+  rename of its animation, the menu of the empty space open: "Undo delete of
+  1 item" (Ctrl+Z) and "Redo rename" (Ctrl+Y). By hand: Ctrl+Z puts the
+  notecard back, Ctrl+Y renames the animation again, Ctrl+Shift+Z redoes too;
+  a drag, a Ctrl-drag copy, an Alt-drag link, a rename (F2), a new folder
+  (Ctrl+Shift+N), each undone (the copy, link and folder go to the Trash,
+  never purged) and redone; the Trash's entry menu offers "Restore to
+  Right-click tests" for an entry deleted from there, and the plain Restore
+  for one whose folder is gone; the Purge and Empty Trash confirmations say
+  Undo cannot bring them back. Wearing an item then undoing the change that
+  made it is refused with the reason, the step kept.
+- **`AURORA_DEMO_INVENTORY=aurora-explorer-tabs|aurora-explorer-split`**:
+  `-tabs` opens the explorer in the right-click tests folder with three
+  tabs behind it (its subfolder, the top, a personal folder), the strip
+  above the toolbar. By hand: a click on a tab, Ctrl+Tab / Ctrl+Shift+Tab,
+  Ctrl+T, Ctrl+W, a middle click on a tab or its cross; a middle click on a
+  folder (a tab at the end, behind) and its menu's Open in new tab; each tab
+  keeps its own Back / Forward and selection; an item dragged onto a tab
+  goes into its folder, held there the tab shows. A tab dragged along the
+  strip moves (a violet line marks where); dragged away from the strip it
+  opens as a window of its own there; that window's tab dragged onto the
+  main window's strip goes back, and the window closes. `-split` opens the
+  dual-panel layout with two explorers (the right one in the subfolder)
+  and an item's menu with Copy / Move to the other pane; check the Undo of
+  such a move, that the narrow panes keep their breadcrumb and columns, and
+  that Tab in one pane's list gives the keyboard to the other's. In any
+  explorer: Ctrl-drag of an item copies it (a log line `inventory drop:`
+  names the mode and the keys held); a right-click in the empty space of a
+  folder, Recent, Worn or Favorites opens New at the side (in Recent, Worn
+  or Favorites a new notecard lands in Notecards, a folder at the top), an
+  entry's menu has New too (into the row's folder), and the
+  rubber band works in those lists too, from a row's Type or Date columns.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
   "Locked" tag after the name; the folder itself refuses Delete, Cut and a
@@ -10069,6 +10115,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Button widths tighten when needed, with unchanged icon sizes and the
   avatar still available for row clicks. The
   details action before More opens the resident sheet.
+  Pax stands 153.4 m away (`AURORA_DEMO_PEOPLE_FILTER=Pax`), and the
+  `crowd`'s Lumens reach 125.4 m (`AURORA_DEMO_PEOPLE_FILTER=Lumen`): the
+  range column widens to the widest range of the list, so every range
+  keeps its gap from the badges, the age and the arrival time (#4594).
   `legacy`: the same
   residents in Firestorm's table, for this run only (the preference is
   not changed). Capture `crowd` at frame 900 or later: the profiles
@@ -10452,7 +10502,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `experiences`, `environment` (or their index); Aurora's window opens a
   tab's section of "Manage", scrolled to and unfolded (`options` on "What
   visitors can do", `general` on "Sale and ownership", `covenant` on the
-  overview); `people` asks for the object owners as Refresh does, `owners`
+  overview); `visibility` opens "Visibility and search" with its
+  advanced rows unfolded and a five-paragraph parcel description (the
+  description field taller than its label, #4647; with `:owner`, since a
+  member sees the field greyed); `people` asks for the
+  object owners as Refresh does, `owners`
   also scrolls down to them; `environment-picker` and `experience-picker`
   open the settings picker (the demo library's skies, waters and days, also
   listed without `AURORA_DEMO_ENV_SELECT`) and the experience picker with

@@ -48,6 +48,14 @@ pub(crate) enum Command {
     Purge,
     /// F3, beside the search field's Ctrl+F.
     Search,
+    /// Ctrl+Z / Ctrl+Y: the inventory's history (`world::inventory::undo`).
+    Undo,
+    Redo,
+    /// The explorer's tabs (`aurora::tabs`).
+    NewTab,
+    CloseTab,
+    NextTab,
+    PreviousTab,
     /// Dolphin's filter bar: it filters the folder shown (Ctrl+Alt+F, not
     /// Dolphin's Ctrl+I, which is the viewer's Inventory window).
     Filter,
@@ -86,6 +94,12 @@ impl Command {
             Command::ContextMenu => Action::InvContextMenu,
             Command::Purge => Action::InvPurge,
             Command::Search => Action::InvSearch,
+            Command::Undo => Action::InvUndo,
+            Command::Redo => Action::InvRedo,
+            Command::NewTab => Action::InvNewTab,
+            Command::CloseTab => Action::InvCloseTab,
+            Command::NextTab => Action::InvNextTab,
+            Command::PreviousTab => Action::InvPreviousTab,
             Command::Filter => Action::InvFilter,
             Command::Preview => Action::InvPreview,
             Command::View(1) => Action::InvViewLarge,
@@ -114,6 +128,11 @@ impl Command {
                 | Command::Preview
                 | Command::View(_)
                 | Command::ToggleSelection
+                // the tabs are the explorer's (`aurora::tabs`)
+                | Command::NewTab
+                | Command::CloseTab
+                | Command::NextTab
+                | Command::PreviousTab
         )
     }
 
@@ -133,7 +152,7 @@ impl Command {
 }
 
 /// Every rebindable command, in the Shortcuts page's order.
-pub(crate) const REBINDABLE: [Command; 22] = [
+pub(crate) const REBINDABLE: [Command; 28] = [
     Command::Back,
     Command::Forward,
     Command::Up,
@@ -156,6 +175,12 @@ pub(crate) const REBINDABLE: [Command; 22] = [
     Command::Properties,
     Command::ContextMenu,
     Command::Purge,
+    Command::Undo,
+    Command::Redo,
+    Command::NewTab,
+    Command::CloseTab,
+    Command::NextTab,
+    Command::PreviousTab,
 ];
 
 /// The inventory actions' bindings, as the user set them.
@@ -248,6 +273,8 @@ pub(crate) fn for_menu_entry(id: &str) -> Option<Command> {
         "reload" => Command::Refresh,
         "select-all" => Command::SelectAll,
         "invert-selection" => Command::InvertSelection,
+        "undo" => Command::Undo,
+        "redo" => Command::Redo,
         _ => return None,
     })
 }
@@ -363,6 +390,11 @@ mod tests {
         assert_eq!(hit(Key::N, CTRL.plus(Modifiers::SHIFT)), Some(Command::NewFolder));
         assert_eq!(hit(Key::N, CTRL), None);
         assert_eq!(hit(Key::F10, Modifiers::SHIFT), Some(Command::ContextMenu));
+        assert_eq!(hit(Key::Z, CTRL), Some(Command::Undo));
+        assert_eq!(hit(Key::Z, CTRL.plus(Modifiers::SHIFT)), Some(Command::Redo));
+        if !cfg!(target_os = "macos") {
+            assert_eq!(hit(Key::Y, CTRL), Some(Command::Redo));
+        }
         // Alt+Enter everywhere (Option+Enter on a Mac): Cmd+I stays the
         // viewer's Inventory toggle there, not Finder's Get Info
         assert_eq!(hit(Key::Enter, Modifiers::ALT), Some(Command::Properties));
@@ -403,8 +435,16 @@ mod tests {
             assert!(keys.keeps(&key(KeyCode::Space), true, false, false, true));
             assert!(keys.keeps(&key(KeyCode::Enter), false, false, true, true));
         }
+        // Conversations' Ctrl+T and the chat's Ctrl+Tab are the explorer's
+        // tabs while the list has the keyboard
+        assert!(keys.keeps(&key(KeyCode::KeyT), true, false, false, true));
+        // outside the explorer they stay Conversations' and the chat's
+        assert!(!keys.keeps(&key(KeyCode::KeyT), true, false, false, false));
+        if !cfg!(target_os = "macos") {
+            assert!(keys.keeps(&key(KeyCode::Tab), true, false, false, true));
+            assert!(!keys.keeps(&key(KeyCode::Tab), true, false, false, false));
+        }
         // the viewer's own stay with it
-        assert!(!keys.keeps(&key(KeyCode::KeyT), true, false, false, true));
         assert!(!keys.keeps(&key(KeyCode::KeyI), true, true, false, true));
         // Ctrl+I opens and closes the Inventory window even from the explorer
         assert!(!keys.keeps(&key(KeyCode::KeyI), true, false, false, true));
@@ -414,6 +454,7 @@ mod tests {
         assert!(!keys.keeps(&key(KeyCode::Digit1), true, true, false, false));
         assert!(!keys.keeps(&key(KeyCode::KeyF), true, false, true, false));
         assert!(keys.keeps(&key(KeyCode::KeyN), true, true, false, false));
+        assert!(!keys.keeps(&key(KeyCode::KeyT), true, true, false, true));
         // a chord the user unbinds goes back to the viewer
         let mut kb = KeyBindings::default();
         kb.set(Action::InvInvertSelection, 0, None);

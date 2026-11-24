@@ -152,15 +152,39 @@ fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
     st.list_focus_frame = Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT));
     ctx.memory_mut(|m| {
         m.request_focus(focus_id(st));
-        m.set_focus_lock_filter(
-            focus_id(st),
-            egui::EventFilter {
-                vertical_arrows: true,
-                horizontal_arrows: true,
-                ..Default::default()
-            },
-        );
+        m.set_focus_lock_filter(focus_id(st), list_filter(st));
     });
+}
+
+/// The keys the focused list keeps from egui's focus moves: the arrows, and
+/// Tab in the split view (`split_tab`).
+fn list_filter(st: &InventoryUi) -> egui::EventFilter {
+    egui::EventFilter {
+        vertical_arrows: true,
+        horizontal_arrows: true,
+        tab: st.other_pane.is_some(),
+        ..Default::default()
+    }
+}
+
+/// The split view: Tab (or Shift+Tab) in one pane's list gives the keyboard
+/// to the other's, as in Dolphin's split view and the two-panel file
+/// managers, rather than to the next widget.
+pub(super) fn split_tab(ctx: &egui::Context, a: &mut InventoryUi, b: &mut InventoryUi) {
+    let (fa, fb) = (focus_id(a), focus_id(b));
+    ctx.memory_mut(|m| {
+        m.set_focus_lock_filter(fa, list_filter(a));
+        m.set_focus_lock_filter(fb, list_filter(b));
+    });
+    let (in_a, in_b) = ctx.memory(|m| (m.has_focus(fa), m.has_focus(fb)));
+    if !(in_a || in_b) || a.rename.is_some() || b.rename.is_some() {
+        return;
+    }
+    let pressed =
+        ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab) | i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab));
+    if pressed {
+        request_focus_ctx(ctx, if in_a { b } else { a });
+    }
 }
 
 fn list_focused_id() -> egui::Id {
@@ -199,12 +223,13 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     // manager (Ctrl or Shift keep the selection)
     // its right-click: the menu of the folder shown (Windows Explorer's
     // and Dolphin's menu of the empty space)
+    // Recent, Worn and Favorites too, with New into each type's folder
+    // (`context_catalog::build_background`)
     if response.secondary_clicked()
         && ui.input(|i| i.pointer.any_click())
         && st
             .aurora
-            .is_some_and(|frame| frame.explorer && frame.layout != super::aurora::Layout::Compact)
-        && st.tab == 0
+            .is_some_and(|frame| frame.layout != super::aurora::Layout::Compact && (frame.explorer || st.tab != 0))
         && let Some(pos) = response.interact_pointer_pos()
     {
         st.row_menu = Some((st.browse, pos));
@@ -1439,6 +1464,81 @@ mod tests {
                 );
             } else {
                 assert!(change.copies.len() == 1 && change.copies[0].parent == id(8001));
+            }
+        }
+    }
+
+    /// Issue #4765: a fetched empty folder has no caret, and a double-click
+    /// on it selects it without opening it, in both window styles; a folder
+    /// with contents still folds on a double-click.
+    #[test]
+    fn a_double_click_leaves_an_empty_folder_shut_in_both_styles() {
+        let shown = |h: &Harness, n| h.st.plain.rows.iter().find(|row| row.id == id(n)).map(|row| row.kind);
+        for (classic, width) in [(true, 680.0), (false, 440.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(width, 950.0));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let empty = &h.world.inventory.folders[&id(8001)];
+            assert!(empty.state == FetchState::Fetched && empty.children.is_empty() && empty.items.is_empty());
+            assert!(h.st.plain.is_open(id(8001)), "{classic}: Expand all left it open");
+            let leaf = rows::Kind::Folder {
+                open: false,
+                branches: false,
+            };
+            assert_eq!(shown(&h, 8001), Some(leaf), "{classic}: shown shut, without a caret");
+            let double_click = |h: &mut Harness, pos: Pos2| {
+                let press = |pressed| Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![Event::PointerMoved(pos), press(true), press(false), press(true), press(false)]);
+                h.frame(Vec::new());
+            };
+            h.st.plain.set_open(id(8001), false);
+            h.frame(Vec::new());
+            let pos = h.row(id(8001));
+            double_click(&mut h, pos);
+            assert_eq!(h.st.selected, Some(id(8001)), "{classic}: the double-click reached the row");
+            assert!(!h.st.plain.is_open(id(8001)), "{classic}: not even left open for later");
+            assert_eq!(shown(&h, 8001), Some(leaf), "{classic}: still shut");
+            assert!(
+                !h.st
+                    .plain
+                    .rows
+                    .iter()
+                    .any(|row| row.id == id(8001) && row.kind == rows::Kind::Empty),
+                "{classic}: no Empty line"
+            );
+            assert!(!h.st.visible.is_empty());
+            let pos = h.row(id(8000));
+            double_click(&mut h, pos);
+            assert_eq!(
+                shown(&h, 8000),
+                Some(rows::Kind::Folder {
+                    open: false,
+                    branches: true
+                }),
+                "{classic}: a folder with contents folds"
+            );
+            if classic {
+                // the Legacy-style single folder window lists 8000 flat:
+                // there an empty folder is gone into, as any other
+                h.st.open_single_folder_window(id(8000));
+                for _ in 0..4 {
+                    h.frame(Vec::new());
+                }
+                let window = h.st.windows.last().expect("single folder window");
+                assert!(window.state.lists_flat());
+                let name = format!("inventory_{}", window.id);
+                let pos = h.row_in(id(8001), &name);
+                double_click(&mut h, pos);
+                let window = h.st.windows.last().expect("single folder window");
+                assert_eq!(window.state.browse, id(8001), "the empty folder is gone into");
             }
         }
     }

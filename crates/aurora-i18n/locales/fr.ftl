@@ -1479,6 +1479,47 @@ inventory-unpin = Désépingler de l’accès rapide
 inventory-quick-access = Accès rapide
 inventory-quick-access-drop = Déposez un dossier ici pour l’épingler
 inventory-invert-selection = Inverser la sélection
+inventory-undo = Annuler
+inventory-redo = Rétablir
+inventory-undo-step = Annuler { $what }
+inventory-redo-step = Rétablir { $what }
+inventory-history-move = { $count ->
+    [one] le déplacement d’un élément
+   *[other] le déplacement de { $count } éléments
+    }
+inventory-history-delete = { $count ->
+    [one] la suppression d’un élément
+   *[other] la suppression de { $count } éléments
+    }
+inventory-history-rename = le changement de nom
+inventory-history-new-folder = la création du dossier
+inventory-history-copy = { $count ->
+    [one] la copie d’un élément
+   *[other] la copie de { $count } éléments
+    }
+inventory-history-link = { $count ->
+    [one] le lien vers un élément
+   *[other] les liens vers { $count } éléments
+    }
+inventory-undo-nothing = Plus rien à annuler : ces éléments ont été déplacés ou n’existent plus.
+inventory-redo-nothing = Plus rien à rétablir : ces éléments ont été déplacés ou n’existent plus.
+inventory-undo-empty = Rien à annuler.
+inventory-redo-empty = Rien à rétablir.
+inventory-undo-dropped = Les éléments de la dernière étape ont été déplacés ou n’existent plus : elle est abandonnée. Annulez de nouveau pour l’étape précédente.
+inventory-redo-dropped = Les éléments de l’étape suivante ont été déplacés ou n’existent plus : elle est abandonnée. Rétablissez de nouveau pour l’étape d’après.
+inventory-undo-folder-not-empty = Ce nouveau dossier contient des éléments ajoutés depuis : sortez-les d’abord, ou supprimez le dossier vous-même.
+inventory-undo-kept-out = Ces éléments sont maintenant dans la tenue actuelle ou les annonces de la Place du marché : modifiez-les là-bas.
+inventory-restore-to = { "Restaurer dans « " }{ $folder }{ " »" }
+inventory-restore-to-origins = Restaurer dans leurs dossiers
+inventory-purge-no-undo = Annuler ne pourra pas les récupérer.
+inventory-new-tab = Nouvel onglet
+inventory-close-tab = Fermer l’onglet
+inventory-next-tab = Onglet suivant
+inventory-previous-tab = Onglet précédent
+inventory-open-in-new-tab = Ouvrir dans un nouvel onglet
+inventory-tabs-limit = { $count } onglets au plus.
+inventory-copy-to-other-pane = Copier dans l’autre volet
+inventory-move-to-other-pane = Déplacer dans l’autre volet
 inventory-resize-columns = Faites glisser pour redimensionner les colonnes. Double-cliquez pour ajuster la colonne de gauche à son contenu.
 inventory-resize-columns-first = Faites glisser pour redimensionner les colonnes. Double-cliquez pour rendre à la première colonne sa largeur habituelle.
 inventory-sort-by-column = Cliquez pour trier selon cette colonne, une seconde fois pour inverser l’ordre. Faites glisser pour déplacer la colonne.
@@ -9080,6 +9121,7 @@ build-ui-texture-bricks = briques
 build-ui-texture-gravel = gravier
 fetch-redirect-failed = redirect failed
 world-mod-declined = refusé
+fetch-invalid-url = URL non valide
 fetch-request-failed = request failed
 session-land-unreadable-response = réponse illisible
 session-land-no-land-resources = La région ne fournit pas la capability LandResources.
