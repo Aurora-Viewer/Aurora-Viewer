@@ -38,6 +38,16 @@ impl TypeAhead {
     pub(super) fn shown(&self, now: f64) -> Option<&str> {
         (!self.text.is_empty() && now - self.at <= TYPE_AHEAD_TIMEOUT).then_some(self.text.as_str())
     }
+
+    /// The prefix kept while the list owns the keyboard.
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// A click starts a new prefix (LLFolderView::handleMouseDown).
+    pub(super) fn clear(&mut self) {
+        self.text.clear();
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,7 +192,7 @@ pub(super) fn handle(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, explo
                     None => true,
                 }
             }
-            egui::Event::Text(text) if !held.command && !held.ctrl && !held.alt => {
+            egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text)) if !held.command && !held.ctrl && !held.alt => {
                 typed.push_str(text);
                 false
             }

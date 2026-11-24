@@ -302,6 +302,26 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     if response.clicked() || response.has_focus() || restore {
         request_focus(ui, st);
     }
+    if response.has_focus()
+        && ui.is_enabled()
+        && st.dialog.is_none()
+        && !ui.ctx().text_edit_focused()
+        && !egui::Popup::is_any_open(ui.ctx())
+    {
+        // Offer native composition at the list, as the residents' list does
+        // (ui/people/type_ahead.rs): the type-ahead accepts IME commits, so a
+        // name outside ASCII can be composed and typed.
+        let to_global = ui.ctx().layer_transform_to_global(ui.layer_id()).unwrap_or_default();
+        let cursor = egui::Rect::from_min_size(rect.min, egui::vec2(1.0, ui.spacing().interact_size.y));
+        ui.output_mut(|out| {
+            out.ime = Some(egui::output::IMEOutput {
+                purpose: egui::IMEPurpose::Normal,
+                rect: to_global * rect,
+                cursor_rect: to_global * cursor,
+                should_interrupt_composition: false,
+            });
+        });
+    }
 }
 
 pub(super) fn copy_allowed(inv: &Inventory, ids: &[Uuid]) -> bool {
@@ -596,6 +616,8 @@ fn demo_mode() -> Option<&'static str> {
                 || mode.starts_with("search-selection")
                 || mode.starts_with("keyboard")
                 || mode.starts_with("aurora-keyboard")
+                || mode.starts_with("type-ahead-ime")
+                || mode.starts_with("aurora-type-ahead-ime")
                 || mode.starts_with("enter")
                 || mode.contains("rename-focus")
                 || mode.contains("rename-window")
@@ -737,6 +759,36 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
                 target.rename.is_some(),
                 ctx.memory(|m| m.has_focus(focus_id(target))),
                 target.selected
+            );
+        }
+        return Vec::new();
+    }
+    if mode == "type-ahead-ime" {
+        // Click Materials in the root, then commit "tex" as a Japanese IME
+        // does: Textures is before it in the root, so the nearest match wraps.
+        if matches!(frame, 650 | 651)
+            && let Some(pos) =
+                ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, crate::demo::u(19)))))
+        {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        if frame == 665 {
+            return vec![egui::Event::Ime(egui::ImeEvent::Commit("tex".into()))];
+        }
+        if frame == 700 {
+            log::info!(
+                "demo inventory type-ahead IME: frame={frame}, selected={:?}, prefix={:?}, list_focus={}",
+                st.selected,
+                st.type_ahead.text(),
+                ctx.memory(|m| m.has_focus(focus_id(st)))
             );
         }
         return Vec::new();
@@ -1709,6 +1761,27 @@ mod tests {
         assert_eq!(h.st.selected, Some(id(20_060)));
         assert_eq!(h.st.selection.len(), 61);
         h.row(id(20_060)); // The unfiltered tree shares the same minimal scroll.
+    }
+
+    #[test]
+    fn an_ime_commit_finds_the_row_and_a_click_starts_a_new_prefix() {
+        let mut h = Harness::new();
+        h.select(id(8100), false);
+        h.frame(Vec::new());
+        assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st))), "the click focused the list");
+
+        h.frame(vec![Event::Ime(egui::ImeEvent::Commit("demo t".into()))]);
+        assert_eq!(h.st.selected, Some(id(8104)), "Demo texture");
+        assert_eq!(h.st.type_ahead.text(), "demo t");
+        assert!(h.st.search.is_empty(), "the filter field is untouched");
+
+        // A click starts a new prefix, as LLFolderView::handleMouseDown.
+        let field = h.text("Filter inventory");
+        h.click(field.center(), Default::default());
+        assert!(h.st.type_ahead.text().is_empty());
+        h.frame(vec![Event::Text("demo s".into())]);
+        assert_eq!(h.st.search, "demo s");
+        assert!(h.st.type_ahead.text().is_empty(), "the field took the text");
     }
 
     #[test]

@@ -6826,7 +6826,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, system folder icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, system folder icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, IME type-ahead, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open\|delete` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
@@ -7846,6 +7846,15 @@ failure. Grid validation and any paid upload are performed by the human.
   or Favorites a new notecard lands in Notecards, a folder at the top), an
   entry's menu has New too (into the row's folder), and the
   rubber band works in those lists too, from a row's Type or Date columns.
+- **`AURORA_DEMO_INVENTORY=type-ahead-ime|aurora-type-ahead-ime`**: clicks the
+  demo "Materials" folder at frames 650–651, then commits `tex` as a Japanese
+  IME does at frame 665 (`egui::ImeEvent::Commit`). The nearest match from that
+  row wraps around the root to "Textures"; capture at 720 with
+  `AURORA_CAPTURE_FRAMES=720` (or later) shows it selected with the rest of the
+  inventory visible and the filter field empty. At frame 700 the log reports
+  the selection, the prefix and the list focus. `aurora-…` opens the wide
+  explorer, where the typed prefix shows in its label; `type-ahead-ime` the
+  Legacy tree.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
   "Locked" tag after the name; the folder itself refuses Delete, Cut and a
