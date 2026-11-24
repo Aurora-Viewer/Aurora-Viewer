@@ -3130,7 +3130,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/appearance/wearable_favorites.rs`, `world/wearable_favorites.rs`, `app/wearable_favorites.rs` | Favorite Wearables (FSFloaterWearableFavorites): `#Aurora/#Wearable Favorites`, created once while the window is open, holds links to wearables and attachments and subfolders; the window picks All Favorites (each original once) or a subfolder, New / Rename / Delete folder, filter (worn tag and type included), sort by name / most recent / type (FSWearableFavoritesSortOrder, saved) or a Custom order dragged by hand (`widgets::reorder`, one order per view, kept per account), Remove, links what is dropped from the inventory (where it is let go, in Custom order), picture rows with the attachment point and a tooltip, wears or takes off on a double click or the hovered row's button (with a status line), waits for the bridge to make `#Aurora`, and shares the outfit rows' menu with Assign to Folder; every change is an ordinary inventory mutation or outfit action; AURORA_DEMO_WEARABLE_FAVORITES |
 | `ui/appearance/selection.rs` | Shared gallery/list outfit selection in display order: Ctrl/Cmd toggles, Shift ranges, stable UUID anchors, right-click preservation and pruning of hidden or deleted outfits |
 | `ui/appearance/clipboard.rs`, `world/outfit_paste.rs` | Ctrl+C / Ctrl+X / Ctrl+V in Appearance on the inventory's clipboard (outfits, items of an outfit, Worn, the outfit editor; links copied, not originals), and the outfit branches of the Legacy paste shared with the inventory: items linked into an outfit (a cut link of another outfit moves), worn when pasted into the Current Outfit, folders made outfits or groups in My Outfits, cut outfits and groups moved |
-| `aurora-net/src/outfits.rs`, `aurora-net/src/outfits/categories.rs` | Writing of the outfit links, favourites, names and images through AIS InventoryAPIv3, move to the trash; confirmation and read-back of the folders / items |
+| `aurora-net/src/outfits.rs`, `aurora-net/src/outfits/categories.rs` | Writing of the outfit links, favourites, names and images through AIS InventoryAPIv3, move to the trash; confirmation and read-back of the folders / items. Without AIS the folder is a diff (`sync_inventory_folder`): only the links that change are sent, and a removal the server still lists is left out of the applied folder |
 | `aurora-net/src/freeze.rs`, `release_notes.rs`, `sim_console.rs`, `voice_moderation.rs`, `postcard.rs`, `session/sim_requests.rs`, `world/sim_console.rs`, `world/voice_moderation.rs`, `ui/sim_console.rs`, `demo_sim_extras.rs` | The small simulator features: being frozen (ViewerFrozenMessage, the state shown by a snowflake among the parcel icons, and the AvatarFrozen alerts worded by the viewer); Help › Server release notes (ServerReleaseNotes, its `Location` opened); Advanced › Region console of estate managers (SimConsoleAsync, its output from the event queue's SimConsoleResponse); nearby voice moderation (SpatialVoiceModerationRequest: who may moderate, the entries under a resident's voice row, the notice when a moderator mutes us); a photo by e-mail (SendPostcard, the photo window's E-mail destination in `ui/snapshot.rs` and `app/snapshot.rs`); their demo (`AURORA_DEMO_FREEZE`, `AURORA_DEMO_SIM_CONSOLE`, `AURORA_DEMO_VOICE_MODERATION`) |
 | `slurl.rs`, `slapp.rs`, `link_trust.rs` | Links in texts: SLURL (navigation bar, "Region (x,y,z)" labels of the place links); the other `secondlife:///app/...` commands (`slapp.rs`: group, parcel, objectim, inventory, experience, classified, event, map, chat, search, agent verbs, the ones refused from a text received; their labels and menus in `ui/chat/app_links.rs`, what a click runs in `app/app_links.rs`, the remote object inspector in `ui/remote_object.rs`); trust of web links (trusted site, unknown, dangerous: shorteners, fake official names, IP addresses…), judged locally on the URL |
 | `link_preview.rs`, `link_preview/services.rs` | Link previews of the conversations (issues #538, #739): which links of a message get a picture under them (a picture's file, a YouTube video, a video file of a trusted site played by the media plugins' browser in a loopback page that reports its shape, #983, the page of an image service: Gyazo and Flickr through their oEmbed (a Gyazo video capture leads to its `.mp4`), Imgur and Lightshot through the page's `og:image`, Reddit through the post's Atom feed, #923; the picture found must be on the service's own servers, Reddit's blurred until clicked; saved answers with made-up ids in `link_preview/fixtures/` for the tests and the demo) and whether it loads by itself (Preferences › Chat: trusted sites by default, the others after a click; never a link that hides its destination), the download (no cookie or referrer, redirects kept on trusted sites, 8 MB at most) and the decoding off the frame (PNG, JPEG, GIF and WebP frames, BMP, kept at the size drawn), YouTube's oEmbed title, the loopback page that holds a video's player (YouTube's player wants a referrer), and the demo's pictures made without network |
@@ -4295,7 +4295,13 @@ Each texture in use holds a slot of the renderer's table (262,144 of them,
 `aurora-render/src/textures.rs`); one that found it full is drawn white
 until a slot frees up, then gets it and loads again, and the objects that
 draw it are built again (`TextureStreamer::give_slots`,
-`Scene::rebuild_reslotted`; #2822).
+`Scene::rebuild_reslotted`; #2822). The built-in transparent texture, the
+invisible bake and the water-exclusion ramp are never downloaded;
+`TextureStreamer::has_alpha_channel` still reports an alpha channel for
+them, so the build tools offer Alpha mode (Alpha blending by default) the
+way `LLPanelFace` does for the preloaded `transparent.j2c` and alpha ramp;
+the invisible bake, a downloaded asset in the Legacy Viewer, is drawn here
+with the transparent slot and reports its alpha (#2826).
 
 Alpha coverage restoration (`aurora-render/src/textures.rs`) only increases
 the box-filtered mip alpha. A texture may be shared by faces with different
@@ -4511,7 +4517,12 @@ process ends as before. A fault at an address where nothing is mapped is
 written without the unwinder, which would fault there in turn; and a fatal
 signal that a library gave its own handler (NVIDIA's shader compiler takes
 SIGABRT at its first compile) is taken back, every second by the watchdog
-and once the renderer is dropped at exit. Panics and failed allocations get the same stacks. `threads.rs` names the
+and once the renderer is dropped at exit. Panics and failed allocations get the same stacks.
+`open_files.rs` (Linux) counts the process's open files by kind once per
+GPU loss, for the report's "Open files at the loss" row (#2970): Mesa
+reports a descriptor it could not get as "out of memory"; it opens
+`/proc/self/fd` when crash recovery starts, since none is left at the
+limit. `threads.rs` names the
 long-lived background threads the session cannot do without (network
 runtime, texture pages, frees, disk caches, chat history): their panic,
 which used to leave the viewer running without them, ends the session at
@@ -5184,7 +5195,9 @@ sidebar and the type filters read it, and `ui/icons.rs` derives its item
 aliases from it. The system folder icons are SVGs generated by
 `scripts/generate-inventory-icons.py` (Tabler's folder with the symbol cut out
 through a mask, committed in `assets/icons/aurora/`), so a skin replaces them
-by name. `Icons::sized` draws an icon larger than 1.5x its 64 px raster from a
+by name; a skin's Legacy-named image of the same folder (`Inv_LookFolder*`,
+`Inv_Sys*`, `Inv_Folder*`) wins over Aurora's own when the skin has it
+(`category::skin_image`, applied by `Icons::load`). `Icons::sized` draws an icon larger than 1.5x its 64 px raster from a
 192 px copy rasterized on first use (`Icons::large`, gallery tiles and the
 details picture): the egui renderer has no mipmaps, so one raster cannot
 serve both sizes. In rows, `category::row_icon_size` draws folders half as

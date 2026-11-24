@@ -2222,6 +2222,11 @@ cube as a hologram, `start` leaves a hologram of it where the move began.
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
 independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
 with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
+`texture:bp-alpha` is the same Blinn-Phong tab after the selection's diffuse
+map is the built-in Transparent texture: Alpha mode is enabled and shows
+Alpha blending. Repeat with `AURORA_DEMO_BUILD_STYLE=legacy` and without it.
+A transparency above 0 still shows Alpha blending and greys the combo; an
+opaque texture still greys it.
 On General, click the object in the world, then the blank stretch in the
 label column to the left of the Name field: the whole name is selected and
 the next letters replace it. Click into Description, click the world, then
@@ -8617,8 +8622,14 @@ failure. Grid validation and any paid upload are performed by the human.
   order (the default chat window shows the last four).
   What to see: no square in the labels, the floating text,
   the chat and its list; all the characters of a line sitting on the same
-  baseline. Compare with `AURORA_FONT_FALLBACK=0` (squares everywhere
-  except Cyrillic, Greek, emojis and a few symbols). Visible limits: flags,
+  baseline. One name is small capitals (`ᴄᴅᴇꜰᴊᴋᴏᴘꜱᴜᴠᴡᴢ` and `ᴥ`); the
+  symbols line includes `♱ ♰ ✞`; the other-scripts line includes Kannada,
+  Oriya and the other Indic letters, plus `𓆩 ꕤ ᥫ 𐙚 𖤐 ꨄ`. Linear A (`𐙚`),
+  Bamum (`𖤐`) and Cham (`ꨄ`) have Linux Noto files only: they stay squares
+  on Windows. Compare with
+  `AURORA_FONT_FALLBACK=0` (squares for everything the embedded Noto Sans
+  also lacks: Georgian, CJK, Arabic, the rare scripts; the small capitals
+  stay, because that Noto face is now always in the family). Visible limits: flags,
   skin tones and ZWJ sequences not composed; emojis
   monochrome outside the chat. On a system without the expected fonts
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares

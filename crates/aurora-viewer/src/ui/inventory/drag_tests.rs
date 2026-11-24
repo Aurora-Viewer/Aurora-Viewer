@@ -707,3 +707,37 @@ fn beyond_the_viewers_window_the_pointer_is_not_over_the_world() {
     // over a window of the interface, as before
     assert!(!drag::in_world(true, Some(egui::pos2(400.0, 300.0)), window));
 }
+
+/// A right-button drag passes the same threshold as a left one, and is kept
+/// as a right drag, whose drop in the explorer asks what to do (Windows
+/// Explorer, Dolphin).
+#[test]
+fn inventory_right_drag_starts_past_the_threshold() {
+    let mut f = Fixture::new();
+    let right = |f: &mut Fixture, pos: egui::Pos2, pressed: bool| {
+        f.frame(
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: modifiers(false),
+                },
+            ],
+            false,
+        );
+    };
+    let from = f.row(100);
+    right(&mut f, from, true);
+    f.hover(from + Vec2::new(2.0, 0.0));
+    assert!(!egui::DragAndDrop::has_any_payload(&f.ctx), "within the threshold");
+    f.hover(from + Vec2::new(50.0, 0.0));
+    assert!(egui::DragAndDrop::has_any_payload(&f.ctx), "past the threshold");
+    assert!(drag::right_drag(&f.ctx), "held as a right drag");
+    let to = f.row(20);
+    f.hover(to);
+    right(&mut f, to, false);
+    f.settle();
+    assert!(f.moved().is_empty(), "a right drop never moves on its own");
+}

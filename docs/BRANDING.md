@@ -261,9 +261,10 @@ dragging a handle switch to `violet_light`, like any selection.
   only for code-like text (script editor, UUIDs, keys, colour codes, URLs,
   paths, versions), and an arrow or a caret is a Tabler icon, never a
   character (`widgets::disclosure_caret`, `sort_caret`). The characters they lack
-  (display names and messages in Georgian, Japanese, Arabic, mathematical
-  letters…) are drawn with the system fonts, which are never chosen for a
-  text of the interface itself.
+  (display names and messages in small capitals, Georgian, Japanese, Arabic,
+  mathematical letters…) are drawn first by the embedded Noto Sans, on every
+  system, then by the system fonts, which are never chosen for a text of the
+  interface itself.
 - **Text size.** Preferences › Fonts and the skin's font scale apply to all
   font faces, including explicit rich text, painter fonts and monospace.
   Keep font sizes in unscaled points; shaping supplies the scaled advances
@@ -366,13 +367,17 @@ shortcuts), because Tabler has none. It is tinted like the other script
 icons (`teal`): only the shape tells an SLua script from an LSL one. It is
 the one hand-drawn icon allowed next to Tabler (decision on PR #2802).
 
-**Proposed exceptions: four clothing icons.** Tabler has no pants, skirt,
-underpants or undershirt; until now they borrowed `walk`, `woman-filled`,
-`diaper` and `shirt-sport`. Zakka drew them for Aurora in the Tabler filled style
-(`assets/icons/aurora/clothing/`, read through
+**Exception: four clothing icons** (the team's decision on PR #4171).
+Exactly these four files are hand-drawn:
+`assets/icons/aurora/clothing/pants.svg`, `skirt.svg`, `underpants.svg` and
+`undershirt.svg`. They are not a precedent for more drawn icons. Tabler has
+no pants, skirt, underpants or undershirt; until now they borrowed `walk`,
+`woman-filled`, `diaper` and `shirt-sport`. Zakka drew them for Aurora in
+the Tabler filled style (read through
 `ui/inventory/category.rs`'s `CLOTHING_DRAWINGS`; their link icons are made
 by `scripts/generate-inventory-icons.py`). They are tinted like the other
-clothing (`rose`).
+clothing (`rose`). Zakka dedicated them to the public domain under
+CC0 1.0 (NOTICE.md, Bundled assets).
 
 **System folder icons are Tabler combined, not drawn.** Each system folder
 (Textures, Sounds… Settings, Materials) is Tabler's `folder-filled` /

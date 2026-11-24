@@ -395,14 +395,15 @@ mod tests {
         if !cfg!(target_os = "macos") {
             assert_eq!(hit(Key::Y, CTRL), Some(Command::Redo));
         }
+        // Alt+Enter everywhere (Option+Enter on a Mac): Cmd+I stays the
+        // viewer's Inventory toggle there, not Finder's Get Info
+        assert_eq!(hit(Key::Enter, Modifiers::ALT), Some(Command::Properties));
+        assert_eq!(hit(Key::I, CTRL), None);
         if cfg!(target_os = "macos") {
-            // Finder's keys
-            assert_eq!(hit(Key::I, CTRL), Some(Command::Properties));
             assert_eq!(hit(Key::Space, CTRL), None, "Spotlight's");
         } else {
             assert_eq!(hit(Key::Space, CTRL), Some(Command::ToggleSelection));
             assert_eq!(hit(Key::Delete, Modifiers::SHIFT), Some(Command::Purge));
-            assert_eq!(hit(Key::Enter, Modifiers::ALT), Some(Command::Properties));
         }
         // the list's fixed keys are no command here
         assert_eq!(hit(Key::Delete, Modifiers::NONE), None);
@@ -475,6 +476,9 @@ mod tests {
     #[test]
     fn a_tip_names_its_key() {
         let ctx = egui::Context::default();
+        // a Mac's labels ask the fonts whether ⌘ can be drawn: they exist
+        // from the first pass
+        ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
         let tip = tip(&ctx, "Select all", Command::SelectAll);
         assert!(tip.starts_with("Select all (") && tip.ends_with(')'), "{tip}");
         assert!(label(&ctx, Command::Rename).is_some_and(|l| l.contains("F2")));
