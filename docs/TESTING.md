@@ -4918,6 +4918,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SNOW_ROOF=1` | Four canopies in the snow: plain, open at the top, glass, leaves |
 | `AURORA_DEMO_SNOW_SPIN=1\|settles-off` | Boxes turning slowly, fast and by a script's steps in the lying snow |
 | `AURORA_DEMO_SNOW_SPIN=timer` | The same, the script's box stepped every 10 s (a move's hold between steps) |
+| `AURORA_DEMO_FOOTPRINTS_OFF=<frame>` | A trail of footprints in the snow, then Footprints turned off at this frame, for the run only |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground (`=snow`: why the snow lies or not) |
 | `AURORA_THUNDER_AT=<s>[:<m>]` | A lightning strike this many seconds after the start, 1 km away or `<m>` metres |
@@ -4972,7 +4973,13 @@ both open states and the selection count. Capture at frame 620.
   off at frame 700 (that run only, never the settings): the snow lying
   goes at once instead of melting away in view. Capture both with the
   shadows on and off (the shelter map is redrawn once a second with them
-  off). `AURORA_RAIN_DEBUG=1` colours the
+  off). `AURORA_DEMO_FOOTPRINTS_OFF=<frame>` (with `AURORA_SNOW` and
+  `AURORA_SNOW_LYING`) presses a trail of sixteen steps in the snow north
+  of the arrival at frame 300 and looks at it from above, then turns
+  Footprints off at that frame, for that run only (never the settings):
+  the trail must go at once, none left frozen on the ground (#4019).
+  Capture before and after that frame (`=500`: frames 450 and 650).
+  `AURORA_RAIN_DEBUG=1` colours the
   ground by its wetness memory: yellow, outside the memory; red, only
   assumed open (seen beyond the shelter map); green, wet; blue, dry under
   cover; brighter, the wetter. `AURORA_RAIN_DEBUG=snow` colours it by why
