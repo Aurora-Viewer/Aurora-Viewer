@@ -16772,6 +16772,8 @@ impl App {
                     1 => Some(crate::build::Tool::Edit),
                     2 => Some(crate::build::Tool::Create),
                     3 => Some(crate::build::Tool::Land),
+                    4 => Some(crate::build::Tool::Focus),
+                    5 => Some(crate::build::Tool::Grab),
                     _ => None,
                 };
                 // LLToolMgr::buildEnabledOrActive: under @edit and @rez

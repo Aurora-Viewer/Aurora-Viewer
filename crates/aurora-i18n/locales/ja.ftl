@@ -15811,6 +15811,8 @@ toolbar-remove-from-menu = ツールバーから削除
 toolbar-command-build-edit = オブジェクトを編集
 toolbar-command-build-create = プリムを作成
 toolbar-command-build-land = 土地を編集
+toolbar-command-build-focus = ビルドカメラ
+toolbar-command-build-grab = オブジェクトを移動
 
 # ３６０度スナップショットのウィンドウ（LLFloater360Capture, floater_360capture.xml）
 capture-360-quality-preview = プレビュー（高速）

@@ -123,6 +123,8 @@ pub(super) fn category(command: &str) -> Category {
         | "director"
         | "second_camera"
         | "inventory_dual"
+        | "build_focus"
+        | "build_grab"
         | "build_edit"
         | "build_create"
         | "build_land"

@@ -1,5 +1,6 @@
-//! Build and its modes' toolbar buttons (Edit objects, Create prims, Edit
-//! land): which tool a click opens, and when it closes the window.
+//! Build and its modes' toolbar buttons (Camera, Move, Edit objects, Create
+//! prims, Edit land): which tool a click opens, and when it closes the
+//! window.
 
 use super::*;
 use std::sync::Arc;
@@ -44,7 +45,7 @@ fn build_first_opens_on_create_then_reopens_on_the_tool_last_shown() {
 fn a_lit_mode_button_closes_the_window_and_another_switches_it() {
     let (mut world, mut settings) = (world(), BuildSettings::default());
     let mut tool = BuildTool::default();
-    for mode in [Tool::Edit, Tool::Create, Tool::Land] {
+    for mode in [Tool::Focus, Tool::Grab, Tool::Edit, Tool::Create, Tool::Land] {
         // closed: the button opens on its tool
         click(&mut tool, &mut world, &mut settings, Some(mode), true);
         assert_eq!(tool.shown_tool(), Some(mode), "{mode:?}");

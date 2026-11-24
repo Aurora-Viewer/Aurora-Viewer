@@ -80,7 +80,7 @@ pub enum BarAction {
     None,
     /// ShowBanLines: 0 hidden, 1 on collision, 2 on proximity.
     BanLines(u8),
-    /// Build floater: 0 toggle, 1 edit, 2 create, 3 land.
+    /// Build floater: 0 toggle, 1 edit, 2 create, 3 land, 4 camera, 5 move.
     Build(u8),
     /// A Build toolbar button, as [`BarAction::Build`]: a mode's button
     /// closes the window when its tool is the one shown.
@@ -3046,6 +3046,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "build_edit" => return BarAction::BuildButton(1),
         "build_create" => return BarAction::BuildButton(2),
         "build_land" => return BarAction::BuildButton(3),
+        "build_focus" => return BarAction::BuildButton(4),
+        "build_grab" => return BarAction::BuildButton(5),
         "edit_particles" => return BarAction::EditParticles,
         "import" => return BarAction::Import,
         "blender_live" => return BarAction::BlenderLive,
@@ -4113,7 +4115,10 @@ pub(crate) fn toolbar_row(
             || (b.command == "favorites" && ui.ctx().data(|d| d.get_temp::<bool>(grid_id)).unwrap_or(false))
             || (super::toolbar::drawers::is_drawer(&b.command) && super::toolbar::drawers::is_open(ui.ctx(), &b.command));
         let rlva_locked = (b.command == "sit" || b.command == "stand_up" && row.seated) && sit_locked
-            || matches!(b.command.as_str(), "build" | "build_edit" | "build_create" | "build_land") && build_locked
+            || matches!(
+                b.command.as_str(),
+                "build" | "build_focus" | "build_grab" | "build_edit" | "build_create" | "build_land"
+            ) && build_locked
             || b.command == "fly" && fly_locked;
         let response = tool_button(
             ui,
@@ -5254,7 +5259,13 @@ mod tests {
             assert_eq!(all.lit(cmd), Some(true), "{cmd}");
         }
         // the build window's modes: only the one it shows lights
-        for (cmd, lit) in [("build_edit", true), ("build_create", false), ("build_land", false)] {
+        for (cmd, lit) in [
+            ("build_edit", true),
+            ("build_create", false),
+            ("build_land", false),
+            ("build_focus", false),
+            ("build_grab", false),
+        ] {
             assert_eq!(none.lit(cmd), Some(false), "{cmd}");
             assert_eq!(all.lit(cmd), Some(lit), "{cmd}");
         }

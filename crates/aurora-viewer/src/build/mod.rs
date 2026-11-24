@@ -1427,8 +1427,8 @@ impl BuildTool {
         .is_some_and(|frame| self.manip.pick(&self.cam, &frame, mode, cursor).is_some())
     }
 
-    /// What Build or one of its modes (Edit objects, Create prims, Edit
-    /// land) does: the tool the window opens or switches to, or `None` when
+    /// What Build or one of its modes (Camera, Move, Edit objects, Create
+    /// prims, Edit land) does: the tool the window opens or switches to, or `None` when
     /// it closes. Build (`mode` `None`) toggles the window and reopens it on
     /// the tool it last showed: the Legacy Viewer's enterBuildMode always
     /// opens on Create, its first opening still does. A mode's toolbar

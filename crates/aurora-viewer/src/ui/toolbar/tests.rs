@@ -1846,12 +1846,12 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
     // every command but bar_account and bar_system, which stay out of the catalogue
-    assert_eq!(all.len(), 124);
+    assert_eq!(all.len(), 126);
     assert!(
         !all.iter()
             .any(|button| matches!(button.command.as_str(), "bar_account" | "bar_system"))
     );
-    assert_eq!(COMMANDS.len(), 126);
+    assert_eq!(COMMANDS.len(), 128);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -2202,6 +2202,8 @@ fn menu_toolbar_build_buttons_have_short_labels() {
         ("build_edit", aurora_i18n::tr!("toolbar-command-build-edit")),
         ("build_create", aurora_i18n::tr!("toolbar-command-build-create")),
         ("build_land", aurora_i18n::tr!("toolbar-command-build-land")),
+        ("build_focus", aurora_i18n::tr!("toolbar-command-build-focus")),
+        ("build_grab", aurora_i18n::tr!("toolbar-command-build-grab")),
     ] {
         let command = catalogue::find(id).expect("menu command");
         assert_eq!(command.label(), label);
