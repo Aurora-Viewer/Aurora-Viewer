@@ -55,6 +55,20 @@ pub struct Effects {
     crashes: super::water_crash::Crashes,
     /// Water dripping off the wet avatars (avatar_drip.rs).
     drip: super::avatar_drip::AvatarDrip,
+    /// The sea grid's shelter prims at the last scan (full id, local id,
+    /// where and how big, quantized as the grid's signature), and those
+    /// seen moving or dropping out while near the water, with when: left out
+    /// of the shelter for `MOVER_HOLD` s (a scripted prim that steps now and
+    /// then went in and out of it, baking the grid again every few seconds).
+    shelter_seen: HashMap<Uuid, (u32, [i32; 10])>,
+    shelter_movers: HashMap<Uuid, f32>,
+    /// The shelter prims' boxes at the last scan, and those of the prims
+    /// that dropped out of it unmoved while still near the water, kept in
+    /// it with when (the region sends objects' updates again as the view
+    /// turns, which counted as a move of their own: whole linksets dropped
+    /// out and came back, a new grid each time).
+    shelter_boxes: HashMap<Uuid, (usize, super::water_shelter::ShelterBox)>,
+    shelter_pinned: HashMap<Uuid, (usize, super::water_shelter::ShelterBox, f32)>,
 }
 
 /// The sea grid baked last (water_shelter.rs) and the one before it,
@@ -65,9 +79,9 @@ struct SeaGrid {
     checked_at: f32,
     signature: u64,
     grid: std::sync::Arc<[[f32; 6]]>,
-    /// The previous grid's refraction offset, swell reach and chop, on this grid's
-    /// cells, and when this one was baked.
-    prev: std::sync::Arc<[[f32; 3]]>,
+    /// The previous grid (all of its cell: depth, shelter, refraction offset,
+    /// swell reach and chop) on this grid's cells, and when this one was baked.
+    prev: std::sync::Arc<[[f32; 6]]>,
     baked_at: f32,
 }
 
@@ -91,10 +105,10 @@ impl SeaGrid {
         t * t * (3.0 - 2.0 * t)
     }
 
-    /// What it shows at `time` (refraction offset, swell reach, chop), moved onto
-    /// a grid at `origin` (cells it no longer covers: `fresh`'s), for the
-    /// next grid to fade from.
-    fn shown(&self, time: f32, origin: Vec2, fresh: &[[f32; 6]]) -> Vec<[f32; 3]> {
+    /// What it shows at `time` (all of a cell), moved onto a grid at
+    /// `origin` (cells it no longer covers: `fresh`'s), for the next grid to
+    /// fade from.
+    fn shown(&self, time: f32, origin: Vec2, fresh: &[[f32; 6]]) -> Vec<[f32; 6]> {
         use aurora_render::water_effects::SEA_GRID;
         let blend = self.blend(time);
         let cell = aurora_render::water_effects::SEA_EXTENT / SEA_GRID as f32;
@@ -103,12 +117,12 @@ impl SeaGrid {
             .map(|i| {
                 let (x, y) = ((i % SEA_GRID) as i32 + shift.x, (i / SEA_GRID) as i32 + shift.y);
                 if x < 0 || y < 0 || x >= SEA_GRID as i32 || y >= SEA_GRID as i32 {
-                    return [fresh[i][3], fresh[i][4], fresh[i][5]];
+                    return fresh[i];
                 }
                 let j = y as usize * SEA_GRID + x as usize;
                 let g = self.grid[j];
-                let old = self.prev.get(j).copied().unwrap_or([g[3], g[4], g[5]]);
-                std::array::from_fn(|k| old[k] + (g[k + 3] - old[k]) * blend)
+                let old = self.prev.get(j).copied().unwrap_or(g);
+                std::array::from_fn(|k| old[k] + (g[k] - old[k]) * blend)
             })
             .collect()
     }
@@ -206,6 +220,25 @@ fn shelter_boxes(scene: &Scene, world: &World, origin: Vec2, extent: f32) -> Vec
     })
 }
 
+/// How long a prim seen moving is left out of the shelter (s).
+const MOVER_HOLD: f32 = 120.0;
+/// The sea grid is centred on our avatar while the camera is within this
+/// of it (m), on the camera otherwise.
+const GRID_ON_AVATAR: f32 = 160.0;
+
+/// A shelter prim's place and size as the sea grid's signature counts them
+/// (to 5 cm and about a degree).
+fn shelter_key(b: &super::water_shelter::ShelterBox) -> [i32; 10] {
+    let mut key = [0; 10];
+    for (k, v) in b.center.to_array().into_iter().chain(b.half.to_array()).enumerate() {
+        key[k] = (v * 20.0).round() as i32;
+    }
+    for (k, v) in b.rotation.to_array().into_iter().take(4).enumerate() {
+        key[6 + k] = (v * 60.0).round() as i32;
+    }
+    key
+}
+
 /// The objects near the water are looked for again every 0.35 s, whether
 /// the last scan found some or none.
 fn scan_due(last: Option<f32>, time: f32) -> bool {
@@ -239,9 +272,9 @@ impl Effects {
                 Some(_) => "baked again",
             }
         );
-        let prev: std::sync::Arc<[[f32; 3]]> = match &self.sea_grid {
+        let prev: std::sync::Arc<[[f32; 6]]> = match &self.sea_grid {
             Some(old) => old.shown(time, origin, &grid).into(),
-            None => grid.iter().map(|c| [c[3], c[4], c[5]]).collect::<Vec<_>>().into(),
+            None => grid.iter().copied().collect::<Vec<_>>().into(),
         };
         self.sea_grid = Some(SeaGrid {
             origin,
@@ -413,6 +446,16 @@ impl Effects {
             // the water: 20,000 heights and the shelter's prims)
             let (sea_grid, sea_prev, sea_origin) = if settings.waves {
                 let step = 64.0;
+                // centred on our avatar, not on the camera: orbiting or
+                // zooming the camera moved it, a new grid each time (the
+                // camera's when it is far from the avatar)
+                let eye = world
+                    .objects
+                    .index_of_uuid(&world.agent_id)
+                    .and_then(|i| Scene::object_transform(world, i, Instant::now(), 0))
+                    .map(|(p, _, _)| p)
+                    .filter(|p| p.is_finite() && (p.truncate() - eye.truncate()).length() < GRID_ON_AVATAR)
+                    .unwrap_or(eye);
                 // (it stays where it is until the camera is well past the
                 // next step: a camera orbiting across the line moved it back
                 // and forth, baking and fading in a grid each time)
@@ -433,7 +476,77 @@ impl Effects {
                     // grid is baked again only when one of them changed, as a
                     // new grid costs the frame that takes it.
                     let started = Instant::now();
-                    let (objects, boxes): (Vec<usize>, Vec<_>) = shelter_boxes(scene, world, sea_origin, SEA_EXTENT).into_iter().unzip();
+                    let found = shelter_boxes(scene, world, sea_origin, SEA_EXTENT);
+                    // what moved since the last scan, or dropped out of it
+                    // while still near the water (left out for moving), is
+                    // held out for a while; what changed is logged
+                    let mut now_seen = HashMap::with_capacity(found.len());
+                    for (i, b) in &found {
+                        if let Some(o) = world.objects.get(*i) {
+                            now_seen.insert(o.full_id, (o.key.local_id, shelter_key(b)));
+                        }
+                    }
+                    let mut moved = Vec::new();
+                    for (id, (local, key)) in &self.shelter_seen {
+                        match now_seen.get(id) {
+                            Some((_, k)) if k != key => {
+                                self.shelter_movers.insert(*id, time);
+                                self.shelter_pinned.remove(id);
+                                moved.push(format!("{local} moved"));
+                            }
+                            None if world.objects.index_of_uuid(id).is_some_and(|i| {
+                                scene.gpu.get(i).is_some_and(|g| {
+                                    let c = g.center.truncate();
+                                    c.cmpge(sea_origin).all() && c.cmplt(sea_origin + Vec2::splat(SEA_EXTENT)).all()
+                                })
+                            }) =>
+                            {
+                                // dropped out unmoved: kept where it was
+                                if let Some(&(i, b)) = self.shelter_boxes.get(id) {
+                                    self.shelter_pinned.insert(*id, (i, b, time));
+                                }
+                                moved.push(format!("{local} kept"));
+                            }
+                            _ => {}
+                        }
+                    }
+                    self.shelter_movers.retain(|_, at| (0.0..MOVER_HOLD).contains(&(time - *at)));
+                    // back in the scan, gone from the region, out of the grid
+                    // or kept long enough: no longer pinned
+                    self.shelter_pinned.retain(|id, (_, b, at)| {
+                        let c = b.center.truncate();
+                        !now_seen.contains_key(id)
+                            && world.objects.index_of_uuid(id).is_some()
+                            && c.cmpge(sea_origin).all()
+                            && c.cmplt(sea_origin + Vec2::splat(SEA_EXTENT)).all()
+                            && (0.0..MOVER_HOLD).contains(&(time - *at))
+                    });
+                    let held: Vec<String> = now_seen
+                        .iter()
+                        .filter(|(id, _)| self.shelter_movers.contains_key(*id) && !self.shelter_seen.contains_key(*id))
+                        .map(|(_, (local, _))| format!("{local} back"))
+                        .collect();
+                    if !moved.is_empty() || !held.is_empty() {
+                        log::info!(
+                            "water sea grid: shelter prims changing (moved: held out {MOVER_HOLD:.0} s; unmoved: kept): {}",
+                            moved.iter().chain(held.iter()).take(12).cloned().collect::<Vec<_>>().join(", ")
+                        );
+                    }
+                    self.shelter_seen = now_seen;
+                    self.shelter_boxes = found
+                        .iter()
+                        .filter_map(|(i, b)| world.objects.get(*i).map(|o| (o.full_id, (*i, *b))))
+                        .collect();
+                    let movers = &self.shelter_movers;
+                    // (the pinned ones in a fixed order: the grid's signature
+                    // hashes the boxes in order)
+                    let mut pinned: Vec<_> = self.shelter_pinned.iter().map(|(id, (i, b, _))| (*id, *i, *b)).collect();
+                    pinned.sort_by_key(|p| p.0);
+                    let (objects, boxes): (Vec<usize>, Vec<_>) = found
+                        .into_iter()
+                        .filter(|(i, _)| world.objects.get(*i).is_none_or(|o| !movers.contains_key(&o.full_id)))
+                        .chain(pinned.into_iter().map(|(_, i, b)| (i, b)))
+                        .unzip();
                     self.crash_boxes.clone_from(&boxes);
                     self.crash_objects = objects;
                     // (the lee is where the incoming swell is blocked: its way, not
@@ -901,6 +1014,36 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A prim entering the shelter calms its patch of sea over the fade,
+    /// never at once (the depth and the shelter faded with the rest).
+    #[test]
+    fn a_new_grid_fades_in_all_of_a_cell() {
+        use aurora_render::water_effects::SEA_GRID;
+        let open = [5.0, 1.0, 3.0, 0.4, 0.9, 0.8];
+        let calm = [4.0, 0.2, 1.0, 0.6, 0.5, 0.3];
+        let old = SeaGrid {
+            origin: Vec2::ZERO,
+            checked_at: 0.0,
+            signature: 1,
+            grid: vec![calm; SEA_GRID * SEA_GRID].into(),
+            prev: vec![open; SEA_GRID * SEA_GRID].into(),
+            baked_at: 10.0,
+        };
+        // just baked: it still shows the open sea it fades from
+        let fresh = vec![calm; SEA_GRID * SEA_GRID];
+        let shown = old.shown(10.0, Vec2::ZERO, &fresh);
+        assert_eq!(shown[0], open);
+        // half way: every value between the two, calm and depth included
+        let half = old.shown(10.0 + SEA_FADE * 0.5, Vec2::ZERO, &fresh);
+        for k in 0..6 {
+            let (lo, hi) = (open[k].min(calm[k]), open[k].max(calm[k]));
+            assert!(half[0][k] > lo && half[0][k] < hi, "value {k}: {}", half[0][k]);
+        }
+        // done: the new grid
+        let done = old.shown(10.0 + SEA_FADE, Vec2::ZERO, &fresh)[0];
+        assert!(done.iter().zip(calm).all(|(a, b)| (a - b).abs() < 1e-5), "{done:?}");
+    }
     #[test]
     fn a_scan_that_found_nothing_is_not_run_again_at_the_next_frame() {
         assert!(scan_due(None, 0.0));

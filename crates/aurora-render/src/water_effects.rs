@@ -229,11 +229,13 @@ pub struct WaterGround {
     /// lowest underside above the water (a deck, a floor on stilts).
     /// Empty: open, deep water everywhere.
     pub sea: std::sync::Arc<[[f32; 6]]>,
-    /// The grid baked before it, as `sea`: its refraction offset and
-    /// shadow, faded out over a few seconds (`Sea::shore[0]`, 0 the old
-    /// grid, 1 the new) so that a new grid never snaps the swell. Empty:
+    /// The grid baked before it, as `sea` (all of it: its depth, its
+    /// shelter, its refraction offset and exposure), faded out over a few
+    /// seconds (`Sea::shore[0]`, 0 the old grid, 1 the new) so that a new
+    /// grid never snaps the swell nor calms or roughens a patch of sea at
+    /// once (a prim entering or leaving the shelter did, a pop). Empty:
     /// the new grid alone.
-    pub sea_prev: std::sync::Arc<[[f32; 3]]>,
+    pub sea_prev: std::sync::Arc<[[f32; 6]]>,
     pub sea_origin: [f32; 2],
     pub sea_extent: f32,
     /// The spectrum's maps of the wind sea this frame (water_fft.rs,
@@ -340,7 +342,7 @@ impl WaterGround {
     }
 
     /// The sea grid at `xy` (depth, calm, clearance, travel, shadow),
-    /// bilinear, the previous grid's refraction faded out by `blend`;
+    /// bilinear, the previous grid faded out by `blend`;
     /// outside the grid its nearest edge, fading into open sea over
     /// `EDGE_FADE`. The travel is the plane wave along `d0` (the swell now)
     /// plus the grid's refraction offset.
@@ -352,8 +354,8 @@ impl WaterGround {
         let inside = xy.clamp(lo, lo + Vec2::splat(self.sea_extent));
         let mut v = bilinear(&self.sea, SEA_GRID, self.sea_origin, self.sea_extent, inside)?;
         if let Some(old) = bilinear(&self.sea_prev, SEA_GRID, self.sea_origin, self.sea_extent, inside) {
-            for k in 0..3 {
-                v[k + 3] = old[k] + (v[k + 3] - old[k]) * blend;
+            for k in 0..6 {
+                v[k] = old[k] + (v[k] - old[k]) * blend;
             }
         }
         let t = (xy.distance(inside) / EDGE_FADE).clamp(0.0, 1.0);
@@ -472,7 +474,7 @@ pub(crate) struct WaterGpu {
     pub snow_trail_view: wgpu::TextureView,
     ground_snapshot: Option<std::sync::Arc<[[f32; 2]]>>,
     sea_snapshot: Option<std::sync::Arc<[[f32; 6]]>>,
-    sea_prev_snapshot: Option<std::sync::Arc<[[f32; 3]]>>,
+    sea_prev_snapshot: Option<std::sync::Arc<[[f32; 6]]>>,
     ocean_snapshot: Option<std::sync::Arc<crate::water_fft::OceanMaps>>,
     group: wgpu::BindGroup,
     pipeline: wgpu::ComputePipeline,
@@ -952,10 +954,16 @@ impl WaterGpu {
                 ground
                     .sea_prev
                     .iter()
-                    .map(|&[offset, reach, chop]| [offset, pack_exposure(reach, chop), 0.0, 0.0])
+                    .map(|&[depth, calm, clear, offset, reach, chop]| {
+                        [offset, pack_exposure(reach, chop), depth, pack_shelter(calm, clear)]
+                    })
                     .collect()
             } else {
-                ground.sea.iter().map(|c| [c[3], pack_exposure(c[4], c[5]), 0.0, 0.0]).collect()
+                ground
+                    .sea
+                    .iter()
+                    .map(|c| [c[3], pack_exposure(c[4], c[5]), c[0], pack_shelter(c[1], c[2])])
+                    .collect()
             };
             if texels.len() == SEA_GRID * SEA_GRID {
                 queue.write_texture(

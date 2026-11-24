@@ -3187,14 +3187,19 @@ fn water_fx_bed(p: vec2<f32>) -> vec2<f32> {
 // [0] depth, calm, travel, swell reach; [1].x clearance, .y chop.
 fn water_fx_sea_texel(c: vec2<i32>) -> array<vec4<f32>,2> {
     let t=textureLoad(water_ground,c+vec2<i32>(0,64),0);
-    // the previous grid's refraction offset, swell reach and chop, fading
-    // out (WaterGround::sea_prev, the sea's shore.x the fade)
+    // the previous grid, all of it, fading out (WaterGround::sea_prev, the
+    // sea's shore.x the fade): its refraction offset, swell reach and chop,
+    // its depth and its shelter (a prim entering or leaving the shelter
+    // calmed or roughened a patch of sea at once, a pop)
     let old=textureLoad(water_ground,c+vec2<i32>(0,192),0);
     let blend=water_fx.sea.shore.x;
     let high=floor(t.y/256.0);
+    let old_high=floor(old.w/256.0);
+    let calm=mix((old.w-old_high*256.0)/255.0,(t.y-high*256.0)/255.0,blend);
+    let clear=mix(old_high/100.0,high/100.0,blend);
     let now=water_fx_exposure(t.w);let was=water_fx_exposure(old.y);
     let exposure=mix(was,now,blend);
-    return array<vec4<f32>,2>(vec4<f32>(t.x,(t.y-high*256.0)/255.0,mix(old.x,t.z,blend),exposure.x),vec4<f32>(high/100.0,exposure.y,0.0,0.0));
+    return array<vec4<f32>,2>(vec4<f32>(mix(old.z,t.x,blend),calm,mix(old.x,t.z,blend),exposure.x),vec4<f32>(clear,exposure.y,0.0,0.0));
 }
 // A cell's swell reach and chop (`pack_exposure`: 1/255 each).
 fn water_fx_exposure(packed: f32) -> vec2<f32> {
