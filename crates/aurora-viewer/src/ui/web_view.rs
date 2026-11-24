@@ -647,7 +647,9 @@ fn next_token() -> u64 {
 /// `LLViewerWindow::handleFocusLost` drops the capture.
 fn read_web_pointer(ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, enabled: bool, captured: bool, token: u64) -> WebPointer {
     let owner_id = egui::Id::unique("web-view-capture-owner");
-    let frame = ui.ctx().cumulative_frame_nr();
+    // (the main viewport's count: a page in a window drawn outside the
+    // viewer counts the same frames, outside.rs)
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let owner = ui.data(|d| d.get_temp::<CaptureOwner>(owner_id));
     let held_elsewhere = owner.is_some_and(|o| o.token != token && if o.held { o.frame + 1 >= frame } else { o.frame == frame });
     let (latest, interact, pressed, released, down, focused) = ui.input(|i| {
