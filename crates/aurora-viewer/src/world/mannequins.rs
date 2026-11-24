@@ -463,6 +463,34 @@ impl World {
         }
     }
 
+    /// The clipping map's avatars, ours and the mannequins, and the
+    /// garments on them: `garments` (the LiveMesh objects we wear) and
+    /// their copies (object indices).
+    pub fn fit_clip_targets(&self, garments: &[Uuid]) -> (Vec<usize>, Vec<usize>) {
+        let avatars = std::iter::once(self.agent_id)
+            .chain(self.fit_lab.mannequins.iter().map(|m| m.id))
+            .filter_map(|id| self.objects.index_of_uuid(&id))
+            .collect();
+        let mut worn = Vec::new();
+        for idx in garments.iter().filter_map(|id| self.objects.index_of_uuid(id)) {
+            worn.push(idx);
+            let Some(key) = self.objects.get(idx).map(|o| o.key) else {
+                continue;
+            };
+            for m in &self.fit_lab.mannequins {
+                if let Some(&(local, _)) = m.copies.get(&key)
+                    && let Some(copy) = self.objects.index_of(&ObjKey {
+                        region: PREVIEW_REGION,
+                        local_id: local,
+                    })
+                {
+                    worn.push(copy);
+                }
+            }
+        }
+        (avatars, worn)
+    }
+
     /// Take the mannequins away, with what they wear.
     pub fn remove_fit_lab(&mut self) {
         let mannequins = std::mem::take(&mut self.fit_lab.mannequins);
@@ -576,6 +604,33 @@ mod tests {
         );
         assert_eq!(world.objects.avatars().count(), 1);
         assert!(world.objects.iter().all(|(_, o)| !o.is_client_preview()));
+    }
+
+    #[test]
+    fn the_clipping_map_takes_our_garment_and_its_copies_on_us_and_the_mannequins() {
+        let (mut world, handle) = world_with_avatar();
+        world.update_fit_lab(&[Body::Slim, Body::Full], Motion::Stand, false, Instant::now());
+        let hat = world
+            .objects
+            .index_of(&ObjKey {
+                region: handle,
+                local_id: HAT,
+            })
+            .expect("hat");
+        let garment = world.objects.get(hat).expect("hat").full_id;
+        let (avatars, garments) = world.fit_clip_targets(&[garment]);
+        let ours = world.objects.index_of_uuid(&world.agent_id).expect("us");
+        assert_eq!(avatars.len(), 3);
+        assert_eq!(avatars[0], ours);
+        assert_eq!(garments.len(), 3, "the hat and its two copies");
+        assert_eq!(garments[0], hat);
+        for (&copy, &avatar) in garments[1..].iter().zip(&avatars[1..]) {
+            let parent = world.objects.get(copy).and_then(|o| o.parent_key());
+            assert_eq!(parent, world.objects.get(avatar).map(|o| o.key), "worn by its mannequin");
+        }
+        // without mannequins: our avatar and our garment alone
+        world.update_fit_lab(&[], Motion::Stand, false, Instant::now());
+        assert_eq!(world.fit_clip_targets(&[garment]), (vec![ours], vec![hat]));
     }
 
     #[test]

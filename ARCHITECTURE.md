@@ -1390,7 +1390,11 @@ wears under ids of their own, each with its own visual parameters, our
 shape with a `Body`'s sliders changed, so the scene gives each its own
 skeleton, morphs and pose while the worn meshes' geometry and skin binds
 stay shared; a worn object whose signature changes is copied again, one
-taken off goes) and the shape transfer; Import the frozen import and
+taken off goes; its clipping map, `aurora_render::fit_clip`, takes the
+garments' faces and the other skinned faces of those avatars as two CPU
+lists like the poser part's, draws the garment's front faces to a depth of
+its own and the visible body to a mask after post, and composites where
+the garment lies within reach behind the body) and the shape transfer; Import the frozen import and
 its prepared LOD triangles; Plugins the installation, progress, completion and
 manual ZIP export.
 Each source row requests its own fresh LOD bundle;

@@ -7,6 +7,14 @@ use crate::ui::widgets::{self, ActionKind};
 use crate::world::mannequins::{Body, Motion};
 use egui::Vec2;
 
+/// The clipping map's reach: the body up to 3 cm in front of the garment's
+/// surface is through it; farther, it is another part of the body in front
+/// of it (an arm before the chest).
+pub const CLIP_REACH: f32 = 0.03;
+/// The band either side of the garment's surface where body and garment
+/// meet (3 mm): amber rather than red.
+pub const CLIP_TOUCH: f32 = 0.003;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FitLab {
     /// Whether the mannequins stand in the world.
@@ -14,6 +22,8 @@ pub struct FitLab {
     /// The bodies chosen, in `Body::ALL`'s order.
     pub bodies: [bool; Body::ALL.len()],
     pub motion: Motion,
+    /// The clipping map, on our avatar and the mannequins.
+    pub clip: bool,
     /// Bring the row in front of us again (taken by the app).
     pub place: bool,
 }
@@ -24,6 +34,7 @@ impl Default for FitLab {
             shown: false,
             bodies: Body::ALL.map(|body| matches!(body, Body::Slim | Body::Curvy | Body::Full)),
             motion: Motion::Stand,
+            clip: false,
             place: false,
         }
     }
@@ -58,6 +69,10 @@ pub(super) fn section(fit: &mut FitLab, ui: &mut egui::Ui, p: &Palette) {
             }
         });
     });
+    widgets::switch_labeled(ui, p, &mut fit.clip, aurora_i18n::tr!("fit-lab-clip"));
+    if fit.clip {
+        super::ui::note(ui, p, aurora_i18n::tr!("fit-lab-clip-note"));
+    }
     let any = fit.bodies.iter().any(|on| *on);
     ui.horizontal(|ui| {
         let height = ui.spacing().interact_size.y.max(26.0);

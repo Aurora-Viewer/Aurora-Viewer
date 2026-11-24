@@ -12928,6 +12928,23 @@ impl App {
                 let [r, g, b, _] = egui::Rgba::from(self.palette.violet_light).to_array();
                 [r, g, b, 0.65]
             },
+            // LiveMesh's Fit lab: red where the body comes through the
+            // garment, amber where they meet; never in a photo
+            fit_clip: self
+                .scene
+                .fit_clip
+                .as_ref()
+                .filter(|_| self.snapshots.capturing.is_none())
+                .map(|_| {
+                    let [r, g, b, _] = egui::Rgba::from(self.palette.danger).to_array();
+                    let [tr, tg, tb, _] = egui::Rgba::from(self.palette.warn).to_array();
+                    aurora_render::FitClipParams {
+                        clip_color: [r, g, b, 0.75],
+                        touch_color: [tr, tg, tb, 0.6],
+                        reach: crate::blender_live::fit_lab::CLIP_REACH,
+                        touch: crate::blender_live::fit_lab::CLIP_TOUCH,
+                    }
+                }),
             selection_color: egui::Rgba::from(if self.imports.local_status.revealing() {
                 self.palette.warn
             } else {

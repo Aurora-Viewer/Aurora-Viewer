@@ -279,6 +279,14 @@ line (link, revision, time since the last snapshot, **Enable preview** or
   bend shows on them too. What you wear or change, a new revision from
   Blender, an alpha cut from your body's HUD, a shape edit, reaches them on
   the next frame. **Bring them here** places the row in front of you again.
+  **Show where the body comes through** paints, on your avatar and the
+  mannequins, the skin or body mesh that pokes out of the LiveMesh garment:
+  red where the body stands out of it by up to 3 cm, amber where body and
+  garment meet (within 3 mm). It is worked out on the graphics card every
+  frame, as the camera sees it, so it follows the animations, the bend and
+  each shape; turn the camera to check the back. Only the garment's outer
+  surface counts: an arm before the chest, farther than 3 cm, is not
+  marked.
   After a teleport or a region crossing they stand in front of you again.
   Only you see them: nothing is sent or saved, and they go when you remove
   them or log out. To test another mesh body, wear it.

@@ -3404,6 +3404,22 @@ fn fs_part_mask(in: PoserPartOut, @builtin(front_facing) front: bool) -> @locati
     return vec4<f32>(smoothstep(0.15, 0.85, in.part), 1.0, 0.0, 1.0);
 }
 
+// LiveMesh's Fit lab (fit_clip.rs), on vs_part_mask's posed vertices: the
+// garment's outer surface (its front faces) as a depth of its own, and the
+// body's visible pixels as a mask.
+@fragment
+fn fs_fit_garment(in: PoserPartOut, @builtin(front_facing) front: bool) {
+    portal_clip(records[in.record], in.world_pos);
+    if (!front || !poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+}
+
+@fragment
+fn fs_fit_body(in: PoserPartOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+}
+
 // The pick interpolates each part's summed skinning weights, as the mask
 // interpolates its share. A flat joint ID makes the first vertex decide
 // for the entire triangle and changes when a mesh reorders its indices.

@@ -117,6 +117,12 @@ impl App {
         } else {
             Default::default()
         };
+        // the clipping map: on our avatar and the mannequins, over the
+        // LiveMesh objects we wear and their copies
+        self.scene.fit_clip = self.blender_live.fit.clip.then(|| {
+            let (avatars, garments) = self.world.fit_clip_targets(&self.blender_live.objects);
+            (avatars.into_iter().collect(), garments.into_iter().collect())
+        });
         let place = std::mem::take(&mut self.blender_live.fit.place);
         self.world
             .update_fit_lab(&self.blender_live.fit.wanted(), self.blender_live.fit.motion, place, Instant::now());
@@ -264,6 +270,7 @@ impl App {
                     }
                     self.blender_live.tab = Tab::Avatar;
                     self.blender_live.fit.shown = true;
+                    self.blender_live.fit.clip = mode == "fit-lab-clip";
                     if mode == "fit-lab-walk" {
                         self.blender_live.fit.motion = crate::world::mannequins::Motion::Walk;
                     }
