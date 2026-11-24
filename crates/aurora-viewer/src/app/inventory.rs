@@ -186,7 +186,8 @@ impl App {
     }
 
     /// The inventory pane an action came from: the right pane of the
-    /// dual-panel layout, or the main window for everything else.
+    /// dual-panel layout, an open folder or additional window by its id, or
+    /// the main window for everything else.
     pub(super) fn inventory_pane(&mut self, editor: Uuid) -> &mut crate::ui::inventory::InventoryUi {
         pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor)
     }
@@ -355,6 +356,8 @@ impl App {
         editor: Uuid,
         undo: Undo,
     ) {
+        // a "+" New Folder's mark goes with this change only, sent or not
+        let in_all = std::mem::take(&mut self.inventory_pane(editor).new_folder_in_all);
         if self.inventory_ui.pending.is_some() {
             self.inventory_ui.consume_clipboard = false;
             return;
@@ -396,6 +399,7 @@ impl App {
                 None
             }
         });
+        pane.created_in_all = in_all && pane.created_selection.is_some();
         pane.message.clear();
         // RLVa judges a Delete's moves to the Trash as removals
         if delete {
@@ -482,7 +486,8 @@ impl App {
     }
 
     /// `editor`: the pane the action came from (`ui::inventory::DUAL_PANE`
-    /// for the right pane of the dual-panel layout, nil for the main one).
+    /// for the right pane of the dual-panel layout, a folder or additional
+    /// window's id for that window, nil for the main one).
     pub(super) fn apply_inventory_action_from(&mut self, editor: Uuid, action: InvAction) {
         match action {
             InvAction::Panel { editor, action } => self.apply_inventory_action_from(editor, *action),
@@ -897,7 +902,7 @@ impl App {
                 let inv = &self.world.inventory;
                 let pane = pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor);
                 if let Some(id) = pane.created_selection.and_then(|id| reply.created.get(&id)) {
-                    pane.show_original(inv, *id);
+                    pane.show_created(inv, *id);
                 }
                 self.inventory_ui.watch_copy(request, &reply);
                 self.world.inventory.undo.created(request, &reply.created);
@@ -955,7 +960,7 @@ impl App {
                 if let Some(id) = pane.created_selection.and_then(|id| reply.created.get(&id))
                     && !pane.select_created_listing(inv, *id)
                 {
-                    pane.show_original(inv, *id);
+                    pane.show_created(inv, *id);
                     pane.begin_rename(inv, *id);
                 }
                 pane.message.clear();
@@ -978,9 +983,16 @@ impl App {
         self.inventory_ui.pending_refresh.clear();
         self.inventory_ui.created_selection = None;
         self.dual_inventory_ui.created_selection = None;
+        self.inventory_ui.created_in_all = false;
+        self.dual_inventory_ui.created_in_all = false;
         self.inventory_mutation_editor = None;
         for w in &mut self.inventory_ui.windows {
-            w.state.message.clone_from(&self.inventory_ui.message);
+            // the folder window that made the change keeps its own message
+            if w.id != editor {
+                w.state.message.clone_from(&self.inventory_ui.message);
+            }
+            w.state.created_selection = None;
+            w.state.created_in_all = false;
         }
     }
 
@@ -1369,7 +1381,17 @@ fn pane_of<'a>(
     dual: &'a mut crate::ui::inventory::InventoryUi,
     editor: Uuid,
 ) -> &'a mut crate::ui::inventory::InventoryUi {
-    if editor == ui::inventory::DUAL_PANE { dual } else { main }
+    if editor == ui::inventory::DUAL_PANE {
+        return dual;
+    }
+    // An open list window (a folder's tree, the additional window) gets what
+    // it asked for itself, such as the folder it created (#4700). A closed
+    // one still drawing a dialog lets the main window answer, where its
+    // message is seen (as `begin_delete` skips closed windows).
+    match main.windows.iter().position(|w| !editor.is_nil() && w.id == editor && w.open) {
+        Some(index) => main.windows[index].state.as_mut(),
+        None => main,
+    }
 }
 
 #[cfg(test)]
@@ -1390,5 +1412,18 @@ mod tests {
         // an additional window's id is not the right pane's
         pane_of(&mut main, &mut dual, Uuid::from_u128(7)).message = "window".into();
         assert_eq!((main.message.as_str(), dual.message.as_str()), ("window", "dual"));
+        // a folder window's change comes back to that window (#4700)
+        main.open_folder_window(Uuid::from_u128(20));
+        let folder_window = main.windows[0].id;
+        pane_of(&mut main, &mut dual, folder_window).message = "folder".into();
+        assert_eq!(main.windows[0].state.message, "folder");
+        assert_eq!(main.message, "window");
+        // closed, it may still draw a dialog: the main window answers for it
+        main.windows[0].open = false;
+        pane_of(&mut main, &mut dual, folder_window).message = "closed".into();
+        assert_eq!(
+            (main.message.as_str(), main.windows[0].state.message.as_str()),
+            ("closed", "folder")
+        );
     }
 }

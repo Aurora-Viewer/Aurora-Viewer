@@ -268,10 +268,16 @@ fn quick_search(
     controls::after_search(inv, st, searching);
 }
 
+/// The explorer shows one folder ("New" creates there, like the Legacy
+/// Viewer's single-folder mode): the wider layouts on the All tab.
+fn browses(st: &InventoryUi, layout: Layout) -> bool {
+    layout != Layout::Compact && st.tab == 0
+}
+
 /// The folder "New" creates in: the explorer's, else the selected folder or
 /// the selected item's.
 fn new_target(inv: &Inventory, st: &InventoryUi, layout: Layout) -> Uuid {
-    if layout != Layout::Compact && st.tab == 0 {
+    if browses(st, layout) {
         return st.browse;
     }
     st.selected
@@ -291,7 +297,9 @@ fn new_menu(
 ) {
     let to = new_target(inv, st, layout);
     let enabled = st.pending.is_none() && rules::destination(inv, to);
-    context::new_menu(ui, p, to, enabled, st, prefs, actions);
+    // outside the explorer, its new folder on the All tab, as doCreate
+    let in_all = !browses(st, layout);
+    context::new_menu(ui, p, to, enabled, in_all, st, prefs, actions);
 }
 
 /// The "Sort" menu: the order, Collapse / Expand for the tree, what the

@@ -158,16 +158,21 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mu
         actions.push(InvAction::Preview(original, Some(clipboard::focus_id(st))));
     }
 }
+/// The "+" menu: what it creates goes in `id`. `in_all`: its new folder is
+/// shown on the All tab, search cleared (`InventoryUi::show_created`).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn new_menu(
     ui: &mut egui::Ui,
     p: &Palette,
     id: Uuid,
     enabled: bool,
+    in_all: bool,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     actions: &mut Vec<InvAction>,
 ) {
     if menu::item_if(ui, p, "folder-filled", aurora_i18n::tr!("common-new-folder"), enabled) {
+        st.new_folder_in_all = in_all;
         submit(
             st,
             actions,

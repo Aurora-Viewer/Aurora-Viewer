@@ -95,7 +95,10 @@ pub(super) fn commands(
     for command in shortcuts::take(ui, wanted) {
         match command {
             shortcuts::Command::NewFolder => {
-                let explorer = st.aurora.is_some_and(|frame| frame.layout != aurora::Layout::Compact) && st.tab == 0;
+                // the explorer, or a single folder window: in the folder shown
+                // and on it (doCreate's single folder mode)
+                let explorer =
+                    st.single_folder.is_some() || st.aurora.is_some_and(|frame| frame.layout != aurora::Layout::Compact) && st.tab == 0;
                 let to = if explorer {
                     root
                 } else {
@@ -108,7 +111,11 @@ pub(super) fn commands(
                     continue;
                 }
                 match rules::create_folder(to, crate::text_validation::default_name("common-new-folder")) {
-                    Ok(plan) => actions.push(InvAction::Edit(plan)),
+                    Ok(plan) => {
+                        // outside the explorer, on the All tab, as "+" New Folder
+                        st.new_folder_in_all = !explorer;
+                        actions.push(InvAction::Edit(plan));
+                    }
                     Err(reason) => st.message = reason,
                 }
             }

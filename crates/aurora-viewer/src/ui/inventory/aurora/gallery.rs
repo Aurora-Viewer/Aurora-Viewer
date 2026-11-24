@@ -433,10 +433,12 @@ fn pane(
         let content = grid.height(count);
         ui.set_height(content.max(viewport.height()));
         let origin = ui.max_rect().min;
-        // a click between the tiles takes the keyboard to the list
+        // a click between the tiles takes the keyboard to the list and, like
+        // the list's empty space, selects nothing
         let blank = ui.interact(ui.max_rect(), ui.scope_id().with("tiles_blank"), Sense::click());
         if blank.clicked() {
             clipboard::request_focus(ui, st);
+            clipboard::blank_click(ui, st, &blank);
         }
         // its right-click: the menu of the folder shown
         if blank.secondary_clicked()

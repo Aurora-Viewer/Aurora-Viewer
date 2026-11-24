@@ -209,6 +209,26 @@ pub(super) fn list_has_focus(ui: &egui::Ui, st: &InventoryUi) -> bool {
         && !egui::Popup::is_any_open(ui.ctx())
 }
 
+/// A click on a list's empty space selects nothing, as in a file manager, in
+/// every layout and both styles; Ctrl or Shift keep the selection. New
+/// Folder with nothing selected then creates in the inventory's root
+/// (#4740). The Legacy Viewer keeps its selection there
+/// (`LLFolderView::handleMouseDown`), but its "+" New Folder never uses the
+/// selection (`LLPanelMainInventory::doCreate`), where Aurora's does: a
+/// visible difference. A real click only: egui also "clicks" a focused
+/// widget on Enter or Space, which would drop the selection Alt+Enter is
+/// about to open.
+pub(super) fn blank_click(ui: &egui::Ui, st: &mut InventoryUi, response: &egui::Response) {
+    if response.clicked()
+        && ui.input(|i| i.pointer.any_click())
+        && !ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift)
+    {
+        st.selection.clear();
+        st.selected = None;
+        st.focus = None;
+    }
+}
+
 /// A stable focus target survives scrolling selected rows out of the viewport.
 /// Register the background before the rows so their clicks take precedence.
 pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
@@ -219,9 +239,7 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
         let explorer = st.aurora.is_some_and(|frame| frame.explorer);
         ui.ctx().data_mut(|d| d.insert_temp(list_focused_id(), (now, explorer)));
     }
-    // a click in the explorer's empty space selects nothing, as in a file
-    // manager (Ctrl or Shift keep the selection)
-    // its right-click: the menu of the folder shown (Windows Explorer's
+    // the explorer's right-click on its empty space: the menu of the folder shown (Windows Explorer's
     // and Dolphin's menu of the empty space)
     // Recent, Worn and Favorites too, with New into each type's folder
     // (`context_catalog::build_background`)
@@ -235,17 +253,7 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
         st.row_menu = Some((st.browse, pos));
         st.background_menu = true;
     }
-    // a real click only: egui also "clicks" a focused widget on Enter or
-    // Space, which would drop the selection Alt+Enter is about to open
-    if response.clicked()
-        && ui.input(|i| i.pointer.any_click())
-        && st.aurora.is_some_and(|frame| frame.explorer)
-        && !ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift)
-    {
-        st.selection.clear();
-        st.selected = None;
-        st.focus = None;
-    }
+    blank_click(ui, st, &response);
     let leaving = ui.input(|i| {
         i.pointer.any_pressed() && i.pointer.interact_pos().is_none_or(|pos| !rect.contains(pos))
             || i.key_pressed(egui::Key::Tab)
@@ -1316,6 +1324,46 @@ mod tests {
             pressed: true,
             repeat: false,
             modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// #4740: a click on the list's empty space selects nothing in every
+    /// layout, so New Folder creates in the root; Ctrl keeps the selection.
+    #[test]
+    fn a_click_on_the_empty_space_selects_nothing_in_every_layout() {
+        for (classic, width) in [(true, 680.0), (false, 440.0), (false, 800.0), (false, 1180.0)] {
+            for ctrl in [false, true] {
+                let mut h = Harness::new();
+                h.classic = classic;
+                super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(width, 950.0));
+                h.st.show_original(&h.world.inventory, id(8100));
+                for _ in 0..4 {
+                    h.frame(Vec::new());
+                }
+                h.select(id(8100), false);
+                assert_eq!(h.st.selected, Some(id(8100)), "{classic}, {width}");
+                // the bottom of the list, below its last row
+                let list = h.ctx.read_response(focus_id(&h.st)).expect("inventory list").rect;
+                let blank = egui::pos2(list.center().x, list.bottom() - 6.0);
+                assert!(
+                    blank.y > h.row(id(8100)).y + 40.0,
+                    "the click must land below the rows: {classic}, {width}"
+                );
+                h.click(
+                    blank,
+                    egui::Modifiers {
+                        ctrl,
+                        command: ctrl,
+                        ..Default::default()
+                    },
+                );
+                if ctrl {
+                    assert_eq!(h.st.selected, Some(id(8100)), "Ctrl keeps it: {classic}, {width}");
+                } else {
+                    assert_eq!(h.st.selected, None, "{classic}, {width}");
+                    assert!(h.st.selection.is_empty(), "{classic}, {width}");
+                }
+            }
         }
     }
 
@@ -2533,8 +2581,12 @@ mod tests {
             .expect("destination window");
         h.click(root.center(), Default::default());
         assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st.windows[1].state))));
+        let dest_window = h.st.windows[1].id;
         let actions = h.paste();
-        assert!(matches!(&actions[..], [InvAction::Edit(change)] if change.copies.len() == 1 && change.copies[0].parent == id(8001)));
+        // the paste is answered in the window that asked for it (#4700)
+        assert!(matches!(&actions[..], [InvAction::Panel { editor, action }]
+            if *editor == dest_window
+                && matches!(&**action, InvAction::Edit(change) if change.copies.len() == 1 && change.copies[0].parent == id(8001))));
         h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("unrelated_widget")));
         assert!(h.paste().is_empty());
     }
