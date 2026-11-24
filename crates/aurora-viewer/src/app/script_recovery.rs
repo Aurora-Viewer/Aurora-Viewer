@@ -209,7 +209,7 @@ impl App {
         if self.script_recovery.pending.is_empty()
             && let Some(last) = self.script_recovery.last.take()
         {
-            self.panels.inventory = true;
+            crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             self.inventory_ui.show_original(&self.world.inventory, last);
         }
         true

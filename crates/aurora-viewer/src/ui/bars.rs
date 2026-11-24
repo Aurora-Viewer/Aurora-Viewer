@@ -1083,7 +1083,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         health_menu(ui, p, &st.health);
         menu::separator(ui, p);
         if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
-            super::widgets::open_floater(ui.ctx(), "options", &mut panels.settings);
+            super::widgets::open_floater(ui.ctx(), super::options::WINDOW, &mut panels.settings);
         }
         // menu_viewer.xml: Show User Interface (alt|shift|U), after
         // Preferences, Toolbar Buttons and Show HUD Attachments
@@ -1428,10 +1428,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             // Firestorm's quick preferences lists, and World > Environment >
             // Personal Lighting...
             if menu::item_if(ui, p, "sun-filled", aurora_i18n::tr!("ui-bars-environment-picker"), free) {
-                panels.environment = true;
+                super::widgets::open_floater(ui.ctx(), "environment_selector", &mut panels.environment);
             }
             if menu::item_if(ui, p, "adjustments-filled", aurora_i18n::tr!("common-personal-lighting"), free) {
-                panels.personal_lighting = true;
+                super::widgets::open_floater(ui.ctx(), "personal_lighting", &mut panels.personal_lighting);
             }
             // Aurora's own: the weather beside the lighting it rides on; it
             // lights the scene, so @setenv holds it like the rest
@@ -2755,7 +2755,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         }
         "inventory" => toggle("inventory", &mut panels.inventory),
         "inventory_dual" => {
-            panels.inventory = true;
+            super::widgets::open_floater(ctx, "inventory", &mut panels.inventory);
             panels.inventory_dual = !panels.inventory_dual;
             super::inventory::resize_for_dual(ctx, panels.inventory_dual);
         }
@@ -2823,7 +2823,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // View › Show User Interface and World › HUDs › Show HUDs as buttons
         "hide_interface" => return BarAction::ToggleInterface,
         "huds" => return BarAction::ToggleHuds,
-        "preferences" => toggle("options", &mut panels.settings),
+        "preferences" => toggle(super::options::WINDOW, &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
             return BarAction::Controls {
@@ -4639,7 +4639,7 @@ mod tests {
             ("inventory", "inventory", |p| p.inventory),
             ("gestures", "gestures", |p| p.gestures),
             ("people", "people", |p| p.people),
-            ("preferences", "options", |p| p.settings),
+            ("preferences", super::super::options::WINDOW, |p| p.settings),
             ("areasearch", super::super::area_search::WINDOW, |p| p.area_search),
             ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),

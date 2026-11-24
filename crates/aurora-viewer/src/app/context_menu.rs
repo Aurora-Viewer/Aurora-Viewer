@@ -487,9 +487,30 @@ impl App {
             self.place_ui.raise(serial);
         } else {
             w.place_details.open_panel(source, &w.map, &mut w.landmarks, now);
-            self.panels.places = true;
+            crate::ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
             self.places_ui.show_profile();
         }
+    }
+
+    /// Show on map, from any button or link: the map tracks the place and
+    /// opens, or expands when it is minimized (LLFloaterReg::showInstance
+    /// "world_map" → LLFloater::openFloater → setMinimized(false)).
+    pub(super) fn show_on_map(&mut self, x: f64, y: f64, z: f32) {
+        self.world.map.show_location(x, y, z);
+        ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+    }
+
+    /// About Land of the selected parcel (LLFloaterReg::showInstance
+    /// "about_land"): opened, or expanded when it is minimized.
+    pub(super) fn open_about_land(&mut self) {
+        let id = ui::land::window_id(self.classic_land());
+        ui::widgets::open_floater(&self.egui_ctx, id, &mut self.panels.about_land);
+    }
+
+    /// About Land shows the Legacy Viewer's tabs
+    /// (AURORA_DEMO_LAND=…:classic shows them without saving it).
+    pub(super) fn classic_land(&self) -> bool {
+        self.settings.classic_about_land || (self.demo && crate::demo::land::scenario().is_some_and(|s| s.classic))
     }
 
     /// "Show in inventory" of a rezzed object the agent owns. The Legacy
@@ -815,7 +836,7 @@ impl App {
             CtxAction::AboutLand(point) => {
                 let (gx, gy) = ui::minimap::to_global(&self.world, point);
                 ui::land::LandUi::select_at_global(&mut self.world, gx, gy);
-                self.panels.about_land = true;
+                self.open_about_land();
             }
             // handle_buy_land on the parcel LLToolPie selected
             CtxAction::BuyLand(point) => {
@@ -836,7 +857,7 @@ impl App {
             CtxAction::ReportAbuse(target) => self.open_report_abuse(target),
             CtxAction::CreateLandmark => self.open_create_landmark(None),
             CtxAction::OpenAppearance { tab, editing } => {
-                self.panels.appearance = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance);
                 // "Change outfit" (tab 0) opens the outfit view in use,
                 // the gallery or the list, rather than always the gallery
                 if tab == 0 && !editing {
@@ -1072,7 +1093,7 @@ impl App {
                 }
             }
             CtxAction::OpenPeople(tab) => {
-                self.panels.people = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, crate::ui::people::WINDOW, &mut self.panels.people);
                 self.panels.people_tab = tab;
             }
             CtxAction::ZoomAvatar(id) => {

@@ -171,7 +171,11 @@ impl App {
             batch,
         });
         if kind == Kind::Viewfinder {
-            self.panels.snapshot = true;
+            crate::ui::widgets::open_floater(
+                &self.egui_ctx,
+                super::snapshot::photo_window_id(self.photo_style()),
+                &mut self.panels.snapshot,
+            );
         } else if !batch {
             crate::ui::widgets::open_floater(&self.egui_ctx, window::WINDOW, &mut true);
         }
