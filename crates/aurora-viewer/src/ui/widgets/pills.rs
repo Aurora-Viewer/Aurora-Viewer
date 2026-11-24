@@ -71,7 +71,8 @@ fn tab(
     let count_w = count.as_ref().map_or(0.0, |g| 5.0 + g.size().x + pad * 2.0);
     let icon_w = if icon.is_empty() { 0.0 } else { 15.0 + 5.0 };
     let content = icon_w + galley.size().x + count_w;
-    let size = Vec2::new(width.unwrap_or(12.0 + content + 12.0), 28.0);
+    let height = galley.size().y.max(count.as_ref().map_or(0.0, |g| g.size().y)) + 8.0;
+    let size = Vec2::new(width.unwrap_or(12.0 + content + 12.0), height.max(28.0));
     let (rect, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {
@@ -394,7 +395,7 @@ pub fn search_text_edit_with_margin(
 fn note_search_clear(ui: &egui::Ui, response: &egui::Response, emptied: bool) {
     if emptied && response.changed() {
         let key = egui::Id::unique("search_selection_reveal").with(ui.layer_id());
-        let frame = ui.ctx().cumulative_frame_nr();
+        let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ui.ctx().data_mut(|data| data.insert_temp(key, frame));
         ui.ctx().request_repaint();
     }
@@ -409,7 +410,7 @@ pub fn search_cleared(ui: &egui::Ui) -> bool {
     let key = egui::Id::unique("search_selection_reveal").with(ui.layer_id());
     ui.ctx()
         .data(|data| data.get_temp::<u64>(key))
-        .is_some_and(|frame| ui.ctx().cumulative_frame_nr().saturating_sub(frame) <= 1)
+        .is_some_and(|frame| ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT).saturating_sub(frame) <= 1)
 }
 
 /// For ordinary lists, reveal a selected row without moving keyboard focus.

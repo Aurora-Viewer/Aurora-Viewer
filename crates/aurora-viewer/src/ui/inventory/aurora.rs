@@ -57,9 +57,7 @@ impl Layout {
     /// The layout of the window `id` as it was last drawn (its title bar is
     /// laid out before its body).
     pub fn of_window(ctx: &egui::Context, id: &str) -> Self {
-        egui::AreaState::load(ctx, egui::Id::unique(id))
-            .and_then(|state| state.size)
-            .map_or(Self::Compact, |size| Self::for_width(size.x - 20.0))
+        widgets::floater_size(ctx, id).map_or(Self::Compact, |size| Self::for_width(size.x - 20.0))
     }
 }
 
@@ -78,10 +76,21 @@ const WIDE_SIZE: f32 = 1180.0;
 
 /// "Widen the window": the explorer with its details pane, as tall as it is.
 pub fn widen(ctx: &egui::Context, id: &str) {
-    let height = egui::AreaState::load(ctx, egui::Id::unique(id))
-        .and_then(|state| state.size)
-        .map_or(DEFAULT_SIZE.y, |size| size.y);
+    let height = widgets::floater_size(ctx, id).map_or(DEFAULT_SIZE.y, |size| size.y);
     widgets::size_floater(ctx, id, egui::vec2(WIDE_SIZE, height.max(DEFAULT_SIZE.y)));
+}
+
+/// The size "Compact view" gives a window of `size`: back to the tree at
+/// the default width, as tall as it is (#4465: the wider window had no way
+/// back but dragging its edge).
+fn narrowed(size: Option<egui::Vec2>) -> egui::Vec2 {
+    egui::vec2(DEFAULT_SIZE.x, size.map_or(DEFAULT_SIZE.y, |size| size.y))
+}
+
+/// "Compact view": the tree under its tabs, as tall as the window is.
+pub fn narrow(ctx: &egui::Context, id: &str) {
+    let size = egui::AreaState::load(ctx, egui::Id::unique(id)).and_then(|state| state.size);
+    widgets::size_floater(ctx, id, narrowed(size));
 }
 
 /// `AURORA_DEMO_INVENTORY=aurora|aurora-medium|aurora-wide|aurora-rights`,
@@ -602,6 +611,14 @@ mod tests {
         assert_eq!(Layout::for_width(700.0), Layout::Medium);
         assert_eq!(Layout::for_width(1019.0), Layout::Medium);
         assert_eq!(Layout::for_width(WIDE_SIZE - 20.0), Layout::Wide);
+    }
+
+    #[test]
+    fn compact_view_goes_back_to_the_tree_at_the_same_height() {
+        let size = narrowed(Some(egui::vec2(WIDE_SIZE, 800.0)));
+        assert_eq!(Layout::for_width(size.x - 20.0), Layout::Compact);
+        assert_eq!(size.y, 800.0);
+        assert_eq!(narrowed(None), DEFAULT_SIZE);
     }
 
     #[test]

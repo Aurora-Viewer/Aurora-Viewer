@@ -18,6 +18,20 @@
 //! by default, `immersive_name_tags`), the HUDs (#1190: shown by default,
 //! `immersive_huds`; no button while Show HUDs hides them anyway) and leave
 //! it.
+//!
+//! The UI rendering feature (#4092) is the Legacy Viewer's other switch, and
+//! goes further: Advanced › Rendering features › UI (Ctrl+Alt+F1, Ctrl+Shift+F1
+//! on Linux; `Advanced.ToggleFeature` "ui", LLPipeline::toggleRenderDebugFeature
+//! of RENDER_DEBUG_FEATURE_UI, indra/newview/llviewermenu.cpp and pipeline.cpp,
+//! originally LGPL 2.1). Off (`Interface::ui_off`), nothing of the interface is
+//! drawn (render_ui in display(), llviewerdisplay.cpp, skips render_ui_3d,
+//! LLHUDObject::renderAll and render_ui_2d): no bar, window, menu, toast, chat
+//! line, name tag, floating text, beacon or selection outline; the world, the
+//! HUD attachments and RLVa's overlay stay. The clicks go to the world
+//! (LLViewerWindow::handleAnyMouseClick) and the fields let the keyboard go
+//! (updateKeyboardFocus). Its shortcut brings everything back. Not saved, as
+//! the Legacy Viewer's feature mask; unlike it, leaving the world turns the
+//! interface back on, so that the login screen is never blank.
 
 use super::bars::islands::{HEIGHT, MARGIN};
 use crate::theme::Palette;
@@ -55,6 +69,9 @@ pub struct Interface {
     /// Mouselook put the open windows away (LLAgent::mViewsPushed): they
     /// come back when it ends.
     mouselook_pushed: bool,
+    /// Advanced › Rendering features › UI unticked (Ctrl+Alt+F1): the world
+    /// alone, nothing of the interface drawn (not saved; `toggle_ui`).
+    pub ui_off: bool,
 }
 
 /// What a frame knows of the bars.
@@ -227,6 +244,26 @@ impl Interface {
             .filter(|_| self.hidden && !self.immersive)
             .map(|at| HINT_S - (now - at))
             .filter(|s| *s > 0.0)
+    }
+
+    /// Advanced › Rendering features › UI and its shortcut: the interface
+    /// drawn or not (LLPipeline::toggleRenderDebugFeature, the feature's bit
+    /// flipped). Turned off, the menus close and the fields let the keyboard
+    /// go, so that the keys move the avatar (LLViewerWindow::
+    /// updateKeyboardFocus clears the focus while it is off). The hidden
+    /// interface and immersive mode keep their own state underneath: they
+    /// are found as they were when it comes back.
+    pub fn toggle_ui(&mut self, ctx: &egui::Context) {
+        self.set_ui_off(ctx, !self.ui_off);
+    }
+
+    /// The UI rendering feature set off or back on (`toggle_ui`).
+    pub fn set_ui_off(&mut self, ctx: &egui::Context, off: bool) {
+        self.ui_off = off;
+        if off {
+            egui::Popup::close_all(ctx);
+            ctx.memory_mut(|m| m.stop_text_input());
+        }
     }
 }
 
@@ -447,6 +484,26 @@ mod tests {
 
     const BOTH: Shown = Shown { top: true, bottom: true };
     const NONE: Shown = Shown { top: false, bottom: false };
+
+    /// Advanced › Rendering features › UI: its shortcut turns the interface
+    /// off and back on, and the hidden interface or immersive mode under it
+    /// is found as it was (the Legacy Viewer's feature bit and
+    /// HideUIControls are separate).
+    #[test]
+    fn the_ui_feature_toggles_over_the_hidden_interface() {
+        let ctx = egui::Context::default();
+        let mut ui = Interface::default();
+        assert!(!ui.ui_off, "drawn by default");
+        ui.toggle_ui(&ctx);
+        assert!(ui.ui_off);
+        ui.toggle_ui(&ctx);
+        assert!(!ui.ui_off, "the same shortcut brings it back");
+        ui.set_immersive(&ctx);
+        ui.toggle_ui(&ctx);
+        assert!(ui.ui_off && ui.hidden && ui.immersive);
+        ui.toggle_ui(&ctx);
+        assert!(!ui.ui_off && ui.hidden && ui.immersive, "immersive mode kept");
+    }
 
     /// Hidden, the islands come back while the pointer, come from a screen
     /// edge, stays on them (or a menu of theirs is open), and go once it

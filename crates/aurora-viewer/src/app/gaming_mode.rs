@@ -7,7 +7,11 @@
 //! priority, media/update.rs). The network, the chat, the sounds and the
 //! notifications go on: with fewer frames, each one may apply more of the
 //! network's events (`event_budget`). Back in front, it ends by itself
-//! (`gaming_mode_leave_on_focus`), or with the button again. A headset that
+//! (`gaming_mode_leave_on_focus`), or with the button again. A window of
+//! the interface outside the viewer's (outside.rs) does not end it: one
+//! answers a message on another screen while the game keeps the card. The
+//! world stays paused, and the loop runs at `OUTSIDE_FPS` while such a
+//! window has the focus, for the typing. A headset that
 //! presents ends it too: the OpenXR frame waiter paces VR, and a world that
 //! stops drawing in front of the eyes is not a pause (busy_pause.rs leaves
 //! VR alone the same way).
@@ -28,6 +32,10 @@ const VISIBLE_FPS: f32 = 5.0;
 /// Frames per second minimised or covered: enough to read the network's
 /// news and raise the notifications, nothing is seen.
 const HIDDEN_FPS: f32 = 2.0;
+/// Frames per second while a window of the interface outside the viewer's
+/// has the focus: what one types there shows as it is typed. Nothing of
+/// the world is drawn: these frames are the interface's alone.
+const OUTSIDE_FPS: f32 = 30.0;
 /// Time a frame may spend applying the network's events (8 ms otherwise,
 /// `App::pump_network_events`). At `HIDDEN_FPS` that is 120 ms a second,
 /// what the 15 fps background cap gives at 8 ms a frame: a busy region's
@@ -64,19 +72,27 @@ fn focus_click(left: Option<Instant>, now: Instant) -> bool {
 }
 
 /// The frame limiter's cap (0 = none) under gaming mode: `hidden` the
-/// window is minimised or covered.
-pub(super) fn cap(cap: f32, on: bool, hidden: bool) -> f32 {
+/// window is minimised or covered, `outside` a window of the interface
+/// outside the viewer's has the focus.
+pub(super) fn cap(cap: f32, on: bool, hidden: bool, outside: bool) -> f32 {
     if !on {
         return cap;
     }
-    let low = if hidden { HIDDEN_FPS } else { VISIBLE_FPS };
+    let low = if outside {
+        OUTSIDE_FPS
+    } else if hidden {
+        HIDDEN_FPS
+    } else {
+        VISIBLE_FPS
+    };
     if cap >= 1.0 { cap.min(low) } else { low }
 }
 
 /// The time a frame may spend applying the network's events, gaming mode
-/// `on` or not.
-pub(super) fn event_budget(on: bool) -> Duration {
-    if on { EVENT_BUDGET } else { Duration::from_millis(8) }
+/// `on` or not; the usual one at `OUTSIDE_FPS` (`outside`, as for `cap`),
+/// whose frames are frequent enough and must stay short for the typing.
+pub(super) fn event_budget(on: bool, outside: bool) -> Duration {
+    if on && !outside { EVENT_BUDGET } else { Duration::from_millis(8) }
 }
 
 /// Whether the memory goes back now, due at `at`.
@@ -206,16 +222,31 @@ mod tests {
 
     #[test]
     fn off_leaves_the_cap_as_it_was() {
-        assert_eq!(cap(0.0, false, true), 0.0);
-        assert_eq!(cap(15.0, false, false), 15.0);
+        assert_eq!(cap(0.0, false, true, false), 0.0);
+        assert_eq!(cap(15.0, false, false, false), 15.0);
+        assert_eq!(cap(120.0, false, false, true), 120.0);
+    }
+
+    /// Answering a message in a window outside the viewer's, on another
+    /// screen, leaves gaming mode on: the loop only runs fast enough for
+    /// the typing, whether the viewer's own window is in sight or not.
+    #[test]
+    fn a_window_outside_with_the_focus_is_typed_in_smoothly() {
+        assert_eq!(cap(0.0, true, false, true), OUTSIDE_FPS);
+        assert_eq!(cap(120.0, true, true, true), OUTSIDE_FPS);
+        assert_eq!(cap(10.0, true, false, true), 10.0, "a lower cap of the user stays");
+        // short frames then, as outside gaming mode
+        assert_eq!(event_budget(true, true), event_budget(false, false));
+        let per_second = |budget: Duration, fps: f32| budget.as_secs_f32() * fps;
+        assert!(per_second(event_budget(true, true), OUTSIDE_FPS) >= per_second(event_budget(false, false), 15.0));
     }
 
     #[test]
     fn on_crawls_and_slower_out_of_sight() {
-        assert_eq!(cap(0.0, true, false), VISIBLE_FPS, "no cap at all becomes the visible one");
-        assert_eq!(cap(120.0, true, false), VISIBLE_FPS);
-        assert_eq!(cap(120.0, true, true), HIDDEN_FPS);
-        assert_eq!(cap(1.0, true, false), 1.0, "a lower cap of the user stays");
+        assert_eq!(cap(0.0, true, false, false), VISIBLE_FPS, "no cap at all becomes the visible one");
+        assert_eq!(cap(120.0, true, false, false), VISIBLE_FPS);
+        assert_eq!(cap(120.0, true, true, false), HIDDEN_FPS);
+        assert_eq!(cap(1.0, true, false, false), 1.0, "a lower cap of the user stays");
     }
 
     #[test]
@@ -229,10 +260,10 @@ mod tests {
 
     #[test]
     fn the_slow_loop_applies_as_many_events_a_second_as_the_background_cap() {
-        assert_eq!(event_budget(false), Duration::from_millis(8));
+        assert_eq!(event_budget(false, false), Duration::from_millis(8));
         let per_second = |budget: Duration, fps: f32| budget.as_secs_f32() * fps;
-        let background = per_second(event_budget(false), 15.0);
-        assert!(per_second(event_budget(true), HIDDEN_FPS) >= background - 1e-6);
-        assert!(per_second(event_budget(true), VISIBLE_FPS) >= background);
+        let background = per_second(event_budget(false, false), 15.0);
+        assert!(per_second(event_budget(true, false), HIDDEN_FPS) >= background - 1e-6);
+        assert!(per_second(event_budget(true, false), VISIBLE_FPS) >= background);
     }
 }

@@ -80,6 +80,7 @@ impl App {
         self.options_ui.gpus = renderer.info.adapters.clone();
         self.options_ui.gpu_in_use = renderer.info.name.clone();
         self.options_ui.gpu_notice = renderer.info.notice;
+        self.options_ui.ray_tracing = renderer.info.ray_tracing;
     }
 
     pub(super) fn egui_state_for(&self, window: &Window, renderer: &Renderer) -> egui_winit::State {
@@ -304,6 +305,7 @@ impl App {
         self.note_gpus(&renderer);
         self.screen_rate.poll(&window, Instant::now());
         let egui_state = self.egui_state_for(&window, &renderer);
+        self.cursor_shown.forget();
         self.gfx = Some(Gfx {
             renderer,
             egui_state,
@@ -319,6 +321,8 @@ impl App {
         self.crash_recent = Default::default();
         // the new egui renderer has none of egui's textures
         self.egui_replay = true;
+        // nor a surface for a window outside the viewer's
+        self.outside.renderer_replaced(&self.egui_ctx);
         Some(started)
     }
 }

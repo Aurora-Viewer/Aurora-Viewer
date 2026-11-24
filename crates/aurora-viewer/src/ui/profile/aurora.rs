@@ -345,7 +345,7 @@ fn tabs_of() -> Vec<usize> {
     vec![TAB_SL, TAB_PICKS, TAB_CLASSIFIEDS, TAB_RL, TAB_FEED, TAB_NOTES]
 }
 
-/// What is edited and not saved, for the bar ("bio, 1 place").
+/// What is edited and not saved, for the bar ("bio, 1 pick").
 fn unsaved_parts(w: &Window) -> Vec<String> {
     let mut parts = Vec::new();
     if w.about.dirty() {
@@ -1558,7 +1558,7 @@ fn card(
     clicked
 }
 
-/// The Profile tab: About and the favorite places on the left, Info,
+/// The Profile tab: About and the picks on the left, Info,
 /// Groups and the private notes on the right; one column when compact. An
 /// item is given by dropping it anywhere on the window (`super::give_drop`).
 fn profile_tab(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool) {
@@ -1771,7 +1771,7 @@ fn partner_chip(ui: &mut egui::Ui, env: &mut Env, partner: Uuid) {
     }
 }
 
-/// The first three favorite places as cards, and the way to all of them.
+/// The first three picks as cards, and the way to all of them.
 fn picks_card(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
     let (p, world) = (env.p, env.world);
     let Some(pr) = world.profiles.get(&w.id) else {
@@ -1818,7 +1818,7 @@ fn picks_card(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
     }
 }
 
-/// One favorite place: its snapshot with the rating of its region, its
+/// One pick: its snapshot with the rating of its region, its
 /// name, place and description; "TP" over the snapshot under the pointer.
 /// True when it is clicked (to show it in its tab).
 fn pick_card(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, pick: Uuid, width: f32) -> bool {
@@ -2093,7 +2093,7 @@ fn switch_row(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut 
     changed
 }
 
-/// "Unsaved changes (bio, 1 place)": while editing, Cancel puts the texts
+/// "Unsaved changes (bio, 1 pick)": while editing, Cancel puts the texts
 /// back and Save sends them; when closing, Cancel keeps the window, Ignore
 /// closes it without saving and Save closes it after saving
 /// (LLFloaterProfile's ProfileUnsavedChanges).

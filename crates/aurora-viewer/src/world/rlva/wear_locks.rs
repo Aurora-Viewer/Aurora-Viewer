@@ -73,6 +73,16 @@ pub struct WearLocks {
 }
 
 impl WearLocks {
+    /// RLVa on, with `items` kept on: for the tests of the rules that ask.
+    #[cfg(test)]
+    pub(crate) fn keeping_on(items: impl IntoIterator<Item = Uuid>) -> Self {
+        Self {
+            active: true,
+            fixed: items.into_iter().collect(),
+            ..Default::default()
+        }
+    }
+
     /// Whether the worn item `item` (an original, not a link) can be taken off.
     pub fn can_remove(&self, item: Uuid) -> bool {
         !self.active || !self.fixed.contains(&item)

@@ -1,7 +1,48 @@
 //! Drag navigation follows LLScrollContainer::autoScroll and LLFolderView's
 //! one-second hover (Firestorm indra/llui, LGPL 2.1). The human also requested
 //! closing an open folder on hover; latch each visit to prevent oscillation.
+//! A tab held under the cargo opens after a short delay, as the Legacy
+//! Viewer's tab containers with open_tabs_on_drag_and_drop do
+//! (LLTabContainer::handleDragAndDrop, indra/llui/lltabcontainer.cpp): the
+//! inventory's and the build window's.
 use super::*;
+
+/// Shorter than the Legacy Viewer's SCROLL_DELAY_TIME (half a second): the
+/// human found the switch too slow (2026-11-21); still long enough for a
+/// pointer passing over the tabs not to open them.
+const TAB_DELAY: f64 = 0.2;
+
+/// True once inventory has been held over the tab at `rect` for the delay,
+/// and for as long as it stays there: the caller opens that tab. `id` names
+/// the tab.
+pub(crate) fn tab_held_over(ui: &egui::Ui, rect: egui::Rect, id: egui::Id) -> bool {
+    let ctx = ui.ctx();
+    let key = id.with("drag-open");
+    if !active(ctx) || !ui.rect_contains_pointer(rect) {
+        ctx.data_mut(|d| d.remove_temp::<f64>(key));
+        return false;
+    }
+    let now = ctx.input(|i| i.time);
+    let since = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(key, || now));
+    let waited = now - since;
+    if waited < TAB_DELAY {
+        // the pointer may rest still: the frame after the delay is asked for
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(TAB_DELAY - waited));
+        return false;
+    }
+    true
+}
+
+/// The highest row of the inventory window `editor` a drag still scrolls
+/// the list up from, this frame: the search row in Aurora's layout, the
+/// next owner row under the tabs in the Legacy one. Above it, no scroll.
+pub(crate) fn search_top(ctx: &egui::Context, editor: Uuid, top: f32) {
+    ctx.data_mut(|d| d.insert_temp(search_top_id(editor), top));
+}
+
+fn search_top_id(editor: Uuid) -> egui::Id {
+    egui::Id::unique(("inventory_drag_search_top", editor))
+}
 
 fn active(ctx: &egui::Context) -> bool {
     ctx.input(|i| i.pointer.primary_down())
@@ -26,7 +67,7 @@ pub(crate) fn folder(ui: &egui::Ui, r: &egui::Response, editor: Uuid, id: Uuid, 
         return;
     }
     let key = egui::Id::unique(("inventory_drag_folder_visit", editor, id));
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let now = ui.input(|i| i.time);
     let toggle = ui.ctx().data_mut(|data| {
         let state = data.get_temp_mut_or_insert_with(egui::Id::unique("inventory_drag_folder_hover"), || Hover {
@@ -67,8 +108,9 @@ struct Motion {
 }
 
 /// Scroll the actual container, including virtualized search results. Retain
-/// the last entered inventory when the pointer leaves vertically into the
-/// header/footer/world, but never scroll a window covered by another window.
+/// the last entered inventory when the pointer leaves the list vertically
+/// into the window's header or footer; the scroll stops once the pointer is
+/// out of the window, under another window, or above the search row.
 pub(crate) fn scroll<R>(ui: &egui::Ui, out: &egui::scroll_area::ScrollAreaOutput<R>, editor: Uuid) {
     let ctx = ui.ctx();
     let owner_id = egui::Id::unique("inventory_drag_scroll_owner");
@@ -84,7 +126,7 @@ pub(crate) fn scroll<R>(ui: &egui::Ui, out: &egui::scroll_area::ScrollAreaOutput
         });
         return;
     }
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) else {
         return;
     };
@@ -102,12 +144,8 @@ pub(crate) fn scroll<R>(ui: &egui::Ui, out: &egui::scroll_area::ScrollAreaOutput
         }
         owns
     });
-    let unobstructed = over_window || layer.is_none_or(|l| l.order == egui::Order::Background);
-    let direction = if owns && unobstructed && rect.x_range().contains(pos.x) {
-        edge(rect, pos.y)
-    } else {
-        0.0
-    };
+    let search = ctx.data(|d| d.get_temp::<f32>(search_top_id(editor)));
+    let direction = direction(rect, pos, owns && over_window, search);
     if direction == 0.0 {
         ctx.data_mut(|d| d.remove::<Motion>(motion_id));
         return;
@@ -142,6 +180,21 @@ pub(crate) fn scroll<R>(ui: &egui::Ui, out: &egui::scroll_area::ScrollAreaOutput
     }
     crate::ui::widgets::scroll_offset::set(ctx, out.id, egui::vec2(offset.x, next));
     ctx.request_repaint();
+}
+
+/// Which way the list at `list` scrolls with the pointer at `pos`: up (-1)
+/// from its top edge up to the search row's top (`search`), down (1) from
+/// its bottom edge, not at all (0) in its middle, beside it, or when the
+/// pointer is not over its window (`over`, the window owning the scroll).
+pub(in crate::ui::inventory) fn direction(list: egui::Rect, pos: egui::Pos2, over: bool, search: Option<f32>) -> f32 {
+    if !over || !list.x_range().contains(pos.x) {
+        return 0.0;
+    }
+    match edge(list, pos.y) {
+        // over the tabs and buttons above the search row
+        up if up < 0.0 && search.is_some_and(|top| pos.y < top) => 0.0,
+        direction => direction,
+    }
 }
 
 fn edge(rect: egui::Rect, y: f32) -> f32 {

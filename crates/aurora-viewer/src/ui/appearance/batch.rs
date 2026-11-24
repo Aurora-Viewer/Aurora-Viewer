@@ -22,6 +22,10 @@ pub const WINDOW: &str = "outfit_batch";
 pub enum Action {
     /// The outfit of this row ticked or unticked, before the start.
     Toggle(usize),
+    /// Every outfit that can be photographed ticked, or none.
+    SetAll(bool),
+    /// Back to the opening choice: the outfits without a picture.
+    SelectMissing,
     Start,
     Pause,
     Resume,
@@ -140,6 +144,37 @@ pub struct View<'a> {
     pub phase: Phase,
     pub rows: Vec<Row<'a>>,
     pub hd: HdTotal<'a>,
+    /// The folder of My Outfits the batch was opened over ("Beach ›
+    /// Night"), named in the headline.
+    pub folder: Option<String>,
+    /// The outfits ticked are the opening choice (those without a picture).
+    pub at_default: bool,
+}
+
+/// The "All outfits" box's state over the outfits that can be ticked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tick {
+    None,
+    /// Some ticked: the box shows a dash, and a click ticks them all.
+    Some,
+    All,
+}
+
+/// The outfits ticked and those that can be (locked and empty ones
+/// cannot), before the start.
+pub fn selection(rows: &[Row]) -> (usize, usize) {
+    rows.iter().fold((0, 0), |(chosen, total), r| match r.state {
+        RowState::Choose { chosen: on, .. } => (chosen + usize::from(on), total + 1),
+        _ => (chosen, total),
+    })
+}
+
+pub fn tick(chosen: usize, total: usize) -> Tick {
+    match chosen {
+        0 => Tick::None,
+        n if n >= total => Tick::All,
+        _ => Tick::Some,
+    }
 }
 
 const ROW: f32 = 48.0;
@@ -168,7 +203,10 @@ pub fn window(ctx: &egui::Context, p: &Palette, settings: &mut PortraitSettings,
 fn body(ui: &mut egui::Ui, p: &Palette, settings: &mut PortraitSettings, view: &View, actions: &mut Vec<Action>) {
     ui.spacing_mut().item_spacing.y = 10.0;
     let headline = match view.phase {
-        Phase::Setup(_) => aurora_i18n::tr!("ui-appearance-batch-choose").to_string(),
+        Phase::Setup(_) => match &view.folder {
+            Some(folder) => aurora_i18n::tr!("ui-appearance-batch-choose-folder", folder = folder.as_str()).to_string(),
+            None => aurora_i18n::tr!("ui-appearance-batch-choose").to_string(),
+        },
         Phase::Running { index, count, paused, .. } => {
             let key = if paused {
                 aurora_i18n::tr!("ui-appearance-batch-paused", index = index, count = count)
@@ -222,6 +260,8 @@ fn body(ui: &mut egui::Ui, p: &Palette, settings: &mut PortraitSettings, view: &
                 hd_total_ui(ui, p, settings, &view.hd);
                 if view.rows.is_empty() {
                     portrait::note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-batch-none"));
+                } else {
+                    selection_bar(ui, p, view, actions);
                 }
             }
             if matches!(view.phase, Phase::Running { .. } | Phase::Restoring | Phase::Finished { .. }) && view.hd.used {
@@ -232,6 +272,37 @@ fn body(ui: &mut egui::Ui, p: &Palette, settings: &mut PortraitSettings, view: &
                 row_ui(ui, p, i, row, actions);
             }
         });
+}
+
+/// Before the start, above the rows: "All outfits" (a dash while only some
+/// are ticked; a click then ticks them all, then none), how many are
+/// ticked, and "Without picture" back to the opening choice.
+fn selection_bar(ui: &mut egui::Ui, p: &Palette, view: &View, actions: &mut Vec<Action>) {
+    let (chosen, total) = selection(&view.rows);
+    let state = tick(chosen, total);
+    widgets::surface(ui, p, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            let mut on = state == Tick::All;
+            let all = ui
+                .add_enabled_ui(total > 0, |ui| {
+                    widgets::checkbox_mixed(ui, p, &mut on, aurora_i18n::tr!("ui-appearance-batch-all"), state == Tick::Some)
+                })
+                .inner;
+            if all.clicked() {
+                actions.push(Action::SetAll(state != Tick::All));
+            }
+            let count = aurora_i18n::tr!("ui-appearance-batch-chosen", chosen = chosen, total = total);
+            ui.label(RichText::new(count).size(12.0).color(p.muted));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let missing = aurora_i18n::tr!("ui-appearance-batch-select-missing");
+                let button = ui.add_enabled_ui(!view.at_default, |ui| widgets::flat_button(ui, p, missing)).inner;
+                if button.clicked() {
+                    actions.push(Action::SelectMissing);
+                }
+            });
+        });
+    });
 }
 
 /// Before the start: the HD pictures' box with the total for the outfits
@@ -543,6 +614,8 @@ mod tests {
                     had_picture: false,
                 }),
                 hd: hd(),
+                folder: None,
+                at_default: true,
             };
             let mut draw = |ui: &mut egui::Ui| {
                 window(ui.ctx(), &p, &mut settings, &view, &mut true);
@@ -680,14 +753,114 @@ mod tests {
                 },
                 PortraitSettings::default,
                 |settings, ctx, p| {
+                    let mut rows = rows(state);
+                    // a partial choice: the bar's dash, and a long folder name
+                    if let Phase::Setup(_) = phase {
+                        for (i, r) in rows.iter_mut().enumerate() {
+                            r.state = RowState::Choose {
+                                chosen: i % 3 == 0,
+                                had_picture: i % 2 == 1,
+                            };
+                        }
+                    }
                     let view = View {
                         phase,
-                        rows: rows(state),
+                        rows,
                         hd: hd(),
+                        folder: Some("Beach › Night › A very long folder name for the headline".into()),
+                        at_default: false,
                     };
                     window(ctx, p, settings, &view, &mut true);
                 },
             );
+        }
+    }
+
+    /// The "All outfits" box counts only the outfits that can be ticked: a
+    /// dash for some, ticked for all, empty for none.
+    #[test]
+    fn the_all_box_counts_the_outfits_that_can_be_ticked() {
+        let choose = |chosen| RowState::Choose {
+            chosen,
+            had_picture: false,
+        };
+        let mut rows = rows(choose(false));
+        assert_eq!(selection(&rows), (0, 7));
+        assert_eq!(tick(0, 7), Tick::None);
+        rows[0].state = choose(true);
+        rows[3].state = choose(true);
+        assert_eq!(selection(&rows), (2, 7));
+        assert_eq!(tick(2, 7), Tick::Some);
+        rows[1].state = RowState::Locked;
+        rows[2].state = RowState::Empty;
+        for r in &mut rows[4..] {
+            r.state = choose(true);
+        }
+        assert_eq!(selection(&rows), (5, 5), "locked and empty outfits are left out");
+        assert_eq!(tick(5, 5), Tick::All);
+        assert_eq!(tick(0, 0), Tick::None, "nothing to tick");
+    }
+
+    /// The headline names the folder the batch was opened over; the bar's
+    /// box ticks every outfit while only some are, then none.
+    #[test]
+    fn the_all_box_ticks_all_from_a_partial_choice_then_none() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let mut frames = Frames::new();
+        theme.apply(&frames.ctx, 1.0);
+        widgets::place_floater(&frames.ctx, WINDOW, egui::pos2(40.0, 40.0), Vec2::new(520.0, 560.0));
+        for (chosen, expected) in [([true, false], true), ([true, true], false), ([false, false], true)] {
+            let mut rows = rows(RowState::Locked);
+            rows.truncate(2);
+            for (r, on) in rows.iter_mut().zip(chosen) {
+                r.state = RowState::Choose {
+                    chosen: on,
+                    had_picture: false,
+                };
+            }
+            let view = View {
+                phase: Phase::Setup(None),
+                rows,
+                hd: HdTotal::default(),
+                folder: Some("Beach".into()),
+                at_default: false,
+            };
+            let mut settings = PortraitSettings::default();
+            let actions = std::cell::RefCell::new(Vec::new());
+            let mut draw = |ui: &mut egui::Ui| {
+                let pushed = window(ui.ctx(), &p, &mut settings, &view, &mut true);
+                actions.borrow_mut().extend(pushed);
+            };
+            let mut texts = Vec::new();
+            for _ in 0..30 {
+                texts = frames.run(Vec::new(), &mut draw);
+            }
+            let headline = aurora_i18n::tr!("ui-appearance-batch-choose-folder", folder = "Beach").to_string();
+            assert!(texts.iter().any(|t| t.source == headline), "the folder named");
+            let at = texts
+                .iter()
+                .find(|t| t.source == aurora_i18n::tr!("ui-appearance-batch-all"))
+                .expect("the All box")
+                .rect
+                .center();
+            actions.borrow_mut().clear();
+            for pressed in [true, false] {
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(at),
+                        egui::Event::PointerButton {
+                            pos: at,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    &mut draw,
+                );
+            }
+            assert_eq!(*actions.borrow(), vec![Action::SetAll(expected)], "from {chosen:?}");
         }
     }
 
@@ -730,6 +903,8 @@ mod tests {
                         balance: Some(500),
                         ..hd()
                     },
+                    folder: None,
+                    at_default: true,
                 };
                 window(ctx, p, settings, &view, &mut true);
             },
