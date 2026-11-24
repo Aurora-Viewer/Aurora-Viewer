@@ -994,7 +994,7 @@ fn saved_prefix(timestamp: u32) -> String {
 
 /// The largest region a grid can have (Constants.MaximumRegionSize,
 /// OpenSim): a corrupt patch number must not make a land grid of gigabytes.
-const MAX_REGION_SIZE: u32 = 4096;
+pub const MAX_REGION_SIZE: u32 = 4096;
 
 impl World {
     pub fn add_tracked_region(&mut self, name: &str, label: &str) {

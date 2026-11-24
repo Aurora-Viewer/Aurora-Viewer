@@ -558,7 +558,7 @@ fn list_area(
                 };
                 // the hovered row's Wear button takes the check's place
                 let toggle = (!layout.busy() && ui.rect_contains_pointer(at))
-                    .then(|| items::wear_toggle(world, it, is_worn))
+                    .then(|| items::wear_toggle(world, it, is_worn, None))
                     .flatten();
                 paint_row(ui, p, at, it, texture, is_worn, is_worn && toggle.is_none(), point.as_deref(), face);
                 if response.clicked() || response.secondary_clicked() {
@@ -574,7 +574,7 @@ fn list_area(
                         actions.push(Action::Gesture(vec![it.id], !world.active_gestures.contains(&it.id)));
                     }
                 } else {
-                    items::double_click(response, world, it, is_worn, actions);
+                    items::double_click(response, world, it, is_worn, None, actions);
                     // the same from a button on the hovered row, for those
                     // who would not guess the double click (Aurora's own)
                     if let Some(action) = toggle

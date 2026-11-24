@@ -4241,3 +4241,41 @@ fn compact_object_shape_fields_stay_inside_at_large_text_size() {
         }
     }
 }
+
+#[test]
+fn one_selected_object_has_its_contents_listed_whatever_the_tab() {
+    // LLFloaterTools::refresh → LLPanelObjectInventory::refresh: a no-copy
+    // or no-transfer choice can then go into the contents at the first try.
+    use aurora_net::{NetCommand, build::BuildCmd};
+    let mut inspector = Inspector::new();
+    let idx = inspector.tool.contents_target(&inspector.world).unwrap();
+    let object = inspector.world.objects.get(idx).unwrap().full_id;
+    let asked = |tool: &BuildTool, id: uuid::Uuid| {
+        tool.out
+            .iter()
+            .filter(|c| matches!(c, NetCommand::Build(BuildCmd::RequestTaskInventory { object_id, .. }) if *object_id == id))
+            .count()
+    };
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "asked once the object is selected");
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "not again while it loads");
+    inspector.tool.on_task_inventory(&inspector.world, object, Some(1), Vec::new());
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "not again once listed");
+    // Two objects: nothing is listed until a choice needs it.
+    let other = (0..inspector.world.objects.len())
+        .find(|&i| {
+            i != idx && crate::build::root_of(&inspector.world, i) == i && inspector.world.objects.get(i).is_some_and(|o| o.pcode == 9)
+        })
+        .unwrap();
+    let other_id = inspector.world.objects.get(other).unwrap().full_id;
+    inspector
+        .tool
+        .click_select(&mut inspector.world, &inspector.settings, Some(other), true);
+    assert_eq!(inspector.tool.roots(&inspector.world).len(), 2);
+    inspector.tool.out.clear();
+    inspector.show(vec![]);
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object) + asked(&inspector.tool, other_id), 0);
+}
