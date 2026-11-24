@@ -264,6 +264,8 @@ mod sl {
     pub const DISABLE_DEBUG_TEXT: u64 = 1 << 1;
     #[cfg_attr(windows, allow(dead_code))]
     pub const USE_MANUAL_HOOKING: u64 = 1 << 2;
+    /// needed for `slSetTagForFrame` (NVIDIA's Streamline refuses it without)
+    pub const USE_FRAME_BASED_RESOURCE_TAGGING: u64 = 1 << 7;
 
     /// `sl::Boolean`
     pub const FALSE: u8 = 0;
@@ -1407,7 +1409,7 @@ mod imp {
         p.log_message_callback = Some(sl::log_message);
         // no over-the-air updates, and Streamline's command list state
         // tracking off (the viewer restores nothing it would track)
-        p.flags = sl::DISABLE_CL_STATE_TRACKING | sl::DISABLE_DEBUG_TEXT;
+        p.flags = sl::DISABLE_CL_STATE_TRACKING | sl::DISABLE_DEBUG_TEXT | sl::USE_FRAME_BASED_RESOURCE_TAGGING;
         // Linux: the viewer makes the instance and device itself and
         // tells the library which (`slSetVulkanInfo`)
         #[cfg(target_os = "linux")]
@@ -2544,10 +2546,19 @@ mod imp {
                 let mut token: sl::FrameToken = std::ptr::null_mut();
                 sl::check((lib.new_frame_token)(&mut token, std::ptr::null())).map_err(|e| format!("slGetNewFrameToken: {e}"))?;
                 sl::check((lib.set_constants)(&constants(None, true), token, &handle)).map_err(|e| format!("slSetConstants: {e}"))?;
-                let r = encoder.as_hal_mut::<Vulkan, _, _>(|e| match e {
-                    Some(e) => (lib.allocate)(e.raw_handle(), sl::FEATURE_DLSS, &handle),
-                    None => sl::ERROR_INVALID_PARAMETER,
-                });
+                // NVIDIA's Streamline (Windows) makes the feature only from
+                // tagged inputs (sl.dlss's dlssBeginEvent), which exist at
+                // the first evaluate, not here: slAllocateResources without
+                // them leaves no feature and answers eErrorInvalidParameter.
+                // The feature is then made by that first evaluate.
+                let r = if cfg!(windows) {
+                    0
+                } else {
+                    encoder.as_hal_mut::<Vulkan, _, _>(|e| match e {
+                        Some(e) => (lib.allocate)(e.raw_handle(), sl::FEATURE_DLSS, &handle),
+                        None => sl::ERROR_INVALID_PARAMETER,
+                    })
+                };
                 sl::check(r).map_err(|e| format!("the DLSS feature for {}x{}: {e}", display.0, display.1))
             })();
             if let Err(e) = made {
