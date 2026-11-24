@@ -10708,6 +10708,7 @@ build-compact-paste-system = Paste from the system clipboard
 build-compact-paste-vector = Paste the copied vector
 build-compact-copy-vector = Copy the vector
 build-compact-camera = Camera
+build-tool-in-use = In use
 build-compact-move-tool = Move
 build-compact-edit = Edit
 build-compact-create = Create

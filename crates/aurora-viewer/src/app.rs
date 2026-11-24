@@ -16776,14 +16776,9 @@ impl App {
                     5 => Some(crate::build::Tool::Grab),
                     _ => None,
                 };
-                // LLToolMgr::buildEnabledOrActive: under @edit and @rez
-                // the window does not open; an open one still closes
-                if self.build.open || self.world.rlva_can_build() {
-                    match self.build.bar_click(mode, button) {
-                        Some(tool) => self.build.open_build(tool),
-                        None => self.build.close(&mut self.world, &mut self.settings.build),
-                    }
-                }
+                let can_build = self.world.rlva_can_build();
+                self.build
+                    .bar_click(mode, button || mode.is_none(), can_build, &mut self.world, &mut self.settings.build);
                 self.flush_build();
             }
             BarAction::Logout => {
@@ -21438,8 +21433,15 @@ impl App {
                 self.toolbar_ui.gaming_mode_active = self.gaming_mode.on;
                 self.toolbar_ui.shown = ui::toolbar::Shown {
                     profile: self.profile_ui.mine_shown(self.world.agent_id),
-                    build: self.build.open,
-                    build_tool: self.build.shown_tool(),
+                    build: self.build.lit(None),
+                    build_tools: [
+                        crate::build::Tool::Focus,
+                        crate::build::Tool::Grab,
+                        crate::build::Tool::Edit,
+                        crate::build::Tool::Create,
+                        crate::build::Tool::Land,
+                    ]
+                    .map(|tool| self.build.lit(Some(tool))),
                     poser: self.ik_editor.open && self.ik_editor.posing(),
                     report_abuse: self.report_abuse.open,
                     marketplace_listings: self.listings_ui.open,

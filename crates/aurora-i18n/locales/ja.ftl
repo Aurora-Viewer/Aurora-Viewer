@@ -10600,6 +10600,7 @@ build-compact-paste-system = システムのクリップボードから貼り付
 build-compact-paste-vector = コピーしたベクトルを貼り付け
 build-compact-copy-vector = ベクトルをコピー
 build-compact-camera = カメラ
+build-tool-in-use = 使用中
 build-compact-move-tool = 移動
 build-compact-edit = 編集
 build-compact-create = 作成

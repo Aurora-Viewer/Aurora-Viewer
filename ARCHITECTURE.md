@@ -2115,6 +2115,11 @@ Contents keeps its three-column action strip. The fixed Legacy controls remain
 independent of the customized Aurora arrangement. Aurora's five editing sections share a full-width
 folding transform area and an editable footer; `build/ui/second_tab.rs` shows a
 second section beside the active one in a window widened for two.
+The Aurora main window is the Edit tool's: Camera, Move, Create and Land each
+have a window of their own (`build/ui/tool_floaters.rs`), opened and closed
+from the rail, their toolbar buttons, menu entries and Ctrl+1, 2, 4, 5;
+`build/tool_windows.rs` holds which ones are shown, the tool in use (the
+window last opened or pressed) and the lit buttons, for both styles.
 `build/face_buttons.rs` holds the face buttons, Invert / All and the face step
 shared by the arrows and the Ctrl+, / Ctrl+. keys. `build/layout.rs` owns the saved
 item order/destinations and the versioned, validated notecard profile, excluding

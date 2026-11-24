@@ -622,10 +622,9 @@ pub struct Shown {
     pub profile: bool,
     /// Floater.IsOpen build.
     pub build: bool,
-    /// The build window's tool while it is open: Camera, Move, Edit
-    /// objects, Create prims and Edit land light on their own (Aurora's
-    /// commands).
-    pub build_tool: Option<crate::build::Tool>,
+    /// Camera, Move, Edit, Create and Land lit, in this order
+    /// (BuildTool::lit; Aurora's commands).
+    pub build_tools: [bool; 5],
     /// Floater.IsOpen fs_poser.
     pub poser: bool,
     /// Floater.IsOpen reporter.
@@ -642,11 +641,11 @@ impl Shown {
         Some(match command {
             "profile" => self.profile,
             "build" => self.build,
-            "build_edit" => self.build_tool == Some(crate::build::Tool::Edit),
-            "build_create" => self.build_tool == Some(crate::build::Tool::Create),
-            "build_land" => self.build_tool == Some(crate::build::Tool::Land),
-            "build_focus" => self.build_tool == Some(crate::build::Tool::Focus),
-            "build_grab" => self.build_tool == Some(crate::build::Tool::Grab),
+            "build_focus" => self.build_tools[0],
+            "build_grab" => self.build_tools[1],
+            "build_edit" => self.build_tools[2],
+            "build_create" => self.build_tools[3],
+            "build_land" => self.build_tools[4],
             "poser" => self.poser,
             "reporter" => self.report_abuse,
             "marketplacelistings" => self.marketplace_listings,

@@ -1633,15 +1633,18 @@ fn create_panel_holds_still_at_every_width_around_its_scroll_bar() {
     // #1092: the shape grid sized itself from the width left by the scroll
     // bar, so at widths where only the wider grid overflowed the bar came
     // and went on every frame and the whole panel jittered.
+    // The Create panel is in its own window (tool_floaters.rs).
     let mut inspector = Inspector::new();
-    inspector.tool.set_tool(Tool::Create);
+    inspector.tool.open_build(Tool::Create);
     let label = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
     let place = |texts: &[(String, egui::Rect)]| texts.iter().find(|(text, _)| text == label).map(|(_, rect)| rect.min);
-    // Horizontal navigation and the fixed options reduce the scrolling
-    // viewport. Keep the marker visible while the shape grid crosses the
-    // scroll-bar threshold at the current construction layout's height.
+    // Keep the marker visible while the shape grid crosses the scroll-bar
+    // threshold at the window's height.
     for width in (300..=450).step_by(3) {
-        resize_inspector(&mut inspector, vec2(width as f32, 850.0));
+        crate::ui::widgets::size_floater(&inspector.ctx, "build_tool_create", vec2(width as f32, 420.0));
+        for _ in 0..5 {
+            inspector.show(vec![]);
+        }
         let first = place(&inspector.show(vec![]).1);
         assert!(first.is_some(), "Create options missing at width {width}");
         for _ in 0..4 {
@@ -4278,4 +4281,78 @@ fn one_selected_object_has_its_contents_listed_whatever_the_tab() {
     inspector.show(vec![]);
     inspector.show(vec![]);
     assert_eq!(asked(&inspector.tool, object) + asked(&inspector.tool, other_id), 0);
+}
+
+/// One click of the primary button at `pos`, as the pointer gives it.
+fn click_at(inspector: &mut Inspector, pos: egui::Pos2) {
+    inspector.show(vec![egui::Event::PointerMoved(pos)]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    inspector.show(vec![]);
+}
+
+/// The Aurora style's tools in windows of their own (human request,
+/// 2026-11-24): the rail's Create button opens its window beside the main
+/// one, which keeps its section; a press picks the tool in use; the button
+/// again closes the window.
+#[test]
+fn the_rail_tool_buttons_open_and_close_their_own_windows() {
+    use crate::build::layout::Item;
+    let mut inspector = Inspector::new();
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let button = |inspector: &Inspector, item: Item| {
+        inspector
+            .tool
+            .ui
+            .layout
+            .targets
+            .iter()
+            .find(|(target, _, _)| *target == item)
+            .map(|(_, _, rect)| rect.center())
+            .expect("rail button")
+    };
+    let create = button(&inspector, Item::Create);
+    let section = inspector.tool.tab;
+    click_at(&mut inspector, create);
+    assert!(inspector.tool.tool_window_open(Tool::Create));
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert!(inspector.tool.main_open, "the main window stays");
+    assert_eq!(inspector.tool.tab, section);
+    let window = inspector
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+        .expect("the Create window");
+    let (main, texts) = inspector.show(vec![]);
+    let options = texts
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("build-ui-tools-keep-selection-tool"))
+        .expect("the Create panel")
+        .1;
+    assert!(window.contains_rect(options), "the panel is in the Create window");
+    assert!(!main.intersects(window), "the window opens beside the main one");
+    assert!(
+        texts
+            .iter()
+            .any(|(text, rect)| text == aurora_i18n::tr!("build-tool-in-use") && window.contains_rect(*rect)),
+        "its title says its tool is the one in use"
+    );
+    // a press in the main window: Edit; in the Create window: Create
+    click_at(&mut inspector, main.left_top() + vec2(40.0, 12.0));
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    assert!(inspector.tool.tool_window_open(Tool::Create));
+    click_at(&mut inspector, window.left_top() + vec2(40.0, 12.0));
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    // lit, the rail button closes the window; Edit is back
+    click_at(&mut inspector, create);
+    assert!(!inspector.tool.tool_window_open(Tool::Create));
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    assert!(inspector.tool.open && inspector.tool.main_open);
 }

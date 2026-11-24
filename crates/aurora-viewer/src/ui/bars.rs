@@ -82,8 +82,8 @@ pub enum BarAction {
     BanLines(u8),
     /// Build floater: 0 toggle, 1 edit, 2 create, 3 land, 4 camera, 5 move.
     Build(u8),
-    /// A Build toolbar button, as [`BarAction::Build`]: a mode's button
-    /// closes the window when its tool is the one shown.
+    /// A Build toolbar button, as [`BarAction::Build`]: lit, it closes its
+    /// window (BuildTool::bar_click).
     BuildButton(u8),
     Logout,
     Quit,
@@ -5271,7 +5271,7 @@ mod tests {
             report_abuse: true,
             marketplace_listings: true,
             teleport_history: true,
-            build_tool: Some(crate::build::Tool::Edit),
+            build_tools: [false, false, true, false, false],
         };
         for cmd in commands {
             assert_eq!(all.lit(cmd), Some(true), "{cmd}");

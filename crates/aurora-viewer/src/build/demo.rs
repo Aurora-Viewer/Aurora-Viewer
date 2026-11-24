@@ -62,7 +62,9 @@
 //! `:media` (e.g. `texture:bp`); `:bp-alpha` paints the selection with the
 //! built-in Transparent texture; `:bp-normal` / `:bp-specular` select empty
 //! legacy map channels, and opens `+weights`, `+grid`, `+media`
-//! (e.g. `general+weights+grid`); `contents+permissions` opens bulk rights.
+//! (e.g. `general+weights+grid`); `contents+permissions` opens bulk rights;
+//! `+camera`, `+move`, `+create`, `+land` open those tools' windows (the
+//! Aurora style; the last one is the tool in use).
 //! `AURORA_DEMO_BUILD_HANDLES=<percent>` sets the edit handle size.
 //! `AURORA_DEMO_BUILD_FOCUS=off|on` focuses the selected object before the
 //! drag, with edit camera tracking disabled/enabled.
@@ -239,6 +241,10 @@ pub fn apply_tab(tool: &mut BuildTool) {
             "media" => tool.ui.media_settings = Some(super::ui::MediaSettingsState::new(None)),
             "permissions" => tool.ui.bulk_perms_open = true,
             "next-owner" => tool.ui.contents_rights = crate::ui::inventory::permissions::Rights::Both,
+            "camera" => tool.open_build(Tool::Focus),
+            "move" => tool.open_build(Tool::Grab),
+            "create" => tool.open_build(Tool::Create),
+            "land" => tool.open_build(Tool::Land),
             _ => {}
         }
     }

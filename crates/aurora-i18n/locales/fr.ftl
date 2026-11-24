@@ -10704,6 +10704,7 @@ build-compact-paste-system = Coller depuis le presse-papiers système
 build-compact-paste-vector = Coller le vecteur copié
 build-compact-copy-vector = Copier le vecteur
 build-compact-camera = Caméra
+build-tool-in-use = En cours
 build-compact-move-tool = Déplacer
 build-compact-edit = Modifier
 build-compact-create = Créer

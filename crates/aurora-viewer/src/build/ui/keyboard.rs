@@ -146,16 +146,16 @@ impl Shortcut {
                     tool.undo(world, history == EditHistory::Redo);
                 }
             }
+            // LLToolMgr::canEdit: no way into the build window under @edit
+            // and @rez (BuildTool::bar_click)
             Self::ToggleBuild => {
-                if tool.open {
-                    tool.close(world, settings);
-                } else if world.rlva_can_build() {
-                    tool.open_build(Tool::Create);
-                }
+                let can_build = world.rlva_can_build();
+                tool.bar_click(None, true, can_build, world, settings);
             }
-            // LLToolMgr::canEdit: no way into the build window under @edit and @rez
-            Self::Open(_) if !tool.open && !world.rlva_can_build() => {}
-            Self::Open(which) => tool.open_build(which),
+            Self::Open(which) => {
+                let can_build = world.rlva_can_build();
+                tool.bar_click(Some(which), false, can_build, world, settings);
+            }
             Self::GridOptions => tool.ui.grid_options_open = !tool.ui.grid_options_open,
             // Esc first turns "Place on surface" off
             Self::Close if tool.place.active => tool.toggle_place(world),

@@ -121,7 +121,7 @@ pub(super) fn shown(tool: &BuildTool, s: &BuildSettings) -> Option<usize> {
     tool.ui
         .second
         .tab
-        .filter(|tab| !s.legacy_window && tool.tool == Tool::Edit && *tab != tool.tab)
+        .filter(|tab| !s.legacy_window && tool.main_tool() == Some(Tool::Edit) && *tab != tool.tab)
 }
 
 /// A click on the button of section `tab`, Shift held or not.
@@ -166,11 +166,11 @@ mod tests {
     use super::*;
 
     fn tool() -> (BuildTool, BuildSettings) {
-        let tool = BuildTool {
-            tool: Tool::Edit,
+        let mut tool = BuildTool {
             tab: 6,
             ..Default::default()
         };
+        tool.open_build(Tool::Edit);
         (tool, BuildSettings::default())
     }
 
@@ -263,15 +263,18 @@ mod tests {
     }
 
     #[test]
-    fn the_legacy_style_another_tool_or_a_detached_section_show_no_second() {
+    fn the_legacy_style_or_a_detached_section_show_no_second() {
         let (mut tool, mut s) = tool();
         let mut width = 350.0;
         frame(&mut tool, &s, &mut width);
         click(&mut tool, 3, true);
         frame(&mut tool, &s, &mut width);
-        tool.tool = Tool::Create;
+        // another tool is in its own window: the main window keeps both
+        tool.open_build(Tool::Create);
+        assert_eq!(shown(&tool, &s), Some(3));
+        tool.main_open = false;
         assert_eq!(shown(&tool, &s), None);
-        tool.tool = Tool::Edit;
+        tool.open_build(Tool::Edit);
         assert_eq!(shown(&tool, &s), Some(3));
         s.legacy_window = true;
         frame(&mut tool, &s, &mut width);

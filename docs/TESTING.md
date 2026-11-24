@@ -2222,6 +2222,9 @@ cube as a hologram, `start` leaves a hologram of it where the move began.
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
 independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
 with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
+In the Aurora style, `+camera`, `+move`, `+create` and `+land` open those
+tools' own windows beside the main one (e.g. `object+create+land`): the last
+one named is the tool in use, and its title says so.
 `texture:bp-alpha` is the same Blinn-Phong tab after the selection's diffuse
 map is the built-in Transparent texture: Alpha mode is enabled and shows
 Alpha blending. Repeat with `AURORA_DEMO_BUILD_STYLE=legacy` and without it.

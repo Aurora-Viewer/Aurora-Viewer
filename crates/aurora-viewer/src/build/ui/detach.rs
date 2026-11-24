@@ -92,7 +92,7 @@ pub(super) fn prepare(tool: &mut BuildTool, s: &BuildSettings) {
     for (block, shown) in &s.detached {
         if let Some(tab) = block.tab() {
             tool.ui.detached_tabs.push(tab);
-            if *shown && tool.tool == Tool::Edit {
+            if *shown && tool.main_tool() == Some(Tool::Edit) {
                 tool.ui.detached_shown.push(tab);
             }
         }
@@ -102,7 +102,7 @@ pub(super) fn prepare(tool: &mut BuildTool, s: &BuildSettings) {
 /// Every section of the build window is in a window of its own: the
 /// build window keeps its shared controls only.
 pub(super) fn sectionless(tool: &BuildTool, s: &BuildSettings) -> bool {
-    available(s) && tool.tool == Tool::Edit && tab_detached(s, tool.tab)
+    available(s) && tool.main_tool() == Some(Tool::Edit) && tab_detached(s, tool.tab)
 }
 
 /// Fit the build window to its shared controls while it has no section,
@@ -157,11 +157,9 @@ pub(super) fn hide(tool: &mut BuildTool) {
 
 /// Show or hide a detached block's window (its rail button).
 pub(super) fn toggle(tool: &mut BuildTool, s: &mut BuildSettings, block: Block) {
-    if block.tab().is_some() && tool.tool != Tool::Edit {
-        // Back to editing, as the button of a section does: its window shows.
-        tool.set_tool(Tool::Edit);
-        s.detached.insert(block, true);
-        return;
+    if block.tab().is_some() {
+        // a section is the Edit tool's, as its button in the window is
+        tool.activate(Tool::Edit);
     }
     if let Some(shown) = s.detached.get_mut(&block) {
         *shown = !*shown;
@@ -308,8 +306,8 @@ pub(super) fn windows(
     let mut reattach = None;
     for block in blocks {
         let shown = match block {
-            Block::Transform => matches!(tool.tool, Tool::Edit | Tool::Create),
-            _ => tool.tool == Tool::Edit,
+            Block::Transform => matches!(tool.main_tool(), Some(Tool::Edit | Tool::Create)),
+            _ => tool.main_tool() == Some(Tool::Edit),
         };
         if !shown {
             continue;
@@ -456,19 +454,24 @@ mod tests {
     }
 
     #[test]
-    fn detached_sections_leave_the_build_window_and_show_only_while_editing() {
+    fn detached_sections_leave_the_build_window_and_show_only_with_it() {
         let s = settings(&[(Block::Materials, true), (Block::Contents, false), (Block::Transform, true)]);
         let mut tool = BuildTool::default();
-        tool.set_tool(Tool::Edit);
+        tool.open_build(Tool::Edit);
         prepare(&mut tool, &s);
         let mut tabs = tool.ui.detached_tabs.clone();
         tabs.sort_unstable();
         // the transform block is no section: it has no tab
         assert_eq!(tabs, vec![3, 4]);
         assert_eq!(tool.ui.detached_shown, vec![3]);
-        tool.set_tool(Tool::Grab);
+        // another tool in its own window: the main window keeps its sections
+        tool.open_build(Tool::Grab);
         prepare(&mut tool, &s);
-        assert!(tool.ui.detached_shown.is_empty(), "a section shows while editing only");
+        assert_eq!(tool.ui.detached_shown, vec![3]);
+        // the main window closed, the move window left: no section shows
+        tool.main_open = false;
+        prepare(&mut tool, &s);
+        assert!(tool.ui.detached_shown.is_empty(), "a section shows with the main window only");
         hide(&mut tool);
         assert!(tool.ui.detached_tabs.is_empty() && tool.ui.detached_shown.is_empty());
     }
@@ -515,14 +518,16 @@ mod tests {
     fn the_build_window_is_sectionless_when_its_tab_is_out() {
         let s = settings(&[(Block::General, true)]);
         let mut tool = BuildTool::default();
-        tool.set_tool(Tool::Edit);
+        tool.open_build(Tool::Edit);
         tool.tab = 6;
         assert!(sectionless(&tool, &s));
         tool.tab = 5;
         assert!(!sectionless(&tool, &s));
         tool.tab = 6;
-        tool.set_tool(Tool::Grab);
-        assert!(!sectionless(&tool, &s), "the other tools show no section anyway");
+        tool.open_build(Tool::Grab);
+        assert!(sectionless(&tool, &s), "another tool's window leaves the main window as it is");
+        tool.main_open = false;
+        assert!(!sectionless(&tool, &s), "no main window, no section anyway");
     }
 
     /// In a window of its own outside the viewer's, the build window is
@@ -549,7 +554,7 @@ mod tests {
         // its section is taken out: 600 of its body for what needs 100
         let mut s = settings(&[(Block::General, true)]);
         let mut tool = BuildTool::default();
-        tool.set_tool(Tool::Edit);
+        tool.open_build(Tool::Edit);
         tool.tab = 6;
         tool.ui.body_height = Some(600.0);
         tool.ui.sectionless_body = Some(100.0);
