@@ -4508,7 +4508,12 @@ process ends as before. A fault at an address where nothing is mapped is
 written without the unwinder, which would fault there in turn; and a fatal
 signal that a library gave its own handler (NVIDIA's shader compiler takes
 SIGABRT at its first compile) is taken back, every second by the watchdog
-and once the renderer is dropped at exit. Panics and failed allocations get the same stacks. `threads.rs` names the
+and once the renderer is dropped at exit. Panics and failed allocations get the same stacks.
+`open_files.rs` (Linux) counts the process's open files by kind once per
+GPU loss, for the report's "Open files at the loss" row (#2970): Mesa
+reports a descriptor it could not get as "out of memory"; it opens
+`/proc/self/fd` when crash recovery starts, since none is left at the
+limit. `threads.rs` names the
 long-lived background threads the session cannot do without (network
 runtime, texture pages, frees, disk caches, chat history): their panic,
 which used to leave the viewer running without them, ends the session at
