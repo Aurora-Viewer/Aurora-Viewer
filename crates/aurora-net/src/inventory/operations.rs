@@ -789,7 +789,14 @@ fn confirmed(operations: &[Operation], created: &HashMap<Uuid, Uuid>, contents: 
                         .iter()
                         .filter(|c| c.folder_id == resolve(*parent))
                         .flat_map(|c| &c.items)
-                        .any(|it| it.asset_id == l.target && it.asset_type == if l.folder { 25 } else { 24 } && it.name == l.name)
+                        // the name as it was sent (`links_body`, the UDP
+                        // LinkInventoryItem): a name outside plain ASCII
+                        // otherwise never reads back the same
+                        .any(|it| {
+                            it.asset_id == l.target
+                                && it.asset_type == if l.folder { 25 } else { 24 }
+                                && (it.name == l.name || it.name == crate::outfits::link_name(&l.name))
+                        })
                 }) {
                     return false;
                 }
@@ -1217,6 +1224,44 @@ mod tests {
     }
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn a_link_reads_back_with_the_name_it_was_sent_with() {
+        // LinkInventoryItem and AIS both carry `link_name`: an attachment
+        // named outside plain ASCII is confirmed by its plain-ASCII link,
+        // not left to wait through every retry.
+        let link = crate::outfits::OutfitLink {
+            target: id(5),
+            name: "Veste « été » | rouge".into(),
+            desc: String::new(),
+            folder: false,
+            inv_type: 18,
+        };
+        let operations = [Operation::Links {
+            parent: id(1),
+            links: vec![link.clone()],
+        }];
+        let read = |name: String| {
+            vec![FolderContents {
+                folder_id: id(1),
+                owner_id: id(2),
+                version: 3,
+                folders: Vec::new(),
+                items: vec![crate::inventory::InvItem {
+                    id: id(6),
+                    parent: id(1),
+                    asset_id: id(5),
+                    asset_type: 24,
+                    name,
+                    ..Default::default()
+                }],
+            }]
+        };
+        let created = HashMap::new();
+        assert!(confirmed(&operations, &created, &read(crate::outfits::link_name(&link.name))));
+        assert!(confirmed(&operations, &created, &read(link.name.clone())));
+        assert!(!confirmed(&operations, &created, &read("Another".into())));
     }
 
     async fn notecard_server(

@@ -128,6 +128,24 @@ def follow(root, install, first):
         time.sleep(0.25)
 
 
+def sign(key, path):
+    """Signs `path` as scripts/sign-release.ps1 does: `<path>.sig`, the 64
+    raw bytes of Ed25519 over the whole file."""
+    run("openssl", "pkeyutl", "-sign", "-rawin", "-inkey", key, "-in", path, "-out", f"{path}.sig")
+
+
+def new_key(path):
+    """A key made for this test; returns its public half in hex (the last 32
+    bytes of its DER form), which the isolated viewer trusts."""
+    run("openssl", "genpkey", "-algorithm", "ed25519", "-out", path)
+    public = subprocess.run(
+        ["openssl", "pkey", "-in", path, "-pubout", "-outform", "DER"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    return public[-32:].hex()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--title", default="Test viewer-update")
@@ -141,6 +159,11 @@ def main():
         "--reset-settings", action="store_true", help="the release resets the settings"
     )
     parser.add_argument("--required", action="store_true", help="the release is a required update")
+    parser.add_argument(
+        "--unsigned",
+        action="store_true",
+        help="the release is made by hand on GitHub, without signatures: never offered",
+    )
     options = parser.parse_args()
 
     repo = Path(
@@ -185,11 +208,18 @@ def main():
         "settings_reset_before": next_version if options.reset_settings else None,
     }
     (feed / "aurora-update-policy.json").write_text(json.dumps(policy), encoding="utf-8")
+    # signed as the Release workflow signs them, with a key made for this
+    # test: the isolated viewer trusts it from the loopback feed only
+    key = root / "test-signing-key.pem"
+    public_key = new_key(key)
+    sign(key, feed / f"{name}.sha256")
+    sign(key, feed / "aurora-update-policy.json")
 
     server = serve(str(feed))
     base = f"http://127.0.0.1:{server.server_port}"
     (root / "aurora-update-test.json").write_text(
-        json.dumps({"schema": 1, "feed": f"{base}/releases.json"}), encoding="utf-8"
+        json.dumps({"schema": 1, "feed": f"{base}/releases.json", "public_key": public_key}),
+        encoding="utf-8",
     )
     (root / "profile").mkdir()
     (root / "cache").mkdir()
@@ -230,7 +260,15 @@ def main():
                 asset(name, archive),
                 asset(f"{name}.sha256", feed / f"{name}.sha256"),
                 asset("aurora-update-policy.json", feed / "aurora-update-policy.json"),
-            ],
+            ]
+            + (
+                []
+                if options.unsigned
+                else [
+                    asset(f"{name}.sha256.sig", feed / f"{name}.sha256.sig"),
+                    asset("aurora-update-policy.json.sig", feed / "aurora-update-policy.json.sig"),
+                ]
+            ),
         }
     ]
     (feed / "releases.json").write_text(json.dumps(releases), encoding="utf-8")

@@ -1301,7 +1301,7 @@ fn outfit_list(
                                     st.outfit_selection.single(*id);
                                 }
                                 st.select_item(&response, *id, it.id, &order);
-                                items::double_click(&response, world, it, worn.contains_key(&it.id), actions);
+                                items::double_click(&response, world, it, worn.contains_key(&it.id), Some(*id), actions);
                                 let selected = st.selected_items(*id, it.id, &order);
                                 items::context_menu(&response, p, world, st, items::List::Outfit(*id), it, &selected, actions);
                             });
@@ -1482,7 +1482,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                 st.layers.row(it.id, it.flags & 0xff, &resp);
             }
             let removable = locks.can_remove(it.id);
-            items::double_click(&resp, world, it, true, actions);
+            items::double_click(&resp, world, it, true, None, actions);
             if edit {
                 if resp.clicked() {
                     clipboard::request_focus(ui.ctx());
@@ -1745,14 +1745,15 @@ fn add_folder(
             if !matches!(it.asset_type, 5 | 6 | 13) || worn.contains(&it.id) {
                 continue;
             }
-            let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
-            widgets::reveal_search_selection(ui, &response, st.selected_item == Some(it.id));
+            let entry = model::wear_entry(inv, id, it.id);
+            let response = row(ui, p, it, "", st.selected_item == Some(entry), None);
+            widgets::reveal_search_selection(ui, &response, st.selected_item == Some(entry));
             row_gap(ui);
             if response.clicked() {
-                st.selected_item = Some(it.id);
+                st.selected_item = Some(entry);
             }
-            if response.double_clicked() && locks.wear(inv, it.id, 0).add {
-                actions.push(Action::Add(it.id));
+            if response.double_clicked() && locks.wear(inv, entry, 0).add {
+                actions.push(Action::Add(entry));
                 st.adding = false;
             }
         }
@@ -2372,9 +2373,38 @@ pub fn demo_showcase(inv: &mut crate::world::inventory::Inventory, st: &mut Appe
     st.outfit_selection.single(Uuid::from_u128(703));
 }
 
+/// `AURORA_DEMO_APPEARANCE_SIZE=<width>,<height>`: the Appearance window's
+/// size for the run, in points, the showcase's widening skipped (#4633: a
+/// height where the preview just overflows).
+pub fn demo_size(ctx: &egui::Context) {
+    let Ok(value) = std::env::var("AURORA_DEMO_APPEARANCE_SIZE") else {
+        return;
+    };
+    let Some(size) = parse_demo_size(&value) else {
+        log::warn!("AURORA_DEMO_APPEARANCE_SIZE: expected <width>,<height>, got {value:?}");
+        return;
+    };
+    widgets::size_floater(ctx, "appearance", size);
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::unique("appearance_showcase_widened"), true));
+}
+
+fn parse_demo_size(value: &str) -> Option<Vec2> {
+    let (width, height) = value.split_once(',')?;
+    let size = Vec2::new(width.trim().parse().ok()?, height.trim().parse().ok()?);
+    (size.x.is_finite() && size.y.is_finite() && size.x > 0.0 && size.y > 0.0).then_some(size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_demo_size_reads_width_and_height() {
+        assert_eq!(parse_demo_size("1080, 1134"), Some(Vec2::new(1080.0, 1134.0)));
+        for bad in ["1080", "a,b", "0,500", "1080,-1", "inf,500"] {
+            assert_eq!(parse_demo_size(bad), None, "{bad}");
+        }
+    }
 
     /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
     /// (indra/newview/rlvhandler.cpp): when the restriction starts, the list
@@ -3576,8 +3606,13 @@ mod tests {
                     actions.extend(draw(&ctx, &mut world, &mut st, None));
                 }
             }
+            let entry = if world.inventory.items[&item].asset_type == 5 {
+                second
+            } else {
+                item
+            };
             assert!(
-                matches!(&actions[..], [Action::WearItem { item: id, replace: false, point: 0 }] if *id == item),
+                matches!(&actions[..], [Action::WearItem { item: id, replace: false, point: 0 }] if *id == entry),
                 "{actions:?}"
             );
         }
@@ -3929,7 +3964,10 @@ mod tests {
         else {
             panic!("{actions:?}");
         };
-        assert_eq!(items.iter().copied().collect::<HashSet<_>>(), HashSet::from(targets));
+        assert_eq!(
+            items.iter().copied().collect::<HashSet<_>>(),
+            HashSet::from([Uuid::from_u128(990), targets[1]])
+        );
         assert!(model::plan(&world.inventory, actions[0].clone(), &HashMap::new()).is_ok());
         click_row(
             &ctx,

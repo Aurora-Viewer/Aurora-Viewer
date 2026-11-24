@@ -406,7 +406,11 @@ pub(super) fn show(
         *open = false;
     } else if back {
         menu.pie_path.pop();
-    } else if (primary_released || secondary_released) && menu.pie_input_frame.is_some_and(|frame| frame != ctx.cumulative_frame_nr()) {
+    } else if (primary_released || secondary_released)
+        && menu
+            .pie_input_frame
+            .is_some_and(|frame| frame != ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
+    {
         if secondary_released {
             if menu.pie_path.pop().is_none() {
                 *open = false;
@@ -436,7 +440,7 @@ pub(super) fn show(
             }
         }
     }
-    menu.pie_input_frame = Some(ctx.cumulative_frame_nr());
+    menu.pie_input_frame = Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT));
     hot
 }
 

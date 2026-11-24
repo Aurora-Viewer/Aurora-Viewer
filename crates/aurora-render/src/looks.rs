@@ -46,8 +46,10 @@ pub const MAX_OPS: usize = 64;
 /// Layers of a frame at most.
 pub const MAX_LAYERS: usize = 8;
 /// Passes of a frame at most (one per convolution, and the first of each
-/// layer).
-const MAX_PASSES: usize = 128;
+/// layer): room for `MAX_LAYERS` of the heaviest look, the viewer letting
+/// the same look be stacked as often as there are layers
+/// (`eight_of_the_heaviest_look_fit_in_a_frame`).
+const MAX_PASSES: usize = 256;
 /// Histogram curves of one look at most.
 const MAX_CURVES: usize = 8;
 /// Histogram curves of a frame at most.
@@ -395,6 +397,30 @@ pub struct PhotoLook {
     /// The focus distance of the depth operations (m); None: the scene's at
     /// the middle of the photo.
     pub focus: Option<f32>,
+}
+
+impl PhotoLook {
+    /// A look that changes nothing (one layer at 0 %): the frame routed
+    /// through the looks' input, where the catalogue pictures' still is
+    /// taken (look_thumbs.rs).
+    pub(crate) fn pass_through(size: (u32, u32)) -> PhotoLook {
+        PhotoLook {
+            layers: vec![LookLayer {
+                ops: vec![LookOp::Brightness {
+                    step: 0.0,
+                    alpha: [0.0; 3],
+                }]
+                .into(),
+                intensity: 0.0,
+                lut: None,
+            }],
+            compare: None,
+            image: [0.0, 0.0, size.0 as f32, size.1 as f32],
+            scale: 1.0,
+            hold: false,
+            focus: None,
+        }
+    }
 }
 
 /// Frames the images of the passes are kept after the last look (the

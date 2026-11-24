@@ -43,7 +43,9 @@ impl BuildTool {
     /// Whether the section of `tab` is on screen this frame: the build
     /// window's own section, or a detached window that is shown.
     pub fn section_visible(&self, tab: usize) -> bool {
-        (self.tab == tab && !self.ui.detached_tabs.contains(&tab)) || self.ui.detached_shown.contains(&tab)
+        (self.tab == tab && !self.ui.detached_tabs.contains(&tab))
+            || self.ui.detached_shown.contains(&tab)
+            || self.ui.second.shown == Some(tab)
     }
 }
 
@@ -109,7 +111,9 @@ pub(super) fn fit_window(ctx: &egui::Context, tool: &BuildTool, s: &BuildSetting
     let id = egui::Id::unique(INSPECTOR_ID);
     let flag = id.with("build-sectionless");
     let saved = id.with("build-sections-height");
-    let Some(rect) = main_rect(ctx) else {
+    // (its size where it is drawn: in a window of its own outside the
+    // viewer's, not the size of the place it left inside)
+    let Some(size) = widgets::floater_size(ctx, INSPECTOR_ID) else {
         return;
     };
     let now = sectionless(tool, s);
@@ -117,16 +121,16 @@ pub(super) fn fit_window(ctx: &egui::Context, tool: &BuildTool, s: &BuildSetting
     if now != was {
         ctx.data_mut(|d| d.insert_persisted(flag, now));
         if now {
-            ctx.data_mut(|d| d.insert_persisted(saved, rect.height()));
+            ctx.data_mut(|d| d.insert_persisted(saved, size.y));
         } else if let Some(height) = ctx.data_mut(|d| d.get_persisted::<f32>(saved)) {
-            widgets::size_floater(ctx, INSPECTOR_ID, egui::vec2(rect.width(), height));
+            widgets::size_floater(ctx, INSPECTOR_ID, egui::vec2(size.x, height));
             return;
         }
     }
     if now && let (Some(body), Some(need)) = (tool.ui.body_height, tool.ui.sectionless_body) {
-        let target = (rect.height() - body + need).round();
-        if (rect.height() - target).abs() > 0.5 {
-            widgets::size_floater(ctx, INSPECTOR_ID, egui::vec2(rect.width(), target));
+        let target = (size.y - body + need).round();
+        if (size.y - target).abs() > 0.5 {
+            widgets::size_floater(ctx, INSPECTOR_ID, egui::vec2(size.x, target));
         }
     }
 }
@@ -210,8 +214,15 @@ pub(super) fn source(ui: &egui::Ui, p: &Palette, tool: &mut BuildTool, s: &Build
     }
 }
 
+/// Where the build window is in the viewer's window: what a block is
+/// dropped on to go back in. None while it is in a window of its own
+/// outside: the place it left inside is no longer its own.
 fn main_rect(ctx: &egui::Context) -> Option<egui::Rect> {
-    ctx.memory(|m| m.area_rect(egui::Id::unique(INSPECTOR_ID)))
+    let id = egui::Id::unique(INSPECTOR_ID);
+    if widgets::floater_outside(ctx, id) {
+        return None;
+    }
+    ctx.memory(|m| m.area_rect(id))
 }
 
 fn outline_main(ctx: &egui::Context, p: &Palette, rect: egui::Rect) {
@@ -512,6 +523,43 @@ mod tests {
         tool.tab = 6;
         tool.set_tool(Tool::Grab);
         assert!(!sectionless(&tool, &s), "the other tools show no section anyway");
+    }
+
+    /// In a window of its own outside the viewer's, the build window is
+    /// fitted from the size it has there, and the place it left inside is
+    /// no longer its own: nothing is dropped on it nor outlined there.
+    #[test]
+    fn the_build_window_outside_is_fitted_from_its_size_there() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique(INSPECTOR_ID);
+        // inside the viewer's window: 420 x 700
+        for _ in 0..2 {
+            crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::Area::new(id).fixed_pos(egui::pos2(50.0, 60.0)).show(ui.ctx(), |ui| {
+                    ui.allocate_space(egui::vec2(420.0, 700.0));
+                });
+            }));
+        }
+        assert_eq!(main_rect(&ctx).map(|rect| rect.size()), Some(egui::vec2(420.0, 700.0)));
+        // sent outside, where it is 500 x 900
+        crate::outside::want(&ctx, id, true);
+        crate::outside::set_native(&ctx, id, true);
+        ctx.data_mut(|d| d.insert_persisted(id.with(widgets::OUTSIDE_SIZE), egui::vec2(500.0, 900.0)));
+        assert_eq!(main_rect(&ctx), None);
+        // its section is taken out: 600 of its body for what needs 100
+        let mut s = settings(&[(Block::General, true)]);
+        let mut tool = BuildTool::default();
+        tool.set_tool(Tool::Edit);
+        tool.tab = 6;
+        tool.ui.body_height = Some(600.0);
+        tool.ui.sectionless_body = Some(100.0);
+        fit_window(&ctx, &tool, &s);
+        assert_eq!(crate::outside::take_resizes(&ctx), [(id, egui::vec2(500.0, 400.0), false)]);
+        // the section comes back: the height it had outside
+        ctx.data_mut(|d| d.insert_persisted(id.with(widgets::OUTSIDE_SIZE), egui::vec2(500.0, 400.0)));
+        s.detached.clear();
+        fit_window(&ctx, &tool, &s);
+        assert_eq!(crate::outside::take_resizes(&ctx), [(id, egui::vec2(500.0, 900.0), false)]);
     }
 
     #[test]

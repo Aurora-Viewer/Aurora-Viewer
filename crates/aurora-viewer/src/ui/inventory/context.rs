@@ -55,7 +55,12 @@ pub(super) fn double_click(
     }
     let original = rules::original(inv, id);
     match original.and_then(|original| inv.items.get(&original)) {
-        Some(it) if matches!(it.asset_type, 5 | 6 | 13) => match wear_toggle(it, facts.worn.contains(&it.id), prefs) {
+        Some(it) if matches!(it.asset_type, 5 | 6 | 13) => match wear_toggle(
+            it,
+            facts.worn.contains(&it.id),
+            prefs,
+            crate::world::appearance::wear_entry(inv, id, it.id),
+        ) {
             Some(Wear::WearItem { item, replace, .. }) if rules::library(inv, item) => {
                 actions.push(InvAction::WearCopy { item, replace });
             }
@@ -78,7 +83,7 @@ pub(super) fn double_click(
 /// not worn is put on, added or replacing as the double-click preferences
 /// say (FSDoubleClickAddInventoryObjects / FSDoubleClickAddInventoryClothing);
 /// physics and body parts always replace.
-pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs: &InventoryPreferences) -> Option<Wear> {
+pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs: &InventoryPreferences, entry: Uuid) -> Option<Wear> {
     if worn {
         return (it.asset_type != 13).then_some(Wear::Remove(it.id));
     }
@@ -88,7 +93,7 @@ pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs
         _ => true,
     };
     Some(Wear::WearItem {
-        item: it.id,
+        item: entry,
         replace,
         point: 0,
     })
@@ -332,7 +337,40 @@ pub(super) fn show(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
-    let mut catalog = super::context_catalog::build(inv, id, st, prefs, facts);
+    let catalog = super::context_catalog::build(inv, id, st, prefs, facts);
+    show_catalog(ui, p, inv, id, catalog, st, prefs, facts, actions);
+}
+
+/// The menu of the explorer's empty space, for the folder it shows
+/// (`context_catalog::build_background`), arranged with the same
+/// customizable layout as the others.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn show_background(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    folder: Uuid,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let catalog = super::context_catalog::build_background(inv, folder, st, prefs, facts);
+    show_catalog(ui, p, inv, folder, catalog, st, prefs, facts, actions);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn show_catalog(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    id: Uuid,
+    mut catalog: super::context_catalog::Catalog,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
     let scope = super::context_catalog::scope(inv, id);
     prefs.context_menus.unify();
     st.menu_editor

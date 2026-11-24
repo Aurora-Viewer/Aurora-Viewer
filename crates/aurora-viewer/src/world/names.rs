@@ -359,7 +359,14 @@ impl AvatarName {
     /// Username shown after the display name in chat headers
     /// (FSChatHistoryHeader: " - username" when a display name was chosen).
     pub fn chat_username(&self, o: &NameOptions) -> Option<String> {
-        (o.use_display_names && o.show_usernames && !self.is_default).then(|| self.user_name_for_display(o))
+        if !o.use_display_names || !o.show_usernames || self.is_default {
+            return None;
+        }
+        if self.legacy_first.is_empty() && self.legacy_last.is_empty() {
+            // A People API reply can supply only the account and display names.
+            return (!self.username.is_empty()).then(|| self.username.clone());
+        }
+        Some(self.user_name_for_display(o))
     }
 
     fn to_llsd(&self) -> Llsd {
@@ -477,6 +484,21 @@ impl AvatarNames {
             self.rlva_nearby = nearby;
             self.generation = self.generation.wrapping_add(1);
         }
+    }
+
+    /// A number that changes with what `shows` answers (RLVa's
+    /// `@shownames`, its exceptions, the residents around), for the views
+    /// that keep names a while (the inventory's creator column).
+    pub fn privacy_key(&self) -> u64 {
+        use std::hash::{BuildHasher, BuildHasherDefault};
+        if !self.rlva_private {
+            return 0;
+        }
+        let hasher = BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default();
+        // order-free: the sum of each id's hash
+        let sum = |ids: &HashSet<Uuid>| ids.iter().fold(0u64, |sum, id| sum.wrapping_add(hasher.hash_one(id)));
+        1u64.wrapping_add(sum(&self.rlva_allowed))
+            .wrapping_add(sum(&self.rlva_nearby).rotate_left(29))
     }
 
     /// `scope` shows the real name of `id` (see `NameScope`).
