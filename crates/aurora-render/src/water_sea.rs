@@ -232,7 +232,10 @@ impl Sea {
             // thrown back on itself and stands up the face instead of
             // shoaling out: higher, and less held down by the depth
             main: (grown * (1.0 + 0.7 * wall)).min(cap * (1.0 + 1.5 * wall)) * dry * shelter * held,
-            chop: reach_chop * (cap / rest.max(0.01)).min(1.0) * dry * shelter.sqrt() * held,
+            // (and it dies out over the last two metres of the real bed: by
+            // the smoothed depth alone, a cliff's foot kept its whole chop,
+            // whose crests and sway climbed the land beside it)
+            chop: reach_chop * (cap / rest.max(0.01)).min(1.0) * dry * shelter.sqrt() * held * smoothstep(0.1, 2.0, at.bed),
             breaking,
             lean: 0.75 * breaking * (0.4 + 0.6 * plunge),
             swash,
@@ -243,6 +246,7 @@ impl Sea {
             // and drains back as one sheet, instead of each point taking
             // its own phase (refraction shortens the swell to a dozen
             // metres there, which drew bands sliding up the sand)
+            slide: smoothstep(-0.2, 1.5, at.bed),
             shore_shift: if slope > 0.0 {
                 wave.dot(at.slope / slope.max(1e-4)) * (-b / slope.max(0.01)).clamp(-60.0, 60.0)
             } else {
@@ -282,7 +286,7 @@ impl Sea {
         let dir = swell.wave / k;
         let main = (dir * theta.cos() * local.main * 0.85).extend(local.main * x.sin());
         let run = swash_rise(theta + local.shore_shift) * local.reach;
-        offset += (main.truncate() * (1.0 - local.swash)).extend(main.z + (run - main.z).max(0.0) * local.swash);
+        offset += (main.truncate() * (1.0 - local.swash) * local.slide).extend(main.z + (run - main.z).max(0.0) * local.swash);
         if self.shore[3] > 0.0 {
             // the spectrum's wind sea (water_fft.rs); none without its maps
             return offset + ocean.map_or(glam::Vec3::ZERO, |o| o.sample(p).offset) * local.chop * self.look[1];
@@ -354,6 +358,10 @@ pub struct Local {
     /// What the swash's phase adds to the swell's here (rad): the swell's
     /// phase where it meets the shoreline.
     pub shore_shift: f32,
+    /// How much of the swell's sway across the water is left (0..1): none
+    /// in the last metre or so of real depth, so the surface does not slide
+    /// over the land beside it.
+    pub slide: f32,
 }
 
 /// The main swell at a point of the sea grid (`WaterGround::sea_point`):

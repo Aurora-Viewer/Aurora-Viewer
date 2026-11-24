@@ -14,7 +14,9 @@
 //! height (`disp`: x, y, z, and ∂x/∂y of the displacement) and the slope
 //! and the displacement's other derivatives (`slope`: ∂h/∂x, ∂h/∂y,
 //! ∂Dx/∂x, ∂Dy/∂y), from which the folding of the crests (the Jacobian) is
-//! worked out for the whitecaps.
+//! worked out for the whitecaps; and the foam the folds leave (`foam`: x),
+//! which lingers after the crest has passed, fading over some seconds and
+//! drawn out downwind into streaks, as a sea's foam does.
 
 use glam::{Vec2, Vec3};
 use std::f32::consts::{PI, TAU};
@@ -28,6 +30,38 @@ pub const OCEAN_TILES: [f32; 2] = [192.0, 27.3];
 /// first's, the others the second's.
 const SPLIT: f32 = 10.0;
 const G: f32 = 9.81;
+/// How long the foam a crest leaves lingers (s, its e-folding time).
+const FOAM_LINGER: f32 = 4.5;
+/// How fast lingering foam spreads along the wind (m²/s): into streaks a
+/// few metres long over its life.
+const FOAM_STREAK: f32 = 0.9;
+/// How long the foam of a breaking crest rides on with it before it is
+/// left behind (s, its e-folding time).
+pub const FOAM_RIDE: f32 = 1.0;
+
+/// How fast a breaking crest of cascade `c` carries its foam downwind (m/s)
+/// in a wind of `speed` m/s: about its waves' phase speed (the long
+/// chop's breaking waves, some 10 to 60 m, run at 4 to 10 m/s; the short
+/// cascade's, under 10 m, at under 4; the GPU's finest at under 1.5).
+pub fn ride_speed(c: usize, speed: f32) -> f32 {
+    match c {
+        0 => (0.45 * speed).min(10.0),
+        1 => (0.3 * speed).min(3.5),
+        _ => (0.2 * speed).min(1.5),
+    }
+}
+/// Map blocks per cascade: `disp`, `slope`, `foam`.
+pub const OCEAN_BLOCKS: usize = 3;
+/// The sea's loop (s): every wave's angular frequency is a multiple of
+/// 2π/LOOP (by under 0.007 rad/s), so its phase is that of the time modulo
+/// LOOP, small enough for the GPU's 32-bit floats after hours online, and
+/// the CPU's and the GPU's maps keep the very same phases.
+pub const OCEAN_LOOP: f64 = 1024.0;
+/// The GPU's finer maps (water_ocean.wgsl): texels a side, and the tile of
+/// the finest cascade (m), whose waves run from where the short cascade's
+/// stop (0.43 m) down to some 4 cm.
+pub const FINE_N: usize = 256;
+pub const FINE_TILE: f32 = 5.151;
 /// How far the wind blows over open water for the spectrum by default (m):
 /// a sea a region or two across, whose local fetch (water_shelter.rs)
 /// scales it down further in bays and lakes. The Sea panel sets it.
@@ -67,7 +101,8 @@ impl C {
 }
 
 /// The maps of both cascades, cascade after cascade, each `OCEAN_N` rows of
-/// `disp` then `OCEAN_N` rows of `slope` (see the module's comment).
+/// `disp`, `OCEAN_N` rows of `slope`, then `OCEAN_N` rows of `foam` (see
+/// the module's comment).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct OceanMaps {
     pub texels: Vec<[f32; 4]>,
@@ -76,6 +111,31 @@ pub struct OceanMaps {
     /// (the height is the scaled one).
     pub height: f32,
     pub scale: f32,
+    /// What the GPU's finer maps take (water_ocean_gpu.rs): their initial
+    /// spectrum, and the time (modulo `OCEAN_LOOP`), chop and wind of
+    /// these maps.
+    pub fine: Option<std::sync::Arc<FineSpectrum>>,
+    pub fine_time: f64,
+    pub chop: f32,
+    pub toward: [f32; 2],
+    /// The wind's speed (m/s), for the foam riding with the crests.
+    pub speed: f32,
+}
+
+/// The GPU's finer maps' initial spectrum: per cascade (the short one at
+/// `FINE_N`, the same waves as the CPU's, and the finest, `FINE_TILE`) and
+/// texel, h0(k) and conj(h0(-k)). `generation` changes with each layout.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FineSpectrum {
+    pub texels: Vec<[f32; 4]>,
+    pub generation: u64,
+}
+
+/// The angular frequency of wave number `len` (deep water), on the loop's
+/// lattice (`OCEAN_LOOP`). water_ocean.wgsl's `omega` is the same.
+pub fn omega(len: f32) -> f64 {
+    let step = std::f64::consts::TAU / OCEAN_LOOP;
+    ((G as f64 * len as f64).sqrt() / step).floor() * step
 }
 
 /// The ocean at a point (as `WaterOceanAt`): displacement (xyz), slope
@@ -86,18 +146,22 @@ pub struct OceanAt {
     pub offset: Vec3,
     pub slope: Vec2,
     pub jacobian: Vec3,
+    /// The crests' folding now or lately (1 - the Jacobian's
+    /// determinant, held as it fades), the lingering foam's cue.
+    pub foam: f32,
 }
 
 impl OceanMaps {
-    /// The texel (`row`, `col`) of cascade `c`'s maps (wrapping).
-    fn texel(&self, c: usize, slope: bool, x: usize, y: usize) -> [f32; 4] {
-        let row = c * 2 * OCEAN_N + usize::from(slope) * OCEAN_N + (y % OCEAN_N);
+    /// The texel (`x`, `y`) of map `block` (0 `disp`, 1 `slope`, 2 `foam`)
+    /// of cascade `c` (wrapping).
+    fn block(&self, c: usize, block: usize, x: usize, y: usize) -> [f32; 4] {
+        let row = (c * OCEAN_BLOCKS + block) * OCEAN_N + (y % OCEAN_N);
         self.texels.get(row * OCEAN_N + (x % OCEAN_N)).copied().unwrap_or([0.0; 4])
     }
 
     /// The ocean at world `p`, bilinear and wrapping, as `water_fx_ocean`.
     pub fn sample(&self, p: Vec2) -> OceanAt {
-        if self.texels.len() != 4 * OCEAN_N * OCEAN_N {
+        if self.texels.len() != OCEAN_TILES.len() * OCEAN_BLOCKS * OCEAN_N * OCEAN_N {
             return OceanAt::default();
         }
         let mut at = OceanAt::default();
@@ -110,8 +174,8 @@ impl OceanMaps {
                 (base.x as i32).rem_euclid(OCEAN_N as i32) as usize,
                 (base.y as i32).rem_euclid(OCEAN_N as i32) as usize,
             );
-            let mix = |slope: bool| {
-                let t = |dx: usize, dy: usize| self.texel(c, slope, x + dx, y + dy);
+            let mix = |block: usize| {
+                let t = |dx: usize, dy: usize| self.block(c, block, x + dx, y + dy);
                 let (a, b, cc, d) = (t(0, 0), t(1, 0), t(0, 1), t(1, 1));
                 std::array::from_fn::<f32, 4, _>(|k| {
                     let top = a[k] + (b[k] - a[k]) * f.x;
@@ -119,11 +183,12 @@ impl OceanMaps {
                     top + (bottom - top) * f.y
                 })
             };
-            let d = mix(false);
-            let s = mix(true);
+            let d = mix(0);
+            let s = mix(1);
             at.offset += Vec3::new(d[0], d[1], d[2]);
             at.slope += Vec2::new(s[0], s[1]);
             at.jacobian += Vec3::new(s[2], d[3], s[3]);
+            at.foam = at.foam.max(mix(2)[0]);
         }
         at
     }
@@ -141,6 +206,13 @@ pub struct Ocean {
     /// The wind the spectrum was laid out for (toward, speed, spectrum,
     /// fetch).
     laid: Option<(Vec2, f32, Spectrum, f32)>,
+    /// Per cascade and texel: the lingering foam, and when it was last
+    /// worked out.
+    foam: Vec<f32>,
+    /// The same, for the foam riding on with the crests (`FOAM_RIDE`).
+    ride: Vec<f32>,
+    foam_time: Option<f64>,
+    fine: std::sync::Arc<FineSpectrum>,
     pub maps: std::sync::Arc<OceanMaps>,
 }
 
@@ -168,7 +240,12 @@ fn gaussian(seed: u32) -> [f32; 2] {
 
 /// The wave vector of texel (`x`, `y`) of a tile `tile` m wide.
 fn wave(x: usize, y: usize, tile: f32) -> Vec2 {
-    let n = OCEAN_N as i32;
+    wave_n(x, y, tile, OCEAN_N)
+}
+
+/// The same on a grid `n` texels a side.
+fn wave_n(x: usize, y: usize, tile: f32, n: usize) -> Vec2 {
+    let n = n as i32;
     let fx = if (x as i32) < n / 2 { x as i32 } else { x as i32 - n };
     let fy = if (y as i32) < n / 2 { y as i32 } else { y as i32 - n };
     Vec2::new(fx as f32, fy as f32) * (TAU / tile)
@@ -181,6 +258,10 @@ impl Ocean {
             noise: (0..count as u32).map(gaussian).collect(),
             h0: vec![C::default(); count],
             laid: None,
+            foam: vec![0.0; count],
+            ride: vec![0.0; count],
+            foam_time: None,
+            fine: std::sync::Arc::default(),
             maps: std::sync::Arc::new(OceanMaps::default()),
         }
     }
@@ -240,11 +321,58 @@ impl Ocean {
                     // quarter of the cell's variance, two Gaussians apiece
                     let amp = (e * dk * dk * 0.25).sqrt();
                     let [a, b] = self.noise[i];
-                    self.h0[i] = C(a * amp, b * amp);
+                    // (none on the Nyquist row and column: their -k is
+                    // themselves, which the GPU's finer grid does not share)
+                    let nyquist = x == OCEAN_N / 2 || y == OCEAN_N / 2;
+                    self.h0[i] = if nyquist { C::default() } else { C(a * amp, b * amp) };
                 }
             }
         }
+        self.lay_fine(toward, speed, spectrum, fetch);
         4.0 * variance.sqrt()
+    }
+
+    /// The GPU's finer spectrum (`FineSpectrum`): the short cascade's own
+    /// waves on a grid `FINE_N` a side (zero past them, so its surface is
+    /// the CPU's, sampled finer), and the finest cascade's waves, those
+    /// past the short cascade's band.
+    fn lay_fine(&mut self, toward: Vec2, speed: f32, spectrum: Spectrum, fetch: f32) {
+        let (n, fine) = (FINE_N as i32, FINE_N);
+        let half = OCEAN_N as i32 / 2;
+        let mut h0 = vec![C::default(); 2 * fine * fine];
+        for y in 0..fine {
+            for x in 0..fine {
+                let fx = if (x as i32) < n / 2 { x as i32 } else { x as i32 - n };
+                let fy = if (y as i32) < n / 2 { y as i32 } else { y as i32 - n };
+                // the short cascade's, from its CPU grid
+                if fx.abs() < half && fy.abs() < half {
+                    let (cx, cy) = (fx.rem_euclid(OCEAN_N as i32) as usize, fy.rem_euclid(OCEAN_N as i32) as usize);
+                    h0[y * fine + x] = self.h0[(OCEAN_N + cy) * OCEAN_N + cx];
+                }
+                // the finest: what lies past the short cascade's band
+                let k = wave_n(x, y, FINE_TILE, fine);
+                let band = half as f32 * TAU / OCEAN_TILES[1];
+                if (fx.abs() < n / 2 && fy.abs() < n / 2) && k.x.abs().max(k.y.abs()) >= band {
+                    let dk = TAU / FINE_TILE;
+                    let e = Self::density(k, toward, speed, spectrum, fetch);
+                    let amp = (e * dk * dk * 0.25).sqrt();
+                    let [a, b] = gaussian(0x4000_0000 + (y * fine + x) as u32);
+                    h0[fine * fine + y * fine + x] = C(a * amp, b * amp);
+                }
+            }
+        }
+        let mirror = |c: usize, x: usize, y: usize| h0[c * fine * fine + ((fine - y) % fine) * fine + (fine - x) % fine];
+        let texels = (0..2 * fine * fine)
+            .map(|i| {
+                let (c, x, y) = (i / (fine * fine), i % fine, (i / fine) % fine);
+                let (a, b) = (h0[i], mirror(c, x, y).conj());
+                [a.0, a.1, b.0, b.1]
+            })
+            .collect();
+        self.fine = std::sync::Arc::new(FineSpectrum {
+            texels,
+            generation: self.fine.generation.wrapping_add(1),
+        });
     }
 
     /// The maps at `time` (s) for a wind blowing toward `toward` at
@@ -290,11 +418,11 @@ impl Ocean {
                 .map(|j| j.join().unwrap_or_else(|_| vec![C::default(); n * n]))
                 .collect()
         });
-        let mut texels = vec![[0.0f32; 4]; OCEAN_TILES.len() * 2 * n * n];
+        let mut texels = vec![[0.0f32; 4]; OCEAN_TILES.len() * OCEAN_BLOCKS * n * n];
         for (job, grid) in grids.iter().enumerate() {
             let (c, f) = (job / 4, job % 4);
             // fields 0, 1 fill `disp` (xy, zw), 2, 3 fill `slope`
-            let rows = c * 2 * n + (f / 2) * n;
+            let rows = c * OCEAN_BLOCKS * n + (f / 2) * n;
             let lane = (f % 2) * 2;
             for (i, v) in grid.iter().enumerate() {
                 let t = &mut texels[rows * n + i];
@@ -302,8 +430,87 @@ impl Ocean {
                 t[lane + 1] = v.1;
             }
         }
-        self.maps = std::sync::Arc::new(OceanMaps { texels, height, scale });
+        self.linger(&mut texels, time, toward, speed);
+        self.maps = std::sync::Arc::new(OceanMaps {
+            texels,
+            height,
+            scale,
+            fine: Some(self.fine.clone()),
+            fine_time: time.rem_euclid(OCEAN_LOOP),
+            chop,
+            toward: toward.to_array(),
+            speed,
+        });
         self.maps.clone()
+    }
+}
+
+impl Ocean {
+    /// The foam the crests leave: where they fold now (1 - the Jacobian's
+    /// determinant, from `texels`' `disp` and `slope`), or the foam left
+    /// there before, fading over `FOAM_LINGER` and spread along the wind
+    /// (`toward`), into `texels`' `foam` maps. The tiles are fixed in the
+    /// world, so foam left on a tile's texel stays where the crest broke
+    /// while the crest moves on; and a share of it rides on with the crest
+    /// for a moment (carried downwind at the crest's speed, `ride_speed`
+    /// in a wind of `speed`, fading over `FOAM_RIDE`): a breaking crest
+    /// keeps a cap of foam at its tip that trails off behind it.
+    fn linger(&mut self, texels: &mut [[f32; 4]], time: f64, toward: Vec2, speed: f32) {
+        let n = OCEAN_N;
+        let dt = match self.foam_time {
+            // (a jump in time: the sea starts afresh)
+            Some(before) if time >= before && time - before < 1.0 => (time - before) as f32,
+            _ => {
+                self.foam.iter_mut().for_each(|f| *f = 0.0);
+                self.ride.iter_mut().for_each(|f| *f = 0.0);
+                0.0
+            }
+        };
+        self.foam_time = Some(time);
+        let fade = (-dt / FOAM_LINGER).exp();
+        let ride_fade = (-dt / FOAM_RIDE).exp();
+        let mut spread = vec![0.0f32; n * n];
+        let mut carried = vec![0.0f32; n * n];
+        for (c, tile) in OCEAN_TILES.iter().enumerate() {
+            let texel = tile / n as f32;
+            // the streaking, explicit diffusion along the wind (kept under
+            // its stability limit)
+            let k = (FOAM_STREAK * dt / (texel * texel)).min(0.45);
+            let foam = &mut self.foam[c * n * n..(c + 1) * n * n];
+            let ride = &mut self.ride[c * n * n..(c + 1) * n * n];
+            let shift = toward * ride_speed(c, speed) * dt / texel;
+            let at = |foam: &[f32], x: f32, y: f32| {
+                let (bx, by) = (x.floor(), y.floor());
+                let (fx, fy) = (x - bx, y - by);
+                let i = |dx: i32, dy: i32| {
+                    let xi = (bx as i32 + dx).rem_euclid(n as i32) as usize;
+                    let yi = (by as i32 + dy).rem_euclid(n as i32) as usize;
+                    foam[yi * n + xi]
+                };
+                let top = i(0, 0) + (i(1, 0) - i(0, 0)) * fx;
+                let bottom = i(0, 1) + (i(1, 1) - i(0, 1)) * fx;
+                top + (bottom - top) * fy
+            };
+            for y in 0..n {
+                for x in 0..n {
+                    let (xf, yf) = (x as f32, y as f32);
+                    let here = foam[y * n + x];
+                    let ahead = at(foam, xf + toward.x, yf + toward.y);
+                    let behind = at(foam, xf - toward.x, yf - toward.y);
+                    spread[y * n + x] = here + k * (ahead + behind - 2.0 * here);
+                    carried[y * n + x] = at(ride, xf - shift.x, yf - shift.y);
+                }
+            }
+            let base = c * OCEAN_BLOCKS * n * n;
+            for (i, f) in foam.iter_mut().enumerate() {
+                let d = texels[base + i];
+                let s = texels[base + n * n + i];
+                let fold = 1.0 - ((1.0 + s[2]) * (1.0 + s[3]) - d[3] * d[3]);
+                *f = fold.max(spread[i] * fade).max(0.0);
+                ride[i] = fold.max(carried[i] * ride_fade).max(0.0);
+                texels[base + 2 * n * n + i] = [f.max(ride[i]), 0.0, 0.0, 0.0];
+            }
+        }
     }
 }
 
@@ -323,8 +530,7 @@ fn field(h0: &[C], c: usize, f: usize, time: f64, chop: f32, scale: f32) -> Vec<
             }
             // h(k, t) = h0(k) e^{iωt} + conj(h0(-k)) e^{-iωt}, the phase
             // kept in f64 (hours of time)
-            let omega = (G as f64 * len as f64).sqrt();
-            let phase = ((omega * time) % std::f64::consts::TAU) as f32;
+            let phase = ((omega(len) * time.rem_euclid(OCEAN_LOOP)) % std::f64::consts::TAU) as f32;
             let (s, co) = phase.sin_cos();
             let mirror = ((n - x) % n, (n - y) % n);
             let a = h0[(c * n + y) * n + x];
@@ -458,6 +664,60 @@ mod tests {
     }
 
     #[test]
+    fn the_foam_of_a_fold_lingers_then_fades_and_streaks_downwind() {
+        let mut ocean = Ocean::new();
+        let toward = Vec2::X;
+        ocean.update(10.0, toward, 16.0, Spectrum::Jonswap, 1.0, FETCH, 1.0);
+        let n = OCEAN_N;
+        let mut texels = vec![[0.0f32; 4]; OCEAN_TILES.len() * OCEAN_BLOCKS * n * n];
+        // a single fold on the long cascade: ∂Dx/∂x = -0.5
+        texels[n * n + 40 * n + 40][2] = -0.5;
+        ocean.foam_time = None;
+        ocean.linger(&mut texels, 0.0, toward, 16.0);
+        let foam = |t: &[[f32; 4]], x: usize, y: usize| t[2 * n * n + y * n + x][0];
+        assert!((foam(&texels, 40, 40) - 0.5).abs() < 1e-5);
+        // the crest moves on: the foam stays, fades, and spreads along x
+        texels[n * n + 40 * n + 40][2] = 0.0;
+        let mut t = 0.0;
+        for _ in 0..60 {
+            t += 1.0 / 30.0;
+            ocean.linger(&mut texels, t, toward, 16.0);
+        }
+        // (a fold one texel wide spreads fast: its peak falls by both)
+        let left = foam(&texels, 40, 40);
+        assert!(left > 0.05 && left < 0.5 * (-2.0f32 / FOAM_LINGER).exp(), "{left}");
+        assert!(foam(&texels, 41, 40) > 0.02, "downwind");
+        assert!(foam(&texels, 40, 41) < 1e-4, "not across the wind");
+        // and is gone some seconds later
+        for _ in 0..900 {
+            t += 1.0 / 30.0;
+            ocean.linger(&mut texels, t, toward, 16.0);
+        }
+        assert!(foam(&texels, 40, 40) < 0.01);
+    }
+
+    #[test]
+    fn a_breaking_crest_carries_its_foam_on_for_a_moment() {
+        let mut ocean = Ocean::new();
+        ocean.update(10.0, Vec2::X, 16.0, Spectrum::Jonswap, 1.0, FETCH, 1.0);
+        let n = OCEAN_N;
+        let mut texels = vec![[0.0f32; 4]; OCEAN_TILES.len() * OCEAN_BLOCKS * n * n];
+        texels[n * n + 40 * n + 40][2] = -0.5;
+        ocean.foam_time = None;
+        ocean.linger(&mut texels, 0.0, Vec2::X, 16.0);
+        texels[n * n + 40 * n + 40][2] = 0.0;
+        let mut t = 0.0;
+        for _ in 0..15 {
+            t += 1.0 / 30.0;
+            ocean.linger(&mut texels, t, Vec2::X, 16.0);
+        }
+        // half a second on, at 7.2 m/s over 1.5 m texels: some 2.4 texels
+        // downwind there is more foam than as far upwind
+        let foam = |x: usize| texels[2 * n * n + 40 * n + x][0];
+        assert!(foam(42) > foam(38) * 1.5 && foam(42) > 0.05, "{} {}", foam(42), foam(38));
+    }
+
+    #[test]
     fn it_tiles_and_moves_on_in_time() {
         let mut ocean = Ocean::new();
         let a = ocean.update(5.0, Vec2::X, 10.0, Spectrum::Phillips, 0.8, FETCH, 1.0);
@@ -466,7 +726,9 @@ mod tests {
         // is 27.3 m, so 7 of the first's (1344 m) are 49.2 of the second's;
         // compare the cascades' maps directly instead
         let mut one = (*a).clone();
-        one.texels[2 * OCEAN_N * OCEAN_N..].iter_mut().for_each(|t| *t = [0.0; 4]);
+        one.texels[OCEAN_BLOCKS * OCEAN_N * OCEAN_N..]
+            .iter_mut()
+            .for_each(|t| *t = [0.0; 4]);
         let far = one.sample(p + Vec2::new(OCEAN_TILES[0], -2.0 * OCEAN_TILES[0]));
         let near = one.sample(p);
         assert!((near.offset - far.offset).length() < 1e-4, "{near:?} {far:?}");

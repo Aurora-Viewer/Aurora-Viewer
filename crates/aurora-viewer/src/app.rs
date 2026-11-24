@@ -13210,6 +13210,7 @@ impl App {
             snow_fallen: self.scene.snow_trails.fallen,
             rain_look: aurora_render::RainLook {
                 snow_detail: self.scene.snow_detail.slot(&mut gfx.renderer).unwrap_or(0),
+                water_foam: self.scene.water_foam.slot(&mut gfx.renderer).unwrap_or(0),
                 // AURORA_SNOW_LYING=<0..1>: snow held at least that deep
                 // (demo captures of deep snow, which takes minutes to gather).
                 // Not with "Snow settles" off: the floor laid it again every

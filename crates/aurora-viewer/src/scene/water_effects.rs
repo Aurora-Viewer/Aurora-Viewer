@@ -55,6 +55,9 @@ pub struct Effects {
     crashes: super::water_crash::Crashes,
     /// Water dripping off the wet avatars (avatar_drip.rs).
     drip: super::avatar_drip::AvatarDrip,
+    /// Spray blown off the breaking crests in a strong wind
+    /// (water_spindrift.rs).
+    spindrift: super::water_spindrift::Spindrift,
     /// The sea grid's shelter prims at the last scan (full id, local id,
     /// where and how big, quantized as the grid's signature), and those
     /// seen moving or dropping out while near the water, with when: left out
@@ -295,6 +298,7 @@ impl Effects {
                 9.0 => 4.0,       // A crash's spray falls back; its mist hangs on.
                 10.0 => 4.5,      // The foam it leaves spreads and fades.
                 11.0 => 2.0,      // Drops dripping off an avatar fall a metre or two.
+                12.0 => 3.0,      // Spindrift blown off a crest thins out.
                 0.0 | 7.0 => 0.8,
                 _ => 3.0,
             };
@@ -902,6 +906,8 @@ impl Scene {
             // (half the events kept at this quality, retain_events)
             let budget = [64, 96, 160, 192][settings.quality.min(3) as usize] / 2;
             effects.crashes.update(&effects.ground, sea, time, &mut effects.events, budget);
+            // and a strong wind tears spray off the breaking crests
+            effects.spindrift.update(&effects.ground, sea, eye, time, &mut effects.events);
         } else {
             effects.crashes.clear();
         }

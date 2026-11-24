@@ -155,12 +155,12 @@ impl WaterGpu {
             renderer.free_mesh(slab);
         }
         if self.quad.is_none() {
-            self.quad = mesh(renderer, 1);
+            self.quad = mesh(renderer, 1, false);
             for (i, n) in [32, 48, 64, 96].into_iter().enumerate() {
-                self.grids[i] = mesh(renderer, n);
+                self.grids[i] = mesh(renderer, n, false);
             }
             for (i, n) in [64, 96, 160, 224].into_iter().enumerate() {
-                self.near_grids[i] = mesh(renderer, n);
+                self.near_grids[i] = mesh(renderer, n, true);
             }
         }
         if self.quad.is_none() {
@@ -270,11 +270,15 @@ impl WaterGpu {
         let curvature = aurora_render::curvature::Curvature::new(view.eye, radius);
         let grid = quality.and_then(|q| self.grids[q.min(3) as usize]);
         let near_grid = quality.and_then(|q| self.near_grids[q.min(3) as usize]);
+        // (from 160 m to 320 m the coarsest grid, 2 m cells: enough for the
+        // waves' shape out there, which env.wgsl's water_fx_wave fades from
+        // 280 m; past 160 m a single quad cut the sea off flat)
+        let far_grid = quality.and_then(|_| self.grids[0]);
         let quad = self.quad;
         self.tiles.iter().flat_map(move |tile| {
             let own = tile.mesh;
             let closest = (view.eye.truncate() - tile.origin.truncate()).clamp(Vec2::ZERO, tile.size) + tile.origin.truncate();
-            let subdivide = grid.is_some() && !tile.patches.is_empty() && closest.distance(view.eye.truncate()) < 160.0;
+            let subdivide = grid.is_some() && !tile.patches.is_empty() && closest.distance(view.eye.truncate()) < WAVE_GRID_REACH;
             std::iter::once((tile.record, tile.origin, tile.size))
                 .chain(tile.patches.iter().copied())
                 .enumerate()
@@ -291,7 +295,8 @@ impl WaterGpu {
                         return None;
                     }
                     let nearest = (view.eye.truncate() - origin.truncate()).clamp(Vec2::ZERO, size) + origin.truncate();
-                    let dense = size.max_element() <= 64.1 && nearest.distance(view.eye.truncate()) < 160.0;
+                    let reach = nearest.distance(view.eye.truncate());
+                    let dense = size.max_element() <= 64.1 && reach < WAVE_GRID_REACH;
                     // Only patches touching the close 24 m need sub-metre
                     // geometry for a body furrow; retain the ordinary far grid.
                     let close = dense && nearest.distance(view.eye.truncate()) < 24.0;
@@ -299,8 +304,10 @@ impl WaterGpu {
                         own
                     } else if close {
                         near_grid.or(grid).or(quad)
-                    } else if dense {
+                    } else if dense && reach < 160.0 {
                         grid.or(quad)
+                    } else if dense {
+                        far_grid.or(grid).or(quad)
                     } else {
                         quad
                     };
@@ -315,6 +322,10 @@ impl WaterGpu {
         })
     }
 }
+
+/// How far from the camera the water's patches are drawn as grids, for the
+/// waves' shape (env.wgsl's water_fx_wave fades it out from 280 m).
+const WAVE_GRID_REACH: f32 = 320.0;
 
 /// A grid on these lines (region metres), at z 0.
 fn grid_mesh(renderer: &mut Renderer, xs: &[f32], ys: &[f32]) -> Option<MeshAlloc> {
@@ -339,13 +350,17 @@ fn grid_mesh(renderer: &mut Renderer, xs: &[f32], ys: &[f32]) -> Option<MeshAllo
     renderer.upload_mesh(&vertices, &indices)
 }
 
-fn mesh(renderer: &mut Renderer, n: usize) -> Option<MeshAlloc> {
+/// A unit grid `n` cells a side. `near`: the close patches' grid, marked
+/// (its u past 4) for env.wgsl's `water_near_warp`, which draws its lines
+/// in toward the camera.
+fn mesh(renderer: &mut Renderer, n: usize, near: bool) -> Option<MeshAlloc> {
+    let mark = if near { 4.0 } else { 0.0 };
     let mut vertices = Vec::with_capacity((n + 1) * (n + 1));
     for y in 0..=n {
         for x in 0..=n {
             let u = x as f32 / n as f32;
             let v = y as f32 / n as f32;
-            vertices.push(Vertex::new([u, v, 0.0], [0.0, 0.0, 1.0], [u, v]));
+            vertices.push(Vertex::new([u, v, 0.0], [0.0, 0.0, 1.0], [u + mark, v]));
         }
     }
     let mut indices = Vec::with_capacity(n * n * 6);

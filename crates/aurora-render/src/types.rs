@@ -1703,6 +1703,9 @@ pub struct RainLook {
     /// The lying snow's detail texture (normal and height): its bindless
     /// slot, 0 for none.
     pub snow_detail: u32,
+    /// Enhanced water's foam texture (a lace and its thickness): its
+    /// bindless slot, 0 for none (the foam is then the procedural pattern).
+    pub water_foam: u32,
     /// How far the weather lying on the ground is drawn at most (m): the
     /// farther of the puddles' and the snow's distances. The wetness
     /// memory's square covers it (128, 256 or 512 m).
@@ -1771,6 +1774,7 @@ impl Default for RainLook {
             quality: 2,
             snow: 0.0,
             snow_detail: 0,
+            water_foam: 0,
             memory_reach: 60.0,
             snow_distance: 60.0,
             deep_reach: 15.0,

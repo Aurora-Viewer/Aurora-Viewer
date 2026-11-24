@@ -4225,6 +4225,18 @@ impl Backend {
             // how open each place is, from the traced probes (rt_gi.wgsl
             // `cs_gi_sky`, common.wgsl `screen_open`)
             float_tex(32),
+            // the wind sea's finer maps (water_ocean_gpu.rs, common.wgsl
+            // `water_fx_fine`)
+            wgpu::BindGroupLayoutEntry {
+                binding: 33,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
             // the night sky's stars (stars.rs)
             wgpu::BindGroupLayoutEntry {
                 binding: 24,
@@ -6806,6 +6818,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 32,
                         resource: wgpu::BindingResource::TextureView(open),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 33,
+                        resource: wgpu::BindingResource::TextureView(water_effects.ocean_view()),
                     },
                     wgpu::BindGroupEntry {
                         binding: 15,
@@ -10647,6 +10663,7 @@ impl Backend {
 
         let mut water_settings = self.settings.water_effects;
         water_settings.enabled &= !f.hide_water;
+        water_settings.foam_texture = f.rain_look.water_foam;
         water_settings.particle_budget = crate::water_effects::water_particle_budget(water_settings.particle_budget, n_particles);
         if self.water_effects.prepare(
             &self.device,

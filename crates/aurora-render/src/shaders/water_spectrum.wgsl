@@ -27,12 +27,17 @@ struct WaterSeaAt { depth: f32, slope: vec2<f32>, shelter: f32, cap: f32, phase:
 // beach's surf similarity (water_sea_surf: spilling, plunging, crashing).
 // The spectrum's wind sea at a point (water_fft.rs `OceanAt`, read by
 // water_fx_ocean): displacement, slope, and the displacement's derivatives
-// (xx, xy, yy). All zero without a spectrum.
-struct WaterOceanAt { offset: vec3<f32>, slope: vec2<f32>, jacobian: vec3<f32> };
-const WATER_OCEAN_NONE=WaterOceanAt(vec3<f32>(0.0),vec2<f32>(0.0),vec3<f32>(0.0));
+// (xx, xy, yy), and the crests' folding now or lately (`foam`: the
+// lingering foam's cue). All zero without a spectrum.
+struct WaterOceanAt { offset: vec3<f32>, slope: vec2<f32>, jacobian: vec3<f32>, foam: f32 };
+const WATER_OCEAN_NONE=WaterOceanAt(vec3<f32>(0.0),vec2<f32>(0.0),vec3<f32>(0.0),0.0);
 // `swash`: how much of the surface here is the swash running up the beach
-// and draining back (its foam is the lace of water_swash_foam).
-struct WaterSwell { offset: vec3<f32>, gradient: vec2<f32>, compression: f32, breaking: f32, crest: f32, surf: f32, swash: f32 };
+// and draining back (its foam is the lace of water_swash_foam). `linger`:
+// the wind sea's folding now or in the last seconds (water_fft.rs), the
+// foam its crests leave behind.
+// `chop`: the scale the spectrum's maps take here (its chop, the Sea
+// panel's), for the GPU's finer maps read beside them.
+struct WaterSwell { offset: vec3<f32>, gradient: vec2<f32>, compression: f32, breaking: f32, crest: f32, surf: f32, swash: f32, linger: f32, chop: f32 };
 // The beach's surf similarity (Sea::surf): its slope over the square root
 // of the deep-water steepness of the waves reaching it. Under ~0.5 they
 // spill, up to ~3 they plunge, past it they crash on what stands steep.
@@ -160,7 +165,11 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     // higher, and less held down by the depth (Sea::local)
     let wall=crash*(1.0-smoothstep(0.5,6.0,d));
     let main=min(grown*(1.0+0.7*wall),cap*(1.0+1.5*wall))*dry*shelter*held;
-    let chop=at.chop*min(cap/max(rest,0.01),1.0)*dry*sqrt(shelter)*held;
+    // (and the chop dies out over the last two metres of the real bed, and
+    // the swell's sway over the last metre and a half: Sea::local's `chop`
+    // and `slide`)
+    let chop=at.chop*min(cap/max(rest,0.01),1.0)*dry*sqrt(shelter)*held*smoothstep(0.1,2.0,b);
+    let slide=smoothstep(-0.2,1.5,b);
     let lean=0.75*breaking*(0.4+0.6*plunge);
     let since=time-sea.frame.z;
     // the main swell
@@ -171,7 +180,7 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     let rise=water_swash_rise(theta+water_swash_shift(at));
     let run=rise.x*reach;
     let over=run>hz;
-    var offset=vec3<f32>(dir*cos(theta)*main*0.85*(1.0-swash),hz+max(run-hz,0.0)*swash);
+    var offset=vec3<f32>(dir*cos(theta)*main*0.85*(1.0-swash)*slide,hz+max(run-hz,0.0)*swash);
     let att0=1.0-smoothstep(0.5,2.0,k*footprint);
     // (the swash's share changes with the depth: its slope too)
     let dt=select(0.0,6.0*((b-0.3)/0.6)*(1.0-(b-0.3)/0.6)/0.6,b>0.3 && b<0.9);
@@ -188,11 +197,14 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     // (the folding that whitens the crests is filtered like the slope: from
     // far up a pixel spans several crests, and unfiltered they drew combs
     // of foam stripes)
-    var jacobian=vec3<f32>(1.0,0.0,1.0)-main*0.85*(1.0-swash)*sin(theta)*att0*vec3<f32>(at.wave.x*dir.x,at.wave.x*dir.y,at.wave.y*dir.y);
+    var jacobian=vec3<f32>(1.0,0.0,1.0)-main*0.85*(1.0-swash)*slide*sin(theta)*att0*vec3<f32>(at.wave.x*dir.x,at.wave.x*dir.y,at.wave.y*dir.y);
     // the wind chop: the spectrum's, or the trains'
     let local=p-sea.frame.xy;
+    var linger=0.0;
+    var scaled=0.0;
     if(sea.shore.w>0.0){
-        let scaled=chop*sea.look.y;
+        scaled=chop*sea.look.y;
+        linger=ocean.foam*scaled;
         offset+=ocean.offset*scaled;
         gradient+=ocean.slope*scaled;
         jacobian+=ocean.jacobian*scaled;
@@ -211,6 +223,8 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     out.offset=offset;
     out.gradient=vec2<f32>(jacobian.z*gradient.x-jacobian.y*gradient.y,jacobian.x*gradient.y-jacobian.y*gradient.x)/determinant;
     out.compression=1.0-determinant;
+    out.linger=linger;
+    out.chop=scaled;
     // the breakers whiten; the swash's foam is its own lace (env's
     // water_swash_foam), as far as it really runs up: a calm lake's
     // centimetre ripples draw none (by the beach's shape alone they drew

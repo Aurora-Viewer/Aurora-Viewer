@@ -97,8 +97,10 @@ pub mod water;
 mod water_contacts;
 pub mod water_crash;
 mod water_effects;
+pub mod water_foam;
 pub mod water_ride;
 pub mod water_shelter;
+pub mod water_spindrift;
 pub mod wind_sound;
 
 use crate::fast_hash::{FastMap, FastSet};
@@ -874,6 +876,8 @@ pub struct AvatarSample {
 pub struct Scene {
     /// Aurora Weather: the lying snow's detail texture.
     pub snow_detail: snow_detail::SnowDetail,
+    /// Enhanced water's foam texture (water_foam.rs).
+    pub water_foam: water_foam::WaterFoam,
     /// Aurora Weather: the snow gathered on the avatars near the camera.
     pub avatar_snow: avatar_snow::AvatarSnow,
     /// Enhanced water: the avatars near the camera wet where they were in
@@ -1743,6 +1747,7 @@ impl Scene {
         let physics_rig = body_physics::PhysicsRig::new(&avatar_lib.shape_params, &avatar_lib.rig).map(Arc::new);
         Scene {
             snow_detail: Default::default(),
+            water_foam: Default::default(),
             avatar_snow: Default::default(),
             avatar_wet: Default::default(),
             snow_trails: Default::default(),
@@ -5459,6 +5464,13 @@ impl Scene {
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
         let under_water_plane = self.water.height.filter(|h| !self.studio_visible && view.eye.z >= *h);
+        // how far enhanced water's waves move its surface off the plane
+        // (the highest crest the sea stacks), when they are drawn
+        let wave_band = if self.water_effects.geometry.is_some() {
+            self.lists.water_sea.wind[3].max(0.0) + 0.3
+        } else {
+            0.0
+        };
         let face_sort = blend_order::face_sort_enabled();
         // Tests and secondary cameras may not supply the texture-importance
         // direction. The near plane faces into the same view frustum.
@@ -5811,7 +5823,15 @@ impl Scene {
                                 .as_ref()
                                 .map(|face| height.of(face.bounds))
                         });
-                        let (after, before) = blend_order::water_sides_of(sc.z, sr, height, under_water_plane);
+                        // (within the waves' band, on both sides: each half is
+                        // cut at the waves' surface itself, object.wgsl
+                        // water_clip)
+                        let (after, before) = blend_order::water_sides_of(
+                            sc.z,
+                            sr + wave_band,
+                            height.map(|(z, half)| (z, half + wave_band)),
+                            under_water_plane,
+                        );
                         if before {
                             l.blend_under.push(entry);
                         }

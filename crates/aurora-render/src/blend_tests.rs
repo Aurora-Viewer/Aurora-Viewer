@@ -38,6 +38,8 @@ struct DrawRecord {{flags:vec4<u32>,tex:vec4<u32>,base_color:vec4<f32>,params:ve
 struct Frame {{sky_cloud_pd2:vec4<f32>,params:vec4<f32>,camera_pos:vec4<f32>}};
 const frame=Frame(vec4<f32>(1.0),vec4<f32>(0.0),vec4<f32>(0.0,0.0,1.0,1.0));
 override WATER_CLIP:u32=0u;
+// (enhanced water's waves are off here: the flat level, object.wgsl water_clip_level)
+fn water_clip_level(world_pos:vec3<f32>)->f32{{return frame.params.y;}}
 struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) @interpolate(flat) record:u32,
     @location(1) world_pos:vec3<f32>,@location(2) uv:vec2<f32>}};
 struct Material {{color:vec4<f32>}};

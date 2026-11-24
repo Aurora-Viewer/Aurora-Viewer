@@ -106,6 +106,7 @@ pub mod vulkan_drivers;
 pub mod vulkan_layers;
 pub mod water_effects;
 pub mod water_fft;
+mod water_ocean_gpu;
 mod water_optics;
 pub mod water_sea;
 mod water_wake;

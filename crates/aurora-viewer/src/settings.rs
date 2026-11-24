@@ -4492,6 +4492,9 @@ impl WaterEffectsSettings {
             splashes: self.splashes,
             bubbles: self.bubbles,
             wet_avatars: self.wet_avatars,
+            // (the renderer takes the texture's slot from the frame:
+            // RainLook::water_foam)
+            foam_texture: 0,
         }
     }
 }

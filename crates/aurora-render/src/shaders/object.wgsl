@@ -870,14 +870,27 @@ override DEPTH_CONTACT_ALPHA: f32 = 0.5;
 // the lists are split at, as LLDrawPoolAlpha uses getWaterHeight for both;
 // not enhanced water's displaced level at the camera (`cam_up.w`), or a
 // face within the waves would lose a slice, or be drawn twice unclipped.
+// With enhanced water's waves the cut is at the waves' surface where the
+// fragment is (water_surface_z), within the band they move the water in
+// (`sea.wind.w`, the highest crest, as the lists widen their split by it:
+// scene/mod.rs): cut at the flat level, a swimsuit's see-through part
+// under a passing crest was drawn after the water, over it.
 override WATER_CLIP: u32 = 0u;
+
+fn water_clip_level(world_pos: vec3<f32>) -> f32 {
+    let h = frame.params.y;
+    if (!water_fx_on(1u) || abs(world_pos.z - h) > water_fx.sea.wind.w + 0.3) {
+        return h;
+    }
+    return water_surface_z(world_pos.xy, h);
+}
 
 fn water_clip(world_pos: vec3<f32>) {
     let h = frame.params.y;
     if (WATER_CLIP == 0u || frame.camera_pos.z < h) {
         return;
     }
-    let above = world_pos.z >= h;
+    let above = world_pos.z >= water_clip_level(world_pos);
     if ((WATER_CLIP == 1u) != above) {
         discard;
     }
@@ -2501,7 +2514,7 @@ fn water_clipped(world_pos: vec3<f32>) -> bool {
     if (WATER_CLIP == 0u || frame.camera_pos.z < h) {
         return false;
     }
-    return (WATER_CLIP == 1u) != (world_pos.z >= h);
+    return (WATER_CLIP == 1u) != (world_pos.z >= water_clip_level(world_pos));
 }
 
 // A fragment's alpha as the alpha-only passes take it: -1 (fs_blend's

@@ -3162,13 +3162,17 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
 }
 
 // Local water controls and history. Opaque GTAO depth is never overwritten.
-struct WaterFxControls { area: vec4<f32>, previous: vec4<f32>, clock: vec4<f32>, counts: vec4<u32>, sea_area: vec4<f32>, sea: WaterSea };
+struct WaterFxControls { area: vec4<f32>, previous: vec4<f32>, clock: vec4<f32>, counts: vec4<u32>, sea_area: vec4<f32>, sea: WaterSea, fine: vec4<f32> };
 struct WaterFxEvent { position: vec4<f32>, motion: vec4<f32>, params: vec4<f32> };
 @group(0) @binding(15) var water_field: texture_2d<f32>;
 @group(0) @binding(16) var<storage, read> water_events: array<WaterFxEvent>;
 @group(0) @binding(17) var<uniform> water_fx: WaterFxControls;
 @group(0) @binding(18) var water_ground: texture_2d<f32>;
 @group(0) @binding(19) var water_light: texture_2d<f32>;
+// the wind sea's finer maps (water_ocean_gpu.rs): per cascade its
+// displacement and slopes, then the foam; `fine` in water_fx says whether
+// they hold this frame's sea and their tiles
+@group(0) @binding(33) var water_fine: texture_2d_array<f32>;
 fn water_fx_on(bit: u32) -> bool { return (water_fx.counts.z & bit) != 0u; }
 fn water_fx_uv(p: vec2<f32>) -> vec2<f32> { return (p - water_fx.area.xy) / max(water_fx.area.z,1.0); }
 fn water_fx_bed(p: vec2<f32>) -> vec2<f32> {
@@ -3233,10 +3237,14 @@ fn water_fx_sea_cell(p: vec2<f32>) -> WaterSeaCell {
 }
 // The spectrum's wind sea at `p` (water_fft.rs `OceanMaps::sample`): per
 // cascade, its maps in the bathymetry texture from row 320 (displacement
-// xyz and ∂Dx/∂y, then the slopes and ∂Dx/∂x, ∂Dy/∂y), bilinear and
-// wrapping over the cascade's tile. Where a pixel spans `footprint` m, a
-// cascade's slopes and folds fade before they alias.
-fn water_fx_ocean(p: vec2<f32>, footprint: f32) -> WaterOceanAt {
+// xyz and ∂Dx/∂y, then the slopes and ∂Dx/∂x, ∂Dy/∂y, then the lingering
+// foam), bilinear and wrapping over the cascade's tile. Where a pixel spans
+// `footprint` m, a cascade's slopes and folds fade before they alias; the
+// long chop's foam does not (a smooth field: kept, the whitecaps vanished
+// toward the horizon and at grazing angles, where pixels are long).
+// (`fine`: the surface's own reading, whose short cascade's slope comes
+// from the GPU's finer maps when they are on: water_fx_fine)
+fn water_fx_ocean(p: vec2<f32>, footprint: f32, fine: bool) -> WaterOceanAt {
     var o=WATER_OCEAN_NONE;
     if(water_fx.sea.shore.w<=0.0){return o;}
     for(var c=0;c<2;c++){
@@ -3244,7 +3252,7 @@ fn water_fx_ocean(p: vec2<f32>, footprint: f32) -> WaterOceanAt {
         let pos=fract(p/tile)*128.0;
         let base=floor(pos);let f=pos-base;
         let i=vec2<i32>(base)%vec2<i32>(128);let j=(i+vec2<i32>(1))%vec2<i32>(128);
-        let row=320+c*256;
+        let row=320+c*384;
         let d=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+i.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+i.y),0),f.x),
             mix(textureLoad(water_ground,vec2<i32>(i.x,row+j.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+j.y),0),f.x),f.y);
         let s=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+128+i.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+128+i.y),0),f.x),
@@ -3254,9 +3262,65 @@ fn water_fx_ocean(p: vec2<f32>, footprint: f32) -> WaterOceanAt {
         let k=select(0.63,2.5,c==1);
         let att=1.0-smoothstep(0.5,2.0,k*footprint);
         o.offset+=d.xyz;
-        o.slope+=s.xy*att;
+        if(!(fine && c==1 && water_fine_on())){o.slope+=s.xy*att;}
         o.jacobian+=vec3<f32>(s.z,d.w,s.w)*att;
+        let foam=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+256+i.y),0).x,textureLoad(water_ground,vec2<i32>(j.x,row+256+i.y),0).x,f.x),
+            mix(textureLoad(water_ground,vec2<i32>(i.x,row+256+j.y),0).x,textureLoad(water_ground,vec2<i32>(j.x,row+256+j.y),0).x,f.x),f.y);
+        o.foam=max(o.foam,foam*select(att,1.0,c==0));
     }
+    return o;
+}
+// One map of a cascade (`row`: its first row) at `q` in tiles, bilinear and
+// wrapping.
+fn water_fx_ocean_tap(q:vec2<f32>,row:i32)->vec4<f32> {
+    let pos=fract(q)*128.0;
+    let base=floor(pos);let f=pos-base;
+    let i=vec2<i32>(base)%vec2<i32>(128);let j=(i+vec2<i32>(1))%vec2<i32>(128);
+    return mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+i.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+i.y),0),f.x),
+        mix(textureLoad(water_ground,vec2<i32>(i.x,row+j.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+j.y),0),f.x),f.y);
+}
+// Enhanced water's surface height at `p` over the region water at `level`
+// (as vs_water draws it: the waves at the place they moved here from, one
+// step back by their sway; flat away from the region's water, as
+// particle_water_level). For what is cut at the surface itself.
+fn water_surface_z(p:vec2<f32>,level:f32)->f32 {
+    if(!water_fx_on(1u)){return level;}
+    let bed=water_fx_bed(p);
+    let region=(1.0-smoothstep(0.25,0.5,abs(level-bed.y)))*smoothstep(0.08,2.4,level-bed.x);
+    if(region<=0.0){return level;}
+    let q=p-water_sea(p,water_fx.clock.x,water_fx.counts.w,water_fx.sea,water_fx_sea_at(p),water_fx_ocean(p,0.0,false),0.0).offset.xy;
+    return level+water_sea(q,water_fx.clock.x,water_fx.counts.w,water_fx.sea,water_fx_sea_at(q),water_fx_ocean(q,0.0,false),0.0).offset.z*region;
+}
+// The GPU's finer maps of the wind sea at `p` (water_ocean_gpu.rs: the
+// short cascade's waves four times finer than the CPU's, and the finest
+// ripples, some 4 cm to 0.43 m), filtered over the pixel's footprint
+// (`gx`, `gy`: the world position's screen derivatives) through their mips
+// and the material sampler (repeating, anisotropic). Each cascade is read
+// through its own horizontal displacement (`chop`, as the surface takes
+// the maps here), so the ripples' crests pinch sharp and their troughs
+// open wide: the jagged facets that break the sun into glints. `slope`
+// both cascades' slopes (the short one's replaces the CPU's, read with it
+// in water_fx_ocean), `foam` the short cascade's lingering foam, `kept`
+// how much of the finest ripples the pixel still resolves.
+struct WaterFine { slope: vec2<f32>, foam: f32, kept: f32 };
+fn water_fine_on() -> bool { return water_fx.fine.x > 0.5; }
+// (`p` where the water lies before the waves move it: water_pixel's
+// `flow`. The short cascade is in the surface's shape already, read there
+// as it is; the finest, not in it, through its own displacement.)
+fn water_fx_fine(p:vec2<f32>,gx:vec2<f32>,gy:vec2<f32>,chop:f32)->WaterFine {
+    var o=WaterFine(vec2<f32>(0.0),0.0,0.0);
+    if(!water_fine_on()){return o;}
+    for(var c=0;c<2;c++){
+        let tile=select(water_fx.fine.y,water_fx.fine.z,c==1);
+        let uv=p/tile;let du=gx/tile;let dv=gy/tile;
+        var at=uv;
+        if(c==1){at=uv-textureSampleGrad(water_fine,tex_sampler,uv,2,du,dv).xy*chop/tile;}
+        let s=textureSampleGrad(water_fine,tex_sampler,at,2*c+1,du,dv);
+        o.slope+=s.xy;
+    }
+    o.slope*=chop;
+    o.foam=textureSampleGrad(water_fine,tex_sampler,p/water_fx.fine.y,4,gx/water_fx.fine.y,gy/water_fx.fine.y).x*chop;
+    o.kept=1.0-smoothstep(0.02,0.1,max(length(gx),length(gy)));
     return o;
 }
 // Where the sea is read at `p` (`WaterGround::sea_point`): the wave depth
@@ -3342,13 +3406,13 @@ fn water_fx_wave(p: vec2<f32>, level: f32) -> vec3<f32> {
     var held=1.0;
     if(water_fx_on(1u)) {
         let at=water_fx_sea_at(p);
-        // The swell's geometry flattens 130-155 m out: past 160 m a water
-        // patch is one quad (scene/water.rs `draws`), and a displaced grid
-        // meeting it left a wall of water along the patch's edge. The far
-        // water keeps the swell in its normals; everything the CPU floats or
-        // touches is nearer than 130 m.
-        let reach=1.0-smoothstep(130.0,155.0,distance(p,frame.camera_pos.xy));
-        offset+=water_sea(p,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(p,0.0),0.0).offset*reach;
+        // The swell's geometry flattens 280-310 m out: past 320 m a water
+        // patch is one quad (scene/water.rs `draws`, WAVE_GRID_REACH), and a
+        // displaced grid meeting it left a wall of water along the patch's
+        // edge. The far water keeps the swell in its normals. (Flattened
+        // from 130 m, the sea turned to a flat sheet at a visible line.)
+        let reach=1.0-smoothstep(280.0,310.0,distance(p,frame.camera_pos.xy));
+        offset+=water_sea(p,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(p,0.0,false),0.0).offset*reach;
         held=at.cap;
     }
     // (the wake's ripples stay under a floor at the water too)
@@ -3500,6 +3564,12 @@ fn water_swash_foam(p: vec2<f32>, at: WaterSeaAt, theta: f32, reach: f32) -> f32
     // falls back, landward as it runs up
     let slid=min(reach*(1.0-rise)/max(fall,0.03),20.0);
     let q=p-down*slid;
+    // the foam texture's lace, when there is one (water_foam_lace; the
+    // footprint from the distance, at about a 1080p view's)
+    if(water_foam_textured()){
+        let lace=water_foam_lace(q,distance(p,frame.camera_pos.xy)*0.0012+0.002);
+        return water_foam_lace_cover(amount,lace)*clamp(amount*1.3,0.0,1.0)*beach;
+    }
     // a marbled network: warped noise folded into ridges
     let warp=vec2<f32>(water_fx_noise(q*0.35),water_fx_noise(q*0.35+vec2<f32>(5.2,1.3)))-0.5;
     let r=q+warp*3.0;
@@ -3527,4 +3597,44 @@ fn water_foam_pattern(p:vec2<f32>,footprint:f32)->vec2<f32> {
 fn water_foam_coverage(amount:f32,pattern:vec2<f32>)->f32 {
     if(amount<0.08){return 0.0;}
     return smoothstep(0.08,0.75,amount)*pattern.x*pattern.y;
+}
+// The foam texture (scene/water_foam.rs: "Foam 003", a lace of sea foam
+// and its thickness), when the viewer has it: its bindless slot rides in
+// `water_fx.fine.w`.
+fn water_foam_textured() -> bool { return water_fx.fine.w > 0.5; }
+const WATER_FOAM_TURN:mat2x2<f32>=mat2x2<f32>(0.7986355,0.6018150,-0.6018150,0.7986355);
+// The lace at `p` for a pixel spanning `footprint` m: read twice, on tiles
+// of 3.1 m and 5.3 m turned 37° against each other (so neither repeats
+// where it shows) through a slow warp, drifting with the wind; mipmapped
+// by the footprint. x the lace, y its thickness, z how much of it the
+// pixel still resolves (past some 20 cm a pixel holds whole cells, and the
+// mips' averages are not a lace to cut).
+fn water_foam_lace(p:vec2<f32>,footprint:f32)->vec3<f32> {
+    let slot=u32(water_fx.fine.w);
+    // (`p` where the water lies before the waves move it: the lace rides
+    // with it; drifting only slowly downwind, as the surface's water does)
+    let drift=p-water_fx.sea.wind.xy*frame.camera_pos.w*(0.02+0.004*water_fx.sea.wind.z);
+    let warp=vec2<f32>(water_fx_noise(drift*0.21),water_fx_noise(drift*0.21+vec2<f32>(5.2,1.3)))-0.5;
+    let q=drift+warp*1.4;
+    let a=sample_tex_level(slot,q/3.1,log2(max(footprint*1024.0/3.1,1.0)));
+    let b=sample_tex_level(slot,(WATER_FOAM_TURN*q)/5.3,log2(max(footprint*1024.0/5.3,1.0)));
+    return vec3<f32>(max(a.r,b.r*0.85),max(a.a,b.a*0.85),1.0-smoothstep(0.04,0.25,footprint));
+}
+// How much of the lace `amount` of foam shows (0..1): thick foam fills its
+// cells, thin foam leaves only its strands, and fades as it thins (foam
+// left behind by a crest dissolves as it lingers, water_fft.rs `linger`,
+// instead of holding its strands and then vanishing); far off, its
+// average. Under it a soft white veil in the foam's own shape, from which
+// the lace stands out where the foam is dense (Sea of Thieves blurs its
+// foam mask for it: Ang et al., SIGGRAPH 2018); our amount is already a
+// smooth field, read here as it is.
+fn water_foam_lace_cover(amount:f32,lace:vec3<f32>)->f32 {
+    if(amount<0.04){return 0.0;}
+    let veil=smoothstep(0.04,0.7,amount)*0.24;
+    // (soft edges, and the far average about the near lace's: a harder cut
+    // drew paper cut-outs, a fuller average greyed a gale's whole sea)
+    let edge=1.0-clamp(amount,0.0,1.0)*0.85;
+    let body=smoothstep(edge-0.1,edge+0.24,lace.y*0.7+lace.x*0.4);
+    let near=body*mix(0.55,1.0,lace.x)*smoothstep(0.04,0.45,amount);
+    return max(mix(clamp(amount,0.0,1.0)*0.45,near,lace.z),veil);
 }

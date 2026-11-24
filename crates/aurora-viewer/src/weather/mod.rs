@@ -408,6 +408,7 @@ impl WeatherSettings {
             snow: if self.snowing() { self.flake_scale() } else { 0.0 },
             // the app gives the detail texture's slot (scene/snow_detail.rs)
             snow_detail: 0,
+            water_foam: 0,
             // the app gives AURORA_SNOW_LYING's floor (demo captures)
             snow_lying: 0.0,
             memory_reach: self.memory_reach(),

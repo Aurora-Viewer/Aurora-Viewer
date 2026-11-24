@@ -16,7 +16,7 @@ pub const SEA_GRID: usize = 128;
 /// Where the spectrum's maps start in the bathymetry texture (under the
 /// two sea grids) and how many rows they take (`water_fx_ocean`).
 const OCEAN_ROW: u32 = WATER_GROUND_SIZE + 2 * SEA_GRID as u32;
-const OCEAN_ROWS: u32 = (crate::water_fft::OCEAN_TILES.len() * 2 * crate::water_fft::OCEAN_N) as u32;
+const OCEAN_ROWS: u32 = (crate::water_fft::OCEAN_TILES.len() * crate::water_fft::OCEAN_BLOCKS * crate::water_fft::OCEAN_N) as u32;
 const _: () = assert!(crate::water_fft::OCEAN_N == SEA_GRID && OCEAN_ROW == 320);
 pub const SEA_EXTENT: f32 = 512.0;
 const MAX_WATER_IMPULSES: usize = 192;
@@ -44,6 +44,9 @@ pub struct WaterEffects {
     /// Avatars wet where they were in the water (the viewer's
     /// scene/avatar_wet.rs; no shader bit: a dry avatar has no wet memory).
     pub wet_avatars: bool,
+    /// The foam texture's bindless slot (`RainLook::water_foam`), 0 for
+    /// none.
+    pub foam_texture: u32,
 }
 
 impl Default for WaterEffects {
@@ -64,6 +67,7 @@ impl Default for WaterEffects {
             splashes: true,
             bubbles: true,
             wet_avatars: true,
+            foam_texture: 0,
         }
     }
 }
@@ -408,7 +412,7 @@ fn bilinear<const N: usize>(grid: &[[f32; N]], size: usize, origin: [f32; 2], ex
 fn pack_events(events: &[WaterEvent], settings: WaterEffects, packed: &mut [WaterEvent]) -> (usize, usize) {
     let flags = settings.flags();
     let particle = |e: &&WaterEvent| {
-        (matches!(e.params[1], 0.0 | 5.0 | 7.0 | 9.0 | 10.0 | 11.0) && flags & 64 != 0) || (e.params[1] == 1.0 && flags & 128 != 0)
+        (matches!(e.params[1], 0.0 | 5.0 | 7.0 | 9.0 | 10.0 | 11.0 | 12.0) && flags & 64 != 0) || (e.params[1] == 1.0 && flags & 128 != 0)
     };
     let recent = &events[events.len().saturating_sub(packed.len())..];
     let mut n = 0;
@@ -437,12 +441,15 @@ struct Uniform {
     counts: [u32; 4],   // events, contacts, flags, quality
     sea_area: [f32; 4], // sea grid origin xy, extent, caustics' focus
     sea: Sea,           // the wind's sea (water_sea.rs, WaterSea)
+    fine: [f32; 4],     // the GPU's finer maps: on, the cascades' tiles (water_ocean_gpu.rs); the foam texture's slot
 }
 
 pub(crate) struct WaterGpu {
     pub view: wgpu::TextureView,
     pub caustics_view: wgpu::TextureView,
     wake: crate::water_wake::WakeGpu,
+    /// The wind sea's finer maps (frame group binding 33).
+    ocean_gpu: crate::water_ocean_gpu::OceanGpu,
     event_count: u32,
     caustics_pipeline: wgpu::RenderPipeline,
     caustics_group: wgpu::BindGroup,
@@ -565,8 +572,8 @@ impl WaterGpu {
             label: Some("water bathymetry"),
             // the 64 bathymetry rows, then the sea grid's (SEA_GRID wide),
             // then the previous sea grid's, fading out, then the spectrum's
-            // maps (water_fft.rs, OCEAN_N wide: per cascade its displacement
-            // then its slopes)
+            // maps (water_fft.rs, OCEAN_N wide: per cascade its displacement,
+            // its slopes, then its lingering foam)
             size: wgpu::Extent3d {
                 width: SEA_GRID as u32,
                 height: OCEAN_ROW + OCEAN_ROWS,
@@ -750,6 +757,7 @@ impl WaterGpu {
         let wake = crate::water_wake::WakeGpu::new(device, &uniform, &events, &ground_view);
         Self {
             wake,
+            ocean_gpu: crate::water_ocean_gpu::OceanGpu::new(device),
             event_count: 0,
             view,
             caustics_view,
@@ -842,6 +850,12 @@ impl WaterGpu {
             );
         }
         let flags = settings.flags();
+        // the wind sea's finer maps, on the GPU, while the waves are on
+        if valid_ground && flags & 1 != 0 {
+            self.ocean_gpu.prepare(queue, &ground.ocean);
+        } else {
+            self.ocean_gpu.ready = false;
+        }
         let u = Uniform {
             area: [origin.x, origin.y, extent, self.size as f32 / extent],
             previous: [
@@ -874,6 +888,13 @@ impl WaterGpu {
                 crate::water_sea::caustic_focus(sea.frame[3], sea.look[1]),
             ],
             sea: *sea,
+            fine: [
+                if self.ocean_gpu.ready { 1.0 } else { 0.0 },
+                crate::water_fft::OCEAN_TILES[1],
+                crate::water_fft::FINE_TILE,
+                // (a bindless slot, exact as a float)
+                settings.foam_texture as f32,
+            ],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         if valid_ground
@@ -1034,7 +1055,13 @@ impl WaterGpu {
         resized
     }
 
+    /// The wind sea's finer maps (frame group binding 33).
+    pub fn ocean_view(&self) -> &wgpu::TextureView {
+        &self.ocean_gpu.view
+    }
+
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.ocean_gpu.encode(encoder);
         if self.flags & 32 != 0 {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("refracted water light"),
