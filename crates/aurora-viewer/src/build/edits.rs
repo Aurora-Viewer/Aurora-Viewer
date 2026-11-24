@@ -24,6 +24,18 @@ pub const FLAGS_TEMPORARY_ON_REZ: u32 = 1 << 29;
 pub const CLICK_ACTION_TOUCH: u8 = 0;
 pub const CLICK_ACTION_SIT: u8 = 1;
 pub const CLICK_ACTION_BUY: u8 = 2;
+/// PHYSICS_SHAPE_NONE (LLViewerObject::PHYSICS_SHAPE_*).
+pub const PHYSICS_SHAPE_NONE: u8 = 1;
+
+/// The physics shape a prim takes when `asked` is chosen. The simulator
+/// refuses None on the root of a linkset, and so on a lone prim: the root
+/// keeps its shape. The Legacy Viewer sends it anyway
+/// (LLSelectMgr::selectionSetPhysicsType, indra/newview/llselectmgr.cpp) and
+/// the shape snaps back when the simulator answers; Aurora keeps it from
+/// being sent, which shows the same final state at once.
+pub fn physics_shape_for(is_root: bool, current: u8, asked: u8) -> u8 {
+    if is_root && asked == PHYSICS_SHAPE_NONE { current } else { asked }
+}
 
 /// What a capability request was for (BuildTool::caps).
 #[derive(Debug, Clone)]
@@ -443,17 +455,30 @@ impl BuildTool {
 
     /// Physics shape type and material values of every selected prim you
     /// can modify (selectionSetPhysicsType etc.: ObjectFlagUpdate with
-    /// ExtraPhysics, the flags unchanged).
+    /// ExtraPhysics, the flags unchanged). Physical, temporary and phantom
+    /// belong to the whole object, and the simulator applies the message's
+    /// flags to the whole linkset: they are read from the root, which
+    /// `set_flags` keeps up to date. A child's own copy can be stale (the
+    /// Legacy Viewer sets the flag on every selected prim), and sending it
+    /// turned Physics off for the linkset.
     pub fn set_physics(&mut self, world: &World, change: impl Fn(&mut PhysicsParams)) {
         for idx in self.sel_prims(world) {
             if !self.can_modify(world, idx) {
                 continue;
             }
             let Some(o) = world.objects.get(idx) else { continue };
+            let is_root = super::root_of(world, idx) == idx;
             let p = self.physics.entry(o.key.local_id).or_default();
+            let shape = p.shape_type;
             change(p);
+            p.shape_type = physics_shape_for(is_root, shape, p.shape_type);
             let params = *p;
-            let f = o.update_flags;
+            let root = if is_root {
+                o
+            } else {
+                world.objects.get(super::root_of(world, idx)).unwrap_or(o)
+            };
+            let f = root.update_flags;
             self.send(BuildCmd::SetPhysicsParams {
                 handle: o.key.region,
                 local_id: o.key.local_id,
@@ -732,6 +757,18 @@ mod tests {
     use aurora_assets::material::PbrOverride;
     use aurora_net::build::perm;
 
+    #[test]
+    fn a_root_prim_keeps_its_physics_shape_when_none_is_asked() {
+        // root (or lone prim): None refused, the other shapes taken
+        assert_eq!(physics_shape_for(true, 0, PHYSICS_SHAPE_NONE), 0);
+        assert_eq!(physics_shape_for(true, 2, PHYSICS_SHAPE_NONE), 2);
+        assert_eq!(physics_shape_for(true, 0, 2), 2);
+        assert_eq!(physics_shape_for(true, 2, 0), 0);
+        // child prim: every shape, None included
+        assert_eq!(physics_shape_for(false, 0, PHYSICS_SHAPE_NONE), PHYSICS_SHAPE_NONE);
+        assert_eq!(physics_shape_for(false, PHYSICS_SHAPE_NONE, 2), 2);
+    }
+
     fn color_world() -> (World, BuildTool, Vec<usize>) {
         let mut world = World::new(Arc::new(AvatarLibrary::load()));
         world.agent_id = crate::demo::DEMO_AGENT;
@@ -805,6 +842,34 @@ mod tests {
         tool.set_click_action(&mut world, CLICK_ACTION_SIT);
         assert!(tool.out.is_empty(), "pending General edits must recheck revoked rights");
         assert!(!tool.can_modify(&world, usize::MAX));
+    }
+
+    #[test]
+    fn a_child_physics_shape_keeps_the_linkset_physical() {
+        let (mut world, mut tool, prims) = color_world();
+        let (root, child) = (prims[0], prims[1]);
+        let parent = world.objects.get(root).unwrap().key.local_id;
+        world.objects.get_mut(child).unwrap().parent_id = parent;
+        tool.selection = vec![world.objects.get(root).unwrap().key];
+        tool.set_flags(&mut world, Some(true), None, Some(true));
+        // the child's own copy has not caught up with the root yet
+        let child_flags = world.objects.get(child).unwrap().update_flags;
+        assert_eq!(child_flags & (FLAGS_USE_PHYSICS | FLAGS_PHANTOM), 0);
+        tool.selection = vec![world.objects.get(child).unwrap().key];
+        tool.selection_linked = true;
+        tool.out.clear();
+        tool.set_physics(&world, |x| x.shape_type = PHYSICS_SHAPE_NONE);
+        let sent: Vec<_> = tool
+            .out
+            .iter()
+            .filter_map(|c| match c {
+                NetCommand::Build(BuildCmd::SetPhysicsParams {
+                    physics, phantom, params, ..
+                }) => Some((*physics, *phantom, params.shape_type)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent, [(true, true, PHYSICS_SHAPE_NONE)], "the root's flags, the child's shape");
     }
 
     #[test]

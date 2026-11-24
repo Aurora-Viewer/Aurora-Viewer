@@ -244,7 +244,14 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             let r = ui.add(
                 super::super::widgets::elided_label(
                     ui,
-                    emphasis.rich_text(ui.ctx(), &name, chat_size(ui.ctx(), 11.5), col).strong(),
+                    emphasis
+                        .rich_text(
+                            ui.ctx(),
+                            super::chat_header_name(world, line, &name),
+                            chat_size(ui.ctx(), 11.5),
+                            col,
+                        )
+                        .strong(),
                     max_bubble,
                 )
                 .sense(egui::Sense::click()),
