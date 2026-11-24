@@ -164,6 +164,13 @@ Use the Rotation / Position / Scale inspector, rotation trackball, axis
 sliders or in-world movement/rotation/scale gizmos. The trackball's axes and
 drag directions follow the current camera, including orbit and roll.
 Horizontal and vertical trackball drags rotate the joint with the pointer.
+
+The poser does not move the camera by default, as in the Legacy Viewer. Two
+Aurora options in Preferences › Camera › Behavior change that, both off by
+default: "Frame the avatar while posing" frames the avatar when the poser
+opens and a joint when a click selects it (never a drag, a side or tab
+change, nor the photo viewfinder), and "Keep the camera still while posing"
+stops the camera's own follows and its reset on movement while you pose.
 Rotations use the joint's parent
 frame in degrees; positions use avatar axes in metres; scales are factors.
 Delta mode is
@@ -246,7 +253,9 @@ a reference frame and two identical posed frames. The pelvis-unlock setting
 controls root rotation and translation. Native animations and BVH have no
 scale tracks; BVH also omits collision volumes. The Aurora pose document
 retains those channels. **Upload as animation…** reuses the existing native
-encoder and opens the normal import preview. Upload and the simulator price
+encoder and opens the normal import preview. The Poser stays open, with every
+subject's pose and undo history intact, so you can prepare the next subject's
+animation or cancel the import without restarting the pose. Upload and the simulator price
 confirmation still require the human's action; saving never uploads.
 
 ## Consent
@@ -321,7 +330,7 @@ marker sets. Seventeen native poser scenarios were inspected, with zero
 runtime errors.
 This does not validate real two-client LSL delivery.
 
-Offline demos use `AURORA_DEMO=1` and `AURORA_DEMO_POSER=` with `self`,
+Offline demos use `AURORA_DEMO=1` and `AURORA_DEMO_POSER=` with `self`, `frame`,
 `connected`, `camera`, `scale`, `hands`, `face`, `misc`, `physics`, `library`, `settings`, `animesh`,
 `consent-accept`, `consent-refuse`, `consent-timeout` or `consent-withdraw`.
 Capture frame 620. The synthetic answers exercise the real consent state

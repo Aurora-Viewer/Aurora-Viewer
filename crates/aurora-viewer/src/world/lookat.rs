@@ -135,18 +135,19 @@ pub const HEAD_RANGE: std::ops::RangeInclusive<f32> = 0.0..=120.0;
 /// FSStaticEyesUUID: the priority 2 animation that holds the eyes still.
 pub const STATIC_EYES: Uuid = uuid::uuid!("592a9fb4-5e02-77bb-e1e5-da4d17d27336");
 
-/// What the simulator was asked about `STATIC_EYES` (update_static_eyes in
-/// llstartup.cpp and its setting's listener in llviewercontrol.cpp). The
-/// animation is the simulator's: a teleport or a crossing lands in a
-/// simulator that does not play it, so every arrival asks again
-/// (gAgent.addRegionChangedCallback(update_static_eyes)), local teleports
-/// too, which may unseat the avatar and reset its animations.
+/// What the simulator was asked about an animation it plays for us while a
+/// setting is on (`STATIC_EYES`: update_static_eyes in llstartup.cpp and its
+/// setting's listener in llviewercontrol.cpp; the Bento idle pose:
+/// LLAgent::setRegion in llagent.cpp). The animation is the simulator's: a
+/// teleport or a crossing lands in a simulator that does not play it, so
+/// every arrival asks again (gAgent.addRegionChangedCallback), local
+/// teleports too, which may unseat the avatar and reset its animations.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct StaticEyes {
+pub struct SimAnimation {
     sent: Option<bool>,
 }
 
-impl StaticEyes {
+impl SimAnimation {
     /// The request to send for the setting `want` (true: start, false:
     /// stop), if any. Nothing is sent to stop what was never started.
     pub fn request(&mut self, want: bool) -> Option<bool> {
@@ -536,7 +537,7 @@ mod tests {
 
     #[test]
     fn static_eyes_are_asked_again_after_every_arrival() {
-        let mut eyes = StaticEyes::default();
+        let mut eyes = SimAnimation::default();
         // the setting off: nothing to stop
         assert_eq!(eyes.request(false), None);
         // on: started once

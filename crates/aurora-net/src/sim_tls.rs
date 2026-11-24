@@ -20,6 +20,13 @@
 //! The log says once per host which rule accepted it, and once per host and
 //! reason why a certificate was refused (host and certificate names only,
 //! never a URL path: capability paths are secrets).
+//!
+//! The bundle now holds Linden Lab's authority alone. It expired in 2025 but
+//! stays the anchor simulator certificates chain to: webpki checks the
+//! validity of the chain, not of a trust anchor, so an expired anchor keeps
+//! working. It must be replaced when Linden Lab publishes a new authority;
+//! the test `the_bundle_holds_one_current_authority` pins the file, and any
+//! other certificate added to it must be current.
 
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
@@ -36,8 +43,10 @@ use rustls::{CertificateError, DigitallySignedStruct, Error, RootCertStore, Sign
 /// certificate of another Linden name (bridge.rs checks the same list).
 pub(crate) const LINDEN_DOMAINS: [&str; 3] = ["secondlife.com", "secondlife.io", "lindenlab.com"];
 
-/// The bundle shipped with the viewer: Linden Lab's authority, plus older
-/// GeoTrust certificates kept with it. Only the first is Linden's own.
+/// The bundle shipped with the viewer: Linden Lab's authority alone, which
+/// simulators chain to. The older GeoTrust certificates it used to carry are
+/// long expired and were removed (they were still trusted as anchors); see
+/// the file's header for when the authority itself must be replaced.
 const LINDEN_BUNDLE: &[u8] = include_bytes!("../lindenlab.pem");
 
 /// Text of the subject of Linden Lab's own authority in the bundle.
@@ -101,6 +110,9 @@ fn bundled_roots() -> (RootCertStore, RootCertStore) {
     }
     for cert in CertificateDer::pem_slice_iter(LINDEN_BUNDLE).flatten() {
         let is_linden = webpki::anchor_from_trusted_cert(&cert).is_ok_and(|anchor| contains(anchor.subject.as_ref(), LINDEN_AUTHORITY));
+        // Only Linden's authority is shipped now; the public store stays a
+        // safety net for a certificate added later, which is checked for
+        // validity by the bundle test. Never widen the public roots here.
         let store = if is_linden { &mut linden } else { &mut public };
         if store.add(cert).is_err() {
             log::warn!("simulator TLS: a certificate of lindenlab.pem was not usable");
@@ -395,6 +407,51 @@ mod tests {
         let (linden, public) = bundled_roots();
         assert_eq!(linden.len(), 1);
         assert!(public.len() > 100, "public roots: {}", public.len());
+    }
+
+    /// What `lindenlab.pem` may carry: Linden Lab's authority, and nothing
+    /// else unless it is current. The authority expired on 2025-04-16 and is
+    /// kept on purpose (a trust anchor's validity is not checked, and
+    /// simulators still chain to it); every other certificate must not be
+    /// expired, nor expire within 90 days. A new certificate is added to this
+    /// list deliberately, so that a package that has gone stale fails here
+    /// instead of silently widening or weakening the trust store.
+    #[test]
+    fn the_bundle_holds_one_current_authority() {
+        use sha2::{Digest, Sha256};
+        use x509_parser::pem::Pem;
+
+        const LINDEN_AUTHORITY: &str = "f75881ca4445891e89086101415e5d922cef1e2010cfef95d2d2d5558c377133";
+        const SOON: i64 = 90 * 24 * 3600;
+
+        let pems: Vec<Pem> = Pem::iter_from_buffer(LINDEN_BUNDLE)
+            .collect::<Result<_, _>>()
+            .expect("lindenlab.pem holds valid PEM blocks");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the clock is after 1970")
+            .as_secs() as i64;
+        let mut seen = Vec::new();
+        for pem in &pems {
+            let cert = pem.parse_x509().expect("a certificate parses");
+            let subject = cert.subject().to_string();
+            let fingerprint: String = Sha256::digest(&pem.contents).iter().map(|b| format!("{b:02x}")).collect();
+            if fingerprint == LINDEN_AUTHORITY {
+                assert!(subject.contains("Linden Lab Certificate Authority"), "{subject}");
+            } else {
+                let not_after = cert.validity().not_after;
+                assert!(
+                    not_after.timestamp() > now + SOON,
+                    "{subject} expires on {not_after}; renew the bundle before it does"
+                );
+            }
+            seen.push(fingerprint);
+        }
+        assert_eq!(
+            seen,
+            vec![LINDEN_AUTHORITY.to_owned()],
+            "the bundle carries Linden Lab's authority alone; a new certificate goes through this test"
+        );
     }
 
     #[test]

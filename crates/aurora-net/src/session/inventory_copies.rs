@@ -236,6 +236,7 @@ impl Session<'_> {
             emit(
                 self.sh,
                 NetEvent::InventoryUpdated {
+                    bulk: false,
                     folders: Vec::new(),
                     items,
                 },

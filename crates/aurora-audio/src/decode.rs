@@ -413,6 +413,12 @@ impl SoundClip {
         std::time::Duration::from_secs_f64(self.samples.len() as f64 / 2.0 / f64::from(ENGINE_SAMPLE_RATE))
     }
 
+    /// How long a voice of it plays: from its start to its end.
+    pub fn played_duration(&self) -> std::time::Duration {
+        let samples = self.samples.len().saturating_sub(self.start);
+        std::time::Duration::from_secs_f64(samples as f64 / 2.0 / f64::from(ENGINE_SAMPLE_RATE))
+    }
+
     /// Memory held by the decoded samples.
     pub fn memory_bytes(&self) -> usize {
         std::mem::size_of_val(&*self.samples)
@@ -535,6 +541,19 @@ pub(crate) mod tests {
         assert_eq!(clip.samples[1000], clip.samples[1001]);
         let peak = clip.samples.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         assert!((0.25..0.35).contains(&peak), "{peak}");
+    }
+
+    #[test]
+    fn played_duration_counts_from_the_voice_start() {
+        let rate = ENGINE_SAMPLE_RATE as usize;
+        let samples: Arc<[f32]> = vec![0.0; rate * 2 * 2].into();
+        let mut clip = SoundClip { samples, start: 0 };
+        assert_eq!(clip.played_duration(), clip.duration());
+        clip.start = rate * 2 / 2;
+        let secs = clip.played_duration().as_secs_f64();
+        assert!((secs - 1.5).abs() < 1e-9, "{secs}");
+        clip.start = usize::MAX;
+        assert_eq!(clip.played_duration(), std::time::Duration::ZERO);
     }
 
     #[test]

@@ -193,6 +193,7 @@ impl Session<'_> {
             NetEvent::InventoryUpdated {
                 folders: update.folders,
                 items,
+                bulk: true,
             },
         );
         if !update.transaction.is_nil() {

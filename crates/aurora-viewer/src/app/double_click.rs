@@ -7,6 +7,16 @@
 use super::*;
 use crate::autopilot::{self, AutoPilot, DoubleClick, Finish};
 
+/// AURORA_DEMO_RT_WALK: where the walk began; the frames in which our
+/// avatar's ray-traced levels were left waiting and the farthest it stood
+/// from them (m); the same for any skeleton.
+#[derive(Default)]
+pub(super) struct RtWalkDemo {
+    from: Option<Vec3>,
+    own: (u32, f32),
+    any: (u32, f32),
+}
+
 impl App {
     /// What a double click on the ground does in this session.
     pub(super) fn double_click_action(&self) -> DoubleClick {
@@ -37,19 +47,22 @@ impl App {
         if self.demo && std::env::var_os("AURORA_DEMO_DOUBLECLICK").is_some() {
             log::info!("demo double click: {action:?} at {point:?}");
         }
-        // LLToolPie::walkToClickedLocation / teleportToClickedLocation: under
-        // RLVa a point that a local teleport may not reach (@tplocal, @sittp,
-        // @unsit while seated) is refused, walking there included
         let global = self
             .world
             .main_origin()
             .map(|(x, y)| glam::DVec3::new(x as f64, y as f64, 0.0) + point.as_dvec3());
-        if action != DoubleClick::Nothing && global.is_some_and(|g| !self.world.rlva_can_teleport_global(g)) {
-            self.world.system_notice(
-                aurora_i18n::tr!("rlva-blocked-autopilot"),
-                crate::world::notice_topics::Topic::Warning,
-            );
-            return;
+        match self.world.rlva_double_click(global) {
+            crate::world::rlva::DoubleClickRlva::Go => {}
+            crate::world::rlva::DoubleClickRlva::Ignored => return,
+            crate::world::rlva::DoubleClickRlva::Blocked => {
+                if action != DoubleClick::Nothing {
+                    self.world.system_notice(
+                        aurora_i18n::tr!("rlva-blocked-autopilot"),
+                        crate::world::notice_topics::Topic::Warning,
+                    );
+                }
+                return;
+            }
         }
         match action {
             DoubleClick::Nothing => {}
@@ -441,6 +454,54 @@ impl App {
                     modifiers: egui::Modifiers::NONE,
                 });
             }
+        }
+    }
+
+    /// AURORA_DEMO_RT_WALK=1: our avatar, heavy and hatted
+    /// (`demo::rt_walk_events`), walks 8 m from frame 700 and the log says at
+    /// frame 940 whether the ray tracer followed it: at each frame, how far
+    /// our avatar stood from the levels its shadow is traced from
+    /// (`Renderer::rt_avatar_behind`), and the same for the farthest of all
+    /// the skeletons (`Renderer::rt_skeletons_waiting`).
+    pub(super) fn demo_rt_walk_steps(&mut self) {
+        const START: u64 = 700;
+        const END: u64 = 940;
+        if !crate::demo::rt_walk() || !(START..=END).contains(&self.frame_count) || !matches!(self.screen, Screen::World) {
+            return;
+        }
+        let at = self.world.agent.position;
+        if self.frame_count == START {
+            self.rt_walk_demo = RtWalkDemo {
+                from: Some(at),
+                ..Default::default()
+            };
+            self.walk_to(at + Vec3::new(8.0, 1.0, 0.0), false);
+            return;
+        }
+        let Some(from) = self.rt_walk_demo.from else {
+            return;
+        };
+        let Some(g) = &self.gfx else {
+            return;
+        };
+        let own = self
+            .scene
+            .palette_of(&self.world.agent_id)
+            .map_or(0.0, |base| g.renderer.rt_avatar_behind(base));
+        let (waiting, any) = g.renderer.rt_skeletons_waiting();
+        let d = &mut self.rt_walk_demo;
+        d.own = (d.own.0 + u32::from(own > 0.0), d.own.1.max(own));
+        d.any = (d.any.0 + u32::from(waiting > 0), d.any.1.max(any));
+        if self.frame_count == END {
+            log::info!(
+                "demo rt walk: the avatar walked {:.1} m in {} frames; its traced levels were left waiting in {} of them, {:.2} m behind at most (any skeleton's: {} frames, {:.2} m)",
+                at.distance(from),
+                END - START,
+                d.own.0,
+                d.own.1,
+                d.any.0,
+                d.any.1,
+            );
         }
     }
 
