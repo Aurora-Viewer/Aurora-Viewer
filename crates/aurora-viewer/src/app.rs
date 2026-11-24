@@ -25301,6 +25301,11 @@ impl ApplicationHandler for App {
         self.hide_windows_for_exit();
         #[cfg(windows)]
         crate::slurl_handoff::release();
+        // before the renderer: LiveMesh's listener thread shares its staging
+        // memory. It ends within 150 ms, unless it prepares a large snapshot.
+        if !self.blender_live.close_for_exit(Duration::from_secs(3)) {
+            log::warn!("the LiveMesh preview was still closing at exit");
+        }
         self.gfx = None;
         #[cfg(target_os = "linux")]
         crate::crash::renderer_dropped();

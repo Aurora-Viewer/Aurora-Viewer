@@ -2,6 +2,7 @@ use super::*;
 use std::{
     io::{self, Read, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -18,11 +19,13 @@ pub(super) fn start(
     rest_axes: std::collections::HashMap<String, [f32; 16]>,
     ctx: egui::Context,
     pool: Option<Arc<aurora_render::StagingPool>>,
-) -> io::Result<Arc<Shared>> {
+) -> io::Result<(Arc<Shared>, JoinHandle<()>)> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
     start_listener(listener, secret, supported, rest_axes, ctx, pool)
 }
 
+/// The thread returned holds `pool`, and through it the GPU device: the
+/// viewer waits for it at exit ([`Live::close_for_exit`]).
 pub(super) fn start_listener(
     listener: TcpListener,
     secret: String,
@@ -30,11 +33,11 @@ pub(super) fn start_listener(
     rest_axes: std::collections::HashMap<String, [f32; 16]>,
     ctx: egui::Context,
     pool: Option<Arc<aurora_render::StagingPool>>,
-) -> io::Result<Arc<Shared>> {
+) -> io::Result<(Arc<Shared>, JoinHandle<()>)> {
     listener.set_nonblocking(true)?;
     let shared = Arc::new(Shared::default());
     let worker = shared.clone();
-    std::thread::Builder::new().name("blender-live".into()).spawn(move || {
+    let thread = std::thread::Builder::new().name("blender-live".into()).spawn(move || {
         while !worker.stop.load(Ordering::Acquire) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
@@ -67,7 +70,7 @@ pub(super) fn start_listener(
             }
         }
     })?;
-    Ok(shared)
+    Ok((shared, thread))
 }
 
 fn read(stream: &mut TcpStream, mut target: &mut [u8], shared: &Shared, idle: Duration) -> io::Result<()> {
@@ -280,7 +283,7 @@ mod tests {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
         let port = listener.local_addr().expect("address").port();
         let supported = ["mPelvis".to_owned()].into_iter().collect();
-        let shared = start_listener(
+        let (shared, _) = start_listener(
             listener,
             secret.to_owned(),
             supported,
