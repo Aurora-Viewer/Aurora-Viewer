@@ -98,7 +98,6 @@ pub fn hint(reason: &str, grid: Grid) -> Option<&'static str> {
         "landmark region not found" | "destination region not found" | "the teleport destination could not be found" => {
             Some(tr!("teleport-hint-hypergrid-destination-gone"))
         }
-        _ if said.contains("gatekeeper") => Some(tr!("teleport-hint-hypergrid-unreachable")),
         _ => None,
     }
 }
@@ -160,6 +159,18 @@ mod tests {
     fn opensim_hypergrid_texts_get_their_explanation() {
         let unreachable = Some(aurora_i18n::tr!("teleport-hint-hypergrid-unreachable"));
         assert_eq!(hint("Could not resolve Landmark grid gatekeeper", Grid::OpenSimHome), unreachable);
+        // a region named Gatekeeper is a region like any other: OpenSim puts
+        // the name in its own texts (Scene.cs, EntityTransferModule.cs)
+        for grid in [Grid::OpenSimHome, Grid::OpenSimAway] {
+            assert_eq!(hint("The region 'Gatekeeper' could not be found.", grid), None);
+            assert_eq!(
+                hint(
+                    "Problems connecting to destination Gatekeeper, reason: Connection between viewer and destination region could not be established.",
+                    grid
+                ),
+                None
+            );
+        }
         assert_eq!(hint("Error contacting grid.", Grid::OpenSimAway), unreachable);
         assert_eq!(
             hint("Destination does not allow visitors from your world", Grid::OpenSimHome),
