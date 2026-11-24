@@ -6914,8 +6914,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   demo agent's chest, facial and skull attachments, `objects` on the first six
   objects of the plaza (Objects tab, Owned by on the cards, Owner and Created in
   Details). Check the summary card, the body-area sections, an opened card
-  (Made by, Worn on, the figure tiles with their share, the prims), the hover
-  Look at / Profile, the View panel and the Details table. `:open` opens the
+  (grey outline, Made by, Worn on, the figure tiles with their share, the prims,
+  the outlined one in violet), the Profile button on the line pointed at, a
+  right click that looks at the item, the View panel and the Details table. `:open` opens the
   third object's card, `:creators` and `:details` show those tabs, `:view` the
   View panel.
 
