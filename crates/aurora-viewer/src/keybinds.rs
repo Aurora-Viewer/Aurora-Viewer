@@ -590,6 +590,14 @@ pub enum Action {
     InvRefresh,
     InvEditPath,
     InvSearch,
+    InvFilter,
+    InvPreview,
+    InvViewLarge,
+    InvViewMedium,
+    InvViewSmall,
+    InvViewCompact,
+    InvViewDetails,
+    InvViewTiles,
     InvSelectAll,
     InvInvertSelection,
     InvToggleSelection,
@@ -613,6 +621,14 @@ pub fn is_inventory(a: Action) -> bool {
             | Action::InvRefresh
             | Action::InvEditPath
             | Action::InvSearch
+            | Action::InvFilter
+            | Action::InvPreview
+            | Action::InvViewLarge
+            | Action::InvViewMedium
+            | Action::InvViewSmall
+            | Action::InvViewCompact
+            | Action::InvViewDetails
+            | Action::InvViewTiles
             | Action::InvSelectAll
             | Action::InvInvertSelection
             | Action::InvToggleSelection
@@ -890,6 +906,14 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::InvRefresh, aurora_i18n::tr!("ui-inventory-context-reload-folder")),
                     (Action::InvEditPath, aurora_i18n::tr!("inventory-path-edit")),
                     (Action::InvSearch, aurora_i18n::tr!("keybinds-inventory-search")),
+                    (Action::InvFilter, aurora_i18n::tr!("keybinds-inventory-filter")),
+                    (Action::InvPreview, aurora_i18n::tr!("keybinds-inventory-preview")),
+                    (Action::InvViewLarge, aurora_i18n::tr!("keybinds-inventory-view-large")),
+                    (Action::InvViewMedium, aurora_i18n::tr!("keybinds-inventory-view-medium")),
+                    (Action::InvViewSmall, aurora_i18n::tr!("keybinds-inventory-view-small")),
+                    (Action::InvViewCompact, aurora_i18n::tr!("keybinds-inventory-view-compact")),
+                    (Action::InvViewDetails, aurora_i18n::tr!("keybinds-inventory-view-details")),
+                    (Action::InvViewTiles, aurora_i18n::tr!("keybinds-inventory-view-tiles")),
                     (Action::InvSelectAll, aurora_i18n::tr!("common-select-all")),
                     (Action::InvInvertSelection, aurora_i18n::tr!("inventory-invert-selection")),
                     (Action::InvToggleSelection, aurora_i18n::tr!("keybinds-inventory-toggle")),
@@ -1062,6 +1086,90 @@ fn inventory_defaults(mac: bool) -> Vec<(Action, [Option<Binding>; 2])> {
         ),
         // F3 is Mission Control on most Macs
         (Action::InvSearch, [if mac { None } else { k(K::F3) }, None]),
+        // Windows Explorer's view keys, in its order; a Mac's Cmd+Shift+3 / 4
+        // are its screenshots: Cmd+Option there
+        (
+            Action::InvViewLarge,
+            [
+                if mac {
+                    kalt(K::Digit1, true, false)
+                } else {
+                    kmod(K::Digit1, true, true)
+                },
+                None,
+            ],
+        ),
+        (
+            Action::InvViewMedium,
+            [
+                if mac {
+                    kalt(K::Digit2, true, false)
+                } else {
+                    kmod(K::Digit2, true, true)
+                },
+                None,
+            ],
+        ),
+        (
+            Action::InvViewSmall,
+            [
+                if mac {
+                    kalt(K::Digit3, true, false)
+                } else {
+                    kmod(K::Digit3, true, true)
+                },
+                None,
+            ],
+        ),
+        (
+            Action::InvViewCompact,
+            [
+                if mac {
+                    kalt(K::Digit4, true, false)
+                } else {
+                    kmod(K::Digit4, true, true)
+                },
+                None,
+            ],
+        ),
+        (
+            Action::InvViewDetails,
+            [
+                if mac {
+                    kalt(K::Digit5, true, false)
+                } else {
+                    kmod(K::Digit5, true, true)
+                },
+                None,
+            ],
+        ),
+        (
+            Action::InvViewTiles,
+            [
+                if mac {
+                    kalt(K::Digit6, true, false)
+                } else {
+                    kmod(K::Digit6, true, true)
+                },
+                None,
+            ],
+        ),
+        // Explorer's preview pane; Finder's Show Preview on a Mac
+        (
+            Action::InvPreview,
+            [
+                if mac {
+                    kmod(K::KeyP, true, true)
+                } else {
+                    kalt(K::KeyP, false, false)
+                },
+                None,
+            ],
+        ),
+        // Dolphin's filter bar. Not Dolphin's Ctrl+I, the viewer's Inventory
+        // window (nor Ctrl+Shift+F, Friends): Ctrl+Alt+F, Cmd+Option+F on a
+        // Mac, which no viewer shortcut uses
+        (Action::InvFilter, [kalt(K::KeyF, true, false), None]),
         (Action::InvSelectAll, [kmod(K::KeyA, true, false), None]),
         (Action::InvInvertSelection, [kmod(K::KeyA, true, true), None]),
         // Cmd+Space is Spotlight: no default there

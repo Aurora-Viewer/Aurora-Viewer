@@ -8,8 +8,9 @@
 //! with the Legacy Viewer's window.
 
 use super::super::permissions::{Permissions, Rights};
+use super::super::view::{COLUMNS, ColumnId};
 use super::super::*;
-use super::columns::{Columns, PAD};
+use super::columns::{ColumnFit, Columns, GAP, PAD};
 use super::{Frame, Layout, rights};
 use crate::ui::{sheet, widgets};
 use egui::{Color32, Pos2, Rangef, Rect, Sense, Vec2};
@@ -361,13 +362,42 @@ pub(super) fn show_quick(
     }
 }
 
-/// Paint the columns of the medium and wide widths for `id`.
+/// The key of `it`'s name in the creator column (`Facts::creator_names`):
+/// its creator and owner, its original's for a link, no owner when a
+/// group owns it.
+pub(in super::super) fn creator_key(inv: &Inventory, it: &aurora_net::inventory::InvItem) -> (Uuid, Uuid) {
+    let original = rules::original(inv, it.id).and_then(|id| inv.items.get(&id)).unwrap_or(it);
+    let owner = if original.group_owned { Uuid::nil() } else { original.owner };
+    (original.creator, owner)
+}
+
+/// What the worn column says of an item: worn (where, at the wide width),
+/// or an active gesture.
+fn worn_text(inv: &Inventory, id: Uuid, facts: &Facts, layout: Layout) -> Option<String> {
+    let original = rules::original(inv, id).unwrap_or(id);
+    if facts.active_gestures.contains(&original) {
+        Some(aurora_i18n::tr!("gesture-active").to_owned())
+    } else if facts.worn.contains(&original) {
+        let worn = aurora_i18n::tr!("common-worn");
+        Some(match facts.worn_at.get(&original) {
+            Some(point) if layout == Layout::Wide => format!("{worn} · {point}"),
+            _ => worn.to_owned(),
+        })
+    } else {
+        None
+    }
+}
+
+/// Paint the columns of the medium and wide widths for `id`, and note in
+/// `fit` how wide each one's text is.
 #[allow(clippy::too_many_arguments)]
 fn paint_columns(
     ui: &egui::Ui,
     p: &Palette,
     inv: &Inventory,
     view: &super::super::view::ViewCache,
+    facts: &Facts,
+    fit: &mut ColumnFit,
     id: Uuid,
     cols: Columns,
     frame: Frame,
@@ -376,19 +406,66 @@ fn paint_columns(
     selected: bool,
 ) {
     let ink = if selected { p.violet_pale } else { p.muted };
-    if let Some(kind) = cols.kind {
-        let galley = cut(ui, &kind_name(inv, id), SMALL, ink, kind.span(), false);
-        widgets::paint_row_text(ui.painter(), galley, kind.min, center_y, ink);
-    }
-    if let (Some(range), Some(permissions)) = (cols.rights, permissions) {
-        rights::paint(ui, p, permissions, frame.rights, range.min, center_y, selected);
-    }
-    if let Some(date) = cols.date {
-        let seconds = inv.items.get(&id).map_or_else(|| view.folder_date(id), |it| it.created_at);
-        let text = short_date(seconds, super::super::view::now());
-        if !text.is_empty() {
-            let galley = cut(ui, &text, SMALL, ink, date.span(), false);
-            widgets::paint_row_text(ui.painter(), galley, date.min, center_y, ink);
+    let item = inv.items.get(&id);
+    let folder = inv.folders.get(&id);
+    let text = |fit: &mut ColumnFit, column: ColumnId, range: Rangef, text: &str| {
+        if text.is_empty() {
+            return;
+        }
+        let natural = ui.painter().layout_no_wrap(text.to_owned(), egui::FontId::proportional(SMALL), ink);
+        fit.note(column, natural.size().x);
+        let galley = cut(ui, text, SMALL, ink, range.span(), false);
+        widgets::paint_row_text(ui.painter(), galley, range.min, center_y, ink);
+    };
+    for (column, range) in cols.iter() {
+        match column {
+            ColumnId::Kind => {
+                // the items' column says a folder's count when shown
+                let kind = match folder {
+                    Some(_) if cols.get(ColumnId::Count).is_some() => aurora_i18n::tr!("inventory-kind-folder").to_owned(),
+                    _ => kind_name(inv, id),
+                };
+                text(fit, column, range, &kind);
+            }
+            ColumnId::Rights => {
+                if let Some(permissions) = permissions {
+                    fit.note(column, rights::width(frame.rights));
+                    rights::paint(ui, p, permissions, frame.rights, range.min, center_y, selected);
+                }
+            }
+            ColumnId::Date => {
+                let seconds = item.map_or_else(|| view.folder_date(id), |it| it.created_at);
+                text(fit, column, range, &short_date(seconds, super::super::view::now()));
+            }
+            ColumnId::Creator => {
+                if let Some(it) = item.filter(|it| it.asset_type != 25) {
+                    let key = creator_key(inv, it);
+                    if !key.0.is_nil() {
+                        let name = facts
+                            .creator_names
+                            .get(&key)
+                            .cloned()
+                            .flatten()
+                            .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned());
+                        text(fit, column, range, &name);
+                    }
+                }
+            }
+            ColumnId::Description => {
+                if let Some(it) = item {
+                    text(fit, column, range, it.desc.lines().next().unwrap_or_default());
+                }
+            }
+            ColumnId::Worn => {
+                if let Some(worn) = worn_text(inv, id, facts, frame.layout) {
+                    text(fit, column, range, &worn);
+                }
+            }
+            ColumnId::Count => {
+                if let Some(f) = folder.filter(|f| f.state == FetchState::Fetched) {
+                    text(fit, column, range, &aurora_i18n::integer((f.items.len() + f.children.len()) as i64));
+                }
+            }
         }
     }
 }
@@ -512,7 +589,20 @@ pub(in super::super) fn item(
         );
     }
     ui.set_clip_rect(clip);
-    paint_columns(ui, p, inv, &st.view, id, cols, frame, permissions, rect.center().y, selected);
+    paint_columns(
+        ui,
+        p,
+        inv,
+        &st.view,
+        facts,
+        &mut st.column_fit,
+        id,
+        cols,
+        frame,
+        permissions,
+        rect.center().y,
+        selected,
+    );
     ui.set_opacity(opacity);
     item_response(ui, p, inv, it, r, permissions, st, prefs, facts, actions);
     if !quick.is_empty() {
@@ -613,7 +703,7 @@ pub(in super::super) fn folder(
         _ => name,
     };
     // A tree counts what a folder holds at its end; the columns say it.
-    let count = (cols.kind.is_none() && folder.state == FetchState::Fetched)
+    let count = (cols.get(ColumnId::Kind).is_none() && cols.get(ColumnId::Count).is_none() && folder.state == FetchState::Fetched)
         .then(|| aurora_i18n::integer((folder.items.len() + folder.children.len()) as i64));
     let count_w = count.as_ref().map_or(0.0, |count| {
         ui.painter()
@@ -668,7 +758,20 @@ pub(in super::super) fn folder(
         );
     }
     ui.set_clip_rect(clip);
-    paint_columns(ui, p, inv, &st.view, id, cols, frame, None, rect.center().y, selected);
+    paint_columns(
+        ui,
+        p,
+        inv,
+        &st.view,
+        facts,
+        &mut st.column_fit,
+        id,
+        cols,
+        frame,
+        None,
+        rect.center().y,
+        selected,
+    );
     let lead = caret.as_ref().map(|caret| caret.rect);
     let was_open = *open;
     ui.set_opacity(opacity);
@@ -687,27 +790,173 @@ pub(in super::super) fn folder(
     }
 }
 
-/// The titles of the columns above a list whose scroll area is `list`.
-pub fn header(ui: &mut egui::Ui, p: &Palette, frame: Frame, list: egui::Id, prefs: &mut view::ExplorerPreferences) {
-    let width = widgets::header_width(ui, list);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
-    let cols = super::columns::resize(ui, p, frame, Rect::from_min_size(rect.min, Vec2::new(width, rect.height())), prefs);
+/// A group's header in the explorer's list (`groups.rs`): its caret, its
+/// name and how many entries it holds, a line to the row's end. True when
+/// it is clicked (it opens or closes).
+pub fn group_header(ui: &mut egui::Ui, p: &Palette, name: &str, count: usize, open: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ui.min_size().y.max(24.0)), Sense::click());
     #[cfg(test)]
     ui.ctx()
-        .data_mut(|data| data.insert_temp(egui::Id::unique("inventory_header_columns"), cols));
-    let title = |text: &str, range: Rangef| {
-        let galley = cut(ui, text, 11.5, p.muted, range.span(), false);
-        widgets::paint_row_text(ui.painter(), galley, range.min, rect.center().y, p.muted);
-    };
-    title(aurora_i18n::tr!("common-name"), Rangef::new(rect.left() + PAD, cols.name_end));
-    if let Some(kind) = cols.kind {
-        title(aurora_i18n::tr!("common-type"), kind);
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_group", name.to_owned())), rect));
+    let ink = if response.hovered() { p.ink } else { p.muted };
+    let caret = Pos2::new(rect.left() + PAD + CARET / 2.0, rect.center().y);
+    widgets::paint_glyph(ui.painter(), widgets::disclosure_caret(open), caret, CARET, ink);
+    let label = sheet::semibold(ui, name, SMALL, ink);
+    let galley = ui.painter().layout_job(label);
+    let left = caret.x + CARET / 2.0 + 6.0;
+    let mut right = left + galley.size().x;
+    widgets::paint_row_text(ui.painter(), galley, left, rect.center().y, ink);
+    let count = ui
+        .painter()
+        .layout_no_wrap(aurora_i18n::integer(count as i64), egui::FontId::proportional(SMALL), p.muted_dim);
+    widgets::paint_row_text(ui.painter(), count.clone(), right + 8.0, rect.center().y, p.muted_dim);
+    right += 8.0 + count.size().x + 10.0;
+    if right < rect.right() - PAD {
+        ui.painter()
+            .hline(right..=rect.right() - PAD, rect.center().y, widgets::divider_stroke(p));
     }
-    if let Some(range) = cols.rights {
-        title(rights::heading(frame.rights), range);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// The titles of the details' columns above a list whose scroll area is
+/// `list`. A click sorts by a column, a second reverses it (Windows
+/// Explorer, Dolphin; Aurora difference: the Legacy Viewer sorts by name or
+/// date only, from its menu); the arrow shows the order followed. A title
+/// dragged sideways moves its column; a right-click opens the columns' menu.
+#[allow(clippy::too_many_arguments)]
+pub fn header(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    frame: Frame,
+    list: egui::Id,
+    prefs: &mut InventoryPreferences,
+    tab: usize,
+    fit: &mut ColumnFit,
+) {
+    use super::super::view::SortHeader;
+    fit.start();
+    let width = widgets::header_width(ui, list);
+    let (rect, background) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
+    let area = Rect::from_min_size(rect.min, Vec2::new(width, rect.height()));
+    // The titles go under the dividers' handles, which sit in the gaps.
+    let mut shown = frame;
+    shown.columns = prefs.explorer;
+    let before = Columns::new(shown, area);
+    let name = (None, SortHeader::Name, Rangef::new(area.left() + PAD, before.name_end));
+    let titles: Vec<_> = std::iter::once(name)
+        .chain(before.iter().map(|(id, range)| (Some(id), id.header(), range)))
+        .collect();
+    let (sorted, descending) = prefs.sort_for(tab).header();
+    let mut clicked = None;
+    let mut menu = background.secondary_clicked().then(|| background.interact_pointer_pos()).flatten();
+    let mut moved = None;
+    for (column, header, range) in &titles {
+        let hit = Rect::from_x_y_ranges(*range, rect.y_range());
+        let sense = if column.is_some() {
+            Sense::click_and_drag()
+        } else {
+            Sense::click()
+        };
+        let response = ui
+            .interact(hit, ui.scope_id().with(("inventory_column_title", *header)), sense)
+            .on_hover_text(aurora_i18n::tr!("inventory-sort-by-column"));
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_column_title", *header)), hit));
+        if response.clicked() {
+            clicked = Some(*header);
+        }
+        if response.secondary_clicked() {
+            menu = response.interact_pointer_pos();
+        }
+        let text = column.map_or(aurora_i18n::tr!("common-name"), |id| super::columns::title(id, shown));
+        let active = *header == sorted;
+        let ink = if active || response.hovered() || response.dragged() {
+            p.ink
+        } else {
+            p.muted
+        };
+        let arrow = if active { 14.0 } else { 0.0 };
+        if let Some(id) = column {
+            let natural = ui.painter().layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.5), ink);
+            fit.note(*id, natural.size().x + arrow);
+        }
+        let galley = cut(ui, text, 11.5, ink, (range.span() - arrow).max(0.0), false);
+        let text_right = range.min + galley.size().x;
+        widgets::paint_row_text(ui.painter(), galley, range.min, rect.center().y, ink);
+        // The date's own order is the newest first: its arrow points down.
+        let down = descending != (*header == SortHeader::Date);
+        if active && let Some(texture) = crate::ui::icons::global(if down { "caret-down-filled" } else { "caret-up-filled" }) {
+            ui.painter().image(
+                texture.id(),
+                Rect::from_center_size(egui::pos2(text_right + 8.0, rect.center().y), Vec2::splat(10.0)),
+                Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                ink,
+            );
+        }
+        // A title carried sideways: the line shows where its column goes.
+        if let Some(id) = column
+            && (response.dragged() || response.drag_stopped())
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            let others: Vec<(ColumnId, Rangef)> = before.iter().filter(|(other, _)| other != id).collect();
+            let place = others.iter().filter(|(_, r)| r.center() < pointer.x).count();
+            let x = match others.get(place) {
+                Some((_, r)) => r.min - GAP * 0.5,
+                None => others.last().map_or(before.name_end + GAP * 0.5, |(_, r)| r.max + GAP * 0.5),
+            };
+            if response.dragged() {
+                ui.painter().rect_filled(hit, ui.visuals().widgets.inactive.corner_radius, p.raised);
+                ui.painter().vline(
+                    x,
+                    rect.y_range().shrink(2.0),
+                    widgets::border_stroke(p, egui::Stroke::new(2.0, p.violet_light)),
+                );
+            } else {
+                // before the column it lands on, or after the last one shown
+                let target = others.get(place).map(|(before, _)| *before);
+                moved = Some((*id, target));
+            }
+        }
     }
-    if let Some(date) = cols.date {
-        title(aurora_i18n::tr!("inventory-column-modified"), date);
+    if let Some(header) = clicked {
+        prefs.sort_for_mut(tab).click(header);
+    }
+    if let Some((id, target)) = moved {
+        let columns = &mut prefs.explorer.columns;
+        let index = match target {
+            Some(target) => columns
+                .0
+                .iter()
+                .filter(|s| s.id != id)
+                .position(|s| s.id == target)
+                .unwrap_or(COLUMNS - 1),
+            None => {
+                let last = before.iter().filter(|(other, _)| *other != id).last().map(|(last, _)| last);
+                last.and_then(|last| columns.0.iter().filter(|s| s.id != id).position(|s| s.id == last))
+                    .map_or(0, |i| i + 1)
+            }
+        };
+        columns.move_to(id, index);
+    }
+    let _cols = super::columns::resize(ui, p, frame, area, &mut prefs.explorer, fit);
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique("inventory_header_columns"), _cols));
+    // the columns' menu, kept where the right-click opened it
+    let popup = list.with("inventory_header_menu");
+    if let Some(pos) = menu {
+        ui.ctx().data_mut(|data| data.insert_temp(popup, pos));
+        egui::Popup::open_id(ui.ctx(), popup);
+    }
+    if let Some(pos) = ui.ctx().data(|data| data.get_temp::<Pos2>(popup)) {
+        let measured = *fit;
+        crate::ui::menu::context_menu_at(ui, popup, pos, p, |ui| {
+            super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights, &measured, frame.layout);
+        });
+        if !egui::Popup::is_id_open(ui.ctx(), popup) {
+            ui.ctx().data_mut(|data| data.remove::<Pos2>(popup));
+        }
     }
     ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, widgets::divider_stroke(p));
 }
@@ -740,22 +989,29 @@ pub(super) mod tests {
             frame(Layout::Compact, Rights::Mine),
             Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, HEIGHT)),
         );
-        assert_eq!(compact.kind, None);
-        assert_eq!(compact.date, None);
+        assert_eq!(compact.get(ColumnId::Kind), None);
+        assert_eq!(compact.get(ColumnId::Date), None);
         assert_eq!(compact.name_end, 400.0 - PAD);
         let medium = Columns::new(
             frame(Layout::Medium, Rights::Mine),
             Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, HEIGHT)),
         );
-        assert!(medium.rights.is_some(), "expanded views have a resizable permissions column");
-        let (kind, date) = (medium.kind.unwrap(), medium.date.unwrap());
+        assert!(
+            medium.get(ColumnId::Rights).is_some(),
+            "expanded views have a resizable permissions column"
+        );
+        let (kind, date) = (medium.get(ColumnId::Kind).unwrap(), medium.get(ColumnId::Date).unwrap());
         assert!(medium.name_end < kind.min && kind.max < date.min && date.max <= 600.0);
         for rights in [Rights::Mine, Rights::Next, Rights::Both] {
             let wide = Columns::new(
                 frame(Layout::Wide, rights),
                 Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, HEIGHT)),
             );
-            let (kind, range, date) = (wide.kind.unwrap(), wide.rights.unwrap(), wide.date.unwrap());
+            let (kind, range, date) = (
+                wide.get(ColumnId::Kind).unwrap(),
+                wide.get(ColumnId::Rights).unwrap(),
+                wide.get(ColumnId::Date).unwrap(),
+            );
             assert!(wide.name_end < kind.min && kind.max < range.min && range.max < date.min);
             assert!(range.span() >= rights::width(rights));
         }
@@ -764,7 +1020,7 @@ pub(super) mod tests {
                 frame(Layout::Wide, Rights::Hidden),
                 Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, HEIGHT))
             )
-            .rights
+            .get(ColumnId::Rights)
             .is_none()
         );
     }

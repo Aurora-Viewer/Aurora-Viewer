@@ -13,6 +13,7 @@
 mod breadcrumb;
 mod columns;
 mod details;
+pub(super) mod filter;
 mod gallery;
 mod history;
 pub(super) mod marquee;
@@ -23,6 +24,7 @@ mod smart_bar;
 mod toolbar;
 
 pub(super) use breadcrumb::{PathEdit, SEPARATOR as PATH_SEPARATOR, path_text};
+pub(super) use columns::ColumnFit;
 pub(super) use history::{History, Place};
 pub(super) use marquee::Marquee;
 pub(super) use rights::button as rights_button;
@@ -150,6 +152,13 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-rights"
             | "aurora-columns"
             | "aurora-columns-hidden"
+            | "aurora-columns-all"
+            | "aurora-explorer-filter"
+            | "aurora-explorer-preview"
+            | "aurora-compact"
+            | "aurora-groups"
+            | "aurora-folder-previews"
+            | "aurora-tiles"
             | "aurora-received-filing"
             | "aurora-received-unread"
             | "aurora-received-sort"
@@ -313,6 +322,25 @@ pub(super) fn contents(
         Layout::Medium | Layout::Wide => explorer(ui, p, icons, inv, st, prefs, facts, images, actions, layout),
     }
     row_menu(ui, p, inv, st, prefs, facts, actions);
+}
+
+/// Windows Explorer's Ctrl+Shift+1…6, in its order: the gallery's large,
+/// medium (the Legacy Viewer's 128) and small pictures, the Compact view,
+/// the Details (the list), the Tiles.
+pub(super) fn set_view(prefs: &mut InventoryPreferences, folder: Uuid, key: u8) {
+    use view::ExplorerView;
+    let (view, side) = match key {
+        1 => (ExplorerView::Gallery, Some(192)),
+        2 => (ExplorerView::Gallery, Some(0)),
+        3 => (ExplorerView::Gallery, Some(96)),
+        4 => (ExplorerView::Compact, None),
+        5 => (ExplorerView::List, None),
+        _ => (ExplorerView::Tiles, None),
+    };
+    prefs.set_view_in(folder, view);
+    if let Some(side) = side {
+        prefs.explorer.tile_size = side;
+    }
 }
 
 /// Where the window's folders start: the root, or a folder window's folder.
@@ -539,14 +567,30 @@ fn explorer_list(
     let Some(mut frame) = st.aurora else { return };
     frame.rights = prefs.rights;
     frame.columns = prefs.explorer;
+    if let Some(key) = st.view_key.take() {
+        set_view(prefs, st.browse, key);
+    }
+    // Alt+P: the details pane, shown if hidden, previews the selection
+    if std::mem::take(&mut st.toggle_preview) {
+        prefs.preview_pane = !prefs.preview_pane || !prefs.show_details;
+        prefs.show_details |= prefs.preview_pane;
+    }
     let (root, filtered) = list_scope(inv, st, prefs, facts);
     let explore = !filtered && !root.is_nil();
+    // the folder filter's bar, for the folder shown (a search has its own)
+    if explore {
+        filter::bar(ui, p, st);
+    }
     // A search or a filter lists its results, from every folder, as rows:
     // the tiles show one folder.
-    let shown = if explore { prefs.explorer.view } else { view::ExplorerView::List };
+    let shown = if explore {
+        prefs.view_in(st.browse)
+    } else {
+        view::ExplorerView::List
+    };
     // the combination view titles its list under its tiles
     if shown == view::ExplorerView::List {
-        rows::header(ui, p, frame, list_id, &mut prefs.explorer);
+        rows::header(ui, p, frame, list_id, prefs, st.tab, &mut st.column_fit);
         frame.columns = prefs.explorer;
     }
     st.aurora = Some(frame);
@@ -577,6 +621,21 @@ fn explorer_list(
         let browse = st.browse;
         std::mem::swap(&mut st.plain, &mut st.flat);
         st.plain.set_tiles(gallery::tiles(shown));
+        // another folder starts with an empty filter (the bar stays open)
+        if st.folder_filter_at.is_some_and(|at| at != browse)
+            && let Some(text) = &mut st.folder_filter
+        {
+            text.clear();
+        }
+        st.folder_filter_at = Some(browse);
+        st.plain.set_filter(st.folder_filter.as_deref().unwrap_or_default());
+        // the Details list's groups (the tiles keep their own order)
+        let group = if shown == view::ExplorerView::List {
+            prefs.explorer.group_by
+        } else {
+            groups::GroupBy::None
+        };
+        st.plain.set_group(group, st.view.context_fingerprint());
         if let Some(frame) = &mut st.aurora {
             frame.explorer = true;
         }
@@ -589,9 +648,12 @@ fn explorer_list(
             view::ExplorerView::List => in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
                 list(ui, p, icons, inv, st, prefs, facts, actions, list_h, browse, false, false)
             }),
-            view::ExplorerView::Gallery => in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
-                gallery::gallery(ui, p, icons, inv, st, prefs, facts, images, actions, list_h, browse)
-            }),
+            view::ExplorerView::Gallery | view::ExplorerView::Compact | view::ExplorerView::Tiles => {
+                in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
+                    let style = gallery::Style::of(shown);
+                    gallery::gallery(ui, p, icons, inv, st, prefs, facts, images, actions, list_h, browse, style)
+                })
+            }
             view::ExplorerView::Combination => {
                 gallery::combination(ui, p, icons, inv, st, prefs, facts, images, actions, list_rect, list_id, browse)
             }
@@ -728,8 +790,8 @@ mod tests {
                 h.frames(3);
             }
             assert!(h.prefs.explorer.sidebar_width > 0);
-            assert!(h.prefs.explorer.kind_width > 0);
-            assert!(h.prefs.explorer.date_width > 0);
+            assert!(h.prefs.explorer.columns.slot(view::ColumnId::Kind).width > 0);
+            assert!(h.prefs.explorer.columns.slot(view::ColumnId::Date).width > 0);
             assert_eq!(h.st.selection, selection);
             assert!(h.actions.is_empty(), "splitters cannot perform inventory operations");
             let saved = h.prefs.explorer;
@@ -748,7 +810,8 @@ mod tests {
                 (header.name_end - row.name_end).abs() < 0.5,
                 "headers stay aligned with scrolled rows"
             );
-            for (header, row) in [(header.kind, row.kind), (header.rights, row.rights), (header.date, row.date)] {
+            for id in [view::ColumnId::Kind, view::ColumnId::Rights, view::ColumnId::Date] {
+                let (header, row) = (header.get(id), row.get(id));
                 assert!((header.unwrap().min - row.unwrap().min).abs() < 0.5);
             }
             let hit = h
@@ -759,6 +822,307 @@ mod tests {
             assert_eq!(h.prefs.explorer.sidebar_width, 0, "double click restores the responsive default");
             h.click(h.row(8101).center(), Default::default());
             assert_eq!(h.st.selected, Some(Uuid::from_u128(8101)), "ordinary row selection still works");
+        }
+    }
+
+    #[test]
+    fn header_titles_sort_and_reverse_without_selecting_or_acting() {
+        use view::{SortColumn, SortHeader};
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(8);
+        h.actions.clear();
+        let selection = h.st.selection.clone();
+        let title = |h: &Harness, header: SortHeader| {
+            h.ctx
+                .data(|data| data.get_temp::<Rect>(egui::Id::unique(("inventory_column_title", header))))
+                .expect("title drawn")
+                .center()
+        };
+        let kind = SortHeader::Column(SortColumn::Kind);
+        h.click(title(&h, kind), Default::default());
+        h.frames(2);
+        assert_eq!(h.prefs.sort.header(), (kind, false));
+        h.click(title(&h, kind), Default::default());
+        h.frames(2);
+        assert_eq!(h.prefs.sort.header(), (kind, true), "a second click reverses");
+        h.click(title(&h, SortHeader::Name), Default::default());
+        h.frames(2);
+        assert_eq!(h.prefs.sort.header(), (SortHeader::Name, false));
+        assert_eq!(h.st.selection, selection);
+        assert!(h.actions.is_empty(), "sorting performs no inventory operation");
+    }
+
+    #[test]
+    fn titles_drag_columns_into_place_and_dividers_fit_them() {
+        use view::{ColumnId, SortHeader};
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(8);
+        h.actions.clear();
+        let sort = h.prefs.sort;
+        let title = |h: &Harness, header: SortHeader| {
+            h.ctx
+                .data(|data| data.get_temp::<Rect>(egui::Id::unique(("inventory_column_title", header))))
+                .expect("title drawn")
+        };
+        // the date carried left of the type
+        let from = title(&h, SortHeader::Date).center();
+        let to = title(&h, ColumnId::Kind.header()).left_center() + egui::vec2(4.0, 0.0);
+        h.run(vec![egui::Event::PointerMoved(from)]);
+        h.run(vec![egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        for step in 1..=6 {
+            h.run(vec![egui::Event::PointerMoved(from + (to - from) * (step as f32 / 6.0))]);
+        }
+        h.run(vec![egui::Event::PointerButton {
+            pos: to,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        h.frames(3);
+        let order: Vec<_> = h.prefs.explorer.columns.0.iter().map(|s| s.id).collect();
+        assert_eq!(order[..3], [ColumnId::Date, ColumnId::Kind, ColumnId::Rights]);
+        assert_eq!(h.prefs.sort, sort, "a drag does not sort");
+        assert!(h.actions.is_empty());
+        // the divider right of the date fits it to its widest text
+        h.prefs.explorer.columns.slot_mut(ColumnId::Date).width = 400;
+        h.frames(3);
+        let handle = h
+            .ctx
+            .data(|data| data.get_temp::<Rect>(egui::Id::unique(("inventory_column_handle", 1_usize))))
+            .expect("the divider after the date");
+        h.double_click(handle.center());
+        h.frames(2);
+        let fitted = h.prefs.explorer.columns.slot(ColumnId::Date).width;
+        assert!((40..200).contains(&fitted), "fitted to its dates and title, got {fitted}");
+        assert_eq!(h.prefs.sort, sort, "a fit does not sort");
+    }
+
+    #[test]
+    fn alt_p_previews_a_notecards_text_and_a_texture_in_the_details_pane() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8103));
+        h.frames(4);
+        let row = h.row(8103);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        let alt_p = if cfg!(target_os = "macos") {
+            egui::Modifiers {
+                shift: true,
+                mac_cmd: true,
+                command: true,
+                ..Default::default()
+            }
+        } else {
+            egui::Modifiers::ALT
+        };
+        h.actions.clear();
+        h.run(vec![egui::Event::Key {
+            key: egui::Key::P,
+            physical_key: Some(egui::Key::P),
+            pressed: true,
+            repeat: false,
+            modifiers: alt_p,
+        }]);
+        h.frames(2);
+        assert!(h.prefs.preview_pane && h.prefs.show_details);
+        let note = Uuid::from_u128(8103);
+        let asked = |h: &Harness| h.actions.iter().any(|a| matches!(a, InvAction::PaneText(id) if *id == note));
+        assert!(!asked(&h), "not before the selection has settled");
+        h.frames(20);
+        assert!(
+            h.actions.iter().any(|a| matches!(a, InvAction::PaneText(id) if *id == note)),
+            "the text is asked for"
+        );
+        // as the app answers
+        let key = crate::ui::inventory::pane_key(&h.inv, note, 0).expect("a notecard");
+        h.facts.pane_texts = std::sync::Arc::new([(key, PaneText::Text("Hello from the notecard".into()))].into());
+        h.frames(2);
+        let shown = h.ctx.data(|d| d.get_temp::<String>(egui::Id::unique("inventory_preview_text")));
+        assert_eq!(shown.as_deref(), Some("Hello from the notecard"));
+        // RLVa's @viewnote turns on: the text read before is not shown again
+        h.inv.rlva_preview_mask = 2;
+        h.ctx
+            .data_mut(|d| d.remove_temp::<String>(egui::Id::unique("inventory_preview_text")));
+        h.actions.clear();
+        h.frames(2);
+        let shown = h.ctx.data(|d| d.get_temp::<String>(egui::Id::unique("inventory_preview_text")));
+        assert_eq!(shown, None, "@viewnote hides the text kept");
+        assert!(
+            h.actions.iter().any(|a| matches!(a, InvAction::PaneText(id) if *id == note)),
+            "asked again under the new terms"
+        );
+        h.inv.rlva_preview_mask = 0;
+        // a texture asks for its picture, unless RLVa's @viewtexture hides it
+        let texture = Uuid::from_u128(8104);
+        h.st.selection.clear();
+        h.st.selection.insert(texture);
+        h.st.selected = Some(texture);
+        h.st.wanted_images.clear();
+        h.frames(2);
+        let asset = h.inv.items[&texture].asset_id;
+        assert!(h.st.wanted_images.contains(&asset));
+        h.inv.rlva_preview_mask = 1;
+        h.st.wanted_images.clear();
+        h.frames(2);
+        assert!(!h.st.wanted_images.contains(&asset), "@viewtexture: the picture stays");
+    }
+
+    #[test]
+    fn ctrl_shift_digits_switch_the_views_and_compact_and_tiles_keep_the_list_order() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let listed = h.st.flat.order.clone();
+        let row = h.row(8100);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        let digit = |h: &mut Harness, key| {
+            let modifiers = if cfg!(target_os = "macos") {
+                egui::Modifiers {
+                    alt: true,
+                    mac_cmd: true,
+                    command: true,
+                    ..Default::default()
+                }
+            } else {
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT | egui::Modifiers::COMMAND
+            };
+            h.run(vec![egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }]);
+            h.frames(3);
+        };
+        for (key, view, side) in [
+            (egui::Key::Num1, view::ExplorerView::Gallery, 192),
+            (egui::Key::Num3, view::ExplorerView::Gallery, 96),
+            (egui::Key::Num2, view::ExplorerView::Gallery, 0),
+            (egui::Key::Num4, view::ExplorerView::Compact, 0),
+            (egui::Key::Num6, view::ExplorerView::Tiles, 0),
+            (egui::Key::Num5, view::ExplorerView::List, 0),
+        ] {
+            digit(&mut h, key);
+            assert_eq!(h.prefs.explorer.view, view, "{key:?}");
+            assert_eq!(h.prefs.explorer.tile_size, side, "{key:?}");
+            // the selected entry stays in sight, drawn in the view
+            assert!(rows::tests::drawn(&h.ctx, Uuid::from_u128(8100)).is_some(), "{view:?}");
+            if matches!(view, view::ExplorerView::Compact | view::ExplorerView::Tiles) {
+                assert_eq!(h.st.flat.order, listed, "{view:?} keeps the list's order");
+                assert_eq!(h.st.flat.tiles, listed.len());
+            }
+        }
+        // a cell of the Compact view selects and opens as a row
+        h.prefs.explorer.view = view::ExplorerView::Compact;
+        h.frames(3);
+        let note = h.row(8103);
+        h.actions.clear();
+        h.double_click(note.left_center() + egui::vec2(30.0, 0.0));
+        assert!(
+            h.actions
+                .iter()
+                .any(|a| matches!(a, InvAction::Preview(id, _) if *id == Uuid::from_u128(8103)))
+        );
+    }
+
+    #[test]
+    fn group_by_type_lists_named_groups_that_close_on_a_click() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let all = h.st.flat.order.len();
+        h.prefs.explorer.group_by = groups::GroupBy::Kind;
+        h.frames(3);
+        let names: Vec<String> = h.st.flat.groups.iter().map(|(name, _)| name.clone()).collect();
+        assert_eq!(
+            names[0],
+            aurora_i18n::tr!("inventory-group-folders"),
+            "the folders' group first: {names:?}"
+        );
+        assert!(names.len() > 3, "{names:?}");
+        assert_eq!(
+            h.st.flat.groups.iter().map(|(_, n)| n).sum::<usize>(),
+            all,
+            "every entry in one group"
+        );
+        assert_eq!(h.st.flat.order.len(), all);
+        // a click on a header closes its group, another opens it (the
+        // second group's, in sight)
+        let (group, in_group) = h.st.flat.groups[1].clone();
+        let header = |h: &Harness| {
+            h.ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("inventory_group", group.clone()))))
+                .expect("the group's header")
+        };
+        let first = h.st.flat.order[h.st.flat.groups[0].1];
+        h.click(header(&h).left_center() + egui::vec2(60.0, 0.0), Default::default());
+        h.frames(2);
+        assert_eq!(h.st.flat.order.len(), all - in_group, "closed");
+        assert!(!h.st.flat.order.contains(&first), "its first entry is no longer listed");
+        h.click(header(&h).left_center() + egui::vec2(60.0, 0.0), Default::default());
+        h.frames(2);
+        assert_eq!(h.st.flat.order.len(), all, "open again");
+        assert!(h.actions.is_empty());
+        // the tiles keep their own order: no groups there
+        h.prefs.explorer.view = view::ExplorerView::Tiles;
+        h.frames(3);
+        assert!(h.st.flat.groups.is_empty());
+    }
+
+    #[test]
+    fn a_typed_path_to_twin_folders_shows_their_parent_filtered_to_them() {
+        let mut h = Harness::new(WIDE_SIZE);
+        let (here, sub) = (Uuid::from_u128(8000), Uuid::from_u128(8001));
+        let twin = Uuid::from_u128(8999);
+        h.inv.created_folders(vec![aurora_net::inventory::InvFolder {
+            id: twin,
+            parent: here,
+            name: folder_name(&h.inv, sub),
+            ..Default::default()
+        }]);
+        h.frames(2);
+        let text = breadcrumb::path_text(&h.inv, h.inv.root, sub);
+        h.st.path_edit = Some(PathEdit::new(text));
+        h.frames(2);
+        h.run(vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        h.frames(3);
+        assert_eq!(h.st.browse, here, "their parent, not the first of them");
+        assert_eq!(h.st.folder_filter.as_deref(), Some(folder_name(&h.inv, sub).as_str()));
+        assert!(h.st.flat.order.contains(&sub) && h.st.flat.order.contains(&twin), "both listed");
+        assert!(h.st.path_edit.is_none());
+    }
+
+    #[test]
+    fn a_folders_tile_asks_for_its_items_pictures_by_the_tiles_size() {
+        let folder = Uuid::from_u128(8000);
+        for (side, wanted) in [(96, 0), (128, 1), (192, 4)] {
+            let mut h = Harness::new(WIDE_SIZE);
+            crate::world::inventory::demo::seed_gallery(&mut h.inv);
+            h.prefs.explorer.view = view::ExplorerView::Gallery;
+            h.prefs.explorer.tile_size = side;
+            h.st.demo_reveal(folder);
+            h.frames(6);
+            let previews = thumbnail::folder_preview(&h.inv, folder, 4);
+            let asked = previews.iter().filter(|asset| h.st.wanted_images.contains(asset)).count();
+            assert!(asked >= wanted, "{side} px: {asked} of {wanted}");
+            if wanted == 0 {
+                // small tiles: the folder's icon, nothing asked for it
+                assert!(rows::tests::drawn(&h.ctx, folder).is_some());
+                assert_eq!(asked, 0);
+            }
         }
     }
 
@@ -896,6 +1260,90 @@ mod tests {
         h.run(vec![button(to, false)]);
         h.frames(2);
         carried
+    }
+
+    #[test]
+    fn ctrl_alt_f_filters_the_folder_shown_until_esc() {
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let all = h.st.flat.order.len();
+        assert!(all > 3, "the right-click tests' folder");
+        let row = h.row(8100);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        // as a keyboard sends them: Ctrl (Cmd on a Mac) is also "command"
+        let filter = if cfg!(target_os = "macos") {
+            let cmd_option = egui::Modifiers {
+                alt: true,
+                mac_cmd: true,
+                command: true,
+                ..Default::default()
+            };
+            key(egui::Key::F, cmd_option)
+        } else {
+            key(
+                egui::Key::F,
+                egui::Modifiers::CTRL | egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+            )
+        };
+        h.run(vec![filter]);
+        h.frames(3);
+        assert_eq!(h.st.folder_filter.as_deref(), Some(""), "the bar opens empty");
+        assert!(
+            h.ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique("inventory_folder_filter")))
+                .is_some()
+        );
+        // everything selected, as Ctrl+A
+        h.st.selection = h.st.flat.order.iter().copied().collect();
+        h.run(vec![egui::Event::Text("demo OBJ".into())]);
+        h.frames(3);
+        assert_eq!(h.st.folder_filter.as_deref(), Some("demo OBJ"), "the field has the keyboard");
+        assert!(
+            !h.st.selection.is_empty() && h.st.selection.iter().all(|id| h.st.flat.order.contains(id)),
+            "what the filter hides leaves the selection"
+        );
+        let names: Vec<String> =
+            h.st.flat
+                .order
+                .iter()
+                .map(|id| {
+                    h.inv
+                        .items
+                        .get(id)
+                        .map_or_else(|| folder_name(&h.inv, *id), |it| it.name.clone())
+                        .to_lowercase()
+                })
+                .collect();
+        assert!(!names.is_empty() && names.len() < all, "{names:?}");
+        assert!(
+            names.iter().all(|n| n.contains("demo") && n.contains("obj")),
+            "every word, any case: {names:?}"
+        );
+        // a folder with nothing that matches says so; the filter stays open
+        h.run(vec![egui::Event::Text("zzz".into())]);
+        h.frames(3);
+        assert!(h.st.flat.order.is_empty() && h.st.flat.filtered_out == all);
+        // another folder: the bar stays open, its text goes
+        let here = h.st.browse;
+        h.st.browse = h.inv.root;
+        h.frames(2);
+        assert_eq!(h.st.folder_filter.as_deref(), Some(""), "emptied in another folder");
+        h.st.browse = here;
+        h.frames(2);
+        assert_eq!(h.st.flat.order.len(), all);
+        h.run(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]);
+        h.frames(3);
+        assert_eq!(h.st.folder_filter, None, "Esc closes the bar");
+        assert_eq!(h.st.flat.order.len(), all, "and lists everything again");
+        assert!(h.actions.is_empty());
     }
 
     #[test]
@@ -1217,7 +1665,7 @@ mod tests {
             h.click(row.center(), Default::default());
             assert_eq!(h.st.selected, Some(Uuid::from_u128(8101)), "{width} px");
             if width >= 800.0 {
-                let sub = h.row(8001).center();
+                let sub = h.row(8001).left_center() + egui::vec2(60.0, 0.0);
                 h.double_click(sub);
                 assert_eq!(h.st.browse, Uuid::from_u128(8001), "{width} px: going into a subfolder");
             }
@@ -1531,16 +1979,17 @@ mod tests {
             let object = Uuid::from_u128(8100);
             h.st.show_original(&h.inv, object);
             h.frames(4);
+            // on the name, left of the quick buttons the hovered row shows
             let sibling = h.row(8101);
-            h.click(sibling.center(), Default::default());
+            h.click(sibling.left_center() + egui::vec2(60.0, 0.0), Default::default());
             assert_eq!(h.st.selected, Some(Uuid::from_u128(8101)), "{width} px");
             assert_eq!(h.st.selection.len(), 1);
             // Ctrl adds the next one.
             let next = h.row(8102);
-            h.click(next.center(), egui::Modifiers::COMMAND);
+            h.click(next.left_center() + egui::vec2(60.0, 0.0), egui::Modifiers::COMMAND);
             assert_eq!(h.st.selection.len(), 2, "{width} px");
             // A double-click opens a notecard.
-            let note = h.row(8103).center();
+            let note = h.row(8103).left_center() + egui::vec2(60.0, 0.0);
             h.actions.clear();
             h.double_click(note);
             assert!(

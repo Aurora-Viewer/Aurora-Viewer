@@ -246,7 +246,16 @@ pub(crate) fn input(
     let navigation = |c: Command| {
         matches!(
             c,
-            Command::Back | Command::Forward | Command::Up | Command::Root | Command::Refresh | Command::EditPath | Command::Search
+            Command::Back
+                | Command::Forward
+                | Command::Up
+                | Command::Root
+                | Command::Refresh
+                | Command::EditPath
+                | Command::Search
+                | Command::Filter
+                | Command::Preview
+                | Command::View(_)
         )
     };
     for command in shortcuts::take(ui, navigation) {
@@ -258,6 +267,9 @@ pub(crate) fn input(
             Command::Refresh => refresh(inv, st, actions),
             Command::EditPath => super::breadcrumb::edit(inv, st),
             Command::Search => st.focus_search = true,
+            Command::Filter => super::filter::open(st),
+            Command::Preview => st.toggle_preview = true,
+            Command::View(view) => st.view_key = Some(view),
             _ => {}
         }
     }

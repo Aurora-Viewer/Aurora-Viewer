@@ -58,7 +58,8 @@ fn details_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferenc
 /// The explorer's views, the Legacy Viewer's "List view", "Gallery view"
 /// and "Combination view" of its single folder mode
 /// (menu_inventory_view_default.xml), and the tiles' sizes.
-fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences) {
+fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences, folder: Uuid) {
+    use super::super::groups::GroupBy;
     use super::super::view::ExplorerView;
     let views = [
         (ExplorerView::List, "list-filled", aurora_i18n::tr!("inventory-view-list")),
@@ -72,8 +73,14 @@ fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences)
             "layout-board-split-filled",
             aurora_i18n::tr!("inventory-view-combination"),
         ),
+        (
+            ExplorerView::Compact,
+            "columns-3-filled",
+            aurora_i18n::tr!("inventory-view-compact"),
+        ),
+        (ExplorerView::Tiles, "layout-cards-filled", aurora_i18n::tr!("inventory-view-tiles")),
     ];
-    let current = prefs.explorer.view;
+    let current = prefs.view_in(folder);
     let icon = views
         .iter()
         .find(|(view, ..)| *view == current)
@@ -82,13 +89,36 @@ fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences)
     menu::dropdown(&button, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         for (view, icon, label) in views {
             if menu::check(ui, p, icon, label, current == view, true) {
-                prefs.explorer.view = view;
+                prefs.set_view_in(folder, view);
+            }
+        }
+        // Dolphin's "Remember display style for each folder"
+        menu::toggle(
+            ui,
+            p,
+            "folder-filled",
+            aurora_i18n::tr!("inventory-view-per-folder"),
+            &mut prefs.view_per_folder,
+        );
+        menu::separator(ui, p);
+        // the Details list's groups (Explorer's Group by)
+        menu::section(ui, p, aurora_i18n::tr!("inventory-group-by"));
+        let details = current == ExplorerView::List;
+        for (by, label) in [
+            (GroupBy::None, aurora_i18n::tr!("inventory-group-none")),
+            (GroupBy::Kind, aurora_i18n::tr!("common-type")),
+            (GroupBy::Date, aurora_i18n::tr!("inventory-column-modified")),
+            (GroupBy::Creator, aurora_i18n::tr!("inventory-column-creator")),
+        ] {
+            if menu::check_keys(ui, p, "", label, details && prefs.explorer.group_by == by, details, "") {
+                prefs.explorer.group_by = by;
             }
         }
         menu::separator(ui, p);
         menu::section(ui, p, aurora_i18n::tr!("inventory-tile-size"));
         let side = super::gallery::side(&prefs.explorer) as u16;
-        let tiles = current != ExplorerView::List;
+        // the pictures' side: the gallery's and the combination view's
+        let tiles = matches!(current, ExplorerView::Gallery | ExplorerView::Combination);
         for (size, label) in [
             (96, aurora_i18n::tr!("inventory-tile-small")),
             (128, aurora_i18n::tr!("inventory-tile-medium")),
@@ -274,20 +304,20 @@ fn sort_menu(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut I
         p,
         "clock-filled",
         aurora_i18n::tr!("ui-inventory-controls-newest-first"),
-        sort.by_date,
+        sort.by_date && sort.column.is_none(),
         true,
     ) {
-        sort.by_date = true;
+        sort.set_by_date(true);
     }
     if menu::check(
         ui,
         p,
         "sort-ascending-letters",
         aurora_i18n::tr!("common-by-name"),
-        !sort.by_date,
+        !sort.by_date && sort.column.is_none(),
         true,
     ) {
-        sort.by_date = false;
+        sort.set_by_date(false);
     }
     menu::toggle(
         ui,
@@ -536,10 +566,10 @@ pub(super) fn explorer_row(
             }
             details_button(ui, p, prefs, layout);
             rights::button(ui, p, &mut prefs.rights, BAR);
-            view_button(ui, p, prefs);
+            view_button(ui, p, prefs, st.browse);
             let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
+                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights, &st.column_fit, layout);
             });
             additional_button(ui, p, st);
             let new = widgets::action_button(ui, p, "plus", new_label, widgets::ActionKind::Primary, Vec2::new(new_w, BAR));
@@ -564,10 +594,10 @@ pub(super) fn explorer_row(
             }
             details_button(ui, p, prefs, layout);
             rights::button(ui, p, &mut prefs.rights, BAR);
-            view_button(ui, p, prefs);
+            view_button(ui, p, prefs, st.browse);
             let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
+                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights, &st.column_fit, layout);
             });
             additional_button(ui, p, st);
             let sort = tool_button(ui, p, "arrows-sort", aurora_i18n::tr!("inventory-sort-menu"), false);
@@ -814,11 +844,24 @@ fn chip(ui: &mut egui::Ui, p: &Palette, text: &str, types: &[i32]) -> bool {
 
 /// The text of the sort order, at the right end of the chips.
 fn sort_text(prefs: &InventoryPreferences, tab: usize) -> String {
+    use super::super::view::SortColumn;
     let sort = prefs.sort_for(tab);
-    let order = if sort.by_date {
-        aurora_i18n::tr!("inventory-sort-date")
+    let order = match sort.column {
+        Some(SortColumn::Kind) => aurora_i18n::tr!("common-type"),
+        Some(SortColumn::Rights) => super::rights::heading(prefs.rights),
+        Some(SortColumn::Description) => aurora_i18n::tr!("inventory-sort-description"),
+        Some(SortColumn::Creator) => aurora_i18n::tr!("inventory-column-creator"),
+        Some(SortColumn::Worn) => aurora_i18n::tr!("common-worn"),
+        Some(SortColumn::Count) => aurora_i18n::tr!("inventory-column-count"),
+        None if sort.by_date => aurora_i18n::tr!("inventory-sort-date"),
+        None => aurora_i18n::tr!("inventory-sort-name"),
+    };
+    let reversed;
+    let order = if sort.descending {
+        reversed = aurora_i18n::tr!("inventory-sort-reversed", order = order);
+        reversed.as_str()
     } else {
-        aurora_i18n::tr!("inventory-sort-name")
+        order
     };
     if sort.system_first {
         aurora_i18n::tr!("inventory-sort-folders-first", order = order)

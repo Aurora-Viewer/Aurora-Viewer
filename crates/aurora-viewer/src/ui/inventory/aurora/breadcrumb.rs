@@ -154,6 +154,38 @@ pub(crate) fn resolve(inv: &Inventory, base: Uuid, text: &str) -> Option<Uuid> {
     }
 }
 
+/// A typed path whose last name is that of several folders side by side
+/// (Second Life allows it): their parent, and that name. Its Enter shows
+/// the parent with the folder filter holding the name (`filter.rs`), the
+/// folders together, instead of going into the first one. Aurora's (a
+/// desktop's paths are unique).
+pub(crate) fn several(inv: &Inventory, base: Uuid, text: &str) -> Option<(Uuid, String)> {
+    let text = text.trim().trim_end_matches(SEPARATOR);
+    let (head, tail) = match text.rfind(SEPARATOR) {
+        Some(at) => (&text[..at], &text[at + 1..]),
+        None => ("", text),
+    };
+    let tail = tail.trim();
+    if tail.is_empty() {
+        return None;
+    }
+    let parent = resolve(
+        inv,
+        base,
+        if head.is_empty() && text.starts_with(SEPARATOR) {
+            "/"
+        } else {
+            head
+        },
+    )?;
+    let same: Vec<String> = subfolders(inv, parent)
+        .into_iter()
+        .map(|(_, name)| name)
+        .filter(|name| name.to_lowercase() == tail.to_lowercase())
+        .collect();
+    (same.len() > 1).then(|| (parent, same[0].clone()))
+}
+
 /// The folders a typed path could go on with: the subfolders of its
 /// complete part whose names start with its last part, as full paths.
 pub(crate) fn completions(inv: &Inventory, base: Uuid, text: &str) -> Vec<(Uuid, String)> {
@@ -426,6 +458,18 @@ fn typing(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi)
         clipboard::request_focus(ui, st);
         return;
     }
+    // several folders of the name: their parent, filtered to it
+    if enter_key
+        && edit.pick.is_none()
+        && let Some((parent, name)) = several(inv, base, &edit.text)
+    {
+        st.path_edit = None;
+        enter(st, parent);
+        st.folder_filter = Some(name);
+        st.folder_filter_at = Some(parent);
+        clipboard::request_focus(ui, st);
+        return;
+    }
     if enter_key {
         let target = match edit.pick.and_then(|n| options.get(n)) {
             Some((id, _)) => Some(*id),
@@ -541,6 +585,26 @@ mod tests {
         assert_eq!(resolve(&inv, root, &format!("{top}/clothing")), Some(clothing));
         // the inventory's own Clothing is still the one without the top
         assert_eq!(resolve(&inv, root, "Clothing"), Some(Uuid::from_u128(2)));
+    }
+
+    #[test]
+    fn a_path_ending_on_several_folders_of_the_name_gives_their_parent() {
+        let (mut inv, root) = tree();
+        let clothing = Uuid::from_u128(2);
+        assert_eq!(several(&inv, root, "~/Clothing/Shirts"), None, "one Shirts: it is gone into");
+        folder(&mut inv, 10, 2, "shirts");
+        assert_eq!(several(&inv, root, "~/Clothing/Shirts"), Some((clothing, "Shirts".into())));
+        assert_eq!(
+            several(&inv, root, "clothing/SHIRTS/"),
+            Some((clothing, "Shirts".into())),
+            "any case, a last /"
+        );
+        assert_eq!(several(&inv, root, "~/Clothing/Shoes"), None);
+        assert_eq!(several(&inv, root, "~/Clothing"), None);
+        assert_eq!(several(&inv, root, "~/Hats/Shirts"), None, "a parent not found");
+        assert_eq!(several(&inv, root, "AC/DC"), None, "a name holding the separator");
+        folder(&mut inv, 11, 1, "Clothing");
+        assert_eq!(several(&inv, root, "Clothing"), Some((root, "Clothing".into())), "at the top too");
     }
 
     #[test]

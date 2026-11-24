@@ -48,6 +48,14 @@ pub(crate) enum Command {
     Purge,
     /// F3, beside the search field's Ctrl+F.
     Search,
+    /// Dolphin's filter bar: it filters the folder shown (Ctrl+Alt+F, not
+    /// Dolphin's Ctrl+I, which is the viewer's Inventory window).
+    Filter,
+    /// Explorer's Alt+P: the details pane shows what the selection holds.
+    Preview,
+    /// Explorer's Ctrl+Shift+1…6: the large, medium and small pictures, the
+    /// Compact view, the Details (the list), the Tiles.
+    View(u8),
     // Named in the menus only: the list keeps these keys fixed and handles
     // them itself (keyboard::open_shortcut, the rename, delete::shortcut,
     // egui's clipboard events).
@@ -78,8 +86,35 @@ impl Command {
             Command::ContextMenu => Action::InvContextMenu,
             Command::Purge => Action::InvPurge,
             Command::Search => Action::InvSearch,
+            Command::Filter => Action::InvFilter,
+            Command::Preview => Action::InvPreview,
+            Command::View(1) => Action::InvViewLarge,
+            Command::View(2) => Action::InvViewMedium,
+            Command::View(3) => Action::InvViewSmall,
+            Command::View(4) => Action::InvViewCompact,
+            Command::View(5) => Action::InvViewDetails,
+            Command::View(_) => Action::InvViewTiles,
             Command::Open | Command::Rename | Command::Delete | Command::Cut | Command::Copy | Command::Paste => return None,
         })
+    }
+
+    /// Whether only the explorer (Aurora's medium and wide window,
+    /// `aurora::explorer`) takes the command: a Legacy-style list or the
+    /// compact Aurora one leaves its keys to the viewer.
+    fn explorer_only(self) -> bool {
+        matches!(
+            self,
+            Command::Back
+                | Command::Forward
+                | Command::Up
+                | Command::Root
+                | Command::EditPath
+                | Command::Search
+                | Command::Filter
+                | Command::Preview
+                | Command::View(_)
+                | Command::ToggleSelection
+        )
     }
 
     /// The fixed key of a command the list keeps (for its menu entry).
@@ -98,7 +133,7 @@ impl Command {
 }
 
 /// Every rebindable command, in the Shortcuts page's order.
-pub(crate) const REBINDABLE: [Command; 14] = [
+pub(crate) const REBINDABLE: [Command; 22] = [
     Command::Back,
     Command::Forward,
     Command::Up,
@@ -106,6 +141,14 @@ pub(crate) const REBINDABLE: [Command; 14] = [
     Command::Refresh,
     Command::EditPath,
     Command::Search,
+    Command::Filter,
+    Command::Preview,
+    Command::View(1),
+    Command::View(2),
+    Command::View(3),
+    Command::View(4),
+    Command::View(5),
+    Command::View(6),
     Command::SelectAll,
     Command::InvertSelection,
     Command::ToggleSelection,
@@ -145,10 +188,13 @@ impl InventoryKeys {
 
     /// Whether a press of the physical key `code` with these modifiers is
     /// one of the list's keys (the viewer's shortcuts leave it to a
-    /// focused list).
-    pub(crate) fn keeps(&self, input: &Input, ctrl: bool, shift: bool, alt: bool) -> bool {
+    /// focused list). Outside the explorer the list takes none of the
+    /// explorer's commands, so their keys stay the viewer's.
+    pub(crate) fn keeps(&self, input: &Input, ctrl: bool, shift: bool, alt: bool, explorer: bool) -> bool {
+        let takes = |a: Action| explorer || !REBINDABLE.iter().any(|c| c.action() == Some(a) && c.explorer_only());
         self.map
             .iter()
+            .filter(|(a, _)| takes(*a))
             .flat_map(|(_, b)| b.iter().flatten())
             .any(|b| &b.input == input && b.ctrl == ctrl && b.shift == shift && b.alt == alt)
     }
@@ -182,8 +228,8 @@ pub(crate) fn get(ctx: &egui::Context) -> InventoryKeys {
 /// Whether a key pressed while an inventory list has the keyboard is one
 /// of the list's (`app::shortcut_claims_focus` and the viewer's dispatch
 /// leave it to the list then).
-pub(crate) fn list_keeps(ctx: &egui::Context, input: &Input, ctrl: bool, shift: bool, alt: bool) -> bool {
-    get(ctx).keeps(input, ctrl, shift, alt)
+pub(crate) fn list_keeps(ctx: &egui::Context, input: &Input, ctrl: bool, shift: bool, alt: bool, explorer: bool) -> bool {
+    get(ctx).keeps(input, ctrl, shift, alt, explorer)
 }
 
 /// The command whose keys an inventory menu entry shows, by the entry's id
@@ -351,19 +397,27 @@ mod tests {
         let keys = defaults();
         let key = |code: KeyCode| Input::key(code);
         // People, the sunset, the Texture Library, OOC chat elsewhere
-        assert!(keys.keeps(&key(KeyCode::KeyA), true, true, false));
-        assert!(keys.keeps(&key(KeyCode::KeyN), true, true, false));
+        assert!(keys.keeps(&key(KeyCode::KeyA), true, true, false, true));
+        assert!(keys.keeps(&key(KeyCode::KeyN), true, true, false, true));
         if !cfg!(target_os = "macos") {
-            assert!(keys.keeps(&key(KeyCode::Space), true, false, false));
-            assert!(keys.keeps(&key(KeyCode::Enter), false, false, true));
+            assert!(keys.keeps(&key(KeyCode::Space), true, false, false, true));
+            assert!(keys.keeps(&key(KeyCode::Enter), false, false, true, true));
         }
         // the viewer's own stay with it
-        assert!(!keys.keeps(&key(KeyCode::KeyT), true, false, false));
-        assert!(!keys.keeps(&key(KeyCode::KeyI), true, true, false));
+        assert!(!keys.keeps(&key(KeyCode::KeyT), true, false, false, true));
+        assert!(!keys.keeps(&key(KeyCode::KeyI), true, true, false, true));
+        // Ctrl+I opens and closes the Inventory window even from the explorer
+        assert!(!keys.keeps(&key(KeyCode::KeyI), true, false, false, true));
+        // outside the explorer the explorer's chords stay the viewer's
+        // (Ctrl+Shift+1 is Performance), its other keys the list's
+        assert!(keys.keeps(&key(KeyCode::Digit1), true, true, false, true) != cfg!(target_os = "macos"));
+        assert!(!keys.keeps(&key(KeyCode::Digit1), true, true, false, false));
+        assert!(!keys.keeps(&key(KeyCode::KeyF), true, false, true, false));
+        assert!(keys.keeps(&key(KeyCode::KeyN), true, true, false, false));
         // a chord the user unbinds goes back to the viewer
         let mut kb = KeyBindings::default();
         kb.set(Action::InvInvertSelection, 0, None);
-        assert!(!InventoryKeys::of(&kb).keeps(&key(KeyCode::KeyA), true, true, false));
+        assert!(!InventoryKeys::of(&kb).keeps(&key(KeyCode::KeyA), true, true, false, true));
     }
 
     #[test]
