@@ -4480,6 +4480,8 @@ fn classic_pane(
     h: f32,
     own_name: &str,
 ) {
+    // the conversation may have changed since the pass began (Ctrl+W, a tab)
+    popout::pickers_follow_view(st);
     let pane = ui.available_rect_before_wrap();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     workspace::drops(ui, p, pane, st, kind, actions);

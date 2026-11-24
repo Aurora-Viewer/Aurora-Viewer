@@ -65,6 +65,60 @@ fn rows_id() -> Id {
     Id::unique("aurora_menu_rows")
 }
 
+/// The layers the rows of a menu drew on, in this pass of the window and
+/// the one before: whatever opened the menu (an egui `Popup` kept in
+/// memory, [`popup_at`]'s bool, a submenu), a press on it is a press in a
+/// menu ([`is_menu_layer`]).
+#[derive(Clone, Default)]
+struct MenuLayers {
+    pass: u64,
+    now: Vec<LayerId>,
+    last: Vec<LayerId>,
+}
+
+fn menu_layers_id(ctx: &egui::Context) -> Id {
+    Id::unique(("aurora_menu_layers", ctx.viewport_id()))
+}
+
+/// A row of a menu drew on its layer. Only the foreground's: a window that
+/// lists its entries with menu rows is not a menu.
+fn note_menu_layer(ui: &Ui) {
+    let layer = ui.layer_id();
+    if layer.order != egui::Order::Foreground {
+        return;
+    }
+    let ctx = ui.ctx();
+    let (id, pass) = (menu_layers_id(ctx), ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
+    ctx.data_mut(|d| {
+        let m = d.get_temp_mut_or_default::<MenuLayers>(id);
+        if m.pass != pass {
+            m.last = if m.pass + 1 == pass {
+                std::mem::take(&mut m.now)
+            } else {
+                Vec::new()
+            };
+            m.now.clear();
+            m.pass = pass;
+        }
+        if !m.now.contains(&layer) {
+            m.now.push(layer);
+        }
+    });
+}
+
+/// `layer` is a menu's, drawn in this pass or the last (where
+/// `Context::layer_id_at` finds it): a picker under it stays open
+/// (`chat::popout::pressed_away`).
+pub(crate) fn is_menu_layer(ctx: &egui::Context, layer: LayerId) -> bool {
+    let (id, pass) = (menu_layers_id(ctx), ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
+    ctx.data(|d| d.get_temp::<MenuLayers>(id))
+        .is_some_and(|m| match pass.checked_sub(m.pass) {
+            Some(0) => m.now.contains(&layer) || m.last.contains(&layer),
+            Some(1) => m.now.contains(&layer),
+            _ => false,
+        })
+}
+
 /// Menu style: the popup and sub-menu frames (`Frame::menu`) are built
 /// from it, so every level gets the panel color and border.
 fn style(p: &Palette) -> egui::style::StyleModifier {
@@ -453,6 +507,7 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
 
 #[allow(clippy::too_many_arguments)]
 fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, end: End, open: bool, sense: Sense) -> egui::Response {
+    note_menu_layer(ui);
     if !filter_row(ui, p, label) {
         return hidden(ui);
     }
