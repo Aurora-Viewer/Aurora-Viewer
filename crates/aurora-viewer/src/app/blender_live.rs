@@ -270,16 +270,23 @@ impl App {
                     self.blender_live.bend.elbows = 90.0;
                     self.blender_live.bend.knees = 60.0;
                 } else {
-                    // the Fit lab's mannequins, in the sleeves, standing or walking:
-                    // the demo's stand-ins for the stock stand and walk, which
-                    // a grid's asset server gives
-                    for (id, anim) in crate::demo::link::animations() {
+                    // the Fit lab's mannequins, in the sleeves: the demo's
+                    // stand-ins for the stock stand, walk and sit on the
+                    // ground, which a grid's asset server gives
+                    let sit = (
+                        crate::world::body::ANIM_SIT_GROUND_CONSTRAINED,
+                        crate::demo::first_person_ground_animation(),
+                    );
+                    for (id, anim) in crate::demo::link::animations().into_iter().chain([sit]) {
                         let bound = crate::scene::anim::BoundAnim::bind(anim, &self.world.avatar_lib.rig);
                         self.scene.anims.insert(id, Arc::new(bound));
                     }
                     self.blender_live.tab = Tab::Avatar;
                     self.blender_live.fit.shown = true;
                     self.blender_live.fit.clip = mode == "fit-lab-clip";
+                    if mode == "fit-lab-sit" {
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Sit;
+                    }
                     if mode == "fit-lab-range" {
                         self.blender_live.fit.motion = crate::world::mannequins::Motion::Range(None);
                     }
