@@ -123,10 +123,9 @@ impl App {
             let (avatars, garments) = self.world.fit_clip_targets(&self.blender_live.objects);
             (avatars.into_iter().collect(), garments.into_iter().collect())
         });
-        // the range of motion's clips, built here, before a mannequin plays one
-        if matches!(self.blender_live.fit.motion, crate::world::mannequins::Motion::Range(_))
-            && !std::mem::replace(&mut self.blender_live.fit.poses_registered, true)
-        {
+        // the Fit lab's own clips (the range of motion, the pelvis anchor),
+        // built here, before a mannequin plays one
+        if self.blender_live.fit.shown && !std::mem::replace(&mut self.blender_live.fit.poses_registered, true) {
             for (id, clip) in crate::world::fit_poses::animations() {
                 let bound = crate::scene::anim::BoundAnim::bind(clip, &self.world.avatar_lib.rig);
                 self.scene.anims.insert(id, Arc::new(bound));
@@ -284,7 +283,7 @@ impl App {
                     self.blender_live.tab = Tab::Avatar;
                     self.blender_live.fit.shown = true;
                     self.blender_live.fit.clip = mode == "fit-lab-clip";
-                    if mode == "fit-lab-sit" {
+                    if mode == "fit-lab-sit" || mode == "fit-lab-sit-stand" {
                         self.blender_live.fit.motion = crate::world::mannequins::Motion::Sit;
                     }
                     if mode == "fit-lab-range" {
@@ -340,6 +339,10 @@ impl App {
                 self.scene.jobs.discard(old);
             }
             self.blender_live.owner = Some(self.world.agent_id);
+        }
+        // `fit-lab-sit-stand`: the mannequins sat on the ground stand up
+        if self.demo && self.frame_count == 520 && std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "fit-lab-sit-stand") {
+            self.blender_live.fit.motion = crate::world::mannequins::Motion::Stand;
         }
         // Quick look and the warnings in front of the windows a demo opens over it
         if self.demo

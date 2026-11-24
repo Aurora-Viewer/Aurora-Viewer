@@ -4143,7 +4143,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns; `far`: an animesh carried far by its animation and one worn far from its point |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-derez-closed\|warnings\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|fit-lab\|fit-lab-walk\|fit-lab-sit\|fit-lab-clip\|fit-lab-range\|fit-lab-pose-<name>\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-derez-closed\|warnings\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|fit-lab\|fit-lab-walk\|fit-lab-sit\|fit-lab-sit-stand\|fit-lab-clip\|fit-lab-range\|fit-lab-pose-<name>\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_LIVE_TAB=place\|avatar\|import\|plugins\|quick-look\|sweep` | Opens the LiveMesh window of the Blender demo on that tab, Quick look, or a card's update sweep |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -4190,7 +4190,8 @@ tab with the Fit lab on: three mannequins (Slim, Curvy, Full figure) stand
 2.2 m in front of the avatar, facing it, each dressed as it is, sleeves
 included, in its own shape; `fit-lab-walk` has them walk in place;
 `fit-lab-sit` sit on the ground (the demo's stand-in for the stock
-sit_ground_constrained, which the grid's asset server gives);
+sit_ground_constrained, which the grid's asset server gives), and
+`fit-lab-sit-stand` stand up again at frame 520, back at their full height;
 `fit-lab-range` has them take the range of motion's poses in turn (arms
 up, reach, arms crossed, squat, kneel, knee raised, twist, bend forward);
 `fit-lab-pose-<name>` holds one of them (`arms-up`, `reach`, `hug`, `squat`,

@@ -248,14 +248,10 @@ impl World {
         self.fit_lab.get(id).map(|m| m.generation)
     }
 
-    /// What a mannequin plays: its stock animation, or ours.
+    /// What a mannequin plays: its stock animation, or ours, over the
+    /// pelvis anchor (`fit_poses::anchor`).
     pub(super) fn mannequin_animations(&self, id: &Uuid) -> Option<&[PlayingAnimation]> {
-        let m = self.fit_lab.get(id)?;
-        Some(if self.fit_lab.motion == Motion::LikeMe {
-            self.animations_of(&self.agent_id)
-        } else {
-            &m.animations
-        })
+        self.fit_lab.get(id).map(|m| m.animations.as_slice())
     }
 
     /// Make the row match `bodies` (in that order) and `motion`, then keep
@@ -300,15 +296,24 @@ impl World {
             self.place_fit_lab(own);
         }
         self.fit_lab.motion = motion;
-        if self.fit_lab.motion_set != Some(motion) {
+        // ours, again each frame while they play what we play
+        if self.fit_lab.motion_set != Some(motion) || motion == Motion::LikeMe {
+            let first = self.fit_lab.motion_set.is_none();
             self.fit_lab.motion_set = Some(motion);
-            let playing: Vec<_> = motion
-                .animation()
-                .map(|id| PlayingAnimation::from_signal(id, 1, now, None))
-                .into_iter()
-                .collect();
+            let anchor = self.fit_lab.mannequins.first().and_then(|m| {
+                m.animations
+                    .iter()
+                    .find(|a| a.id == super::fit_poses::ANCHOR)
+                    .copied()
+                    .filter(|_| !first)
+            });
+            let mut playing: Vec<_> = match motion.animation() {
+                Some(id) => vec![PlayingAnimation::from_signal(id, 1, now, None)],
+                None => self.animations_of(&self.agent_id).to_vec(),
+            };
+            playing.push(anchor.unwrap_or_else(|| PlayingAnimation::from_signal(super::fit_poses::ANCHOR, 1, now, None)));
             for m in &mut self.fit_lab.mannequins {
-                m.animations = playing.clone();
+                m.animations.clone_from(&playing);
             }
         }
         self.shape_mannequins();
@@ -587,7 +592,12 @@ mod tests {
             assert!(o.is_avatar() && o.is_client_preview() && o.parent_id == 0);
             assert_eq!(worn_points(&world, id), vec![2], "the hat, not the HUD");
             assert_eq!(world.appearance_of(id), world.agent_id, "our bakes");
-            assert_eq!(world.animations_of(id).len(), 1, "a stand of its own");
+            let playing: Vec<Uuid> = world.animations_of(id).iter().map(|a| a.id).collect();
+            assert_eq!(
+                playing,
+                vec![crate::own_motion::ANIM_STAND, super::super::fit_poses::ANCHOR],
+                "a stand of its own, over the pelvis anchor"
+            );
         }
         let me = world.agent_id;
         assert_eq!(world.visual_params(&ids[0]), world.visual_params(&me), "Me: our shape");
@@ -598,9 +608,13 @@ mod tests {
         world.shape_preview_generation += 1;
         world.update_fit_lab(&[Body::Me, Body::Slim, Body::Full], Motion::Stand, false, now);
         assert!(world.appearance_generation(&ids[1]) > before + 1);
-        // Like me: they play what we play
+        // Like me: they play what we play, over the anchor that brings the
+        // pelvis back after a sit
         world.update_fit_lab(&[Body::Me, Body::Slim, Body::Full], Motion::LikeMe, false, now);
-        assert_eq!(world.animations_of(&ids[1]), world.animations_of(&me));
+        let ours = world.animations_of(&me).to_vec();
+        let theirs = world.animations_of(&ids[1]);
+        assert_eq!(&theirs[..ours.len()], ours.as_slice());
+        assert_eq!(theirs.last().map(|a| a.id), Some(super::super::fit_poses::ANCHOR));
         // none: they go, with what they wear
         world.update_fit_lab(&[], Motion::Stand, false, now);
         assert!(

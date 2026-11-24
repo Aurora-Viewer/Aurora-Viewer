@@ -27,7 +27,7 @@ pub struct FitLab {
     pub clip: bool,
     /// Bring the row in front of us again (taken by the app).
     pub place: bool,
-    /// The range of motion's clips are in the scene's animations.
+    /// The Fit lab's own clips are in the scene's animations.
     pub poses_registered: bool,
 }
 

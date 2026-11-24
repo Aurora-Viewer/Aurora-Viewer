@@ -187,13 +187,46 @@ pub fn animation_id(pose: Option<Pose>) -> Uuid {
     Uuid::from_u128(0xF17_1AB0_0000_4000_8000_0000_0000_0000 | index as u128)
 }
 
+/// The pelvis at rest, under everything a mannequin plays (`anchor`).
+pub const ANCHOR: Uuid = Uuid::from_u128(0xF17_1AB0_0000_4000_8000_0000_0000_00FF);
+
 /// Every clip, with its id: the scene registers them before a mannequin
 /// plays one.
 pub fn animations() -> Vec<(Uuid, Animation)> {
     std::iter::once(None)
         .chain(Pose::ALL.into_iter().map(Some))
         .map(|pose| (animation_id(pose), animation(pose)))
+        .chain([(ANCHOR, anchor())])
         .collect()
+}
+
+/// The pelvis at its rest, at the lowest priority: a joint an animation
+/// moved stays there once it stops, as in the Legacy Viewer, until another
+/// moves it; a sit or a squat would leave the mannequin on the ground after
+/// it. Any motion that moves the pelvis wins over this one, and once it
+/// eases out the pelvis eases back to its place.
+pub fn anchor() -> Animation {
+    Animation {
+        base_priority: 0,
+        duration: 1.0,
+        emote_name: String::new(),
+        loop_in: 0.0,
+        loop_out: 1.0,
+        looping: true,
+        ends_after: None,
+        ease_in: 0.0,
+        ease_out: 0.0,
+        hand_pose: 0,
+        joints: vec![JointMotion {
+            joint_name: "mPelvis".into(),
+            priority: 0,
+            rot_keys: Vec::new(),
+            pos_keys: vec![PosKey {
+                time: 0.0,
+                position: Vec3::ZERO,
+            }],
+        }],
+    }
 }
 
 /// The joints every pose sets: a joint a pose leaves alone is at rest
@@ -282,7 +315,7 @@ mod tests {
     #[test]
     fn each_pose_and_the_cycle_is_a_looping_clip_of_its_own() {
         let all = animations();
-        assert_eq!(all.len(), Pose::ALL.len() + 1);
+        assert_eq!(all.len(), Pose::ALL.len() + 2);
         let mut ids: Vec<Uuid> = all.iter().map(|(id, _)| *id).collect();
         ids.sort();
         ids.dedup();
