@@ -56,7 +56,9 @@ a failure the two eyes can differ (DLSS in one, FSR in the other) until
 **Try again**. For VR the headset's
 device is opened with what DLSS needs too; if NVIDIA's library cannot add
 that, FSR draws while the headset is in use and Preferences says so. DLSS in
-VR is untested: no headset was available.
+VR was run on Windows by a contributor (Quest 3, Meta's OpenXR runtime
+over Link, 2026-11-24): both eyes drew DLSS, and the window drew it again
+after leaving VR. Not run in VR on Linux.
 After a graphics driver reset (the device lost and opened again), DLSS
 starts again on the new device, with any earlier refusal forgotten; if
 NVIDIA's library refuses it there, FSR draws. Nothing of NVIDIA's is called
@@ -109,8 +111,8 @@ inside an SDK checkout.
 
 DLSS on Windows (64-bit, NVIDIA RTX) works the same way, from a build with
 the `dlss` feature, with NVIDIA's signed Streamline release. Nothing is
-built. **Untested:** the Windows code is type-checked but has never been
-built or run.
+built. Run on Windows by a contributor (RTX 4090, 2026-11-24): DLSS drew
+at each mode and model, through a resize, fullscreen and an overlay.
 
 1. Close the viewer (it holds the DLSS files open while it runs), then run,
    in PowerShell, from the viewer's folder:
