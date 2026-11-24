@@ -63,7 +63,9 @@ impl egui::Plugin for PressLatch {
     }
 
     fn on_begin_pass(&mut self, ui: &mut egui::Ui) {
-        if ui.input(|i| i.pointer.primary_pressed()) {
+        // a right press too, as inventory rows start right-button drags, but
+        // not one made while the left press that dragged is still held
+        if ui.input(|i| i.pointer.primary_pressed() || (i.pointer.secondary_pressed() && !i.pointer.primary_down())) {
             self.dragged = false;
         }
     }
@@ -82,13 +84,20 @@ fn latch(ctx: &egui::Context) -> egui::plugin::TypedPluginHandle<PressLatch> {
 /// Only once per press: a drag cancelled with Escape does not start again
 /// while the button stays down. Every inventory drag source goes through it.
 pub(super) fn begins(ui: &egui::Ui, r: &egui::Response) -> bool {
+    begins_by(ui, r, egui::PointerButton::Primary)
+}
+
+/// [`begins`] for a drag held with `button`: the inventory's own rows also
+/// start one with the right button, whose drop asks what to do
+/// ([`DropMenu`]), under the same threshold.
+fn begins_by(ui: &egui::Ui, r: &egui::Response, button: egui::PointerButton) -> bool {
     let latch = latch(ui.ctx());
     let dragged = latch.lock().dragged;
     let begins = !dragged
         && r.is_pointer_button_down_on()
         && !egui::DragAndDrop::has_any_payload(ui.ctx())
         && ui.input(|i| {
-            i.pointer.primary_down()
+            i.pointer.button_down(button)
                 && !i.key_pressed(egui::Key::Escape)
                 && i.pointer
                     .press_origin()
@@ -111,9 +120,13 @@ pub(super) fn dragged_this_press(ctx: &egui::Context) -> bool {
 
 pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, st: &mut InventoryUi) {
     record_row(ui.ctx(), st.ui_id, id, r.rect);
-    if !begins(ui, r) {
+    let right = if begins(ui, r) {
+        false
+    } else if begins_by(ui, r, egui::PointerButton::Secondary) {
+        true
+    } else {
         return;
-    }
+    };
     // Pressing a selected row must keep a Ctrl/Shift selection until the drag
     // threshold. Starting from another row selects that row alone.
     if !st.selection.contains(&id) {
@@ -123,7 +136,6 @@ pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, 
     }
     st.selected = Some(id);
     super::clipboard::request_focus(ui, st);
-    let right = r.drag_started_by(egui::PointerButton::Secondary);
     ui.ctx().data_mut(|d| d.insert_temp(right_drag_id(), right));
     let ids = st.selected_ids(id);
     if ids.len() > 1 {
@@ -210,7 +222,7 @@ fn right_drag_id() -> egui::Id {
 /// the pickers, the profile…): it holds only while the right button is
 /// down or is being released, and is forgotten otherwise, so a later left
 /// drag from anywhere is never taken for a right one.
-fn right_drag(ctx: &egui::Context) -> bool {
+pub(super) fn right_drag(ctx: &egui::Context) -> bool {
     if !ctx.data(|d| d.get_temp::<bool>(right_drag_id())).unwrap_or(false) {
         return false;
     }
