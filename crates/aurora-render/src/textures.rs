@@ -1610,6 +1610,12 @@ impl TextureTable {
                     false
                 }
             }
+            // a size the page thread could not make, asked again a little
+            // later; with the thread gone meanwhile, the caller makes it now
+            Ask::Wait if !self.worker.alive() && self.requests.failed.contains_key(&key) => {
+                self.requests.failed.remove(&key);
+                false
+            }
             Ask::Wait => true,
             // the driver is slow to allocate it (video memory full): the
             // page thread is still at it, and the main thread would only
@@ -3482,9 +3488,11 @@ mod tests {
 
     /// #4612, #4683: a page the page thread is late with (the driver slow
     /// to allocate it, video memory full) is waited for, never made by the
-    /// main thread, which froze the window on the same allocation; a
-    /// failure the page thread reports refuses the upload for want of video
-    /// memory, again without a page made here.
+    /// main thread, which froze the window on the same allocation; after a
+    /// failure the page thread reports, the upload waits with its texels
+    /// (not refused: nothing to decode again) and the page is asked from the
+    /// page thread again, again without a page made here. A second failure
+    /// within the caller's wait does not push that wait back.
     #[test]
     fn a_late_or_failed_page_is_never_made_by_the_main_thread() {
         let _gpu = crate::test_gpu::lock();
@@ -3537,6 +3545,19 @@ mod tests {
         // only waiting, not refused: nothing to decode again
         assert!(table.store.page_backoff.waiting());
         assert_eq!(table.retry_after_refusal(), None);
+        // another failure while that wait runs: its deadline stays put
+        let deadline = table.store.page_backoff.next_try();
+        table
+            .worker
+            .reply_tx
+            .send(PageReply::Failed {
+                key,
+                layers: 96,
+                error: "out of device memory".into(),
+            })
+            .expect("reply");
+        assert!(!table.prepare_page(slot, chain, 0));
+        assert_eq!(table.store.page_backoff.next_try(), deadline);
         // a little later (video memory free again): the page thread is asked
         // again, makes the page, and the upload goes
         table.requests.failed.insert(key, long_ago);

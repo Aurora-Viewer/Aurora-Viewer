@@ -144,9 +144,12 @@ const EVICT_LOOKS_PER_FRAME: usize = 512;
 /// allocate (video memory full, #4612) would otherwise hold back for that
 /// long the sizes whose pages have room.
 const PAGE_WAITS: usize = 16;
-/// Uploads set aside in a frame at most, whatever their sizes: thousands
-/// may wait for the same page.
-const PAGE_WAITS_MAX: usize = 1024;
+/// Time a frame spends at most setting aside uploads whose page is not
+/// there, from the first one: thousands may wait for the same page, and a
+/// count would stop the frame in front of them (a frame that has uploaded
+/// nothing has no other limit, `UploadBudget::allows`). Several thousand
+/// set aside in that time.
+const PAGE_WAIT_WALK: Duration = Duration::from_millis(1);
 /// Shortest wait before a texture refused by a full video memory is
 /// decoded and sent again (the renderer's own page wait is 2 s to 30 s).
 const MEMORY_RETRY_MIN: Duration = Duration::from_secs(1);
@@ -3500,6 +3503,7 @@ impl TextureStreamer {
         // and their sizes
         let mut waiting: Vec<PendingUpload> = Vec::new();
         let mut waiting_sizes: HashSet<ChainSize> = HashSet::new();
+        let mut walk_started: Option<Instant> = None;
         self.uploads.promote_ready();
         while budget.allows(done, spent, t0.elapsed()) {
             let Some(mut u) = self.uploads.pop(&mut self.trash) else {
@@ -3539,7 +3543,8 @@ impl TextureStreamer {
             {
                 waiting_sizes.insert(chain);
                 waiting.push(u);
-                if waiting_sizes.len() >= PAGE_WAITS || waiting.len() >= PAGE_WAITS_MAX {
+                let walk = *walk_started.get_or_insert_with(Instant::now);
+                if waiting_sizes.len() >= PAGE_WAITS || walk.elapsed() >= PAGE_WAIT_WALK {
                     break;
                 }
                 continue;
