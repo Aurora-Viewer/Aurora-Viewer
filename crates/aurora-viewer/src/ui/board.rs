@@ -354,6 +354,11 @@ impl Nav {
         Nav { id, at, moved }
     }
 
+    /// The row the keyboard is on, or comes to.
+    pub fn at(&self) -> usize {
+        self.at
+    }
+
     /// The keyboard is on the list.
     pub fn focused(&self, ui: &egui::Ui) -> bool {
         ui.memory(|m| m.has_focus(self.id.with(self.at)))
@@ -553,7 +558,14 @@ pub fn is_wide(ctx: &egui::Context, views: &Views, saved: bool, opening: bool) -
     let last = widgets::floater_size(ctx, views.window);
     let measured = last.map(|s| s.x - widgets::floater_chrome(ctx).x >= views.from);
     let placed = ctx.data_mut(|d| d.get_temp::<bool>(egui::Id::unique(views.window).with("restore_size")));
-    if opening && placed != Some(true) && measured.is_some_and(|wide| wide != saved) {
+    // a size kept from before the window had two views is not one of theirs
+    let known = egui::Id::unique(views.window).with("board_views");
+    let first = opening && !ctx.data_mut(|d| d.get_persisted::<bool>(known)).unwrap_or(false);
+    if first {
+        ctx.data_mut(|d| d.insert_persisted(known, true));
+    }
+    let other = measured.is_some_and(|wide| wide != saved);
+    if opening && placed != Some(true) && (other || (first && last.is_some())) {
         widgets::size_floater(ctx, views.window, views.size(ctx, saved));
         return saved;
     }

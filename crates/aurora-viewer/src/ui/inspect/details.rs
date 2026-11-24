@@ -70,8 +70,7 @@ fn cell_text(row: &Row, column: Column) -> String {
 }
 
 /// Rows in the order of the table: the linksets' own, or a sorted column.
-fn sorted(rows: &[Row], sort: Option<(Column, bool)>) -> Vec<&Row> {
-    let mut list: Vec<&Row> = rows.iter().collect();
+fn sorted(mut list: Vec<&Row>, sort: Option<(Column, bool)>) -> Vec<&Row> {
     let Some((column, descending)) = sort else {
         return list;
     };
@@ -126,12 +125,12 @@ pub(super) fn show(
     let width = widgets::header_width(ui, ui.scope_id().with("inspect_rows")) - 26.0;
     let columns = visible(*frame.columns, width);
     header(state, ui, p, &columns, Some(frame.columns));
-    rows(state, ui, p, frame.rows, &columns, true, avatar, actions);
+    rows(state, ui, p, frame.rows.iter().collect(), &columns, true, avatar, actions);
 }
 
 /// The whole table in a grown tile: every chosen column, scrolled sideways
 /// when they do not fit.
-pub(super) fn table(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, list: &[Row], chosen: u32, actions: &mut Vec<Action>) {
+pub(super) fn table(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, list: Vec<&Row>, chosen: u32, actions: &mut Vec<Action>) {
     let columns: Vec<Column> = Column::ALL
         .into_iter()
         .filter(|c| *c == Column::Name || shown(chosen, *c))
@@ -217,13 +216,14 @@ fn rows(
     state: &mut InspectUi,
     ui: &mut egui::Ui,
     p: &Palette,
-    rows: &[Row],
+    rows: Vec<&Row>,
     columns: &[Column],
     opens: bool,
     avatar: bool,
     actions: &mut Vec<Action>,
 ) {
-    let query = state.query.trim().to_lowercase();
+    // (a grown tile's rows are already those the search keeps)
+    let query = if opens { state.query.trim().to_lowercase() } else { String::new() };
     let list: Vec<&Row> = sorted(rows, state.sort)
         .into_iter()
         .filter(|r| query.is_empty() || r.name.to_lowercase().contains(&query) || r.creator_name.to_lowercase().contains(&query))
@@ -236,9 +236,15 @@ fn rows(
             ui.label(RichText::new(aurora_i18n::tr!("inspect-empty")).size(12.0).color(p.muted));
         }
         let radius = ui.visuals().widgets.inactive.corner_radius;
-        for row in list {
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
+        let nav = crate::ui::board::Nav::begin(ui, ("inspect_prims", opens), list.len(), 10);
+        for (i, row) in list.into_iter().enumerate() {
+            let (_, rect) = ui.allocate_space(Vec2::new(ui.available_width(), 24.0));
             let open = opens && state.detail_open == Some(row.id);
+            // what is out of sight is neither drawn nor sensed
+            if !ui.is_rect_visible(rect) && !open && i != nav.at() {
+                continue;
+            }
+            let resp = nav.row(ui, rect, i);
             if ui.is_rect_visible(rect) {
                 if state.selected == Some(row.id) {
                     ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
@@ -383,7 +389,12 @@ mod tests {
     #[test]
     fn rows_keep_their_linkset_order_until_a_column_is_sorted() {
         let rows = [row(1, "Racine", 12), row(2, "bras", 900), row(3, "Anneau", 40)];
-        let names = |sort| sorted(&rows, sort).into_iter().map(|r| r.name.as_str()).collect::<Vec<_>>();
+        let names = |sort| {
+            sorted(rows.iter().collect(), sort)
+                .into_iter()
+                .map(|r| r.name.as_str())
+                .collect::<Vec<_>>()
+        };
         assert_eq!(names(None), ["Racine", "bras", "Anneau"]);
         // names without regard to case, figures as numbers
         assert_eq!(names(Some((Column::Name, false))), ["Anneau", "bras", "Racine"]);

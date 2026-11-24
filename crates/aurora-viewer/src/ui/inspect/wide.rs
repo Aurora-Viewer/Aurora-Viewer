@@ -657,39 +657,35 @@ fn item_list(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &Fram
     let objects = state.subject == Subject::Objects;
     let nav = board::Nav::begin(ui, "inspect_items", view.shown.len(), 10);
     let height = ROW * crate::ui::fonts::scale(ui.ctx()).max(1.0);
-    scroll(ui, "inspect_items", |ui| {
-        for (i, item) in view.shown.iter().enumerate() {
-            let row = view.row(item);
-            let lit = lit(state, item);
-            let (line, resp) = board::row(ui, p, &nav, i, height, lit);
-            if !ui.is_rect_visible(line) {
-                continue;
-            }
-            let y = line.center().y;
-            row_face(state, ui, p, frame, egui::pos2(line.left() + 13.0, y), row);
-            let mut right = value_badge(ui, p, line.right() - 6.0, y, item, row, view.tiers[&item.root], objects) - 8.0;
-            let aside = state.wide.aside.contains(&item.root);
-            let note = if aside {
-                aurora_i18n::tr!("inspect-is-aside").to_owned()
-            } else if objects {
-                String::new()
-            } else {
-                point_label(frame, item.point)
-            };
-            if !note.is_empty() && line.width() > 230.0 {
-                right = text_before(ui, right, y, &note, 92.0, 11.5, if aside { p.warn } else { p.muted }) - 8.0;
-            }
-            if lit != Lit::Off {
-                right = board::check(ui, p, right, y);
-            }
-            let left = line.left() + 28.0;
-            let font = name_font(ui, lit != Lit::Off, 12.5);
-            let ink = if aside { p.muted } else { p.ink };
-            widgets::paint_elided(ui, row.name.trim(), egui::pos2(left, y), (right - left).max(20.0), font, ink);
-            let label = spoken(state, frame, row, item);
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
-            respond(state, resp, item);
+    board::virtual_rows(ui, "inspect_items", view.shown.len(), height, None, &nav, |ui, i, line, _| {
+        let item = view.shown[i];
+        let row = view.row(item);
+        let lit = lit(state, item);
+        let resp = board::row_at(ui, p, &nav, i, line, lit);
+        let y = line.center().y;
+        row_face(state, ui, p, frame, egui::pos2(line.left() + 13.0, y), row);
+        let mut right = value_badge(ui, p, line.right() - 6.0, y, item, row, view.tiers[&item.root], objects) - 8.0;
+        let aside = state.wide.aside.contains(&item.root);
+        let note = if aside {
+            aurora_i18n::tr!("inspect-is-aside").to_owned()
+        } else if objects {
+            String::new()
+        } else {
+            point_label(frame, item.point)
+        };
+        if !note.is_empty() && line.width() > 230.0 {
+            right = text_before(ui, right, y, &note, 92.0, 11.5, if aside { p.warn } else { p.muted }) - 8.0;
         }
+        if lit != Lit::Off {
+            right = board::check(ui, p, right, y);
+        }
+        let left = line.left() + 28.0;
+        let font = name_font(ui, lit != Lit::Off, 12.5);
+        let ink = if aside { p.muted } else { p.ink };
+        widgets::paint_elided(ui, row.name.trim(), egui::pos2(left, y), (right - left).max(20.0), font, ink);
+        let label = spoken(state, frame, row, item);
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
+        respond(state, resp, item);
     });
 }
 
@@ -788,40 +784,36 @@ fn item_table(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &Fra
         });
     }
     let nav = board::Nav::begin(ui, "inspect_item_table", list.len(), 12);
-    scroll(ui, "inspect_item_table", |ui| {
-        for (i, item) in list.iter().enumerate() {
-            let row = view.row(item);
-            let lit = lit(state, item);
-            let (line, resp) = board::row(ui, p, &nav, i, 27.0, lit);
-            if !ui.is_rect_visible(line) {
-                continue;
-            }
-            let cells = board::col_rects(&cols, line);
-            let y = line.center().y;
-            let name = if lit == Lit::Off {
-                cells[0]
-            } else {
-                cells[0].with_max_x(cells[0].right() - 18.0)
-            };
-            board::cell(ui, name, row.name.trim(), p.ink);
-            if lit != Lit::Off {
-                board::check(ui, p, cells[0].right() - 2.0, y);
-            }
-            if objects {
-                let face = Rect::from_center_size(egui::pos2(cells[1].left() + 17.0, y), Vec2::splat(18.0));
-                row_face(state, ui, p, frame, face.center(), row);
-                board::cell(ui, cells[1].with_min_x(face.right()), &row.owner_name, p.ink);
-            } else {
-                board::cell(ui, cells[1], &point_label(frame, item.point), p.muted);
-            }
-            creator_cell(state, ui, p, frame, cells[2], row);
-            value_badge(ui, p, cells[3].right() - 8.0, y, item, row, view.tiers[&item.root], objects);
-            board::figure_cell(ui, cells[4], &aurora_i18n::integer(i64::from(item.triangles)), p.ink);
-            board::figure_cell(ui, cells[5], &megabytes(item.vram), p.ink);
-            let label = spoken(state, frame, row, item);
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
-            respond(state, resp, item);
+    board::virtual_rows(ui, "inspect_item_table", list.len(), 27.0, None, &nav, |ui, i, line, _| {
+        let item = list[i];
+        let row = view.row(item);
+        let lit = lit(state, item);
+        let resp = board::row_at(ui, p, &nav, i, line, lit);
+        let cells = board::col_rects(&cols, line);
+        let y = line.center().y;
+        let name = if lit == Lit::Off {
+            cells[0]
+        } else {
+            cells[0].with_max_x(cells[0].right() - 18.0)
+        };
+        board::cell(ui, name, row.name.trim(), p.ink);
+        if lit != Lit::Off {
+            board::check(ui, p, cells[0].right() - 2.0, y);
         }
+        if objects {
+            let face = Rect::from_center_size(egui::pos2(cells[1].left() + 17.0, y), Vec2::splat(18.0));
+            row_face(state, ui, p, frame, face.center(), row);
+            board::cell(ui, cells[1].with_min_x(face.right()), &row.owner_name, p.ink);
+        } else {
+            board::cell(ui, cells[1], &point_label(frame, item.point), p.muted);
+        }
+        creator_cell(state, ui, p, frame, cells[2], row);
+        value_badge(ui, p, cells[3].right() - 8.0, y, item, row, view.tiers[&item.root], objects);
+        board::figure_cell(ui, cells[4], &aurora_i18n::integer(i64::from(item.triangles)), p.ink);
+        board::figure_cell(ui, cells[5], &megabytes(item.vram), p.ink);
+        let label = spoken(state, frame, row, item);
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
+        respond(state, resp, item);
     });
 }
 
@@ -1033,18 +1025,17 @@ fn land(ui: &mut egui::Ui, p: &Palette, frame: &Frame<'_>, view: &View<'_>, id: 
                 v(b).total_cmp(&v(a))
             });
             let nav = board::Nav::begin(ui, "inspect_land", list.len(), 10);
-            scroll(ui, "inspect_land", |ui| {
-                for (i, item) in list.iter().enumerate() {
-                    let row = view.row(item);
-                    let (line, _) = board::row(ui, p, &nav, i, 27.0, Lit::Off);
-                    let cells = board::col_rects(&cols, line);
-                    board::cell(ui, cells[0], row.name.trim(), p.ink);
-                    board::cell(ui, cells[1], &row.owner_name, p.muted);
-                    let v = row.land_impact;
-                    let text = v.map_or("…".to_owned(), |v| aurora_i18n::integer(v.round() as i64));
-                    board::badge(ui, p, cells[2].right() - 8.0, line.center().y, text, land_weight(v.unwrap_or(0.0)));
-                    board::figure_cell(ui, cells[3], &aurora_i18n::integer(item.prims.len() as i64), p.ink);
-                }
+            board::virtual_rows(ui, "inspect_land", list.len(), 27.0, None, &nav, |ui, i, line, _| {
+                let item = list[i];
+                let row = view.row(item);
+                board::row_at(ui, p, &nav, i, line, Lit::Off);
+                let cells = board::col_rects(&cols, line);
+                board::cell(ui, cells[0], row.name.trim(), p.ink);
+                board::cell(ui, cells[1], &row.owner_name, p.muted);
+                let v = row.land_impact;
+                let text = v.map_or("…".to_owned(), |v| aurora_i18n::integer(v.round() as i64));
+                board::badge(ui, p, cells[2].right() - 8.0, line.center().y, text, land_weight(v.unwrap_or(0.0)));
+                board::figure_cell(ui, cells[3], &aurora_i18n::integer(item.prims.len() as i64), p.ink);
             });
         })
         .0;
@@ -1756,25 +1747,21 @@ fn figures(
                 });
             }
             let nav = board::Nav::begin(ui, "inspect_figure_table", list.len(), 10);
-            scroll(ui, "inspect_figure_table", |ui| {
-                for (i, item) in list.iter().enumerate() {
-                    let row = view.row(item);
-                    let lit = lit(state, item);
-                    let (line, resp) = board::row(ui, p, &nav, i, 27.0, lit);
-                    if !ui.is_rect_visible(line) {
-                        continue;
-                    }
-                    let cells = board::col_rects(&cols, line);
-                    board::cell(ui, cells[0], row.name.trim(), p.ink);
-                    board::figure_cell(ui, cells[1], &n(item.triangles), p.ink);
-                    board::figure_cell(ui, cells[2], &n(item.vertices), p.ink);
-                    board::figure_cell(ui, cells[3], &n(item.faces), p.ink);
-                    board::figure_cell(ui, cells[4], &megabytes(item.vram), p.ink);
-                    board::figure_cell(ui, cells[5], &megabytes(item.texture_memory), p.ink);
-                    let label = spoken(state, frame, row, item);
-                    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
-                    respond(state, resp, item);
-                }
+            board::virtual_rows(ui, "inspect_figure_table", list.len(), 27.0, None, &nav, |ui, i, line, _| {
+                let item = list[i];
+                let row = view.row(item);
+                let lit = lit(state, item);
+                let resp = board::row_at(ui, p, &nav, i, line, lit);
+                let cells = board::col_rects(&cols, line);
+                board::cell(ui, cells[0], row.name.trim(), p.ink);
+                board::figure_cell(ui, cells[1], &n(item.triangles), p.ink);
+                board::figure_cell(ui, cells[2], &n(item.vertices), p.ink);
+                board::figure_cell(ui, cells[3], &n(item.faces), p.ink);
+                board::figure_cell(ui, cells[4], &megabytes(item.vram), p.ink);
+                board::figure_cell(ui, cells[5], &megabytes(item.texture_memory), p.ink);
+                let label = spoken(state, frame, row, item);
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
+                respond(state, resp, item);
             });
         }
     })
@@ -1813,7 +1800,10 @@ fn prims(
     };
     board::tile(ui, p, id, rect, form, Some(head), |ui| match form {
         Form::Small => {
-            let word = aurora_i18n::tr!("inspect-summary-items", count = view.shown.len());
+            let word = match view.open {
+                Some(item) => view.row(item).name.trim().to_owned(),
+                None => aurora_i18n::tr!("inspect-summary-items", count = view.shown.len()),
+            };
             board::figure(ui, p, &n, &word);
         }
         Form::Usual => match view.open {
@@ -1867,15 +1857,11 @@ fn prims(
                 }
             });
             ui.add_space(4.0);
-            let kept: Vec<Row> = match view.open {
-                Some(item) => item.prims.iter().map(|i| view.rows[*i].clone()).collect(),
-                None => view
-                    .shown
-                    .iter()
-                    .flat_map(|i| i.prims.iter().map(|r| view.rows[*r].clone()))
-                    .collect(),
+            let kept: Vec<&Row> = match view.open {
+                Some(item) => item.prims.iter().map(|i| &view.rows[*i]).collect(),
+                None => view.shown.iter().flat_map(|i| i.prims.iter().map(|r| &view.rows[*r])).collect(),
             };
-            details::table(state, ui, p, &kept, *frame.columns, actions);
+            details::table(state, ui, p, kept, *frame.columns, actions);
         }
     })
     .0

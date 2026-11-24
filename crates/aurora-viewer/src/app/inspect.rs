@@ -11,6 +11,10 @@ use aurora_net::build::BuildCmd;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Land impacts asked for in one request, and for one window.
+const COST_BATCH: usize = 64;
+const COST_MOST: usize = 512;
+
 impl App {
     /// "Inspect" of a right-click menu on object `id`: its whole
     /// linkset, as the menu's selection in Firestorm.
@@ -329,31 +333,24 @@ impl App {
             Subject::Avatar(id) => w.objects.index_of_uuid(&id).map_or(Place::World, Place::Worn),
             Subject::Objects => Place::World,
         };
-        let groups: Vec<Group> = self
-            .inspect_ui
-            .roots
-            .iter()
-            .filter_map(|id| Some((*id, w.objects.index_of_uuid(id)?)))
-            .map(|(root, idx)| Group {
-                root,
-                prims: crate::build::family(w, idx)
-                    .into_iter()
-                    .filter(|i| w.objects.get(*i).is_some_and(|o| !o.is_avatar()))
-                    .collect(),
-            })
-            .collect();
-        self.inspect_ui
-            .stage
-            .stage
-            .update(w, &self.scene, &groups, place, ctx, std::time::Instant::now());
+        let group = |root: &Uuid| stage_group(w, root);
+        let now = std::time::Instant::now();
+        let ui = &mut self.inspect_ui;
+        ui.stage.stage.update(w, &self.scene, &ui.roots, group, place, ctx, now);
     }
 
     /// The people here and their complexity, as the world names them.
     fn inspect_people(&mut self) -> Vec<Person> {
         let own = self.world.agent_id;
         let seen = self.seen_avatars();
+        // RLVa `@shownearby`: no list of the people around (as Near me)
+        let alone = self.world.rlva.has("shownearby");
+        let subject = match self.inspect_ui.subject {
+            Subject::Avatar(id) => Some(id),
+            Subject::Objects => None,
+        };
         seen.into_iter()
-            .filter(|s| s.weight > 0)
+            .filter(|s| s.weight > 0 && (!alone || s.id == own || Some(s.id) == subject))
             .map(|s| {
                 self.world.social.want_name(s.id);
                 let shown = self.world.rlva_shows_name(NameScope::World, s.id);
@@ -399,7 +396,7 @@ impl App {
     /// each (GetObjectCost, as LLSelectMgr asks for its selection).
     fn inspect_costs(&mut self) {
         let mut by_region: HashMap<RegionHandle, Vec<Uuid>> = HashMap::new();
-        for id in &self.inspect_ui.roots {
+        for id in self.inspect_ui.roots.iter().take(COST_MOST) {
             let Some(o) = self.world.objects.index_of_uuid(id).and_then(|i| self.world.objects.get(i)) else {
                 continue;
             };
@@ -408,7 +405,9 @@ impl App {
             }
         }
         for (handle, ids) in by_region {
-            self.build.ask_costs(handle, ids);
+            for batch in ids.chunks(COST_BATCH) {
+                self.build.ask_costs(handle, batch.to_vec());
+            }
         }
     }
 
@@ -494,6 +493,16 @@ impl App {
         };
         self.on_ctx_action(crate::ui::context::CtxAction::Zoom(position, Some(id)));
     }
+}
+
+/// An object and its prims, for the 3D views of Inspect and Area Search.
+pub(super) fn stage_group(world: &crate::world::World, root: &Uuid) -> Option<Group> {
+    let idx = world.objects.index_of_uuid(root)?;
+    let prims = crate::build::family(world, idx)
+        .into_iter()
+        .filter(|i| world.objects.get(*i).is_some_and(|o| !o.is_avatar()))
+        .collect();
+    Some(Group { root: *root, prims })
 }
 
 /// The resident who owns a prim as its row names them, and whose profile

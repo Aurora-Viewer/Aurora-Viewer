@@ -54,6 +54,9 @@ pub enum Place {
 /// meshes that arrive).
 const LOOK_AGAIN: Duration = Duration::from_millis(500);
 
+/// Objects shown at most.
+const MOST_OBJECTS: usize = 64;
+
 /// Why there is no 3D view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Absent {
@@ -76,6 +79,8 @@ pub struct Stage {
     /// The groups last asked for: other objects never show the old model.
     groups: Vec<Uuid>,
     model: Option<Arc<StageModel>>,
+    /// Counts the models: what was made for one is not used for the next.
+    serial: u64,
     absent: Absent,
 }
 
@@ -90,6 +95,7 @@ impl Default for Stage {
             looked: None,
             groups: Vec::new(),
             model: None,
+            serial: 0,
             absent: Absent::Loading,
         }
     }
@@ -99,6 +105,11 @@ impl Stage {
     /// The model to draw, or why there is none.
     pub fn model(&self) -> Result<&Arc<StageModel>, Absent> {
         self.model.as_ref().ok_or(self.absent)
+    }
+
+    /// Which model it is.
+    pub fn serial(&self) -> u64 {
+        self.serial
     }
 
     /// Forget everything (the window closed): the model is freed off the
@@ -114,8 +125,19 @@ impl Stage {
         self.absent = Absent::Loading;
     }
 
-    /// Keep the model of `groups` up to date while the window shows it.
-    pub fn update(&mut self, world: &World, scene: &Scene, groups: &[Group], place: Place, ctx: &egui::Context, now: Instant) {
+    /// Keep the model of the objects `roots` up to date while the window shows
+    /// it; `group` tells their prims, asked only when they are looked at.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update(
+        &mut self,
+        world: &World,
+        scene: &Scene,
+        roots: &[Uuid],
+        group: impl Fn(&Uuid) -> Option<Group>,
+        place: Place,
+        ctx: &egui::Context,
+        now: Instant,
+    ) {
         if world.rlva.second_camera_blocked() {
             if self.model.is_some() || self.absent != Absent::Refused {
                 self.clear(scene);
@@ -137,16 +159,18 @@ impl Stage {
             self.asked = None;
             self.key = key;
             self.absent = Absent::Nothing;
+            self.serial += 1;
             if let Some(old) = std::mem::replace(&mut self.model, model.map(Arc::new)) {
                 scene.jobs.discard(old);
             }
         }
-        let roots = || groups.iter().map(|g| g.root);
-        if !self.groups.iter().copied().eq(roots()) {
+        // (more than these would not be told apart)
+        let roots = &roots[..roots.len().min(MOST_OBJECTS)];
+        if self.groups != roots {
             self.clear(scene);
-            self.groups = roots().collect();
+            self.groups = roots.to_vec();
         }
-        if groups.is_empty() {
+        if roots.is_empty() {
             self.absent = Absent::Nothing;
             return;
         }
@@ -156,7 +180,8 @@ impl Stage {
         }
         self.looked = Some(now);
         ctx.request_repaint_after(LOOK_AGAIN);
-        let input = Input::capture(world, scene, groups, place);
+        let groups: Vec<Group> = roots.iter().filter_map(group).collect();
+        let input = Input::capture(world, scene, &groups, place);
         if input.key == self.key {
             return;
         }

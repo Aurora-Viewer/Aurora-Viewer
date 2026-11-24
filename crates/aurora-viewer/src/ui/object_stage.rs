@@ -46,8 +46,8 @@ pub struct StageUi {
     /// The object alone, kept while the view goes back to them all.
     alone: Option<Uuid>,
     /// What the pose and the tones shown were made for.
-    posed: Option<(usize, build_standing::Key, Pose)>,
-    toned: Option<(usize, Showing, Option<Uuid>, Tones)>,
+    posed: Option<(u64, build_standing::Key, Pose)>,
+    toned: Option<(u64, Showing, Option<Uuid>, Tones)>,
     over: Option<Uuid>,
     looked: f64,
 }
@@ -194,7 +194,7 @@ impl StageUi {
     }
 
     fn pose(&mut self, model: &Arc<StageModel>, standing: crate::object_stage::Standing) -> Pose {
-        let (at, key) = (Arc::as_ptr(model) as usize, build_standing::key(standing));
+        let (at, key) = (self.stage.serial(), build_standing::key(standing));
         if let Some((m, k, pose)) = &self.posed
             && (*m, *k) == (at, key)
         {
@@ -208,7 +208,7 @@ impl StageUi {
     /// The prim outlined in the world takes the accent; pointing at an object
     /// dims the others.
     fn tones(&mut self, p: &Palette, model: &Arc<StageModel>, showing: Showing) -> Tones {
-        let at = Arc::as_ptr(model) as usize;
+        let at = self.stage.serial();
         let pointed = showing.pointed.or(self.over).filter(|_| showing.alone.is_none());
         if let Some((m, s, o, tones)) = &self.toned
             && (*m, *s, *o) == (at, showing, pointed)

@@ -2,7 +2,7 @@
 //! FSAreaSearch::findObjects / processRequestQueue / requestObjectProperties
 //! (indra/newview/fsareasearch.cpp). Avatars are excluded; attachments are opt-in.
 use super::*;
-use crate::object_stage::{Group, Place};
+use crate::object_stage::Place;
 use crate::ui::area_search::{Action, Env, Facts, MenuLocks, Row};
 use crate::world::objects::{ObjKey, Object, ObjectStore};
 use aurora_net::build::{BuildCmd, ObjectProps};
@@ -410,24 +410,10 @@ impl App {
     /// Keep the 3D view of the wide window up to date with the selection.
     fn area_search_stage(&mut self, ctx: &egui::Context, now: Instant) {
         let w = &self.world;
-        let groups: Vec<Group> = self
-            .area_search_ui
-            .staged()
-            .iter()
-            .filter_map(|id| Some((*id, w.objects.index_of_uuid(id)?)))
-            .map(|(id, idx)| Group {
-                root: id,
-                // a linked prim listed by itself shows alone
-                prims: crate::build::family(w, idx)
-                    .into_iter()
-                    .filter(|i| w.objects.get(*i).is_some_and(|o| !o.is_avatar()))
-                    .collect(),
-            })
-            .collect();
-        self.area_search_ui
-            .stage
-            .stage
-            .update(w, &self.scene, &groups, Place::World, ctx, now);
+        let group = |root: &Uuid| super::inspect::stage_group(w, root);
+        let ui = &mut self.area_search_ui;
+        let roots = ui.staged().to_vec();
+        ui.stage.stage.update(w, &self.scene, &roots, group, Place::World, ctx, now);
     }
 
     /// Figures of the one selected object, for its card.

@@ -350,11 +350,15 @@ pub(super) fn details(
             ui.spacing_mut().item_spacing.x = gap;
             let arrow = 26.0;
             let width = ((ui.available_width() - arrow - 2.0 * gap) / 2.0).floor();
-            let owner_button = if row.group_owned() {
-                Some(Action::Group(row.owner_id))
-            } else {
-                (!row.names_hidden && !row.owner_id.is_nil()).then_some(Action::Profile(row.owner_id))
-            };
+            // (under `@shownames` the owner is a stand-in, a group too)
+            let known = !row.names_hidden && !row.owner_id.is_nil();
+            let owner_button = known.then(|| {
+                if row.group_owned() {
+                    Action::Group(row.owner_id)
+                } else {
+                    Action::Profile(row.owner_id)
+                }
+            });
             let (who, group, hidden) = (row.owner_id, row.group_owned(), row.names_hidden);
             let title = aurora_i18n::tr!("inspect-owned-by");
             if person(

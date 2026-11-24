@@ -564,6 +564,11 @@ fn area_search_card_opens_profiles_but_not_under_shownames() {
     h.settle();
     let at = h.find(aurora_i18n::tr!("inspect-owned-by")).center();
     assert!(matches!(h.click_at(at).1, Some(Action::Group(id)) if id == Uuid::from_u128(0xAA)));
+    for row in &mut h.ui.table.rows {
+        row.names_hidden = true;
+    }
+    h.settle();
+    assert!(h.click_at(at).1.is_none(), "a hidden group stays closed");
 }
 
 #[test]
