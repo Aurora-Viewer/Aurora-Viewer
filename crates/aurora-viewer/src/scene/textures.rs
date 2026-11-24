@@ -1703,11 +1703,16 @@ impl TextureStreamer {
     /// channel of flat alpha 250-254 or 255 is still classed opaque for the
     /// render passes, `has_alpha`.
     ///
-    /// The built-in transparent textures are never downloaded: the Legacy
-    /// Viewer preloads `transparent.j2c` as RGBA
+    /// The built-in transparent textures are never downloaded, so they report
+    /// an alpha channel before any loaded check. The Legacy Viewer preloads
+    /// `transparent.j2c` as RGBA and the alpha ramp as `GL_ALPHA8`
     /// (`LLViewerTextureList::doPreloadImages`, llviewertexturelist.cpp), so
     /// getImageFormat (llpanelface.cpp) reports an alpha channel, the combo
-    /// is offered and a new material defaults to Alpha blending.
+    /// is offered and a new material defaults to Alpha blending. The
+    /// invisible bake is not preloaded there (IMG_INVISIBLE is a dataserver
+    /// asset, whose alpha comes from the downloaded image); here it is
+    /// drawn with the transparent slot and never fetched, so it reports the
+    /// alpha of the texture it is drawn with.
     pub fn has_alpha_channel(&self, id: &Uuid) -> Option<bool> {
         if is_builtin_transparent(id) {
             return Some(true);

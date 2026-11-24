@@ -4283,7 +4283,9 @@ draw it are built again (`TextureStreamer::give_slots`,
 invisible bake and the water-exclusion ramp are never downloaded;
 `TextureStreamer::has_alpha_channel` still reports an alpha channel for
 them, so the build tools offer Alpha mode (Alpha blending by default) the
-way `LLPanelFace` does for the preloaded `transparent.j2c` (#2826).
+way `LLPanelFace` does for the preloaded `transparent.j2c` and alpha ramp;
+the invisible bake, a downloaded asset in the Legacy Viewer, is drawn here
+with the transparent slot and reports its alpha (#2826).
 
 Alpha coverage restoration (`aurora-render/src/textures.rs`) only increases
 the box-filtered mip alpha. A texture may be shared by faces with different
