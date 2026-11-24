@@ -49,6 +49,8 @@ mod save_to_contents_tests;
 pub mod script_queue;
 #[cfg(test)]
 mod selection_tests;
+#[cfg(test)]
+mod shape_capture_tests;
 pub mod shapes;
 pub mod silhouette;
 #[cfg(test)]
@@ -236,8 +238,11 @@ pub struct BuildSettings {
     /// RenderReflectionProbeVolumes: off at each start (Persist=0).
     #[serde(skip)]
     pub show_probe_volumes: bool,
-    /// Create tool: shape (index in `shapes::SHAPES`).
+    /// Create tool: shape (`shapes::captured_index` says how it counts).
     pub create_shape: usize,
+    /// The shapes captured from prims by the Aurora Create window's picker,
+    /// after the tree and the grass (`BuildTool::capture_shape`).
+    pub captured_shapes: Vec<shapes::CapturedShape>,
     /// CreateToolKeepSelected.
     pub keep_tool: bool,
     /// The Aurora Create window shows its options under the shapes (the
@@ -400,6 +405,32 @@ impl BuildSettings {
             self.gizmo_scale.clamp(*GIZMO_SCALE_RANGE.start(), *GIZMO_SCALE_RANGE.end())
         } else {
             1.0
+        }
+    }
+
+    /// The prim the Create tool rezzes, None for a tree or grass: its
+    /// shape, its placement rotation and its own size (a captured shape's;
+    /// the others take `new_prim_size`).
+    pub fn create_volume(&self) -> Option<(aurora_prim::RawShape, Quat, Option<Vec3>)> {
+        let all = shapes::shapes();
+        if let Some(sh) = all.get(self.create_shape) {
+            return Some((sh.raw(), sh.rotation(), None));
+        }
+        let captured = self.captured_shapes.get(shapes::captured_index(self.create_shape)?)?;
+        Some((captured.shape, Quat::IDENTITY, Some(Vec3::from_array(captured.scale))))
+    }
+
+    /// Removes the captured shape `k`; the choice follows its shape, or
+    /// goes back to the cube when it was that one.
+    pub fn remove_captured(&mut self, k: usize) {
+        if k >= self.captured_shapes.len() {
+            return;
+        }
+        self.captured_shapes.remove(k);
+        match shapes::captured_index(self.create_shape) {
+            Some(chosen) if chosen == k => self.create_shape = 0,
+            Some(chosen) if chosen > k => self.create_shape -= 1,
+            _ => {}
         }
     }
 
@@ -815,6 +846,7 @@ impl Default for BuildSettings {
             create_shape: 0,
             keep_tool: false,
             create_options_shown: true,
+            captured_shapes: Vec::new(),
             rez_under_land_group: true,
             new_prim_size: [0.5; 3],
             new_prim_material: 3,
@@ -1056,6 +1088,10 @@ pub struct BuildTool {
     /// Objects created / duplicated with FLAGS_CREATE_SELECTED: select them
     /// when they arrive (LLViewerObjectList). (Sent at, objects already flagged.)
     pending_create: Option<(Instant, HashSet<Uuid>)>,
+    /// The Create window's picker is armed: the next world click captures
+    /// the shape of the prim under it (`capture_shape`); Escape, the
+    /// window closed or the picker's button again put it down.
+    pub shape_capture: bool,
     /// Prims the Create tool asked for whose new objects' look is still to
     /// be given (new_defaults.rs).
     new_defaults_pending: u32,
@@ -1136,6 +1172,7 @@ impl Default for BuildTool {
             land: land::LandTool::default(),
             silhouettes: silhouette::Cache::default(),
             pending_create: None,
+            shape_capture: false,
             new_defaults_pending: 0,
             rect: None,
             press: None,
@@ -1460,6 +1497,7 @@ impl BuildTool {
             self.status = aurora_i18n::tr!("replace-waiting-server").into();
             return;
         }
+        self.shape_capture = false;
         self.cancel_replacement(world);
         self.cancel_color_picker(world);
         self.commit_color_edit();
@@ -2869,13 +2907,15 @@ impl BuildTool {
             };
             (pcode, aurora_prim::RawShape::default(), glam::Quat::IDENTITY, state, scale, 0)
         } else {
-            let sh = &shapes::shapes()[s.create_shape.min(n - 1)];
+            let Some((shape, rotation, own_size)) = s.create_volume() else {
+                return;
+            };
             (
                 aurora_prim::params::LL_PCODE_VOLUME,
-                sh.raw(),
-                sh.rotation(),
+                shape,
+                rotation,
                 0,
-                world.prim_limits().clamp3(Vec3::from_array(s.new_prim_size)),
+                world.prim_limits().clamp3(own_size.unwrap_or(Vec3::from_array(s.new_prim_size))),
                 FLAGS_CREATE_SELECTED,
             )
         };
@@ -2908,6 +2948,55 @@ impl BuildTool {
             self.set_tool(Tool::Edit);
             self.edit_mode = EditMode::Move;
         }
+    }
+
+    /// The Create window's picker: the shape of the prim `idx` clicked
+    /// becomes a shape of its own, chosen (Aurora's own, human request
+    /// 2026-11-24). The Legacy Viewer's rule for copying a prim's shape,
+    /// LLPanelObject::onCopyParams and its button's state in
+    /// LLPanelObject::getState: a prim we may modify, not a mesh. Stricter:
+    /// no sculpted prim either (ObjectAdd carries no sculpt map), and not
+    /// while RLVa forbids editing it (RlvActions::canEdit). False when
+    /// refused, with the reason in `status`.
+    pub fn capture_shape(&mut self, world: &World, s: &mut BuildSettings, idx: usize) -> bool {
+        let Some(o) = world.objects.get(idx) else { return false };
+        let refused = if o.pcode != aurora_prim::params::LL_PCODE_VOLUME {
+            Some(aurora_i18n::tr!("build-capture-shape-not-a-prim"))
+        } else if o.volume.sculpt.is_some() {
+            Some(aurora_i18n::tr!("build-capture-shape-mesh-or-sculpt"))
+        } else if !self.can_modify(world, idx) || !world.rlva_can_edit(idx) {
+            Some(aurora_i18n::tr!("build-capture-shape-no-modify"))
+        } else {
+            None
+        };
+        if let Some(reason) = refused {
+            self.status = reason.into();
+            return false;
+        }
+        let mut volume = o.volume;
+        // a flexible prim's path is a line once rezzed without its flexible
+        // parameters (LLPanelObject::onPasteParams' rule)
+        if volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE {
+            volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        }
+        let captured = shapes::CapturedShape {
+            shape: volume.to_raw(),
+            scale: o.scale.to_array(),
+        };
+        let k = match s.captured_shapes.iter().position(|c| *c == captured) {
+            Some(k) => k,
+            None if s.captured_shapes.len() >= shapes::MAX_CAPTURED => {
+                self.status = aurora_i18n::tr!("build-capture-shape-full").into();
+                return false;
+            }
+            None => {
+                s.captured_shapes.push(captured);
+                s.captured_shapes.len() - 1
+            }
+        };
+        s.create_shape = shapes::shapes().len() + 2 + k;
+        s.copy_selection = false;
+        true
     }
 
     /// "Copy selection": ObjectDuplicateOnRay of the selected roots
@@ -3002,7 +3091,8 @@ impl BuildTool {
             && !self.replacement_active()
             && !self.ui.color_picker.pipette
             && !s.copy_selection
-            && s.create_shape < shapes::shapes().len()
+            && !self.shape_capture
+            && s.create_volume().is_some()
             && !over_ui
             && !(mods.shift || mods.ctrl || mods.alt)
     }

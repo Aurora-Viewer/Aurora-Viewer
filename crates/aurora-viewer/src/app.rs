@@ -8504,6 +8504,24 @@ impl App {
     /// Left press while building: handles, selection, create, terraform.
     /// Run by `click`; false also when it stopped to ask for the depth under
     /// the cursor (`ClickWait::waiting`), to run again when it has come.
+    /// The Create window's shape picker's click: the prim under it gives its
+    /// shape, which becomes the chosen shape and makes Create the tool in
+    /// use (`BuildTool::capture_shape`). Nothing yet while the depth under
+    /// the cursor is asked for (the press is run again with it).
+    fn capture_shape_pick(&mut self) {
+        let picked = self.menu_pick();
+        if picked.is_none() && self.clicks.waiting() {
+            return;
+        }
+        self.build.shape_capture = false;
+        if let Some((Some(idx), _)) = picked
+            && self.build.capture_shape(&self.world, &mut self.settings.build, idx)
+        {
+            self.build.activate(crate::build::Tool::Create);
+            self.settings.save();
+        }
+    }
+
     fn build_mouse_down(&mut self) -> bool {
         if self.texture_pipette() {
             self.left_down = true;
@@ -8538,6 +8556,11 @@ impl App {
         if self.particle_editor.picking {
             self.left_down = true;
             self.particle_target_pick();
+            return true;
+        }
+        if self.build.capturing_shape() {
+            self.left_down = true;
+            self.capture_shape_pick();
             return true;
         }
         // Object view takes the camera tool even while Build is open, as
@@ -13779,7 +13802,11 @@ impl App {
             full.platform_output.cursor_icon = cursor;
             full.platform_output.cursor_image = self.cursors.inventory_drag(cursor);
         }
-        if (self.color_pipette() || self.texture_pipette() || self.report_abuse.picking || self.particle_editor.picking)
+        if (self.color_pipette()
+            || self.texture_pipette()
+            || self.report_abuse.picking
+            || self.particle_editor.picking
+            || self.build.capturing_shape())
             && !ctx.is_pointer_over_egui()
         {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;

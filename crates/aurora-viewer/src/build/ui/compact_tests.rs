@@ -4300,6 +4300,68 @@ fn click_at(inspector: &mut Inspector, pos: egui::Pos2) {
     inspector.show(vec![]);
 }
 
+/// The Create window's shape picker (human request, 2026-11-24): its
+/// button arms and puts it down without taking the tool in use, a shape
+/// clicked puts it down, and the shapes captured follow the grass, chosen
+/// by a click and removed from their right-click menu.
+#[test]
+fn the_shape_picker_arms_alone_and_the_captured_shapes_are_chosen_and_removed() {
+    use crate::build::shapes::{CapturedShape, shapes};
+    let mut inspector = Inspector::new();
+    inspector.settings.captured_shapes = vec![CapturedShape {
+        shape: shapes()[10].raw(),
+        scale: [1.0; 3],
+    }];
+    inspector.tool.open_build(Tool::Create);
+    inspector.tool.activate(Tool::Edit);
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let rect = |inspector: &Inspector, key: &str| inspector.ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(key))).expect(key);
+    let grid = rect(&inspector, "build-create-shapes");
+    let capture = rect(&inspector, "build-create-capture");
+    let cell = (grid.width() - 24.0) / 5.0;
+    assert!(
+        (grid.height() - (cell * 4.0 + 18.0)).abs() < 0.5,
+        "a fourth row for the captured shape and the picker"
+    );
+    assert!(grid.expand(0.5).contains_rect(capture), "{grid:?} {capture:?}");
+    click_at(&mut inspector, capture.center());
+    assert!(inspector.tool.capturing_shape(), "armed");
+    assert_eq!(inspector.tool.tool, Tool::Edit, "the picker leaves Edit in use");
+    click_at(&mut inspector, capture.center());
+    assert!(!inspector.tool.shape_capture, "the button again puts it down");
+    click_at(&mut inspector, capture.center());
+    click_at(&mut inspector, grid.left_top() + vec2(10.0, 10.0));
+    assert!(!inspector.tool.shape_capture, "a shape clicked puts it down");
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    // the captured shape, first of the fourth row
+    let captured = grid.left_top() + vec2(cell * 0.5, (cell + 6.0) * 3.0 + cell * 0.5);
+    click_at(&mut inspector, captured);
+    assert_eq!(inspector.settings.create_shape, shapes().len() + 2);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    inspector.show(vec![egui::Event::PointerMoved(captured)]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: captured,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    let remove = aurora_i18n::tr!("build-capture-shape-remove");
+    let item = inspector
+        .show(vec![])
+        .1
+        .into_iter()
+        .find(|(text, _)| text == remove)
+        .expect("the captured shape's menu")
+        .1;
+    click_at(&mut inspector, item.center());
+    assert!(inspector.settings.captured_shapes.is_empty());
+    assert_eq!(inspector.settings.create_shape, 0, "its removal chooses the cube");
+}
+
 /// The Aurora style's tools in windows of their own (human request,
 /// 2026-11-24): the rail's Create button opens its window beside the main
 /// one, which keeps its section; a press picks the tool in use; the button

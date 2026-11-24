@@ -2,7 +2,7 @@
 //! shape on rayon; pointer motion only updates one GPU placement record.
 //! Uses the loading shader's own HOLOGRAM mode, independently of Rez::enabled.
 
-use crate::build::{BuildSettings, shapes};
+use crate::build::BuildSettings;
 use crate::world::World;
 use aurora_render::{DrawCmd, DrawLists, DrawRecord, MeshAlloc, Renderer, rez_mode};
 use crossbeam_channel::{Receiver, TryRecvError};
@@ -12,7 +12,8 @@ use std::time::Instant;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Placement {
-    shape: usize,
+    /// The shape's geometry, prepared once (`shape_key`).
+    shape: aurora_prim::RawShape,
     position: Vec3,
     rotation: Quat,
     scale: Vec3,
@@ -32,13 +33,14 @@ impl Placement {
             return None;
         }
         crate::build::BuildTool::region_at(world, point)?;
-        let shape = shapes::shapes().into_iter().nth(settings.create_shape)?;
-        let scale = world.prim_limits().clamp3(Vec3::from_array(settings.new_prim_size));
-        let rotation = shape.rotation();
+        let (shape, rotation, own_size) = settings.create_volume()?;
+        let scale = world
+            .prim_limits()
+            .clamp3(own_size.unwrap_or(Vec3::from_array(settings.new_prim_size)));
         let axes = glam::Mat3::from_quat(rotation);
         let half_height = Vec3::new(axes.x_axis.z, axes.y_axis.z, axes.z_axis.z).abs().dot(scale) * 0.5;
         Some(Self {
-            shape: settings.create_shape,
+            shape,
             position: point + Vec3::Z * half_height,
             rotation,
             scale,
@@ -61,6 +63,25 @@ impl Placement {
 
 type Prepared = Vec<super::jobs::FaceGeom>;
 
+/// The key of a shape's prepared geometry: its quantized fields, the same
+/// for every choice that rezzes the same shape (a captured one included).
+fn shape_key(shape: &aurora_prim::RawShape) -> [u32; 6] {
+    let s = shape;
+    [
+        u32::from_le_bytes([s.path_curve, s.profile_curve, s.path_scale_x, s.path_scale_y]),
+        u32::from_le_bytes([s.path_shear_x, s.path_shear_y, s.path_twist as u8, s.path_twist_begin as u8]),
+        u32::from_le_bytes([
+            s.path_radius_offset as u8,
+            s.path_taper_x as u8,
+            s.path_taper_y as u8,
+            s.path_revolutions,
+        ]),
+        u32::from(s.path_skew as u8) | u32::from(s.profile_hollow) << 8,
+        u32::from(s.path_begin) | u32::from(s.path_end) << 16,
+        u32::from(s.profile_begin) | u32::from(s.profile_end) << 16,
+    ]
+}
+
 enum Geometry {
     Pending(Receiver<Prepared>),
     Ready(Vec<MeshAlloc>),
@@ -68,10 +89,10 @@ enum Geometry {
 
 #[derive(Default)]
 pub struct CreationPreview {
-    shapes: HashMap<usize, Geometry>,
+    shapes: HashMap<[u32; 6], Geometry>,
     record: Option<u32>,
     start: Option<u32>,
-    active: Option<usize>,
+    active: Option<[u32; 6]>,
     pub candidates: Vec<usize>,
 }
 
@@ -83,8 +104,9 @@ impl CreationPreview {
             return;
         };
         let start = *self.start.get_or_insert_with(|| renderer.anim_clock().ms(Instant::now()));
-        let geometry = self.shapes.entry(placement.shape).or_insert_with(|| {
-            let params = shapes::shapes()[placement.shape].params();
+        let key = shape_key(&placement.shape);
+        let geometry = self.shapes.entry(key).or_insert_with(|| {
+            let params = placement.shape.to_params();
             let (send, receive) = crossbeam_channel::bounded(1);
             rayon::spawn(move || {
                 let mesh = aurora_prim::generate_volume(&params, aurora_prim::volume::DETAIL_SCALES[2]);
@@ -121,7 +143,7 @@ impl CreationPreview {
         } else {
             self.record = Some(renderer.records.alloc(record));
         }
-        self.active = Some(placement.shape);
+        self.active = Some(key);
     }
 
     pub fn append(&self, lists: &mut DrawLists) {
@@ -158,6 +180,7 @@ impl CreationPreview {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::build::shapes;
     use std::sync::Arc;
 
     #[test]
@@ -238,5 +261,27 @@ mod tests {
             Placement::new(&world, &settings, point).is_none(),
             "Plants have no primitive hologram"
         );
+        // a captured shape: its own shape and size, upright
+        let torus = shapes::shapes()[10].raw();
+        let captured = BuildSettings {
+            create_shape: shapes::shapes().len() + 2,
+            captured_shapes: vec![shapes::CapturedShape {
+                shape: torus,
+                scale: [0.5, 1.5, 2.5],
+            }],
+            new_prim_size: [1.0; 3],
+            ..settings.clone()
+        };
+        let placement = Placement::new(&world, &captured, point).expect("valid demo surface");
+        assert_eq!(placement.shape, torus);
+        assert_eq!(placement.rotation, Quat::IDENTITY);
+        assert_eq!(placement.scale, Vec3::new(0.5, 1.5, 2.5));
+        assert!((placement.position.z - (point.z + 1.25)).abs() < 1e-4);
+        assert_ne!(shape_key(&torus), shape_key(&shapes::shapes()[0].raw()));
+        let gone = BuildSettings {
+            create_shape: shapes::shapes().len() + 3,
+            ..captured
+        };
+        assert!(Placement::new(&world, &gone, point).is_none(), "a captured shape no longer there");
     }
 }

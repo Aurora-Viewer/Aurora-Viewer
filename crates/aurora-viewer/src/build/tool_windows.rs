@@ -19,6 +19,11 @@ impl BuildTool {
     }
 
     /// The tool windows shown, in the order they opened.
+    /// The Create window's shape picker waits for a world click.
+    pub fn capturing_shape(&self) -> bool {
+        self.shape_capture && self.open && !self.ui.legacy() && self.tool_windows.contains(&Tool::Create)
+    }
+
     pub fn tool_windows(&self) -> &[Tool] {
         &self.tool_windows
     }
@@ -67,6 +72,9 @@ impl BuildTool {
     /// (LLFloaterTools::onClose).
     pub fn close_tool_window(&mut self, tool: Tool, world: &mut World, s: &mut BuildSettings) {
         self.tool_windows.retain(|t| *t != tool);
+        if tool == Tool::Create {
+            self.shape_capture = false;
+        }
         if !self.main_open && self.tool_windows.is_empty() {
             self.close_all(world, s);
         } else if self.tool == tool {

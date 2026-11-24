@@ -100,12 +100,22 @@ pub fn grab_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: Mo
 /// which the caret at the bottom shows or hides as the Legacy style's
 /// window does its lower part (kept in the build settings; the window
 /// follows, tool_floaters.rs).
-/// The Aurora Create panel, `active` while Create is the tool in use. A
-/// shape clicked gives whether it was the shape already chosen.
-pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, active: bool) -> Option<bool> {
+/// What a click in the Create panel's grid asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateClick {
+    /// A shape, `again` when it was the one already chosen.
+    Shape { again: bool },
+    /// The shape picker's button (Aurora window only).
+    Capture,
+}
+
+/// The Aurora Create panel, `active` while Create is the tool in use, with
+/// the shapes captured from prims and the picker's button (lit while it
+/// waits for a world click, `capturing`).
+pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, active: bool, capturing: bool) -> Option<CreateClick> {
     ui.vertical(|ui| {
         let cell = Vec2::splat((ui.available_width() - 24.0) / 5.0);
-        let picked = create_shapes(ui, p, s, cell, active);
+        let picked = create_shapes(ui, p, s, cell, active, Some(capturing));
         if s.create_options_shown {
             ui.add_space(12.0);
             create_options(ui, p, s);
@@ -146,7 +156,7 @@ pub(super) fn create_legacy_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildS
         "legacy-create-shapes",
     );
     let cell = Vec2::splat((shapes.available_width() - 24.0) / 5.0);
-    create_shapes(&mut shapes, p, s, cell, true);
+    create_shapes(&mut shapes, p, s, cell, true, None);
     let mut options = super::legacy::pane(
         ui,
         egui::Rect::from_min_max(egui::pos2(middle + 5.0, rect.top()), rect.max),
@@ -157,13 +167,26 @@ pub(super) fn create_legacy_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildS
 
 /// The shape grid. The chosen shape is lit in the accent while Create is
 /// the tool in use (`active`), on a dimmer accent otherwise (human request,
-/// 2026-11-24). A shape clicked gives whether it was the one chosen.
-fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Vec2, active: bool) -> Option<bool> {
+/// 2026-11-24). With `captured` (the Aurora window: whether the picker is
+/// armed), the shapes captured from prims follow the grass, then the
+/// picker's button; a right click removes a captured shape.
+fn create_shapes(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut BuildSettings,
+    cell: Vec2,
+    active: bool,
+    captured: Option<bool>,
+) -> Option<CreateClick> {
     // Five cells a row, placed from this frame's cell size: an egui::Grid
     // keeps its last frame's column widths, and a window narrowed around it
     // was held at its old width (the Create window, 2026-11-24).
     const GAP: f32 = 6.0;
-    let count = shapes().len() + 2;
+    let fixed = shapes().len() + 2;
+    let count = match captured {
+        Some(_) => fixed + s.captured_shapes.len() + 1,
+        None => fixed,
+    };
     let rows = count.div_ceil(5);
     let (block, _) = ui.allocate_exact_size(
         Vec2::new(cell.x * 5.0 + GAP * 4.0, cell.y * rows as f32 + GAP * (rows - 1) as f32),
@@ -172,10 +195,19 @@ fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Ve
     #[cfg(test)]
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("build-create-shapes"), block));
     let mut picked = None;
+    let mut removed = None;
     for i in 0..count {
-        let sel = s.create_shape == i && !s.copy_selection;
         let at = block.min + Vec2::new((i % 5) as f32 * (cell.x + GAP), (i / 5) as f32 * (cell.y + GAP));
         let rect = egui::Rect::from_min_size(at, cell);
+        if let Some(armed) = captured
+            && i == count - 1
+        {
+            if capture_button(ui, p, s, rect, armed) {
+                picked = Some(CreateClick::Capture);
+            }
+            continue;
+        }
+        let sel = s.create_shape == i && !s.copy_selection;
         let resp = ui.interact(rect, ui.make_persistent_id(("create_shape", i)), egui::Sense::click());
         let fill = if sel && active {
             p.violet
@@ -193,29 +225,84 @@ fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Ve
         }
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
         let col = if sel && active { p.on_accent } else { p.ink };
-        let name = match i {
+        let name: String = match i {
             i if i < shapes().len() => {
                 let sh = &shapes()[i];
                 super::shape_preview::paint(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
-                sh.name
+                sh.name.to_owned()
             }
             i if i == shapes().len() => {
                 super::shape_preview::paint_plant(ui, rect.shrink(3.0), true, col);
-                aurora_i18n::tr!("build-ui-tools-tree")
+                aurora_i18n::tr!("build-ui-tools-tree").to_owned()
             }
-            _ => {
+            i if i == shapes().len() + 1 => {
                 super::shape_preview::paint_plant(ui, rect.shrink(3.0), false, col);
-                aurora_i18n::tr!("build-ui-tools-grass")
+                aurora_i18n::tr!("build-ui-tools-grass").to_owned()
+            }
+            i => {
+                let k = i - fixed;
+                let params = s.captured_shapes[k].shape.to_params();
+                super::shape_preview::paint(ui, rect.shrink(3.0), &params, glam::Quat::IDENTITY, col);
+                crate::ui::menu::context_menu(&resp, p, |ui| {
+                    if crate::ui::menu::item(ui, p, "trash-filled", aurora_i18n::tr!("build-capture-shape-remove")) {
+                        removed = Some(k);
+                    }
+                });
+                let kind = super::object::types()[super::object::ui_from_volume(&params).ty].0;
+                aurora_i18n::tr!("build-capture-shape-tooltip", kind = kind)
             }
         };
         if resp.on_hover_text(name).clicked() {
             // LLFloaterTools::setObjectType also unticks "Copy selection"
             s.create_shape = i;
             s.copy_selection = false;
-            picked = Some(sel);
+            picked = Some(CreateClick::Shape { again: sel });
         }
     }
+    if let Some(k) = removed {
+        s.remove_captured(k);
+    }
     picked
+}
+
+/// The shape picker's cell: lit while it waits for a world click, greyed
+/// once `shapes::MAX_CAPTURED` shapes are kept. True when clicked.
+fn capture_button(ui: &mut egui::Ui, p: &Palette, s: &BuildSettings, rect: egui::Rect, armed: bool) -> bool {
+    let full = s.captured_shapes.len() >= crate::build::shapes::MAX_CAPTURED;
+    let sense = if full && !armed {
+        egui::Sense::hover()
+    } else {
+        egui::Sense::click()
+    };
+    let resp = ui.interact(rect, ui.make_persistent_id("create_shape_capture"), sense);
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("build-create-capture"), rect));
+    let fill = if armed {
+        p.violet
+    } else if resp.hovered() && !full {
+        p.raised
+    } else {
+        p.field
+    };
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    let ink = if armed {
+        p.on_accent
+    } else if full {
+        p.muted_dim
+    } else {
+        p.ink
+    };
+    let glyph = egui::Rect::from_center_size(rect.center(), Vec2::splat((rect.width() * 0.45).min(22.0)));
+    super::compact::glyph(ui, glyph, "color-picker", ink);
+    let tip = if armed {
+        aurora_i18n::tr!("build-capture-shape-armed")
+    } else if full {
+        aurora_i18n::tr!("build-capture-shape-full")
+    } else {
+        aurora_i18n::tr!("build-capture-shape-button")
+    };
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !full || armed, tip));
+    resp.on_hover_text(tip).clicked()
 }
 
 fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {

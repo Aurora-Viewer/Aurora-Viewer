@@ -88,7 +88,7 @@ pub(super) fn actions(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
     });
 }
 
-fn glyph(ui: &egui::Ui, rect: egui::Rect, name: &str, color: egui::Color32) {
+pub(super) fn glyph(ui: &egui::Ui, rect: egui::Rect, name: &str, color: egui::Color32) {
     if let Some(t) = icons::global(name) {
         ui.painter().image(
             t.id(),
@@ -803,9 +803,18 @@ pub(super) fn tool_panel(
             // chosen, clicked while in use, ends it (human requests,
             // 2026-11-24)
             let active = tool.tool == Tool::Create;
-            match tools::create_panel(ui, p, s, active) {
-                Some(true) if active => tool.deactivate_create(),
-                Some(_) => tool.activate(Tool::Create),
+            if tool.shape_capture && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                tool.shape_capture = false;
+            }
+            match tools::create_panel(ui, p, s, active, tool.capturing_shape()) {
+                Some(tools::CreateClick::Shape { again: true }) if active => tool.deactivate_create(),
+                Some(tools::CreateClick::Shape { .. }) => {
+                    tool.shape_capture = false;
+                    tool.activate(Tool::Create);
+                }
+                // the picker's button arms or puts down the picker; the tool
+                // in use stays (a shape captured makes Create in use)
+                Some(tools::CreateClick::Capture) => tool.shape_capture = !tool.shape_capture,
                 None => {}
             }
         }
