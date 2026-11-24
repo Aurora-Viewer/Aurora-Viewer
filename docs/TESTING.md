@@ -10096,6 +10096,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Button widths tighten when needed, with unchanged icon sizes and the
   avatar still available for row clicks. The
   details action before More opens the resident sheet.
+  Pax stands 153.4 m away (`AURORA_DEMO_PEOPLE_FILTER=Pax`), and the
+  `crowd`'s Lumens reach 125.4 m (`AURORA_DEMO_PEOPLE_FILTER=Lumen`): the
+  range column widens to the widest range of the list, so every range
+  keeps its gap from the badges, the age and the arrival time (#4594).
   `legacy`: the same
   residents in Firestorm's table, for this run only (the preference is
   not changed). Capture `crowd` at frame 900 or later: the profiles
