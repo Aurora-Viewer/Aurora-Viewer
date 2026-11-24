@@ -1238,6 +1238,9 @@ mod tests {
                     kind: crate::world::ChatKind::Im,
                     source: BOB,
                     origin: crate::world::Origin::Live,
+                    blocked: false,
+                    beyond_range: false,
+                    speaker: Default::default(),
                 },
             );
             kit.main_open = true;
