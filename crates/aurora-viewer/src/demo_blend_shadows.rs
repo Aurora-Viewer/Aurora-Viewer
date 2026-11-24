@@ -7,6 +7,12 @@
 //!   0.03, then 0.95; a texture at alpha 0.75 everywhere. As in the Legacy
 //!   Viewer, the shadows are: the frame alone, solid; the frame alone,
 //!   dithered; dithered; none; solid; dithered.
+//! - `behind`: two upright panes 8 m along the start view, the left one
+//!   blended at face alpha 0.95, the right one opaque, each before an
+//!   opaque slab lying 2.2 m up whose shadow lies on the ground behind the
+//!   pane. With ray-traced shadows and the contact shadows, the blended
+//!   pane is lit as the opaque one is: it must not show the slab's shadow
+//!   seen through it.
 //! - `dense`: 400 greenhouse panes over a 60 m square ahead, for the cost of
 //!   the blended casters (AURORA_PROFILE, AURORA_BLEND_SHADOWS=0 to compare).
 //!
@@ -30,12 +36,14 @@ const TEX_ALPHA_75: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Row,
+    Behind,
     Dense,
 }
 
 fn mode() -> Option<Mode> {
     match std::env::var("AURORA_DEMO_BLEND_SHADOWS").ok()?.trim() {
         "1" => Some(Mode::Row),
+        "behind" => Some(Mode::Behind),
         "dense" => Some(Mode::Dense),
         _ => None,
     }
@@ -90,6 +98,14 @@ pub fn events() -> Vec<NetEvent> {
                 // (right of the view: clear of the first-launch windows)
                 let p = eye + look * 14.0 - across * (4.0 + (k as f32 - 2.5) * 2.4);
                 objects.push(panel(FIRST_ID + k as u32, above(p, 1.3), flat, texture, alpha));
+            }
+        }
+        Mode::Behind => {
+            for (k, alpha) in [0.95, 1.0].into_iter().enumerate() {
+                let side = across * (1.3 - 2.6 * k as f32);
+                let id = FIRST_ID + 2 * k as u32;
+                objects.push(panel(id, above(eye + look * 8.0 + side, 1.0), upright, BLANK_TEXTURE, alpha));
+                objects.push(panel(id + 1, above(eye + look * 9.6 + side, 2.2), flat, BLANK_TEXTURE, 1.0));
             }
         }
         Mode::Dense => {

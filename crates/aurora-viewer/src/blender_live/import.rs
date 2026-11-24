@@ -152,6 +152,7 @@ pub fn decode(bytes: &[u8], expected: Request, supported: &HashSet<String>) -> R
             revision: 1,
             meshes: vec![level.mesh],
             images: reply.images.clone(),
+            warnings: Vec::new(),
         };
         prepared.push(protocol::prepare_snapshot(snapshot, supported, None, &Default::default())?);
     }

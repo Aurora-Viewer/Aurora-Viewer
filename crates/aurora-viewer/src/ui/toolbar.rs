@@ -407,6 +407,7 @@ pub struct ToolbarUi {
     /// the app).
     pub flash_nearby: bool,
     pub conversations_menu: Option<crate::ui::chat::ButtonMenu>,
+    pub has_open_ims: bool,
     /// The look the bars are drawn in (given by the app): the islands' dock
     /// or Firestorm's bars.
     pub islands: bool,
@@ -514,7 +515,7 @@ impl ToolbarUi {
             // out of its flash
             if button.is_some_and(|b| b.command == "conversations") {
                 menu::separator(ui, p);
-                if let Some(choice) = crate::ui::chat::button_menu(ui, p, self.flash_nearby) {
+                if let Some(choice) = crate::ui::chat::button_menu(ui, p, self.flash_nearby, self.has_open_ims) {
                     self.conversations_menu = Some(choice);
                 }
             }
