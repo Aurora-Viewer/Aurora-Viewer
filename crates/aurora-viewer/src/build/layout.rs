@@ -583,6 +583,19 @@ pub struct Options {
     /// Absent from notecards exported before it existed: off.
     #[serde(default)]
     pub wheel_on_hover: bool,
+    /// Absent from notecards exported before they existed: add or take out
+    /// the object, the default.
+    #[serde(default)]
+    pub shift_click: crate::build::face_buttons::ModifierClick,
+    #[serde(default)]
+    pub ctrl_click: crate::build::face_buttons::ModifierClick,
+    #[serde(default)]
+    pub ctrl_right_click: crate::build::CtrlRightClick,
+    #[serde(default = "double_click_linked_default")]
+    pub double_click_linked: bool,
+}
+fn double_click_linked_default() -> bool {
+    true
 }
 fn surrounding_default() -> bool {
     true
@@ -633,6 +646,10 @@ impl Profile {
                 land_group: s.rez_under_land_group,
                 follow_edit: s.follow_edit_object,
                 wheel_on_hover: s.wheel_on_hover,
+                shift_click: s.shift_click,
+                ctrl_click: s.ctrl_click,
+                ctrl_right_click: s.ctrl_right_click,
+                double_click_linked: s.double_click_linked,
             },
             ruler: Ruler {
                 grid_unit: s.grid_resolution,
@@ -707,6 +724,10 @@ impl Profile {
         s.rez_under_land_group = self.options.land_group;
         s.follow_edit_object = self.options.follow_edit;
         s.wheel_on_hover = self.options.wheel_on_hover;
+        s.shift_click = self.options.shift_click;
+        s.ctrl_click = self.options.ctrl_click;
+        s.ctrl_right_click = self.options.ctrl_right_click;
+        s.double_click_linked = self.options.double_click_linked;
         s.grid_resolution = self.ruler.grid_unit;
         s.grid_draw_size = self.ruler.grid_draw;
         s.decimal_precision = self.ruler.precision;

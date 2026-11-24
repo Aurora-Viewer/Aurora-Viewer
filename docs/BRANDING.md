@@ -126,8 +126,9 @@ dragging a handle switch to `violet_light`, like any selection.
   (`ui/loading.rs`): the last view, blurred, fills the whole screen, the
   name of the region is written large at the bottom left with what is known
   about it (maturity rating, arrival point, residents present) and the
-  current step; at the bottom right, the tile of the region on the world map
-  with the arrival point, and the progress in figures; the progress itself
+  current step; at the bottom right, the region's picture on the world map
+  (every 256 m cell of a var region, in the region's shape) with the
+  arrival point, and the progress in figures; the progress itself
   is a luminous hairline with the brand gradient along the whole bottom
   edge. The brand (wolf and name) stays discreet at the top left.
 - **Discreet rounding.** Flat design, almost square corners. Buttons:

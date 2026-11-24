@@ -24,7 +24,8 @@
 //!
 //! The closest probes get the cube slots; one cube face is captured per frame,
 //! the probe needing it most first (never captured by distance, then the
-//! best `update_score`).
+//! best `update_score`). Once every probe kept has its capture, the refresh
+//! is paced in time instead ([`REFRESH_FACES_PER_SEC`]).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -76,6 +77,14 @@ const EDGE_EASE: f32 = 0.5;
 /// How fast the edge of the field comes in at most (m/s).
 const EDGE_IN_SPEED: f32 = 16.0;
 const DEFAULT_PERIOD: Duration = Duration::from_secs(2);
+/// Cube faces captured per second at most once every probe kept has its
+/// capture (`next_capture`). The Legacy Viewer captures a face every frame
+/// (doProbeUpdate), as Aurora did: the refresh cost a face and its filtering
+/// (about 0.5 ms on the GPU) every frame, more often as the frame rate rose,
+/// for a scene that most of the time gives the same capture again. 60 faces
+/// a second refresh 10 probes a second, twice the Legacy Viewer's at 60 fps
+/// (12 frames a probe, its irradiance and radiance passes).
+const REFRESH_FACES_PER_SEC: f32 = 60.0;
 const SCAN_PERIOD: Duration = Duration::from_millis(500);
 /// The candidate scan visits every object of the scene and of the world: it
 /// is spread over this many frames (in one frame it made a slow frame every
@@ -165,6 +174,9 @@ pub struct ProbeManager {
     default_complete: bool,
     default_last: Option<Instant>,
     updating: Option<Updating>,
+    /// Faces the paced refresh may capture now, up to 1
+    /// ([`REFRESH_FACES_PER_SEC`]).
+    refresh_budget: f32,
     last_scan: Option<Instant>,
     pass: Option<ScanPass>,
     last_frame: Option<Instant>,
@@ -190,6 +202,7 @@ impl Default for ProbeManager {
             default_complete: false,
             default_last: None,
             updating: None,
+            refresh_budget: 0.0,
             last_scan: None,
             pass: None,
             last_frame: None,
@@ -418,7 +431,7 @@ impl ProbeManager {
         let full = (keep > 0 && live.len() > keep).then(|| self.probes[live[keep - 1]].distance);
         let edge = eased_edge(self.edge, full.map_or(self.range, |f| f.min(self.range)), dt);
         self.edge = Some(edge);
-        let capture = self.next_capture(&order, eye, now);
+        let capture = self.next_capture(&order, eye, now, dt);
         // probe list for the shaders, closest first (refSphere order)
         let mut list = Vec::with_capacity(self.slots as usize);
         list.push(ProbeGpu {
@@ -461,11 +474,40 @@ impl ProbeManager {
     /// Pick the probe face to render (LLReflectionMapManager::update /
     /// doProbeUpdate): finish the probe in progress, else the default probe
     /// when due, else the first by `capture_order`.
-    fn next_capture(&mut self, order: &[Key], eye: Vec3, now: Instant) -> Option<ProbeCapture> {
+    ///
+    /// A face every frame while a probe kept waits for its first capture
+    /// (arrival, teleport, a probe coming into the slots, a settings change:
+    /// `refresh`), as in the Legacy Viewer; once they all have one, the
+    /// refresh goes at [`REFRESH_FACES_PER_SEC`] (`dt`: time since the last
+    /// frame). A difference with the Legacy Viewer: a still scene gives the
+    /// same captures, a change shows in the probes later than at a high
+    /// frame rate, sooner than the Legacy Viewer's at 60 fps.
+    fn next_capture(&mut self, order: &[Key], eye: Vec3, now: Instant, dt: f32) -> Option<ProbeCapture> {
+        // (a probe fading out past the slots is not drawn again)
+        let keep = self.slots.saturating_sub(1) as usize;
+        let live = |k: &Key| self.probes.get(k).filter(|p| p.slot.is_some() && p.retired.is_none());
+        let waiting = !self.default_complete
+            || self.default_last.is_none()
+            || order
+                .iter()
+                .take(keep)
+                .filter_map(live)
+                .any(|p| !p.complete || p.last_update.is_none());
+        self.refresh_budget = (self.refresh_budget + dt * REFRESH_FACES_PER_SEC).min(1.0);
+        if !waiting && self.refresh_budget < 1.0 {
+            return None;
+        }
+        let capture = self.next_face(order, keep, eye, now);
+        if !waiting && capture.is_some() {
+            self.refresh_budget -= 1.0;
+        }
+        capture
+    }
+
+    /// The next face of the probe in progress, or of the next probe due.
+    fn next_face(&mut self, order: &[Key], keep: usize, eye: Vec3, now: Instant) -> Option<ProbeCapture> {
         if self.updating.is_none() {
             let default_due = !self.default_complete || self.default_last.is_none_or(|t| now.duration_since(t) >= DEFAULT_PERIOD);
-            // (a probe fading out past the slots is not drawn again)
-            let keep = self.slots.saturating_sub(1) as usize;
             let candidate = order
                 .iter()
                 .take(keep)
@@ -844,6 +886,85 @@ mod tests {
 
     fn cell_key(x: i32) -> Key {
         Key::Cell(0, IVec3::new(x, 0, 0))
+    }
+
+    /// Faces captured over `frames` frames of `dt` seconds.
+    fn faces_over(m: &mut ProbeManager, order: &[Key], start: Instant, frames: u32, dt: f32) -> u32 {
+        (1..=frames)
+            .filter(|&i| {
+                let now = start + Duration::from_secs_f32(i as f32 * dt);
+                m.next_capture(order, Vec3::ZERO, now, dt).is_some()
+            })
+            .count() as u32
+    }
+
+    #[test]
+    fn a_new_probe_is_captured_a_face_every_frame() {
+        let start = Instant::now();
+        let mut m = ProbeManager::default();
+        let mut p = cell_probe(Vec3::ZERO, 10.0, false);
+        p.slot = Some(1);
+        m.probes.insert(cell_key(0), p);
+        let order = [cell_key(0)];
+        // the default probe's six faces, then the new probe's six, at 240 fps
+        assert_eq!(faces_over(&mut m, &order, start, 12, 1.0 / 240.0), 12);
+        assert!(m.default_complete && m.probes[&cell_key(0)].complete);
+    }
+
+    #[test]
+    fn captured_probes_are_refreshed_at_the_paced_rate() {
+        let start = Instant::now();
+        let mut m = ProbeManager {
+            default_complete: true,
+            default_last: Some(start),
+            ..Default::default()
+        };
+        for x in 0..4 {
+            let mut p = cell_probe(Vec3::new(x as f32 * 16.0, 0.0, 0.0), 8.0, true);
+            p.slot = Some(1 + x as u32);
+            p.last_update = Some(start);
+            m.probes.insert(cell_key(x), p);
+        }
+        let order: Vec<Key> = (0..4).map(cell_key).collect();
+        // one second at 240 fps: 60 faces, not 240
+        let faces = faces_over(&mut m, &order, start, 240, 1.0 / 240.0);
+        assert!((59..=60).contains(&faces), "{faces}");
+        // under 60 fps the pacing changes nothing: a face every frame
+        let later = start + Duration::from_secs(1);
+        assert_eq!(faces_over(&mut m, &order, later, 30, 1.0 / 30.0), 30);
+    }
+
+    #[test]
+    fn a_probe_waiting_for_its_capture_lifts_the_pacing() {
+        let start = Instant::now();
+        let mut m = ProbeManager {
+            default_complete: true,
+            default_last: Some(start),
+            ..Default::default()
+        };
+        let mut done = cell_probe(Vec3::ZERO, 8.0, true);
+        done.last_update = Some(start);
+        m.probes.insert(cell_key(0), done);
+        let mut order = vec![cell_key(0)];
+        let dt = 1.0 / 240.0;
+        assert!(faces_over(&mut m, &order, start, 8, dt) <= 2);
+        // a probe comes into the slots: every frame again, the face in
+        // progress then the new probe's six
+        let mut new = cell_probe(Vec3::new(16.0, 0.0, 0.0), 8.0, false);
+        new.slot = Some(2);
+        m.probes.insert(cell_key(1), new);
+        order.push(cell_key(1));
+        let later = start + Duration::from_secs(1);
+        assert_eq!(faces_over(&mut m, &order, later, 6, dt), 6);
+        let mut more = 0;
+        while !m.probes[&cell_key(1)].complete {
+            more += 1;
+            assert!(m.next_capture(&order, Vec3::ZERO, later, dt).is_some(), "face {more} paced");
+            assert!(more <= 6);
+        }
+        // and `refresh` draws them all again at full speed
+        m.refresh();
+        assert_eq!(faces_over(&mut m, &order, later, 18, dt), 18);
     }
 
     #[test]

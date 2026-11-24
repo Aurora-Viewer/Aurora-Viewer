@@ -578,8 +578,19 @@ impl Object {
             rotation: self.angular_rotation * self.rotation,
             velocity,
             acceleration,
-            angular_velocity: self.angular_velocity,
+            angular_velocity: self.spin(),
         }
+    }
+
+    /// The angular velocity the object turns with between updates. An
+    /// avatar does not turn by it: LLVOAvatar::idleUpdate (llvoavatar.cpp,
+    /// originally LGPL 2.1) puts back the rotation of another avatar after
+    /// LLViewerObject::idleUpdate, "leave out the angular update part", and
+    /// our own avatar's facing comes from the agent. OpenSim leaves the yaw
+    /// rate of its flying roll in an avatar's updates after it lands
+    /// (ScenePresence.m_AngularVelocity), which spun the avatar for good.
+    fn spin(&self) -> Vec3 {
+        if self.is_avatar() { Vec3::ZERO } else { self.angular_velocity }
     }
 
     /// LLVOVolume::isAttachment: a prim worn by an avatar (trees, grass and
@@ -605,7 +616,7 @@ impl Object {
     /// acceleration or spin).
     pub fn extrapolates(&self) -> bool {
         let (velocity, acceleration) = self.linear_motion();
-        velocity != Vec3::ZERO || acceleration != Vec3::ZERO || self.angular_velocity != Vec3::ZERO
+        velocity != Vec3::ZERO || acceleration != Vec3::ZERO || self.spin() != Vec3::ZERO
     }
 
     /// Whether `predicted` changes from a frame to the next: a reported
@@ -1084,7 +1095,7 @@ impl ObjectStore {
                     (target.0, target.1, o.scale),
                     k,
                     visible,
-                    o.angular_velocity != Vec3::ZERO,
+                    o.spin() != Vec3::ZERO,
                     o.parent_id != 0,
                 )
             };
@@ -3113,6 +3124,29 @@ mod tests {
         assert!(!s.get(ground).expect("prim").is_attachment());
         s.advance_motion(1, 2.0);
         near(s.predicted(s.get(ground).expect("prim"), now).0, Vec3::X * 0.2 + Vec3::Y);
+    }
+
+    #[test]
+    fn an_avatar_does_not_turn_by_its_reported_angular_velocity() {
+        // OpenSim keeps the yaw rate of its flying roll in an avatar's
+        // updates after it lands: the avatar faces its reported rotation,
+        // as LLVOAvatar::idleUpdate keeps it, and only a prim spins
+        let now = Instant::now();
+        let mut s = ObjectStore::default();
+        let mut avatar = update(1, AVATAR, "");
+        avatar.rotation = Quat::from_rotation_z(0.3);
+        avatar.angular_velocity = Vec3::Z * 0.8;
+        let idx = s.upsert(1, avatar);
+        let o = s.get(idx).expect("avatar");
+        assert!(o.is_avatar());
+        assert!(!o.has_motion());
+        s.advance_motion(1, 5.0);
+        let (_, rotation) = s.predicted(s.get(idx).expect("avatar"), now);
+        assert!(rotation.abs_diff_eq(Quat::from_rotation_z(0.3), 1e-5), "{rotation:?}");
+        let mut prim = update(2, PRIM, "");
+        prim.angular_velocity = Vec3::Z * 0.8;
+        let idx = s.upsert(1, prim);
+        assert!(s.get(idx).expect("prim").has_motion());
     }
 
     #[test]
