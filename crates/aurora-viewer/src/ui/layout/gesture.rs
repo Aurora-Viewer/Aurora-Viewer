@@ -40,6 +40,9 @@ pub(super) struct Move {
     began: f64,
     /// Alt was held during this drag: the window left its group.
     detached: bool,
+    /// Parked members of the group (closed, `layout::park`), where they
+    /// stood when the drag began: they follow it.
+    parked: Vec<(u64, Rect)>,
 }
 
 /// A window resized by an edge, from one frame to the next.
@@ -128,9 +131,14 @@ impl Windows {
         let find = |id: u64| open.iter().find(|s| s.id.value() == id).copied();
         // glued windows are open, expanded and still side by side: closing
         // or minimizing one, or pulling an edge away, frees it
+        // a parked window is away on purpose: its links wait for it
+        let parked = &self.parked;
         self.links.retain(|(a, b)| match (find(*a), find(*b)) {
             (Some(a), Some(b)) => !a.minimized && !b.minimized && snap::touching(a.rect, b.rect),
-            _ => false,
+            (first, second) => [(*a, first), (*b, second)].iter().all(|(id, shown)| match shown {
+                Some(shown) => !shown.minimized,
+                None => parked.contains(id),
+            }),
         });
         if pointer.dragged.is_none() {
             self.refresh_anchors(room);
@@ -139,9 +147,12 @@ impl Windows {
         if self.live.moved.is_none()
             && let Some(window) = open.iter().find(|s| pointer.dragged == Some(move_id(s.id)))
         {
-            let start = snap::group(&self.links, window.id.value())
-                .into_iter()
-                .filter_map(|id| find(id).map(|s| (id, s.rect)))
+            let members = snap::group(&self.links, window.id.value());
+            let start = members.iter().filter_map(|id| find(*id).map(|s| (*id, s.rect))).collect();
+            let parked = members
+                .iter()
+                .filter(|id| find(**id).is_none() && self.parked.contains(*id))
+                .filter_map(|id| self.placed.get(id).map(|placed| (*id, placed.rect)))
                 .collect();
             self.live.moved = Some(Move {
                 start,
@@ -149,6 +160,7 @@ impl Windows {
                 snap: Snap::default(),
                 began: pointer.time,
                 detached: false,
+                parked,
             });
         }
         let mut moved = self.live.moved.take()?;
@@ -164,6 +176,7 @@ impl Windows {
             self.links.retain(|(a, b)| *a != window && *b != window);
             self.live.reanchor.extend(moved.start.iter().map(|(id, _)| *id));
             moved.start.truncate(1);
+            moved.parked.clear();
         }
         let in_group = |id: u64| moved.start.iter().any(|(member, _)| *member == id);
 
@@ -172,6 +185,15 @@ impl Windows {
             // egui leaves the windows where the last frame had them, and the
             // snap shown then is the one applied
             let snap = if snap_enabled && pointer.alt { moved.snap } else { Snap::default() };
+            // the parked members land where the group did
+            let travel = shown.rect.min - start.min + snap.shift();
+            for (id, rect) in &moved.parked {
+                let landed = rect.translate(travel);
+                self.parked_moves.insert(*id, landed.min);
+                if let Some(placed) = self.placed.get_mut(id) {
+                    placed.rect = landed;
+                }
+            }
             if snap.is_none() {
                 return None;
             }

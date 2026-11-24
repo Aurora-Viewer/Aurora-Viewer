@@ -72,6 +72,17 @@ impl Fixture {
                     false,
                 ));
             }
+            actions.extend(mini::show(
+                ui.ctx(),
+                &crate::theme::Theme::default().palette(),
+                &self.catalog,
+                &self.inv,
+                &mut self.runtime,
+                &mut self.account,
+                &mut self.movement_prefs,
+                &mut self.manager_open,
+                false,
+            ));
             actions.extend(show(
                 ui.ctx(),
                 &crate::theme::Theme::default().palette(),
@@ -1117,6 +1128,189 @@ fn quick_controls_share_preferences_and_preserve_water_mode_exclusion() {
     assert!(f.manager_open);
     assert!(!f.quick.as_ref().expect("quick").open);
     assert_eq!(f.inv.generation, generation, "quick controls must not mutate inventory");
+}
+
+#[test]
+fn quick_popup_names_the_selected_animation_and_tracks_manual_steps() {
+    let mut f = quick_fixture(true);
+    f.runtime.current = Some(State::Standing);
+    let set = f.catalog.selected(f.account.selected).expect("set").clone();
+    let selected_name = set.animation_config(State::Standing).expect("stands").steps[0].name.clone();
+    let selected_text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = selected_name);
+    let mut shapes = f.draw(Vec::new()).1;
+    assert!(
+        shapes.iter_mut().any(|shape| contains_text(&shape.shape, &selected_text)),
+        "{selected_text}"
+    );
+    f.runtime.step(&set, State::Standing, true);
+    let next_name = set.animation_config(State::Standing).expect("stands").steps[1].name.clone();
+    let next_text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = next_name);
+    let mut shapes = f.draw(Vec::new()).1;
+    assert!(
+        shapes.iter_mut().any(|shape| contains_text(&shape.shape, &next_text)),
+        "{next_text}"
+    );
+}
+
+#[test]
+fn quick_pin_opens_the_persistent_mini_window() {
+    let mut f = quick_fixture(true);
+    assert!(!f.account.mini_open);
+    f.click(aurora_i18n::tr!("ao-quick-pin"));
+    assert!(f.account.mini_open);
+    assert!(!f.quick.as_ref().expect("quick").open);
+}
+
+fn shows_text(f: &mut Fixture, text: &str) -> bool {
+    let mut shapes = f.draw(Vec::new()).1;
+    shapes.iter_mut().any(|shape| contains_text(&shape.shape, text))
+}
+
+/// The popup's pin is LLFloaterReg::showInstance: it expands a minimized mini
+/// window, and it is hidden while the mini window is already shown.
+#[test]
+fn quick_pin_expands_a_minimized_mini_window_and_hides_while_it_is_shown() {
+    let mut f = quick_fixture(true);
+    let pin = aurora_i18n::tr!("ao-quick-pin");
+    f.click(pin);
+    assert!(f.account.mini_open);
+    f.settle();
+    f.click("AO");
+    f.settle();
+    assert!(f.quick.as_ref().is_some_and(|q| q.open));
+    assert!(!shows_text(&mut f, pin), "no pin while the mini window is shown");
+    super::super::widgets::minimize_floater(&f.ctx, mini::WINDOW);
+    f.settle();
+    assert!(super::super::widgets::floater_minimized(&f.ctx, mini::WINDOW));
+    assert!(shows_text(&mut f, pin), "the pin comes back for a minimized window");
+    f.click(pin);
+    f.settle();
+    assert!(f.account.mini_open);
+    assert!(
+        !super::super::widgets::floater_minimized(&f.ctx, mini::WINDOW),
+        "the pin expands the minimized mini window"
+    );
+}
+
+/// Unlike FloaterAO::onClickMore, which turns its one floater into the full
+/// AO, the mini window's Settings button opens the manager beside it.
+#[test]
+fn mini_ao_settings_opens_the_manager_and_keeps_the_mini_window_open() {
+    let mut f = quick_fixture(true);
+    f.quick = None;
+    f.account.mini_open = true;
+    f.settle();
+    assert!(!f.manager_open);
+    f.click(aurora_i18n::tr!("ao-quick-manager"));
+    f.settle();
+    assert!(f.manager_open, "Settings opens the full AO window");
+    assert!(f.account.mini_open, "the mini window stays open");
+}
+
+/// A Sits switch whose save is refused says why in the window, as the
+/// manager does with `state.message`, until a later save succeeds.
+#[test]
+fn mini_ao_shows_a_failed_sits_save_in_the_window() {
+    let mut f = quick_fixture(true);
+    f.quick = None;
+    f.account.mini_open = true;
+    let selected = f.account.selected;
+    let set = f.catalog.sets.iter_mut().find(|s| s.id == selected).expect("set");
+    let name = std::mem::replace(&mut set.name, "bad:name".into());
+    let reason = inventory::save_set(&f.inv, set).expect_err("a name with ':' is refused");
+    let reason = reason.as_str();
+    f.settle();
+    assert!(!shows_text(&mut f, reason));
+    let actions = f.click(aurora_i18n::tr!("ao-sits"));
+    assert!(!actions.iter().any(|a| matches!(a, Action::Edit(..))), "nothing to send");
+    assert!(shows_text(&mut f, reason), "the refusal is shown in the window");
+    f.catalog.sets.iter_mut().find(|s| s.id == selected).expect("set").name = name;
+    assert!(matches!(f.click(aurora_i18n::tr!("ao-sits")).as_slice(), [Action::Edit(_, None)]));
+    assert!(!shows_text(&mut f, reason), "a saved switch clears the message");
+}
+
+#[test]
+fn mini_ao_open_at_login_keeps_swimming_while_the_ao_loads() {
+    // The mini window stays open across logins: it is drawn before the AO
+    // folder arrives, and must not switch swimming off (and save that).
+    let mut f = Fixture::new();
+    f.account.mini_open = true;
+    f.movement_prefs.swimming = true;
+    f.catalog.loading = true;
+    let (actions, _) = f.draw(Vec::new());
+    assert!(f.movement_prefs.swimming, "swimming kept while the AO loads");
+    assert!(!actions.iter().any(|a| matches!(a, Action::MovementPreferences)), "nothing to save");
+    f.catalog.loading = false;
+    f.catalog.failed = true;
+    f.draw(Vec::new());
+    assert!(f.movement_prefs.swimming, "kept after a failed fetch too");
+    // loaded, without the swimming animations: off, as app/movement.rs does
+    f.catalog.failed = false;
+    f.catalog
+        .sets
+        .iter_mut()
+        .find(|s| s.id == f.account.selected)
+        .expect("set")
+        .states
+        .remove(&State::WaterEntry);
+    f.draw(Vec::new());
+    assert!(!f.movement_prefs.swimming);
+}
+
+#[test]
+fn mini_ao_movement_switches_emit_preference_changes() {
+    let mut f = quick_fixture(true);
+    f.quick = None;
+    f.account.mini_open = true;
+    f.settle();
+    assert!(
+        f.click(aurora_i18n::tr!("movement-swimming"))
+            .iter()
+            .any(|action| matches!(action, Action::MovementPreferences))
+    );
+    assert!(f.movement_prefs.swimming);
+}
+
+#[test]
+fn mini_ao_can_toggle_sit_override_without_opening_the_manager() {
+    let mut f = quick_fixture(true);
+    f.quick = None;
+    f.account.mini_open = true;
+    f.settle();
+    assert!(matches!(f.click(aurora_i18n::tr!("ao-sits")).as_slice(), [Action::Edit(_, None)]));
+}
+
+#[test]
+fn mini_ao_shows_the_current_step_and_stays_open_after_outside_clicks() {
+    let mut f = quick_fixture(true);
+    f.quick = None;
+    f.account.enabled = true;
+    f.runtime.current = Some(State::Standing);
+    f.account.mini_open = true;
+    f.settle();
+    let set = f.catalog.selected(f.account.selected).expect("set").clone();
+    let name = set.animation_config(State::Standing).expect("stands").steps[0].name.clone();
+    let text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = name);
+    let mut shapes = f.draw(Vec::new()).1;
+    assert!(shapes.iter_mut().any(|shape| contains_text(&shape.shape, &text)), "{text}");
+    f.runtime.step(&set, State::Standing, true);
+    let next = set.animation_config(State::Standing).expect("stands").steps[1].name.clone();
+    let next_text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = next);
+    let mut shapes = f.draw(Vec::new()).1;
+    assert!(
+        shapes.iter_mut().any(|shape| contains_text(&shape.shape, &next_text)),
+        "{next_text}"
+    );
+    f.click_at(egui::pos2(20.0, 20.0));
+    assert!(f.account.mini_open, "world clicks do not dismiss the persistent window");
+}
+
+fn contains_text(shape: &egui::Shape, text: &str) -> bool {
+    match shape {
+        egui::Shape::Text(t) => t.galley.text() == text,
+        egui::Shape::Vec(shapes) => shapes.iter().any(|shape| contains_text(shape, text)),
+        _ => false,
+    }
 }
 
 #[test]
