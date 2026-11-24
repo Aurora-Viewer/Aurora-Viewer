@@ -138,7 +138,7 @@ fn top_id() -> egui::Id {
 /// top row, or room in the Legacy Viewer's navigation bar.
 pub fn reserve_top(ctx: &egui::Context, rect: Rect, size: f32, island: bool) {
     // (the frame read outside: the context is locked within `data_mut`)
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         d.insert_temp(
             top_id(),
@@ -158,7 +158,7 @@ pub fn reserve_top(ctx: &egui::Context, rect: Rect, size: f32, island: bool) {
 }
 
 pub fn reserve_toolbar(ctx: &egui::Context, rect: Rect, size: f32, layer: egui::LayerId, clip: Rect, vertical: bool) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         data.insert_temp(
             top_id(),
@@ -179,7 +179,7 @@ pub fn reserve_toolbar(ctx: &egui::Context, rect: Rect, size: f32, layer: egui::
 
 /// What `reserve_top` left this frame.
 fn top_slot(ctx: &egui::Context) -> Option<Slot> {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<(u64, Slot)>(top_id()))
         .filter(|(f, _)| *f == frame)
         .map(|(_, s)| s)

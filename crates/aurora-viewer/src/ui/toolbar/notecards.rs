@@ -876,7 +876,7 @@ mod tests {
         let _ = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 720.0))),
-                time: Some(ctx.cumulative_frame_nr() as f64 * 0.1),
+                time: Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) as f64 * 0.1),
                 events,
                 ..Default::default()
             },

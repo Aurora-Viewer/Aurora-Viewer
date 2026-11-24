@@ -236,7 +236,7 @@ fn readout_width(text_w: f32) -> f32 {
 
 /// Demo captures (`AURORA_DEMO_BARS`): the menu to open once, at frame 300.
 pub(super) fn demo_open(ctx: &egui::Context, resp: &egui::Response, which: super::demo::Open) {
-    if super::demo::get().open == Some(which) && ctx.cumulative_frame_nr() == 300 {
+    if super::demo::get().open == Some(which) && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 {
         egui::Popup::open_id(ctx, egui::Popup::default_response_id(resp));
     }
 }
@@ -574,7 +574,10 @@ pub(super) fn account_part(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, isla
     }
     // the demo cannot right-click: the same menu under the island
     let ctx = ui.ctx().clone();
-    if part != AccountPart::Status && super::demo::get().open == Some(super::demo::Open::Account) && ctx.cumulative_frame_nr() >= 300 {
+    if part != AccountPart::Status
+        && super::demo::get().open == Some(super::demo::Open::Account)
+        && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300
+    {
         let id = Id::unique("bars_account_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         let at = Pos2::new(rect.left(), island.bottom() + MARGIN);
@@ -867,7 +870,7 @@ pub(super) fn system_parts(
     // the demo cannot right-click: the same menu where the pointer would be
     if only.is_none_or(|item| item == Item::Clock)
         && super::demo::get().open == Some(super::demo::Open::System)
-        && ctx.cumulative_frame_nr() >= 300
+        && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300
     {
         let id = Id::unique("bars_system_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
@@ -879,7 +882,7 @@ pub(super) fn system_parts(
     // the demo cannot click: Performance opened from the island at frame
     // 300, by its frame rate or its network
     let demo = super::demo::get().perf;
-    if demo.is_some() && ctx.cumulative_frame_nr() == 300 && !panels.perf {
+    if demo.is_some() && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 && !panels.perf {
         crate::ui::perf::place_under(&ctx, island);
         if demo == Some(super::demo::Perf::Network) {
             *action = BarAction::NetworkGraph;
@@ -2158,6 +2161,7 @@ pub(crate) mod tests {
             adapters: Vec::new(),
             notice: None,
             vulkan: None,
+            ray_tracing: Default::default(),
         };
         let input = egui::RawInput {
             screen_rect: Some(screen),

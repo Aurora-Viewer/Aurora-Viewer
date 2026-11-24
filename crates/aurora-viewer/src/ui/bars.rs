@@ -93,6 +93,12 @@ pub enum BarAction {
     ToggleFlyOverride,
     /// The toolbar's Snapshot to disk (File.TakeSnapshotToDisk).
     PhotoToDisk,
+    /// The menu's Photo, as its Ctrl+Shift+S (Take Snapshot, `Floater.Show`
+    /// snapshot): opens the photo window, or brings it forward.
+    PhotoWindow,
+    /// The toolbar's Photo button (the snapshot command, `Floater.Toggle`):
+    /// the photo window of the chosen style opened or closed.
+    PhotoToggle,
     /// The toolbar's Photo roll: the reel's quick view on its newest photo.
     PhotoRoll,
     /// The toolbar's 360° snapshot (Floater.ToggleOrBringToFront
@@ -872,7 +878,9 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
     // demo captures: AURORA_DEMO_STATUSMENU=1 opens it (=invisible: with
     // that status, set by the viewer)
     static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300 {
+    if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some())
+        && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300
+    {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
     }
     menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
@@ -1601,18 +1609,32 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::ToggleNameTags;
         }
         menu::separator(ui, p);
-        // Firestorm's View › Camera Controls and Movement Controls
+        // The Legacy Viewer's View › Camera Controls and Movement Controls: checked
+        // while shown, a click toggles them as the toolbar buttons do
+        // (View.ToggleCameraFloater, Floater.Toggle "moveview"), compact
+        // windows included (#3904); here in the World menu
         let camera = crate::keybinds::chord_label("KeyC", true, false, true);
-        if menu::command(ui, p, "controls-camera-title").item_keys("video-filled", aurora_i18n::tr!("controls-camera-title"), &camera) {
+        if menu::command(ui, p, "controls-camera-title").check_keys(
+            "video-filled",
+            aurora_i18n::tr!("controls-camera-title"),
+            panels.camera_controls,
+            true,
+            &camera,
+        ) {
             *action = BarAction::Controls {
                 movement: false,
-                toggle: false,
+                toggle: true,
             };
         }
-        if menu::command(ui, p, "controls-movement-title").item("walk", aurora_i18n::tr!("controls-movement-title")) {
+        if menu::command(ui, p, "controls-movement-title").check(
+            "walk",
+            aurora_i18n::tr!("controls-movement-title"),
+            panels.movement_controls,
+            true,
+        ) {
             *action = BarAction::Controls {
                 movement: true,
-                toggle: false,
+                toggle: true,
             };
         }
         if menu::command(ui, p, "common-mouselook-m").item("eye-filled", aurora_i18n::tr!("common-mouselook-m")) {
@@ -1623,7 +1645,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         let photo = crate::keybinds::chord_label("KeyS", true, false, true);
         if menu::command(ui, p, "photo-title").item_keys("photo-filled", aurora_i18n::tr!("photo-title"), &photo) {
-            super::widgets::toggle_floater(ui.ctx(), super::snapshot::WINDOW, &mut panels.snapshot);
+            *action = BarAction::PhotoWindow;
         }
         // Phototools (menu_viewer.xml `phototools_item_call`, alt|P)
         let phototools = crate::keybinds::chord_label("KeyP", false, true, false);
@@ -2467,7 +2489,7 @@ fn location_field_scoped(
             panels.nav_edit_new = true;
         }
         // AURORA_DEMO_BARS=legacy,locations: a place being typed
-        if demo::get().locations && ui.ctx().cumulative_frame_nr() == location_suggest::DEMO_FRAME {
+        if demo::get().locations && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == location_suggest::DEMO_FRAME {
             panels.nav_edit = Some(location_suggest::DEMO_TYPED.to_owned());
             panels.nav_edit_new = true;
         }
@@ -2947,7 +2969,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
-        "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
+        // Floater.Toggle snapshot: the app knows the window's style
+        "snapshot" => return BarAction::PhotoToggle,
         // Floater.ToggleOrBringToFront 360capture
         "360capture" => return BarAction::Photo360,
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
@@ -3587,7 +3610,8 @@ fn mic_button(
 
     // demo captures: AURORA_DEMO_MICMENU=1 opens the panel
     static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let demo = *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_MICMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300;
+    let demo = *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_MICMENU").is_some())
+        && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300;
     let toggle = match &arrow {
         Some(arrow) => arrow.clicked(),
         None => !toolbar_menu && resp.secondary_clicked(),
@@ -5086,6 +5110,15 @@ mod tests {
         assert!(!command_active("ao_mini", &panels, false, false, false));
         panels.ao_mini = true;
         assert!(command_active("ao_mini", &panels, false, false, false));
+    }
+
+    /// The toolbar's Photo button is left to the app, which toggles the
+    /// window of the chosen style (#4625).
+    #[test]
+    fn snapshot_button_asks_the_app_to_toggle_the_photo_window() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(matches!(run_command(&ctx, "snapshot", &mut panels), BarAction::PhotoToggle));
     }
 
     #[test]

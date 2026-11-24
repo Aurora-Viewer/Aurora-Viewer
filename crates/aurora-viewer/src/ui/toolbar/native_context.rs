@@ -66,7 +66,7 @@ pub(crate) fn start_group(ui: &mut Ui, p: &Palette) {
 
 /// The same wording, icon and final position, adjacent to button appearance.
 pub(crate) fn item(ui: &mut Ui, p: &Palette) -> bool {
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ui.ctx()
         .data_mut(|data| data.insert_temp(ui.layer_id().id.with("toolbar_context_footer"), frame));
     menu::item(ui, p, "layout-grid-filled", aurora_i18n::tr!("toolbar-interface-edit"))
@@ -92,7 +92,7 @@ pub(super) fn tracked_popup(ctx: &Context) -> Option<Id> {
 
 /// Record only context popups that actually rendered the toolbar footer.
 pub(crate) fn context_shown(ctx: &Context, id: Id, was_open: bool, requested: bool) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let owned = ctx.data(|data| data.get_temp::<u64>(id.with("toolbar_context_footer"))) == Some(frame);
     if owned
         && (!was_open || requested)
@@ -117,7 +117,7 @@ pub(crate) fn context_shown(ctx: &Context, id: Id, was_open: bool, requested: bo
 /// A second stationary right click closes the owned popup even when its face
 /// covers the original button. Suppress reopening for the complete input frame.
 pub(crate) fn dismiss_repeated_click(ctx: &Context) -> bool {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let dismissed = Id::unique("toolbar_context_dismissed_frame");
     if ctx.data(|data| data.get_temp::<u64>(dismissed)) == Some(frame) {
         return true;
@@ -167,7 +167,7 @@ fn request(ui: &mut Ui, p: &Palette, command: Option<String>) {
 
 pub(crate) fn append(ui: &mut Ui, p: &Palette) {
     if let Some(command) = ui.ctx().data(|data| data.get_temp::<String>(scope_id())) {
-        let frame = ui.ctx().cumulative_frame_nr();
+        let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ui.ctx()
             .data_mut(|data| data.insert_temp(Id::unique(("toolbar_native_popup", &command)), frame));
         request(ui, p, Some(command));
@@ -175,7 +175,8 @@ pub(crate) fn append(ui: &mut Ui, p: &Palette) {
 }
 
 pub(crate) fn shown(ctx: &Context, command: &str) -> bool {
-    ctx.data(|data| data.get_temp::<u64>(Id::unique(("toolbar_native_popup", command)))) == Some(ctx.cumulative_frame_nr())
+    ctx.data(|data| data.get_temp::<u64>(Id::unique(("toolbar_native_popup", command))))
+        == Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
 }
 
 /// Older uncomposed bars use the same entry without a persisted native target.

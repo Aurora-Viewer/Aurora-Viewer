@@ -55,7 +55,7 @@ pub(crate) fn context_picker_contains_pointer(ctx: &egui::Context) -> bool {
     let protection = ctx.data(|data| data.get_temp::<PickerProtection>(protection_id()));
     protection.is_some_and(|protection| {
         egui::Popup::is_id_open(ctx, protection.parent)
-            && protection.frame.saturating_add(1) >= ctx.cumulative_frame_nr()
+            && protection.frame.saturating_add(1) >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
             && ctx.pointer_interact_pos().is_some_and(|pos| protection.rect.contains(pos))
     })
 }
@@ -153,7 +153,7 @@ impl ContextPicker {
         self.editor.side_picker(ctx, p, &source.button, &mut value, owner, settings.locked);
         if self.editor.picker_open {
             if let Some(rect) = ctx.memory(|memory| memory.area_rect(Id::unique(("toolbar_icon_side_picker", &source.button.command)))) {
-                let frame = ctx.cumulative_frame_nr();
+                let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
                 ctx.data_mut(|data| {
                     data.insert_temp(
                         protection_id(),
@@ -432,7 +432,7 @@ impl ToolbarUi {
             self.menu_row_context = Some(MenuRowContext {
                 button: button.clone(),
                 pos: response.interact_pointer_pos().unwrap_or(response.rect.left_bottom()),
-                frame: response.ctx.cumulative_frame_nr(),
+                frame: response.ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT),
             });
         } else if response.hovered()
             && self
@@ -461,7 +461,7 @@ impl ToolbarUi {
             self.appearance_items(ui, p, &context.button, settings.locked, &key);
         });
         // the right click on another row that closed it opened that row's
-        if !open && context.frame != ctx.cumulative_frame_nr() {
+        if !open && context.frame != ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) {
             self.menu_row_context = None;
         }
     }
