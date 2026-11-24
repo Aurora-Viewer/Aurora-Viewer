@@ -3167,6 +3167,7 @@ LUT_3D_SIZE {n}
             max_samples: renderer.msaa_supported().iter().copied().filter(|&n| n <= 8).max().unwrap_or(1),
             // (the renderer's measure, else the photo plan's fallback)
             target_bytes: snapshot::pass_bytes_per_pixel(self.snapshots.target_bytes, samples) - snapshot::PASS_OUTPUT_BYTES,
+            wide_normals: self.settings.normals_high(),
         };
         let memory = self.photo_memory(renderer);
         snapshot::quality::plan(memory, user, screen, current, may_raise)

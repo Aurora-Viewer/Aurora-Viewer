@@ -62,6 +62,8 @@ fn demo_vr_closed() -> Option<u64> {
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The G-buffer at the Standard precision: 8 bits per channel.
+const GBUF_STANDARD: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// A colour target of 16 normalized bits per channel, on the device that has
 /// it (`main_thread.rs` `open_device` asks for it where `gbuf_wide` holds).
 pub(crate) const GBUF_WIDE: wgpu::Features = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
@@ -85,18 +87,32 @@ pub(crate) fn gbuf_wide(adapter: &wgpu::Adapter) -> bool {
         )
 }
 
-/// The G-buffer (octahedral normal, roughness, metallic): 16 bits per
-/// channel, as the normals of LLPipeline::addDeferredAttachments
-/// (indra/newview/pipeline.cpp, GL_RGBA16; originally LGPL 2.1). Eight bits
-/// step the normal by 0.45 degrees, and a mirror doubles it: the reflection
-/// of a smooth face came in terraces, 30 cm apart at 20 m. Without the
-/// normalized format, 16-bit floats: steps of 0.06 degrees at most.
-pub(crate) fn gbuf_format(features: wgpu::Features) -> wgpu::TextureFormat {
-    if features.contains(GBUF_WIDE) {
-        wgpu::TextureFormat::Rgba16Unorm
-    } else {
-        wgpu::TextureFormat::Rgba16Float
+/// The G-buffer's format (octahedral normal, roughness, metallic). `high`
+/// ([`NormalPrecision::high`]): 16 bits per channel, as the normals of
+/// LLPipeline::addDeferredAttachments (indra/newview/pipeline.cpp,
+/// GL_RGBA16; originally LGPL 2.1), in 8 bits' place: eight step the normal
+/// by 0.45 degrees, and a mirror doubles it, so that the traced reflection
+/// of a smooth face came in terraces, 30 cm apart at 20 m. `wide`: the
+/// device draws 16 normalized bits at the pass's sample count
+/// (`Backend::gbuf_wide`); without, 16-bit floats, the HDR target's format,
+/// which every device draws and resolves at each sample count offered:
+/// steps of 0.06 degrees at most.
+pub(crate) fn gbuf_format(high: bool, wide: bool) -> wgpu::TextureFormat {
+    match (high, wide) {
+        (false, _) => GBUF_STANDARD,
+        (true, true) => wgpu::TextureFormat::Rgba16Unorm,
+        (true, false) => HDR_FORMAT,
     }
+}
+
+/// The G-buffer `s` asks of a renderer of `device` at `samples`: none, or
+/// its format. `wide`: the sample counts of the 16 normalized bits
+/// (`Backend::gbuf_wide`). The reflections count as traced with the sun's
+/// shadows on only: nothing is traced without them (`rt_now`).
+fn gbuf_wanted(device: &wgpu::Device, external: bool, wide: &[u32], s: &RenderSettings, samples: u32) -> Option<wgpu::TextureFormat> {
+    let traced = s.shadow_resolution > 0 && crate::rt_shadows::traced(device, external, s.ray_tracing).reflections;
+    s.gbuffer()
+        .then(|| gbuf_format(s.normal_precision.high(s.ssr, traced), wide.contains(&samples)))
 }
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -430,7 +446,7 @@ impl Smaa {
             a2c: false,
             samples: 1,
             format: Some(format),
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: None,
             depth_bias: Default::default(),
@@ -762,7 +778,7 @@ impl Glow {
             a2c: false,
             samples: 1,
             format: Some(fmt),
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: None,
             depth_bias: Default::default(),
@@ -2254,7 +2270,16 @@ pub(crate) struct Backend {
     /// The scene's pipelines were compiled with the soft shadows' path
     /// (`soft_path`): the mask is drawn and read only while they were.
     soft_pipelines: bool,
-    /// The pipelines being compiled for other samples or SSR, if any.
+    /// The G-buffer the scene's pipelines were compiled for: its format,
+    /// none without it (`gbuf_wanted`). The targets are made of it, not of
+    /// the settings: a set compiling for another precision draws into the
+    /// one of before until it arrives.
+    gbuf_pipelines: Option<wgpu::TextureFormat>,
+    /// The sample counts the device draws 16 normalized bits at, 1
+    /// included: none without the format (`GBUF_WIDE`).
+    gbuf_wide: Vec<u32>,
+    /// The pipelines being compiled for other samples, SSR or another
+    /// G-buffer format, if any.
     pipeline_build: Option<PipelineBuild>,
     /// The pipeline workers still running, a set no longer wanted included:
     /// waited for when the renderer is dropped (`wait_pipeline_workers`).
@@ -2603,8 +2628,8 @@ struct PipeDesc<'a> {
     a2c: bool,
     samples: u32,
     format: Option<wgpu::TextureFormat>,
-    /// Second color target (G-buffer for SSR).
-    gbuf: bool,
+    /// Second color target (G-buffer for SSR), of this format.
+    gbuf: Option<wgpu::TextureFormat>,
     /// Second color target of the passes of the exact blend order
     /// (`blend_exact::Lists::range`): its blend, and what is written.
     range: Option<(Option<wgpu::BlendState>, wgpu::ColorWrites)>,
@@ -3146,9 +3171,9 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
             write_mask: d.write_mask,
         }));
     }
-    if d.gbuf {
+    if let Some(format) = d.gbuf {
         targets.push(Some(wgpu::ColorTargetState {
-            format: gbuf_format(device.features()),
+            format,
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
         }));
@@ -3465,14 +3490,16 @@ type ImpostorPipelines = (
     wgpu::RenderPipeline,
 );
 
-/// The pipelines that depend on the MSAA samples and SSR, compiled on a
-/// worker thread when one of them changes (#1722, #1746). Built on the render
+/// The pipelines that depend on the MSAA samples, SSR and the G-buffer's
+/// format, compiled on a worker thread when one of them changes (#1722,
+/// #1746). Built on the render
 /// thread, the whole set stopped the frames for as long as the driver took:
 /// 9 s on amdvlk, 36 s on an Intel Arc, reported as a GPU stall. The frames keep their samples and SSR meanwhile, and take the
 /// new ones with their targets on the frame the set arrives.
 struct PipelineBuild {
     samples: u32,
-    ssr: bool,
+    /// The G-buffer's format, none without it (`gbuf_wanted`).
+    gbuf: Option<wgpu::TextureFormat>,
     /// Compiled with the soft shadows' path (`soft_path`).
     soft: bool,
     started: std::time::Instant,
@@ -3503,7 +3530,7 @@ impl Impostors {
         records_layout: &wgpu::BindGroupLayout,
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
-        ssr: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         soft: bool,
     ) -> Impostors {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3564,7 +3591,7 @@ impl Impostors {
             mapped_at_creation: false,
         });
         let (capture_opaque, capture_blend, sprite, sprite_depth) =
-            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, ssr, soft);
+            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, gbuf, soft);
         Impostors {
             layout,
             atlas,
@@ -3684,7 +3711,7 @@ impl Impostors {
         records_layout: &wgpu::BindGroupLayout,
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
-        ssr: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         soft: bool,
     ) -> ImpostorPipelines {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3702,7 +3729,7 @@ impl Impostors {
             bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout)],
             immediate_size: 0,
         });
-        let desc = |label: &'static str, vs: &'static str, fs: &'static str, vb: Vb, samples: u32, gbuf: bool| PipeDesc {
+        let desc = |label: &'static str, vs: &'static str, fs: &'static str, vb: Vb, samples: u32, gbuf| PipeDesc {
             label,
             vs,
             fs: Some(fs),
@@ -3728,13 +3755,13 @@ impl Impostors {
             device,
             &module,
             &capture_pl,
-            desc("impostor capture", "vs_main", "fs_impostor_capture", Vb::Mesh, 1, false),
+            desc("impostor capture", "vs_main", "fs_impostor_capture", Vb::Mesh, 1, None),
         );
         let capture_blend = make_pipeline(
             device,
             &module,
             &capture_pl,
-            desc("impostor capture blend", "vs_main", "fs_impostor_capture_blend", Vb::Mesh, 1, false),
+            desc("impostor capture blend", "vs_main", "fs_impostor_capture_blend", Vb::Mesh, 1, None),
         );
         // cards in scene pass A (its sample count and SSR G-buffer); the scene
         // alpha holds the glow: color only
@@ -3747,10 +3774,10 @@ impl Impostors {
                 ..desc(
                     "impostor cards",
                     "vs_impostor",
-                    if ssr { "fs_impostor_g" } else { "fs_impostor" },
+                    if gbuf.is_some() { "fs_impostor_g" } else { "fs_impostor" },
                     Vb::Sprite,
                     samples,
-                    ssr,
+                    gbuf,
                 )
             },
         );
@@ -3762,7 +3789,7 @@ impl Impostors {
             PipeDesc {
                 format: None,
                 depth_compare: wgpu::CompareFunction::Greater,
-                ..desc("impostor cards depth", "vs_impostor", "fs_impostor_depth", Vb::Sprite, 1, false)
+                ..desc("impostor cards depth", "vs_impostor", "fs_impostor_depth", Vb::Sprite, 1, None)
             },
         );
         (capture_opaque, capture_blend, sprite, sprite_depth)
@@ -4485,7 +4512,10 @@ impl Backend {
 
         let fmt_features = adapter.get_texture_format_features(HDR_FORMAT);
         let depth_features = adapter.get_texture_format_features(DEPTH_FORMAT);
-        let gbuf_features = adapter.get_texture_format_features(gbuf_format(device.features()));
+        // (the anti-aliasing choices are those of the Standard G-buffer: a
+        // sample count the 16 normalized bits lack takes 16-bit floats,
+        // `gbuf_format`, and stays offered)
+        let gbuf_features = adapter.get_texture_format_features(GBUF_STANDARD);
         let msaa_supported: Vec<u32> = [2u32, 4, 8]
             .into_iter()
             .filter(|n| *n == 4 || adapter_specific)
@@ -4497,6 +4527,13 @@ impl Backend {
             .collect();
         let msaa_samples = if msaa_supported.contains(&4) { 4 } else { 1 };
         let settings = RenderSettings::default();
+        let gbuf_wide: Vec<u32> = if device.features().contains(GBUF_WIDE) {
+            let wide = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Unorm).flags;
+            [1u32, 2, 4, 8].into_iter().filter(|n| wide.sample_count_supported(*n)).collect()
+        } else {
+            Vec::new()
+        };
+        let gbuf_pipelines = gbuf_wanted(&device, external, &gbuf_wide, &settings, msaa_samples);
         let bloom = crate::bloom::Bloom::new(&device, &post_layout);
         // what the stochastic transparency is made from, the first frame the
         // method is on (`make_st`): nothing of it exists before
@@ -4532,7 +4569,7 @@ impl Backend {
             &gbuf_layout,
             msaa_samples,
             format,
-            settings.gbuffer(),
+            gbuf_pipelines,
             soft_path(&settings),
         );
         let ssao = Self::make_ssao(&device);
@@ -4561,6 +4598,7 @@ impl Backend {
                 config.width,
                 config.height,
                 msaa_samples,
+                gbuf_pipelines,
                 &settings,
                 external,
                 refuse,
@@ -4653,7 +4691,7 @@ impl Backend {
             &records_layout,
             &tex_layout,
             msaa_samples,
-            settings.gbuffer(),
+            gbuf_pipelines,
             soft_path(&settings),
         );
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -4807,6 +4845,8 @@ impl Backend {
             msaa_samples,
             pipeline_build: None,
             soft_pipelines: soft_path(&settings),
+            gbuf_pipelines,
+            gbuf_wide,
             pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
@@ -4979,7 +5019,7 @@ impl Backend {
             samples,
             format: Some(HDR_FORMAT),
             range: None,
-            gbuf: false,
+            gbuf: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
             constants: &[],
@@ -5143,9 +5183,10 @@ impl Backend {
         gbuf_layout: &wgpu::BindGroupLayout,
         samples: u32,
         surface_format: wgpu::TextureFormat,
-        ssr: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         soft: bool,
     ) -> Pipelines {
+        let ssr = gbuf.is_some();
         // (without the stochastic transparency's passes: its own module,
         // `make_st`, when the method is first on)
         let src = format!(
@@ -5186,7 +5227,7 @@ impl Backend {
             a2c: false,
             samples,
             format: Some(HDR_FORMAT),
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
@@ -5202,7 +5243,7 @@ impl Backend {
         let hud_desc = |label, blend, depth_write| PipeDesc {
             format: Some(surface_format),
             samples: 1,
-            gbuf: false,
+            gbuf: None,
             range: None,
             cull: None,
             blend,
@@ -5233,7 +5274,7 @@ impl Backend {
             cull: None,
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Always,
-            gbuf: ssr,
+            gbuf,
             ..base("sky", "vs_sky", g("fs_sky", "fs_sky_g"))
         });
         let clouds_weather = pipe(PipeDesc {
@@ -5248,15 +5289,15 @@ impl Backend {
             ..base("cloud weather", "vs_sky", "fs_cloud_weather")
         });
         let terrain = pipe(PipeDesc {
-            gbuf: ssr,
+            gbuf,
             ..base("terrain", "vs_terrain", g("fs_terrain", "fs_terrain_g"))
         });
         let terrain_pbr = pipe(PipeDesc {
-            gbuf: ssr,
+            gbuf,
             ..base("terrain pbr", "vs_terrain_pbr", g("fs_terrain_pbr", "fs_terrain_pbr_g"))
         });
         let opaque = pipe(PipeDesc {
-            gbuf: ssr,
+            gbuf,
             ..base("opaque", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
         let creation_preview = pipe(PipeDesc {
@@ -5265,19 +5306,19 @@ impl Backend {
         });
         let opaque_2s = pipe(PipeDesc {
             cull: None,
-            gbuf: ssr,
+            gbuf,
             ..base("opaque 2s", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
         let mask = pipe(PipeDesc {
             a2c: samples > 1,
-            gbuf: ssr,
+            gbuf,
             constants: &a2c,
             ..base("mask", "vs_main", g("fs_mask", "fs_mask_g"))
         });
         let mask_2s = pipe(PipeDesc {
             a2c: samples > 1,
             cull: None,
-            gbuf: ssr,
+            gbuf,
             constants: &a2c,
             ..base("mask 2s", "vs_main", g("fs_mask", "fs_mask_g"))
         });
@@ -6187,7 +6228,7 @@ impl Backend {
             a2c: false,
             samples: 1,
             format: None,
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: Some(SHADOW_FORMAT),
             depth_bias: wgpu::DepthBiasState {
@@ -6260,7 +6301,7 @@ impl Backend {
                 a2c: false,
                 samples: 1,
                 format: Some(surface_format),
-                gbuf: false,
+                gbuf: None,
                 range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
@@ -6416,7 +6457,7 @@ impl Backend {
                     a2c: false,
                     samples: 1,
                     format: Some(AO_FORMAT),
-                    gbuf: false,
+                    gbuf: None,
                     range: None,
                     depth_format: None,
                     depth_bias: Default::default(),
@@ -6455,6 +6496,7 @@ impl Backend {
         width: u32,
         height: u32,
         samples: u32,
+        gbuf: Option<wgpu::TextureFormat>,
         s: &RenderSettings,
         external: bool,
         refuse: bool,
@@ -6507,13 +6549,13 @@ impl Backend {
         );
         let water_interface = make_view(device, "nearest water interface", w, h, DEPTH_FORMAT, 1, sampled).1;
         let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
-        let (gbuf_msaa, gbuf) = if s.gbuffer() {
-            (
-                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, gbuf_format(device.features()), samples, att).1),
-                Some(make_view(device, "gbuffer", w, h, gbuf_format(device.features()), 1, sampled).1),
-            )
-        } else {
-            (None, None)
+        // (of the format the pipelines in use were compiled for)
+        let (gbuf_msaa, gbuf) = match gbuf {
+            Some(format) => (
+                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, format, samples, att).1),
+                Some(make_view(device, "gbuffer", w, h, format, 1, sampled).1),
+            ),
+            None => (None, None),
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
@@ -7349,6 +7391,7 @@ impl Backend {
             size.0,
             size.1,
             self.msaa_samples,
+            self.gbuf_pipelines,
             &self.settings,
             self.external,
             refuse,
@@ -7416,7 +7459,8 @@ impl Backend {
             _ => 1,
         };
         let soft = soft_path(&s);
-        if (samples, s.gbuffer(), soft) == (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines) {
+        let gbuf = gbuf_wanted(&self.device, self.external, &self.gbuf_wide, &s, samples);
+        if (samples, gbuf, soft) == (self.msaa_samples, self.gbuf_pipelines, self.soft_pipelines) {
             // (a set still compiling for other samples is no longer wanted)
             self.pipeline_build = None;
             self.apply_settings_with(s, None);
@@ -7425,15 +7469,15 @@ impl Backend {
         if self
             .pipeline_build
             .as_ref()
-            .is_none_or(|b| (b.samples, b.ssr, b.soft) != (samples, s.gbuffer(), soft))
+            .is_none_or(|b| (b.samples, b.gbuf, b.soft) != (samples, gbuf, soft))
         {
             log::info!(
                 "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}, soft shadows {}",
                 if s.ssr { "on" } else { "off" },
-                if s.gbuffer() { "on" } else { "off" },
+                gbuf.map_or_else(|| "off".to_owned(), |f| format!("{f:?}")),
                 if soft { "on" } else { "off" }
             );
-            let (build, worker) = self.start_pipeline_build(samples, s.gbuffer(), soft);
+            let (build, worker) = self.start_pipeline_build(samples, gbuf, soft);
             self.pipeline_workers.retain(|w| !w.is_finished());
             self.pipeline_workers.extend(worker);
             self.pipeline_build = Some(build);
@@ -7448,12 +7492,13 @@ impl Backend {
                     build.started.elapsed().as_millis()
                 );
                 self.pipeline_build = None;
-                self.apply_settings_with(s, Some((samples, scene, impostors)));
+                self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 // the other settings now, the samples, SSR and soft shadows
                 // with their pipelines (the soft shadows' mask is made
-                // once the pipelines that read it are there)
+                // once the pipelines that read it are there; the G-buffer
+                // keeps the format of the pipelines in use, `gbuf_pipelines`)
                 let now = RenderSettings {
                     aa: self.settings.aa,
                     ssr: self.settings.ssr,
@@ -7478,7 +7523,7 @@ impl Backend {
                     &self.gbuf_layout,
                     samples,
                     self.config.format,
-                    s.gbuffer(),
+                    gbuf,
                     soft,
                 );
                 let impostors = Impostors::make_pipelines(
@@ -7488,17 +7533,22 @@ impl Backend {
                     &self.records_layout,
                     &self.tex_layout,
                     samples,
-                    s.gbuffer(),
+                    gbuf,
                     soft,
                 );
-                self.apply_settings_with(s, Some((samples, scene, impostors)));
+                self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
         }
     }
 
-    /// Compile the pipelines for `samples`, `ssr` and the soft shadows'
-    /// path `soft` on a worker thread.
-    fn start_pipeline_build(&self, samples: u32, ssr: bool, soft: bool) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
+    /// Compile the pipelines for `samples`, the G-buffer `gbuf` and the
+    /// soft shadows' path `soft` on a worker thread.
+    fn start_pipeline_build(
+        &self,
+        samples: u32,
+        gbuf: Option<wgpu::TextureFormat>,
+        soft: bool,
+    ) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
         let (tx, done) = std::sync::mpsc::sync_channel(1);
         let device = self.device.clone();
         let layouts = [
@@ -7513,7 +7563,7 @@ impl Backend {
         ];
         let format = self.config.format;
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
-            let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
+            let [frame, records, tex, shadow, post, bloom, gbuf_layout, impostor] = &layouts;
             let scene = Self::make_pipelines(
                 &device,
                 frame,
@@ -7521,13 +7571,13 @@ impl Backend {
                 tex,
                 shadow,
                 [post, bloom],
-                gbuf,
+                gbuf_layout,
                 samples,
                 format,
-                ssr,
+                gbuf,
                 soft,
             );
-            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft);
+            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, gbuf, soft);
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
         });
@@ -7539,7 +7589,7 @@ impl Backend {
             .ok();
         let build = PipelineBuild {
             samples,
-            ssr,
+            gbuf,
             soft,
             started: std::time::Instant::now(),
             done,
@@ -7592,8 +7642,13 @@ impl Backend {
     }
 
     /// `apply_settings` once the pipelines for `s` are known: `rebuilt` the
-    /// set compiled for other samples or SSR, `None` when they stay.
-    fn apply_settings_with(&mut self, s: RenderSettings, rebuilt: Option<(u32, Pipelines, ImpostorPipelines)>) {
+    /// set compiled for other samples or another G-buffer, `None` when they
+    /// stay.
+    fn apply_settings_with(
+        &mut self,
+        s: RenderSettings,
+        rebuilt: Option<(u32, Option<wgpu::TextureFormat>, Pipelines, ImpostorPipelines)>,
+    ) {
         let pipelines_dirty = rebuilt.is_some();
         let mut targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
@@ -7612,8 +7667,9 @@ impl Backend {
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
         let taa_was = self.taa.is_some();
-        if let Some((samples, scene, impostors)) = rebuilt {
+        if let Some((samples, gbuf, scene, impostors)) = rebuilt {
             self.msaa_samples = samples;
+            self.gbuf_pipelines = gbuf;
             self.soft_pipelines = soft_path(&s);
             self.pipelines = scene;
             self.impostors.set_pipelines(impostors);
@@ -7810,7 +7866,7 @@ impl Backend {
                 a2c: false,
                 samples: 1,
                 format: Some(HDR_FORMAT),
-                gbuf: false,
+                gbuf: None,
                 range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
@@ -9055,7 +9111,10 @@ impl Backend {
             self.rebuild_targets();
         }
         stats.present_mode = Some(self.config.present_mode);
-        if settings != self.settings {
+        // (and at each frame while their pipelines compile: a set for another
+        // G-buffer format leaves the settings as asked, with nothing held
+        // back to tell the frames apart, `apply_settings`)
+        if settings != self.settings || self.pipeline_build.is_some() {
             self.apply_frame_settings(settings);
         }
         // (at each frame until its worker is done, whatever else the
@@ -9068,7 +9127,8 @@ impl Backend {
         if !self.remake {
             self.seed = None;
         }
-        stats.settings = Some(self.settings);
+        // (none while their pipelines compile: `Renderer::settings_applied`)
+        stats.settings = self.pipeline_build.is_none().then_some(self.settings);
         stats.snow_lying = self.rain_wet.snow > RAIN_WET_DRY;
         // the tiled photo is done: its context goes with the targets that
         // bind it
@@ -11737,7 +11797,7 @@ impl Backend {
         // ---- volumetric clouds: the weather map when its parameters changed,
         // the noise slice, the trace and the reconstruction (clouds.rs)
         let scene_samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
-        let scene_gbuf = self.targets.gbuf.is_some();
+        let scene_gbuf = self.targets.gbuf.as_ref().map(|view| view.texture().format());
         // (until the noise is made `encode` generates it and allocates
         // nothing; after, it needs the targets made above)
         let clouds_encode = self.clouds_now || self.clouds.as_ref().is_some_and(|c| !c.ready());
@@ -11776,14 +11836,7 @@ impl Backend {
                 cloud_size,
                 still,
             );
-            clouds.prepare(
-                &self.device,
-                scene_samples,
-                scene_gbuf,
-                HDR_FORMAT,
-                gbuf_format(self.device.features()),
-                DEPTH_FORMAT,
-            );
+            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, DEPTH_FORMAT);
         } else if let Some(clouds) = &mut self.clouds {
             clouds.skipped(still.is_some());
         }
@@ -13962,11 +14015,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_gbuffer_keeps_16_bits_on_every_device() {
-        assert_eq!(gbuf_format(GBUF_WIDE), wgpu::TextureFormat::Rgba16Unorm);
-        // without the normalized format, the HDR target's: every device
-        // draws into it and resolves it
-        assert_eq!(gbuf_format(wgpu::Features::empty()), HDR_FORMAT);
+    fn the_gbuffer_keeps_8_bits_or_16_on_every_device() {
+        // Standard: the format of before, whatever the device has
+        assert_eq!(gbuf_format(false, true), wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(gbuf_format(false, false), wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(gbuf_format(true, true), wgpu::TextureFormat::Rgba16Unorm);
+        // without the normalized format, or at a sample count it lacks, the
+        // HDR target's: every device draws into it and resolves it at each
+        // sample count offered
+        assert_eq!(gbuf_format(true, false), HDR_FORMAT);
     }
 
     #[test]

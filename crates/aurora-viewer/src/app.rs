@@ -1698,6 +1698,14 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_SSR") {
         settings.ssr = v != "0";
     }
+    if let Ok(v) = std::env::var("AURORA_NORMAL_PRECISION") {
+        match v.as_str() {
+            "auto" => settings.normal_precision = crate::settings::NORMAL_PRECISION_AUTO,
+            "standard" => settings.normal_precision = crate::settings::NORMAL_PRECISION_STANDARD,
+            "high" => settings.normal_precision = crate::settings::NORMAL_PRECISION_HIGH,
+            other => log::warn!("AURORA_NORMAL_PRECISION: unknown value {other:?} (auto, standard or high)"),
+        }
+    }
     if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
         settings.occlusion_culling = v != "0";
     }
