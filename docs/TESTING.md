@@ -6719,7 +6719,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_CONV_OPTIONS=aurora\|compact\|bubbles\|legacy[:on][:group\|nova]` | The conversation options of Preferences › Chat: tabs ordered by type, tab names, group moderators, "(You)", system messages in brackets, faded history, opening on offline messages |
 | `AURORA_DEMO_OIIA=<seconds>` | The spinning cat's show, started without its warning from that second of its music, without the video |
-| `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
+| `AURORA_DEMO_ATTENTION=1\|front\|capture\|badge` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background; `badge`: the Linux launcher badge and KDE flash |
 | `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
 | `AURORA_DEMO_GAMING_MODE=<frame>` | From that frame, gaming mode is on as from its toolbar button: the Render pauses, the loop slows, with its notice and window title, until the window comes back in front |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
@@ -8290,7 +8290,7 @@ failure. Grid validation and any paid upload are performed by the human.
   in gaming mode for 1 s, freeing up video memory`, and 3 s in `gaming mode: memory
   given back, working set … MB, private … MB`, before and after; the
   textures load again once it ends (`textures load as before`).
-- **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
+- **`AURORA_DEMO_ATTENTION=1|front|capture|badge`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer
   (1000) and a script dialog (1060) arrive. Each but the script dialog
@@ -8315,6 +8315,18 @@ failure. Grid validation and any paid upload are performed by the human.
   minimize (Hyprland, Sway) keeps the window focused, so nothing is shown
   unless the window is moved away from the screen first.
   `AURORA_DEMO_OPTIONS=3:attention` opens the switches.
+  `badge` (Linux, `linux_badge.rs`) turns the launcher badge and the KDE
+  flash on for the run without touching the settings, and leaves the window
+  where it is (put another window over it to see the flash): an IM at
+  frame 760, a second at 820, one from another resident at 880 and a
+  teleport offer at 940 raise the count on the taskbar icon to 4; the first
+  conversation is read at 1100 and everything at 1160, and the badge falls
+  to nothing. The badge is the `com.canonical.Unity.LauncherEntry`
+  `Update` signal: `dbus-monitor "interface='com.canonical.Unity.LauncherEntry'"`
+  shows it on any desktop, KDE Plasma's task manager draws it. On KDE the
+  flash starts with each arrival while the window is behind and stops when
+  it takes the focus; the log says `taskbar flash`, and with `RUST_LOG`
+  at debug, `launcher badge: …` when the bus is missing.
 - **`AURORA_DEMO_EXIT=1|cancel|logout|quit`**: opens the modal at frame 650.
   `1` leaves it interactive; the other modes make the choice at frame 800.
   Take screenshots at `740,900` to compare the blurred background then the

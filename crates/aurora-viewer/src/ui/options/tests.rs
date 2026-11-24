@@ -353,6 +353,7 @@ const BEFORE: &[&str] = &[
     "flash_on_script_dialog",
     "system_notifications",
     "system_notifications_when_active",
+    "linux_taskbar_badge",
     "warn_external_links",
     "show_chat",
     "show_contacts_tab",

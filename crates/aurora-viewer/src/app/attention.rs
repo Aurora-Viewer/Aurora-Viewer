@@ -39,6 +39,11 @@ pub struct State {
     /// The window's own title, then the one last given to the window (the
     /// unread count before it, `titled`).
     title: Option<(String, String)>,
+    /// The launcher badge of Linux (`linux_badge.rs`); clears itself on drop.
+    badge: crate::linux_badge::Badge,
+    /// The KDE flash is asking for attention, to be stopped on focus.
+    #[cfg(not(windows))]
+    kde_flashing: bool,
 }
 
 /// The titles told lately (GrowlManager::mTitleTimers).
@@ -259,6 +264,15 @@ impl App {
             self.attention.behind = !window_in_front(&g.window);
         }
         self.unread_title();
+        self.launcher_badge();
+        #[cfg(not(windows))]
+        if self.attention.kde_flashing
+            && !self.attention.behind
+            && let Some(g) = &self.gfx
+        {
+            self.attention.kde_flashing = false;
+            g.window.request_user_attention(None);
+        }
         if std::mem::take(&mut self.attention.flash)
             && let Some(g) = &self.gfx
         {
@@ -268,8 +282,11 @@ impl App {
                 flash_window(&g.window);
             }
             #[cfg(not(windows))]
-            if flashes_here(g.window.is_minimized()) {
+            let kde = kde_flash(self.badge_on());
+            #[cfg(not(windows))]
+            if kde || flashes_here(g.window.is_minimized()) {
                 log::info!("taskbar flash");
+                self.attention.kde_flashing = kde;
                 g.window
                     .request_user_attention(Some(winit::window::UserAttentionType::Informational));
             } else {
@@ -277,6 +294,26 @@ impl App {
             }
         }
         self.attention_clicks();
+    }
+
+    /// The launcher badge and the KDE flash are on: the setting, or
+    /// AURORA_DEMO_ATTENTION=badge for the run (never saved).
+    fn badge_on(&self) -> bool {
+        self.settings.linux_taskbar_badge || (self.demo && crate::demo::attention::mode().as_deref() == Some("badge"))
+    }
+
+    /// The launcher's badge (Linux, `linux_badge.rs`): the unread
+    /// conversations and the pending notices of the notification center, live,
+    /// whether the window is in front or not and in do not disturb; in world
+    /// only, and 0 (cleared) while the setting is off.
+    fn launcher_badge(&mut self) {
+        let on = cfg!(target_os = "linux") && self.badge_on();
+        let count = if on && matches!(self.screen, super::Screen::World) {
+            crate::linux_badge::badge_count(self.world.conversations_badge(), self.world.notifications.unread_notices())
+        } else {
+            0
+        };
+        self.attention.badge.set(count);
     }
 
     /// The unread count before the window title, set only when it changes.
@@ -396,6 +433,19 @@ fn window_in_front(window: &winit::window::Window) -> bool {
 #[cfg(not(windows))]
 fn flashes_here(minimized: Option<bool>) -> bool {
     cfg!(target_os = "macos") || minimized == Some(true)
+}
+
+/// The flash while the window is behind and not minimized, which the
+/// Legacy Viewer never does on Linux (LLWindowSDL::flashIcon, above): on KDE
+/// Plasma, with the launcher badge's setting on, an unfocused window asking
+/// for attention is shown by the task manager without taking the focus, so
+/// the request is safe there, on Wayland (xdg-activation) as on X11. On
+/// another desktop it stays the minimized-only rule: a compositor such as
+/// Hyprland would switch to the viewer. winit takes the request back when
+/// the window gets the focus (`attention_window`).
+#[cfg(not(windows))]
+fn kde_flash(on: bool) -> bool {
+    crate::linux_badge::kde_flash_enabled(on, std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref())
 }
 
 #[cfg(windows)]

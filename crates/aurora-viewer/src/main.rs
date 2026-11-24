@@ -84,6 +84,7 @@ mod login_accounts;
 mod login_favorites;
 mod login_places;
 mod login_wait;
+mod linux_badge;
 mod lsl_keywords;
 #[cfg(target_os = "macos")]
 mod mac_quit;

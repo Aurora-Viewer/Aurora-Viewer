@@ -5,11 +5,15 @@
 //! for the scenario), shows a Windows notification. `front` keeps the window
 //! in front (no flash, no notification unless "Even when Aurora is in front");
 //! `capture` brings the window back at frame 1150, for a screenshot.
+//! `badge` feeds the Linux launcher badge and KDE flash (turned on for the
+//! run, the settings untouched): two residents' IMs and a teleport offer
+//! arrive, then the conversations and the notices are read one after the
+//! other. The window is left alone: put it behind another to see the flash.
 
 use aurora_net::{ChatMessage, ChatSourceType, ChatType, InstantMessage, NetEvent};
 use uuid::Uuid;
 
-/// The scenario, if asked: `1`, `front` or `capture`.
+/// The scenario, if asked: `1`, `front`, `capture` or `badge`.
 pub fn mode() -> Option<String> {
     std::env::var("AURORA_DEMO_ATTENTION").ok()
 }
@@ -39,6 +43,49 @@ fn im(agent: Uuid, from: Uuid, name: &str, dialog: u8, session: Uuid, text: &str
 
 fn mention(agent: Uuid, text: &str) -> String {
     format!("secondlife:///app/agent/{agent}/mention {text}")
+}
+
+/// `badge`: frame at which the first conversation is read, and the one at
+/// which the rest is (the arrivals are at 760, 820, 880 and 940).
+pub const BADGE_READ_FIRST: u64 = 1100;
+pub const BADGE_READ_ALL: u64 = 1160;
+
+/// The events of `frame` for `badge`: the count rises to 4 (three unread
+/// messages, one offer).
+pub fn badge_events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
+    use super::{DEMO_NOVA, DEMO_TESS};
+    let session = |other: Uuid| Uuid::from_u128(agent.as_u128() ^ other.as_u128());
+    let event = match frame {
+        760 | 820 => im(
+            agent,
+            DEMO_NOVA,
+            "Nova Exemple",
+            0,
+            session(DEMO_NOVA),
+            aurora_i18n::tr!("demo-attention-im"),
+            b"",
+        ),
+        880 => im(
+            agent,
+            DEMO_TESS,
+            "Tess Touch",
+            0,
+            session(DEMO_TESS),
+            aurora_i18n::tr!("demo-attention-im"),
+            b"",
+        ),
+        940 => im(
+            agent,
+            DEMO_NOVA,
+            "Nova Exemple",
+            crate::world::notifications::im::LURE_USER,
+            Uuid::from_u128(0x0A77_E000_0000_0000_0000_0000_0000_0002),
+            aurora_i18n::tr!("demo-attention-teleport"),
+            b"",
+        ),
+        _ => return Vec::new(),
+    };
+    vec![event]
 }
 
 /// The events of `frame`.

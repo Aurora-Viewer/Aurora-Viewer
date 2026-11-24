@@ -919,6 +919,13 @@ impl Notifications {
         self.listed().filter(|n| !n.read).count()
     }
 
+    /// The unread entries that are not a conversation's message (those are
+    /// counted with the conversations): offers, group notices, alerts. What
+    /// the launcher badge adds to the unread conversations.
+    pub fn unread_notices(&self) -> usize {
+        self.listed().filter(|n| !n.read && !matches!(n.data, Data::Message { .. })).count()
+    }
+
     pub fn mark_all_read(&mut self) {
         for n in self.list.iter_mut() {
             n.read = true;

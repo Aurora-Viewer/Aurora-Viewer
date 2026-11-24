@@ -14547,6 +14547,7 @@ impl App {
         {
             if self.frame_count == crate::demo::attention::MINIMIZE_AT
                 && mode != "front"
+                && mode != "badge"
                 && let Some(g) = &self.gfx
             {
                 g.window.set_minimized(true);
@@ -14560,7 +14561,24 @@ impl App {
                 self.notif_ui.open = true;
             }
             let agent = self.world.agent_id;
-            for event in crate::demo::attention::events(self.frame_count, agent) {
+            let events = if mode == "badge" {
+                crate::demo::attention::badge_events(self.frame_count, agent)
+            } else {
+                crate::demo::attention::events(self.frame_count, agent)
+            };
+            if mode == "badge" {
+                // the count falls: a conversation read, then the rest
+                if self.frame_count == crate::demo::attention::BADGE_READ_FIRST
+                    && let Some(s) = self.world.social.ims.first_mut()
+                {
+                    s.unread = 0;
+                }
+                if self.frame_count == crate::demo::attention::BADGE_READ_ALL {
+                    self.world.social.ims.iter_mut().for_each(|s| s.unread = 0);
+                    self.world.notifications.mark_all_read();
+                }
+            }
+            for event in events {
                 log::info!(
                     "demo attention: arrival at frame {}, behind {}",
                     self.frame_count,
