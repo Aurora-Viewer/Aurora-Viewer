@@ -11,6 +11,11 @@
 //! `LDAP.`, `IMAP.`, `SMTP.` or `POP3.` (any case, `checkprefix`) picks that
 //! scheme; every other host gets `http`. A value that starts with `/` is left
 //! alone: libcurl has no host for it either and refuses it.
+//!
+//! Stricter than libcurl on purpose: a string the HTTP client already reads
+//! as `http` or `https` (`https:@host/…`, a backslash, a tab, a leading line
+//! end) is left as written, so a guess never turns the grid's `https` into
+//! `http` or sends the capability to another host.
 
 use std::borrow::Cow;
 
@@ -33,7 +38,12 @@ pub(crate) fn ensure_scheme_owned(url: String) -> String {
 }
 
 fn is_left_alone(url: &str) -> bool {
-    url.is_empty() || url.starts_with('/') || has_scheme_slash(url)
+    url.is_empty()
+        || url.starts_with('/')
+        || has_scheme_slash(url)
+        // The grid wrote http(s): a guess never replaces it (only reached for
+        // strings that would otherwise be guessed).
+        || reqwest::Url::parse(url).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
 }
 
 fn with_guessed_scheme(url: &str) -> String {
@@ -116,6 +126,25 @@ mod tests {
         assert_eq!(ensure_scheme("abcdefghijklmnop://h/x"), "http://abcdefghijklmnop://h/x");
         assert_eq!(ensure_scheme("https:/a.example/cap"), "https:/a.example/cap");
         assert_eq!(ensure_scheme("1http://a.example/cap"), "1http://a.example/cap");
+    }
+
+    /// Strings the HTTP client reads as https are never guessed into http
+    /// or onto another host (stricter than libcurl, see the module comment).
+    #[test]
+    fn a_scheme_the_grid_wrote_as_https_is_never_replaced() {
+        for url in [
+            "https:@a.example/cap",
+            "https:\\\\a.example\\cap",
+            "https:\t//a.example/cap",
+            "\nhttps://a.example/cap",
+        ] {
+            assert_eq!(ensure_scheme(url), url, "{url:?}");
+            assert_eq!(ensure_scheme_owned(url.to_owned()), url, "{url:?}");
+        }
+        // real schemeless capabilities are still guessed
+        assert_eq!(ensure_scheme("a.example:8003/cap"), "http://a.example:8003/cap");
+        assert_eq!(ensure_scheme("user:pw@a.example/cap"), "http://user:pw@a.example/cap");
+        assert_eq!(ensure_scheme("a.example/cap"), "http://a.example/cap");
     }
 
     #[test]

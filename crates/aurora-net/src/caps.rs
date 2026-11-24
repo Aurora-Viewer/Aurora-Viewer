@@ -443,7 +443,8 @@ pub async fn resolve_seed(
                     for (k, val) in m {
                         let s = val.to_string_value();
                         if !s.is_empty() {
-                            // `CURLOPT_URL` with no default protocol (urlapi.c `guess_scheme`).
+                            // `CURLOPT_URL` with no default protocol: libcurl 7.54.1's
+                            // guess (`parseurlandfillconn`, lib/url.c; see curl_url.rs).
                             caps.insert(k.clone(), crate::curl_url::ensure_scheme_owned(s));
                         }
                     }
