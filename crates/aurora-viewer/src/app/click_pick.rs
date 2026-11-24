@@ -148,10 +148,9 @@ impl Picked {
 /// A click whose depth is asked.
 struct Pending {
     through_ignored: bool,
-    ticket: u64,
-    /// The request for the drawn faces, when the click asks it, and the
-    /// two answers as they come.
-    drawn: Option<u64>,
+    /// The main view's depth is redundant when the drawn faces supply it.
+    depth_ticket: Option<u64>,
+    drawn_ticket: u64,
     depth_answer: Option<Option<Vec3>>,
     drawn_answer: Option<aurora_render::Drawn>,
     click: Click,
@@ -165,6 +164,15 @@ struct Pending {
     frame: u64,
     /// AURORA_CLICK_PICK=check: the waiting read made at the click.
     check: Option<Check>,
+}
+
+impl Pending {
+    fn forget(&self, renderer: &mut aurora_render::Renderer) {
+        if let Some(ticket) = self.depth_ticket {
+            renderer.forget_pick(ticket);
+        }
+        renderer.forget_drawn(self.drawn_ticket);
+    }
 }
 
 /// What the read that waits gave at the time of the click.
@@ -492,7 +500,6 @@ impl App {
             let depth = g.renderer.pick_world(x, y);
             (depth, t.elapsed())
         });
-        let ticket = g.renderer.request_pick(x, y);
         self.frame_profile.trace_click();
         // LLToolCamera::handleMouseDown: displayed surfaces, including the
         // transparency overlay. Posed geometry avoids an attachment's bind pose.
@@ -502,6 +509,8 @@ impl App {
             || (self.build.open && self.build.tool == crate::build::Tool::Focus);
         let through_ignored =
             !self.build.open && matches!(click, Click::Press | Click::World) && ray.is_some_and(|r| self.scene.may_pick_ignored(r));
+        // The comparison diagnostic still measures the main view's depth.
+        let depth_ticket = (!through_ignored || check.is_some()).then(|| g.renderer.request_pick(x, y));
         let mode = match (click == Click::Menu, camera) {
             (false, _) if through_ignored => aurora_render::DrawnMode::WorldPress { camera },
             (true, true) => aurora_render::DrawnMode::Visible,
@@ -510,7 +519,7 @@ impl App {
             (false, false) => aurora_render::DrawnMode::Left,
         };
         self.hover_drawn.cancel(&mut g.renderer);
-        let drawn = Some(g.renderer.request_drawn(x, y, mode));
+        let drawn_ticket = g.renderer.request_drawn(x, y, mode);
         let tags = self.name_tag_candidates(ray);
         let check = check.map(|(depth, waited)| Check {
             depth,
@@ -519,8 +528,8 @@ impl App {
         });
         self.clicks.pending = Some(Pending {
             through_ignored,
-            ticket,
-            drawn,
+            depth_ticket,
+            drawn_ticket,
             depth_answer: None,
             drawn_answer: None,
             click,
@@ -585,27 +594,23 @@ impl App {
             let Some(g) = self.gfx.as_mut() else {
                 return;
             };
-            if p.depth_answer.is_none() {
-                p.depth_answer = g.renderer.take_pick(p.ticket);
-            }
-            if let Some(ticket) = p.drawn
-                && p.drawn_answer.is_none()
+            if let Some(ticket) = p.depth_ticket
+                && p.depth_answer.is_none()
             {
-                p.drawn_answer = g.renderer.take_drawn(ticket);
+                p.depth_answer = g.renderer.take_pick(ticket);
             }
-            let answer = match (p.depth_answer, p.drawn, p.drawn_answer) {
-                (Some(depth), None, _) => Some((depth, Default::default())),
-                (Some(depth), Some(_), Some(drawn)) => Some((depth, drawn)),
+            if p.drawn_answer.is_none() {
+                p.drawn_answer = g.renderer.take_drawn(p.drawn_ticket);
+            }
+            let answer = match p.drawn_answer {
+                Some(drawn) if p.depth_ticket.is_none() || p.depth_answer.is_some() => Some((p.depth_answer.flatten(), drawn)),
                 _ if p.asked.elapsed() < GIVE_UP => return,
                 _ => {
                     log::warn!(
                         "click pick: no answer after {:.1} s, click dropped",
                         p.asked.elapsed().as_secs_f32()
                     );
-                    g.renderer.forget_pick(p.ticket);
-                    if let Some(ticket) = p.drawn {
-                        g.renderer.forget_drawn(ticket);
-                    }
+                    p.forget(&mut g.renderer);
                     None
                 }
             };
@@ -791,10 +796,7 @@ impl App {
         if let Some(p) = self.clicks.pending.take()
             && let Some(g) = self.gfx.as_mut()
         {
-            g.renderer.forget_pick(p.ticket);
-            if let Some(ticket) = p.drawn {
-                g.renderer.forget_drawn(ticket);
-            }
+            p.forget(&mut g.renderer);
         }
         self.clicks.held.clear();
         self.build.drop_press();
@@ -1206,8 +1208,8 @@ mod tests {
     fn pending_pick() -> Pending {
         Pending {
             through_ignored: false,
-            ticket: 1,
-            drawn: None,
+            depth_ticket: Some(1),
+            drawn_ticket: 2,
             depth_answer: None,
             drawn_answer: None,
             click: Click::Press,
@@ -1419,8 +1421,8 @@ mod tests {
         // behind a click that waits for its depth: the depth, then the pass
         w.pending = Some(Pending {
             through_ignored: false,
-            ticket: 1,
-            drawn: None,
+            depth_ticket: Some(1),
+            drawn_ticket: 2,
             depth_answer: None,
             drawn_answer: None,
             click: Click::Press,

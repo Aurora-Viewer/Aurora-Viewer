@@ -4420,7 +4420,8 @@ An ordinary world press or camera press outside Build can look through
 Ignore Object volumes. The scene tracks their draw owners and checks their
 bounds at the press. For a possible hit, the same narrow pass runs before
 Hi-Z removes hidden draws and skips flagged volumes, preserving posed
-surfaces, terrain and empty sky behind them.
+surfaces, terrain and empty sky behind them. Its opaque hit also supplies
+depth for the press, so this path skips the main view's depth readback.
 CPU searches never intersect the unposed rest geometry of
 GPU-posed meshes. Nothing is drawn or allocated per frame outside a click.
 Name-tag hit planes and their rectangles are captured with the press and
