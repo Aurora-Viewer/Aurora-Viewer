@@ -56,7 +56,8 @@ removes a worn preview; **Rez** brings it back. Derez/detach keep the source in
 the list and subsequent Blender edits never rez it automatically. A Derez,
 Detach, Drop or Attach happens at once and shows a toast under the status
 line for 8 seconds, whose **Undo** puts the object and its prims back where
-they were. The card's
+they were. Made from the world's menu while the window is closed or
+minimized, the same toast shows over the world, above the toolbar. The card's
 eye remains independent. **Stop** clears all session previews and placement.
 
 **Edit** uses the normal Aurora translation, rotation and size tools, with the
@@ -149,6 +150,11 @@ The other valid objects continue to update. Fix the reported problem and use
 **Update now**, or wait for the next automatic capture, to retry. The entry stays
 in Blender's list; failed sources are omitted from that preview snapshot. Import
 and LOD preparation still require the complete requested source to be valid.
+With plug-in 0.16.0 or later, Aurora's **Objects** tab shows the same warnings:
+an object whose textures Blender could not read keeps its card, with an amber
+"Textures skipped, plain color shown" line and Blender's reason; an object
+Blender could not send has a card of its own, "Not in the preview", with the
+reason (an export error, or over the transfer limit).
 
 The four navigation buttons keep the sidebar focused on one task:
 
@@ -828,6 +834,13 @@ with `packed: {"vertices": "<base64>", "indices": "<base64>"}`. Each vertex is a
 joint indices and four f32 weights. Indices are little-endian u32. Values are
 identical to the ordinary JSON-to-f32 conversion; bounds, skinning, normals and
 index validation still apply. Mixing nonempty arrays and packed data is invalid.
+With `object-warnings`, a snapshot may carry `warnings`: at most 64 entries of
+`{"source_id": "<uuid>", "name": "…", "kind": "textures" | "not-sent",
+"reason": "…"}` (`source_id` optional; name and reason at most 512 characters,
+untranslated). `textures` names a sent object shown in its plain colour;
+`not-sent` an object left out of the revision. The viewer drops unknown kinds
+and entries without a name instead of refusing the snapshot; an older viewer
+never receives the field.
 Length zero is a heartbeat. The reply is newline-terminated JSON
 with `ok`, `revision` on success, or `error` on rejection. A success acknowledges
 CPU preparation, not a displayed GPU frame. Revisions strictly increase within

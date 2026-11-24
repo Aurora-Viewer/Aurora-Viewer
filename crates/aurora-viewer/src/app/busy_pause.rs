@@ -91,7 +91,7 @@ impl App {
     /// Every frame, after the render: the pause follows the GPU time.
     pub(super) fn busy_pause_frame(&mut self, vr: bool) {
         let mut timed = self.capture.is_some() || self.frame_profile.enabled();
-        let (mut behind, mut gpu_ms) = (!self.focused, self.last_render.gpu_ms);
+        let (mut behind, mut gpu_ms) = (!self.in_front(), self.last_render.gpu_ms);
         if self.demo && !self.busy_pause.demo_released && demo_from().is_some_and(|from| self.frame_count >= from) {
             // (a new measure each frame)
             let ms = SLOW_MS * 2.0 + (self.frame_count % 2) as f32;

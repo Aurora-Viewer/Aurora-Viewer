@@ -40,6 +40,11 @@ impl Tab {
 }
 
 pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &Palette, can_upload: bool) -> bool {
+    // a Derez, Detach, Drop or Attach from the world's menu while the window
+    // is closed or minimized keeps its Undo, over the world
+    if !live.open || widgets::floater_minimized(ctx, "blender_live") {
+        world_undo_toast(live, ctx, p);
+    }
     if !live.open {
         return false;
     }
@@ -92,32 +97,7 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &Palette, can_upload
 /// viewer, so the change is made at once and the toast offers it back
 /// instead of asking first.
 fn undo_toast(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
-    use super::objects::Action;
-    let Some(undo) = &live.undo else { return };
-    let now = std::time::Instant::now();
-    if undo.expired(now) {
-        return;
-    }
-    ui.ctx().request_repaint_after(objects_undo_left(undo, now));
-    let name = live
-        .snapshot
-        .as_ref()
-        .and_then(|s| s.sources.iter().find(|s| s.id == undo.source))
-        .map_or_else(String::new, |s| s.name.clone());
-    let text = match undo.action {
-        Action::Derez => aurora_i18n::tr!("blender-live-undo-derez", name = name.as_str()),
-        Action::Detach => aurora_i18n::tr!("blender-live-undo-detach", name = name.as_str()),
-        Action::Drop => aurora_i18n::tr!("blender-live-undo-drop", name = name.as_str()),
-        Action::Attach(point) => {
-            let point = live
-                .attach_choices
-                .iter()
-                .find(|choice| choice.0 == point)
-                .map_or("", |choice| choice.2.as_str());
-            aurora_i18n::tr!("blender-live-undo-attach", name = name.as_str(), point = point)
-        }
-        _ => return,
-    };
+    let Some(text) = undo_text(live, ui.ctx()) else { return };
     egui::Frame::new()
         .fill(p.field)
         .stroke(Stroke::new(1.0, p.violet.gamma_multiply(0.45)))
@@ -130,17 +110,90 @@ fn undo_toast(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
         })
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-undo")).clicked() {
-                        live.undo_requested = true;
-                    }
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.add(egui::Label::new(RichText::new(text).size(12.5).color(p.ink)).wrap());
-                    });
-                });
+            undo_row(live, ui, p, &text);
+        });
+}
+
+/// The same toast over the world, above the toolbar, when the window is
+/// closed or minimized: the change came from the world's menu, so its Undo
+/// stays within reach. It names the window, which is not in sight.
+fn world_undo_toast(live: &mut Live, ctx: &egui::Context, p: &Palette) {
+    let Some(text) = undo_text(live, ctx) else { return };
+    egui::Area::new(egui::Id::unique("blender_live_world_undo"))
+        .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, -WORLD_TOAST_ABOVE))
+        .show(ctx, |ui| {
+            ui.set_max_width(WORLD_TOAST_WIDTH);
+            widgets::overlay(
+                ui,
+                p,
+                egui::Margin {
+                    left: 12,
+                    right: 6,
+                    top: 6,
+                    bottom: 6,
+                },
+                |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(aurora_i18n::tr!("blender-live-title").ui_upper())
+                                .size(10.5)
+                                .color(p.muted),
+                        )
+                        .selectable(false),
+                    );
+                    undo_row(live, ui, p, &text);
+                },
+            );
+        });
+}
+
+/// How far above the window's bottom the world's toast sits: clear of the
+/// toolbar and the chat bar.
+const WORLD_TOAST_ABOVE: f32 = 84.0;
+const WORLD_TOAST_WIDTH: f32 = 420.0;
+
+/// What the toast says, while it is shown.
+fn undo_text(live: &Live, ctx: &egui::Context) -> Option<String> {
+    use super::objects::Action;
+    let undo = live.undo.as_ref()?;
+    let now = std::time::Instant::now();
+    if undo.expired(now) {
+        return None;
+    }
+    ctx.request_repaint_after(objects_undo_left(undo, now));
+    let name = live
+        .snapshot
+        .as_ref()
+        .and_then(|s| s.sources.iter().find(|s| s.id == undo.source))
+        .map_or_else(String::new, |s| s.name.clone());
+    Some(match undo.action {
+        Action::Derez => aurora_i18n::tr!("blender-live-undo-derez", name = name.as_str()),
+        Action::Detach => aurora_i18n::tr!("blender-live-undo-detach", name = name.as_str()),
+        Action::Drop => aurora_i18n::tr!("blender-live-undo-drop", name = name.as_str()),
+        Action::Attach(point) => {
+            let point = live
+                .attach_choices
+                .iter()
+                .find(|choice| choice.0 == point)
+                .map_or("", |choice| choice.2.as_str());
+            aurora_i18n::tr!("blender-live-undo-attach", name = name.as_str(), point = point)
+        }
+        _ => return None,
+    })
+}
+
+/// The toast's text and its Undo button.
+fn undo_row(live: &mut Live, ui: &mut egui::Ui, p: &Palette, text: &str) {
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-undo")).clicked() {
+                live.undo_requested = true;
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add(egui::Label::new(RichText::new(text).size(12.5).color(p.ink)).wrap());
             });
         });
+    });
 }
 
 fn objects_undo_left(undo: &super::objects::Undo, now: std::time::Instant) -> std::time::Duration {
@@ -315,6 +368,7 @@ fn objects(live: &mut Live, ui: &mut egui::Ui, p: &Palette, can_upload: bool) {
     if sources.iter().all(|s| live.state(s.id) == SourceState::Removed) {
         note(ui, p, aurora_i18n::tr!("blender-live-empty"));
     }
+    not_sent(live, ui, p);
     let rows = live.linkset_rows();
     let mut kids_open = false;
     for (index, row) in rows.iter().enumerate() {
@@ -691,6 +745,9 @@ fn object_card(
                 ago_label(ui, p, changed);
             });
         });
+        if let Some(reason) = texture_warning(live, source.id) {
+            warning_line(ui, p, aurora_i18n::tr!("blender-live-warning-textures"), &reason);
+        }
     });
     toggle
 }
@@ -720,7 +777,62 @@ fn kid_card(live: &mut Live, ui: &mut egui::Ui, p: &Palette, row: &links::Row, c
                     ui.label(RichText::new(tris).size(10.5).color(p.muted));
                 });
             });
+            if let Some(reason) = texture_warning(live, source.id) {
+                warning_line(ui, p, aurora_i18n::tr!("blender-live-warning-textures"), &reason);
+            }
         });
+    });
+}
+
+/// Blender's reason when it could not read an object's textures: the card
+/// says so, as Blender's sidebar does.
+fn texture_warning(live: &Live, id: Uuid) -> Option<String> {
+    live.snapshot
+        .as_ref()?
+        .warnings
+        .iter()
+        .find(|w| w.kind == protocol::WarningKind::Textures && w.source == Some(id))
+        .map(|w| w.reason.clone())
+}
+
+/// The objects Blender could not send in this revision, each on a card of
+/// its own with Blender's reason: they have no preview to show.
+fn not_sent(live: &Live, ui: &mut egui::Ui, p: &Palette) {
+    let Some(snapshot) = live.snapshot.as_ref() else { return };
+    for warning in snapshot.warnings.iter().filter(|w| w.kind == protocol::WarningKind::NotSent) {
+        ui.push_id(("blender_live_not_sent", &warning.name, warning.source), |ui| {
+            card_frame(ui, p, false, false).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&warning.name)
+                            .size(12.5)
+                            .family(crate::ui::fonts::semibold(ui.ctx()))
+                            .color(p.ink),
+                    )
+                    .truncate(),
+                );
+                warning_line(ui, p, aurora_i18n::tr!("blender-live-warning-not-sent"), &warning.reason);
+            });
+        });
+    }
+}
+
+/// A warning under a card: the amber triangle and what it means, then
+/// Blender's own reason, muted, wrapped to the card.
+fn warning_line(ui: &mut egui::Ui, p: &Palette, lead: &str, reason: &str) {
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::hover());
+        crate::ui::sheet::icon_at(ui, "alert-triangle-filled", rect.center() + Vec2::new(0.0, 1.0), 12.0, p.amber);
+        let font = egui::FontId::proportional(10.5);
+        let mut job = egui::text::LayoutJob::default();
+        job.append(lead, 0.0, egui::TextFormat::simple(font.clone(), p.amber));
+        if !reason.is_empty() {
+            job.append(" · ", 0.0, egui::TextFormat::simple(font.clone(), p.muted));
+            job.append(reason, 0.0, egui::TextFormat::simple(font, p.muted));
+        }
+        ui.add(egui::Label::new(job).wrap());
     });
 }
 

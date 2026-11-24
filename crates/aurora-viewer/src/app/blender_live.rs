@@ -250,6 +250,8 @@ impl App {
                 self.blender_live.bend.elbows = 90.0;
                 self.blender_live.bend.knees = 60.0;
                 crate::blender_live::demo_sleeves_fixture(&self.world.avatar_lib.rig)
+            } else if mode == "warnings" {
+                crate::blender_live::demo_warnings_fixture(&self.world.avatar_lib.rig)
             } else if mode.starts_with("static") {
                 crate::blender_live::demo_static_fixture(&self.world.avatar_lib.rig, mode.starts_with("static-linked"))
             } else {
@@ -290,10 +292,11 @@ impl App {
             }
             self.blender_live.owner = Some(self.world.agent_id);
         }
-        // Quick look in front of the windows a demo opens over it
+        // Quick look and the warnings in front of the windows a demo opens over it
         if self.demo
             && (400..=440).contains(&self.frame_count)
-            && std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look")
+            && (std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look")
+                || std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "warnings"))
         {
             crate::ui::widgets::bring_floater_front(&self.egui_ctx, "blender_live");
         }
@@ -313,6 +316,27 @@ impl App {
             if let Some(old) = self.blender_live.receive(snapshot) {
                 self.scene.jobs.discard(old);
             }
+        }
+        // `static-derez-closed`: the window closes, then the world's menu
+        // derezzes the object, through the same command as the pie menu
+        if self.demo
+            && self.frame_count == 700
+            && std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "static-derez-closed")
+            && let Some(key) = self
+                .blender_live
+                .selected
+                .and_then(|source| self.blender_live.root(source))
+                .and_then(|id| self.world.objects.index_of_uuid(&id))
+                .and_then(|idx| self.world.objects.get(idx))
+                .map(|object| object.key)
+        {
+            self.send(NetCommand::Build(aurora_net::build::BuildCmd::DeRez {
+                handle: key.region,
+                local_ids: vec![key.local_id],
+                destination: aurora_net::build::derez::TAKE_INTO_AGENT_INVENTORY,
+                destination_id: uuid::Uuid::nil(),
+                group_id: uuid::Uuid::nil(),
+            }));
         }
         if self.demo
             && self.frame_count == 450
@@ -342,7 +366,7 @@ impl App {
             };
             if matches!(
                 mode.as_str(),
-                "static" | "static-linked" | "static-linked-child" | "static-linked-menu"
+                "static" | "static-linked" | "static-linked-child" | "static-linked-menu" | "static-derez-closed"
             ) && let Some(placement) = self.blender_live.placements.get(&source)
             {
                 let position = if let Some(parent) = placement.parent.and_then(|id| self.blender_live.placements.get(&id)) {
@@ -357,7 +381,13 @@ impl App {
                     &self.settings.camera,
                 );
             }
-            self.blender_live.object_action = Some((source, action));
+            // `static-derez-closed` keeps the camera on the object, unselected,
+            // so its Derez shows
+            if mode == "static-derez-closed" {
+                self.blender_live.open = false;
+            } else {
+                self.blender_live.object_action = Some((source, action));
+            }
         }
         if self.demo
             && self.frame_count == 520
