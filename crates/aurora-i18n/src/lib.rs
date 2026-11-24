@@ -651,6 +651,12 @@ mod tests {
     fn the_grid_gets_the_legacy_viewer_s_language_codes() {
         for (code, grid) in [
             ("en", "en"),
+            ("en-US", "en"),
+            ("en-AU", "en"),
+            ("en-GB", "en"),
+            ("en_US", "en"),
+            ("en_AU", "en"),
+            ("en_GB", "en"),
             ("fr", "fr"),
             ("ja", "ja"),
             ("de", "de"),
