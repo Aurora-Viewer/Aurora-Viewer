@@ -229,11 +229,17 @@ fn card(
     let row = &frame.rows[item.first];
     let open = state.opened == Some(item.root);
     let radius = ui.visuals().window_corner_radius;
-    let (fill, stroke) = if open {
-        (p.violet.gamma_multiply(0.13), Stroke::new(1.0, p.violet))
-    } else {
-        (p.raised.gamma_multiply(0.45), Stroke::new(1.0, egui::Color32::TRANSPARENT))
-    };
+    // an open card only gains an outline: the accent is for the prim outlined
+    // in the world, at its foot
+    let fill = p.raised.gamma_multiply(0.45);
+    let stroke = Stroke::new(
+        1.0,
+        if open {
+            p.muted.gamma_multiply(0.5)
+        } else {
+            egui::Color32::TRANSPARENT
+        },
+    );
     let point = (item.point != 0).then(|| point_label(frame, item.point));
     egui::Frame::new().fill(fill).stroke(stroke).corner_radius(radius).show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -248,7 +254,7 @@ fn card(
         // badge, where it is worn; the name takes what is left
         let mut right = rect.right() - 10.0;
         let chevron = if open { "chevron-down" } else { "chevron-right" };
-        let tint = if open { p.violet_light } else { p.muted };
+        let tint = if open { p.ink } else { p.muted };
         crate::ui::sheet::icon_at(ui, chevron, egui::pos2(right - 7.0, rect.center().y), 14.0, tint);
         right -= 22.0;
         let mut on_action = false;
