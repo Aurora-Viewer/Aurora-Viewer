@@ -221,6 +221,8 @@ pub mod flags {
     /// alpha, as LLVOVolume::lineSegmentIntersect ignores texture alpha
     /// there, also where `EMISSIVE_MASK` is dropped for a transparent face.
     pub const PICK_IGNORES_ALPHA: u32 = 1 << 28;
+    /// Bit 27 of flags[3]. World clicks skip this volume outside Build.
+    pub const IGNORE_OBJECT_PICK: u32 = 1 << 27;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -412,6 +414,10 @@ impl DrawRecord {
     /// flags[3]'s texture-animation mode and dimensions.
     pub fn set_world_blend_pick(&mut self, enabled: bool) {
         self.flags[3] = (self.flags[3] & !flags::WORLD_BLEND_PICK) | if enabled { flags::WORLD_BLEND_PICK } else { 0 };
+    }
+
+    pub fn set_ignore_object_pick(&mut self, ignored: bool) {
+        self.flags[3] = (self.flags[3] & !flags::IGNORE_OBJECT_PICK) | if ignored { flags::IGNORE_OBJECT_PICK } else { 0 };
     }
 
     /// Layer rank (0..=`flags::LAYER_RANK_MAX`) of a face that may lie
@@ -2856,6 +2862,9 @@ mod tests {
             | (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT)
             | 0x00ff_ffff;
         assert_eq!(flags::PICK_IGNORES_ALPHA & others, 0);
+        assert_eq!(flags::IGNORE_OBJECT_PICK & (others | flags::PICK_IGNORES_ALPHA), 0);
+        let common = include_str!("shaders/common.wgsl");
+        assert!(common.contains(&format!("const FLAG_IGNORE_OBJECT_PICK: u32 = {}u;", flags::IGNORE_OBJECT_PICK)));
     }
 
     /// The visible-surface pick reads the bit with the same value, in the

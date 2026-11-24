@@ -121,6 +121,7 @@ pub(super) struct Picked {
     /// whose surface it is when the GPU alone poses it (scene/drawn.rs).
     /// Camera clicks use the visible-surface mode of that same pass.
     pub drawn: aurora_render::Drawn,
+    pub through_ignored: bool,
     /// A displayed name tag captured at the original press, before waiting
     /// for the depth. Camera/avatar motion cannot move its hit rectangle.
     pub tag: Option<(Uuid, Vec3)>,
@@ -146,6 +147,7 @@ impl Picked {
 
 /// A click whose depth is asked.
 struct Pending {
+    through_ignored: bool,
     ticket: u64,
     /// The request for the drawn faces, when the click asks it, and the
     /// two answers as they come.
@@ -476,6 +478,7 @@ impl App {
             // (the read that waits knows nothing of the faces drawn: a
             // rigged mesh is not designated, as before)
             let picked = Picked {
+                through_ignored: false,
                 ray,
                 depth,
                 drawn: Default::default(),
@@ -497,7 +500,10 @@ impl App {
         let camera = (self.alt && !matches!(click, Click::Gun { .. }))
             || self.object_view
             || (self.build.open && self.build.tool == crate::build::Tool::Focus);
+        let through_ignored =
+            !self.build.open && matches!(click, Click::Press | Click::World) && ray.is_some_and(|r| self.scene.may_pick_ignored(r));
         let mode = match (click == Click::Menu, camera) {
+            (false, _) if through_ignored => aurora_render::DrawnMode::WorldPress { camera },
             (true, true) => aurora_render::DrawnMode::Visible,
             (true, false) => aurora_render::DrawnMode::Interaction,
             (false, true) => aurora_render::DrawnMode::LeftVisible,
@@ -512,6 +518,7 @@ impl App {
             waited,
         });
         self.clicks.pending = Some(Pending {
+            through_ignored,
             ticket,
             drawn,
             depth_answer: None,
@@ -618,8 +625,16 @@ impl App {
                     Some(c) => self.log_click_check(&p, c, depth, frames, ms),
                     None => self.note_pick(format_args!("answered after {frames} frames, {ms:.2} ms")),
                 }
+                // Use the same opaque surface for the touch, avatar and name
+                // tag. A filtered sky hit has no depth at all.
+                let depth = if p.through_ignored {
+                    drawn.opaque.map(|face| face.point)
+                } else {
+                    depth
+                };
                 let tag = super::plate_click::visible_tag(&p.tags, depth, p.ray);
                 self.clicks.in_hand = Some(Picked {
+                    through_ignored: p.through_ignored,
                     ray: p.ray,
                     depth,
                     drawn,
@@ -833,7 +848,7 @@ impl App {
                 self.egui_ctx.egui_wants_keyboard_input()
             ),
             DemoNote::Action(mode) => log::info!(
-                "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, media_url={}",
+                "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, focus_object={:?}, media_url={}",
                 self.interactions.dialog.is_some(),
                 self.world.agent.is_sitting(),
                 self.interactions
@@ -846,6 +861,11 @@ impl App {
                 self.media.find(&crate::media::MediaKey::Parcel).is_some_and(|m| m.paused),
                 self.build.selection,
                 self.camera.focus_point(),
+                self.camera
+                    .focus_object_id()
+                    .and_then(|id| self.world.objects.index_of_uuid(&id))
+                    .and_then(|idx| self.world.objects.get(idx))
+                    .map(|o| o.key.local_id),
                 self.interactions.media_url.is_some(),
             ),
             DemoNote::Media(pos, frame) => log::info!("demo media click at {pos:?} (frame {frame}): focus {:?}", self.media.focus),
@@ -1185,6 +1205,7 @@ mod tests {
 
     fn pending_pick() -> Pending {
         Pending {
+            through_ignored: false,
             ticket: 1,
             drawn: None,
             depth_answer: None,
@@ -1397,6 +1418,7 @@ mod tests {
 
         // behind a click that waits for its depth: the depth, then the pass
         w.pending = Some(Pending {
+            through_ignored: false,
             ticket: 1,
             drawn: None,
             depth_answer: None,

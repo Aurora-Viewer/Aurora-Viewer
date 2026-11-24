@@ -640,6 +640,47 @@ mod tests {
     };
 
     #[test]
+    fn filtered_press_uses_the_posed_surface_behind_an_ignored_volume() {
+        let (mut world, mut scene, front, back) = super::super::picking::tests::indexed_scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let screen = world.objects.get_mut(front).unwrap();
+        screen.set_click_action(crate::interaction::code::IGNORE);
+        scene.gpu[front].center = screen.position;
+        scene.gpu[front].radius = 1.0;
+        scene.ignored_draws.insert(front);
+        assert!(scene.may_pick_ignored(ray));
+        assert!(!scene.may_pick_ignored((ray.0 + Vec3::Y * 10.0, ray.1)));
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        scene.gpu.resize_with(scene.gpu.len().max(own + 1), Default::default);
+        scene.gpu[own].is_avatar = true;
+        let body_draw = FaceDraw {
+            record: 2,
+            ..scene.gpu[front].faces[0]
+        };
+        scene.gpu[own].faces.push(body_draw);
+        scene.gpu[back].faces[0].record = 1;
+        let pick = |record, distance| {
+            let point = ray.0 + ray.1 * distance;
+            let drawn = Drawn {
+                opaque: Some(DrawnFace {
+                    record,
+                    point,
+                    st: glam::Vec2::ZERO,
+                    normal: -Vec3::X,
+                    binormal: Vec3::Z,
+                }),
+                blend: None,
+            };
+            let depth = scene.touch_depth(&world, &drawn, Some(ray), Some(point), 100.0);
+            let hit = scene.drawn_action_point(&world, ray, depth, 100.0);
+            scene.own_avatar_surface(&world, &drawn, ray, hit.filter(|&p| p != point))
+        };
+        assert_eq!(pick(2, 4.0), Some(ray.0 + ray.1 * 4.0));
+        assert_eq!(pick(1, 6.5), None);
+        assert_eq!(scene.drawn_action_point(&world, ray, None, 100.0), None);
+    }
+
+    #[test]
     fn own_avatar_steering_requires_a_drawn_body_surface() {
         let (world, mut scene, front, back) = super::super::picking::tests::indexed_scene_with_two_objects();
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
