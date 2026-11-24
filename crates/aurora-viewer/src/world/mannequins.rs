@@ -168,9 +168,15 @@ struct Mannequin {
     /// Its first local id: its avatar; its copies follow.
     base: u32,
     next: u32,
+    /// The local ids of copies taken away, to give again (an outfit or a
+    /// mesh body changed while the row stands).
+    free: Vec<u32>,
+    /// It reached `LOCALS_EACH` (said once in the log).
+    full: bool,
     /// Its AvatarAppearance values: ours with its sliders changed.
     params: Vec<u8>,
-    /// Moves when `params` change (the scene rebuilds its skeleton).
+    /// Its appearance generation: new each time `params` change, never one
+    /// a mannequin of the same id had (the scene rebuilds its skeleton).
     generation: u64,
     /// Our worn object → its copy's local id and the source's signature
     /// when it was copied.
@@ -189,6 +195,10 @@ pub struct FitLab {
     from_generation: Option<u64>,
     /// The motion their animations were set for.
     motion_set: Option<Motion>,
+    /// The last appearance generation given (`Mannequin::generation`):
+    /// a mannequin's id comes back with its place in the row, its skeleton
+    /// cached by the scene must not.
+    generations: u64,
 }
 
 impl FitLab {
@@ -259,6 +269,13 @@ impl World {
     /// lab is on; an empty list takes the mannequins away. `place` puts the
     /// row in front of us again.
     pub fn update_fit_lab(&mut self, bodies: &[Body], motion: Motion, place: bool, now: Instant) {
+        // a teleport: the row goes, and stands again in front of us once we
+        // have arrived (the region changes before our place does); a
+        // region crossing makes it again where we are
+        if self.teleporting || !self.movement_complete {
+            self.remove_fit_lab();
+            return;
+        }
         if self.fit_lab.region.is_some() && self.fit_lab.region != self.main_region {
             self.remove_fit_lab();
         }
@@ -277,13 +294,16 @@ impl World {
             self.fit_lab.region = self.main_region;
             for (index, &body) in bodies.iter().enumerate() {
                 let base = FIRST_LOCAL + index as u32 * LOCALS_EACH;
+                self.fit_lab.generations += 1;
                 self.fit_lab.mannequins.push(Mannequin {
                     id: mannequin_id(self.agent_id, index),
                     body,
                     base,
                     next: base + 1,
+                    free: Vec::new(),
+                    full: false,
                     params: Vec::new(),
-                    generation: 1,
+                    generation: self.fit_lab.generations,
                     copies: HashMap::new(),
                     animations: Vec::new(),
                 });
@@ -371,7 +391,8 @@ impl World {
             } else {
                 shape.edit_values(&ours, &changed)
             };
-            m.generation += 1;
+            self.fit_lab.generations += 1;
+            m.generation = self.fit_lab.generations;
         }
     }
 
@@ -424,11 +445,23 @@ impl World {
                 let local = match m.copies.get(&key) {
                     Some(&(_, before)) if before == sig => continue,
                     Some(&(local, _)) => local,
-                    None if m.next < m.base + LOCALS_EACH => {
-                        m.next += 1;
-                        m.next - 1
+                    None => {
+                        let Some(local) = m.free.pop().or_else(|| {
+                            (m.next < m.base + LOCALS_EACH).then(|| {
+                                m.next += 1;
+                                m.next - 1
+                            })
+                        }) else {
+                            if !std::mem::replace(&mut m.full, true) {
+                                log::warn!(
+                                    "LiveMesh Fit lab: a mannequin wears {} prims, the most it can copy",
+                                    LOCALS_EACH - 1
+                                );
+                            }
+                            continue;
+                        };
+                        local
                     }
-                    None => continue,
                 };
                 m.copies.insert(key, (local, sig));
                 let full_id = Uuid::from_u128(m.id.as_u128() ^ object.full_id.as_u128().rotate_left(1));
@@ -449,6 +482,8 @@ impl World {
                 let keep = kept.contains(key);
                 if !keep {
                     gone.push(*local);
+                    // (given again from the next frame, once killed below)
+                    m.free.push(*local);
                 }
                 keep
             });
@@ -559,6 +594,7 @@ mod tests {
         world.apply(aurora_net::NetEvent::ObjectUpdates { handle, objects });
         world.shape_preview = Some(world.avatar_lib.shape_params.values_with(&[]));
         world.shape_preview_generation = 1;
+        world.movement_complete = true;
         (world, handle)
     }
 
@@ -653,6 +689,30 @@ mod tests {
     }
 
     #[test]
+    fn a_teleport_takes_the_row_away_until_we_arrive_and_a_new_row_gets_new_skeletons() {
+        let (mut world, _) = world_with_avatar();
+        let now = Instant::now();
+        world.update_fit_lab(&[Body::Slim, Body::Full], Motion::Stand, false, now);
+        let first = mannequin_id(world.agent_id, 0);
+        let slim = world.appearance_generation(&first);
+        // on the way: nowhere to stand (the region changes before our place)
+        world.teleporting = true;
+        world.update_fit_lab(&[Body::Slim, Body::Full], Motion::Stand, false, now);
+        assert!(world.objects.index_of_uuid(&first).is_none() && !world.is_mannequin(&first));
+        world.teleporting = false;
+        world.update_fit_lab(&[Body::Slim, Body::Full], Motion::Stand, false, now);
+        assert!(world.objects.index_of_uuid(&first).is_some(), "in front of us again");
+        // the first place in the row, now Curvy: the same id, never the
+        // generation Slim had there (the scene's cached skeleton)
+        world.update_fit_lab(&[Body::Curvy], Motion::Stand, false, now);
+        assert!(world.is_mannequin(&first));
+        assert_ne!(world.appearance_generation(&first), slim);
+        let curvy = world.appearance_generation(&first);
+        world.update_fit_lab(&[Body::Slim, Body::Full], Motion::Stand, false, now);
+        assert!(world.appearance_generation(&first) > curvy);
+    }
+
+    #[test]
     fn a_worn_object_that_changes_is_copied_again_and_one_taken_off_goes() {
         let (mut world, handle) = world_with_avatar();
         let now = Instant::now();
@@ -684,9 +744,34 @@ mod tests {
         let copy = world.objects.children_of(&mannequin)[0];
         assert_eq!(world.objects.get(copy).and_then(|o| o.te.clone()), Some(te), "the new alpha cut");
         // the hat taken off: its copy goes, the mannequin stays
+        let copy_local = world.objects.get(copy).map(|o| o.key.local_id).expect("copy");
         world.kill_objects(handle, &[HAT]);
         world.update_fit_lab(&[Body::Curvy], Motion::Stand, false, now);
         assert!(worn_points(&world, &id).is_empty());
         assert!(world.is_mannequin(&id));
+        // another hat: its copy takes the local id the first one left
+        let us = world
+            .objects
+            .index_of_uuid(&world.agent_id)
+            .and_then(|i| world.objects.get(i))
+            .expect("us");
+        let avatar_local = us.key.local_id;
+        let mut update = super::super::mirror::copy_of(us, Uuid::from_u128(70_003), 70_003, avatar_local);
+        update.pcode = 9;
+        update.state = 2 << 4;
+        update.position = Vec3::ZERO;
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update],
+        });
+        world.update_fit_lab(&[Body::Curvy], Motion::Stand, false, now);
+        let mannequin = world
+            .objects
+            .index_of_uuid(&id)
+            .and_then(|i| world.objects.get(i))
+            .expect("drawn")
+            .key;
+        let copy = world.objects.children_of(&mannequin)[0];
+        assert_eq!(world.objects.get(copy).map(|o| o.key.local_id), Some(copy_local));
     }
 }

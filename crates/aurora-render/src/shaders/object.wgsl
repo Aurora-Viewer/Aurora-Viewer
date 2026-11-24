@@ -3405,12 +3405,14 @@ fn fs_part_mask(in: PoserPartOut, @builtin(front_facing) front: bool) -> @locati
 }
 
 // LiveMesh's Fit lab (fit_clip.rs), on vs_part_mask's posed vertices: the
-// garment's outer surface (its front faces) as a depth of its own, and the
+// garment's outer surface (the front faces of a single-sided material, both
+// sides of a double-sided one) as a depth of its own, and the
 // body's visible pixels as a mask.
 @fragment
 fn fs_fit_garment(in: PoserPartOut, @builtin(front_facing) front: bool) {
     portal_clip(records[in.record], in.world_pos);
-    if (!front || !poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    // (a double-sided garment keeps both sides: its normals may face in)
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
 }
 
 @fragment

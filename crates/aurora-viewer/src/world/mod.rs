@@ -3163,10 +3163,13 @@ impl World {
     }
 
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
-        let mannequin = self.mannequin_generation(avatar).unwrap_or(0);
+        // a mannequin's moves with ours (mannequins.rs: its shape is made
+        // again from ours each time ours changes)
+        if let Some(generation) = self.mannequin_generation(avatar) {
+            return generation;
+        }
         let avatar = &self.appearance_of(avatar);
-        mannequin
-            + self.shown_appearance(avatar).map(|(_, g)| *g).unwrap_or(0)
+        self.shown_appearance(avatar).map(|(_, g)| *g).unwrap_or(0)
             + self.bake_refreshes.get(avatar).copied().unwrap_or(0)
             + self.shape_tweens.generation(avatar)
             + if *avatar == self.agent_id {

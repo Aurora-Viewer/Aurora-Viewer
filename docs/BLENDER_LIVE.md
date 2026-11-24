@@ -276,7 +276,8 @@ line (link, revision, time since the last snapshot, **Enable preview** or
   leg sliders changed. Fitted mesh follows each shape as it would on a
   resident with it. They **Stand**, **Walk** in place, **Sit**, or play what
   you play (**Like me**: your AO, a pose, a dance), and the elbow and knee
-  bend shows on them too. **Range of motion** takes them to the ends of
+  bend shows on them too (and on you, while they stand, even with the
+  preview stopped). **Range of motion** takes them to the ends of
   what a body does, where a garment stretches or lets the body through:
   **Arms up**, **Reach forward**, **Arms crossed**, **Squat**, **Kneel**,
   **Knee raised**, **Twist** and **Bend forward**, held, or **All, in
@@ -290,9 +291,16 @@ line (link, revision, time since the last snapshot, **Enable preview** or
   garment meet (within 3 mm). It is worked out on the graphics card every
   frame, as the camera sees it, so it follows the animations, the bend and
   each shape; turn the camera to check the back. Only the garment's outer
-  surface counts: an arm before the chest, farther than 3 cm, is not
-  marked.
-  After a teleport or a region crossing they stand in front of you again.
+  surface counts (both sides of a double-sided material): an arm before the
+  chest, farther than 3 cm, is not marked. Everything else rigged you wear
+  counts as body, hair and a jacket over the garment included: take them
+  off for the check. The map is drawn in the window only: not in photos,
+  while the Director plays or films, with the interface hidden, nor in VR.
+  A texture tried on a worn item locally (texture picker) shows on you, not
+  on the mannequins.
+  After a teleport or a region crossing they stand in front of you again,
+  once you have arrived. They are drawn as you are: the complexity limit
+  and Render Friends Only leave them alone.
   Only you see them: nothing is sent or saved, and they go when you remove
   them or log out. To test another mesh body, wear it.
   Then the shape transfer (below).

@@ -6397,6 +6397,12 @@ impl App {
         if Scene::skeleton_owner(&self.world, idx).is_some_and(|(owner, _)| owner == me) {
             return None;
         }
+        // the viewer's own objects (LiveMesh's previews, our copies): their
+        // made-up ids are not sent; the eyes go to the point alone
+        if o.is_client_preview() {
+            let (mx, my) = self.world.main_origin()?;
+            return Some((None, glam::DVec3::new(mx as f64, my as f64, 0.0) + point.as_dvec3()));
+        }
         let (at, rot, hud) = Scene::object_transform(&self.world, idx, now, 0)?;
         if hud {
             return None;
@@ -11343,6 +11349,7 @@ impl App {
         }
         self.local_bakes.apply(&mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
+        self.update_fit_clip();
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
@@ -12061,6 +12068,10 @@ impl App {
             // shapes. The tools may be open behind the photo view, or in a
             // window outside.
             let bare = self.photo_full_frame() || self.director_playing() || self.director_filming() || self.interface.ui_off;
+            // (and LiveMesh's Fit lab clipping map)
+            if bare {
+                self.scene.fit_clip = None;
+            }
             let mut selection_wire = if bare {
                 Default::default()
             } else {

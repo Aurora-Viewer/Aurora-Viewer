@@ -3,7 +3,8 @@
 //! pixels where the body pokes through the garment being made.
 //!
 //! Screen space, every frame, with no read back: the garment's outer
-//! surface (its front faces, `fs_fit_garment`) goes to a depth of its own;
+//! surface (`fs_fit_garment`: the front faces of a single-sided material,
+//! both sides of a double-sided one) goes to a depth of its own;
 //! the body's faces (the system body and the rigged meshes worn) that are
 //! the visible surface go to a coverage mask (`fs_fit_body`, read-only test
 //! against the scene's depth, as the selection's coverage). Where a body

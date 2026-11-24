@@ -2203,6 +2203,9 @@ pub(crate) struct Backend {
     /// Frames since a part was last lit: its overlay images go after
     /// `PART_IDLE_FRAMES`.
     part_idle: u32,
+    /// Frames without the Fit lab's map: its images go after
+    /// `PART_IDLE_FRAMES`, so a garment out of view a moment keeps them.
+    fit_idle: u32,
     /// The world's labels, drawn behind what the scene has in front of
     /// them (label_depth.rs).
     label_depth: crate::label_depth::LabelDepth,
@@ -4768,6 +4771,7 @@ impl Backend {
             part_pick_px: None,
             part_lit: false,
             part_idle: 0,
+            fit_idle: 0,
             label_depth,
             impostors,
             motion_history,
@@ -7282,6 +7286,7 @@ impl Backend {
         self.rlva_scaled = None;
         self.selection = None;
         self.hud_selection = None;
+        self.fit_clip = None;
         if let Some(dof) = &mut self.dof {
             dof.release();
         }
@@ -9355,6 +9360,7 @@ impl Backend {
         // and a body in view
         match f.fit_clip.filter(|_| !lists.fit_garment.is_empty() && !lists.fit_body.is_empty()) {
             Some(params) => {
+                self.fit_idle = 0;
                 let size = [post_size.0, post_size.1];
                 if self.fit_clip.as_ref().is_none_or(|fit| fit.size != size) {
                     let format = self.config.format;
@@ -9366,7 +9372,12 @@ impl Backend {
                     fit.update(&self.queue, &params, f.proj);
                 }
             }
-            None => self.fit_clip = None,
+            None => {
+                self.fit_idle = self.fit_idle.saturating_add(1);
+                if self.fit_idle > PART_IDLE_FRAMES {
+                    self.fit_clip = None;
+                }
+            }
         }
         if !lists.hud_select_faces.is_empty() {
             let size = [self.config.width, self.config.height];

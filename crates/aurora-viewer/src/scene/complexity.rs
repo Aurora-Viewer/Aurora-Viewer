@@ -386,7 +386,9 @@ impl Scene {
             let (c, area) = self.avatar_complexity(world, idx);
             self.avatar_complexity.insert(id, c);
             self.avatar_area.insert(id, area);
-            if rules.too_complex(&id, id == world.agent_id, c, area) {
+            // (our copies, the animation editor's mirror and the Fit lab's
+            // mannequins, are drawn as we are)
+            if rules.too_complex(&id, id == world.agent_id || world.is_local_copy(&id), c, area) {
                 self.too_complex.insert(idx);
             } else {
                 self.too_complex.remove(&idx);

@@ -117,12 +117,6 @@ impl App {
         } else {
             Default::default()
         };
-        // the clipping map: on our avatar and the mannequins, over the
-        // LiveMesh objects we wear and their copies
-        self.scene.fit_clip = self.blender_live.fit.clip.then(|| {
-            let (avatars, garments) = self.world.fit_clip_targets(&self.blender_live.objects);
-            (avatars.into_iter().collect(), garments.into_iter().collect())
-        });
         // the Fit lab's own clips (the range of motion, the pelvis anchor),
         // built here, before a mannequin plays one
         if self.blender_live.fit.shown && !std::mem::replace(&mut self.blender_live.fit.poses_registered, true) {
@@ -533,6 +527,16 @@ impl App {
                 self.blender_live.objects.len()
             );
         }
+    }
+
+    /// The Fit lab's clipping map: on our avatar and the mannequins, over
+    /// the LiveMesh objects we wear and their copies, once this frame's
+    /// row is dressed and its snapshot installed (their object indices).
+    pub(super) fn update_fit_clip(&mut self) {
+        self.scene.fit_clip = self.blender_live.fit.clip.then(|| {
+            let (avatars, garments) = self.world.fit_clip_targets(&self.blender_live.objects);
+            (avatars.into_iter().collect(), garments.into_iter().collect())
+        });
     }
 
     fn install_blender_snapshot(&mut self, snapshot: Prepared, renderer: &mut aurora_render::Renderer) {
