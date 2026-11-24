@@ -123,6 +123,15 @@ impl App {
             let (avatars, garments) = self.world.fit_clip_targets(&self.blender_live.objects);
             (avatars.into_iter().collect(), garments.into_iter().collect())
         });
+        // the range of motion's clips, built here, before a mannequin plays one
+        if matches!(self.blender_live.fit.motion, crate::world::mannequins::Motion::Range(_))
+            && !std::mem::replace(&mut self.blender_live.fit.poses_registered, true)
+        {
+            for (id, clip) in crate::world::fit_poses::animations() {
+                let bound = crate::scene::anim::BoundAnim::bind(clip, &self.world.avatar_lib.rig);
+                self.scene.anims.insert(id, Arc::new(bound));
+            }
+        }
         let place = std::mem::take(&mut self.blender_live.fit.place);
         self.world
             .update_fit_lab(&self.blender_live.fit.wanted(), self.blender_live.fit.motion, place, Instant::now());
@@ -271,6 +280,13 @@ impl App {
                     self.blender_live.tab = Tab::Avatar;
                     self.blender_live.fit.shown = true;
                     self.blender_live.fit.clip = mode == "fit-lab-clip";
+                    if mode == "fit-lab-range" {
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Range(None);
+                    }
+                    if let Some(name) = mode.strip_prefix("fit-lab-pose-") {
+                        let pose = crate::world::fit_poses::Pose::ALL.into_iter().find(|p| p.key() == name);
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Range(pose);
+                    }
                     if mode == "fit-lab-walk" {
                         self.blender_live.fit.motion = crate::world::mannequins::Motion::Walk;
                     }

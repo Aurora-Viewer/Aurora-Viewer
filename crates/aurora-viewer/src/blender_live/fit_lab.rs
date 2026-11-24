@@ -4,6 +4,7 @@
 
 use crate::theme::Palette;
 use crate::ui::widgets::{self, ActionKind};
+use crate::world::fit_poses::Pose;
 use crate::world::mannequins::{Body, Motion};
 use egui::Vec2;
 
@@ -26,6 +27,8 @@ pub struct FitLab {
     pub clip: bool,
     /// Bring the row in front of us again (taken by the app).
     pub place: bool,
+    /// The range of motion's clips are in the scene's animations.
+    pub poses_registered: bool,
 }
 
 impl Default for FitLab {
@@ -36,6 +39,7 @@ impl Default for FitLab {
             motion: Motion::Stand,
             clip: false,
             place: false,
+            poses_registered: false,
         }
     }
 }
@@ -65,10 +69,27 @@ pub(super) fn section(fit: &mut FitLab, ui: &mut egui::Ui, p: &Palette) {
     widgets::form_row(ui, p, aurora_i18n::tr!("fit-lab-motion"), |ui| {
         ui.horizontal_wrapped(|ui| {
             for motion in Motion::ALL {
-                widgets::radio_value(ui, p, &mut fit.motion, motion, motion.label());
+                let same = std::mem::discriminant(&fit.motion) == std::mem::discriminant(&motion);
+                if widgets::radio(ui, p, same, motion.label()).clicked() && !same {
+                    fit.motion = motion;
+                }
             }
         });
     });
+    if let Motion::Range(pose) = &mut fit.motion {
+        widgets::form_row(ui, p, aurora_i18n::tr!("fit-lab-pose"), |ui| {
+            let all = aurora_i18n::tr!("fit-lab-pose-all");
+            egui::ComboBox::from_id_salt("fit_lab_pose")
+                .selected_text((*pose).map_or(all, Pose::label))
+                .width(ui.available_width().min(220.0))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(pose, None, all);
+                    for each in Pose::ALL {
+                        ui.selectable_value(pose, Some(each), each.label());
+                    }
+                });
+        });
+    }
     widgets::switch_labeled(ui, p, &mut fit.clip, aurora_i18n::tr!("fit-lab-clip"));
     if fit.clip {
         super::ui::note(ui, p, aurora_i18n::tr!("fit-lab-clip-note"));

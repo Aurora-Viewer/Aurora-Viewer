@@ -43,6 +43,7 @@ pub mod estate;
 pub mod experience_log;
 pub mod experiences;
 pub mod favorites;
+pub mod fit_poses;
 pub mod flying_at_exit;
 mod friend_join;
 pub mod friends_only;

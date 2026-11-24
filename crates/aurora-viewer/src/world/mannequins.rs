@@ -128,18 +128,22 @@ pub enum Motion {
     Stand,
     Walk,
     Sit,
+    /// The range of motion (fit_poses.rs): a pose held, or all in turn.
+    Range(Option<super::fit_poses::Pose>),
     /// What our avatar plays (its AO, a pose, a dance).
     LikeMe,
 }
 
 impl Motion {
-    pub const ALL: [Motion; 4] = [Motion::Stand, Motion::Walk, Motion::Sit, Motion::LikeMe];
+    /// The choices, a range of motion as all its poses in turn.
+    pub const ALL: [Motion; 5] = [Motion::Stand, Motion::Walk, Motion::Sit, Motion::Range(None), Motion::LikeMe];
 
     pub fn label(self) -> &'static str {
         match self {
             Motion::Stand => aurora_i18n::tr!("fit-lab-motion-stand"),
             Motion::Walk => aurora_i18n::tr!("fit-lab-motion-walk"),
             Motion::Sit => aurora_i18n::tr!("fit-lab-motion-sit"),
+            Motion::Range(_) => aurora_i18n::tr!("fit-lab-motion-range"),
             Motion::LikeMe => aurora_i18n::tr!("fit-lab-motion-like-me"),
         }
     }
@@ -150,6 +154,7 @@ impl Motion {
             Motion::Stand => Some(crate::own_motion::ANIM_STAND),
             Motion::Walk => Some(crate::own_motion::ANIM_WALK),
             Motion::Sit => Some(super::body::ANIM_SIT_GROUND_CONSTRAINED),
+            Motion::Range(pose) => Some(super::fit_poses::animation_id(pose)),
             Motion::LikeMe => None,
         }
     }

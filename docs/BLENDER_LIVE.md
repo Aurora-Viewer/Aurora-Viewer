@@ -276,7 +276,12 @@ line (link, revision, time since the last snapshot, **Enable preview** or
   leg sliders changed. Fitted mesh follows each shape as it would on a
   resident with it. They **Stand**, **Walk** in place, **Sit**, or play what
   you play (**Like me**: your AO, a pose, a dance), and the elbow and knee
-  bend shows on them too. What you wear or change, a new revision from
+  bend shows on them too. **Range of motion** takes them to the ends of
+  what a body does, where a garment stretches or lets the body through:
+  **Arms up**, **Reach forward**, **Arms crossed**, **Squat**, **Kneel**,
+  **Knee raised**, **Twist** and **Bend forward**, held, or **All, in
+  turn** (each reached in 0.8 s and held 1.4 s). These poses are made by
+  Aurora for the mannequins alone and are never sent. What you wear or change, a new revision from
   Blender, an alpha cut from your body's HUD, a shape edit, reaches them on
   the next frame. **Bring them here** places the row in front of you again.
   **Show where the body comes through** paints, on your avatar and the
