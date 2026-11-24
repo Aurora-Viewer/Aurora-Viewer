@@ -6412,6 +6412,12 @@ impl App {
         if Scene::skeleton_owner(&self.world, idx).is_some_and(|(owner, _)| owner == me) {
             return None;
         }
+        // our copies (the mirror, the Fit lab's mannequins): their made-up
+        // ids are not sent; the eyes go to the point alone
+        if self.world.on_local_copy(idx) {
+            let (mx, my) = self.world.main_origin()?;
+            return Some((None, glam::DVec3::new(mx as f64, my as f64, 0.0) + point.as_dvec3()));
+        }
         let (at, rot, hud) = Scene::object_transform(&self.world, idx, now, 0)?;
         if hud {
             return None;
@@ -11397,6 +11403,7 @@ impl App {
         }
         self.local_bakes.apply(&mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
+        self.update_fit_clip();
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
@@ -12116,6 +12123,10 @@ impl App {
             // shapes. The tools may be open behind the photo view, or in a
             // window outside.
             let bare = self.photo_full_frame() || self.director_playing() || self.director_filming() || self.interface.ui_off;
+            // (and LiveMesh's Fit lab clipping map)
+            if bare {
+                self.scene.fit_clip = None;
+            }
             let mut selection_wire = if bare {
                 Default::default()
             } else {
@@ -12983,6 +12994,23 @@ impl App {
                 let [r, g, b, _] = egui::Rgba::from(self.palette.violet_light).to_array();
                 [r, g, b, 0.65]
             },
+            // LiveMesh's Fit lab: red where the body comes through the
+            // garment, amber where they meet; never in a photo
+            fit_clip: self
+                .scene
+                .fit_clip
+                .as_ref()
+                .filter(|_| self.snapshots.capturing.is_none())
+                .map(|_| {
+                    let [r, g, b, _] = egui::Rgba::from(self.palette.danger).to_array();
+                    let [tr, tg, tb, _] = egui::Rgba::from(self.palette.warn).to_array();
+                    aurora_render::FitClipParams {
+                        clip_color: [r, g, b, 0.75],
+                        touch_color: [tr, tg, tb, 0.6],
+                        reach: crate::blender_live::fit_lab::CLIP_REACH,
+                        touch: crate::blender_live::fit_lab::CLIP_TOUCH,
+                    }
+                }),
             selection_color: egui::Rgba::from(if self.imports.local_status.revealing() {
                 self.palette.warn
             } else {

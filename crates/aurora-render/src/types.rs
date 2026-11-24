@@ -774,6 +774,10 @@ pub struct DrawLists {
     /// The poser subject's skinned faces, while a part is hovered: the part
     /// is kept on them by its joints (`FrameParams::part_joints`).
     pub part_faces: Vec<DrawCmd>,
+    /// LiveMesh's Fit lab (fit_clip.rs): the garment's faces, and the
+    /// faces of the bodies that wear it, on the avatars it is checked on.
+    pub fit_garment: Vec<DrawCmd>,
+    pub fit_body: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -849,6 +853,8 @@ impl DrawLists {
         self.select_pattern.clear();
         self.hud_select_pattern.clear();
         self.part_faces.clear();
+        self.fit_garment.clear();
+        self.fit_body.clear();
     }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
@@ -908,6 +914,8 @@ impl DrawLists {
         self.select_pattern.clone_from(&src.select_pattern);
         self.hud_select_pattern.clone_from(&src.hud_select_pattern);
         self.part_faces.clone_from(&src.part_faces);
+        self.fit_garment.clone_from(&src.fit_garment);
+        self.fit_body.clone_from(&src.fit_body);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -969,6 +977,8 @@ impl DrawLists {
         self.select_pattern.clear();
         self.hud_select_pattern.clear();
         self.part_faces.clear();
+        self.fit_garment.clear();
+        self.fit_body.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -1810,6 +1820,9 @@ pub struct FrameParams {
     /// as a selection's halo with a light tint inside.
     pub part_joints: [u32; 8],
     pub part_color: [f32; 4],
+    /// LiveMesh's Fit lab clipping map on `fit_body` (fit_clip.rs): off
+    /// when None.
+    pub fit_clip: Option<crate::FitClipParams>,
     /// Palette-joint part classes (0 occluder, 1 body, 2 face, 3/4 hands,
     /// 5 wings, 6 tail), eight four-bit classes per word. The shader sums
     /// each part's weights and interpolates them before picking a part.
