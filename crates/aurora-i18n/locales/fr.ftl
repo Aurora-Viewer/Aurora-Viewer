@@ -12581,6 +12581,7 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
     }
 ui-land-dialogs-objects-of-owners-returned = Les objets des propriétaires choisis ont été rendus.
 ui-group-profile-title = Profil du groupe
+ui-group-profile-title-named = Profil du groupe - { $name }
 ui-group-profile-view = Voir le profil du groupe
 ui-group-profile-members-and-roles = Membres et rôles
 ui-group-profile-leave = Quitter

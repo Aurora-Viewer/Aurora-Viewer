@@ -10,7 +10,7 @@
 //! group's list was first seen and were never opened (`world/group_data.rs`).
 
 use super::view::{self, View};
-use super::{GroupAction, GroupProfileUi};
+use super::{GroupAction, GroupWindow};
 use crate::theme::Palette;
 use crate::ui::inventory::InvDrag;
 use crate::ui::place_details::Ctx;
@@ -194,7 +194,7 @@ pub fn row(ui: &mut egui::Ui, p: &Palette, n: &NoticeSummary, unread: bool, sele
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+pub fn show(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let body = Rect::from_min_max(
         ui.cursor().min + Vec2::new(4.0, 0.0),
         ui.max_rect().right_bottom() - Vec2::new(4.0, 0.0),
@@ -239,7 +239,7 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
 }
 
 /// The search, "New notice", "Refresh", then the notices.
-fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+fn list(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
@@ -330,7 +330,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
 }
 
 /// The notice chosen, as it came: sender, date, message, attachment.
-fn reading(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+fn reading(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     let shown = v.data.and_then(|d| d.notice.as_ref()).filter(|n| Some(n.id) == st.notices.selected);
     let Some(n) = shown else {
@@ -479,7 +479,7 @@ pub(crate) fn asset_label(asset_type: u8) -> &'static str {
 
 /// A new notice: subject, message, an attachment dropped from the
 /// inventory; sent to every member.
-fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+fn compose(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     let Some(draft) = st.notices.compose.as_mut() else {
         return;

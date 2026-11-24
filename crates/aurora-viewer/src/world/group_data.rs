@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 /// Groups kept at most (MAX_CACHED_GROUPS): the least recently opened one
-/// goes first.
+/// that no profile window shows goes first.
 const MAX_CACHED_GROUPS: usize = 20;
 
 /// The notices read, per account: a group's notices are unread once they
@@ -151,6 +151,9 @@ pub struct GroupMgr {
     /// (group, resident) banned by `ban_member`, to be told
     /// (the EjectAvatarFromGroup notice).
     pub banned: Vec<(Uuid, Uuid)>,
+    /// The groups an open profile window shows (LLGroupMgr's observers):
+    /// never dropped from the cache while shown.
+    observed: HashSet<Uuid>,
 }
 
 impl GroupMgr {
@@ -171,12 +174,25 @@ impl GroupMgr {
         std::mem::take(&mut self.out)
     }
 
-    /// createGroupData, the least recently opened group dropped past
-    /// MAX_CACHED_GROUPS (LLGroupMgr::addGroup).
+    /// The groups the profile windows show now (LLGroupMgr::addObserver /
+    /// removeObserver of each LLPanelGroup).
+    pub fn observe(&mut self, groups: HashSet<Uuid>) {
+        self.observed = groups;
+    }
+
+    /// createGroupData, the least recently opened group that no window
+    /// shows dropped past MAX_CACHED_GROUPS (LLGroupMgr::addGroup: "remove
+    /// the oldest un-observed group"; with every group shown, none goes and
+    /// the cache grows past the limit).
     fn data(&mut self, group: Uuid) -> &mut GroupData {
         if !self.groups.contains_key(&group)
             && self.groups.len() >= MAX_CACHED_GROUPS
-            && let Some(oldest) = self.groups.iter().min_by_key(|(_, g)| g.accessed).map(|(id, _)| *id)
+            && let Some(oldest) = self
+                .groups
+                .iter()
+                .filter(|(id, _)| !self.observed.contains(id))
+                .min_by_key(|(_, g)| g.accessed)
+                .map(|(id, _)| *id)
         {
             self.groups.remove(&oldest);
         }
@@ -1123,6 +1139,21 @@ mod tests {
         assert_eq!(mgr.groups.len(), MAX_CACHED_GROUPS);
         assert!(mgr.get(&Uuid::from_u128(1)).is_none(), "the oldest one went");
         assert!(mgr.get(&Uuid::from_u128(21)).is_some());
+    }
+
+    #[test]
+    fn a_group_a_window_shows_is_kept_past_twenty() {
+        let mut mgr = GroupMgr::default();
+        mgr.observe([Uuid::from_u128(1)].into());
+        for i in 1..=21u128 {
+            mgr.open(Uuid::from_u128(i), false);
+        }
+        assert!(mgr.get(&Uuid::from_u128(1)).is_some(), "shown in a window");
+        assert!(mgr.get(&Uuid::from_u128(2)).is_none(), "the oldest one not shown went");
+        // every group shown: none goes, the cache grows
+        mgr.observe((1..=22u128).map(Uuid::from_u128).collect());
+        mgr.open(Uuid::from_u128(22), false);
+        assert_eq!(mgr.groups.len(), MAX_CACHED_GROUPS + 1);
     }
     /// Answer what the manager asked: the members (owners marked), the
     /// "everyone" role, and the pairs once asked.

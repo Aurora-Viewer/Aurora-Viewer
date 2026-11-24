@@ -126,6 +126,11 @@ fn has(texts: &[String], key: &'static str) -> bool {
     texts.iter().any(|t| *t == want || *t == want.to_uppercase())
 }
 
+/// The window opened last.
+fn win(st: &mut GroupProfileUi) -> &mut GroupWindow {
+    st.current().expect("a group window is open")
+}
+
 fn opened(world: &mut World) -> GroupProfileUi {
     let mut st = GroupProfileUi::default();
     st.open(world, DEMO_GROUP1);
@@ -200,7 +205,7 @@ fn managing_members_shows_invite_roles_and_donations() {
     for (abilities, manages) in [(MEMBER, false), (officer, true)] {
         let mut world = world(true, abilities);
         let mut st = opened(&mut world);
-        st.tab = Tab::Members;
+        win(&mut st).tab = Tab::Members;
         let (texts, _) = texts(&mut st, &world, false);
         let column = |key: &'static str| {
             texts
@@ -282,7 +287,7 @@ fn classic_general_flows_past_its_old_height_without_clipping_fields() {
                             want_groups: &mut groups,
                         };
                         let view = view::View::of(&world, DEMO_GROUP1);
-                        st.classic(ui, &mut c, &env, &view, &mut Vec::new());
+                        win(&mut st).classic(ui, &mut c, &env, &view, &mut Vec::new());
                     },
                 );
                 output.textures_delta.clear();
@@ -357,7 +362,7 @@ fn classic_requested_section_waits_for_a_late_group_profile() {
                     want_groups: &mut groups,
                 };
                 let view = view::View::of(world, DEMO_GROUP1);
-                st.classic(ui, &mut c, &env, &view, &mut Vec::new());
+                win(st).classic(ui, &mut c, &env, &view, &mut Vec::new());
             },
         );
         output.textures_delta.clear();
@@ -366,12 +371,16 @@ fn classic_requested_section_waits_for_a_late_group_profile() {
     for _ in 0..REVEAL_FRAMES + 5 {
         draw(&mut st, &world);
     }
-    assert_eq!(st.reveal, REVEAL_FRAMES, "waiting for the profile must not consume the request");
+    assert_eq!(
+        win(&mut st).reveal,
+        REVEAL_FRAMES,
+        "waiting for the profile must not consume the request"
+    );
     world.search.groups.insert(DEMO_GROUP1, profile);
     for _ in 0..REVEAL_FRAMES + 30 {
         draw(&mut st, &world);
     }
-    assert_eq!(st.reveal, 0);
+    assert_eq!(win(&mut st).reveal, 0);
     let shapes = draw(&mut st, &world);
     let title = aurora_i18n::tr!("ui-group-profile-members-and-roles");
     let (rect, clip) = shapes
@@ -481,7 +490,7 @@ fn search_groups_join_confirms_without_opening_a_profile() {
             ..
         })
     ));
-    assert!(st.shown().is_none());
+    assert!(!st.is_shown(DEMO_GROUP1));
     let (drawn, actions) = texts(&mut st, &world, false);
     assert!(
         has(&drawn, "ui-group-profile-join-title"),
@@ -865,7 +874,7 @@ fn the_land_tab_shows_the_totals_the_parcels_and_this_week() {
     assert!(has(&texts, "ui-group-land-balance"));
 
     // the sales page: both packets of this week
-    st.land.ledger = Ledger::Sales;
+    win(&mut st).land.ledger = Ledger::Sales;
     answer_land(
         &mut world,
         &[GroupAction::LandPage {
@@ -1121,4 +1130,78 @@ fn post_links_ability_follows_the_region() {
     assert!(view::View::of(&world, DEMO_GROUP1).post_links);
     world.apply(features(false));
     assert!(!view::View::of(&world, DEMO_GROUP1).post_links);
+}
+
+/// The window of `group`.
+fn window_of(st: &mut GroupProfileUi, group: Uuid) -> &mut GroupWindow {
+    st.windows.iter_mut().find(|w| w.group == group).expect("its window is open")
+}
+
+#[test]
+fn each_group_opens_its_own_window() {
+    use crate::demo::DEMO_GROUP2;
+    let mut world = world(true, MEMBER);
+    let mut st = opened(&mut world);
+    win(&mut st).tab = Tab::Members;
+    st.open(&mut world, DEMO_GROUP2);
+    assert!(st.is_shown(DEMO_GROUP1) && st.is_shown(DEMO_GROUP2), "the first one stays open");
+    assert_ne!(st.window_id(DEMO_GROUP1), st.window_id(DEMO_GROUP2));
+    assert_eq!(window_of(&mut st, DEMO_GROUP2).tab, Tab::Home);
+    // FSFloaterGroup::openGroupFloater: the same group raises its window,
+    // as it was
+    st.open(&mut world, DEMO_GROUP1);
+    assert_eq!(st.windows.len(), 2);
+    assert_eq!(window_of(&mut st, DEMO_GROUP1).tab, Tab::Members);
+    assert!(window_of(&mut st, DEMO_GROUP1).raise);
+}
+
+#[test]
+fn a_notice_draft_and_an_identity_edit_stay_with_their_group() {
+    use crate::demo::DEMO_GROUP2;
+    let mut world = world(true, MEMBER | powers::NOTICES_SEND);
+    let mut st = opened(&mut world);
+    st.show_notices(true);
+    win(&mut st).notices.compose.as_mut().expect("a new notice").subject = "Tonight".into();
+    st.open(&mut world, DEMO_GROUP2);
+    assert!(
+        window_of(&mut st, DEMO_GROUP2).notices.compose.is_none(),
+        "the other group starts without it"
+    );
+    assert!(window_of(&mut st, DEMO_GROUP2).admin.identity.is_none());
+    let draft = window_of(&mut st, DEMO_GROUP1).notices.compose.as_ref().map(|d| d.subject.clone());
+    assert_eq!(draft.as_deref(), Some("Tonight"));
+}
+
+#[test]
+fn the_group_data_keeps_the_groups_shown() {
+    use crate::demo::DEMO_GROUP2;
+    let mut world = world(true, MEMBER);
+    let mut st = opened(&mut world);
+    st.open(&mut world, DEMO_GROUP2);
+    let observed = |actions: &[GroupAction]| {
+        actions
+            .iter()
+            .filter_map(|a| match a {
+                GroupAction::Observe(groups) => Some(groups.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let (_, actions) = texts(&mut st, &world, false);
+    assert_eq!(observed(&actions), [HashSet::from([DEMO_GROUP1, DEMO_GROUP2])], "told once");
+    // a closed window goes, its group no longer kept
+    window_of(&mut st, DEMO_GROUP2).open = false;
+    let (_, actions) = texts(&mut st, &world, false);
+    assert_eq!(observed(&actions), [HashSet::from([DEMO_GROUP1])]);
+    assert!(!st.is_shown(DEMO_GROUP2));
+    assert_eq!(st.windows.len(), 1);
+}
+
+#[test]
+fn the_classic_title_names_the_group() {
+    let mut world = world(true, MEMBER);
+    let mut st = opened(&mut world);
+    let _ = texts(&mut st, &world, true);
+    let want = aurora_i18n::tr!("ui-group-profile-title-named", name = "Aurora Builders".to_owned());
+    assert_eq!(win(&mut st).title.1, want);
 }

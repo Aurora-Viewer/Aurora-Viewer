@@ -54,7 +54,7 @@ fn uri_destinations_restore_on_explicit_open_and_stay_minimized_otherwise() {
             let window = match destination {
                 Destination::Profile if classic => format!("profile-{DEMO_LOUP}"),
                 Destination::Profile => format!("profile-card-{DEMO_LOUP}"),
-                Destination::Group => "group_profile".to_owned(),
+                Destination::Group => format!("group_profile-{DEMO_GROUP1}"),
                 Destination::Places => "places".into(),
                 Destination::StandalonePlace => {
                     let serial = world

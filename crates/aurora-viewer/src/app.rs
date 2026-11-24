@@ -18060,6 +18060,7 @@ impl App {
                         self.world.experiences.request_group(group);
                     }
                 }
+                GroupAction::Observe(groups) => self.world.group_data.observe(groups),
                 GroupAction::Refresh { group, member } => {
                     self.send(NetCommand::GroupProfileRequest(group));
                     self.world.group_data.refresh(group, member);
@@ -23234,8 +23235,10 @@ impl ApplicationHandler for App {
             // name (a guest's: a group we are not in)
             if std::env::var_os("AURORA_DEMO_GROUP_PROFILE").is_some() {
                 self.group_profile_ui.open(&mut self.world, crate::demo::group::shown_group());
-                if crate::demo::group::profile_wide() {
-                    ui::widgets::size_floater(&self.egui_ctx, "group_profile", egui::Vec2::new(900.0, 640.0));
+                if crate::demo::group::profile_wide()
+                    && let Some(id) = self.group_profile_ui.window_id(crate::demo::group::shown_group())
+                {
+                    ui::widgets::size_floater(&self.egui_ctx, id, egui::Vec2::new(900.0, 640.0));
                 }
                 if let Some(member) = crate::demo::group::members_tab() {
                     self.group_profile_ui.show_member(member);
@@ -23257,6 +23260,9 @@ impl ApplicationHandler for App {
                         committed: crate::demo::group::LAND_COMMITTED,
                     });
                     self.group_profile_ui.show_land(ledger);
+                }
+                if let Some(group) = crate::demo::group::second_group() {
+                    self.group_profile_ui.open(&mut self.world, group);
                 }
                 if let Some(invitees) = crate::demo::group::invitees() {
                     self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);

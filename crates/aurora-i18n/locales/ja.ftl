@@ -12443,6 +12443,7 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
     }
 ui-land-dialogs-objects-of-owners-returned = 選択した所有者のオブジェクトを返却しました。
 ui-group-profile-title = グループのプロフィール
+ui-group-profile-title-named = グループのプロフィール－{ $name }
 ui-group-profile-view = グループのプロフィールを表示
 ui-group-profile-members-and-roles = メンバーと役割
 ui-group-profile-leave = 脱退

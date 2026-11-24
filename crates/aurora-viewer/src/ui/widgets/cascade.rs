@@ -20,6 +20,11 @@ pub(crate) enum Group {
     /// Properties of an object's contents item: the Legacy Viewer's
     /// per-item "properties" instances stack in one group.
     TaskProperties,
+    /// A group's profile (FSFloaterGroup, one instance per group), in the
+    /// classic or the Aurora look: their sizes differ.
+    Profile {
+        classic: bool,
+    },
     Inventory(i32),
 }
 
@@ -42,7 +47,7 @@ impl Group {
         // Resource sizes have their own human-requested preferences.
         matches!(
             self,
-            Self::Notecard | Self::Script | Self::Animation | Self::Sound | Self::Gesture | Self::Conversation
+            Self::Notecard | Self::Script | Self::Animation | Self::Sound | Self::Gesture | Self::Conversation | Self::Profile { .. }
         )
     }
 
@@ -172,7 +177,11 @@ pub(super) fn forget(ctx: &Context, id: Id) {
 pub(super) fn forget_saved(ctx: &Context) {
     use Group::*;
     ctx.data_mut(|data| {
-        for group in [Notecard, Script, Animation, Sound, Gesture, Conversation] {
+        let profiles = [Profile { classic: false }, Profile { classic: true }];
+        for group in [Notecard, Script, Animation, Sound, Gesture, Conversation]
+            .into_iter()
+            .chain(profiles)
+        {
             debug_assert!(group.saves_rect());
             data.remove::<Rect>(group.saved_id());
         }

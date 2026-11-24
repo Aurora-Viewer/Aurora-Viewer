@@ -125,6 +125,16 @@ pub fn invitees() -> Option<Vec<Uuid>> {
     (v.split(':').nth(1) == Some("invite")).then(|| vec![super::DEMO_FRIEND, Uuid::from_u128(MEMBER | 5000), DEMO_NOVA])
 }
 
+/// `:second`: another group's window opens beside the first one
+/// (FSFloaterGroup, one window per group), which keeps its tab and draft.
+pub fn second_group() -> Option<Uuid> {
+    let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
+    v.split(':').skip(1).any(|p| p == "second").then(|| match shown_group() {
+        DEMO_GROUP1 => super::search::boreal(),
+        _ => DEMO_GROUP1,
+    })
+}
+
 /// The group the profile opens on in this scenario.
 pub fn shown_group() -> Uuid {
     match scenario() {

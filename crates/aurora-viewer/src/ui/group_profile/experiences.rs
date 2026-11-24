@@ -6,7 +6,7 @@
 //! shows the accordion (LLPanelGroup::update).
 
 use super::view::View;
-use super::{GroupAction, GroupProfileUi};
+use super::{GroupAction, GroupWindow};
 use crate::theme::Palette;
 use crate::ui::place_details::Ctx;
 use crate::ui::widgets;
@@ -30,7 +30,7 @@ pub fn visible(v: &View) -> bool {
     v.member.is_some()
 }
 
-pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+pub fn show(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     if !visible(v) {
         return;
     }
