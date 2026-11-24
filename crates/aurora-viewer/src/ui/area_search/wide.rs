@@ -172,8 +172,12 @@ fn stage(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, id: egui::Id,
         let spoken = format!("{title}, {name}");
         let lines = if form == Form::Small { 0.0 } else { 2.0 };
         let top_room = (8.0 + lines * 18.0) * crate::ui::fonts::scale(ui.ctx()).max(1.0);
-        if let Some(hit) = state.stage.show(&mut child, p, rect, top_room, showing, &spoken)
-            && form != Form::Small
+        if let Some(hit) = state.stage.show(&mut child, p, rect, top_room, showing, &spoken, &|hit| {
+            // the prims of one object have no names here
+            selected
+                .is_none()
+                .then(|| state.table.rows.iter().find(|r| r.id == hit.root).map(|r| r.name.clone()))?
+        }) && form != Form::Small
         {
             state.prim = (state.prim != Some(hit.prim)).then_some(hit.prim);
         }

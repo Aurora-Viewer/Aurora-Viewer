@@ -425,16 +425,18 @@ impl App {
         };
         let (who, option) = scenario.split_once(':').unwrap_or((scenario.as_str(), ""));
         match who {
-            "objects" => {
+            "objects" | "pbr" => {
+                // (`pbr`: those with a PBR material)
                 let ids: Vec<Uuid> = self
                     .world
                     .objects
                     .iter()
                     .filter(|(_, o)| !o.is_avatar() && !o.is_attachment() && o.parent_id == 0)
+                    .filter(|(_, o)| who == "objects" || !o.extra.render_materials.is_empty())
                     .map(|(_, o)| o.full_id)
                     .take(6)
                     .collect();
-                if ids.len() < 6 {
+                if ids.len() < if who == "objects" { 6 } else { 1 } {
                     return;
                 }
                 self.inspect_objects(&ids);

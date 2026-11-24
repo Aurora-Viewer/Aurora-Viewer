@@ -36,10 +36,23 @@ pub struct Skin {
     pub rest: Vec<Mat4>,
 }
 pub type Pose = Arc<[[[f32; 4]; 4]]>;
-/// What each part of a model is mixed with, in the order of its parts: a
-/// displayed colour and how much of it (0: the part as it is). Parts past the
-/// end keep their own look.
-pub type Tones = Arc<[[f32; 4]]>;
+/// Parts outlined over the picture.
+#[derive(Clone)]
+pub struct Highlight {
+    /// Per part: 0 not outlined, 1 pointed at, 2 selected.
+    pub classes: Arc<[u8]>,
+    /// Displayed colours of 1 and 2, and how strongly each shows.
+    pub colors: [[f32; 4]; 2],
+}
+impl Highlight {
+    fn same(a: Option<&Self>, b: Option<&Self>) -> bool {
+        match (a, b) {
+            (Some(a), Some(b)) => Arc::ptr_eq(&a.classes, &b.classes) && a.colors == b.colors,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
 #[derive(Clone)]
 pub struct Image {
     pub size: [u32; 2],
@@ -100,6 +113,15 @@ pub struct View {
     pub edges: bool,
     pub uv: bool,
     pub material: Option<Material>,
+    /// Lit as in a photo studio that turns with the camera.
+    pub studio: Option<Studio>,
+}
+/// A studio: reflections, a key light with shadows, rim lights, a ground that
+/// is lighter behind the model.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Studio {
+    /// Height of the floor the model stands on and shades.
+    pub floor: Option<f32>,
 }
 impl Default for View {
     fn default() -> Self {
@@ -115,6 +137,7 @@ impl Default for View {
             edges: false,
             uv: false,
             material: None,
+            studio: None,
         }
     }
 }
@@ -163,7 +186,7 @@ struct Region {
     model: Arc<Model>,
     view: View,
     pose: Option<Pose>,
-    tones: Option<Tones>,
+    highlight: Option<Highlight>,
 }
 
 /// A window that shows previews: the viewer's own, or one of the interface
@@ -216,7 +239,8 @@ pub(crate) fn same(a: &egui::PaintCallback, b: &egui::PaintCallback) -> Option<b
         (None, None) => true,
         _ => false,
     };
-    Some(a.id == b.id && Arc::ptr_eq(&a.model, &b.model) && a.view == b.view && same_pose)
+    let same_highlight = Highlight::same(a.highlight.as_ref(), b.highlight.as_ref());
+    Some(a.id == b.id && Arc::ptr_eq(&a.model, &b.model) && a.view == b.view && same_pose && same_highlight)
 }
 pub fn paint(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: &mut View, size: egui::Vec2) -> egui::Response {
     paint_with_pose(ui, id, model, view, size, None)
@@ -243,7 +267,7 @@ fn paint_tile(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, si
                 model,
                 view,
                 pose: None,
-                tones: None,
+                highlight: None,
             }),
         }));
     }
@@ -285,7 +309,7 @@ pub fn paint_with_pose(
             model,
             view: *view,
             pose,
-            tones: None,
+            highlight: None,
         }),
     }));
     response
@@ -293,7 +317,15 @@ pub fn paint_with_pose(
 
 /// A preview over `rect`, drawn only: its caller turns the camera and reads
 /// the clicks itself.
-pub fn paint_stage(ui: &egui::Ui, id: egui::Id, model: Arc<Model>, view: View, rect: egui::Rect, pose: Option<Pose>, tones: Option<Tones>) {
+pub fn paint_stage(
+    ui: &egui::Ui,
+    id: egui::Id,
+    model: Arc<Model>,
+    view: View,
+    rect: egui::Rect,
+    pose: Option<Pose>,
+    highlight: Option<Highlight>,
+) {
     if ui.is_rect_visible(rect) {
         ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
             rect,
@@ -302,7 +334,7 @@ pub fn paint_stage(ui: &egui::Ui, id: egui::Id, model: Arc<Model>, view: View, r
                 model,
                 view,
                 pose,
-                tones,
+                highlight,
             }),
         }));
     }
@@ -320,7 +352,12 @@ struct Uniform {
     ambient: [f32; 4],
     surface: [f32; 4],
     uv: [[[f32; 4]; 2]; 4],
-    tone: [f32; 4],
+    shadow: [[f32; 4]; 4],
+    /// Lit in a studio, the camera's yaw (cosine, sine), the outline's class.
+    studio: [f32; 4],
+    /// The floor: its height, its radius, whether there is one.
+    floor: [f32; 4],
+    ground: [f32; 4],
 }
 /// The palette a part's skin shares with its other parts (0: no skin).
 fn skin_key(skin: Option<&Arc<Skin>>) -> usize {
@@ -343,6 +380,14 @@ struct Passes {
     triangles: wgpu::RenderPipeline,
     blended: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
+    ground: wgpu::RenderPipeline,
+    floor: wgpu::RenderPipeline,
+}
+/// What the studio and the outlines add, one sample a pixel.
+struct Extras {
+    shadow: wgpu::RenderPipeline,
+    mask: wgpu::RenderPipeline,
+    outline: wgpu::RenderPipeline,
 }
 struct Pipelines {
     layout: wgpu::BindGroupLayout,
@@ -350,7 +395,18 @@ struct Pipelines {
     pipeline_layout: wgpu::PipelineLayout,
     /// Without anti-aliasing, and with it, each made when first used.
     passes: [Option<Passes>; 2],
+    extras: Option<Extras>,
+    mips: crate::preview_mips::Mips,
     sampler: wgpu::Sampler,
+    /// The shadow map, for the passes that read it, and the map of none.
+    shadow_layout: wgpu::BindGroupLayout,
+    shadow_sampler: wgpu::Sampler,
+    no_shadow: wgpu::BindGroup,
+    outline_layout: wgpu::BindGroupLayout,
+    outline_sampler: wgpu::Sampler,
+    /// The layout of the passes that do not read the shadow map.
+    plain_layout: wgpu::PipelineLayout,
+    outline_pipeline_layout: wgpu::PipelineLayout,
     assets: SharedAssets,
 }
 struct Target {
@@ -365,7 +421,9 @@ struct Target {
     texture: egui::TextureId,
     last: Option<View>,
     last_pose: Option<Pose>,
-    last_tones: Option<Tones>,
+    last_highlight: Option<Highlight>,
+    shadow: Option<Shadow>,
+    outline: Option<Outline>,
 }
 #[derive(Default)]
 pub(crate) struct Cache {
@@ -439,11 +497,83 @@ impl Pipelines {
             label: Some("Preview material"),
             entries: &entries,
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Preview"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
+        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Preview shadow"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
         });
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Preview shadow"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        let none = shadow_map(device, 1);
+        let no_shadow = shadow_group(device, &shadow_layout, &shadow_sampler, &none);
+        let outline_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Preview outline"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let outline_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Preview outline"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let layout_of = |label, groups: &[Option<&wgpu::BindGroupLayout>]| {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: groups,
+                immediate_size: 0,
+            })
+        };
+        let pipeline_layout = layout_of("Preview", &[Some(&layout), Some(&shadow_layout)]);
+        let plain_layout = layout_of("Preview plain", &[Some(&layout)]);
+        let outline_pipeline_layout = layout_of("Preview outline", &[Some(&outline_layout)]);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Asset preview"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/preview.wgsl").into()),
@@ -454,6 +584,8 @@ impl Pipelines {
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 8,
             ..Default::default()
         });
         Self {
@@ -461,7 +593,16 @@ impl Pipelines {
             shader,
             pipeline_layout,
             passes: [None, None],
+            extras: None,
+            mips: crate::preview_mips::Mips::new(device),
             sampler,
+            shadow_layout,
+            shadow_sampler,
+            no_shadow,
+            outline_layout,
+            outline_sampler,
+            plain_layout,
+            outline_pipeline_layout,
             assets: SharedAssets::default(),
         }
     }
@@ -477,6 +618,12 @@ impl Pipelines {
         passes[usize::from(samples > 1)].get_or_insert_with(|| Passes::new(device, shader, pipeline_layout, samples))
     }
 
+    fn prepare_extras(&mut self, device: &wgpu::Device) {
+        if self.extras.is_none() {
+            self.extras = Some(Extras::new(device, self));
+        }
+    }
+
     fn passes(&self, samples: u32) -> &Passes {
         self.passes[usize::from(samples > 1)].as_ref().expect("prepared with the target")
     }
@@ -484,20 +631,18 @@ impl Pipelines {
 
 impl Passes {
     fn new(device: &wgpu::Device, shader: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, samples: u32) -> Self {
-        let pipeline = |topology, entry, depth_write| {
+        let pipeline = |topology, vertex, entry, depth_write| {
             let solid = samples > 1 && depth_write;
+            // (the ground and the floor make their own corners)
+            let buffers: &[Option<wgpu::VertexBufferLayout>] = if vertex == "vs" { &[Some(VERTEX_LAYOUT)] } else { &[] };
             device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some("Asset preview"),
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: shader,
-                    entry_point: Some("vs"),
+                    entry_point: Some(vertex),
                     compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Uint32x4, 4 => Float32x4],
-                    })],
+                    buffers,
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: shader,
@@ -519,7 +664,11 @@ impl Passes {
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
                     depth_write_enabled: Some(depth_write),
-                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    depth_compare: Some(if vertex == "vs_ground" {
+                        wgpu::CompareFunction::Always
+                    } else {
+                        wgpu::CompareFunction::LessEqual
+                    }),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -534,11 +683,240 @@ impl Passes {
             })
         };
         Self {
-            triangles: pipeline(wgpu::PrimitiveTopology::TriangleList, "fs", true),
-            blended: pipeline(wgpu::PrimitiveTopology::TriangleList, "fs", false),
-            edges: pipeline(wgpu::PrimitiveTopology::LineList, "fs_edge", false),
+            triangles: pipeline(wgpu::PrimitiveTopology::TriangleList, "vs", "fs", true),
+            blended: pipeline(wgpu::PrimitiveTopology::TriangleList, "vs", "fs", false),
+            edges: pipeline(wgpu::PrimitiveTopology::LineList, "vs", "fs_edge", false),
+            ground: pipeline(wgpu::PrimitiveTopology::TriangleList, "vs_ground", "fs_ground", false),
+            floor: pipeline(wgpu::PrimitiveTopology::TriangleList, "vs_floor", "fs_floor", false),
         }
     }
+}
+
+const VERTEX_LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+    array_stride: std::mem::size_of::<Vertex>() as u64,
+    step_mode: wgpu::VertexStepMode::Vertex,
+    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Uint32x4, 4 => Float32x4],
+};
+
+/// Side of the shadow map of a studio.
+const SHADOW_SIZE: u32 = 1536;
+
+fn shadow_map(device: &wgpu::Device, side: u32) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("Preview shadow"),
+            size: wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+        .create_view(&Default::default())
+}
+
+fn shadow_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    map: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Preview shadow"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(map),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
+impl Extras {
+    fn new(device: &wgpu::Device, pipelines: &Pipelines) -> Self {
+        let depth = |compare, write, bias| wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: Some(write),
+            depth_compare: Some(compare),
+            stencil: Default::default(),
+            bias,
+        };
+        let bias = wgpu::DepthBiasState {
+            constant: 2,
+            slope_scale: 2.0,
+            clamp: 0.0,
+        };
+        let model = |label, vertex, fragment, targets: &[Option<wgpu::ColorTargetState>], depth_stencil| {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipelines.plain_layout),
+                vertex: wgpu::VertexState {
+                    module: &pipelines.shader,
+                    entry_point: Some(vertex),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(VERTEX_LAYOUT)],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &pipelines.shader,
+                    entry_point: Some(fragment),
+                    compilation_options: Default::default(),
+                    targets,
+                }),
+                primitive: Default::default(),
+                depth_stencil,
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let most = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Max,
+        };
+        let mask = wgpu::ColorTargetState {
+            format: MASK_FORMAT,
+            blend: Some(wgpu::BlendState { color: most, alpha: most }),
+            write_mask: wgpu::ColorWrites::ALL,
+        };
+        let outline = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Preview outline"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/preview_outline.wgsl").into()),
+        });
+        Self {
+            shadow: model(
+                "Preview shadow",
+                "vs_shadow",
+                "fs_shadow",
+                &[],
+                Some(depth(wgpu::CompareFunction::Less, true, bias)),
+            ),
+            mask: model("Preview mask", "vs", "fs_mask", &[Some(mask)], None),
+            outline: device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+                label: Some("Preview outline"),
+                layout: Some(&pipelines.outline_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &outline,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &outline,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::COLOR,
+                    })],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            }),
+        }
+    }
+}
+
+const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
+
+/// The shadow map and the outline's mask of a target that needs them.
+struct Shadow {
+    view: wgpu::TextureView,
+    group: wgpu::BindGroup,
+}
+struct Outline {
+    size: [u32; 2],
+    mask: wgpu::TextureView,
+    uniform: wgpu::Buffer,
+    group: wgpu::BindGroup,
+}
+
+impl Outline {
+    fn new(device: &wgpu::Device, pipelines: &Pipelines, size: [u32; 2]) -> Self {
+        let mask = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Preview mask"),
+                size: wgpu::Extent3d {
+                    width: size[0],
+                    height: size[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: MASK_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        let uniform = crate::gpu_alloc::buffer_init(
+            device,
+            "Preview outline",
+            &[0; std::mem::size_of::<OutlineUniform>()],
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Preview outline"),
+            layout: &pipelines.outline_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&mask),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&pipelines.outline_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform.as_entire_binding(),
+                },
+            ],
+        });
+        Self {
+            size,
+            mask,
+            uniform,
+            group,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct OutlineUniform {
+    colors: [[f32; 4]; 2],
+    /// One pixel, and the outline's width in pixels.
+    pixel: [f32; 4],
+}
+
+/// Towards the studio's key light, in the camera's frame: towards the camera,
+/// to its right, up (preview.wgsl).
+const KEY_LIGHT: [f32; 3] = [0.55, -0.6, 0.62];
+
+/// The studio's key light, as the shadow map sees the model.
+fn shadow_matrix(model: &Model, yaw: f32) -> Mat4 {
+    let (s, c) = yaw.sin_cos();
+    let [front, right, up] = KEY_LIGHT;
+    let toward = Vec3::new(front * c - right * s, front * s + right * c, up).normalize();
+    let radius = model.radius.max(0.001) * 1.1;
+    let eye = model.center + toward * radius * 2.0;
+    glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, radius * 0.5, radius * 4.0)
+        * glam::camera::rh::view::look_at_mat4(eye, model.center, Vec3::Z)
 }
 
 impl Target {
@@ -592,6 +970,7 @@ impl Target {
         let assets = &mut pipeline.assets;
         let mut parts = Vec::new();
         let mut bones = HashMap::new();
+        let mut smaller: Option<wgpu::CommandEncoder> = None;
         for (source, part) in model.parts.iter().enumerate() {
             if part.vertices.is_empty() || part.indices.is_empty() {
                 continue;
@@ -674,7 +1053,7 @@ impl Target {
                             height: size[1],
                             depth_or_array_layers: 1,
                         },
-                        mip_level_count: 1,
+                        mip_level_count: crate::preview_mips::levels(size),
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: if slot == 0 || slot == 3 {
@@ -682,7 +1061,9 @@ impl Target {
                         } else {
                             wgpu::TextureFormat::Rgba8Unorm
                         },
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING
+                            | wgpu::TextureUsages::COPY_DST
+                            | wgpu::TextureUsages::RENDER_ATTACHMENT,
                         view_formats: &[],
                     });
                     queue.write_texture(
@@ -699,6 +1080,10 @@ impl Target {
                             depth_or_array_layers: 1,
                         },
                     );
+                    if texture.mip_level_count() > 1 {
+                        let encoder = smaller.get_or_insert_with(|| device.create_command_encoder(&Default::default()));
+                        pipeline.mips.record(device, encoder, &texture);
+                    }
                     let view = texture.create_view(&Default::default());
                     assets.images.insert(key, (image.as_ref().map(Arc::downgrade), view.clone()));
                     view
@@ -739,6 +1124,9 @@ impl Target {
                 group,
             });
         }
+        if let Some(encoder) = smaller {
+            queue.submit([encoder.finish()]);
+        }
         Self {
             model,
             parts,
@@ -750,34 +1138,55 @@ impl Target {
             texture,
             last: None,
             last_pose: None,
-            last_tones: None,
+            last_highlight: None,
+            shadow: None,
+            outline: None,
         }
     }
+    #[allow(clippy::too_many_arguments)]
     fn draw(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        pipeline: &Pipelines,
+        pipeline: &mut Pipelines,
         view: View,
         pose: Option<&Pose>,
-        tones: Option<&Tones>,
+        highlight: Option<&Highlight>,
     ) {
+        // nothing outlined, or not at all: no outline to draw
+        let highlight = highlight.filter(|h| {
+            h.classes
+                .iter()
+                .any(|c| (1..=2).contains(c) && h.colors[usize::from(*c) - 1][3] > 0.0)
+        });
         let same_pose = match (pose, self.last_pose.as_ref()) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
             _ => false,
         };
-        let same_tones = match (tones, self.last_tones.as_ref()) {
-            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-            (None, None) => true,
-            _ => false,
-        };
-        if self.last == Some(view) && same_pose && same_tones {
+        let same_highlight = Highlight::same(highlight, self.last_highlight.as_ref());
+        if self.last == Some(view) && same_pose && same_highlight {
             return;
         }
         self.last = Some(view);
         self.last_pose = pose.cloned();
-        self.last_tones = tones.cloned();
+        self.last_highlight = highlight.cloned();
+        pipeline.prepare(device, self.samples);
+        if view.studio.is_some() || highlight.is_some() {
+            pipeline.prepare_extras(device);
+        }
+        if view.studio.is_some() && self.shadow.is_none() {
+            let map = shadow_map(device, SHADOW_SIZE);
+            let group = shadow_group(device, &pipeline.shadow_layout, &pipeline.shadow_sampler, &map);
+            self.shadow = Some(Shadow { view: map, group });
+        }
+        if highlight.is_some() && self.outline.as_ref().is_none_or(|o| o.size != self.size) {
+            self.outline = Some(Outline::new(device, pipeline, self.size));
+        }
+        let pipeline = &*pipeline;
+        let light = shadow_matrix(&self.model, view.yaw).to_cols_array_2d();
+        let floor = view.studio.and_then(|s| s.floor);
         let radius = self.model.radius.max(0.001);
         let (eye, center) = view.camera(&self.model, self.size[0] as f32 / self.size[1] as f32);
         let projection =
@@ -826,9 +1235,53 @@ impl Target {
                     0.0,
                 ],
                 uv: material.uv,
-                tone: tones.and_then(|tones| tones.get(part.source)).copied().unwrap_or_default(),
+                shadow: light,
+                studio: [
+                    if view.studio.is_some() { 1.0 } else { 0.0 },
+                    view.yaw.cos(),
+                    view.yaw.sin(),
+                    highlight
+                        .and_then(|h| h.classes.get(part.source))
+                        .map_or(0.0, |class| f32::from(*class)),
+                ],
+                floor: [
+                    floor.unwrap_or_default(),
+                    radius * 1.6,
+                    if floor.is_some() && eye.z > floor.unwrap_or_default() {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                    0.0,
+                ],
+                ground: view.background,
             };
             queue.write_buffer(&part.uniform, 0, bytemuck::bytes_of(&uniforms));
+        }
+        let shadow = self.shadow.as_ref().filter(|_| view.studio.is_some());
+        if let (Some(shadow), Some(extras)) = (shadow, &pipeline.extras) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Preview shadow"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &shadow.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&extras.shadow);
+            for part in &self.parts {
+                pass.set_bind_group(0, &part.group, &[]);
+                pass.set_vertex_buffer(0, part.vertices.slice(..));
+                pass.set_index_buffer(part.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..part.count, 0, 0..1);
+            }
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Asset preview"),
@@ -863,6 +1316,18 @@ impl Target {
             multiview_mask: None,
         });
         let passes = pipeline.passes(self.samples);
+        pass.set_bind_group(1, shadow.map_or(&pipeline.no_shadow, |s| &s.group), &[]);
+        if view.studio.is_some()
+            && let Some(first) = self.parts.first()
+        {
+            pass.set_bind_group(0, &first.group, &[]);
+            pass.set_pipeline(&passes.ground);
+            pass.draw(0..3, 0..1);
+            if floor.is_some() {
+                pass.set_pipeline(&passes.floor);
+                pass.draw(0..6, 0..1);
+            }
+        }
         // Like the world passes, skin/masked faces precede blended cosmetics.
         // A transparent layer must never write depth over the face behind it.
         for blended in [false, true] {
@@ -889,6 +1354,68 @@ impl Target {
                 pass.draw_indexed(0..part.edge_count, 0, 0..1);
             }
         }
+        drop(pass);
+        let (Some(highlight), Some(outline), Some(extras)) = (highlight, &self.outline, &pipeline.extras) else {
+            return;
+        };
+        let uniform = OutlineUniform {
+            colors: highlight.colors,
+            pixel: [
+                1.0 / self.size[0] as f32,
+                1.0 / self.size[1] as f32,
+                // as wide on any screen: a small part of the picture's height
+                (self.size[1] as f32 / 220.0).clamp(1.5, 4.0),
+                0.0,
+            ],
+        };
+        queue.write_buffer(&outline.uniform, 0, bytemuck::bytes_of(&uniform));
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Preview mask"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &outline.mask,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&extras.mask);
+            for part in &self.parts {
+                if highlight.classes.get(part.source).is_none_or(|class| *class == 0) {
+                    continue;
+                }
+                pass.set_bind_group(0, &part.group, &[]);
+                pass.set_vertex_buffer(0, part.vertices.slice(..));
+                pass.set_index_buffer(part.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..part.count, 0, 0..1);
+            }
+        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Preview outline"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.color,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&extras.outline);
+        pass.set_bind_group(0, &outline.group, &[]);
+        pass.draw(0..3, 0..1);
     }
 }
 
@@ -999,7 +1526,15 @@ impl Cache {
             if (target.size, target.samples) != (size, samples) {
                 target.resize(device, egui, pipeline, size, samples);
             }
-            target.draw(queue, encoder, pipeline, region.view, region.pose.as_ref(), region.tones.as_ref());
+            target.draw(
+                device,
+                queue,
+                encoder,
+                pipeline,
+                region.view,
+                region.pose.as_ref(),
+                region.highlight.as_ref(),
+            );
             seen.insert(region.id);
             let mut mesh = egui::Mesh::with_texture(target.texture);
             mesh.add_rect_with_uv(
@@ -1108,7 +1643,7 @@ mod tests {
                 background: [0.0, 0.0, 0.0, 1.0],
                 ..Default::default()
             };
-            target.draw(&queue, &mut encoder, &pipeline, view, None, None);
+            target.draw(&device, &queue, &mut encoder, &mut pipeline, view, None, None);
             let pixels = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Edge pixels"),
                 size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
@@ -1222,6 +1757,7 @@ mod tests {
             target.color = color.create_view(&Default::default());
             let mut encoder = device.create_command_encoder(&Default::default());
             target.draw(
+                &device,
                 &queue,
                 &mut encoder,
                 pipeline,
@@ -1453,7 +1989,10 @@ mod tests {
                 ambient: [0.2, 0.2, 0.2, 1.0],
                 surface: [1.0, 1.0, 0.0, 0.0],
                 uv: Material::default().uv,
-                tone: [0.0; 4],
+                shadow: Mat4::IDENTITY.to_cols_array_2d(),
+                studio: [0.0; 4],
+                floor: [0.0; 4],
+                ground: [0.0; 4],
             }),
             wgpu::BufferUsages::UNIFORM,
         );
@@ -1520,6 +2059,7 @@ mod tests {
                 multiview_mask: None,
             });
             pass.set_pipeline(&pipeline.passes(1).triangles);
+            pass.set_bind_group(1, &pipeline.no_shadow, &[]);
             pass.set_bind_group(0, &group, &[]);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);

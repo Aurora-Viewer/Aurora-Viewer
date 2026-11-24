@@ -1,6 +1,6 @@
 //! The 3D view of Inspect and Area Search: the inspected objects alone, made
 //! from what the viewer already holds of them (meshes, prims, sculpts and
-//! textures), turned by the user and pulled apart into their items or prims.
+//! textures), turned by the user, one taken out alone by a click.
 //! Aurora's own: the Legacy Viewer has no such view.
 //!
 //! The appearance and the worn geometry are resolved as the Shape editor
@@ -8,9 +8,8 @@
 //! draws only: it shows no asset id, saves and exports nothing, and is closed
 //! wherever RLVa limits what may be seen (`RlvaState::second_camera_blocked`).
 //!
-//! Every prim owns its bones, rigid ones included, so that moving, pulling
-//! apart and hiding are a new palette (`StageModel::pose`): the geometry is
-//! uploaded once.
+//! Every prim owns its bones, rigid ones included, so that moving and hiding
+//! are a new palette (`StageModel::pose`): the geometry is uploaded once.
 
 mod build;
 pub mod layout;
@@ -20,11 +19,11 @@ pub use build::{Input, StageModel, Standing};
 
 /// A standing as a key: the same to the eye is the same pose.
 pub mod build_standing {
-    pub type Key = (i32, Option<(usize, i32)>);
+    pub type Key = Option<(usize, i32)>;
 
     pub fn key(s: super::Standing) -> Key {
         let step = |v: f32| (v * 2000.0).round() as i32;
-        (step(s.apart), s.focus.map(|(g, f)| (g, step(f))))
+        s.focus.map(|(g, f)| (g, step(f)))
     }
 }
 

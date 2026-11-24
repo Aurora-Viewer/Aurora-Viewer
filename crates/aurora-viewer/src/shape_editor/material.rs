@@ -13,6 +13,11 @@ pub(crate) struct Face {
     pub textures: [Uuid; 4],
     pub material: Material,
     pub alpha_explicit: bool,
+    /// How shiny a face without a PBR material is (0 to 1): its materials'
+    /// glossiness, or the shiny of its texture entry. Not for the hints.
+    pub gloss: Option<f32>,
+    /// Drawn at full brightness (without a PBR material).
+    pub fullbright: bool,
 }
 
 /// UV input here is SL bottom-left, while CPU images are top-left.
@@ -45,6 +50,8 @@ impl Face {
                 ..Default::default()
             },
             alpha_explicit: false,
+            gloss: Some(f32::from(te.bump_shiny_fullbright >> 6) * 0.25),
+            fullbright: te.bump_shiny_fullbright & 0x20 != 0,
         };
         if let Some(id) = object.visual_material(index) {
             let mut material = scene.materials.peek(&id).map(|m| (*m).clone()).unwrap_or_default();
@@ -88,8 +95,13 @@ impl Face {
                 ..Default::default()
             };
             out.alpha_explicit = true;
+            (out.gloss, out.fullbright) = (None, false);
         } else if let Some(material) = scene.legacy_mats.peek(&te.material_id) {
             out.textures[1] = material.normal_map;
+            if !material.specular_map.is_nil() {
+                let strong = f32::from(*material.specular_color[..3].iter().max().unwrap_or(&0)) / 255.0;
+                out.gloss = Some((f32::from(material.specular_exp) / 255.0 * strong).clamp(0.0, 1.0));
+            }
             out.material.uv[1] = uv(material.normal_st, material.normal_rot, false);
             out.material.alpha_cutoff = material.alpha_cutoff as f32 / 255.0;
             out.material.alpha_mode = match material.diffuse_alpha_mode {

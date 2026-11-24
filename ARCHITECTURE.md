@@ -1263,9 +1263,13 @@ headings, the small / wide view of a window.
 `object_stage/` is their 3D view: `mod.rs` keeps one model per window up to
 date (refused under RLVa's `second_camera_blocked`), `build.rs` takes the
 objects from the caches on the main thread and makes the model on a worker
-(every prim owns its bones, so moving, isolating and pulling apart are a new
-palette), `layout.rs` where the parts go. `ui/object_stage.rs` draws it with
-`aurora_render::preview::paint_stage` and its controls. It asks nothing of the
+(every prim owns its bones, so moving and isolating are a new palette; what is
+worn stands relaxed), `layout.rs` where the objects stand. `ui/object_stage.rs` draws it with
+`aurora_render::preview::paint_stage` and its controls. `View::studio` lights it
+(`preview.wgsl`: analytic lamps that a rough surface blurs, a key light with a
+shadow map, a floor, Khronos PBR Neutral tone mapping), `Highlight` outlines
+parts (`preview_outline.wgsl`), `preview_mips.rs` makes the smaller sizes of
+every preview's textures. It asks nothing of the
 network and shows no asset id.
 
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search

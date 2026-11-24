@@ -35,29 +35,6 @@ fn objects_of_the_world_stand_side_by_side_on_the_same_ground() {
 }
 
 #[test]
-fn worn_items_come_apart_around_the_largest() {
-    // a body, and items worn on it, some at the same place
-    let mut boxes = vec![Bounds {
-        lo: Vec3::new(-0.2, -0.4, 0.0),
-        hi: Vec3::new(0.2, 0.4, 1.8),
-    }];
-    boxes.extend((0..9).map(|i| cube(Vec3::new(0.0, 0.0, 0.2 * i as f32), 0.25)));
-    let moves = layout::worn_apart(&boxes);
-    assert_eq!(moves[0], Vec3::ZERO, "the body stays");
-    apart(&boxes, &moves);
-    assert!(layout::worn_apart(&[]).is_empty());
-}
-
-#[test]
-fn prims_that_share_their_middle_fan_out() {
-    let boxes = [cube(Vec3::ZERO, 1.0), cube(Vec3::ZERO, 1.0), cube(Vec3::new(0.0, 3.0, 0.0), 1.0)];
-    let moves = layout::parts_apart(&boxes);
-    assert!(moves.iter().all(|m| m.is_finite()));
-    assert!(moves[2].y > 0.0, "away from the middle");
-    assert_eq!(layout::parts_apart(&boxes[..1]), [Vec3::ZERO], "one part has nothing to leave");
-}
-
-#[test]
 fn a_ray_finds_a_box_in_front_of_it_only() {
     let b = cube(Vec3::new(5.0, 0.0, 0.0), 2.0);
     let hit = b.hit(Vec3::ZERO, Vec3::X).expect("in front");
@@ -66,4 +43,23 @@ fn a_ray_finds_a_box_in_front_of_it_only() {
     assert!(b.hit(Vec3::ZERO, Vec3::Y).is_none());
     assert_eq!(b.hit(Vec3::new(5.0, 0.0, 0.0), Vec3::X), Some(0.0), "from inside");
     assert!(Bounds::default().empty());
+}
+
+/// Arms down along the body, the two sides alike, feet on the same ground.
+#[test]
+fn the_stance_is_relaxed_and_symmetrical() {
+    let lib = crate::scene::avatar::AvatarLibrary::load();
+    let joints = super::build::stance(&lib, &[]);
+    let at = |name: &str| joints[lib.rig.names[name]].w_axis.truncate();
+    for side in ["Left", "Right"] {
+        let (shoulder, wrist) = (at(&format!("mShoulder{side}")), at(&format!("mWrist{side}")));
+        assert!(shoulder.z - wrist.z > 0.35, "{side}: the hand hangs, {shoulder:?} {wrist:?}");
+        let out = (wrist.y - shoulder.y).abs();
+        assert!(out < 0.3 && wrist.y.abs() > 0.15, "{side}: beside the body, {wrist:?}");
+        assert!(wrist.x > shoulder.x - 0.02, "{side}: a little forward");
+    }
+    for name in ["mWrist", "mElbow", "mKnee", "mAnkle"] {
+        let (l, r) = (at(&format!("{name}Left")), at(&format!("{name}Right")));
+        assert!((l - Vec3::new(r.x, -r.y, r.z)).length() < 0.01, "{name}: {l:?} {r:?}");
+    }
 }

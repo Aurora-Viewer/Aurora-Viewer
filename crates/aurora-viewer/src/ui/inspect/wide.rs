@@ -388,7 +388,7 @@ fn stage(
     let showing = Showing {
         alone: view.open.map(|i| i.root),
         outlined: state.selected,
-        pointed,
+        pointed: pointed.or_else(|| state.demo_hover.then(|| view.items.get(3).map(|i| i.root)).flatten()),
     };
     let absent = state.stage.stage.model().is_err();
     let mut child = ui.new_child(egui::UiBuilder::new().id_salt(id).max_rect(rect));
@@ -403,8 +403,10 @@ fn stage(
     if absent && form != Form::Small {
         missing(state, ui, p, frame, view, rect);
     }
-    if let Some(hit) = state.stage.show(ui, p, rect, top_room, showing, title)
-        && form != Form::Small
+    if let Some(hit) = state.stage.show(ui, p, rect, top_room, showing, title, &|hit| {
+        let id = if view.open.is_some() { hit.prim } else { hit.root };
+        view.rows.iter().find(|r| r.id == id).map(|r| r.name.clone())
+    }) && form != Form::Small
     {
         if state.opened == Some(hit.root) {
             state.selected = Some(hit.prim);
@@ -519,7 +521,9 @@ fn point_label(frame: &Frame<'_>, point: u8) -> String {
 /// grey once one of its prims is.
 fn lit(state: &InspectUi, item: &Item) -> Lit {
     if state.opened != Some(item.root) {
-        Lit::Off
+        // pointed at in the 3D view
+        let over = state.opened.is_none() && state.stage.over().is_some_and(|hit| hit.root == item.root);
+        if over { Lit::Pointed } else { Lit::Off }
     } else if state.selected == Some(item.root) {
         Lit::Outlined
     } else {
@@ -676,15 +680,15 @@ fn item_list(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &Fram
         if !note.is_empty() && line.width() > 230.0 {
             right = text_before(ui, right, y, &note, 92.0, 11.5, if aside { p.warn } else { p.muted }) - 8.0;
         }
-        if lit != Lit::Off {
+        if lit.chosen() {
             right = board::check(ui, p, right, y);
         }
         let left = line.left() + 28.0;
-        let font = name_font(ui, lit != Lit::Off, 12.5);
+        let font = name_font(ui, lit.chosen(), 12.5);
         let ink = if aside { p.muted } else { p.ink };
         widgets::paint_elided(ui, row.name.trim(), egui::pos2(left, y), (right - left).max(20.0), font, ink);
         let label = spoken(state, frame, row, item);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit.chosen(), &label));
         respond(state, resp, item);
     });
 }
@@ -791,13 +795,13 @@ fn item_table(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &Fra
         let resp = board::row_at(ui, p, &nav, i, line, lit);
         let cells = board::col_rects(&cols, line);
         let y = line.center().y;
-        let name = if lit == Lit::Off {
+        let name = if !lit.chosen() {
             cells[0]
         } else {
             cells[0].with_max_x(cells[0].right() - 18.0)
         };
         board::cell(ui, name, row.name.trim(), p.ink);
-        if lit != Lit::Off {
+        if lit.chosen() {
             board::check(ui, p, cells[0].right() - 2.0, y);
         }
         if objects {
@@ -812,7 +816,7 @@ fn item_table(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &Fra
         board::figure_cell(ui, cells[4], &aurora_i18n::integer(i64::from(item.triangles)), p.ink);
         board::figure_cell(ui, cells[5], &megabytes(item.vram), p.ink);
         let label = spoken(state, frame, row, item);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit.chosen(), &label));
         respond(state, resp, item);
     });
 }
@@ -1280,7 +1284,7 @@ fn makers(
                         );
                         board::figure_cell(ui, cells[3], &megabytes(item.vram), p.ink);
                         let label = spoken(state, frame, row, item);
-                        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
+                        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit.chosen(), &label));
                         respond(state, resp, item);
                     }
                 }
@@ -1589,7 +1593,7 @@ fn places(
                             !avatar,
                         );
                         let label = spoken(state, frame, row, item);
-                        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
+                        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit.chosen(), &label));
                         respond(state, resp, item);
                     }
                 }
@@ -1760,7 +1764,7 @@ fn figures(
                 board::figure_cell(ui, cells[4], &megabytes(item.vram), p.ink);
                 board::figure_cell(ui, cells[5], &megabytes(item.texture_memory), p.ink);
                 let label = spoken(state, frame, row, item);
-                resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit != Lit::Off, &label));
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit.chosen(), &label));
                 respond(state, resp, item);
             });
         }

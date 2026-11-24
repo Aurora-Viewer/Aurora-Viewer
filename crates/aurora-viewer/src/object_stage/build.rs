@@ -51,7 +51,7 @@ struct Hold {
     local: Mat4,
 }
 
-struct RawPrim {
+pub(super) struct RawPrim {
     id: Uuid,
     group: usize,
     shape: Shape,
@@ -132,6 +132,8 @@ fn hash_prim(prim: &RawPrim, hasher: &mut impl Hasher) {
     for face in &prim.faces {
         face.hash(hasher);
         face.hash_look(hasher);
+        face.gloss.map(f32::to_bits).hash(hasher);
+        face.fullbright.hash(hasher);
     }
 }
 
@@ -226,10 +228,6 @@ pub struct GroupShape {
     pub root: Uuid,
     pub units: Range<usize>,
     pub bounds: Bounds,
-    /// What it moves by once the whole is pulled apart.
-    away: Vec3,
-    /// Its box once its own parts are pulled apart.
-    apart: Bounds,
 }
 
 pub struct StageModel {
@@ -239,10 +237,7 @@ pub struct StageModel {
     pub groups: Vec<GroupShape>,
     /// Every bone, at rest in the model's space.
     base: Vec<Mat4>,
-    /// What each unit moves by once its own group is pulled apart.
-    unit_away: Vec<Vec3>,
-    together: Bounds,
-    spread: Bounds,
+    whole: Bounds,
     /// The triangles as they stand together, for picking.
     skinned: Vec<Arc<[Vec3]>>,
     images: HashMap<Uuid, (PreviewRevision, Arc<Image>)>,
@@ -252,8 +247,6 @@ pub struct StageModel {
 /// How the model stands in a frame.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Standing {
-    /// 0 together, 1 pulled apart.
-    pub apart: f32,
     /// The group alone in the view, and how far that has come (0 to 1).
     pub focus: Option<(usize, f32)>,
 }
@@ -330,8 +323,39 @@ impl Input {
     }
 }
 
-/// The joints of a neutral stance, with what the worn meshes ask of them.
-fn stance(lib: &AvatarLibrary, prims: &[RawPrim]) -> Vec<Mat4> {
+/// A relaxed stance: the arms down, the elbows and the fingers a little bent,
+/// the feet a little apart. (At rest the skeleton stands arms wide, its axes
+/// the avatar's: forward, left, up.)
+fn relaxed() -> Vec<(String, Quat)> {
+    let turn = |x: f32, y: f32, z: f32| {
+        let r = f32::to_radians;
+        Quat::from_rotation_x(r(x)) * Quat::from_rotation_y(r(y)) * Quat::from_rotation_z(r(z))
+    };
+    let mut out = vec![
+        ("mNeck".to_owned(), turn(0.0, 3.0, 0.0)),
+        ("mChest".to_owned(), turn(0.0, -2.0, 0.0)),
+    ];
+    // the right side mirrors the left one
+    for (side, m) in [("Left", 1.0), ("Right", -1.0)] {
+        let mut add = |name: &str, x: f32, y: f32, z: f32| out.push((format!("{name}{side}"), turn(m * x, y, m * z)));
+        add("mCollar", -5.0, 0.0, 0.0);
+        add("mShoulder", -66.0, 0.0, -4.0);
+        add("mElbow", 0.0, 0.0, -16.0);
+        add("mWrist", -4.0, 0.0, -2.0);
+        add("mHip", 3.5, 0.0, 4.0);
+        add("mAnkle", -3.5, 0.0, 0.0);
+        for (finger, curl) in [("Index", 10.0), ("Middle", 14.0), ("Ring", 18.0), ("Pinky", 22.0)] {
+            for (joint, part) in [(1, 0.8), (2, 1.2), (3, 0.8)] {
+                add(&format!("mHand{finger}{joint}"), -curl * part, 0.0, 0.0);
+            }
+        }
+        add("mHandThumb1", -8.0, 0.0, 6.0);
+    }
+    out
+}
+
+/// The joints of a relaxed stance, with what the worn meshes ask of them.
+pub(super) fn stance(lib: &AvatarLibrary, prims: &[RawPrim]) -> Vec<Mat4> {
     let rig = &lib.rig;
     let mut overrides = crate::scene::joint_overrides::JointOverrides::new(rig);
     for prim in prims {
@@ -342,9 +366,15 @@ fn stance(lib: &AvatarLibrary, prims: &[RawPrim]) -> Vec<Mat4> {
             overrides.add(rig, *asset, skin);
         }
     }
+    let mut rotations = rig.local_rot.clone();
+    for (name, rotation) in relaxed() {
+        if let Some(joint) = rig.names.get(name.as_str()).and_then(|j| rotations.get_mut(*j)) {
+            *joint *= rotation;
+        }
+    }
     let (mut positions, mut scales) = (rig.local_pos.clone(), rig.scale.clone());
     overrides.apply(rig, &mut positions, &mut scales);
-    rig.world_with(&rig.local_rot, Vec3::ZERO, &positions, &scales)
+    rig.world_with(&rotations, Vec3::ZERO, &positions, &scales)
 }
 
 fn mesh_faces(faces: &[aurora_assets::MeshFace]) -> Vec<Drawn> {
@@ -480,7 +510,11 @@ impl Building {
                 continue;
             }
             posed.iter().for_each(|p| bounds.add(*p));
-            let textures = look.textures.map(|id| images.get(&id).map(|(_, image)| image.clone()));
+            let mut textures = look.textures.map(|id| images.get(&id).map(|(_, image)| image.clone()));
+            if look.fullbright {
+                // it gives its own light
+                textures[3] = textures[0].clone();
+            }
             let blend = look.material.color[3] < 1.0
                 || textures[0]
                     .as_ref()
@@ -493,6 +527,22 @@ impl Building {
                 indices: d.indices,
                 textures,
                 material: Material {
+                    // a texture entry's tint is a displayed colour, a PBR
+                    // material's is light
+                    color: match look.gloss {
+                        Some(_) => {
+                            let [r, g, b, a] = look.material.color;
+                            [r.max(0.0).powf(2.2), g.max(0.0).powf(2.2), b.max(0.0).powf(2.2), a]
+                        }
+                        None => look.material.color,
+                    },
+                    roughness: look.gloss.map_or(look.material.roughness, |gloss| 1.0 - 0.85 * gloss),
+                    emissive: if look.fullbright {
+                        let c = look.material.color;
+                        [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6]
+                    } else {
+                        look.material.emissive
+                    },
                     alpha_mode: match (look.alpha_explicit, blend) {
                         (true, _) => look.material.alpha_mode,
                         (false, true) => 1,
@@ -550,43 +600,17 @@ impl Building {
                 }
             }
         }
-        let mut unit_away = vec![Vec3::ZERO; self.units.len()];
-        let mut groups: Vec<GroupShape> = roots
+        let groups: Vec<GroupShape> = roots
             .into_iter()
             .enumerate()
             .map(|(g, root)| {
                 let units = range(&self.units, g);
-                let boxes = boxes_of(&self.units, units.clone());
-                let mut apart = Bounds::default();
-                for ((u, b), away) in units.clone().zip(&boxes).zip(layout::parts_apart(&boxes)) {
-                    unit_away[u] = away;
-                    apart.join(b.moved(away));
-                }
-                GroupShape {
-                    root,
-                    units,
-                    bounds: layout::whole(&boxes),
-                    away: Vec3::ZERO,
-                    apart,
-                }
+                let bounds = layout::whole(&boxes_of(&self.units, units.clone()));
+                GroupShape { root, units, bounds }
             })
             .collect();
-        let present: Vec<usize> = (0..groups.len()).filter(|g| !groups[*g].units.is_empty()).collect();
-        let boxes: Vec<Bounds> = present.iter().map(|g| groups[*g].bounds).collect();
-        let together = layout::whole(&boxes);
-        let aways: Vec<Vec3> = if worn {
-            layout::worn_apart(&boxes)
-        } else {
-            boxes
-                .iter()
-                .map(|b| (b.center() - together.center()) * Vec3::new(1.0, 0.5, 0.3))
-                .collect()
-        };
-        let mut spread = Bounds::default();
-        for ((g, b), away) in present.iter().zip(&boxes).zip(aways) {
-            groups[*g].away = away;
-            spread.join(b.moved(away));
-        }
+        let boxes: Vec<Bounds> = groups.iter().filter(|g| !g.units.is_empty()).map(|g| g.bounds).collect();
+        let whole = layout::whole(&boxes);
         Some(StageModel {
             model: Arc::new(Model {
                 parts: self.parts,
@@ -597,9 +621,7 @@ impl Building {
             units: self.units,
             groups,
             base: self.base,
-            unit_away,
-            together,
-            spread,
+            whole,
             skinned: self.skinned,
             images,
             meshes,
@@ -628,28 +650,24 @@ fn lerp(a: Vec3, b: Vec3, t: f32) -> Vec3 {
 impl StageModel {
     /// The sphere the view shows: its centre and radius.
     fn framed(&self, standing: Standing) -> (Vec3, f32) {
-        let mix = |a: &Bounds, b: &Bounds, t: f32| (lerp(a.center(), b.center(), t), a.radius() + (b.radius() - a.radius()) * t);
-        let (center, radius) = mix(&self.together, &self.spread, standing.apart);
+        let (center, radius) = (self.whole.center(), self.whole.radius());
         match standing.focus.and_then(|(g, f)| Some((self.groups.get(g)?, f))) {
             Some((group, f)) if !group.units.is_empty() => {
-                let (c, r) = mix(&group.bounds, &group.apart, standing.apart);
+                let (c, r) = (group.bounds.center(), group.bounds.radius());
                 (lerp(center, c, f), radius + (r - radius) * f)
             }
             _ => (center, radius),
         }
     }
 
-    /// What a unit moves by.
-    fn moved(&self, unit: usize, standing: Standing) -> Vec3 {
-        let group = self.units[unit].group;
-        let (mine, f) = standing.focus.map_or((false, 0.0), |(g, f)| (g == group, f));
-        let whole = self.groups[group].away * standing.apart * (1.0 - f);
-        let own = if mine {
-            self.unit_away[unit] * standing.apart * f
-        } else {
-            Vec3::ZERO
+    /// The floor what is shown stands on, as the view frames it.
+    pub fn floor(&self, standing: Standing) -> f32 {
+        let (center, radius) = self.framed(standing);
+        let low = match standing.focus.and_then(|(g, f)| Some((self.groups.get(g)?, f))) {
+            Some((group, f)) if !group.units.is_empty() => self.whole.lo.z + (group.bounds.lo.z - self.whole.lo.z) * f,
+            _ => self.whole.lo.z,
         };
-        whole + own
+        (low - center.z) / radius
     }
 
     /// How large a group shows: the others shrink away from one alone.
@@ -664,14 +682,11 @@ impl StageModel {
         let (center, radius) = self.framed(standing);
         let view = Mat4::from_scale(Vec3::splat(1.0 / radius)) * Mat4::from_translation(-center);
         let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); self.base.len()];
-        for (u, unit) in self.units.iter().enumerate() {
+        for unit in &self.units {
             let middle = self.groups[unit.group].bounds.center();
             // (never quite 0: a matrix without an inverse has no normals)
             let size = self.shown(unit.group, standing).max(1e-4);
-            let m = view
-                * Mat4::from_translation(self.moved(u, standing) + middle)
-                * Mat4::from_scale(Vec3::splat(size))
-                * Mat4::from_translation(-middle);
+            let m = view * Mat4::from_translation(middle) * Mat4::from_scale(Vec3::splat(size)) * Mat4::from_translation(-middle);
             for bone in unit.bones.clone() {
                 out[bone] = (m * self.base[bone]).to_cols_array_2d();
             }
@@ -679,11 +694,11 @@ impl StageModel {
         out.into()
     }
 
-    /// A tone for each part, by its unit.
-    pub fn tones(&self, tone: impl Fn(&Unit) -> [f32; 4]) -> aurora_render::preview::Tones {
-        let mut out = vec![[0.0; 4]; self.model.parts.len()];
+    /// The class of each part's outline, by its unit (`Highlight`).
+    pub fn classes(&self, class: impl Fn(&Unit) -> u8) -> Arc<[u8]> {
+        let mut out = vec![0; self.model.parts.len()];
         for unit in &self.units {
-            out[unit.parts.clone()].fill(tone(unit));
+            out[unit.parts.clone()].fill(class(unit));
         }
         out.into()
     }
@@ -698,16 +713,15 @@ impl StageModel {
             if self.shown(unit.group, standing) < 0.5 {
                 continue;
             }
-            let start = from - self.moved(u, standing);
             let near = |t: f32| best.is_none_or(|(b, _)| t < b);
-            if !unit.bounds.hit(start, dir).is_some_and(near) {
+            if !unit.bounds.hit(from, dir).is_some_and(near) {
                 continue;
             }
             for part in unit.parts.clone() {
                 let points = &self.skinned[part];
                 for tri in self.model.parts[part].indices.as_chunks::<3>().0 {
                     let Some([a, b, c]) = corner(points, tri) else { continue };
-                    if let Some(t) = triangle(start, dir, a, b, c)
+                    if let Some(t) = triangle(from, dir, a, b, c)
                         && best.is_none_or(|(b, _)| t < b)
                     {
                         best = Some((t, u));
@@ -718,14 +732,9 @@ impl StageModel {
         best.map(|(_, u)| &self.units[u])
     }
 
-    /// How many parts a group can be pulled into.
+    /// How many prims of an object the view shows.
     pub fn parts_of(&self, root: &Uuid) -> usize {
         self.groups.iter().find(|g| g.root == *root).map_or(0, |g| g.units.len())
-    }
-
-    /// How many groups have something to draw.
-    pub fn shown_groups(&self) -> usize {
-        self.groups.iter().filter(|g| !g.units.is_empty()).count()
     }
 }
 

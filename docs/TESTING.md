@@ -6924,13 +6924,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the outlined one in violet), the Profile button on the line pointed at, a
   right click that looks at the item, the View panel and the Details table. `:open` opens the
   third object's card, `:creators` and `:details` show those tabs, `:view` the
-  View panel. `crowd` takes someone of `AURORA_DEMO_CROWD`, `market` eight pieces
+  View panel. `crowd` takes someone of `AURORA_DEMO_CROWD`, `pbr` the objects with a PBR material
+  (`AURORA_DEMO_PBR_METAL=1`, `AURORA_DEMO_PBR_OVERRIDE=1`), `market` eight pieces
   of the market below, of several owners. `:small` and `:wide` force a view (never
-  kept in the settings). In the wide one: `item` opens the third object, `apart`
-  pulls the 3D view apart, `grow-3d`, `grow-items`, `grow-complexity`,
+  kept in the settings). In the wide one: `item` opens the third object, `hover`
+  outlines the fourth in 3D, `grow-3d`, `grow-items`, `grow-complexity`,
   `grow-makers`, `grow-places`, `grow-figures` and `grow-prims` grow that tile.
   Options go together, separated by commas (`wolf:wide,item,grow-prims`). Check
-  that nothing spins by itself, dragging and each button, a click on an item in
+  that nothing spins by itself, dragging, a right drag, the arrow keys and each button, the outline
+  and the name of what is pointed at, the shadows and the reflections, a click on an item in
   3D, the violet on what is outlined in the world (the item, then a prim of it),
   Set aside and Put back, a maker, an area and an owner picked (and their chips),
   `AURORA_DEMO_CROWD=24` for the people of the strip, `AURORA_TEXT_SIZE=1.5` and

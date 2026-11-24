@@ -325,6 +325,8 @@ pub struct InspectUi {
     /// The 3D view of the wide window.
     pub stage: super::object_stage::StageUi,
     wide: wide::Wide,
+    /// AURORA_DEMO_INSPECT's `hover`.
+    demo_hover: bool,
     /// AURORA_DEMO_INSPECT's view; None: the one chosen last.
     pub forced_wide: Option<bool>,
     /// The window opens this frame: it takes the view chosen last.
@@ -374,8 +376,8 @@ impl InspectUi {
 
     /// AURORA_DEMO_INSPECT's options: `wide` or `small` the view; small, `open`
     /// the third object's card, `creators` or `details` that tab, `view` the
-    /// View panel; wide, `item` the third object, `apart` the 3D view pulled
-    /// apart, `grow-…` a tile grown.
+    /// View panel; wide, `item` the third object, `grow-…` a tile grown,
+    /// `hover` its 3D view with the fourth pointed at.
     pub fn demo(&mut self, option: &str) {
         match option {
             "open" => {
@@ -399,7 +401,7 @@ impl InspectUi {
             "grow-figures" => self.wide.grown = Some(wide::Tile::Figures),
             "grow-prims" => self.wide.grown = Some(wide::Tile::Prims),
             "grow-3d" => self.wide.grown = Some(wide::Tile::Stage),
-            "apart" => self.stage.pull_apart(1.0),
+            "hover" => self.demo_hover = true,
             _ => {}
         }
     }

@@ -301,6 +301,14 @@ pub enum Lit {
     On,
     /// Outlined in the world: the accent.
     Outlined,
+    /// Not chosen, but pointed at elsewhere in the window.
+    Pointed,
+}
+
+impl Lit {
+    pub fn chosen(self) -> bool {
+        matches!(self, Lit::On | Lit::Outlined)
+    }
 }
 
 /// The keyboard in a list: one stop for Tab, then the arrows, Home and End
@@ -641,6 +649,7 @@ pub fn paint_lit(ui: &egui::Ui, p: &Palette, rect: Rect, lit: Lit, hovered: bool
     let radius = ui.visuals().widgets.inactive.corner_radius;
     let (fill, stroke) = match lit {
         Lit::Off if hovered => (p.raised.gamma_multiply(0.6), Stroke::NONE),
+        Lit::Pointed => (p.raised.gamma_multiply(0.6), Stroke::NONE),
         Lit::Off => return,
         Lit::On => (p.raised, Stroke::new(1.0, p.muted.gamma_multiply(0.6))),
         Lit::Outlined => (p.violet.gamma_multiply(0.22), Stroke::new(1.0, p.violet_light)),
