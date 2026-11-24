@@ -594,8 +594,10 @@ impl Catalog {
             f.state = FetchState::Unknown;
         }
         // AOEngine::reload (aoengine.cpp) sets mAOFolder null, then tick looks
-        // the folders up by name. An explicit reload while the brand is
-        // renamed finds nothing; that is the same in both viewers.
+        // the folders up by name. While the brand is renamed, the Legacy
+        // Viewer's tick finds no #Firestorm and makes a new one, then a new
+        // #AO; Aurora makes nothing here (no twin #Aurora): the reload finds
+        // no sets until the folder has its name back.
         self.brand = None;
         self.root = None;
         self.invalidate();
