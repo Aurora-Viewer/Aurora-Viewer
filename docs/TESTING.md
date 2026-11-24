@@ -13199,16 +13199,21 @@ What the inventory must show with these scenarios:
   neither the tool nor the variable). To test a WGSL change while logged in,
   without a restart: edit the file in the checkout the viewer was built
   from, then press **T2** (or run with `AURORA_SHADER_RELOAD=watch`, which
-  reloads within half a second of a save). The renderer reads `common.wgsl`,
+  reloads within half a second of a save). With `1` or `watch` the files
+  are read from the checkout from the start, unchecked; otherwise the build's
+  copy stays until a reload validates. The renderer reads `common.wgsl`,
   `water_spectrum.wgsl`, `object.wgsl`, `env.wgsl`, `water_sim.wgsl`,
   `water_caustics.wgsl` and `water_wake.wgsl` once, puts them together as
   the build does (`object_shader_source`, `scene_shader_source`, the
-  soft-shadow and early-depth rewrites), has naga validate every module,
-  then compiles on a worker thread the scene's pipelines for the MSAA
-  samples, SSR and soft shadows in use, the impostors' and the water's, and
-  swaps them in a later frame (about 200 to 400 ms; the frame does not
-  wait). The water keeps its ripples, wetness memory and snow trails; the
-  stochastic transparency, when on, is compiled again at its next frame.
+  soft-shadow and early-depth rewrites), has naga validate every module
+  (SSR's and the stochastic transparency's too, even off, as they are made
+  later from the same files), then compiles on a worker thread the scene's
+  pipelines for the MSAA samples, SSR and soft shadows in use, the
+  impostors', the water's and the stochastic transparency's when it is on,
+  and swaps them in a later frame (about 200 to 400 ms; the frame does not
+  wait). A pipeline the device refuses (a binding the layouts lack, Metal's
+  compiler) fails the reload the same way. The water keeps its ripples,
+  wetness memory and snow trails.
   The log says `shader reload <n>: swapped in in <ms> ms … changed: <files>;
   rebuilt: …`, and nearby chat says it in a line. A file that does not
   validate changes nothing: the old pipelines stay, naga's full report goes

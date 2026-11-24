@@ -127,6 +127,19 @@ pub fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, bool) {
 /// said so, an object came back invalid). What worker threads `make`
 /// starts catch in their own scopes counts too ([`on_worker`]).
 pub fn scoped_apart<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, bool, bool) {
+    let (made, oom, invalid, _) = scoped_full(device, make);
+    (made, oom, invalid)
+}
+
+/// [`scoped_apart`] for a caller that must refuse anything the device
+/// refused (shader_reload.rs): the first validation or memory error of
+/// this thread or of the workers it started, as text.
+pub fn scoped_error<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, Option<String>) {
+    let (made, _, _, error) = scoped_full(device, make);
+    (made, error)
+}
+
+fn scoped_full<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, bool, bool, Option<String>) {
     let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let workers = Arc::new(WorkerRefusals::default());
@@ -140,10 +153,17 @@ pub fn scoped_apart<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, b
     for e in oom.iter().chain(&invalid) {
         say(e);
     }
+    let error = oom
+        .iter()
+        .chain(&invalid)
+        .map(crate::main_thread::error_text)
+        .next()
+        .or_else(|| workers.error.lock().ok().and_then(|e| e.clone()));
     (
         made,
         oom.is_some() || workers.oom.load(Ordering::Relaxed),
         is_invalid || workers.invalid.load(Ordering::Relaxed),
+        error,
     )
 }
 
@@ -154,6 +174,8 @@ pub fn scoped_apart<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, b
 pub struct WorkerRefusals {
     oom: AtomicBool,
     invalid: AtomicBool,
+    /// The first error a worker's scopes caught, whatever it was.
+    error: std::sync::Mutex<Option<String>>,
 }
 
 thread_local! {
@@ -169,9 +191,12 @@ pub fn enclosing() -> Option<Arc<WorkerRefusals>> {
 /// making thread's [`scoped_apart`], what they catch reported to it.
 pub fn on_worker<T>(device: &wgpu::Device, parent: Option<&WorkerRefusals>, work: impl FnOnce() -> T) -> T {
     let Some(parent) = parent else { return work() };
-    let (made, oom, invalid) = scoped_apart(device, work);
+    let (made, oom, invalid, error) = scoped_full(device, work);
     parent.oom.fetch_or(oom, Ordering::Relaxed);
     parent.invalid.fetch_or(invalid, Ordering::Relaxed);
+    if let (Some(error), Ok(mut first)) = (error, parent.error.lock()) {
+        first.get_or_insert(error);
+    }
     made
 }
 

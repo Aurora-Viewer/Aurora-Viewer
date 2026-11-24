@@ -34,8 +34,9 @@ pub const FILES: &[(&str, &str)] = &[
 ];
 
 static DEVELOPMENT: AtomicBool = AtomicBool::new(false);
-/// The shaders come from the checkout (`AURORA_SHADER_RELOAD`, or a reload
-/// asked for), not from the build.
+/// The reloadable shaders come from the checkout, not from the build:
+/// `AURORA_SHADER_RELOAD` at start, or once a reload validated (a refused
+/// one leaves the baked copy, which nothing checked would replace).
 static FROM_CHECKOUT: AtomicBool = AtomicBool::new(false);
 /// `AURORA_SHADER_RELOAD=watch`: a saved file asks for a reload.
 static WATCH: AtomicBool = AtomicBool::new(false);
@@ -99,7 +100,6 @@ pub fn request() -> bool {
     if !available() {
         return false;
     }
-    FROM_CHECKOUT.store(true, Ordering::Relaxed);
     let generation = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     log::info!("shader reload {generation}: asked for, from {}", folder().display());
     true
@@ -109,9 +109,16 @@ pub(crate) fn generation() -> u64 {
     GENERATION.load(Ordering::Relaxed)
 }
 
-/// Whether the reloadable shaders are read from the checkout.
-pub(crate) fn from_checkout() -> bool {
-    FROM_CHECKOUT.load(Ordering::Relaxed)
+/// Whether a module made on this thread now reads the reloadable files
+/// from the checkout: a reload's worker, or once one validated.
+pub(crate) fn active() -> bool {
+    FROM_CHECKOUT.load(Ordering::Relaxed) || CANDIDATE.with(|c| c.borrow().is_some())
+}
+
+/// Whether a reload reads `file` ([`FILES`]): the others keep their baked
+/// copy (outside the demo's `AURORA_DEMO_WATER_SHADERS`).
+pub(crate) fn reloadable(file: &str) -> bool {
+    FILES.iter().any(|(name, _)| *name == file)
 }
 
 /// A file's text as the next module made on this thread takes it: a
@@ -185,6 +192,7 @@ pub(crate) fn with_candidate<T>(candidate: &Candidate, f: impl FnOnce() -> T) ->
 /// The candidate's files become the ones every later module reads.
 pub(crate) fn promote(candidate: &Candidate) {
     *VALIDATED.lock() = Some(candidate.texts.clone());
+    FROM_CHECKOUT.store(true, Ordering::Relaxed);
 }
 
 /// Has naga parse and validate a module made from the candidate (`label`
@@ -204,6 +212,24 @@ pub(crate) fn validate(label: &str, source: &str, candidate: &Candidate) -> Resu
     log::error!("shader reload: the {label} module does not validate:\n{report}");
     let place = location.and_then(|l| place_of(source, l.line_number as usize, &candidate.texts));
     Err(Failure { place, message })
+}
+
+/// A refusal of the device (wgpu's report: a title, "Caused by:", then a
+/// cause a line, deeper and deeper) as a [`Failure`] on one line: the call
+/// and its label, then the two deepest causes.
+pub(crate) fn device_failure(report: &str) -> Failure {
+    let lines: Vec<&str> = report
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && *l != "Caused by:")
+        .collect();
+    let call = lines.iter().find(|l| l.starts_with("In ")).map(|l| l.trim_start_matches("In "));
+    let deepest = lines.iter().rev().take(2).rev().copied().collect::<Vec<_>>().join(": ");
+    let message = match call {
+        Some(call) if !deepest.contains(call) => format!("{call}: {deepest}"),
+        _ => deepest,
+    };
+    Failure { place: None, message }
 }
 
 /// An error and its causes, on one line.
@@ -336,6 +362,24 @@ mod tests {
         texts.insert("object.wgsl", Arc::from("let x = 1;\n"));
         texts.insert("env.wgsl", Arc::from("let x = 1;\n"));
         assert_eq!(place_of("let x = 1;", 1, &texts), None);
+    }
+
+    #[test]
+    fn a_device_refusal_keeps_its_label_and_deepest_causes() {
+        let report = "Validation Error\n\nCaused by:\n  In Device::create_render_pipeline, label = 'sky'\n    Error matching ShaderStages(FRAGMENT) shader requirements against the pipeline\n      Shader global ResourceBinding { group: 1, binding: 9 } is not available in the pipeline layout\n        Binding is missing from the pipeline layout\n";
+        assert_eq!(
+            device_failure(report).message,
+            "Device::create_render_pipeline, label = 'sky': Shader global ResourceBinding { group: 1, binding: 9 } is not available in the pipeline layout: Binding is missing from the pipeline layout"
+        );
+        assert_eq!(device_failure("Out of memory").message, "Out of memory");
+    }
+
+    #[test]
+    fn only_the_listed_files_reload() {
+        assert!(reloadable("object.wgsl"));
+        assert!(reloadable("water_wake.wgsl"));
+        assert!(!reloadable("clouds.wgsl"));
+        assert!(!reloadable("oit_stochastic.wgsl"));
     }
 
     #[test]

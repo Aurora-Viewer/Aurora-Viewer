@@ -3478,6 +3478,8 @@ struct Reloaded {
     scene: Pipelines,
     impostors: ImpostorPipelines,
     water: crate::water_effects::WaterShaders,
+    /// The stochastic transparency's, for the samples it had.
+    stochastic: Option<crate::oit_stochastic::Pipes>,
     changed: Vec<&'static str>,
 }
 
@@ -7557,6 +7559,19 @@ impl Backend {
             self.start_shader_reload(generation);
         }
         let Some(build) = &self.reload_build else { return };
+        if self.lost.get() {
+            // (its pipelines would be of a device gone)
+            let generation = build.generation;
+            self.reload_build = None;
+            crate::shader_reload::report(
+                generation,
+                crate::shader_reload::Outcome::Failed(crate::shader_reload::Failure {
+                    place: None,
+                    message: "the GPU device was lost".into(),
+                }),
+            );
+            return;
+        }
         let result = match build.done.try_recv() {
             Ok(result) => result,
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
@@ -7586,8 +7601,14 @@ impl Backend {
             // from the files before the reload, so it is made again
             self.reload_seen = 0;
         }
-        // (made again from the reloaded files at its next frame, if on)
-        let stochastic = self.st_pipes.take().is_some();
+        // (one made meanwhile for other samples already reads the files)
+        let stochastic = match made.stochastic {
+            Some(p) if self.st_pipes.as_ref().is_some_and(|old| old.samples == p.samples) => {
+                self.st_pipes = Some(p);
+                true
+            }
+            _ => false,
+        };
         log::info!(
             "shader reload {}: {} in {ms} ms ({} sample(s), SSR {}, soft shadows {}); changed: {}; rebuilt: {}",
             build.generation,
@@ -7607,7 +7628,7 @@ impl Backend {
             [
                 scene.then_some("scene, impostors"),
                 water.then_some("water simulation, caustics, wake"),
-                stochastic.then_some("stochastic transparency (next frame)"),
+                stochastic.then_some("stochastic transparency"),
             ]
             .into_iter()
             .flatten()
@@ -7644,7 +7665,12 @@ impl Backend {
         let (samples, ssr, soft) = (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines);
         let water = self.water_effects.bindings();
         let worker_water = water.clone();
-        let stochastic = self.st_pipes.is_some();
+        // (its pipelines made again only when it has some now)
+        let stochastic = self
+            .st
+            .as_ref()
+            .zip(self.st_pipes.as_ref())
+            .map(|(st, p)| (st.shared().clone(), p.samples));
         log::info!("shader reload {generation}: compiling for {samples} sample(s)");
         let spawned = std::thread::Builder::new().name("aurora-shader-reload".into()).spawn(move || {
             let made = (|| {
@@ -7658,42 +7684,43 @@ impl Backend {
                         ("water caustics", crate::water_effects::caustics_source().into_owned()),
                         ("water wake", crate::water_wake::source().into_owned()),
                     ];
-                    if stochastic {
-                        modules.push(("stochastic transparency", crate::oit_stochastic::st_scene_source(&device)));
-                    }
+                    // (also those made later from the same files: SSR or the
+                    // stochastic transparency turned on after the reload)
+                    modules.push(("SSR", format!("{}\n{}", common_shader_for(soft), include_str!("shaders/ssr.wgsl"))));
+                    modules.push(("stochastic transparency", crate::oit_stochastic::st_scene_source(&device)));
                     for (label, source) in &modules {
                         crate::shader_reload::validate(label, source, &candidate)?;
                     }
-                    // what naga lets through and the device still refuses
-                    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+                    // what naga lets through and the device still refuses (a
+                    // binding the layouts lack, an output of another type,
+                    // Metal's compiler), on this thread and on the batch's
+                    // workers (pipeline_batch.rs), or memory
                     let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
-                    let scene = Self::make_pipelines(
-                        &device,
-                        frame,
-                        records,
-                        tex,
-                        shadow,
-                        [post, bloom],
-                        gbuf,
-                        samples,
-                        format,
-                        ssr,
-                        soft,
-                    );
-                    let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft);
-                    let water = worker_water.shaders(&device);
-                    if let Some(e) = pollster::block_on(scope.pop()) {
-                        return Err(crate::shader_reload::Failure {
-                            place: None,
-                            message: crate::main_thread::error_text(&e),
-                        });
-                    }
-                    Ok(Reloaded {
-                        scene,
-                        impostors,
-                        water,
+                    let (made, refused) = crate::gpu_alloc::scoped_error(&device, || Reloaded {
+                        scene: Self::make_pipelines(
+                            &device,
+                            frame,
+                            records,
+                            tex,
+                            shadow,
+                            [post, bloom],
+                            gbuf,
+                            samples,
+                            format,
+                            ssr,
+                            soft,
+                        ),
+                        impostors: Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft),
+                        water: worker_water.shaders(&device),
+                        stochastic: stochastic
+                            .as_ref()
+                            .map(|(shared, st_samples)| Self::make_st_pipes(&device, frame, records, tex, shared, *st_samples)),
                         changed: candidate.changed.clone(),
-                    })
+                    });
+                    match refused {
+                        Some(report) => Err(crate::shader_reload::device_failure(&report)),
+                        None => Ok(made),
+                    }
                 })?;
                 crate::shader_reload::promote(&candidate);
                 Ok(made)

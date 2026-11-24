@@ -181,7 +181,8 @@ pub(crate) const COMMON_SHADER: &str = concat!(
 /// Normal viewers always use their baked shaders.
 pub(crate) fn water_shader_source(files: &[&str], baked: &'static str) -> std::borrow::Cow<'static, str> {
     let demo = std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_WATER_SHADERS").as_deref() == Ok("1");
-    if !demo && !shader_reload::from_checkout() {
+    let reload = files.iter().all(|f| shader_reload::reloadable(f)) && shader_reload::active();
+    if !demo && !reload {
         return baked.into();
     }
     let mut source = String::new();
