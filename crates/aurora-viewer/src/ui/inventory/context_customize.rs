@@ -203,7 +203,7 @@ impl State {
     /// Dismissal can bypass the popup body (closed inventory, replaced popup,
     /// or a native window move). Editing must end even on those frames.
     pub(crate) fn finish_frame(&mut self, ctx: &egui::Context, profile: &mut Profile) {
-        if self.root.is_some() && (lost_window_focus(ctx) || self.frame != ctx.cumulative_frame_nr()) {
+        if self.root.is_some() && (lost_window_focus(ctx) || self.frame != ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)) {
             self.dismiss(ctx, profile);
         }
     }
@@ -218,7 +218,10 @@ impl State {
 
     pub(crate) fn prepare(&mut self, ctx: &egui::Context, item: Uuid, root: Id, scope: &str, prefs: &mut super::menu_layout::Preferences) {
         if let Some((previous_item, previous_root, previous_scope)) = &self.root
-            && (*previous_item != item || *previous_root != root || previous_scope != scope || ctx.cumulative_frame_nr() > self.frame + 1)
+            && (*previous_item != item
+                || *previous_root != root
+                || previous_scope != scope
+                || ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) > self.frame + 1)
             && let Some(profile) = prefs.profiles.get_mut(previous_scope)
         {
             // A newly opened menu can reuse the previous popup's ID.
@@ -261,7 +264,7 @@ pub(crate) fn show(
         return None;
     }
     menu::distinct_surface(ui);
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let root = ui.layer_id().id;
     if state.keep_open_frame == Some(frame) {
         menu::keep_parent_open_this_pass(ui);
@@ -622,7 +625,13 @@ impl View<'_> {
                             Kind::Group { direction, .. } => Some(direction == Direction::Vertical),
                             _ => None,
                         };
-                        let response = menu::editable_row(
+                        // the entry's shortcut, from the inventory's one table
+                        let keys = (!self.scope.starts_with("scene:"))
+                            .then(|| super::shortcuts::for_menu_entry(&entry.id))
+                            .flatten()
+                            .and_then(|command| super::shortcuts::label(ui.ctx(), command))
+                            .unwrap_or_default();
+                        let response = menu::editable_row_keys(
                             ui,
                             self.p,
                             self.entry_icon(entry),
@@ -635,6 +644,7 @@ impl View<'_> {
                             },
                             down,
                             !self.profile.locked,
+                            &keys,
                         );
                         self.interact(ui, &response, entry, zone, depth, false);
                     }
@@ -1223,7 +1233,7 @@ impl View<'_> {
         );
         self.state.remember(before, &self.profile.layout);
         if !keep {
-            self.state.keep_open_frame = Some(ui.ctx().cumulative_frame_nr());
+            self.state.keep_open_frame = Some(ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT));
             menu::keep_parent_open_this_pass(ui);
         }
         if open && keep {

@@ -1,7 +1,8 @@
 //! A window sized by its content (`Floater::auto_height` or `fixed`) comes
 //! back to its size once the viewer's window, made tiny, is made large
 //! again, whatever its body: a scroll area of its own (the Director's), a
-//! plain tall body (Aurora Weather's) or a short one.
+//! plain tall body or a short one. (Aurora Weather's window, the other one
+//! found squeezed, now resizes by its edges.)
 
 use super::*;
 
@@ -21,13 +22,10 @@ enum Body {
     PlainScroll(f32),
     /// no scroll area: the floater scrolls it when it is too tall
     Plain(f32),
-    /// Aurora Weather's real body
-    Weather,
 }
 
 fn pass(ctx: &egui::Context, p: &crate::theme::Palette, screen: Vec2, kind: Kind, body: Body) -> Option<egui::Rect> {
     let mut open = true;
-    let mut weather = crate::weather::WeatherSettings::default();
     let mut output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
@@ -36,11 +34,7 @@ fn pass(ctx: &egui::Context, p: &crate::theme::Palette, screen: Vec2, kind: Kind
         |ui| {
             let ctx = ui.ctx().clone();
             let room = (super::super::layout::work_area(&ctx).height() - 230.0).max(220.0);
-            let width = match body {
-                Body::Weather => super::super::weather_window::WINDOW_W,
-                _ => 340.0,
-            };
-            let floater = Floater::new(ID, "Test", egui::pos2(100.0, 90.0), Vec2::new(width, 560.0));
+            let floater = Floater::new(ID, "Test", egui::pos2(100.0, 90.0), Vec2::new(340.0, 560.0));
             let floater = match kind {
                 Kind::AutoHeight => floater.auto_height(),
                 Kind::Fixed => floater.fixed(),
@@ -58,9 +52,6 @@ fn pass(ctx: &egui::Context, p: &crate::theme::Palette, screen: Vec2, kind: Kind
                 }
                 Body::Plain(content) => {
                     ui.allocate_exact_size(Vec2::new(300.0, content), Sense::hover());
-                }
-                Body::Weather => {
-                    super::super::weather_window::body(ui, p, &mut weather);
                 }
             });
         },
@@ -129,9 +120,4 @@ fn a_plain_body_comes_back() {
         // taller than the room: the floater scrolls it
         assert_same(kind, Body::Plain(1200.0));
     }
-}
-
-#[test]
-fn aurora_weather_comes_back() {
-    assert_same(Kind::AutoHeight, Body::Weather);
 }

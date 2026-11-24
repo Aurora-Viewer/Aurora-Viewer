@@ -136,7 +136,7 @@ impl Previews {
         let state = state(ctx);
         {
             let mut s = state.lock();
-            s.drawn = ctx.cumulative_frame_nr();
+            s.drawn = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
             if s.look != Some(look) {
                 s.clear();
                 s.look = Some(look);
@@ -230,7 +230,7 @@ impl Previews {
 pub fn release_unused(ctx: &egui::Context) {
     let state = state(ctx);
     let mut s = state.lock();
-    if !s.entries.is_empty() && s.drawn + 1 < ctx.cumulative_frame_nr() {
+    if !s.entries.is_empty() && s.drawn + 1 < ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) {
         s.clear();
         // the pictures already sent are dropped with the queue
         while s.receiver.try_recv().is_ok() {}

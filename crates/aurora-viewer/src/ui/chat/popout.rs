@@ -297,7 +297,7 @@ pub(super) fn one_picker(st: &mut ChatUi) {
 /// `one_picker` has closed the other.
 pub(super) fn claim_picker(ctx: &egui::Context) -> bool {
     let id = egui::Id::unique("conversation_emoji_picker_frame");
-    let frame = ctx.cumulative_pass_nr();
+    let frame = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let free = ctx.data(|d| d.get_temp::<u64>(id)) != Some(frame);
     if free {
         ctx.data_mut(|d| d.insert_temp(id, frame));
@@ -452,7 +452,9 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
         floater.min_size = floater.min_size.max(MIN_SIZE);
         w.view.swap(st);
         WINDOW.with(|cell| cell.set(Some(w.conversation)));
+        let (conversation, minimized) = (w.conversation, crate::ui::widgets::floater_minimized(ctx, &w.floater));
         floater.show(ctx, p, &mut open, |ui| {
+            let focus_before = super::focus_before_body(ui);
             if style.workspace() {
                 let h = ui.available_height().max(MIN_SIZE.y - 40.0);
                 ui.vertical(|ui| {
@@ -467,6 +469,9 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
                 ui.vertical(|ui| {
                     super::classic_pane(ui, p, icons, emoji, pics, gestures, world, st, actions, h, &own_name);
                 });
+            }
+            if !minimized {
+                super::press_focuses_field(ui, focus_before, egui::Id::unique(("conv_input", conversation)));
             }
         });
         WINDOW.with(|cell| cell.set(None));

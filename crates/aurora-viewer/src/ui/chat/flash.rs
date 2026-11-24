@@ -232,6 +232,7 @@ pub enum ButtonMenu {
     Open,
     /// Whether nearby chat flashes the button from now on.
     NearbyFlash(bool),
+    CloseAll,
 }
 
 /// The rows of the Conversations button's right-click menu, `nearby_on`
@@ -239,11 +240,14 @@ pub enum ButtonMenu {
 /// and leaving nearby chat out of the flash while IMs, group chats and
 /// conferences keep it. Shared by the chat island's button and the
 /// toolbars' Conversations button.
-pub fn button_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, nearby_on: bool) -> Option<ButtonMenu> {
+pub fn button_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, nearby_on: bool, has_open_ims: bool) -> Option<ButtonMenu> {
     use crate::ui::menu;
     let mut out = None;
     if menu::item(ui, p, "message-filled", aurora_i18n::tr!("ui-bars-conversations-open")) {
         out = Some(ButtonMenu::Open);
+    }
+    if super::close_all::menu_item(ui, p, has_open_ims) {
+        out = Some(ButtonMenu::CloseAll);
     }
     menu::separator(ui, p);
     if menu::check(
