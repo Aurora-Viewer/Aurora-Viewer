@@ -2604,6 +2604,10 @@ Preferences › Camera › Behavior › “Click my avatar: keep camera” for t
 a plain body click must preserve position and lens (no snap behind) and aim
 the focus at the clicked body point (`LLToolCamera::pickCallback`).
 `avatar-return` disables the option and must return to avatar follow.
+`avatar-ignore-drag` and `avatar-ignore-mask-drag` put an opaque or Mask
+Ignore Object panel between the camera and the chest. Holding the press and
+dragging must turn the avatar through the panel as in `avatar-drag`.
+For a manual press, replace `-drag` with `-ready`.
 `avatar-gap-head` / `avatar-gap-legs` put a scripted panel behind our avatar
 and click beside its head / between its legs, inside the former body box.
 Both must log `demo touch_start: prim=975` and leave the camera unchanged;
@@ -3140,7 +3144,9 @@ No real L$ and no connection to a grid.
 - `none` / `touch` send press, move and release; `grab` simulates the
   physical move.
 - `ignore` goes through a visible screen and opens Buy behind it; `disabled`
-  stops the click without touching; `ignore-build` selects this screen in
+  stops the click without touching. `ignore-alt` and `ignore-object-view` focus the Buy cube (971),
+  while `ignore-alt-build` focuses the screen (981). After changing the click action on the existing panel,
+  `ignore-alt-switch-off` focuses 981 and `ignore-alt-switch-on` focuses 971. `ignore-build` selects this screen in
   build mode.
 - `open` shows three simulated content items.
 - `open-multi` (#1410): the Open window receives Ctrl+A at frame 420;

@@ -3512,12 +3512,20 @@ fn vs_pick(in: VsIn) -> PickOut {
     return out;
 }
 
+// Only fragments covering the 2 x 2 pick target need this test.
+fn pick_clip(rec: DrawRecord, world_pos: vec3<f32>) {
+    if (frame.soft.w != 0.0 && (rec.flags.w & FLAG_IGNORE_OBJECT_PICK) != 0u) {
+        discard;
+    }
+    portal_clip(rec, world_pos);
+}
+
 // The transparency overlay shows full triangles, independent of alpha.
 // LLViewerWindow::pickAsync / pickImmediate include them while debug alpha
 // is shown, so camera focus must stop at that displayed surface too.
 @fragment
 fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
-    portal_clip(records[in.record], in.world_pos);
+    pick_clip(records[in.record], in.world_pos);
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
@@ -3530,7 +3538,7 @@ fn fs_pick_mask(in: PickOut) -> @location(0) vec4<u32> {
     if ((rec.flags.w & FLAG_OBJECT_MASK_PICK) == 0u) {
         discard;
     }
-    portal_clip(rec, in.world_pos);
+    pick_clip(rec, in.world_pos);
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
@@ -3542,7 +3550,7 @@ const PICK_ALPHA_CUTOFF: f32 = 32.0 / 255.0;
 @fragment
 fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
-    portal_clip(rec, in.world_pos);
+    pick_clip(rec, in.world_pos);
     let world_left = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
     if (world_left && sample_tex(rec.tex.x, in.uv).a <= PICK_ALPHA_CUTOFF) {
         discard;
@@ -3565,7 +3573,7 @@ fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
 @fragment
 fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
-    portal_clip(rec, in.world_pos);
+    pick_clip(rec, in.world_pos);
     // A legacy material in emissive mask mode stays a camera target on its
     // clear texels, whatever the face's alpha: LLVOVolume::
     // lineSegmentIntersect ignores texture alpha there, even on a
