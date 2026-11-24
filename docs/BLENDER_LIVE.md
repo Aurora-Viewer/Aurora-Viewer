@@ -294,13 +294,16 @@ line (link, revision, time since the last snapshot, **Enable preview** or
   surface counts (both sides of a double-sided material): an arm before the
   chest, farther than 3 cm, is not marked. Everything else rigged you wear
   counts as body, hair and a jacket over the garment included: take them
-  off for the check. The map is drawn in the window only: not in photos,
+  off for the check. At an opening (neckline, cuff, hem) of a double-sided
+  garment, thin marks can show along the edge of the skin: its far side
+  lies close behind there. The map is drawn in the window only: not in photos,
   while the Director plays or films, with the interface hidden, nor in VR.
-  A texture tried on a worn item locally (texture picker) shows on you, not
-  on the mannequins.
+  A texture or a mesh tried on a worn item locally shows on you, not on
+  the mannequins.
   After a teleport or a region crossing they stand in front of you again,
   once you have arrived. They are drawn as you are: the complexity limit
-  and Render Friends Only leave them alone.
+  and Render Friends Only leave them alone. The maximum number of avatars
+  drawn in full counts them: past it, some are impostors.
   Only you see them: nothing is sent or saved, and they go when you remove
   them or log out. To test another mesh body, wear it.
   Then the shape transfer (below).

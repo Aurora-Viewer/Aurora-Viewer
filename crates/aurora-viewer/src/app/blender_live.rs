@@ -533,7 +533,9 @@ impl App {
     /// the LiveMesh objects we wear and their copies, once this frame's
     /// row is dressed and its snapshot installed (their object indices).
     pub(super) fn update_fit_clip(&mut self) {
-        self.scene.fit_clip = self.blender_live.fit.clip.then(|| {
+        // (never in a photo)
+        let shown = self.blender_live.fit.clip && self.snapshots.capturing.is_none();
+        self.scene.fit_clip = shown.then(|| {
             let (avatars, garments) = self.world.fit_clip_targets(&self.blender_live.objects);
             (avatars.into_iter().collect(), garments.into_iter().collect())
         });

@@ -1390,11 +1390,11 @@ wears under ids of their own, each with its own visual parameters, our
 shape with a `Body`'s sliders changed, so the scene gives each its own
 skeleton, morphs and pose while the worn meshes' geometry and skin binds
 stay shared; a worn object whose signature changes is copied again, one
-taken off goes; its range of motion, `world/fit_poses.rs`, builds eight pose clips and a
+taken off goes; its range of motion, `world/fit_poses.rs`, builds the pose clips (eight held, one in turn) and a
 lowest-priority pelvis anchor as local animations; its clipping map,
 `aurora_render::fit_clip` with `shaders/fit_clip.wgsl`, takes the
 garments' faces and the other skinned faces of those avatars as two CPU
-lists like the poser part's, draws the garment's front faces to a depth of
+lists like the poser part's, draws the garment's outer faces (both sides of a double-sided material) to a depth of
 its own and the visible body to a mask after post, and composites where
 the garment lies within reach behind the body) and the shape transfer; Import the frozen import and
 its prepared LOD triangles; Plugins the installation, progress, completion and

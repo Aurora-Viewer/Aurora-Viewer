@@ -178,9 +178,9 @@ struct Mannequin {
     /// Its appearance generation: new each time `params` change, never one
     /// a mannequin of the same id had (the scene rebuilds its skeleton).
     generation: u64,
-    /// Our worn object → its copy's local id and the source's signature
-    /// when it was copied.
-    copies: HashMap<ObjKey, (u32, u64)>,
+    /// Our worn object (its id: its key changes with the region) → its
+    /// copy's local id and the source's signature when it was copied.
+    copies: HashMap<Uuid, (u32, u64)>,
     animations: Vec<PlayingAnimation>,
 }
 
@@ -412,7 +412,9 @@ impl World {
         let Some(own_key) = self.objects.get(own).map(|o| o.key) else {
             return;
         };
-        let worn: Vec<(usize, ObjKey, u64)> = self
+        // by their ids: a region that sends them again gives them other keys
+        // (`ObjectStore::rekey`), and the copies must stay theirs
+        let worn: Vec<(usize, Uuid, Option<Uuid>, u64)> = self
             .objects
             .subtree(own)
             .into_iter()
@@ -422,11 +424,12 @@ impl World {
                 if super::avatar_cache::is_copy(object.key) {
                     return None;
                 }
-                let parent = object.parent_key()?;
-                if parent == own_key && (object.is_avatar() || (31..=38).contains(&object.attachment_point())) {
+                let parent = self.objects.parent_of(object).and_then(|i| self.objects.get(i))?;
+                let on_us = parent.key == own_key;
+                if on_us && (object.is_avatar() || (31..=38).contains(&object.attachment_point())) {
                     return None;
                 }
-                Some((idx, object.key, signature(self, object)))
+                Some((idx, object.full_id, (!on_us).then_some(parent.full_id), signature(self, object)))
             })
             .collect();
         let mut updates = Vec::new();
@@ -434,23 +437,18 @@ impl World {
         let mut overrides = Vec::new();
         for m in &mut self.fit_lab.mannequins {
             let mut kept = HashSet::new();
-            for &(idx, key, sig) in &worn {
+            for &(idx, id, parent_id, sig) in &worn {
                 let Some(object) = self.objects.get(idx) else {
                     continue;
                 };
-                let Some(parent_key) = object.parent_key() else {
-                    continue;
-                };
-                let parent = if parent_key == own_key {
-                    m.base
-                } else if let Some(&(local, _)) = m.copies.get(&parent_key) {
-                    local
-                } else {
+                let parent = match parent_id.map(|parent| m.copies.get(&parent)) {
+                    None => m.base,
+                    Some(Some(&(local, _))) => local,
                     // its parent was left out: so is it
-                    continue;
+                    Some(None) => continue,
                 };
-                kept.insert(key);
-                let local = match m.copies.get(&key) {
+                kept.insert(id);
+                let local = match m.copies.get(&id) {
                     Some(&(_, before)) if before == sig => continue,
                     Some(&(local, _)) => local,
                     None => {
@@ -471,13 +469,13 @@ impl World {
                         local
                     }
                 };
-                m.copies.insert(key, (local, sig));
+                m.copies.insert(id, (local, sig));
                 let full_id = Uuid::from_u128(m.id.as_u128() ^ object.full_id.as_u128().rotate_left(1));
                 let copy_key = ObjKey {
                     region: PREVIEW_REGION,
                     local_id: local,
                 };
-                overrides.push((copy_key, self.gltf_overrides.get(&key).cloned()));
+                overrides.push((copy_key, self.gltf_overrides.get(&object.key).cloned()));
                 updates.push((
                     ObjKey {
                         region: PREVIEW_REGION,
@@ -486,8 +484,8 @@ impl World {
                     super::mirror::copy_of(object, full_id, local, parent),
                 ));
             }
-            m.copies.retain(|key, (local, _)| {
-                let keep = kept.contains(key);
+            m.copies.retain(|id, (local, _)| {
+                let keep = kept.contains(id);
                 if !keep {
                     gone.push(*local);
                     // (given again from the next frame, once killed below)
@@ -525,13 +523,10 @@ impl World {
             .filter_map(|id| self.objects.index_of_uuid(&id))
             .collect();
         let mut worn = Vec::new();
-        for idx in garments.iter().filter_map(|id| self.objects.index_of_uuid(id)) {
+        for (id, idx) in garments.iter().filter_map(|id| Some((id, self.objects.index_of_uuid(id)?))) {
             worn.push(idx);
-            let Some(key) = self.objects.get(idx).map(|o| o.key) else {
-                continue;
-            };
             for m in &self.fit_lab.mannequins {
-                if let Some(&(local, _)) = m.copies.get(&key)
+                if let Some(&(local, _)) = m.copies.get(id)
                     && let Some(copy) = self.objects.index_of(&ObjKey {
                         region: PREVIEW_REGION,
                         local_id: local,
@@ -736,6 +731,46 @@ mod tests {
         let curvy = world.appearance_generation(&first);
         world.update_fit_lab(&[Body::Slim, Body::Full], Motion::Stand, false, now);
         assert!(world.appearance_generation(&first) > curvy);
+    }
+
+    /// After a teleport the region sends what we wear again, the same
+    /// objects under other local ids, parents and children in any order.
+    #[test]
+    fn a_worn_object_sent_again_under_another_key_keeps_its_copy() {
+        let (mut world, handle) = world_with_avatar();
+        let now = Instant::now();
+        let us = world
+            .objects
+            .index_of_uuid(&world.agent_id)
+            .and_then(|i| world.objects.get(i))
+            .expect("us");
+        let us_local = us.key.local_id;
+        let prim = |full: u32, local: u32, parent: u32| {
+            let mut update = super::super::mirror::copy_of(us, Uuid::from_u128(full as u128), local, parent);
+            update.pcode = 9;
+            update.state = 2 << 4;
+            update.position = Vec3::ZERO;
+            update
+        };
+        // the hat's brim, and the hat and the brim as they come again
+        let (brim, hat2, brim2) = (prim(70_010, 70_010, HAT), prim(HAT, 90_001, us_local), prim(70_010, 90_002, 90_001));
+        let send = |world: &mut World, objects| world.apply(aurora_net::NetEvent::ObjectUpdates { handle, objects });
+        send(&mut world, vec![brim]);
+        let dress = |world: &mut World| world.update_fit_lab(&[Body::Slim], Motion::Stand, false, now);
+        dress(&mut world);
+        let mannequin = mannequin_id(world.agent_id, 0);
+        let copies = |world: &World| {
+            let root = world.objects.index_of_uuid(&mannequin).expect("drawn");
+            world.objects.subtree(root).len() - 1
+        };
+        assert_eq!(copies(&world), 2, "the hat and its brim");
+        for resent in [hat2, brim2] {
+            send(&mut world, vec![resent]);
+            for _ in 0..3 {
+                dress(&mut world);
+                assert_eq!(copies(&world), 2, "both still worn by the mannequin");
+            }
+        }
     }
 
     #[test]

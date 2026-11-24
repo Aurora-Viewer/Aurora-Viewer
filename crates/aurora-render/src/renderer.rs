@@ -2206,6 +2206,8 @@ pub(crate) struct Backend {
     /// Frames without the Fit lab's map: its images go after
     /// `PART_IDLE_FRAMES`, so a garment out of view a moment keeps them.
     fit_idle: u32,
+    /// This frame draws the Fit lab's map: it has its parameters and faces.
+    fit_lit: bool,
     /// The world's labels, drawn behind what the scene has in front of
     /// them (label_depth.rs).
     label_depth: crate::label_depth::LabelDepth,
@@ -4772,6 +4774,7 @@ impl Backend {
             part_lit: false,
             part_idle: 0,
             fit_idle: 0,
+            fit_lit: false,
             label_depth,
             impostors,
             motion_history,
@@ -9358,7 +9361,11 @@ impl Backend {
         }
         // the Fit lab's map: its images while it is on and has a garment
         // and a body in view
-        match f.fit_clip.filter(|_| !lists.fit_garment.is_empty() && !lists.fit_body.is_empty()) {
+        // (kept images are not drawn without this frame's parameters: a
+        // photo's frame has none, and another size)
+        let fit_params = f.fit_clip.filter(|_| !lists.fit_garment.is_empty() && !lists.fit_body.is_empty());
+        self.fit_lit = fit_params.is_some();
+        match fit_params {
             Some(params) => {
                 self.fit_idle = 0;
                 let size = [post_size.0, post_size.1];
@@ -9368,6 +9375,7 @@ impl Backend {
                         crate::fit_clip::FitClip::new(device, format, DEPTH_FORMAT, size)
                     });
                 }
+                // (refused by a full video memory: nothing of the old size is left)
                 if let Some(fit) = &self.fit_clip {
                     fit.update(&self.queue, &params, f.proj);
                 }
@@ -13182,7 +13190,7 @@ impl Backend {
         // timestamp goes to whichever pass really ends it
         let draws_selection = rg.select_faces.1 > 0 && self.selection.is_some();
         let draws_part = rg.part_faces.1 > 0 && self.part_lit && self.part.is_some() && self.part_depth.is_some();
-        let draws_fit = rg.fit_garment.1 > 0 && rg.fit_body.1 > 0 && self.fit_clip.is_some();
+        let draws_fit = self.fit_lit && rg.fit_garment.1 > 0 && rg.fit_body.1 > 0 && self.fit_clip.is_some();
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
@@ -13347,10 +13355,7 @@ impl Backend {
         }
 
         // LiveMesh's Fit lab: where the body pokes through the garment
-        if rg.fit_garment.1 > 0
-            && rg.fit_body.1 > 0
-            && let Some(fit) = &self.fit_clip
-        {
+        if draws_fit && let Some(fit) = &self.fit_clip {
             let mut pass = fit.begin_garment(&mut encoder);
             bind_mesh(&mut pass, &self.groups.b);
             draw(&mut pass, &self.pipelines.fit_garment, rg.fit_garment);

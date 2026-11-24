@@ -415,7 +415,7 @@ impl Scene {
             } else if self.rlva_silhouettes.contains(&idx) {
                 let complexity = self.avatar_complexity.get(&object.full_id).copied().unwrap_or_default();
                 let area = self.avatar_area.get(&object.full_id).copied().unwrap_or_default();
-                if !rules.too_complex(&object.full_id, false, complexity, area) {
+                if !rules.too_complex(&object.full_id, world.is_local_copy(&object.full_id), complexity, area) {
                     self.too_complex.remove(&idx);
                 }
             }
