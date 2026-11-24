@@ -116,13 +116,36 @@ fn distance_galley(ui: &egui::Ui, p: &Palette, row: &Row, draw_distance: f32, co
     (ui.painter().layout_job(job), color)
 }
 
-/// Width of the range column of `rows` (#4594): their widest range as
-/// drawn, never under the density's least width. A fixed width let
-/// "153.4 m" run into the badges (or the age) beside it; one width for the
-/// whole list keeps the badges lined up from row to row.
+/// Width of the range column of `rows` (#4594): their widest range, never
+/// under the density's least width. A fixed width let "153.4 m" run into
+/// the badges (or the age) beside it; one width for the whole list keeps
+/// the badges lined up from row to row. Each range is measured with every
+/// digit as wide as the font's widest (as `region_restart::tabular` sets its
+/// digits): the font's digits are proportional, so the real text would move
+/// the column, and every badge with it, each time someone walks a step; the
+/// column only widens with one more digit (100 m, 1000 m).
 fn dist_width(ui: &egui::Ui, p: &Palette, rows: &[Row], draw_distance: f32, compact: bool) -> f32 {
-    rows.iter()
-        .map(|row| distance_galley(ui, p, row, draw_distance, compact).0.size().x.ceil())
+    let size = if compact { 11.5 } else { 13.0 };
+    let measure = |text: String| {
+        let job = egui::text::LayoutJob::single_section(text, semibold(ui, size, p.ink));
+        ui.painter().layout_job(job).size().x
+    };
+    let widest = ('0'..='9')
+        .map(|d| (d, measure(d.to_string())))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map_or('0', |(d, _)| d);
+    let templates: std::collections::BTreeSet<String> = rows
+        .iter()
+        .map(|row| {
+            distance_text(row.range, draw_distance)
+                .chars()
+                .map(|c| if c.is_ascii_digit() { widest } else { c })
+                .collect()
+        })
+        .collect();
+    templates
+        .into_iter()
+        .map(|text| measure(text).ceil())
         .fold(metrics(compact).dist, f32::max)
 }
 
@@ -1519,6 +1542,17 @@ mod tests {
             frames.run(Vec::new(), |ui| {
                 for compact in [false, true] {
                     let width = dist_width(ui, &p, &rows, 4096.0, compact);
+                    // the same width while someone walks: the column does not
+                    // move with each step of the widest range
+                    for walked in [100.0, 108.8, 111.1, 150.0, 151.1, 199.9] {
+                        let steps = [Some(4.7), Some(walked)].into_iter().map(row).collect::<Vec<_>>();
+                        let first = [Some(4.7), Some(153.4)].into_iter().map(row).collect::<Vec<_>>();
+                        assert_eq!(
+                            dist_width(ui, &p, &steps, 4096.0, compact),
+                            dist_width(ui, &p, &first, 4096.0, compact),
+                            "{walked} m"
+                        );
+                    }
                     assert!(width >= metrics(compact).dist);
                     if text_size > 1.0 {
                         assert!(width > metrics(compact).dist, "the large ranges need more than the least width");
