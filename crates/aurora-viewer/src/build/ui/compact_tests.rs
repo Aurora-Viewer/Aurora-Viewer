@@ -1629,17 +1629,15 @@ fn construction_large_keeps_each_section_and_tool_inside_a_stable_window() {
 }
 
 #[test]
-fn create_panel_holds_still_at_every_width_around_its_scroll_bar() {
+fn create_window_holds_still_at_every_width() {
     // #1092: the shape grid sized itself from the width left by the scroll
-    // bar, so at widths where only the wider grid overflowed the bar came
-    // and went on every frame and the whole panel jittered.
-    // The Create panel is in its own window (tool_floaters.rs).
+    // bar, and the panel jittered where the bar came and went. The Create
+    // window (tool_floaters.rs) now has no scroll bar: its height follows
+    // the grid at every width, and nothing moves from frame to frame.
     let mut inspector = Inspector::new();
     inspector.tool.open_build(Tool::Create);
     let label = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
     let place = |texts: &[(String, egui::Rect)]| texts.iter().find(|(text, _)| text == label).map(|(_, rect)| rect.min);
-    // Keep the marker visible while the shape grid crosses the scroll-bar
-    // threshold at the window's height.
     for width in (300..=450).step_by(3) {
         crate::ui::widgets::size_floater(&inspector.ctx, "build_tool_create", vec2(width as f32, 420.0));
         for _ in 0..5 {
@@ -1650,6 +1648,11 @@ fn create_panel_holds_still_at_every_width_around_its_scroll_bar() {
         for _ in 0..4 {
             assert_eq!(place(&inspector.show(vec![]).1), first, "Create panel moved at width {width}");
         }
+        let window = inspector
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+            .expect("the Create window");
+        assert!((window.width() - width as f32).abs() < 1.0, "{width}: {window:?}");
     }
 }
 
@@ -4358,12 +4361,12 @@ fn the_rail_tool_buttons_open_and_close_their_own_windows() {
 }
 
 /// The Create window (human request, 2026-11-24): no "Click in the world
-/// to build" line; the caret at its bottom hides its whole options part,
-/// the window shrinking to its shapes as the Legacy style's folds, then
-/// shows it again at the size it had; folded, it still resizes. The choice
-/// is kept in the build settings.
+/// to build" line; the caret at its bottom hides its whole options part, as
+/// the Legacy style's window folds, and shows it again. The window has no
+/// scroll bar: its height follows what it shows, and its left and right
+/// edges resize its width only. The choice is kept in the build settings.
 #[test]
-fn the_create_window_hides_its_options_part_and_has_no_hint() {
+fn the_create_window_fits_its_content_and_hides_its_options_part() {
     let mut inspector = Inspector::new();
     inspector.tool.open_build(Tool::Create);
     for _ in 0..4 {
@@ -4388,7 +4391,35 @@ fn the_create_window_hides_its_options_part_and_has_no_hint() {
             .ctx
             .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-options-toggle")))
             .expect("the caret")
-            .center()
+    };
+    // as tall as its content: the caret, last, ends just above its bottom
+    let fits = |inspector: &Inspector| {
+        let (rect, caret) = (window(inspector), caret(inspector));
+        let gap = rect.bottom() - caret.bottom();
+        assert!(
+            (0.0..24.0).contains(&gap),
+            "the window ends at its content: {rect:?}, caret {caret:?}"
+        );
+    };
+    let drag = |inspector: &mut Inspector, start: egui::Pos2, target: egui::Pos2| {
+        inspector.show(vec![egui::Event::PointerMoved(start)]);
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        inspector.show(vec![egui::Event::PointerMoved(target)]);
+        inspector.show(vec![egui::Event::PointerMoved(target)]);
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        for _ in 0..3 {
+            inspector.show(vec![]);
+        }
     };
     let keep = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
     assert!(!shows(
@@ -4396,8 +4427,19 @@ fn the_create_window_hides_its_options_part_and_has_no_hint() {
         aurora_i18n::tr!("build-ui-tools-click-in-the-world-to-build")
     ));
     assert!(shows(&mut inspector, keep), "shown by default");
+    fits(&inspector);
     let open = window(&inspector);
-    let at = caret(&inspector);
+    // its bottom edge resizes nothing
+    drag(
+        &mut inspector,
+        open.center_bottom() - vec2(0.0, 1.0),
+        open.center_bottom() + vec2(0.0, 120.0),
+    );
+    assert!(
+        (window(&inspector).size() - open.size()).length() < 1.0,
+        "the bottom edge is no handle"
+    );
+    let at = caret(&inspector).center();
     click_at(&mut inspector, at);
     for _ in 0..6 {
         inspector.show(vec![]);
@@ -4407,47 +4449,24 @@ fn the_create_window_hides_its_options_part_and_has_no_hint() {
     let folded = window(&inspector);
     assert!(folded.height() < open.height() - 40.0, "the window shrinks: {open:?} -> {folded:?}");
     assert!((folded.width() - open.width()).abs() < 1.0, "at the width it had");
-    // still resizable by its corner while folded
-    let start = folded.right_bottom() - vec2(2.0, 2.0);
-    let target = start + vec2(60.0, 80.0);
-    inspector.show(vec![egui::Event::PointerMoved(start)]);
-    inspector.show(vec![egui::Event::PointerButton {
-        pos: start,
-        button: egui::PointerButton::Primary,
-        pressed: true,
-        modifiers: Default::default(),
-    }]);
-    inspector.show(vec![egui::Event::PointerMoved(target)]);
-    inspector.show(vec![egui::Event::PointerMoved(target)]);
-    inspector.show(vec![egui::Event::PointerButton {
-        pos: target,
-        button: egui::PointerButton::Primary,
-        pressed: false,
-        modifiers: Default::default(),
-    }]);
-    for _ in 0..3 {
-        inspector.show(vec![]);
-    }
-    let resized = window(&inspector);
+    fits(&inspector);
+    // folded, its right edge still widens it, its height following
+    let edge = folded.right_center() - vec2(1.0, 0.0);
+    drag(&mut inspector, edge, edge + vec2(80.0, 40.0));
+    let wide = window(&inspector);
     assert!(
-        resized.width() > folded.width() + 40.0,
-        "folded, its width follows the corner: {folded:?} -> {resized:?}"
-    );
-    assert!(
-        resized.height() > folded.height() + 60.0,
-        "folded, its height follows the corner: {folded:?} -> {resized:?}"
+        wide.width() > folded.width() + 60.0,
+        "its width follows the edge: {folded:?} -> {wide:?}"
     );
     assert!(!inspector.settings.create_options_shown, "the drag shows no options");
-    let at = caret(&inspector);
+    fits(&inspector);
+    let at = caret(&inspector).center();
     click_at(&mut inspector, at);
     for _ in 0..6 {
         inspector.show(vec![]);
     }
     assert!(inspector.settings.create_options_shown);
     assert!(shows(&mut inspector, keep), "shown again");
-    let back = window(&inspector);
-    assert!(
-        (back.size() - open.size()).length() < 1.0,
-        "at the size it had: {open:?} -> {back:?}"
-    );
+    assert!((window(&inspector).width() - wide.width()).abs() < 1.0, "at the width it was given");
+    fits(&inspector);
 }

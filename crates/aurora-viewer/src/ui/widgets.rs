@@ -788,6 +788,9 @@ pub struct Floater<'a> {
     /// Resized in height only: its width is the one it opens with
     /// (Performance's full view, lined up under the system island).
     pub height_only: bool,
+    /// Resized in width only, its height following its content (see
+    /// `width_only`).
+    pub width_only: bool,
     /// Put a toolbar directly beneath the title, without a separator layout row.
     pub compact_header: bool,
     /// Something new waits inside (unread messages): the minimized bar shows
@@ -846,6 +849,7 @@ impl<'a> Floater<'a> {
             min_size: Vec2::new(220.0, 120.0),
             resizable: true,
             height_only: false,
+            width_only: false,
             help: None,
             actions: Vec::new(),
             silent: false,
@@ -942,7 +946,7 @@ impl<'a> Floater<'a> {
     /// window drawn over an overlay of the viewer's (`order`) is a window
     /// of its own outside, over nothing.
     fn goes_outside(&self) -> bool {
-        !STAYS_INSIDE.contains(&self.id) && !self.height_only
+        !STAYS_INSIDE.contains(&self.id) && !self.height_only && !self.width_only
     }
 
     pub fn framed_header(mut self, icon: &'a str) -> Self {
@@ -953,6 +957,16 @@ impl<'a> Floater<'a> {
     pub fn auto_height(mut self) -> Self {
         self.auto_height = true;
         self.resizable = false;
+        self
+    }
+
+    /// As tall as its content, with no scroll bar while the room holds it,
+    /// and resized in width by its left and right edges (the Aurora build
+    /// tools' Create window: its shape grid wraps to the width chosen).
+    pub fn width_only(mut self) -> Self {
+        self.auto_height = true;
+        self.resizable = true;
+        self.width_only = true;
         self
     }
 
@@ -1182,7 +1196,7 @@ impl<'a> Floater<'a> {
         // A window as tall as its content (fixed, or of automatic height)
         // whose content is taller than the room scrolls it, from the frame
         // after the one that showed it too tall, and for as long as it is.
-        let content_sized = !self.resizable && !minimized;
+        let content_sized = (!self.resizable || self.width_only) && !minimized;
         let scroll_id = window_id.with("body_scrolls");
         let scrolls = content_sized && ctx.data(|d| d.get_temp::<bool>(scroll_id)).unwrap_or(false);
         let mut still_too_tall = false;
@@ -1192,7 +1206,7 @@ impl<'a> Floater<'a> {
         // are (LLFloaterView::adjustToFitScreen).
         let shrink = egui::AreaState::load(ctx, window_id)
             .and_then(|s| s.size)
-            .filter(|s| resizable && resize_drag.is_none() && (s.x > work.width() + 0.5 || s.y > work.height() + 0.5))
+            .filter(|s| resizable && !self.width_only && resize_drag.is_none() && (s.x > work.width() + 0.5 || s.y > work.height() + 0.5))
             .map(|s| s.min(work.size()));
         // Our handles clamp both geometry and position at the minimum, while
         // Window retains its normal movement and persisted layout.
@@ -1213,11 +1227,19 @@ impl<'a> Floater<'a> {
         // reports of 2026-11-17 and 2026-11-21). It gets at least the room
         // egui gives a window it opens, which changes nothing until a squeeze.
         if self.auto_height && !minimized {
-            w = w
-                .auto_sized()
-                .min_width(self.default_size.x)
-                .max_width(self.default_size.x)
-                .min_height(work.height());
+            // `width_only`: the width the user left it at, or the one it is
+            // restored to
+            let width = if !self.width_only {
+                self.default_size.x
+            } else if restore {
+                expanded.x
+            } else {
+                egui::AreaState::load(ctx, window_id)
+                    .and_then(|s| s.size)
+                    .map_or(self.default_size.x, |size| size.x)
+            }
+            .clamp(self.min_size.x, work.width());
+            w = w.auto_sized().min_width(width).max_width(width).min_height(work.height());
         } else if self.resizable && !minimized {
             w = w.default_size(self.default_size).min_size(self.min_size);
         } else if !minimized {
@@ -1298,7 +1320,11 @@ impl<'a> Floater<'a> {
             }
         }
         if let Some(rect) = resized {
-            w = w.fixed_size(rect.size());
+            w = if self.width_only {
+                w.min_width(rect.width()).max_width(rect.width())
+            } else {
+                w.fixed_size(rect.size())
+            };
             asked = Some(rect.min);
         }
         // Whatever places the window, its title bar stays in reach: egui
@@ -1308,7 +1334,8 @@ impl<'a> Floater<'a> {
             w = w.current_pos(pos);
         }
         // `steady_size`: once shown, the body in the window's exact rect
-        let held = self.steady_size && resizable && egui::AreaState::load(ctx, window_id).is_some_and(|s| s.size.is_some());
+        let held =
+            self.steady_size && resizable && !self.width_only && egui::AreaState::load(ctx, window_id).is_some_and(|s| s.size.is_some());
         let mut glass_slot = None;
         let response = w.show(ctx, |outer| {
             glass_slot = Some((outer.painter().clone(), outer.painter().add(egui::Shape::Noop)));
@@ -1326,7 +1353,9 @@ impl<'a> Floater<'a> {
             // Reserve the requested content area as a resizable Window would:
             // height-filling scroll areas otherwise shave a few pixels off
             // each restoration even though Resize remembered the right size.
-            if resizable || (restore && !self.auto_height) {
+            if self.width_only {
+                ui.set_min_width(ui.available_width());
+            } else if resizable || (restore && !self.auto_height) {
                 ui.set_min_size(ui.available_size());
             }
             if self.headless {
@@ -1632,7 +1661,14 @@ impl<'a> Floater<'a> {
                 drag.finish(ctx, window_id, requested, response.response.rect);
             }
             if resizable {
-                resize::handles_of(ctx, p, &response.response, self.height_only);
+                let axes = if self.height_only {
+                    resize::Axes::Height
+                } else if self.width_only {
+                    resize::Axes::Width
+                } else {
+                    resize::Axes::Both
+                };
+                resize::handles_of(ctx, p, &response.response, axes);
             }
         }
         title_draft_end(ctx, window_id, self.title_rename.as_ref(), title_draft, title_finished);
