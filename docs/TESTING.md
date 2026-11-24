@@ -2224,7 +2224,9 @@ independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
 with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
 In the Aurora style, `+camera`, `+move`, `+create` and `+land` open those
 tools' own windows beside the main one (e.g. `object+create+land`): the last
-one named is the tool in use, and its title says so.
+one named is the tool in use, and its title says so. `+edit` after them gives
+the tool back to Edit, their windows staying (`object+create+edit`: the Create
+window's chosen shape on its dimmer accent).
 `texture:bp-alpha` is the same Blinn-Phong tab after the selection's diffuse
 map is the built-in Transparent texture: Alpha mode is enabled and shows
 Alpha blending. Repeat with `AURORA_DEMO_BUILD_STYLE=legacy` and without it.

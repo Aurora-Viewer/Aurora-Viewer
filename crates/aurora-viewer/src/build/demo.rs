@@ -64,7 +64,8 @@
 //! legacy map channels, and opens `+weights`, `+grid`, `+media`
 //! (e.g. `general+weights+grid`); `contents+permissions` opens bulk rights;
 //! `+camera`, `+move`, `+create`, `+land` open those tools' windows (the
-//! Aurora style; the last one is the tool in use).
+//! Aurora style; the last one is the tool in use), `+edit` gives the tool
+//! back to Edit, their windows staying.
 //! `AURORA_DEMO_BUILD_HANDLES=<percent>` sets the edit handle size.
 //! `AURORA_DEMO_BUILD_FOCUS=off|on` focuses the selected object before the
 //! drag, with edit camera tracking disabled/enabled.
@@ -245,6 +246,7 @@ pub fn apply_tab(tool: &mut BuildTool) {
             "move" => tool.open_build(Tool::Grab),
             "create" => tool.open_build(Tool::Create),
             "land" => tool.open_build(Tool::Land),
+            "edit" => tool.activate(Tool::Edit),
             _ => {}
         }
     }
