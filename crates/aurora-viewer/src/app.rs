@@ -6397,9 +6397,9 @@ impl App {
         if Scene::skeleton_owner(&self.world, idx).is_some_and(|(owner, _)| owner == me) {
             return None;
         }
-        // the viewer's own objects (LiveMesh's previews, our copies): their
-        // made-up ids are not sent; the eyes go to the point alone
-        if o.is_client_preview() {
+        // our copies (the mirror, the Fit lab's mannequins): their made-up
+        // ids are not sent; the eyes go to the point alone
+        if self.world.on_local_copy(idx) {
             let (mx, my) = self.world.main_origin()?;
             return Some((None, glam::DVec3::new(mx as f64, my as f64, 0.0) + point.as_dvec3()));
         }

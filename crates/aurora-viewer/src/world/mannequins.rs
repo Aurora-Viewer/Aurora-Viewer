@@ -249,6 +249,14 @@ impl World {
         self.is_mirror(id) || self.is_mannequin(id)
     }
 
+    /// Whether an object is one of our copies, or worn by one. Not the
+    /// avatar cache's copies, which stand for what a resident wears.
+    pub fn on_local_copy(&self, idx: usize) -> bool {
+        crate::ui::context::wearer(self, idx)
+            .or_else(|| self.objects.get(idx).map(|o| o.full_id))
+            .is_some_and(|id| self.is_local_copy(&id))
+    }
+
     /// A mannequin's AvatarAppearance values, while it has them.
     pub(super) fn mannequin_params(&self, id: &Uuid) -> Option<&[u8]> {
         self.fit_lab.get(id).map(|m| m.params.as_slice()).filter(|p| !p.is_empty())
@@ -617,7 +625,7 @@ mod tests {
 
     #[test]
     fn the_fit_lab_dresses_each_mannequin_as_us_in_its_own_shape() {
-        let (mut world, _) = world_with_avatar();
+        let (mut world, handle) = world_with_avatar();
         let now = Instant::now();
         world.update_fit_lab(&[Body::Me, Body::Slim, Body::Full], Motion::Stand, false, now);
         let ids: Vec<Uuid> = (0..3).map(|i| mannequin_id(world.agent_id, i)).collect();
@@ -635,6 +643,24 @@ mod tests {
                 "a stand of its own, over the pelvis anchor"
             );
         }
+        // no hover tip on a mannequin nor on what it wears; ours keeps its own
+        for id in &ids {
+            let idx = world.objects.index_of_uuid(id).expect("drawn");
+            let key = world.objects.get(idx).expect("mannequin").key;
+            for i in [idx, world.objects.children_of(&key)[0]] {
+                assert!(world.on_local_copy(i));
+                assert!(crate::hover_tips::subject_at(&world, Some(i), Vec3::ZERO).is_none());
+            }
+        }
+        let own_hat = world
+            .objects
+            .index_of(&ObjKey {
+                region: handle,
+                local_id: HAT,
+            })
+            .expect("hat");
+        assert!(!world.on_local_copy(own_hat));
+        assert!(crate::hover_tips::subject_at(&world, Some(own_hat), Vec3::ZERO).is_some());
         let me = world.agent_id;
         assert_eq!(world.visual_params(&ids[0]), world.visual_params(&me), "Me: our shape");
         assert!(thickness(&world, &ids[1]) < thickness(&world, &me), "Slim is thinner");
