@@ -368,6 +368,7 @@ fn objects(live: &mut Live, ui: &mut egui::Ui, p: &Palette, can_upload: bool) {
     if sources.iter().all(|s| live.state(s.id) == SourceState::Removed) {
         note(ui, p, aurora_i18n::tr!("blender-live-empty"));
     }
+    not_sent(live, ui, p);
     let rows = live.linkset_rows();
     let mut kids_open = false;
     for (index, row) in rows.iter().enumerate() {
@@ -744,6 +745,9 @@ fn object_card(
                 ago_label(ui, p, changed);
             });
         });
+        if let Some(reason) = texture_warning(live, source.id) {
+            warning_line(ui, p, aurora_i18n::tr!("blender-live-warning-textures"), &reason);
+        }
     });
     toggle
 }
@@ -773,7 +777,62 @@ fn kid_card(live: &mut Live, ui: &mut egui::Ui, p: &Palette, row: &links::Row, c
                     ui.label(RichText::new(tris).size(10.5).color(p.muted));
                 });
             });
+            if let Some(reason) = texture_warning(live, source.id) {
+                warning_line(ui, p, aurora_i18n::tr!("blender-live-warning-textures"), &reason);
+            }
         });
+    });
+}
+
+/// Blender's reason when it could not read an object's textures: the card
+/// says so, as Blender's sidebar does.
+fn texture_warning(live: &Live, id: Uuid) -> Option<String> {
+    live.snapshot
+        .as_ref()?
+        .warnings
+        .iter()
+        .find(|w| w.kind == protocol::WarningKind::Textures && w.source == Some(id))
+        .map(|w| w.reason.clone())
+}
+
+/// The objects Blender could not send in this revision, each on a card of
+/// its own with Blender's reason: they have no preview to show.
+fn not_sent(live: &Live, ui: &mut egui::Ui, p: &Palette) {
+    let Some(snapshot) = live.snapshot.as_ref() else { return };
+    for warning in snapshot.warnings.iter().filter(|w| w.kind == protocol::WarningKind::NotSent) {
+        ui.push_id(("blender_live_not_sent", &warning.name, warning.source), |ui| {
+            card_frame(ui, p, false, false).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&warning.name)
+                            .size(12.5)
+                            .family(crate::ui::fonts::semibold(ui.ctx()))
+                            .color(p.ink),
+                    )
+                    .truncate(),
+                );
+                warning_line(ui, p, aurora_i18n::tr!("blender-live-warning-not-sent"), &warning.reason);
+            });
+        });
+    }
+}
+
+/// A warning under a card: the amber triangle and what it means, then
+/// Blender's own reason, muted, wrapped to the card.
+fn warning_line(ui: &mut egui::Ui, p: &Palette, lead: &str, reason: &str) {
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::hover());
+        crate::ui::sheet::icon_at(ui, "alert-triangle-filled", rect.center() + Vec2::new(0.0, 1.0), 12.0, p.amber);
+        let font = egui::FontId::proportional(10.5);
+        let mut job = egui::text::LayoutJob::default();
+        job.append(lead, 0.0, egui::TextFormat::simple(font.clone(), p.amber));
+        if !reason.is_empty() {
+            job.append(" · ", 0.0, egui::TextFormat::simple(font.clone(), p.muted));
+            job.append(reason, 0.0, egui::TextFormat::simple(font, p.muted));
+        }
+        ui.add(egui::Label::new(job).wrap());
     });
 }
 
