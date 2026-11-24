@@ -706,7 +706,8 @@ mod right_button_tests {
                 modifiers: Default::default(),
             }],
         ] {
-            let _ = ctx.run_ui(
+            // the font atlas a first pass uploads is not drawn here
+            ctx.run_ui(
                 egui::RawInput {
                     events,
                     ..Default::default()
@@ -716,7 +717,9 @@ mod right_button_tests {
                     let _ = cursor(&ctx);
                     badge(&ctx, &p);
                 },
-            );
+            )
+            .textures_delta
+            .clear();
         }
         assert!(ctx.input(|i| i.pointer.secondary_down()));
     }
@@ -730,7 +733,7 @@ mod right_button_tests {
         egui::DragAndDrop::set_payload(&ctx, InvDrag(Uuid::from_u128(1)));
         let pos = egui::pos2(100.0, 100.0);
         let mut right = true;
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 events: vec![egui::Event::PointerButton {
                     pos,
@@ -747,6 +750,7 @@ mod right_button_tests {
                 assert_eq!(current_mode(ui.ctx()), mode_for(held, cfg!(target_os = "macos")));
             },
         );
+        output.textures_delta.clear();
         assert!(!right);
         assert!(ctx.data(|d| d.get_temp::<bool>(right_drag_id())).is_none(), "the flag is forgotten");
     }
