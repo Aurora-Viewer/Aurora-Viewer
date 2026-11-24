@@ -7794,6 +7794,39 @@ failure. Grid validation and any paid upload are performed by the human.
   tooltip names F6; a key the list keeps (Enter, an arrow) is refused with a
   notice; Ctrl+Shift+A still opens People when the list does not have the
   keyboard, and unbinding Invert selection gives the chord back to People.
+- **`AURORA_DEMO_INVENTORY=aurora-explorer-undo`**: the wide explorer in
+  the right-click tests folder after a Delete of its notecard and an undone
+  rename of its animation, the menu of the empty space open: "Undo delete of
+  1 item" (Ctrl+Z) and "Redo rename" (Ctrl+Y). By hand: Ctrl+Z puts the
+  notecard back, Ctrl+Y renames the animation again, Ctrl+Shift+Z redoes too;
+  a drag, a Ctrl-drag copy, an Alt-drag link, a rename (F2), a new folder
+  (Ctrl+Shift+N), each undone (the copy, link and folder go to the Trash,
+  never purged) and redone; the Trash's entry menu offers "Restore to
+  Right-click tests" for an entry deleted from there, and the plain Restore
+  for one whose folder is gone; the Purge and Empty Trash confirmations say
+  Undo cannot bring them back. Wearing an item then undoing the change that
+  made it is refused with the reason, the step kept.
+- **`AURORA_DEMO_INVENTORY=aurora-explorer-tabs|aurora-explorer-split`**:
+  `-tabs` opens the explorer in the right-click tests folder with three
+  tabs behind it (its subfolder, the top, a personal folder), the strip
+  above the toolbar. By hand: a click on a tab, Ctrl+Tab / Ctrl+Shift+Tab,
+  Ctrl+T, Ctrl+W, a middle click on a tab or its cross; a middle click on a
+  folder (a tab at the end, behind) and its menu's Open in new tab; each tab
+  keeps its own Back / Forward and selection; an item dragged onto a tab
+  goes into its folder, held there the tab shows. A tab dragged along the
+  strip moves (a violet line marks where); dragged away from the strip it
+  opens as a window of its own there; that window's tab dragged onto the
+  main window's strip goes back, and the window closes. `-split` opens the
+  dual-panel layout with two explorers (the right one in the subfolder)
+  and an item's menu with Copy / Move to the other pane; check the Undo of
+  such a move, that the narrow panes keep their breadcrumb and columns, and
+  that Tab in one pane's list gives the keyboard to the other's. In any
+  explorer: Ctrl-drag of an item copies it (a log line `inventory drop:`
+  names the mode and the keys held); a right-click in the empty space of a
+  folder, Recent, Worn or Favorites opens New at the side (in Recent, Worn
+  or Favorites a new notecard lands in Notecards, a folder at the top), an
+  entry's menu has New too (into the row's folder), and the
+  rubber band works in those lists too, from a row's Type or Date columns.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
   "Locked" tag after the name; the folder itself refuses Delete, Cut and a

@@ -190,6 +190,12 @@ pub(crate) fn mode_for(m: egui::Modifiers, mac: bool) -> DropMode {
     }
 }
 
+/// Whether a drop of `ids` into `to` would change anything (the menus'
+/// Copy / Move to the other pane, greyed otherwise).
+pub(super) fn would_drop(inv: &Inventory, ids: &[Uuid], to: Uuid, mode: DropMode, prefs: &InventoryPreferences, facts: &Facts) -> bool {
+    mutation(inv, ids, to, mode, prefs, facts).is_ok_and(|plan| changes(&plan))
+}
+
 /// The change a drop of `ids` into `to` makes.
 fn mutation(
     inv: &Inventory,
@@ -507,7 +513,7 @@ pub(super) fn target(
                 .into_iter()
                 .any(|mode| plan_allows(ui.ctx(), inv, cargo.ids(), to, mode, prefs, facts))
         } else {
-            plan.as_ref().as_ref().is_ok_and(|p| !p.operations.is_empty())
+            plan.as_ref().as_ref().is_ok_and(changes)
         };
     ui.ctx().data_mut(|d| {
         d.insert_temp(
@@ -541,6 +547,15 @@ pub(super) fn target(
     }
     if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
         egui::DragAndDrop::clear_payload(ui.ctx());
+        let m = ui.input(|i| i.modifiers);
+        log::info!(
+            "inventory drop: {mode:?} of {} entries (allowed {allowed}; Ctrl {}, Shift {}, Alt {}, Command {})",
+            cargo.ids().len(),
+            m.ctrl,
+            m.shift,
+            m.alt,
+            m.command
+        );
         // Revalidate on release: permissions, pending requests and inventory
         // may have changed while the cursor was held still over a folder.
         if st.pending.is_some() {
@@ -558,7 +573,7 @@ pub(super) fn target(
 /// What a drop does: a move as before, a copy or links by Paste's routes
 /// (the Marketplace's paste, the outfit folders' rules).
 #[allow(clippy::too_many_arguments)]
-fn drop_cargo(
+pub(super) fn drop_cargo(
     inv: &Inventory,
     ids: &[Uuid],
     to: Uuid,
@@ -587,6 +602,12 @@ fn drop_cargo(
     }
 }
 
+/// Whether a drop's plan changes anything: an item's copy travels in
+/// `copies`, not in `operations`, so a Ctrl-drag of items was refused.
+pub(super) fn changes(plan: &Mutation) -> bool {
+    !plan.operations.is_empty() || !plan.copies.is_empty()
+}
+
 fn plan_allows(
     ctx: &egui::Context,
     inv: &Inventory,
@@ -596,10 +617,7 @@ fn plan_allows(
     prefs: &InventoryPreferences,
     facts: &Facts,
 ) -> bool {
-    plan(ctx, inv, ids, to, mode, prefs, facts)
-        .as_ref()
-        .as_ref()
-        .is_ok_and(|p| !p.operations.is_empty())
+    plan(ctx, inv, ids, to, mode, prefs, facts).as_ref().as_ref().is_ok_and(changes)
 }
 
 /// The folders a drag that may copy or link carries (Ctrl, Alt, or the

@@ -1,8 +1,12 @@
 //! The menu entries of a desktop file manager, as customizable as the rest:
 //! "Copy path" and "Show in folder" on an entry, and the menu of the
 //! explorer's empty space (Windows Explorer's and Dolphin's background
-//! menu): View, Sort by, Select all, Invert selection, with the folder's
-//! own New, Paste, Paste as link, Reload and Properties. Aurora difference:
+//! menu): View, Sort by, Select all, Invert selection, Undo and Redo
+//! (`world::inventory::undo`), with the folder's own New, Paste, Paste as
+//! link, Reload and Properties. On a folder, "Open in new tab"
+//! (`aurora::tabs`); in the split view, Copy and Move to the other pane, as
+//! Dolphin's "Copy to Other View" and "Move to Other View". Aurora
+//! difference:
 //! the Legacy Viewer's single folder mode has no menu on its empty space
 //! and no path to copy.
 
@@ -20,6 +24,10 @@ pub(in super::super) enum ExplorerCommand {
     ShowInFolder(Uuid),
     /// A folder in or out of the column's Quick access.
     Pin(Uuid, bool),
+    /// A folder in a new tab, shown.
+    OpenTab(Uuid),
+    /// The selection to the other pane's folder: copied (true) or moved.
+    ToOtherPane(Vec<Uuid>, bool),
 }
 
 /// The entries of the folder's menu that its empty space keeps (with the
@@ -37,8 +45,24 @@ pub(super) fn kept_in_background(entry: &Entry) -> bool {
         || BACKGROUND_ADDS.contains(&entry.id.as_str())
 }
 
+/// New as a labelled "New ▸" among the text entries, opening at its side
+/// as View and Sort do, as Explorer's and Dolphin's "New" (the "+" of the
+/// icon bar was easy to miss): the empty space's menu and, in Aurora's
+/// window, every entry's. It goes first among the entries the menu layout
+/// has not ranked, so after the ranked ones; the menu editor moves it.
+pub(super) fn new_first(entries: &mut Vec<Entry>) {
+    let Some(at) = entries.iter().position(|e| e.id == "new" && e.zone == "top") else {
+        return;
+    };
+    let mut new = entries.remove(at);
+    new.zone = TEXT.into();
+    new.slot = None;
+    let first_text = entries.iter().position(|e| e.zone == TEXT).unwrap_or(entries.len());
+    entries.insert(first_text, new);
+}
+
 /// The entries only the empty space's menu shows (and the editor).
-const BACKGROUND_ADDS: &[&str] = &["explorer-view", "explorer-sort", "select-all", "invert-selection"];
+const BACKGROUND_ADDS: &[&str] = &["explorer-view", "explorer-sort", "select-all", "invert-selection", "undo", "redo"];
 
 fn check(c: &mut Catalog, id: &str, on: bool) {
     if !c.editing
@@ -54,6 +78,7 @@ pub(super) fn build(
     id: Uuid,
     st: &InventoryUi,
     prefs: &InventoryPreferences,
+    facts: &Facts,
     all: bool,
     background: bool,
 ) {
@@ -94,6 +119,50 @@ pub(super) fn build(
                 },
                 single && id != inv.root,
                 Command::Explorer(ExplorerCommand::Pin(id, !pinned)),
+            );
+        }
+        // the explorer's tabs, where it shows them
+        if all
+            || (single
+                && inv.folders.contains_key(&id)
+                && st
+                    .aurora
+                    .is_some_and(|f| f.layout != super::super::aurora::Layout::Compact || st.other_pane.is_some()))
+        {
+            c.add(
+                "open-tab",
+                TEXT,
+                "app-window-filled",
+                aurora_i18n::tr!("inventory-open-in-new-tab"),
+                single && st.tabs.len() < super::super::aurora::tabs::LIMIT,
+                Command::Explorer(ExplorerCommand::OpenTab(id)),
+            );
+        }
+        // the split view: the other pane's folder, as a drop there would
+        let other = st.other_pane.filter(|folder| inv.folders.contains_key(folder));
+        if all || other.is_some() {
+            let ids = st.selected_ids(id);
+            let to = other.unwrap_or_default();
+            let allowed = other.is_some() && !ids.contains(&to) && ids.iter().all(|id| rules::parent(inv, *id) != Some(to));
+            // greyed when the drop's own plan refuses (a no-copy item's
+            // copy, a protected or worn entry's move), as the drag shows
+            let would = |mode| allowed && !all && super::super::drag::would_drop(inv, &ids, to, mode, prefs, facts);
+            let (copy, moves) = (would(super::super::drag::DropMode::Copy), would(super::super::drag::DropMode::Move));
+            c.add(
+                "copy-to-pane",
+                TEXT,
+                "copy-filled",
+                aurora_i18n::tr!("inventory-copy-to-other-pane"),
+                copy,
+                Command::Explorer(ExplorerCommand::ToOtherPane(ids.clone(), true)),
+            );
+            c.add(
+                "move-to-pane",
+                TEXT,
+                "arrow-right",
+                aurora_i18n::tr!("inventory-move-to-other-pane"),
+                moves,
+                Command::Explorer(ExplorerCommand::ToOtherPane(ids, false)),
             );
         }
     }
@@ -208,9 +277,40 @@ pub(super) fn build(
         true,
         Command::Explorer(ExplorerCommand::Invert),
     );
+    // Explorer's Undo / Redo, the step named ("Undo move of 3 items");
+    // the history is the session's (`world::inventory::undo`)
+    c.divider("explorer-history", TEXT);
+    let busy = inv.undo.busy() || st.pending.is_some();
+    for (key, icon, undo, step) in [
+        ("undo", "arrow-back-up", true, inv.undo.shown(inv, true)),
+        ("redo", "arrow-forward-up", false, inv.undo.shown(inv, false)),
+    ] {
+        let label = match (step, c.editing) {
+            (Some(step), false) if undo => aurora_i18n::tr!("inventory-undo-step", what = step.what()),
+            (Some(step), false) => aurora_i18n::tr!("inventory-redo-step", what = step.what()),
+            _ if undo => aurora_i18n::tr!("inventory-undo").to_owned(),
+            _ => aurora_i18n::tr!("inventory-redo").to_owned(),
+        };
+        c.add(
+            key,
+            TEXT,
+            icon,
+            &label,
+            step.is_some() && !busy,
+            Command::Invoke(InvAction::History { undo, named: true }),
+        );
+    }
 }
 
-pub(super) fn execute(command: ExplorerCommand, ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
+pub(super) fn execute(
+    command: ExplorerCommand,
+    ui: &egui::Ui,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
     match command {
         ExplorerCommand::View(view) => prefs.set_view_in(st.browse, view),
         ExplorerCommand::ByDate(by_date) => prefs.sort.set_by_date(by_date),
@@ -239,6 +339,19 @@ pub(super) fn execute(command: ExplorerCommand, ui: &egui::Ui, inv: &Inventory, 
             prefs.pinned.retain(|pinned| *pinned != id);
             if pin {
                 prefs.pinned.push(id);
+            }
+        }
+        ExplorerCommand::OpenTab(id) => {
+            super::super::aurora::tabs::open(st, prefs, id, true);
+        }
+        ExplorerCommand::ToOtherPane(ids, copy) => {
+            if let Some(to) = st.other_pane.filter(|folder| inv.folders.contains_key(folder)) {
+                let mode = if copy {
+                    super::super::drag::DropMode::Copy
+                } else {
+                    super::super::drag::DropMode::Move
+                };
+                super::super::drag::drop_cargo(inv, &ids, to, mode, st, prefs, facts, actions);
             }
         }
     }

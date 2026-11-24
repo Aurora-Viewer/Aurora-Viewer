@@ -27,7 +27,7 @@ const LISTED: usize = 12;
 
 /// A place the explorer shows: a folder, or one of the shortcuts (Recent,
 /// Worn, Favorites, Received) whatever folder was last browsed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Place {
     pub tab: usize,
     pub folder: Uuid,
@@ -276,7 +276,7 @@ pub(crate) fn input(
 }
 
 /// The name of a place in the lists of Back and Forward.
-fn place_name(inv: &Inventory, place: Place) -> String {
+pub(super) fn place_name(inv: &Inventory, place: Place) -> String {
     if place.tab == 0 {
         folder_name(inv, place.folder)
     } else {
@@ -285,7 +285,7 @@ fn place_name(inv: &Inventory, place: Place) -> String {
 }
 
 /// A button of the three, greyed when it leads nowhere.
-fn button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: String, enabled: bool) -> egui::Response {
+pub(super) fn button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: String, enabled: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::splat(super::toolbar::BAR),
         if enabled { Sense::click() } else { Sense::hover() },

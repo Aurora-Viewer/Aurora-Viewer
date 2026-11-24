@@ -21,6 +21,7 @@ mod rights;
 pub(super) mod rows;
 mod sidebar;
 mod smart_bar;
+pub(super) mod tabs;
 mod toolbar;
 
 pub(super) use breadcrumb::{PathEdit, SEPARATOR as PATH_SEPARATOR, path_text};
@@ -29,6 +30,7 @@ pub(super) use history::{History, Place};
 pub(super) use marquee::Marquee;
 pub(super) use rights::button as rights_button;
 pub(super) use sidebar::Sidebar;
+pub(super) use tabs::Tabs;
 
 use super::permissions::Rights;
 use super::*;
@@ -143,6 +145,9 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-explorer"
             | "aurora-explorer-path"
             | "aurora-explorer-menu"
+            | "aurora-explorer-undo"
+            | "aurora-explorer-tabs"
+            | "aurora-explorer-split"
             | "aurora-combination"
             | "aurora-worn-wide"
             | "aurora-sidebar-wide"
@@ -302,7 +307,11 @@ pub(super) fn contents(
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     actions: &mut Vec<InvAction>,
 ) {
-    let layout = Layout::for_width(ui.available_width());
+    // In the split view each pane is an explorer, without the column below
+    // the medium width (Dolphin's split view keeps its places panel aside).
+    let width = Layout::for_width(ui.available_width());
+    let narrow = st.other_pane.is_some() && width == Layout::Compact;
+    let layout = if narrow { Layout::Medium } else { width };
     st.aurora = Some(Frame {
         layout,
         rights: prefs.rights,
@@ -321,6 +330,7 @@ pub(super) fn contents(
     if layout != Layout::Compact {
         st.demo_explorer_now(inv);
         st.history.retain(|id| inv.folders.contains_key(&id));
+        tabs::retain(st, prefs, inv);
         if st.history.observe(history::Place::of(st)) {
             // the keyboard's place and a typed path belong to the folder left
             st.focus = None;
@@ -331,7 +341,7 @@ pub(super) fn contents(
     }
     match layout {
         Layout::Compact => compact(ui, p, icons, inv, st, prefs, facts, images, actions),
-        Layout::Medium | Layout::Wide => explorer(ui, p, icons, inv, st, prefs, facts, images, actions, layout),
+        Layout::Medium | Layout::Wide => explorer(ui, p, icons, inv, st, prefs, facts, images, actions, layout, narrow),
     }
     row_menu(ui, p, inv, st, prefs, facts, actions);
 }
@@ -517,24 +527,35 @@ fn explorer(
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     actions: &mut Vec<InvAction>,
     layout: Layout,
+    narrow: bool,
 ) {
     let window = ui.max_rect();
     history::input(ui, inv, st, prefs, actions, window);
+    if clipboard::list_has_focus(ui, st) && !ui.ctx().text_edit_focused() {
+        tabs::input(ui, st, prefs);
+    }
+    tabs::strip(ui, p, inv, st, prefs, facts, actions);
     toolbar::explorer_row(ui, p, inv, st, prefs, facts, layout, actions);
     ui.add_space(8.0);
     let area = ui.available_rect_before_wrap();
     let pane_w = if layout == Layout::Wide && prefs.show_details { 300.0 } else { 0.0 };
     const GAP: f32 = 8.0;
-    let side_w = columns::sidebar(ui, p, area, pane_w, layout, &mut prefs.explorer);
+    let side_w = if narrow {
+        0.0
+    } else {
+        columns::sidebar(ui, p, area, pane_w, layout, &mut prefs.explorer)
+    };
     let side = Rect::from_min_size(area.min, egui::vec2(side_w, area.height()));
     let pane = Rect::from_min_max(egui::pos2(area.right() - pane_w, area.top()), area.max);
     let content = Rect::from_min_max(
-        egui::pos2(side.right() + GAP, area.top()),
+        egui::pos2(if narrow { area.left() } else { side.right() + GAP }, area.top()),
         egui::pos2(if pane_w > 0.0 { pane.left() - GAP } else { area.right() }, area.bottom()),
     );
-    let mut side_ui = ui.new_child(egui::UiBuilder::new().max_rect(side).id_salt("aurora_inventory_side"));
-    side_ui.set_clip_rect(side.intersect(ui.clip_rect()));
-    sidebar::show(&mut side_ui, p, icons, inv, st, prefs, facts, actions);
+    if !narrow {
+        let mut side_ui = ui.new_child(egui::UiBuilder::new().max_rect(side).id_salt("aurora_inventory_side"));
+        side_ui.set_clip_rect(side.intersect(ui.clip_rect()));
+        sidebar::show(&mut side_ui, p, icons, inv, st, prefs, facts, actions);
+    }
     let mut content_ui = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(content)
@@ -679,9 +700,13 @@ fn explorer_list(
         std::mem::swap(&mut st.plain, &mut st.flat);
         out
     } else {
-        in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
+        // Recent, Worn, Favorites and the results take the band too
+        marquee::begin(ui, st, list_rect);
+        let out = in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
             list(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, filtered, false)
-        })
+        });
+        marquee::end(ui, p, st, list_rect, out.id, out.inner_rect);
+        out
     };
     widgets::remember_scroll_bar(ui, list_id, &out);
     type_ahead_label(ui, p, st, list_rect);
@@ -1545,6 +1570,23 @@ mod tests {
             press_and_move(&mut h, name, egui::pos2(name.x + 10.0, row.bottom() + 70.0)),
             "the name carries the item"
         );
+    }
+
+    #[test]
+    fn results_rows_drag_by_their_name_and_their_other_columns_draw_the_band() {
+        // Recent, Worn, Favorites and a search list results, not a folder
+        let mut h = Harness::new(WIDE_SIZE);
+        h.frames(3);
+        h.st.search = "Demo".into();
+        h.frames(6);
+        let drawn: Vec<Rect> = (8000..8300u128)
+            .filter_map(|n| rows::tests::drawn(&h.ctx, Uuid::from_u128(n)))
+            .collect();
+        let first = drawn.iter().min_by(|a, b| a.top().total_cmp(&b.top())).copied().expect("rows");
+        let from = egui::pos2(first.right() - 12.0, first.center().y);
+        let to = egui::pos2(from.x, first.bottom() + 70.0);
+        assert!(!press_and_move(&mut h, from, to), "the other columns do not carry the row");
+        assert!(h.st.selection.len() >= 3, "banded: {}", h.st.selection.len());
     }
 
     #[test]
