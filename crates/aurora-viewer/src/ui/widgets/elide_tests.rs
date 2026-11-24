@@ -13,6 +13,8 @@ pub(crate) const SHORT: &str = "Nova";
 pub(crate) struct Frames {
     pub ctx: egui::Context,
     pub screen_size: egui::Vec2,
+    /// The window has the system's focus (on by default).
+    pub focused: bool,
     frame: usize,
 }
 
@@ -21,6 +23,7 @@ impl Frames {
         Self {
             ctx: egui::Context::default(),
             screen_size: egui::vec2(1280.0, 900.0),
+            focused: true,
             frame: 0,
         }
     }
@@ -61,6 +64,7 @@ impl Frames {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.screen_size)),
                 time: Some(self.frame as f64 / 60.0),
                 events,
+                focused: self.focused,
                 ..Default::default()
             },
             |ui| body(ui),
