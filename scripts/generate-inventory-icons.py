@@ -117,7 +117,7 @@ def shortcut():
 
 def header(comment, root_attrs):
     source = (
-        "drawn by Zakka for Aurora" if comment.startswith("clothing/") else "Tabler icons, MIT, assets/tabler-icons/LICENSE"
+        "drawn by Zakka for Aurora, CC0 1.0" if comment.startswith("clothing/") else "Tabler icons, MIT, assets/tabler-icons/LICENSE"
     )
     return (
         f"<!-- aurora-generated: {comment} (scripts/generate-inventory-icons.py; {source}) -->\n"

@@ -29,6 +29,10 @@ pub fn caret(ui: &mut egui::Ui, p: &Palette, open: bool) -> egui::Response {
 /// The icon of a folder by its preferred type: a system folder shows its
 /// category's symbol (llviewerfoldertype.cpp, see `category`).
 pub fn folder_icon(type_default: i32, open: bool) -> &'static str {
+    // stock and version folders keep their Legacy names (see `category`)
+    if let Some((_, closed, opened)) = category::MARKETPLACE_SUBFOLDERS.iter().find(|(t, _, _)| *t == type_default) {
+        return if open { opened } else { closed };
+    }
     match type_default {
         14 => "Inv_TrashClosed",
         // FT_MY_SUITCASE (llviewerfoldertype.cpp: Inv_SuitcaseOpen / Closed)
