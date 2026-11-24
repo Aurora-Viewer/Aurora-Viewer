@@ -2628,8 +2628,9 @@ impl App {
         if self.demo && (self.rlva_selftest_demo_command(&cmd) || self.bridge_demo_command(&cmd)) {
             return;
         }
-        // AURORA_DEMO_TELEPORT_FAILED: the region refuses every teleport (a
-        // link to another region is refused in teleport_to_location_looking)
+        // AURORA_DEMO_TELEPORT_FAILED: the region refuses every teleport, an
+        // accepted lure included (a link to another region is refused in
+        // teleport_to_location_looking)
         if self.demo
             && matches!(
                 cmd,
@@ -2637,6 +2638,7 @@ impl App {
                     | NetCommand::TeleportLandmark(_)
                     | NetCommand::TeleportToRegion { .. }
                     | NetCommand::TeleportHome
+                    | NetCommand::AcceptLure { .. }
             )
             && self.demo_teleport_refused()
         {
