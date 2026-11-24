@@ -126,8 +126,9 @@ dragging a handle switch to `violet_light`, like any selection.
   (`ui/loading.rs`): the last view, blurred, fills the whole screen, the
   name of the region is written large at the bottom left with what is known
   about it (maturity rating, arrival point, residents present) and the
-  current step; at the bottom right, the tile of the region on the world map
-  with the arrival point, and the progress in figures; the progress itself
+  current step; at the bottom right, the region's picture on the world map
+  (every 256 m cell of a var region, in the region's shape) with the
+  arrival point, and the progress in figures; the progress itself
   is a luminous hairline with the brand gradient along the whole bottom
   edge. The brand (wolf and name) stays discreet at the top left.
 - **Discreet rounding.** Flat design, almost square corners. Buttons:
@@ -365,13 +366,17 @@ shortcuts), because Tabler has none. It is tinted like the other script
 icons (`teal`): only the shape tells an SLua script from an LSL one. It is
 the one hand-drawn icon allowed next to Tabler (decision on PR #2802).
 
-**Proposed exceptions: four clothing icons.** Tabler has no pants, skirt,
-underpants or undershirt; until now they borrowed `walk`, `woman-filled`,
-`diaper` and `shirt-sport`. Zakka drew them for Aurora in the Tabler filled style
-(`assets/icons/aurora/clothing/`, read through
+**Exception: four clothing icons** (the team's decision on PR #4171).
+Exactly these four files are hand-drawn:
+`assets/icons/aurora/clothing/pants.svg`, `skirt.svg`, `underpants.svg` and
+`undershirt.svg`. They are not a precedent for more drawn icons. Tabler has
+no pants, skirt, underpants or undershirt; until now they borrowed `walk`,
+`woman-filled`, `diaper` and `shirt-sport`. Zakka drew them for Aurora in
+the Tabler filled style (read through
 `ui/inventory/category.rs`'s `CLOTHING_DRAWINGS`; their link icons are made
 by `scripts/generate-inventory-icons.py`). They are tinted like the other
-clothing (`rose`).
+clothing (`rose`). Zakka dedicated them to the public domain under
+CC0 1.0 (NOTICE.md, Bundled assets).
 
 **System folder icons are Tabler combined, not drawn.** Each system folder
 (Textures, Sounds… Settings, Materials) is Tabler's `folder-filled` /
