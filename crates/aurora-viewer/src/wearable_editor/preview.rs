@@ -252,8 +252,10 @@ impl Preview {
                     continue;
                 }
                 let texture = resolve(value.kind, id);
-                if texture.is_nil() || matches!(texture, IMG_DEFAULT_AVATAR | IMG_INVISIBLE | aurora_prim::te::BLANK_TEXTURE)
-                    || !self.wanted.insert(texture) {
+                if texture.is_nil()
+                    || matches!(texture, IMG_DEFAULT_AVATAR | IMG_INVISIBLE | aurora_prim::te::BLANK_TEXTURE)
+                    || !self.wanted.insert(texture)
+                {
                     continue;
                 }
                 scene.textures.note_usage_boosted(&texture, f32::MAX);
@@ -289,12 +291,16 @@ impl Preview {
             return commands;
         };
         // Copy complete wearable assets only when a bake is ready to start.
-        let values = values.into_iter().cloned().map(|mut value| {
-            for texture in value.textures.values_mut() {
-                *texture = resolve(value.kind, *texture);
-            }
-            value
-        }).collect();
+        let values = values
+            .into_iter()
+            .cloned()
+            .map(|mut value| {
+                for texture in value.textures.values_mut() {
+                    *texture = resolve(value.kind, *texture);
+                }
+                value
+            })
+            .collect();
         let lib = world.avatar_lib.clone();
         let base = world.server_visual_params().to_vec();
         let regions = self.regions.clone();

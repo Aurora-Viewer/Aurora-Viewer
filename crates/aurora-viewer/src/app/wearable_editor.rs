@@ -111,7 +111,8 @@ impl App {
         if self.demo
             && self.frame_count == 650
             && std::env::var("AURORA_DEMO_WEARABLE").is_ok_and(|mode| {
-                mode.split_once(':').is_some_and(|(_, mode)| matches!(mode, "save" | "local-save" | "local-save-shape"))
+                mode.split_once(':')
+                    .is_some_and(|(_, mode)| matches!(mode, "save" | "local-save" | "local-save-shape"))
             })
             && let Some(command) = self.wearable_ui.save(&self.world, None)
         {
