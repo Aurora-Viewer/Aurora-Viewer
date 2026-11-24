@@ -8921,7 +8921,12 @@ impl App {
         self.script_click_up();
         self.left_down = false;
         self.world_mouse_walk_pending = false;
-        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene));
+        let mods = crate::build::Mods {
+            shift: self.shift,
+            ctrl: self.ctrl,
+            alt: self.alt,
+        };
+        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene), mods);
         self.flush_build();
         self.media.on_release(aurora_media::Modifiers {
             control: self.ctrl,
@@ -16056,6 +16061,7 @@ impl App {
                     crate::build::demo::Step::Press => self.click(click_pick::Click::Build),
                     crate::build::demo::Step::Release => self.build_release(),
                     crate::build::demo::Step::Shift(on) => self.shift = on,
+                    crate::build::demo::Step::Ctrl(on) => self.ctrl = on,
                     crate::build::demo::Step::FocusLost => {
                         self.drop_clicks();
                         self.on_left_release();
@@ -23877,7 +23883,14 @@ impl ApplicationHandler for App {
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(480.0, 560.0));
                 }
             }
-            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("cycle,") || v.starts_with("cycle-linked,")) {
+            // the cycle objects serve the cycle demos, and a rectangle that
+            // names one of them (rect-ctrl,object:99614)
+            let cycle = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| {
+                v.starts_with("cycle,")
+                    || v.starts_with("cycle-linked,")
+                    || (99610..=99614).any(|id| v.contains(&format!("object:{id}")) || v.contains(&format!("keep:{id}")))
+            });
+            if cycle {
                 for ev in crate::demo::selection_cycle_events() {
                     self.world.apply(ev);
                 }

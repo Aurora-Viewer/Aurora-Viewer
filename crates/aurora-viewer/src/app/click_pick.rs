@@ -810,7 +810,12 @@ impl App {
             self.clicks.hold(Held::BuildRelease);
             return;
         }
-        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene));
+        let mods = crate::build::Mods {
+            shift: self.shift,
+            ctrl: self.ctrl,
+            alt: self.alt,
+        };
+        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene), mods);
         self.flush_build();
     }
 

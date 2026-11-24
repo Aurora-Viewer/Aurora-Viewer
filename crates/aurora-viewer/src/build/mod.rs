@@ -1302,6 +1302,13 @@ fn rect_dragged(a: (f32, f32), b: (f32, f32), ppp: f32) -> bool {
     dx * dx + dy * dy >= CLICK_SLOP_POINTS * CLICK_SLOP_POINTS
 }
 
+/// LLToolSelectRect::handleMouseUp and `draw` (indra/newview/lltoolselectrect.cpp,
+/// originally LGPL 2.1): Ctrl alone, `mask == MASK_CONTROL`, makes the
+/// rectangle deselect and paints it red; Shift, or Ctrl with it, still adds.
+fn rect_deselect(mods: Mods) -> bool {
+    mods.ctrl && !mods.shift && !mods.alt
+}
+
 /// Object indices of a selection with their highlight (true = root color):
 /// whole linksets, or the selected prims with "Edit linked".
 pub fn highlighted_of(world: &World, selection: &[ObjKey], linked: bool) -> Vec<(usize, bool)> {
@@ -2282,7 +2289,13 @@ impl BuildTool {
     /// LLSelectMgr::updateSelectionSilhouette roots the rect selection.
     /// Without `scene` (tests) or geometry yet, a prim across the edge is
     /// taken only without "Select by surrounding".
-    fn rect_select(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, a: (f32, f32), b: (f32, f32), extend: bool) {
+    /// `deselect` is `LLToolSelectRect::handleMouseUp`'s `mask == MASK_CONTROL`
+    /// (indra/newview/lltoolselectrect.cpp, originally LGPL 2.1), whose
+    /// `deselectHighlightedObjects` takes the highlighted objects out of the
+    /// selection: only the selected roots the highlighted set holds leave, as
+    /// `highlightObjectOnly` applies the picking filters in both modes
+    /// (indra/newview/llselectmgr.cpp).
+    fn rect_select(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, a: (f32, f32), b: (f32, f32), deselect: bool) {
         // a press that left the slop, or a rectangle given whole
         if !(std::mem::take(&mut self.rect_walked) || rect_dragged(a, b, self.cam.ppp)) {
             return; // a click, handled by `mouse_up`
@@ -2340,19 +2353,24 @@ impl BuildTool {
                     )
                 }),
             };
-            if taken
-                && passes_rect_filters(world, s, idx)
-                && let Some(u) = Self::unit_of(world, idx, s.edit_linked)
-                && seen.insert(u)
-            {
+            if !taken || !passes_rect_filters(world, s, idx) {
+                continue;
+            }
+            let Some(u) = Self::unit_of(world, idx, s.edit_linked) else {
+                continue;
+            };
+            // LLToolSelectRect::handleRectangleSelection: (deselect &&
+            // !vobjp->isSelected()) skips what is not selected
+            if (!deselect || self.is_selected(&u)) && seen.insert(u) {
                 units.push(u);
             }
         }
-        if !extend && units.is_empty() {
-            return;
-        }
-        for u in units.into_iter().take(1024) {
-            self.add(world, u);
+        if deselect {
+            self.deselect(world, &units);
+        } else {
+            for u in units.into_iter().take(1024) {
+                self.add(world, u);
+            }
         }
     }
 
@@ -2740,7 +2758,9 @@ impl BuildTool {
     }
 
     /// `scene` gives the selection rectangle the drawn vertices of the prims.
-    pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>) {
+    /// The modifiers of the release decide, as LLToolSelectRect::handleMouseUp:
+    /// `mods` is the mask of the mouse-up event.
+    pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, mods: Mods) {
         if let Some((a, b, extend)) = self.rect.take() {
             match self.press.take() {
                 Some(pick) => {
@@ -2750,7 +2770,7 @@ impl BuildTool {
                         _ => self.click_select(world, s, pick, extend),
                     }
                 }
-                None => self.rect_select(world, s, scene, a, b, extend),
+                None => self.rect_select(world, s, scene, a, b, rect_deselect(mods)),
             }
         }
         let mut cmds = Vec::new();
@@ -3152,15 +3172,18 @@ impl BuildTool {
         if let Some((a, b, _)) = self.rect
             && self.rect_walked
         {
+            // LLToolSelectRect::draw (lltoolselectrect.cpp): the rectangle
+            // turns red while the Ctrl that deselects is held
+            let (fill, border) = if rect_deselect(mods) {
+                (draw::fade(pal.danger, 0.1), pal.danger)
+            } else {
+                (draw::rgba(1.0, 1.0, 1.0, 0.06), draw::rgba(1.0, 1.0, 1.0, 0.8))
+            };
             let k = 1.0 / cam.ppp;
             let r = egui::Rect::from_two_pos(egui::pos2(a.0 * k, a.1 * k), egui::pos2(b.0 * k, b.1 * k));
-            p.painter.rect_filled(r, 0.0, draw::rgba(1.0, 1.0, 1.0, 0.06));
-            p.painter.rect_stroke(
-                r,
-                0.0,
-                egui::Stroke::new(1.0, draw::rgba(1.0, 1.0, 1.0, 0.8)),
-                egui::StrokeKind::Inside,
-            );
+            p.painter.rect_filled(r, 0.0, fill);
+            p.painter
+                .rect_stroke(r, 0.0, egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
         }
     }
 
