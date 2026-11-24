@@ -336,7 +336,7 @@ pub(super) fn show_quick(
                                 InvAction::WearCopy { item, replace: false }
                             } else {
                                 InvAction::Appearance(crate::world::appearance::Action::WearItem {
-                                    item,
+                                    item: crate::world::appearance::wear_entry(inv, id, item),
                                     replace: false,
                                     point: 0,
                                 })

@@ -317,6 +317,24 @@ pub struct FloaterState {
     pub requests: Vec<Request>,
     /// The selection seen last frame (drafts are dropped when it changes).
     last_selection: Vec<ObjKey>,
+    /// That selection is one object (one root, or one prim): its contents
+    /// are kept listed whatever the tab (`prefetch_contents`).
+    single_object: bool,
+}
+
+/// LLFloaterTools::refresh → LLPanelObjectInventory::refresh: with one
+/// object selected (one root, or one prim), the build window lists its
+/// contents whatever the tab, and asks again when its inventory serial
+/// changes. A no-copy or no-transfer texture or material chosen in a picker
+/// or dropped on a swatch can then go into them at the first try:
+/// LLToolDragAndDrop::handleDropMaterialProtections, like `admit_item`,
+/// waits ("try again") only while they are still loading.
+fn prefetch_contents(tool: &mut BuildTool, world: &World) {
+    if tool.ui.single_object
+        && let Some(idx) = tool.contents_target(world)
+    {
+        tool.request_contents(world, idx, false);
+    }
 }
 
 /// Width of the label column of the tabs.
@@ -487,11 +505,13 @@ pub fn show(
         tool.cancel_color_picker(world);
         tool.commit_color_edit();
         tool.ui.last_selection = tool.selection.clone();
+        tool.ui.single_object = tool.selection.len() == 1 || tool.roots(world).len() == 1;
         tool.ui.edits.clear();
         tool.ui.sale_draft = None;
         contents_selection::finish_rename(tool, world);
         tool.ui.contents_selection = Default::default();
     }
+    prefetch_contents(tool, world);
     let screen = ctx.content_rect();
     let demo_picker = egui::Id::unique("demo_color_picker_opened");
     let picker_mode = crate::ui::color_picker::demo::mode();
