@@ -61,7 +61,7 @@ pub(super) fn hover(response: &egui::Response, p: &Palette, st: &StatusInfo, act
             ctx.pointer_latest_pos()
                 .is_some_and(|pos| card.contains(pos) || bridge.contains(pos))
         });
-    let forced = super::demo::get().fps_presets && ctx.cumulative_frame_nr() >= 300;
+    let forced = super::demo::get().fps_presets && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300;
     let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let dismissed = ctx.data(|d| d.get_temp::<bool>(id.with("dismissed"))).unwrap_or(false) && (hovered || keep);
     ctx.data_mut(|d| d.insert_temp(id.with("dismissed"), escape || dismissed));

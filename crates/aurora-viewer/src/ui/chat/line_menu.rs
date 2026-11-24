@@ -104,7 +104,7 @@ pub(super) fn highlight(ui: &mut Ui, id: Id, seq: u64, line: &ChatLine, p: &Pale
         && !ui.is_sizing_pass()
     {
         let pos = egui::Popup::position_of_id(ui.ctx(), popup).unwrap_or_else(|| ui.min_rect().center());
-        let frame = ui.ctx().cumulative_frame_nr();
+        let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ui.data_mut(|d| {
             d.insert_temp(popup.with("inline_chat_frame"), frame);
             if d.get_temp::<Open>(id).is_none_or(|m| m.popup != popup || m.seq != Some(seq)) {
@@ -145,7 +145,9 @@ pub(super) fn show(ui: &Ui, id: Id, p: &Palette, body: impl FnOnce(&mut Ui, &Tar
     if menu.popup != id {
         // Inline actions belong to their link/preview. Eviction dismisses
         // them rather than leaving an invisible menu holding the viewport.
-        if !ui.is_sizing_pass() && ctx.data(|d| d.get_temp::<u64>(menu.popup.with("inline_chat_frame"))) != Some(ctx.cumulative_frame_nr())
+        if !ui.is_sizing_pass()
+            && ctx.data(|d| d.get_temp::<u64>(menu.popup.with("inline_chat_frame")))
+                != Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
         {
             egui::Popup::close_id(ctx, menu.popup);
             ctx.data_mut(|d| {

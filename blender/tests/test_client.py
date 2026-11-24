@@ -103,6 +103,32 @@ class ClientTests(unittest.TestCase):
         self.assertIn("link", small)
         self.assertEqual(small["faces"][0]["material"]["textures"][0], 1)
 
+    def test_object_warnings_reach_only_a_viewer_that_asks_and_name_what_was_left_out(self):
+        warned = module.object_warning("a", "Textured", "textures", "Unsupported image")
+        value = {"protocol": 1, "revision": 1, "meshes": [{"name": "Textured", "source_id": "a", "faces": []}],
+                 "warnings": [warned]}
+        self.assertNotIn("warnings", module.wire_snapshot(value, ["pbr-materials", "source-ids"]))
+        self.assertEqual(module.wire_snapshot(value, ["source-ids", "object-warnings"])["warnings"], [warned])
+        self.assertNotIn("warnings", module.wire_snapshot(dict(value, warnings=[]), ["object-warnings"]))
+        self.assertIn("warnings", value, "the capture is not changed")
+        long = module.object_warning(None, "n" * 900, "not-sent", "r" * 900)
+        self.assertNotIn("source_id", long)
+        self.assertEqual((len(long["name"]), len(long["reason"])), (module.MAX_WARNING_TEXT, module.MAX_WARNING_TEXT))
+        many = module.wire_snapshot(dict(value, warnings=[warned] * 100), ["object-warnings"])
+        self.assertEqual(len(many["warnings"]), module.MAX_WARNINGS)
+        # an object over the transfer limit is named, after the export's own warnings
+        big = {"name": "Too large", "source_id": "root", "faces": [], "padding": "x" * 4096}
+        with patch.object(module, "MAX_BYTES", 1024):
+            payload, errors = module.prepare_frame(dict(value, meshes=value["meshes"] + [big]),
+                                                   {"features": ["pbr-materials", "source-ids", "object-warnings"]})
+        sent = json.loads(payload)
+        self.assertEqual([mesh["name"] for mesh in sent["meshes"]], ["Textured"])
+        self.assertEqual([(w["source_id"], w["kind"]) for w in sent["warnings"]], [("a", "textures"), ("root", "not-sent")])
+        self.assertEqual(sent["warnings"][1]["reason"], errors["root"])
+        with patch.object(module, "MAX_BYTES", 1024):
+            payload, _ = module.prepare_frame(dict(value, meshes=[big]), {"features": ["pbr-materials", "source-ids"]})
+        self.assertNotIn("warnings", json.loads(payload), "an older viewer gets no warnings")
+
     def test_decoded_budget_is_enforced_even_when_compression_is_small(self):
         value = {"protocol": 1, "revision": 1, "meshes": [{"name": "Over decoded budget", "padding": "x" * 8000}]}
         hello_value = {"features": ["pbr-materials", "compressed-snapshots"], "max_bytes": 1024, "max_decoded_bytes": 4096}

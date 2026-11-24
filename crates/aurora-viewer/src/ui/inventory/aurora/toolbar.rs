@@ -151,7 +151,10 @@ pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inv
             );
         }
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
-        if response.clicked() {
+        // inventory held over a tab opens it (panel_main_inventory.xml's
+        // open_tabs_on_drag_and_drop)
+        let held = crate::ui::inventory::drag::navigation::tab_held_over(ui, cell, response.id);
+        if response.clicked() || (held && !selected) {
             set_tab(st, prefs, tab);
         }
     }
@@ -416,6 +419,7 @@ fn search_line(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Invento
         ui.spacing_mut().item_spacing.x = 6.0;
         search(ui, p, inv, st, prefs, ui.available_width(), layout);
     });
+    crate::ui::inventory::drag::navigation::search_top(ui.ctx(), st.ui_id, _row.response.rect.top());
     #[cfg(test)]
     ui.ctx()
         .data_mut(|data| data.insert_temp(egui::Id::unique("inventory_search_row"), _row.response.rect));

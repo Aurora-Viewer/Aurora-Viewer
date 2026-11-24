@@ -42,6 +42,7 @@
 //! steady rate, to measure a click's cost in a loaded scene.
 
 use super::*;
+use crate::world::objects::ObjKey;
 use std::collections::VecDeque;
 use uuid::Uuid;
 
@@ -106,6 +107,8 @@ pub(super) enum DemoNote {
     Media((f32, f32), u64),
     /// AURORA_DEMO_MMO: the mouse mode after the press on the avatar.
     Mmo,
+    /// Object view with Build open: retain this selection while focusing.
+    ObjectView(Vec<ObjKey>),
 }
 
 /// The cursor ray and the depth under the cursor of a click, both of the
@@ -638,7 +641,7 @@ impl App {
     /// field has committed to the selection it was typed for).
     pub(super) fn press_while_typing(&mut self) {
         let turn = Held::UiTurn {
-            pass: self.egui_ctx.cumulative_pass_nr(),
+            pass: self.egui_ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT),
             cursor: self.cursor_pos,
             mods: [self.alt, self.ctrl, self.shift],
         };
@@ -648,7 +651,7 @@ impl App {
     /// Run what is held, in order, until a click waits for its depth again
     /// or a `UiTurn` waits for the end of the interface's pass.
     fn drain_held(&mut self) {
-        while let Some((input, restore)) = self.clicks.next_held(self.egui_ctx.cumulative_pass_nr()) {
+        while let Some((input, restore)) = self.clicks.next_held(self.egui_ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT)) {
             let Some((cursor, mods)) = restore else {
                 self.replay(input);
                 continue;
@@ -802,6 +805,20 @@ impl App {
             return;
         }
         match note {
+            DemoNote::ObjectView(selection) => {
+                let unchanged = self.build.selection == selection;
+                let focused = self.mouse_mode == MouseMode::FocusOrbit;
+                let pass = self.object_view && self.build.open && unchanged && focused;
+                log::info!(
+                    "demo object view: {}; build={}, selection_unchanged={}, selected={}, mouse={:?}, focus={:?}",
+                    if pass { "PASS" } else { "FAIL" },
+                    self.build.open,
+                    unchanged,
+                    self.build.selection.len(),
+                    self.mouse_mode,
+                    self.camera.focus_point(),
+                );
+            }
             DemoNote::Camera(frame) => log::info!(
                 "demo camera f{frame}: {} (mouse {:?}, agent yaw {:.2}, right orbit={}, menu={}, down={}, cursor held={}, alt free={}, typing={})",
                 self.camera.describe(),
@@ -860,7 +877,7 @@ impl App {
     fn click_target(&self, click: Click, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>) -> Target {
         let now = Instant::now();
         let build = self.build.open;
-        let tools = build && !self.alt && matches!(click, Click::Press | Click::Build);
+        let tools = build && !self.alt && !self.object_view && matches!(click, Click::Press | Click::Build);
         let selection_pick = if click == Click::Menu {
             Scene::selection_pick
         } else {
@@ -984,7 +1001,7 @@ impl App {
             DemoKind::Alt => self.alt = true,
             // (the menu of the click before)
             DemoKind::Menu => self.context_menu = None,
-            DemoKind::Build | DemoKind::Focus => {
+            DemoKind::Build | DemoKind::Focus | DemoKind::ObjectView => {
                 let tool = if spec.kind == DemoKind::Focus {
                     crate::build::Tool::Focus
                 } else {
@@ -995,7 +1012,16 @@ impl App {
                 }
             }
         }
+        let selection = (spec.kind == DemoKind::ObjectView).then(|| {
+            self.object_view = true;
+            self.panels.camera_controls = true;
+            self.build.selection.clone()
+        });
         self.mouse_input(button, true, false);
+        if let Some(selection) = selection {
+            // Wait behind the real GPU pick and before the button's release.
+            self.demo_note(DemoNote::ObjectView(selection));
+        }
         // (a short human click)
         self.clicks.demo.up = Some(now + Duration::from_millis(60).min(spec.period / 2));
     }
@@ -1039,7 +1065,7 @@ impl App {
     }
 }
 
-/// AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus]": a
+/// AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus|object-view]": a
 /// click on the world every `ms` milliseconds (250 if it is not a number)
 /// once the world shows, held 60 ms: at pixel (x, y) of the window (a
 /// quarter of the width, near the bottom, by default), or with `sweep` at a
@@ -1077,6 +1103,7 @@ enum DemoKind {
     Menu,
     Build,
     Focus,
+    ObjectView,
 }
 
 fn demo_spec(var: &str) -> DemoSpec {
@@ -1087,6 +1114,7 @@ fn demo_spec(var: &str) -> DemoSpec {
         Some("menu") => DemoKind::Menu,
         Some("build") => DemoKind::Build,
         Some("focus") => DemoKind::Focus,
+        Some("object-view") => DemoKind::ObjectView,
         _ => DemoKind::Left,
     };
     let at = match numbers[..] {
@@ -1449,6 +1477,7 @@ mod tests {
             (Duration::from_millis(100), DemoAt::Sweep, DemoKind::Build)
         );
         assert_eq!(demo_spec("250,focus").kind, DemoKind::Focus);
+        assert_eq!(demo_spec("250,object-view").kind, DemoKind::ObjectView);
         let d = demo_spec("300,rigged,menu");
         assert_eq!((d.at, d.kind, d.clickable), (DemoAt::Rigged, DemoKind::Menu, false));
         let d = demo_spec("300,rigged,clickable,left");

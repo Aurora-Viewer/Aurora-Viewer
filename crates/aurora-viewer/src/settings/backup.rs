@@ -48,7 +48,7 @@ const THIS_PC: &[&str] = &[
     "custom_language_file",
 ];
 /// The same inside `audio`: the devices of this PC.
-const THIS_PC_AUDIO: &[&str] = &["output_device", "input_device"];
+const THIS_PC_AUDIO: &[&str] = &["output_device", "voice_output_device", "input_device"];
 /// The same inside `gifs`: the user's own service keys, and this viewer's
 /// random id. A backup file is carried around and shared; keys are not.
 const THIS_PC_GIFS: &[&str] = &["giphy_key", "klipy_key", "customer_id"];
@@ -296,6 +296,7 @@ impl Settings {
         self.chat_log_location = current.chat_log_location.clone();
         self.custom_language_file = current.custom_language_file.clone();
         self.audio.output_device = current.audio.output_device.clone();
+        self.audio.voice_output_device = current.audio.voice_output_device.clone();
         self.audio.input_device = current.audio.input_device.clone();
         self.gifs.giphy_key = current.gifs.giphy_key.clone();
         self.gifs.klipy_key = current.gifs.klipy_key.clone();
@@ -340,6 +341,7 @@ mod tests {
             ..Settings::default()
         };
         s.audio.output_device = "Speakers".into();
+        s.audio.voice_output_device = "Headset".into();
         s.audio.input_device = "Microphone".into();
         s.gifs.giphy_key = "giphy-key-of-this-pc".into();
         s.gifs.klipy_key = "klipy-key-of-this-pc".into();
@@ -358,6 +360,7 @@ mod tests {
             "D:\\\\cache",
             "D:\\\\logs",
             "Speakers",
+            "Headset",
             "Microphone",
             "giphy-key-of-this-pc",
             "klipy-key-of-this-pc",
@@ -398,6 +401,7 @@ mod tests {
         other.colors.chat_direct = [1, 2, 3, 255];
         other.window_width = 640;
         other.audio.output_device = "Elsewhere".into();
+        other.audio.voice_output_device = "Other headset".into();
         other.gifs.giphy_key = "giphy-key-elsewhere".into();
         other.gifs.rating = crate::gif_search::Rating::Strict;
         let backup = Backup::parse(&Backup::new(&other, Some("layout".into())).to_bytes().unwrap()).unwrap();
@@ -451,6 +455,26 @@ mod tests {
         value["settings"]["a_newer_setting"] = 1.into();
         let backup = Backup::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(backup.settings(&Settings::default()).is_some());
+    }
+
+    #[test]
+    fn the_environments_saved_for_parcels_stay_out_of_settings_and_backups() {
+        // they hold the asset ids of what was applied (`world/parcel_env.rs`)
+        let asset = Uuid::from_u128(0x5E7_A55E7);
+        let from = scratch();
+        let dir = from.join("accounts").join(Uuid::from_u128(1).to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = crate::world::parcel_env::file_name("agni");
+        assert!(!ACCOUNT_FILES.contains(&name.as_str()));
+        std::fs::write(dir.join(&name), format!("[{{\"environment\":\"{{'sky_id':u{asset}}}\"}}]")).unwrap();
+        let mut backup = Backup::new(&Settings::default(), None);
+        backup.read_files(&from);
+        let text = String::from_utf8(backup.to_bytes().unwrap()).unwrap();
+        assert!(!text.contains(&asset.to_string()), "an asset id written in the backup");
+        assert!(!text.contains("parcel_environments"), "the file named in the backup");
+        let settings = serde_json::to_string(&Settings::default().to_saved()).unwrap();
+        assert!(!settings.contains("parcel_environments"), "a settings key");
+        let _ = std::fs::remove_dir_all(from);
     }
 
     #[test]

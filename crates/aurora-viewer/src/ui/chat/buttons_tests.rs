@@ -20,6 +20,36 @@ const MEETING: Uuid = Uuid::from_u128(0xC0);
 const ALL: [ChatStyle; 4] = [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy];
 
 #[test]
+fn chat_header_username_follows_preferences_and_saved_names_stay_frozen() {
+    let mut h = H::new(ChatStyle::Aurora);
+    let names = &mut h.world.social.avatar_names;
+    names.options.legacy_format = false;
+    names.options.use_display_names = true;
+    names.options.show_usernames = true;
+    names.on_display_names(
+        &[aurora_net::AvatarNameData {
+            id: JANE,
+            username: "janedoe".into(),
+            display_name: "Jane".into(),
+            ..Default::default()
+        }],
+        &[],
+        None,
+    );
+    let mut message = line("Jane", JANE, ChatKind::Im, "/me waves");
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane (janedoe)");
+    assert_eq!(
+        super::line_body(&message, &super::sender_name(&h.world, "", &message)).0,
+        "Jane waves"
+    );
+    message.origin = Origin::Log;
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
+    message.origin = Origin::Live;
+    h.world.social.avatar_names.options.show_usernames = false;
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
+}
+
+#[test]
 fn teleport_invitation_paints_one_destination_in_every_style() {
     use crate::world::teleport_invites::{Answer, Invite, InviteKind, Place, Rating};
     for style in ALL {
@@ -575,6 +605,18 @@ fn the_head_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
             "{style:?}: close"
         );
+        // its neighbour in the list shows next (#4373)
+        let order = if style.workspace() {
+            super::sidebar::tab_order(&h.world, &h.st)
+        } else {
+            super::keys::legacy_order(&h.world, &h.st)
+        };
+        let next = super::keys::after_close(&order, BOB);
+        assert!(next.is_some() && next != Some(BOB), "{style:?}: a conversation beside Bob");
+        assert_eq!(h.st.selected, next, "{style:?}: the neighbour shown");
+        // the harness keeps the closed conversation: back to Bob's
+        h.st.selected = Some(BOB);
+        h.settle();
         h.press(control_id("head-search-filled"));
         assert!(h.st.searches.get(&Some(BOB)).is_some_and(|s| s.find.is_some()), "{style:?}: find");
         h.press(control_id("head-search-filled"));
@@ -871,7 +913,8 @@ fn an_objects_full_size_line_offers_to_ignore_it_in_every_style() {
 
 /// A double click on the first or the last word of a message, then Ctrl+C,
 /// copies that word alone: not the line's "[time] Name: " prefix, nor the
-/// whole message.
+/// whole message. A third click copies the message as a drag from the start
+/// of its line does, with the prefix.
 #[test]
 fn a_double_clicked_word_is_copied_alone() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
@@ -884,6 +927,7 @@ fn a_double_clicked_word_is_copied_alone() {
             ] {
                 let mut h = H::new(style);
                 let message = line("Jane", JANE, ChatKind::Im, said);
+                let prefixed = format!("{}{said}", super::copy_prefix(&message, &message.from));
                 if let Some(id) = conversation {
                     h.world.social.session_mut(id).lines = [message].into();
                 } else {
@@ -909,6 +953,59 @@ fn a_double_clicked_word_is_copied_alone() {
                     _ => None,
                 });
                 assert_eq!(copied.as_deref(), Some(word), "{style:?}, {conversation:?}, {said:?}");
+                // a third click selects the whole paragraph, copied as a drag
+                // from the start of the line: with the "[time] Name: " prefix
+                h.frame(vec![button(true)]);
+                h.frame(vec![button(false)]);
+                h.settle();
+                let copied = h.frame_out(vec![egui::Event::Copy]).commands.into_iter().find_map(|c| match c {
+                    egui::OutputCommand::CopyText(t) => Some(t),
+                    _ => None,
+                });
+                assert_eq!(copied, Some(prefixed), "{style:?}, {conversation:?}, {said:?}");
+            }
+        }
+    }
+}
+
+/// A triple click on a message of two paragraphs, then Ctrl+C: the first
+/// paragraph is copied with the line's "[time] Name: " prefix, the one after
+/// the line break without it.
+#[test]
+fn a_triple_clicked_paragraph_after_a_line_break_is_copied_without_the_prefix() {
+    let said = "first paragraph\nsecond one";
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for conversation in [None, Some(JANE)] {
+            let message = line("Jane", JANE, ChatKind::Im, said);
+            let prefix = super::copy_prefix(&message, &message.from);
+            // the upper and the lower row of the message
+            for (row, expected) in [(0.25, format!("{prefix}first paragraph")), (0.75, "second one".into())] {
+                let mut h = H::new(style);
+                if let Some(id) = conversation {
+                    h.world.social.session_mut(id).lines = [message.clone()].into();
+                } else {
+                    h.world.chat = [message.clone()].into();
+                }
+                h.open(conversation);
+                let text = h.text_rect(said);
+                let pos = egui::pos2(text.left() + 20.0, text.top() + text.height() * row);
+                let button = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![egui::Event::PointerMoved(pos)]);
+                for _ in 0..3 {
+                    h.frame(vec![button(true)]);
+                    h.frame(vec![button(false)]);
+                }
+                h.settle();
+                let copied = h.frame_out(vec![egui::Event::Copy]).commands.into_iter().find_map(|c| match c {
+                    egui::OutputCommand::CopyText(t) => Some(t),
+                    _ => None,
+                });
+                assert_eq!(copied, Some(expected), "{style:?}, {conversation:?}, row {row}");
             }
         }
     }
@@ -2560,6 +2657,18 @@ fn the_window_of_tabs_still_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
             "{style:?}: close"
         );
+        // its neighbour in the list shows next (#4373)
+        let order = if style.workspace() {
+            super::sidebar::tab_order(&h.world, &h.st)
+        } else {
+            super::keys::legacy_order(&h.world, &h.st)
+        };
+        let next = super::keys::after_close(&order, BOB);
+        assert!(next.is_some() && next != Some(BOB), "{style:?}: a conversation beside Bob");
+        assert_eq!(h.st.selected, next, "{style:?}: the neighbour shown");
+        // the harness keeps the closed conversation: back to Bob's
+        h.st.selected = Some(BOB);
+        h.settle();
         h.press(classic_id("phone-filled"));
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::Call(id) if *id == BOB)),

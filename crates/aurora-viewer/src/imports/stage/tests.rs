@@ -14,7 +14,7 @@ fn world() -> crate::world::World {
 }
 
 fn local(source: Source) -> Entry {
-    let mut entry = Entry::new("cached-source.gltf".into(), Ok(source), Default::default());
+    let mut entry = Entry::new("cached-source.gltf".into(), Ok(source), Preferences::default().texture());
     entry.local = true;
     entry.local_published = true;
     entry.local_restore_active = true;
@@ -125,6 +125,11 @@ fn material_snapshots_keep_distinct_submaterials_from_the_same_file_and_follow_s
             ]),
         });
         entry.name = format!("Material {index}");
+        entry.image_size_limit = if index == 0 {
+            ImageSizeLimit::Size1024
+        } else {
+            ImageSizeLimit::Size2048
+        };
         entry.material_index = index;
         imports.entries.push(entry);
     }
@@ -139,6 +144,9 @@ fn material_snapshots_keep_distinct_submaterials_from_the_same_file_and_follow_s
             panic!("material")
         };
         assert_eq!(copy.material_index, index);
+        assert_eq!(copy.image_size_limit, imports.entries[index].image_size_limit);
+        let maximum = if index == 0 { 1024 } else { 2048 };
+        assert_eq!((copy.options.max_width, copy.options.max_height), (maximum, maximum));
         assert_eq!(value.metallic_factor, index as f32 * 0.5);
         assert!(images[0].is_some());
         assert_eq!(
