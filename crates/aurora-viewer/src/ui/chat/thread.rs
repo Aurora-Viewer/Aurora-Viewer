@@ -302,7 +302,7 @@ pub(super) fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: C
 fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, color: Color32, who: &Who, max: f32) {
     // "(You)" with the option; a moderator's name style adds its italics
     // (the names are semi-bold already)
-    let mut text = RichText::new(super::shown_name(line, name))
+    let mut text = RichText::new(super::chat_header_name(env.world, line, name))
         .font(egui::FontId::new(chat_size(ui.ctx(), 13.5), crate::ui::fonts::semibold(ui.ctx())))
         .color(color);
     if super::moderator_look(env, line).is_some_and(|(n, _)| n.italics) {

@@ -50,7 +50,28 @@ def read_token(port):
     return token
 
 
+# Per-object warnings travel only to a viewer that asked for them: v1 peers
+# reject unknown snapshot fields. Bounded like the viewer's parser.
+MAX_WARNINGS = 64
+MAX_WARNING_TEXT = 512
+
+
+def object_warning(source_id, name, kind, reason):
+    """One entry of the snapshot's `warnings` list: `kind` is "textures" (the
+    object syncs in its plain colour) or "not-sent" (it is not in this
+    revision); `reason` is the untranslated export message."""
+    value = {"name": str(name)[:MAX_WARNING_TEXT], "kind": kind, "reason": str(reason)[:MAX_WARNING_TEXT]}
+    if source_id:
+        value["source_id"] = str(source_id)
+    return value
+
+
 def wire_snapshot(snapshot, features):
+    if "warnings" in snapshot:
+        if "object-warnings" in features and snapshot["warnings"]:
+            snapshot = dict(snapshot, warnings=snapshot["warnings"][:MAX_WARNINGS])
+        else:
+            snapshot = {key: value for key, value in snapshot.items() if key != "warnings"}
     if "static-meshes" not in features and any(mesh.get("joints") == [] for mesh in snapshot.get("meshes", [])):
         raise ValueError("Update Aurora Viewer to preview non-rigged meshes")
     if not {"object-links", "source-ids"}.issubset(features) and any(mesh.get("link") for mesh in snapshot.get("meshes", [])):
@@ -161,6 +182,16 @@ def prepare_frame(snapshot, hello):
             else:
                 accepted.append(mesh)
                 payload = candidate
+        if issues and "object-warnings" in hello.get("features", []):
+            # the viewer lists what this revision left out, and why
+            dropped = [object_warning(mesh.get("source_id"), mesh["name"], "not-sent",
+                                      issues[mesh.get("source_id", mesh["name"])])
+                       for mesh in snapshot.get("meshes", []) if mesh.get("source_id", mesh["name"]) in issues]
+            try:
+                payload = _encode(dict(_subset(snapshot, accepted),
+                                       warnings=list(snapshot.get("warnings", [])) + dropped), hello)
+            except SnapshotSizeError:
+                pass
         return payload, issues
 
 

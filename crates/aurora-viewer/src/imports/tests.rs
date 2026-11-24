@@ -93,6 +93,114 @@ fn map_step(map: &LocalImage, options: import_texture::Options, cost: i32) -> St
     }
 }
 
+/// A paid texture whose upload is under way, with one more waiting behind it.
+fn paid_texture_batch() -> (Imports, Uuid) {
+    let texture = |name: &str| {
+        let mut entry = Entry::new(name.into(), Ok(Source::Texture(image(16, 16))), Default::default());
+        entry.status = Status::Preparing;
+        entry
+    };
+    let step = |entry: &Entry| Step {
+        key: entry.id,
+        entry: Some(entry.id),
+        kind: Kind::Texture,
+        folder: Uuid::nil(),
+        name: entry.name.clone(),
+        description: String::new(),
+        source: Source::Texture(image(16, 16)),
+        options: Default::default(),
+        sound_options: Default::default(),
+        cost: 10,
+        permissions: Default::default(),
+    };
+    let (failing, waiting) = (texture("failing.png"), texture("waiting.png"));
+    let request = Uuid::new_v4();
+    let imports = Imports {
+        choice: Choice::Bulk,
+        current: Some((request, step(&failing))),
+        queue: VecDeque::from([step(&waiting)]),
+        entries: vec![failing, waiting],
+        ..Default::default()
+    };
+    (imports, request)
+}
+
+#[test]
+fn a_failed_upload_leaves_the_files_added_after_it_priced() {
+    let (mut imports, request) = paid_texture_batch();
+
+    imports.uploaded(request, Err(Error::Unknown));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(
+        !imports.entries[0].selected,
+        "the failed row is left out, like a file that could not be read"
+    );
+    assert!(matches!(imports.entries[1].status, Status::Cancelled));
+
+    imports.entries.push(Entry::new(
+        "later.png".into(),
+        Ok(Source::Texture(image(16, 16))),
+        Default::default(),
+    ));
+    assert_eq!(imports.total(&prices()), Some(10), "only the new file is priced");
+    // "Resume remaining files"
+    imports.entries[1].status = Status::Ready;
+    assert_eq!(
+        imports.total(&prices()),
+        Some(20),
+        "the file that waited behind the failure counts again"
+    );
+}
+
+#[test]
+fn a_material_whose_free_map_failed_is_left_out_while_the_batch_goes_on() {
+    let (mut imports, request, _, _) = failed_map_batch(0);
+
+    imports.uploaded(request, Err(Error::Unknown));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(!imports.entries[0].selected);
+    assert!(imports.entries[1].selected && matches!(imports.entries[1].status, Status::Preparing));
+}
+
+#[test]
+fn restoring_a_failed_upload_selects_it_again() {
+    let (mut imports, request) = paid_texture_batch();
+
+    imports.uploaded(request, Err(Error::Unknown));
+    let failed = imports.entries[0].id;
+    imports.restore_draft(failed);
+    assert!(imports.entries[0].selected && matches!(imports.entries[0].status, Status::Ready));
+    assert_eq!(imports.total(&prices()), Some(10));
+}
+
+#[test]
+fn restoring_a_draft_left_unselected_by_hand_keeps_it_unselected() {
+    let mut imports = Imports::default();
+    // (a reload that fails keeps the row's last source and its selection)
+    let mut entry = Entry::new("edited.png".into(), Ok(Source::Texture(image(16, 16))), Default::default());
+    entry.selected = false;
+    entry.status = Status::Error("Invalid".into());
+    let id = entry.id;
+    imports.entries.push(entry);
+    imports.restore_draft(id);
+    assert!(matches!(imports.entries[0].status, Status::Ready));
+    assert!(!imports.entries[0].selected);
+}
+
+#[test]
+fn a_failed_row_selected_by_hand_still_blocks_the_price() {
+    let (mut imports, request) = paid_texture_batch();
+
+    imports.uploaded(request, Err(Error::Unknown));
+    imports.entries.push(Entry::new(
+        "later.png".into(),
+        Ok(Source::Texture(image(16, 16))),
+        Default::default(),
+    ));
+    imports.entries[0].selected = true;
+    assert_eq!(imports.total(&prices()), None);
+}
+
 /// A default material whose cached options still say 2K follows the shared 1K
 /// limit: failure must find it with the same effective map key as the upload.
 fn failed_map_batch(map_cost: i32) -> (Imports, Uuid, Uuid, Uuid) {

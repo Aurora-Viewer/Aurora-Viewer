@@ -383,7 +383,9 @@ impl ListingsUi {
         }
         if let (true, Some(root)) = (merchant, root) {
             self.data.fetch_contents(root);
-            if inv.folders.get(&root).is_some_and(|f| f.state != FetchState::Fetched) || ui.ctx().cumulative_pass_nr().is_multiple_of(30) {
+            if inv.folders.get(&root).is_some_and(|f| f.state != FetchState::Fetched)
+                || ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT).is_multiple_of(30)
+            {
                 // LLInventoryModelBackgroundFetch::start(mRootFolderId)
                 request_tree(inv, root);
             }
