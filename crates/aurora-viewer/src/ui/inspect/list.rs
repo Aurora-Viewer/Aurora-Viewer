@@ -131,7 +131,7 @@ fn creators(
                 if let Some(id) = creator {
                     state.wanted_pics.insert(id);
                 }
-                widgets::avatar_picture(ui, p, pic, creator.and_then(|id| frame.pics.get(&id)), &name, false);
+                widgets::avatar_disc(ui, p, pic, creator.and_then(|id| frame.pics.get(&id)), &name, false);
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
                     ui.label(
@@ -284,7 +284,7 @@ fn card(
             if let Some(id) = row.creator {
                 state.wanted_pics.insert(id);
             }
-            widgets::avatar_picture(ui, p, pic, row.creator.and_then(|id| frame.pics.get(&id)), &row.creator_name, false);
+            widgets::avatar_disc(ui, p, pic, row.creator.and_then(|id| frame.pics.get(&id)), &row.creator_name, false);
             if ui.rect_contains_pointer(pic) {
                 resp.clone()
                     .on_hover_text(aurora_i18n::tr!("inspect-made-by-tip", name = row.creator_name.as_str()));
@@ -318,7 +318,7 @@ fn card(
             if let Some(id) = row.creator {
                 state.wanted_pics.insert(id);
             }
-            widgets::avatar_picture(
+            widgets::avatar_disc(
                 ui,
                 p,
                 creator_pic,
@@ -577,7 +577,13 @@ fn person_card(
         if let Some(id) = who {
             state.wanted_pics.insert(id);
         }
-        widgets::avatar_picture(ui, p, pic, who.and_then(|id| frame.pics.get(&id)), name, false);
+        let tex = who.and_then(|id| frame.pics.get(&id));
+        if can_open {
+            widgets::avatar_disc(ui, p, pic, tex, name, false);
+        } else {
+            // a group keeps a square tile: only residents are round
+            widgets::avatar_picture(ui, p, pic, tex, name, false);
+        }
         let text_w = (ui.available_width() - 34.0).max(20.0);
         ui.vertical(|ui| {
             ui.set_width(text_w);

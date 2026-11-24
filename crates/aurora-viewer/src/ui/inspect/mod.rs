@@ -419,11 +419,11 @@ impl InspectUi {
                     let title = match self.subject {
                         Subject::Avatar(id) => {
                             self.wanted_pics.insert(id);
-                            widgets::avatar_picture(ui, p, pic, frame.pics.get(&id), frame.subject_name, false);
+                            widgets::avatar_disc(ui, p, pic, frame.pics.get(&id), frame.subject_name, false);
                             frame.subject_name.to_owned()
                         }
                         Subject::Objects => {
-                            ui.painter().circle_filled(pic.center(), pic.width() / 2.0, p.raised);
+                            ui.painter().rect_filled(pic, radius, p.raised);
                             crate::ui::sheet::icon_at(ui, "cube", pic.center(), 20.0, p.violet_light);
                             aurora_i18n::tr!("inspect-objects-title", count = items.len())
                         }
@@ -440,7 +440,9 @@ impl InspectUi {
                         ui.add_space(6.0);
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 2.0;
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                // the name's line is as tall as the name, not as a button
+                                ui.spacing_mut().interact_size.y = 0.0;
                                 let pad = ((row_h - text_h) / 2.0).max(0.0);
                                 ui.add_space(pad);
                                 ui.horizontal(|ui| {
@@ -625,7 +627,7 @@ fn complexity_box(ui: &mut egui::Ui, p: &Palette, complexity: u32, limit: Option
         .inner_margin(egui::Margin::symmetric(9, 5))
         .show(ui, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.spacing_mut().item_spacing.y = 0.0;
                 ui.label(
                     RichText::new(aurora_i18n::tr!("inspect-totals-complexity").to_uppercase())
                         .size(10.5)
@@ -659,13 +661,16 @@ fn complexity_box(ui: &mut egui::Ui, p: &Palette, complexity: u32, limit: Option
 fn complexity_box_height(ui: &egui::Ui) -> f32 {
     let bold = crate::ui::fonts::semibold(ui.ctx());
     ui.ctx()
-        .fonts_mut(|f| 10.0 + f.row_height(&egui::FontId::new(10.5, bold.clone())) + 1.0 + f.row_height(&egui::FontId::new(14.0, bold)))
+        .fonts_mut(|f| 10.0 + f.row_height(&egui::FontId::new(10.5, bold.clone())) + f.row_height(&egui::FontId::new(14.0, bold)))
 }
 
 /// The quiet link beside the name in the summary card: a small icon, a face
 /// only when pointed at.
 fn profile_link(ui: &mut egui::Ui, p: &Palette) -> bool {
-    let (r, resp) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+    // 20 px to click, in a line no taller than its icon
+    let (slot, spot) = ui.allocate_exact_size(Vec2::new(20.0, 14.0), Sense::hover());
+    let r = egui::Rect::from_center_size(slot.center(), Vec2::splat(20.0));
+    let resp = ui.interact(r, spot.id.with("link"), Sense::click());
     let hovered = resp.hovered();
     if hovered {
         ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, p.raised);
