@@ -11056,7 +11056,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   name, newest), the search (it covers every category: "saiko" lists two
   places), the people count on the pictures, "Already visited" on Lantern
   Isle and Pixel Arcade (from the demo's teleport history), "Until …" on
-  the Garden Concert, the footer "Official grid guide · updated just now"
+  the Garden Concert, the footer "Official grid guide · Updated just now"
   and its refresh button. Teleport, Show on map, About Land and Copy SLurl
   act as for any place link; Create landmark and Add to favorites are
   dimmed with a tooltip outside the place's region. The widen / compact
