@@ -290,3 +290,129 @@ fn a_worn_selection_is_kept_apart_and_cannot_be_deleted_taken_copied_or_linked()
     tool.prune(&world, &limited, Instant::now());
     assert_eq!(tool.selection, vec![key]);
 }
+
+#[test]
+fn undo_puts_back_a_moved_object_of_ours_in_the_demo() {
+    let mut world = world();
+    let obj = world
+        .objects
+        .iter()
+        .find(|(i, o)| {
+            selectable(&world, *i)
+                && select_type(&world, *i) == SelectType::World
+                && o.parent_id == 0
+                && o.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
+        })
+        .map(|(i, _)| i)
+        .expect("an object of ours");
+    let start = world.objects.get(obj).unwrap().position;
+    let s = BuildSettings::default();
+    let mut tool = BuildTool::default();
+    tool.open_build(Tool::Edit);
+    tool.click_select(&mut world, &s, Some(obj), false);
+    let mut sim = super::demo_sim::DemoSim::default();
+    let mut reply = |world: &mut World, tool: &mut BuildTool| {
+        for c in std::mem::take(&mut tool.out) {
+            if let NetCommand::Build(c) = c {
+                for ev in sim.reply(world, &c) {
+                    world.apply(ev);
+                }
+            }
+        }
+    };
+    reply(&mut world, &mut tool);
+    let at = |world: &World| world.objects.get(obj).unwrap().position;
+    tool.set_transform(&mut world, &s, Some(start + Vec3::X), None, None, true);
+    reply(&mut world, &mut tool);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    tool.set_transform(&mut world, &s, Some(start + Vec3::X * 2.0), None, None, true);
+    reply(&mut world, &mut tool);
+    assert!(at(&world).abs_diff_eq(start + Vec3::X * 2.0, 1e-4));
+    // the simulator's answer to Undo waits out our last edit's (edit_echo.rs)
+    let settle = |world: &mut World| world.objects.expire_sent_edits(Instant::now() + std::time::Duration::from_secs(3));
+    assert!(tool.can_undo(&world, false));
+    tool.undo(&world, false);
+    reply(&mut world, &mut tool);
+    settle(&mut world);
+    assert!(at(&world).abs_diff_eq(start + Vec3::X, 1e-4), "{:?}", at(&world));
+    tool.undo(&world, false);
+    reply(&mut world, &mut tool);
+    settle(&mut world);
+    assert!(at(&world).abs_diff_eq(start, 1e-4), "{:?}", at(&world));
+    tool.undo(&world, true);
+    reply(&mut world, &mut tool);
+    settle(&mut world);
+    assert!(at(&world).abs_diff_eq(start + Vec3::X, 1e-4), "{:?}", at(&world));
+}
+
+#[test]
+fn the_demo_reports_another_avatars_attachment_contents_as_theirs() {
+    let world = world();
+    let mut sim = super::demo_sim::DemoSim::default();
+    let owners = |sim: &mut super::demo_sim::DemoSim, idx: usize| {
+        let o = world.objects.get(idx).unwrap();
+        let events = sim.reply(
+            &world,
+            &BuildCmd::RequestTaskInventory {
+                handle: o.key.region,
+                local_id: o.key.local_id,
+                object_id: o.full_id,
+            },
+        );
+        let Some(aurora_net::NetEvent::TaskInventory { result: Ok(items), .. }) = events.into_iter().next() else {
+            panic!("contents");
+        };
+        items.into_iter().filter(|i| !i.is_folder).map(|i| i.owner_id).collect::<Vec<_>>()
+    };
+    let hat = local(&world, 9100);
+    let wolf = world
+        .objects
+        .get(world.objects.parent_of(world.objects.get(hat).unwrap()).unwrap())
+        .unwrap()
+        .full_id;
+    let theirs = owners(&mut sim, hat);
+    assert!(!theirs.is_empty() && theirs.iter().all(|&o| o == wolf), "{theirs:?}");
+    let (root, _) = worn(&world);
+    let ours = owners(&mut sim, root);
+    assert!(!ours.is_empty() && ours.iter().all(|&o| o == crate::demo::DEMO_AGENT), "{ours:?}");
+}
+
+#[test]
+fn a_prim_we_create_in_the_demo_is_our_own_work() {
+    let mut world = world();
+    let s = BuildSettings::default();
+    let mut tool = BuildTool::default();
+    tool.open_build(Tool::Create);
+    let point = world.agent.position + Vec3::X * 5.0;
+    tool.place(&mut world, &s, Some(point), None, (0.0, 0.0));
+    let Some(NetCommand::Build(add @ BuildCmd::Add(prim))) = tool.out.iter().find(|c| matches!(c, NetCommand::Build(BuildCmd::Add(_))))
+    else {
+        panic!("ObjectAdd");
+    };
+    let handle = prim.handle;
+    let mut sim = super::demo_sim::DemoSim::default();
+    let events = sim.reply(&world, add);
+    let Some(aurora_net::NetEvent::ObjectUpdates { objects, .. }) = events.first() else {
+        panic!("created object");
+    };
+    let (id, local_id) = (objects[0].full_id, objects[0].local_id);
+    for ev in events {
+        world.apply(ev);
+    }
+    let replies = sim.reply(
+        &world,
+        &BuildCmd::Select {
+            handle,
+            local_ids: vec![local_id],
+        },
+    );
+    let props = replies
+        .iter()
+        .find_map(|ev| match ev {
+            aurora_net::NetEvent::ObjectProperties(props) => props.iter().find(|p| p.object_id == id),
+            _ => None,
+        })
+        .expect("properties");
+    let me = crate::demo::DEMO_AGENT;
+    assert_eq!((props.creator_id, props.owner_id, props.last_owner_id), (me, me, me));
+}
