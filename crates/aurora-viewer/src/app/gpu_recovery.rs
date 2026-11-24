@@ -269,8 +269,9 @@ impl App {
     /// buffer made (`aurora_render::start_guarded`), or the renderer finds
     /// the device lost once its objects are made (`RenderError::DeviceLost`).
     /// Either start is made again once, after `RESTART_WAIT`. None when no
-    /// renderer could be made: the caller closes as before, with the crash
-    /// report.
+    /// renderer could be made: the caller closes as before, and reports the
+    /// loss (`crash::gpu_lost`; for the VR reopen, when the new device was
+    /// lost).
     ///
     /// The wait holds the event loop, as the whole recovery does (it made
     /// the new renderer in up to 11 s in the crash reports): on this path
