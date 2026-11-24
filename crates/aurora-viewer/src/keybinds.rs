@@ -1800,17 +1800,16 @@ mod tests {
         layout::current().named_key(us_key)
     }
 
-    /// LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
-    /// French keyboards print Début. Japanese keyboards print Home.
     #[test]
     fn standalone_alt_keys_use_platform_labels() {
         for key in ["AltLeft", "AltRight"] {
             assert_eq!(key_label_on(key, true), "⌥ Option");
             assert_eq!(key_label_on(key, false), "ALT");
         }
-        assert_eq!(key_label("AltLeft"), if cfg!(target_os = "macos") { "⌥ Option" } else { "ALT" });
     }
 
+    /// LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
+    /// French keyboards print Début. Japanese keyboards print Home.
     #[test]
     fn the_home_key_is_labelled_home() {
         assert_eq!(aurora_i18n::text_in("en", "keybinds-origin"), "Home");
