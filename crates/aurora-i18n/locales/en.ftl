@@ -9720,7 +9720,7 @@ status-loading-2 = (loading…)
 status-name-loading = { $name }{ "  (loading…)" }
 status-empty = (empty)
 status-loading-3 = { "  (loading…)" }
-status-terrain-objects-textures = { $value0 }{ "  ·  terrain " }{ $value1 }{ " %  ·  " }{ $value2 }{ " objects  ·  textures " }{ $value3 }/{ $value4 }
+status-terrain-objects-textures = { $value0 }{ "  ·  Terrain " }{ $value1 }{ " %  ·  " }{ $value2 }{ " Objects  ·  Textures " }{ $value3 }/{ $value4 }
 status-v-version-available = v{ $version }{ " available" }
 status-second-life-beta-aditi = Second Life Beta (Aditi)
 status-name-distance-d-m = { $name }{ "\u000A(Distance: " }{ $d }{ " m)" }
@@ -10828,8 +10828,8 @@ script-fold-line-count =
 script-fold-all = Collapse all
 script-expand-all = Expand all
 loading-residents = { $count ->
-    [one] { $count } resident here
-   *[other] { $count } residents here
+    [one] { $count } Resident here
+   *[other] { $count } Residents here
     }
 ui-bars-click-to-talk = Click to turn on
 ui-bars-microphone-options = Microphone options
