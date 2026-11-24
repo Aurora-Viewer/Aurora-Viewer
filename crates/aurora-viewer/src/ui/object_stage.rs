@@ -84,11 +84,6 @@ impl StageUi {
         self.apart = apart;
     }
 
-    /// The object the pointer is on in the view.
-    pub fn over(&self) -> Option<Uuid> {
-        self.over
-    }
-
     /// Draw the view over `rect`, its controls when there is room. `top`: what
     /// the caller writes over the top of the view. Returns the click.
     pub fn show(&mut self, ui: &mut egui::Ui, p: &Palette, rect: Rect, top: f32, showing: Showing, spoken: &str) -> Option<Hit> {
@@ -105,7 +100,7 @@ impl StageUi {
         let ground = rect.shrink(1.0);
         let view_rect = if controls {
             Rect::from_min_max(
-                egui::pos2(ground.left(), ground.top() + top * 0.5),
+                egui::pos2(ground.left(), ground.top() + top),
                 egui::pos2(ground.right(), ground.bottom() - BAR - 8.0),
             )
         } else {

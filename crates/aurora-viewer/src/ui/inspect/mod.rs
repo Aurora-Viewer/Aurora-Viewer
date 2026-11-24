@@ -351,7 +351,7 @@ fn kilobytes(bytes: u64) -> String {
     aurora_i18n::integer((bytes / 1024) as i64)
 }
 
-fn megabytes(bytes: u64) -> String {
+pub(crate) fn megabytes(bytes: u64) -> String {
     aurora_i18n::tr!("inspect-megabytes", n = aurora_i18n::number(bytes as f64 / (1024.0 * 1024.0), 1))
 }
 
@@ -924,6 +924,86 @@ mod tests {
                 );
             },
         );
+    }
+
+    /// The board of tiles too, every tile grown in turn.
+    #[test]
+    fn the_wide_window_keeps_its_size() {
+        let rows: Vec<Row> = (0..40)
+            .map(|i| Row {
+                id: Uuid::from_u128(i),
+                root: i % 4 == 0,
+                name: format!("Prim {i}"),
+                creator_name: format!("Maker {}", i % 3),
+                point: (i % 12) as u8 + 1,
+                complexity: if i % 4 == 0 { 1_000 * i as u32 } else { 0 },
+                ..Default::default()
+            })
+            .collect();
+        let people: Vec<Person> = (0..30)
+            .map(|i| Person {
+                id: Uuid::from_u128(500 + i),
+                pic: None,
+                name: format!("Person {i}"),
+                complexity: 9_000 * i as u32,
+                you: i == 3,
+                friend: i == 7,
+                drawn: i < 25,
+            })
+            .collect();
+        let (pics, names) = (HashMap::new(), HashMap::new());
+        let grown = [
+            None,
+            Some(wide::Tile::Stage),
+            Some(wide::Tile::Items),
+            Some(wide::Tile::Weight),
+            Some(wide::Tile::Makers),
+            Some(wide::Tile::Places),
+            Some(wide::Tile::Figures),
+            Some(wide::Tile::Prims),
+        ];
+        for (tile, opened) in grown.into_iter().flat_map(|t| [(t, None), (t, Some(Uuid::from_u128(4)))]) {
+            for subject in [Subject::Avatar(Uuid::from_u128(99)), Subject::Objects] {
+                crate::ui::widgets::steady_tests::assert_window_steady(
+                    "inspect",
+                    &[Vec2::new(800.0, 760.0)],
+                    aurora_i18n::tr!("inspect-creator-button"),
+                    || {
+                        let mut ui = InspectUi {
+                            open: true,
+                            subject,
+                            opened,
+                            selected: opened,
+                            ..Default::default()
+                        };
+                        ui.wide.grown = tile;
+                        ui
+                    },
+                    |ui, ctx, p| {
+                        let (mut columns, mut view, mut saved) = (ALL_COLUMNS, InspectView::default(), true);
+                        ui.show(
+                            ctx,
+                            p,
+                            Frame {
+                                rows: &rows,
+                                totals: &Totals::default(),
+                                subject_name: "Mira Solvane",
+                                subject_username: Some("mira.solvane"),
+                                subject_profile: Some(Uuid::from_u128(99)),
+                                pics: &pics,
+                                point_names: &names,
+                                max_complexity: 150_000,
+                                people: &people,
+                                parcel: Some((900, 1_000)),
+                                columns: &mut columns,
+                                view: &mut view,
+                            },
+                            &mut saved,
+                        );
+                    },
+                );
+            }
+        }
     }
 
     #[test]

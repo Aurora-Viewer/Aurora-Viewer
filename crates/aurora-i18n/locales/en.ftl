@@ -362,18 +362,14 @@ toolbar-command-chat-bar = Chat bar
 toolbar-command-area-search = Area search
 
 # Area Search (issue #930).
-area-search-hint = Search objects, descriptions, owners, creators or UUIDs…
 area-search-refresh = Refresh
 area-search-parcel = Current parcel only
-area-search-children = Include linked prims
 area-search-mine = My objects
 area-search-filters = Filters
 area-search-sale = For sale
 area-search-physical = Physical
 area-search-phantom = Phantom
 area-search-temporary = Temporary
-area-search-distance = Maximum distance
-area-search-reset = Reset filters
 area-search-count = { $shown } / { $total } objects · { $pending } waiting for details
 area-search-parcel-pending = Waiting for the current parcel boundaries…
 area-search-scope = Only objects received by the viewer are listed.
@@ -382,7 +378,6 @@ area-search-price = Price
 area-search-inspect = Inspect
 area-search-zoom = Zoom
 area-search-copy = Copy UUID
-area-search-neighbors = Include neighboring regions
 area-search-demo-description = Offline object for testing search and filters
 area-search-empty = No objects match these filters.
 area-search-sit = Sit
@@ -15763,25 +15758,12 @@ area-search-last-owner = Last owner
 area-search-land-impact = Land impact
 area-search-prim-count = Prim count
 
-area-search-search = Search
-area-search-columns = Columns
-area-search-regex = Use regular expressions
 area-search-regex-error = Regular expression: { $error }
 
-area-search-required = Only list objects that are
-area-search-excluded = Exclude objects that are
-area-search-ranges = Distance and sale price
-area-search-attachment = Attachments
 area-search-media = Shared media
 area-search-copy-perm = Copy
 area-search-modify-perm = Modify
 area-search-transfer-perm = Transfer
-area-search-probes = Reflection probes
-area-search-child-prim = Child prims
-area-search-neighbor-regions = In neighboring regions
-area-search-distance-range = Distance
-area-search-min = Min
-area-search-max = Max
 area-search-click-action = Mouse click action
 area-search-click-unrestricted = Unrestricted
 area-search-click-any = Any action
@@ -15795,15 +15777,108 @@ area-search-reset-columns = Reset columns
 
 area-search-regex-limit = Matching limit exceeded. Simplify the expression.
 
-area-search-reset-all-tip = Reset the entire search.
-area-search-reset-search-tip = Clear search fields and regular expressions.
-area-search-reset-options-tip = Restore original filter options.
 area-search-reset-columns-tip = Restore default columns.
 
-area-search-range-options = Ranges
-area-search-reset-ranges-tip = Restore default distance and sale price ranges.
 
-area-search-results = Results
+area-search-metres = { $n } m
+area-search-band-reach = Within reach
+area-search-band-close = Close by
+area-search-band-around = Around you
+area-search-band-further = Further
+area-search-band-far = Far
+area-search-band = Area
+area-search-under = under { $distance }
+area-search-beyond = beyond { $distance }
+area-search-within = Within { $distance }
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Show every distance
+area-search-from = Distance from
+area-search-to = Distance to
+area-search-bar-tip = { $count ->
+    [one] One object, { $from } to { $to }
+   *[other] { $count } objects, { $from } to { $to }
+}
+area-search-of-objects = of { $total } objects
+area-search-li = { $value } LI
+area-search-li-count = { $value } land impact
+area-search-owner-count = { $count ->
+    [one] one owner
+   *[other] { $count } owners
+}
+area-search-object-count = { $count ->
+    [one] one object
+   *[other] { $count } objects
+}
+area-search-objects-word = objects
+area-search-in-reach = here
+area-search-tab-objects = Objects
+area-search-tab-owners = Owners
+area-search-tab-details = Details
+area-search-col-distance = Dist.
+area-search-col-li = LI
+area-search-filters-count = Filters · { $count }
+area-search-hint-short = Search objects, owners, creators…
+area-search-hint-wide = Objects, owners, creators or UUIDs
+area-search-clear-tip = Take every filter away: every object here is listed
+area-search-chip-hidden = { $name }: hidden. Click to list them again.
+area-search-chip-field = { $name }: { $text }
+area-search-chip-click = { $action } on click
+area-search-show = { $count ->
+    [one] Show one object
+   *[other] Show { $count } objects
+}
+area-search-kind-heading = Kind of object
+area-search-kind-tip = Click: only these. Again: hidden.
+area-search-kind-any = any
+area-search-kind-only = only these
+area-search-kind-hidden = Hidden
+area-search-kind-attached = Attached
+area-search-kind-probes = Probes
+area-search-click-all = All
+area-search-click-any-short = Any
+area-search-permissions = Permissions
+area-search-price-heading = Sale price, for objects for sale
+area-search-price-to = to
+area-search-price-tip = Pick “For sale” first
+area-search-where = Where and whose
+area-search-linked = Linked prims
+area-search-neighbouring = Neighbouring regions
+area-search-one-field = Search in one field
+area-search-regex-switch = Regular expressions
+area-search-regex-invalid = Not a valid regular expression
+area-search-reset-filters-tip = Restore every filter; the search text stays
+area-search-save-defaults-tip = Open with these filters from now on
+area-search-reset-search = Reset the search texts
+area-search-reset-filters = Reset the filter options
+area-search-reset-ranges = Reset distance and price
+area-search-reset-all = Reset everything
+area-search-more = More
+area-search-live = Live
+area-search-several = Select several
+area-search-several-tip = Clicks add to the selection (also Ctrl or Shift + click, Ctrl+A)
+area-search-actions = Actions
+area-search-nothing = No objects received yet.
+area-search-nothing-for-sale = Nothing for sale here.
+area-search-not-for-sale = Not for sale
+area-search-from-price = from { $price }
+area-search-nearest = Nearest first
+area-search-heaviest = Heaviest first
+area-search-order-tip = Change the order: nearest or heaviest first
+area-search-rank = #{ $rank } of { $all }
+area-search-rank-here = #{ $rank } here
+area-search-card-more = Show every figure
+area-search-card-less = Show less
+area-search-open-group = Open the group
+area-search-spoken = { $name }, { $distance }, land impact { $li }, owned by { $owner }
+area-search-owner-spoken = { $name }, { $count } objects, land impact { $li }
+area-search-stage-line = { $distance } away · { $li } land impact · { $owner }
+area-search-tile-3d = 3D view
+area-search-on = { $count } on
+area-search-on-word = on
+area-search-more-on = { $count ->
+    [one] one more filter on
+   *[other] { $count } more filters on
+}
 
 # Applied local textures and materials (#1375).
 local-appearance-warning = { $count ->

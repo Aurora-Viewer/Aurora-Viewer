@@ -4,34 +4,69 @@
 //! The right-click menu of the results follows menu_fs_area_search.xml and
 //! FSPanelAreaSearchList::onContextMenuItemClick / onContextMenuItemEnable.
 
-mod controls;
+mod chart;
+mod list;
 mod model;
 mod selection;
+mod sheet;
+mod small;
 mod table;
 #[cfg(test)]
 mod tests;
+mod wide;
 pub(crate) use selection::Selection;
 pub(crate) use table::{Column, Filters, Row, Table};
 
+use super::board;
 use super::menu;
 use super::widgets::{self, Floater};
+use crate::settings::area_search::{AreaSearch, DEFAULT_COLUMNS};
 use crate::theme::Palette;
-use egui::{RichText, Sense, Vec2};
-use std::collections::HashSet;
+use egui::{RichText, TextureHandle, Vec2};
+use model::Digest;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub const WINDOW: &str = "area_search";
+
+/// The small window and the wide one.
+const VIEWS: board::Views = board::Views {
+    window: WINDOW,
+    small: Vec2::new(430.0, 760.0),
+    wide: Vec2::new(800.0, 760.0),
+    from: 680.0,
+};
 
 #[derive(Default)]
 pub struct AreaSearchUi {
     pub(crate) table: Table,
     visible_columns: Option<[bool; 10]>,
-    demo_columns: bool,
     pub(crate) save_defaults: bool,
     pub(crate) selection: Selection,
     pub(crate) refresh: bool,
-    /// At most one inline form is expanded, leaving rows visible below it.
-    expanded: Option<controls::Section>,
+    /// Clicks add to the selection ("Select several").
+    several: bool,
+    /// The details card shows every figure.
+    card_open: bool,
+    /// Objects, Owners, Details: the small window's tabs.
+    tab: usize,
+    /// The small window shows its filters.
+    sheet: bool,
+    /// The wide window's grown tile.
+    grown: Option<wide::Tile>,
+    /// The 3D view of the wide window.
+    pub(crate) stage: super::object_stage::StageUi,
+    /// The prim outlined in the 3D view.
+    prim: Option<Uuid>,
+    /// Profile pictures the window shows, for the app to fetch.
+    pub(crate) wanted_pics: HashSet<Uuid>,
+    /// What the results come to, and the list it was made from.
+    digest: Option<(u64, Arc<Digest>)>,
+    /// The window was open last frame.
+    was_open: bool,
+    /// AURORA_DEMO_AREA_SEARCH's view; None: the one chosen last.
+    pub(crate) forced_wide: Option<bool>,
     /// Where the right-click menu opened.
     menu_at: Option<egui::Pos2>,
     /// What RLVa hides of that menu, asked once as it opens: the selection
@@ -41,6 +76,37 @@ pub struct AreaSearchUi {
     checked: u64,
     /// AURORA_DEMO_AREA_SEARCH=menu: right click the second row once shown.
     pub(crate) demo_menu: bool,
+    /// `select`: take the third row once shown.
+    pub(crate) demo_select: bool,
+}
+
+/// What the resets take back (the "…" menu).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Section {
+    All,
+    Search,
+    Filters,
+    Ranges,
+    Columns,
+}
+
+/// Figures of the single selected object that the list does not hold.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Facts {
+    pub triangles: u32,
+    pub texture_memory: u64,
+}
+
+/// What the window needs from the app this frame.
+pub struct Env<'a> {
+    /// The boundaries of the current parcel are known.
+    pub parcel_known: bool,
+    /// Zoom is enabled within it (onContextMenuItemEnable "in_dd").
+    pub draw_distance: f32,
+    /// What RLVa refuses on the rows a menu opens on.
+    pub locks: &'a dyn Fn(&[Uuid]) -> MenuLocks,
+    pub pics: &'a HashMap<Uuid, TextureHandle>,
+    pub facts: Option<Facts>,
 }
 
 /// What the window asks of the viewer. Several objects: every selected row,
@@ -59,6 +125,9 @@ pub enum Action {
     Buy(Uuid),
     /// "Filter My Objects": the owner field set to our name.
     FilterMine,
+    /// The profile of an owner or a creator, or of the group that owns.
+    Profile(Uuid),
+    Group(Uuid),
 }
 
 /// What RLVa refuses on at least one selected row, by the words of the
@@ -96,158 +165,67 @@ impl MenuLocks {
 }
 
 impl AreaSearchUi {
-    /// `draw_distance` enables Zoom (onContextMenuItemEnable "in_dd");
-    /// `locks` answers for the rows a right click opens the menu on.
-    pub fn show(
+    /// Whether the window shows its board of tiles this frame.
+    pub(crate) fn is_wide(&self, ctx: &egui::Context, saved: bool) -> bool {
+        board::is_wide(ctx, &VIEWS, saved, !self.was_open)
+    }
+
+    /// The window is closed: what it keeps only while shown goes.
+    pub(crate) fn closed(&mut self) {
+        self.was_open = false;
+        self.digest = None;
+        self.several = false;
+    }
+
+    /// The objects the 3D view shows: the selected ones, a few at most.
+    pub(crate) fn staged(&self) -> &[Uuid] {
+        const MOST: usize = 12;
+        &self.selection.ids[..self.selection.ids.len().min(MOST)]
+    }
+
+    pub(crate) fn show(
         &mut self,
         ctx: &egui::Context,
         p: &Palette,
         open: &mut bool,
-        parcel_known: bool,
-        draw_distance: f32,
-        locks: &dyn Fn(&[Uuid]) -> MenuLocks,
+        saved_wide: &mut bool,
+        env: &Env<'_>,
     ) -> Option<Action> {
         let mut action = None;
+        let wide = self.is_wide(ctx, *saved_wide);
+        self.was_open = true;
         let mut window = Floater::new(
             WINDOW,
             aurora_i18n::tr!("toolbar-command-area-search"),
-            egui::pos2(250.0, 120.0),
-            Vec2::new(800.0, 550.0),
+            egui::pos2(250.0, 60.0),
+            VIEWS.size(ctx, *saved_wide),
         );
-        window.min_size = Vec2::new(560.0, 350.0);
+        window.min_size = Vec2::new(380.0, 420.0);
+        let (mut resize, mut refresh) = (false, false);
+        let (icon, tip) = board::size_button(wide);
+        let mut window = window.action(icon, tip, &mut resize);
+        if !wide {
+            window = window
+                .action("refresh", aurora_i18n::tr!("area-search-refresh"), &mut refresh)
+                .title_state(p.success, aurora_i18n::tr!("area-search-live"));
+        }
         window.show(ctx, p, open, |ui| {
-            ui.horizontal(|ui| {
-                let refresh_label = aurora_i18n::tr!("area-search-refresh");
-                let refresh_width = widgets::action_button_fit(ui, "refresh", refresh_label);
-                let width = (ui.available_width() - refresh_width - ui.spacing().item_spacing.x)
-                    .max(120.0)
-                    .floor();
-                widgets::clearable_search_box(ui, p, &mut self.table.filters.query, aurora_i18n::tr!("area-search-hint"), width);
-                if widgets::action_button(
-                    ui,
-                    p,
-                    "refresh",
-                    refresh_label,
-                    widgets::ActionKind::Flat,
-                    Vec2::new(refresh_width, 26.0),
-                )
-                .clicked()
-                {
-                    self.refresh = true;
+            let d = self.digest();
+            let (mut body, footer) = widgets::above_footer(ui);
+            action = if wide {
+                wide::show(self, &mut body, p, env, &d)
+            } else {
+                small::show(self, &mut body, p, env, &d)
+            };
+            footer.show(ui, |ui| {
+                if let Some(asked) = self.footer(ui, p, env, &d, wide) {
+                    action = Some(asked);
                 }
             });
-            self.table.prepare();
-            ui.label(
-                RichText::new(aurora_i18n::tr!(
-                    "area-search-count",
-                    shown = self.table.visible.len() as i64,
-                    total = self.table.rows.len() as i64,
-                    pending = self.table.pending as i64
-                ))
-                .size(12.0)
-                .color(p.muted),
-            );
-            self.controls(ui, p);
-            if let Some(error) = &self.table.regex_error {
-                ui.label(RichText::new(aurora_i18n::tr!("area-search-regex-error", error = error.as_str())).color(p.warn));
-            }
-            self.table.prepare();
-            self.check_selection();
-            if self.table.filters.parcel_only && !parcel_known {
-                ui.label(RichText::new(aurora_i18n::tr!("area-search-parcel-pending")).color(p.warn));
-            }
-            ui.label(RichText::new(aurora_i18n::tr!("area-search-scope")).size(11.0).color(p.muted));
-            let (mut table_ui, footer) = widgets::above_footer(ui);
-            let mut columns = self.columns();
-            let minima: Vec<_> = columns.iter().map(|(column, _)| column_min_width(ui, *column)).collect();
-            let minimum: f32 = minima.iter().sum();
-            let table_width = table_ui.available_width().max(minimum + 16.0);
-            egui::ScrollArea::horizontal()
-                .id_salt("area_search_horizontal")
-                .auto_shrink([false, false])
-                .show(&mut table_ui, |ui| {
-                    ui.set_width(table_width);
-
-                    let width = widgets::header_width(ui, ui.scope_id().with("area_search_rows"));
-                    let extra = (width - minimum).max(0.0);
-                    for ((_, fraction), min) in columns.iter_mut().zip(&minima) {
-                        *fraction = (*min + extra * *fraction) / width;
-                    }
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        for &(column, fraction) in &columns {
-                            let label = column.label();
-                            let label = if self.table.sort == column {
-                                format!("{label} {}", if self.table.descending { "↓" } else { "↑" })
-                            } else {
-                                label.to_owned()
-                            };
-                            if ui
-                                .add_sized([width * fraction - 4.0, 24.0], egui::Button::new(label).truncate())
-                                .on_hover_text(column.label())
-                                .clicked()
-                            {
-                                self.table.descending = self.table.sort == column && !self.table.descending;
-                                self.table.sort = column;
-                                self.table.dirty = true;
-                            }
-                        }
-                    });
-                    self.table.prepare();
-                    self.check_selection();
-                    if self.table.visible.is_empty() {
-                        ui.label(RichText::new(aurora_i18n::tr!("area-search-empty")).color(p.muted));
-                    }
-                    let height = ui.available_height();
-                    let list = egui::ScrollArea::vertical()
-                        .id_salt("area_search_rows")
-                        .max_height(height)
-                        .auto_shrink([false, false])
-                        .show_rows(ui, 25.0, self.table.visible.len(), |ui, range| {
-                            for i in range {
-                                let row = &self.table.rows[self.table.visible[i]];
-                                let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 25.0), Sense::click());
-                                let selected = self.selection.contains(&row.id);
-                                if selected || response.hovered() {
-                                    let color = if selected { p.violet.gamma_multiply(0.28) } else { p.raised };
-                                    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, color);
-                                }
-                                let mut x = rect.left();
-                                for &(column, fraction) in &columns {
-                                    let w = rect.width() * fraction;
-                                    let text = row.cell(column);
-                                    let mut job = egui::text::LayoutJob::simple_singleline(text, egui::FontId::proportional(12.0), p.ink);
-                                    job.wrap = egui::text::TextWrapping::truncate_at_width(w - 10.0);
-                                    let galley = ui.painter().layout_job(job);
-                                    let at = widgets::row_text_origin(ui.painter(), &galley, x + 4.0, rect.center().y);
-                                    ui.painter().galley(at, galley, p.ink);
-                                    x += w;
-                                }
-                                if response.clicked() {
-                                    let m = ui.input(|i| i.modifiers);
-                                    let (rows, visible) = (&self.table.rows, &self.table.visible);
-                                    self.selection
-                                        .click(row.id, m.command, m.shift, || visible.iter().map(|i| rows[*i].id).collect());
-                                }
-                                if response.double_clicked() && !ui.input(|i| i.modifiers.command || i.modifiers.shift) {
-                                    action = Some(Action::Zoom(row.id));
-                                }
-                                let demo = self.demo_menu && i == 1;
-                                if response.secondary_clicked() || demo {
-                                    self.demo_menu = false;
-                                    self.selection.context_click(row.id);
-                                    self.menu_locks = locks(&self.selection.ids);
-                                    self.menu_at = Some(response.interact_pointer_pos().unwrap_or(rect.center()));
-                                    egui::Popup::open_id(ui.ctx(), menu_id());
-                                }
-                                response.on_hover_text(format!("{}\n{}\n{}", row.name, row.description, row.id));
-                            }
-                        });
-                    widgets::remember_scroll_bar(ui, ui.scope_id().with("area_search_rows"), &list);
-                });
+            self.table.filters.normalize();
             if let Some(pos) = self.menu_at {
                 let mut chosen = None;
-                menu::context_menu_at(ui, menu_id(), pos, p, |ui| chosen = self.menu(ui, p, draw_distance));
+                menu::context_menu_at(ui, menu_id(), pos, p, |ui| chosen = self.menu(ui, p, env.draw_distance));
                 if !egui::Popup::is_id_open(ui.ctx(), menu_id()) {
                     self.menu_at = None;
                 }
@@ -255,61 +233,245 @@ impl AreaSearchUi {
                     action = chosen;
                 }
             }
-            footer.show(ui, |ui| {
-                let reset = controls::page_footer(ui, p, controls::Section::All, |ui| {
-                    let single = self.selection.single();
-                    let ids = &self.selection.ids;
-                    ui.add_enabled_ui(!ids.is_empty(), |ui| {
-                        if widgets::action_button(
-                            ui,
-                            p,
-                            "zoom-scan-filled",
-                            aurora_i18n::tr!("area-search-inspect"),
-                            widgets::ActionKind::Flat,
-                            Vec2::new(0.0, 28.0),
-                        )
-                        .clicked()
-                        {
-                            action = Some(Action::Inspect(ids.clone()));
-                        }
-                        if ui
-                            .add_enabled_ui(single.is_some(), |ui| {
-                                widgets::action_button(
-                                    ui,
-                                    p,
-                                    "zoom-in-filled",
-                                    aurora_i18n::tr!("area-search-zoom"),
-                                    widgets::ActionKind::Flat,
-                                    Vec2::new(0.0, 28.0),
-                                )
-                            })
-                            .inner
-                            .clicked()
-                            && let Some(id) = single
-                        {
-                            action = Some(Action::Zoom(id));
-                        }
-                        if widgets::action_button(
-                            ui,
-                            p,
-                            "copy-filled",
-                            aurora_i18n::tr!("area-search-copy"),
-                            widgets::ActionKind::Flat,
-                            Vec2::new(0.0, 28.0),
-                        )
-                        .clicked()
-                        {
-                            let ids: Vec<_> = ids.iter().map(Uuid::to_string).collect();
-                            ui.ctx().copy_text(ids.join("\n"));
-                        }
-                    });
-                });
-                if reset {
-                    self.reset_section(controls::Section::All);
+        });
+        self.refresh |= refresh;
+        board::after(ctx, &VIEWS, resize, wide, saved_wide);
+        action
+    }
+
+    /// What the results come to, made again with each new list.
+    fn digest(&mut self) -> Arc<Digest> {
+        self.table.prepare();
+        // an owner who has nothing left here holds nothing back
+        if let Some(owner) = self.table.owner
+            && !self.table.rows.iter().any(|r| r.owner_id == owner)
+            && !self.table.rows.is_empty()
+        {
+            self.table.owner = None;
+            self.table.prepare();
+        }
+        if self.demo_select && self.table.visible.len() > 2 && self.table.pending == 0 {
+            self.demo_select = false;
+            self.selection
+                .click(self.table.rows[self.table.visible[2]].id, false, false, Vec::new);
+        }
+        self.check_selection();
+        let generation = self.table.generation;
+        if let Some((made, digest)) = &self.digest
+            && *made == generation
+        {
+            return digest.clone();
+        }
+        let digest = Arc::new(Digest::of(&self.table));
+        self.digest = Some((generation, digest.clone()));
+        digest
+    }
+
+    /// The count, the notices and the buttons of what is selected.
+    fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, env: &Env<'_>, _d: &Digest, wide: bool) -> Option<Action> {
+        let mut action = None;
+        let count = aurora_i18n::tr!(
+            "area-search-count",
+            shown = self.table.visible.len() as i64,
+            total = self.table.rows.len() as i64,
+            pending = self.table.pending as i64
+        );
+        let notice = if let Some(error) = &self.table.regex_error {
+            Some((
+                aurora_i18n::tr!("area-search-regex-invalid").to_owned(),
+                aurora_i18n::tr!("area-search-regex-error", error = error.as_str()),
+            ))
+        } else if self.table.filters.parcel_only && !env.parcel_known {
+            let text = aurora_i18n::tr!("area-search-parcel-pending").to_owned();
+            Some((text.clone(), text))
+        } else {
+            None
+        };
+        let any = !self.selection.is_empty();
+        let single = self.selection.single();
+        let size = Vec2::new(0.0, 26.0);
+        let kind = |on: bool| {
+            if on {
+                widgets::ActionKind::Primary
+            } else {
+                widgets::ActionKind::Flat
+            }
+        };
+        ui.horizontal(|ui| {
+            ui.set_min_height(28.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if any {
+                    let b = widgets::action_button(ui, p, "", aurora_i18n::tr!("area-search-actions"), kind(false), size);
+                    if b.clicked() {
+                        let at = b.rect.left_top();
+                        self.open_menu(ui, env, at);
+                    }
                 }
+                // (the small window has the keyboard's and the menu's ways)
+                if wide || !any {
+                    let label = aurora_i18n::tr!("area-search-several");
+                    if widgets::action_button(ui, p, "", label, kind(self.several), size)
+                        .on_hover_text(aurora_i18n::tr!("area-search-several-tip"))
+                        .clicked()
+                    {
+                        self.several = !self.several;
+                    }
+                }
+                if any {
+                    if widgets::action_button(ui, p, "", aurora_i18n::tr!("area-search-copy"), kind(false), size).clicked() {
+                        let ids: Vec<_> = self.selection.ids.iter().map(Uuid::to_string).collect();
+                        ui.ctx().copy_text(ids.join("\n"));
+                    }
+                    let zoom = aurora_i18n::tr!("area-search-zoom");
+                    if widgets::action_button_if(ui, p, "", zoom, kind(false), size, single.is_some()).clicked()
+                        && let Some(id) = single
+                    {
+                        action = Some(Action::Zoom(id));
+                    }
+                    if widgets::action_button(ui, p, "", aurora_i18n::tr!("area-search-inspect"), kind(false), size).clicked() {
+                        action = Some(Action::Inspect(self.selection.ids.clone()));
+                    }
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    widgets::status_dot(ui, p.violet);
+                    let text = match &notice {
+                        Some((short, _)) => RichText::new(short).size(11.5).color(p.warn),
+                        None if any && !wide => {
+                            let n = aurora_i18n::tr!("inspect-selected-count", count = self.selection.ids.len());
+                            RichText::new(n).size(11.5).color(p.muted)
+                        }
+                        None => RichText::new(&count).size(11.5).color(p.muted),
+                    };
+                    let tip = match &notice {
+                        Some((_, long)) => format!("{long}\n{count}"),
+                        None => format!("{count}\n{}", aurora_i18n::tr!("area-search-scope")),
+                    };
+                    ui.add(egui::Label::new(text).truncate()).on_hover_text(tip);
+                });
             });
         });
         action
+    }
+
+    /// AURORA_DEMO_AREA_SEARCH's options, separated by commas.
+    pub(crate) fn demo_controls(&mut self, mode: &str) {
+        for option in mode.split(',') {
+            match option {
+                "wide" => self.forced_wide = Some(true),
+                "small" => self.forced_wide = Some(false),
+                "filters" | "scope" | "ranges" | "fields" => {
+                    self.sheet = true;
+                    self.grown = Some(wide::Tile::Filters);
+                }
+                "regex" => {
+                    self.table.filters.regex = true;
+                    self.table.filters.name = "(".into();
+                }
+                "owners" => {
+                    self.tab = 1;
+                    self.grown = Some(wide::Tile::Owners);
+                }
+                "table" | "columns" => {
+                    self.tab = 2;
+                    self.grown = Some(wide::Tile::Objects);
+                }
+                "distance" => self.grown = Some(wide::Tile::Distance),
+                "sale-list" => self.grown = Some(wide::Tile::Sale),
+                "3d" => self.grown = Some(wide::Tile::Stage),
+                "card" => self.card_open = true,
+                "all-columns" => {
+                    self.tab = 2;
+                    self.grown = Some(wide::Tile::Objects);
+                    self.visible_columns = Some([true; 10]);
+                }
+                "link" => {
+                    let f = Filters {
+                        name: aurora_i18n::tr!("demo-fountain").into(),
+                        ..Default::default()
+                    };
+                    if let Some(crate::slapp::AppLink::AreaSearch(filters)) = crate::slapp::parse(&f.link()) {
+                        self.open_filters(*filters);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub(crate) fn from_saved(saved: &AreaSearch) -> Self {
+        let mut saved = saved.clone();
+        saved.normalize();
+        let mut ui = Self::default();
+        ui.table.filters = saved.filters;
+        ui.visible_columns = Some(saved.columns);
+        ui
+    }
+
+    pub(crate) fn saved_columns(&self) -> [bool; 10] {
+        self.visible_columns.unwrap_or(DEFAULT_COLUMNS)
+    }
+
+    pub(crate) fn open_filters(&mut self, filters: Filters) {
+        self.table.filters = filters;
+        self.table.filters.normalize();
+        self.table.owner = None;
+        self.refresh = true;
+    }
+
+    /// "Filter my objects" fills a field: the sheet shows it.
+    pub(crate) fn reveal_search(&mut self) {
+        self.sheet = true;
+        self.grown = Some(wide::Tile::Filters);
+    }
+
+    fn reset_section(&mut self, section: Section) {
+        let defaults = Filters::default();
+        let f = &mut self.table.filters;
+        match section {
+            Section::All => {
+                *f = defaults;
+                self.table.owner = None;
+            }
+            Section::Search => *f = f.without_search(),
+            // everything but the search texts and the ranges
+            Section::Filters => {
+                let kept = f.clone();
+                *f = Filters {
+                    query: kept.query,
+                    name: kept.name,
+                    description: kept.description,
+                    owner: kept.owner,
+                    creator: kept.creator,
+                    group: kept.group,
+                    last_owner: kept.last_owner,
+                    regex: kept.regex,
+                    sale: kept.sale,
+                    min_price: kept.min_price,
+                    max_price: kept.max_price,
+                    distance_on: kept.distance_on,
+                    min_distance: kept.min_distance,
+                    max_distance: kept.max_distance,
+                    ..defaults
+                };
+                self.table.owner = None;
+            }
+            Section::Ranges => {
+                f.sale = defaults.sale;
+                f.min_price = defaults.min_price;
+                f.max_price = defaults.max_price;
+                f.distance_on = defaults.distance_on;
+                f.min_distance = defaults.min_distance;
+                f.max_distance = defaults.max_distance;
+            }
+            Section::Columns => {
+                self.visible_columns = Some(DEFAULT_COLUMNS);
+                return;
+            }
+        }
+        self.table.filters.normalize();
+        self.table.prepare();
+        self.check_selection();
     }
 
     /// Selected rows that were filtered out or left the list cannot be
@@ -450,35 +612,4 @@ impl AreaSearchUi {
 
 fn menu_id() -> egui::Id {
     egui::Id::unique("area_search_menu")
-}
-
-impl AreaSearchUi {
-    fn columns(&self) -> Vec<(Column, f32)> {
-        let shown = self
-            .visible_columns
-            .unwrap_or([true, true, true, true, true, false, true, false, false, false]);
-        let weights = [0.16, 0.29, 0.26, 0.10, 0.16, 0.10, 0.23, 0.23, 0.23, 0.23];
-        let total: f32 = weights.iter().zip(shown).filter_map(|(w, on)| on.then_some(w)).sum();
-        Column::ALL
-            .into_iter()
-            .zip(weights)
-            .zip(shown)
-            .filter_map(|((column, weight), on)| on.then_some((column, weight / total)))
-            .collect()
-    }
-}
-
-/// Keep optional columns readable. Overflow scrolls the header and virtualized
-/// rows together rather than reducing numeric headers to indistinguishable dots.
-fn column_min_width(ui: &egui::Ui, column: Column) -> f32 {
-    let content: f32 = match column {
-        Column::Name => 130.0,
-        Column::Description => 150.0,
-        Column::Owner | Column::Group | Column::Creator | Column::LastOwner => 140.0,
-        Column::LandImpact | Column::PrimCount => 90.0,
-        Column::Distance | Column::Price => 72.0,
-    };
-    let font = egui::TextStyle::Button.resolve(ui.style());
-    let label = ui.painter().layout_no_wrap(column.label().into(), font, ui.visuals().text_color());
-    content.max(label.size().x + 2.0 * ui.spacing().button_padding.x + 24.0)
 }

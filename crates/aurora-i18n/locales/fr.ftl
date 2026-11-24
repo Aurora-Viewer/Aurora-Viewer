@@ -362,18 +362,14 @@ toolbar-command-chat-bar = Barre de chat
 toolbar-command-area-search = Recherche d’objets
 
 # Area Search (issue #930).
-area-search-hint = Objets, descriptions, propriétaires, créateurs ou UUID…
 area-search-refresh = Actualiser
 area-search-parcel = Parcelle actuelle uniquement
-area-search-children = Inclure les prims liés
 area-search-mine = Mes objets
 area-search-filters = Filtres
 area-search-sale = À vendre
 area-search-physical = Physique
 area-search-phantom = Fantôme
 area-search-temporary = Temporaire
-area-search-distance = Distance maximale
-area-search-reset = Réinitialiser les filtres
 area-search-count = { $shown } / { $total } objets · { $pending } en attente de détails
 area-search-parcel-pending = En attente des limites de la parcelle actuelle…
 area-search-scope = Seuls les objets reçus par le visualiseur sont listés.
@@ -382,7 +378,6 @@ area-search-price = Prix
 area-search-inspect = Inspecter
 area-search-zoom = Zoomer
 area-search-copy = Copier l’UUID
-area-search-neighbors = Inclure les régions voisines
 area-search-demo-description = Objet hors ligne pour tester la recherche et les filtres
 area-search-empty = Aucun objet ne correspond à ces filtres.
 area-search-sit = S'asseoir
@@ -15771,25 +15766,12 @@ area-search-last-owner = Dernier propriétaire
 area-search-land-impact = Impact sur le terrain
 area-search-prim-count = Nombre de primitives
 
-area-search-search = Rechercher
-area-search-columns = Colonnes
-area-search-regex = Utiliser les expressions régulières
 area-search-regex-error = Expression régulière : { $error }
 
-area-search-required = Ne lister que les objets qui sont
-area-search-excluded = Exclure les objets qui sont
-area-search-ranges = Distance et prix de vente
-area-search-attachment = Pièces jointes
 area-search-media = Média partagé
 area-search-copy-perm = Copie
 area-search-modify-perm = Modification
 area-search-transfer-perm = Transfert
-area-search-probes = Sondes de réflexion
-area-search-child-prim = Prims enfants
-area-search-neighbor-regions = Dans les régions voisines
-area-search-distance-range = Distance
-area-search-min = Min
-area-search-max = Max
 area-search-click-action = Action au clic de souris
 area-search-click-unrestricted = Sans restriction
 area-search-click-any = Toute action
@@ -15803,15 +15785,108 @@ area-search-reset-columns = Réinitialiser les colonnes
 
 area-search-regex-limit = Limite de recherche dépassée. Simplifiez l'expression.
 
-area-search-reset-all-tip = Réinitialiser toute la recherche.
-area-search-reset-search-tip = Effacer les champs de recherche et les expressions régulières.
-area-search-reset-options-tip = Rétablir les options de filtrage d’origine.
 area-search-reset-columns-tip = Rétablir les colonnes par défaut.
 
-area-search-range-options = Plages
-area-search-reset-ranges-tip = Rétablir les plages de distance et de prix par défaut.
 
-area-search-results = Résultats
+area-search-metres = { $n } m
+area-search-band-reach = À portée
+area-search-band-close = Tout près
+area-search-band-around = Autour de vous
+area-search-band-further = Plus loin
+area-search-band-far = Loin
+area-search-band = Zone
+area-search-under = moins de { $distance }
+area-search-beyond = au-delà de { $distance }
+area-search-within = À moins de { $distance }
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Montrer toutes les distances
+area-search-from = Distance à partir de
+area-search-to = Distance jusqu’à
+area-search-bar-tip = { $count ->
+    [one] Un objet, de { $from } à { $to }
+   *[other] { $count } objets, de { $from } à { $to }
+}
+area-search-of-objects = sur { $total } objets
+area-search-li = { $value } IS
+area-search-li-count = { $value } d’impact sur le terrain
+area-search-owner-count = { $count ->
+    [one] un propriétaire
+   *[other] { $count } propriétaires
+}
+area-search-object-count = { $count ->
+    [one] un objet
+   *[other] { $count } objets
+}
+area-search-objects-word = objets
+area-search-in-reach = ici
+area-search-tab-objects = Objets
+area-search-tab-owners = Propriétaires
+area-search-tab-details = Détails
+area-search-col-distance = Dist.
+area-search-col-li = IS
+area-search-filters-count = Filtres · { $count }
+area-search-hint-short = Chercher objets, propriétaires, créateurs…
+area-search-hint-wide = Objets, propriétaires, créateurs ou UUID
+area-search-clear-tip = Retirer tous les filtres : tous les objets d’ici sont listés
+area-search-chip-hidden = { $name } : masqués. Cliquez pour les lister de nouveau.
+area-search-chip-field = { $name } : { $text }
+area-search-chip-click = { $action } au clic
+area-search-show = { $count ->
+    [one] Montrer un objet
+   *[other] Montrer { $count } objets
+}
+area-search-kind-heading = Genre d’objet
+area-search-kind-tip = Un clic : seulement ceux-ci. Encore : masqués.
+area-search-kind-any = tous
+area-search-kind-only = seulement ceux-ci
+area-search-kind-hidden = Masqués
+area-search-kind-attached = Attachés
+area-search-kind-probes = Sondes
+area-search-click-all = Tout
+area-search-click-any-short = Toute
+area-search-permissions = Permissions
+area-search-price-heading = Prix, pour les objets à vendre
+area-search-price-to = à
+area-search-price-tip = Choisissez d’abord « À vendre »
+area-search-where = Où et à qui
+area-search-linked = Prims liés
+area-search-neighbouring = Régions voisines
+area-search-one-field = Chercher dans un champ
+area-search-regex-switch = Expressions régulières
+area-search-regex-invalid = Expression régulière non valide
+area-search-reset-filters-tip = Rétablir tous les filtres ; le texte cherché reste
+area-search-save-defaults-tip = Ouvrir désormais avec ces filtres
+area-search-reset-search = Vider les textes cherchés
+area-search-reset-filters = Rétablir les options de filtre
+area-search-reset-ranges = Rétablir distance et prix
+area-search-reset-all = Tout rétablir
+area-search-more = Plus
+area-search-live = En direct
+area-search-several = En choisir plusieurs
+area-search-several-tip = Les clics ajoutent à la sélection (aussi Ctrl ou Maj + clic, Ctrl+A)
+area-search-actions = Actions
+area-search-nothing = Aucun objet reçu pour l’instant.
+area-search-nothing-for-sale = Rien à vendre ici.
+area-search-not-for-sale = Pas à vendre
+area-search-from-price = dès { $price }
+area-search-nearest = Les plus proches
+area-search-heaviest = Les plus lourds
+area-search-order-tip = Changer l’ordre : les plus proches ou les plus lourds d’abord
+area-search-rank = n° { $rank } sur { $all }
+area-search-rank-here = n° { $rank } ici
+area-search-card-more = Montrer tous les chiffres
+area-search-card-less = En montrer moins
+area-search-open-group = Ouvrir le groupe
+area-search-spoken = { $name }, { $distance }, impact { $li }, appartient à { $owner }
+area-search-owner-spoken = { $name }, { $count } objets, impact { $li }
+area-search-stage-line = À { $distance } · impact { $li } · { $owner }
+area-search-tile-3d = Vue 3D
+area-search-on = { $count } actifs
+area-search-on-word = actifs
+area-search-more-on = { $count ->
+    [one] un autre filtre actif
+   *[other] { $count } autres filtres actifs
+}
 
 # Applied local textures and materials (#1375).
 local-appearance-warning = { $count ->

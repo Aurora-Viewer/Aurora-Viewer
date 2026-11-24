@@ -14,6 +14,8 @@
 
 mod build;
 pub mod layout;
+#[cfg(test)]
+mod tests;
 pub use build::{Input, StageModel, Standing};
 
 /// A standing as a key: the same to the eye is the same pose.

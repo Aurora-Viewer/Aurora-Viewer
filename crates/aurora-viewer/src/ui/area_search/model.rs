@@ -95,6 +95,12 @@ pub(super) struct Chart {
     pub reach: f32,
 }
 
+impl Default for Chart {
+    fn default() -> Self {
+        Chart::new(std::iter::empty())
+    }
+}
+
 impl Chart {
     /// `distances` of the rows every filter but the distance keeps. One
     /// region's side at least; as far as the furthest object otherwise, by
@@ -195,6 +201,276 @@ pub(super) fn owners(rows: &[Row], visible: &[usize]) -> Vec<Owner> {
             .then(a.id.cmp(&b.id))
     });
     out
+}
+
+/// A line of the list of objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Line {
+    /// A distance band's heading.
+    Band(usize),
+    /// A row, by its place in `Table::visible`.
+    Row(usize),
+}
+
+/// Everything the window counts, made once per result list.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Digest {
+    pub chart: Chart,
+    pub lines: Vec<Line>,
+    pub bands: [Band; BANDS.len()],
+    pub owners: Vec<Owner>,
+    /// How many owners the results have.
+    pub owner_count: usize,
+    pub land_impact: f32,
+    pub kinds: [u32; Kind::ALL.len()],
+    /// The rows for sale, cheapest first.
+    pub sale: Vec<usize>,
+    /// Land impacts of the results, heaviest first.
+    weights: Vec<f32>,
+}
+
+impl Digest {
+    pub fn of(table: &super::Table) -> Self {
+        let (rows, visible) = (&table.rows, &table.visible);
+        let shown = || visible.iter().map(|i| &rows[*i]);
+        // bands only while the list goes from near to far
+        let banded = table.sort == super::Column::Distance && !table.descending;
+        let mut lines = Vec::with_capacity(visible.len() + BANDS.len());
+        let mut last = None;
+        for (at, i) in visible.iter().enumerate() {
+            let band = band_of(rows[*i].distance);
+            if banded && last != Some(band) {
+                lines.push(Line::Band(band));
+                last = Some(band);
+            }
+            lines.push(Line::Row(at));
+        }
+        let mut kinds = [0; Kind::ALL.len()];
+        for row in shown() {
+            for (count, kind) in kinds.iter_mut().zip(Kind::ALL) {
+                *count += u32::from(kind.is(row));
+            }
+        }
+        let mut sale: Vec<usize> = visible.iter().copied().filter(|i| rows[*i].price.is_some()).collect();
+        sale.sort_by_key(|i| (rows[*i].price, rows[*i].id));
+        let mut weights: Vec<f32> = shown().filter_map(|r| r.land_impact).collect();
+        weights.sort_unstable_by(|a, b| b.total_cmp(a));
+        let owners = owners(rows, &table.unpicked);
+        Digest {
+            chart: Chart::new(table.distances.iter().copied()),
+            lines,
+            bands: bands(shown()),
+            owner_count: if table.owner.is_some() { 1 } else { owners.len() },
+            owners,
+            land_impact: weights.iter().sum(),
+            kinds,
+            sale,
+            weights,
+        }
+    }
+
+    /// The place of a land impact among the results: 1 is the heaviest.
+    pub fn rank(&self, land_impact: f32) -> usize {
+        self.weights.partition_point(|w| *w > land_impact) + 1
+    }
+
+    pub fn ranked(&self) -> usize {
+        self.weights.len()
+    }
+}
+
+impl Kind {
+    /// Whether an object is of this kind, as the filters see it.
+    pub fn is(self, row: &Row) -> bool {
+        match self {
+            Self::Locked => row.loaded && row.owner_mask & aurora_net::build::perm::MOVE == 0,
+            Self::Physical => row.flags & 1 != 0,
+            Self::Phantom => row.flags & (1 << 10) != 0,
+            Self::Temporary => row.flags & (1 << 29) != 0,
+            Self::Attached => row.attachment,
+            Self::Media => row.media,
+            Self::Probe => row.probe,
+            Self::Sale => row.price.is_some(),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Locked => aurora_i18n::tr!("build-ui-object-locked"),
+            Self::Physical => aurora_i18n::tr!("area-search-physical"),
+            Self::Phantom => aurora_i18n::tr!("area-search-phantom"),
+            Self::Temporary => aurora_i18n::tr!("area-search-temporary"),
+            Self::Attached => aurora_i18n::tr!("area-search-kind-attached"),
+            Self::Media => aurora_i18n::tr!("area-search-media"),
+            Self::Probe => aurora_i18n::tr!("area-search-kind-probes"),
+            Self::Sale => aurora_i18n::tr!("area-search-sale"),
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Locked => "lock-filled",
+            Self::Physical => "bounce-right-filled",
+            Self::Phantom => "ghost-2-filled",
+            Self::Temporary => "clock-filled",
+            Self::Attached => "paperclip",
+            Self::Media => "device-tv-filled",
+            Self::Probe => "sphere",
+            Self::Sale => "tag-filled",
+        }
+    }
+}
+
+/// The name of a distance band.
+pub(super) fn band_name(band: usize) -> &'static str {
+    match band {
+        0 => aurora_i18n::tr!("area-search-band-reach"),
+        1 => aurora_i18n::tr!("area-search-band-close"),
+        2 => aurora_i18n::tr!("area-search-band-around"),
+        3 => aurora_i18n::tr!("area-search-band-further"),
+        _ => aurora_i18n::tr!("area-search-band-far"),
+    }
+}
+
+/// A filter that is on, as a chip that takes it away.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum On {
+    Kind(Kind),
+    Click,
+    Copy,
+    Modify,
+    Transfer,
+    Parcel,
+    Mine,
+    Linked,
+    Neighbors,
+    Name,
+    Description,
+    Owner,
+    Group,
+    Creator,
+    LastOwner,
+}
+
+/// The filters that differ from the original ones, the distance aside (the
+/// chart says it). Attachments hidden are one: something is left out.
+pub(super) fn filters_on(f: &Filters) -> Vec<On> {
+    let mut out: Vec<On> = Kind::ALL
+        .into_iter()
+        .filter(|k| k.state(f) != KindState::Any)
+        .map(On::Kind)
+        .collect();
+    let flags = [
+        (On::Click, f.click_action != 0),
+        (On::Copy, f.copy),
+        (On::Modify, f.modify),
+        (On::Transfer, f.transfer),
+        (On::Parcel, f.parcel_only),
+        (On::Mine, f.mine),
+        (On::Linked, f.children),
+        (On::Neighbors, f.neighbors),
+        (On::Name, !f.name.is_empty()),
+        (On::Description, !f.description.is_empty()),
+        (On::Owner, !f.owner.is_empty()),
+        (On::Group, !f.group.is_empty()),
+        (On::Creator, !f.creator.is_empty()),
+        (On::LastOwner, !f.last_owner.is_empty()),
+    ];
+    out.extend(flags.into_iter().filter(|(_, on)| *on).map(|(what, _)| what));
+    out
+}
+
+impl On {
+    /// Back to any.
+    pub fn clear(self, f: &mut Filters) {
+        match self {
+            On::Kind(kind) => kind.set(f, KindState::Any),
+            On::Click => f.click_action = 0,
+            On::Copy => f.copy = false,
+            On::Modify => f.modify = false,
+            On::Transfer => f.transfer = false,
+            On::Parcel => f.parcel_only = false,
+            On::Mine => f.mine = false,
+            On::Linked => f.children = false,
+            On::Neighbors => f.neighbors = false,
+            On::Name => f.name.clear(),
+            On::Description => f.description.clear(),
+            On::Owner => f.owner.clear(),
+            On::Group => f.group.clear(),
+            On::Creator => f.creator.clear(),
+            On::LastOwner => f.last_owner.clear(),
+        }
+    }
+
+    /// Hidden rather than required.
+    pub fn hides(self, f: &Filters) -> bool {
+        matches!(self, On::Kind(kind) if kind.state(f) == KindState::Hidden)
+    }
+
+    pub fn icon(self, f: &Filters) -> &'static str {
+        match self {
+            On::Kind(kind) => kind.icon(),
+            On::Click => CLICK_ICONS[usize::from(f.click_action.min(9))],
+            On::Copy => "copy-filled",
+            On::Modify => "pencil-filled",
+            On::Transfer => "arrows-exchange",
+            On::Parcel => "map-pin-filled",
+            On::Mine => "user-filled",
+            On::Linked => "link",
+            On::Neighbors => "map",
+            _ => "search-filled",
+        }
+    }
+
+    pub fn label(self, f: &Filters) -> String {
+        let field = |name: &str, text: &str| aurora_i18n::tr!("area-search-chip-field", name = name, text = text);
+        match self {
+            On::Kind(kind) => kind.label().to_owned(),
+            On::Click => aurora_i18n::tr!("area-search-chip-click", action = click_label(f.click_action)),
+            On::Copy => aurora_i18n::tr!("area-search-copy-perm").to_owned(),
+            On::Modify => aurora_i18n::tr!("area-search-modify-perm").to_owned(),
+            On::Transfer => aurora_i18n::tr!("area-search-transfer-perm").to_owned(),
+            On::Parcel => aurora_i18n::tr!("area-search-parcel").to_owned(),
+            On::Mine => aurora_i18n::tr!("area-search-mine").to_owned(),
+            On::Linked => aurora_i18n::tr!("area-search-linked").to_owned(),
+            On::Neighbors => aurora_i18n::tr!("area-search-neighbouring").to_owned(),
+            On::Name => field(aurora_i18n::tr!("inspect-col-item"), &f.name),
+            On::Description => field(aurora_i18n::tr!("inspect-col-description"), &f.description),
+            On::Owner => field(aurora_i18n::tr!("inspect-col-owner"), &f.owner),
+            On::Group => field(aurora_i18n::tr!("area-search-group"), &f.group),
+            On::Creator => field(aurora_i18n::tr!("inspect-col-creator"), &f.creator),
+            On::LastOwner => field(aurora_i18n::tr!("area-search-last-owner"), &f.last_owner),
+        }
+    }
+}
+
+/// The mouse click actions, in the order of the Legacy combo.
+pub(super) const CLICK_ICONS: [&str; 10] = [
+    "",
+    "",
+    "click-filled",
+    "armchair",
+    "shopping-cart-filled",
+    "coin-filled",
+    "package",
+    "player-play-filled",
+    "device-tv-filled",
+    "zoom-in-filled",
+];
+
+pub(super) fn click_label(action: u8) -> &'static str {
+    match action {
+        0 => aurora_i18n::tr!("area-search-click-unrestricted"),
+        1 => aurora_i18n::tr!("area-search-click-any"),
+        2 => aurora_i18n::tr!("ui-context-touch"),
+        3 => aurora_i18n::tr!("area-search-sit"),
+        4 => aurora_i18n::tr!("common-buy-object"),
+        5 => aurora_i18n::tr!("area-search-click-pay"),
+        6 => aurora_i18n::tr!("area-search-click-open"),
+        7 => aurora_i18n::tr!("area-search-click-play"),
+        8 => aurora_i18n::tr!("area-search-click-media"),
+        _ => aurora_i18n::tr!("common-zoom-2"),
+    }
 }
 
 #[cfg(test)]
@@ -305,5 +581,66 @@ mod tests {
         let seen: Vec<_> = owners.iter().map(|o| (o.id.as_u128(), o.count, o.land_impact, o.group)).collect();
         assert_eq!(seen, [(6, 1, 8.0, false), (7, 1, 3.0, true), (5, 2, 2.5, false)]);
         assert_eq!(owners[2].rows, [0, 2]);
+    }
+
+    #[test]
+    fn area_search_digest_bands_ranks_and_counts() {
+        let mut table = super::super::Table::default();
+        let mut rows = vec![row(1, 1, 3.0, Some(50.0)), row(2, 1, 40.0, Some(2.0)), row(3, 2, 90.0, None)];
+        rows[1].price = Some(30);
+        rows[2].price = Some(5);
+        rows[0].flags = 1;
+        table.replace(rows);
+        table.prepare();
+        let d = Digest::of(&table);
+        assert_eq!(
+            d.lines,
+            [
+                Line::Band(0),
+                Line::Row(0),
+                Line::Band(2),
+                Line::Row(1),
+                Line::Band(3),
+                Line::Row(2)
+            ]
+        );
+        assert_eq!((d.land_impact, d.owner_count), (52.0, 2));
+        assert_eq!((d.rank(50.0), d.rank(2.0), d.ranked()), (1, 2, 2));
+        assert_eq!(d.sale, [2, 1], "cheapest first");
+        assert_eq!(d.kinds[1], 1);
+        // heaviest first: no bands
+        table.sort = super::super::Column::LandImpact;
+        table.descending = true;
+        table.dirty = true;
+        table.prepare();
+        assert_eq!(Digest::of(&table).lines, [Line::Row(0), Line::Row(1), Line::Row(2)]);
+        // an owner picked narrows the list, the others stay to be picked
+        table.owner = Some(Uuid::from_u128(2));
+        table.prepare();
+        let d = Digest::of(&table);
+        assert_eq!((table.visible.len(), d.owners.len(), d.owner_count), (1, 2, 1));
+        assert_eq!(table.distances, [90.0], "the chart follows the pick");
+    }
+
+    #[test]
+    fn area_search_chips_name_what_is_on_and_take_it_away() {
+        let mut f = Filters {
+            children: true,
+            click_action: 3,
+            name: "Lamp".into(),
+            physical: true,
+            ..Default::default()
+        };
+        let on = filters_on(&f);
+        assert_eq!(
+            on,
+            [On::Kind(Kind::Physical), On::Kind(Kind::Attached), On::Click, On::Linked, On::Name]
+        );
+        assert!(On::Kind(Kind::Attached).hides(&f) && !On::Kind(Kind::Physical).hides(&f));
+        for what in on {
+            what.clear(&mut f);
+        }
+        assert!(filters_on(&f).is_empty());
+        assert!(f.include_attachments, "any: attachments are listed too");
     }
 }

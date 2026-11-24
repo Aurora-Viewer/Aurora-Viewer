@@ -161,6 +161,12 @@ pub fn slide(ui: &egui::Ui, id: egui::Id, to: Rect) -> Rect {
     Rect::from_min_size(o + Vec2::new(x, y), Vec2::new(at(2, to.width()), at(3, to.height())))
 }
 
+/// A size that slides to its new value.
+pub fn slide_value(ui: &egui::Ui, id: egui::Id, to: f32) -> f32 {
+    let time = if ui.style().animation_time > 0.0 { 0.18 } else { 0.0 };
+    ui.ctx().animate_value_with_time(id, to, time)
+}
+
 /// What a tile's title says.
 pub struct Head<'a> {
     pub title: &'a str,
@@ -181,7 +187,24 @@ pub fn tile<R>(
     head: Option<Head<'_>>,
     inside: impl FnOnce(&mut egui::Ui) -> R,
 ) -> (bool, R) {
-    surface(ui, p, rect, form);
+    tile_on(ui, p, id, rect, form, head, true, inside)
+}
+
+/// `tile`, on a surface already there when not `painted`.
+#[allow(clippy::too_many_arguments)]
+pub fn tile_on<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id: egui::Id,
+    rect: Rect,
+    form: Form,
+    head: Option<Head<'_>>,
+    painted: bool,
+    inside: impl FnOnce(&mut egui::Ui) -> R,
+) -> (bool, R) {
+    if painted {
+        surface(ui, p, rect, form);
+    }
     let inner = rect.shrink2(PAD);
     let mut child = ui.new_child(
         egui::UiBuilder::new()
@@ -327,6 +350,11 @@ impl Nav {
         Nav { id, at, moved }
     }
 
+    /// The keyboard is on the list.
+    pub fn focused(&self, ui: &egui::Ui) -> bool {
+        ui.memory(|m| m.has_focus(self.id.with(self.at)))
+    }
+
     /// The row the keyboard just came to: a virtual list scrolls there.
     pub fn arrived(&self) -> Option<usize> {
         self.moved.then_some(self.at)
@@ -344,6 +372,58 @@ impl Nav {
         }
         resp
     }
+}
+
+/// A long list of rows of one height; `card` is room under one of them.
+/// `draw` gets the row's index, its rectangle and the room under it. Only
+/// what shows is drawn; the keyboard's row is brought into view.
+pub fn virtual_rows(
+    ui: &mut egui::Ui,
+    salt: &str,
+    count: usize,
+    height: f32,
+    card: Option<(usize, f32)>,
+    nav: &Nav,
+    mut draw: impl FnMut(&mut egui::Ui, usize, Rect, Option<Rect>),
+) {
+    let top = |i: usize| i as f32 * height + card.filter(|(at, _)| i > *at).map_or(0.0, |(_, h)| h);
+    let total = top(count);
+    egui::ScrollArea::vertical()
+        .id_salt(salt)
+        .auto_shrink([false, false])
+        .show_viewport(ui, |ui, viewport| {
+            ui.set_height(total);
+            ui.set_width(ui.available_width());
+            let area = ui.max_rect();
+            let rect = |i: usize| Rect::from_min_size(egui::pos2(area.left(), area.top() + top(i)), Vec2::new(area.width(), height));
+            if let Some(i) = nav.arrived() {
+                ui.scroll_to_rect_animation(rect(i), None, egui::style::ScrollAnimation::none());
+            }
+            let (from, to) = (viewport.top(), viewport.bottom());
+            let before = card.map_or(0.0, |(_, h)| h);
+            let first = (((from - before) / height).floor().max(0.0) as usize).min(count);
+            let last = ((to / height).ceil().max(0.0) as usize).min(count);
+            // the keyboard's row stays there for the keyboard
+            let stop = (nav.at < first || nav.at >= last) && nav.at < count;
+            for i in (first..last).chain(stop.then_some(nav.at)) {
+                let row = rect(i);
+                let under = card
+                    .filter(|(at, _)| *at == i)
+                    .map(|(_, h)| Rect::from_min_size(row.left_bottom(), Vec2::new(row.width(), h)));
+                let bottom = under.map_or(row.bottom(), |r| r.bottom());
+                if i != nav.at && (bottom < area.top() + from || row.top() > area.top() + to) {
+                    continue;
+                }
+                draw(ui, i, row, under);
+            }
+        });
+}
+
+/// A row of `virtual_rows`.
+pub fn row_at(ui: &egui::Ui, p: &Palette, nav: &Nav, index: usize, rect: Rect, lit: Lit) -> egui::Response {
+    let resp = nav.row(ui, rect, index);
+    paint_lit(ui, p, rect, lit, resp.hovered());
+    resp
 }
 
 /// One row of a list: its face and what it senses. The caller paints over it.
@@ -575,23 +655,6 @@ pub fn text_ending(ui: &egui::Ui, right: f32, y: f32, text: &str, size: f32, col
     let left = right - galley.size().x;
     widgets::paint_ink_left(ui.painter(), galley, egui::pos2(left, y), color);
     left
-}
-
-/// A heading between two groups of a list.
-pub fn band(ui: &mut egui::Ui, p: &Palette, title: &str, note: &str, value: &str) {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Heading, true, format!("{title}, {note}, {value}")));
-    let left = rect.left() + 6.0;
-    let y = rect.center().y;
-    let font = egui::FontId::new(12.0, super::fonts::semibold(ui.ctx()));
-    let galley = ui.painter().layout_no_wrap(title.to_owned(), font, p.ink);
-    let width = galley.size().x;
-    widgets::paint_ink_left(ui.painter(), galley, egui::pos2(left, y), p.ink);
-    let small = egui::FontId::proportional(11.5);
-    widgets::paint_elided(ui, note, egui::pos2(left + width + 7.0, y), 120.0, small, p.muted);
-    if !value.is_empty() {
-        text_ending(ui, rect.right() - 6.0, y, value, 11.5, p.muted);
-    }
 }
 
 /// A pill that can be on (a filter, a column shown): the accent's wash and

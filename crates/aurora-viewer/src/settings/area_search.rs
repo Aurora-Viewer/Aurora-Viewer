@@ -144,6 +144,14 @@ impl Filters {
             }
         }
     }
+    /// Every filter back, the quick search kept.
+    pub fn reset_all_but_query(&mut self) {
+        *self = Self {
+            query: std::mem::take(&mut self.query),
+            ..Self::default()
+        };
+    }
+
     /// Save filter rules, never the current search text (Legacy Save as Default).
     pub fn without_search(&self) -> Self {
         let mut f = self.clone();
@@ -160,7 +168,8 @@ impl Filters {
     }
 }
 
-pub const DEFAULT_COLUMNS: [bool; 10] = [true, true, true, true, true, false, true, false, false, false];
+/// Distance, name, land impact, owner (in the order of `Column::ALL`).
+pub const DEFAULT_COLUMNS: [bool; 10] = [true, true, false, false, true, false, true, false, false, false];
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]

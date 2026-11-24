@@ -2,7 +2,8 @@
 //! FSAreaSearch::findObjects / processRequestQueue / requestObjectProperties
 //! (indra/newview/fsareasearch.cpp). Avatars are excluded; attachments are opt-in.
 use super::*;
-use crate::ui::area_search::{Action, MenuLocks, Row};
+use crate::object_stage::{Group, Place};
+use crate::ui::area_search::{Action, Env, Facts, MenuLocks, Row};
 use crate::world::objects::{ObjKey, Object, ObjectStore};
 use aurora_net::build::{BuildCmd, ObjectProps};
 use rayon::prelude::*;
@@ -266,10 +267,12 @@ impl App {
         self.panels.minimap = false;
         self.area_search_ui.table.filters = Default::default();
         self.area_search_ui.demo_controls(mode);
-        self.area_search_ui.demo_menu = mode == "menu";
-        self.area_search_ui.table.filters.parcel_only = mode == "parcel";
-        self.area_search_ui.table.filters.sale = mode == "sale";
-        if mode == "search" {
+        let has = |option: &str| mode.split(',').any(|o| o == option);
+        self.area_search_ui.demo_menu = has("menu");
+        self.area_search_ui.demo_select = has("select") || has("card");
+        self.area_search_ui.table.filters.parcel_only = has("parcel");
+        self.area_search_ui.table.filters.sale = has("sale");
+        if has("search") {
             self.area_search_ui.table.filters.query = aurora_i18n::tr!("demo-fountain").into();
         }
         let keys: Vec<_> = self
@@ -312,10 +315,12 @@ impl App {
         // touches already asked for go on once the window is closed
         self.area_search_touches(Instant::now());
         if !self.panels.area_search {
+            self.area_search_ui.closed();
             if self.area_search_feed.seeded {
                 self.area_search_feed.reset();
                 self.area_search_ui.table.replace(Vec::new());
                 self.area_search_ui.selection.clear();
+                self.area_search_ui.stage.stage.clear(&self.scene);
             }
             if self
                 .area_search_feed
@@ -366,13 +371,30 @@ impl App {
         }
         let parcel_known = self.world.parcel.as_ref().is_some_and(|p| !p.bitmap.is_empty());
         let draw_distance = self.settings.draw_distance;
+        // (a demo's view is never kept in the settings)
+        let forced = self.area_search_ui.forced_wide;
+        let mut wide = forced.unwrap_or(self.settings.area_search_wide);
+        if self.area_search_ui.is_wide(ctx, wide) {
+            self.area_search_stage(ctx, now);
+        } else {
+            self.area_search_ui.stage.stage.clear(&self.scene);
+        }
+        let facts = self.area_search_facts();
         let world = &self.world;
-        let locks = |ids: &[Uuid]| menu_locks(world, ids, now);
-        if let Some(action) = self
-            .area_search_ui
-            .show(ctx, p, &mut self.panels.area_search, parcel_known, draw_distance, &locks)
-        {
+        let env = Env {
+            parcel_known,
+            draw_distance,
+            locks: &|ids: &[Uuid]| menu_locks(world, ids, now),
+            pics: &self.avatar_pics,
+            facts,
+        };
+        let action = self.area_search_ui.show(ctx, p, &mut self.panels.area_search, &mut wide, &env);
+        if let Some(action) = action {
             self.area_search_action(action, now);
+        }
+        if forced.is_none() && wide != self.settings.area_search_wide {
+            self.settings.area_search_wide = wide;
+            self.settings.save();
         }
         let columns = self.area_search_ui.saved_columns();
         let defaults = std::mem::take(&mut self.area_search_ui.save_defaults);
@@ -383,6 +405,47 @@ impl App {
             }
             self.settings.save();
         }
+    }
+
+    /// Keep the 3D view of the wide window up to date with the selection.
+    fn area_search_stage(&mut self, ctx: &egui::Context, now: Instant) {
+        let w = &self.world;
+        let groups: Vec<Group> = self
+            .area_search_ui
+            .staged()
+            .iter()
+            .filter_map(|id| Some((*id, w.objects.index_of_uuid(id)?)))
+            .map(|(id, idx)| Group {
+                root: id,
+                // a linked prim listed by itself shows alone
+                prims: crate::build::family(w, idx)
+                    .into_iter()
+                    .filter(|i| w.objects.get(*i).is_some_and(|o| !o.is_avatar()))
+                    .collect(),
+            })
+            .collect();
+        self.area_search_ui
+            .stage
+            .stage
+            .update(w, &self.scene, &groups, Place::World, ctx, now);
+    }
+
+    /// Figures of the one selected object, for its card.
+    fn area_search_facts(&self) -> Option<Facts> {
+        let id = self.area_search_ui.selection.single()?;
+        let idx = self.world.objects.index_of_uuid(&id)?;
+        let mut facts = Facts::default();
+        let mut textures = HashSet::new();
+        for prim in crate::build::family(&self.world, idx) {
+            if self.world.objects.get(prim).is_none_or(Object::is_avatar) {
+                continue;
+            }
+            let stats = self.scene.prim_stats(&self.world, prim);
+            facts.triangles += stats.triangles;
+            textures.extend(stats.textures);
+        }
+        facts.texture_memory = textures.iter().map(|id| self.scene.texture_memory(id).0).sum();
+        Some(facts)
     }
 
     /// FSPanelAreaSearchList::onContextMenuItemClick, through the actions
@@ -463,6 +526,8 @@ impl App {
                 }
             }
             Action::Buy(id) => self.on_ctx_action(CtxAction::Buy(id)),
+            Action::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            Action::Group(id) => self.group_profile_ui.open(&mut self.world, id),
             // setFindOwnerText(gAgentUsername), then the search
             // (under RLVa's `@shownames` the owner column shows the stand-in
             // of our own name too, which is then what finds our objects)
@@ -672,20 +737,12 @@ impl App {
             })
             .collect();
         self.area_search_ui.table.replace(rows);
-        let cost_batches = if self.area_search_ui.needs_costs() {
-            self.area_search_ui.table.prepare();
-            let visible: HashSet<_> = self
-                .area_search_ui
-                .table
-                .visible
-                .iter()
-                .map(|i| self.area_search_ui.table.rows[*i].id)
-                .collect();
-            let candidates: Vec<_> = candidates.into_iter().filter(|(id, _)| visible.contains(id)).collect();
-            self.area_search_feed.cost_batches(&candidates, now)
-        } else {
-            HashMap::new()
-        };
+        // the land impact is always shown (the badges, the totals)
+        self.area_search_ui.table.prepare();
+        let table = &self.area_search_ui.table;
+        let visible: HashSet<_> = table.visible.iter().map(|i| table.rows[*i].id).collect();
+        let candidates: Vec<_> = candidates.into_iter().filter(|(id, _)| visible.contains(id)).collect();
+        let cost_batches = self.area_search_feed.cost_batches(&candidates, now);
         let kept: HashSet<_> = self
             .build
             .highlighted(&self.world)
