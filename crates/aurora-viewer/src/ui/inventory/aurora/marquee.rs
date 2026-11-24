@@ -47,7 +47,7 @@ fn active_id() -> egui::Id {
 /// one was drawn in the last frame, so a band whose explorer went away
 /// (closed, narrowed, another shortcut) stops at once.
 pub(crate) fn active(ctx: &egui::Context) -> bool {
-    let now = ctx.cumulative_frame_nr();
+    let now = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<u64>(active_id())).is_some_and(|at| at + 1 >= now)
 }
 
@@ -103,7 +103,7 @@ pub(crate) fn end(ui: &egui::Ui, p: &Palette, st: &mut InventoryUi, list: Rect, 
         st.marquee.seen.clear();
         return;
     }
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(active_id(), frame));
     let now = st.marquee.content(pos);
     if (now - start).length() < THRESHOLD {

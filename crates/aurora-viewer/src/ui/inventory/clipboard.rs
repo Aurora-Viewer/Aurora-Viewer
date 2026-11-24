@@ -170,7 +170,7 @@ fn list_focused_id() -> egui::Id {
 /// An inventory list had the keyboard in the last frame drawn (keys reach
 /// the viewer before the frame that draws the list).
 pub(super) fn list_focused_recently(ctx: &egui::Context) -> bool {
-    let now = ctx.cumulative_frame_nr();
+    let now = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<u64>(list_focused_id())).is_some_and(|at| at + 1 >= now)
 }
 
@@ -188,7 +188,7 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     let rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), height));
     let response = ui.interact(rect, focus_id(st), egui::Sense::click());
     if ui.memory(|m| m.has_focus(focus_id(st))) {
-        let now = ui.ctx().cumulative_frame_nr();
+        let now = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ui.ctx().data_mut(|d| d.insert_temp(list_focused_id(), now));
     }
     // a click in the explorer's empty space selects nothing, as in a file
