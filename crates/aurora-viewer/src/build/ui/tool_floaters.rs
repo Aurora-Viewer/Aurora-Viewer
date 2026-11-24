@@ -71,27 +71,19 @@ pub(super) fn show(
         if tool.tool == which {
             floater = floater.title_state(p.violet, aurora_i18n::tr!("build-tool-in-use"));
         }
-        // The Create window without its options: as short as its shapes, at
-        // the width it had, like the Legacy style's folded window.
-        let folded = which == Tool::Create && !s.create_options_shown;
+        // The Create window's options hidden or shown again (human request,
+        // 2026-11-24): it shrinks to its shapes, at the width it had, like
+        // the Legacy style's folded window, then takes back the size it had;
+        // resizable either way.
         // (not the floater's own "expanded_size", which follows the window
         // at every frame, folded too)
         let size_id = egui::Id::unique(id).with("options_shown_size");
-        if folded {
-            floater.default_size.x = ctx
-                .data_mut(|d| d.get_persisted::<Vec2>(size_id))
-                .map_or(floater.default_size.x, |size| size.x);
-            floater = floater.auto_height();
-        }
+        let fit_id = egui::Id::unique(id).with("fit_to_shapes");
         let shown_before = s.create_options_shown;
         let mut open = true;
-        floater.show(ctx, p, &mut open, |ui| {
+        let scroll = floater.show(ctx, p, &mut open, |ui| {
             common::typography(ui);
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            if folded {
-                compact::tool_panel(ui, p, tool, world, s, mods, env, which);
-                return;
-            }
             // laid out at the width it keeps once the scroll bar shows: the
             // Create shape grid grows taller as it widens, and a width that
             // follows the bar would make it come and go (#1092)
@@ -102,20 +94,32 @@ pub(super) fn show(
                 .show(ui, |ui| {
                     ui.set_max_width(width);
                     compact::tool_panel(ui, p, tool, world, s, mods, env, which);
-                });
+                })
         });
+        let window = ctx.memory(|m| m.area_rect(egui::Id::unique(id)));
         if which == Tool::Create && s.create_options_shown != shown_before {
+            ctx.data_mut(|d| d.remove_temp::<bool>(fit_id));
             if s.create_options_shown {
                 // shown again: the size it had (kept across sessions), or
                 // its first height at its width
-                let width = ctx.memory(|m| m.area_rect(egui::Id::unique(id))).map(|rect| rect.width());
                 let size = ctx
                     .data_mut(|d| d.get_persisted::<Vec2>(size_id))
-                    .unwrap_or_else(|| Vec2::new(width.unwrap_or(default_size(which).x), default_size(which).y));
+                    .unwrap_or_else(|| Vec2::new(window.map_or(default_size(which).x, |rect| rect.width()), default_size(which).y));
                 widgets::size_floater(ctx, id, size);
-            } else if let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::unique(id))) {
-                ctx.data_mut(|d| d.insert_persisted(size_id, rect.size()));
+            } else if let Some(rect) = window {
+                ctx.data_mut(|d| {
+                    d.insert_persisted(size_id, rect.size());
+                    // fitted once the frame after, laid out without them
+                    d.insert_temp(fit_id, true);
+                });
             }
+        } else if ctx.data_mut(|d| d.remove_temp::<bool>(fit_id)).is_some()
+            && let (Some(rect), Some(scroll)) = (window, scroll.as_ref())
+        {
+            // as tall as its shapes: the window around the scroll area,
+            // plus what the area holds
+            let height = rect.height() - scroll.inner_rect.height() + scroll.content_size.y;
+            widgets::size_floater(ctx, id, Vec2::new(rect.width(), height.min(rect.height())));
         }
         if !open {
             tool.close_tool_window(which, world, s);

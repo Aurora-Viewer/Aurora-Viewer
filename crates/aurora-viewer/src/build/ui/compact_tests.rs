@@ -4360,8 +4360,8 @@ fn the_rail_tool_buttons_open_and_close_their_own_windows() {
 /// The Create window (human request, 2026-11-24): no "Click in the world
 /// to build" line; the caret at its bottom hides its whole options part,
 /// the window shrinking to its shapes as the Legacy style's folds, then
-/// shows it again at the size it had. The choice is kept in the build
-/// settings.
+/// shows it again at the size it had; folded, it still resizes. The choice
+/// is kept in the build settings.
 #[test]
 fn the_create_window_hides_its_options_part_and_has_no_hint() {
     let mut inspector = Inspector::new();
@@ -4407,6 +4407,37 @@ fn the_create_window_hides_its_options_part_and_has_no_hint() {
     let folded = window(&inspector);
     assert!(folded.height() < open.height() - 40.0, "the window shrinks: {open:?} -> {folded:?}");
     assert!((folded.width() - open.width()).abs() < 1.0, "at the width it had");
+    // still resizable by its corner while folded
+    let start = folded.right_bottom() - vec2(2.0, 2.0);
+    let target = start + vec2(60.0, 80.0);
+    inspector.show(vec![egui::Event::PointerMoved(start)]);
+    inspector.show(vec![egui::Event::PointerButton {
+        pos: start,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    }]);
+    inspector.show(vec![egui::Event::PointerMoved(target)]);
+    inspector.show(vec![egui::Event::PointerMoved(target)]);
+    inspector.show(vec![egui::Event::PointerButton {
+        pos: target,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    }]);
+    for _ in 0..3 {
+        inspector.show(vec![]);
+    }
+    let resized = window(&inspector);
+    assert!(
+        resized.width() > folded.width() + 40.0,
+        "folded, its width follows the corner: {folded:?} -> {resized:?}"
+    );
+    assert!(
+        resized.height() > folded.height() + 60.0,
+        "folded, its height follows the corner: {folded:?} -> {resized:?}"
+    );
+    assert!(!inspector.settings.create_options_shown, "the drag shows no options");
     let at = caret(&inspector);
     click_at(&mut inspector, at);
     for _ in 0..6 {
