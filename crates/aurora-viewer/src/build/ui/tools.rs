@@ -152,47 +152,51 @@ pub(super) fn create_legacy_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildS
 }
 
 fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Vec2) {
-    egui::Grid::new("shapes")
-        .min_col_width(cell.x)
-        .spacing(Vec2::splat(6.0))
-        .show(ui, |ui| {
-            for i in 0..shapes().len() + 2 {
-                let sel = s.create_shape == i && !s.copy_selection;
-                let (rect, resp) = ui.allocate_exact_size(cell, egui::Sense::click());
-                let fill = if sel {
-                    p.violet
-                } else if resp.hovered() {
-                    p.raised
-                } else {
-                    p.field
-                };
-                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-                let col = if sel { p.on_accent } else { p.ink };
-                let name = match i {
-                    i if i < shapes().len() => {
-                        let sh = &shapes()[i];
-                        super::shape_preview::paint(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
-                        sh.name
-                    }
-                    i if i == shapes().len() => {
-                        super::shape_preview::paint_plant(ui, rect.shrink(3.0), true, col);
-                        aurora_i18n::tr!("build-ui-tools-tree")
-                    }
-                    _ => {
-                        super::shape_preview::paint_plant(ui, rect.shrink(3.0), false, col);
-                        aurora_i18n::tr!("build-ui-tools-grass")
-                    }
-                };
-                if resp.on_hover_text(name).clicked() {
-                    // LLFloaterTools::setObjectType also unticks "Copy selection"
-                    s.create_shape = i;
-                    s.copy_selection = false;
-                }
-                if i % 5 == 4 {
-                    ui.end_row();
-                }
+    // Five cells a row, placed from this frame's cell size: an egui::Grid
+    // keeps its last frame's column widths, and a window narrowed around it
+    // was held at its old width (the Create window, 2026-11-24).
+    const GAP: f32 = 6.0;
+    let count = shapes().len() + 2;
+    let rows = count.div_ceil(5);
+    let (block, _) = ui.allocate_exact_size(
+        Vec2::new(cell.x * 5.0 + GAP * 4.0, cell.y * rows as f32 + GAP * (rows - 1) as f32),
+        egui::Sense::hover(),
+    );
+    for i in 0..count {
+        let sel = s.create_shape == i && !s.copy_selection;
+        let at = block.min + Vec2::new((i % 5) as f32 * (cell.x + GAP), (i / 5) as f32 * (cell.y + GAP));
+        let rect = egui::Rect::from_min_size(at, cell);
+        let resp = ui.interact(rect, ui.make_persistent_id(("create_shape", i)), egui::Sense::click());
+        let fill = if sel {
+            p.violet
+        } else if resp.hovered() {
+            p.raised
+        } else {
+            p.field
+        };
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+        let col = if sel { p.on_accent } else { p.ink };
+        let name = match i {
+            i if i < shapes().len() => {
+                let sh = &shapes()[i];
+                super::shape_preview::paint(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
+                sh.name
             }
-        });
+            i if i == shapes().len() => {
+                super::shape_preview::paint_plant(ui, rect.shrink(3.0), true, col);
+                aurora_i18n::tr!("build-ui-tools-tree")
+            }
+            _ => {
+                super::shape_preview::paint_plant(ui, rect.shrink(3.0), false, col);
+                aurora_i18n::tr!("build-ui-tools-grass")
+            }
+        };
+        if resp.on_hover_text(name).clicked() {
+            // LLFloaterTools::setObjectType also unticks "Copy selection"
+            s.create_shape = i;
+            s.copy_selection = false;
+        }
+    }
 }
 
 fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {

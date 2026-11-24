@@ -1353,9 +1353,7 @@ impl<'a> Floater<'a> {
             // Reserve the requested content area as a resizable Window would:
             // height-filling scroll areas otherwise shave a few pixels off
             // each restoration even though Resize remembered the right size.
-            if self.width_only {
-                ui.set_min_width(ui.available_width());
-            } else if resizable || (restore && !self.auto_height) {
+            if resizable && !self.width_only || (restore && !self.auto_height) {
                 ui.set_min_size(ui.available_size());
             }
             if self.headless {
@@ -1658,7 +1656,18 @@ impl<'a> Floater<'a> {
                 attention_mark(&painter, p, response.response.rect, radius, wash);
             }
             if let (Some(drag), Some(requested)) = (resize_drag, resized) {
-                drag.finish(ctx, window_id, requested, response.response.rect);
+                // `width_only`: its content reflows to the width asked, a
+                // frame late at most, so a frame wider than asked is no
+                // minimum to keep (it stopped the window from narrowing)
+                let actual = if self.width_only {
+                    egui::Rect::from_min_size(
+                        response.response.rect.min,
+                        egui::vec2(requested.width(), response.response.rect.height()),
+                    )
+                } else {
+                    response.response.rect
+                };
+                drag.finish(ctx, window_id, requested, actual);
             }
             if resizable {
                 let axes = if self.height_only {

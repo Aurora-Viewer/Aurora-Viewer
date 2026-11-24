@@ -4469,4 +4469,34 @@ fn the_create_window_fits_its_content_and_hides_its_options_part() {
     assert!(shows(&mut inspector, keep), "shown again");
     assert!((window(&inspector).width() - wide.width()).abs() < 1.0, "at the width it was given");
     fits(&inspector);
+    // and its edges narrow it again, down to its minimum, with its options
+    // shown or hidden (the human's report of 2026-11-24)
+    for shown in [true, false] {
+        if inspector.settings.create_options_shown != shown {
+            let at = caret(&inspector).center();
+            click_at(&mut inspector, at);
+            for _ in 0..6 {
+                inspector.show(vec![]);
+            }
+        }
+        let before = window(&inspector);
+        let edge = before.right_center() - vec2(1.0, 0.0);
+        drag(&mut inspector, edge, edge - vec2(70.0, 0.0));
+        let narrow = window(&inspector);
+        assert!(
+            narrow.width() < before.width() - 50.0,
+            "options shown {shown}: the right edge narrows it: {before:?} -> {narrow:?}"
+        );
+        fits(&inspector);
+        let edge = narrow.left_center() + vec2(1.0, 0.0);
+        drag(&mut inspector, edge, edge + vec2(400.0, 0.0));
+        let least = window(&inspector);
+        assert!(
+            (least.width() - 240.0).abs() < 1.0,
+            "options shown {shown}: the left edge narrows it to its minimum: {narrow:?} -> {least:?}"
+        );
+        fits(&inspector);
+        let edge = least.right_center() - vec2(1.0, 0.0);
+        drag(&mut inspector, edge, edge + vec2(120.0, 0.0));
+    }
 }
