@@ -276,7 +276,9 @@ impl App {
         for attempt in 1..=RESTART_ATTEMPTS {
             match aurora_render::start_guarded(|| {
                 if demo_fail && attempt == 1 {
-                    panic!("Failed to get mapped range for buffer created with mapped_at_creation: Buffer with '' label is invalid (AURORA_DEMO_GPU_RESTART_FAIL)");
+                    panic!(
+                        "Failed to get mapped range for buffer created with mapped_at_creation: Buffer with '' label is invalid (AURORA_DEMO_GPU_RESTART_FAIL)"
+                    );
                 }
                 self.open_renderer(window)
             }) {
