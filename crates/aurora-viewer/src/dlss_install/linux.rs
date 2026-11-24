@@ -7,7 +7,7 @@
 //! against its SHA-256, so the build needs only `g++` (no git, make or
 //! Vulkan development package).
 
-use super::{Net, Remote, Report, remote};
+use super::{Net, Remote, Report, Step, remote};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -110,10 +110,7 @@ pub fn prepare(net: &Net, work: &Path, report: Report) -> Result<(), String> {
     // before downloading anything: the one tool the build needs
     let cxx = std::env::var_os("CXX").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("g++"));
     if !Command::new(&cxx).arg("--version").output().is_ok_and(|o| o.status.success()) {
-        return Err(String::from(
-            "building DLSS's library needs g++, which is not installed \
-             (Debian, Ubuntu: sudo apt install g++; Fedora: sudo dnf install gcc-c++; Arch: sudo pacman -S gcc)",
-        ));
+        return Err(aurora_i18n::tr!("ui-options-dlss-install-needs-gxx").to_string());
     }
     let vulkan = system_library("libvulkan.so.1").ok_or("the Vulkan loader libvulkan.so.1 was not found")?;
 
@@ -127,7 +124,7 @@ pub fn prepare(net: &Net, work: &Path, report: Report) -> Result<(), String> {
     let mut before = 0;
     for (base, r) in all {
         let bytes = net.download(base, r, |got| {
-            report("Downloading NVIDIA DLSS and sl-ngx", 0.85 * (before + got) as f32 / total as f32);
+            report(Step::Downloading,0.85 * (before + got) as f32 / total as f32);
         })?;
         let path = work.join(r.name);
         if let Some(dir) = path.parent() {
@@ -139,7 +136,7 @@ pub fn prepare(net: &Net, work: &Path, report: Report) -> Result<(), String> {
 
     // sl-ngx's Makefile, with the Vulkan loader by its path (no -lvulkan:
     // its unversioned name comes only with a development package)
-    report("Building sl-ngx", 0.9);
+    report(Step::Building, 0.9);
     let out = Command::new(&cxx)
         .current_dir(work)
         .args([

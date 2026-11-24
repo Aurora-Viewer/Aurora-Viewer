@@ -50,6 +50,17 @@ const fn remote(path: &'static str, name: &'static str, size: u64, sha256: &'sta
     Remote { path, name, size, sha256 }
 }
 
+/// What the installation is doing, shown by the dialog in the user's language.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    Starting,
+    Downloading,
+    /// (Linux: sl-ngx built with g++)
+    #[cfg_attr(windows, allow(dead_code))]
+    Building,
+    Installing,
+}
+
 /// Where the installation is, for the Preferences dialog.
 #[derive(Clone, Debug, Default)]
 pub enum State {
@@ -60,8 +71,8 @@ pub enum State {
     Fetching,
     /// NVIDIA's licence, waiting for Accept or Cancel.
     Licence(String),
-    /// Downloading or building: what is done, and how far (0..1).
-    Working(String, f32),
+    /// Downloading or building: which step, and how far (0..1).
+    Working(Step, f32),
     /// The files are in place: a restart turns DLSS on.
     Done,
     Failed(String),
@@ -108,7 +119,7 @@ impl Installer {
             State::Licence(text) => text,
             _ => return,
         };
-        self.set(State::Working("Starting".into(), 0.0));
+        self.set(State::Working(Step::Starting, 0.0));
         let state = self.state.clone();
         spawn(
             move || {
@@ -192,11 +203,11 @@ fn sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// What the platform's steps report: what is being done, and how far (0..1).
-type Report<'a> = &'a dyn Fn(&str, f32);
+/// What the platform's steps report: the step, and how far (0..1).
+type Report<'a> = &'a dyn Fn(Step, f32);
 
 fn install(folder: &Path, licence: &str, state: &Mutex<State>) -> Result<(), String> {
-    let report = |what: &str, f: f32| *state.lock().unwrap() = State::Working(what.into(), f);
+    let report = |step: Step, f: f32| *state.lock().unwrap() = State::Working(step, f);
     // (beside the folder, on its filesystem: each file then moves in one step)
     let work = folder.with_extension("installing");
     let _ = std::fs::remove_dir_all(&work);
@@ -205,7 +216,7 @@ fn install(folder: &Path, licence: &str, state: &Mutex<State>) -> Result<(), Str
         platform::prepare(&Net::new()?, &work, &report)?;
         std::fs::write(work.join(LICENCE_NAME), licence).map_err(|e| format!("{LICENCE_NAME}: {e}"))?;
 
-        report("Installing", 0.98);
+        report(Step::Installing, 0.98);
         std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         for name in platform::INSTALLED.into_iter().chain([LICENCE_NAME]) {
             let to = folder.join(name);

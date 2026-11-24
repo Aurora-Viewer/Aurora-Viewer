@@ -9,7 +9,7 @@
 //! each DLL against NVIDIA's Authenticode signature. A server that does not
 //! answer ranges gets the whole zip, checked against its SHA-256.
 
-use super::{Net, Report};
+use super::{Net, Report, Step};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -88,7 +88,7 @@ pub fn licence(net: &Net) -> Result<String, String> {
 /// The files of [`INSTALLED`], checked, in `work`.
 pub fn prepare(net: &Net, work: &Path, report: Report) -> Result<(), String> {
     let total: u64 = FILES.iter().map(|f| f.packed).sum();
-    let fetched = |got: u64| report("Downloading NVIDIA Streamline", 0.95 * (got.min(total) as f32 / total as f32));
+    let fetched = |got: u64| report(Step::Downloading, 0.95 * (got.min(total) as f32 / total as f32));
     let mut zip = open(net, Some(work), &fetched)?;
     for f in &FILES {
         let bytes = read(&mut zip, f)?;
