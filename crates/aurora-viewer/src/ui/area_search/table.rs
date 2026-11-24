@@ -139,6 +139,10 @@ impl Row {
             && (!f.media || self.media)
             && (!f.probe || self.probe)
             && (!f.exclude_probes || !self.probe)
+            && (!f.exclude_locked || (self.loaded && self.owner_mask & aurora_net::build::perm::MOVE != 0))
+            && (!f.exclude_phantom || self.flags & (1 << 10) == 0)
+            && (!f.exclude_media || !self.media)
+            && (!f.exclude_sale || self.price.is_none())
             && (!f.exclude_physical || self.flags & 1 == 0)
             && (!f.exclude_temporary || self.flags & (1 << 29) == 0)
             && match f.click_action {

@@ -5,6 +5,7 @@
 //! FSPanelAreaSearchList::onContextMenuItemClick / onContextMenuItemEnable.
 
 mod controls;
+mod model;
 mod selection;
 mod table;
 #[cfg(test)]
