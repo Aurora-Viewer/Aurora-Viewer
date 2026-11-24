@@ -1,4 +1,5 @@
 //! Native inventory commands and their current availability, before presentation.
+mod explorer;
 mod extra;
 use super::menu_layout::{Direction, Entry, Kind, LOCK, TEXT, children};
 use super::*;
@@ -39,6 +40,7 @@ pub(super) enum Command {
     Favorite(Vec<Uuid>, bool),
     Worn(crate::ui::context::CtxAction),
     Marketplace(Vec<Uuid>, bool),
+    Explorer(explorer::ExplorerCommand),
 }
 
 #[derive(Default)]
@@ -274,7 +276,16 @@ pub(super) fn lock_entry() -> Entry {
 }
 
 pub(super) fn build(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
-    build_mode(inv, id, st, prefs, facts, false)
+    build_mode(inv, id, st, prefs, facts, false, false)
+}
+
+/// The menu of the explorer's empty space, showing `folder`: what acts on
+/// the folder shown rather than on the folder itself
+/// (`explorer::kept_in_background`).
+pub(super) fn build_background(inv: &Inventory, folder: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
+    let mut c = build_mode(inv, folder, st, prefs, facts, false, true);
+    c.entries.retain(explorer::kept_in_background);
+    c
 }
 
 /// Reuse the native definitions, independent of inventory contents and selection.
@@ -290,6 +301,7 @@ pub(super) fn editing_entries(live: &[Entry], facts: &Facts) -> Vec<Entry> {
                 &InventoryPreferences::default(),
                 &Facts::default(),
                 true,
+                false,
             )
             .entries
         })
@@ -323,7 +335,16 @@ pub(super) fn editing_entries(live: &[Entry], facts: &Facts) -> Vec<Entry> {
     entries
 }
 
-fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts, all: bool) -> Catalog {
+#[allow(clippy::too_many_arguments)]
+fn build_mode(
+    inv: &Inventory,
+    id: Uuid,
+    st: &InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    all: bool,
+    background: bool,
+) -> Catalog {
     let mut c = Catalog {
         editing: all,
         ..Default::default()
@@ -1016,6 +1037,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         c.slot("delete", 7);
     }
     extra::build(&mut c, inv, id, st, prefs, facts, all);
+    explorer::build(&mut c, inv, id, st, prefs, all, background);
     if !all {
         super::listings::restrict(&mut c, inv, id);
     }
@@ -1194,6 +1216,31 @@ fn item_attachments(
     }
 }
 
+/// The properties of `ids`, each in a window of its own (one already open
+/// for an item is kept, not doubled), the list free behind them.
+pub(super) fn properties_windows(st: &mut InventoryUi, ids: Vec<Uuid>) {
+    for id in ids {
+        if !st
+            .windows
+            .iter()
+            .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
+        {
+            let state = InventoryUi {
+                ui_id: Uuid::new_v4(),
+                dialog: Some(EditDialog::Properties(id)),
+                ..Default::default()
+            };
+            st.windows.push(InventoryWindow {
+                id: state.ui_id,
+                root: Uuid::nil(),
+                additional: false,
+                state: Box::new(state),
+                open: false,
+            });
+        }
+    }
+}
+
 pub(super) fn execute(
     command: Command,
     ui: &egui::Ui,
@@ -1246,28 +1293,7 @@ pub(super) fn execute(
             }
         }
         Command::Batch(batch) => actions.extend(batch),
-        Command::PropertiesMany(ids) => {
-            for id in ids {
-                if !st
-                    .windows
-                    .iter()
-                    .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
-                {
-                    let state = InventoryUi {
-                        ui_id: Uuid::new_v4(),
-                        dialog: Some(EditDialog::Properties(id)),
-                        ..Default::default()
-                    };
-                    st.windows.push(InventoryWindow {
-                        id: state.ui_id,
-                        root: Uuid::nil(),
-                        additional: false,
-                        state: Box::new(state),
-                        open: false,
-                    });
-                }
-            }
-        }
+        Command::PropertiesMany(ids) => properties_windows(st, ids),
         Command::Properties(id) => {
             st.property_edit = None;
             st.dialog = Some(EditDialog::Properties(id));
@@ -1319,6 +1345,7 @@ pub(super) fn execute(
         }),
         Command::Worn(action) => crate::ui::context::request(ui.ctx(), action),
         Command::Marketplace(ids, copy) => submit(rules::marketplace(inv, &ids, copy, &prefs.protected, &facts.worn)),
+        Command::Explorer(command) => explorer::execute(command, ui, inv, st, prefs),
     }
 }
 
@@ -1522,7 +1549,11 @@ mod tests {
         let prefs = InventoryPreferences::default();
         let state = InventoryUi::default();
         assert_eq!(build(&inv, folder, &state, &prefs, &facts()).prepare_outfit, Some(folder));
-        assert!(build_mode(&inv, folder, &state, &prefs, &facts(), true).prepare_outfit.is_none());
+        assert!(
+            build_mode(&inv, folder, &state, &prefs, &facts(), true, false)
+                .prepare_outfit
+                .is_none()
+        );
         let mut multi = InventoryUi::default();
         multi.selection.extend([folder, Uuid::from_u128(8100)]);
         assert!(build(&inv, folder, &multi, &prefs, &facts()).prepare_outfit.is_none());
@@ -1553,6 +1584,7 @@ mod tests {
             &prefs,
             &Facts::default(),
             true,
+            false,
         );
         assert!(metadata.commands.is_empty());
         assert!(

@@ -45,16 +45,24 @@ impl InventoryUi {
 
     /// Called before fields consume input, even while Inventory is closed.
     pub fn clipboard_input(&mut self, events: &[egui::Event]) {
+        self.cut_cancelled = false;
         for event in events {
             match event {
                 egui::Event::Key {
                     key: egui::Key::Escape,
                     pressed: true,
                     ..
-                } => self.cancel_cut(),
+                } => {
+                    // this Esc is spent on the cut: the list keeps its selection
+                    self.cut_cancelled |= self.cut;
+                    self.cancel_cut();
+                }
                 egui::Event::Paste(text) => self.clipboard_changed(Some(text)),
                 _ => {}
             }
+        }
+        for window in &mut self.windows {
+            window.state.cut_cancelled = self.cut_cancelled;
         }
     }
 
@@ -155,6 +163,20 @@ fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
     });
 }
 
+fn list_focused_id() -> egui::Id {
+    egui::Id::unique("inventory_list_focused_frame")
+}
+
+/// An inventory list had the keyboard in the last frame drawn (keys reach
+/// the viewer before the frame that draws the list): whether it was the
+/// explorer (`aurora::Frame::explorer`), None when no list had it.
+pub(super) fn list_focused_recently(ctx: &egui::Context) -> Option<bool> {
+    let now = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    ctx.data(|d| d.get_temp::<(u64, bool)>(list_focused_id()))
+        .filter(|(at, _)| at + 1 >= now)
+        .map(|(_, explorer)| explorer)
+}
+
 pub(super) fn list_has_focus(ui: &egui::Ui, st: &InventoryUi) -> bool {
     ui.is_enabled()
         && st.dialog.is_none()
@@ -168,6 +190,37 @@ pub(super) fn list_has_focus(ui: &egui::Ui, st: &InventoryUi) -> bool {
 pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     let rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), height));
     let response = ui.interact(rect, focus_id(st), egui::Sense::click());
+    if ui.memory(|m| m.has_focus(focus_id(st))) {
+        let now = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
+        let explorer = st.aurora.is_some_and(|frame| frame.explorer);
+        ui.ctx().data_mut(|d| d.insert_temp(list_focused_id(), (now, explorer)));
+    }
+    // a click in the explorer's empty space selects nothing, as in a file
+    // manager (Ctrl or Shift keep the selection)
+    // its right-click: the menu of the folder shown (Windows Explorer's
+    // and Dolphin's menu of the empty space)
+    if response.secondary_clicked()
+        && ui.input(|i| i.pointer.any_click())
+        && st
+            .aurora
+            .is_some_and(|frame| frame.explorer && frame.layout != super::aurora::Layout::Compact)
+        && st.tab == 0
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        st.row_menu = Some((st.browse, pos));
+        st.background_menu = true;
+    }
+    // a real click only: egui also "clicks" a focused widget on Enter or
+    // Space, which would drop the selection Alt+Enter is about to open
+    if response.clicked()
+        && ui.input(|i| i.pointer.any_click())
+        && st.aurora.is_some_and(|frame| frame.explorer)
+        && !ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift)
+    {
+        st.selection.clear();
+        st.selected = None;
+        st.focus = None;
+    }
     let leaving = ui.input(|i| {
         i.pointer.any_pressed() && i.pointer.interact_pos().is_none_or(|pos| !rect.contains(pos))
             || i.key_pressed(egui::Key::Tab)
@@ -338,22 +391,44 @@ pub(super) fn paste(
     actions: &mut Vec<InvAction>,
 ) {
     let cut = st.cut && !links;
+    let ids = st.clipboard.clone();
+    if let Some(consume) = paste_ids(inv, &ids, to, cut, links, st, prefs, facts, actions) {
+        st.consume_clipboard = consume;
+    }
+}
+
+/// Paste or Paste as link of `ids` into `to`, by the routes of each place:
+/// the Marketplace's own paste, the outfit folders' rules, the inventory's
+/// elsewhere. A drag that copies or links goes the same way (`drag.rs`).
+/// Returns whether the clipboard is to be consumed once the change lands
+/// (None: the clipboard is not concerned).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn paste_ids(
+    inv: &Inventory,
+    ids: &[Uuid],
+    to: Uuid,
+    cut: bool,
+    links: bool,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) -> Option<bool> {
     if !links && crate::world::marketplace::root(inv).is_some_and(|root| rules::under(inv, to, root)) {
         actions.push(InvAction::MarketplacePaste {
             to,
-            ids: st.clipboard.clone(),
+            ids: ids.to_vec(),
             copy: !cut,
         });
-        return;
+        return None;
     }
     if !links {
-        match crate::world::outfit_paste::plan(inv, &st.clipboard, to, cut, &prefs.protected) {
+        match crate::world::outfit_paste::plan(inv, ids, to, cut, &prefs.protected) {
             Ok(crate::world::outfit_paste::Paste::Inventory) => {}
             Ok(crate::world::outfit_paste::Paste::Edit(change)) => {
-                st.consume_clipboard = cut;
                 st.message.clear();
                 actions.push(InvAction::Edit(change));
-                return;
+                return Some(cut);
             }
             // dropToOutfit into the Current Outfit wears, and leaves the
             // clipboard as it was.
@@ -364,24 +439,23 @@ pub(super) fn paste(
                     replace: true,
                     point: 0,
                 }));
-                return;
+                return None;
             }
             Err(reason) => {
-                st.consume_clipboard = false;
                 st.message = reason;
-                return;
+                return Some(false);
             }
         }
     }
-    match rules::paste(inv, &st.clipboard, to, cut, links, &prefs.protected, &facts.worn) {
+    match rules::paste(inv, ids, to, cut, links, &prefs.protected, &facts.worn) {
         Ok(change) => {
-            st.consume_clipboard = cut;
             st.message.clear();
             actions.push(InvAction::Edit(change));
+            Some(cut)
         }
         Err(reason) => {
-            st.consume_clipboard = false;
             st.message = reason;
+            Some(false)
         }
     }
 }
@@ -408,6 +482,7 @@ pub(super) fn shortcuts(
         return;
     }
     super::keyboard::open_shortcut(ui, inv, st, prefs, facts, actions);
+    super::keyboard::commands(ui, inv, root, st, prefs, facts, actions);
     // egui-winit consumes the physical C/X/V presses and emits these native
     // clipboard events instead. Testing key_pressed(C) would miss real input.
     let mut events = Vec::new();
@@ -430,6 +505,21 @@ pub(super) fn shortcuts(
             continue;
         }
         match event {
+            // Windows: egui-winit turns Shift+Delete into a Cut (its old
+            // Windows meaning); the list's Shift+Delete purges instead
+            egui::Event::Cut
+                if cfg!(target_os = "windows")
+                    && ui.input(|i| i.modifiers.shift && !i.modifiers.command)
+                    && super::shortcuts::get(ui.ctx()).keeps(
+                        &crate::keybinds::Input::key(winit::keyboard::KeyCode::Delete),
+                        false,
+                        true,
+                        false,
+                        true,
+                    ) =>
+            {
+                super::keyboard::purge(inv, st, prefs, facts, actions);
+            }
             egui::Event::Copy | egui::Event::Cut => {
                 let mut ids: Vec<_> = st.selection.iter().copied().collect();
                 ids.sort();
