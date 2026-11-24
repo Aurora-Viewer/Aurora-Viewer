@@ -171,11 +171,9 @@ impl App {
             batch,
         });
         if kind == Kind::Viewfinder {
-            crate::ui::widgets::open_floater(
-                &self.egui_ctx,
-                super::snapshot::photo_window_id(self.photo_style()),
-                &mut self.panels.snapshot,
-            );
+            // the square viewfinder, not the Photo floater: a minimized
+            // Photo panel stays as it was
+            self.panels.snapshot = true;
         } else if !batch {
             crate::ui::widgets::open_floater(&self.egui_ctx, window::WINDOW, &mut true);
         }

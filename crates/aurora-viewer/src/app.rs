@@ -5695,7 +5695,11 @@ impl App {
             Action::TeleportHome => {
                 self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
             }
-            Action::RegionEstate => ui::widgets::toggle_floater(&self.egui_ctx, ui::region::WINDOW, &mut self.panels.region_estate),
+            Action::RegionEstate => ui::widgets::toggle_floater(
+                &self.egui_ctx,
+                ui::region::window_id(self.settings.classic_region_estate),
+                &mut self.panels.region_estate,
+            ),
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
@@ -16941,7 +16945,13 @@ impl App {
             }
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
             BarAction::ResumeClouds => self.snapshots.ui.light.clouds_paused = false,
-            BarAction::AuroraWeather => self.env_ui.weather_open = !self.rlva_environment_windows_locked(),
+            BarAction::AuroraWeather => {
+                if self.rlva_environment_windows_locked() {
+                    self.env_ui.weather_open = false;
+                } else {
+                    ui::widgets::open_floater(&self.egui_ctx, "aurora_weather", &mut self.env_ui.weather_open);
+                }
+            }
             BarAction::NewEnvironment(kind) => self.open_new_environment(kind),
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
@@ -21006,6 +21016,8 @@ impl App {
                     .flatten()
                     .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
                 let classic_land = self.classic_land();
+                self.panels.about_land_classic = classic_land;
+                self.panels.region_estate_classic = self.settings.classic_region_estate;
                 if self.land_ui.show(
                     &ctx,
                     &p,
@@ -21023,11 +21035,7 @@ impl App {
                 self.panels.about_land = open;
                 // Region / Estate: asked by About Land or the restart notice
                 if ui::region::take_open_request(&ctx) {
-                    let id = if self.settings.classic_region_estate {
-                        ui::region::CLASSIC_WINDOW
-                    } else {
-                        ui::region::WINDOW
-                    };
+                    let id = ui::region::window_id(self.settings.classic_region_estate);
                     ui::widgets::open_floater(&ctx, id, &mut self.panels.region_estate);
                 }
                 let mut open = self.panels.region_estate && self.world.rlva_can_view_region();
