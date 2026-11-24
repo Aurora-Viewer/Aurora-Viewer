@@ -308,14 +308,26 @@ enum Ask {
 }
 
 /// Pages asked from the page thread and not received yet, one per size:
-/// when each was asked, and whether it was seen late already.
+/// when each was asked, and whether it was seen late already; and the
+/// sizes whose page the page thread could not make (video memory full),
+/// with when it said so.
 #[derive(Default)]
 struct PageRequests {
     asked: HashMap<PageKey, (Instant, bool)>,
+    failed: HashMap<PageKey, Instant>,
 }
 
 impl PageRequests {
     fn ask(&mut self, key: PageKey, now: Instant) -> Ask {
+        // a page that could not be made is asked again after a while, as
+        // often as the main thread used to try it (once per
+        // `REQUEST_TIMEOUT`): the uploads of that size wait meanwhile
+        if let Some(&at) = self.failed.get(&key) {
+            if now.saturating_duration_since(at) < REQUEST_TIMEOUT {
+                return Ask::Wait;
+            }
+            self.failed.remove(&key);
+        }
         match self.asked.get_mut(&key) {
             None => {
                 self.asked.insert(key, (now, false));
@@ -330,6 +342,13 @@ impl PageRequests {
 
     fn done(&mut self, key: PageKey) {
         self.asked.remove(&key);
+    }
+
+    /// The page thread could not make it: asked again `REQUEST_TIMEOUT`
+    /// after `now`.
+    fn failed(&mut self, key: PageKey, now: Instant) {
+        self.asked.remove(&key);
+        self.failed.insert(key, now);
     }
 }
 
@@ -1553,10 +1572,11 @@ impl TextureTable {
     ///
     /// True as well when the page thread cannot make the page (not started
     /// or gone, table full): the upload then creates it or is refused, as
-    /// before; and while a page failed for want of video memory, when the
-    /// upload is refused without trying (`page_backoff`). A page that is
-    /// only late is waited for: the driver is slow to allocate it, and the
-    /// main thread would wait on the same allocation (#4612).
+    /// before. A page that is late is waited for: the driver is slow to
+    /// allocate it, and the main thread would wait on the same allocation
+    /// (#4612). One the page thread could not make (video memory full) is
+    /// asked from it again a little later (`PageRequests::failed`); the
+    /// uploads wait meanwhile, with their texels.
     pub fn prepare_page(&mut self, slot: u32, (format, width, height, levels): (TexelFormat, u32, u32, u32), queued: u32) -> bool {
         self.receive_pages();
         let key = PageKey::of_chain(format, width, height, levels);
@@ -1565,11 +1585,6 @@ impl TextureTable {
         }
         let (free, spare) = (self.store.free_layers(key), self.store.spare_layers(key));
         if free + spare == 0 {
-            // (the upload is then refused by `new_page` and sent again
-            // once the wait is over: no page is asked for meanwhile)
-            if !self.store.page_backoff.ready(Instant::now()) {
-                return true;
-            }
             return !self.ask_for_page(key);
         }
         // this upload takes a layer (of the spare page when the others are
@@ -1615,9 +1630,9 @@ impl TextureTable {
         }
     }
 
-    /// Take the pages the page thread finished, and its failures: video
-    /// memory full, the uploads of that size wait as if the page had failed
-    /// here.
+    /// Take the pages the page thread finished, and its failures (video
+    /// memory full): the uploads of that size wait, and the page is asked
+    /// again a little later.
     fn receive_pages(&mut self) {
         while let Ok(reply) = self.worker.made.try_recv() {
             match reply {
@@ -1627,8 +1642,11 @@ impl TextureTable {
                     self.store.add_spare(page);
                 }
                 PageReply::Failed { key, layers, error } => {
-                    self.requests.done(key);
-                    self.store.page_failed(key, layers, &error, Instant::now());
+                    let now = Instant::now();
+                    self.requests.failed(key, now);
+                    // (the log line once per shortage, and the main
+                    // thread's own attempts held back, as before)
+                    self.store.page_failed(key, layers, &error, now);
                 }
             }
         }
@@ -3505,9 +3523,22 @@ mod tests {
                 error: "out of device memory".into(),
             })
             .expect("reply");
-        // the upload goes on, and is refused for want of memory without
-        // trying a page here; it is sent again after the wait
-        assert!(table.prepare_page(slot, chain, 0));
+        // the upload waits with its texels, with no page tried here, and
+        // the page thread is not asked again at once
+        for _ in 0..3 {
+            assert!(!table.prepare_page(slot, chain, 0), "the upload waits after a failure");
+        }
+        assert!(table.requests.failed.contains_key(&key));
+        assert!(!table.requests.asked.contains_key(&key));
+        assert_eq!((table.pages_made().inline, table.pages()), (inline, pages));
+        // a little later (video memory free again): the page thread is asked
+        // again, makes the page, and the upload goes
+        table.requests.failed.insert(key, long_ago);
+        let t0 = Instant::now();
+        while !table.prepare_page(slot, chain, 0) {
+            assert!(t0.elapsed() < Duration::from_secs(5), "no page from the page thread");
+            std::thread::sleep(Duration::from_millis(1));
+        }
         let levels: Vec<Vec<u8>> = (0..7).map(|l| texels(0, 64, 64, l)).collect();
         let mips: Vec<MipLevel> = levels
             .iter()
@@ -3518,9 +3549,9 @@ mod tests {
                 data: d,
             })
             .collect();
-        assert!(!table.replace(&device, &mut writes, slot, &mips));
-        assert!(table.retry_after_refusal().is_some());
-        assert_eq!((table.pages_made().inline, table.pages()), (inline, pages));
+        assert!(table.replace(&device, &mut writes, slot, &mips));
+        let made = table.pages_made();
+        assert_eq!((made.inline, made.threaded, table.pages()), (inline, 1, pages + 1));
     }
 
     /// The whole table on the GPU as the renderer uses it: random creations,
