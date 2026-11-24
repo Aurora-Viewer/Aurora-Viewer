@@ -350,8 +350,16 @@ fn run_headless() -> anyhow::Result<()> {
         cli::get().offscreen_gpu,
         cli::get().mcp_port.unwrap_or(3847)
     );
-    while running.load(std::sync::atomic::Ordering::Relaxed) && !headless_stop_requested() && app.tick_headless() {
-        std::thread::sleep(std::time::Duration::from_millis(33));
+    const HEADLESS_TICK: std::time::Duration = std::time::Duration::from_millis(33);
+    while running.load(std::sync::atomic::Ordering::Relaxed) && !headless_stop_requested() {
+        let tick_start = std::time::Instant::now();
+        if !app.tick_headless() {
+            break;
+        }
+        let sleep_for = HEADLESS_TICK.saturating_sub(tick_start.elapsed());
+        if !sleep_for.is_zero() {
+            std::thread::sleep(sleep_for);
+        }
     }
     if app.mcp_shutdown_requested() {
         std::thread::sleep(std::time::Duration::from_millis(50));

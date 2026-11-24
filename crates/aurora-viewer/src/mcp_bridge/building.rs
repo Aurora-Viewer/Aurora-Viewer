@@ -18,6 +18,7 @@ pub(super) struct PendingDuplicate {
     region: RegionHandle,
     known_ids: HashSet<u32>,
     expected_count: usize,
+    last_polled: Option<Instant>,
     started: Instant,
     deadline: Duration,
     reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
@@ -212,6 +213,7 @@ impl App {
             region: handle,
             known_ids,
             expected_count: local_ids.len(),
+            last_polled: None,
             started: Instant::now(),
             deadline: Duration::from_millis(timeout_ms.clamp(300, 10_000)),
             reply_tx,
@@ -220,26 +222,36 @@ impl App {
 
     pub(super) fn poll_mcp_prim_duplicate(&mut self) {
         let now = Instant::now();
-        for p in std::mem::take(&mut self.mcp_bridge.pending_duplicates) {
-            let mut new_prims: Vec<Value> = self
+        for mut p in std::mem::take(&mut self.mcp_bridge.pending_duplicates) {
+            let expired = now.duration_since(p.started) >= p.deadline;
+            if !expired && p.last_polled.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_millis(50)) {
+                self.mcp_bridge.pending_duplicates.push_back(p);
+                continue;
+            }
+            p.last_polled = Some(now);
+            let mut new_prims: Vec<(u32, Uuid, [f32; 3])> = self
                 .world
                 .objects
                 .iter()
                 .filter(|(_, o)| o.key.region == p.region && !o.is_avatar() && !p.known_ids.contains(&o.key.local_id))
-                .map(|(_, o)| {
-                    json!({
-                        "local_id": o.key.local_id,
-                        "object_uuid": o.full_id.to_string(),
-                        "position": [o.position.x, o.position.y, o.position.z],
-                    })
-                })
+                .map(|(_, o)| (o.key.local_id, o.full_id, [o.position.x, o.position.y, o.position.z]))
                 .collect();
-            if new_prims.len() >= p.expected_count || now.duration_since(p.started) >= p.deadline {
-                new_prims.sort_by_key(|v| v.get("local_id").and_then(Value::as_u64).unwrap_or(0));
+            if new_prims.len() >= p.expected_count || expired {
+                new_prims.sort_by_key(|(lid, _, _)| *lid);
+                let created: Vec<Value> = new_prims
+                    .into_iter()
+                    .map(|(local_id, object_uuid, position)| {
+                        json!({
+                            "local_id": local_id,
+                            "object_uuid": object_uuid.to_string(),
+                            "position": position,
+                        })
+                    })
+                    .collect();
                 let _ = p.reply_tx.send(Ok(ViewerResponse::Json(json!({
                     "ok": true,
-                    "duplicated_count": new_prims.len(),
-                    "created": new_prims,
+                    "duplicated_count": created.len(),
+                    "created": created,
                 }))));
             } else {
                 self.mcp_bridge.pending_duplicates.push_back(p);

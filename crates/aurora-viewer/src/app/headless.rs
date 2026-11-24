@@ -44,6 +44,11 @@ impl App {
         // Drain MCP commands first so mutations (camera_set, avatar_walk_to,
         // setting_set) reach the network controls in this same tick.
         self.update_mcp_bridge(None);
+        self.step_headless_world(dt, still, frozen, world_now)
+    }
+
+    /// Steps world perception, locomotion, network controls, and timers without rendering.
+    pub(super) fn step_headless_world(&mut self, dt: f32, still: bool, frozen: bool, world_now: impl Fn() -> Instant) -> bool {
 
         if self.in_world() {
             self.step_draw_distance();

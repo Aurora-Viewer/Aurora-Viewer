@@ -1972,6 +1972,7 @@ pub(crate) struct Backend {
     queue: wgpu::Queue,
     /// Destroyed by hand in `Drop`, unless the device is lost (None in offscreen mode).
     surface: Option<std::mem::ManuallyDrop<Arc<wgpu::Surface<'static>>>>,
+    headless_offscreen: Option<wgpu::Texture>,
     config: wgpu::SurfaceConfiguration,
     external: bool,
     /// What the second camera's renderer is made from (second_view.rs):
@@ -4646,6 +4647,7 @@ impl Backend {
             device,
             queue,
             surface: surface.map(std::mem::ManuallyDrop::new),
+            headless_offscreen: None,
             config,
             external,
             second_seed,
@@ -7228,6 +7230,7 @@ impl Backend {
     /// try: otherwise a card with room for one set but not two would refuse
     /// every try.
     fn rebuild_targets(&mut self) {
+        self.headless_offscreen = None;
         // (a renderer waiting for its remake draws no world: its targets
         // stay small and the notice stays, whatever asks for them)
         if self.remake {
@@ -9193,21 +9196,29 @@ impl Backend {
                 _ => None,
             }
         } else {
-            // Headless offscreen GPU mode: render into an offscreen texture, never presented.
-            Some(FrameTarget::Offscreen(self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("headless_offscreen"),
-                size: wgpu::Extent3d {
-                    width: self.config.width,
-                    height: self.config.height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: self.config.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })))
+            // Headless offscreen GPU mode: render into a cached offscreen texture, never presented.
+            let stale = self.headless_offscreen.as_ref().is_none_or(|tex| {
+                tex.width() != self.config.width || tex.height() != self.config.height || tex.format() != self.config.format
+            });
+            if stale {
+                self.headless_offscreen = Some(self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("headless_offscreen"),
+                    size: wgpu::Extent3d {
+                        width: self.config.width,
+                        height: self.config.height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: self.config.format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::COPY_SRC
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                }));
+            }
+            self.headless_offscreen.clone().map(FrameTarget::Offscreen)
         };
         // (before the skip: a frame without a surface image, as in a resize,
         // must not take the notice away)

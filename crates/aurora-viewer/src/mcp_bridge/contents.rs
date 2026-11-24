@@ -137,6 +137,7 @@ enum Stage {
         folder_name: String,
         before: HashSet<Uuid>,
         names: Vec<String>,
+        last_checked_gen: Option<u64>,
     },
     /// Waiting for a fresh listing before acting.
     Fetch { op: ContentsOp, asked: bool },
@@ -146,9 +147,11 @@ enum Stage {
     /// it is dropped in (after the old one is removed, with `replace`).
     NotecardMade {
         name: String,
+        parent: Uuid,
         before_inventory: HashSet<Uuid>,
         bytes: usize,
         replace: bool,
+        last_checked_gen: Option<u64>,
     },
     /// The old item of that name is being removed before the new one goes in.
     RemoveThenAdd {
@@ -385,20 +388,54 @@ impl App {
                 folder_name,
                 before,
                 names,
+                last_checked_gen,
             } => {
                 let inv = &self.world.inventory;
+                if *last_checked_gen == Some(inv.generation) {
+                    return None;
+                }
+                *last_checked_gen = Some(inv.generation);
                 // the folder asked for, or a new top-level one of its name
-                let candidates: Vec<Uuid> = inv
+                let mut candidates = Vec::new();
+                if inv.folders.contains_key(folder) {
+                    candidates.push(*folder);
+                }
+                let matches_new_top = |f: &crate::world::inventory::Folder| {
+                    f.info.id != *folder
+                        && !f.library
+                        && f.info.parent == inv.root
+                        && &f.info.name == folder_name
+                        && !before.contains(&f.info.id)
+                };
+                if let Some(root) = inv
                     .folders
-                    .values()
-                    .filter(|f| {
-                        f.info.id == *folder
-                            || (!f.library && f.info.parent == inv.root && &f.info.name == folder_name && !before.contains(&f.info.id))
-                    })
-                    .map(|f| f.info.id)
-                    .collect();
+                    .get(&inv.root)
+                    .filter(|f| f.state == crate::world::inventory::FetchState::Fetched)
+                {
+                    for child_id in &root.children {
+                        if let Some(f) = inv.folders.get(child_id)
+                            && matches_new_top(f)
+                        {
+                            candidates.push(f.info.id);
+                        }
+                    }
+                } else {
+                    for f in inv.folders.values() {
+                        if matches_new_top(f) {
+                            candidates.push(f.info.id);
+                        }
+                    }
+                }
                 let (found, arrived) = candidates.into_iter().find_map(|fid| {
-                    let arrived: Vec<&aurora_net::inventory::InvItem> = inv.items.values().filter(|it| it.parent == fid).collect();
+                    let arrived: Vec<&aurora_net::inventory::InvItem> = if let Some(f) = inv
+                        .folders
+                        .get(&fid)
+                        .filter(|f| f.state == crate::world::inventory::FetchState::Fetched)
+                    {
+                        f.items.iter().filter_map(|id| inv.items.get(id)).filter(|it| it.parent == fid).collect()
+                    } else {
+                        inv.items.values().filter(|it| it.parent == fid).collect()
+                    };
                     names
                         .iter()
                         .all(|n| arrived.iter().any(|it| &it.name == n))
@@ -420,17 +457,34 @@ impl App {
             }
             Stage::NotecardMade {
                 name,
+                parent,
                 before_inventory,
                 bytes,
                 replace,
+                last_checked_gen,
             } => {
-                let made = self
-                    .world
-                    .inventory
-                    .items
-                    .values()
-                    .find(|it| it.asset_type == 7 && &it.name == name && !before_inventory.contains(&it.id) && !it.asset_id.is_nil())
-                    .map(|it| it.id)?;
+                let inv = &self.world.inventory;
+                if *last_checked_gen == Some(inv.generation) {
+                    return None;
+                }
+                *last_checked_gen = Some(inv.generation);
+                let matches = |it: &&aurora_net::inventory::InvItem| {
+                    it.asset_type == 7 && &it.name == name && !before_inventory.contains(&it.id) && !it.asset_id.is_nil()
+                };
+                let made = if let Some(folder) = inv
+                    .folders
+                    .get(parent)
+                    .filter(|f| f.state == crate::world::inventory::FetchState::Fetched)
+                {
+                    folder
+                        .items
+                        .iter()
+                        .filter_map(|id| inv.items.get(id))
+                        .find(matches)
+                        .map(|it| it.id)?
+                } else {
+                    inv.items.values().find(matches).map(|it| it.id)?
+                };
                 let (name, bytes, replace) = (name.clone(), *bytes, *replace);
                 let items = self.listing(p.object_uuid).map(<[TaskItem]>::to_vec).unwrap_or_default();
                 let note = json!({ "name": name, "bytes": bytes, "inventory_copy": made.to_string() });
@@ -612,12 +666,24 @@ impl App {
                 let names: Vec<String> = items.iter().map(|it| it.name.clone()).collect();
                 let folder_name = crate::build::task_inventory::contents_folder_name(&name);
                 let inv = &self.world.inventory;
-                let before: HashSet<Uuid> = inv
+                let before: HashSet<Uuid> = if let Some(root) = inv
                     .folders
-                    .values()
-                    .filter(|f| f.info.parent == inv.root && f.info.name == folder_name)
-                    .map(|f| f.info.id)
-                    .collect();
+                    .get(&inv.root)
+                    .filter(|f| f.state == crate::world::inventory::FetchState::Fetched)
+                {
+                    root.children
+                        .iter()
+                        .filter_map(|cid| inv.folders.get(cid))
+                        .filter(|f| f.info.parent == inv.root && f.info.name == folder_name)
+                        .map(|f| f.info.id)
+                        .collect()
+                } else {
+                    inv.folders
+                        .values()
+                        .filter(|f| f.info.parent == inv.root && f.info.name == folder_name)
+                        .map(|f| f.info.id)
+                        .collect()
+                };
                 match self.mcp_copy_contents(p.object_uuid, name, items) {
                     Ok(folder) => {
                         p.stage = Stage::Copied {
@@ -625,6 +691,7 @@ impl App {
                             folder_name,
                             before,
                             names,
+                            last_checked_gen: None,
                         };
                         None
                     }
@@ -668,14 +735,26 @@ impl App {
                     .values()
                     .find(|f| !f.library && f.info.type_default == 7)
                     .map_or(self.world.inventory.root, |f| f.info.id);
-                let before_inventory: HashSet<Uuid> = self
-                    .world
-                    .inventory
-                    .items
-                    .values()
-                    .filter(|it| it.name == name)
-                    .map(|it| it.id)
-                    .collect();
+                let inv = &self.world.inventory;
+                let before_inventory: HashSet<Uuid> = if let Some(folder) = inv
+                    .folders
+                    .get(&parent)
+                    .filter(|f| f.state == crate::world::inventory::FetchState::Fetched)
+                {
+                    folder
+                        .items
+                        .iter()
+                        .filter_map(|id| inv.items.get(id))
+                        .filter(|it| it.name == name)
+                        .map(|it| it.id)
+                        .collect()
+                } else {
+                    inv.items
+                        .values()
+                        .filter(|it| it.name == name)
+                        .map(|it| it.id)
+                        .collect()
+                };
                 self.send(NetCommand::CreateNotecardItem {
                     request: Uuid::new_v4(),
                     parent,
@@ -685,9 +764,11 @@ impl App {
                 });
                 p.stage = Stage::NotecardMade {
                     name,
+                    parent,
                     before_inventory,
                     bytes: encoded.len(),
                     replace,
+                    last_checked_gen: None,
                 };
                 None
             }

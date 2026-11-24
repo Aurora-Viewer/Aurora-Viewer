@@ -11533,6 +11533,24 @@ impl App {
         self.local_bakes.apply(&mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
         self.update_mcp_bridge(Some(&mut gfx.renderer));
+        if event_loop.is_none() {
+            let capture_active = gfx.renderer.capture_request
+                || gfx.renderer.capture_scene
+                || gfx.renderer.captured.is_some()
+                || self.mcp_bridge.has_pending_capture()
+                || self.snapshots.capturing.is_some();
+            if !capture_active
+                && self.in_world()
+                && self
+                    .mcp_bridge
+                    .last_offscreen_render
+                    .is_some_and(|t| t.elapsed() < Duration::from_millis(250))
+            {
+                self.gfx = Some(gfx);
+                return self.step_headless_world(dt, still, frozen, world_now);
+            }
+            self.mcp_bridge.last_offscreen_render = Some(Instant::now());
+        }
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
@@ -14246,7 +14264,9 @@ impl App {
             // stale input; then the frame limiter
             gfx.renderer.wait_for_gpu();
             work = Some(self.frame_start.elapsed());
-            if let Some(target) = target {
+            if event_loop.is_some()
+                && let Some(target) = target
+            {
                 wait_until(self.frame_start + target);
             }
         }

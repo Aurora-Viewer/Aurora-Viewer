@@ -9,6 +9,7 @@ pub(super) struct PendingLandmark {
     name: String,
     parent: Uuid,
     before_ids: HashSet<Uuid>,
+    last_checked_gen: Option<u64>,
     started: Instant,
     deadline: Duration,
     reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
@@ -437,14 +438,26 @@ impl App {
             self.world.agent.position.z
         );
         let final_name = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).unwrap_or(default_name);
-        let before_ids: HashSet<Uuid> = self
-            .world
-            .inventory
-            .items
-            .values()
-            .filter(|it| it.parent == parent && it.asset_type == 3)
-            .map(|it| it.id)
-            .collect();
+        let inv = &self.world.inventory;
+        let before_ids: HashSet<Uuid> = if let Some(folder) = inv
+            .folders
+            .get(&parent)
+            .filter(|f| f.state == crate::world::inventory::FetchState::Fetched)
+        {
+            folder
+                .items
+                .iter()
+                .filter_map(|id| inv.items.get(id))
+                .filter(|it| it.parent == parent && it.asset_type == 3)
+                .map(|it| it.id)
+                .collect()
+        } else {
+            inv.items
+                .values()
+                .filter(|it| it.parent == parent && it.asset_type == 3)
+                .map(|it| it.id)
+                .collect()
+        };
 
         if let Err(e) = self.mcp_send(NetCommand::CreateInventoryItem {
             parent,
@@ -460,6 +473,7 @@ impl App {
             name: final_name,
             parent,
             before_ids,
+            last_checked_gen: None,
             started: Instant::now(),
             deadline: Duration::from_millis(timeout_ms.clamp(500, 15_000)),
             reply_tx,
@@ -468,14 +482,35 @@ impl App {
 
     pub(super) fn poll_mcp_landmark_create(&mut self) {
         let now = Instant::now();
-        for p in std::mem::take(&mut self.mcp_bridge.pending_landmarks) {
-            let created = self
-                .world
-                .inventory
-                .items
-                .values()
-                .filter(|it| it.parent == p.parent && it.asset_type == 3 && !p.before_ids.contains(&it.id))
-                .max_by_key(|it| u8::from(it.name == p.name));
+        for mut p in std::mem::take(&mut self.mcp_bridge.pending_landmarks) {
+            if now.duration_since(p.started) >= p.deadline {
+                let _ = p.reply_tx.send(Err(McpError::Timeout(p.deadline.as_millis() as u64)));
+                continue;
+            }
+            let inv_gen = self.world.inventory.generation;
+            if p.last_checked_gen == Some(inv_gen) {
+                self.mcp_bridge.pending_landmarks.push_back(p);
+                continue;
+            }
+            p.last_checked_gen = Some(inv_gen);
+            let inv = &self.world.inventory;
+            let created = if let Some(folder) = inv
+                .folders
+                .get(&p.parent)
+                .filter(|f| f.state == crate::world::inventory::FetchState::Fetched)
+            {
+                folder
+                    .items
+                    .iter()
+                    .filter_map(|id| inv.items.get(id))
+                    .filter(|it| it.parent == p.parent && it.asset_type == 3 && !p.before_ids.contains(&it.id))
+                    .max_by_key(|it| u8::from(it.name == p.name))
+            } else {
+                inv.items
+                    .values()
+                    .filter(|it| it.parent == p.parent && it.asset_type == 3 && !p.before_ids.contains(&it.id))
+                    .max_by_key(|it| u8::from(it.name == p.name))
+            };
             if let Some(item) = created {
                 let ids = crate::world::inventory::asset_ids::AssetIds::of(&self.world);
                 let _ = p.reply_tx.send(Ok(ViewerResponse::Json(json!({
@@ -486,8 +521,6 @@ impl App {
                     "folder_id": p.parent.to_string(),
                     "name": item.name,
                 }))));
-            } else if now.duration_since(p.started) >= p.deadline {
-                let _ = p.reply_tx.send(Err(McpError::Timeout(p.deadline.as_millis() as u64)));
             } else {
                 self.mcp_bridge.pending_landmarks.push_back(p);
             }
