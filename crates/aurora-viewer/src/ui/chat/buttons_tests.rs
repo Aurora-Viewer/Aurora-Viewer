@@ -1976,6 +1976,47 @@ fn the_message_menu_retains_copy_and_quote_after_eviction() {
     }
 }
 
+/// The field's emoji and GIF pickers (#4867), in every style: a click in a
+/// picker keeps it, the GIF button swaps the emoji picker for its own, and
+/// a click away from the picker closes it, as the chat bar's does.
+#[test]
+fn a_click_away_closes_the_pickers() {
+    let away = egui::pos2(1150.0, 750.0);
+    for style in ALL {
+        let mut h = H::new(style);
+        h.st.gifs.demo = true;
+        h.open(Some(JANE));
+        let (emoji_button, gif_button) = if style.workspace() {
+            (control_id("box-mood-smile-filled"), control_id("box-gif"))
+        } else {
+            (classic_id("mood-smile-filled"), classic_id("gif"))
+        };
+        let picker = |h: &H, name: &str| {
+            h.frames
+                .ctx
+                .memory(|m| m.area_rect(egui::Id::unique((name, Some(JANE)))))
+                .unwrap_or_else(|| panic!("{style:?}: {name} is not shown"))
+        };
+        h.press(emoji_button);
+        assert!(h.st.emoji_open, "{style:?}: the emoji picker opens");
+        // its margin: no emoji under the click
+        let inside = picker(&h, "emoji_picker").left_top() + egui::vec2(3.0, 3.0);
+        assert!(!h.shown(emoji_button).unwrap().contains(away), "{style:?}");
+        h.at(inside);
+        assert!(h.st.emoji_open, "{style:?}: a click in the picker keeps it");
+        h.at(away);
+        assert!(!h.st.emoji_open, "{style:?}: a click away closes the emoji picker");
+        h.press(emoji_button);
+        h.press(gif_button);
+        assert!(h.st.gif_open && !h.st.emoji_open, "{style:?}: the GIF button swaps the pickers");
+        let inside = picker(&h, "gif_picker").left_top() + egui::vec2(3.0, 3.0);
+        h.at(inside);
+        assert!(h.st.gif_open, "{style:?}: a click in the GIF picker keeps it");
+        h.at(away);
+        assert!(!h.st.gif_open, "{style:?}: a click away closes the GIF picker");
+    }
+}
+
 /// The field (Aurora, Compact): emoji, the volume's menu, inventory,
 /// channel, send.
 #[test]

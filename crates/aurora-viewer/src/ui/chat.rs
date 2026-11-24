@@ -4669,7 +4669,7 @@ fn classic_pane(
         let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
         let mut close = false;
         // one per conversation: one in each window (`popout.rs`)
-        egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
+        let shown = egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
             .fade_in(false)
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::LEFT_BOTTOM)
@@ -4691,6 +4691,9 @@ fn classic_pane(
         if close {
             st.emoji_open = false;
             ui.ctx().memory_mut(|m| m.request_focus(conv_input));
+        } else if popout::clicked_away(ui.ctx(), &shown.response) {
+            // the click goes where it landed, the keyboard with it
+            st.emoji_open = false;
         }
     }
     let anchor = emoji_btn.unwrap_or(resp.rect).left_top();

@@ -305,6 +305,30 @@ pub(super) fn claim_picker(ctx: &egui::Context) -> bool {
     free
 }
 
+/// A click away from the emoji or GIF picker drawn as `picker` (its
+/// `Area`) closes it (#4867), as it does the chat bar's (`bars/dock.rs`)
+/// and the Legacy Viewer's emoji picker, an `auto_close` floater
+/// (LLFloater::goneFromFront, indra/llui/llfloater.cpp, originally LGPL
+/// 2.1). Not on the pass it first shows: the click that opened it (its
+/// button, or the GIF button closing the emoji picker) is not one away from
+/// it. Nor a click on a menu over it, in the foreground: an emoji's
+/// favourite menu, a field's right-click menu (`text_menu.rs`).
+pub(super) fn clicked_away(ctx: &egui::Context, picker: &egui::Response) -> bool {
+    let id = picker.id.with("clicked_away_pass");
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
+    let shown_before = ctx.data_mut(|d| {
+        let last = d.get_temp::<u64>(id);
+        d.insert_temp(id, pass);
+        last.is_some_and(|last| last + 1 == pass)
+    });
+    let on_menu = || {
+        ctx.pointer_interact_pos()
+            .and_then(|pos| ctx.layer_id_at(pos))
+            .is_some_and(|layer| layer.order >= egui::Order::Foreground)
+    };
+    shown_before && picker.clicked_elsewhere() && !on_menu()
+}
+
 /// `conversation:<uuid>`, or `conversation:nearby` for the nearby chat.
 pub(super) fn floater_id(conversation: Option<Uuid>) -> String {
     match conversation {
