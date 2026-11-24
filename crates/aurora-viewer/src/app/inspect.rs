@@ -440,6 +440,29 @@ impl App {
                 }
                 self.inspect_objects(&ids);
             }
+            "market" => {
+                let ids: Vec<Uuid> = crate::demo::market::some()
+                    .into_iter()
+                    .filter_map(|local| self.world.objects.iter().find(|(_, o)| o.key.local_id == local))
+                    .map(|(_, o)| o.full_id)
+                    .collect();
+                if ids.is_empty() {
+                    return;
+                }
+                self.inspect_objects(&ids);
+            }
+            // someone of AURORA_DEMO_CROWD: many rigged meshes
+            "crowd" => {
+                let known = [crate::demo::DEMO_AGENT, crate::demo::DEMO_LOUP];
+                let who = self
+                    .world
+                    .objects
+                    .avatars()
+                    .map(|(_, o)| o.full_id)
+                    .find(|id| !known.contains(id) && worn_roots(&self.world, id).len() > 1);
+                let Some(id) = who else { return };
+                self.inspect_avatar(id);
+            }
             who => {
                 let id = if who == "self" {
                     crate::demo::DEMO_AGENT

@@ -10102,7 +10102,7 @@ impl App {
         wanted.extend(self.inventory_ui.wanted_pics.drain());
         wanted.extend(self.conversation_log_ui.wanted_pics.drain());
         wanted.extend(self.inspect_ui.wanted_pics.drain());
-        wanted.extend(self.area_search_ui.wanted_pics.drain());
+        wanted.extend(self.area_search_ui.wanted_pics.get_mut().drain());
         let portrait = self.appearance_ui.wanted_outfit_portrait.take();
         self.scene.textures.show_outfit_portrait(portrait);
         if let Some(image) = portrait

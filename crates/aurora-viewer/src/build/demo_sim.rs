@@ -186,6 +186,13 @@ impl DemoSim {
             let outfit = local_id.and_then(crate::demo::inspect::props);
             let creator_id = outfit.map_or(creator_id, |o| o.2);
             let name = outfit.map_or(name, |o| o.0.to_owned());
+            // the market of AURORA_DEMO_AREA_SEARCH: several owners and creators
+            let market = local_id.and_then(crate::demo::market::props);
+            let (name, owner_id, creator_id, group) = match market {
+                Some((name, _, creator, Some(group))) => (name, group, creator, Some(group)),
+                Some((name, owner, creator, None)) => (name, owner, creator, group),
+                None => (name, owner_id, creator_id, group),
+            };
             let description = outfit.map_or_else(String::new, |o| o.1.to_owned());
             ObjectProps {
                 object_id: id,
@@ -1151,7 +1158,12 @@ impl DemoSim {
                 let mut m = Llsd::new_map();
                 for v in body["object_ids"].as_array() {
                     let id = v.as_uuid();
-                    let n = prims_of(&id);
+                    let n = world
+                        .objects
+                        .index_of_uuid(&id)
+                        .and_then(|i| world.objects.get(i))
+                        .and_then(|o| crate::demo::market::land_impact(o.key.local_id))
+                        .unwrap_or_else(|| prims_of(&id));
                     m.insert(
                         id.to_string(),
                         llsd_map! {

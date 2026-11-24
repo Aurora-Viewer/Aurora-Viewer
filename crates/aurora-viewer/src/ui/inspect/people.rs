@@ -272,7 +272,7 @@ pub fn table(
         me.complexity = subject.total;
     }
     people.sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name));
-    match sort.unwrap_or((1, true)) {
+    match sort.unwrap_or((0, false)) {
         (0, down) => {
             if down {
                 people.reverse();

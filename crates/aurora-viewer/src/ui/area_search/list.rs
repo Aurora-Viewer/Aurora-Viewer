@@ -32,23 +32,13 @@ fn band_note(band: usize, count: usize) -> String {
 /// What a click on a row does, shared by every list.
 impl AreaSearchUi {
     /// The face of an owner: a group's is square; hidden by RLVa, initials.
-    pub(super) fn owner_face(
-        &mut self,
-        ui: &egui::Ui,
-        p: &Palette,
-        env: &Env<'_>,
-        r: Rect,
-        who: Uuid,
-        name: &str,
-        group: bool,
-        hidden: bool,
-    ) {
+    pub(super) fn owner_face(&self, ui: &egui::Ui, p: &Palette, env: &Env<'_>, r: Rect, who: Uuid, name: &str, group: bool, hidden: bool) {
         if group {
             group_face(ui, p, r);
             return;
         }
         let pic = (!hidden && !who.is_nil()).then_some(who);
-        self.wanted_pics.extend(pic);
+        self.wanted_pics.borrow_mut().extend(pic);
         widgets::avatar_disc(ui, p, r, pic.and_then(|id| env.pics.get(&id)), name, false);
     }
 
@@ -222,18 +212,19 @@ pub(super) fn objects(
                     band_line(ui, p, line, band, &d.bands[band], style);
                 }
                 Line::Row(at) => {
-                    let row = state.table.rows[state.table.visible[at]].clone();
+                    let row = &state.table.rows[state.table.visible[at]];
                     let on = state.selection.contains(&row.id);
                     let lit = if on { Lit::Outlined } else { Lit::Off };
                     let resp = board::row_at(ui, p, &nav, i, line, lit);
                     match style {
-                        Style::Faces => face_row(state, ui, p, env, line, &row, on),
-                        Style::Columns => column_row(state, ui, p, env, line, &row, on),
+                        Style::Faces => face_row(state, ui, p, env, line, row, on),
+                        Style::Columns => column_row(state, ui, p, env, line, row, on),
                     }
-                    let label = spoken(&row);
+                    let label = spoken(row);
                     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &label));
                     action = state.respond(ui, env, resp, at).or(action.take());
                     if let Some(under) = under {
+                        let row = state.table.rows[state.table.visible[at]].clone();
                         let mut child = ui.new_child(
                             egui::UiBuilder::new()
                                 .id_salt("area_search_card")
@@ -292,7 +283,7 @@ fn band_line(ui: &egui::Ui, p: &Palette, line: Rect, band: usize, value: &model:
 }
 
 /// Face, name, check, distance, land impact.
-fn face_row(state: &mut AreaSearchUi, ui: &egui::Ui, p: &Palette, env: &Env<'_>, line: Rect, row: &Row, on: bool) {
+fn face_row(state: &AreaSearchUi, ui: &egui::Ui, p: &Palette, env: &Env<'_>, line: Rect, row: &Row, on: bool) {
     let y = line.center().y;
     let face = Rect::from_center_size(egui::pos2(line.left() + 14.0, y), Vec2::splat(18.0));
     state.owner_face(ui, p, env, face, row.owner_id, &row.owner, row.group_owned(), row.names_hidden);
@@ -310,7 +301,7 @@ fn face_row(state: &mut AreaSearchUi, ui: &egui::Ui, p: &Palette, env: &Env<'_>,
 }
 
 /// Distance, name, land impact, owner.
-fn column_row(state: &mut AreaSearchUi, ui: &egui::Ui, p: &Palette, env: &Env<'_>, line: Rect, row: &Row, on: bool) {
+fn column_row(state: &AreaSearchUi, ui: &egui::Ui, p: &Palette, env: &Env<'_>, line: Rect, row: &Row, on: bool) {
     let y = line.center().y;
     let cells = small_columns(line);
     let small = egui::FontId::proportional(11.5);
@@ -667,7 +658,7 @@ pub(super) fn sale(
     };
     let mut draw = |ui: &mut egui::Ui, i: usize, line: Rect| {
         let index = d.sale[i];
-        let row = state.table.rows[index].clone();
+        let row = &state.table.rows[index];
         let on = state.selection.contains(&row.id);
         let resp = board::row_at(ui, p, &nav, i, line, if on { Lit::Outlined } else { Lit::Off });
         let y = line.center().y;
@@ -692,7 +683,7 @@ pub(super) fn sale(
             egui::FontId::proportional(12.5),
             p.ink,
         );
-        let label = format!("{}, {price}", spoken(&row));
+        let label = format!("{}, {price}", spoken(row));
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &label));
         let at = if full {
             places.get(&index).copied()
@@ -841,7 +832,7 @@ pub(super) fn table(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, en
     let list = list.with_max_y(list.bottom() - foot);
     let mut child = ui.new_child(egui::UiBuilder::new().id_salt("area_search_rows").max_rect(list));
     board::virtual_rows(&mut child, "area_search_table", count, height, None, &nav, |ui, i, line, _| {
-        let row = state.table.rows[state.table.visible[i]].clone();
+        let row = &state.table.rows[state.table.visible[i]];
         let on = state.selection.contains(&row.id);
         let resp = board::row_at(ui, p, &nav, i, line, if on { Lit::Outlined } else { Lit::Off });
         let y = line.center().y;
@@ -881,7 +872,7 @@ pub(super) fn table(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, en
                 c => board::cell(&cut, cell, row.cell(*c).trim(), p.muted),
             }
         }
-        let label = spoken(&row);
+        let label = spoken(row);
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &label));
         action = state.respond(ui, env, resp, i).or(action.take());
     });

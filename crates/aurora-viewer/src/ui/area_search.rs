@@ -60,7 +60,7 @@ pub struct AreaSearchUi {
     /// The prim outlined in the 3D view.
     prim: Option<Uuid>,
     /// Profile pictures the window shows, for the app to fetch.
-    pub(crate) wanted_pics: HashSet<Uuid>,
+    pub(crate) wanted_pics: std::cell::RefCell<HashSet<Uuid>>,
     /// What the results come to, and the list it was made from.
     digest: Option<(u64, Arc<Digest>)>,
     /// The window was open last frame.
@@ -347,7 +347,9 @@ impl AreaSearchUi {
                         Some((_, long)) => format!("{long}\n{count}"),
                         None => format!("{count}\n{}", aurora_i18n::tr!("area-search-scope")),
                     };
-                    ui.add(egui::Label::new(text).truncate()).on_hover_text(tip);
+                    if ui.available_width() > 40.0 {
+                        ui.add(egui::Label::new(text).truncate()).on_hover_text(tip);
+                    }
                 });
             });
         });

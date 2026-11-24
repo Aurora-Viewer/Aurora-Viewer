@@ -589,8 +589,10 @@ fn area_search_windows_keep_their_size() {
             sizes,
             aurora_i18n::tr!("area-search-several"),
             || {
-                let mut ui = AreaSearchUi::default();
-                ui.was_open = true;
+                let mut ui = AreaSearchUi {
+                    was_open: true,
+                    ..Default::default()
+                };
                 ui.table.replace(rows.clone());
                 ui
             },

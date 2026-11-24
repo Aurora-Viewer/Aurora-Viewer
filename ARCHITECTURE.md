@@ -1253,20 +1253,33 @@ gathered into objects (body areas, sort orders, badge tiers, shares),
 `list.rs` the one-line object cards and the Creators tab, `details.rs` the
 Legacy prim table with its totals. `app/inspect.rs` selects the prims, builds
 their rows and answers the window's actions (profiles, Look at).
+Wide, the window is a board of tiles: `wide.rs` the tiles (the objects in 3D,
+items, complexity or land impact, Made by, Worn on / Owned by, figures, prims)
+and what one narrows in the others, `people.rs` the complexity among the people
+here. `ui/board.rs` is the board both wide windows share: packing on four, two
+or one columns, a tile that grows, rows with one Tab stop, virtual lists, table
+headings, the small / wide view of a window.
+
+`object_stage/` is their 3D view: `mod.rs` keeps one model per window up to
+date (refused under RLVa's `second_camera_blocked`), `build.rs` takes the
+objects from the caches on the main thread and makes the model on a worker
+(every prim owns its bones, so moving, isolating and pulling apart are a new
+palette), `layout.rs` where the parts go. `ui/object_stage.rs` draws it with
+`aurora_render::preview::paint_stage` and its controls. It asks nothing of the
+network and shows no asset id.
 
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
 window and cache its filtered, sorted, virtualized object rows.
-`ui/area_search/controls.rs` places Results, Search, Filters and Ranges in shared tabs on the left, showing
-one inline form above the virtualized table; Filters pairs required properties
-with exclusions/parcel/ownership (side by side when wide), while Ranges holds
-distance and price. Columns stays in a right-aligned
-popout. Forms scroll independently to reserve result rows below them; selecting
-Results hides the form to give the table more room. All edits apply immediately.
-Reset sits at the bottom right of each section and restores only its own options or
-column choices; the result footer resets the entire search. Save as default
+`ui/area_search/model.rs` counts what the window shows once per result list
+(distance bars and bands, owners, kinds, what is for sale, ranks) and names the
+filters that are on. `chart.rs` is the distance chart with its two handles,
+`sheet.rs` the filters (three-state kinds, click action, permissions, price,
+scope, the six fields), `list.rs` the lists (bands, owners, for sale, the whole
+table with the name kept in view, the card of the selected object), `small.rs`
+and `wide.rs` the two views. All edits apply immediately. Save as default
 persists filter options without search text. Compiled regex filters survive
 live snapshots; one matching-limit failure cancels the rest of that batch,
-with diagnostics visible above the table.
+with diagnostics in the footer.
 `settings/area_search.rs` owns typed defaults and Legacy-compatible
 `openfloater/area_search` link encoding/decoding, routed by `slapp.rs`.
 Aurora retains its broader physical/temporary defaults, live text search,

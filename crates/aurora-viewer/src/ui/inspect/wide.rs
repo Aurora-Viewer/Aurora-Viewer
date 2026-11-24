@@ -394,10 +394,16 @@ fn stage(
     let mut child = ui.new_child(egui::UiBuilder::new().id_salt(id).max_rect(rect));
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
     let ui = &mut child;
+    let lines = match (form, view.open) {
+        (Form::Small, _) => 0.0,
+        (_, None) => 1.0,
+        (_, Some(_)) => 3.0,
+    };
+    let top_room = (10.0 + lines * 17.0) * crate::ui::fonts::scale(ui.ctx()).max(1.0);
     if absent && form != Form::Small {
         missing(state, ui, p, frame, view, rect);
     }
-    if let Some(hit) = state.stage.show(ui, p, rect, 50.0, showing, title)
+    if let Some(hit) = state.stage.show(ui, p, rect, top_room, showing, title)
         && form != Form::Small
     {
         if state.opened == Some(hit.root) {
@@ -900,7 +906,7 @@ fn weight(
                 let (chart, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 96.0), Sense::hover());
                 people::paint(ui, p, frame, &mut state.wanted_pics, chart, &subject, true);
                 ui.add_space(6.0);
-                let mut sort = state.wide.sorts.get("people").copied().flatten();
+                let mut sort = state.wide.sorts.get("people").copied().unwrap_or(Some((1, true)));
                 people::table(ui, p, frame, &mut state.wanted_pics, &subject, &mut sort);
                 state.wide.sorts.insert("people", sort);
             })
@@ -1177,7 +1183,8 @@ fn makers(
         Form::Usual => {
             if let Some(item) = view.open {
                 let row = view.row(item);
-                let count = view.items.iter().filter(|i| view.row(i).creator_name == row.creator_name).count();
+                let made = Pick::Maker(row.creator, row.creator_name.clone());
+                let count = view.items.iter().filter(|i| made.keeps(view.rows, i)).count();
                 let line = aurora_i18n::tr!("inspect-made-of", count = count, all = view.items.len());
                 if person(state, ui, p, frame, row.creator, None, &row.creator_name, &line)
                     && let Some(who) = row.creator

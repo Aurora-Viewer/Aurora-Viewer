@@ -11,7 +11,7 @@ pub const GAP: f32 = 8.0;
 /// Width of the small tiles beside a grown one.
 const SIDE: f32 = 185.0;
 /// Narrowest column, at the text's usual size.
-const COLUMN: f32 = 150.0;
+const COLUMN: f32 = 125.0;
 /// Smallest height of a row, and the tallest it is stretched to.
 const ROW: f32 = 64.0;
 /// Inside a tile.
@@ -67,7 +67,11 @@ fn pack<T: Copy>(tiles: &[Tile<T>], columns: usize) -> (Vec<Slot>, usize) {
     let mut used: Vec<Vec<bool>> = Vec::new();
     let mut slots = Vec::with_capacity(tiles.len());
     for tile in tiles {
-        let (w, h) = (usize::from(tile.columns).clamp(1, columns), usize::from(tile.rows).max(1));
+        // on fewer columns the large tiles are lower: the next ones stay in
+        // sight
+        let most = if columns < 4 { 3 } else { usize::MAX };
+        let w = usize::from(tile.columns).clamp(1, columns);
+        let h = usize::from(tile.rows).clamp(1, most);
         let mut row = 0;
         let (x, y) = 'found: loop {
             for x in 0..=columns - w {
@@ -599,12 +603,14 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, rect: Rect, text: &mut String, hin
             .min_size(rect.size())
     });
     if empty && !field.has_focus() {
-        let caps = egui::Rect::from_min_max(
-            egui::pos2(rect.right() - 62.0, rect.top()),
-            egui::pos2(rect.right() - 10.0, rect.bottom()),
-        );
         let keys = aurora_i18n::tr!("board-find-keys");
-        text_ending(ui, caps.right(), caps.center().y, keys, 11.0, p.muted);
+        let width = |text: &str, font| ui.painter().layout_no_wrap(text.to_owned(), font, p.muted).size().x;
+        let body = width(hint, egui::TextStyle::Body.resolve(ui.style()));
+        let caps = width(keys, egui::FontId::proportional(11.0));
+        // (nothing over the hint with a large text)
+        if body + caps + 44.0 < rect.width() {
+            text_ending(ui, rect.right() - 10.0, rect.center().y, keys, 11.0, p.muted);
+        }
     }
     if super::find_shortcut::take(ui, &[field.id]) {
         field.request_focus();
@@ -765,7 +771,8 @@ mod tests {
     fn a_large_text_takes_two_columns_then_one_and_scrolls() {
         assert_eq!(columns(764.0, 1.0), 4);
         assert_eq!(columns(764.0, 2.0), 2);
-        assert_eq!(columns(280.0, 1.0), 1);
+        assert_eq!(columns(764.0, 1.5), 4);
+        assert_eq!(columns(240.0, 1.0), 1);
         let (placed, height) = place(&BOARD, None, area(764.0, 616.0), 2.0);
         apart(&placed);
         assert!(height > 616.0, "taller than its area: it scrolls");

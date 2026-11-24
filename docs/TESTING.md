@@ -6451,7 +6451,7 @@ both open states and the selection count. Capture at frame 620.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
-| `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
+| `AURORA_DEMO_AREA_SEARCH=1\|market,wide\|small,select\|card\|filters\|table\|owners\|…` | Open Area Search, small or wide, on the plaza or a market of 360 pieces; options separated by commas |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 | `AURORA_DEMO_UNINSTALL=confirm\|running\|result\|left` | "Remove Aurora from this computer" as a dry run: its confirmation, or the result window. |
 
@@ -6468,17 +6468,23 @@ read from or removed in the registry, the desktop files, the credential
 store or Blender: the log says what a real removal would do. Capture after
 frame 700 in English, French and Japanese.
 
-`AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
-the agent's parcel, `sale` shows sale entries, `filters` opens Filters (required/excluded properties, permissions, click action and scope), and
-`search` searches the localized fountain name, and `menu` right-clicks the
-second row to open the result menu. `fields` expands the six-field Search form,
-`ranges` opens distance and sale price, `scope` is an alias for Filters, `columns` opens the Columns popout, `all-columns` shows all ten result columns,
-and `link` round-trips a fountain search through the SLapp parser.
-Capture after frame 740 in English, French and Japanese, at normal and 150% UI scale. Check the column
-sorting, combined text and flag filters, the in-field crosses that clear only
-their filled text filter and return keyboard focus to it, Reset, Refresh preserving filters,
-selection, Inspect, Zoom/double click, Copy UUID, and the toolbar button reopening
-a minimized window. The right-click menu (`menu`): Ctrl and Shift clicks select
+`AURORA_DEMO_AREA_SEARCH`: options separated by commas. `1` opens the window;
+`market` adds 360 pieces of furniture of several owners, creators, land impacts
+and kinds; `wide` and `small` force a view (never kept in the settings); `select`
+takes the third row, `card` too with its card open; `parcel` restricts to the
+agent's parcel, `sale` to what is for sale, `search` searches the localized
+fountain name, `menu` right-clicks the second row, `filters` opens the filters,
+`regex` a wrong expression, `owners`, `table`, `all-columns`, `distance`,
+`sale-list` and `3d` grow that tile (or show that tab), and `link` round-trips a
+fountain search through the SLapp parser. Capture after frame 740 in English,
+French and Japanese, at `AURORA_TEXT_SIZE=1`, `1.5` and `2`, in both views. Check
+the chart's handles (drag, arrows, Shift + arrows), a drag over the bars, the
+kinds' three states and the chips, the sort of every column, the sideways scroll
+with the name in view, the folded and open card, Reset, Save as default, Copy as
+link, the separate resets of the "…" menu, Refresh preserving filters, Select
+several, Ctrl+A and the arrow keys in the list, Inspect, Zoom / double click,
+Copy UUID, the 3D view empty with nothing selected, and the toolbar button
+reopening a minimized window. The right-click menu (`menu`): Ctrl and Shift clicks select
 several rows and every entry acts on all of them; Sit, Teleport to and Buy need
 one row (Buy one for sale), Zoom one within the draw distance; a right click
 outside the selection selects that row alone; Select all, Clear selection and
@@ -6847,7 +6853,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_LINE_MENU=1\|object` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`), or an object line's in any style (with `AURORA_DEMO_OBJECT_CHAT`) |
 | `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|classic\|form\|publish\|new-pick]` | An avatar's profile window |
-| `AURORA_DEMO_INSPECT=wolf\|self\|objects[:open\|creators\|details\|view]` | Inspect on what Violet Wolf or the demo agent wears, or on six plaza objects |
+| `AURORA_DEMO_INSPECT=wolf\|self\|crowd\|objects\|market[:wide\|small,item\|open\|grow-…\|…]` | Inspect on what someone wears, or on objects, small or wide; options separated by commas |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
 | `AURORA_DEMO_SHARE=multi[:n=<count>]` | Dozens of Orion-like friends (default 80) for inventory Share multi-select (#3074) |
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
@@ -6918,7 +6924,17 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the outlined one in violet), the Profile button on the line pointed at, a
   right click that looks at the item, the View panel and the Details table. `:open` opens the
   third object's card, `:creators` and `:details` show those tabs, `:view` the
-  View panel.
+  View panel. `crowd` takes someone of `AURORA_DEMO_CROWD`, `market` eight pieces
+  of the market below, of several owners. `:small` and `:wide` force a view (never
+  kept in the settings). In the wide one: `item` opens the third object, `apart`
+  pulls the 3D view apart, `grow-3d`, `grow-items`, `grow-complexity`,
+  `grow-makers`, `grow-places`, `grow-figures` and `grow-prims` grow that tile.
+  Options go together, separated by commas (`wolf:wide,item,grow-prims`). Check
+  that nothing spins by itself, dragging and each button, a click on an item in
+  3D, the violet on what is outlined in the world (the item, then a prim of it),
+  Set aside and Put back, a maker, an area and an owner picked (and their chips),
+  `AURORA_DEMO_CROWD=24` for the people of the strip, `AURORA_TEXT_SIZE=1.5` and
+  `2` (two columns), High contrast and Reduce motion.
 
 - **`AURORA_DEMO_RLVA`**: `enabled` opens Preferences > RLVa and
   applies synthetic object restrictions at frame 700. `disabled` delivers

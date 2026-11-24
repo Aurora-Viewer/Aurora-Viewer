@@ -170,7 +170,9 @@ fn stage(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, id: egui::Id,
             pointed: None,
         };
         let spoken = format!("{title}, {name}");
-        if let Some(hit) = state.stage.show(&mut child, p, rect, 40.0, showing, &spoken)
+        let lines = if form == Form::Small { 0.0 } else { 2.0 };
+        let top_room = (8.0 + lines * 18.0) * crate::ui::fonts::scale(ui.ctx()).max(1.0);
+        if let Some(hit) = state.stage.show(&mut child, p, rect, top_room, showing, &spoken)
             && form != Form::Small
         {
             state.prim = (state.prim != Some(hit.prim)).then_some(hit.prim);
