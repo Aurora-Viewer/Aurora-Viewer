@@ -110,12 +110,16 @@ impl App {
     }
 
     pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
-        // the Avatar tab's bend shows on our avatar while the preview runs
-        self.scene.preview_bend = if self.blender_live.running() {
+        // the Avatar tab's bend shows on our avatar (and the Fit lab's
+        // mannequins) while the preview runs or the mannequins stand
+        self.scene.preview_bend = if self.blender_live.running() || self.blender_live.fit.shown {
             self.blender_live.bend
         } else {
             Default::default()
         };
+        let place = std::mem::take(&mut self.blender_live.fit.place);
+        self.world
+            .update_fit_lab(&self.blender_live.fit.wanted(), self.blender_live.fit.motion, place, Instant::now());
         self.blender_live.capture_placements(&mut self.world);
         self.blender_live.still = self.settings.reduce_motion;
         if std::mem::take(&mut self.blender_live.undo_requested) {
@@ -245,10 +249,25 @@ impl App {
             if mode.starts_with("shape") {
                 self.demo_blender_shape(mode == "shape-readonly");
             }
-            let fixture = if mode == "sleeves" {
-                // the Avatar tab's bend, set, so it shows on the avatar and in Quick look
-                self.blender_live.bend.elbows = 90.0;
-                self.blender_live.bend.knees = 60.0;
+            let fixture = if mode == "sleeves" || mode.starts_with("fit-lab") {
+                if mode == "sleeves" {
+                    // the Avatar tab's bend, set, so it shows on the avatar and in Quick look
+                    self.blender_live.bend.elbows = 90.0;
+                    self.blender_live.bend.knees = 60.0;
+                } else {
+                    // the Fit lab's mannequins, in the sleeves, standing or walking:
+                    // the demo's stand-ins for the stock stand and walk, which
+                    // a grid's asset server gives
+                    for (id, anim) in crate::demo::link::animations() {
+                        let bound = crate::scene::anim::BoundAnim::bind(anim, &self.world.avatar_lib.rig);
+                        self.scene.anims.insert(id, Arc::new(bound));
+                    }
+                    self.blender_live.tab = Tab::Avatar;
+                    self.blender_live.fit.shown = true;
+                    if mode == "fit-lab-walk" {
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Walk;
+                    }
+                }
                 crate::blender_live::demo_sleeves_fixture(&self.world.avatar_lib.rig)
             } else if mode == "warnings" {
                 crate::blender_live::demo_warnings_fixture(&self.world.avatar_lib.rig)
@@ -296,7 +315,7 @@ impl App {
         if self.demo
             && (400..=440).contains(&self.frame_count)
             && (std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look")
-                || std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "warnings"))
+                || std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "warnings" || mode.starts_with("fit-lab")))
         {
             crate::ui::widgets::bring_floater_front(&self.egui_ctx, "blender_live");
         }

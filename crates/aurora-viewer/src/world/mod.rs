@@ -64,6 +64,7 @@ pub mod landmarks;
 pub mod lookat;
 pub mod lsl_syntax;
 pub mod lslbridge;
+pub mod mannequins;
 pub mod marketplace;
 pub mod maturity;
 pub mod mirror;
@@ -704,6 +705,8 @@ pub struct World {
     held_partner: Vec<(ObjKey, Uuid)>,
     /// The stand-in Person B, a mirror of our avatar (mirror.rs).
     mirror: Option<mirror::Mirror>,
+    /// LiveMesh's Fit lab: mannequins dressed as our avatar (mannequins.rs).
+    fit_lab: mannequins::FitLab,
     /// Interface sounds to play (drained by the app).
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
@@ -1171,6 +1174,7 @@ impl World {
             couple_anchor: None,
             held_partner: Vec::new(),
             mirror: None,
+            fit_lab: Default::default(),
             social: social::Social::default(),
             contact_sets: Default::default(),
             avatar_marks: Default::default(),
@@ -2878,6 +2882,9 @@ impl World {
 
     /// Visual parameter values (shape) of an avatar's last appearance.
     pub fn visual_params(&self, avatar: &Uuid) -> Option<&[u8]> {
+        if let Some(values) = self.mannequin_params(avatar) {
+            return Some(values);
+        }
         let avatar = &self.appearance_of(avatar);
         if *avatar == self.agent_id
             && let Some(values) = &self.shape_preview
@@ -3155,8 +3162,10 @@ impl World {
     }
 
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
+        let mannequin = self.mannequin_generation(avatar).unwrap_or(0);
         let avatar = &self.appearance_of(avatar);
-        self.shown_appearance(avatar).map(|(_, g)| *g).unwrap_or(0)
+        mannequin
+            + self.shown_appearance(avatar).map(|(_, g)| *g).unwrap_or(0)
             + self.bake_refreshes.get(avatar).copied().unwrap_or(0)
             + self.shape_tweens.generation(avatar)
             + if *avatar == self.agent_id {
@@ -3206,7 +3215,7 @@ impl World {
     /// Baked texture id for an avatar (by object index) and TE slot.
     pub fn bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
-        if self.is_mirror(&o.full_id) {
+        if self.is_local_copy(&o.full_id) {
             return self.bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
         }
         if o.full_id == self.agent_id
@@ -3219,7 +3228,7 @@ impl World {
 
     pub fn server_bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
-        if self.is_mirror(&o.full_id) {
+        if self.is_local_copy(&o.full_id) {
             return self.server_bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
         }
         if let Some((a, _)) = self.shown_appearance(&o.full_id)
@@ -6846,6 +6855,9 @@ impl World {
     }
 
     pub fn animations_of(&self, owner: &Uuid) -> &[PlayingAnimation] {
+        if let Some(playing) = self.mannequin_animations(owner) {
+            return playing;
+        }
         if *owner == self.agent_id {
             if let Some(pose) = &self.ao_pose {
                 return pose;

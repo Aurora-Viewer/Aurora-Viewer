@@ -267,8 +267,22 @@ line (link, revision, time since the last snapshot, **Enable preview** or
   **Hold this pose instead of my animations**, to see how a rigged mesh in
   progress deforms. The bend is drawn for you only, while the preview runs:
   nothing is sent, and your animations, other residents' view and the import
-  are unchanged. The axes are those of the mesh importer's test bend. Then
-  the shape transfer (below).
+  are unchanged. The axes are those of the mesh importer's test bend.
+  **Fit lab** stands mannequins 2.2 m in front of you, facing you: each is a
+  copy of your avatar with everything you wear (mesh body, head, hands,
+  Bake on Mesh skin, the body's current alpha cuts, the LiveMesh preview) in
+  another shape: **Me** (yours), **Slim**, **Curvy**, **Full figure**,
+  **Athletic**, **Tall** or **Petite**, your shape with its body, torso and
+  leg sliders changed. Fitted mesh follows each shape as it would on a
+  resident with it. They **Stand**, **Walk** in place, **Sit**, or play what
+  you play (**Like me**: your AO, a pose, a dance), and the elbow and knee
+  bend shows on them too. What you wear or change, a new revision from
+  Blender, an alpha cut from your body's HUD, a shape edit, reaches them on
+  the next frame. **Bring them here** places the row in front of you again.
+  After a teleport or a region crossing they stand in front of you again.
+  Only you see them: nothing is sent or saved, and they go when you remove
+  them or log out. To test another mesh body, wear it.
+  Then the shape transfer (below).
 - **Import**: the selected object frozen into the mesh importer, with the
   triangles of its four levels of detail once Blender has prepared them.
 - **Plugins**: the plug-in in each Blender found, and the manual ZIP.

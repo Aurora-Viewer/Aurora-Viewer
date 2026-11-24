@@ -6186,7 +6186,8 @@ impl Scene {
             motions.aurora_feet = self.ground_avatar_feet;
             motions.look_over_animations = photo_look;
             motions.look_glance = if photo_look { world.look_at.photo.glance } else { 0.0 };
-            motions.preview_bend = if owner == world.agent_id {
+            // (LiveMesh's bend shows on the Fit lab's mannequins too)
+            motions.preview_bend = if owner == world.agent_id || world.is_mannequin(&owner) {
                 self.preview_bend
             } else {
                 anim::PreviewBend::default()
