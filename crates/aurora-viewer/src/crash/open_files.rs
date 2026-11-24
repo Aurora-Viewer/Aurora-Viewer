@@ -68,7 +68,7 @@ fn line(counts: &[usize; OPEN_FILE_KINDS.len()], limit: Option<u64>) -> String {
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use super::{OPEN_FILE_KINDS, kind_of, line};
+    use super::{NOT_COUNTED, OPEN_FILE_KINDS, kind_of, line};
     use std::sync::Mutex;
 
     /// The `/proc/self/fd` directory, held open from startup.
@@ -99,7 +99,13 @@ mod imp {
         // SAFETY: a NUL-terminated path; a null result is checked.
         let dir = unsafe { libc::opendir(c"/proc/self/fd".as_ptr()) };
         if dir.is_null() {
-            log::warn!("open files: /proc/self/fd not opened ({})", std::io::Error::last_os_error());
+            // The log is not up yet (crash recovery starts first, main.rs):
+            // stderr, like `crash::start`'s own failure. Each loss then says
+            // why it has no count (`log_at_loss`).
+            eprintln!(
+                "open files will not be counted at a GPU loss: /proc/self/fd not opened ({})",
+                std::io::Error::last_os_error()
+            );
             return;
         }
         *held = Some(Held { dir });
@@ -107,15 +113,27 @@ mod imp {
 
     pub fn census() -> Option<String> {
         let held = HELD.lock().unwrap_or_else(|e| e.into_inner());
-        let held = held.as_ref()?;
+        let Some(held) = held.as_ref() else {
+            log::warn!("{NOT_COUNTED}/proc/self/fd was not opened at startup");
+            return None;
+        };
         let mut counts = [0usize; OPEN_FILE_KINDS.len()];
         // SAFETY: `dir` is the open DIR from `prime`, never closed, used
         // under the mutex; each entry is read before the next readdir.
         unsafe {
             libc::rewinddir(held.dir);
             loop {
+                // readdir returns null at the end and on an error alike;
+                // only errno tells them apart, so it is cleared first.
+                *libc::__errno_location() = 0;
                 let entry = libc::readdir(held.dir);
                 if entry.is_null() {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error().is_some_and(|code| code != 0) {
+                        // A partial count would read as complete against the limit.
+                        log::warn!("{NOT_COUNTED}reading /proc/self/fd failed ({error})");
+                        return None;
+                    }
                     break;
                 }
                 let name = std::ffi::CStr::from_ptr((*entry).d_name.as_ptr());
@@ -149,8 +167,8 @@ pub fn prime() {
     imp::prime();
 }
 
-/// The open files by kind, now (Linux; `None` elsewhere or when [`prime`]
-/// could not open the directory).
+/// The open files by kind, now (Linux; `None` elsewhere, or with a warning
+/// when [`prime`] could not open the directory or reading it failed).
 pub fn census() -> Option<String> {
     imp::census()
 }
@@ -165,6 +183,11 @@ pub fn log_at_loss() {
 
 /// The start of the logged line, after the log header.
 pub const LINE_PREFIX: &str = "open files at the loss: ";
+
+/// The start of the warning when a loss gets no count; distinct from
+/// [`LINE_PREFIX`], so the crash report never reads it as a census.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const NOT_COUNTED: &str = "open files not counted at the loss: ";
 
 #[cfg(test)]
 mod tests {
