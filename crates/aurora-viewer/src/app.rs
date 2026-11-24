@@ -3549,6 +3549,7 @@ impl App {
                 || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
                 || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
                 || (mode == "next-server" && self.login_form.accepted_next_servers.is_empty())
+                || (mode == "unencrypted" && self.login_form.accepted_unencrypted.is_empty())
                 || mode == "server-error"
             {
                 if mode == "terms" {
@@ -3642,7 +3643,21 @@ impl App {
             last_exec: self.last_exec(),
             platform: crate::system_info::login_platform(),
             accepted_next_servers: self.login_form.accepted_next_servers.clone(),
+            accepted_unencrypted: self
+                .settings
+                .unencrypted_logins
+                .iter()
+                .chain(&self.login_form.accepted_unencrypted)
+                .cloned()
+                .collect(),
         };
+        // a plain http server agreed to is asked once (saved just below)
+        for server in std::mem::take(&mut self.login_form.accepted_unencrypted) {
+            if !self.settings.unencrypted_logins.contains(&server) {
+                log::info!("login: the user agreed to log in to {server} without encryption");
+                self.settings.unencrypted_logins.push(server);
+            }
+        }
         self.login_form.busy = true;
         self.login_form.error = None;
         self.login_progress = Some((aurora_i18n::tr!("app-connecting").into(), 0.05));
@@ -4463,6 +4478,7 @@ impl App {
                 bad_credentials,
                 previous_session,
                 next_server,
+                unencrypted_server,
             } => {
                 // A refused login spends its code, whatever the reason: the next
                 // attempt sends none, so the server can ask for a new one
@@ -4499,6 +4515,9 @@ impl App {
                 } else if let Some(server) = next_server {
                     self.login_form.next_server = Some(server);
                     self.login_form.accept_next_server = false;
+                } else if let Some(server) = unencrypted_server {
+                    self.login_form.unencrypted_server = Some(server);
+                    self.login_form.accept_unencrypted = false;
                 } else if tos_required {
                     self.login_form.tos_message = Some(error);
                 } else if critical_required {
@@ -18567,6 +18586,24 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: Some("login.other-grid.example".into()),
+                        unencrypted_server: None,
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("unencrypted")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the grid's login address is a plain http one
+                    // (LoginError::Unencrypted): nothing was sent
+                    log::info!("demo login: the login address is not encrypted");
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: String::new(),
+                        mfa_required: false,
+                        tos_required: false,
+                        critical_required: false,
+                        bad_credentials: false,
+                        previous_session: false,
+                        next_server: None,
+                        unencrypted_server: Some("grid.example:8002".into()),
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("server-error")
@@ -18583,6 +18620,7 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: None,
+                        unencrypted_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
@@ -18604,6 +18642,7 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: None,
+                        unencrypted_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
                     self.demo_mfa_challenge = None;
@@ -18624,6 +18663,7 @@ impl App {
                         bad_credentials: refused,
                         previous_session: false,
                         next_server: None,
+                        unencrypted_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some() {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -22185,6 +22225,7 @@ impl ApplicationHandler for App {
                         | "mfa-refused"
                         | "terms"
                         | "next-server"
+                        | "unencrypted"
                         | "server-error"
                         | "add"
                         | "password"
@@ -22195,7 +22236,8 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "unencrypted" | "server-error"
+                        | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -22242,7 +22284,16 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "add" | "add-mfa" | "password"
+                        "first"
+                            | "first-mfa"
+                            | "mfa-refused"
+                            | "terms"
+                            | "next-server"
+                            | "unencrypted"
+                            | "server-error"
+                            | "add"
+                            | "add-mfa"
+                            | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -22252,7 +22303,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server" | "server-error") {
+                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server" | "unencrypted" | "server-error") {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
