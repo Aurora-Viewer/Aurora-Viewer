@@ -226,6 +226,7 @@ pub(super) fn blank_click(ui: &egui::Ui, st: &mut InventoryUi, response: &egui::
         st.selection.clear();
         st.selected = None;
         st.focus = None;
+        st.anchor = None;
     }
 }
 
@@ -1362,6 +1363,7 @@ mod tests {
                 } else {
                     assert_eq!(h.st.selected, None, "{classic}, {width}");
                     assert!(h.st.selection.is_empty(), "{classic}, {width}");
+                    assert!(h.st.anchor.is_none(), "Shift must not extend a cleared selection");
                 }
             }
         }

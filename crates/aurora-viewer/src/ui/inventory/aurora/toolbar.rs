@@ -268,24 +268,6 @@ fn quick_search(
     controls::after_search(inv, st, searching);
 }
 
-/// The explorer shows one folder ("New" creates there, like the Legacy
-/// Viewer's single-folder mode): the wider layouts on the All tab.
-fn browses(st: &InventoryUi, layout: Layout) -> bool {
-    layout != Layout::Compact && st.tab == 0
-}
-
-/// The folder "New" creates in: the explorer's, else the selected folder or
-/// the selected item's.
-fn new_target(inv: &Inventory, st: &InventoryUi, layout: Layout) -> Uuid {
-    if browses(st, layout) {
-        return st.browse;
-    }
-    st.selected
-        .filter(|id| inv.folders.contains_key(id))
-        .or_else(|| st.selected.and_then(|id| rules::parent(inv, id)))
-        .unwrap_or_else(|| super::base(inv, st))
-}
-
 fn new_menu(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -295,10 +277,9 @@ fn new_menu(
     layout: Layout,
     actions: &mut Vec<InvAction>,
 ) {
-    let to = new_target(inv, st, layout);
+    let (to, in_all) = st.new_folder_target(inv, super::base(inv, st), Some(layout));
     let enabled = st.pending.is_none() && rules::destination(inv, to);
     // outside the explorer, its new folder on the All tab, as doCreate
-    let in_all = !browses(st, layout);
     context::new_menu(ui, p, to, enabled, in_all, st, prefs, actions);
 }
 
@@ -1234,9 +1215,17 @@ mod tests {
             selected: Some(Uuid::from_u128(3)),
             ..Default::default()
         };
-        assert_eq!(new_target(&inv, &st, Layout::Wide), Uuid::from_u128(2));
-        assert_eq!(new_target(&inv, &st, Layout::Compact), Uuid::from_u128(3));
+        assert_eq!(st.new_folder_target(&inv, inv.root, Some(Layout::Wide)), (st.browse, false));
+        assert_eq!(
+            st.new_folder_target(&inv, inv.root, Some(Layout::Compact)),
+            (Uuid::from_u128(3), true)
+        );
         st.selected = None;
-        assert_eq!(new_target(&inv, &st, Layout::Compact), inv.root);
+        assert_eq!(st.new_folder_target(&inv, inv.root, Some(Layout::Compact)), (inv.root, true));
+        st.single_folder = Some(single_folder::Nav::at(st.browse));
+        st.selected = Some(Uuid::from_u128(3));
+        for layout in [None, Some(Layout::Compact), Some(Layout::Wide)] {
+            assert_eq!(st.new_folder_target(&inv, inv.root, layout), (st.browse, false));
+        }
     }
 }

@@ -566,7 +566,7 @@ impl InventoryWindow {
     /// window, the Marketplace Listings panel) lets the main window
     /// answer. A new kind of list window is added here.
     fn lists_inventory(&self) -> bool {
-        self.id != listings::PANEL && (!self.root.is_nil() || self.additional || self.state.single_folder.is_some() || self.state.torn_off)
+        self.id != listings::PANEL && (!self.root.is_nil() || self.additional || self.state.torn_off || self.state.single_folder.is_some())
     }
 }
 
@@ -851,10 +851,9 @@ pub struct InventoryUi {
     pub consume_clipboard: bool,
     pub pending_refresh: Vec<Uuid>,
     pub created_selection: Option<Uuid>,
-    /// The next change is a "+" New Folder (toolbar, gear menu or
-    /// Ctrl+Shift+N) outside the explorer: its folder is shown on the All
-    /// tab, search cleared, as LLPanelMainInventory::doCreate does.
-    pub new_folder_in_all: bool,
+    /// Client folder ID from "+" outside the explorer. A refused or cancelled
+    /// Marketplace edit must not change how the next folder is displayed.
+    pub new_folder_in_all: Option<Uuid>,
     /// The pending change's folder is shown that way (`show_created`).
     pub created_in_all: bool,
     pub merchant_requested: bool,
@@ -1258,6 +1257,23 @@ impl InventoryUi {
         self.show_original_in(inv, id, 0);
     }
 
+    /// Toolbar and keyboard use the same destination and reveal policy.
+    /// In single-folder mode the displayed folder owns the new one even
+    /// when the window is narrow or another row is selected.
+    fn new_folder_target(&self, inv: &Inventory, root: Uuid, layout: Option<aurora::Layout>) -> (Uuid, bool) {
+        if self.single_folder.is_some() || self.tab == 0 && layout.is_some_and(|layout| layout != aurora::Layout::Compact) {
+            return (self.browse, false);
+        }
+        let parent = self.selected.and_then(|id| {
+            if inv.folders.contains_key(&id) {
+                Some(id)
+            } else {
+                rules::parent(inv, id)
+            }
+        });
+        (parent.unwrap_or(root), true)
+    }
+
     /// A folder this window just created: select it, by the Legacy
     /// Viewer's rule for the command that made it.
     /// - "+" New Folder (toolbar, gear menu, Ctrl+Shift+N) outside the
@@ -1278,6 +1294,7 @@ impl InventoryUi {
     ///   (a visible difference, so that the result shows where the user is
     ///   working).
     pub fn show_created(&mut self, inv: &Inventory, id: Uuid) {
+        self.anchor = Some(id);
         if std::mem::take(&mut self.created_in_all) {
             self.show_original(inv, id);
             return;
@@ -2187,7 +2204,7 @@ fn folder_window_contents(
     });
     task_drop::target(ui, p, &zone.response, inv, root, actions);
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
-    status(ui, p, inv, st, prefs, facts, actions, filtered);
+    status(ui, p, inv, root, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
     drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
@@ -2259,6 +2276,7 @@ fn status(
     ui: &mut egui::Ui,
     p: &Palette,
     inv: &Inventory,
+    root: Uuid,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     facts: &Facts,
@@ -2281,25 +2299,14 @@ fn status(
         )
     };
     ui.horizontal(|ui| {
-        // the classic "+": its new folder on the All tab, as doCreate; in a
-        // single folder window ("Open in a new window"), in the folder shown
-        // and on it, as doCreate's single folder mode
-        let single = st.single_folder.is_some();
-        let to = if single {
-            st.browse
-        } else {
-            st.selected
-                .filter(|id| inv.folders.contains_key(id))
-                .or_else(|| st.selected.and_then(|id| rules::parent(inv, id)))
-                .unwrap_or(inv.root)
-        };
+        let (to, in_all) = st.new_folder_target(inv, root, None);
         super::widgets::icon_menu(ui, p, "plus", aurora_i18n::tr!("common-new-folder"), |ui| {
             context::new_menu(
                 ui,
                 p,
                 to,
                 st.pending.is_none() && rules::destination(inv, to),
-                !single,
+                in_all,
                 st,
                 prefs,
                 actions,
@@ -3016,7 +3023,7 @@ fn inventory_contents(
     let target = list_destination(st, root);
     task_drop::target(ui, p, &zone.response, inv, target, actions);
     drag::target(ui, p, &zone.response, inv, target, st, prefs, facts, actions);
-    status(ui, p, inv, st, prefs, facts, actions, filtered);
+    status(ui, p, inv, root, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
     drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
@@ -4593,6 +4600,7 @@ mod tests {
         assert_eq!(st.filters, filters);
         assert_eq!(st.selected, Some(id(20)));
         assert_eq!(st.selection, HashSet::from([id(20)]));
+        assert_eq!(st.anchor, Some(id(20)));
         assert_eq!(st.reveal, Some(id(20)));
         assert!(st.reveal_path.contains(&id(10)));
         // a "+" New Folder: on the All tab, search cleared, as
@@ -4667,6 +4675,9 @@ mod tests {
             open: true,
         };
         assert!(torn.lists_inventory(), "a torn-off tab");
+        let mut actions = vec![edit()];
+        tag_window_edits(&torn, &mut actions, 0..1);
+        assert!(matches!(&actions[0], InvAction::Panel { editor, .. } if *editor == torn.id));
     }
 
     #[test]

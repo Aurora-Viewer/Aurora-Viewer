@@ -319,6 +319,11 @@ impl App {
         self.submit_inventory_edit(change, None, Uuid::nil(), Undo::Skip);
     }
 
+    pub(super) fn submit_marketplace_paste(&mut self, change: aurora_net::inventory::operations::Mutation, cut: bool, editor: Uuid) {
+        self.inventory_ui.consume_clipboard = cut;
+        self.submit_inventory_edit(change, None, editor, Undo::Skip);
+    }
+
     pub(super) fn submit_inventory_delete(&mut self, deletion: ui::inventory::DeleteRequest) {
         self.inventory_ui.consume_clipboard = false;
         let editor = deletion.selection.window();
@@ -399,7 +404,7 @@ impl App {
                 None
             }
         });
-        pane.created_in_all = in_all && pane.created_selection.is_some();
+        pane.created_in_all = in_all.is_some() && in_all == pane.created_selection;
         pane.message.clear();
         // RLVa judges a Delete's moves to the Trash as removals
         if delete {
@@ -414,7 +419,10 @@ impl App {
     pub(super) fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
         // the clipboard is shared by both panes: the main window holds it
         let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
-        if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
+        if let Some(change) = self
+            .listings_ui
+            .guard_inventory_change(&self.world.inventory, change, cut, drag, editor)
+        {
             self.inventory_ui.consume_clipboard = cut;
             self.submit_inventory_edit(change, None, editor, Undo::Record);
         }
