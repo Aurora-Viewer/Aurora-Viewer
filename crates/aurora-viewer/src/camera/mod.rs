@@ -51,6 +51,11 @@ const MIN_ZOOM_FRACTION: f32 = 0.25;
 const MAX_ZOOM_FRACTION: f32 = 8.0;
 const CAMERA_ZOOM_HALF_LIFE: f32 = 0.07;
 const FOV_ZOOM_HALF_LIFE: f32 = 0.07;
+/// The distance a camera tool's zoom drag asks is reached over this half
+/// life (Aurora): applied at once, as LLToolCamera does, each frame took the
+/// mouse's uneven motion as it came, 1 % a pixel, and the zoom jumped (the
+/// human's report of 2026-11-24). The orbit of the same drag stays direct.
+const DRAG_ZOOM_HALF_LIFE: f32 = 0.05;
 const CAMERA_LAG_HALF_LIFE: f32 = 0.25;
 const MIN_CAMERA_LAG: f32 = 0.5;
 const MAX_CAMERA_LAG: f32 = 5.0;
@@ -319,6 +324,9 @@ struct Tool {
     outside_x: bool,
     outside_y: bool,
     steering: bool,
+    /// The focus distance the zoom asked, reached by `update`
+    /// (`DRAG_ZOOM_HALF_LIFE`).
+    zoom_goal: Option<f32>,
 }
 
 #[derive(Clone)]
@@ -1953,7 +1961,49 @@ impl Camera {
     }
 
     pub fn end_drag(&mut self) {
-        self.tool = None;
+        // released: the distance asked, at once
+        if let Some(goal) = self.tool.take().and_then(|t| t.zoom_goal).filter(|g| g.is_finite()) {
+            self.focus_offset_target = self.focus_offset_target.normalize_or(Vec3::X) * goal;
+        }
+    }
+
+    /// The zoom of a camera drag: the distance it asks (LLAgentCamera::
+    /// cameraZoomIn's limits), followed by `follow_drag_zoom`.
+    fn drag_zoom(&mut self, fraction: f32) {
+        let held = self.focus_offset_target;
+        if let Some(goal) = self.tool.and_then(|t| t.zoom_goal) {
+            self.focus_offset_target = held.normalize_or(Vec3::X) * goal;
+        }
+        self.zoom_in(fraction);
+        let goal = self.focus_offset_target.length();
+        self.focus_offset_target = held;
+        if let Some(t) = &mut self.tool {
+            t.zoom_goal = Some(goal);
+        }
+    }
+
+    /// One frame of the drag's zoom toward the distance it asked.
+    fn follow_drag_zoom(&mut self, dt: f32) {
+        let Some(goal) = self.tool.and_then(|t| t.zoom_goal) else {
+            return;
+        };
+        let now = self.focus_offset_target.length();
+        if !goal.is_finite() || !now.is_finite() {
+            // nothing to follow: the distance stays where it is
+            if let Some(t) = &mut self.tool {
+                t.zoom_goal = None;
+            }
+            return;
+        }
+        let mut next = now + (goal - now) * interpolant(DRAG_ZOOM_HALF_LIFE, dt);
+        let reached = (goal - next).abs() <= goal.abs() * 1e-4;
+        if reached || !next.is_finite() {
+            next = goal;
+        }
+        self.focus_offset_target = self.focus_offset_target.normalize_or(Vec3::X) * next;
+        if reached && let Some(t) = &mut self.tool {
+            t.zoom_goal = None;
+        }
     }
 
     /// Mouse motion during a camera drag (LLToolCamera::handleHover), in
@@ -2009,7 +2059,7 @@ impl Camera {
                     if steering {
                         self.orbit_over(dy * k);
                     } else {
-                        self.zoom_in(0.99f32.powf(-dy));
+                        self.drag_zoom(0.99f32.powf(-dy));
                     }
                 }
             }
@@ -2518,6 +2568,7 @@ impl Camera {
             f.now,
             self.gamepad_follow_avatar || (s.track_focus_object && f.edit_tracking != Some(false)),
         );
+        self.follow_drag_zoom(dt);
         let offset_changed = self.focus_offset != self.focus_offset_target;
         // CAMERA_FOCUS_HALF_LIFE is 0: the offset follows at once
         self.focus_offset = self.focus_offset_target;
@@ -5898,6 +5949,58 @@ mod tests {
             smoothing: *SMOOTHING_RANGE.end(),
             ..Default::default()
         }
+    }
+
+    /// The camera tool's zoom drag follows the mouse's uneven motion
+    /// smoothly (the human's report of 2026-11-24): no frame moves the
+    /// camera much more than the one before, the drag ends where the same
+    /// motion applied at once would, and a released drag stops there.
+    #[test]
+    fn a_zoom_drag_is_smooth_and_ends_where_the_mouse_asked() {
+        let s = CameraSettings::default();
+        let mut f = frame(1.0 / 60.0);
+        f.build_mode = true;
+        let (mut cam, mut w) = alt_focused(10.0, &s);
+        for _ in 0..60 {
+            cam.update(&mut w, &s, &f);
+        }
+        let start = cam.focus_offset_target.length();
+        // the motion as it comes: 12 px in a frame, none in the next
+        let mut steps = Vec::new();
+        let mut total = 0.0;
+        for i in 0..30 {
+            let dy = if i % 2 == 0 { 12.0 } else { 0.0 };
+            total += dy;
+            let before = cam.position.distance(cam.target);
+            cam.drag(ToolMode::Zoom, 0.0, dy, 1280.0, &mut w.agent);
+            cam.update(&mut w, &s, &f);
+            steps.push(cam.position.distance(cam.target) - before);
+        }
+        // every frame moves, about as far as the one before: no frame is
+        // still between two jumps (applied at once, one in two would be)
+        // (past its first frames, while it gathers speed)
+        for pair in steps[8..].windows(2) {
+            assert!(pair[0] > 0.0 && pair[1] > 0.0, "steps {steps:?}");
+            assert!(pair[1] < pair[0] * 1.6 && pair[0] < pair[1] * 1.6, "steps {steps:?}");
+        }
+        cam.end_drag();
+        cam.update(&mut w, &s, &f);
+        let asked = start * 0.99f32.powf(-total);
+        assert!(
+            (cam.focus_offset_target.length() - asked).abs() < 1e-3,
+            "{} for {asked}",
+            cam.focus_offset_target.length()
+        );
+        // a goal that is not a number is dropped, the distance kept
+        cam.begin_drag(false);
+        let before = cam.focus_offset_target;
+        if let Some(t) = &mut cam.tool {
+            t.zoom_goal = Some(f32::NAN);
+        }
+        cam.update(&mut w, &s, &f);
+        assert!(cam.focus_offset_target.is_finite() && cam.focus_offset_target.abs_diff_eq(before, 1e-5));
+        cam.end_drag();
+        assert!(cam.focus_offset_target.is_finite());
     }
 
     /// The lag once reached 50 m: the camera jumped to its goal, fell behind
