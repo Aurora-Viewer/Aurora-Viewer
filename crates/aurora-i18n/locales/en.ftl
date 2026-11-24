@@ -1476,6 +1476,47 @@ inventory-unpin = Unpin from Quick access
 inventory-quick-access = Quick access
 inventory-quick-access-drop = Drop a folder here to pin it
 inventory-invert-selection = Invert selection
+inventory-undo = Undo
+inventory-redo = Redo
+inventory-undo-step = Undo { $what }
+inventory-redo-step = Redo { $what }
+inventory-history-move = { $count ->
+    [one] move of 1 item
+   *[other] move of { $count } items
+    }
+inventory-history-delete = { $count ->
+    [one] delete of 1 item
+   *[other] delete of { $count } items
+    }
+inventory-history-rename = rename
+inventory-history-new-folder = new folder
+inventory-history-copy = { $count ->
+    [one] copy of 1 item
+   *[other] copy of { $count } items
+    }
+inventory-history-link = { $count ->
+    [one] link to 1 item
+   *[other] links to { $count } items
+    }
+inventory-undo-nothing = Nothing left to undo: those items have moved or are gone.
+inventory-redo-nothing = Nothing left to redo: those items have moved or are gone.
+inventory-undo-empty = Nothing to undo.
+inventory-redo-empty = Nothing to redo.
+inventory-undo-dropped = The last step's items have moved or are gone: it was dropped. Undo again for the step before.
+inventory-redo-dropped = The next step's items have moved or are gone: it was dropped. Redo again for the step after.
+inventory-undo-folder-not-empty = That new folder holds items put there since: move them out first, or delete the folder yourself.
+inventory-undo-kept-out = Those items are in the current outfit or the Marketplace listings now: change them there.
+inventory-restore-to = Restore to “{ $folder }”
+inventory-restore-to-origins = Restore to their folders
+inventory-purge-no-undo = Undo cannot bring them back.
+inventory-new-tab = New tab
+inventory-close-tab = Close tab
+inventory-next-tab = Next tab
+inventory-previous-tab = Previous tab
+inventory-open-in-new-tab = Open in new tab
+inventory-tabs-limit = At most { $count } tabs.
+inventory-copy-to-other-pane = Copy to the other pane
+inventory-move-to-other-pane = Move to the other pane
 inventory-resize-columns = Drag to resize columns. Double-click to fit the column on the left to its contents.
 inventory-resize-columns-first = Drag to resize columns. Double-click to give the first column its usual width.
 inventory-sort-by-column = Click to sort by this column, again to reverse the order. Drag to move the column.
