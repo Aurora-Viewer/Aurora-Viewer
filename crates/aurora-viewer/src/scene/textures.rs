@@ -25,7 +25,7 @@ use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, TexelFormat, build_mips};
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -138,9 +138,15 @@ const UI_ASK_LAPSE: Duration = Duration::from_secs(5);
 /// left by teleport go in about a second instead of in one frame.
 const EVICT_PER_FRAME: usize = 64;
 const EVICT_LOOKS_PER_FRAME: usize = 512;
-/// Uploads set aside in a frame because their texture page is still being
-/// made, before the frame stops looking for one that can go.
+/// Texture sizes whose page is still being made, set aside in a frame
+/// before it stops looking for an upload that can go. The uploads of a
+/// size already waiting do not count: a page the driver takes long to
+/// allocate (video memory full, #4612) would otherwise hold back for that
+/// long the sizes whose pages have room.
 const PAGE_WAITS: usize = 16;
+/// Uploads set aside in a frame at most, whatever their sizes: thousands
+/// may wait for the same page.
+const PAGE_WAITS_MAX: usize = 1024;
 /// Shortest wait before a texture refused by a full video memory is
 /// decoded and sent again (the renderer's own page wait is 2 s to 30 s).
 const MEMORY_RETRY_MIN: Duration = Duration::from_secs(1);
@@ -3490,8 +3496,10 @@ impl TextureStreamer {
         let t0 = Instant::now();
         let mut spent = 0u64;
         let mut done = 0usize;
-        // uploads whose texture page is not there yet, put back at the end
+        // uploads whose texture page is not there yet, put back at the end,
+        // and their sizes
         let mut waiting: Vec<PendingUpload> = Vec::new();
+        let mut waiting_sizes: HashSet<ChainSize> = HashSet::new();
         self.uploads.promote_ready();
         while budget.allows(done, spent, t0.elapsed()) {
             let Some(mut u) = self.uploads.pop(&mut self.trash) else {
@@ -3526,12 +3534,12 @@ impl TextureStreamer {
             let placed = e.slot != NO_SLOT;
             let queued = &self.uploads;
             if placed
-                && u.chain()
-                    .is_some_and(|chain| !renderer.textures.prepare_page(e.slot, chain, queued.queued(chain)))
+                && let Some(chain) = u.chain()
+                && !renderer.textures.prepare_page(e.slot, chain, queued.queued(chain))
             {
+                waiting_sizes.insert(chain);
                 waiting.push(u);
-                if waiting.len() >= PAGE_WAITS {
-                    // (thousands may wait for that same page)
+                if waiting_sizes.len() >= PAGE_WAITS || waiting.len() >= PAGE_WAITS_MAX {
                     break;
                 }
                 continue;
