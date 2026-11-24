@@ -3748,6 +3748,13 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     // AURORA_DEMO_CONV_MODERATE: a second group where we
                     // manage bans, for "Ban from all my groups"
                     powers: g(DEMO_GROUP2, "", false).powers
+                        // AURORA_DEMO_GROUP_PROFILE=…:second: our abilities
+                        // of the first group, to write a notice in both
+                        | if group::second_group() == Some(DEMO_GROUP2) {
+                            group::my_powers()
+                        } else {
+                            0
+                        }
                         | if crate::ui::chat::moderation::demo_mode().is_some() {
                             aurora_net::groups::powers::GROUP_BAN_ACCESS
                         } else {

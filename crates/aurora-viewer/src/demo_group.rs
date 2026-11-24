@@ -126,11 +126,13 @@ pub fn invitees() -> Option<Vec<Uuid>> {
 }
 
 /// `:second`: another group's window opens beside the first one
-/// (FSFloaterGroup, one window per group), which keeps its tab and draft.
+/// (FSFloaterGroup, one window per group), which keeps its tab and draft:
+/// Northern Wolves, where we have the same abilities as in the first group
+/// (a notice can be written in both), or Aurora Builders for a guest.
 pub fn second_group() -> Option<Uuid> {
     let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
     v.split(':').skip(1).any(|p| p == "second").then(|| match shown_group() {
-        DEMO_GROUP1 => super::search::boreal(),
+        DEMO_GROUP1 => super::DEMO_GROUP2,
         _ => DEMO_GROUP1,
     })
 }
@@ -1003,10 +1005,14 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
             message,
             bucket,
             ..
-        } if *to == DEMO_GROUP1 => {
-            log::info!("demo group: notice sent ({} bytes attached)", bucket.len().saturating_sub(1));
+        } if *to == DEMO_GROUP1 || second_group() == Some(*to) => {
+            // the group named: `:second` checks a draft went to its own
+            log::info!(
+                "demo group: notice sent to {to} ({} bytes attached)",
+                bucket.len().saturating_sub(1)
+            );
             vec![NetEvent::InstantMessage(aurora_net::InstantMessage {
-                from_agent_id: DEMO_GROUP1,
+                from_agent_id: *to,
                 from_name: "Aurora Demo".into(),
                 to_agent_id: DEMO_AGENT,
                 dialog: 32,

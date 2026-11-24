@@ -51,6 +51,15 @@ impl Group {
         )
     }
 
+    /// A window stacked on another one keeps its step down and right
+    /// even when that leaves it less room than its size, getting smaller
+    /// instead of being pushed back over the window below (human request,
+    /// #4788: the group profiles, taller than most screens' room). Visible
+    /// difference: the Legacy Viewer's adjustToFitScreen moves it back.
+    fn keeps_step(self) -> bool {
+        matches!(self, Self::Profile { .. })
+    }
+
     fn saved_id(self) -> Id {
         Id::unique(("inventory_cascade_rect", self))
     }
@@ -103,8 +112,13 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
         }
         let anchor = windows.0.iter().rev().find(|w| w.group == group && w.visible && !w.minimized);
         let primary = anchor.is_none();
-        let size = saved.map_or(default.size(), |r| r.size()).min(work.size());
+        let mut size = saved.map_or(default.size(), |r| r.size()).min(work.size());
         let target = anchor.map_or_else(|| saved.map_or(default.min, |r| r.min), |w| w.rect.min + OFFSET);
+        let room = (work.max - target).max(Vec2::ZERO);
+        let shrunk = !primary && group.keeps_step() && (size.x > room.x || size.y > room.y);
+        if shrunk {
+            size = size.min(room);
+        }
         let pos = super::fit_in(work, target, size);
         windows.0.push(Window {
             id,
@@ -120,7 +134,7 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
         });
         Some(Opening {
             pos,
-            size: saved.map(|_| size),
+            size: (saved.is_some() || shrunk).then_some(size),
         })
     })
 }

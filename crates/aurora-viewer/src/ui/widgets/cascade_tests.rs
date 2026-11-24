@@ -178,3 +178,19 @@ fn cascade_temporarily_hidden_documents_keep_their_positions() {
     f.settle();
     assert_eq!([f.rect(first), f.rect(second)], before);
 }
+
+#[test]
+fn cascade_group_profiles_keep_their_step_when_taller_than_the_room() {
+    let mut f = Fixture::default();
+    let tall = egui::vec2(600.0, 1000.0);
+    let profile = CascadeGroup::Profile { classic: false };
+    let first = f.open(profile, tall);
+    let second = f.open(profile, tall);
+    let (a, b) = (f.rect(first), f.rect(second));
+    same(b.min - a.min, Vec2::splat(32.0));
+    assert!((b.max.y - a.max.y).abs() < 1.0, "smaller by its step, same bottom: {a:?} {b:?}");
+    // other groups are still placed back inside, as the Legacy Viewer does
+    let texture = f.open(CascadeGroup::Texture, tall);
+    let again = f.open(CascadeGroup::Texture, tall);
+    assert!((f.rect(again).min.y - f.rect(texture).min.y).abs() < 1.0);
+}

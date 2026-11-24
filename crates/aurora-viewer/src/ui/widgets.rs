@@ -1216,7 +1216,9 @@ impl<'a> Floater<'a> {
                 if self.framed_header.is_some() { 40.0 } else { 38.0 },
             ));
         } else if let Some(size) = opening.as_ref().and_then(|o| o.size).filter(|_| !self.auto_height) {
-            w = w.fixed_size(size);
+            // a stacked window made smaller to keep its step
+            // (`cascade::Group::keeps_step`) stops at its least size
+            w = w.fixed_size(size.max(self.min_size));
         } else if restore && !self.auto_height {
             w = w.fixed_size(expanded.min(work.size()));
         } else if let Some(size) = shrink {
