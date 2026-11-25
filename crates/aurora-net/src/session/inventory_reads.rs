@@ -245,7 +245,7 @@ impl Reader {
                             if ordinary && attachment && !reads.items.is_empty() {
                                 events.send(crate::types::NetEvent::AttachmentInventoryItems(reads.items.clone()));
                             }
-                            super::send_item_reads(&events, reads, attachment && !ordinary);
+                            super::send_item_reads(&events, reads, attachment && !ordinary, attachment && ordinary);
                         }
                     },
                 }
@@ -445,7 +445,7 @@ mod tests {
         let failed: std::collections::HashSet<_> = received
             .try_iter()
             .flat_map(|(_, event)| match event {
-                crate::NetEvent::InventoryItemsFailed { items } => items,
+                crate::NetEvent::InventoryItemsFailed { items, .. } => items,
                 _ => panic!("only the two intentionally failed reads should answer"),
             })
             .collect();

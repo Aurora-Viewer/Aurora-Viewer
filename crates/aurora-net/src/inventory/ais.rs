@@ -137,6 +137,18 @@ const RETRY_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(5)
 /// The Legacy Viewer's default request timeout is 30 s; a large inventory
 /// reply can be slower, so this stays generous.
 pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// AISAPI::HTTP_TIMEOUT (indra/newview/llaisapi.cpp), which the Legacy
+/// Viewer applies to every AIS command. Here a subtree read and an item
+/// read; a single folder keeps [`REQUEST_TIMEOUT`].
+///
+/// Deliberate difference: llcorehttp retries a timed-out or 5xx command up
+/// to 5 times (`HttpPolicy::stageAfterCompletion`, `isRetryable`); a subtree
+/// read that times out here is tried once, then read in smaller parts by the
+/// walk (background.rs), which answers sooner than five more 180 s waits.
+pub const TREE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+/// A subtree read's whole time, its retries and their waits included:
+/// under the walk's own deadline (background.rs TREE_DEADLINE, 240 s).
+pub const TREE_TOTAL: std::time::Duration = std::time::Duration::from_secs(210);
 
 /// Why an inventory read failed, enough for the background walk to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,11 +169,29 @@ pub enum FetchFailure {
 pub struct FetchError {
     pub kind: FetchFailure,
     pub status: Option<u16>,
+    /// The server did not answer in time (a [`FetchFailure::Transient`]
+    /// with no status): the walk reads such a subtree in smaller parts at
+    /// once. A transport error (connection refused or reset, DNS) is not a
+    /// timeout and keeps the walk's backoff.
+    pub timed_out: bool,
 }
 
 impl FetchError {
     pub const fn new(kind: FetchFailure, status: Option<u16>) -> Self {
-        FetchError { kind, status }
+        FetchError {
+            kind,
+            status,
+            timed_out: false,
+        }
+    }
+
+    /// No answer in time.
+    pub const fn timeout() -> Self {
+        FetchError {
+            kind: FetchFailure::Transient,
+            status: None,
+            timed_out: true,
+        }
     }
 
     fn status_of(status: u16) -> Self {
@@ -173,6 +203,7 @@ impl FetchError {
         FetchError {
             kind,
             status: Some(status),
+            timed_out: false,
         }
     }
 }
@@ -181,6 +212,7 @@ impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.status {
             Some(status) => write!(f, "AIS inventory read failed (status {status}, {:?})", self.kind),
+            None if self.timed_out => write!(f, "AIS inventory read timed out"),
             None => write!(f, "AIS inventory read failed ({:?})", self.kind),
         }
     }
@@ -259,7 +291,22 @@ pub async fn fetch_tree(
         url.push_str("&children=");
         url.push_str(&ids.join(","));
     }
-    let doc = get(http, url, log::Level::Warn).await?;
+    // (a subtree read waits AISAPI::HTTP_TIMEOUT (180 s), the Legacy
+    // Viewer's timeout for an AIS command, but only once, where llcorehttp
+    // would try it again up to 5 times (TREE_TIMEOUT): a large subtree's
+    // reply takes longer than a folder's; one that times out, or that a
+    // gateway gives up on, is never asked again as is: the walk reads it in
+    // smaller parts)
+    let doc = if depth > 0 {
+        // (one answer within TREE_TOTAL, retries and waits included: the
+        // walk's deadline never frees a slot while its request still runs)
+        let state = TryState::default();
+        tokio::time::timeout(TREE_TOTAL, get_with(http, url, TREE_TIMEOUT, RETRY_ATTEMPTS, 0, Some(&state)))
+            .await
+            .unwrap_or_else(|_| Err(state.out_of_time()))?
+    } else {
+        get(http, url).await?
+    };
     parse_tree_reply(&doc, owner, parent, children, depth).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(200)))
 }
 
@@ -283,40 +330,102 @@ fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], de
     Ok(out)
 }
 
+/// What a subtree read went through, for the reason given when its whole
+/// time ([`TREE_TOTAL`]) runs out.
+#[derive(Default)]
+struct TryState {
+    /// A throttle or an overload (429 or 503) was answered.
+    overloaded: std::sync::atomic::AtomicBool,
+    /// When the attempt in progress was sent; `None` between attempts.
+    sending: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl TryState {
+    fn sending(&self, since: Option<std::time::Instant>) {
+        if let Ok(mut sending) = self.sending.lock() {
+            *sending = since;
+        }
+    }
+
+    /// Why the whole time ran out: an overload waits (503); a server still
+    /// on its answer for at least a folder's timeout is a timeout (read in
+    /// parts); anything else (transport errors and their backoff) is a
+    /// plain transient failure, which keeps the walk's backoff.
+    fn out_of_time(&self) -> FetchError {
+        self.out_of_time_at(std::time::Instant::now())
+    }
+
+    /// [`out_of_time`] at `now` (the tests set the clock).
+    fn out_of_time_at(&self, now: std::time::Instant) -> FetchError {
+        if self.overloaded.load(std::sync::atomic::Ordering::Relaxed) {
+            return FetchError::new(FetchFailure::Transient, Some(503));
+        }
+        let waited = self
+            .sending
+            .lock()
+            .ok()
+            .and_then(|s| *s)
+            .map(|at| now.saturating_duration_since(at));
+        if waited.is_some_and(|w| w >= REQUEST_TIMEOUT) {
+            FetchError::timeout()
+        } else {
+            FetchError::new(FetchFailure::Transient, None)
+        }
+    }
+}
+
 /// One AIS read, retried on the conditions the Legacy Viewer's HTTP layer retries
 /// (timeout, 408/425/429 and 5xx), with its backoff and `Retry-After`.
-async fn get(http: &reqwest::Client, url: String, failure_level: log::Level) -> Result<Llsd, FetchError> {
+async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
+    get_with(http, url, REQUEST_TIMEOUT, RETRY_ATTEMPTS, RETRY_ATTEMPTS, None).await
+}
+
+/// [`get`] with its own timeout, how many times a failed attempt is tried
+/// again, and how many of those may follow a timeout.
+async fn get_with(
+    http: &reqwest::Client,
+    url: String,
+    timeout: std::time::Duration,
+    retries: u32,
+    timeout_retries: u32,
+    state: Option<&TryState>,
+) -> Result<Llsd, FetchError> {
     let mut attempt = 0;
+    let mut timeouts = 0;
     loop {
         attempt += 1;
         let timed = crate::probe::HttpRequest::start(crate::probe::HttpKind::Inventory);
-        let sent = tokio::time::timeout(REQUEST_TIMEOUT, http.get(&url).header("Accept", "application/llsd+xml").send()).await;
+        if let Some(state) = state {
+            state.sending(Some(std::time::Instant::now()));
+        }
+        let sent = tokio::time::timeout(timeout, http.get(&url).header("Accept", "application/llsd+xml").send()).await;
         let response = match sent {
             Err(_) => {
                 if let Some(t) = timed {
                     t.finish(0, 0, false);
                 }
-                if attempt <= RETRY_ATTEMPTS {
+                if let Some(state) = state {
+                    state.sending(None);
+                }
+                timeouts += 1;
+                if attempt <= retries && timeouts <= timeout_retries {
                     tokio::time::sleep(retry_backoff(attempt, None)).await;
                     continue;
                 }
-                log::log!(failure_level, "AIS read exhausted {attempt} attempts waiting for response headers");
-                return Err(FetchError::new(FetchFailure::Transient, None));
+                return Err(FetchError::timeout());
             }
             Ok(Err(error)) => {
                 if let Some(t) = timed {
                     t.finish(0, 0, false);
                 }
-                if attempt <= RETRY_ATTEMPTS {
+                if let Some(state) = state {
+                    state.sending(None);
+                }
+                if attempt <= retries {
                     log::debug!("AIS inventory read failed ({}); retry {attempt}", error.without_url());
                     tokio::time::sleep(retry_backoff(attempt, None)).await;
                     continue;
                 }
-                log::log!(
-                    failure_level,
-                    "AIS read exhausted {attempt} attempts during transport: {}",
-                    error.without_url()
-                );
                 return Err(FetchError::new(FetchFailure::Transient, None));
             }
             Ok(Ok(response)) => response,
@@ -327,63 +436,62 @@ async fn get(http: &reqwest::Client, url: String, failure_level: log::Level) -> 
                 t.finish(status, 0, false);
             }
             let failure = FetchError::status_of(status);
-            if failure.kind == FetchFailure::Transient && attempt <= RETRY_ATTEMPTS {
+            // (a gateway that gave up on a subtree read gives up on it
+            // again: the walk reads it in parts at once; a throttle, 429,
+            // waits as always)
+            // (a 503 waits for its Retry-After: an overload, never split)
+            let gateway = matches!(status, 502 | 504) && timeout_retries < RETRY_ATTEMPTS;
+            if failure.kind == FetchFailure::Transient && attempt <= retries && !gateway {
                 log::debug!("AIS inventory read failed (status {status}); retry {attempt}");
+                if let Some(state) = state {
+                    state.sending(None);
+                    if matches!(status, 429 | 503) {
+                        state.overloaded.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
                 tokio::time::sleep(retry_backoff(attempt, retry_after(&response))).await;
                 continue;
             }
             return Err(failure);
         }
         let wait = retry_after(&response);
-        let body = match tokio::time::timeout(REQUEST_TIMEOUT, response.bytes()).await {
+        let body = match tokio::time::timeout(timeout, response.bytes()).await {
             Err(_) => {
                 if let Some(t) = timed {
                     t.finish(status, 0, false);
                 }
-                if attempt <= RETRY_ATTEMPTS {
+                timeouts += 1;
+                if attempt <= retries && timeouts <= timeout_retries {
                     tokio::time::sleep(retry_backoff(attempt, wait)).await;
                     continue;
                 }
-                log::log!(
-                    failure_level,
-                    "AIS read exhausted {attempt} attempts waiting for a response body (status {status})"
-                );
-                return Err(FetchError::new(FetchFailure::Transient, Some(status)));
+                // (a timeout: the walk reads it in parts)
+                return Err(FetchError::timeout());
             }
             Ok(Err(error)) => {
                 if let Some(t) = timed {
                     t.finish(status, 0, false);
                 }
-                if attempt <= RETRY_ATTEMPTS {
+                if let Some(state) = state {
+                    state.sending(None);
+                }
+                if attempt <= retries {
                     log::debug!("AIS inventory reply failed ({}); retry {attempt}", error.without_url());
                     tokio::time::sleep(retry_backoff(attempt, wait)).await;
                     continue;
                 }
-                log::log!(
-                    failure_level,
-                    "AIS read exhausted {attempt} attempts reading a response body (status {status}): {}",
-                    error.without_url()
-                );
                 return Err(FetchError::new(FetchFailure::Transient, Some(status)));
             }
             Ok(Ok(body)) => body,
         };
         let bytes = body.len();
-        let parsed = if body.is_empty() {
-            Ok(Llsd::Undef)
-        } else {
-            aurora_llsd::from_xml(&body).map_err(|_| {
-                log::log!(
-                    failure_level,
-                    "AIS response contains malformed LLSD (status {status}, {bytes} bytes)"
-                );
-                FetchError::new(FetchFailure::Fatal, Some(status))
-            })
-        };
         if let Some(t) = timed {
-            t.finish(status, bytes, parsed.is_ok());
+            t.finish(status, bytes, true);
         }
-        return parsed;
+        if body.is_empty() {
+            return Ok(Llsd::Undef);
+        }
+        return aurora_llsd::from_xml(&body).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(status)));
     }
 }
 
@@ -397,7 +505,7 @@ pub async fn fetch_folders(http: &reqwest::Client, cap: &str, owner: Uuid, ids: 
             let http = http.clone();
             let url = format!("{}/category/{id}/children?depth=0", cap.trim_end_matches('/'));
             tasks.spawn(async move {
-                let doc = get(&http, url, log::Level::Warn).await?;
+                let doc = get(&http, url).await?;
                 parse_folder(&doc, id, owner).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(200)))
             });
         }
@@ -446,67 +554,67 @@ pub struct ItemReads {
     pub failed: Vec<Uuid>,
 }
 
-async fn read_item(http: &reqwest::Client, url: String, owner: Uuid, id: Uuid) -> Result<Option<InvItem>, FetchError> {
-    get(http, url, log::Level::Debug)
-        .await
-        .map(|doc| match parse_item_reply(&doc, id, owner) {
-            Ok(item) => Some(item),
+/// The session queue owns admission and recovery. Bound this logical read,
+/// including paced HTTP retries, independently of the subtree deadlines.
+pub(crate) async fn read_one_item(http: &reqwest::Client, cap: &str, owner: Uuid, id: Uuid) -> ItemReads {
+    let mut result = ItemReads::default();
+    let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
+    match tokio::time::timeout(TREE_TIMEOUT, get(http, url)).await {
+        Ok(Ok(doc)) => match parse_item_reply(&doc, id, owner) {
+            Ok(item) => result.items.push(item),
             Err(reason) => {
                 log::debug!("AIS item {id} response could not be parsed: {reason}");
-                None
+                result.failed.push(id);
             }
-        })
-}
-
-impl ItemReads {
-    fn record(&mut self, id: Uuid, result: Result<Option<InvItem>, FetchError>) {
-        match result {
-            Ok(Some(item)) => self.items.push(item),
-            Err(FetchError {
-                status: Some(404 | 410), ..
-            }) => self.missing.push(id),
-            Ok(None) => self.failed.push(id),
-            Err(error) => {
-                log::debug!("AIS item {id} read failed: {error}");
-                self.failed.push(id);
-            }
+        },
+        Ok(Err(FetchError {
+            status: Some(404 | 410), ..
+        })) => result.missing.push(id),
+        Ok(Err(error)) => {
+            log::debug!("AIS item {id} read failed: {error}");
+            result.failed.push(id);
         }
-    }
-}
-
-/// A single read for the session reader, which already owns its task and
-/// handles task failure and cancellation.
-pub(crate) async fn read_one_item(http: &reqwest::Client, cap: &str, owner: Uuid, id: Uuid) -> ItemReads {
-    let mut reads = ItemReads::default();
-    let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
-    // Bound the whole logical read, including the existing HTTP retries.
-    // AISAPI::HTTP_TIMEOUT gives one read 180 seconds in the Legacy Viewer.
-    match tokio::time::timeout(std::time::Duration::from_secs(180), read_item(http, url, owner, id)).await {
-        Ok(result) => reads.record(id, result),
         Err(_) => {
             log::debug!("AIS item {id} exceeded its 180-second read budget");
-            reads.failed.push(id);
+            result.failed.push(id);
         }
     }
-    reads
+    result
 }
+
+/// Item reads sent side by side; the chunks of a larger read go one after
+/// the other.
+pub const ITEM_CHUNK: usize = 16;
 
 /// Bounded parallel reads of single items (AISAPI::FetchItem).
 pub async fn read_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> ItemReads {
     let mut reads = ItemReads::default();
-    let cap = cap.trim_end_matches('/');
-    for chunk in ids.chunks(16) {
+    for chunk in ids.chunks(ITEM_CHUNK) {
         let mut tasks = tokio::task::JoinSet::new();
         for id in chunk.iter().copied() {
             let http = http.clone();
-            let url = format!("{cap}/item/{id}");
-            tasks.spawn(async move { (id, read_item(&http, url, owner, id).await) });
+            let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
+            tasks.spawn(async move {
+                // (AISAPI::HTTP_TIMEOUT, as every AIS command: an item read
+                // always answers, so the viewer's one-read-at-a-time claim
+                // (world/inventory.rs ITEM_READ_DEADLINE) outlasts it)
+                let read = tokio::time::timeout(
+                    TREE_TIMEOUT,
+                    crate::caps::get_llsd_as(&http, &url, crate::probe::HttpKind::Inventory),
+                )
+                .await;
+                (id, read.map(|read| read.map(|doc| parse_item_reply(&doc, id, owner).ok())))
+            });
         }
         let mut answered = HashSet::new();
         while let Some(result) = tasks.join_next().await {
             let Ok((id, read)) = result else { continue };
             answered.insert(id);
-            reads.record(id, read);
+            match read {
+                Ok(Ok(Some(item))) => reads.items.push(item),
+                Ok(Err(crate::caps::CapsError::Status(404 | 410))) => reads.missing.push(id),
+                Ok(Ok(None) | Err(_)) | Err(_) => reads.failed.push(id),
+            }
         }
         // a panicked read task answers nothing: failed, asked again
         reads.failed.extend(chunk.iter().filter(|id| !answered.contains(id)));
@@ -521,80 +629,6 @@ mod tests {
     use aurora_llsd::{Llsd, llsd_map};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use uuid::Uuid;
-
-    async fn read_test_headers(socket: &mut tokio::net::TcpStream) {
-        let mut bytes = Vec::new();
-        while !bytes.windows(4).any(|part| part == b"\r\n\r\n") {
-            let mut buffer = [0; 2048];
-            let n = socket.read(&mut buffer).await.unwrap();
-            assert!(n > 0, "the test client must send complete HTTP headers");
-            bytes.extend_from_slice(&buffer[..n]);
-        }
-    }
-
-    #[tokio::test]
-    async fn recovery_item_read_retries_a_service_failure_before_reporting_it_failed() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            for attempt in 0..2 {
-                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
-                    .await
-                    .unwrap()
-                    .unwrap();
-                read_test_headers(&mut socket).await;
-                let (status, body) = if attempt == 0 {
-                    ("503 Service Unavailable", Vec::new())
-                } else {
-                    ("200 OK", aurora_llsd::to_xml(&record(3, false, 6, false)))
-                };
-                socket
-                    .write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes())
-                    .await
-                    .unwrap();
-                socket.write_all(&body).await.unwrap();
-                crate::test_http::finish(socket);
-            }
-        });
-        let reads = read_items(&reqwest::Client::new(), &url, id(2), &[id(3)]).await;
-        assert_eq!(reads.items.iter().map(|it| it.id).collect::<Vec<_>>(), [id(3)]);
-        assert!(reads.failed.is_empty());
-        server.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn recovery_item_read_recovers_after_a_body_deadline() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            let (mut stalled, _) = listener.accept().await.unwrap();
-            read_test_headers(&mut stalled).await;
-            stalled
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10000\r\n\r\n<incomplete")
-                .await
-                .unwrap();
-            let (mut recovered, _) = listener.accept().await.unwrap();
-            read_test_headers(&mut recovered).await;
-            let body = aurora_llsd::to_xml(&record(3, false, 6, false));
-            recovered
-                .write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes())
-                .await
-                .unwrap();
-            recovered.write_all(&body).await.unwrap();
-            crate::test_http::finish(recovered);
-            drop(stalled);
-        });
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(500))
-            .build()
-            .unwrap();
-        let reads = tokio::time::timeout(std::time::Duration::from_secs(10), read_items(&http, &url, id(2), &[id(3)]))
-            .await
-            .unwrap();
-        assert_eq!(reads.items.iter().map(|it| it.id).collect::<Vec<_>>(), [id(3)]);
-        assert!(reads.failed.is_empty());
-        server.await.unwrap();
-    }
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
@@ -1019,6 +1053,87 @@ mod tests {
         assert_eq!(server.await.expect("server"), 3, "two failures and the successful read");
     }
 
+    /// When a subtree read's whole time runs out, the reason decides the
+    /// walk's answer: an overload waits (503), a server still on its answer
+    /// for a folder's timeout is a timeout (read in parts), anything else
+    /// (between attempts, a transport error's backoff) keeps the backoff.
+    #[test]
+    fn a_subtree_read_out_of_time_gives_its_reason() {
+        let state = TryState::default();
+        assert_eq!(
+            state.out_of_time(),
+            FetchError::new(FetchFailure::Transient, None),
+            "between attempts"
+        );
+        let sent = std::time::Instant::now();
+        state.sending(Some(sent));
+        assert!(!state.out_of_time_at(sent).timed_out, "an attempt just sent is no timeout");
+        assert_eq!(
+            state.out_of_time_at(sent + REQUEST_TIMEOUT),
+            FetchError::timeout(),
+            "the server kept the attempt waiting"
+        );
+        state.overloaded.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            state.out_of_time(),
+            FetchError::new(FetchFailure::Transient, Some(503)),
+            "an overload waits"
+        );
+    }
+
+    /// A server that takes the request and never answers gives a timeout,
+    /// and the attempt is no longer marked in progress.
+    #[tokio::test]
+    async fn an_unanswered_attempt_is_a_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("request");
+            let mut buffer = [0u8; 2048];
+            let _ = socket.read(&mut buffer).await;
+            // (holds the connection, never answers)
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        });
+        let state = TryState::default();
+        let error = get_with(
+            &crate::test_http_client(),
+            url,
+            std::time::Duration::from_millis(300),
+            0,
+            0,
+            Some(&state),
+        )
+        .await
+        .expect_err("never answered");
+        assert_eq!(error, FetchError::timeout());
+        assert!(state.sending.lock().expect("state").is_none(), "no attempt left in progress");
+        server.abort();
+    }
+
+    /// A refused connection is a transport error, never a timeout: the walk
+    /// keeps its backoff.
+    #[tokio::test]
+    async fn a_refused_connection_is_no_timeout() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("local port");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        drop(listener);
+        let state = TryState::default();
+        // (no retry: the backoff's waits would only slow the test)
+        let error = get_with(
+            &crate::test_http_client(),
+            url,
+            std::time::Duration::from_secs(5),
+            0,
+            0,
+            Some(&state),
+        )
+        .await
+        .expect_err("refused");
+        assert_eq!(error.kind, FetchFailure::Transient);
+        assert!(!error.timed_out);
+        assert!(state.sending.lock().expect("state").is_none());
+    }
+
     #[tokio::test]
     async fn a_forbidden_reply_is_reported_as_too_big_and_not_retried() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
@@ -1049,8 +1164,8 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
         let url = format!("http://{}", listener.local_addr().expect("address"));
         let server = tokio::spawn(async move {
-            for _ in 0..3 + RETRY_ATTEMPTS {
-                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(10), listener.accept())
+            for _ in 0..3 {
+                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
                     .await
                     .expect("request timeout")
                     .expect("request");

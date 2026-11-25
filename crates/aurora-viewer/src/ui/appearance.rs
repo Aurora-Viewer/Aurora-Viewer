@@ -4995,7 +4995,6 @@ mod tests {
             model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
             let id = Uuid::from_u128(target);
             let name = world.inventory.items[&id].name.clone();
-            let before = world.inventory.generation;
             let mut st = AppearanceUi::default();
             st.open(2, false);
             for _ in 0..5 {
@@ -5009,6 +5008,9 @@ mod tests {
                 egui::Modifiers::NONE,
                 egui::PointerButton::Secondary,
             );
+            // Read after the draws: opening the window asks for its folders,
+            // and each folder read changes the generation.
+            let before = world.inventory.generation;
             let actions = click_menu(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-items-show-original"));
             assert!(
                 matches!(actions.as_slice(), [Action::ShowOriginal(actual)] if *actual == id),

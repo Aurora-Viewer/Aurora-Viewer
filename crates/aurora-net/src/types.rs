@@ -1453,10 +1453,16 @@ pub enum NetEvent {
     InventoryCreated(crate::inventory::InvItem),
     InventoryItemsFailed {
         items: Vec<Uuid>,
+        /// Read for a worn attachment (`FetchAttachmentItems`).
+        attachment: bool,
+        /// The same AIS read also satisfied the other delivery kind.
+        coalesced: bool,
     },
     /// Items the server answered do not exist: broken links' originals.
     InventoryItemsMissing {
         items: Vec<Uuid>,
+        attachment: bool,
+        coalesced: bool,
     },
     /// Answer to `UploadBake`: the new texture.
     BakeUploaded {

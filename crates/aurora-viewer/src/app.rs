@@ -2520,6 +2520,19 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        // a link's original confirmed gone is not read again this session,
+        // one given up after its attempts only after its pause
+        // (`Inventory::drop_broken`): on a huge inventory, hundreds of dead
+        // links each read over and over took requests from the folder walk.
+        // Aurora's own rule: the Legacy Viewer's
+        // LLViewerInventoryItem::getIsBrokenLink (llviewerinventory.cpp) is
+        // only a state check and suppresses no read.
+        if let NetCommand::FetchItems { items, .. } = &mut cmd {
+            self.world.inventory.drop_broken(items);
+            if items.is_empty() {
+                return;
+            }
+        }
         if let NetCommand::SetAlwaysRun(run) = &mut cmd {
             *run &= !self.vr_walk_override.active();
         }
@@ -3435,6 +3448,15 @@ impl App {
         }
         let mut cmd = cmd;
         self.world.prepare_inventory_command(&mut cmd);
+        // (nor an item already on its way: one read an item at a time,
+        // claimed only as it is really sent)
+        let attachment = matches!(cmd, NetCommand::FetchAttachmentItems { .. });
+        if let NetCommand::FetchItems { items, .. } | NetCommand::FetchAttachmentItems { items } = &mut cmd {
+            self.world.inventory.claim_item_reads(items, attachment, std::time::Instant::now());
+            if items.is_empty() {
+                return;
+            }
+        }
         self.net.send(cmd);
     }
 
@@ -15019,6 +15041,12 @@ impl App {
                 .is_some_and(|g| g.renderer.vr_runtime_lost() && !g.renderer.vr_engaged())
         {
             if !self.reopen_without_vr(event_loop) {
+                // its new device lost while it started (#4508): reported as
+                // the loss it is, as after a recovery from a loss; another
+                // failure (no window, no adapter) is not a loss
+                if aurora_render::loss_details().is_some() {
+                    crate::crash::gpu_lost();
+                }
                 self.close_while_gpu_stalled(event_loop);
             }
             return;
