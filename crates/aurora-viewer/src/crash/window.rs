@@ -349,7 +349,8 @@ impl Recovery {
             let scale = window.scale_factor();
             let height = window
                 .current_monitor()
-                .map(|m| f64::from(m.size().height) / scale - 100.0)
+                .and_then(|m| crate::screen_info::size(&m))
+                .map(|size| f64::from(size.height) / scale - 100.0)
                 .unwrap_or(760.0)
                 .clamp(500.0, 760.0);
             let _ = window.request_inner_size(winit::dpi::LogicalSize::new(840.0, height));

@@ -303,7 +303,7 @@ fn background(p: &Palette, ctx: &egui::Context, rect: egui::Rect) -> Vec<egui::e
 /// Centred on the screen the viewer will most likely open on.
 fn centred(event_loop: &ActiveEventLoop) -> Option<winit::dpi::PhysicalPosition<i32>> {
     let monitor = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next())?;
-    let (pos, size, scale) = (monitor.position(), monitor.size(), monitor.scale_factor());
+    let (pos, size, scale) = (monitor.position(), crate::screen_info::size(&monitor)?, monitor.scale_factor());
     let (w, h) = ((SIZE.x as f64 * scale) as i32, (SIZE.y as f64 * scale) as i32);
     Some(winit::dpi::PhysicalPosition::new(
         pos.x + (size.width as i32 - w) / 2,

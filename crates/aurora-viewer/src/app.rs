@@ -22059,7 +22059,12 @@ impl ApplicationHandler for App {
         // last position, only if it is still on a connected screen
         if let (Some(x), Some(y), false) = (self.settings.window_x, self.settings.window_y, capture) {
             let on = event_loop.available_monitors().find(|m| {
-                let (p, s) = (m.position(), m.size());
+                // (a screen the system no longer describes is not one to
+                // open on: screen_info.rs)
+                let Some(s) = crate::screen_info::size(m) else {
+                    return false;
+                };
+                let p = m.position();
                 // the title bar (top-left corner area) must be reachable
                 x + 40 >= p.x && x + 40 < p.x + s.width as i32 && y + 10 >= p.y && y + 10 < p.y + s.height as i32
             });
@@ -22070,16 +22075,16 @@ impl ApplicationHandler for App {
         }
         // a "normal" size covering the whole screen is a maximized window
         // recorded as normal (older versions): restore to 80 % of the screen
-        if let (Some(m), false) = (&monitor, capture) {
+        if let (Some(m), Some(size), false) = (&monitor, monitor.as_ref().and_then(crate::screen_info::size), capture) {
             let sf = m.scale_factor();
-            let (mw, mh) = (m.size().width as f64 / sf, m.size().height as f64 / sf);
+            let (mw, mh) = (size.width as f64 / sf, size.height as f64 / sf);
             if w as f64 >= mw * 0.95 && h as f64 >= mh * 0.9 {
                 w = (mw * 0.8) as u32;
                 h = (mh * 0.8) as u32;
                 let p = m.position();
                 pos = Some((
-                    p.x + ((m.size().width as f64 - w as f64 * sf) / 2.0) as i32,
-                    p.y + ((m.size().height as f64 - h as f64 * sf) / 2.0) as i32,
+                    p.x + ((size.width as f64 - w as f64 * sf) / 2.0) as i32,
+                    p.y + ((size.height as f64 - h as f64 * sf) / 2.0) as i32,
                 ));
             }
         }

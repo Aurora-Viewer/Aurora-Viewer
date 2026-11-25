@@ -110,6 +110,7 @@ mod report_abuse;
 mod save_retry;
 mod saves;
 mod scene;
+mod screen_info;
 mod screen_rate;
 mod settings;
 mod shape_editor;

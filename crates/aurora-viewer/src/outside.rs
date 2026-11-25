@@ -771,9 +771,9 @@ impl Outside {
                 if native.window.is_maximized() || native.window.fullscreen().is_some() {
                     continue;
                 }
-                let room = native.window.current_monitor().map(|monitor| {
-                    let room = monitor.size().to_logical::<f32>(monitor.scale_factor());
-                    egui::vec2(room.width / zoom, room.height / zoom)
+                let room = native.window.current_monitor().and_then(|monitor| {
+                    let room = crate::screen_info::size(&monitor)?.to_logical::<f32>(monitor.scale_factor());
+                    Some(egui::vec2(room.width / zoom, room.height / zoom))
                 });
                 let size = whole(fitting(size, room), zoom);
                 // a held size is the least and the most the system allows:
