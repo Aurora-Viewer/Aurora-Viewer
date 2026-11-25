@@ -505,10 +505,13 @@ impl Scene {
                 let Some(p) = point else {
                     return Some((hit.t, idx, ray.0 + ray.1 * hit.t));
                 };
-                // Near the depth, ranked where the texel's ray meets it, the
-                // ray the depth was drawn on: on the click's, a surface a few
-                // centimetres behind the one drawn there (a wall behind a
-                // poster) could come before it, both seen at an angle.
+                // Drawn at the depth, ranked at the nearer of where the
+                // texel's ray (the one the depth was drawn on) and the
+                // click's meet it, so that what lies behind it on both comes
+                // after it: on the click's alone, a surface a few centimetres
+                // behind the one drawn there (a wall behind a poster) could
+                // come before it, both seen at an angle; on the texel's alone,
+                // a prim just behind it that the texel's ray misses could.
                 let depth_t = (p - ray.0).dot(ray.1);
                 let drawn = if hit.t >= depth_t - DEPTH_NEAR {
                     self.drawn_at(world, idx, ray.0, p, now, mode)
@@ -520,7 +523,7 @@ impl Scene {
                     // there, through a gap of the same object)
                     Some((depth_t + drawn?, idx, p))
                 } else {
-                    Some((drawn.map_or(hit.t, |past| depth_t + past), idx, ray.0 + ray.1 * hit.t))
+                    Some((drawn.map_or(hit.t, |past| hit.t.min(depth_t + past)), idx, ray.0 + ray.1 * hit.t))
                 }
             });
             let hit = nearest_hit(hits, |h| (h.0, h.1));
@@ -3049,6 +3052,34 @@ pub(crate) mod tests {
             assert_eq!(pick(&world, &scene), (Some(wall), Some(wall)), "{case}");
             scene.gpu[poster].hidden = false;
         }
+    }
+
+    #[test]
+    fn a_prim_just_behind_the_surface_drawn_at_the_depth_that_its_texel_misses_is_not_taken() {
+        // A wall drawn 10 m away, turned toward the camera: the click's ray,
+        // 10 cm beside the texel's, meets it 5 cm in front of the depth. A
+        // 2 cm prim 2 cm behind the wall on the click's ray, which the
+        // texel's ray passes beside: hidden behind the wall, it is taken only
+        // once the wall is not drawn.
+        let (mut world, mut scene, prim, wall) = indexed_scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let point = Vec3::new(10.0, 0.1, 50.0);
+        let turn = (-0.5f32).atan();
+        let o = world.objects.get_mut(wall).unwrap();
+        o.rotation = Quat::from_rotation_z(turn);
+        o.position = point + Vec3::new(turn.cos(), turn.sin(), 0.0) * 0.5;
+        let o = world.objects.get_mut(prim).unwrap();
+        o.scale = Vec3::splat(0.02);
+        o.position = Vec3::new(9.98, 0.0, 50.0);
+        let pick = |scene: &Scene| {
+            (
+                scene.left_selection_pick(&world, Some(ray), Some(point), true, false, 256.0).1,
+                scene.selection_pick(&world, Some(ray), Some(point), false, false, 256.0).1,
+            )
+        };
+        assert_eq!(pick(&scene), (Some(wall), Some(wall)));
+        scene.gpu[wall].hidden = true;
+        assert_eq!(pick(&scene), (Some(prim), Some(prim)));
     }
 
     #[test]
