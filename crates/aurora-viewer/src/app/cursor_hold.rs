@@ -410,7 +410,18 @@ impl App {
             .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
         self.cursor_pos = (x, y);
     }
+}
 
+/// Whether the window is a Wayland surface, where the cursor can only be
+/// moved while locked.
+fn wayland(window: &winit::window::Window) -> bool {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    window
+        .window_handle()
+        .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)))
+}
+
+impl App {
     /// Put the shown cursor at `to` (physical pixels): the pie that opens on
     /// the press near an edge of the window is moved inside it, and the
     /// cursor goes to its centre (PieMenu::show → setMousePositionLocal,
@@ -449,15 +460,6 @@ impl App {
             let _ = g.egui_state.on_window_event(&g.window, &moved);
         }
     }
-}
-
-/// Whether the window is a Wayland surface, where the cursor can only be
-/// moved while locked.
-fn wayland(window: &winit::window::Window) -> bool {
-    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    window
-        .window_handle()
-        .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)))
 }
 
 #[cfg(test)]
