@@ -46,7 +46,7 @@ impl App {
             self.options_ui.legacy_lists.found = Some(Vec::new());
             return;
         };
-        self.options_ui.legacy_lists.other_grid = !account.grid_known() || mode() == Some(Mode::OtherGrid);
+        self.options_ui.legacy_lists.other_grid = !account.grid_known() || (self.demo && mode() == Some(Mode::OtherGrid));
         let apps = match &self.legacy_lists.demo_apps {
             Some(apps) => apps.clone(),
             None => self.world.chat_log.legacy_apps(),
@@ -147,32 +147,63 @@ impl App {
     }
 }
 
-/// The result as the preferences say it.
+/// The result as the preferences say it. "Nothing new" only when every
+/// list was read and saved: a list that failed may well hold something new.
 fn status(report: &Report) -> String {
     use aurora_i18n::tr;
-    let mut text = if report.total() == 0 {
-        tr!("ui-options-legacy-lists-nothing").to_owned()
-    } else {
-        tr!(
-            "ui-options-legacy-lists-imported",
-            teleports = report.teleports,
-            derender = report.derender,
-            media = report.media,
-            sets = report.contact_sets
-        )
-        .to_owned()
-    };
-    if !report.unreadable.is_empty() {
-        text.push(' ');
-        text.push_str(&tr!("ui-options-legacy-lists-failed", files = report.unreadable.join(", ")));
+    let mut parts = Vec::new();
+    if report.total() > 0 {
+        parts.push(
+            tr!(
+                "ui-options-legacy-lists-added",
+                teleports = report.teleports,
+                derender = report.derender,
+                media = report.media,
+                sets = report.contact_sets
+            )
+            .to_owned(),
+        );
+    } else if report.unreadable.is_empty() && report.unsaved.is_empty() {
+        parts.push(tr!("ui-options-legacy-lists-nothing").to_owned());
     }
-    if report.contact_sets_unsaved {
-        text.push(' ');
-        text.push_str(tr!("ui-options-legacy-lists-not-saved"));
+    if !report.unreadable.is_empty() {
+        parts.push(tr!("ui-options-legacy-lists-failed", files = report.unreadable.join(", ")).to_owned());
     }
     if !report.unsaved.is_empty() {
-        text.push(' ');
-        text.push_str(&tr!("ui-options-legacy-lists-unsaved", files = report.unsaved.join(", ")));
+        parts.push(tr!("ui-options-legacy-lists-unsaved", files = report.unsaved.join(", ")).to_owned());
     }
-    text
+    parts.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_new_only_when_every_list_was_read_and_saved() {
+        let nothing = aurora_i18n::tr!("ui-options-legacy-lists-nothing").to_owned();
+        assert_eq!(status(&Report::default()), nothing);
+        let unsaved = Report {
+            unsaved: vec!["settings_friends_groups.xml"],
+            ..Report::default()
+        };
+        let text = status(&unsaved);
+        assert!(!text.contains(&nothing) && text.contains("settings_friends_groups.xml"), "{text}");
+        let unreadable = Report {
+            unreadable: vec!["medialist.xml"],
+            ..Report::default()
+        };
+        let text = status(&unreadable);
+        assert!(!text.contains(&nothing) && text.contains("medialist.xml"), "{text}");
+        let added = Report {
+            teleports: 2,
+            unsaved: vec!["settings_friends_groups.xml"],
+            ..Report::default()
+        };
+        let text = status(&added);
+        assert!(
+            text.contains('2') && text.contains("settings_friends_groups.xml") && !text.starts_with(' '),
+            "{text}"
+        );
+    }
 }

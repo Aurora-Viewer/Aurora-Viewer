@@ -128,8 +128,6 @@ pub struct Report {
     pub media: usize,
     pub contact_sets: usize,
     pub unreadable: Vec<&'static str>,
-    /// The account's contact sets could not be written.
-    pub contact_sets_unsaved: bool,
     /// Lists that could not be written: they stay as they were.
     pub unsaved: Vec<&'static str>,
     /// Our avatar sat on something that left the world.
@@ -260,7 +258,7 @@ impl super::World {
                     Ok(_) => report.contact_sets = adds,
                     Err(e) => {
                         log::warn!("contact sets not saved: {e}");
-                        report.contact_sets_unsaved = true;
+                        report.unsaved.push(CONTACT_SETS_FILE);
                     }
                 }
             }
@@ -420,7 +418,7 @@ mod tests {
         std::fs::write(&blocker, "").expect("blocker");
         world.contact_sets = crate::world::contact_sets::ContactSets::load(blocker.join(CONTACT_SETS_FILE));
         let report = world.merge_legacy_lists(read(&dir));
-        assert!(report.contact_sets_unsaved);
+        assert_eq!(report.unsaved, [CONTACT_SETS_FILE]);
         assert_eq!(report.contact_sets, 0);
         assert_eq!(
             (report.teleports, report.derender, report.media),

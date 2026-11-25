@@ -356,8 +356,12 @@ impl HistoryStorage {
     /// rule decides between two entries of one place: the newest visit
     /// stays, at the older position, so importing again changes nothing.
     /// The number of places added or updated; on a failed save the history
-    /// stays as it was, in the file too.
+    /// stays as it was, in the file too. Nothing to add is never a failed
+    /// save, even over a history that could not be read.
     pub fn merge(&mut self, items: Vec<HistoryItem>) -> std::io::Result<usize> {
+        if items.is_empty() {
+            return Ok(0);
+        }
         if self.unreadable {
             return Err(std::io::Error::other("the saved history could not be read"));
         }
@@ -1344,6 +1348,10 @@ mod tests {
         s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 2000.0, String::new());
         assert_eq!(s.items.len(), 1);
         assert!(writers().snapshot(&path).is_none());
+        // nothing to import is not a failed save
+        assert_eq!(s.merge(Vec::new()).ok(), Some(0));
+        let item = s.items[0].clone();
+        assert!(s.merge(vec![item]).is_err(), "a place to add still fails");
         drop(s);
         assert!(path.join("inside").is_dir());
         let _ = std::fs::remove_dir_all(&dir);

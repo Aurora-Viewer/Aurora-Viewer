@@ -29,7 +29,8 @@ pub fn mode() -> Option<Mode> {
         "none" => Mode::None,
         "unreadable" => Mode::Unreadable,
         "other-grid" => Mode::OtherGrid,
-        _ => Mode::Window,
+        "1" => Mode::Window,
+        _ => return None,
     })
 }
 

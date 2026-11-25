@@ -77,7 +77,7 @@ pub(super) fn modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
                     ),
                     (
                         &mut parts.contact_sets,
-                        tr!("ui-options-legacy-lists-contact-sets", count = counts.contact_sets),
+                        tr!("ui-options-legacy-lists-contact-set-entries", count = counts.contact_sets),
                         counts.contact_sets,
                     ),
                 ];
