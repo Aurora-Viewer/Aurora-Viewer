@@ -2146,6 +2146,81 @@ mod tests {
         }
     }
 
+    /// An ended friendship's card: a long name as the title, cut on one
+    /// line and still a link to the profile, and the statement under it
+    /// whole, in the Legacy toast and Aurora's toast and list.
+    #[test]
+    fn a_friendship_ended_card_keeps_its_sentence_whole_under_a_long_name_in_both_styles() {
+        let name = "'Orion the Great' (Orion Example)";
+        let id = Uuid::from_u128(0x4562);
+        let sentence = aurora_i18n::tr!("world-mod-friendship-ended-text");
+        for (aurora, toast) in [(false, true), (true, true), (true, false)] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::default();
+            let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut list = Notifications::default();
+            let nid = list.push(Kind::Friendship, name, sentence, Data::None);
+            list.link_name(nid, name, crate::world::notifications::NameTarget::Avatar(id));
+            let mut time = 0.0;
+            let mut frame = |events| {
+                time += 0.1;
+                let mut answer = None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.set_width(240.0);
+                        answer = card(
+                            ui,
+                            &p,
+                            &icons,
+                            &world,
+                            &HashMap::new(),
+                            &mut HashSet::new(),
+                            &mut list.list[0],
+                            toast,
+                            aurora,
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                (output, answer)
+            };
+            for _ in 0..3 {
+                frame(vec![]);
+            }
+            let (output, _) = frame(vec![]);
+            let galley = |wanted: &str| {
+                output.shapes.iter().find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.text() == wanted => Some((t.pos, t.galley.clone())),
+                    _ => None,
+                })
+            };
+            let (_, body) = galley(sentence).expect("the sentence under the name");
+            assert!(!body.elided, "the sentence is never cut (aurora {aurora}, toast {toast})");
+            let (pos, title) = galley(name).expect("the name as the title");
+            let pos = pos + egui::vec2(4.0, title.size().y * 0.5);
+            frame(vec![egui::Event::PointerMoved(pos)]);
+            for pressed in [true, false] {
+                let (_, answer) = frame(vec![egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }]);
+                assert!(answer.is_none(), "the name does not answer the card");
+            }
+            assert_eq!(crate::ui::profile::take_open_request(&ctx), Some(id), "the name opens the profile");
+        }
+    }
+
     /// A friend's notice lives as long as its toast; a message's entry
     /// stays under the bell once its toast is gone when asked for, else it
     /// leaves with its toast too (#752).

@@ -495,6 +495,7 @@ fn friendship_ended_notification_follows_preference_live_and_history() {
 
     // On: live termination creates a Kind::Friendship card like "accepted your friendship",
     // asks for attention, links the resident's profile, and moves to history on dismiss.
+    // The name alone is the title (cut on one line), the statement its text (wrapped).
     let mut w = world();
     w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
     w.notifications.toasts.friendship_ended = true;
@@ -508,8 +509,8 @@ fn friendship_ended_notification_follows_preference_live_and_history() {
     assert!(!n.transient);
     assert!(!n.interactive());
     assert!(!n.opens());
-    assert_eq!(n.title, "Jane Doe ended your friendship");
-    assert!(n.body.is_empty());
+    assert_eq!(n.title, "Jane Doe");
+    assert_eq!(n.body, "This resident ended your friendship.");
     assert_eq!(n.name_links.len(), 1);
     assert_eq!(n.name_links[0].name, "Jane Doe");
     assert_eq!(n.name_links[0].target, NameTarget::Avatar(JANE));
@@ -522,9 +523,16 @@ fn friendship_ended_notification_follows_preference_live_and_history() {
     w.record_notification_history();
     let hist = super::notification_history::search(&w.notification_history, "ended your friendship");
     assert_eq!(hist.len(), 1);
-    assert_eq!(hist[0].1.outcome, Outcome::Read);
-    assert_eq!(hist[0].1.follow, Follow::Restore);
-    assert_eq!(hist[0].1.name_links[0].target, NameTarget::Avatar(JANE));
+    let entry = hist[0].1;
+    assert_eq!(entry.title, "Jane Doe");
+    assert_eq!(entry.body, "This resident ended your friendship.");
+    assert_eq!(entry.outcome, Outcome::Read);
+    assert_eq!(entry.follow, Follow::Restore);
+    assert_eq!(entry.name_links.len(), 1);
+    assert_eq!(entry.name_links[0].name, "Jane Doe");
+    assert_eq!(entry.name_links[0].target, NameTarget::Avatar(JANE));
+    // History's search still finds it by the name as well as by the text
+    assert_eq!(super::notification_history::search(&w.notification_history, "jane doe").len(), 1);
 
     // Local removal and blocked residents do not emit notifications.
     let mut w = world();
@@ -574,8 +582,10 @@ fn friendship_ended_offline_waits_for_world_and_name_resolution() {
     assert_eq!(w.notifications.list.len(), 1);
     let n = &w.notifications.list[0];
     assert_eq!(n.kind, Kind::Friendship);
-    assert_eq!(n.title, "Fresh Name is no longer on your friends list");
+    assert_eq!(n.title, "Fresh Name");
+    assert_eq!(n.body, "This resident is no longer on your friends list.");
     assert_eq!(n.name_links.len(), 1);
+    assert_eq!(n.name_links[0].name, "Fresh Name");
     assert_eq!(n.name_links[0].target, super::notification_history::NameTarget::Avatar(missing_id));
     let nid = n.id;
     w.record_notification_history();
@@ -583,6 +593,16 @@ fn friendship_ended_offline_waits_for_world_and_name_resolution() {
     w.record_notification_history();
     let hist = super::notification_history::search(&w.notification_history, "no longer on your friends list");
     assert_eq!(hist.len(), 1);
+    let entry = hist[0].1;
+    assert_eq!(entry.title, "Fresh Name");
+    assert_eq!(entry.body, "This resident is no longer on your friends list.");
+    assert_eq!(entry.name_links.len(), 1);
+    assert_eq!(entry.name_links[0].name, "Fresh Name");
+    assert_eq!(
+        entry.name_links[0].target,
+        super::notification_history::NameTarget::Avatar(missing_id)
+    );
+    assert_eq!(super::notification_history::search(&w.notification_history, "fresh name").len(), 1);
     assert!(super::notification_history::search(&w.notification_history, "ended your friendship").is_empty());
 
     // If the login response lacked `buddy-list`, reconciliation does nothing.
@@ -625,6 +645,6 @@ fn friendship_ended_waits_for_the_block_list() {
     assert!(w.mutes.is_muted_id(&JANE));
     w.flush_friendship_ended_notices();
     w.flush_friendship_ended_notices();
-    let titles: Vec<&str> = w.notifications.list.iter().map(|n| n.title.as_str()).collect();
-    assert_eq!(titles, ["Tom Smith is no longer on your friends list"]);
+    let shown: Vec<(&str, &str)> = w.notifications.list.iter().map(|n| (n.title.as_str(), n.body.as_str())).collect();
+    assert_eq!(shown, [("Tom Smith", "This resident is no longer on your friends list.")]);
 }

@@ -6547,17 +6547,20 @@ impl World {
                 .social
                 .known_roster_name(&id)
                 .or_else(|| (!fallback.is_empty()).then_some(fallback));
-            let from = resolved.clone().unwrap_or_else(|| aurora_i18n::tr!("world-mod-someone").to_owned());
+            // The name alone is the title, cut on one line like every card's
+            // title; the statement is the text under it, which wraps, so a
+            // long name never hides it (like a calling card's offer)
+            let title = resolved.clone().unwrap_or_else(|| aurora_i18n::tr!("world-mod-someone").to_owned());
             // Only the live TerminateFriendship says who ended it; a friend
             // missing at login may have been removed by this account from
             // another viewer, or their account may be gone
-            let title = match how {
-                friend_snapshot::Ended::Live => aurora_i18n::tr!("world-mod-ended-your-friendship", from = from),
-                friend_snapshot::Ended::AtLogin => aurora_i18n::tr!("world-mod-no-longer-on-your-friends-list", from = from),
+            let body = match how {
+                friend_snapshot::Ended::Live => aurora_i18n::tr!("world-mod-friendship-ended-text"),
+                friend_snapshot::Ended::AtLogin => aurora_i18n::tr!("world-mod-friend-no-longer-listed-text"),
             };
             let nid = self
                 .notifications
-                .push(notifications::Kind::Friendship, title, String::new(), notifications::Data::None);
+                .push(notifications::Kind::Friendship, title, body, notifications::Data::None);
             if let Some(name) = resolved {
                 self.notifications.link_name(nid, name, notifications::NameTarget::Avatar(id));
             }
