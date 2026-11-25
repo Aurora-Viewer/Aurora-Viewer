@@ -661,7 +661,6 @@ enum Edit {
     MoveBlock(Bar, Vec<ToolButton>, usize, bool),
     DrawerBlock(String, Vec<ToolButton>, usize),
     RemoveBlock(Vec<String>),
-    DividerAfter(Bar, Option<String>),
     Remove(String),
     Restore,
     Clear,
@@ -1110,10 +1109,6 @@ impl ToolbarUi {
                 }
                 menu::separator(ui, p);
             }
-            if !locked && menu::item(ui, p, "separator-vertical", aurora_i18n::tr!("toolbar-add-separator")) {
-                self.open = true;
-                self.pending = Some(Edit::DividerAfter(bar, button.map(|button| button.command.clone())));
-            }
             self.action_options(ui, p, button);
             if button.is_none_or(|b| settings.drawer_of(&b.command).is_none()) {
                 menu::separator(ui, p);
@@ -1381,23 +1376,6 @@ impl ToolbarUi {
                     changed |= self.commit_impl(layout, settings, provisional);
                 }
                 return changed;
-            }
-            Edit::DividerAfter(bar, anchor) => {
-                if settings.locked {
-                    return false;
-                }
-                let (drawer, list) = drawers::contents(settings, *bar, anchor.as_deref().unwrap_or(""), layout);
-                let rank = anchor
-                    .as_ref()
-                    .and_then(|anchor| list.iter().position(|button| button.command == *anchor))
-                    .map_or(list.len(), |index| index + 1);
-                let button = structure::divider(&uuid::Uuid::new_v4().to_string());
-                self.pending = Some(if let Some(id) = drawer {
-                    Edit::DrawerInsert(id, button, rank)
-                } else {
-                    Edit::Insert(*bar, button, rank)
-                });
-                return self.commit_impl(layout, settings, provisional);
             }
             _ => {}
         }
@@ -1793,7 +1771,6 @@ impl ToolbarUi {
             Edit::MoveBlock(..)
             | Edit::DrawerBlock(..)
             | Edit::RemoveBlock(..)
-            | Edit::DividerAfter(..)
             | Edit::DrawerFromDrop(..)
             | Edit::DrawerOptions(..)
             | Edit::DrawerCloses(..)

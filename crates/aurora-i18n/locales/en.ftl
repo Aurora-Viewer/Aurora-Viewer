@@ -16002,7 +16002,6 @@ toolbar-separator-settings = Block spacing settings
 toolbar-separator-size = Size / minimum (px)
 toolbar-separator-stretch = Fill available space
 toolbar-separator-help = Flexible gaps share the space left by the blocks. Size is their minimum width, or height in a side bar.
-toolbar-add-separator = Add a separator
 toolbar-block-navigation = Navigation and SLURL
 toolbar-block-account = Account and balance
 toolbar-block-system = Clock, indicators and audio

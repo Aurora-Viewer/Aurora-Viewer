@@ -16011,7 +16011,6 @@ toolbar-separator-settings = Espacement entre blocs
 toolbar-separator-size = Taille / minimum (px)
 toolbar-separator-stretch = Occuper l’espace libre
 toolbar-separator-help = Les espaces extensibles se partagent la place laissée par les blocs. La taille est leur largeur minimale, ou leur hauteur dans une barre latérale.
-toolbar-add-separator = Ajouter un séparateur
 toolbar-block-navigation = Navigation et SLURL
 toolbar-block-account = Compte et solde
 toolbar-block-system = Heure, indicateurs et son

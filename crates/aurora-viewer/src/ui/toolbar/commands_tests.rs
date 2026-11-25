@@ -437,7 +437,6 @@ fn normal_native_contexts_share_one_customization_entry_and_select_the_clicked_c
                 }
                 for key in [
                     "toolbar-locked",
-                    "toolbar-add-separator",
                     "toolbar-add-spacer",
                     "ui-bars-show-in-island",
                     "ui-bars-show-clock",

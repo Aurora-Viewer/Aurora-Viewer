@@ -15839,7 +15839,6 @@ toolbar-separator-settings = ブロック間の余白の設定
 toolbar-separator-size = サイズ／最小値（px）
 toolbar-separator-stretch = 空き領域を埋める
 toolbar-separator-help = 伸縮する余白はブロックの残りの領域を均等に分けます。サイズは最小の幅、サイドバーでは最小の高さです。
-toolbar-add-separator = 区切りを追加
 toolbar-block-navigation = ナビゲーションとSLURL
 toolbar-block-account = アカウントと残高
 toolbar-block-system = 時計・状態・音声
