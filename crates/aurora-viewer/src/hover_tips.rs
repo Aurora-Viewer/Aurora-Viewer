@@ -70,6 +70,11 @@ pub fn subject_at(world: &World, idx: Option<usize>, point: Vec3) -> Option<Subj
         });
     };
     let o = world.objects.get(idx)?;
+    // our copies (the animation editor's mirror, the Fit lab's mannequins)
+    // and what they wear are no one's: nothing to look up or offer for them
+    if world.on_local_copy(idx) {
+        return None;
+    }
     if o.is_avatar() {
         return Some(Subject::Avatar { idx, id: o.full_id });
     }
