@@ -231,6 +231,8 @@ struct Window {
     demo_classified: Option<bool>,
     /// Open a photo once the demo profile reply arrives.
     demo_photo: Option<(PictureSlot, bool)>,
+    /// Demo captures: the classic Picks tab clicks New once it shows.
+    demo_new_pick: bool,
 }
 
 enum CloseChoice {
@@ -279,6 +281,7 @@ impl Window {
             notes_saved: false,
             demo_classified: None,
             demo_photo: None,
+            demo_new_pick: false,
         }
     }
 
@@ -634,6 +637,7 @@ impl ProfileUi {
                 "edit" => w.editing = true,
                 "form" => w.demo_classified = Some(false),
                 "publish" => w.demo_classified = Some(true),
+                "new-pick" => w.demo_new_pick = true,
                 "photo" => w.demo_photo = Some((PictureSlot::SecondLife, false)),
                 "first-photo" => {
                     w.tab = TAB_RL;
@@ -1977,12 +1981,6 @@ fn picks_tab(
         loading(ui, p);
         return;
     };
-    let mut items = pr.picks.clone();
-    if let Some((e, _)) = &w.pick_edit
-        && e.id.is_nil()
-    {
-        items.push((Uuid::nil(), e.name.clone()));
-    }
     if own {
         ui.vertical_centered(|ui| {
             ui.label(
@@ -1996,9 +1994,11 @@ fn picks_tab(
         ui.horizontal(|ui| {
             let creating = w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil());
             let can_add = pr.picks.len() < picks_limit(world) && !creating && !w.pick_save_waits() && !world.rlva.has("showloc");
+            let demo_click = can_add && std::mem::take(&mut w.demo_new_pick);
             if ui
                 .add_enabled(can_add, egui::Button::new(aurora_i18n::tr!("ui-profile-new")))
                 .clicked()
+                || demo_click
             {
                 w.pick_edit = Some((new_pick(world), PickEdit::default()));
                 w.pick_sel = Some(Uuid::nil());
@@ -2030,6 +2030,10 @@ fn picks_tab(
         });
         ui.add_space(4.0);
     }
+    // Listed after the buttons: a draft New just started is in the list
+    // this frame, so the selection stays on it (#4685).
+    let draft = w.pick_edit.as_ref().map(|(e, _)| e).filter(|e| e.id.is_nil());
+    let items = pick_items(&pr.picks, draft);
     if items.is_empty() {
         ui.add_space(120.0);
         ui.vertical_centered(|ui| {
@@ -2042,9 +2046,7 @@ fn picks_tab(
         });
         return;
     }
-    if w.pick_sel.is_none_or(|s| !items.iter().any(|(id, _)| *id == s)) {
-        w.pick_sel = items.first().map(|(id, _)| *id);
-    }
+    w.pick_sel = listed_pick_sel(w.pick_sel, &items);
     let height = ui.available_height() - 12.0;
     ui.horizontal_top(|ui| {
         let before = w.pick_sel;
@@ -2067,6 +2069,25 @@ fn picks_tab(
             }
         });
     });
+}
+
+/// The classic window's list of picks: the server's, then the one being
+/// created under the nil id, like the tab LLPanelProfilePicks::onClickNewBtn
+/// adds (indra/newview/llpanelprofilepicks.cpp).
+fn pick_items(picks: &[(Uuid, String)], draft: Option<&PickEdit>) -> Vec<(Uuid, String)> {
+    let mut items = picks.to_vec();
+    if let Some(e) = draft {
+        items.push((Uuid::nil(), e.name.clone()));
+    }
+    items
+}
+
+/// The selection kept while it is listed, else the first pick.
+fn listed_pick_sel(sel: Option<Uuid>, items: &[(Uuid, String)]) -> Option<Uuid> {
+    match sel {
+        Some(s) if items.iter().any(|(id, _)| *id == s) => Some(s),
+        _ => items.first().map(|(id, _)| *id),
+    }
 }
 
 /// A new pick at our position (LLPanelProfilePick::setAvatarId, null pick).
@@ -2579,6 +2600,62 @@ fn notes_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, profile: Option<&Ava
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// New with picks already listed: the draft is listed in the same
+    /// frame, so the selection stays on it instead of going back to the
+    /// first pick (#4685).
+    #[test]
+    fn new_pick_stays_selected_beside_existing_picks() {
+        let picks = vec![
+            (Uuid::from_u128(1), "Beach".to_string()),
+            (Uuid::from_u128(2), "Workshop".to_string()),
+        ];
+        let draft = PickEdit {
+            name: "New pick".into(),
+            ..PickEdit::default()
+        };
+        let items = pick_items(&picks, Some(&draft));
+        assert_eq!(items.last(), Some(&(Uuid::nil(), "New pick".to_string())));
+        assert_eq!(listed_pick_sel(Some(Uuid::nil()), &items), Some(Uuid::nil()));
+        // without the draft (dropped or saved), the first pick is shown
+        let items = pick_items(&picks, None);
+        assert_eq!(listed_pick_sel(Some(Uuid::nil()), &items), Some(Uuid::from_u128(1)));
+        assert_eq!(listed_pick_sel(Some(Uuid::from_u128(2)), &items), Some(Uuid::from_u128(2)));
+        assert_eq!(listed_pick_sel(None, &[]), None);
+    }
+
+    /// One frame of our classic Favorites tab with two picks, New clicked
+    /// (the demo's click, on the button's own path): the draft is selected
+    /// and kept, not replaced by the first pick (#4685).
+    #[test]
+    fn classic_new_pick_beside_existing_picks_is_selected() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(4685);
+        world.profiles.merge_picks(
+            world.agent_id,
+            vec![(Uuid::from_u128(1), "Beach".into()), (Uuid::from_u128(2), "Workshop".into())],
+        );
+        let p = crate::theme::Theme::default().palette();
+        let mut emoji = super::super::emoji::Emoji::load();
+        let images = HashMap::new();
+        let c = TabCtx {
+            p: &p,
+            world: &world,
+            images: &images,
+            own: true,
+        };
+        let mut w = Window::new(world.agent_id);
+        w.tab = TAB_PICKS;
+        w.demo_new_pick = true;
+        let mut actions = Vec::new();
+        Frames::new().run(Vec::new(), &mut |ui: &mut egui::Ui| {
+            picks_tab(ui, &c, &mut emoji, &mut w, &mut HashSet::new(), &mut HashSet::new(), &mut actions);
+        });
+        assert!(!w.demo_new_pick, "New was clicked");
+        assert_eq!(w.pick_sel, Some(Uuid::nil()));
+        assert!(w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil()), "the draft is kept");
+    }
 
     #[test]
     fn classic_profile_double_click_opens_member_and_nonmember_groups() {

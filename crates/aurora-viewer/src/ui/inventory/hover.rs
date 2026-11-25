@@ -99,7 +99,8 @@ impl State {
     }
 }
 
-fn asset(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+/// The picture a row's tooltip shows, the preview pane's too.
+pub(super) fn asset(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     if !inv.can_preview(0) {
         return None;
     }

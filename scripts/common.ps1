@@ -27,7 +27,17 @@ function Get-TaskSlug([string]$Name) {
 # A build or a viewer is running from $Dir: compiler command lines name
 # their output folder, the viewer runs from its own exe.
 function Test-InUse([string]$Dir) {
-    $full = [IO.Path]::GetFullPath($Dir).TrimEnd('\') + '\'
+    $sep = [IO.Path]::DirectorySeparatorChar
+    $full = [IO.Path]::GetFullPath($Dir).TrimEnd($sep) + $sep
+    if ($IsLinux) {
+        # no CIM here. A cargo that has not started rustc yet names no folder
+        # on its command line, but it runs from one.
+        return [bool](Get-Process cargo, rustc, clippy-driver, aurora-viewer -ErrorAction SilentlyContinue | Where-Object {
+            $cwd = (Get-Item -LiteralPath "/proc/$($_.Id)/cwd" -Force -ErrorAction SilentlyContinue).LinkTarget
+            ($_.Path -and $_.Path.StartsWith($full)) -or ($_.CommandLine -and $_.CommandLine.Contains($full)) -or
+            ($cwd -and "$($cwd.TrimEnd($sep))$sep".StartsWith($full))
+        })
+    }
     $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue -Filter (
         "Name='cargo.exe' OR Name='rustc.exe' OR Name='clippy-driver.exe' OR Name='aurora-viewer.exe'")
     [bool]($procs | Where-Object {
@@ -353,4 +363,102 @@ function Exit-BuildSlot([Threading.Mutex]$Slot) {
 function Invoke-Checked([string]$What, [scriptblock]$Command) {
     & $Command
     if ($LASTEXITCODE -ne 0) { throw "Failed: $What (code $LASTEXITCODE)." }
+}
+
+# owner/name of a GitHub remote URL (https or ssh), nothing for another host.
+function Get-GitHubSlug([string]$Url) {
+    if ($Url -and $Url.Trim() -match 'github\.com[:/](?<owner>[^/]+)/(?<name>[^/]+?)(\.git)?/?$') {
+        "$($Matches.owner)/$($Matches.name)"
+    }
+}
+
+# GitHub owners whose copy of the repository may hold the head of a task
+# branch's PR, surest first: the remotes the branch's settings push it to
+# (branch push remote, remote.pushDefault, a tracked branch of the same
+# name); else the remotes holding a ref of that name, left by a push or by
+# a fetch (a contributor's fork added for a review may hold a branch of the
+# same name: Get-BranchPr also checks the commits); else every GitHub
+# remote's owner. A task branch tracks origin/main from new-task.ps1, which
+# says nothing of where it was pushed.
+function Get-BranchHeadOwners([string]$Dir, [string]$Branch) {
+    $owners = @{}
+    foreach ($r in @(git -C $Dir remote 2>$null)) {
+        $slug = Get-GitHubSlug (git -C $Dir remote get-url --push $r 2>$null)
+        if ($slug) { $owners[$r] = $slug.Split('/')[0] }
+    }
+    $configured = @()
+    $configured += git -C $Dir config "branch.$Branch.pushRemote" 2>$null
+    $configured += git -C $Dir config remote.pushDefault 2>$null
+    if ((git -C $Dir config "branch.$Branch.merge" 2>$null) -eq "refs/heads/$Branch") {
+        $configured += git -C $Dir config "branch.$Branch.remote" 2>$null
+    }
+    $withRef = @()
+    foreach ($r in @($owners.Keys)) {
+        git -C $Dir show-ref --verify --quiet "refs/remotes/$r/$Branch" 2>$null
+        if ($LASTEXITCODE -eq 0) { $withRef += $r }
+    }
+    foreach ($remotes in @(, $configured) + @(, $withRef)) {
+        $known = @($remotes | Where-Object { $_ -and $owners.ContainsKey($_) } | ForEach-Object { $owners[$_] } | Select-Object -Unique)
+        if ($known) { return $known }
+    }
+    @($owners.Values | Select-Object -Unique)
+}
+
+# The newest of $Prs (gh pr list JSON, newest first) whose head is in the
+# repository of one of $Owners, and whose head commit passes $HasHead when
+# given: another contributor's PR from a branch of the same name (main,
+# fix/...) is not ours.
+function Select-BranchPr($Prs, [string[]]$Owners, [scriptblock]$HasHead) {
+    foreach ($pr in $Prs) {
+        if (-not $pr.headRepositoryOwner -or $Owners -notcontains $pr.headRepositoryOwner.login) { continue }
+        if ($HasHead -and -not (& $HasHead $pr.headRefOid)) { continue }
+        return $pr
+    }
+}
+
+# $Commit is $Head or one of its ancestors. False for a commit missing
+# here (a head pushed from elsewhere, not fetched): nothing is assumed.
+# A missing object is caught by `cat-file -e` first, which writes nothing:
+# merge-base would print "fatal: Not a valid commit name" on stderr, and a
+# caller under $ErrorActionPreference = 'Stop' (check.ps1's steps) turns that
+# into a terminating error in Windows PowerShell 5.1, `2>$null` or not. The
+# local 'Continue' covers whatever else git may print. No `<oid>^{commit}`:
+# when git is a .bat (depot_tools), cmd eats the `^`.
+function Test-CommitIn([string]$Dir, [string]$Commit, [string]$Head) {
+    if (-not $Commit -or -not $Head) { return $false }
+    $ErrorActionPreference = 'Continue'
+    foreach ($oid in $Commit, $Head) {
+        git -C $Dir cat-file -e $oid 2>$null
+        if ($LASTEXITCODE -ne 0) { return $false }
+    }
+    git -C $Dir merge-base --is-ancestor $Commit $Head 2>$null
+    $LASTEXITCODE -eq 0
+}
+
+# Number and state of the PR of a task branch, into the repository of the
+# origin remote, or nothing. The head may be on a fork (branches pushed to a
+# personal fork, PRs opened cross-repo): a bare `gh pr view <branch>` only
+# looks in the repository gh picks for the folder and, with a fork remote
+# and no `gh repo set-default`, finds nothing.
+# -AllCommits, before deleting anything: only a PR whose head holds every
+# commit of the local branch. A same-named branch of someone else does not,
+# nor does a PR merged before commits made since.
+function Get-BranchPr([string]$Dir, [string]$Branch, [switch]$AllCommits) {
+    if (-not $Branch) { return }
+    $Branch = $Branch.Trim()
+    $repo = Get-GitHubSlug (git -C $Dir remote get-url origin 2>$null)
+    if (-not $repo) { return }
+    $json = gh pr list --repo $repo --head $Branch --state all --limit 30 --json number,state,headRepositoryOwner,headRefOid 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return }
+    # assigned before use: Windows PowerShell 5.1 hands a JSON array to the
+    # pipeline as one object
+    $prs = ($json -join "`n") | ConvertFrom-Json
+    if (-not $prs) { return }
+    $hasHead = $null
+    if ($AllCommits) {
+        $tip = git -C $Dir rev-parse --verify --quiet "refs/heads/$Branch" 2>$null
+        if (-not $tip) { return }
+        $hasHead = { param($Oid) Test-CommitIn $Dir $tip $Oid }.GetNewClosure()
+    }
+    Select-BranchPr $prs (Get-BranchHeadOwners $Dir $Branch) $hasHead
 }

@@ -44,7 +44,7 @@ impl MediaSettingsState {
     }
 }
 
-pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, _s: &mut BuildSettings, env: &mut Env) {
+pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
     weights(ctx, p, tool, world);
     media_settings(ctx, p, tool, world, env);
     group_picker(ctx, p, tool, world, "group_picker");
@@ -53,7 +53,12 @@ pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: 
     confirm(ctx, p, tool, world, env);
     save_material(ctx, p, tool, world);
     contents_filters(ctx, p, tool);
+    // LLPanelFace's pickers warn when a choice cannot be previewed
+    tool.ui.picker.warn_live_preview = tool.ui.pick_target.is_some() && s.warn_live_preview;
     super::texture_preview::show(ctx, p, tool, world, env);
+    if std::mem::take(&mut tool.ui.picker.stop_warning_live_preview) {
+        s.warn_live_preview = false;
+    }
     // the picker's previews are wanted images too
     let w: Vec<uuid::Uuid> = tool.ui.picker.wanted_images.drain().collect();
     tool.ui.wanted_images.extend(w);

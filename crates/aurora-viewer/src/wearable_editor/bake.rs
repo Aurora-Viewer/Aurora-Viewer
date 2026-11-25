@@ -253,6 +253,7 @@ impl Definitions {
             .map(|(id, value)| (*id, *value))
             .collect()
     }
+    #[cfg(test)]
     pub fn affected(&self, region: &Region, kind: u8) -> bool {
         region.layers.iter().any(|layer| {
             layer.local.is_some_and(|(_, k)| k == kind)

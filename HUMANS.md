@@ -334,7 +334,19 @@ action; a repair that does not change the tools keeps the current session.
 
 To check these behaviours without installing or publishing anything:
 `powershell -NoProfile -File scripts/test-tools.ps1` tests the menus in
-hidden Windows consoles and the restart on isolated temporary scripts.
+hidden Windows consoles (a pseudo-terminal on Linux) and the restart on isolated temporary scripts.
+
+**On Linux**, `aurora-tools.sh` is the same tool: same menus, arguments and
+installation in an empty folder; double-clicked, it opens a terminal. It needs
+PowerShell 7 (`pwsh`). What stands for a Windows part: `pacman` or `apt` through
+`sudo` for `winget`, with rustup.rs for Rust where `apt` has no package; a
+terminal window (`$TERMINAL` or a usual one) for the Debug viewer's console;
+`RELEASE/build-release.sh` for the `.bat`; `notify-send` for the notifications;
+desktop entries for the shortcuts; `~/.local/share/auroraviewer/logs` for the
+logs; `wl-clipboard`, `xclip` or `xsel` for the clipboard. Repair installs these
+desktop tools like the others. Claude permissions writes the same rules for the
+Bash tool. `scripts/test-tools.ps1` runs its console tests on a pseudo-terminal
+there (`scripts/test-tools-console.py`, Python 3).
 
 | Choice | What it does |
 |---|---|
@@ -342,7 +354,7 @@ hidden Windows consoles and the restart on isolated temporary scripts.
 | Dev viewer | Your local repository, default profile (the agents' one) |
 | Debug viewer | Your local repository with a console, the debug controls and full debug information (`debugging` profile, its own folder of a few GB) |
 | Demo | The viewer offline, with the choice of an `AURORA_DEMO_*` scenario (read from [docs/TESTING.md](docs/TESTING.md)) |
-| Agent tasks | The folders of `work\`: PR, changes in progress, last build, size; cleanup of those whose PR is merged |
+| Agent tasks | The folders of `work\`: PR, changes in progress, last build, size; cleanup of those whose PR is merged. A task's PR is found whether its branch was pushed to the main repository or to your own fork (PR opened from the fork), as for `end-task.ps1` and the housekeeping of `new-task.ps1` |
 | Disk | The space taken by the builds, and the cleanup (`clean.ps1`) |
 | Viewer logs | Open the folder, read the end of the last log, copy its path for an agent |
 | PR tracking | The live panel (see below) |

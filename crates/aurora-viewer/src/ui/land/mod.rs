@@ -519,6 +519,14 @@ impl LandUi {
             self.show_once = true;
             return;
         }
+        // "Visibility and search", unfolded (its name, description and
+        // picture rows; the demo parcel then has a long description)
+        if key == "visibility" {
+            self.page = Page::Manage;
+            self.manage_nav.go(manage::Section::Visibility);
+            self.manage_open.insert(manage::Section::Visibility);
+            return;
+        }
         if key == "owners" {
             self.page = Page::People;
             self.refresh_owners_once = true;
