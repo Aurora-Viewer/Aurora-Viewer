@@ -5012,7 +5012,6 @@ ui-sound-movelock-toggle = Фіксація положення увімк. / в�
 world-mod-invitation-to-join-a-group = Запрошення приєднатися до групи
 world-notifications-group-fee = Членський внесок: L$ { $fee }
 ui-context-invite-to-group = Запросити до групи
-ui-profile-invite-to-group-coming-soon = Запросити до групи (незабаром)
 ui-contacts-invite = Запросити...
 ui-contacts-invite-help = Запросити мешканців до цієї групи
 ui-login-i-accept-the-terms-and-want-to-log-in = Я приймаю умови й хочу увійти

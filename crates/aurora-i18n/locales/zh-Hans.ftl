@@ -4903,7 +4903,6 @@ ui-sound-movelock-toggle = 移动锁定开 / 关
 world-mod-invitation-to-join-a-group = 加入群组的邀请
 world-notifications-group-fee = 入会费：L$ { $fee }
 ui-context-invite-to-group = 邀请加入群组
-ui-profile-invite-to-group-coming-soon = 邀请加入群组（即将推出）
 ui-contacts-invite = 邀请…
 ui-contacts-invite-help = 邀请居民加入此群组
 ui-login-i-accept-the-terms-and-want-to-log-in = 我接受条款并希望登录
