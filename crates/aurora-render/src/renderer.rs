@@ -12901,14 +12901,17 @@ impl Backend {
         {
             draw_pick(&mut encoder, mode);
         }
-        // depth under the cursor, read back in a later frame
+        // depth under the cursor, read back in a later frame, with the
+        // still camera: the hover's caches compare this point from frame to
+        // frame, and the jitter would move it by up to a texel at each one
+        // (picks take the jittered one, `last_inv_vp`)
         self.depth_pick.encode_hover(
             &self.device,
             &self.queue,
             &mut encoder,
             &self.targets.depth_ss,
             world_size,
-            (fu.proj * fu.view).inverse(),
+            unjittered_vp.inverse(),
             Curvature::new(f.camera_pos, f.curvature),
         );
         let enc_scene = std::mem::replace(
