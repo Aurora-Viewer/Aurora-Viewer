@@ -219,7 +219,7 @@ impl App {
             // hover asks for has neither creator nor date
             if let Some(props) = self.build.props.get(&id).filter(|props| props.full).cloned() {
                 row.name = props.name;
-                row.description = props.description;
+                row.description = crate::hover_tips::written(&props.description).to_owned();
                 row.created = props.creation_date / 1_000_000;
                 // LLPermissions::isGroupOwned
                 let group_owned = !props.group_id.is_nil() && (props.owner_id.is_nil() || props.owner_id == props.group_id);

@@ -65,7 +65,7 @@ impl AreaSearchUi {
         }
         let row = &self.table.rows[self.table.visible[visible]];
         resp.on_hover_ui(|ui| {
-            let lines = [row.name.trim(), row.description.trim(), &id.to_string()];
+            let lines = [row.name.trim(), crate::hover_tips::written(&row.description), &id.to_string()];
             let lines: Vec<&str> = lines.into_iter().filter(|s| !s.is_empty()).collect();
             ui.label(lines.join("\n"));
         });
@@ -872,6 +872,7 @@ pub(super) fn table(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, en
                     state.owner_face(&cut, p, env, face, row.owner_id, &row.owner, row.group_owned(), row.names_hidden);
                     board::cell(&cut, cell.with_min_x(face.right()), &row.owner, p.ink);
                 }
+                Column::Description => board::cell(&cut, cell, crate::hover_tips::written(&row.description), p.muted),
                 c if c.numeric() => board::figure_cell(&cut, cell, &row.cell(*c), p.muted),
                 c => board::cell(&cut, cell, row.cell(*c).trim(), p.muted),
             }

@@ -379,7 +379,9 @@ fn stage(
         Subject::Avatar(_) => aurora_i18n::tr!("inspect-stage-outfit"),
         Subject::Objects => aurora_i18n::tr!("inspect-stage-objects"),
     };
-    let title = view.open.map_or(outfit, |item| view.row(item).name.trim());
+    // (what is shown whole needs no title)
+    let title = view.open.map_or("", |item| view.row(item).name.trim());
+    let spoken = if title.is_empty() { outfit } else { title };
     let showing = Showing {
         alone: view.open.map(|i| i.root),
         outlined: state.selected,
@@ -398,7 +400,7 @@ fn stage(
     if absent && form != Form::Small {
         missing(state, ui, p, frame, view, rect);
     }
-    if let Some(hit) = state.stage.show(ui, p, rect, top_room, showing, title, &|hit| {
+    if let Some(hit) = state.stage.show(ui, p, rect, top_room, showing, spoken, &|hit| {
         let id = if view.open.is_some() { hit.prim } else { hit.root };
         view.rows.iter().find(|r| r.id == id).map(|r| r.name.clone())
     }) && form != Form::Small
