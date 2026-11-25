@@ -449,13 +449,24 @@ fn recent_participants_merge_without_opening_chats_and_obey_revoked_gates() {
     use aurora_net::chat_service::ListEntry;
     let root = temp();
     let mut w = world(&root);
-    w.mutes.state = LoadState::Loaded;
+    w.mutes.on_server(aurora_net::MuteListSource::ServerEmpty, None);
     w.chat_service_settle();
-    w.social.avatar_names.on_display_names(&[aurora_net::AvatarNameData {
-        id: JANE, username: "jane.doe".into(), display_name: "Jane Doe".into(),
-        legacy_first: "Jane".into(), legacy_last: "Doe".into(), ..Default::default()
-    }], &[], None);
-    let entry = ListEntry { resident_id: JANE, last_msg_id: row(1, "").msg_id };
+    w.social.avatar_names.on_display_names(
+        &[aurora_net::AvatarNameData {
+            id: JANE,
+            username: "jane.doe".into(),
+            display_name: "Jane Doe".into(),
+            legacy_first: "Jane".into(),
+            legacy_last: "Doe".into(),
+            ..Default::default()
+        }],
+        &[],
+        None,
+    );
+    let entry = ListEntry {
+        resident_id: JANE,
+        last_msg_id: row(1, "").msg_id,
+    };
     w.on_recent_conversations(vec![entry.clone()]);
     assert_eq!(w.recent.list()[0].when, UNIX_EPOCH + Duration::from_secs(BASE + 1));
     assert!(w.social.ims.is_empty() && w.reopen_ims.is_empty());
@@ -465,22 +476,35 @@ fn recent_participants_merge_without_opening_chats_and_obey_revoked_gates() {
     w.on_recent_conversations(vec![entry.clone()]);
     assert_eq!(w.recent.list()[0].when, newer);
     let other = Uuid::from_u128(3);
-    let pending = ListEntry { resident_id: other, last_msg_id: row(2, "").msg_id };
+    let pending = ListEntry {
+        resident_id: other,
+        last_msg_id: row(2, "").msg_id,
+    };
     w.on_recent_conversations(vec![pending.clone()]);
     w.chat_log.cfg.log_im = false;
-    w.poll_chat_service();
-    w.social.avatar_names.on_display_names(&[aurora_net::AvatarNameData {
-        id: other, username: "other.example".into(), legacy_first: "Other".into(),
-        legacy_last: "Example".into(), ..Default::default()
-    }], &[], None);
+    w.social.avatar_names.on_display_names(
+        &[aurora_net::AvatarNameData {
+            id: other,
+            username: "other.example".into(),
+            legacy_first: "Other".into(),
+            legacy_last: "Example".into(),
+            ..Default::default()
+        }],
+        &[],
+        None,
+    );
+    // A response can precede the next poll that updates manager.gates.
+    w.on_recent_conversations(vec![pending.clone()]);
     w.poll_recent_participants();
-    assert_eq!(w.recent.len(), 1, "revoked consent discards pending names");
+    assert_eq!(w.recent.len(), 1, "revoked consent discards pending names immediately");
+    w.poll_chat_service();
     w.chat_log.cfg.log_im = true;
-    w.mutes.state = LoadState::Degraded;
+    w.mutes.state = LoadState::Requested(Instant::now() - Duration::from_secs(31));
+    assert!(w.mutes.check_timeout(None));
     w.poll_chat_service();
     w.on_recent_conversations(vec![pending.clone()]);
     assert_eq!(w.recent.len(), 1, "a fallback mute cache is insufficient");
-    w.mutes.state = LoadState::Loaded;
+    w.mutes.on_server(aurora_net::MuteListSource::ServerEmpty, None);
     w.chat_service.enabled = false;
     w.chat_service_start_in(service_dir(&root));
     w.chat_service_settle();

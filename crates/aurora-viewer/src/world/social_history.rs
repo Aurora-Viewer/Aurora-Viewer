@@ -134,10 +134,15 @@ fn read(path: &Path) -> io::Result<Option<Saved>> {
         return Err(io::Error::other("social history exceeds size limit"));
     }
     crate::disk_io::read(crate::disk_io::Origin::Other, bytes.len());
-    let saved: Saved = serde_json::from_slice(&bytes).map_err(|_| io::Error::other("invalid social history"))?;
+    let mut saved: Saved = serde_json::from_slice(&bytes).map_err(|_| io::Error::other("invalid social history"))?;
     if saved.version != 1 {
         return Err(io::Error::other("unsupported social history version"));
     }
+    // Normalize older, uncapped files on the reader thread too. The frame
+    // thread receives at most MAX_PEOPLE entries to merge with early activity.
+    let mut recent = super::recent::RecentPeople::default();
+    recent.merge(Uuid::nil(), std::mem::take(&mut saved.recent));
+    saved.recent = recent.list().to_vec();
     Ok(Some(saved))
 }
 
@@ -330,7 +335,9 @@ impl World {
     }
 
     fn save_social_history_at(&mut self, now: Instant, force: bool) {
-        if !self.social_history.ready { return; }
+        if !self.social_history.ready {
+            return;
+        }
         if self.social_history.recent_revision == self.recent.revision
             && self.open_conversations().eq(self.social_history.conversations.iter().copied())
         {
@@ -338,12 +345,13 @@ impl World {
             return;
         }
         let due = *self.social_history.save_due.get_or_insert(now + SAVE_INTERVAL);
-        if !force && now < due { return; }
+        if !force && now < due {
+            return;
+        }
         self.social_history.save_due = None;
         let conversations = self.open_conversations().collect();
         self.social_history.save(&self.recent, conversations);
     }
-
 }
 
 #[cfg(test)]
@@ -557,6 +565,29 @@ mod tests {
         assert_eq!(saved.recent, w.recent.list());
         assert_eq!(saved.conversations, [Conversation::Resident(peer)]);
         drop(w);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn social_history_bounds_an_existing_uncapped_file_before_publication() {
+        let root = root();
+        let me = Uuid::from_u128(1);
+        let file = path(&root, me, "agni");
+        let saved = Saved {
+            recent: (2..super::super::recent::MAX_PEOPLE + 102)
+                .map(|n| Met {
+                    id: Uuid::from_u128(n as u128),
+                    when: SystemTime::UNIX_EPOCH + Duration::from_secs(n as u64),
+                    region: String::new(),
+                })
+                .collect(),
+            ..Saved::default()
+        };
+        write(&file, &saved).unwrap();
+        let restored = read(&file).unwrap().unwrap();
+        assert_eq!(restored.recent.len(), super::super::recent::MAX_PEOPLE);
+        assert_eq!(restored.recent[0].id, saved.recent.last().unwrap().id);
+        assert_eq!(restored.recent.last().unwrap().id, saved.recent[100].id);
         std::fs::remove_dir_all(root).unwrap();
     }
 
