@@ -49,11 +49,16 @@ independent previews and preserves their current placement. Paused or absent
 roots are not referenced. Linksets require the viewer's `object-links` capability.
 
 Static objects initially appear on the floor two metres in front of your
-avatar. Select the source in Aurora's **LiveMesh** window to **Edit**, **Drop
+avatar. Select the source in Aurora's **LiveMesh** window, then open its
+**Place** tab (or **Place** in the card's **…** menu) to **Edit**, **Drop
 to ground**, **Derez**, **Attach to** a body point or **Attach to HUD**. **Detach**
 removes a worn preview; **Rez** brings it back. Derez/detach keep the source in
-the list and subsequent Blender edits never rez it automatically. The visible
-checkbox remains independent. **Stop** clears all session previews and placement.
+the list and subsequent Blender edits never rez it automatically. A Derez,
+Detach, Drop or Attach happens at once and shows a toast under the status
+line for 8 seconds, whose **Undo** puts the object and its prims back where
+they were. Made from the world's menu while the window is closed or
+minimized, the same toast shows over the world, above the toolbar. The card's
+eye remains independent. **Stop** clears all session previews and placement.
 
 **Edit** uses the normal Aurora translation, rotation and size tools, with the
 same controls for body attachments and HUDs. Right-clicking any prim opens the
@@ -112,7 +117,8 @@ script is started. Rigged sources continue to follow the avatar as before.
    - **Blender 2.93–4.1:** choose the **classic add-on** package in Aurora.
      In Blender, open Preferences → Add-ons → Install, select the ZIP,
      then enable **3D View: Aurora LiveMesh**. Keep the ZIP intact.
-3. In Aurora's **LiveMesh** window, open the **Connection** tab and click **Enable preview**.
+3. In Aurora's **LiveMesh** window, click **Enable preview** on the status line above the tabs.
+   The plug-in finds the preview's key by itself (see "Wire protocol v1").
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
 4. In Blender, open the 3D view sidebar (`N`) → **Aurora** → **Live**, then
@@ -144,6 +150,11 @@ The other valid objects continue to update. Fix the reported problem and use
 **Update now**, or wait for the next automatic capture, to retry. The entry stays
 in Blender's list; failed sources are omitted from that preview snapshot. Import
 and LOD preparation still require the complete requested source to be valid.
+With plug-in 0.16.0 or later, Aurora's **Objects** tab shows the same warnings:
+an object whose textures Blender could not read keeps its card, with an amber
+"Textures skipped, plain color shown" line and Blender's reason; an object
+Blender could not send has a card of its own, "Not in the preview", with the
+reason (an export error, or over the transfer limit).
 
 The four navigation buttons keep the sidebar focused on one task:
 
@@ -221,19 +232,87 @@ to publish additions, pauses, resumptions, removals or grouping changes.
 The add-on reconnects automatically when Aurora becomes available again,
 resending its latest snapshot. Disconnecting Blender leaves the last good
 preview visible. Aurora's **Stop and remove** closes the listener and removes
-the preview; **Remove meshes** withdraws all current objects until restored.
+the preview; **Remove meshes** (in the folded **Connection** section of the
+**Objects** tab) withdraws all current objects until restored.
 Closing the window keeps the bridge active. The listener is
 off on each viewer launch, and changing accounts stops it.
 
 ## Manage objects and upload in Aurora
 
-Aurora's **Build → LiveMesh** lists each source object by its Blender
-name, even if it spans several render batches. The window separates
-**Connection**, **Objects** and **Plugins** with horizontal lines and plain headings.
-Connection status appears beside the section title; port, loopback address and
-the start/stop button share a single line below it.
-Uncheck an object to hide it
-temporarily; rechecking displays its latest geometry and materials.
+Aurora's **Build → LiveMesh** window follows the Director's layout: a status
+line (link, revision, time since the last snapshot, **Enable preview** or
+**Stop and remove**) above five tabs.
+
+- **Objects**: one card per source object, by its Blender name, even if it
+  spans several render batches. A small live thumbnail shows the object as
+  Blender last sent it, in its rest pose; it is rebuilt in the background
+  once an object stops changing for 0.4 s, so a drag in Blender does not
+  rebuild it at each revision. While a change is on its way (sent by
+  Blender, not yet in the picture), a light sweeps over the thumbnail; with
+  **Reduce animations**, the thumbnail is tinted instead. Click it for **Quick look**, a larger view
+  under the cards: drag to turn it, double-click to face it again. A rigged
+  object bends there at the elbows and knees as the **Avatar** tab sets them. The line under the name says whether it is
+  static or rigged (a **Rigged** tag), its prims and its triangles. A linkset's
+  card unfolds to its prims (`#2 · Frame`). On the right, the time since
+  Blender last changed that object (teal for the first five seconds): a
+  revision that leaves an object as it was does not reset its time.
+  Clicking a name selects the object; the **…** menu imports it or opens
+  **Place**. **Show all** and **Hide all** act on every object not removed. The folded
+  **Connection** section holds the port, the loopback address and **Remove
+  meshes**.
+- **Place**: where the selected static object is, its placement actions, and
+  its position, rotation and size.
+- **Avatar**: **Check the weights** bends your avatar's **Elbows** and
+  **Knees** (0–150°) on top of what it plays, or of its rest pose with
+  **Hold this pose instead of my animations**, to see how a rigged mesh in
+  progress deforms. The bend is drawn for you only, while the preview runs:
+  nothing is sent, and your animations, other residents' view and the import
+  are unchanged. The axes are those of the mesh importer's test bend.
+  **Fit lab** stands mannequins 2.2 m in front of you, facing you: each is a
+  copy of your avatar with everything you wear (mesh body, head, hands,
+  Bake on Mesh skin, the body's current alpha cuts, the LiveMesh preview) in
+  another shape: **Me** (yours), **Slim**, **Curvy**, **Full figure**,
+  **Athletic**, **Tall** or **Petite**, your shape with its body, torso and
+  leg sliders changed. Fitted mesh follows each shape as it would on a
+  resident with it. They **Stand**, **Walk** in place, **Sit**, or play what
+  you play (**Like me**: your AO, a pose, a dance), and the elbow and knee
+  bend shows on them too (and on you, while they stand, even with the
+  preview stopped). **Range of motion** takes them to the ends of
+  what a body does, where a garment stretches or lets the body through:
+  **Arms up**, **Reach forward**, **Arms crossed**, **Squat**, **Kneel**,
+  **Knee raised**, **Twist** and **Bend forward**, held, or **All, in
+  turn** (each reached in 0.8 s and held 1.4 s). These poses are made by
+  Aurora for the mannequins alone and are never sent. What you wear or change, a new revision from
+  Blender, an alpha cut from your body's HUD, a shape edit, reaches them on
+  the next frame. **Bring them here** places the row in front of you again.
+  **Show where the body comes through** paints, on your avatar and the
+  mannequins, the skin or body mesh that pokes out of the LiveMesh garment:
+  red where the body stands out of it by up to 3 cm, amber where body and
+  garment meet (within 3 mm). It is worked out on the graphics card every
+  frame, as the camera sees it, so it follows the animations, the bend and
+  each shape; turn the camera to check the back. Only the garment's outer
+  surface counts (both sides of a double-sided material): an arm before the
+  chest, farther than 3 cm, is not marked. Everything else rigged you wear
+  counts as body, hair and a jacket over the garment included: take them
+  off for the check. At an opening (neckline, cuff, hem) of a double-sided
+  garment, thin marks can show along the edge of the skin: its far side
+  lies close behind there. The map is drawn in the window only: not in photos,
+  while the Director plays or films, with the interface hidden, nor in VR.
+  A texture or a mesh tried on a worn item locally shows on you, not on
+  the mannequins.
+  After a teleport or a region crossing they stand in front of you again,
+  once you have arrived. They are drawn as you are: the complexity limit
+  and Render Friends Only leave them alone. The maximum number of avatars
+  drawn in full counts them: past it, some are impostors.
+  Only you see them: nothing is sent or saved, and they go when you remove
+  them or log out. To test another mesh body, wear it.
+  Then the shape transfer (below).
+- **Import**: the selected object frozen into the mesh importer, with the
+  triangles of its four levels of detail once Blender has prepared them.
+- **Plugins**: the plug-in in each Blender found, and the manual ZIP.
+
+Click an object's eye to hide it temporarily; showing it again displays its
+latest geometry and materials.
 **Remove meshes** withdraws all sources from the list and avatar preview.
 Subsequent live revisions keep them removed. To bring them back, restart the
 preview and use **Update now** in Blender. These controls affect Aurora's
@@ -245,7 +324,8 @@ reordering. Settings reset when a source stops being sent (for example, when
 disabled/removed in Blender), when stopping the bridge or changing accounts.
 Older plug-ins use names as their identity, so renaming starts a new entry.
 
-Each object has its own **Import** button on its row, with no selection required.
+**Import** (the **Import** tab's button, or the card's **…** menu) takes the
+selected object.
 With plug-in 0.11.0+, it asks Blender to prepare the current object and all
 three lower LODs, then opens them in the normal mesh importer. All four levels
 are assigned automatically. All parts, weights, inverse binds, UVs, colors and
@@ -284,7 +364,10 @@ triangle counts are approximate and may require adjusting the target.
 
 Preparation waits for Blender's Object Mode, with an actionable error after
 30 seconds; Aurora abandons an unanswered request after 180 seconds or a
-disconnect. Each bundle is bounded to 600,000 exported corners and 64 MiB.
+disconnect. Each bundle is bounded to 600,000 exported corners and 64 MiB
+on the wire; with a viewer that offers `compressed-lods`, the plug-in deflates
+it first, so prepared LODs of up to 256 MiB fit when they deflate under 64 MiB
+(#3519).
 Older plug-ins can still synchronize live, but must be updated for this import
 workflow. A paused source can be imported without enabling its live preview.
 
@@ -639,7 +722,7 @@ externally edited image in Blender; **Update now** also refreshes image caches.
 
 ### Send your shape to Blender
 
-With plug-in **0.10.0+** connected, Aurora's LiveMesh **Connection** section
+With plug-in **0.10.0+** connected, Aurora's LiveMesh **Avatar** tab
 offers **Add a skeleton with my shape** and **Apply my shape to the selected
 skeleton**. Aurora requires the worn shape's resolved inventory item
 to belong to you and grant **Modify**. Missing inventory data or a no-modify
@@ -705,6 +788,163 @@ modifiers removed, keeping geometry modifiers and shape keys. The source mesh,
 selection, object mode and modifier settings remain intact. Custom joint
 position overrides are not applied to Aurora's skeleton.
 
+## Maya
+
+Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.5.1). It uses the same
+connection, port (17655) and key as the Blender plug-in, so the viewer side is
+the same: start the preview in Aurora's **LiveMesh** window first.
+
+**Install.** In Aurora's LiveMesh window, open the **Plugins** tab: under
+the Blender plug-ins, the **Aurora LiveMesh for Maya** row has **Save Maya
+plug-in…**. Extract the ZIP anywhere, then drag
+`install.mel` into a Maya viewport. It copies the `aurora_live_maya` folder to
+your Maya scripts folder, adds a **LiveMesh** button to an **Aurora** shelf
+and opens the window. Dragging a newer `install.mel` replaces the old copy.
+
+**Use.** The window has five tabs: **Live**, **Import / LOD**, **Rig**,
+**Weights** and **Controls**. In **Live**, select mesh objects and click **Add
+selected**, then **Connect**. The list is saved with the scene. **Pause**
+keeps an entry but takes it out of the preview; **Resume** sends it again.
+**Group** makes the selected meshes without a skin one linkset, the first
+selected being its root; **Ungroup** on a root frees its whole linkset, on a
+child only that child; **Make root** changes a linkset's root. These choices
+win over Maya parenting and are saved with the scene; a paused root leaves
+its children independent while paused. Edits are sent after a short pause, at most once
+per interval (2 seconds by default) with **Automatic updates** on; **Update
+now** sends at once and reloads the texture files.
+
+- **Rigged meshes** are meshes with a skinCluster. The plug-in reads the skin's
+  input mesh: blend shapes and the other deformers before the skin are
+  included, the current pose is not. Joints are matched by name without
+  namespace (`rig:mPelvis` is `mPelvis`), or by a string attribute
+  `auroraJoint` on the joint. Every weighted joint must be a Second Life joint
+  (`mPelvis`, `mChest`, the Bento joints, the collision volumes such as
+  `BELLY`); the strongest four weights of each vertex are kept and normalized.
+  Vertices without weight take those of the nearest weighted vertex.
+- **Bind pose.** By default the skin's bind matrices (`bindPreMatrix`,
+  `geomMatrix`) are used whole, as a Collada export from Maya writes them for
+  an upload. **Use Second Life joint axes** keeps only each joint's bind
+  position and takes Aurora's own joint axes: use it for a rig whose joint
+  orientations do not follow Second Life's (the mesh then twists after an
+  upload too).
+- **Axes and units.** The plug-in reads Maya's up axis: a Y-up scene is
+  turned to Second Life's Z-up frame like a Y-up Collada file at upload, a
+  Z-up scene is not turned. **Scene units** says how large the scene is.
+  Maya keeps every length in centimetres, whatever unit its preferences
+  show: **Real size** takes them as they are, **1 Maya centimetre = 1 metre**
+  fits a kit built at one unit per metre in a centimetre scene, as many
+  Second Life kits are. **Automatic** chooses from the rig: Second Life's
+  pelvis stands about a metre above the feet. Without a rig, Automatic uses
+  real size. The window shows the scale and up axis in use. A rig is also
+  turned so that its left side (found from `mShoulderLeft` and
+  `mShoulderRight`, or the collar, hip, eye or wrist pairs) is the avatar's
+  left, whichever way it faces in Maya; an upload does not turn it, so a rig
+  that does not face +X still needs turning before its upload.
+- **Static meshes** (no skin) keep their rotation and scale; their position in
+  the scene is not used: Aurora places them in front of your avatar, as with
+  Blender. A static mesh parented under another synchronized static mesh is a
+  prim of that mesh's linkset.
+- **Materials.** Standard Surface, aiStandardSurface and USD Preview Surface
+  give base colour, metalness, roughness, emission, opacity and a normal map;
+  Lambert, Blinn and Phong give their colour, transparency and incandescence.
+  Textures must be `file` (or `aiImage`) nodes on one image (no UDIM), with a
+  plain `place2dTexture` (repeat and offset only). Normal maps go through a
+  `bump2d` set to **Tangent Space Normals** with depth 1, or an `aiNormalMap`
+  at strength 1. For transparency, connect the base colour file's alpha to
+  the opacity (Lambert: `outTransparency` to Transparency). Colour spaces sRGB
+  and Raw are read. Source images may be up to 16 megapixels and are scaled to at most 1024 pixels. A material that
+  does not follow these rules is shown in its plain colour, and the list says
+  why.
+- **Import / LOD.** Click **Import** next to a mesh in Aurora's LiveMesh
+  list: the plug-in prepares four levels and Aurora opens its Import window
+  with them, as with Blender. High is the synchronized mesh. Medium, Low and
+  Lowest are set in the Maya window's **Import / LOD** tab, for the mesh
+  selected in its list: **Existing or automatic** (default) uses the mesh
+  named in the field, or else the one named after High with the level's
+  suffix (`Body_medium`, `Body_low`, `Body_lowest`; a trailing `_high` of
+  High's name is dropped), and makes a reduced copy when there is none;
+  **Existing mesh** requires one; **Automatic** always reduces. A reduced
+  copy is High at rest put through `polyReduce`, to 50 %, 25 % and 12.5 % of
+  High's triangles by default or to a triangle count; a skinned one takes each
+  vertex's weights from the nearest High vertex. The copies are deleted and
+  leave no undo step; your meshes are not changed. A level's surfaces are
+  matched to High's by shading group, so a lower level can drop a material
+  but not add one. Existing skinned levels must be bound to the same rig as
+  High (same bind matrices).
+- **Send your shape to Maya.** **Add a skeleton with my shape** in Aurora's
+  LiveMesh window works with Maya too, with the same rights check as for
+  Blender (your own worn shape, with Modify). Maya then gets a new group in
+  its own namespace (`AuroraShape`, `AuroraShape2`…): the 159-joint Second
+  Life skeleton at your shape's proportions, world-aligned joints named
+  `mPelvis`, `mChest`… (collision volumes hidden), and the neutral reference
+  body (head, torso, legs, eyes, eyelashes) skinned to it. A Y-up scene gets
+  it facing +Z with its left on +X, a Z-up scene in Second Life's axes; it is
+  built at real size, or at one centimetre per metre when **Scene units** says
+  so. One undo removes it; receiving the same shape again does not duplicate
+  it. Each joint keeps the shape's bind (`auroraShapeBind`,
+  `auroraShapeHead`), so a garment skinned to this skeleton previews with
+  your shape once, not twice. Nothing existing is changed and nothing is
+  added to the live list.
+- **Apply my shape to a MayaStar rig.** With MayaStar open and its rig in the
+  scene (select the rig when the scene holds more than one), **Apply my
+  shape to the selected skeleton** hands your shape to MayaStar's own
+  **Import XML shape**, as the Blender plug-in hands it to Avastar: MayaStar
+  moves its sliders, controls and meshes itself. Aurora sends the shape as
+  the Legacy Viewer's appearance XML (the shape editor's **Save as XML**,
+  now with the `display`, `u8` and `type` attributes MayaStar reads); the
+  plug-in answers MayaStar's file dialog with it for that one call and
+  deletes the file. One undo reverts it. Each joint of the rig then keeps
+  the shape's bind, so a garment previews with your shape once. 
+- **Apply my shape to another rig.** Without MayaStar, the plug-in reshapes
+  the selected SL rig itself, like the Blender plug-in's generic path: each
+  SL joint moves by its change from the previous shape (the rig's last
+  received one, or SL's default skeleton) to yours, the rest geometry of the
+  meshes skinned to it follows by their weights, and their skins re-bind at
+  the new joint places (Go to Bind Pose follows). Joints, weights and
+  orientations are kept; one undo reverts it. The rig should stand at the
+  origin and in its bind pose, with no Aurora controls (or other
+  constraints) driving its joints; its size is read from its own pelvis
+  height unless **Scene units** is set by hand. Meshes with blend shapes or other deformers before their skin are
+  refused: use MayaStar or the Blender plug-in for them.
+- **Rig.** **Create SL avatar rig** adds the 133 Bento bones and 26 Fitted
+  Mesh collision volumes at SL's standard rest, world-aligned in their own
+  `AuroraRig` namespace, with an optional rigged test T-shirt (open neck,
+  hem and cuffs, four weights per vertex) that joins the live list. Its
+  joints go to display layers (`SL_Body`, `SL_Bento_Hands`, `SL_Bento_Face`,
+  `SL_Fitted_Mesh`…): body and hands shown, the rest hidden; the tab shows a
+  checkbox per layer, **Show all** and **Hide all**. **Sort the selected rig
+  into SL layers** does the same for an existing rig. Hiding a layer changes
+  the display only.
+- **Weights.** The tools use the selected rig, the rig of the selected
+  meshes or the scene's only rig, which must stand in its bind pose.
+  **Recalculate weights** binds the selected meshes with Maya's heat-map bind
+  to the classic SL body joints (**SL body**) or every deforming joint but
+  collision volumes and the folded Bento spine (**All deform joints**), then
+  keeps the strongest four, normalized; a vertex left unweighted cancels the
+  run. **Transfer weights** copies a skinned source mesh's weights to the
+  selected meshes (nearest surface point or nearest vertex), refusing the
+  whole run when a vertex is farther than **Max distance** (0 for
+  unlimited). **Normalize to 4 weights** cleans existing weights. Each is one
+  undo step; weighted meshes join the live list, paused ones stay paused.
+- **Controls.** **Add root / COG** adds a ring on the ground that moves the
+  whole posed rig and a diamond at the pelvis that the pelvis follows.
+  **Create IK controls** adds a target and a pole for each hand and foot
+  (elbow poles behind the arms, knee poles ahead), off until you tick the
+  limb; ticking snaps the target to the wrist or ankle, and rotating the
+  target turns the hand or foot; unticking leaves the limb as it stands, free
+  to pose in FK. **Classic eyes +** and **Bento eyes +** add
+  a look-at target two metres ahead; **Focus** turns the eyes toward it
+  (switching it off leaves them where they look), **Recentre** puts it back
+  in front. Controls are never skinned, so the
+  preview ignores them; joints already driven by a constraint are refused.
+  Aurora keeps playing its own animations on the rest mesh.
+- **Not in this version:** blend shapes before the skin when applying a shape
+  without MayaStar.
+
+The plug-in's pure rules (frames, binds, weights, packing, colour tables) have
+tests that run without Maya: `python maya/tests/test_convert.py`.
+`python maya/package.py <file.zip>` builds the same ZIP as the viewer's button.
+
 ## Current limits
 
 - 32 enabled source objects and 600,000 exported corners. Transfer frames stay
@@ -767,8 +1007,17 @@ can be opened normally and connected through the Aurora sidebar.
 
 ## Wire protocol v1
 
-TCP listens on IPv4 loopback only. The client sends the eight bytes
-`AURBLD1\n`. Aurora responds with one newline-terminated JSON object containing
+TCP listens on IPv4 loopback only. Each time the preview starts, Aurora draws
+a new random key (64 hex characters) and writes it to `blender-live/<port>.token`
+in its data folder (`%LOCALAPPDATA%\Aurora\AuroraViewer\data` on Windows,
+`~/.local/share/auroraviewer` on Linux, `~/Library/Application
+Support/org.Aurora.AuroraViewer` on macOS; owner-only on Linux and macOS). It
+removes the file when the preview stops. The plug-in reads it before every
+connection, so no other program, another user's included, can push meshes to
+the preview. The client sends the eight bytes `AURBLD2\n`, then that key.
+A wrong key closes the connection and the LiveMesh window says so. A plug-in
+older than 0.15.0 sends `AURBLD1\n` alone: it receives `{"protocol":2}` and
+reports an incompatible protocol until it is updated. Aurora responds with one newline-terminated JSON object containing
 `protocol`, the supported `joints`, their inverse neutral `rest_axes` (column-major,
 translation removed), negotiated `features`, `max_bytes` (64 MiB), and
 `max_decoded_bytes` (256 MiB). Every subsequent client message is a four-byte
@@ -783,6 +1032,13 @@ with `packed: {"vertices": "<base64>", "indices": "<base64>"}`. Each vertex is a
 joint indices and four f32 weights. Indices are little-endian u32. Values are
 identical to the ordinary JSON-to-f32 conversion; bounds, skinning, normals and
 index validation still apply. Mixing nonempty arrays and packed data is invalid.
+With `object-warnings`, a snapshot may carry `warnings`: at most 64 entries of
+`{"source_id": "<uuid>", "name": "…", "kind": "textures" | "not-sent",
+"reason": "…"}` (`source_id` optional; name and reason at most 512 characters,
+untranslated). `textures` names a sent object shown in its plain colour;
+`not-sent` an object left out of the revision. The viewer drops unknown kinds
+and entries without a name instead of refusing the snapshot; an older viewer
+never receives the field.
 Length zero is a heartbeat. The reply is newline-terminated JSON
 with `ok`, `revision` on success, or `error` on rejection. A success acknowledges
 CPU preparation, not a displayed GPU frame. Revisions strictly increase within
@@ -807,7 +1063,10 @@ Clients negotiating `import-lods` can receive
 `prepare_import: {"id":"<request UUID>","source":"<source UUID>"}` in a reply.
 Blender's main thread prepares the source's configured levels; its socket worker
 sends a length-prefixed body beginning with four ASCII bytes `LODS`, followed
-by UTF-8 JSON containing `id`, `source`, `levels` and shared `images`. `levels`
+by UTF-8 JSON containing `id`, `source`, `levels` and shared `images`. When
+the viewer advertises `compressed-lods`, the JSON after `LODS` may instead be
+`ZLIB` and a complete zlib stream of it, bounded like `compressed-snapshots`
+(64 MiB on the wire, 256 MiB decoded); plain bodies stay accepted. `levels`
 is ordered Lowest, Low, Medium, High. Each level contains the regular wire
 `mesh`, `slots` mapping its nonempty surfaces to High, and a bounded `origin`
 label. Errors send `id`, `source`, `error` instead. The viewer validates the

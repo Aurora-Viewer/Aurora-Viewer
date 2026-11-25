@@ -24,6 +24,55 @@ pub(super) fn typography(ui: &mut egui::Ui) {
     crate::ui::widgets::organization_typography(ui);
 }
 
+fn wheel_on_hover_id() -> egui::Id {
+    egui::Id::unique("build-spinner-wheel-on-hover")
+}
+
+/// BuildSettings::wheel_on_hover for the number fields of this pass; the
+/// build window writes it before it draws them.
+pub(super) fn set_wheel_on_hover(ctx: &egui::Context, on: bool) {
+    ctx.data_mut(|d| d.insert_temp(wheel_on_hover_id(), on));
+}
+
+/// Which field takes the wheel, and whether the wheel leaves its number
+/// alone. On, the field under the pointer, as LLSpinCtrl::handleScrollWheel
+/// (indra/llui/llspinctrl.cpp), and a field being typed in keeps its text.
+/// Off, only the field clicked into: scrolling down the window over the
+/// other fields scrolls it and edits nothing. Once something is typed there
+/// the wheel leaves the draft alone too, until Enter or a click elsewhere.
+/// A context the build window never drew keeps the Legacy Viewer's rule.
+fn wheel_targets(ui: &egui::Ui, r: &egui::Response) -> (bool, bool) {
+    let on_hover = ui.data(|d| d.get_temp::<bool>(wheel_on_hover_id())).unwrap_or(true);
+    if on_hover {
+        return (true, r.has_focus());
+    }
+    let typed_id = r.id.with("build_field_typed");
+    if !r.has_focus() {
+        ui.data_mut(|d| d.remove::<bool>(typed_id));
+        return (false, false);
+    }
+    let typed = ui.data(|d| d.get_temp::<bool>(typed_id)).unwrap_or(false)
+        || ui.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Text(_)
+                        | egui::Event::Paste(_)
+                        | egui::Event::Cut
+                        | egui::Event::Key {
+                            key: egui::Key::Backspace | egui::Key::Delete,
+                            pressed: true,
+                            ..
+                        }
+                )
+            })
+        });
+    if typed {
+        ui.data_mut(|d| d.insert_temp(typed_id, true));
+    }
+    (true, typed)
+}
+
 /// How a build field's keyboard entry stands this pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldEnd {
@@ -58,7 +107,7 @@ pub(crate) fn field_end(ui: &egui::Ui, r: &egui::Response) -> FieldEnd {
         return FieldEnd::Open;
     }
     let ended_id = r.id.with("build_field_ended");
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     if ui.data(|d| d.get_temp::<u64>(ended_id)).is_some_and(|ended| ended + 1 == pass) {
         return FieldEnd::Repeat;
     }
@@ -91,6 +140,7 @@ impl Edit {
 struct SpinnerDrag {
     widget: egui::Id,
     value: f32,
+    changed: bool,
 }
 
 pub fn label(ui: &mut egui::Ui, p: &Palette, t: &str) -> egui::Response {
@@ -266,9 +316,12 @@ fn spinner(
     // Deliberate difference: LLSpinCtrl::handleScrollWheel calls onUpBtn /
     // onDownBtn, which step from the typed text and commit it; here the
     // wheel leaves a field being typed in alone, as a spin arrow pressed
-    // while typing does (TASKS.md).
-    let protect = r.has_focus() || r.dragged() || r.drag_stopped() || draft.is_some();
-    let wheel = crate::ui::widgets::spin_wheel(ui, row_rect, r.id, !protect);
+    // while typing does (TASKS.md). With the window's "wheel on hover" off
+    // (the default) only the field clicked into takes the wheel, and steps
+    // while nothing is typed there yet (`wheel_targets`).
+    let (take, typed_keeps) = wheel_targets(ui, &r);
+    let protect = typed_keeps || r.dragged() || r.drag_stopped() || draft.is_some();
+    let wheel = crate::ui::widgets::spin_wheel(ui, row_rect, r.id, take, !protect);
     // A spin click or a drag is not a typed entry; otherwise an abandoned
     // or already ended entry writes nothing, even if DragValue parsed its
     // text again.
@@ -291,7 +344,17 @@ fn spinner(
     }
     let stepped = stepped && *v != before_step;
     if r.dragged() {
-        ui.data_mut(|data| data.insert_temp(draft_id, SpinnerDrag { widget: r.id, value: *v }));
+        let changed = draft.is_some_and(|d| d.changed) || *v != before;
+        ui.data_mut(|data| {
+            data.insert_temp(
+                draft_id,
+                SpinnerDrag {
+                    widget: r.id,
+                    value: *v,
+                    changed,
+                },
+            )
+        });
     }
     let mut e = Edit {
         changed: stepped,
@@ -306,7 +369,7 @@ fn spinner(
         }
     }
     if r.drag_stopped() {
-        e.changed |= draft.is_some();
+        e.changed |= draft.is_some_and(|d| d.changed);
         e.commit = true;
     }
     // LLSpinCtrl::onEditorCommit (indra/llui/llspinctrl.cpp) commits every
@@ -343,8 +406,9 @@ pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i3
     });
     let row_rect = row.response.rect;
     let (r, step) = row.inner;
-    let protect = r.has_focus() || r.dragged() || r.drag_stopped();
-    let wheel = crate::ui::widgets::spin_wheel(ui, row_rect, r.id, !protect);
+    let (take, typed_keeps) = wheel_targets(ui, &r);
+    let protect = typed_keeps || r.dragged() || r.drag_stopped();
+    let wheel = crate::ui::widgets::spin_wheel(ui, row_rect, r.id, take, !protect);
     let delta = scale.saturating_mul(step) + wheel.integer;
     if delta == 0 && !r.dragged() && !r.drag_stopped() && matches!(field_end(ui, &r), FieldEnd::Revert | FieldEnd::Repeat) {
         *v = before;
@@ -473,13 +537,7 @@ pub fn swatch(
             }
         }
         if multiple {
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                aurora_i18n::tr!("build-ui-common-multiple"),
-                egui::FontId::proportional(11.0),
-                p.ink,
-            );
+            crate::ui::widgets::picture_label(ui, p, rect, aurora_i18n::tr!("build-ui-common-multiple"), 11.0);
         }
         let stroke = if resp.hovered() && enabled { p.violet_light } else { p.raised };
         painter.rect_stroke(
@@ -1170,6 +1228,108 @@ mod tests {
         }]);
         assert_eq!(value.get(), 4.0, "Enter commits the typed number alone");
         assert!(edit.changed && edit.commit);
+    }
+
+    /// The build window's "wheel on hover" off (its default): the wheel over
+    /// a field scrolls the panel, and steps only the field clicked into.
+    #[test]
+    fn without_wheel_on_hover_only_the_clicked_field_takes_the_wheel() {
+        let show = |ctx: &egui::Context, value: &std::cell::Cell<f32>, time: f64, events: Vec<egui::Event>| {
+            let mut field = egui::Pos2::ZERO;
+            let mut edit = Edit::default();
+            let mut offset = 0.0;
+            let mut current = value.get();
+            let mut output = ctx.run_ui(input(time, events), |ui| {
+                let scrolled = egui::ScrollArea::vertical().max_height(90.0).show(ui, |ui| {
+                    ui.add_space(30.0);
+                    field = ui.cursor().min + egui::vec2(20.0, 10.0);
+                    edit = spin(ui, &mut current, 1.0, 0.0..=100.0, 2, 90.0, false);
+                    ui.add_space(400.0);
+                });
+                offset = scrolled.state.clamped_offset().y;
+            });
+            output.textures_delta.clear();
+            value.set(current);
+            (field, edit, offset)
+        };
+
+        let ctx = egui::Context::default();
+        set_wheel_on_hover(&ctx, false);
+        let value = std::cell::Cell::new(10.0f32);
+        let (field, _, _) = show(&ctx, &value, 0.0, vec![]);
+        let (_, edit, mut offset) = show(
+            &ctx,
+            &value,
+            0.1,
+            vec![
+                egui::Event::PointerMoved(field),
+                wheel(-1.0, egui::MouseWheelUnit::Line, Default::default()),
+            ],
+        );
+        assert_eq!(value.get(), 10.0, "a field that is only hovered does not step");
+        assert_eq!(edit, Edit::default());
+        for step in 1..8 {
+            offset = offset.max(show(&ctx, &value, 0.1 + step as f64 * 0.05, vec![egui::Event::PointerMoved(field)]).2);
+        }
+        assert!(offset > 0.0, "the wheel over the field scrolls the panel");
+
+        let ctx = egui::Context::default();
+        set_wheel_on_hover(&ctx, false);
+        let value = std::cell::Cell::new(10.0f32);
+        let (field, _, _) = show(&ctx, &value, 0.0, vec![]);
+        show(
+            &ctx,
+            &value,
+            0.0,
+            vec![egui::Event::PointerMoved(field), button(field, true, Default::default())],
+        );
+        show(&ctx, &value, 0.0, vec![button(field, false, Default::default())]);
+        let (_, edit, offset) = show(
+            &ctx,
+            &value,
+            0.1,
+            vec![
+                egui::Event::PointerMoved(field),
+                wheel(1.0, egui::MouseWheelUnit::Line, Default::default()),
+            ],
+        );
+        assert_eq!(value.get(), 11.0, "the field clicked into steps");
+        assert!(edit.changed && edit.commit);
+        assert_eq!(offset, 0.0, "and the panel stays still");
+        show(&ctx, &value, 0.2, vec![egui::Event::Text("4".into())]);
+        show(
+            &ctx,
+            &value,
+            0.3,
+            vec![
+                egui::Event::PointerMoved(field),
+                wheel(1.0, egui::MouseWheelUnit::Line, Default::default()),
+            ],
+        );
+        assert_eq!(value.get(), 11.0, "once typed in, the wheel leaves the draft alone");
+        show(
+            &ctx,
+            &value,
+            0.4,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+        );
+        assert_eq!(value.get(), 4.0, "Enter commits the typed number");
+        show(
+            &ctx,
+            &value,
+            0.5,
+            vec![
+                egui::Event::PointerMoved(field),
+                wheel(1.0, egui::MouseWheelUnit::Line, Default::default()),
+            ],
+        );
+        assert_eq!(value.get(), 4.0, "after Enter the field no longer takes the wheel");
     }
 
     #[test]

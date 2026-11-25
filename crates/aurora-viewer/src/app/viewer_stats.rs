@@ -125,7 +125,7 @@ impl App {
     pub(super) fn note_viewer_stats(&mut self, paced: Duration, gpu: &aurora_render::GpuInfo) {
         let now = Instant::now();
         let position = self.in_world().then(|| self.world.agent_global()).flatten();
-        let focused = self.focused;
+        let focused = self.in_front();
         let t = &mut self.viewer_stats;
         t.render_start.get_or_insert(now);
         t.frames += 1;
@@ -175,7 +175,7 @@ impl App {
         let inventory = &self.world.inventory;
         ViewerSide {
             version: format!("{} {}", aurora_net::login::CHANNEL, aurora_version::login_version()),
-            language: aurora_i18n::language().to_owned(),
+            language: aurora_i18n::grid_language().to_owned(),
             run_time: now.duration_since(t.started).as_secs_f64(),
             foreground_time: t.foreground_time,
             foreground_frames: t.foreground_frames,

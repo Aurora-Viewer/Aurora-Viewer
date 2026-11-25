@@ -78,6 +78,7 @@ fn legacy_build_tabs_reuse_native_panels_and_ignore_hidden_aurora_sections() {
     for label in [
         aurora_i18n::tr!("rez-under-land-group"),
         aurora_i18n::tr!("build-ui-tools-follow-edit-object"),
+        aurora_i18n::tr!("build-wheel-on-hover"),
     ] {
         assert!(
             texts.iter().any(|(text, _)| text == label),
@@ -143,6 +144,31 @@ fn legacy_build_radios_and_tool_buttons_follow_native_transitions() {
     );
 }
 
+/// #3648: the block above the tabs grew with the window's width, so a wide
+/// window pushed the tabs down and left their panel 30 points.
+#[test]
+fn legacy_build_tabs_keep_their_place_and_height_when_the_window_widens() {
+    let mut inspector = legacy();
+    let label = aurora_i18n::tr!("build-compact-general");
+    let mut measure = |width: f32| {
+        let (window, texts) = resize_inspector(&mut inspector, vec2(width, 820.0));
+        let tab = texts.iter().find(|(text, _)| text == label).unwrap().1;
+        let collapse = inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("legacy-build-collapse")))
+            .unwrap();
+        (tab.top() - window.top(), collapse.top() - tab.bottom())
+    };
+    let (narrow_top, narrow_body) = measure(400.0);
+    let (wide_top, wide_body) = measure(700.0);
+    let (wider_top, wider_body) = measure(1100.0);
+    assert!((wide_top - narrow_top).abs() <= 1.0, "tabs at {narrow_top} then {wide_top}");
+    assert!((wide_body - narrow_body).abs() <= 1.0, "body {narrow_body} then {wide_body}");
+    assert!((wider_top - narrow_top).abs() <= 1.0, "tabs at {narrow_top} then {wider_top}");
+    assert!((wider_body - narrow_body).abs() <= 1.0, "body {narrow_body} then {wider_body}");
+    assert!(narrow_body > 300.0, "the tabs keep their room: {narrow_body}");
+}
+
 #[test]
 fn legacy_build_collapse_restores_geometry_and_scrolling_keeps_the_tabs_visible() {
     let mut inspector = legacy();
@@ -183,6 +209,7 @@ fn legacy_build_collapse_restores_geometry_and_scrolling_keeps_the_tabs_visible(
 
 #[test]
 fn legacy_selection_shows_the_link_or_the_faces_of_one_prim() {
+    use crate::build::face_buttons::FaceButton;
     let mut inspector = legacy();
     for event in crate::demo::selection_cycle_events() {
         inspector.world.apply(event);
@@ -235,7 +262,37 @@ fn legacy_selection_shows_the_link_or_the_faces_of_one_prim() {
     assert!(count >= 3, "a demo root with several faces");
     inspector.tool.faces.insert(key, vec![2, 0]);
     assert_eq!(line(&inspector), Some(faces("0, 2")));
-    assert!(shown(&mut inspector, &faces("0, 2")));
+    // on screen, the face buttons 0 to 8 take the line's place
+    assert!(!shown(&mut inspector, &faces("0, 2")));
+    let texts = inspector.show(vec![]).1;
+    assert!((0..9).all(|face| texts.iter().any(|(t, _)| t == &face.to_string())));
+    assert_eq!(
+        inspector.tool.face_buttons(&inspector.world)[..3],
+        [FaceButton::On, FaceButton::Off, FaceButton::On]
+    );
+    // Invert and All after them
+    let action = |inspector: &Inspector, invert: bool| {
+        inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_face_action", invert))))
+            .expect("drawn in the Legacy style")
+    };
+    let (invert, all) = (action(&inspector, true), action(&inspector, false));
+    assert!(all.left() >= invert.right() && invert.width() > 4.0);
+    inspector.show(vec![egui::Event::PointerMoved(invert.center())]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: invert.center(),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+    }
+    let mut want: Vec<u8> = (0..count as u8).filter(|face| ![0, 2].contains(face)).collect();
+    want.sort_unstable();
+    let mut got = inspector.tool.sel_faces(&inspector.world, root);
+    got.sort_unstable();
+    assert_eq!(got, want, "Invert gives the other faces");
     inspector.tool.faces.insert(key, (0..count as u8).collect());
     assert_eq!(line(&inspector), Some(faces("ALL_SIDES")));
 

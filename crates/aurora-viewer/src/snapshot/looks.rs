@@ -23,8 +23,10 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Layers of the stack at most.
-pub const MAX_LAYERS: usize = 6;
+/// Layers of the stack at most: the renderer's own limit, which every
+/// look (the same one as often as wanted) fits in (aurora-render's
+/// `eight_of_the_heaviest_look_fit_in_a_frame`).
+pub const MAX_LAYERS: usize = aurora_render::looks::MAX_LAYERS;
 
 /// One look of the stack.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -56,44 +58,53 @@ impl Layer {
     }
 }
 
-/// How a click in the list changes the stack.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Mode {
-    /// The chosen layer takes the look.
-    #[default]
-    Replace,
-    /// The look goes on top as a new layer.
-    Add,
-}
-
-/// The stack once `pointed` (Some(None): "No filter") is tried in `mode`
-/// over layer `selected`.
-pub fn tried(stack: &[Layer], pointed: Option<Option<&str>>, mode: Mode, selected: usize) -> Vec<Layer> {
+/// The stack once `pointed` (Some(None): "No filter") is tried: it swaps
+/// the layer `replace` (the Replace switch on), or goes on top while there
+/// is room. A full stack tries nothing.
+pub fn tried(stack: &[Layer], pointed: Option<Option<&str>>, replace: Option<usize>) -> Vec<Layer> {
     let mut stack = stack.to_vec();
     match pointed {
         None => {}
         Some(None) => stack.clear(),
         Some(Some(id)) => {
-            choose(&mut stack, id, mode, selected);
+            choose(&mut stack, id, replace);
         }
     }
     stack
 }
 
-/// A look chosen in the list: the chosen layer takes it, or it goes on
-/// top; returns the layer it is in.
-pub fn choose(stack: &mut Vec<Layer>, id: &str, mode: Mode, selected: usize) -> usize {
-    if mode == Mode::Add || stack.is_empty() {
-        if stack.len() >= MAX_LAYERS {
-            stack.pop();
+/// A look clicked in the catalogue: it swaps the layer `replace` (the
+/// Replace switch on; the layer keeps its place and strength), or goes on
+/// top. Returns the layer it is in; None when the stack is full and nothing
+/// is replaced (adding never pushes another look out).
+pub fn choose(stack: &mut Vec<Layer>, id: &str, replace: Option<usize>) -> Option<usize> {
+    match replace.filter(|&at| at < stack.len()) {
+        Some(at) => {
+            stack[at].id = id.to_owned();
+            stack[at].on = true;
+            Some(at)
         }
-        stack.push(Layer::new(id));
-        stack.len() - 1
-    } else {
-        let at = selected.min(stack.len() - 1);
-        stack[at].id = id.to_owned();
-        stack[at].on = true;
-        at
+        None => insert(stack, stack.len(), id),
+    }
+}
+
+/// A look dropped from the catalogue at place `at` of the stack (0..=len);
+/// None when the stack is full.
+pub fn insert(stack: &mut Vec<Layer>, at: usize, id: &str) -> Option<usize> {
+    if stack.len() >= MAX_LAYERS {
+        return None;
+    }
+    let at = at.min(stack.len());
+    stack.insert(at, Layer::new(id));
+    Some(at)
+}
+
+/// Loaded looks back into the stack's rules: at most `MAX_LAYERS`, each at
+/// most 100 %.
+pub fn sanitize(stack: &mut Vec<Layer>) {
+    stack.truncate(MAX_LAYERS);
+    for layer in stack {
+        layer.strength = layer.strength.min(100);
     }
 }
 
@@ -248,6 +259,12 @@ pub fn label(id: Option<&str>) -> Cow<'static, str> {
     id.and_then(name).unwrap_or(Cow::Borrowed(aurora_i18n::tr!("photo-look-none")))
 }
 
+/// What one of Aurora's looks does (its tile's tooltip); None for the
+/// others, which have no description.
+pub fn tip(id: &str) -> Option<&'static str> {
+    id.strip_prefix(AURORA).and_then(aurora_text).map(|(_, tip)| tip)
+}
+
 /// The key a name sorts and is searched by: letters without their
 /// accents, any case (the Legacy Viewer's map sorts the bytes, which puts É
 /// after Z).
@@ -351,6 +368,52 @@ pub fn search(query: &str, lut_names: &[String]) -> Vec<Entry> {
         .collect()
 }
 
+/// The starred looks of `entries` first, in the list's own order, then the
+/// others (Aurora's own: the Legacy Viewer's filter list has no favourites).
+pub fn favorites_first(entries: Vec<Entry>, favorites: &[String]) -> Vec<Entry> {
+    let (mut first, rest): (Vec<Entry>, Vec<Entry>) = entries.into_iter().partition(|e| favorites.contains(&e.id));
+    first.extend(rest);
+    first
+}
+
+/// The starred looks, by family in the catalogue's order (Legacy, Aurora,
+/// the LUTs); a star whose look is gone (a table deleted) is left out.
+pub fn favorite_list(favorites: &[String], lut_names: &[String]) -> Vec<(Tab, Vec<Entry>)> {
+    let starred = |entries: Vec<Entry>| -> Vec<Entry> { entries.into_iter().filter(|e| favorites.contains(&e.id)).collect() };
+    let families = [
+        (Tab::Legacy, starred(legacy_list())),
+        (Tab::Aurora, starred(aurora_list().into_iter().flat_map(|(_, e)| e).collect())),
+        (
+            Tab::Luts,
+            starred(pack_list().into_iter().flat_map(|(_, e)| e).chain(lut_list(lut_names)).collect()),
+        ),
+    ];
+    families.into_iter().filter(|(_, e)| !e.is_empty()).collect()
+}
+
+/// Stars a look, or takes its star away.
+pub fn toggle_favorite(favorites: &mut Vec<String>, id: &str) {
+    match favorites.iter().position(|f| f == id) {
+        Some(at) => {
+            favorites.remove(at);
+        }
+        None => favorites.push(id.to_owned()),
+    }
+}
+
+/// Whether a look can be applied to the faces of a 360° snapshot one by one
+/// (`LookOp::is_pointwise`): its operations depend on a pixel's colour alone.
+/// A table of the user's is a colour operation. An unknown look is not.
+pub fn is_pointwise(id: &str) -> bool {
+    if id.starts_with(LUT) {
+        return true;
+    }
+    if let Some(aurora) = id.strip_prefix(AURORA) {
+        return aurora_look(aurora).is_some_and(|look| look.ops.iter().all(LookOp::is_pointwise));
+    }
+    legacy_look(id).is_some_and(|ops| ops.iter().all(LookOp::is_pointwise))
+}
+
 /// What a look draws: its operations, and its table.
 #[derive(Clone)]
 pub struct Resolved {
@@ -436,9 +499,55 @@ pub fn frame_look(layers: &[(Resolved, u8)], place: Placement, compare: Option<f
     })
 }
 
+/// The world's look (Preferences › Graphics › Image › World look, and its
+/// window `ui/world_look.rs`): a stack of its own, with its own settings,
+/// drawn on the 3D view, under the interface. Aurora's own: the Legacy
+/// Viewer has looks only in its snapshot window.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorldLook {
+    /// Drawn (off: the stack is kept for later).
+    pub on: bool,
+    pub looks: Vec<Layer>,
+    /// The settings of its Aurora looks by id, apart from the photos'.
+    pub look_settings: Settings,
+}
+
+/// The world look's stack for this frame. The photo window and the
+/// Director (`photo_looks_shown`) draw their own stack, the one of the
+/// photos and films they take, so the world's is not drawn under it. Off,
+/// nothing is drawn unless a look is pointed at in its window: the stack is
+/// then tried with it (`tried`), as when it is on, so that the list can be
+/// browsed before the look is switched on (the human's choice, 2026-11-21:
+/// the same preview on or off). `replace`: the card the look pointed at
+/// swaps (`LooksUi::replace_target`), else it is tried at the end; a full
+/// stack with Replace off tries nothing new.
+pub fn world_stack(look: &WorldLook, pointed: Option<Option<&str>>, replace: Option<usize>, photo_looks_shown: bool) -> Vec<Layer> {
+    if photo_looks_shown || (!look.on && pointed.is_none()) {
+        return Vec::new();
+    }
+    tried(&look.looks, pointed, replace)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The photo window's 360° format keeps the colour looks and greys the
+    /// others (the classification itself is tested for every look in
+    /// aurora-render's looks tests).
+    #[test]
+    fn colour_looks_are_kept_for_a_360_snapshot_and_the_others_are_not() {
+        assert!(is_pointwise("Sepia") && is_pointwise("BlackAndWhite") && is_pointwise("Intense"));
+        assert!(is_pointwise(&format!("{AURORA}keep-red")));
+        assert!(is_pointwise(&format!("{LUT}warm.cube")), "a table is a colour operation");
+        assert!(!is_pointwise("Spotlight") && !is_pointwise("Sharpen") && !is_pointwise("Posterize"));
+        assert!(!is_pointwise(&format!("{AURORA}fine-grain")) && !is_pointwise(&format!("{AURORA}fisheye")));
+        assert!(!is_pointwise("No such look"));
+        let all = legacy_list().into_iter().chain(aurora_list().into_iter().flat_map(|(_, e)| e));
+        let kept = all.filter(|e| is_pointwise(&e.id)).count();
+        assert!(kept > 5 && kept < 66, "{kept} of the 66 looks are colour looks");
+    }
 
     #[test]
     fn every_look_has_a_name() {
@@ -529,22 +638,141 @@ mod tests {
     }
 
     #[test]
-    fn clicks_replace_the_chosen_layer_or_add_one() {
+    fn clicks_add_unless_replace_is_on() {
         let mut stack = Vec::new();
-        assert_eq!(choose(&mut stack, "Sepia", Mode::Replace, 0), 0);
-        assert_eq!(choose(&mut stack, "aurora:vhs", Mode::Add, 0), 1);
-        assert_eq!(choose(&mut stack, "Negative", Mode::Replace, 0), 0);
+        // a click adds; with Replace on over an empty stack too
+        assert_eq!(choose(&mut stack, "Sepia", None), Some(0));
+        assert_eq!(choose(&mut stack, "aurora:vhs", None), Some(1));
+        stack[0].strength = 40;
+        stack[0].on = false;
+        // Replace on: the chosen layer swaps, keeping its place and strength
+        assert_eq!(choose(&mut stack, "Negative", Some(0)), Some(0));
+        assert_eq!((stack[0].strength, stack[0].on), (40, true));
+        // a chosen layer gone (taken out meanwhile): the click adds
+        assert_eq!(choose(&mut stack, "Antique", Some(9)), Some(2));
         let ids: Vec<&str> = stack.iter().map(|l| l.id.as_str()).collect();
-        assert_eq!(ids, ["Negative", "aurora:vhs"]);
+        assert_eq!(ids, ["Negative", "aurora:vhs", "Antique"]);
         // trying leaves the stack as it is
-        let tried = tried(&stack, Some(Some("Sepia")), Mode::Add, 0);
-        assert_eq!(tried.len(), 3);
-        assert_eq!(stack.len(), 2);
-        assert!(super::tried(&stack, Some(None), Mode::Add, 0).is_empty());
-        // the stack has a ceiling: the top layer gives way
-        for _ in 0..10 {
-            choose(&mut stack, "aurora:pixel", Mode::Add, 0);
+        assert_eq!(tried(&stack, Some(Some("Sepia")), None).len(), 4);
+        assert_eq!(tried(&stack, Some(Some("Sepia")), Some(1))[1].id, "Sepia");
+        assert_eq!(stack.len(), 3);
+        assert!(tried(&stack, Some(None), None).is_empty());
+    }
+
+    #[test]
+    fn a_full_stack_adds_nothing_but_still_replaces() {
+        let mut stack = Vec::new();
+        for _ in 0..MAX_LAYERS {
+            assert!(choose(&mut stack, "aurora:pixel", None).is_some());
         }
+        assert_eq!(MAX_LAYERS, 8, "the renderer's limit");
+        // full: neither a click nor a drop pushes a look out
+        assert_eq!(choose(&mut stack, "Sepia", None), None);
+        assert_eq!(insert(&mut stack, 0, "Sepia"), None);
+        assert_eq!(tried(&stack, Some(Some("Sepia")), None), stack, "nothing to try");
+        assert!(stack.iter().all(|l| l.id == "aurora:pixel"));
+        // Replace still swaps one
+        assert_eq!(choose(&mut stack, "Sepia", Some(MAX_LAYERS - 1)), Some(MAX_LAYERS - 1));
         assert_eq!(stack.len(), MAX_LAYERS);
+    }
+
+    #[test]
+    fn the_world_look_is_drawn_when_on_and_gives_way_to_the_photo_looks() {
+        let mut world = WorldLook {
+            on: true,
+            looks: vec![Layer::new("pack:czar-fenris/Noir")],
+            ..Default::default()
+        };
+        let ids = |stack: Vec<Layer>| stack.into_iter().map(|l| l.id).collect::<Vec<_>>();
+        assert_eq!(ids(world_stack(&world, None, Some(0), false)), ["pack:czar-fenris/Noir"]);
+        // the photo window or the Director draws its own stack
+        assert!(world_stack(&world, None, Some(0), true).is_empty());
+        assert!(world_stack(&world, Some(Some("Sepia")), Some(0), true).is_empty());
+        // a look pointed at in its window is tried, the stack unchanged
+        assert_eq!(
+            ids(world_stack(&world, Some(Some("Sepia")), None, false)),
+            ["pack:czar-fenris/Noir", "Sepia"]
+        );
+        assert!(world_stack(&world, Some(None), Some(0), false).is_empty());
+        assert_eq!(world.looks.len(), 1);
+        // off: nothing, unless a look is pointed at
+        world.on = false;
+        assert!(world_stack(&world, None, Some(0), false).is_empty());
+        assert_eq!(ids(world_stack(&world, Some(Some("Sepia")), Some(0), false)), ["Sepia"]);
+        // Replace off (the default): the switched-off stack with the look
+        // at its end, as when it is on
+        assert_eq!(
+            ids(world_stack(&world, Some(Some("Sepia")), None, false)),
+            ["pack:czar-fenris/Noir", "Sepia"]
+        );
+        let full = WorldLook {
+            looks: (0..MAX_LAYERS).map(|_| Layer::new("Negative")).collect(),
+            ..Default::default()
+        };
+        assert_eq!(
+            world_stack(&full, Some(Some("Sepia")), None, false),
+            full.looks,
+            "a full stack with Replace off tries nothing new"
+        );
+        // a setting saved before the world look keeps working: empty and off
+        let read: WorldLook = serde_json::from_str("{}").expect("reads");
+        assert_eq!(read, WorldLook::default());
+        assert!(!read.on && read.looks.is_empty());
+    }
+
+    #[test]
+    fn a_drop_takes_its_place_in_the_stack() {
+        let mut stack = vec![Layer::new("Sepia"), Layer::new("Negative")];
+        assert_eq!(insert(&mut stack, 1, "aurora:vhs"), Some(1));
+        assert_eq!(insert(&mut stack, 99, "Antique"), Some(3), "past the end: last");
+        let ids: Vec<&str> = stack.iter().map(|l| l.id.as_str()).collect();
+        assert_eq!(ids, ["Sepia", "aurora:vhs", "Negative", "Antique"]);
+    }
+
+    #[test]
+    fn loaded_looks_keep_to_the_stacks_rules() {
+        let mut stack: Vec<Layer> = (0..12)
+            .map(|_| Layer {
+                id: "Sepia".into(),
+                strength: 250,
+                on: true,
+            })
+            .collect();
+        sanitize(&mut stack);
+        assert_eq!(stack.len(), MAX_LAYERS);
+        assert!(stack.iter().all(|l| l.strength == 100));
+    }
+
+    #[test]
+    fn starred_looks_come_first_in_their_list() {
+        let favorites = vec!["aurora:vhs".to_owned(), "aurora:fine-grain".to_owned()];
+        let creative: Vec<Entry> = aurora_list().into_iter().flat_map(|(_, e)| e).collect();
+        let sorted = favorites_first(creative.clone(), &favorites);
+        assert_eq!(sorted.len(), creative.len(), "nothing lost");
+        // the list's own order among the starred, then among the others
+        assert_eq!(sorted[0].id, "aurora:fine-grain");
+        assert_eq!(sorted[1].id, "aurora:vhs");
+        assert_eq!(
+            sorted[2].id,
+            creative.iter().find(|e| !favorites.contains(&e.id)).expect("others").id
+        );
+    }
+
+    #[test]
+    fn the_star_list_groups_the_starred_by_family_and_skips_what_is_gone() {
+        let mut favorites = Vec::new();
+        for id in ["lut:mine.cube", "Sepia", "aurora:vhs", "lut:deleted.cube"] {
+            toggle_favorite(&mut favorites, id);
+        }
+        let luts = vec!["mine.cube".to_owned()];
+        let list = favorite_list(&favorites, &luts);
+        let tabs: Vec<Tab> = list.iter().map(|(t, _)| *t).collect();
+        assert_eq!(tabs, [Tab::Legacy, Tab::Aurora, Tab::Luts]);
+        assert_eq!(list[2].1.len(), 1, "the deleted table is not listed");
+        // a second star takes it away
+        toggle_favorite(&mut favorites, "Sepia");
+        assert!(!favorites.contains(&"Sepia".to_owned()));
+        assert_eq!(favorite_list(&favorites, &luts).len(), 2);
+        assert!(favorite_list(&[], &luts).is_empty());
     }
 }

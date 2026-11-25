@@ -28,7 +28,7 @@ pub enum Voice {
 #[derive(Debug, Clone)]
 pub struct Utterance {
     /// The message as received, links and "/me" included: the bubble
-    /// shows their labels (`ui::chat::resolved_text`).
+    /// shows their labels (`ui::chat::resolved_text_in`).
     pub text: String,
     /// The speaker's name as the nearby chat has it, for an emote.
     pub from: String,

@@ -140,6 +140,18 @@ impl Rig {
         self.parent.len()
     }
 
+    /// Origin of a native translation key in the rig's local coordinates.
+    /// mPelvis and Avatar Center hang from the omitted mRoot, whose rest
+    /// translation is folded into their joints. Every other key is
+    /// already relative to its joint's parent.
+    pub(crate) fn key_origin(&self, bone: usize) -> Vec3 {
+        if bone == self.pelvis || self.parent[bone].is_none() && self.names.get("Avatar Center") == Some(&bone) {
+            self.local_pos[self.pelvis]
+        } else {
+            Vec3::ZERO
+        }
+    }
+
     /// LLVOAvatar::initAttachmentPoints (indra/newview/llvoavatar.cpp,
     /// originally LGPL 2.1): every body attachment point is an
     /// LLViewerJointAttachment, a joint below its bone that
@@ -543,6 +555,55 @@ impl Motion {
     }
 }
 
+/// LiveMesh's elbow and knee bend (Avatar tab): our avatar's elbows and
+/// knees turned on top of what it plays, or of its rest pose when `hold`,
+/// to check how a rigged mesh in progress deforms. Drawn here only: nothing
+/// is sent, animations and uploads are unchanged. The axes are those of the
+/// mesh importer's test bend (`imports/mesh/preview.rs`). Aurora's own.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PreviewBend {
+    /// Degrees, 0..=150.
+    pub elbows: f32,
+    /// Degrees, 0..=150.
+    pub knees: f32,
+    /// The rest pose instead of the animations.
+    pub hold: bool,
+}
+
+impl PreviewBend {
+    /// The largest bend the sliders give, degrees.
+    pub const MAX: f32 = 150.0;
+
+    pub fn active(&self) -> bool {
+        self.hold || self.elbows > 0.0 || self.knees > 0.0
+    }
+
+    /// The local rotations bent, or `None` when there is nothing to bend.
+    pub fn apply(&self, rig: &Rig, rotations: &[Quat]) -> Option<Vec<Quat>> {
+        if !self.active() {
+            return None;
+        }
+        let mut out = if self.hold && rig.local_rot.len() == rotations.len() {
+            rig.local_rot.clone()
+        } else {
+            rotations.to_vec()
+        };
+        let elbows = self.elbows.clamp(0.0, Self::MAX).to_radians();
+        let knees = self.knees.clamp(0.0, Self::MAX).to_radians();
+        for (name, turn) in [
+            ("mElbowLeft", Quat::from_rotation_z(-elbows)),
+            ("mElbowRight", Quat::from_rotation_z(elbows)),
+            ("mKneeLeft", Quat::from_rotation_y(knees)),
+            ("mKneeRight", Quat::from_rotation_y(knees)),
+        ] {
+            if let Some(rotation) = rig.names.get(name).and_then(|&joint| out.get_mut(joint)) {
+                *rotation *= turn;
+            }
+        }
+        Some(out)
+    }
+}
+
 /// Motions and held pose of one avatar (or animesh).
 #[derive(Default)]
 pub struct Controller {
@@ -595,6 +656,21 @@ pub struct Controller {
     pointing: pointing::Pointing,
     /// The look-at target was cleared: HEAD_ROT stops (eyes keep `look`).
     pub look_cleared: bool,
+    /// The head, neck and eyes take the look-at over every animation
+    /// (`LOOK_OVER_ANIMATIONS`): our avatar under the photo window's "Look
+    /// at camera", so that an AO stand that keys the head does not hold it.
+    /// Aurora's own; the torso keeps the animations' pose.
+    pub look_over_animations: bool,
+    /// Under `look_over_animations`, how much of the turn is left to the
+    /// eyes: 0 the head faces the target (as far as it reaches), 1 the head
+    /// keeps the animation's and only the eyes look, a side glance; ½ a
+    /// three-quarter turn. The photo window's "Look intensity" (1 − it).
+    pub look_glance: f32,
+    /// LiveMesh's elbow and knee bend, on our avatar only.
+    pub preview_bend: PreviewBend,
+    /// `look_over_animations` as last logged, with the head's strongest
+    /// animation priority.
+    look_over_logged: bool,
     procedural: Procedural,
     /// Joints used by the procedural motions, as posed last frame
     /// (skeleton space).
@@ -692,6 +768,8 @@ struct Procedural {
     eyes: Fade,
     torso: Quat,
     last_head: Quat,
+    /// `natural_reach`, eased (REACH_BACK / REACH_AWAY_HALF_LIFE).
+    reach: f32,
     jitter_at: Option<Instant>,
     jitter_time: f32,
     jitter_yaw: f32,
@@ -715,6 +793,7 @@ impl Default for Procedural {
             eyes: Fade::default(),
             torso: Quat::IDENTITY,
             last_head: Quat::IDENTITY,
+            reach: 1.0,
             jitter_at: None,
             jitter_time: 0.0,
             jitter_yaw: 0.0,
@@ -791,11 +870,41 @@ const EYE_EASE: f32 = 0.5;
 const MEDIUM_PRIORITY: i32 = 1;
 /// LLBodyNoiseMotion's priority.
 const HIGH_PRIORITY: i32 = 2;
+/// Above any animation's priority: the head and eyes under
+/// `look_over_animations`. LLKeyframeMotion::deserialize brings a base
+/// priority back under ADDITIVE_PRIORITY but takes a joint's own priority
+/// as the file has it, so a joint may key 7 or more (an AO stand did).
+const LOOK_OVER_ANIMATIONS: i32 = i32::MAX;
 
 /// LLSmoothInterpolation::getInterpolant.
 fn interpolant(dt: f32, half_life: f32) -> f32 {
     (1.0 - 2f32.powf(-dt / half_life)).clamp(0.0, 1.0)
 }
+
+/// How far a look-at target, as a rotation from the chest (`rel`), is
+/// within a natural turn of the neck: 1 up to `NATURAL_REACH.0` off the
+/// chest's front, 0 from `NATURAL_REACH.1` on, smooth between. Aurora's own,
+/// for `look_over_animations`: past it the head goes back to the
+/// animation's instead of staring behind the body.
+fn natural_reach(rel: Quat) -> f32 {
+    let f = rel * Vec3::X;
+    let angle = f.x.clamp(-1.0, 1.0).acos();
+    let (from, to) = (NATURAL_REACH.0.to_radians(), NATURAL_REACH.1.to_radians());
+    let t = ((angle - from) / (to - from)).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
+
+/// Degrees off the chest's front where the look over the animations starts
+/// to give up, and where it has (`natural_reach`).
+const NATURAL_REACH: (f32, f32) = (70.0, 110.0);
+/// Over the animations, how fast the head takes the target back as it
+/// comes into reach and gives it up as it leaves (half-lives, s): a body
+/// that turns quickly would otherwise snap the head round with it.
+const REACH_BACK_HALF_LIFE: f32 = 0.35;
+const REACH_AWAY_HALF_LIFE: f32 = 0.15;
+/// Over the animations, the head's lag behind its target (half-life, s):
+/// a deliberate look at the lens, gentler than HEAD_LOOKAT_LAG_HALF_LIFE.
+const OVER_HEAD_LAG_HALF_LIFE: f32 = 0.3;
 
 /// LLQuaternion::constrain: limit a rotation to `angle`.
 fn constrain(q: Quat, angle: f32) -> Quat {
@@ -818,12 +927,19 @@ const EYES_FROM_HEAD: Vec3 = Vec3::new(0.098, 0.0, 0.079);
 /// skeleton, and LLHeadRotMotion turns both); without eyes, mHead with
 /// the default offset.
 fn eyes_between(eyes: Option<(Vec3, Vec3)>, alt: Option<(Vec3, Vec3)>, head: Option<(Quat, Vec3)>) -> Option<Vec3> {
+    eye_pair(eyes, alt)
+        .map(|(l, r)| (l + r) * 0.5)
+        .or_else(|| head.map(|(r, p)| p + r * EYES_FROM_HEAD))
+}
+
+/// The pair of eyes `eyes_between` goes by, left then right: the Bento
+/// ones when a mesh head has moved them away from the system eyes.
+fn eye_pair(eyes: Option<(Vec3, Vec3)>, alt: Option<(Vec3, Vec3)>) -> Option<(Vec3, Vec3)> {
     let mid = |(l, r): (Vec3, Vec3)| (l + r) * 0.5;
-    match (eyes.map(mid), alt.map(mid)) {
-        (Some(e), Some(a)) if a.distance(e) > 0.005 => Some(a),
+    match (eyes, alt) {
+        (Some(e), Some(a)) if mid(a).distance(mid(e)) > 0.005 => Some(a),
         (Some(e), _) => Some(e),
-        (None, Some(a)) => Some(a),
-        (None, None) => head.map(|(r, p)| p + r * EYES_FROM_HEAD),
+        (None, a) => a,
     }
 }
 
@@ -1019,6 +1135,19 @@ impl Controller {
         self.posed.head.map(|h| h.1)
     }
 
+    /// Skeleton-space rotation of the head as posed last frame.
+    pub fn head_rot(&self) -> Option<Quat> {
+        self.posed.head.map(|h| h.0)
+    }
+
+    /// Skeleton-space places of the two eyes as posed last frame, left
+    /// then right (`eye_pair`): the joints the eyeballs turn about.
+    pub fn eyes_each(&self) -> Option<(Vec3, Vec3)> {
+        let p = &self.posed;
+        let pair = |l: Option<(Quat, Vec3)>, r: Option<(Quat, Vec3)>| Some((l?.1, r?.1));
+        eye_pair(pair(p.eye_l, p.eye_r), pair(p.alt_l, p.alt_r))
+    }
+
     /// Skeleton-space point between the eyes as posed last frame
     /// (`eyes_between`), for the look-at line.
     pub fn eyes_pos(&self) -> Option<Vec3> {
@@ -1041,8 +1170,16 @@ impl Controller {
         let mut out = Vec::new();
         let p = &self.posed;
         let pr = &mut self.procedural;
+        let look_priority = if self.look_over_animations {
+            LOOK_OVER_ANIMATIONS
+        } else {
+            MEDIUM_PRIORITY
+        };
         let head_w = pr.head.update(!self.look_cleared, now, HEAD_ROT_EASE);
         let eye_w = pr.eyes.update(true, now, EYE_EASE);
+        // how far the target is within a natural reach (1) or out of it (0),
+        // over the animations only (`natural_reach`)
+        let mut reach = 1.0;
         // LLHeadRotMotion::onUpdate (in the root frame)
         if head_w > 0.0 {
             let target = match self.look {
@@ -1061,19 +1198,51 @@ impl Controller {
                 }
                 None => Quat::IDENTITY,
             };
-            let head_local = constrain(target, HEAD_ROTATION_CONSTRAINT);
+            // over the animations, the reach is the body's as the
+            // animation poses it (the chest), not the root's: a stand that
+            // turns the body would otherwise leave the head twisted round
+            let chest_rot = p.chest.map(|c| c.0).filter(|_| self.look_over_animations);
+            let head_local = match chest_rot {
+                Some(chest) => {
+                    let rel = chest.inverse() * target;
+                    let wanted = natural_reach(rel);
+                    let half_life = if wanted > pr.reach {
+                        REACH_BACK_HALF_LIFE
+                    } else {
+                        REACH_AWAY_HALF_LIFE
+                    };
+                    pr.reach += (wanted - pr.reach) * interpolant(dt, half_life);
+                    reach = pr.reach;
+                    chest * constrain(rel, HEAD_ROTATION_CONSTRAINT)
+                }
+                None => {
+                    pr.reach = 1.0;
+                    constrain(target, HEAD_ROTATION_CONSTRAINT)
+                }
+            };
             let torso_target = nlerp(TORSO_LAG, Quat::IDENTITY, head_local);
             pr.torso = nlerp(interpolant(dt, TORSO_LOOKAT_LAG_HALF_LIFE), pr.torso, torso_target);
-            pr.last_head = nlerp(interpolant(dt, HEAD_LOOKAT_LAG_HALF_LIFE), pr.last_head, head_local);
+            let lag = if chest_rot.is_some() {
+                OVER_HEAD_LAG_HALF_LIFE
+            } else {
+                HEAD_LOOKAT_LAG_HALF_LIFE
+            };
+            pr.last_head = nlerp(interpolant(dt, lag), pr.last_head, head_local);
             if let Some(t) = j.torso {
                 out.push((t, MEDIUM_PRIORITY, head_w, pr.torso, false));
             }
             if let (Some(neck), Some(head), Some(chest)) = (j.neck, j.head, p.chest) {
                 // what is left after the chest, half to the neck, half to the head
-                let h = chest.0.inverse() * pr.last_head;
+                let mut h = chest.0.inverse() * pr.last_head;
+                if chest_rot.is_some() {
+                    // the lag must not carry it past the reach while the
+                    // body turns; out of reach, back to the animation's head
+                    let turn = reach * (1.0 - self.look_glance.clamp(0.0, 1.0));
+                    h = nlerp(turn, Quat::IDENTITY, constrain(h, HEAD_ROTATION_CONSTRAINT));
+                }
                 let half = nlerp(NECK_LAG, Quat::IDENTITY, h);
-                out.push((neck, MEDIUM_PRIORITY, head_w, half, false));
-                out.push((head, MEDIUM_PRIORITY, head_w, half, false));
+                out.push((neck, look_priority, head_w * reach, half, false));
+                out.push((head, look_priority, head_w * reach, half, false));
             }
         }
         // LLEyeMotion::onUpdate
@@ -1115,8 +1284,12 @@ impl Controller {
                 } else {
                     Quat::IDENTITY
                 };
-                out.push((l, MEDIUM_PRIORITY, eye_w, rot * jitter * vq, false));
-                out.push((r, MEDIUM_PRIORITY, eye_w, rot * jitter * vq.inverse(), false));
+                if self.look_over_animations {
+                    // out of reach, the eyes come back ahead with the head
+                    rot = nlerp(reach, Quat::IDENTITY, rot);
+                }
+                out.push((l, look_priority, eye_w, rot * jitter * vq, false));
+                out.push((r, look_priority, eye_w, rot * jitter * vq.inverse(), false));
             }
         }
         // LLBreatheMotionRot (MEDIUM_PRIORITY, normal blend), from the
@@ -1317,6 +1490,18 @@ impl Controller {
                     }
                 }
             }
+            // A 0 s one-shot has no timed stop (activateMotionInstance:
+            // getDuration() != 0), but LLKeyframeMotion::onUpdate returns
+            // false once its time passes 0, so updateMotionsByType stops it
+            // on the next frame and requests the simulator stop. Held, a
+            // single-frame face pose froze a mesh head's expressions and
+            // eyes on its wearer's screen (#3227).
+            if m.stop.is_none() && !m.anim.anim.looping && m.anim.anim.duration <= 0.0 && now > m.activation {
+                m.stop_at(now);
+                if !m.internal && !preview.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
+                    completed.push(m.id);
+                }
+            }
             // A "loop" whose raw loop points run past its duration plays
             // once: LLKeyframeMotion::onUpdate returns false, and
             // updateMotionsByType stops it and requests the simulator stop
@@ -1505,6 +1690,17 @@ impl Controller {
                 }
             }
         }
+        if self.look_over_animations != self.look_over_logged {
+            self.look_over_logged = self.look_over_animations;
+            if self.look_over_animations {
+                let top = |name: &str| rig.names.get(name).and_then(|&j| states.get(j)?.first().map(|state| state.0));
+                log::info!(
+                    "look over animations: on; strongest animation priority on mHead {:?}, mNeck {:?}",
+                    top("mHead"),
+                    top("mNeck")
+                );
+            }
+        }
         // head, eye, breathing and body noise motions, started with the
         // avatar (startDefaultMotions)
         let lj = LookJoints::of(rig);
@@ -1637,8 +1833,9 @@ impl Controller {
                     self.pelvis_offset = Some(pos);
                     self.tag_pelvis_offset = top;
                 } else if let Some(rest) = rest_pos.get(j) {
-                    self.pos_delta[j] = pos - *rest;
-                    self.tag_pos_delta[j] = top - rest.z;
+                    let origin = rig.key_origin(j);
+                    self.pos_delta[j] = origin + pos - *rest;
+                    self.tag_pos_delta[j] = origin.z + top - rest.z;
                 }
             }
             if j != rig.pelvis
@@ -1767,6 +1964,8 @@ impl Controller {
         let (rotations, positions) = edited.as_ref().map_or((rotations, local_pos.as_slice()), |p| {
             (p.rotations.as_slice(), p.positions.as_slice())
         });
+        let bent = self.preview_bend.apply(rig, rotations);
+        let rotations = bent.as_deref().unwrap_or(rotations);
         let world = self.poser.as_ref().map_or_else(
             || rig.world_with(rotations, pelvis, positions, scale),
             |(pose, model)| pose.matrices(rig, *model),
@@ -2148,6 +2347,37 @@ mod tests {
                 assert!(!manager.is_playing(item));
             }
         }
+    }
+
+    #[test]
+    fn avatar_center_keys_use_the_root_even_with_a_pelvis_override() {
+        let mut rig = rig();
+        rig.add_attachment_points(&[("Avatar Center".to_owned(), None, Vec3::ZERO, Quat::IDENTITY)]);
+        let center = rig.names["Avatar Center"];
+        let mut base = SkeletonBase {
+            local_pos: rig.local_pos.clone(),
+            scale: rig.scale.clone(),
+        };
+        base.local_pos[rig.pelvis].z += 0.35;
+        let offset = Vec3::new(0.5, -0.1, 0.22);
+        let mut animation = swing(&rig).anim.clone();
+        animation.joints = vec![aurora_assets::JointMotion {
+            joint_name: "Avatar Center".into(),
+            priority: 4,
+            rot_keys: Vec::new(),
+            pos_keys: vec![aurora_assets::anim::PosKey {
+                time: 0.0,
+                position: offset,
+            }],
+        }];
+        let motion = Arc::new(BoundAnim::bind(animation, &rig));
+        let start = Instant::now();
+        let mut controller = Controller::default();
+        controller.sync(&[signal(Uuid::from_u128(42), 1, start)], start, |_| Some(motion.clone()));
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        controller.evaluate(&rig, start + Duration::from_millis(500), Some(&base), &mut out);
+        let center_world = Mat4::from_cols_array_2d(&out[center]).w_axis.truncate();
+        assert!(center_world.abs_diff_eq(rig.local_pos[rig.pelvis] + offset, 1e-5));
     }
 
     #[test]
@@ -3132,6 +3362,199 @@ mod tests {
         assert!(left - ahead > 0.4, "eyes back ahead: {left} -> {ahead}");
     }
 
+    /// An AO stand that keys the head and neck at priority 7 holds them
+    /// against the look-at (MEDIUM_PRIORITY, as in the Legacy Viewer); with
+    /// `look_over_animations` (the photo window's "Look at camera") the
+    /// head turns to the target anyway, and the torso keeps the stand.
+    #[test]
+    fn the_look_over_animations_turns_a_head_an_ao_stand_holds() {
+        let rig = rig();
+        let mut animation = swing(&rig).anim.clone();
+        animation.looping = true;
+        animation.joints = ["mHead", "mNeck", "mTorso"]
+            .into_iter()
+            .map(|name| aurora_assets::JointMotion {
+                joint_name: name.into(),
+                // a joint's own priority may pass 6 (the file's, unclamped)
+                priority: if name == "mTorso" { 4 } else { 7 },
+                rot_keys: vec![aurora_assets::anim::RotKey {
+                    time: 0.0,
+                    rotation: Quat::IDENTITY,
+                }],
+                pos_keys: Vec::new(),
+            })
+            .collect();
+        let animation = Arc::new(BoundAnim::bind(animation, &rig));
+        let rot = |pose: &[[[f32; 4]; 4]], name: &str| Mat4::from_cols_array_2d(&pose[rig.names[name]]).to_scale_rotation_translation().1;
+        let yaw = |q: Quat| {
+            let f = q * Vec3::X;
+            f.y.atan2(f.x)
+        };
+        let run = |over: bool| {
+            let t0 = Instant::now();
+            let mut controller = synchronized_controller();
+            controller.sync(&[signal(Uuid::from_u128(7), 1, t0)], t0, |_| Some(animation.clone()));
+            controller.look_over_animations = over;
+            // to the left, within the head's reach
+            controller.look = Some(Vec3::new(1.0, 1.0, 0.0));
+            let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+            for i in 0..=60 {
+                controller.evaluate(&rig, t0 + Duration::from_secs_f32(i as f32 * 0.05), None, &mut pose);
+            }
+            (yaw(rot(&pose, "mHead")), yaw(rot(&pose, "mTorso")))
+        };
+        let (held, torso_held) = run(false);
+        let (turned, torso) = run(true);
+        assert!(held.abs() < 0.02, "the stand holds the head: {held}");
+        assert!(turned > 0.4, "the head turns to the target over the stand: {turned}");
+        assert!(
+            torso.abs() < 0.02 && torso_held.abs() < 0.02,
+            "the torso keeps the stand: {torso_held} {torso}"
+        );
+    }
+
+    /// An animation that turns the body round (a walk in circles) with
+    /// the camera behind it: over the animations, the head keeps a natural
+    /// reach from the chest instead of staring backwards, and gives the
+    /// head back to the animation; within reach, it still turns.
+    #[test]
+    fn the_look_over_animations_keeps_a_natural_reach_from_the_chest() {
+        let rig = rig();
+        let turned = |yaw: f32| {
+            let mut animation = swing(&rig).anim.clone();
+            animation.looping = true;
+            animation.joints = [("mTorso", yaw, 4), ("mNeck", 0.0, 7), ("mHead", 0.0, 7)]
+                .into_iter()
+                .map(|(name, yaw, priority)| aurora_assets::JointMotion {
+                    joint_name: name.into(),
+                    priority,
+                    rot_keys: vec![aurora_assets::anim::RotKey {
+                        time: 0.0,
+                        rotation: Quat::from_rotation_z(yaw),
+                    }],
+                    pos_keys: Vec::new(),
+                })
+                .collect();
+            Arc::new(BoundAnim::bind(animation, &rig))
+        };
+        let rot = |pose: &[[[f32; 4]; 4]], name: &str| Mat4::from_cols_array_2d(&pose[rig.names[name]]).to_scale_rotation_translation().1;
+        let yaw = |q: Quat| {
+            let f = q * Vec3::X;
+            f.y.atan2(f.x)
+        };
+        // the head's yaw from the chest, the camera ahead of the root
+        let run = |body: f32| {
+            let animation = turned(body);
+            let t0 = Instant::now();
+            let mut controller = synchronized_controller();
+            controller.sync(&[signal(Uuid::from_u128(7), 1, t0)], t0, |_| Some(animation.clone()));
+            controller.look_over_animations = true;
+            controller.look = Some(Vec3::new(2.0, 0.0, 0.0));
+            let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+            for i in 0..=60 {
+                controller.evaluate(&rig, t0 + Duration::from_secs_f32(i as f32 * 0.05), None, &mut pose);
+            }
+            yaw(rot(&pose, "mChest").inverse() * rot(&pose, "mHead"))
+        };
+        // the body turned 40° away: the head turns back to the camera
+        let near = run(40f32.to_radians());
+        assert!(near < -0.4, "within reach the head turns to the camera: {near}");
+        // the body turned round: the head stays with the animation's
+        let behind = run(170f32.to_radians());
+        assert!(behind.abs() < 0.05, "out of reach the head is the animation's: {behind}");
+        // never past the head's constraint from the chest
+        for body in [60f32, 90.0, 120.0] {
+            let h = run(body.to_radians());
+            assert!(h.abs() <= HEAD_ROTATION_CONSTRAINT + 0.02, "{body}°: {h}");
+        }
+        assert_eq!(natural_reach(Quat::IDENTITY), 1.0);
+        assert_eq!(natural_reach(Quat::from_rotation_z(std::f32::consts::PI)), 0.0);
+    }
+
+    /// "Look intensity": the share of the turn the head takes, the eyes
+    /// doing the rest; a glance leaves the head straight on the neck while
+    /// the eyes still turn to the target.
+    /// LiveMesh's bend turns the elbows and knees about the importer's test
+    /// bend axes, over the pose played or the rest pose, and nothing else.
+    #[test]
+    fn the_preview_bend_turns_only_the_elbows_and_knees() {
+        let rig = rig();
+        let played: Vec<Quat> = (0..rig.len()).map(|i| Quat::from_rotation_x(i as f32 * 0.01)).collect();
+        assert!(PreviewBend::default().apply(&rig, &played).is_none(), "nothing to bend");
+        let bend = PreviewBend {
+            elbows: 90.0,
+            knees: 40.0,
+            hold: false,
+        };
+        let bent = bend.apply(&rig, &played).expect("bent");
+        let joint = |name: &str| rig.names[name];
+        for (name, turn) in [
+            ("mElbowLeft", Quat::from_rotation_z(-90f32.to_radians())),
+            ("mElbowRight", Quat::from_rotation_z(90f32.to_radians())),
+            ("mKneeLeft", Quat::from_rotation_y(40f32.to_radians())),
+            ("mKneeRight", Quat::from_rotation_y(40f32.to_radians())),
+        ] {
+            assert!(bent[joint(name)].angle_between(played[joint(name)] * turn) < 1e-3, "{name}");
+        }
+        let untouched = ["mElbowLeft", "mElbowRight", "mKneeLeft", "mKneeRight"].map(joint);
+        for (index, (a, b)) in bent.iter().zip(&played).enumerate() {
+            if !untouched.contains(&index) {
+                assert_eq!(a, b, "joint {index} keeps the pose played");
+            }
+        }
+        // held: the rest pose, bent
+        let held = PreviewBend { hold: true, ..bend }.apply(&rig, &played).expect("held");
+        assert_eq!(held[joint("mTorso")], rig.local_rot[joint("mTorso")]);
+        let knee = joint("mKneeLeft");
+        assert!(held[knee].angle_between(rig.local_rot[knee] * Quat::from_rotation_y(40f32.to_radians())) < 1e-3);
+        // the sliders' range
+        let far = PreviewBend {
+            elbows: 400.0,
+            ..Default::default()
+        }
+        .apply(&rig, &played)
+        .expect("bent");
+        let elbow = joint("mElbowRight");
+        assert!(far[elbow].angle_between(played[elbow] * Quat::from_rotation_z(PreviewBend::MAX.to_radians())) < 1e-3);
+    }
+
+    #[test]
+    fn the_look_glance_leaves_the_turn_to_the_eyes() {
+        let rig = rig();
+        let rot = |pose: &[[[f32; 4]; 4]], name: &str| Mat4::from_cols_array_2d(&pose[rig.names[name]]).to_scale_rotation_translation().1;
+        let yaw = |q: Quat| {
+            let f = q * Vec3::X;
+            f.y.atan2(f.x)
+        };
+        let run = |glance: f32| {
+            let t0 = Instant::now();
+            let mut controller = synchronized_controller();
+            controller.look_over_animations = true;
+            controller.look_glance = glance;
+            // 50° to the left
+            controller.look = Some(Vec3::new(50f32.to_radians().cos(), 50f32.to_radians().sin(), 0.0) * 2.0);
+            let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+            for i in 0..=60 {
+                controller.evaluate(&rig, t0 + Duration::from_secs_f32(i as f32 * 0.05), None, &mut pose);
+            }
+            let chest = rot(&pose, "mChest");
+            (
+                yaw(chest.inverse() * rot(&pose, "mHead")),
+                yaw(rot(&pose, "mHead").inverse() * rot(&pose, "mEyeLeft")),
+            )
+        };
+        let (full, _) = run(0.0);
+        let (three_quarter, _) = run(0.5);
+        let (glance, eyes) = run(1.0);
+        assert!(full > 0.4, "full: the head turns {full}");
+        assert!(
+            three_quarter > 0.3 * full && three_quarter < 0.7 * full,
+            "half: about half the turn {three_quarter} of {full}"
+        );
+        assert!(glance.abs() < 0.02, "glance: the head stays {glance}");
+        assert!(eyes > 0.3, "glance: the eyes turn to the target {eyes}");
+    }
+
     #[test]
     fn name_tag_height_updates_with_shape_and_mesh_offsets_but_not_look_at() {
         let rig = rig();
@@ -3415,6 +3838,46 @@ mod tests {
             assert!(c.sync(&resent, at(1.7), |_| Some(anim.clone())).is_empty());
             assert!(c.sync(&resent, at(3.0), |_| Some(anim.clone())).is_empty());
             assert!(c.motions.is_empty(), "eased out, not replayed (synchronized {synchronized})");
+        }
+    }
+
+    /// A non-looping 0 s animation (a mesh head HUD's single-frame face
+    /// pose) applies for one frame, then stops, eases out and asks the
+    /// simulator to stop it, once, as LLKeyframeMotion::onUpdate returning
+    /// false makes the Legacy Viewer do (#3227).
+    #[test]
+    fn a_zero_length_one_shot_stops_after_its_first_frame() {
+        let rig = rig();
+        let id = Uuid::from_u128(22);
+        let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.0).anim.clone(), &rig);
+        bound.anim.looping = false;
+        bound.anim.duration = 0.0;
+        bound.anim.loop_in = 0.0;
+        bound.anim.loop_out = 0.0;
+        bound.anim.ease_in = 0.0;
+        bound.anim.ease_out = 0.5;
+        let anim = Arc::new(bound);
+        for synchronized in [false, true] {
+            let t0 = Instant::now();
+            let at = |s| t0 + Duration::from_secs_f64(s);
+            let mut c = if synchronized {
+                synchronized_controller()
+            } else {
+                Controller::default()
+            };
+            let playing = [signal(id, 1, t0)];
+            assert!(
+                c.sync(&playing, t0, |_| Some(anim.clone())).is_empty(),
+                "applied on its first frame"
+            );
+            assert!(c.motions[0].weight > 0.99);
+            assert_eq!(c.sync(&playing, at(0.02), |_| Some(anim.clone())), vec![id]);
+            assert_eq!(c.motions[0].stop, Some(at(0.02)));
+            // still listed by the simulator until it handles the stop: not replayed
+            assert!(c.sync(&playing, at(0.3), |_| Some(anim.clone())).is_empty());
+            assert!(c.motions[0].weight < 1.0, "easing out");
+            assert!(c.sync(&playing, at(1.0), |_| Some(anim.clone())).is_empty());
+            assert!(c.motions.is_empty(), "eased out (synchronized {synchronized})");
         }
     }
 

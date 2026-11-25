@@ -81,7 +81,7 @@ fn sightings(world: &World, region: u64, now: Instant) -> Vec<Sighting> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for (idx, o) in world.objects.avatars() {
-        if o.full_id.is_nil() || o.full_id == world.agent_id {
+        if o.full_id.is_nil() || o.full_id == world.agent_id || world.is_local_copy(&o.full_id) {
             continue;
         }
         let Some(marker) = marked(world, &o.full_id) else { continue };

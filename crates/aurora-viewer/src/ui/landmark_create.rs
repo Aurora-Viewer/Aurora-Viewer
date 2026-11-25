@@ -267,9 +267,9 @@ impl CreateLandmarkUi {
 
     /// The lit star: the landmark of this parcel in the window's edit form
     /// (LLPanelLandmarkInfo: title, folder, notes), with Delete.
-    pub fn open_edit(&mut self, inv: &Inventory, item: Uuid) {
+    pub fn open_edit(&mut self, ctx: &egui::Context, inv: &Inventory, item: Uuid) {
         let Some(it) = inv.items.get(&item) else { return };
-        self.open = true;
+        widgets::open_floater(ctx, WINDOW, &mut self.open);
         self.editing = true;
         self.waiting = false;
         self.new_folder = None;
@@ -281,16 +281,19 @@ impl CreateLandmarkUi {
 
     /// LLFloaterReg::showInstance("add_landmark", dest_folder): open the
     /// window and create the landmark (onOpen, setLandmarkInfo). Already open:
-    /// it is only brought back, without a second landmark.
-    pub fn open(&mut self, world: &World, dest: Option<Uuid>) -> Option<NetCommand> {
+    /// it is only brought back, expanded when minimized, without a second
+    /// landmark.
+    pub fn open(&mut self, ctx: &egui::Context, world: &World, dest: Option<Uuid>) -> Option<NetCommand> {
         if world.rlva.has("showloc") {
             return None;
         }
         if self.open {
+            widgets::open_floater(ctx, WINDOW, &mut self.open);
             return None;
         }
         let inv = &world.inventory;
-        self.open = true;
+        // closed while minimized by @showloc, it opens expanded
+        widgets::open_floater(ctx, WINDOW, &mut self.open);
         self.editing = false;
         self.item = None;
         self.waiting = false;
@@ -692,6 +695,23 @@ mod tests {
         );
         assert_eq!(ui.parcel_landmark(&inv, &mut landmarks, None, Some(origin)), None, "no parcel yet");
         assert!(ui.parcel_landmark(&inv, &mut landmarks, Some(&here), Some(origin)).is_some());
+    }
+
+    /// Closed while minimized by @showloc, the window opens again expanded
+    /// (LLFloater::openFloater, setMinimized(false)), not as a title bar.
+    #[test]
+    fn closed_minimized_by_showloc_it_opens_expanded() {
+        let ctx = egui::Context::default();
+        let world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut ui = CreateLandmarkUi::default();
+        ui.open(&ctx, &world, None);
+        assert!(ui.open);
+        widgets::minimize_floater(&ctx, WINDOW);
+        ui.apply_rlva_privacy(true);
+        assert!(!ui.open);
+        ui.open(&ctx, &world, None);
+        assert!(ui.open);
+        assert!(!widgets::floater_minimized(&ctx, WINDOW));
     }
 
     #[test]

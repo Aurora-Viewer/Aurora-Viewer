@@ -181,9 +181,15 @@ impl NameTagVisibility {
     }
 }
 
+/// LLVOAvatar::idleUpdateNameTag (indra/newview/llvoavatar.cpp) draws our own
+/// tag on `RenderNameShowSelf && AvatarNameTagMode`: Avatar Name Tags on Off
+/// hides every tag, ours included (#3855). Aurora's mode is Off when neither
+/// the friends' nor the other residents' tags show
+/// (`quick_prefs::NameTags::of`); the own tag's switch keeps its value and
+/// applies again once one of them is back on.
 fn name_tag_enabled(settings: &crate::settings::Settings, own: bool, friend: bool) -> bool {
     if own {
-        settings.show_own_name_tag
+        settings.show_own_name_tag && (settings.show_friend_name_tags || settings.show_other_name_tags)
     } else if friend {
         settings.show_friend_name_tags
     } else {
@@ -198,6 +204,35 @@ fn name_tag_enabled(settings: &crate::settings::Settings, own: bool, friend: boo
 /// it, so that the renderer draws it before the HUD attachments too.
 pub fn world_painter(ctx: &egui::Context) -> egui::Painter {
     ctx.layer_painter(egui::LayerId::background())
+}
+
+/// The floating text `object` shows for `raw` (llSetText), as
+/// LLHUDText::setString (indra/newview/llhudtext.cpp) sets it: nothing when
+/// RlvActions::canShowHoverText refuses it (@showhovertext*), else the
+/// places (RlvUtil::filterLocation) and the names (RlvUtil::filterNames,
+/// which ends with filterMentions) hidden when it came, kept until it
+/// changes or a restriction LLHUDText::refreshAllObjectText follows comes
+/// or goes (`HoverTexts`).
+pub fn hover_text(world: &World, object: uuid::Uuid, hud: bool, raw: &str) -> String {
+    if !world.rlva.enabled() {
+        return raw.to_owned();
+    }
+    if !world.rlva.hover_visible(object, hud) {
+        return String::new();
+    }
+    world.rlva.hover_texts.get(&world.rlva, object, raw, |raw| {
+        let names = world.rlva_hover_privacy.apply(raw);
+        world.rlva_freeze_mentions(&names).into_owned()
+    })
+}
+
+/// The first line of the floating text object `id` shows (`hover_text`),
+/// for a panel that names an object by it; None when it shows none.
+pub fn hover_text_title(world: &World, id: uuid::Uuid) -> Option<String> {
+    let index = world.objects.index_of_uuid(&id)?;
+    let o = world.objects.get(index)?;
+    let text = hover_text(world, o.full_id, world.hud_root(index).is_some(), &o.text);
+    Some(text.lines().next().unwrap_or("").to_owned()).filter(|line| !line.is_empty())
 }
 
 /// llSetText on our HUD attachments, without world-distance fading. Painted
@@ -235,7 +270,7 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
         }
         let c = o.text_color;
         let color = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
-        let text = world.rlva_hover_privacy.apply(&o.text).into_owned();
+        let text = hover_text(world, o.full_id, true, &o.text);
         super::floating_text::paint(&painter, text, point, 12.0 * scale, color, view.zoom, None);
     }
 }
@@ -488,7 +523,8 @@ pub fn draw(
     // only the avatars and the objects with a text: a shop has thousands of
     // objects for a few dozen of these
     for (idx, o) in world.objects.avatars().chain(world.objects.texted()) {
-        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) {
+        // the animation editor's mirror of us has no name tag
+        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) || world.is_local_copy(&o.full_id) {
             continue;
         }
         if !o.is_avatar() && !world.rlva.hover_visible(o.full_id, scene.gpu.get(idx).is_some_and(|g| g.hud)) {
@@ -509,21 +545,27 @@ pub fn draw(
             let Some((pos, _, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
+            // the animation editor's couple partner, moved on screen: the
+            // tag goes with the body (`World::couple_shift`)
+            let pos = world
+                .avatar_models
+                .get(&o.full_id)
+                .and_then(|model| world.couple_shift(o.full_id, *model))
+                .map_or(pos, |shift| shift.transform_point3(pos));
             let d = pos.distance(eye);
             // from us, not from the camera: the RLVa limits and the tags'
             // distance (LLVOAvatar::idleUpdateNameTagText: gAgent's position)
             let agent_distance = pos.distance(world.agent.position);
-            if !world.rlva.nametag_visible(o.full_id, world.agent_id, agent_distance) {
-                continue;
-            }
+            let rlva_tag = world.rlva.nametag_visible(o.full_id, world.agent_id, agent_distance);
             // a resident with a bubble shows it under their name whatever
-            // the name tags' settings, their distance and their timer
-            // (LLVOAvatar::idleUpdateNameTag: visible_chat)
+            // the name tags' settings, their distance, their timer and
+            // @shownametags (LLVOAvatar::idleUpdateNameTag, llvoavatar.cpp:
+            // render_name = visible_chat || visible_typing || (fRlvShowAvTag && ...))
             let chatting = bubbles.as_ref().is_some_and(|b| super::chat_bubbles::shows(world, b, o.full_id, d));
             // a hidden name's tag follows the other residents' switch: the
             // friends' one would tell which strangers are friends
             let names = avatar_tags == AvatarTags::Shown && name_tag_enabled(settings, own, world.rlva_shown_friend(&o.full_id));
-            if !chatting && (!names || d > settings.name_tag_distance) {
+            if !chatting && (!rlva_tag || !names || d > settings.name_tag_distance) {
                 continue;
             }
             let head = scene.name_tag_anchor(&o.full_id, pos);
@@ -627,7 +669,9 @@ pub fn draw(
             let (name, username, custom, legacy) = match names.get(&o.full_id) {
                 Some(n) => {
                     let (main, user) = n.tag_lines(&names.options);
-                    let custom = names.options.use_display_names && !n.is_default;
+                    // (by the name itself, not by the stand-in RLVa shows
+                    // for it: LLVOAvatar::getNameTagColor asks the cache)
+                    let custom = names.options.use_display_names && names.raw(&o.full_id).is_some_and(|n| !n.is_default);
                     (main, user, custom, n.user_name_for_display(&names.options))
                 }
                 None => {
@@ -751,7 +795,7 @@ pub fn draw(
                 distance: d,
                 at: anchor,
                 screen: sp,
-                text: world.rlva_hover_privacy.apply(&o.text).into_owned(),
+                text: hover_text(world, o.full_id, false, &o.text),
                 color: Color32::from_rgba_unmultiplied(c[0], c[1], c[2], alpha as u8),
                 background,
                 highlighted,
@@ -759,6 +803,11 @@ pub fn draw(
         }
     }
     visibility.finish();
+    // the filtered texts of the objects gone are forgotten
+    let cached = world.rlva.hover_texts.count();
+    if cached > 256 && cached > 2 * world.objects.texted().count() {
+        world.rlva.hover_texts.retain(|id| world.objects.index_of_uuid(id).is_some());
+    }
     // the floating texts under the name tags, far first; the highlighted
     // one last, over everything (LLHUDObject's hud_object_further_away)
     texts.sort_by(|a, b| b.distance.total_cmp(&a.distance));
@@ -1008,7 +1057,7 @@ mod tests {
     }
 
     #[test]
-    fn name_tag_categories_are_independent_and_self_takes_priority() {
+    fn name_tag_categories_follow_their_switches_and_off_hides_our_own() {
         for own in [false, true] {
             for friends in [false, true] {
                 for others in [false, true] {
@@ -1018,8 +1067,9 @@ mod tests {
                         show_other_name_tags: others,
                         ..Default::default()
                     };
-                    assert_eq!(name_tag_enabled(&settings, true, false), own);
-                    assert_eq!(name_tag_enabled(&settings, true, true), own);
+                    // ours: its switch, while the residents' tags are not all off
+                    assert_eq!(name_tag_enabled(&settings, true, false), own && (friends || others));
+                    assert_eq!(name_tag_enabled(&settings, true, true), own && (friends || others));
                     assert_eq!(name_tag_enabled(&settings, false, true), friends);
                     assert_eq!(name_tag_enabled(&settings, false, false), others);
                 }
@@ -1529,3 +1579,7 @@ mod tests {
         assert_eq!(floating_text_background(&s, false, 1.0, white), Some(Color32::from_black_alpha(0)));
     }
 }
+
+#[cfg(test)]
+#[path = "hud/privacy_tests.rs"]
+mod privacy_tests;

@@ -338,7 +338,7 @@ mod tests {
         });
         let dir = std::env::temp_dir().join(format!("aurora-defs-{}", Uuid::new_v4()));
         let id = Uuid::from_u128(0xdef);
-        let http = reqwest::Client::new();
+        let http = crate::test_http_client();
         let defs = load_definitions(&http, &url, &dir, id).await.expect("definitions");
         server.await.expect("server");
         assert!(keywords(defs.lsl.as_ref().expect("LSL")).is_some_and(|k| k.iter().any(|k| k.name == "llSay")));
@@ -358,7 +358,7 @@ mod tests {
         let id = Uuid::from_u128(0xdee);
         std::fs::create_dir_all(&dir).expect("test folder");
         std::fs::write(cache_file(&dir, id), aurora_llsd::to_xml(&doc())).expect("cached LSL");
-        let http = reqwest::Client::new();
+        let http = crate::test_http_client();
         let defs = load_definitions(&http, "http://127.0.0.1:9/none", &dir, id)
             .await
             .expect("cached LSL");

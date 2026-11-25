@@ -531,6 +531,44 @@ fn linear_color(color: [f32; 4]) -> [f32; 4] {
     // The egui preview target stores gamma RGB. PBR factors use linear RGB.
     egui::Rgba::from(color32(color)).to_rgba_unmultiplied()
 }
+fn image_size_limit(ui: &mut egui::Ui, entry: &mut Entry, prefs: &Preferences) {
+    let old = entry.image_size_limit;
+    ui.horizontal_wrapped(|ui| {
+        ui.label(if matches!(entry.source, Some(Source::Texture(_))) {
+            aurora_i18n::tr!("import-image-size-single")
+        } else {
+            aurora_i18n::tr!("import-image-size-limit")
+        });
+        let label = |limit| match limit {
+            ImageSizeLimit::Default => aurora_i18n::tr!("import-image-size-inherit", size = limit.maximum(prefs.limit_texture_size)),
+            limit => aurora_i18n::tr!("import-image-size-pixels", size = limit.maximum(prefs.limit_texture_size)),
+        };
+        let response = egui::ComboBox::from_id_salt(("import_image_size_limit", entry.id))
+            .width(210.0)
+            .selected_text(label(entry.image_size_limit))
+            .show_ui(ui, |ui| {
+                for limit in [ImageSizeLimit::Default, ImageSizeLimit::Size1024, ImageSizeLimit::Size2048] {
+                    let response = selection(ui, &mut entry.image_size_limit, limit, label(limit));
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::unique(("import_image_size_choice", entry.id, limit)), response.rect);
+                    });
+                    let _ = response;
+                }
+            })
+            .response
+            .on_hover_text(aurora_i18n::tr!("import-image-size-inherit-help"));
+        #[cfg(test)]
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(egui::Id::unique(("import_image_size_limit", entry.id)), response.rect);
+        });
+        let _ = response;
+    });
+    if old != entry.image_size_limit {
+        entry.sync_image_size(prefs.limit_texture_size);
+    }
+}
+
 fn texture(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -538,7 +576,6 @@ fn texture(
     image: &DecodedImage,
     empty_alpha: bool,
     options: &mut import_texture::Options,
-    prefs: &mut Preferences,
     preview: &Option<egui::TextureHandle>,
     actions: &mut Vec<Action>,
     generation: &mut u64,
@@ -568,15 +605,6 @@ fn texture(
                 selection(ui, target, index, label);
             }
         });
-    if texture_needs_size_limit(image) {
-        let mut limit_size = options.max_width.max(options.max_height) <= 1024;
-        if widgets::switch_labeled(ui, p, &mut limit_size, aurora_i18n::tr!("import-max-size")).changed() {
-            let maximum = if limit_size { 1024 } else { 2048 };
-            options.max_width = maximum;
-            options.max_height = maximum;
-            prefs.limit_texture_size = limit_size;
-        }
-    }
     let (width, height) = import_texture::dimensions(image.width, image.height, *options);
     ui.label(aurora_i18n::tr!("import-texture-size", width = width, height = height));
     if width * height <= 128 * 128 {
@@ -949,7 +977,14 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
                 ui.label(label);
                 ui.add(
                     egui::DragValue::new(value)
-                        .range(0.0..=animation.duration)
+                        .range(
+                            0.0..=if animation.looping {
+                                super::animation::MAX_LOOP_FADE_INPUT
+                            } else {
+                                animation.duration
+                            },
+                        )
+                        .clamp_existing_to_range(!animation.looping)
                         .suffix(" s")
                         .speed(0.01)
                         .fixed_decimals(3),

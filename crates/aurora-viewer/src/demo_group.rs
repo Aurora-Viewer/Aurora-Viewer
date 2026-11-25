@@ -65,6 +65,11 @@ pub fn profile_classic() -> bool {
     std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').skip(1).any(|p| p == "classic"))
 }
 
+/// A wide profile for comparing the notice's two-column layout.
+pub fn profile_wide() -> bool {
+    std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').skip(1).any(|p| p == "wide"))
+}
+
 pub fn identity_section() -> bool {
     std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').nth(1) == Some("identity"))
 }
@@ -174,6 +179,7 @@ pub fn simulator_features() -> Option<NetEvent> {
         currency_symbol: String::new(),
         export_supported: false,
         group_chat_post_links: !v.split(':').any(|part| part == "no-links"),
+        game_control: false,
     })
 }
 
@@ -184,8 +190,12 @@ pub fn my_powers() -> u64 {
         Scenario::Officer => DEFAULT_OFFICER,
         // AURORA_DEMO_CONV_MODERATE: every ability, to moderate its chat
         _ if crate::ui::chat::moderation::demo_mode().is_some() => u64::MAX,
-        // AURORA_DEMO_SOCIAL_MENU: someone to invite into it
-        _ if super::social_menu::step().is_some() => DEFAULT_OFFICER,
+        // AURORA_DEMO_SOCIAL_MENU / AURORA_DEMO_PROFILE: someone to invite into it
+        _ if super::social_menu::step().is_some()
+            || (std::env::var_os("AURORA_DEMO_GROUP_PROFILE").is_none() && std::env::var_os("AURORA_DEMO_PROFILE").is_some()) =>
+        {
+            DEFAULT_OFFICER
+        }
         _ => DEFAULT_MEMBER,
     }
 }

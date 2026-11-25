@@ -2,6 +2,9 @@
 //! Unlike agent_jump (llviewerinput.cpp), one surface ascent press immediately
 //! requests a shore jump; a second press requests flight. These are extensions
 //! requested by the maintainer; the Legacy AO only supplies swim animations.
+//! Underwater, ascent rises only while held, like descent (the swim motor's
+//! depth follows the captured keys); a press only resumes a surface return
+//! already under way.
 use super::{Frame, State};
 use crate::agent::MoveInput;
 use std::time::{Duration, Instant};
@@ -60,7 +63,7 @@ impl Controls {
         }
         if up_edge {
             // A held underwater press cannot become a second action on arrival.
-            if state == State::Submerged || (surfacing && state.swimming()) {
+            if surfacing && state.swimming() {
                 self.surface_press = None;
                 return Some(Action::Surface);
             }

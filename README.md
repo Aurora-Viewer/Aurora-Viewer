@@ -21,7 +21,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 <sub>This software is not provided or supported by Linden Lab, the makers of Second Life.</sub>
 
-[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
+[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing) · [Code signing policy](https://aurora-viewer.org/code-signing/)
 
 </div>
 
@@ -111,36 +111,38 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.10 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.13 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>The Director</h3>
-      Film in the world: keep camera views as keyframes on a timeline,
-      play them back as one smooth shot with the world alone, and record
-      it to a video file with your own ffmpeg.
+      <h3>Ray tracing: Deluxe (RT)</h3>
+      On cards with ray tracing, the Deluxe (RT) level traces the shadows
+      of the sun, the moon and the lamps, exact where things touch, with
+      coloured glass tinting the light, and lets the light bounce into
+      rooms. A ray tracing quality fits it to smaller cards.
     </td>
     <td width="50%" valign="top">
-      <h3>Transparency in its true order</h3>
-      Glass, curtains and the layers of mesh hair show in the right order
-      at every pixel, even when they cross. Choose it in Preferences ›
-      Graphics, "Order of transparent surfaces"; the Stochastic choice
-      is thanks to Anne Skydancer.
+      <h3>Windows outside the viewer</h3>
+      Send Conversations, the inventory or any other window to a screen
+      of its own and bring it back; drag and drop still works between
+      them. Voice chat can play on its own output device.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Weather and water</h3>
-      Aurora Weather reaches farther, with puddles and lying snow up to
-      256 m away and much steadier snow. Water and ambient occlusion cost
-      less for the same image.
+      <h3>A new LiveMesh and photo filters</h3>
+      LiveMesh is rebuilt with live thumbnails, Quick look, a weight bend
+      test and an Undo button. Photo filters become cards you drag, with
+      a catalogue that previews each effect, and Phototools gets its
+      Light and DoF &amp; glow tabs.
     </td>
     <td valign="top">
-      <h3>More like the Legacy Viewer</h3>
-      The Conversation log, draw distance up to 1024 m, the Animation
-      Speed menu, beacons, radar marks, Doppler on moving sounds, and
-      objects saved as Collada or OBJ.
+      <h3>Faster textures, a rounder world</h3>
+      aurora-j2k, a JPEG 2000 decoder written in Rust, decodes textures
+      faster. Soft sun shadows and planet curvature are new options, a
+      Mini AO window stays open, and updates install only when signed by
+      the Release workflow.
     </td>
   </tr>
 </table>
@@ -219,8 +221,10 @@ are planned or in progress: they are not in the viewer yet.
   fences and hair stay solid in the distance, and textures load as finely as
   you expect close to the camera.
 - **Graphics levels matched to your machine**, chosen at first launch: GTAO
-  from Medium up, contact shadows from High, screen-space indirect light
-  (experimental) in Deluxe with a 192 m draw distance; per-section resets
+  from Medium up, contact shadows from High, and Deluxe (RT): High with the
+  sun's and the lamps' shadows and the indirect light ray-traced, on the
+  cards with ray queries, at a ray tracing quality of your choice (Low,
+  Medium, High) that keeps every traced effect on; per-section resets
   when you want to start over. Save your own settings as named graphics
   profiles and switch between them from Preferences or the FPS counter.
 - **HDR, or the older look**: the Legacy Viewer's HDR and Emissive switch,
@@ -357,7 +361,7 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Creator tools
 
-- **LiveMesh**: see your Blender mesh in the viewer while you edit it, with
+- **LiveMesh**: see your Blender or Maya mesh in the viewer while you edit it, with
   nothing uploaded. Rigged meshes follow your own avatar, with their weights,
   shape keys and materials; static meshes and linksets become local objects
   you can place on the ground, move, rotate, resize, attach to your body or
@@ -373,8 +377,8 @@ are planned or in progress: they are not in the viewer yet.
   whole-pose actions. Save poses to a library, export them as BVH or import
   them as an animation, with Ctrl+Z / Ctrl+Y as you go. The pose is seen by
   you only ([details](docs/POSER.md)).
-- **An IK workbench**: reusable pose projects that keep chosen bones on their
-  targets, with contacts that compatible viewers apply to nearby avatars
+- **An IK workbench**: pose your own skeleton bone by bone, with IK chains,
+  limb holds and animation layers, as a base for the animation creator
   ([details](docs/IK_EDIT.md)).
 - **Build tools that stay out of the way**: a compact editor you can arrange
   yourself, larger material previews for Blinn-Phong and PBR, a live preview
@@ -414,7 +418,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
   or borders, at once and without a restart, and gives the window back
   exactly as it was (Preferences › Graphics).
-- **In English, French and Japanese (日本語)**: the whole interface follows
+- **In fifteen languages** (English, French, Japanese, German, Spanish,
+  Italian, Brazilian and European Portuguese, Polish, Russian, Ukrainian,
+  Turkish, Norwegian Bokmål, Simplified and Traditional Chinese): the interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
   interface fonts and Japanese dates ([details](#language)).
@@ -542,7 +548,7 @@ are planned or in progress: they are not in the viewer yet.
   credits.
 - **Made for every eye**: an Accessibility page gathers the settings that
   help (interface scale, text size up to twice the normal size, reduce
-  motion, sounds…), with a button on the login screen. A high-contrast palette, the OpenDyslexic font, and
+  motion, sounds…), with a button on the login screen. A high-contrast palette, a setting that turns off the glass, the OpenDyslexic font, and
   volume sliders that follow your ear are a click away, and the chat can
   have a text size of its own.
 - **Your colours**: pick the accent, window background and text colours in
@@ -556,7 +562,7 @@ are planned or in progress: they are not in the viewer yet.
   downloads it in the background, checks it against its published hash,
   installs it and restarts your session, and rolls back if anything goes
   wrong. Before you agree, it tells you whether your cache and settings are
-  kept. On Linux and macOS it shows the new release instead
+  kept. On macOS it shows the new release instead
   ([details](docs/UPDATES.md)).
 
 ### Only in Aurora
@@ -574,10 +580,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Portals to walk through**: open a portal to a place, drop a landmark
   into the world, or drag a place there from Favorites, Places, the teleport
   history or search results, and walk, run or fly through it to teleport.
-  A portal opens where you may build, like rezzing an object. Other Aurora
-  users see it too: your friends by default, everyone if you choose, and a
-  portal that appears on someone never pulls them in. The portal back home
-  is yours alone on land where you may not build.
+  A portal opens where you may build, like rezzing an object, and only you
+  see it; a portal that opens on you never pulls you in. The way back opens
+  behind you when you arrive.
 - **Just your parcel, if you like**: hide what stands outside the current
   parcel, everywhere or only on the parcels you list, with exceptions that
   stay visible and options for neighbouring parcels of the same owner or
@@ -649,8 +654,12 @@ frame on your own PC.
   PBR and legacy materials, shadows, GTAO ambient occlusion with specular
   occlusion, sun contact shadows, specular anti-aliasing, reflection probes,
   water, glow, particles, rainbows, 22° halos and depth of field;
-  screen-space indirect light, GPU occlusion and enhanced water effects (all
-  experimental), graphics presets and per-section resets; headset viewing
+  ray-traced sun and local light shadows and indirect light (the Deluxe
+  (RT) graphics level, on the cards with ray queries; the shadow maps
+  elsewhere); screen-space indirect light,
+  GPU occlusion, enhanced water effects and ray-traced indirect light and
+  reflections (all experimental),
+  graphics presets and per-section resets; headset viewing
   through OpenXR (experimental, view only).
 - **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;
@@ -669,7 +678,7 @@ frame on your own PC.
   to the body/HUD.
 - **Posing** — a [poser](docs/POSER.md) for yourself, your animesh and
   consenting nearby avatars, with a pose library, BVH export and animation
-  import; an [IK workbench](docs/IK_EDIT.md) with shared contact profiles.
+  import; an [IK workbench](docs/IK_EDIT.md) for local skeleton posing.
 - **World** — prims, sculpts, mesh with LOD, classic and PBR terrain, EEP environment,
   sky, water and day-cycle editors, experience environments, world sounds
   with occlusion, headphone HRTF and room reverb (experimental), parcel
@@ -677,8 +686,8 @@ frame on your own PC.
   on prims, with Aurora's media plugins pack, downloaded once you agree; an area search
   for the objects rezzed around you, with filters and sortable results;
   a Sound Explorer with local previews, source camera and sound blocking;
-  walk-through portals shared with other Aurora users, with friend/group
-  access and protection against portals appearing on top of someone;
+  walk-through portals of your own, with a way back and protection against
+  a portal opening on top of you;
   parcel content isolation, a grid status window, and a live particle
   editor; OpenSim grids and the Hypergrid, with a grid manager, avatars
   baked by the viewer where the grid does not bake, large regions, and
@@ -724,17 +733,17 @@ frame on your own PC.
   tools, folder colours, outfit backups to JSON, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
-- **Interface** — in English, French and Japanese; flat Aurora theme, Inter font, Tabler icons, glass island bars,
+- **Interface** — in fifteen languages, flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; an immersive mode that keeps only the chat; Aurora team and
   Linden Lab marks; double-click walk / run / teleport and content-rating controls
   for places and teleport offers; an Accessibility page, a high-contrast
-  palette, custom interface colours, text up to twice the size and the
+  palette, a setting that turns off the glass, custom interface colours, text up to twice the size and the
   OpenDyslexic font.
-- **Windows updates** — release checks, cancellable verified downloads,
-  installation and restart with rollback. The prompt explains whether cache
-  and settings will be preserved, migrated or reset.
+- **Updates in place** (Windows and Linux) — release checks, cancellable
+  verified downloads, installation and restart with rollback. The prompt
+  explains whether cache and settings will be preserved, migrated or reset.
 
 Voice calls, photo uploads, environment saving and several group / region
 operations are implemented and tested in the offline demo, but still need
@@ -748,8 +757,6 @@ completed work from features awaiting that validation.
 
 - Depth exports and 360° snapshots.
 - Automatic updates on macOS (the viewer points to the new release).
-- Automatic installation of updates on Linux (the viewer points to the
-  new release instead).
 
 Voice is WebRTC only; Vivox is not supported.
 
@@ -788,18 +795,25 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
-The interface is available in English, French and Japanese (日本語): system
-language detection, a choice saved in Preferences and applied at once. The
+The viewer ships English, French, Japanese (日本語), Simplified Chinese
+(简体中文), Traditional Chinese (繁體中文), Russian (Русский), German (Deutsch),
+Brazilian Portuguese (Português (Brasil)), Spanish (Español), Italian
+(Italiano), Polish (Polski), Turkish (Türkçe), European Portuguese (Português
+(Portugal)), Norwegian Bokmål (Norsk bokmål) and Ukrainian (Українська). It
+detects the system language
+by default. A choice saved in Preferences applies at once. The
 Japanese translation covers every message, with the official Second Life
 Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic
-UI or MS UI Gothic) and writes dates the Japanese way. Fluent catalogues make
-it possible to add a language; see [the translation guide](docs/TRANSLATING.md).
+UI or MS UI Gothic) and writes dates the Japanese way. The other languages
+use the Second Life terms of the Legacy Viewer's interface in that language,
+and Chinese draws with the system's Chinese fonts (Microsoft YaHei or
+Microsoft JhengHei on Windows). Fluent catalogues make it possible to add a
+language; see [the translation guide](docs/TRANSLATING.md).
 
-The viewer first follows the language saved in **Preferences › Interface ›
-Language**, then the system's if "System language" is selected. English is
-the fallback. The change applies at once; the "Language visible to scripts"
-setting is on by default, like the Legacy Viewer. The translations are in
-`crates/aurora-i18n/locales/`.
+Find the language picker and the custom Fluent file option in
+**Preferences › Language and updates**. Untranslated messages appear in
+English. The "Language visible to scripts" setting is on by default, like
+the Legacy Viewer. The translations are in `crates/aurora-i18n/locales/`.
 
 ### Frame limiter
 
@@ -1093,7 +1107,9 @@ git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
 The tools check the environment and offer to **repair** it: they install
 whatever is missing (GitHub CLI, the Visual Studio C++ tools, Rust), clone
 the Legacy Viewer sources next to the repository, and download the Rust
-toolchain and the crates. Then, driven by the keyboard: release /
+toolchain and the crates. On Linux, `aurora-tools.sh` is the same tool (see
+[Installing on Linux](docs/LINUX.md#development-environment)). Then, driven by
+the keyboard: release /
 dev / debug viewers, demo, agents' tasks, disk, logs, live pull requests with
 Windows notifications, releases (see
 [HUMANS.md](HUMANS.md)).
@@ -1258,10 +1274,7 @@ its own task in its own git worktree:
 - [docs/BRANDING.md](docs/BRANDING.md) — palette, logos, icons and UI rules
 - [docs/TESTING.md](docs/TESTING.md) — test switches (demo scenarios,
   captures, diagnostics) and profiling
-- [docs/HAND_CONTACTS.md](docs/HAND_CONTACTS.md) — local motorcycle wrist
-  contact prototype and the creator's LSL script
-- [docs/IK_EDIT.md](docs/IK_EDIT.md) — frozen-pose skeleton editor, target-prim
-  offsets and general bone-contact authoring for LSL
+- [docs/IK_EDIT.md](docs/IK_EDIT.md) — frozen-pose skeleton editor
 
 Pull requests follow the [pull request template](.github/pull_request_template.md):
 a check lists what a description is missing, and maintainers review a PR

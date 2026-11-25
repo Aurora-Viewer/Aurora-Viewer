@@ -17,8 +17,20 @@
 //! conversation shown instead (LLMultiFloater::closeDockedFloater); Close
 //! All still closes that window. The mini-map hides its title bar but is a
 //! window like the others (`LLFloaterMap`, `floater_map.xml`), so Close
-//! Window takes it. A script prompt kept in the notification list is not in
-//! the frontmost list ([`shown_extra`]): only Close All takes it.
+//! Window takes it. A window without a close cross (the small camera,
+//! `Floater::without_close`) is passed over for the one behind, as
+//! getFrontmostClosableFloater skips a floater that is not closeable;
+//! Close All still closes it ([`shown_extra`]). Script prompts are windows of their own while they show
+//! as toasts: Close Window takes the newest before the windows behind it
+//! ([`shown_prompt`]); kept in the notification list, Close All still closes
+//! them ([`shown_extra`]).
+//!
+//! A window in its window outside the viewer's (outside.rs) is the front
+//! one when the keyboard is in it: the keys pressed there are its own
+//! ([`pressed_outside`]) and close it, or every window, at the next frame
+//! of the interface. Pressed in the viewer's window, Ctrl+W stays the
+//! front window's inside. Not in the Legacy Viewer, whose floaters stay
+//! inside its window.
 
 use crate::keybinds::{Input, Mods};
 use egui::{Id, Order};
@@ -50,8 +62,14 @@ struct State {
     shown: Vec<(Id, u64)>,
     /// Surfaces outside the frontmost list, such as a script prompt. Close All only.
     extra: Vec<(Id, u64)>,
+    /// Script prompts shown as windows, with their order (the notification
+    /// id): Close Window takes the newest, over the windows behind it.
+    prompts: Vec<(Id, u64, u64)>,
     target: Option<(Id, u64)>,
     all: bool,
+    /// Pressed in a window outside the viewer's, for the next frame: that
+    /// window to close, or every window (`None`), with the frame.
+    outside: Option<(Option<Id>, u64)>,
 }
 
 fn state_id() -> Id {
@@ -70,8 +88,20 @@ pub fn shown_extra(ctx: &egui::Context, id: Id) {
     note(ctx, id, true);
 }
 
+/// A script prompt shown as a window this frame: Ctrl+W closes the newest
+/// visible one, over the windows behind it, and Ctrl+Shift+W all of them.
+/// `order` tells the newest (the notification id).
+pub fn shown_prompt(ctx: &egui::Context, id: Id, order: u64) {
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    ctx.data_mut(|d| {
+        let state = d.get_temp_mut_or_default::<State>(state_id());
+        state.prompts.retain(|(other, at, _)| *other != id && at + 1 >= frame);
+        state.prompts.push((id, frame, order));
+    });
+}
+
 fn note(ctx: &egui::Context, id: Id, extra: bool) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
         let list = if extra { &mut state.extra } else { &mut state.shown };
@@ -84,37 +114,53 @@ fn listed(list: &[(Id, u64)], id: Id, frame: u64) -> bool {
     list.iter().any(|(other, at)| *other == id && at + 1 >= frame)
 }
 
+fn listed_prompt(list: &[(Id, u64, u64)], id: Id, frame: u64) -> bool {
+    list.iter().any(|(other, at, _)| *other == id && at + 1 >= frame)
+}
+
 /// At the start of the interface's frame: Ctrl+Shift+W closes every window
 /// drawn on the last frame, and Ctrl+W alone goes to the frontmost. The key
 /// is taken. Nothing with a dialog open (the menu entry is disabled while
 /// an alert shows), nor without a window: a field keeps the key then.
 pub fn begin(ctx: &egui::Context) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let mut state = ctx.data(|d| d.get_temp::<State>(state_id())).unwrap_or_default();
     state.shown.retain(|(_, at)| at + 1 >= frame);
     state.extra.retain(|(_, at)| at + 1 >= frame);
+    state.prompts.retain(|(_, at, _)| at + 1 >= frame);
     state.target = None;
     state.all = false;
+    let outside = state.outside.take().filter(|(_, at)| at + 1 >= frame);
     // held down, it closes once, not on each repeat
     if ctx.memory(|m| m.top_modal_layer()).is_none() {
         let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
-        if pressed_alone(ctx, egui::Key::W, shift) && (!state.shown.is_empty() || !state.extra.is_empty()) {
+        let any = !state.shown.is_empty() || !state.extra.is_empty() || !state.prompts.is_empty();
+        if let Some((asked, _)) = outside {
+            match asked {
+                Some(id) => state.target = Some((id, frame)),
+                None => state.all = any,
+            }
+        } else if pressed_alone(ctx, egui::Key::W, shift) && any {
             ctx.input_mut(|i| i.consume_key(shift, egui::Key::W));
             state.all = true;
         } else if pressed_alone(ctx, egui::Key::W, egui::Modifiers::COMMAND) {
+            // a script prompt shows over the windows: the newest one first
+            let prompt = state.prompts.iter().max_by_key(|(_, _, order)| *order).map(|(id, _, _)| *id);
             // back to front
-            let front = ctx.memory(|m| {
-                m.layer_ids()
-                    // a window's own layer: Middle, or Foreground over the
-                    // photo viewfinder (the poser)
-                    .filter_map(|layer| {
-                        state
-                            .shown
-                            .iter()
-                            .find(|(id, _)| layer.id == *id && layer.order != Order::Background)
-                    })
-                    .map(|(id, _)| *id)
-                    .last()
+            let front = prompt.or_else(|| {
+                ctx.memory(|m| {
+                    m.layer_ids()
+                        // a window's own layer: Middle, or Foreground over the
+                        // photo viewfinder (the poser)
+                        .filter_map(|layer| {
+                            state
+                                .shown
+                                .iter()
+                                .find(|(id, _)| layer.id == *id && layer.order != Order::Background)
+                        })
+                        .map(|(id, _)| *id)
+                        .last()
+                })
             });
             if let Some(id) = front {
                 ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::W));
@@ -123,6 +169,27 @@ pub fn begin(ctx: &egui::Context) {
         }
     }
     ctx.data_mut(|d| d.insert_temp(state_id(), state));
+}
+
+/// In the pass of the window `id` outside the viewer's, before its fields
+/// read their keys: Ctrl+W pressed there closes that window, the one with
+/// the keyboard, and Ctrl+Shift+W every window, at the next frame of the
+/// interface ([`begin`]), where what answers the key first still does
+/// (Conversations closes its conversation shown). The key is taken: a field
+/// there does not erase a word with it.
+pub fn pressed_outside(ctx: &egui::Context, id: Id) {
+    let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+    let asked = if pressed_alone(ctx, egui::Key::W, shift) {
+        ctx.input_mut(|i| i.consume_key(shift, egui::Key::W));
+        None
+    } else if pressed_alone(ctx, egui::Key::W, egui::Modifiers::COMMAND) {
+        ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::W));
+        Some(id)
+    } else {
+        return;
+    };
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<State>(state_id()).outside = Some((asked, frame)));
 }
 
 /// Ctrl+Shift+W is closing every window this frame. Conversations uses it
@@ -144,11 +211,11 @@ fn pressed_alone(ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers
 /// Ctrl+W asks the window `id` to close on this frame, once. Ctrl+Shift+W
 /// asks every window drawn on the last frame; each of them hears it.
 pub fn take(ctx: &egui::Context, id: Id) -> bool {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
         if state.all {
-            return listed(&state.shown, id, frame) || listed(&state.extra, id, frame);
+            return listed(&state.shown, id, frame) || listed(&state.extra, id, frame) || listed_prompt(&state.prompts, id, frame);
         }
         let mine = state.target == Some((id, frame));
         if mine {
@@ -352,6 +419,63 @@ mod tests {
         }
     }
 
+    /// A script prompt as a toast paints over the windows: Close Window
+    /// takes the newest prompt, not the window behind it; Close All takes
+    /// the window and every prompt.
+    #[test]
+    fn ctrl_w_closes_the_newest_script_prompt_over_a_window() {
+        let mut frames = Frames::new();
+        let window = Id::unique("window");
+        let older = Id::NULL.with(("script_prompt", 1_u64));
+        let newer = Id::NULL.with(("script_prompt", 2_u64));
+        let mut closed: Vec<&'static str> = Vec::new();
+        let frame = |frames: &mut Frames, events: Vec<egui::Event>, closed: &mut Vec<&'static str>| {
+            frames.run(events, |ui| {
+                let ctx = ui.ctx().clone();
+                begin(&ctx);
+                egui::Window::new("window")
+                    .id(window)
+                    .fixed_pos(egui::pos2(0.0, 0.0))
+                    .show(&ctx, |_| {});
+                shown(&ctx, window);
+                shown_prompt(&ctx, older, 1);
+                shown_prompt(&ctx, newer, 2);
+                if take(&ctx, window) {
+                    closed.push("window");
+                }
+                if take(&ctx, older) {
+                    closed.push("older");
+                }
+                if take(&ctx, newer) {
+                    closed.push("newer");
+                }
+            });
+        };
+        frame(&mut frames, Vec::new(), &mut closed);
+        frame(&mut frames, vec![key(egui::Key::W, egui::Modifiers::COMMAND)], &mut closed);
+        assert_eq!(closed, vec!["newer"]);
+        // release W, or the next press is a repeat and does not close again
+        frame(
+            &mut frames,
+            vec![egui::Event::Key {
+                key: egui::Key::W,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            &mut closed,
+        );
+        closed.clear();
+        frame(
+            &mut frames,
+            vec![key(egui::Key::W, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)],
+            &mut closed,
+        );
+        closed.sort_unstable();
+        assert_eq!(closed, vec!["newer", "older", "window"]);
+    }
+
     #[test]
     fn other_keys_close_nothing() {
         for (event, w) in [
@@ -416,6 +540,44 @@ mod tests {
                 assert_eq!(key_left, !visible, "a hidden map must leave the key for the focused widget");
             }
         }
+    }
+
+    #[test]
+    fn ctrl_shift_w_closes_a_window_ctrl_w_does_not_pick() {
+        let mut frames = Frames::new();
+        let map = Id::unique("map");
+        let mut closed = false;
+        let frame = |frames: &mut Frames, events: Vec<egui::Event>, closed: &mut bool| {
+            frames.run(events, |ui| {
+                let ctx = ui.ctx().clone();
+                begin(&ctx);
+                if take(&ctx, map) {
+                    *closed = true;
+                }
+                shown_extra(&ctx, map);
+            });
+        };
+        frame(&mut frames, Vec::new(), &mut closed);
+        frame(&mut frames, vec![key(egui::Key::W, egui::Modifiers::COMMAND)], &mut closed);
+        assert!(!closed, "Ctrl+W leaves a surface outside the frontmost list");
+        // release W, or the next press is a repeat and does not close again
+        frame(
+            &mut frames,
+            vec![egui::Event::Key {
+                key: egui::Key::W,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            &mut closed,
+        );
+        frame(
+            &mut frames,
+            vec![key(egui::Key::W, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)],
+            &mut closed,
+        );
+        assert!(closed);
     }
 
     #[test]

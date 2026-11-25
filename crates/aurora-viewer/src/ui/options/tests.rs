@@ -3,6 +3,123 @@ use crate::keybinds::{Action, Input};
 use crate::ui::widgets::elide_tests::Frames;
 use winit::keyboard::KeyCode;
 
+/// A search that reaches the System fonts row must not wait for the list:
+/// the frame draws the row as waiting, and the list comes later on its own.
+#[test]
+fn a_search_reaching_the_system_fonts_row_does_not_wait_for_the_list() {
+    let mut frames = Frames::new();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&frames.ctx, 1.0);
+    let p = theme.palette();
+    let icons = Icons::load(&frames.ctx, None);
+    let mut settings = Settings::default();
+    let mut st = OptionsUi {
+        query: aurora_i18n::tr!("ui-options-system-fonts").to_owned(),
+        ..Default::default()
+    };
+    let waiting = aurora_i18n::tr!("ui-options-system-fonts-searching");
+    let mut frame = |st: &mut OptionsUi| {
+        let mut open = true;
+        let texts = frames.run(Vec::new(), |ui| {
+            show(ui.ctx(), &p, &icons, &mut settings, st, &mut open);
+        });
+        texts.iter().any(|t| t.source == waiting)
+    };
+
+    crate::ui::fonts::FONT_LIST_HELD.set(true);
+    let shown = frame(&mut st);
+    crate::ui::fonts::FONT_LIST_HELD.set(false);
+    assert!(st.system_fonts.is_none(), "the frame took the list itself");
+    assert!(shown, "the row does not say it is waiting");
+
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while st.system_fonts.is_none() {
+        assert!(std::time::Instant::now() < until, "the list never came");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        frame(&mut st);
+    }
+    assert!(!frame(&mut st), "the row still waits once the list is there");
+}
+
+#[test]
+fn a_shared_preference_link_finds_the_row_without_changing_its_value() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = Settings::default();
+    let original = settings.chat_timestamps_nearby;
+    let defaults = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut result = OptionsResult::default();
+
+    st.open_setting("chat_timestamps_nearby".to_owned());
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+    });
+    assert!(matches!(st.go_to, Some((Page::Chat, 0, Some(_)))));
+    assert!(st.pending_setting.is_none());
+    assert_eq!(settings.chat_timestamps_nearby, original);
+    assert!(!result.changed);
+
+    // A setting inside a collapsed cog also opens its parent.
+    st.open_setting("name_tag_show_seconds".to_owned());
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+    });
+    assert!(matches!(st.go_to, Some((Page::Avatars, 0, Some(_)))));
+    assert!(st.open_parent.is_some());
+}
+
+#[test]
+fn a_dotted_preference_link_finds_its_graphics_tab_and_translated_label() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = Settings::default();
+    let defaults = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut result = OptionsResult::default();
+    st.open_setting("parcel_visibility.mode".into());
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+    });
+    assert!(matches!(st.go_to, Some((Page::Graphics, 6, Some(RowFlash::Link(_))))));
+    assert_eq!(
+        setting_link_label("parcel_visibility.mode"),
+        format!(
+            "{} › {}",
+            aurora_i18n::tr!("common-preferences"),
+            aurora_i18n::tr!("parcel-visibility-mode")
+        )
+    );
+    assert!(!result.setting_unavailable);
+}
+
+#[test]
+fn unavailable_preference_links_preserve_the_current_search_and_show_a_notice_once() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = Settings::default();
+    let defaults = Settings::default();
+    let mut st = OptionsUi {
+        page: Page::Sound,
+        query: "volume".into(),
+        ..Default::default()
+    };
+    settings.chat_style = crate::settings::ChatStyle::Legacy;
+    for path in ["removed.setting", "keybinds", "audio.ui", "show_recent_emojis"] {
+        st.open_setting(path.into());
+        for expected_notice in [true, false] {
+            let mut result = OptionsResult::default();
+            run_ui(&ctx, egui::RawInput::default(), |ui| {
+                count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+            });
+            assert_eq!(result.setting_unavailable, expected_notice, "{path}");
+            assert!(st.go_to.is_none());
+            assert_eq!(st.page, Page::Sound);
+            assert_eq!(st.query, "volume");
+        }
+    }
+}
+
 #[test]
 fn opening_preferences_focuses_search_without_taking_it_back() {
     let mut frames = Frames::new();
@@ -138,6 +255,7 @@ const BEFORE: &[&str] = &[
     "confirm_object_bonus",
     "confirm_return_to_owner",
     "confirm_attachment_drop",
+    "confirm_close_all_ims",
     "confirm_script_modify",
     "region_check_texture_heights",
     "sim_version_alert",
@@ -248,6 +366,7 @@ const BEFORE: &[&str] = &[
     "log_im",
     "log_nearby",
     "log_show_history",
+    "chat_service_history",
     "reopen_ims",
     "log_dated_names",
     "log_import_at_login",
@@ -327,6 +446,8 @@ const BEFORE: &[&str] = &[
     "classic_pay_window",
     "legacy_money_tracker",
     "classic_controls",
+    "compact_controls",
+    "compact_movement_controls",
     "classic_restart_alert",
     "classic_rez_effect",
     "classic_hover_tips",
@@ -612,6 +733,18 @@ fn the_sound_page_puts_push_to_talk_back_only() {
 }
 
 #[test]
+fn voice_output_device_has_its_own_sound_preference() {
+    let paths = collected();
+    assert!(paths.contains(&(Page::Sound, "audio.voice_output_device".into())), "{paths:?}");
+    let mut settings = Settings::default();
+    let label = cx::fold(aurora_i18n::tr!("ui-options-voice-output"));
+    assert!(
+        counts(&mut settings, &label).hits(Page::Sound) >= 1,
+        "Voice output row is searchable"
+    );
+}
+
+#[test]
 fn the_moved_settings_reset_with_their_new_page() {
     let mut s = Settings::default();
     s.water_effects.enabled = true;
@@ -623,6 +756,7 @@ fn the_moved_settings_reset_with_their_new_page() {
     s.sort_received_items = true;
     s.received_items_since = 123;
     s.reduce_motion = true;
+    s.disable_glass = true;
     s.audio.lip_sync = false;
     s.audio.media_autoplay = true;
     s.language_is_public = false;
@@ -641,6 +775,7 @@ fn the_moved_settings_reset_with_their_new_page() {
     assert_eq!(s.received_items_since, 0);
     reset_page_settings(Page::Accessibility, &mut s);
     assert!(!s.reduce_motion);
+    assert!(!s.disable_glass);
     reset_page_settings(Page::Media, &mut s);
     assert!(!s.audio.media_autoplay);
     reset_page_settings(Page::Privacy, &mut s);
@@ -738,7 +873,11 @@ fn every_page_names_its_tabs() {
     assert_eq!(Page::parse("9"), None, "the former Debug page is the Dev Toolbox");
     assert_eq!(
         Page::Graphics.tabs()[5..],
-        [aurora_i18n::tr!("ui-options-smoothness"), aurora_i18n::tr!("region-parcels")]
+        [
+            aurora_i18n::tr!("ui-options-smoothness"),
+            aurora_i18n::tr!("region-parcels"),
+            aurora_i18n::tr!("ui-options-tab-ray-tracing")
+        ]
     );
 }
 
@@ -1742,6 +1881,61 @@ fn the_graphics_card_group_shows_the_startup_notice() {
     }
 }
 
+/// Graphics › Light › Ray tracing: the rows are there whatever the graphics
+/// card, and the reason it cannot trace shows under the group's title, only
+/// when there is one.
+#[test]
+fn the_ray_tracing_group_says_why_the_card_cannot_trace() {
+    use aurora_render::RayTracingSupport as Support;
+    let tab = 7;
+    let unsupported = aurora_i18n::tr!("ui-options-ray-tracing-unsupported").to_string();
+    let vr = aurora_i18n::tr!("ui-options-ray-tracing-vr").to_string();
+    let row = aurora_i18n::tr!("ui-options-ray-traced-shadows").to_string();
+    for (support, shown) in [
+        (Support::Unsupported, Some(&unsupported)),
+        (Support::Vr, Some(&vr)),
+        (Support::NotOpened, None),
+        (Support::Ready, None),
+    ] {
+        let mut frames = Frames::new();
+        let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+        st.ray_tracing = support;
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Graphics, tab, Vec::new());
+        }
+        let shows = |text: &str| texts.iter().any(|t| t.source == text);
+        assert!(shows(&row), "the ray tracing row is on the Ray tracing tab with {support:?}");
+        for text in [&unsupported, &vr] {
+            assert_eq!(shows(text), shown == Some(text), "{text} with {support:?}");
+        }
+        // nothing traced by default, and nothing here changes it
+        assert_eq!(s.ray_tracing, crate::settings::RayTracingSettings::OFF);
+    }
+    // found by the words people type, its options behind the cog too
+    let mut s = Settings::default();
+    assert!(counts(&mut s, "raytracing").hits(Page::Graphics) >= 1);
+    s.ray_tracing.reflections = true;
+    assert_eq!(counts(&mut s, "").modified(Page::Graphics), 1);
+}
+
+/// Deluxe (RT) is out of reach, with the Ray tracing tab's reason, where the
+/// card cannot trace; elsewhere it can be chosen.
+#[test]
+fn deluxe_rt_says_why_the_card_cannot_take_it() {
+    use aurora_render::RayTracingSupport as Support;
+    assert_eq!(
+        super::deluxe_rt_blocked(Support::Unsupported),
+        Some(aurora_i18n::tr!("ui-options-ray-tracing-unsupported"))
+    );
+    assert_eq!(
+        super::deluxe_rt_blocked(Support::Vr),
+        Some(aurora_i18n::tr!("ui-options-ray-tracing-vr"))
+    );
+    assert_eq!(super::deluxe_rt_blocked(Support::Ready), None);
+    assert_eq!(super::deluxe_rt_blocked(Support::NotOpened), None);
+}
+
 /// Accessibility gathers rows of other pages: each one is drawn there, and
 /// only there besides its own page (the search and the counts keep it on
 /// its page).
@@ -1760,6 +1954,7 @@ fn the_accessibility_page_shows_the_settings_of_other_pages() {
         tr!("ui-options-text-size"),
         tr!("ui-options-bundled-fonts"),
         tr!("ui-options-high-contrast"),
+        tr!("ui-options-disable-glass"),
         tr!("ui-options-name-distance"),
         tr!("ui-options-accent-color"),
         tr!("ui-options-surface-color"),
@@ -1836,8 +2031,10 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
     // the Accessibility reset puts back its own rows only
     s.font_scale = 1.2;
     s.reduce_motion = true;
+    s.disable_glass = true;
     reset_page_settings(Page::Accessibility, &mut s);
     assert!(!s.reduce_motion);
+    assert!(!s.disable_glass);
     assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
 }
 
@@ -1849,6 +2046,8 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
 fn the_confirmations_page_lists_every_question_and_warning() {
     use aurora_i18n::tr;
     let mut frames = Frames::new();
+    // This fixture draws the entire page without the preferences window's scroll area.
+    frames.screen_size.y = 1400.0;
     let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
     s.gpu_driver_dismissed = "32.0.15.6094".into();
     s.debug_settings_warning_ignored = true;
@@ -1859,6 +2058,7 @@ fn the_confirmations_page_lists_every_question_and_warning() {
     }
     let shows = |key: &str| texts.iter().any(|t| t.source == key);
     for key in [
+        tr!("ui-chat-confirm-close-all-ims"),
         tr!("task-transfer-warn-move"),
         tr!("task-transfer-warn-scripted"),
         tr!("ui-options-confirm-no-transfer-settings"),
@@ -1870,6 +2070,7 @@ fn the_confirmations_page_lists_every_question_and_warning() {
         tr!("ui-options-fly-override-caution"),
         tr!("ui-options-driver-warning"),
         tr!("ui-options-skipped-update"),
+        tr!("ui-options-warn-live-preview"),
         "32.0.15.6094",
     ] {
         assert!(shows(key), "{key} on Confirmations");
@@ -1904,7 +2105,7 @@ fn the_confirmations_page_lists_every_question_and_warning() {
         })
         .expect("a Show again button")
         .rect;
-    assert!(again.bottom() < 900.0, "the button is on the test screen");
+    assert!(again.bottom() < frames.screen_size.y, "the button is on the test screen");
     for events in click(again.center()) {
         page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Confirmations, 0, events);
     }
@@ -1920,50 +2121,12 @@ fn the_confirmations_page_lists_every_question_and_warning() {
 }
 
 #[test]
-fn the_weather_lives_in_graphics_only() {
-    // (and in the Aurora Weather window; Preferences › Aurora, the choices
-    // between Aurora's look and the Legacy Viewer's, has none of it)
+fn the_weather_lives_in_its_own_window_only() {
+    // every weather setting is in the Aurora Weather window: Preferences
+    // has none of them, so that each is set in one place
     let paths = collected();
-    let elsewhere: Vec<_> = paths
-        .iter()
-        .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
-        .collect();
-    assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
-}
-
-#[test]
-fn the_wet_ground_distance_stays_live_with_the_puddles_off() {
-    // behind the puddles' cog, the wet ground's distance still acts with
-    // them off (the wet ground is drawn in any rain), their ice does not:
-    // the label's ink, found by a search for its own text (the tests may
-    // run in French)
-    let p = crate::theme::Theme::default().palette();
-    let ink = |label: &str| {
-        let mut s = Settings::default();
-        s.weather.puddles = false;
-        let d = Settings::default();
-        let (mut st, mut r) = (OptionsUi::default(), OptionsResult::default());
-        let mut frames = Frames::new();
-        let mut shapes = Vec::new();
-        for _ in 0..3 {
-            shapes = frames.shapes(Vec::new(), |ui| {
-                ui.set_width(700.0);
-                let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Search, label);
-                // Sky and environment, where the weather is
-                run_page(&mut cx, Page::Graphics, Some(2));
-            });
-        }
-        shapes
-            .iter()
-            .find_map(|shape| match shape {
-                // a row behind a cog is found as "Puddles › <its label>"
-                egui::Shape::Text(t) if t.galley.text().ends_with(&format!("› {label}")) => Some(t.fallback_color),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("the row {label}"))
-    };
-    assert_eq!(ink(aurora_i18n::tr!("ui-weather-distance")), p.ink, "the wet ground's distance");
-    assert_eq!(ink(aurora_i18n::tr!("ui-weather-ice")), p.muted, "the puddles' ice");
+    let rows: Vec<_> = paths.iter().filter(|(_, p)| p.starts_with("weather.")).collect();
+    assert!(rows.is_empty(), "weather rows in Preferences: {rows:?}");
 }
 
 #[test]
@@ -2029,19 +2192,9 @@ fn show_friends_only_switches_from_controls_once_logged_in() {
     }
 }
 
-/// #2136: the System fonts search filters the list, the list grows back when
-/// the search is cleared or the list reopened, and a click in the room a
-/// filtered list left closes it. `screen_h` short enough opens it above its
-/// button.
-fn font_search(screen_h: f32) {
-    let theme = crate::theme::Theme::default();
-    let p = theme.palette();
-    let ctx = egui::Context::default();
-    crate::ui::fonts::apply(&ctx, crate::ui::fonts::INTER);
-    theme.apply(&ctx, 1.0);
-    let names = ["Alpha", "Beta", "Gamma", "Delta"];
-    let mut settings = Settings::default();
-    let mut state = OptionsUi {
+/// Preferences on Appearance, with these system fonts.
+fn font_list_state(names: &[&str]) -> OptionsUi {
+    OptionsUi {
         page: Page::Appearance,
         system_fonts: Some(
             names
@@ -2053,32 +2206,90 @@ fn font_search(screen_h: f32) {
                 .collect(),
         ),
         ..Default::default()
-    };
+    }
+}
+
+/// One frame of the Preferences window, 1600 points wide: the texts drawn
+/// and their places.
+fn draw_preferences(
+    ctx: &egui::Context,
+    frame: &mut u32,
+    screen_h: f32,
+    events: Vec<egui::Event>,
+    state: &mut OptionsUi,
+    settings: &mut Settings,
+) -> Vec<(String, egui::Rect)> {
+    if *frame == 0 {
+        let theme = crate::theme::Theme::default();
+        crate::ui::fonts::apply(ctx, crate::ui::fonts::INTER);
+        theme.apply(ctx, 1.0);
+    }
+    *frame += 1;
+    let p = crate::theme::Theme::default().palette();
     let mut open = true;
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, screen_h))),
+            time: Some(f64::from(*frame) / 60.0),
+            events,
+            focused: true,
+            ..Default::default()
+        },
+        |_| {
+            show(ctx, &p, &Icons::default(), settings, state, &mut open);
+        },
+    );
+    output.textures_delta.clear();
+    output
+        .shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) => Some((t.galley.text().to_owned(), t.visual_bounding_rect())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The frames of a click at `at`.
+fn click_frames(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    vec![
+        vec![egui::Event::PointerMoved(at)],
+        vec![button(true)],
+        vec![button(false)],
+        vec![],
+        vec![],
+    ]
+}
+
+/// A key press, without modifiers.
+fn key_event(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+/// #2136: the System fonts search filters the list, the list grows back when
+/// the search is cleared or the list reopened, and a click in the room a
+/// filtered list left closes it. `screen_h` short enough opens it above its
+/// button.
+fn font_search(screen_h: f32) {
+    let ctx = egui::Context::default();
+    let names = ["Alpha", "Beta", "Gamma", "Delta"];
+    let mut settings = Settings::default();
+    let mut state = font_list_state(&names);
     let mut frame = 0;
-    let mut draw = |events: Vec<egui::Event>, state: &mut OptionsUi, settings: &mut Settings| -> Vec<(String, egui::Rect)> {
-        frame += 1;
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, screen_h))),
-                time: Some(frame as f64 / 60.0),
-                events,
-                focused: true,
-                ..Default::default()
-            },
-            |_| {
-                show(&ctx, &p, &Icons::default(), settings, state, &mut open);
-            },
-        );
-        output.textures_delta.clear();
-        output
-            .shapes
-            .iter()
-            .filter_map(|c| match &c.shape {
-                egui::Shape::Text(t) => Some((t.galley.text().to_owned(), t.visual_bounding_rect())),
-                _ => None,
-            })
-            .collect()
+    let mut draw = |events: Vec<egui::Event>, state: &mut OptionsUi, settings: &mut Settings| {
+        draw_preferences(&ctx, &mut frame, screen_h, events, state, settings)
     };
     let shown = |texts: &[(String, egui::Rect)]| -> Vec<String> {
         names
@@ -2098,28 +2309,8 @@ fn font_search(screen_h: f32) {
     for _ in 0..12 {
         texts = draw(vec![], &mut state, &mut settings);
     }
-    let click = |at: egui::Pos2| {
-        let button = |pressed| egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        vec![
-            vec![egui::Event::PointerMoved(at)],
-            vec![button(true)],
-            vec![button(false)],
-            vec![],
-            vec![],
-        ]
-    };
-    let key = |key| egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers::NONE,
-    };
+    let click = click_frames;
+    let key = key_event;
     let erase = || {
         vec![
             vec![key(egui::Key::Backspace)],
@@ -2195,6 +2386,57 @@ fn font_search(screen_h: f32) {
     assert_eq!(shown(&texts), all, "the list reopens on the whole list");
     assert!((height() - whole).abs() < 0.5);
     assert!(state.font_filter.is_empty());
+    // the keys, from the search field: no system font chosen yet, so Down
+    // starts on the first; Up wraps around; Enter picks and closes
+    let path = |name: &str| format!("system:/nonexistent/{name}.ttf");
+    for k in [
+        egui::Key::ArrowDown,
+        egui::Key::ArrowDown,
+        egui::Key::ArrowUp,
+        egui::Key::ArrowUp,
+        egui::Key::Enter,
+    ] {
+        for events in [vec![key(k)], vec![]] {
+            draw(events, &mut state, &mut settings);
+        }
+    }
+    assert_eq!(settings.font, path("Delta"), "Down, Down, Up, Up (wrapped), Enter");
+    assert!(!egui::Popup::is_any_open(&ctx), "Enter closes the list");
+    // reopened on the chosen font: Down goes to the next one, wrapping
+    for events in click(combo) {
+        draw(events, &mut state, &mut settings);
+    }
+    for k in [egui::Key::ArrowDown, egui::Key::Enter] {
+        for events in [vec![key(k)], vec![]] {
+            draw(events, &mut state, &mut settings);
+        }
+    }
+    assert_eq!(settings.font, path("Alpha"), "from Delta, Down wraps to Alpha");
+    // typing selects the first font found
+    for events in click(combo) {
+        draw(events, &mut state, &mut settings);
+    }
+    for events in typed() {
+        draw(events, &mut state, &mut settings);
+    }
+    for events in [vec![key(egui::Key::Enter)], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(settings.font, path("Beta"), "Enter picks the first font found");
+    assert!(!egui::Popup::is_any_open(&ctx));
+    // nothing found: Enter does nothing, and the field keeps the keyboard
+    for events in click(combo) {
+        draw(events, &mut state, &mut settings);
+    }
+    for events in [vec![egui::Event::Text("zz".into())], vec![], vec![key(egui::Key::Enter)], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(settings.font, path("Beta"));
+    assert!(egui::Popup::is_any_open(&ctx), "the list stays open");
+    for events in [vec![egui::Event::Text("x".into())], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(state.font_filter, "zzx", "typing still filters");
 }
 
 #[test]
@@ -2205,4 +2447,74 @@ fn the_system_font_search_filters_and_resets() {
 #[test]
 fn the_system_font_search_resets_above_its_button() {
     font_search(420.0);
+}
+
+#[test]
+fn every_page_icon_is_built_in() {
+    for page in Page::ALL {
+        assert!(crate::ui::icons::embedded(page.icon()), "{page:?}: {}", page.icon());
+    }
+}
+
+/// #2136: the font the keys selected is always on screen: after typing in
+/// a list scrolled down, and on opening on a chosen font far down.
+#[test]
+fn the_selected_system_font_stays_in_view() {
+    let ctx = egui::Context::default();
+    let names: Vec<String> = (0..40).map(|i| format!("Font {i:02}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut settings = Settings::default();
+    let mut state = font_list_state(&refs);
+    let mut frame = 0;
+    let mut draw = |events: Vec<egui::Event>, state: &mut OptionsUi, settings: &mut Settings| {
+        draw_preferences(&ctx, &mut frame, 1000.0, events, state, settings)
+    };
+    let mut texts = vec![];
+    for _ in 0..12 {
+        texts = draw(vec![], &mut state, &mut settings);
+    }
+    let none = aurora_i18n::tr!("ui-options-no-system-font");
+    let combo = texts.iter().find(|(t, _)| t == none).expect("the System fonts list").1.center();
+    let drawn = |texts: &[(String, egui::Rect)], name: &str| texts.iter().any(|(t, _)| t == name);
+    for events in click_frames(combo) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    let row = texts.iter().find(|(t, _)| t == "Font 00").expect("the first row").1.center();
+    for events in [
+        vec![egui::Event::PointerMoved(row)],
+        vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -2000.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+        }],
+    ] {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    // the wheel scrolls smoothly: a second for it to stop
+    for _ in 0..60 {
+        texts = draw(vec![], &mut state, &mut settings);
+    }
+    assert!(!drawn(&texts, "Font 00") && drawn(&texts, "Font 39"), "scrolled to the end");
+    // every font still matches: the selection goes back to the first
+    // the scroll is animated: half a second
+    texts = draw(vec![egui::Event::Text("o".into())], &mut state, &mut settings);
+    for _ in 0..30 {
+        texts = draw(vec![], &mut state, &mut settings);
+    }
+    assert!(drawn(&texts, "Font 00"), "the selected first font found is shown");
+    for events in [vec![key_event(egui::Key::Enter)], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(settings.font, "system:/nonexistent/Font 00.ttf");
+    // a chosen font far down: the list opens on it
+    settings.font = "system:/nonexistent/Font 35.ttf".into();
+    for events in click_frames(combo) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    for _ in 0..30 {
+        texts = draw(vec![], &mut state, &mut settings);
+    }
+    assert!(drawn(&texts, "Font 35"), "the list opens on the chosen font");
 }

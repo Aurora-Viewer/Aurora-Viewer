@@ -89,7 +89,7 @@ fn typing_names(world: &World, st: &ChatUi) -> Vec<String> {
     match st.selected {
         None => st.nearby_typing_names(world),
         Some(id) if sidebar::kind(world, &id) == sidebar::Kind::Private && world.social.is_typing(&id) => {
-            vec![world.social.display_name_of(&id)]
+            vec![world.social.display_name_in(crate::world::names::NameScope::Roster, &id)]
         }
         Some(_) => Vec::new(),
     }
@@ -131,6 +131,21 @@ pub(super) fn show(
                 let galley = ui.painter().layout_job(job);
                 crate::ui::widgets::paint_row_text(ui.painter(), galley, line.left() + 26.0, line.center().y, p.muted);
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+            } else if let Some(id) = st.selected.filter(|id| sidebar::kind(world, id) == sidebar::Kind::Private)
+                && world.chat_service.loading(id)
+            {
+                // the Chat Service's history is read or fetched (the IM
+                // window's loading panel, Snapshot::service_work_active)
+                // painted, not placed: `ui.put` would move the cursor up to
+                // the spinner's bottom and lift the box under the line
+                let spin = egui::Rect::from_center_size(egui::pos2(line.left() + 10.0, line.center().y), egui::vec2(12.0, 12.0));
+                egui::Spinner::new().size(12.0).color(p.violet_light).paint_at(ui, spin);
+                let galley = ui.painter().layout_no_wrap(
+                    aurora_i18n::tr!("ui-chat-history-loading").to_string(),
+                    egui::FontId::proportional(11.0),
+                    p.muted,
+                );
+                crate::ui::widgets::paint_row_text(ui.painter(), galley, line.left() + 26.0, line.center().y, p.muted);
             }
             // ---- the box
             let mut draft = std::mem::take(st.draft_mut(st.selected));
@@ -139,6 +154,7 @@ pub(super) fn show(
                 st.conv_focus_request = true;
             }
             let mut emoji_btn = None;
+            let mut gif_btn = None;
             let mut send_clicked = false;
             let local = st.selected.is_none();
             let roomy = width > 520.0;
@@ -166,6 +182,7 @@ pub(super) fn show(
                         // shown once a key is entered (Preferences › Chat › GIFs)
                         if st.gifs.usable() {
                             let b = box_button(ui, p, "gif", aurora_i18n::tr!("ui-chat-gif"), st.gif_open);
+                            gif_btn = Some(b.rect);
                             super::gif_picker::button(&b, p, st);
                         }
                         // narrow, only its icon. An IM has no attach button:
@@ -257,11 +274,12 @@ pub(super) fn show(
             if !st.recent_emojis.above {
                 st.recent_emojis.strip(ui, p, emoji, width - 28.0, conv_input, &mut draft);
             }
+            let picker_buttons: Vec<egui::Rect> = emoji_btn.into_iter().chain(gif_btn).collect();
             if st.emoji_open && super::popout::claim_picker(ui.ctx()) {
                 let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
                 let mut close = false;
                 // one per conversation: one in each window (`popout.rs`)
-                egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
+                let shown = egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
                     .fade_in(false)
                     .order(egui::Order::Foreground)
                     .pivot(egui::Align2::LEFT_BOTTOM)
@@ -283,11 +301,14 @@ pub(super) fn show(
                 if close {
                     st.emoji_open = false;
                     ui.ctx().memory_mut(|m| m.request_focus(conv_input));
+                } else if super::popout::pressed_away(ui.ctx(), &shown.response, &picker_buttons) {
+                    // the click goes where it landed, the keyboard with it
+                    st.emoji_open = false;
                 }
             }
             let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
             let chat_type = st.volume.chat_type();
-            super::gif_picker::popup(ui.ctx(), p, icons, st, anchor, 8.0, conv_input, chat_type, actions);
+            super::gif_picker::popup(ui.ctx(), p, icons, st, anchor, 8.0, &picker_buttons, conv_input, chat_type, actions);
             // the Enter that asked for the keyboard (start_chat) is not one
             // typed in the field: taken as Enter on an empty field, it would
             // hand the keyboard straight back to the world

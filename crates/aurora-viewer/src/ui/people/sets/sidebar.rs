@@ -10,6 +10,7 @@ use crate::theme::Palette;
 use crate::ui::contacts::SetEdit;
 use crate::ui::{context, menu, widgets};
 use crate::world::contact_sets;
+use aurora_i18n::UiUpper;
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 
 /// The button of the options shared by every set and the import: the
@@ -94,7 +95,7 @@ fn header(ui: &mut egui::Ui, c: &mut Ctx) {
 /// A small capitals caption.
 fn caption(ui: &egui::Ui, p: &Palette, text: &str, left: f32, y: f32) {
     let g = ui.painter().layout_no_wrap(
-        text.to_uppercase(),
+        text.ui_upper(),
         crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 10.5, p.muted).font_id,
         p.muted,
     );

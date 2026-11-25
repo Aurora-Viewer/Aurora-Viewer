@@ -28,6 +28,9 @@ pub struct Bundle {
 pub struct State {
     active: Option<(Request, Instant)>,
     pub ready: Option<Bundle>,
+    /// The triangles of the last levels Blender prepared (high, medium,
+    /// low, lowest), with their source: the Import tab shows them.
+    pub levels: Option<(Uuid, [usize; 4])>,
     pub message: String,
     pub error: bool,
     pub demo_requested: bool,
@@ -93,7 +96,8 @@ fn aligned_scene(low: &Scene, high: &Scene, slots: &[usize]) -> Result<Arc<Scene
 }
 
 pub fn decode(bytes: &[u8], expected: Request, supported: &HashSet<String>) -> Result<Bundle, String> {
-    if bytes.is_empty() || bytes.len() > protocol::MAX_BYTES {
+    // An inflated "compressed-lods" body may be larger than one frame.
+    if bytes.is_empty() || bytes.len() > protocol::MAX_DECODED_BYTES {
         return Err("Invalid Blender LOD payload size".into());
     }
     let reply: Reply = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
@@ -149,6 +153,7 @@ pub fn decode(bytes: &[u8], expected: Request, supported: &HashSet<String>) -> R
             revision: 1,
             meshes: vec![level.mesh],
             images: reply.images.clone(),
+            warnings: Vec::new(),
         };
         prepared.push(protocol::prepare_snapshot(snapshot, supported, None, &Default::default())?);
     }
@@ -177,7 +182,7 @@ impl Live {
             status.connected && status.import_capable
         });
         if !capable {
-            self.import.message = aurora_i18n::tr!("blender-import-connect").into();
+            self.import.message = aurora_i18n::tr!("livemesh-import-connect").into();
             self.import.error = true;
             return;
         }
@@ -190,7 +195,7 @@ impl Live {
             *shared.import_request.lock() = Some(request);
             self.import.active = Some((request, Instant::now()));
             self.import.error = false;
-            self.import.message = aurora_i18n::tr!("blender-import-preparing").into();
+            self.import.message = aurora_i18n::tr!("livemesh-import-preparing").into();
         }
     }
     pub fn poll_import(&mut self) {
@@ -204,10 +209,16 @@ impl Live {
             self.import.error = result.is_err();
             match result {
                 Ok(bundle) => {
+                    let triangles = |scene: &Scene| scene.models.iter().map(|model| model.triangles()).sum::<usize>();
+                    let [medium, low, lowest] = &bundle.lods;
+                    self.import.levels = Some((
+                        request.source,
+                        [triangles(&bundle.high.scene), triangles(medium), triangles(low), triangles(lowest)],
+                    ));
                     self.import.ready = Some(bundle);
-                    self.import.message = aurora_i18n::tr!("blender-import-ready").into();
+                    self.import.message = aurora_i18n::tr!("livemesh-import-ready").into();
                 }
-                Err(error) => self.import.message = aurora_i18n::tr!("blender-import-failed", error = error),
+                Err(error) => self.import.message = aurora_i18n::tr!("livemesh-import-failed", error = error),
             }
         } else if start.elapsed() > Duration::from_secs(180) || shared.is_none_or(|s| !s.status.lock().connected) {
             if let Some(shared) = shared {
@@ -216,7 +227,7 @@ impl Live {
             }
             self.import.active = None;
             self.import.error = true;
-            self.import.message = aurora_i18n::tr!("blender-import-timeout").into();
+            self.import.message = aurora_i18n::tr!("livemesh-import-timeout").into();
         }
     }
 }
@@ -231,7 +242,11 @@ mod tests {
         let shared = Arc::new(super::super::Shared::default());
         shared.status.lock().connected = true;
         let mut live = Live {
-            server: Some(super::super::Server { shared: shared.clone() }),
+            server: Some(super::super::Server {
+                shared: shared.clone(),
+                thread: None,
+                _token: None,
+            }),
             ..Default::default()
         };
         live.request_import(Uuid::from_u128(456));

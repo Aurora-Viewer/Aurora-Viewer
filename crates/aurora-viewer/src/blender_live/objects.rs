@@ -211,6 +211,27 @@ pub struct Placement {
     pub center: Vec3,
 }
 
+/// The placement change the toast can undo: a Derez, a Detach, a Drop or
+/// an Attach of a root, with the placements and states of the root and its
+/// prims as they were before. Placement is local to this viewer, so the
+/// change happens at once and Undo puts every field back.
+#[derive(Clone)]
+pub struct Undo {
+    pub source: Uuid,
+    pub action: Action,
+    pub at: std::time::Instant,
+    before: Vec<(Uuid, Placement, Option<SourceState>)>,
+}
+
+impl Undo {
+    /// How long the toast stays.
+    pub const SHOWN: std::time::Duration = std::time::Duration::from_secs(8);
+
+    pub fn expired(&self, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(self.at) >= Self::SHOWN
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum Action {
     Rez,
@@ -350,6 +371,16 @@ impl Live {
                 child.scale *= ratio;
             }
         }
+        let undoable = matches!(action, Action::Derez | Action::Detach | Action::Drop | Action::Attach(_));
+        let before: Vec<_> = if undoable {
+            self.placements
+                .iter()
+                .filter(|(id, p)| **id == source || p.parent == Some(source))
+                .map(|(id, p)| (*id, *p, self.states.get(id).copied()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let Some(placement) = self.placements.get_mut(&source) else {
             return;
         };
@@ -405,6 +436,32 @@ impl Live {
             child.location = location;
         }
         self.placement_dirty.insert(source);
+        self.revision = None;
+        if undoable {
+            self.undo = Some(Undo {
+                source,
+                action,
+                at: std::time::Instant::now(),
+                before,
+            });
+        }
+    }
+
+    /// Puts back what the toast's change moved, and closes the toast.
+    pub fn undo_placement(&mut self) {
+        let Some(undo) = self.undo.take() else { return };
+        for (id, placement, state) in undo.before {
+            // a source Blender removed since stays removed
+            if !self.placements.contains_key(&id) {
+                continue;
+            }
+            self.placements.insert(id, placement);
+            match state {
+                Some(state) => self.states.insert(id, state),
+                None => self.states.remove(&id),
+            };
+        }
+        self.placement_dirty.insert(undo.source);
         self.revision = None;
     }
 

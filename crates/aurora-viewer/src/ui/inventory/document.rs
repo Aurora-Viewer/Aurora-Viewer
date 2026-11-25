@@ -16,7 +16,15 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
     };
     if matches!(
         mode.as_str(),
-        "note-markdown" | "note-source" | "note-classic" | "note-format" | "note-remember" | "note-lsl" | "note-lsl-markdown"
+        "note-markdown"
+            | "note-source"
+            | "note-classic"
+            | "note-format"
+            | "note-remember"
+            | "note-lsl"
+            | "note-lsl-markdown"
+            | "note-find"
+            | "note-replace"
     ) {
         if frame < 600 && mode != "note-remember" {
             st.notecard_view = Some(match mode.as_str() {
@@ -66,6 +74,26 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
                         modifiers: egui::Modifiers::NONE,
                     },
                 ];
+            }
+        }
+        // note-find: the find bar opens at frame 650 on "female" and goes to
+        // its first match; note-replace then replaces all of them at 690
+        if matches!(mode.as_str(), "note-find" | "note-replace")
+            && let Some(item) = st.preview
+            && let Some(Ok(text)) = &mut st.preview_text
+        {
+            let id = egui::Id::unique(("inventory_document_text", st.ui_id, item));
+            let mut changed = false;
+            if frame == 650 {
+                st.notecard_find.begin(ctx, id, text);
+                st.notecard_find.demo_texts("female", "woman");
+                st.notecard_find.find(ctx, id, text);
+            }
+            if frame == 690 && mode == "note-replace" {
+                changed = st.notecard_find.replace_all(ctx, id, text);
+            }
+            if changed {
+                st.document_changed();
             }
         }
         return Vec::new();
@@ -243,6 +271,15 @@ impl InventoryUi {
             })
         };
         if let Some((editor, loading)) = existing {
+            // Reopening an existing document should activate it too, even if
+            // another application field currently holds keyboard focus.
+            if kind == 7 {
+                if self.ui_id == editor {
+                    self.notecard_focus_pending = true;
+                } else if let Some(window) = self.windows.iter_mut().find(|w| w.state.ui_id == editor) {
+                    window.state.notecard_focus_pending = true;
+                }
+            }
             let id = preview_window_id(editor, item, kind);
             super::super::widgets::open_floater(ctx, &id, &mut true);
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
@@ -273,7 +310,9 @@ impl InventoryUi {
         self.preview_can_edit = false;
         self.preview_source = None;
         self.notecard_view = Default::default();
+        self.notecard_focus_pending = false;
         self.notecard_markdown = Default::default();
+        self.notecard_find.hide();
         self.attachment_preview = None;
         self.preview_original.clear();
         self.preview_description = None;
@@ -295,6 +334,9 @@ impl InventoryUi {
             self.preview_message.clone_from(reason);
             return;
         }
+        // A newly loaded document is ready to take focus on its first
+        // interactive frame, not while an egui floater is sizing itself.
+        let was_loaded = self.preview_text.as_ref().is_some_and(Result::is_ok);
         self.preview_source = None;
         self.preview_can_edit = false;
         let result = result.as_ref().map_err(Clone::clone).and_then(|data| {
@@ -312,6 +354,9 @@ impl InventoryUi {
         });
         if let Ok(text) = &result {
             self.preview_original.clone_from(text);
+        }
+        if kind == 7 && result.is_ok() && !was_loaded {
+            self.notecard_focus_pending = true;
         }
         self.preview_text = Some(result);
     }

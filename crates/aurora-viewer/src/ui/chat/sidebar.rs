@@ -13,6 +13,8 @@ use super::{ChatUi, ConvAction, close_tip, presence};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::contact_sets::appearance::ICONS;
+use crate::world::names::NameScope;
+use aurora_i18n::UiUpper;
 use egui::{Color32, RichText};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -261,10 +263,12 @@ struct Picked {
 }
 
 /// What the Contacts entry's second line says: the friends online (the tab
-/// shows People's friends) or what the contact list holds.
+/// shows People's friends), our groups (its Groups pill) or what the
+/// contact list holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ContactsSub {
     Friends,
+    Groups,
     Lists,
 }
 
@@ -364,6 +368,7 @@ pub(super) fn show(
                             "ui-chat-contacts-friends-sub",
                             online = world.social.friends.iter().filter(|f| f.online).count() as i64
                         ),
+                        ContactsSub::Groups => aurora_i18n::tr!("ui-chat-contacts-groups-sub", count = world.groups.groups.len() as i64),
                         ContactsSub::Lists => aurora_i18n::tr!("ui-chat-contacts-sub").to_owned(),
                     }),
                     sub_icon: None,
@@ -520,7 +525,7 @@ pub(super) fn show(
                     .friends
                     .iter()
                     .filter(|f| !world.social.has_session(&f.id))
-                    .map(|f| (f.id, world.social.name_of(&f.id)))
+                    .map(|f| (f.id, world.social.name_in(NameScope::Roster, &f.id)))
                     .filter(|(_, n)| n.to_lowercase().contains(&filter))
                     .collect();
                 friends.sort_by_key(|(_, n)| crate::natural_order::key(n));
@@ -685,7 +690,7 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
     let near = aurora_i18n::tr!("ui-chat-in-earshot", n = st.nearby_count);
     // (never a blocked resident's line)
     match world.chat.iter().rev().find(|l| !l.kind.is_notice() && !l.blocked) {
-        Some(l) => format!("{near} · {}", preview(world, l, true)),
+        Some(l) => format!("{near} · {}", preview(world, NameScope::World, l, true)),
         None => near,
     }
 }
@@ -693,11 +698,11 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
 /// The last message of a conversation in a few words: "Name: text", ours
 /// "You: text", an emote as it reads; its links by their labels, as in the
 /// conversation (#947), the entry eliding the result.
-fn preview(world: &World, line: &crate::world::ChatLine, named: bool) -> String {
+fn preview(world: &World, scope: NameScope, line: &crate::world::ChatLine, named: bool) -> String {
     let own = world.own_name();
     let name = super::sender_name(world, &own, line);
     let (text, _) = super::line_body(line, &name);
-    let text = super::resolved_text(world, &text);
+    let text = super::resolved_text_in(world, line.wording(scope), &text);
     let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     if emote || line.kind.is_notice() {
@@ -740,7 +745,9 @@ fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::
         .iter()
         .find(|s| s.other == id)
         .and_then(|s| s.lines.iter().rev().find(|l| !l.kind.is_card()));
-    let last = last.map(|l| preview(world, l, kind != Kind::Private)).unwrap_or_default();
+    let last = last
+        .map(|l| preview(world, NameScope::Roster, l, kind != Kind::Private))
+        .unwrap_or_default();
     if kind == Kind::Private && matches!(status, presence::Status::Away | presence::Status::Busy | presence::Status::Offline) {
         let label = status.label();
         return (
@@ -761,7 +768,7 @@ fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::
 
 /// The title of a section: small capitals in semi-bold.
 fn section_title(ui: &egui::Ui, p: &Palette, title: &str) -> RichText {
-    RichText::new(title.to_uppercase())
+    RichText::new(title.ui_upper())
         .font(egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
         .color(p.muted_dim)
 }
@@ -793,7 +800,7 @@ pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
 pub(super) fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
     let names = &world.social.avatar_names;
     if kind == Kind::Private
-        && let Some(name) = names.get(id)
+        && let Some(name) = names.get_in(NameScope::Roster, id)
     {
         // FSIMTabNameFormat (Preferences › Chat), the display name by default
         let format = super::conversation_options::current().tab_names;

@@ -124,6 +124,8 @@ impl App {
         self.left_down = true;
         let ray = picked.ray;
         let far = self.settings.draw_distance;
+        // (the modifiers of the press, which a click run again has restored)
+        self.scene.rigged_clicks = self.rigged_clicks();
         let depth = self.scene.touch_depth(&self.world, &picked.drawn, ray, picked.depth, far);
         let hit = self.scene.action_point(&self.world, ray, depth, false, far);
         let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);

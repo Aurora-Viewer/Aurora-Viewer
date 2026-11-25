@@ -32,6 +32,7 @@ use crate::world::place_details::{Place as PlaceProfile, Source as Profile, Stag
 use crate::world::place_snapshots::Spot;
 use crate::world::tphistory::{self, HistoryItem};
 use crate::world::worldmap::WorldMap;
+use aurora_i18n::UiUpper;
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
@@ -43,6 +44,8 @@ use uuid::Uuid;
 /// From this width the window shows the rail and the preview.
 pub const WIDE: f32 = 760.0;
 const RAIL_W: f32 = 210.0;
+const RAIL_HANDLE: f32 = 8.0;
+const MIN_LIST_W: f32 = 220.0;
 const PREVIEW_W: f32 = 316.0;
 const TOOLBAR_H: f32 = 52.0;
 const FOOTER_H: f32 = 38.0;
@@ -149,11 +152,42 @@ pub struct Env<'a> {
     pub favorites: &'a [Uuid],
 }
 
+/// Width of the landmark folder pane. Keep the user's choice in the window
+/// layout. A temporarily smaller window only limits the displayed width.
+fn folder_rail_width(ui: &mut egui::Ui, p: &Palette, body: Rect) -> f32 {
+    let id = egui::Id::unique("places_folder_rail_width");
+    let max = (body.width() - PREVIEW_W - RAIL_HANDLE - MIN_LIST_W).max(140.0);
+    let saved = ui.data_mut(|data| data.get_persisted::<f32>(id)).unwrap_or(RAIL_W);
+    let mut width = saved.clamp(140.0, max);
+    let handle = Rect::from_min_size(body.min + Vec2::new(width, 0.0), Vec2::new(RAIL_HANDLE, body.height()));
+    let response = ui
+        .interact(handle, id, Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+        .on_hover_text(aurora_i18n::tr!("inventory-resize-sidebar"));
+    if response.double_clicked() {
+        ui.data_mut(|data| data.remove::<f32>(id));
+        width = RAIL_W.clamp(140.0, max);
+    } else if response.dragged() && response.drag_delta().x != 0.0 {
+        width = (width + response.drag_delta().x).clamp(140.0, max);
+        ui.data_mut(|data| data.insert_persisted(id, width));
+    }
+    let stroke = if response.hovered() || response.dragged() {
+        widgets::border_stroke(p, egui::Stroke::new(1.0, p.violet_light))
+    } else {
+        widgets::divider_stroke(p)
+    };
+    ui.painter().vline(body.left() + width + RAIL_HANDLE * 0.5, body.y_range(), stroke);
+    width
+}
+
 /// The profile the preview asks for a place.
 fn profile_of(place: &Place, inv: &Inventory, history: &[HistoryItem]) -> Option<Profile> {
     if let Some(item) = place.item {
-        let asset = inv.items.get(&item).map_or(Uuid::nil(), |it| it.asset_id);
-        return Some(Profile::Landmark { item, asset });
+        let original = crate::world::landmarks::inventory_item(inv, item)?;
+        return Some(Profile::Landmark {
+            item: original.id,
+            asset: original.asset_id,
+        });
     }
     let entry = history.get(place.history?)?;
     Some(Profile::History {
@@ -201,7 +235,7 @@ fn paint_icon(painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
 
 /// A small caps section title ("LANDMARK FOLDERS").
 fn section(ui: &egui::Ui, p: &Palette, text: &str, at: Pos2) {
-    let g = line(ui, &text.to_uppercase(), 11.0, p.muted, true, 400.0);
+    let g = line(ui, &text.ui_upper(), 11.0, p.muted, true, 400.0);
     ui.painter().galley(at, g, p.muted);
 }
 
@@ -577,11 +611,14 @@ impl PlacesUi {
         self.sort_button(&mut tb, p, c.world, env.sort, actions);
 
         let body = Rect::from_min_max(Pos2::new(full.left(), bar.bottom()), full.max);
-        let rail = Rect::from_min_size(body.min, Vec2::new(RAIL_W, body.height()));
+        let rail_width = folder_rail_width(ui, p, body);
+        let rail = Rect::from_min_size(body.min, Vec2::new(rail_width, body.height()));
         let preview = Rect::from_min_max(Pos2::new(body.right() - PREVIEW_W, body.top()), body.max);
-        let list = Rect::from_min_max(Pos2::new(rail.right(), body.top()), Pos2::new(preview.left(), body.bottom()));
+        let list = Rect::from_min_max(
+            Pos2::new(rail.right() + RAIL_HANDLE, body.top()),
+            Pos2::new(preview.left(), body.bottom()),
+        );
         ui.painter().rect_filled(rail, 0.0, p.field.gamma_multiply(0.55));
-        ui.painter().vline(rail.right(), rail.y_range(), stroke);
         ui.painter().rect_filled(preview, 0.0, p.field.gamma_multiply(0.35));
         ui.painter().vline(preview.left(), preview.y_range(), stroke);
 
@@ -973,15 +1010,10 @@ impl PlacesUi {
     /// its position (LLPanelPlaces, LLTeleportHistoryPanel:
     /// canTeleportToLocation), a landmark under @tplm (LLLandmarksPanel).
     fn teleport_allowed(world: &World, key: Key, place: &Place) -> bool {
-        if let Key::Visit(i) = key
-            && let Some(entry) = world.tp_storage.items.get(i)
-        {
-            return world.rlva_can_teleport_global(entry.global);
-        }
-        if place.item.is_some() {
-            world.rlva_can_teleport_landmark()
+        if matches!(key, Key::Landmark(_)) && place.item.is_some() {
+            world.rlva_landmark_button_enabled()
         } else {
-            place.global.is_none_or(|g| world.rlva_can_teleport_global(g))
+            world.rlva_can_teleport_location()
         }
     }
 
@@ -999,7 +1031,7 @@ impl PlacesUi {
                 global: entry.global,
                 title: entry.title.clone(),
             });
-        } else if let Some(item) = place.item.and_then(|i| inv.items.get(&i)) {
+        } else if let Some(item) = place.item.and_then(|i| crate::world::landmarks::inventory_item(inv, i)) {
             self.confirm = Some(Confirm::Landmark {
                 asset: item.asset_id,
                 name: item.name.clone(),
@@ -1571,25 +1603,30 @@ impl PlacesUi {
         ui.add_space(8.0);
         // the folders of the Landmarks tab, in chips
         if current == Source::All {
-            egui::ScrollArea::horizontal()
-                .id_salt("places-chips")
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        if widgets::pills::filter_pill(ui, p, "", aurora_i18n::tr!("ui-places-chip-all"), self.aurora.source == Source::All)
-                            .clicked()
-                        {
-                            self.set_source(Source::All);
-                        }
-                        for f in model::folders(&world.inventory) {
-                            let on = self.aurora.source == Source::Folder(f.id);
-                            if widgets::pills::filter_pill(ui, p, "", &f.name, on).clicked() {
-                                self.set_source(Source::Folder(f.id));
-                            }
-                        }
-                    });
-                });
+            // the wheel moves the row, and the chosen folder comes into view (#3872)
+            widgets::chip_row(ui, "places-chips", |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let mut chosen = None;
+                let all = self.aurora.source == Source::All;
+                let chip = widgets::pills::filter_pill(ui, p, "", aurora_i18n::tr!("ui-places-chip-all"), all);
+                if all {
+                    chosen = Some((egui::Id::unique("all"), chip.rect));
+                }
+                if chip.clicked() {
+                    self.set_source(Source::All);
+                }
+                for f in model::folders(&world.inventory) {
+                    let on = self.aurora.source == Source::Folder(f.id);
+                    let chip = widgets::pills::filter_pill(ui, p, "", &f.name, on);
+                    if on {
+                        chosen = Some((egui::Id::unique(f.id), chip.rect));
+                    }
+                    if chip.clicked() {
+                        self.set_source(Source::Folder(f.id));
+                    }
+                }
+                chosen
+            });
             ui.add_space(8.0);
         }
         // the narrow list keeps the landmarks of the Landmarks tab only
@@ -1623,7 +1660,14 @@ impl PlacesUi {
             _ => None,
         });
         let key = self.aurora.selected.unwrap_or(Key::Visit(usize::MAX));
-        let left = ui.max_rect().left() + 68.0;
+        let tp = aurora_i18n::tr!("common-teleport-3");
+        let map = aurora_i18n::tr!("common-map");
+        let tw = widgets::action_button_fit(ui, "location-filled", tp);
+        let mw = widgets::action_button_fit(ui, "map", map);
+        // Keep the LLPanelPlaces actions reachable in Aurora's inline details:
+        // large text can need the thumbnail's indentation as well as another row.
+        let indent = (ui.available_width() - 10.0 - tw.max(mw)).clamp(0.0, 68.0);
+        let left = ui.max_rect().left() + indent;
         let width = (ui.max_rect().right() - 10.0 - left).max(60.0);
         let rect = Rect::from_min_size(Pos2::new(left, ui.cursor().top() + 2.0), Vec2::new(width, 400.0));
         let mut d = ui.new_child(
@@ -1648,10 +1692,8 @@ impl PlacesUi {
                     .color(p.muted),
             );
         }
-        d.horizontal(|ui| {
+        d.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            let tp = aurora_i18n::tr!("common-teleport-3");
-            let tw = widgets::action_button_fit(ui, "location-filled", tp);
             if widgets::action_button_if(
                 ui,
                 p,
@@ -1665,30 +1707,24 @@ impl PlacesUi {
             {
                 self.teleport(key, place, &world.inventory, history);
             }
-            let mw = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));
-            if ui
-                .add_enabled_ui(place.global.is_some() && crate::ui::context::can_show_on_map(world), |ui| {
-                    widgets::action_button(
-                        ui,
-                        p,
-                        "map",
-                        aurora_i18n::tr!("common-map"),
-                        widgets::ActionKind::Flat,
-                        Vec2::new(mw, 26.0),
-                    )
-                })
-                .inner
-                .clicked()
+            if widgets::action_button_if(
+                ui,
+                p,
+                "map",
+                map,
+                widgets::ActionKind::Flat,
+                Vec2::new(mw, 26.0),
+                place.global.is_some() && crate::ui::context::can_show_on_map(world),
+            )
+            .clicked()
                 && let Some(g) = place.global
             {
                 actions.push(PlacesAction::ShowOnMap(g));
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let more = widgets::action_button(ui, p, "dots-filled", "", widgets::ActionKind::Flat, Vec2::splat(26.0))
-                    .on_hover_text(aurora_i18n::tr!("ui-places-more"));
-                menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    self.place_menu(ui, p, world, key, place, actions);
-                });
+            let more = widgets::action_button(ui, p, "dots-filled", "", widgets::ActionKind::Flat, Vec2::splat(26.0))
+                .on_hover_text(aurora_i18n::tr!("ui-places-more"));
+            menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                self.place_menu(ui, p, world, key, place, actions);
             });
         });
         // the rename asked from the menu, under the actions
@@ -1894,6 +1930,47 @@ mod tests {
     }
 
     #[test]
+    fn folder_divider_drag_survives_a_restart_and_a_temporarily_smaller_window() {
+        let p = crate::theme::Theme::default().palette();
+        let frame = |ctx: &egui::Context, width: f32, events| {
+            let body = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 400.0));
+            let mut displayed = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(body),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    displayed = folder_rail_width(ui, &p, body);
+                },
+            );
+            output.textures_delta.clear();
+            displayed
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let ctx = egui::Context::default();
+        let start = Pos2::new(RAIL_W + RAIL_HANDLE * 0.5, 100.0);
+        let end = start + Vec2::new(82.0, 0.0);
+        assert_eq!(frame(&ctx, 1000.0, vec![]), RAIL_W);
+        frame(&ctx, 1000.0, vec![egui::Event::PointerMoved(start), button(start, true)]);
+        frame(&ctx, 1000.0, vec![egui::Event::PointerMoved(end)]);
+        let resized = frame(&ctx, 1000.0, vec![button(end, false)]);
+        assert_eq!(resized, RAIL_W + 82.0);
+
+        let saved = ron::to_string(&ctx.memory(|memory| memory.clone())).unwrap();
+        let restored = egui::Context::default();
+        restored.memory_mut(|memory| *memory = ron::from_str(&saved).unwrap());
+        assert_eq!(frame(&restored, WIDE, vec![]), WIDE - PREVIEW_W - RAIL_HANDLE - MIN_LIST_W);
+        assert_eq!(frame(&restored, 1000.0, vec![]), resized);
+    }
+
+    #[test]
     fn only_a_landmark_opened_from_elsewhere_replaces_the_lists() {
         use crate::world::place_details::PlaceDetails;
         let open = |source| {
@@ -2089,6 +2166,156 @@ mod tests {
         )]);
         inv.apply(vec![contents(trash, Vec::new(), Vec::new())]);
         inv
+    }
+
+    #[test]
+    fn landmark_link_profile_and_teleport_use_the_original_asset() {
+        let mut inv = inventory();
+        let link = inv.items.get_mut(&id(201)).expect("favorite");
+        link.asset_type = 24;
+        link.asset_id = id(101);
+        let place = Place {
+            item: Some(id(201)),
+            favorite: Some(id(201)),
+            ..Default::default()
+        };
+        assert!(matches!(profile_of(&place, &inv, &[]), Some(Profile::Landmark { item, asset }) if item == id(101) && asset == id(1001)));
+        let mut state = PlacesUi::default();
+        state.teleport(Key::Landmark(id(1001)), &place, &inv, &[]);
+        assert!(matches!(state.confirm, Some(Confirm::Landmark { asset, .. }) if asset == id(1001)));
+    }
+
+    #[test]
+    fn narrow_place_actions_stay_visible_and_clickable_with_large_text() {
+        fn pointer(pos: Pos2, pressed: bool) -> Vec<egui::Event> {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        }
+
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = inventory();
+        let global = DVec3::new(256_040.0, 256_300.0, 22.0);
+        world.tp_storage.items.push(HistoryItem {
+            title: "Test visit".into(),
+            global,
+            date: 1.0,
+            slurl: String::new(),
+        });
+        let images = std::collections::HashMap::new();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut names = HashSet::new();
+        let mut wanted_images = HashSet::new();
+        let mut groups = HashSet::new();
+        for width in [236.0, 296.0, 456.0] {
+            for text_size in [1.0, 1.5, 2.0] {
+                for source in [Source::Favorites, Source::All, Source::History] {
+                    let ctx = egui::Context::default();
+                    let theme = crate::theme::Theme::default();
+                    theme.apply(&ctx, text_size);
+                    let p = theme.palette();
+                    let key = if source == Source::History {
+                        Key::Visit(0)
+                    } else {
+                        Key::Landmark(id(1000))
+                    };
+                    let place = Place {
+                        item: (source != Source::History).then_some(id(100)),
+                        asset: (source != Source::History).then_some(id(1000)),
+                        history: Some(0),
+                        global: Some(global),
+                        ..Default::default()
+                    };
+                    let mut state = PlacesUi::default();
+                    state.aurora.source = source;
+                    state.aurora.selected = Some(key);
+                    let mut time = 0.0;
+                    let mut frame = |events, state: &mut PlacesUi| {
+                        time += 0.1;
+                        let mut actions = Vec::new();
+                        let mut layer = egui::LayerId::background();
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 700.0))),
+                                time: Some(time),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| {
+                                layer = ui.layer_id();
+                                let mut c = Ctx {
+                                    p: &p,
+                                    world: &world,
+                                    images: &images,
+                                    emoji: &mut emoji,
+                                    want_names: &mut names,
+                                    wanted_images: &mut wanted_images,
+                                    want_groups: &mut groups,
+                                };
+                                state.narrow_details(ui, &mut c, &place, &mut actions);
+                            },
+                        );
+                        output.textures_delta.clear();
+                        let buttons: Vec<_> = ctx.viewport(|v| {
+                            v.prev_pass
+                                .widgets
+                                .get_layer(layer)
+                                .filter(|w| w.sense.senses_click())
+                                .map(|w| w.rect)
+                                .collect()
+                        });
+                        (actions, buttons, output.shapes)
+                    };
+                    frame(vec![], &mut state);
+                    let (_, buttons, shapes) = frame(vec![], &mut state);
+                    assert_eq!(buttons.len(), 3, "Teleport, Map, More");
+                    let bounds = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 700.0));
+                    for rect in &buttons {
+                        assert!(
+                            bounds.contains_rect(*rect),
+                            "clipped action: {source:?}, width {width}, text {text_size}: {rect:?}"
+                        );
+                    }
+                    for label in [aurora_i18n::tr!("common-teleport-3"), aurora_i18n::tr!("common-map")] {
+                        let text = shapes
+                            .iter()
+                            .find_map(|s| match &s.shape {
+                                egui::epaint::Shape::Text(t) if t.galley.text() == label => Some((t.visual_bounding_rect(), s.clip_rect)),
+                                _ => None,
+                            })
+                            .expect("action label drawn");
+                        assert!(
+                            text.1.contains_rect(text.0.shrink(0.5)),
+                            "clipped {label}, width {width}, text {text_size}"
+                        );
+                    }
+                    for i in 0..buttons.len() {
+                        for j in i + 1..buttons.len() {
+                            assert!(!buttons[i].intersects(buttons[j]), "actions overlap");
+                        }
+                    }
+                    frame(pointer(buttons[0].center(), true), &mut state);
+                    frame(pointer(buttons[0].center(), false), &mut state);
+                    assert!(state.confirm.is_some(), "Teleport reachable");
+                    state.confirm = None;
+                    frame(pointer(buttons[1].center(), true), &mut state);
+                    let (actions, ..) = frame(pointer(buttons[1].center(), false), &mut state);
+                    assert!(
+                        actions.iter().any(|a| matches!(a, PlacesAction::ShowOnMap(g) if *g == global)),
+                        "Map reachable"
+                    );
+                    frame(pointer(buttons[2].center(), true), &mut state);
+                    frame(pointer(buttons[2].center(), false), &mut state);
+                    assert!(egui::Popup::is_any_open(&ctx), "More reachable");
+                }
+            }
+        }
     }
 
     #[test]

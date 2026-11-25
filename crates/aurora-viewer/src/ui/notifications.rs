@@ -32,6 +32,8 @@ pub(crate) const CARD_ROW_SPACING: f32 = 6.0;
 pub struct NotifUi {
     pub privacy: crate::world::rlva::privacy::TextFilter,
     pub open: bool,
+    /// To Do listed something at the last frame.
+    pub was_listed: bool,
     /// Bottom-left of the bell (where the list opens).
     pub anchor: Option<egui::Pos2>,
     /// (notification id, expiry time)
@@ -213,7 +215,7 @@ pub(super) fn look_style(p: &Palette, look: crate::world::notification_history::
 /// The start of a message on its card: its links by their labels first,
 /// then cut, so never inside an address (#947).
 fn message_excerpt(world: &World, body: &str) -> String {
-    let body = super::chat::resolved_text(world, body);
+    let body = super::chat::resolved_text_in(world, Kind::Message.text(), body);
     let mut text: String = body.chars().take(MESSAGE_CHARS).collect();
     if body.chars().count() > MESSAGE_CHARS {
         text.push('…');
@@ -275,7 +277,17 @@ pub(super) fn person_card(
                         n.title.clone()
                     };
                     ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                        name_hover = text::show(ui, p, &title, &n.name_links, 12.5, p.ink, true, false);
+                        name_hover = text::show(
+                            ui,
+                            p,
+                            &title,
+                            &n.name_links,
+                            12.5,
+                            p.ink,
+                            true,
+                            false,
+                            world.notifications.names_of(n),
+                        );
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (r, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
@@ -297,7 +309,14 @@ pub(super) fn person_card(
                 let shown = world.notification_body(n);
                 if !shown.is_empty() {
                     let text = message_excerpt(world, &shown);
-                    name_hover = name_hover.or(text::person_body(ui, p, env.emoji, &text, &n.name_links));
+                    name_hover = name_hover.or(text::person_body(
+                        ui,
+                        p,
+                        env.emoji,
+                        &text,
+                        &n.name_links,
+                        world.notifications.names_of(n),
+                    ));
                 }
             });
         });
@@ -339,7 +358,7 @@ pub(super) fn person_card(
     let cover = if tip.is_empty() { cover } else { cover.on_hover_text(tip) };
     if cover.clicked() {
         if !on_close && let Some(target) = name_hover {
-            text::open(ui.ctx(), target);
+            text::open(ui.ctx(), world.notifications.names_of(n), target);
             return None;
         }
         return Some(if on_close || !n.opens() {
@@ -431,7 +450,17 @@ pub(super) fn card(
                         let title = super::notification_center::aurora::title(ui, p, &n.title, 12.5);
                         ui.add(egui::Label::new(title).wrap());
                     } else {
-                        text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, true);
+                        text::show(
+                            ui,
+                            p,
+                            &n.title,
+                            &n.name_links,
+                            12.5,
+                            p.ink,
+                            true,
+                            true,
+                            world.notifications.names_of(n),
+                        );
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -469,12 +498,19 @@ pub(super) fn card(
                 // LLTextEditor (lltoastnotifypanel.cpp, "text_editor_box")
                 if script {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        super::chat::text_with_links(ui, p, world, &shown, &n.name_links, 12.0, p.ink);
+                        super::chat::text_with_links(ui, p, world, world.notifications.text_of(n), &shown, &n.name_links, 12.0, p.ink);
                     });
                 } else {
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
-                        super::chat::text_with_links(ui, p, world, &shown, &n.name_links, 12.0, p.muted);
+                        let text = world.notifications.text_of(n);
+                        if matches!(n.data, Data::GroupNotice { .. }) {
+                            super::chat::select::document(ui, p, n.id, &shown, |ui, line| {
+                                super::chat::text_with_links(ui, p, world, text, line, &n.name_links, 12.0, p.muted);
+                            });
+                        } else {
+                            super::chat::text_with_links(ui, p, world, text, &shown, &n.name_links, 12.0, p.muted);
+                        }
                     });
                 }
             }
@@ -570,6 +606,24 @@ pub(super) fn card(
                     };
                     buttons.push((accept.into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
+                }
+                // handle_teleport_access_blocked's prompts and the maturity
+                // dialog (world/teleport_access.rs)
+                Data::MaturityChange { rating, prompt } => {
+                    use crate::world::teleport_access::Prompt;
+                    let accept: String = match prompt {
+                        Prompt::ChangeAndReteleport => aurora_i18n::tr!("world-teleport-access-change-and-continue").into(),
+                        Prompt::Change => aurora_i18n::tr!("world-teleport-access-change-preferences").into(),
+                        Prompt::Allow => aurora_i18n::tr!(
+                            "world-teleport-access-allow-button",
+                            rating = crate::ui::bars::maturity_name(*rating).to_owned()
+                        ),
+                        _ => aurora_i18n::tr!("common-ok").into(),
+                    };
+                    buttons.push((accept, Response::Accept, true));
+                    if *prompt != Prompt::OutOfSync {
+                        buttons.push((aurora_i18n::tr!("common-cancel").into(), Response::Decline, false));
+                    }
                 }
                 // TeleportRequest: Yes offers a teleport, No sends nothing
                 Data::TeleportRequest { .. } => {
@@ -691,29 +745,33 @@ pub(super) fn card(
                 } => {
                     ui.add_space(8.0);
                     let width = (ui.available_width() - 12.0) / 3.0;
+                    let size = Vec2::new(width, ui.spacing().interact_size.y.max(24.0));
                     // Reverse rows, never the labels or their wire indices.
+                    // A button taller than the requested size must not shift
+                    // the next column down in a vertically centered row.
                     for row in script_rows(b.len()) {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_top(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             for index in row.clone() {
-                                if button_sized(ui, p, &b[index], false, Some(Vec2::new(width, 24.0))).clicked() {
+                                if button_sized(ui, p, &b[index], false, Some(size)).clicked() {
                                     out = Some(Response::Button(index));
                                 }
                             }
                             for _ in row.len()..3 {
-                                ui.allocate_space(Vec2::new(width, 24.0));
+                                ui.allocate_space(size);
                             }
                         });
                     }
                     ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if button_sized(ui, p, aurora_i18n::tr!("common-ignore"), false, Some(Vec2::new(72.0, 22.0))).clicked() {
+                    ui.horizontal_top(|ui| {
+                        // LLToastNotifyPanel::createButton auto-sizes these
+                        // labels; updateButtonsLayout keeps Block to the left
+                        // of Ignore. Only script labels use fixed columns.
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min).with_main_wrap(true), |ui| {
+                            if button(ui, p, aurora_i18n::tr!("common-ignore"), false).clicked() {
                                 out = Some(Response::Dismiss);
                             }
-                            if !own_object
-                                && button_sized(ui, p, aurora_i18n::tr!("common-block"), false, Some(Vec2::new(72.0, 22.0))).clicked()
-                            {
+                            if !own_object && button(ui, p, aurora_i18n::tr!("common-block"), false).clicked() {
                                 out = Some(Response::Block);
                             }
                         });
@@ -792,15 +850,25 @@ pub(super) fn card(
     out
 }
 
-/// Script prompts are windows for Close All in both notification styles.
-/// Dismissing one uses the existing ignore-without-reply response.
-pub(super) fn close_script_prompt(ctx: &egui::Context, n: &Notification) -> bool {
-    if !matches!(n.data, Data::Dialog { .. } | Data::TextBox { .. }) {
+/// Close Window takes the newest visible LLScriptFloater (llDialog, llTextBox,
+/// llLoadURL and object inventory offers). Aurora also stacks permission
+/// questions here, so their shortcut follows their cross without answering.
+/// Cards kept in the list receive Close All only.
+pub(super) fn close_script_prompt(ctx: &egui::Context, n: &Notification, window: bool) -> bool {
+    if !n.stays_until_answered() {
         return false;
     }
     let id = egui::Id::NULL.with(("script_prompt", n.id));
-    super::close_key::shown_extra(ctx, id);
-    super::close_key::take(ctx, id)
+    // Apply the shortcut to prompts already shown when the key was pressed.
+    if super::close_key::take(ctx, id) {
+        return true;
+    }
+    if window {
+        super::close_key::shown_prompt(ctx, id, n.id);
+    } else {
+        super::close_key::shown_extra(ctx, id);
+    }
+    false
 }
 
 /// Lines of an llTextBox reply shown before it scrolls: the 50 pixels of the
@@ -960,6 +1028,12 @@ fn shown_toasts(list: &Notifications, nui: &NotifUi, dnd: bool) -> (Vec<u64>, us
     (keep, behind)
 }
 
+/// Port of LLSysWellWindow::removeItemByID (indra/newview/llsyswellwindow.cpp):
+/// close when the To Do list becomes empty.
+pub(crate) fn list_emptied(was_listed: bool, listed_now: bool, tab: super::notification_center::Tab) -> bool {
+    tab == super::notification_center::Tab::ToDo && was_listed && !listed_now
+}
+
 /// List under the bell and toasts; returns the answers to apply.
 pub fn show(
     ctx: &egui::Context,
@@ -980,6 +1054,11 @@ pub fn show(
     nui.column = None;
     update_toasts(list, nui, now, env.message_seconds, env.tip_seconds, env.hidden, dnd);
 
+    let listed_now = list.listed().next().is_some();
+    if nui.open && list_emptied(nui.was_listed, listed_now, nui.center.tab) {
+        nui.open = false;
+    }
+    nui.was_listed = listed_now;
     let anchor = nui.anchor.unwrap_or(egui::pos2(8.0, 60.0));
     if nui.open {
         nui.toasts.clear();
@@ -1058,7 +1137,7 @@ pub fn show(
                                 ui.spacing_mut().item_spacing.y = 4.0;
                                 // newest first
                                 for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
-                                    if close_script_prompt(ctx, n) {
+                                    if close_script_prompt(ctx, n, false) {
                                         answers.push((n.id, Response::Dismiss));
                                         continue;
                                     }
@@ -1097,15 +1176,12 @@ pub fn show(
                 let (ids, behind) = shown_toasts(list, nui, dnd);
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
-                        if close_script_prompt(ctx, n) {
-                            answers.push((id, Response::Dismiss));
-                            nui.toasts.retain(|(t, _)| *t != id);
-                            continue;
-                        }
-                        // the card keeps its own row spacing; the stack's
-                        // spacing stands only between the cards
-                        let r = ui
-                            .scope(|ui| {
+                        let r = if close_script_prompt(ctx, n, true) {
+                            Some(Response::Dismiss)
+                        } else {
+                            // the card keeps its own row spacing; the stack's
+                            // spacing stands only between the cards
+                            ui.scope(|ui| {
                                 ui.spacing_mut().item_spacing.y = CARD_ROW_SPACING;
                                 if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
                                     person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
@@ -1113,7 +1189,8 @@ pub fn show(
                                     card(ui, p, icons, world, env.images, &mut nui.wanted_images, n, true, false)
                                 }
                             })
-                            .inner;
+                            .inner
+                        };
                         match r {
                             // closing a toast only hides it: the offer waits in
                             // the list (a scripted window too, until answered)
@@ -1159,6 +1236,172 @@ mod tests {
 
     /// NotificationTipToastLifeTime's default (settings.xml).
     const TOAST_TIP: f64 = 10.0;
+
+    /// Close Window reaches the Legacy Viewer's script floaters (a dialog,
+    /// a text box, a URL, an object's offer) and Aurora's stacked permission
+    /// question; a resident's offer stays out.
+    #[test]
+    fn script_windows_include_permission_questions_over_the_legacy_viewer() {
+        let note = |data| Notification {
+            id: 1,
+            time: std::time::SystemTime::UNIX_EPOCH,
+            kind: Kind::Script,
+            title: String::new(),
+            body: String::new(),
+            name_links: Vec::new(),
+            read: false,
+            data,
+            text: String::new(),
+            transient: false,
+            quiet: false,
+            maturity: 0,
+        };
+        let sender = ([127, 0, 0, 1], 1).into();
+        let offer = |task, object| Data::Inventory {
+            from: Uuid::nil(),
+            tx: Uuid::nil(),
+            asset_type: 6,
+            object,
+            task,
+            task_offer: None,
+        };
+        for data in [
+            Data::Dialog {
+                sender,
+                object: Uuid::nil(),
+                object_name: String::new(),
+                own_object: false,
+                channel: 0,
+                buttons: Vec::new(),
+            },
+            Data::TextBox {
+                sender,
+                object: Uuid::nil(),
+                channel: 0,
+            },
+            Data::Url("https://example.invalid".into()),
+            offer(true, Uuid::nil()),
+            Data::Permissions {
+                task: Uuid::nil(),
+                item: Uuid::nil(),
+                questions: 0,
+                region: Default::default(),
+                experience: None,
+                caution: None,
+            },
+        ] {
+            let visible = note(data);
+            let new_prompt = Notification {
+                id: 2,
+                ..note(Data::Url("https://example.invalid".into()))
+            };
+            let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+            frames.run(Vec::new(), |ui| {
+                super::super::close_key::begin(ui.ctx());
+                assert!(!close_script_prompt(ui.ctx(), &visible, true));
+            });
+            let close_all = egui::Event::Key {
+                key: egui::Key::W,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            };
+            let mut dismissed = false;
+            frames.run(vec![close_all], |ui| {
+                super::super::close_key::begin(ui.ctx());
+                dismissed |= close_script_prompt(ui.ctx(), &visible, true);
+                assert!(!close_script_prompt(ui.ctx(), &new_prompt, true));
+            });
+            assert!(dismissed);
+        }
+        assert!(!note(offer(false, Uuid::from_u128(7))).stays_until_answered());
+    }
+
+    #[test]
+    fn closing_a_script_permission_or_object_offer_uses_its_visible_cross() {
+        use crate::world::notifications::im;
+        use aurora_net::NetCommand;
+
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let icons = Icons::default();
+        let pics = HashMap::new();
+        let images = HashMap::new();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        for legacy in [false, true] {
+            for (index, permission) in [(1, true), (3, false)] {
+                let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+                theme.apply(&frames.ctx, 1.0);
+                let mut list = Notifications::default();
+                let id = super::super::notification_center::tests::scripted_windows(&mut list)[index];
+                list.list.retain(|n| n.id == id);
+                let mut nui = NotifUi {
+                    bell: Some(egui::Rect::from_min_size(egui::pos2(550.0, 12.0), egui::vec2(32.0, 32.0))),
+                    ..Default::default()
+                };
+                let mut hist = Default::default();
+                let mut frame = |list: &mut Notifications, nui: &mut NotifUi, events| {
+                    let mut result = Vec::new();
+                    frames.run(events, |ui| {
+                        super::super::close_key::begin(ui.ctx());
+                        let mut env = ToastEnv {
+                            pics: &pics,
+                            images: &images,
+                            emoji: &mut emoji,
+                            hidden: false,
+                            message_seconds: 30.0,
+                            tip_seconds: TOAST_TIP,
+                            restart: None,
+                            presence_at: Default::default(),
+                            classic_bars: true,
+                            toast_gap: crate::settings::TOAST_GAP,
+                        };
+                        let draw = if legacy { show } else { super::super::notification_center::show };
+                        result.extend(draw(ui.ctx(), &p, &icons, &world, list, &mut hist, nui, &mut env, false).0);
+                    });
+                    result
+                };
+                let key = |pressed, modifiers| egui::Event::Key {
+                    key: egui::Key::W,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                };
+                for _ in 0..4 {
+                    assert!(frame(&mut list, &mut nui, vec![]).is_empty());
+                }
+                let command = egui::Modifiers::COMMAND;
+                let mut answer = frame(&mut list, &mut nui, vec![key(true, command)]);
+                if legacy {
+                    assert!(answer.is_empty(), "hiding sends nothing");
+                    assert!(nui.hidden.contains(&id));
+                    assert!(list.listed().any(|n| n.id == id));
+                    assert!(!shown_toasts(&list, &nui, false).0.contains(&id));
+                    nui.open = true;
+                    assert!(frame(&mut list, &mut nui, vec![key(false, command)]).is_empty());
+                    assert!(frame(&mut list, &mut nui, vec![]).is_empty());
+                    answer = frame(&mut list, &mut nui, vec![key(true, command | egui::Modifiers::SHIFT)]);
+                }
+                assert!(matches!(answer.as_slice(), [(got, Response::Dismiss)] if *got == id));
+                let (out, url) = list.respond(id, Response::Dismiss, |_| Uuid::nil(), Uuid::nil());
+                assert!(url.is_none() && !list.listed().any(|n| n.id == id));
+                if permission {
+                    assert!(out.is_empty(), "a permission question is closed silently");
+                } else {
+                    assert!(matches!(
+                        out.as_slice(),
+                        [NetCommand::SendImDialog {
+                            dialog: im::TASK_INVENTORY_DECLINED,
+                            ..
+                        }]
+                    ));
+                }
+            }
+        }
+    }
 
     #[test]
     fn bell_right_click_turns_do_not_disturb_over_and_keeps_the_rest() {
@@ -1368,10 +1611,10 @@ mod tests {
 
     #[test]
     fn script_dialog_pointer_clicks_return_the_original_button_in_both_styles() {
-        for aurora in [false, true] {
+        for (aurora, scale) in [(false, 1.0), (true, 1.0), (false, 2.0), (true, 2.0)] {
             let ctx = egui::Context::default();
             let theme = crate::theme::Theme::default();
-            theme.apply(&ctx, 1.0);
+            theme.apply(&ctx, scale);
             let p = theme.palette();
             let icons = Icons::default();
             let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -1422,6 +1665,23 @@ mod tests {
             for _ in 0..3 {
                 frame(vec![]);
             }
+            let (output, _) = frame(vec![]);
+            for row in labels.chunks(3) {
+                let centers: Vec<_> = row
+                    .iter()
+                    .map(|label| {
+                        output
+                            .shapes
+                            .iter()
+                            .find_map(|s| match &s.shape {
+                                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos.y + t.galley.size().y * 0.5),
+                                _ => None,
+                            })
+                            .expect("button visible")
+                    })
+                    .collect();
+                assert!(centers.iter().all(|y| (y - centers[0]).abs() < 0.5), "aurora={aurora}: {centers:?}");
+            }
             for (index, label) in labels.iter().enumerate() {
                 let (output, _) = frame(vec![]);
                 let pos = output
@@ -1448,6 +1708,40 @@ mod tests {
                     "aurora={aurora}, button={index}: {answer:?}"
                 );
             }
+            let mut footer = Vec::new();
+            for (label, block) in [(aurora_i18n::tr!("common-block"), true), (aurora_i18n::tr!("common-ignore"), false)] {
+                let (output, _) = frame(vec![]);
+                let text = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| match &s.shape {
+                        egui::Shape::Text(t) if t.galley.text() == label => Some(t),
+                        _ => None,
+                    })
+                    .expect("footer label visible");
+                assert!(!text.galley.elided, "aurora={aurora}, scale={scale}: {label} must stay whole");
+                let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                footer.push(rect);
+                let pos = rect.center();
+                frame(vec![egui::Event::PointerMoved(pos)]);
+                let click = |pressed| {
+                    vec![egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }]
+                };
+                frame(click(true));
+                let (_, answer) = frame(click(false));
+                assert!(
+                    matches!((answer, block), (Some(Response::Block), true) | (Some(Response::Dismiss), false)),
+                    "aurora={aurora}, scale={scale}: {label} keeps its action"
+                );
+            }
+            assert!(!footer[0].intersects(footer[1]));
+            assert!((footer[0].center().y - footer[1].center().y).abs() < 0.5);
+            assert!(footer[0].right() < footer[1].left(), "Block stays left of Ignore");
         }
     }
 

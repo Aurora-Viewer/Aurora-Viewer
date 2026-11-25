@@ -13,6 +13,17 @@ pub fn can_edit(inv: &super::Inventory, item: uuid::Uuid, god_level: u8) -> bool
         })
 }
 
+/// The explorer's preview pane may read a notecard's text: the rule of
+/// LLPreviewNotecard::loadAsset (indra/newview/llpreviewnotecard.cpp), copy
+/// for the agent or any god, the same as its window's (`app::inventory`
+/// InvAction::Preview), and RLVa's @viewnote; a link reads its original.
+pub fn can_read(inv: &super::Inventory, item: uuid::Uuid, god_level: u8) -> bool {
+    inv.can_preview(7)
+        && super::actions::original(inv, item)
+            .and_then(|id| inv.items.get(&id))
+            .is_some_and(|it| it.asset_type == 7 && (god_level > 0 || super::actions::held(inv, it) & super::actions::COPY != 0))
+}
+
 pub fn text(kind: i32, data: &[u8]) -> Result<(String, bool), String> {
     if kind == 7 {
         return aurora_net::inventory::notecard::Notecard::decode(data).map(|card| (card.text, true));
@@ -103,6 +114,46 @@ mod tests {
         item.parent = inv.lib_root;
         assert!(!can_edit(&inv, id, 0));
         assert!(!can_edit(&inv, id, 255), "the Library stays read only");
+    }
+    #[test]
+    fn the_preview_pane_reads_a_notecard_held_with_copy_or_by_a_god() {
+        use super::super::actions::{COPY, MODIFY, TRANSFER};
+        let mut inv = super::super::Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, uuid::Uuid::from_u128(2));
+        let id = uuid::Uuid::from_u128(8103);
+        // a known agent: with none, everything reads as the agent's
+        let me = uuid::Uuid::from_u128(76);
+        inv.owner = me;
+        let other = uuid::Uuid::from_u128(77);
+        let set = |inv: &mut super::super::Inventory, owner, group_owned, owner_mask, everyone_mask, library| {
+            let it = inv.items.get_mut(&id).expect("note");
+            (it.owner, it.group_owned, it.owner_mask, it.everyone_mask) = (owner, group_owned, owner_mask, everyone_mask);
+            if library {
+                it.parent = inv.lib_root;
+            }
+        };
+        let full = COPY | MODIFY | TRANSFER;
+        // (owner, group-owned, owner mask, everyone mask, Library, readable)
+        for (owner, group, mask, everyone, library, readable, what) in [
+            (me, false, full, 0, false, true, "the agent's, full"),
+            (me, false, MODIFY | TRANSFER, 0, false, false, "no copy"),
+            (me, false, COPY | MODIFY, 0, false, true, "no transfer"),
+            (me, false, COPY | TRANSFER, 0, false, true, "no modify"),
+            (other, true, full, 0, false, false, "group-owned, nothing for everyone"),
+            (other, true, full, COPY, false, true, "group-owned, copy for everyone"),
+            (other, false, full, 0, false, false, "someone else's"),
+            (other, false, full, COPY, true, true, "a Library notecard"),
+        ] {
+            set(&mut inv, owner, group, mask, everyone, library);
+            assert_eq!(can_read(&inv, id, 0), readable, "{what}");
+            assert!(can_read(&inv, id, 200), "a god reads {what}");
+        }
+        set(&mut inv, me, false, full, 0, false);
+        inv.rlva_preview_mask = 2;
+        assert!(!can_read(&inv, id, 255), "@viewnote hides it from everyone");
+        inv.rlva_preview_mask = 0;
+        inv.items.get_mut(&id).expect("note").asset_type = 0;
+        assert!(!can_read(&inv, id, 0), "a texture has no text");
     }
     #[test]
     fn notecard_lengths_are_utf8_bytes_and_invalid_sizes_never_panic() {

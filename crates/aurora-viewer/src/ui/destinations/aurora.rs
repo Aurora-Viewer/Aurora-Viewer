@@ -466,19 +466,22 @@ impl AuroraState {
         ui.add_space(8.0);
         // the categories, in chips
         let mut pick = None;
-        egui::ScrollArea::horizontal()
-            .id_salt("destinations-chips")
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    for &ci in &cache.shown {
-                        if widgets::filter_pill(ui, p, "", &cache.labels[ci], ci == cache.key.category).clicked() {
-                            pick = Some(ci);
-                        }
-                    }
-                });
-            });
+        // the same row as the folders of Places: the wheel moves it (#3872)
+        widgets::chip_row(ui, "destinations-chips", |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let mut chosen = None;
+            for &ci in &cache.shown {
+                let on = ci == cache.key.category;
+                let chip = widgets::filter_pill(ui, p, "", &cache.labels[ci], on);
+                if on {
+                    chosen = Some((egui::Id::unique(ci), chip.rect));
+                }
+                if chip.clicked() {
+                    pick = Some(ci);
+                }
+            }
+            chosen
+        });
         ui.add_space(6.0);
         // maturity and order
         ui.horizontal(|ui| {

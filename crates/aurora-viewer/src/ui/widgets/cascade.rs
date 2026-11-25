@@ -17,6 +17,9 @@ pub(crate) enum Group {
     Gesture,
     /// A conversation in its own window (floater_fs_im_session.xml).
     Conversation,
+    /// Properties of an object's contents item: the Legacy Viewer's
+    /// per-item "properties" instances stack in one group.
+    TaskProperties,
     Inventory(i32),
 }
 
@@ -80,7 +83,7 @@ pub(super) struct Opening {
 /// must not override a new instance's group placement. Existing instances
 /// keep their position, including when raised/restored or the UI is hidden.
 pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: Rect) -> Option<Opening> {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         let saved = group.saves_rect().then(|| data.get_persisted::<Rect>(group.saved_id())).flatten();
         let windows = data.get_temp_mut_or_default::<Windows>(registry_id());
@@ -118,7 +121,7 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
 }
 
 pub(super) fn shown(ctx: &Context, id: Id, rect: Rect, minimized: bool) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         let saved = {
             let windows = data.get_temp_mut_or_default::<Windows>(registry_id());
@@ -141,7 +144,7 @@ pub(super) fn shown(ctx: &Context, id: Id, rect: Rect, minimized: bool) {
 }
 
 pub(super) fn hidden(ctx: &Context, id: Id) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         let windows = data.get_temp_mut_or_default::<Windows>(registry_id());
         if let Some(w) = windows.0.iter_mut().find(|w| w.id == id) {
@@ -162,6 +165,18 @@ pub(super) fn minimized(ctx: &Context, id: Id, minimized: bool) {
 
 pub(super) fn forget(ctx: &Context, id: Id) {
     ctx.data_mut(|data| data.get_temp_mut_or_default::<Windows>(registry_id()).0.retain(|w| w.id != id));
+}
+
+/// "Reset window positions and sizes": the groups that remember where
+/// their first window stood (`Group::saves_rect`) forget it.
+pub(super) fn forget_saved(ctx: &Context) {
+    use Group::*;
+    ctx.data_mut(|data| {
+        for group in [Notecard, Script, Animation, Sound, Gesture, Conversation] {
+            debug_assert!(group.saves_rect());
+            data.remove::<Rect>(group.saved_id());
+        }
+    });
 }
 
 pub(super) fn placed(ctx: &Context, id: Id) {

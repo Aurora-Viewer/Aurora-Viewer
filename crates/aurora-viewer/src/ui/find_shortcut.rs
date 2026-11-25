@@ -3,7 +3,7 @@
 //! - the script editor, for its own find (LLFloaterScriptSearch);
 //! - a window with a find bar over a conversation (Conversations, the
 //!   history of a conversation), like LLFloaterSearchReplace on a chat
-//!   history;
+//!   history, or over a notecard's text (`inventory/find.rs`);
 //! - "Search", the accelerator of Firestorm's menu (menu_viewer.xml),
 //!   a shortcut of the viewer (`keybinds::Action::Search` by default).
 //!
@@ -69,14 +69,14 @@ fn claims_id() -> Id {
 /// The windows with a find bar drawn on the last frame.
 fn claims(ctx: &egui::Context) -> Vec<Claim> {
     // read outside the closure: the context is locked inside it
-    let now = ctx.cumulative_frame_nr();
+    let now = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let mut claims = ctx.data(|d| d.get_temp::<Vec<Claim>>(claims_id())).unwrap_or_default();
     claims.retain(|claim| claim.frame + 1 >= now);
     claims
 }
 
 fn claim(ctx: &egui::Context, layer: LayerId, fields: &[Id]) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let claims = d.get_temp_mut_or_default::<Vec<Claim>>(claims_id());
         claims.retain(|claim| claim.layer != layer && claim.frame + 1 >= frame);

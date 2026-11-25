@@ -53,6 +53,7 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
                     &Icons::default(),
                     &mut world,
                     state,
+                    None,
                     &mut prefs,
                     &mut true,
                     false,
@@ -148,4 +149,80 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
         frame(vec![egui::Event::PointerMoved(destination)], &mut state);
         assert_eq!(frame(button(destination, false), &mut state).1, Some(item));
     }
+}
+
+/// RlvUIEnabler::filterFloaterViewXXX (rlvui.cpp) validates the opening of
+/// a texture's preview alone: under @viewtexture one already open stays
+/// open, and no other opens.
+#[test]
+fn rlva_viewtexture_leaves_an_open_texture_preview_and_refuses_a_new_one() {
+    let ctx = egui::Context::default();
+    let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.agent_id = Uuid::from_u128(2);
+    world.inventory = super::tests::view_inventory(false);
+    let texture = |n: u128| aurora_net::inventory::InvItem {
+        id: Uuid::from_u128(n),
+        parent: world.inventory.root,
+        asset_id: Uuid::from_u128(n + 1),
+        asset_type: 0,
+        name: format!("Texture {n}"),
+        owner: world.agent_id,
+        owner_mask: rules::COPY | rules::TRANSFER,
+        ..Default::default()
+    };
+    let (open, other) = (texture(92001), texture(92011));
+    world.inventory.add_items(vec![open.clone(), other.clone()]);
+    let image = ctx.load_texture(
+        "rlva texture preview test",
+        egui::ColorImage::filled([64, 64], egui::Color32::GRAY),
+        Default::default(),
+    );
+    let images = HashMap::from([(open.asset_id, image.clone()), (other.asset_id, image)]);
+    let mut resources = crate::ui::texture_library::LibraryUi::default();
+    let mut library_prefs = crate::ui::texture_library::Preferences::default();
+    let mut scene = crate::scene::Scene::new(std::env::temp_dir(), world.avatar_lib.clone());
+    let mut time = 0.0;
+    let drawn = |item: Uuid| egui::Id::unique(("resource_texture_preview", item));
+    let mut frames = |world: &mut World, resources: &mut crate::ui::texture_library::LibraryUi, item: Option<Uuid>| {
+        for pass in 0..8 {
+            time += 1.0 / 60.0;
+            let _ = headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |host| {
+                    if pass == 0
+                        && let Some(item) = item
+                    {
+                        resources.open_preview(host.ctx(), world, item);
+                    }
+                    resources.show(
+                        host.ctx(),
+                        &crate::theme::Theme::default().palette(),
+                        world,
+                        &mut scene,
+                        &images,
+                        &mut library_prefs,
+                        &mut false,
+                    );
+                },
+            ));
+        }
+    };
+    let shown = |item: Uuid| {
+        ctx.data_mut(|data| {
+            let rect = data.get_temp::<egui::Rect>(drawn(item));
+            data.remove::<egui::Rect>(drawn(item));
+            rect
+        })
+        .is_some()
+    };
+    frames(&mut world, &mut resources, Some(open.id));
+    assert!(shown(open.id), "the preview opens");
+    world.inventory.rlva_preview_mask = 1;
+    frames(&mut world, &mut resources, Some(other.id));
+    assert!(shown(open.id), "the open preview stays");
+    assert!(!shown(other.id), "no other opens");
 }

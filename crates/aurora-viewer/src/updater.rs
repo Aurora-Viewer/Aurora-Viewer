@@ -503,13 +503,13 @@ impl Updater {
         if self.busy() {
             return;
         }
-        if !cfg!(windows) || release.archive.is_none() || release.checksum.is_none() {
+        if !aurora_updater::installs_here() || release.archive.is_none() || release.sha256.is_none() {
             if show {
                 self.state = State::Error(Failure::Unsupported);
                 self.open = true;
             } else {
-                // no package to install here (macOS, Linux): the notice
-                // offers the version, the window links its page
+                // no package to install here (macOS): the notice offers the
+                // version, the window links its page
                 self.quiet_download = false;
                 self.notice = Some(Notice {
                     version: release.version.clone(),
@@ -534,6 +534,12 @@ impl Updater {
                         Failure::Filesystem
                     })?;
                     let parent = path.parent().ok_or(Failure::Filesystem)?;
+                    // a sandbox's folder is a read-only package: say so before
+                    // the layout check, which would otherwise answer "extract
+                    // it into a dedicated folder" first
+                    if let Some(problem) = aurora_updater::install::sandboxed() {
+                        return Err(problem);
+                    }
                     if let Err(e) = Workspace::check_install(parent) {
                         log::warn!("update: this folder cannot be updated in place: {e:#}");
                         return Err(if aurora_updater::install::at_drive_root(parent) {
@@ -542,9 +548,14 @@ impl Updater {
                             Failure::Unsupported
                         });
                     }
+                    // one this account may not write: the package manager or
+                    // the bundle owns the viewer
+                    if let Some(problem) = aurora_updater::install::self_update_problem(parent) {
+                        return Err(problem);
+                    }
                     Workspace::new(parent).map_err(|e| {
                         log::warn!("update prepare: {e:#}");
-                        Failure::Filesystem
+                        prepare_failure(&e)
                     })
                 })
                 .await
@@ -600,6 +611,23 @@ fn announces(release: &Release, announced: &str, ignored: &str) -> bool {
     release.tag != announced && (release.required || release.tag != ignored)
 }
 
+/// Why preparing the transaction failed. On Linux, a folder this account
+/// cannot write belongs to a sandbox or a system package: the window explains
+/// that and links the release page. Windows installs in the user's own folder
+/// and has no such bundled sandbox; its old message already says the folder
+/// is not writable, so it must stay as it was.
+fn prepare_failure(error: &anyhow::Error) -> Failure {
+    let denied = matches!(
+        error.downcast_ref::<std::io::Error>().map(std::io::Error::kind),
+        Some(std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem)
+    );
+    if cfg!(target_os = "linux") && denied {
+        Failure::Protected
+    } else {
+        Failure::Filesystem
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,7 +661,7 @@ mod tests {
             notes: String::new(),
             url: aurora_updater::feed::RELEASE_PAGE.into(),
             archive: None,
-            checksum: None,
+            sha256: None,
             required,
             minimum: required.then(|| tag.trim_start_matches('v').into()),
             // these tests are about the block itself
@@ -850,5 +878,16 @@ mod tests {
         updater.poll(&mut settings, &mut info, rt.handle());
         assert!(updater.open && matches!(updater.state, State::Offer));
         assert!(updater.take_notice().is_none());
+    }
+
+    #[test]
+    fn a_folder_this_account_cannot_write_is_protected_only_on_linux() {
+        let expected = cfg!(target_os = "linux");
+        let denied = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let read_only = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::ReadOnlyFilesystem));
+        assert_eq!(matches!(prepare_failure(&denied), Failure::Protected), expected);
+        assert_eq!(matches!(prepare_failure(&read_only), Failure::Protected), expected);
+        let other = anyhow::anyhow!("disk full");
+        assert!(matches!(prepare_failure(&other), Failure::Filesystem));
     }
 }

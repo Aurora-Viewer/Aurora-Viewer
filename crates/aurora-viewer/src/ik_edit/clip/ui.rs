@@ -39,29 +39,37 @@ fn interpolation_combo(ui: &mut egui::Ui, id_salt: impl egui::AsIdSalt, interpol
 }
 
 impl Editor {
-    /// The draft selector. Choosing a draft swaps it with the current one and
-    /// starts it at its first frame.
+    /// The draft selector: every draft in its place, the open one ticked.
+    /// Choosing another opens it at its first frame; the one left keeps
+    /// its place in the list.
     fn drafts_ui(&mut self, ui: &mut egui::Ui, selected_text: String, width: Option<f32>) {
         let mut choice = None;
         let mut combo = egui::ComboBox::from_id_salt("animation-drafts").selected_text(selected_text);
         if let Some(width) = width {
             combo = combo.width(width);
         }
+        let order = self.clip.draft_order();
         combo
             .show_ui(ui, |ui| {
-                for (index, draft) in self.clip.history.iter().enumerate() {
-                    if ui.selectable_label(false, format!("{} · {}", index + 1, draft.name)).clicked() {
-                        choice = Some(index);
+                for (position, entry) in order.iter().enumerate() {
+                    let draft = match entry {
+                        Some(index) => &self.clip.history[*index],
+                        None => match &self.clip.document {
+                            Some(document) => document,
+                            None => continue,
+                        },
+                    };
+                    let label = format!("{} · {}", position + 1, draft.name);
+                    if ui.selectable_label(entry.is_none(), label).clicked() && entry.is_some() {
+                        choice = Some(position);
                     }
                 }
             })
             .response
             .on_hover_text(aurora_i18n::tr!("anim-edit-drafts-hint"));
-        let Some(index) = choice else { return };
-        if let Some(current) = self.clip.document.as_mut() {
-            std::mem::swap(current, &mut self.clip.history[index]);
-        } else {
-            self.clip.document = Some(self.clip.history.remove(index));
+        let Some(position) = choice else { return };
+        if !self.clip.pick_draft(position) {
+            return;
         }
         self.clip.clear_undo_history();
         self.clip.auto_key_retime_from = None;
@@ -233,7 +241,10 @@ impl Editor {
                 match self.clip.tab {
                     ClipTab::Bone => self.clip_bone_ui(ui, palette, world, frame),
                     ClipTab::Tracks => self.clip_tracks_ui(ui, palette, world, frame),
-                    ClipTab::Clip => self.clip_settings_ui(ui, palette),
+                    ClipTab::Clip => {
+                        self.couple_ui(ui, palette, world);
+                        self.clip_settings_ui(ui, palette);
+                    }
                     ClipTab::Display => self.visibility_ui(ui, palette, world, frame),
                 }
             });
@@ -352,29 +363,51 @@ impl Editor {
             self.clip.changed();
         }
     }
-    pub(super) fn clip_capture_ui(&mut self, ui: &mut egui::Ui) {
-        ui.add_enabled_ui(!self.clip.waiting_source(), |ui| {
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add_enabled(self.selected.is_some(), egui::Button::new(aurora_i18n::tr!("anim-edit-key-bone")))
-                    .clicked()
-                    && let Some(bone) = self.selected
-                {
-                    self.clip.capture = Some(Capture::Bone(bone));
-                }
-                if ui
-                    .add_enabled(
-                        !self.clip.modified.is_empty(),
-                        egui::Button::new(aurora_i18n::tr!("anim-edit-key-changes")),
-                    )
-                    .clicked()
-                {
-                    self.clip.capture = Some(Capture::Modified);
-                }
-                if ui.button(aurora_i18n::tr!("anim-edit-key-pose")).clicked() {
-                    self.clip.capture = Some(Capture::Pose);
-                }
-            });
+    /// Key this bone (with the joints selected with it), the changes, or the
+    /// whole pose at the playhead: icon buttons like the timeline's.
+    pub(super) fn clip_capture_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, size: egui::Vec2) {
+        let waiting = self.clip.waiting_source();
+        ui.horizontal_wrapped(|ui| {
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "keyframe-filled",
+                aurora_i18n::tr!("anim-edit-key-bone"),
+                widgets::ActionKind::Flat,
+                size,
+                !waiting && self.selected.is_some(),
+            )
+            .clicked()
+                && let Some(bone) = self.selected
+            {
+                self.clip.capture = Some(Capture::Bone(bone));
+            }
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "keyframe-filled",
+                aurora_i18n::tr!("anim-edit-key-changes"),
+                widgets::ActionKind::Flat,
+                size,
+                !waiting && !self.clip.modified.is_empty(),
+            )
+            .clicked()
+            {
+                self.clip.capture = Some(Capture::Modified);
+            }
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "key-filled",
+                aurora_i18n::tr!("anim-edit-key-pose"),
+                widgets::ActionKind::Flat,
+                size,
+                !waiting,
+            )
+            .clicked()
+            {
+                self.clip.capture = Some(Capture::Pose);
+            }
         });
     }
     fn clip_tracks_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame) {
@@ -382,12 +415,9 @@ impl Editor {
         ui.label(aurora_i18n::tr!("anim-edit-priority-hint"));
         let mut changes = Vec::new();
         let mut selected = None;
-        for (index, track) in document
-            .tracks
-            .iter()
-            .enumerate()
-            .filter(|(_, track)| track.authored || !track.enabled || Some(track.bone) == self.selected)
-        {
+        for (index, track) in document.tracks.iter().enumerate().filter(|(_, track)| {
+            track.authored || !track.enabled || Some(track.bone) == self.selected || self.clip.together.contains(&track.bone)
+        }) {
             ui.push_id(("native-track", track.bone), |ui| {
                 ui.horizontal(|ui| {
                     let mut enabled = track.enabled;
@@ -398,10 +428,17 @@ impl Editor {
                     let mut changed = enabled_response.changed();
                     let mut checkpoint = checkpoint_on_edit(&enabled_response);
                     if ui
-                        .add(egui::Button::selectable(self.selected == Some(track.bone), &track.motion.joint_name).truncate())
+                        .add(
+                            egui::Button::selectable(
+                                self.selected == Some(track.bone) || self.clip_follows(track.bone),
+                                &track.motion.joint_name,
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("poser-together-tip"))
                         .clicked()
                     {
-                        selected = Some(track.bone);
+                        selected = Some((track.bone, ui.input(|i| crate::ik_edit::adds_to_selection(i.modifiers))));
                     }
                     let priority_response = ui.add(egui::DragValue::new(&mut priority).range(-1..=6).speed(1));
                     changed |= priority_response.changed();
@@ -461,8 +498,8 @@ impl Editor {
                 self.clip.changed();
             }
         }
-        if let Some(bone) = selected {
-            self.select(bone, &world.avatar_lib.rig, frame);
+        if let Some((bone, add)) = selected {
+            self.clip_click_bone(bone, &world.avatar_lib.rig, frame, add);
         }
     }
 
@@ -593,16 +630,22 @@ impl Editor {
         checkpoint_needed |= checkpoint_on_edit(&response);
         let duration = end.saturating_sub(start) as f32 / fps as f32;
         egui::Grid::new("native-animation-timing").num_columns(2).show(ui, |ui| {
-            for (key, value) in [
-                ("import-loop-in", &mut meta.loop_in),
-                ("import-loop-out", &mut meta.loop_out),
-                ("import-ease-in", &mut meta.ease_in),
-                ("import-ease-out", &mut meta.ease_out),
+            let max_ease = if meta.looping {
+                crate::imports::animation::MAX_LOOP_FADE_INPUT
+            } else {
+                duration
+            };
+            for (key, value, limit, clamp_existing) in [
+                ("import-loop-in", &mut meta.loop_in, duration, true),
+                ("import-loop-out", &mut meta.loop_out, duration, true),
+                ("import-ease-in", &mut meta.ease_in, max_ease, !meta.looping),
+                ("import-ease-out", &mut meta.ease_out, max_ease, !meta.looping),
             ] {
                 ui.label(aurora_i18n::text(key));
                 let response = ui.add(
                     egui::DragValue::new(value)
-                        .range(0.0..=duration)
+                        .range(0.0..=limit)
+                        .clamp_existing_to_range(clamp_existing)
                         .speed(1.0 / f64::from(fps))
                         .suffix(" s"),
                 );
@@ -667,24 +710,69 @@ impl Editor {
         }
     }
     pub(in crate::ik_edit) fn clip_export_ui(&mut self, ui: &mut egui::Ui, palette: &Palette) {
-        self.clip_capture_ui(ui);
+        // the page above scrolls; the keying and the files stay below it
+        widgets::divider(ui, palette);
+        // the six buttons of the footer as wide as each other, when they fit
+        let size = egui::vec2(
+            equal_width(
+                ui,
+                3,
+                &[
+                    ("keyframe-filled", aurora_i18n::tr!("anim-edit-key-bone")),
+                    ("keyframe-filled", aurora_i18n::tr!("anim-edit-key-changes")),
+                    ("key-filled", aurora_i18n::tr!("anim-edit-key-pose")),
+                    ("device-floppy-filled", aurora_i18n::tr!("anim-edit-save")),
+                    ("file-export", aurora_i18n::tr!("anim-edit-export-bvh")),
+                    ("upload", aurora_i18n::tr!("anim-edit-upload")),
+                ],
+            ),
+            ui.spacing().interact_size.y,
+        );
+        self.clip_capture_ui(ui, palette, size);
         let enabled = !self.clip.busy
             && !self.clip.waiting_source()
             && self.clip.document.as_ref().is_some_and(|document| document.has_exportable_tracks());
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("anim-edit-save")))
-                .clicked()
+        let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
+        ui.horizontal_wrapped(|ui| {
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "device-floppy-filled",
+                aurora_i18n::tr!("anim-edit-save"),
+                widgets::ActionKind::Primary,
+                size,
+                enabled,
+            )
+            .clicked()
             {
-                let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
                 self.queue_studio_file_action(files::Action::Save { last_key_only });
             }
-            if ui
-                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("anim-edit-upload")))
-                .on_hover_text(aurora_i18n::tr!("anim-edit-upload-hint"))
-                .clicked()
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "file-export",
+                aurora_i18n::tr!("anim-edit-export-bvh"),
+                widgets::ActionKind::Flat,
+                size,
+                enabled,
+            )
+            .on_hover_text(aurora_i18n::tr!("anim-edit-export-bvh-hint"))
+            .clicked()
             {
-                let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
+                self.queue_studio_file_action(files::Action::ExportBvh { last_key_only });
+            }
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "upload",
+                aurora_i18n::tr!("anim-edit-upload"),
+                widgets::ActionKind::Flat,
+                size,
+                enabled,
+            )
+            .on_hover_text(aurora_i18n::tr!("anim-edit-upload-hint"))
+            .clicked()
+            {
                 self.queue_studio_file_action(files::Action::Import { last_key_only });
             }
         });
@@ -698,5 +786,215 @@ impl Editor {
             ui.add(egui::Label::new(egui::RichText::new(error).color(palette.danger)).truncate())
                 .on_hover_text(error);
         }
+    }
+}
+
+/// One width for a row of `per_row` action buttons: the widest of
+/// `buttons`, when `per_row` of them fit side by side; otherwise 0 (each
+/// its own width, the row wraps).
+pub(in crate::ik_edit) fn equal_width(ui: &egui::Ui, per_row: usize, buttons: &[(&str, &str)]) -> f32 {
+    let widest = buttons
+        .iter()
+        .map(|(icon, label)| widgets::action_button_fit(ui, icon, label))
+        .fold(0.0, f32::max);
+    let count = per_row.max(1) as f32;
+    let row = widest * count + ui.spacing().item_spacing.x * (count - 1.0);
+    if row <= ui.available_width() { widest } else { 0.0 }
+}
+
+impl Editor {
+    /// Couple mode's section: who Person B is and the switch between the
+    /// two, or the nearby residents to pick B from, each with the posing
+    /// consent's state (they accept as for the poser).
+    fn couple_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World) {
+        use crate::world::poser_consent::{self, Status};
+        let size = egui::vec2(ui.available_width().min(260.0), ui.spacing().interact_size.y);
+        ui.label(egui::RichText::new(aurora_i18n::tr!("anim-couple-title")).strong());
+        if let Some(couple) = self.clip.couple.as_ref() {
+            let editing_b = couple.editing_b;
+            ui.label(aurora_i18n::tr!("anim-couple-partner", name = couple.partner_name.clone()));
+            let label = if editing_b {
+                aurora_i18n::tr!("anim-couple-edit-a")
+            } else {
+                aurora_i18n::tr!("anim-couple-edit-b")
+            };
+            if widgets::action_button(ui, palette, "exchange-filled", label, widgets::ActionKind::Flat, size).clicked() {
+                self.switch_person();
+            }
+            // Person B moved on screen, never in their animation
+            ui.label(aurora_i18n::tr!("anim-couple-move"));
+            let (mut local, turn) = self.couple_place_local(world);
+            let mut degrees = turn.to_degrees();
+            let mut changed = false;
+            egui::Grid::new("couple-move").num_columns(2).show(ui, |ui| {
+                for (key, value) in [
+                    ("anim-couple-forward", &mut local.x),
+                    ("anim-couple-left", &mut local.y),
+                    ("anim-couple-up", &mut local.z),
+                ] {
+                    ui.label(aurora_i18n::text(key));
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(value)
+                                .speed(0.01)
+                                .range(-20.0..=20.0)
+                                .suffix(" m")
+                                .fixed_decimals(2),
+                        )
+                        .changed();
+                    ui.end_row();
+                }
+                ui.label(aurora_i18n::tr!("anim-couple-turn"));
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut degrees)
+                            .speed(0.5)
+                            .range(-180.0..=180.0)
+                            .suffix("°")
+                            .fixed_decimals(0),
+                    )
+                    .changed();
+                ui.end_row();
+            });
+            if changed {
+                self.set_couple_place(world, local, degrees.to_radians());
+            }
+            ui.horizontal(|ui| {
+                let half = egui::vec2((size.x - ui.spacing().item_spacing.x) / 2.0, size.y);
+                if widgets::action_button(
+                    ui,
+                    palette,
+                    "users",
+                    aurora_i18n::tr!("anim-couple-face"),
+                    widgets::ActionKind::Flat,
+                    half,
+                )
+                .on_hover_text(aurora_i18n::tr!("anim-couple-face-tip"))
+                .clicked()
+                {
+                    self.couple_face_to_face(world);
+                }
+                if widgets::action_button(
+                    ui,
+                    palette,
+                    "restore",
+                    aurora_i18n::tr!("anim-couple-reset-place"),
+                    widgets::ActionKind::Flat,
+                    half,
+                )
+                .clicked()
+                {
+                    self.set_couple_place(world, Vec3::ZERO, 0.0);
+                }
+            });
+            if widgets::action_button(
+                ui,
+                palette,
+                "circle-x-filled",
+                aurora_i18n::tr!("anim-couple-end"),
+                widgets::ActionKind::Flat,
+                size,
+            )
+            .on_hover_text(aurora_i18n::tr!("anim-couple-end-tip"))
+            .clicked()
+            {
+                self.end_couple();
+            }
+            widgets::divider(ui, palette);
+            return;
+        }
+        ui.label(egui::RichText::new(aurora_i18n::tr!("anim-couple-hint")).color(palette.muted));
+        // no one around, or to try a pose first: a mirror of yourself
+        let waiting = self.clip.mirror_wanted.is_some();
+        if widgets::action_button_if(
+            ui,
+            palette,
+            "flip-horizontal",
+            aurora_i18n::tr!("anim-couple-mirror"),
+            widgets::ActionKind::Flat,
+            egui::vec2(ui.available_width().min(260.0), ui.spacing().interact_size.y),
+            !waiting,
+        )
+        .on_hover_text(aurora_i18n::tr!("anim-couple-mirror-tip"))
+        .clicked()
+        {
+            self.clip.mirror_wanted = Some(std::time::Instant::now());
+            self.clip.error = None;
+        }
+        let mut peers: Vec<(Uuid, String, f32)> = world
+            .objects
+            .iter()
+            .filter(|(_, object)| {
+                object.is_avatar()
+                    && object.full_id != world.agent_id
+                    && !world.is_local_copy(&object.full_id)
+                    && poser_consent::nearby(world, object.full_id)
+            })
+            .map(|(_, object)| {
+                let id = object.full_id;
+                (
+                    id,
+                    poser_consent::name(world, id),
+                    poser_consent::distance(world, id).unwrap_or(f32::MAX),
+                )
+            })
+            .collect();
+        peers.sort_by(|a, b| a.2.total_cmp(&b.2));
+        if peers.is_empty() {
+            ui.label(egui::RichText::new(aurora_i18n::tr!("poser-nearby-none")).color(palette.muted));
+        } else {
+            // say why an Ask goes nowhere, as the poser's subject menu does:
+            // the request travels through the bridge, ours and theirs
+            use crate::world::bridge::QueryState;
+            let bridge = self.poser_bridge();
+            let hint = match bridge {
+                QueryState::Ready => "anim-couple-ask-needs",
+                QueryState::Starting => "poser-bridge-starting",
+                QueryState::Silent => "poser-bridge-silent",
+                QueryState::Failed => "poser-bridge-failed",
+                QueryState::Detached => "poser-bridge-needed",
+                QueryState::Off => "poser-bridge-disabled",
+            };
+            let color = if bridge == QueryState::Ready {
+                palette.muted
+            } else {
+                palette.amber
+            };
+            ui.label(egui::RichText::new(aurora_i18n::text(hint)).color(color));
+        }
+        let mut chosen = None;
+        for (id, name, distance) in peers.into_iter().take(12) {
+            ui.horizontal(|ui| {
+                let status = world.poser_consent.status(id);
+                let (icon, label, enabled) = match status {
+                    Status::Accepted => ("user-plus", aurora_i18n::tr!("anim-couple-use"), true),
+                    Status::Pending => ("clock-filled", aurora_i18n::tr!("poser-asked"), false),
+                    Status::Refused => ("circle-x-filled", aurora_i18n::tr!("poser-refused"), false),
+                    Status::NoAnswer => ("clock-filled", aurora_i18n::tr!("poser-no-answer"), false),
+                    Status::Ask => ("send-filled", aurora_i18n::tr!("poser-consent-ask"), true),
+                };
+                let button = egui::vec2(110.0, ui.spacing().interact_size.y);
+                let kind = if status == Status::Accepted {
+                    widgets::ActionKind::Primary
+                } else {
+                    widgets::ActionKind::Flat
+                };
+                if widgets::action_button_if(ui, palette, icon, label, kind, button, enabled).clicked() {
+                    match status {
+                        Status::Accepted => chosen = Some(id),
+                        Status::Ask => self.push_poser_request(poser::Request::Ask(id)),
+                        _ => {}
+                    }
+                }
+                ui.add(egui::Label::new(format!("{name} · {distance:.0} m")).truncate());
+            });
+        }
+        if let Some(id) = chosen
+            && !self.start_couple(world, couple::Partner::Avatar(id))
+            && self.clip.error.is_none()
+        {
+            self.clip.error = Some(aurora_i18n::text("anim-couple-wait").to_owned());
+        }
+        widgets::divider(ui, palette);
     }
 }

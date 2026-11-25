@@ -44,6 +44,10 @@ pub(crate) enum Capture {
     Full,
     /// The whole frame, drawn offscreen at the photo's size.
     Snapshot(crate::SnapshotSpec),
+    /// A film's frame, read back without waiting (film_readback.rs): the 3D
+    /// view of the window's frame, or (`Some`) the frame drawn offscreen at
+    /// the film's size, as a photo is.
+    Film(u64, Option<crate::SnapshotSpec>),
 }
 
 /// Which capture a frame carries: the scene alone wins over the whole
@@ -116,6 +120,9 @@ pub(crate) struct FramePacket {
     pub params: FrameParams,
     pub lists: DrawLists,
     pub ui: Option<EguiFrame>,
+    /// The windows of the interface outside the viewer's (outside.rs):
+    /// opened, closed, and those to draw after this frame.
+    pub outside: crate::outside::Packet,
     pub surface: SurfaceState,
     pub settings: RenderSettings,
     /// Pixel whose depth to read back (hover; answered a few frames later).
@@ -126,16 +133,30 @@ pub(crate) struct FramePacket {
     /// Pixels whose drawn faces to read back: drawn again in this frame,
     /// answered with a later result (drawn_pick.rs).
     pub drawn: Vec<DrawnRequest>,
+    /// Requests of earlier frames given up since the frame before: not
+    /// drawn for if they still wait.
+    pub drawn_forgotten: Vec<u64>,
     pub capture: Option<Capture>,
+    /// The panorama to project from the cube of the six faces, before the
+    /// frame is drawn (equirect.rs); answered by a later result.
+    pub equirect: Option<Box<crate::EquirectJob>>,
     /// Count the luminance histogram of this frame shown at that exposure
     /// (the photo viewfinder; answered a few frames later).
     pub histogram: Option<f32>,
+    /// A small picture of this frame's 3D view, tagged (thumbnail.rs;
+    /// answered a few frames later, never waited for).
+    pub thumbnail: Option<u64>,
+    /// The second camera's view, drawn after this frame (second_view.rs).
+    pub second_view: Option<crate::second_view::SecondViewJob>,
     /// Start the motion history again (`Renderer::cut_motion_history`).
     pub motion_cut: bool,
     /// How far every position moved since the last frame (m, x and y): a
     /// border crossing made them relative to another region
     /// (`Renderer::shift_world`). The weather's memories move with them.
     pub world_shift: [f32; 2],
+    /// The faces the ray-traced shadows trace this frame (rt_shadows.rs;
+    /// None when the device does not trace).
+    pub rt: Option<std::sync::Arc<crate::rt_shadows::Faces>>,
     /// When the frame began reading its input (`Renderer::mark_input`):
     /// the time to its presentation is the latency the frame pacing cuts.
     pub input_at: Option<Instant>,
@@ -162,8 +183,20 @@ pub(crate) struct FrameResult {
     /// The frame was a photo (`Capture::Snapshot`): `captured` is its image,
     /// None when it could not be drawn.
     pub snapshot: bool,
+    /// The oldest panorama asked whose readback is over (width, height,
+    /// RGBA8); Some(None) when it could not be made.
+    pub equirect: Option<crate::equirect::Answer>,
     /// The luminance histogram counted lately (`FramePacket::histogram`).
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
+    /// The small pictures made since the last result (`FramePacket::thumbnail`).
+    pub thumbnails: Vec<crate::Thumbnail>,
+    /// What became of the windows outside since the last result.
+    pub outside: Vec<crate::OutsideEvent>,
+    /// The film frames read back since the last result, in their order.
+    pub films: Vec<crate::film_readback::FilmFrame>,
+    /// The ray tracer that drew this frame (`RtShadows::made`), 0 without
+    /// one: turned off, or still being made.
+    pub rt: u32,
     pub spent: Spent,
 }
 

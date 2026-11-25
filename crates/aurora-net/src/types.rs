@@ -522,6 +522,16 @@ pub enum NetEvent {
     /// The ReadOfflineMsgs capability failed: Firestorm then asks by
     /// message (`NetCommand::RequestOfflineMessagesLegacy`).
     OfflineMessagesFailed,
+    /// Answer of a `NetCommand::ChatServiceRequest`. `status` is the HTTP
+    /// status, 0 for a transport failure (timeout, connection) and 499 for
+    /// an LLSD body that does not parse, as LLCoreHttpUtil reports them.
+    /// `body` is the LLSD of a success only; an array root (the list) is
+    /// given as it is.
+    ChatServiceResponse {
+        id: u64,
+        status: u16,
+        body: Option<aurora_llsd::Llsd>,
+    },
     /// An offline group invitation was accepted by capability: the group
     /// list is to ask again.
     OfflineGroupInviteAccepted(Uuid),
@@ -567,6 +577,8 @@ pub enum NetEvent {
     /// its own flag in the next request; `error` is then the server's text.
     /// `next_server`: the login server sends the login on to this other
     /// server (`LoginError::NextServer`), which the user agrees to first.
+    /// `unencrypted_server`: the login would go to this server over plain
+    /// `http` (`LoginError::Unencrypted`), which the user agrees to first.
     LoginFailed {
         error: String,
         mfa_required: bool,
@@ -575,6 +587,7 @@ pub enum NetEvent {
         bad_credentials: bool,
         previous_session: bool,
         next_server: Option<String>,
+        unencrypted_server: Option<String>,
     },
     LoggedIn(Arc<LoginResponse>),
     /// A simulator circuit was established (main or neighbor).
@@ -709,7 +722,14 @@ pub enum NetEvent {
         /// "GroupChatPostLinksEnabled": the region applies the group ability
         /// to post links in chat (LLViewerRegion::groupChatPostLinksEnabled).
         group_chat_post_links: bool,
+        /// "GameControlEnabled": the region reads GameControlData
+        /// (LLViewerRegion::gameControlEnabled).
+        game_control: bool,
     },
+    /// SimStats' LL_SIM_STAT_FPS of any region (process_sim_stats): the
+    /// simulator's frame rate, which paces GameControlData
+    /// (LLGameControl::setServerFrameRate).
+    SimFrameRate(f32),
     HoverHeightUpdated {
         region: RegionHandle,
         request: u64,
@@ -823,9 +843,20 @@ pub enum NetEvent {
     VoiceModerationFailed {
         everyone: bool,
     },
+    /// A teleport refused or failed (`teleport_failed.rs`): `reason` is the
+    /// simulator's text, `code` the id the viewer looks up for its own
+    /// wording (AlertInfo's Message, else the reason, which may be empty),
+    /// `region` its REGION_NAME. `code` is None for the viewer's own
+    /// failures: they get no CouldNotTeleportReason popup.
     TeleportFailed {
         reason: String,
+        code: Option<String>,
+        region: String,
     },
+    /// The TeleportFailed that follows is a refusal for the destination's
+    /// content rating (teleport_access.rs): the viewer may offer to change
+    /// the preference instead of reporting the reason.
+    TeleportAccessBlocked(crate::teleport_access::AccessBlocked),
     Alert {
         message: String,
     },
@@ -1266,6 +1297,10 @@ pub enum NetEvent {
     InventoryUpdated {
         folders: Vec<crate::inventory::InvFolder>,
         items: Vec<crate::inventory::InvItem>,
+        /// From BulkUpdateInventory (UDP or event queue): a delivery or an
+        /// unpack, whose folders the viewer reads at once so they sort by
+        /// their contents (#3025). Every other server change leaves it false.
+        bulk: bool,
     },
     /// Delivery identity follows InventoryUpdated, so observers see its headers.
     InventoryDelivery {
@@ -1555,6 +1590,26 @@ pub struct AttachRequest {
     pub desc: String,
 }
 
+/// What the simulator sends of its region (LLViewerRegion::setInterestListMode,
+/// indra/newview/llviewerregion.cpp, originally LGPL 2.1): the camera's
+/// view by default, everything while the 360° snapshot window is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InterestListMode {
+    #[default]
+    Default,
+    Capture360,
+}
+
+impl InterestListMode {
+    /// The capability's `mode` (IL_MODE_DEFAULT, IL_MODE_360).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InterestListMode::Default => "default",
+            InterestListMode::Capture360 => "360",
+        }
+    }
+}
+
 /// LLToolGrab SurfaceInfo: llDetectedTouch* values in region coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TouchSurface {
@@ -1621,6 +1676,17 @@ pub enum NetCommand {
     /// The same by the RetrieveInstantMessages message only (after
     /// `NetEvent::OfflineMessagesFailed`).
     RequestOfflineMessagesLegacy,
+    /// One request of the grid's direct IM history
+    /// (LLChatServiceHistory::request, LL viewer 26.5): a GET of the
+    /// conversation list when `body` is None, else a POST of one history
+    /// page. `url` is the capability of the context the viewer sampled, so
+    /// that a region change in between does not send it elsewhere. Answered
+    /// by `NetEvent::ChatServiceResponse` with the same `id`.
+    ChatServiceRequest {
+        id: u64,
+        url: String,
+        body: Option<aurora_llsd::Llsd>,
+    },
     /// Answer a friendship offer received while offline: by the
     /// AcceptFriendship / DeclineFriendship capability, else by message when
     /// it came with a transaction id.
@@ -1791,6 +1857,11 @@ pub enum NetCommand {
     /// The camera's vertical viewing angle (radians) changed: AgentFOV now,
     /// and again at each arrival (LLViewerCamera::setView).
     SetFov(f32),
+    /// The interest list mode (LLAgent::changeInterestListMode): posted to
+    /// the InterestList capability of every region that has it, and again
+    /// to the agent's region when its capabilities arrive while the mode is
+    /// not the default (the 360° snapshot window).
+    SetInterestListMode(InterestListMode),
     /// Controls that changed enough to be sent now (`NetClient::set_controls`).
     /// Every change of the control flags comes through here, in order: a
     /// key tapped between two ticks of the session is not lost.
@@ -1800,6 +1871,9 @@ pub enum NetCommand {
     /// viewer made on purpose, such as the Compass's 1° (LLAgent::resetAxes
     /// then send_agent_update in FSAvatarAlignBase::applyRotation).
     ForceAgentUpdate,
+    /// GameControlData to the agent's region, unreliable (sendGameControlData,
+    /// llappviewer.cpp): the viewer decides when it is due.
+    GameControlData(GameControlPacket),
     /// Walk / run toggle (SetAlwaysRun), used for double-tap running.
     SetAlwaysRun(bool),
     /// Our look-at target (ViewerEffect, LLHUDEffectLookAt::packData).
@@ -2569,6 +2643,21 @@ pub mod control {
 /// The typing bit of AgentUpdate's State (AGENT_STATE_TYPING, llagent.cpp).
 pub const AGENT_STATE_TYPING: u8 = 0x04;
 
+/// One GameControlData message, packed as sendGameControlData does: the
+/// trailing zero axes are already cut, and a button mask of zero is `None`
+/// (the server reads anything left out as zero).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GameControlPacket {
+    /// Wraps at 255, never reset (LLGameControl::getNextPacketNum).
+    pub packet: u8,
+    /// AgentControlMode: 0 avatar, 1 mouselook, 2 flycam, 3 captive, 4 cursor.
+    pub action_mode: u8,
+    pub axes: Vec<i16>,
+    pub buttons: Option<u32>,
+    pub mode_axes: Vec<i16>,
+    pub mode_buttons: Option<u32>,
+}
+
 /// Agent state the viewer writes each frame and the network layer sends by
 /// the rule of `agent_update.rs`.
 #[derive(Debug, Clone, Copy)]
@@ -2620,6 +2709,18 @@ pub struct ExperienceLogEvent {
     pub object_name: String,
     pub parcel_name: String,
     pub attachment: bool,
+}
+
+impl NetEvent {
+    /// A teleport failure of the viewer's own (blocked, offline, given up):
+    /// no simulator code, so no Legacy popup, only the notice.
+    pub fn viewer_teleport_failed(reason: impl Into<String>) -> Self {
+        NetEvent::TeleportFailed {
+            reason: reason.into(),
+            code: None,
+            region: String::new(),
+        }
+    }
 }
 
 #[cfg(test)]

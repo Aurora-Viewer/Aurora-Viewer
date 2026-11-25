@@ -570,7 +570,7 @@ mod tests {
         let mut old = crate::demo::action_avatar(false);
         old.full_id = friend();
         old.position = Vec3::new(60.0, 200.0, 2500.0);
-        w.objects.upsert_at(destination(), old.clone(), None);
+        w.objects.upsert(destination(), old.clone());
         w.coarse.insert(destination(), vec![(friend(), Vec3::new(60.0, 200.0, 2500.0))]);
         arrive(&mut w, destination());
         assert!(w.finish_friend_join(Instant::now(), false).is_none());
@@ -607,9 +607,7 @@ mod tests {
                 0 => w.social.friends[0].rights_has = 0,
                 1 => w.social.friends[0].online = false,
                 2 => {
-                    w.apply(NetEvent::TeleportFailed {
-                        reason: "Offline test".into(),
-                    });
+                    w.apply(NetEvent::viewer_teleport_failed("Offline test"));
                 }
                 3 => w.begin_teleport(false), // includes accepting a lure
                 4 => w.map.clear_track(),
@@ -975,9 +973,7 @@ mod tests {
             w.agent.flying = true;
             w.begin_teleport(false);
             w.defer_friend_join_flight(friend(), true, true);
-            w.apply(NetEvent::TeleportFailed {
-                reason: "Offline test".into(),
-            });
+            w.apply(NetEvent::viewer_teleport_failed("Offline test"));
             assert!(w.map.friend_join_flight.is_none());
             w.begin_teleport(false);
             w.agent.flying = true;
@@ -1087,9 +1083,7 @@ mod tests {
             match cancel {
                 0 => w.begin_teleport(false),
                 1 => {
-                    w.apply(NetEvent::TeleportFailed {
-                        reason: "Offline test".into(),
-                    });
+                    w.apply(NetEvent::viewer_teleport_failed("Offline test"));
                 }
                 2 => w.cancel_friend_join_flight(),
                 3 => {

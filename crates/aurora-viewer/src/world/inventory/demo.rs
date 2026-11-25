@@ -329,6 +329,39 @@ pub fn seed_sidebar(inv: &mut Inventory) {
     }
 }
 
+/// One folder of each system folder type the inventory gives a symbol
+/// (`ui::inventory::category`) that the demo lacks, under the root, for
+/// the system folder icons (`AURORA_DEMO_INVENTORY=aurora-system-folders`).
+pub fn seed_system_folders(inv: &mut Inventory) {
+    let missing: Vec<(i32, String)> = crate::ui::inventory::category::ROWS
+        .iter()
+        .flat_map(|row| {
+            row.folder_types
+                .iter()
+                .map(move |kind| (*kind, format!("{:?} ({kind})", row.category)))
+        })
+        .filter(|(kind, _)| !inv.folders.values().any(|f| f.info.type_default == *kind))
+        .collect();
+    inv.created_folders(
+        missing
+            .iter()
+            .enumerate()
+            .map(|(n, (kind, name))| InvFolder {
+                id: Uuid::from_u128(31_000 + n as u128),
+                parent: inv.root,
+                name: name.clone(),
+                type_default: *kind,
+                ..Default::default()
+            })
+            .collect(),
+    );
+    for n in 0..missing.len() {
+        if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(31_000 + n as u128)) {
+            folder.state = FetchState::Fetched;
+        }
+    }
+}
+
 /// A Marketplace inbox separate from the normal inventory, for tab validation.
 pub fn seed_received(inv: &mut Inventory, agent: Uuid) {
     let inbox = Uuid::from_u128(8_300_000);
@@ -530,6 +563,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "folder-window"
         | "move-folder"
         | "folder-window-search"
+        | "single-folder-window"
         | "image-layout-folder"
         | "image-layout-folder-wide" => 8000,
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,
@@ -540,6 +574,10 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "properties-no-mod"
         | "properties-no-creator"
         | "rename"
+        | "rename-focus"
+        | "aurora-rename-focus"
+        | "rename-window"
+        | "aurora-rename-window"
         | "multi-add"
         | "multi-detach"
         | "delete"
@@ -560,13 +598,17 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "clipboard-window"
         | "keyboard"
         | "keyboard-fold"
+        | "keyboard-down"
         | "aurora-keyboard"
         | "aurora-keyboard-fold"
+        | "aurora-keyboard-down"
         | "aurora-keyboard-wide" => 8100,
+        "keyboard-click-top" | "keyboard-click-bottom" | "aurora-keyboard-click-top" | "aurora-keyboard-click-bottom" => 11000,
         "animation"
         | "animation-open"
         | "animation-play-local"
         | "animation-play-world"
+        | "animation-play-two"
         | "animation-properties"
         | "image"
         | "image-photo"
@@ -578,7 +620,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
         | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" | "note-drop" | "note-image" | "note-landmark"
         | "note-copy" | "note-task-embedded" | "note-menu-right" | "note-markdown" | "note-source" | "note-classic" | "note-format"
-        | "note-remember" | "note-lsl" | "note-lsl-markdown" | "note-rez" | "task-preview" => 8103,
+        | "note-remember" | "note-lsl" | "note-lsl-markdown" | "note-rez" | "note-find" | "note-replace" | "task-preview" => 8103,
         "nocopy" | "offer-unsent" | "offer-sent" | "offer-uncertain" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
@@ -635,6 +677,17 @@ pub fn seed_clipboard_tree(inv: &mut Inventory) {
     inv.add_items(items);
 }
 
+/// The pose notecard of `AURORA_DEMO_INVENTORY=note-find` and `note-replace`:
+/// data lines, not interface text.
+const POSE_NOTE: &str = "SITTER 0\n\
+    POSE Sit1|sit_female_01|<0.0,0.0,0.6>|<0,0,0>\n\
+    POSE Sit2|sit_female_02|<0.1,0.0,0.6>|<0,0,0>\n\
+    POSE Lean|lean_female_01|<0.0,0.2,0.6>|<0,0,90>\n\
+    SITTER 1\n\
+    POSE Sit1|sit_male_01|<0.0,0.6,0.6>|<0,0,180>\n\
+    POSE Sit2|sit_male_02|<0.1,0.6,0.6>|<0,0,180>\n\
+    POSE Lean|lean_male_01|<0.0,0.8,0.6>|<0,0,270>";
+
 pub fn note_asset(embedded: bool) -> Vec<u8> {
     let markdown = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| {
         matches!(
@@ -643,14 +696,19 @@ pub fn note_asset(embedded: bool) -> Vec<u8> {
         )
     });
     let lsl = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "note-lsl" | "note-lsl-markdown"));
-    let text = if lsl {
+    // the find scenarios: a pose notecard, the kind creators clean with
+    // Replace all (#4153), with items to show that they stay
+    let poses = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "note-find" | "note-replace"));
+    let text = if poses {
+        POSE_NOTE
+    } else if lsl {
         aurora_i18n::tr!("notecard-lsl-demo")
     } else if markdown {
         aurora_i18n::tr!("notecard-markdown-demo")
     } else {
         aurora_i18n::tr!("notecard-demo-text")
     };
-    let embedded = embedded || markdown;
+    let embedded = embedded || markdown || poses;
     if embedded {
         let mut card = aurora_net::inventory::notecard::Notecard::default();
         let mut text = format!("{text}\n");
@@ -786,6 +844,35 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
     }
     inv.add_items(items);
     inv.sort_all();
+}
+
+/// The pictures of the gallery scenarios (`AURORA_DEMO_INVENTORY=aurora-
+/// gallery…`, `aurora-combination`): the demo's own textures on some of the
+/// right-click tests' entries, a folder among them, and on every item of the
+/// large folder; the others keep their type's icon.
+pub fn seed_gallery(inv: &mut Inventory) {
+    use crate::demo::{TEX_FRAMES, TEX_GRADIENT, TEX_ORM_DISC, TEX_SNAPSHOT, TEX_TILES};
+    let pictures = [TEX_SNAPSHOT, TEX_TILES, TEX_GRADIENT, TEX_FRAMES, TEX_ORM_DISC];
+    for (n, picture) in [
+        (8100, TEX_SNAPSHOT),
+        (8106, TEX_FRAMES),
+        (8107, TEX_GRADIENT),
+        (8108, TEX_ORM_DISC),
+        (8111, TEX_TILES),
+    ] {
+        if let Some(it) = inv.items.get_mut(&Uuid::from_u128(n)) {
+            it.thumbnail = picture;
+        }
+    }
+    for n in 0..1500u128 {
+        if let Some(it) = inv.items.get_mut(&Uuid::from_u128(10000 + n)) {
+            it.thumbnail = pictures[(n % pictures.len() as u128) as usize];
+        }
+    }
+    if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(8001)) {
+        folder.info.thumbnail = TEX_TILES;
+    }
+    inv.generation += 1;
 }
 
 /// Hundreds of empty top folders, as some residents keep: still a long list
@@ -1350,9 +1437,98 @@ pub fn fetch_reply(cmd: &NetCommand, inv: &Inventory, source: &FetchSource, faul
     }
 }
 
+/// The demo answers the outfit folders from the live model: the Current
+/// Outfit, the outfits and My Outfits (types 46..=48), and the groups of My
+/// Outfits the demo seeded (`outfit_folders::seed_demo`). The groups exist
+/// only in the live model: the demo's dataserver does not know them and
+/// answers each with made-up objects and no subfolders, which wiped them
+/// when Appearance read them again on opening (their outfits gone, "Night"
+/// no longer a group). Such a listing is rewritten with what the model
+/// holds, as the grid would answer; any other folder keeps the
+/// dataserver's answer.
+pub fn keep_live_listing(inv: &Inventory, c: &mut FolderContents) {
+    let Some(folder) = inv.folders.get(&c.folder_id) else {
+        return;
+    };
+    if !matches!(folder.info.type_default, 46..=48) && !crate::world::outfit_folders::is_group(inv, c.folder_id) {
+        return;
+    }
+    c.version = folder.info.version;
+    c.folders = folder
+        .children
+        .iter()
+        .filter_map(|id| inv.folders.get(id).map(|f| f.info.clone()))
+        .collect();
+    c.items = folder.items.iter().filter_map(|id| inv.items.get(id).cloned()).collect();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Appearance reads the seeded groups of My Outfits again on opening:
+    /// they come back with their subgroups and outfits, and a folder outside
+    /// My Outfits keeps the dataserver's answer.
+    #[test]
+    fn the_seeded_outfit_groups_keep_their_contents_when_read_again() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let agent = crate::demo::DEMO_AGENT;
+        world.agent_id = agent;
+        crate::world::appearance::seed_demo(&mut world.inventory, agent);
+        crate::world::outfit_folders::seed_demo(&mut world.inventory, agent);
+        let inv = &mut world.inventory;
+        let [beach, night, beach_day, beach_night] = [741, 742, 746, 747].map(Uuid::from_u128);
+        // what the demo's dataserver answers, rewritten as App::send does
+        let dataserver = |folders: Vec<Uuid>| -> Vec<FolderContents> {
+            let cmd = NetCommand::FetchInventory {
+                folders,
+                owner: agent,
+                library: false,
+            };
+            crate::demo::demo_reply(&cmd)
+                .into_iter()
+                .flat_map(|ev| match ev {
+                    NetEvent::InventoryContents(c) => c,
+                    _ => Vec::new(),
+                })
+                .collect()
+        };
+        let mut contents = dataserver(vec![beach, night]);
+        assert_eq!(contents.len(), 2, "both groups answered");
+        for c in &mut contents {
+            keep_live_listing(inv, c);
+        }
+        let plain = inv
+            .folders
+            .values()
+            .find(|f| !matches!(f.info.type_default, 46..=48) && !f.library && !crate::world::outfit_folders::container(inv, f.info.id))
+            .map(|f| f.info.id)
+            .expect("a folder outside My Outfits");
+        let mut answered = dataserver(vec![plain]);
+        let ids = |c: &[FolderContents]| -> Vec<Uuid> { c.iter().flat_map(|c| c.items.iter().map(|i| i.id)).collect() };
+        let before = ids(&answered);
+        for c in &mut answered {
+            keep_live_listing(inv, c);
+        }
+        assert_eq!(
+            ids(&answered),
+            before,
+            "a folder outside My Outfits is left as the dataserver answered"
+        );
+        for f in inv.folders.values_mut() {
+            f.state = FetchState::Unknown;
+        }
+        inv.apply(contents);
+        let entries = crate::world::outfit_folders::tree(inv, "", Default::default(), crate::world::outfit_folders::Order::Gallery);
+        let entry = |id| entries.iter().find(|e| e.id == id).copied();
+        assert!(entry(night).is_some_and(|e| e.group), "Night is still a group");
+        assert_eq!(
+            entry(beach).map(|e| e.outfits),
+            Some(2),
+            "Beach counts its outfits, Night's included"
+        );
+        assert!(entry(beach_day).is_some() && entry(beach_night).is_some());
+    }
 
     #[test]
     fn big_mode_reads_its_size_and_options() {

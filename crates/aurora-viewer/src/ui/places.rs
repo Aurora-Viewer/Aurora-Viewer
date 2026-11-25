@@ -42,9 +42,6 @@ pub const TAB_HISTORY: usize = 2;
 /// FT_FAVORITE / FT_LANDMARK folder types.
 const FOLDER_FAVORITES: i32 = 23;
 pub(crate) const FOLDER_LANDMARKS: i32 = 3;
-/// AT_LANDMARK.
-const ASSET_LANDMARK: i32 = 3;
-
 /// AURORA_DEMO_PLACES and the like: a tab by its name or index (the former
 /// French names are still accepted).
 pub fn tab_from_name(name: &str) -> Option<usize> {
@@ -143,8 +140,8 @@ fn has_match(inv: &Inventory, folder: Uuid, filter: &str, depth: usize) -> bool 
         && (f
             .items
             .iter()
-            .filter_map(|i| inv.items.get(i))
-            .any(|i| i.asset_type == ASSET_LANDMARK && matches(&i.name, filter))
+            .filter_map(|i| crate::world::landmarks::inventory_item(inv, *i))
+            .any(|i| matches(&i.name, filter))
             || f.children.iter().any(|c| has_match(inv, *c, filter, depth + 1)))
 }
 
@@ -201,21 +198,22 @@ fn add_rows(
     let mut items: Vec<_> = f
         .items
         .iter()
-        .filter_map(|i| inv.items.get(i))
-        .filter(|i| i.asset_type == ASSET_LANDMARK && matches(&i.name, filter))
+        .filter_map(|id| crate::world::landmarks::inventory_item(inv, *id).map(|item| (*id, item)))
+        .filter(|(_, i)| matches(&i.name, filter))
         .collect();
     if by_date {
-        items.sort_by(|a, b| {
-            b.created_at
-                .cmp(&a.created_at)
+        items.sort_by(|(a_id, a), (b_id, b)| {
+            inv.items[b_id]
+                .created_at
+                .cmp(&inv.items[a_id].created_at)
                 .then_with(|| crate::natural_order::cmp(&a.name, &b.name))
         });
     } else {
-        items.sort_by_key(|i| crate::natural_order::key(&i.name));
+        items.sort_by_key(|(_, i)| crate::natural_order::key(&i.name));
     }
-    rows.extend(items.into_iter().map(|i| Row {
+    rows.extend(items.into_iter().map(|(id, i)| Row {
         depth,
-        id: i.id,
+        id,
         name: i.name.clone(),
         folder: None,
     }));
@@ -241,11 +239,11 @@ pub fn history_sections(items: &[HistoryItem], filter: &str, now: f64, offset: f
 }
 
 /// The region of a SLURL for a global position: the map's, else the region
-/// part of a history title ("Parcel, Region").
+/// part of a history title ("Parcel, Region"). Under @showloc a connected
+/// region is "(Hidden region)" in it (`slurl::make`), as
+/// LLTeleportHistoryPanel::onCopySLURL copies LLSLURL::getSLURLString
+/// (llpanelteleporthistory.cpp, llslurl.cpp) with no RLVa test of its own.
 fn slurl_at(world: &World, global: DVec3, title: &str) -> Option<String> {
-    if world.rlva.has("showloc") {
-        return None;
-    }
     let region = world
         .map
         .sim_at_global(global.x, global.y)
@@ -601,7 +599,7 @@ impl PlacesUi {
     /// The landmark selected, with its asset.
     fn selected_landmark<'w>(&self, world: &'w World) -> Option<&'w aurora_net::inventory::InvItem> {
         match self.selected {
-            Some(Sel::Item(id)) => world.inventory.items.get(&id).filter(|i| i.asset_type == ASSET_LANDMARK),
+            Some(Sel::Item(id)) => crate::world::landmarks::inventory_item(&world.inventory, id),
             _ => None,
         }
     }
@@ -659,12 +657,11 @@ impl PlacesUi {
                 None => "map-pin-filled",
             };
             // a landmark's region, once its asset is read and the region known
-            let rating = world.inventory.items.get(&row.id).filter(|_| row.folder.is_none()).and_then(|it| {
-                match world.landmarks.peek(it.asset_id) {
+            let rating =
+                crate::world::landmarks::inventory_item(&world.inventory, row.id).and_then(|it| match world.landmarks.peek(it.asset_id) {
                     Resolved::Ready { global, .. } => world.map.sim_at_global(global.x, global.y).map(|(_, s)| s.access),
                     _ => None,
-                }
-            });
+                });
             let r = list_row(
                 ui,
                 p,
@@ -686,7 +683,7 @@ impl PlacesUi {
             }
             if r.response.clicked() || r.response.secondary_clicked() {
                 self.selected = Some(sel);
-                if let Some(it) = world.inventory.items.get(&row.id) {
+                if let Some(it) = crate::world::landmarks::inventory_item(&world.inventory, row.id) {
                     self.want_landmarks.insert(it.asset_id);
                 }
             }
@@ -713,7 +710,7 @@ impl PlacesUi {
                 None => {
                     // LLLandmarkBridgeAction::doIt: TeleportFromLandmark
                     if r.response.double_clicked()
-                        && let Some(it) = world.inventory.items.get(&row.id)
+                        && let Some(it) = crate::world::landmarks::inventory_item(&world.inventory, row.id)
                     {
                         self.confirm = Some(Confirm::Landmark {
                             asset: it.asset_id,
@@ -1755,6 +1752,29 @@ mod tests {
     }
 
     #[test]
+    fn landmark_links_are_listed_and_filtered_by_the_original_name() {
+        let mut inv = inventory();
+        let id = Uuid::from_u128;
+        let mut link = landmark(300, 20, "Stale link name", 400);
+        link.asset_type = 24;
+        link.asset_id = id(100);
+        inv.items.insert(link.id, link);
+        inv.folders.get_mut(&id(20)).expect("subfolder").items.push(id(300));
+        let rows = landmark_rows(&inv, id(10), "Plage", true, &HashSet::new(), false);
+        assert!(rows.iter().any(|row| row.id == id(20) && row.folder == Some(true)));
+        assert!(rows.iter().any(|row| row.id == id(300) && row.name == "Plage"));
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = inv;
+        let ui = PlacesUi {
+            selected: Some(Sel::Item(id(300))),
+            ..Default::default()
+        };
+        let target = ui.selected_landmark(&world).expect("selected link resolves");
+        assert_eq!(target.id, id(100));
+        assert_eq!(target.asset_id, id(1100));
+    }
+
+    #[test]
     fn landmark_tree_sorting_and_folders() {
         let inv = inventory();
         let root = system_folder(&inv, FOLDER_LANDMARKS).expect("landmarks folder");
@@ -1836,5 +1856,24 @@ mod tests {
         assert_eq!(tab_from_name("reperes"), Some(TAB_LANDMARKS));
         assert_eq!(tab_from_name("historique"), Some(TAB_HISTORY));
         assert_eq!(tab_from_name("autre"), None);
+    }
+
+    /// LLTeleportHistoryPanel::onCopySLURL: under RLVa @showloc the place
+    /// the agent is in copies as "(Hidden region)", it is no longer refused;
+    /// a region the agent is not connected to keeps its address.
+    #[test]
+    fn showloc_copies_the_history_place_here_as_the_hidden_slurl() {
+        let world = crate::world::rlva_location_tests::showloc_world();
+        let here = world.region_name();
+        crate::slurl::set_hidden_regions(world.rlva_slurl_hidden_regions());
+        let global = world.agent_global().expect("arrived");
+        let slurl = slurl_at(&world, global, &format!("Parcel, {here}"));
+        let far = slurl_at(&world, DVec3::new(9_000_000.0, 9_000_000.0, 20.0), "Parcel, Far Away");
+        crate::slurl::set_hidden_regions(None);
+        assert_eq!(
+            slurl.as_deref(),
+            Some(format!("http://maps.secondlife.com/secondlife/{}", aurora_i18n::tr!("rlva-hidden-region")).as_str())
+        );
+        assert!(far.is_some_and(|s| s.contains("/Far%20Away/")));
     }
 }

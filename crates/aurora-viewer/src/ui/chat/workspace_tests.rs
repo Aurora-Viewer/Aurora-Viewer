@@ -22,6 +22,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     }
 }
 
@@ -51,6 +52,7 @@ struct Harness {
     open: bool,
     /// `Settings::chat_column_collapsed`, given every frame as the app does.
     column_setting: bool,
+    confirm_close_all_ims: bool,
     /// The viewer runs in demo mode (the button never writes the settings).
     demo: bool,
 }
@@ -81,6 +83,7 @@ impl Harness {
             friends: Default::default(),
             open: true,
             column_setting: false,
+            confirm_close_all_ims: true,
             demo: false,
         }
     }
@@ -104,6 +107,7 @@ impl Harness {
             friends,
             open,
             column_setting,
+            confirm_close_all_ims,
             demo,
         } = self;
         // as the app does every frame, and with what the button asked
@@ -145,6 +149,9 @@ impl Harness {
                 }),
                 open,
             ));
+            if st.close_all_dialog(ui.ctx(), &p, world) {
+                *confirm_close_all_ims = false;
+            }
         });
         for action in &actions[asked..] {
             if let ConvAction::ColumnCollapsed(collapsed) = action {
@@ -239,6 +246,33 @@ fn the_column_shows_and_closes_conversations() {
     assert_eq!(h.st.selected, None, "without showing it");
 }
 
+/// The conversation shown closed from its × in the column: the one below
+/// it shows next, the one above at the end of the list, as with Ctrl+W
+/// (LLTabContainer::removeTabPanel), not the nearby chat at the top (#4373).
+#[test]
+fn closing_the_conversation_shown_shows_its_neighbour() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.settle();
+    let order = super::super::sidebar::tab_order(&h.world, &h.st);
+    assert_eq!(order.len(), 3, "the nearby chat, then two conversations");
+    let (first, last) = (order[1].expect("a conversation"), order[2].expect("a conversation"));
+    let close_shown = |h: &mut Harness, id: Uuid| {
+        h.st.selected = Some(id);
+        h.settle();
+        h.actions.clear();
+        let entry = h.rect(entry_id(Pinned::Conversation(id)));
+        h.frame(vec![egui::Event::PointerMoved(entry.center())]);
+        h.frame(Vec::new());
+        let close = h.rect(entry_id(Pinned::Conversation(id)).with("close"));
+        h.click(close.center());
+        assert!(h.actions.iter().any(|a| matches!(a, ConvAction::Close(c) if *c == id)));
+    };
+    close_shown(&mut h, first);
+    assert_eq!(h.st.selected, Some(last), "the one below");
+    close_shown(&mut h, last);
+    assert_eq!(h.st.selected, Some(first), "the last one: the one above");
+}
+
 /// The right-click menu of a message: Quote puts "> text" in the field,
 /// which takes the keyboard.
 #[test]
@@ -289,6 +323,12 @@ fn a_double_click_selects_one_word_of_a_line() {
     h.settle();
     let (start, end) = h.st.selection.1.bounds().expect("a word is selected");
     assert_eq!((start.seq, start.at, end.at), (end.seq, 6, 10), "\"from\" of \"hello from Jane\"");
+    // a third click selects the whole paragraph instead of clearing it
+    h.frame(vec![button(true)]);
+    h.frame(vec![button(false)]);
+    h.settle();
+    let (start, end) = h.st.selection.1.bounds().expect("the paragraph is selected");
+    assert_eq!((start.seq, start.at, end.at), (end.seq, 0, 15), "\"hello from Jane\"");
 }
 
 #[test]
@@ -502,6 +542,42 @@ fn the_keyboard_goes_round_the_conversations_and_closes_them() {
         h.frame(key(egui::Key::W, egui::Modifiers::COMMAND));
         assert!(!h.open, "{style:?}");
         assert!(!h.actions.iter().any(|a| matches!(a, ConvAction::Close(_))), "{style:?}");
+    }
+}
+
+/// Ctrl+W with the emoji or GIF picker open: the next conversation shows
+/// with the pickers closed from the pass of the key on, not one pass with
+/// the other conversation's picker (#4867), in both styles of the list.
+#[test]
+fn closing_a_conversation_with_ctrl_w_closes_its_picker() {
+    for style in [ChatStyle::Legacy, ChatStyle::Aurora] {
+        for gif in [false, true] {
+            let mut h = Harness::new(style);
+            h.st.gifs.demo = true;
+            h.settle();
+            let order = if style.workspace() {
+                super::super::sidebar::tab_order(&h.world, &h.st)
+            } else {
+                super::super::keys::legacy_order(&h.world, &h.st)
+            };
+            let last = order[2];
+            h.st.select_tab(last);
+            h.st.conv_focus_request = true;
+            h.settle();
+            if gif {
+                h.st.gif_open = true;
+            } else {
+                h.st.emoji_open = true;
+            }
+            h.settle();
+            assert!(h.st.emoji_open || h.st.gif_open, "{style:?} gif {gif}: open");
+            h.frame(key(egui::Key::W, egui::Modifiers::COMMAND));
+            assert_ne!(h.st.selected, last, "{style:?} gif {gif}: the next one shown");
+            assert!(
+                !h.st.emoji_open && !h.st.gif_open,
+                "{style:?} gif {gif}: closed on the pass of the key"
+            );
+        }
     }
 }
 
@@ -2213,6 +2289,203 @@ fn the_contacts_tab_shows_peoples_friends() {
     assert!(texts.iter().all(|t| t.source != groups), "no contact list tabs");
 }
 
+/// Two of our groups, for the Contacts tab's Groups pill.
+fn add_groups(world: &mut World) {
+    for (n, name) in ["Builders Guild", "Night Owls"].into_iter().enumerate() {
+        world.groups.groups.push(aurora_net::GroupMembership {
+            id: Uuid::from_u128(0x6000 + n as u128),
+            name: name.to_owned(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+    }
+}
+
+/// The frames of a click at `at` (a move, a press, a release).
+fn click_frames(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    vec![vec![egui::Event::PointerMoved(at)], vec![button(true)], vec![button(false)]]
+}
+
+/// Conversations with the Contacts tab in Aurora's look of People, a frame
+/// per `input` entry then three still ones; the texts of the last.
+fn contacts_pane_frames(
+    h: &mut Harness,
+    people: &mut crate::ui::people::PeopleUi,
+    input: Vec<Vec<egui::Event>>,
+) -> Vec<crate::ui::widgets::elide_tests::Text> {
+    let p = crate::theme::Theme::default().palette();
+    let radar = crate::world::radar::Radar::default();
+    let mut radar_settings = crate::ui::people::RadarSettings::default();
+    let (voice, pics) = (HashMap::new(), HashMap::new());
+    let data = crate::ui::people::RadarData {
+        radar: &radar,
+        settings: &mut radar_settings,
+        voice: &voice,
+        draw_distance: 64.0,
+        second_life: true,
+        now: 0.0,
+        pics: &pics,
+    };
+    let mut friends = crate::ui::people::FriendsSettings::default();
+    let mut texts = Vec::new();
+    for events in input.into_iter().chain([Vec::new(), Vec::new(), Vec::new()]) {
+        let mut open = true;
+        let Harness {
+            frames,
+            world,
+            st,
+            icons,
+            emoji,
+            contacts,
+            contacts_settings,
+            gestures,
+            actions,
+            ..
+        } = &mut *h;
+        texts = frames.run(events, |ui| {
+            actions.extend(show(
+                ui.ctx(),
+                &p,
+                icons,
+                emoji,
+                &pics,
+                &pics,
+                world,
+                gestures,
+                st,
+                contacts,
+                contacts_settings,
+                true,
+                Some(crate::ui::people::FriendsPane {
+                    st: &mut *people,
+                    data: &data,
+                    settings: &mut friends,
+                    images: &pics,
+                }),
+                &mut open,
+            ));
+        });
+    }
+    texts
+}
+
+/// The pane's pill named `label`, right of the column (which may name its
+/// groups section).
+fn pane_pill(texts: &[crate::ui::widgets::elide_tests::Text], label: &str) -> egui::Pos2 {
+    texts
+        .iter()
+        .filter(|t| t.source == label)
+        .max_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x))
+        .unwrap_or_else(|| panic!("the {label} pill"))
+        .rect
+        .center()
+}
+
+/// The Contacts tab's Groups pill in Aurora's look of People: our groups'
+/// rows instead of the friends', and back to the friends with the other
+/// pill (the Legacy look's Contacts › Groups tab).
+#[test]
+fn the_contacts_tab_shows_our_groups_under_its_pill() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_friends(&mut h.world);
+    add_groups(&mut h.world);
+    h.st.contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 560.0));
+    let mut people = crate::ui::people::PeopleUi::default();
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    assert!(!people.pane_groups, "the friends first");
+    assert!(texts.iter().any(|t| t.source == "Friend 00"), "the friends' rows");
+    let pill = pane_pill(&texts, aurora_i18n::tr!("common-groups"));
+    let texts = contacts_pane_frames(&mut h, &mut people, click_frames(pill));
+    assert!(people.pane_groups, "the Groups pill opened");
+    assert!(texts.iter().any(|t| t.source == "Builders Guild"), "the groups' rows");
+    assert!(texts.iter().all(|t| t.source != "Friend 00"), "no friend left");
+    let sub = aurora_i18n::tr!("ui-chat-contacts-groups-sub", count = 2);
+    assert!(texts.iter().any(|t| t.source == sub), "the column says {sub:?}");
+    let pill = pane_pill(&texts, aurora_i18n::tr!("common-friends"));
+    let texts = contacts_pane_frames(&mut h, &mut people, click_frames(pill));
+    assert!(!people.pane_groups, "back to the friends");
+    assert!(texts.iter().any(|t| t.source == "Friend 00"), "the friends' rows again");
+}
+
+/// In a Contacts pane too narrow for the group's sheet beside the list, a
+/// double click on a group opens its chat: the first click only selects,
+/// the list stays under the pointer for the second (the sheet alone would
+/// take the pane, its buttons under the second click).
+#[test]
+fn a_double_click_on_a_group_in_a_narrow_contacts_pane_opens_its_chat() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_groups(&mut h.world);
+    h.st.contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(640.0, 560.0));
+    let mut people = crate::ui::people::PeopleUi::default();
+    people.pane_groups = true;
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    let row = texts
+        .iter()
+        .find(|t| t.source == "Night Owls")
+        .expect("the group's row")
+        .rect
+        .center();
+    // too narrow for the sheet beside the list: no "No group to display"
+    let empty = aurora_i18n::tr!("people-group-details-empty");
+    assert!(texts.iter().all(|t| t.source != empty), "the pane is narrow");
+    let mut input = click_frames(row);
+    input.extend(click_frames(row).into_iter().skip(1));
+    let texts = contacts_pane_frames(&mut h, &mut people, input);
+    let group = Uuid::from_u128(0x6001);
+    assert!(
+        h.actions
+            .iter()
+            .any(|a| matches!(a, ConvAction::People(crate::ui::people::PeopleAction::GroupChat(id)) if *id == group)),
+        "the group's chat opened"
+    );
+    assert!(texts.iter().any(|t| t.source == "Builders Guild"), "the list stayed");
+}
+
+/// A group shown beside the list in a wide Contacts pane comes back when the
+/// pane, made too narrow for the sheet, is widened again: the sheet is not
+/// left empty.
+#[test]
+fn a_group_sheet_comes_back_when_the_contacts_pane_widens_again() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_groups(&mut h.world);
+    h.st.contacts = true;
+    let wide = egui::vec2(960.0, 560.0);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), wide);
+    let mut people = crate::ui::people::PeopleUi::default();
+    people.pane_groups = true;
+    let empty = aurora_i18n::tr!("people-group-details-empty");
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    assert!(texts.iter().any(|t| t.source == empty), "the pane is wide, nothing shown yet");
+    let row = texts
+        .iter()
+        .find(|t| t.source == "Night Owls")
+        .expect("the group's row")
+        .rect
+        .center();
+    let texts = contacts_pane_frames(&mut h, &mut people, click_frames(row));
+    assert!(texts.iter().all(|t| t.source != empty), "the click shows the group");
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(640.0, 560.0));
+    contacts_pane_frames(&mut h, &mut people, Vec::new());
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), wide);
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    assert!(texts.iter().any(|t| t.source == "Builders Guild"), "the list is back");
+    assert!(
+        texts.iter().all(|t| t.source != empty),
+        "the group's sheet is back, not an empty one"
+    );
+}
+
 /// Who types in the nearby chat shows above the field, their name in the
 /// ink (a layout that once took the fonts' lock twice and froze the
 /// viewer at its first frame: this frame must end).
@@ -2634,7 +2907,80 @@ fn a_group_conversation_opens_the_group_actions() {
     assert!(h.actions.iter().any(|a| matches!(a, ConvAction::Call(id) if *id == GROUP)));
 }
 
-/// The nearby chat's menu holds its transcript only: it cannot be closed.
+/// The same Close All command is available from nearby chat, but never closes it.
+#[test]
+fn close_all_ims_leaves_sessions_and_preserves_detached_nearby() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let group = Uuid::from_u128(0x1234);
+    h.world.groups.sessions.entry(group).or_default().group = true;
+    h.world.conversation_line(group, line("Jane", JANE, ChatKind::Im, "group"));
+    h.settle();
+    let local = h.rect(entry_id(Pinned::Local));
+    let label = aurora_i18n::tr!("ui-chat-close-all-ims");
+    let texts = h.right_click(local.center());
+    h.click(last(&texts, label).center());
+    assert!(h.actions.iter().any(|a| matches!(a, ConvAction::CloseAll)));
+    h.st.selected = Some(JANE);
+    h.st.popped.pop_out(Some(BOB), false, false, false);
+    h.st.popped.pop_out(None, false, false, false);
+
+    h.st.request_close_all(&mut h.world, true);
+    assert!(h.world.social.ims.is_empty());
+    assert!(h.st.selected.is_none());
+    assert!(h.world.groups.sessions.is_empty());
+    assert!(!h.st.popped.contains(Some(BOB)));
+    assert!(h.st.popped.contains(None));
+    assert!(h.open);
+    assert!(
+        h.world
+            .groups
+            .out
+            .iter()
+            .any(|cmd| matches!(cmd, aurora_net::NetCommand::SendImDialog { id, dialog, .. }
+        if *id == group && *dialog == crate::world::groups::dialog::SESSION_LEAVE))
+    );
+
+    h.st.popped.remove(None);
+    h.actions.clear();
+    h.settle();
+    let local = h.rect(entry_id(Pinned::Local));
+    let texts = h.right_click(local.center());
+    h.click(last(&texts, label).center());
+    assert!(!h.actions.iter().any(|a| matches!(a, ConvAction::CloseAll)));
+}
+
+#[test]
+fn close_all_ims_prompts_for_voice_and_cancel_keeps_every_session() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.world.start_call(JANE);
+    h.world.calls.active.as_mut().unwrap().state = crate::world::calls::CallState::Connected;
+    h.st.request_close_all(&mut h.world, true);
+    let texts = h.settle();
+    assert!(shown(&texts, aurora_i18n::tr!("ui-chat-close-all-ims-question")));
+    h.click(last(&texts, aurora_i18n::tr!("ui-context-do-not-show-again")).center());
+    h.click(last(&texts, aurora_i18n::tr!("common-cancel")).center());
+    assert!(h.st.close_all_prompt.is_none());
+    assert!(h.confirm_close_all_ims);
+    assert!(h.world.call_of(&JANE).is_some());
+    assert_eq!(h.world.social.ims.len(), 2);
+
+    h.st.request_close_all(&mut h.world, true);
+    let texts = h.settle();
+    h.click(last(&texts, aurora_i18n::tr!("ui-context-do-not-show-again")).center());
+    h.click(last(&texts, aurora_i18n::tr!("common-ok")).center());
+    assert!(!h.confirm_close_all_ims);
+    assert!(h.world.calls.active.is_none());
+    assert!(h.world.social.ims.is_empty());
+
+    h.world.start_call(BOB);
+    h.world.calls.active.as_mut().unwrap().state = crate::world::calls::CallState::Connected;
+    h.st.request_close_all(&mut h.world, h.confirm_close_all_ims);
+    assert!(h.st.close_all_prompt.is_none());
+    assert!(h.world.calls.active.is_none());
+    assert!(h.world.social.ims.is_empty());
+}
+
+/// Nearby chat offers its transcript and has no individual Close action.
 #[test]
 fn the_nearby_chat_menu_holds_its_transcript() {
     let mut h = Harness::new(ChatStyle::Aurora);
@@ -2663,6 +3009,7 @@ fn the_tabs_of_the_other_styles_open_the_menu() {
         let texts = h.right_click(tab.center());
         let close = aurora_i18n::tr!("ui-chat-close-conversation");
         assert!(shown(&texts, close), "{style:?}");
+        assert!(shown(&texts, aurora_i18n::tr!("ui-chat-close-all-ims")), "{style:?}");
         assert!(shown(&texts, aurora_i18n::tr!("common-view-profile")), "{style:?}");
         h.click(last(&texts, close).center());
         assert!(
@@ -2672,48 +3019,89 @@ fn the_tabs_of_the_other_styles_open_the_menu() {
     }
 }
 
-/// Away from the end of a conversation, the button back to the latest
-/// messages shows and counts what came in; its click brings the end back,
-/// where the next line shows at once (#558), in both windows.
+/// Compare the whole painted text with the button disabled: any unwanted
+/// label is caught, whatever its wording or unread count.
+fn assert_no_latest_button(h: &mut Harness) {
+    let texts = |h: &mut Harness| {
+        // Scrolling and overscroll can still move the viewport after twelve
+        // frames. Compare steady frames, with no pointer tooltip appearing.
+        h.frame(vec![egui::Event::PointerGone]);
+        let mut previous = Vec::new();
+        let mut steady = 0;
+        for _ in 0..240 {
+            let current = h.frame(Vec::new()).into_iter().map(|t| t.source).collect::<Vec<_>>();
+            if current == previous {
+                steady += 1;
+                if steady >= 24 {
+                    return current;
+                }
+            } else {
+                steady = 0;
+                previous = current;
+            }
+        }
+        panic!("the conversation's painted text did not settle");
+    };
+    let shown = texts(h);
+    h.st.hide_latest = true;
+    let hidden = texts(h);
+    h.st.hide_latest = false;
+    assert_eq!(shown, hidden, "{:?}: no latest-message button should be painted", h.st.style);
+}
+
+/// Scrolling alone shows no button (#2364). New messages bring it up; its
+/// click reaches the end and clears the count, in every style and window.
 #[test]
 fn the_latest_button_brings_the_end_back() {
-    let jump = aurora_i18n::tr!("ui-chat-latest");
+    // Measure every row deterministically: a busy machine must not change
+    // which old lines are painted between the two visibility snapshots.
+    crate::ui::chat::view::measure_rows_per_frame(Some(usize::MAX));
     let two = aurora_i18n::tr!("ui-chat-latest-new", count = 2usize);
     let count = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().filter(|t| t.source == s).count();
-    let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| count(texts, s) > 0;
-    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
-        let mut h = Harness::new(style);
-        for k in 0..60 {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        for detached in [false, true] {
+            let mut h = Harness::new(style);
+            for k in 0..60 {
+                h.world
+                    .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+            }
+            h.st.selected = Some(JANE);
+            if detached {
+                h.st.demo_pop_out(&h.frames.ctx, Some(JANE), egui::pos2(40.0, 40.0), egui::vec2(420.0, 500.0));
+            }
+            h.settle();
+            assert_no_latest_button(&mut h);
+            h.st.views.get_mut(&Some(JANE)).expect("the conversation was drawn").scroll_to(0);
+            assert_no_latest_button(&mut h);
+            assert!(
+                h.st.views[&Some(JANE)].below() > 300.0,
+                "{style:?}, detached={detached}: at the top"
+            );
+            // Our lines, notices and blocked messages do not count.
             h.world
-                .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+                .conversation_line(JANE, line("You", h.world.agent_id, ChatKind::OWN, "our line"));
+            h.world
+                .conversation_line(JANE, line("System", uuid::Uuid::nil(), ChatKind::System, "notice"));
+            let mut blocked = line("Jane", JANE, ChatKind::Im, "blocked");
+            blocked.blocked = true;
+            h.world.conversation_line(JANE, blocked);
+            assert_no_latest_button(&mut h);
+            h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
+            h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
+            let texts = h.settle();
+            let away = count(&texts, "new 2");
+            h.click(painted(&texts, &two).rect.center());
+            let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+            assert_eq!(count(&texts, "new 2"), away + 1, "{style:?}, detached={detached}: the end in sight");
+            assert_no_latest_button(&mut h);
+            h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "after"));
+            assert_eq!(count(&h.settle(), "after"), away + 1, "{style:?}, detached={detached}");
+            // Returning to old messages must not resurrect the cleared count.
+            h.st.views.get_mut(&Some(JANE)).expect("the conversation was drawn").scroll_to(0);
+            assert_no_latest_button(&mut h);
         }
-        h.st.selected = Some(JANE);
-        // never, not even for the frame the conversation is first shown
-        for _ in 0..8 {
-            assert!(!has(&h.frame(Vec::new()), jump), "{style:?}: at the end, no button");
-        }
-        // to the top (the demo's way)
-        h.st.demo_scroll = Some(JANE);
-        h.settle();
-        h.settle();
-        assert!(h.st.demo_scrolled, "{style:?}");
-        let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
-        assert!(has(&texts, jump), "{style:?}: far from the end");
-        // two lines come in, out of sight
-        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
-        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
-        // (the column's entry says the last one too)
-        let texts = h.settle();
-        let away = count(&texts, "new 2");
-        let at = painted(&texts, &two).rect.center();
-        h.click(at);
-        let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
-        assert_eq!(count(&texts, "new 2"), away + 1, "{style:?}: the end in sight");
-        assert!(!has(&texts, &two) && !has(&texts, jump), "{style:?}: the button gone");
-        // the lines follow the end again
-        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "after"));
-        assert_eq!(count(&h.settle(), "after"), away + 1, "{style:?}");
     }
+    crate::ui::chat::view::measure_rows_per_frame(None);
 }
 
 /// The Aurora box grows with its text up to thirty rows, its buttons level
@@ -2753,7 +3141,7 @@ fn the_box_grows_to_thirty_rows_and_the_messages_keep_their_end() {
         text.height()
     );
     assert!(has(&texts, "old 59"), "the last message still in sight");
-    assert!(!has(&texts, aurora_i18n::tr!("ui-chat-latest")), "no button back to it");
+    assert!(h.st.views[&Some(JANE)].below() < 1.0, "still following the end");
     // the emoji button level with the first row, not centred on the box
     let emoji = h.rect(crate::ui::chat::sidebar::control_id("box-mood-smile-filled"));
     assert!((emoji.center().y - text.top()).abs() < 16.0, "{emoji:?} {text:?}");
@@ -2775,10 +3163,7 @@ fn the_box_grows_to_thirty_rows_and_the_messages_keep_their_end() {
     *h.st.draft_mut(Some(JANE)) = (1..=12).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
     let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
     assert!(has(&texts, "old 59"), "opened with a long draft: the last message in sight");
-    assert!(
-        !has(&texts, aurora_i18n::tr!("ui-chat-latest")),
-        "opened with a long draft: no button"
-    );
+    assert!(h.st.views[&Some(JANE)].below() < 1.0, "opened with a long draft: following the end");
 }
 
 /// With the button turned off (Preferences › Chat › Conversations), a
@@ -2786,7 +3171,6 @@ fn the_box_grows_to_thirty_rows_and_the_messages_keep_their_end() {
 /// in, and the reader stays where they are, in both windows.
 #[test]
 fn the_latest_button_can_be_turned_off() {
-    let jump = aurora_i18n::tr!("ui-chat-latest");
     let two = aurora_i18n::tr!("ui-chat-latest-new", count = 2usize);
     let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().any(|t| t.source == s);
     for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
@@ -2804,11 +3188,10 @@ fn the_latest_button_can_be_turned_off() {
         assert!(h.st.demo_scrolled, "{style:?}");
         let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
         assert!(has(&texts, "old 0"), "{style:?}: at the top");
-        assert!(!has(&texts, jump), "{style:?}: far from the end, no button");
         h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
         h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
         let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
-        assert!(!has(&texts, &two) && !has(&texts, jump), "{style:?}: no count either");
+        assert!(!has(&texts, &two), "{style:?}: no count either");
         assert!(has(&texts, "old 0"), "{style:?}: the reader stays at the top");
     }
 }

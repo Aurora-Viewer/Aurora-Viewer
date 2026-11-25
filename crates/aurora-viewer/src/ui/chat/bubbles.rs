@@ -11,7 +11,7 @@
 //! - Same texts as the classic lines (`draw_line`): links, mentions, emoji,
 //!   find highlights, history greyed and looked up for nothing.
 
-use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, presence, view};
+use super::{LineEnv, Mark, chat_text_bracketed, chat_text_marked, hhmm, history_tone, line_name_menu, presence, view};
 use crate::theme::Palette;
 use crate::ui::fonts::chat_size;
 use crate::world::chat_log::format::Slt;
@@ -116,8 +116,18 @@ fn text_width(ui: &egui::Ui, text: &str, size: f32, max: f32) -> f32 {
 fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLine, mark: Option<Mark>) {
     let (p, world) = (env.p, env.world);
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
-    let text = super::system_text(&line.text);
-    let width = text_width(ui, &text, chat_size(ui.ctx(), TEXT_SIZE), ui.available_width() * 0.86);
+    let brackets = super::system_brackets(world, line);
+    // the brackets are drawn with the text: the pill takes their room too
+    let width = if brackets {
+        text_width(
+            ui,
+            &format!("[{}]", line.text),
+            chat_size(ui.ctx(), TEXT_SIZE),
+            ui.available_width() * 0.86,
+        )
+    } else {
+        text_width(ui, &line.text, chat_size(ui.ctx(), TEXT_SIZE), ui.available_width() * 0.86)
+    };
     ui.add_space(3.0);
     ui.vertical_centered(|ui| {
         egui::Frame::new()
@@ -127,17 +137,19 @@ fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLi
             .show(ui, |ui| {
                 ui.set_max_width(width);
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                    chat_text_marked(
+                    chat_text_bracketed(
                         ui,
                         p,
                         env.emoji,
                         world,
+                        line.wording(env.names),
                         env.want_names,
-                        &text,
+                        &line.text,
                         chat_size(ui.ctx(), 12.0),
                         tone.unwrap_or(p.muted),
                         true,
                         mark,
+                        brackets,
                     );
                 });
             });
@@ -197,7 +209,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     let name = super::sender_name(world, env.own_name, line);
     // a history line's sender is known when its name was cached
     // (world/transcripts.rs): its picture shows, dimmed
-    let avatar = if object {
+    let avatar = if object || line.anonymous() {
         uuid::Uuid::nil()
     } else if own {
         world.agent_id
@@ -232,20 +244,27 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             let r = ui.add(
                 super::super::widgets::elided_label(
                     ui,
-                    emphasis.rich_text(ui.ctx(), &name, chat_size(ui.ctx(), 11.5), col).strong(),
+                    emphasis
+                        .rich_text(
+                            ui.ctx(),
+                            super::chat_header_name(world, line, &name),
+                            chat_size(ui.ctx(), 11.5),
+                            col,
+                        )
+                        .strong(),
                     max_bubble,
                 )
                 .sense(egui::Sense::click()),
             );
-            if object && !line.source.is_nil() {
-                super::object_sender(&r.on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
+            if object {
+                super::line_object_sender(r, p, world, line, env.menu);
             } else if !avatar.is_nil() {
-                line_name_menu(&r, p, world, avatar, line, env.menu);
+                line_name_menu(&r, p, world, avatar, env.names, line, env.menu);
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                     .clicked()
                 {
-                    super::super::profile::request_open(ui.ctx(), avatar);
+                    super::super::profile::request_open_in(ui.ctx(), env.names, avatar);
                 }
                 crate::ui::staff::after_name(ui, p, crate::world::staff::mark(world, &avatar), 9.0);
             }
@@ -258,7 +277,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     // the text: an emote is the name in italics, a shout or a whisper says so
     let (text, italics) = super::line_body(line, &name);
     let emphasis = super::line_emphasis(env, line, italics);
-    let text = world.rlva_filter_text(&text).into_owned();
+    let text = world.rlva_filter_text_in(line.wording(env.names), &text).into_owned();
     let visible = super::previews::text(env.previews.as_deref(), line, &text, max_bubble - 20.0);
     let text_color = match (own, tone) {
         (true, None) => p.on_accent,
@@ -296,7 +315,19 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 if !visible.is_empty() {
-                    chat_text_marked(ui, p, env.emoji, world, env.want_names, &visible, size, text_color, emphasis, mark);
+                    chat_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        world,
+                        line.wording(env.names),
+                        env.want_names,
+                        &visible,
+                        size,
+                        text_color,
+                        emphasis,
+                        mark,
+                    );
                 }
                 super::previews::cards(ui, env, line, &text);
             });
@@ -326,15 +357,18 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
         if !own && look.tail {
             let pic = egui::Rect::from_min_size(egui::pos2(rect.left() - PIC_GAP - PIC, rect.bottom() - PIC), egui::Vec2::splat(PIC));
             sender_picture(ui, env, line, pic, &name, avatar, object, logged);
-            if !avatar.is_nil() {
+            if object {
+                let cube = ui.interact(pic, ui.scope_id().with("sender"), egui::Sense::click());
+                super::line_object_sender(cube.on_hover_text(name.as_str()), p, world, line, env.menu);
+            } else if !avatar.is_nil() {
                 let resp = ui.interact(pic, ui.scope_id().with("sender"), egui::Sense::click());
-                line_name_menu(&resp, p, world, avatar, line, env.menu);
+                line_name_menu(&resp, p, world, avatar, env.names, line, env.menu);
                 if resp
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(name.as_str())
                     .clicked()
                 {
-                    super::super::profile::request_open(ui.ctx(), avatar);
+                    super::super::profile::request_open_in(ui.ctx(), env.names, avatar);
                 }
             }
         }
@@ -429,6 +463,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let day = 86_400;
         // yesterday's two lines, then today's
@@ -478,6 +513,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let mut list_top = 0.0;
         let mut output = ctx.run_ui(
@@ -493,6 +529,7 @@ mod tests {
                     emoji: &mut emoji,
                     pics: &pics,
                     world: &world,
+                    names: crate::world::names::NameScope::World,
                     want_names: &mut names,
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",

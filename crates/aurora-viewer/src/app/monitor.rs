@@ -127,7 +127,8 @@ impl App {
                 aurora_i18n::tr!("toolbar-command-destinations"),
             ),
         ];
-        for (pid, label) in pages {
+        let signup = self.signup_ui.web_process_ids().map(|pid| (pid, aurora_i18n::tr!("signup-title")));
+        for (pid, label) in pages.into_iter().chain(signup) {
             if let Some(pid) = pid {
                 out.push(MediaProcess {
                     pid,
@@ -352,11 +353,7 @@ impl App {
         let mut out: Vec<RegionLink> = sims
             .iter()
             .map(|s| {
-                let name = s
-                    .handle
-                    .and_then(|h| self.world.regions.get(&h).map(|r| r.name.clone()))
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or_else(|| aurora_i18n::tr!("monitor-region-unknown").to_owned());
+                let name = link_name(&self.world, s.handle);
                 RegionLink {
                     name,
                     main: s.handle.is_some() && s.handle == main,
@@ -372,35 +369,7 @@ impl App {
     /// The agent's simulator as its statistics last said (SimStats come
     /// from the main region only).
     fn monitor_region(&self) -> Option<RegionHealth> {
-        use aurora_net::estate::sim_stat;
-        let (handle, stats) = self.world.estate.stats.as_ref()?;
-        if Some(*handle) != self.world.main_region {
-            return None;
-        }
-        // (ids not named in sim_stat, from LLViewerStats' SimStat ids)
-        const NETMS: u32 = 5;
-        const SIMOTHERMS: u32 = 6;
-        const AGENTMS: u32 = 8;
-        const IMAGESMS: u32 = 9;
-        Some(RegionHealth {
-            name: self.world.region_name().to_owned(),
-            dilation: stats.get(sim_stat::TIME_DILATION),
-            fps: stats.get(sim_stat::FPS),
-            physics_fps: stats.get(sim_stat::PHYSFPS),
-            frame_ms: stats.get(sim_stat::FRAMEMS),
-            physics_ms: stats.get(sim_stat::SIMPHYSICSMS),
-            script_ms: stats.get(sim_stat::SCRIPTMS),
-            net_ms: stats.get(NETMS),
-            agent_ms: stats.get(AGENTMS),
-            images_ms: stats.get(IMAGESMS),
-            other_ms: stats.get(SIMOTHERMS),
-            spare_ms: stats.get(sim_stat::SIMSPARETIME),
-            scripts: stats.get(sim_stat::NUMSCRIPTSACTIVE),
-            agents: stats.get(sim_stat::NUMAGENTMAIN),
-            child_agents: stats.get(sim_stat::NUMAGENTCHILD),
-            objects: stats.get(sim_stat::NUMTASKS),
-            capacity: stats.object_capacity,
-        })
+        region_health(&self.world)
     }
 
     /// Video memory of a set of textures at the size they are shown.
@@ -603,7 +572,8 @@ impl App {
         let bridge = self.bridge_runtime.item();
         let (mut worn, mut huds) = (Vec::new(), Vec::new());
         for &att in world.objects.children_of(&me.key) {
-            let Some(root) = world.objects.get(att) else {
+            // (not the copies drawn from the cache, world/avatar_cache)
+            let Some(root) = world.objects.get(att).filter(|o| !o.is_client_preview()) else {
                 continue;
             };
             let item = root.attachment_item_id();
@@ -722,6 +692,7 @@ impl App {
                     ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
                     self.options_ui.open(ui::options::Page::Network, 0);
                 }
+                Action::Autotune(request) => self.autotune_request(request),
             }
         }
     }
@@ -762,4 +733,54 @@ impl App {
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
     }
+}
+
+/// The name of a simulator the viewer has a circuit with: "(Hidden
+/// region)" under RLVa `@showloc`, every such region being one the agent
+/// is connected to (RlvUtil::isNearbyRegion, rlvcommon.cpp), as the
+/// Legacy Viewer's status bar names the agent's (LLAgentUI::buildLocationString).
+pub(super) fn link_name(world: &crate::world::World, handle: Option<aurora_net::RegionHandle>) -> String {
+    let name = handle
+        .and_then(|h| world.regions.get(&h).map(|r| r.name.clone()))
+        .filter(|n| !n.is_empty());
+    match name {
+        Some(_) if world.rlva.has("showloc") => aurora_i18n::tr!("rlva-hidden-region").to_owned(),
+        Some(name) => name,
+        None => aurora_i18n::tr!("monitor-region-unknown").to_owned(),
+    }
+}
+
+/// The agent's simulator as its statistics last said (SimStats come from
+/// the main region only), named "(Hidden region)" under RLVa `@showloc`
+/// (`World::rlva_region_label`).
+pub(super) fn region_health(world: &crate::world::World) -> Option<RegionHealth> {
+    use aurora_net::estate::sim_stat;
+    let (handle, stats) = world.estate.stats.as_ref()?;
+    if Some(*handle) != world.main_region {
+        return None;
+    }
+    // (ids not named in sim_stat, from LLViewerStats' SimStat ids)
+    const NETMS: u32 = 5;
+    const SIMOTHERMS: u32 = 6;
+    const AGENTMS: u32 = 8;
+    const IMAGESMS: u32 = 9;
+    Some(RegionHealth {
+        name: world.rlva_region_label(),
+        dilation: stats.get(sim_stat::TIME_DILATION),
+        fps: stats.get(sim_stat::FPS),
+        physics_fps: stats.get(sim_stat::PHYSFPS),
+        frame_ms: stats.get(sim_stat::FRAMEMS),
+        physics_ms: stats.get(sim_stat::SIMPHYSICSMS),
+        script_ms: stats.get(sim_stat::SCRIPTMS),
+        net_ms: stats.get(NETMS),
+        agent_ms: stats.get(AGENTMS),
+        images_ms: stats.get(IMAGESMS),
+        other_ms: stats.get(SIMOTHERMS),
+        spare_ms: stats.get(sim_stat::SIMSPARETIME),
+        scripts: stats.get(sim_stat::NUMSCRIPTSACTIVE),
+        agents: stats.get(sim_stat::NUMAGENTMAIN),
+        child_agents: stats.get(sim_stat::NUMAGENTCHILD),
+        objects: stats.get(sim_stat::NUMTASKS),
+        capacity: stats.object_capacity,
+    })
 }

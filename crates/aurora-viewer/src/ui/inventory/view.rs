@@ -123,6 +123,7 @@ fn received_filing_view_pins_marketplace_and_scopes_sender_search_without_server
                     by_date,
                     folders_by_name: !by_date,
                     system_first,
+                    ..Default::default()
                 },
                 ..Default::default()
             };
@@ -185,6 +186,12 @@ pub struct Sort {
     pub by_date: bool,
     pub folders_by_name: bool,
     pub system_first: bool,
+    /// A column of the explorer's details sorts instead of the name or the
+    /// date (Aurora difference: the Legacy Viewer sorts by name or date only).
+    pub column: Option<SortColumn>,
+    /// The order is reversed, inside the same groups: the system folders and
+    /// the folders keep their place (LLFolderBridge::getSortGroup).
+    pub descending: bool,
 }
 impl Default for Sort {
     fn default() -> Self {
@@ -192,15 +199,87 @@ impl Default for Sort {
             by_date: true,
             folders_by_name: true,
             system_first: true,
+            column: None,
+            descending: false,
         }
     }
+}
+
+impl Sort {
+    /// The Legacy Viewer's order by name or by date, without a column.
+    pub fn set_by_date(&mut self, by_date: bool) {
+        self.by_date = by_date;
+        self.column = None;
+        self.descending = false;
+    }
+
+    /// A click on a header of the explorer's details: sorts by it, a second
+    /// click reverses it (Windows Explorer, Dolphin).
+    pub fn click(&mut self, header: SortHeader) {
+        let current = match self.column {
+            Some(column) => SortHeader::Column(column),
+            None if self.by_date => SortHeader::Date,
+            None => SortHeader::Name,
+        };
+        if current == header {
+            self.descending = !self.descending;
+            return;
+        }
+        self.descending = false;
+        match header {
+            SortHeader::Name => self.set_by_date(false),
+            SortHeader::Date => self.set_by_date(true),
+            SortHeader::Column(column) => self.column = Some(column),
+        }
+    }
+
+    /// The header the order follows, and whether it is reversed, for its arrow.
+    pub fn header(self) -> (SortHeader, bool) {
+        let header = match self.column {
+            Some(column) => SortHeader::Column(column),
+            None if self.by_date => SortHeader::Date,
+            None => SortHeader::Name,
+        };
+        (header, self.descending)
+    }
+
+    /// The order the selectors inherit: the Legacy Viewer's, without the
+    /// explorer's columns.
+    pub fn legacy(self) -> Self {
+        Self {
+            column: None,
+            descending: false,
+            ..self
+        }
+    }
+}
+
+/// The columns of the explorer's details that sort by something else than
+/// the name or the date.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortColumn {
+    Kind,
+    Rights,
+    Description,
+    Creator,
+    Worn,
+    Count,
+}
+
+/// A header of the explorer's details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SortHeader {
+    Name,
+    Date,
+    Column(SortColumn),
 }
 
 /// The main inventory's saved order is published once per UI frame. All
 /// inventory selectors inherit it, as LLInventoryPanel's DEFAULT_SORT_ORDER
 /// does (indra/newview/llinventorypanel.cpp).
 pub fn set_picker_sort(ctx: &egui::Context, sort: Sort) {
-    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("inventory_picker_sort"), sort));
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("inventory_picker_sort"), sort.legacy()));
 }
 
 pub fn picker_sort(ctx: &egui::Context) -> Sort {
@@ -380,9 +459,27 @@ pub struct InventoryPreferences {
     /// Aurora's window shows the selection's details: the card at the
     /// bottom of the narrow and medium widths, the pane of the wide one.
     pub show_details: bool,
+    /// The wide width's details pane previews the selection (Alt+P): a
+    /// texture whole, a notecard's text, a sound to play. Aurora's (Windows
+    /// Explorer's preview pane); off by default.
+    pub preview_pane: bool,
+    /// Aurora's dual-panel layout: two panes side by side in the Inventory
+    /// window, each with its own folder, search and selection. Off by
+    /// default (the Legacy Viewer has one pane).
+    pub dual_panel: bool,
     /// Folder icon colors (`folder_colors.rs`): this viewer only, on by default.
     pub folder_colors_enabled: bool,
     pub folder_colors: std::collections::BTreeMap<Uuid, [u8; 3]>,
+    /// The folders pinned to the explorer's column (Quick access), in their
+    /// order. Aurora's.
+    pub pinned: Vec<Uuid>,
+    /// Each folder keeps the explorer's view it was last shown in (Dolphin's
+    /// "Remember display style for each folder"); off, one view for all.
+    /// Aurora's; off by default.
+    pub view_per_folder: bool,
+    /// The views of the folders, with `view_per_folder` (at most
+    /// `FOLDER_VIEWS`); the others take `explorer.view`.
+    pub folder_views: std::collections::BTreeMap<Uuid, ExplorerView>,
 }
 impl Default for InventoryPreferences {
     fn default() -> Self {
@@ -431,8 +528,13 @@ impl Default for InventoryPreferences {
             confirm_delete: true,
             rights: Default::default(),
             show_details: true,
+            preview_pane: false,
+            dual_panel: false,
             folder_colors_enabled: true,
             folder_colors: Default::default(),
+            pinned: Vec::new(),
+            view_per_folder: false,
+            folder_views: Default::default(),
         }
     }
 }
@@ -440,32 +542,300 @@ impl Default for InventoryPreferences {
 /// Expanded inventory geometry in logical points. Zero widths inherit the
 /// layout's defaults; resizing a small window never overwrites saved widths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(from = "SavedExplorer")]
 pub struct ExplorerPreferences {
     pub sidebar_width: u16,
-    pub kind_width: u16,
-    pub rights_width: u16,
-    pub date_width: u16,
-    pub show_kind: bool,
-    pub show_rights: bool,
-    pub show_date: bool,
+    /// The details' columns after the name, in their order.
+    pub columns: ColumnList,
+    /// How the explorer shows its folder: rows, tiles, or both.
+    pub view: ExplorerView,
+    /// The side of a tile's picture; 0 is the Legacy Viewer's 128.
+    pub tile_size: u16,
+    /// The height of the tiles above the rows in the combination view; 0
+    /// shares the room between them.
+    pub gallery_height: u16,
+    /// The Details list's groups (`groups.rs`); none by default.
+    pub group_by: super::groups::GroupBy,
 }
 
 impl Default for ExplorerPreferences {
     fn default() -> Self {
         Self {
             sidebar_width: 0,
+            columns: ColumnList::default(),
+            view: ExplorerView::List,
+            tile_size: 0,
+            gallery_height: 0,
+            group_by: super::groups::GroupBy::None,
+        }
+    }
+}
+
+/// The saved explorer preferences, those from before the column list
+/// included (their three columns' widths and switches).
+#[derive(Deserialize)]
+#[serde(default)]
+struct SavedExplorer {
+    sidebar_width: u16,
+    columns: Option<ColumnList>,
+    kind_width: u16,
+    rights_width: u16,
+    date_width: u16,
+    show_kind: bool,
+    show_rights: bool,
+    show_date: bool,
+    view: ExplorerView,
+    tile_size: u16,
+    gallery_height: u16,
+    group_by: super::groups::GroupBy,
+}
+
+impl Default for SavedExplorer {
+    fn default() -> Self {
+        let now = ExplorerPreferences::default();
+        Self {
+            sidebar_width: now.sidebar_width,
+            columns: None,
             kind_width: 0,
             rights_width: 0,
             date_width: 0,
             show_kind: true,
             show_rights: true,
             show_date: true,
+            view: now.view,
+            tile_size: now.tile_size,
+            gallery_height: now.gallery_height,
+            group_by: now.group_by,
         }
     }
 }
 
+impl From<SavedExplorer> for ExplorerPreferences {
+    fn from(saved: SavedExplorer) -> Self {
+        let columns = saved.columns.unwrap_or_else(|| {
+            let mut columns = ColumnList::default();
+            for (id, show, width) in [
+                (ColumnId::Kind, saved.show_kind, saved.kind_width),
+                (ColumnId::Rights, saved.show_rights, saved.rights_width),
+                (ColumnId::Date, saved.show_date, saved.date_width),
+            ] {
+                let slot = columns.slot_mut(id);
+                slot.show = show;
+                slot.width = width;
+            }
+            columns
+        });
+        Self {
+            sidebar_width: saved.sidebar_width,
+            columns,
+            view: saved.view,
+            tile_size: saved.tile_size,
+            gallery_height: saved.gallery_height,
+            group_by: saved.group_by,
+        }
+    }
+}
+
+/// A column of the explorer's details, after the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColumnId {
+    Kind,
+    Rights,
+    Date,
+    Creator,
+    Description,
+    Worn,
+    Count,
+}
+
+impl ColumnId {
+    pub const ALL: [Self; COLUMNS] = [
+        Self::Kind,
+        Self::Rights,
+        Self::Date,
+        Self::Creator,
+        Self::Description,
+        Self::Worn,
+        Self::Count,
+    ];
+
+    /// The header a click on its title sorts by.
+    pub fn header(self) -> SortHeader {
+        match self {
+            Self::Date => SortHeader::Date,
+            Self::Kind => SortHeader::Column(SortColumn::Kind),
+            Self::Rights => SortHeader::Column(SortColumn::Rights),
+            Self::Creator => SortHeader::Column(SortColumn::Creator),
+            Self::Description => SortHeader::Column(SortColumn::Description),
+            Self::Worn => SortHeader::Column(SortColumn::Worn),
+            Self::Count => SortHeader::Column(SortColumn::Count),
+        }
+    }
+}
+
+pub const COLUMNS: usize = 7;
+
+/// A column's place: shown or not, and its saved width (0: the default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColumnSlot {
+    pub id: ColumnId,
+    pub show: bool,
+    #[serde(default)]
+    pub width: u16,
+}
+
+/// Every column once, in the order they are drawn. Saved as a list, read
+/// back whatever it holds: an unknown or repeated column is dropped, a
+/// missing one comes back hidden at the end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "Vec<SavedSlot>", into = "Vec<ColumnSlot>")]
+pub struct ColumnList(pub [ColumnSlot; COLUMNS]);
+
+/// A column as saved; `None` for one this version does not know.
+#[derive(Deserialize)]
+struct SavedSlot {
+    #[serde(default, deserialize_with = "known_column")]
+    id: Option<ColumnId>,
+    #[serde(default)]
+    show: bool,
+    #[serde(default)]
+    width: u16,
+}
+
+fn known_column<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<ColumnId>, D::Error> {
+    Ok(serde_json::Value::deserialize(de)
+        .ok()
+        .and_then(|value| serde_json::from_value(value).ok()))
+}
+
+impl Default for ColumnList {
+    /// The type, the rights and the date, as before; the others hidden.
+    fn default() -> Self {
+        Self(ColumnId::ALL.map(|id| ColumnSlot {
+            id,
+            show: matches!(id, ColumnId::Kind | ColumnId::Rights | ColumnId::Date),
+            width: 0,
+        }))
+    }
+}
+
+impl From<Vec<SavedSlot>> for ColumnList {
+    fn from(saved: Vec<SavedSlot>) -> Self {
+        let mut slots: Vec<ColumnSlot> = Vec::with_capacity(COLUMNS);
+        for slot in saved {
+            if let Some(id) = slot.id
+                && !slots.iter().any(|s| s.id == id)
+            {
+                slots.push(ColumnSlot {
+                    id,
+                    show: slot.show,
+                    width: slot.width,
+                });
+            }
+        }
+        for id in ColumnId::ALL {
+            if !slots.iter().any(|s| s.id == id) {
+                slots.push(ColumnSlot { id, show: false, width: 0 });
+            }
+        }
+        let mut list = Self::default();
+        list.0.copy_from_slice(&slots[..COLUMNS]);
+        list
+    }
+}
+
+impl From<ColumnList> for Vec<ColumnSlot> {
+    fn from(list: ColumnList) -> Self {
+        list.0.to_vec()
+    }
+}
+
+impl ColumnList {
+    pub fn slot(&self, id: ColumnId) -> &ColumnSlot {
+        self.0.iter().find(|s| s.id == id).expect("every column is in the list")
+    }
+
+    pub fn slot_mut(&mut self, id: ColumnId) -> &mut ColumnSlot {
+        self.0.iter_mut().find(|s| s.id == id).expect("every column is in the list")
+    }
+
+    pub fn shown(&self, id: ColumnId) -> bool {
+        self.slot(id).show
+    }
+
+    /// Moves `id` to `index` among all the columns, the others keeping their
+    /// order.
+    pub fn move_to(&mut self, id: ColumnId, index: usize) {
+        let mut slots = self.0.to_vec();
+        let Some(from) = slots.iter().position(|s| s.id == id) else {
+            return;
+        };
+        let slot = slots.remove(from);
+        slots.insert(index.min(slots.len()), slot);
+        self.0.copy_from_slice(&slots);
+    }
+
+    /// Every width back to its default, the order and the switches kept.
+    pub fn reset_widths(&mut self) {
+        for slot in &mut self.0 {
+            slot.width = 0;
+        }
+    }
+}
+
+/// The views of the Legacy Viewer's single folder mode (LLPanelMainInventory
+/// ::setViewMode, indra/newview/llpanelmaininventory.cpp): the list, the
+/// gallery of every entry, or the combination of a gallery of the entries
+/// that have a picture above a list of the others. Aurora difference: the
+/// choice is kept, and the explorer starts with its list as before (the
+/// Legacy Viewer starts each single folder mode in the combination view).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplorerView {
+    #[default]
+    List,
+    Gallery,
+    Combination,
+    /// Dolphin's Compact view, Windows Explorer's List: the names alone,
+    /// side by side in as many columns as fit (Aurora's).
+    Compact,
+    /// Windows Explorer's Tiles: a picture beside the name, the type and
+    /// the date (Aurora's).
+    Tiles,
+}
+
+/// The folders whose view is kept, at most: past it, the entry of the
+/// smallest id goes (a cheap choice, not the oldest; the map stays small).
+pub const FOLDER_VIEWS: usize = 500;
+
 impl InventoryPreferences {
+    /// The explorer's view in `folder`.
+    pub fn view_in(&self, folder: Uuid) -> ExplorerView {
+        if self.view_per_folder {
+            self.folder_views.get(&folder).copied().unwrap_or(self.explorer.view)
+        } else {
+            self.explorer.view
+        }
+    }
+
+    /// Shows `folder` in `view`: that folder only with `view_per_folder`,
+    /// every folder otherwise.
+    pub fn set_view_in(&mut self, folder: Uuid, view: ExplorerView) {
+        if !self.view_per_folder {
+            self.explorer.view = view;
+            return;
+        }
+        self.folder_views.insert(folder, view);
+        while self.folder_views.len() > FOLDER_VIEWS {
+            // the smallest id goes, never the folder just set
+            let Some(first) = self.folder_views.keys().copied().find(|id| *id != folder) else {
+                break;
+            };
+            self.folder_views.remove(&first);
+        }
+    }
+
     pub(super) fn filters_for(&self, tab: usize) -> &Filters {
         if tab == 0 {
             &self.filter_defaults
@@ -539,6 +909,11 @@ struct Entry {
     trash: bool,
     outfit: bool,
     library: bool,
+    /// What a column sorts by (`Sort::column`): the type's name, or the
+    /// description; empty for the name or the date.
+    key: String,
+    /// The rights held, for the rights column: more rights sort later.
+    rank: u32,
 }
 
 #[derive(PartialEq, Eq)]
@@ -556,12 +931,51 @@ struct Query {
     agent: Uuid,
     cutoff: i64,
     worn: HashSet<Uuid>,
+    /// The worn or active tag each worn original's label ends with, as it
+    /// is searched: " (worn on left hand)", " (active)"…
+    worn_tags: HashMap<Uuid, String>,
     names: HashMap<Uuid, String>,
+}
+
+/// What the sorts by creator and by worn read beside the inventory: the
+/// creators' names as the column shows them (`None` while unknown) by
+/// creator and owner (`resident_scopes`), and the worn or active items.
+#[derive(Default, Clone)]
+pub struct SortContext {
+    pub creators: std::sync::Arc<HashMap<(Uuid, Uuid), Option<String>>>,
+    pub worn: std::sync::Arc<HashSet<Uuid>>,
+    /// Changes when either changes; the order is rebuilt then.
+    pub fingerprint: u64,
+}
+
+impl SortContext {
+    pub fn new(creators: std::sync::Arc<HashMap<(Uuid, Uuid), Option<String>>>, worn: HashSet<Uuid>) -> Self {
+        use std::hash::{Hash, Hasher};
+        // order-free: the sum of each entry's hash
+        let hash = |value: &dyn Fn(&mut std::collections::hash_map::DefaultHasher)| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            value(&mut hasher);
+            hasher.finish()
+        };
+        let mut fingerprint = ((creators.len() as u64) << 32) | worn.len() as u64;
+        for entry in creators.iter() {
+            fingerprint = fingerprint.wrapping_add(hash(&|h| entry.hash(h)));
+        }
+        for id in &worn {
+            fingerprint = fingerprint.wrapping_add(hash(&|h| id.hash(h)).rotate_left(17));
+        }
+        Self {
+            creators,
+            worn: std::sync::Arc::new(worn),
+            fingerprint,
+        }
+    }
 }
 
 #[derive(Default)]
 pub struct ViewCache {
-    version: Option<(Uuid, Uuid, u64, Sort)>,
+    version: Option<(Uuid, Uuid, u64, Sort, &'static str, u64)>,
+    context: SortContext,
     entries: Vec<Entry>,
     children: IdMap<Vec<Uuid>>,
     result_children: IdMap<Vec<Uuid>>,
@@ -579,8 +993,31 @@ pub struct ViewCache {
 }
 
 impl ViewCache {
+    /// The name the creator column gives the creator of `it`, if known.
+    pub fn creator_name(&self, inv: &Inventory, it: &aurora_net::inventory::InvItem) -> Option<String> {
+        self.context
+            .creators
+            .get(&super::aurora::rows::creator_key(inv, it))
+            .cloned()
+            .flatten()
+    }
+
+    /// Changes when the creators' names or the worn items change.
+    pub fn context_fingerprint(&self) -> u64 {
+        self.context.fingerprint
+    }
+
+    /// The creators' names and the worn items the sorts by them read.
+    pub fn set_context(&mut self, context: SortContext) {
+        self.context = context;
+    }
+
     pub fn prepare(&mut self, inv: &Inventory, sort: Sort) {
-        let version = (inv.root, inv.lib_root, inv.generation, sort);
+        let context = match sort.column {
+            Some(SortColumn::Creator | SortColumn::Worn) => self.context.fingerprint,
+            _ => 0,
+        };
+        let version = (inv.root, inv.lib_root, inv.generation, sort, aurora_i18n::language(), context);
         if self.version == Some(version) {
             return;
         }
@@ -601,6 +1038,8 @@ impl ViewCache {
                 trash: trash.contains(&at),
                 outfit: outfits.contains(&at),
                 library: rules::library(inv, id),
+                key: String::new(),
+                rank: 0,
             }
         };
         self.entries = inv
@@ -676,6 +1115,40 @@ impl ViewCache {
             entry.date = dates.get(&entry.id).copied().unwrap_or(0);
         }
         self.folder_dates = dates;
+        if let Some(column) = sort.column {
+            let context = &self.context;
+            self.entries.par_iter_mut().for_each(|e| {
+                if e.folder {
+                    // a folder counts what it holds, once loaded
+                    if column == SortColumn::Count
+                        && let Some(f) = inv.folders.get(&e.id)
+                        && f.state == crate::world::inventory::FetchState::Fetched
+                    {
+                        e.rank = 1 + (f.items.len() + f.children.len()) as u32;
+                    }
+                    return;
+                }
+                match column {
+                    SortColumn::Kind => e.key = super::aurora::rows::kind_name(inv, e.id).to_lowercase(),
+                    SortColumn::Description => e.key.clone_from(&e.desc),
+                    SortColumn::Rights => e.rank = rights_rank(inv, e.id),
+                    SortColumn::Creator => {
+                        let name = inv
+                            .items
+                            .get(&e.id)
+                            .filter(|it| it.asset_type != 25)
+                            .and_then(|it| context.creators.get(&super::aurora::rows::creator_key(inv, it)).cloned().flatten());
+                        e.rank = u32::from(name.is_none());
+                        e.key = name.unwrap_or_default().to_lowercase();
+                    }
+                    SortColumn::Worn => {
+                        let original = rules::original(inv, e.id).unwrap_or(e.id);
+                        e.rank = u32::from(context.worn.contains(&original));
+                    }
+                    SortColumn::Count => {}
+                }
+            });
+        }
         self.entries.par_sort_unstable_by(|a, b| compare(a, b, sort));
         self.folders = inv.folders.keys().copied().collect();
         // Keep the lists' memory: a folder gone keeps an empty list.
@@ -703,7 +1176,7 @@ impl ViewCache {
     /// The rendered sort, without the model generation: a late Delete respects
     /// a new sort while ordinary inventory updates keep the same intent.
     pub(super) fn selection_sort(&self) -> Option<Sort> {
-        self.version.map(|(_, _, _, sort)| sort)
+        self.version.map(|(_, _, _, sort, _, _)| sort)
     }
 
     /// The date a folder sorts by: its newest descendant's, 0 when it holds
@@ -770,6 +1243,22 @@ impl ViewCache {
         } else {
             HashSet::new()
         };
+        // LLItemBridge::buildSearchableName: the name searched is the row's
+        // whole label, so it holds the worn tag of LLObjectBridge and
+        // LLWearableBridge::getLabelSuffix and the active one of
+        // LLGestureBridge::getLabelSuffix (llinventorybridge.cpp): `+worn`
+        // finds what the avatar wears (#4423). The same text as the rows'
+        // tag (`Facts::worn_label`), lowercase like the searched names.
+        let worn_tags = if smart.is_none() && !text.is_empty() && matches!(prefs.search_field, SearchField::Name | SearchField::All) {
+            facts
+                .worn
+                .iter()
+                .chain(&facts.active_gestures)
+                .filter_map(|id| Some((*id, format!(" ({})", facts.original_worn_label(*id)?.to_lowercase()))))
+                .collect()
+        } else {
+            HashMap::new()
+        };
         let query = Query {
             root,
             text,
@@ -784,6 +1273,7 @@ impl ViewCache {
             agent,
             cutoff,
             worn,
+            worn_tags,
             names,
         };
         if self.query.as_ref() == Some(&query) {
@@ -838,6 +1328,12 @@ impl ViewCache {
         // LLItemBridge::getLabelSuffix: the translated link suffix, lowercase
         // like the searched names.
         let link_suffix = format!(" ({})", aurora_i18n::tr!("inventory-pill-link").to_lowercase());
+        let rights_suffixes = [
+            (rules::COPY, aurora_i18n::tr!("inventory-search-no-copy")),
+            (rules::MODIFY, aurora_i18n::tr!("inventory-search-no-modify")),
+            (rules::TRANSFER, aurora_i18n::tr!("inventory-search-no-transfer")),
+        ]
+        .map(|(bit, words)| (bit, format!(" ({})", words.to_lowercase())));
         self.results = self
             .entries
             .par_iter()
@@ -963,13 +1459,28 @@ impl ViewCache {
                     return false;
                 }
                 let creator = || query.names.get(&original.creator).map(|s| s.to_lowercase()).unwrap_or_default();
-                // LLItemBridge::buildDisplayName includes the link suffix in search.
+                // LLItemBridge::buildSearchableName: the name and its label's
+                // suffix (getLabelSuffix), in its order: the link tag, or the
+                // rights the agent lacks on its own item, then the worn tag.
                 let name = || {
-                    if linked {
-                        std::borrow::Cow::Owned(format!("{}{link_suffix}", e.name))
-                    } else {
-                        std::borrow::Cow::Borrowed(e.name.as_str())
+                    let rights = rules::label_missing_rights(it, inv.owner);
+                    let worn = query.worn_tags.get(&original_id);
+                    if !linked && rights == 0 && worn.is_none() {
+                        return std::borrow::Cow::Borrowed(e.name.as_str());
                     }
+                    let mut label = e.name.clone();
+                    if linked {
+                        label.push_str(&link_suffix);
+                    }
+                    for (bit, suffix) in &rights_suffixes {
+                        if rights & bit != 0 {
+                            label.push_str(suffix);
+                        }
+                    }
+                    if let Some(worn) = worn {
+                        label.push_str(worn);
+                    }
+                    std::borrow::Cow::Owned(label)
                 };
                 match query.field {
                     SearchField::Name => matches_text(&name(), &query.text),
@@ -1083,6 +1594,10 @@ pub struct TreeRow {
     pub depth: usize,
     pub folder: bool,
     pub open: bool,
+    /// Whether it has a caret and opens: while results are below it, as the
+    /// Legacy Viewer's filtered tree draws the arrow only over a visible
+    /// child (`rows::branches`).
+    pub branches: bool,
 }
 
 /// Flatten only the expanded branches for virtual drawing. Collapsed folders
@@ -1141,13 +1656,21 @@ impl TreeState {
                     self.closed[tab].remove(&id);
                 }
             }
-            let open = folder && !self.closed[tab].contains(&id);
+            let children = view.result_children.get(&id).filter(|children| !children.is_empty());
+            let branches = folder && children.is_some();
+            let open = branches && !self.closed[tab].contains(&id);
             if id != root || show_root {
-                self.rows.push(TreeRow { id, depth, folder, open });
+                self.rows.push(TreeRow {
+                    id,
+                    depth,
+                    folder,
+                    open,
+                    branches,
+                });
                 self.order.push(id);
             }
             if (open || (id == root && !show_root))
-                && let Some(children) = view.result_children.get(&id)
+                && let Some(children) = children
             {
                 let depth = depth + usize::from(id != root || show_root);
                 todo.extend(children.iter().rev().map(|id| (*id, depth)));
@@ -1163,6 +1686,11 @@ impl TreeState {
 
     pub fn is_open(&self, id: Uuid, tab: usize) -> bool {
         !self.closed[tab.min(4)].contains(&id)
+    }
+
+    /// Whether the folder's row is listed with a caret.
+    pub fn folds(&self, id: Uuid) -> bool {
+        self.rows.iter().any(|row| row.id == id && row.branches)
     }
 
     pub fn set_open(&mut self, id: Uuid, tab: usize, open: bool) {
@@ -1292,19 +1820,55 @@ fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
     } else {
         b.folder.cmp(&a.folder)
     };
+    if let Some(column) = sort.column {
+        // Folders have no type, rights or description: they keep their names.
+        let key = match column {
+            SortColumn::Rights | SortColumn::Count => a.rank.cmp(&b.rank),
+            // the worn items first
+            SortColumn::Worn => b.rank.cmp(&a.rank),
+            SortColumn::Kind | SortColumn::Description | SortColumn::Creator => cmp_folded(&a.key, &b.key),
+        };
+        let key = if sort.descending { key.reverse() } else { key };
+        // the creators not named yet stay last, whichever way
+        let key = if column == SortColumn::Creator {
+            a.rank.cmp(&b.rank).then(key)
+        } else {
+            key
+        };
+        return groups
+            .then_with(|| key)
+            .then_with(|| cmp_folded(&a.name, &b.name))
+            .then_with(|| a.id.cmp(&b.id));
+    }
     let by_name = !sort.by_date || (sort.folders_by_name && a.folder && b.folder);
     groups
         .then_with(|| {
-            if by_name {
+            let order = if by_name {
                 cmp_folded(&a.name, &b.name).then_with(|| b.date.cmp(&a.date))
             } else {
                 b.date.cmp(&a.date).then_with(|| cmp_folded(&a.name, &b.name))
-            }
+            };
+            if sort.descending { order.reverse() } else { order }
         })
         .then_with(|| a.id.cmp(&b.id))
 }
 
-fn matches_text(value: &str, query: &str) -> bool {
+/// The rank of an item's rights for the rights column: modify, copy and
+/// transfer each count (`actions::held`, the rights the column shows).
+fn rights_rank(inv: &Inventory, id: Uuid) -> u32 {
+    use crate::world::inventory::actions;
+    super::permissions::Permissions::inventory(inv, id)
+        .and_then(|p| p.owner())
+        .map_or(0, |mask| {
+            1 + [actions::MODIFY, actions::COPY, actions::TRANSFER]
+                .iter()
+                .filter(|bit| mask & **bit != 0)
+                .count() as u32
+        })
+}
+
+/// Inventory text matching on a label and query already folded to the same case.
+pub(crate) fn matches_text(value: &str, query: &str) -> bool {
     if let Some(exact) = query.strip_prefix('"').and_then(|q| q.strip_suffix('"')) {
         return value.split_whitespace().any(|word| word == exact);
     }
@@ -1380,6 +1944,104 @@ mod tests {
             );
             assert!(view.results.contains(&id(91)));
             assert!(!view.results.contains(&id(10)));
+        }
+    }
+
+    /// The quick search of `text` in `field`, in All of the inventory.
+    fn search_text(inv: &Inventory, facts: &Facts, field: SearchField, text: &str) -> Vec<Uuid> {
+        let prefs = InventoryPreferences {
+            search_field: field,
+            ..Default::default()
+        };
+        let mut view = ViewCache::default();
+        view.search(inv, inv.root, text, &prefs, &Filters::default(), 0, None, facts, facts.agent, 1000);
+        view.results
+    }
+
+    #[test]
+    fn name_plus_worn_matches_what_the_avatar_wears_like_the_legacy_label() {
+        // #4423: `jacket+worn` finds the worn jacket, its link and an item
+        // whose own name says "worn", as the Legacy Viewer's label does
+        // (LLItemBridge::buildSearchableName with LLWearableBridge and
+        // LLObjectBridge::getLabelSuffix).
+        let (mut inv, mut facts) = fixture();
+        let mut jacket = item(20, id(2), "Denim Jacket", 100);
+        jacket.asset_type = 5;
+        jacket.inv_type = 18;
+        let spare = item(21, id(2), "Spare Jacket", 100);
+        let worn = aurora_i18n::tr!("common-worn").to_lowercase();
+        let jacket_query = format!("jacket+{worn}");
+        let link_tag = aurora_i18n::tr!("inventory-pill-link").to_lowercase();
+        let active = aurora_i18n::tr!("gesture-active").to_lowercase();
+        let named = item(22, id(2), &format!("Jacket ({worn})"), 100);
+        let mut link = item(23, id(6), "Denim Jacket", 100);
+        link.asset_type = 24;
+        link.asset_id = id(20);
+        let ring = item(24, id(2), "Ring", 100);
+        let mut wave = item(25, id(2), "Wave", 100);
+        wave.asset_type = 21;
+        wave.inv_type = 20;
+        inv.add_items(vec![jacket, spare, named, link, ring, wave]);
+        facts.worn = [id(20), id(24)].into();
+        facts.worn_labels = [(id(24), "Worn on Left Hand".to_owned())].into();
+        facts.active_gestures = [id(25)].into();
+        for field in [SearchField::Name, SearchField::All] {
+            let search = |facts: &Facts, text: &str| {
+                let mut found = search_text(&inv, facts, field, text);
+                found.sort();
+                found
+            };
+            // The jacket, its link and the item with the tag in its name.
+            assert_eq!(search(&facts, &jacket_query), [id(20), id(22), id(23)], "{field:?}");
+            assert_eq!(search(&facts, &format!("{jacket_query}+{link_tag}")), [id(23)], "{field:?}");
+            assert_eq!(search(&facts, "ring+worn on left hand"), [id(24)], "{field:?}");
+            assert_eq!(search(&facts, &format!("wave+{active}")), [id(25)], "{field:?}");
+            // taken off: only the name is left
+            facts.worn.clear();
+            assert_eq!(search(&facts, &jacket_query), [id(22)], "{field:?}");
+            facts.worn = [id(20), id(24)].into();
+        }
+        // the description has no label tags
+        assert!(search_text(&inv, &facts, SearchField::Description, &worn).is_empty());
+    }
+
+    #[test]
+    fn the_searched_label_names_the_rights_missing_on_the_agents_own_items() {
+        // LLItemBridge::getLabelSuffix: " (no copy)", " (no modify)" and
+        // " (no transfer)" on the agent's own items only, never on a link.
+        let (mut inv, facts) = fixture();
+        inv.owner = id(98);
+        let mut no_copy = item(30, id(2), "Sofa", 100);
+        no_copy.owner = id(98);
+        no_copy.owner_mask = rules::MODIFY | rules::TRANSFER;
+        let mut no_mod_no_transfer = item(31, id(2), "Lamp", 100);
+        no_mod_no_transfer.owner = id(98);
+        no_mod_no_transfer.owner_mask = rules::COPY;
+        let mut group = item(32, id(2), "Group Sofa", 100);
+        group.owner = id(97);
+        group.group_owned = true;
+        group.owner_mask = rules::MODIFY;
+        let mut link = item(33, id(2), "Sofa", 100);
+        link.owner = id(98);
+        link.asset_type = 24;
+        link.asset_id = id(30);
+        let mut full = item(34, id(2), "Table", 100);
+        full.owner = id(98);
+        inv.add_items(vec![no_copy, no_mod_no_transfer, group, link, full]);
+        let no_copy_text = aurora_i18n::tr!("inventory-search-no-copy").to_lowercase();
+        let no_modify_text = aurora_i18n::tr!("inventory-search-no-modify").to_lowercase();
+        let no_transfer_text = aurora_i18n::tr!("inventory-search-no-transfer").to_lowercase();
+        for field in [SearchField::Name, SearchField::All] {
+            assert_eq!(search_text(&inv, &facts, field, &no_copy_text), [id(30)], "{field:?}");
+            assert_eq!(
+                search_text(&inv, &facts, field, &format!("lamp+{no_modify_text}+{no_transfer_text}")),
+                [id(31)],
+                "{field:?}"
+            );
+            assert!(
+                search_text(&inv, &facts, field, &format!("table+{no_copy_text}")).is_empty(),
+                "{field:?}"
+            );
         }
     }
 
@@ -1743,6 +2405,7 @@ mod tests {
                         by_date,
                         folders_by_name,
                         system_first,
+                        ..Default::default()
                     };
                     set_picker_sort(&ctx, sort);
                     let order = picker_order(&ctx, &inv);
@@ -1788,6 +2451,7 @@ mod tests {
                         by_date,
                         system_first,
                         folders_by_name: false,
+                        ..Default::default()
                     },
                     ..Default::default()
                 };
@@ -1814,6 +2478,225 @@ mod tests {
         inv.remove(&[id(10)]);
         cache.prepare(&inv, prefs.sort);
         assert!(!cache.children(id(2), &prefs, inv.lib_root).contains(&id(10)));
+    }
+
+    #[test]
+    fn each_folder_keeps_its_view_only_when_asked() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut prefs = InventoryPreferences::default();
+        prefs.set_view_in(a, ExplorerView::Tiles);
+        assert_eq!(
+            (prefs.view_in(a), prefs.view_in(b)),
+            (ExplorerView::Tiles, ExplorerView::Tiles),
+            "one view for all"
+        );
+        assert!(prefs.folder_views.is_empty());
+        prefs.view_per_folder = true;
+        prefs.set_view_in(a, ExplorerView::Compact);
+        assert_eq!(prefs.view_in(a), ExplorerView::Compact);
+        assert_eq!(prefs.view_in(b), ExplorerView::Tiles, "the others keep the common view");
+        prefs.view_per_folder = false;
+        assert_eq!(
+            prefs.view_in(a),
+            ExplorerView::Tiles,
+            "off: the common view again, the folders' kept"
+        );
+        prefs.view_per_folder = true;
+        for n in 0..(FOLDER_VIEWS as u128 + 20) {
+            prefs.set_view_in(Uuid::from_u128(1000 + n), ExplorerView::Gallery);
+        }
+        assert_eq!(prefs.folder_views.len(), FOLDER_VIEWS, "bounded");
+        // the folder just set stays even with the smallest id
+        let smallest = Uuid::from_u128(5);
+        prefs.set_view_in(smallest, ExplorerView::Compact);
+        assert_eq!(prefs.folder_views.len(), FOLDER_VIEWS, "the next one went");
+        assert_eq!(prefs.view_in(smallest), ExplorerView::Compact);
+        let saved = serde_json::to_string(&prefs).unwrap();
+        let back: InventoryPreferences = serde_json::from_str(&saved).unwrap();
+        assert_eq!(back.folder_views, prefs.folder_views);
+        assert!(back.view_per_folder);
+    }
+
+    #[test]
+    fn header_clicks_sort_by_a_column_and_reverse_it() {
+        let mut sort = Sort::default();
+        assert_eq!(
+            sort.header(),
+            (SortHeader::Date, false),
+            "the Legacy Viewer's default, newest first"
+        );
+        sort.click(SortHeader::Name);
+        assert_eq!((sort.by_date, sort.column, sort.descending), (false, None, false));
+        sort.click(SortHeader::Name);
+        assert_eq!(sort.header(), (SortHeader::Name, true), "a second click reverses");
+        sort.click(SortHeader::Column(SortColumn::Kind));
+        assert_eq!(
+            sort.header(),
+            (SortHeader::Column(SortColumn::Kind), false),
+            "another column starts ascending"
+        );
+        sort.click(SortHeader::Date);
+        assert_eq!((sort.by_date, sort.column, sort.descending), (true, None, false));
+        sort.click(SortHeader::Column(SortColumn::Rights));
+        sort.set_by_date(false);
+        assert_eq!(sort.header(), (SortHeader::Name, false), "the menus' orders leave the column");
+        sort.click(SortHeader::Column(SortColumn::Description));
+        sort.descending = true;
+        assert_eq!(
+            sort.legacy(),
+            Sort {
+                by_date: false,
+                ..Sort::default()
+            },
+            "selectors keep the Legacy order"
+        );
+    }
+
+    #[test]
+    fn columns_sort_items_and_keep_folders_and_system_folders_in_place() {
+        let (mut inv, _) = fixture();
+        folder(&mut inv, 7, id(2), -1, "sub");
+        let mut notecard = item(13, id(2), "B notecard", 200);
+        (notecard.asset_type, notecard.inv_type) = (7, 7);
+        notecard.desc = "zebra".into();
+        notecard.owner_mask = rules::COPY;
+        let mut texture = item(14, id(2), "C texture", 250);
+        (texture.asset_type, texture.inv_type) = (0, 0);
+        texture.desc = "apple".into();
+        inv.add_items(vec![notecard, texture]);
+        let children = |sort: Sort| {
+            let mut prefs = InventoryPreferences {
+                sort,
+                ..Default::default()
+            };
+            prefs.sort = sort;
+            let mut cache = ViewCache::default();
+            cache.prepare(&inv, sort);
+            cache.children(id(2), &prefs, inv.lib_root)
+        };
+        let by_name = Sort {
+            by_date: false,
+            ..Sort::default()
+        };
+        assert_eq!(children(by_name), [id(7), id(10), id(13), id(14), id(12), id(11)]);
+        assert_eq!(
+            children(Sort {
+                descending: true,
+                ..by_name
+            }),
+            [id(7), id(11), id(12), id(14), id(13), id(10)],
+            "reversed, the folder stays above the items"
+        );
+        let mut kinds: Vec<_> = [10, 11, 12, 13, 14]
+            .map(|n| (super::super::aurora::rows::kind_name(&inv, id(n)).to_lowercase(), n))
+            .into_iter()
+            .collect();
+        // the same type keeps the names' order
+        let name = |n: u128| inv.items[&id(n)].name.to_lowercase();
+        kinds.sort_by(|a, b| cmp_folded(&a.0, &b.0).then_with(|| cmp_folded(&name(a.1), &name(b.1))));
+        let kind = Sort {
+            column: Some(SortColumn::Kind),
+            ..by_name
+        };
+        let expected: Vec<_> = std::iter::once(id(7)).chain(kinds.iter().map(|(_, n)| id(*n))).collect();
+        assert_eq!(children(kind), expected);
+        let description = Sort {
+            column: Some(SortColumn::Description),
+            ..by_name
+        };
+        // no description first, by name, then "apple" and "zebra"
+        assert_eq!(children(description), [id(7), id(10), id(12), id(11), id(14), id(13)]);
+        let rights = Sort {
+            column: Some(SortColumn::Rights),
+            ..by_name
+        };
+        assert_eq!(
+            children(rights)[..2],
+            [id(7), id(13)],
+            "the copy-only notecard holds the fewest rights"
+        );
+        let root = |sort: Sort| {
+            let prefs = InventoryPreferences::default();
+            let mut cache = ViewCache::default();
+            cache.prepare(&inv, sort);
+            cache.children(inv.root, &prefs, inv.lib_root)
+        };
+        assert_eq!(
+            root(Sort { descending: true, ..kind })[0],
+            root(kind)[0],
+            "the system folders stay first when reversed"
+        );
+    }
+
+    #[test]
+    fn creators_worn_and_counts_sort_with_their_context() {
+        let (mut inv, _) = fixture();
+        folder(&mut inv, 7, id(2), -1, "full");
+        folder(&mut inv, 8, id(2), -1, "empty");
+        inv.add_items(vec![item(30, id(7), "inside", 10), item(31, id(7), "inside too", 10)]);
+        inv.folders.get_mut(&id(7)).unwrap().items = vec![id(30), id(31)];
+        // 10 by Zed, 11 by Amy, 12 by a creator not named yet
+        for (n, creator) in [(10, 50), (11, 51), (12, 52)] {
+            let mut it = inv.items[&id(n)].clone();
+            it.creator = id(creator);
+            it.owner = id(99);
+            inv.add_items(vec![it]);
+        }
+        let creators: HashMap<_, _> = [
+            ((id(50), id(99)), Some("Zed".to_owned())),
+            ((id(51), id(99)), Some("amy".to_owned())),
+            ((id(52), id(99)), None),
+        ]
+        .into();
+        let context = SortContext::new(std::sync::Arc::new(creators), [id(11)].into());
+        let children = |sort: Sort, context: &SortContext| {
+            let prefs = InventoryPreferences::default();
+            let mut cache = ViewCache::default();
+            cache.set_context(context.clone());
+            cache.prepare(&inv, sort);
+            cache.children(id(2), &prefs, inv.lib_root)
+        };
+        let by = |column| Sort {
+            by_date: false,
+            column: Some(column),
+            ..Sort::default()
+        };
+        assert_eq!(children(by(SortColumn::Creator), &context)[2..], [id(11), id(10), id(12)]);
+        assert_eq!(
+            children(
+                Sort {
+                    descending: true,
+                    ..by(SortColumn::Creator)
+                },
+                &context
+            )[2..],
+            [id(10), id(11), id(12)],
+            "a creator not named yet stays last"
+        );
+        assert_eq!(children(by(SortColumn::Worn), &context)[2], id(11), "the worn item first");
+        assert_eq!(
+            children(by(SortColumn::Count), &context)[..2],
+            [id(8), id(7)],
+            "the fuller folder later"
+        );
+        // a name that arrives sorts again
+        let mut cache = ViewCache::default();
+        cache.set_context(context.clone());
+        cache.prepare(&inv, by(SortColumn::Creator));
+        let built = cache.built();
+        cache.set_context(context.clone());
+        cache.prepare(&inv, by(SortColumn::Creator));
+        assert_eq!(cache.built(), built, "the same names keep the order");
+        let named: HashMap<_, _> = [((id(52), id(99)), Some("Bea".to_owned()))].into();
+        cache.set_context(SortContext::new(std::sync::Arc::new(named), HashSet::new()));
+        cache.prepare(&inv, by(SortColumn::Creator));
+        assert_ne!(cache.built(), built);
+        cache.set_context(SortContext::default());
+        let built = cache.built();
+        cache.prepare(&inv, by(SortColumn::Kind));
+        cache.set_context(context);
+        cache.prepare(&inv, by(SortColumn::Kind));
+        assert_eq!(cache.built(), built + 1, "a sort that reads no names ignores them");
     }
 
     #[test]
@@ -2100,10 +2983,12 @@ mod tests {
         view.search(&inv, inv.root, "", &prefs, &filters, 2, None, &facts, facts.agent, 1000);
         tree.prepare(&view, inv.root, 2, true);
         assert_eq!(open(&tree, 2), Some(false));
-        // Expand all opens everything, Inner included
+        // Expand all opens everything but Inner: nothing is under it, so it
+        // has no caret and stays shut (`rows::branches`)
         tree.set_all(&view, inv.root, 2, true);
         tree.prepare(&view, inv.root, 2, true);
-        assert_eq!((open(&tree, 2), open(&tree, 7)), (Some(true), Some(true)));
+        assert_eq!((open(&tree, 2), open(&tree, 7)), (Some(true), Some(false)));
+        assert!(tree.folds(id(2)) && !tree.folds(id(7)));
 
         // without the option, nothing changes: only the folders of the matches
         let mut view = ViewCache::default();
@@ -2287,11 +3172,13 @@ mod tests {
                 by_date: false,
                 system_first: false,
                 folders_by_name: false,
+                ..Default::default()
             },
             received_sort: Sort {
                 by_date: true,
                 folders_by_name: true,
                 system_first: false,
+                ..Default::default()
             },
             filter_defaults: Filters {
                 links: Links::Exclude,
@@ -2300,6 +3187,7 @@ mod tests {
                 ..Default::default()
             },
             show_details: false,
+            dual_panel: true,
             ..prefs
         };
         let json = serde_json::to_string(&changed).expect("serialize preferences");
@@ -2318,7 +3206,8 @@ mod tests {
             Sort {
                 by_date: false,
                 folders_by_name: true,
-                system_first: false
+                system_first: false,
+                ..Default::default()
             }
         );
         assert_eq!(
@@ -2326,7 +3215,8 @@ mod tests {
             Sort {
                 by_date: true,
                 folders_by_name: false,
-                system_first: true
+                system_first: true,
+                ..Default::default()
             }
         );
     }
@@ -2433,6 +3323,7 @@ mod tests {
             by_date: false,
             folders_by_name: true,
             system_first: false,
+            ..Default::default()
         };
         let saved = serde_json::to_string(&prefs).expect("save");
         let restored: InventoryPreferences = serde_json::from_str(&saved).expect("reload");

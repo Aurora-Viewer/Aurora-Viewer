@@ -51,6 +51,9 @@ pub struct LoginRequest {
     /// The other login servers (`login_authority`) the user agreed to
     /// continue this login on (`LoginError::NextServer`).
     pub accepted_next_servers: Vec<String>,
+    /// The login servers (`login_authority`) the user agreed to log in to
+    /// without encryption (`LoginError::Unencrypted`).
+    pub accepted_unencrypted: Vec<String>,
 }
 
 /// The system a login names (LLAppViewer::init's setPlatformInfo with
@@ -205,6 +208,14 @@ pub enum LoginError {
     Server(u16),
     #[error("{0}")]
     XmlRpc(#[from] xmlrpc::XmlRpcError),
+    /// The address answered (HTTP 200), but not with an XML-RPC login reply:
+    /// most often a web page, when the grid's web site address was given as
+    /// its login URI (#3884). The Legacy Viewer shows its catch-all
+    /// "server_is_down" text there (StatusXMLRPCError with no message,
+    /// LLXMLRPCTransaction::Impl::setStatus, indra/newview/llxmlrpctransaction.cpp),
+    /// never the parser's words; the parser's error goes to the log.
+    #[error("{}", aurora_i18n::tr!("login-not-a-login-server"))]
+    NotALoginServer,
     #[error("login refused ({reason}): {message}")]
     Refused {
         reason: String,
@@ -225,6 +236,11 @@ pub enum LoginError {
     /// in `LoginRequest::accepted_next_servers`.
     #[error("the login continues on {0}")]
     NextServer(String),
+    /// The login would go to this server (its `login_authority`) over plain
+    /// `http`: nothing is sent until the user agrees, and the next attempt
+    /// names it in `LoginRequest::accepted_unencrypted` (`unencrypted_server`).
+    #[error("the login to {0} would not be encrypted")]
+    Unencrypted(String),
     /// The login was not sent on (`NextServer::Refuse`).
     #[error("{0}")]
     Stopped(&'static str),
@@ -407,6 +423,27 @@ pub fn next_server(from: &str, to: &str, accepted: &[String]) -> NextServer {
     }
 }
 
+/// The login server of `uri` when a login sent there would travel
+/// unencrypted: an `http` address off this machine, by its
+/// `login_authority`. `None` for `https` and for this machine itself
+/// (`localhost`, a loopback address: a local OpenSim never leaves it).
+/// Deliberate difference, stricter: the Legacy Viewer sends the password
+/// hash to an `http` login address without a word (LLLogin::Impl::loginCoro,
+/// viewer_components/login/lllogin.cpp; FSGridHandler even adds `http://` to
+/// an address typed without a scheme, indra/newview/fsgridhandler.cpp).
+pub fn unencrypted_server(uri: &str) -> Option<String> {
+    let url = reqwest::Url::parse(uri.trim()).ok()?;
+    if url.scheme() != "http" {
+        return None;
+    }
+    let host = url.host_str()?.trim_start_matches('[').trim_end_matches(']').trim_end_matches('.');
+    let loopback = match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost"),
+    };
+    if loopback { None } else { login_authority(uri) }
+}
+
 /// The HTTP redirects of the login request: followed by the client only
 /// when `next_server` follows them on its own; the others come back to
 /// `login`, which asks or refuses (a 307 / 308 resends the request).
@@ -541,7 +578,9 @@ fn parse_success(v: Llsd) -> Result<LoginResponse, LoginError> {
         region_y: v["region_y"].as_u32(),
         region_size_x: size("region_size_x"),
         region_size_y: size("region_size_y"),
-        seed_capability: v["seed_capability"].as_str().to_owned(),
+        // The login seed is handed to `CURLOPT_URL` as received
+        // (`LLViewerRegion::setSeedCapability`). A missing scheme is guessed.
+        seed_capability: crate::curl_url::ensure_scheme(v["seed_capability"].as_str()).into_owned(),
         look_at: parse_ll_vector(v["look_at"].as_str()).unwrap_or(Vec3::X),
         message: v["message"].as_str().to_owned(),
         agent_appearance_service: v["agent_appearance_service"].as_str().to_owned(),
@@ -562,6 +601,14 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
     let mut method = "login_to_simulator".to_owned();
     let accepted = &req.accepted_next_servers;
     for _attempt in 0..5 {
+        // the first request as the next ones: nothing goes out over plain
+        // http to a server the user has not agreed to (the client's own
+        // redirects stay on this server, or move to https)
+        if let Some(server) = unencrypted_server(&uri)
+            && !req.accepted_unencrypted.contains(&server)
+        {
+            return Err(LoginError::Unencrypted(server));
+        }
         let body = xmlrpc::build_call(&method, &build_params(req, &uri));
         let resp = http
             .post(&uri)
@@ -589,7 +636,15 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
         if !status.is_success() {
             return Err(LoginError::Server(status.as_u16()));
         }
-        let v = xmlrpc::parse_response(&bytes)?;
+        let v = match xmlrpc::parse_response(&bytes) {
+            Ok(v) => v,
+            // a fault is the login server's own answer
+            Err(fault @ xmlrpc::XmlRpcError::Fault { .. }) => return Err(fault.into()),
+            Err(e) => {
+                log::warn!("the login address did not send a login reply ({e}; {} bytes)", bytes.len());
+                return Err(LoginError::NotALoginServer);
+            }
+        };
         match v["login"].to_string_value().as_str() {
             "true" => return parse_success(v),
             "indeterminate" => {
@@ -618,6 +673,17 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_login_seed_without_a_scheme_is_fetched_as_http() {
+        let mut m = Map::new();
+        m.insert("agent_id".into(), Llsd::Uuid(Uuid::from_u128(1)));
+        m.insert("sim_ip".into(), "127.0.0.1".into());
+        m.insert("sim_port".into(), 9000.into());
+        m.insert("seed_capability".into(), "grid.example:8002/cap/seed".into());
+        let login = parse_success(Llsd::Map(m)).expect("login");
+        assert_eq!(login.seed_capability, "http://grid.example:8002/cap/seed");
+    }
 
     #[test]
     fn username_split() {
@@ -676,6 +742,7 @@ mod tests {
             },
             platform: Platform::default(),
             accepted_next_servers: Vec::new(),
+            accepted_unencrypted: Vec::new(),
         };
         let p = build_params(&req, SL_MAIN_GRID);
         assert_eq!(p["last_exec_event"].as_i32(), LastExec::UNKNOWN);
@@ -757,6 +824,7 @@ mod tests {
             last_exec: LastExec::default(),
             platform: Platform::windows("26200", true),
             accepted_next_servers: Vec::new(),
+            accepted_unencrypted: Vec::new(),
         };
         let linden = build_params(&req(SL_MAIN_GRID), SL_MAIN_GRID);
         assert_eq!(linden["mac"].as_str(), real_mac);
@@ -879,6 +947,7 @@ mod tests {
             last_exec: LastExec::default(),
             platform,
             accepted_next_servers: Vec::new(),
+            accepted_unencrypted: Vec::new(),
         };
         let p = build_params(&req(Platform::windows("26200", true)), SL_MAIN_GRID);
         assert_eq!(p["platform_version"].as_str(), "10.0.26200");
@@ -960,6 +1029,7 @@ mod tests {
             last_exec: LastExec::default(),
             platform: Platform::default(),
             accepted_next_servers: accepted.to_vec(),
+            accepted_unencrypted: Vec::new(),
         }
     }
 
@@ -967,9 +1037,86 @@ mod tests {
         login_authority(url).expect("an authority")
     }
 
+    #[test]
+    fn plain_http_off_this_machine_is_unencrypted() {
+        assert_eq!(unencrypted_server("http://Grid.Example:8002/"), Some("grid.example:8002".into()));
+        assert_eq!(unencrypted_server(" HTTP://grid.example/login "), Some("grid.example".into()));
+        assert_eq!(unencrypted_server("http://192.168.1.20:9000/"), Some("192.168.1.20:9000".into()));
+        for encrypted in ["https://grid.example:8002/", SL_MAIN_GRID, SL_BETA_GRID] {
+            assert_eq!(unencrypted_server(encrypted), None, "{encrypted}");
+        }
+        // this machine: nothing travels
+        for local in [
+            "http://localhost:9000/",
+            "http://LOCALHOST./",
+            "http://grid.localhost:9000/",
+            "http://127.0.0.1:9000/",
+            "http://127.5.0.1/",
+            "http://[::1]:9000/",
+        ] {
+            assert_eq!(unencrypted_server(local), None, "{local}");
+        }
+        // a name that only mentions localhost is another machine
+        assert_eq!(
+            unencrypted_server("http://localhost.grid.example/"),
+            Some("localhost.grid.example".into())
+        );
+        assert_eq!(unencrypted_server("not an address"), None);
+    }
+
+    #[tokio::test]
+    async fn plain_http_gets_the_login_only_once_agreed() {
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
+        // the first request: nothing is sent, whatever else was agreed to
+        let grid = "http://grid.example:8002/";
+        let mut req = synthetic_request(grid, &["grid.example:8002".into()]);
+        let asked = login(&http, &req).await;
+        assert!(
+            matches!(&asked, Err(LoginError::Unencrypted(server)) if server == "grid.example:8002"),
+            "{asked:?}"
+        );
+        // agreed to another server only: still asked
+        req.accepted_unencrypted = vec!["other.example:8002".into()];
+        let asked = login(&http, &req).await;
+        assert!(
+            matches!(&asked, Err(LoginError::Unencrypted(server)) if server == "grid.example:8002"),
+            "{asked:?}"
+        );
+        // a later hop to plain http is asked too, even to a server agreed
+        // to as the next one
+        let next = answer(&[
+            ("login", "indeterminate"),
+            ("next_url", grid),
+            ("next_method", "login_to_simulator"),
+        ]);
+        let (local, hits) = login_server(vec![("200 OK", String::new(), next)]).await;
+        let asked = login(&http, &synthetic_request(&local, &["grid.example:8002".into()])).await;
+        assert!(
+            matches!(&asked, Err(LoginError::Unencrypted(server)) if server == "grid.example:8002"),
+            "{asked:?}"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // a server on this machine gets the login as before
+        let (local, hits) = login_server(vec![("200 OK", String::new(), wrong_password())]).await;
+        let refused = login(&http, &synthetic_request(&local, &[])).await;
+        assert!(
+            matches!(&refused, Err(LoginError::Refused { reason, .. }) if reason == "key"),
+            "{refused:?}"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn another_server_gets_the_login_only_once_agreed() {
-        let http = reqwest::Client::builder().redirect(redirect_policy()).build().expect("client");
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
         // "indeterminate" to another server: nothing sent there, the user is asked
         let (other, other_hits) = login_server(vec![("200 OK", String::new(), wrong_password())]).await;
         let next = answer(&[
@@ -1003,9 +1150,45 @@ mod tests {
         assert_eq!(other_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
+    /// #3884: a grid's web site given as its login URI answers 200 with a
+    /// page, and the login error was the XML parser's ("mismatched end tag").
+    #[tokio::test]
+    async fn a_web_page_instead_of_a_login_reply_is_told_as_a_wrong_address() {
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
+        let page = "<!DOCTYPE html><html><head><title>A grid</title></head><body><p>Welcome<br></body></html>";
+        let not_a_reply = "<?xml version=\"1.0\"?><rss><channel/></rss>";
+        for body in [page, not_a_reply, ""] {
+            let (grid, _) = login_server(vec![("200 OK", String::new(), body.to_owned())]).await;
+            let failed = login(&http, &synthetic_request(&grid, &[])).await;
+            assert!(matches!(failed, Err(LoginError::NotALoginServer)), "{body:?}: {failed:?}");
+            let text = failed.expect_err("an error").to_string();
+            assert_eq!(text, aurora_i18n::tr!("login-not-a-login-server").to_string());
+            assert!(!text.contains("xml") && !text.contains("byte"), "{text}");
+        }
+        // a fault stays the login server's own answer
+        let fault = "<?xml version=\"1.0\"?><methodResponse><fault><value><struct>\
+            <member><name>faultCode</name><value><int>4</int></value></member>\
+            <member><name>faultString</name><value><string>Too many parameters.</string></value></member>\
+            </struct></value></fault></methodResponse>";
+        let (grid, _) = login_server(vec![("200 OK", String::new(), fault.to_owned())]).await;
+        let failed = login(&http, &synthetic_request(&grid, &[])).await;
+        assert!(
+            matches!(failed, Err(LoginError::XmlRpc(xmlrpc::XmlRpcError::Fault { code: 4, .. }))),
+            "{failed:?}"
+        );
+    }
+
     #[tokio::test]
     async fn an_http_error_of_the_login_server_is_told_as_the_server_s_problem() {
-        let http = reqwest::Client::builder().redirect(redirect_policy()).build().expect("client");
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
         let (grid, _) = login_server(vec![("500 Internal Server Error", String::new(), String::new())]).await;
         let failed = login(&http, &synthetic_request(&grid, &[])).await;
         assert!(matches!(failed, Err(LoginError::Server(500))), "{failed:?}");
@@ -1016,7 +1199,11 @@ mod tests {
 
     #[tokio::test]
     async fn the_same_server_is_followed_without_a_question() {
-        let http = reqwest::Client::builder().redirect(redirect_policy()).build().expect("client");
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
         // a 307 to another path, then a relative next_url: the same server
         let (grid, hits) = login_server(vec![
             ("307 Temporary Redirect", "Location: /login2\r\n".into(), String::new()),

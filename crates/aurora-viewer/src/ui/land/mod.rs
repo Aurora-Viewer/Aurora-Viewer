@@ -268,6 +268,12 @@ enum PickFor {
     SellTo,
 }
 
+/// The About Land window's floater id: each layout keeps its own place and
+/// size.
+pub fn window_id(classic: bool) -> &'static str {
+    if classic { "about_land" } else { "about_land_aurora" }
+}
+
 #[derive(Default)]
 pub struct LandUi {
     /// The classic window's tab.
@@ -519,6 +525,14 @@ impl LandUi {
             self.show_once = true;
             return;
         }
+        // "Visibility and search", unfolded (its name, description and
+        // picture rows; the demo parcel then has a long description)
+        if key == "visibility" {
+            self.page = Page::Manage;
+            self.manage_nav.go(manage::Section::Visibility);
+            self.manage_open.insert(manage::Section::Visibility);
+            return;
+        }
         if key == "owners" {
             self.page = Page::People;
             self.refresh_owners_once = true;
@@ -636,10 +650,11 @@ impl LandUi {
                 .get(&view.handle)
                 .is_some_and(|r| r.caps.contains_key("RegionExperiences"));
         // each layout keeps its own size
-        let (id, size, min_size) = if classic {
-            ("about_land", Vec2::new(790.0, 620.0), Vec2::new(740.0, 470.0))
+        let id = window_id(classic);
+        let (size, min_size) = if classic {
+            (Vec2::new(790.0, 620.0), Vec2::new(740.0, 470.0))
         } else {
-            ("about_land_aurora", aurora::SIZE, aurora::MIN_SIZE)
+            (aurora::SIZE, aurora::MIN_SIZE)
         };
         let mut floater = Floater::new(
             id,
@@ -957,14 +972,14 @@ fn dim(ui: &mut egui::Ui, p: &Palette, s: impl Into<String>) -> egui::Response {
 /// A resident's name that opens the profile (LLSLURL "agent ... inspect").
 fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) {
     world.social.want_name(id);
-    let name = world.social.name_of(&id);
+    let name = world.social.name_in(crate::world::names::NameScope::Roster, &id);
     if ui
         .add(egui::Label::new(RichText::new(name).size(12.0).color(p.violet_light)).sense(egui::Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
         .clicked()
     {
-        super::profile::request_open(ui.ctx(), id);
+        super::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, id);
     }
 }
 

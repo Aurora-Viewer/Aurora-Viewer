@@ -142,9 +142,13 @@ fn tile(ui: &mut egui::Ui, p: &Palette, v: &View, world: &World, pics: &Pictures
     if let Some(uv) = uv
         && v.same_region
     {
-        let size = world.regions.get(&v.handle).map_or(256.0, |r| r.heightmap.size_x.max(256) as f32);
+        let (size_x, size_y) = world
+            .regions
+            .get(&v.handle)
+            .map_or((256.0, 256.0), |r| (r.heightmap.size_x as f32, r.heightmap.size_y as f32));
         let pos = world.agent.position;
-        let (u, t) = (pos.x / size, 1.0 - pos.y / size);
+        let (x, y) = crate::ui::map_tiles::region_pin(pos.x, pos.y, size_x, size_y);
+        let (u, t) = (x, 1.0 - y);
         if uv.x_range().contains(u) && uv.y_range().contains(t) {
             let at = egui::pos2(
                 rect.left() + (u - uv.min.x) / uv.width() * rect.width(),
@@ -322,7 +326,7 @@ fn owner(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(aurora_i18n::tr!("common-view-profile"));
             if r.clicked() && !v.owner.is_nil() {
-                crate::ui::profile::request_open(ui.ctx(), v.owner);
+                crate::ui::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, v.owner);
             }
             let mut line = role_name(Role::Owner).to_owned();
             if v.manages() && !managers.is_empty() {
@@ -370,28 +374,16 @@ fn fact_list(p: &Palette, world: &World, details: Option<&aurora_net::estate::Re
             small: false,
         },
     });
-    // objects against the region's capacity
-    out.push(match stats {
-        Some(s) if s.object_capacity > 0 => {
-            let used = s.get(sim_stat::NUMTASKS).unwrap_or(0.0);
-            let left = (i64::from(s.object_capacity) - used.round() as i64).max(0);
-            let frac = fraction(used, s.object_capacity);
-            let tint = (frac >= 0.9).then_some(p.danger).or((frac >= 0.8).then_some(p.warn));
-            Fact {
-                key: aurora_i18n::tr!("common-objects"),
-                value: count_of(used, s.object_capacity),
-                rest: aurora_i18n::tr!("ui-land-overview-objects-free", n = left, count = aurora_i18n::integer(left)),
-                gauge: Some(("region_objects", frac, tint)),
-                small: false,
-            }
-        }
-        _ => Fact {
-            key: aurora_i18n::tr!("common-objects"),
-            value: loading(),
-            rest: String::new(),
-            gauge: None,
-            small: false,
-        },
+    // NUMTASKS counts prims, including attachments. The region's land impact
+    // capacity uses a different unit and cannot be subtracted from this count.
+    out.push(Fact {
+        key: aurora_i18n::tr!("common-objects"),
+        value: stats
+            .and_then(|s| s.get(sim_stat::NUMTASKS))
+            .map_or_else(loading, |n| aurora_i18n::integer(n.round() as i64)),
+        rest: String::new(),
+        gauge: None,
+        small: false,
     });
     // how the simulator keeps up
     out.push(match stats.and_then(|s| s.get(sim_stat::TIME_DILATION)) {
@@ -712,7 +704,7 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
                 .on_hover_text(top)
                 .clicked()
             {
-                super::top_objects::open(s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
+                super::top_objects::open(ui.ctx(), s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
             }
             let restart = aurora_i18n::tr!("region-restart");
             if action(ui, p, "refresh", label(restart), SoftDanger, true)
@@ -843,7 +835,7 @@ fn health_card(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world
         && r.clicked()
         && !world.estate.top_waiting
     {
-        super::top_objects::open(s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
+        super::top_objects::open(ui.ctx(), s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
     }
     let stats = world.estate.stats_of(v.handle).cloned();
     let get = |id: u32| stats.as_ref().and_then(|s| s.get(id));
@@ -1003,5 +995,32 @@ mod tests {
         assert!(sunday.chars().next().is_some_and(|c| !c.is_lowercase()), "{sunday}");
         s.days = [true; 7];
         assert!(schedule_text(&s).starts_with(aurora_i18n::tr!("region-schedule-every-day")));
+    }
+}
+
+#[cfg(test)]
+mod object_count_tests {
+    use super::*;
+
+    #[test]
+    fn region_object_count_does_not_use_land_impact_capacity() {
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let palette = crate::theme::Theme::default().palette();
+        let mut stats = SimStats {
+            values: vec![(sim_stat::NUMTASKS, 31_200.0)],
+            object_capacity: 30_000,
+        };
+        for (value, expected) in [
+            (true, aurora_i18n::integer(31_200)),
+            (false, aurora_i18n::tr!("common-loading").to_owned()),
+        ] {
+            if !value {
+                stats.values.clear();
+            }
+            let facts = fact_list(&palette, &world, None, Some(&stats));
+            let objects = facts.iter().find(|fact| fact.key == aurora_i18n::tr!("common-objects")).unwrap();
+            assert_eq!(objects.value, expected);
+            assert!(objects.gauge.is_none() && objects.rest.is_empty());
+        }
     }
 }

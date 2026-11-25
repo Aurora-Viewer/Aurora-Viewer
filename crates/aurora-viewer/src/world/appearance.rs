@@ -64,8 +64,9 @@ pub enum Action {
     /// The photo mode, square, for an outfit's picture.
     OutfitPhotoMode(Uuid),
     /// The batch portraits' window, over these outfits (the showcase's,
-    /// in its order).
-    OutfitBatch(Vec<Uuid>),
+    /// in its order), and the folder of My Outfits they were chosen from
+    /// (the showcase filtered to it), named in the window.
+    OutfitBatch(Vec<Uuid>, Option<Uuid>),
     Wear(Uuid, bool),
     WearOutfits {
         folders: Vec<Uuid>,
@@ -284,6 +285,27 @@ pub(super) fn item_link(it: &InvItem) -> OutfitLink {
     }
 }
 
+/// Keep the selected outfit link for clothing. The original still supplies
+/// the wearable type, permissions and the target of the new COF link.
+pub fn wear_entry(inv: &Inventory, entry: Uuid, original: Uuid) -> Uuid {
+    if entry != original
+        && inv.items.get(&original).is_some_and(|it| it.asset_type == 5)
+        && inv.items.get(&entry).is_some_and(|link| {
+            link.asset_type == 24
+                && link.asset_id == original
+                && inv
+                    .folders
+                    .get(&link.parent)
+                    .is_some_and(|f| f.info.type_default == FT_OUTFIT && !f.library)
+        })
+        && !super::inventory::actions::library(inv, original)
+    {
+        entry
+    } else {
+        original
+    }
+}
+
 pub fn dirty(inv: &Inventory) -> bool {
     let Some((cof, base)) = cof(inv).zip(base(inv)) else {
         return false;
@@ -292,7 +314,16 @@ pub fn dirty(inv: &Inventory) -> bool {
         let mut keys: Vec<_> = folder_links(inv, id)
             .into_iter()
             .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13 | 21)))
-            .map(|l| (l.target, l.name, l.desc))
+            // read as the Legacy Viewer holds them (LLInventoryItem::fromLLSD):
+            // an outfit saved before the links went out in plain ASCII is
+            // not a change
+            .map(|l| {
+                (
+                    l.target,
+                    aurora_net::outfits::link_name(&l.name),
+                    aurora_net::outfits::link_desc(&l.desc),
+                )
+            })
             .collect();
         keys.sort();
         keys
@@ -482,8 +513,38 @@ fn remove_links(inv: &Inventory, current: &mut Vec<OutfitLink>, ids: Vec<Uuid>) 
     Ok(())
 }
 
+/// What a clothing item put on the planned COF does to the layers already
+/// worn of its wearable type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Layers {
+    /// Goes on top of them (Add).
+    Add,
+    /// Takes the top one off (Wear): LLAppearanceMgr::wearItemsOnAvatar
+    /// with `replace` (indra/newview/llappearancemgr.cpp).
+    ReplaceTop,
+    /// Takes every one off: an RLVa forced wear that replaces
+    /// (RlvForceWear::addWearable, indra/newview/rlvhelper.cpp, forceRemove).
+    ReplaceAll,
+}
+
+/// Port of LLWearableData::canAddWearable (indra/llappearance/llwearabledata.cpp)
+/// for clothing of wearable type `kind`, on the planned COF: one physics
+/// layer at most, other clothing below MAX_CLOTHING_LAYERS (60) in all.
+fn can_add_clothing(inv: &Inventory, links: &[OutfitLink], kind: u32) -> bool {
+    let mut clothing = links
+        .iter()
+        .filter(|l| !l.folder)
+        .filter_map(|l| inv.items.get(&l.target))
+        .filter(|it| it.asset_type == 5);
+    if kind == u32::from(crate::physics_editor::KIND) {
+        !clothing.any(|it| it.flags & 0xff == kind)
+    } else {
+        clothing.count() < 60
+    }
+}
+
 /// Put one item on the planned COF. A body part always replaces its type;
-/// `replace_layer` clears the item's clothing layer first; `replace` sends
+/// clothing treats the layers of its type as `layers` says; `replace` sends
 /// an attachment to its point instead of adding it there.
 fn wear_link(
     inv: &Inventory,
@@ -491,7 +552,7 @@ fn wear_link(
     worn: &HashMap<Uuid, u8>,
     seen: &mut HashSet<Uuid>,
     request: WearRequest,
-    replace_layer: bool,
+    layers: Layers,
 ) -> Result<(), String> {
     let id =
         super::inventory::actions::original(inv, request.item).ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
@@ -508,14 +569,43 @@ fn wear_link(
     {
         return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-worn").into());
     }
-    if it.asset_type == 13 || (replace_layer && it.asset_type == 5) {
-        current.retain(|l| {
-            l.folder
-                || inv
-                    .items
-                    .get(&l.target)
-                    .is_none_or(|old| old.asset_type != it.asset_type || old.flags & 0xff != it.flags & 0xff)
-        });
+    let kind = it.flags & 0xff;
+    let same_type = |l: &OutfitLink| {
+        !l.folder
+            && inv
+                .items
+                .get(&l.target)
+                .is_some_and(|old| old.asset_type == it.asset_type && old.flags & 0xff == kind)
+    };
+    if it.asset_type == 13 {
+        current.retain(|l| !same_type(l));
+    }
+    // Port of the AT_CLOTHING case of LLAppearanceMgr::wearItemsOnAvatar
+    // (indra/newview/llappearancemgr.cpp): Wear, or a layer the type cannot
+    // take any more, takes off only the top layer of the type
+    // (getWearableItemID(type, wearable_count - 1)), never the ones under it
+    // (#4260). An item already worn changes nothing (isLinkedInCOF; RLVa
+    // keeps it too).
+    if it.asset_type == 5 && !current.iter().any(|l| !l.folder && l.target == id) {
+        if layers == Layers::ReplaceAll {
+            current.retain(|l| !same_type(l));
+        }
+        let has_room = can_add_clothing(inv, current, kind);
+        if layers == Layers::ReplaceTop || !has_room {
+            let top = current
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| same_type(l))
+                .max_by_key(|(_, l)| layer_rank(l, kind))
+                .map(|(i, _)| i);
+            if let Some(top) = top {
+                current.remove(top);
+            } else if !has_room {
+                // At the total limit there is no layer of this type to replace.
+                // Refuse before a COF write rather than removing an unrelated layer.
+                return Err(aurora_i18n::tr!("world-appearance-clothing-layers-full").into());
+            }
+        }
     }
     if request.replace && it.asset_type == 6 {
         // Point zero uses the last saved point (LLObjectBridge::mAttachPt).
@@ -536,7 +626,17 @@ fn wear_link(
         }
     }
     if !current.iter().any(|l| l.target == id) {
-        current.push(item_link(it));
+        let mut link = item_link(it);
+        if wear_entry(inv, request.item, id) != id {
+            let source = &inv.items[&request.item];
+            // link_inventory_array (llviewerinventory.cpp) takes the clicked
+            // link's actual description. An unplaced link sorts by name.
+            link.desc.clone_from(&source.desc);
+            if let Some(order) = layer_order(&source.desc, kind) {
+                restore_layer(inv, current, &mut link, source.parent, kind, order);
+            }
+        }
+        current.push(link);
     }
     Ok(())
 }
@@ -873,7 +973,8 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             for request in wear {
                 // RLVa already chose replace or add per item (the first
                 // clothing of a layer replaces, the next ones add).
-                wear_link(inv, &mut current, worn, &mut seen, request, request.replace)?;
+                let layers = if request.replace { Layers::ReplaceAll } else { Layers::Add };
+                wear_link(inv, &mut current, worn, &mut seen, request, layers)?;
             }
             change.links = current;
         }
@@ -912,19 +1013,22 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             let mut seen = HashSet::new();
             let mut replaced_clothing = HashSet::new();
             for id in ids {
-                let layer = super::inventory::actions::original(inv, id)
+                let original = super::inventory::actions::original(inv, id);
+                // An item already worn is skipped before needs_to_replace
+                // (isLinkedInCOF), so it never uses up its type's turn.
+                let worn_already = original.is_some_and(|id| current.iter().any(|l| !l.folder && l.target == id));
+                let layer = original
                     .and_then(|id| inv.items.get(&id))
                     .map(|it| (it.asset_type, it.flags & 0xff));
-                // The first clothing of a layer replaces, the next ones add.
-                let replace_layer = replace && layer.is_some_and(|(kind, layer)| kind != 5 || replaced_clothing.insert(layer));
-                wear_link(
-                    inv,
-                    &mut current,
-                    worn,
-                    &mut seen,
-                    WearRequest { item: id, replace, point },
-                    replace_layer,
-                )?;
+                // The first clothing of a type replaces its top layer, the
+                // next ones add (needs_to_replace, llappearancemgr.cpp).
+                let layers = if replace && !worn_already && layer.is_some_and(|(kind, layer)| kind != 5 || replaced_clothing.insert(layer))
+                {
+                    Layers::ReplaceTop
+                } else {
+                    Layers::Add
+                };
+                wear_link(inv, &mut current, worn, &mut seen, WearRequest { item: id, replace, point }, layers)?;
             }
             change.links = current;
         }
@@ -989,7 +1093,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         | Action::OutfitSnapshot(_)
         | Action::OutfitPortrait(_)
         | Action::OutfitPhotoMode(_)
-        | Action::OutfitBatch(_)
+        | Action::OutfitBatch(..)
         | Action::Category(..)
         | Action::Folders(_)
         | Action::DeleteFromOutfit { .. }
@@ -1120,32 +1224,69 @@ fn drop_coalesced(inv: &Inventory, links: &mut Vec<OutfitLink>) {
 /// WearablesOrderComparator: ties then go by name. The outfit lists and the
 /// layers worn share this order, so a list shows what the avatar wears.
 pub fn layer_rank(link: &OutfitLink, kind: u32) -> (u32, String) {
-    let order = link
-        .desc
-        .strip_prefix('@')
+    (layer_order(&link.desc, kind).unwrap_or(u32::MAX), link.name.to_lowercase())
+}
+
+fn layer_order(desc: &str, kind: u32) -> Option<u32> {
+    desc.strip_prefix('@')
         .and_then(|s| s.parse::<u32>().ok())
         .filter(|order| order / 100 == kind)
-        .unwrap_or(u32::MAX);
-    (order, link.name.to_lowercase())
+}
+
+/// Removing a layer renumbers the COF. Use the saved outfit's other layers
+/// as bounds so adding them back one at a time also works in reverse order.
+/// Keep the relative order of everything the resident is already wearing.
+fn restore_layer(inv: &Inventory, current: &mut [OutfitLink], new: &mut OutfitLink, outfit: Uuid, kind: u32, order: u32) {
+    let saved: HashMap<_, _> = inv.folders[&outfit]
+        .items
+        .iter()
+        .filter_map(|id| inv.items.get(id))
+        .filter(|it| it.parent == outfit && it.asset_type == 24)
+        .filter_map(|it| Some((it.asset_id, layer_order(&it.desc, kind)?)))
+        .collect();
+    let worn = ordered_layers(inv, current, kind);
+    let mut lower = 0;
+    let mut upper = worn.len();
+    for (i, link) in worn.iter().enumerate() {
+        if let Some(&place) = saved.get(&link.target) {
+            if place < order {
+                lower = i + 1;
+            } else if place > order {
+                upper = upper.min(i);
+            }
+        }
+    }
+    let mut slot = ((order % 100) as usize).min(worn.len());
+    // If the resident reversed the saved neighbours, keep their current
+    // order and insert at the saved index among the remaining layers.
+    if lower <= upper {
+        slot = slot.clamp(lower, upper);
+    }
+    for (index, link) in worn.into_iter().enumerate() {
+        link.desc = format!("@{}", kind * 100 + (index + usize::from(index >= slot)) as u32);
+    }
+    new.desc = format!("@{}", kind * 100 + slot as u32);
+}
+
+fn ordered_layers<'a>(inv: &Inventory, links: &'a mut [OutfitLink], kind: u32) -> Vec<&'a mut OutfitLink> {
+    let mut layers: Vec<_> = links
+        .iter_mut()
+        .filter(|l| {
+            !l.folder
+                && inv
+                    .items
+                    .get(&l.target)
+                    .is_some_and(|it| it.asset_type == 5 && it.flags & 0xff == kind)
+        })
+        .collect();
+    layers.sort_by_cached_key(|l| layer_rank(l, kind));
+    layers
 }
 
 fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
     for kind in 4..=16 {
-        let mut indices: Vec<_> = links
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| {
-                !l.folder
-                    && inv
-                        .items
-                        .get(&l.target)
-                        .is_some_and(|it| it.asset_type == 5 && it.flags & 0xff == kind)
-            })
-            .map(|(i, l)| (i, layer_rank(l, kind)))
-            .collect();
-        indices.sort_by(|a, b| a.1.cmp(&b.1));
-        for (order, (i, _)) in indices.iter().enumerate() {
-            links[*i].desc = format!("@{}", kind * 100 + order as u32);
+        for (order, link) in ordered_layers(inv, links, kind).into_iter().enumerate() {
+            link.desc = format!("@{}", kind * 100 + order as u32);
         }
     }
 }
@@ -1651,7 +1792,8 @@ pub fn seed_demo_wearables(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, cof, &links);
 }
 
-/// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`: the number of generated
+/// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]`:
+/// the number of generated
 /// outfits added to the Appearance demo (a large wardrobe), 0 without it.
 pub fn demo_outfit_count() -> usize {
     std::env::var("AURORA_DEMO_OUTFITS")
@@ -1712,14 +1854,33 @@ pub fn seed_demo_take_off(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, sub, &hair);
 }
 
-/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`).
+/// The outfit sort the modes of `AURORA_DEMO_OUTFITS` ask for, if any.
+pub fn demo_outfit_sort() -> Option<super::outfit_folders::Sort> {
+    use super::outfit_folders::{Sort, SortBy};
+    let modes = ["newest", "oldest", "favorites", "images"];
+    modes.iter().any(|mode| demo_outfit_mode(mode)).then(|| Sort {
+        by: if demo_outfit_mode("newest") {
+            SortBy::Newest
+        } else if demo_outfit_mode("oldest") {
+            SortBy::Oldest
+        } else {
+            SortBy::NameAscending
+        },
+        favorites_first: demo_outfit_mode("favorites"),
+        images_first: demo_outfit_mode("images"),
+    })
+}
+
+/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`, ...).
 pub fn demo_outfit_mode(mode: &str) -> bool {
     std::env::var("AURORA_DEMO_OUTFITS").is_ok_and(|v| v.split(',').skip(1).any(|m| m.trim() == mode))
 }
 
 /// A large wardrobe for the Appearance demo: `count` outfits with generated
 /// names, 20 to 60 links each to a pool of generated clothes, objects and
-/// body parts, and a thumbnail (never loaded offline) on one in four.
+/// body parts, a thumbnail (never loaded offline) on one in four, and a
+/// date that does not follow the names; with the `favorites` mode, one in
+/// five is a favorite.
 pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
     use super::inventory::Folder;
     let Some(my) = system_folder(inv, FT_MY_OUTFITS) else {
@@ -1751,10 +1912,13 @@ pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
         })
         .collect();
     inv.add_items(pool.clone());
+    let favorites = demo_outfit_mode("favorites");
     let mut contents = Vec::with_capacity(count);
     let mut outfits = Vec::with_capacity(count);
     for i in 0..count {
         let id = Uuid::from_u128(2_000_000 + i as u128);
+        // a day apart: the names sort by style first, so not in their order
+        let saved = 1_700_000_000 + ((i * 7919) % count.max(1)) as i64 * 86_400;
         let name = format!("{} {} {:04}", STYLES[i % STYLES.len()], KINDS[(i / 7) % KINDS.len()], i);
         inv.folders.insert(
             id,
@@ -1770,6 +1934,7 @@ pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
                     } else {
                         Uuid::nil()
                     },
+                    favorite: favorites && i % 5 == 0,
                     ..Default::default()
                 },
                 children: Vec::new(),
@@ -1794,6 +1959,7 @@ pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
                     owner: agent,
                     base_mask: 0x7fffffff,
                     owner_mask: 0x7fffffff,
+                    created_at: saved,
                     ..Default::default()
                 }
             })
@@ -2230,6 +2396,54 @@ mod tests {
         assert!(change.links.iter().any(|l| l.target == gone));
     }
 
+    /// An outfit whose every link is broken (an OpenSim outfit of deleted
+    /// items) is still worn, as updateCOF does: the current body parts stay,
+    /// the clothing and attachments go, the outfit becomes the base outfit,
+    /// and no link to a missing original is sent (the read-back would wait
+    /// for it).
+    #[test]
+    fn an_outfit_of_broken_links_keeps_the_body_parts_and_sends_no_broken_link() {
+        let mut inv = fixture();
+        let outfit = Uuid::from_u128(704);
+        let cof = cof(&inv).expect("COF");
+        let gone: Vec<_> = folder_links(&inv, outfit)
+            .into_iter()
+            .filter(|l| !l.folder)
+            .map(|l| l.target)
+            // the current body parts stay in the inventory
+            .filter(|target| {
+                !(inv.items.get(target).is_some_and(|it| it.asset_type == 13)
+                    && folder_links(&inv, cof).iter().any(|l| l.target == *target))
+            })
+            .collect();
+        assert!(!gone.is_empty());
+        for id in &gone {
+            inv.items.remove(id);
+        }
+        inv.items_missing(gone.clone());
+        let body: Vec<_> = folder_links(&inv, cof)
+            .into_iter()
+            .filter(|l| inv.items.get(&l.target).is_some_and(|it| it.asset_type == 13))
+            .map(|l| l.target)
+            .collect();
+        assert!(!body.is_empty());
+        let (change, sync) = plan(&inv, Action::Wear(outfit, false), &HashMap::new()).expect("worn without the missing items");
+        assert!(sync);
+        assert!(change.links.iter().all(|l| !gone.contains(&l.target)), "no broken link is sent");
+        for id in &body {
+            assert!(change.links.iter().any(|l| l.target == *id), "body part {id} kept");
+        }
+        assert!(
+            change
+                .links
+                .iter()
+                .all(|l| l.folder || inv.items.get(&l.target).is_some_and(|it| it.asset_type == 13)),
+            "clothing and attachments taken off: {:?}",
+            change.links
+        );
+        assert!(change.links.iter().any(|l| l.folder && l.target == outfit), "the base outfit");
+    }
+
     #[test]
     fn a_broken_link_in_the_current_outfit_no_longer_blocks_outfit_changes() {
         let mut inv = fixture();
@@ -2645,6 +2859,30 @@ mod tests {
         demo_mutate(&mut inv, Uuid::from_u128(1), &change).expect("mutation");
         assert_eq!(base(&inv), Some(change.folder));
         assert!(!dirty(&inv));
+        // #4225: an outfit saved with a UTF-8 link name, worn since with the
+        // plain-ASCII link the Legacy Viewer sends, has not changed
+        let target = folder_links(&inv, change.folder).iter().find(|l| !l.folder).expect("link").target;
+        let name = "Veste « été »";
+        for (folder, link_name) in [
+            (change.folder, name.to_owned()),
+            (cof(&inv).expect("COF"), aurora_net::outfits::link_name(name)),
+        ] {
+            let link = inv
+                .items
+                .values_mut()
+                .find(|it| it.parent == folder && it.asset_type == 24 && it.asset_id == target)
+                .expect("outfit link");
+            link.name = link_name;
+        }
+        assert!(!dirty(&inv), "the same link read as the Legacy Viewer reads it");
+        let cof_folder = cof(&inv).expect("COF");
+        let link = inv
+            .items
+            .values_mut()
+            .find(|it| it.parent == cof_folder && it.asset_type == 24 && it.asset_id == target)
+            .expect("COF link");
+        link.desc = "@1501".into();
+        assert!(dirty(&inv), "another layer is still a change");
     }
     #[test]
     fn body_parts_cannot_be_removed_and_unloaded_outfits_cannot_be_worn() {
@@ -2762,6 +3000,195 @@ mod tests {
             assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(999)));
             assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(710)), "body preserved");
         }
+    }
+
+    /// A copy of the Freckles tattoo of `seed_demo_layers` as another
+    /// clothing item of wearable type `kind`, in the inventory.
+    fn clothing(inv: &mut Inventory, id: u128, kind: u32, name: &str) -> Uuid {
+        let item = InvItem {
+            id: Uuid::from_u128(id),
+            name: name.into(),
+            desc: String::new(),
+            flags: kind,
+            ..inv.items[&Uuid::from_u128(724)].clone()
+        };
+        inv.add_items(vec![item]);
+        Uuid::from_u128(id)
+    }
+
+    fn wear(inv: &Inventory, item: Uuid, replace: bool) -> Vec<Uuid> {
+        let (change, _) = plan(inv, Action::WearItem { item, replace, point: 0 }, &HashMap::new()).expect("wear");
+        change.links.iter().filter(|l| !l.folder).map(|l| l.target).collect()
+    }
+
+    #[test]
+    fn saved_outfit_layers_return_in_order_when_added_individually() {
+        let agent = Uuid::from_u128(1);
+        let mut inv = fixture();
+        seed_demo_layers(&mut inv, agent);
+        let cof = cof(&inv).expect("COF");
+        let folder = Uuid::from_u128(702);
+        let tattoos = [714, 724, 725].map(Uuid::from_u128);
+        let links = folder_links(&inv, cof);
+        demo_replace(&mut inv, agent, folder, &links);
+        let entries = tattoos.map(|id| {
+            inv.folders[&folder]
+                .items
+                .iter()
+                .copied()
+                .find(|entry| inv.items[entry].asset_id == id)
+                .unwrap()
+        });
+        let bare: Vec<_> = links.into_iter().filter(|l| !tattoos.contains(&l.target)).collect();
+        for permutation in [[2, 1, 0], [1, 0, 2], [0, 2, 1], [1, 2, 0], [2, 0, 1], [0, 1, 2]] {
+            demo_replace(&mut inv, agent, cof, &bare);
+            for i in permutation {
+                let (change, _) = plan(&inv, Action::Add(entries[i]), &HashMap::new()).expect("add saved layer");
+                demo_mutate(&mut inv, agent, &change).expect("acknowledged COF");
+            }
+            let mut result = folder_links(&inv, cof);
+            let worn: Vec<_> = ordered_layers(&inv, &mut result, 14).iter().map(|l| l.target).collect();
+            assert_eq!(worn, tattoos, "added in order {permutation:?}");
+        }
+    }
+
+    #[test]
+    fn wear_uses_the_clicked_outfits_slot_after_replacing_the_top_layer() {
+        let agent = Uuid::from_u128(1);
+        let mut inv = fixture();
+        seed_demo_layers(&mut inv, agent);
+        let [bottom, middle, top] = [714, 724, 725].map(Uuid::from_u128);
+        let new = clothing(&mut inv, 9000, 14, "Zebra");
+        // The original and the two outfits all give the same item different places.
+        inv.items.get_mut(&new).unwrap().desc = "@1402".into();
+        for (folder, desc, expected) in [
+            (702, "@1400", vec![new, bottom, middle]),
+            (703, "@1401", vec![bottom, new, middle]),
+            (704, "@500", vec![bottom, middle, new]),
+            (705, "creator text", vec![bottom, middle, new]),
+        ] {
+            let folder = Uuid::from_u128(folder);
+            let mut saved = item_link(&inv.items[&new]);
+            saved.desc = desc.into();
+            demo_replace(&mut inv, agent, folder, &[saved]);
+            let entry = inv.folders[&folder].items[0];
+            let action = Action::WearItem {
+                item: entry,
+                replace: true,
+                point: 0,
+            };
+            let (mut change, _) = plan(&inv, action, &HashMap::new()).expect("wear saved layer");
+            let worn: Vec<_> = ordered_layers(&inv, &mut change.links, 14).iter().map(|l| l.target).collect();
+            assert_eq!(worn, expected);
+            assert!(!change.links.iter().any(|l| l.target == top || l.target == entry));
+            assert_eq!(inv.items[&entry].desc, desc);
+        }
+        assert_eq!(inv.items[&new].desc, "@1402");
+    }
+
+    #[test]
+    fn wear_replaces_only_the_top_layer_of_its_type_while_add_keeps_them_all() {
+        // #4260, LLAppearanceMgr::wearItemsOnAvatar: Wear takes off the top
+        // layer of the type (Lipstick, @1402), never the tattoos under it
+        let mut inv = fixture();
+        seed_demo_layers(&mut inv, Uuid::from_u128(1));
+        let (star, freckles, lipstick) = (Uuid::from_u128(714), Uuid::from_u128(724), Uuid::from_u128(725));
+        let third = clothing(&mut inv, 9990, 14, "Third tattoo");
+        let worn = wear(&inv, third, true);
+        assert!(worn.contains(&star) && worn.contains(&freckles) && worn.contains(&third));
+        assert!(!worn.contains(&lipstick), "the top layer is replaced");
+        let worn = wear(&inv, third, false);
+        assert!(
+            [star, freckles, lipstick, third].iter().all(|id| worn.contains(id)),
+            "Add keeps every layer"
+        );
+        // a layer already worn changes nothing (isLinkedInCOF)
+        let before = wear(&inv, freckles, false);
+        assert_eq!(wear(&inv, freckles, true), before);
+        assert!(before.contains(&lipstick));
+        // nor does it use up the type's replace in a selection: the new
+        // tattoo still replaces the top layer, Lipstick itself
+        let (change, _) = plan(
+            &inv,
+            Action::WearItems {
+                items: vec![lipstick, third],
+                replace: true,
+                point: 0,
+            },
+            &HashMap::new(),
+        )
+        .expect("wear selection");
+        let worn: Vec<_> = change.links.iter().filter(|l| !l.folder).map(|l| l.target).collect();
+        assert!(worn.contains(&star) && worn.contains(&freckles) && worn.contains(&third));
+        assert!(!worn.contains(&lipstick), "the worn item is skipped, the new one replaces the top");
+    }
+
+    #[test]
+    fn a_type_that_cannot_take_another_layer_replaces_its_top_one_even_on_add() {
+        // LLWearableData::canAddWearable: one physics layer, and 60 clothing
+        // layers in all, whatever their types
+        let mut inv = fixture();
+        seed_demo_layers(&mut inv, Uuid::from_u128(1));
+        let agent = Uuid::from_u128(1);
+        let cof = cof(&inv).expect("COF");
+        let physics = clothing(&mut inv, 9980, 15, "Physics");
+        let mut links = folder_links(&inv, cof);
+        links.push(item_link(&inv.items[&physics]));
+        demo_replace(&mut inv, agent, cof, &links);
+        let other = clothing(&mut inv, 9981, 15, "Other physics");
+        let worn = wear(&inv, other, false);
+        assert!(
+            worn.contains(&other) && !worn.contains(&physics),
+            "a second physics layer replaces the first"
+        );
+
+        let count = |inv: &Inventory, links: &[OutfitLink]| {
+            links
+                .iter()
+                .filter(|l| inv.items.get(&l.target).is_some_and(|it| it.asset_type == 5))
+                .count()
+        };
+        let mut links = folder_links(&inv, cof);
+        let missing = 60 - count(&inv, &links);
+        for n in 0..missing {
+            let alpha = clothing(&mut inv, 9000 + n as u128, 13, &format!("Alpha {n}"));
+            links.push(item_link(&inv.items[&alpha]));
+        }
+        demo_replace(&mut inv, agent, cof, &links);
+        assert_eq!(count(&inv, &folder_links(&inv, cof)), 60);
+        let missing_kind = (4..=16)
+            .find(|kind| {
+                !links.iter().any(|l| {
+                    inv.items
+                        .get(&l.target)
+                        .is_some_and(|it| it.asset_type == 5 && it.flags & 0xff == *kind)
+                })
+            })
+            .expect("a clothing type absent from this outfit");
+        let first = clothing(&mut inv, 9991, missing_kind, "First of this type");
+        for replace in [false, true] {
+            let result = plan(
+                &inv,
+                Action::WearItem {
+                    item: first,
+                    replace,
+                    point: 0,
+                },
+                &HashMap::new(),
+            );
+            assert!(result.is_err(), "a full outfit cannot add its first layer of an unrelated type");
+        }
+        let tattoo = clothing(&mut inv, 9990, 14, "Third tattoo");
+        let worn = wear(&inv, tattoo, false);
+        assert!(worn.contains(&tattoo));
+        assert!(!worn.contains(&Uuid::from_u128(725)), "the top tattoo makes room");
+        assert!(worn.contains(&Uuid::from_u128(724)) && worn.contains(&Uuid::from_u128(714)));
+        assert_eq!(
+            worn.iter()
+                .filter(|id| inv.items.get(id).is_some_and(|it| it.asset_type == 5))
+                .count(),
+            60
+        );
     }
 
     #[test]

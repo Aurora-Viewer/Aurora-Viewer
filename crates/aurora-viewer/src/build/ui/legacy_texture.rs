@@ -20,7 +20,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
                     1 => 0,
                     _ => 2,
                 };
-                if widgets::compact_tabs(
+                let (clicked, rects) = widgets::compact_tabs_at(
                     ui,
                     p,
                     &mut tab,
@@ -29,7 +29,18 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
                         (aurora_i18n::tr!("build-ui-texture-blinn-phong"), true),
                         (aurora_i18n::tr!("extra-media"), true),
                     ],
-                ) {
+                );
+                // inventory held over PBR or Blinn-Phong opens it (the texture
+                // panel's open_tabs_on_drag_and_drop, panel_fs_tools_texture.xml)
+                let mut held = false;
+                for (index, rect) in rects.iter().enumerate().take(2) {
+                    let id = egui::Id::unique("legacy-build-drag-open-texture").with(index);
+                    if crate::ui::inventory::drag::navigation::tab_held_over(ui, *rect, id) {
+                        tab = index;
+                        held = true;
+                    }
+                }
+                if clicked || held {
                     tool.ui.tex_tab = match tab {
                         0 => 1,
                         1 => 0,
@@ -117,7 +128,7 @@ fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         .map(|x| {
             let mut material = tool.face_legacy(env, world, x.idx, x.face, &x.te);
             if let Some(appearance) = world.objects.get(x.idx).and_then(|object| object.local_appearance(x.face as usize)) {
-                appearance.apply_legacy(material.get_or_insert_with(|| default_legacy(env, &x.te)));
+                appearance.apply_legacy(material.get_or_insert_with(|| default_legacy_for_face(env, world, x)));
             }
             material
         })
@@ -254,7 +265,7 @@ fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             });
         },
     );
-    let has_alpha = diffuse.and_then(|id| env.scene.textures.has_alpha(&id)).unwrap_or(false);
+    let has_alpha = diffuse.and_then(|id| env.scene.textures.has_alpha_channel(&id)).unwrap_or(false);
     let opaque = sel.iter().all(|x| x.te.color[3] >= 1.0);
     let default = if has_alpha { alpha_mode::BLEND } else { alpha_mode::NONE };
     let (mode, mixed) = same(bp.iter().map(|m| m.as_ref().map(|m| m.diffuse_alpha_mode).unwrap_or(default)));
@@ -403,8 +414,13 @@ pub(super) fn pbr_surface(
     mat: &aurora_assets::material::PbrMaterial,
     asset: Option<Uuid>,
     mixed: bool,
+    maps_mixed: [bool; 4],
     model: Option<std::sync::Arc<aurora_render::preview::Model>>,
     editable: bool,
+    (save_material, save): (
+        &aurora_assets::material::PbrMaterial,
+        Option<crate::build::texture_copy::MaterialSave>,
+    ),
 ) {
     let scale = super::super::common::font_scale(ui);
     let map_step = 74.0 * scale;
@@ -433,13 +449,16 @@ pub(super) fn pbr_surface(
             world,
             env,
             id.filter(|_| editable),
-            false,
+            editable && maps_mixed[channel],
             caption,
             PickTarget::PbrMap(channel),
             editable,
             60.0,
         );
     }
+    // Save to inventory, in the free cell under Emissive, as in Aurora's layout.
+    let mut cell = child(ui, canvas, 64.0, map_step * 2.0, 60.0, map_h, "legacy-pbr-save");
+    super::save_button(&mut cell, p, tool, save_material, save, 60.0);
     for (y, target, color) in [
         (
             0.0,
@@ -529,11 +548,11 @@ pub(super) fn pbr_surface(
     });
 }
 
-fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, sel: &[Sel], env: &Env) {
+fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, sel: &[Sel], env: &mut Env) {
     let (canvas, _) = ui.allocate_exact_size(vec2(ui.available_width(), 68.0), egui::Sense::hover());
     let mut left = child(ui, canvas, 0.0, 0.0, canvas.width() - 96.0, 68.0, "legacy-face-parameters");
     left.spacing_mut().interact_size.y = 16.0;
-    repeats_meter(&mut left, p, tool, world, sel);
+    repeats_meter(&mut left, p, tool, world, env, sel);
     if let Some(value) = check(
         &mut left,
         p,

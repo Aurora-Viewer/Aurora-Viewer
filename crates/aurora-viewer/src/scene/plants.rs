@@ -89,6 +89,14 @@ pub(super) fn plant_face(o: &Object) -> Option<TextureFace> {
     })
 }
 
+/// `@setcam_textures` covers trees (LLDrawPoolTree::renderDeferred binds
+/// sDefaultDiffuseImagep while textures are off), not grass: its faces are
+/// neither volumes nor particles, which LLFace::setDefaultTexture alone
+/// switches (indra/newview/llface.cpp).
+pub(super) fn takes_camera_texture(o: &Object) -> bool {
+    o.pcode != LL_PCODE_LEGACY_GRASS
+}
+
 /// The scene level of a plant that is not drawn (tree_detail.rs).
 pub(super) const NOT_DRAWN: u8 = u8::MAX;
 
@@ -300,5 +308,18 @@ mod tests {
     #[test]
     fn tree_levels_run_the_other_way() {
         assert_eq!([tree_lod(3), tree_lod(2), tree_lod(1), tree_lod(0)], [0, 1, 2, 3]);
+    }
+
+    /// LLDrawPoolTree::renderDeferred and LLFace::setDefaultTexture: the
+    /// forced texture covers trees and ordinary prims, never grass.
+    #[test]
+    fn rlva_camera_textures_cover_trees_but_not_grass() {
+        let mut o = crate::demo::action_avatar(false);
+        o.pcode = LL_PCODE_LEGACY_TREE;
+        assert!(takes_camera_texture(&Object::from_update(1, o.clone())));
+        o.pcode = LL_PCODE_LEGACY_GRASS;
+        assert!(!takes_camera_texture(&Object::from_update(1, o.clone())));
+        o.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        assert!(takes_camera_texture(&Object::from_update(1, o)));
     }
 }

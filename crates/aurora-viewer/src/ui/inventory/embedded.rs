@@ -11,7 +11,7 @@ use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 pub fn save_focused(ctx: &egui::Context) -> bool {
     ctx.memory(|m| m.focused()).is_some_and(|id| {
         ctx.data(|d| d.get_temp::<u64>(id.with("document_save_frame")))
-            .is_some_and(|frame| frame + 1 >= ctx.cumulative_frame_nr())
+            .is_some_and(|frame| frame + 1 >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
     })
 }
 
@@ -125,6 +125,8 @@ pub(super) fn editor(
     let code_background = markdown
         .filter(|rendered| !rendered.code_blocks.is_empty())
         .map(|_| ui.painter().add(egui::Shape::Noop));
+    // The open find bar's matches (find.rs).
+    let find = super::find::highlights(ui.ctx(), id);
     let label_font = egui::TextStyle::Body.resolve(ui.style());
     let mut labels = std::collections::HashMap::new();
     if let Some(source) = source {
@@ -240,6 +242,36 @@ pub(super) fn editor(
             ),
         );
     }
+    if let Some(found) = find {
+        let clip = output.text_clip_rect.translate(-output.galley_pos.to_vec2());
+        let focused = output.response.has_focus();
+        let painter = ui.painter().with_clip_rect(output.text_clip_rect);
+        for (rect, current) in super::find::rects(&output.galley, &found, clip.top(), clip.bottom()) {
+            // over the text: the editor's field face is opaque. A light wash
+            // keeps the glyphs readable; the match the bar went to also gets
+            // an outline while the bar has the keyboard (with the keyboard
+            // here, egui's own selection shows it)
+            let rect = rect.translate(output.galley_pos.to_vec2());
+            painter.add(egui::Shape::rect_filled(
+                rect,
+                egui::CornerRadius::ZERO,
+                p.amber.gamma_multiply(0.3),
+            ));
+            if current && !focused {
+                painter.add(egui::Shape::rect_stroke(
+                    rect,
+                    egui::CornerRadius::ZERO,
+                    egui::Stroke::new(1.5, p.amber),
+                    egui::StrokeKind::Outside,
+                ));
+            }
+        }
+    }
+    if super::find::take_scroll(ui.ctx(), id) {
+        let cursor = output.state.cursor.char_range().unwrap_or_default().primary;
+        let rect = output.galley.pos_from_cursor(cursor).translate(output.galley_pos.to_vec2());
+        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+    }
     let mut result = EditorResult {
         changed: output.response.changed(),
         #[cfg(test)]
@@ -249,7 +281,7 @@ pub(super) fn editor(
         ..Default::default()
     };
     if output.response.has_focus() {
-        let frame = ui.ctx().cumulative_frame_nr();
+        let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ui.ctx().data_mut(|data| data.insert_temp(id.with("document_save_frame"), frame));
         result.save = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
     }
@@ -309,14 +341,15 @@ pub(super) fn editor(
                 id.with(("attachment", index)),
                 egui::Sense::click_and_drag(),
             );
-            // LLViewerTextEditor::handleMouseUp opens items on a single click.
-            if response.clicked() {
-                result.open = Some(marker);
-            }
             // handleHover begins a drag past the threshold. Only an object
             // has somewhere to go here: the world (dropObject).
-            if response.drag_started() && attachment.item.asset_type == 6 {
+            if super::drag::begins(ui, &response) && attachment.item.asset_type == 6 {
                 result.drag = Some(marker);
+            }
+            // LLViewerTextEditor::handleMouseUp opens items on a single
+            // click, never on the release of a drag.
+            if response.clicked() && !super::drag::dragged_this_press(ui.ctx()) {
+                result.open = Some(marker);
             }
             response
                 .clone()
@@ -360,14 +393,11 @@ pub(super) fn preview(
     ctx: &egui::Context,
     p: &Palette,
     st: &mut InventoryUi,
-    inv: &crate::world::inventory::Inventory,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
 ) {
-    // a texture preview already open closes when @viewtexture applies, as
-    // RlvUIEnabler::onToggleViewXXX closes the "preview_texture" floaters
-    if !inv.can_preview(0) {
-        st.attachment_preview = None;
-    }
+    // (@viewtexture refuses to open it, `App::open_notecard_attachment`; one
+    // already open stays: RlvUIEnabler::filterFloaterViewXXX, rlvui.cpp,
+    // validates the opening of "preview_texture" alone)
     let Some(item) = &st.attachment_preview else { return };
     let mut open = true;
     super::super::widgets::Floater::new(
@@ -378,13 +408,15 @@ pub(super) fn preview(
     )
     .show(ctx, p, &mut open, |ui| {
         st.wanted_images.insert(item.asset_id);
-        if let Some(image) = images.get(&item.asset_id) {
-            ui.add(egui::Image::new(image).max_size(ui.available_size()).fit_to_original_size(1.0));
-        } else {
-            ui.spinner();
-            ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
+        // The description heads the window, as in LLPreviewTexture's
+        // floater_preview_texture.xml; the picture fills the rest and follows
+        // the window's size, like a texture opened from the inventory (it was
+        // capped at the texture's own pixel size).
+        if !item.desc.is_empty() {
+            ui.label(&item.desc);
         }
-        ui.label(&item.desc);
+        let display = crate::ui::texture_library::texture_view::Display::default();
+        crate::ui::texture_library::texture_view::picture(ui, p, images.get(&item.asset_id), None, &display, None);
     });
     if !open {
         st.attachment_preview = None;
@@ -400,7 +432,7 @@ mod tests {
         let output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(700.0, 400.0))),
-                time: Some(ctx.cumulative_frame_nr() as f64 * 0.1),
+                time: Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) as f64 * 0.1),
                 focused: true,
                 events,
                 ..Default::default()

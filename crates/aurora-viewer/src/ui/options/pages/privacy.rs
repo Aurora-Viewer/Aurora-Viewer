@@ -152,16 +152,6 @@ pub(super) fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
     account_group(cx);
     login_favorites_row(cx);
-    cx.choice(
-        tr!("poser-privacy"),
-        tr!("poser-privacy-hint"),
-        &field!(pose_requests.policy),
-        &[
-            (crate::world::poser_consent::Policy::Everyone, tr!("poser-policy-everyone"), false),
-            (crate::world::poser_consent::Policy::Friends, tr!("poser-policy-friends"), false),
-            (crate::world::poser_consent::Policy::Nobody, tr!("poser-policy-nobody"), false),
-        ],
-    );
     // "Only friends and groups can call or IM me" (voice_call_friends_only_check,
     // VoiceCallsFriendsOnly; its hint is the FriendsAndGroupsOnly notice)
     cx.group(tr!("ui-options-calls-and-messages"), |cx| {
@@ -208,6 +198,11 @@ pub(super) fn page(cx: &mut Cx) {
             tr!("ui-options-private-point-at"),
             tr!("ui-options-private-point-at-help"),
             &field!(lookat.private_point_at),
+        );
+        cx.toggle(
+            tr!("ui-options-private-edit-beam"),
+            tr!("ui-options-private-edit-beam-help"),
+            &field!(lookat.private_edit_beam),
         );
         cx.toggle(
             tr!("ui-options-limit-look-at-distance"),

@@ -25,7 +25,7 @@ impl App {
     }
 
     pub(super) fn joystick_status(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        if !self.joystick.active {
+        if !flycam_status_shown(self.joystick.active, self.interface.hidden) {
             return;
         }
         let room = crate::ui::layout::work_area(ctx);
@@ -323,10 +323,11 @@ impl App {
             Use::On
         } else if self.panels.settings && self.options_ui.page == crate::ui::options::Page::Controls && self.options_ui.tab != 0 {
             Use::List
-        } else if self.settings.gamepad.enabled || (self.panels.settings && self.options_ui.page == crate::ui::options::Page::Gamepad) {
-            Use::Gamepad
         } else {
-            Use::Off
+            // the gamepads are always read: Game Controls sends them to the
+            // region whatever drives the avatar (LLGameControl::init always
+            // opens them)
+            Use::Gamepad
         };
         self.joystick.backend.poll(mode, &mut self.joystick.snapshot);
         if self.settings.migrate_legacy_gamepad(&self.joystick.snapshot) {
@@ -521,7 +522,7 @@ impl App {
         if self.camera.mouselook() {
             if player_movement_input {
                 self.camera.reset_gamepad_mouselook_zoom();
-            } else if motion.avatar_zoom != 0.0 && self.world.rlva.camera_owner().is_none() {
+            } else if motion.avatar_zoom != 0.0 {
                 self.camera
                     .gamepad_mouselook_zoom(motion.avatar_zoom, dt, &self.settings.camera, self.view_aspect());
             }
@@ -1021,6 +1022,15 @@ impl App {
     }
 }
 
+/// The flycam pill goes with the interface (Alt+Shift+U, immersive mode), as
+/// the Legacy Viewer hides its Flycam button (LLPanelStandStopFlying) with
+/// HideUIControls (LLViewToggleUI::confirm, llviewermenu.cpp, and
+/// LLAgentCamera::changeCameraToDefault, llagentcamera.cpp); the flycam
+/// itself keeps running.
+fn flycam_status_shown(active: bool, interface_hidden: bool) -> bool {
+    active && !interface_hidden
+}
+
 fn next_gamepad_view(current: crate::camera::VrView, first_person: bool, flycam: bool) -> crate::camera::VrView {
     use crate::camera::VrView;
     match current {
@@ -1046,7 +1056,16 @@ fn avatar_cycle_index(current: Option<usize>, count: usize, direction: i8) -> Op
 
 #[cfg(test)]
 mod tests {
-    use super::avatar_cycle_index;
+    use super::*;
+
+    #[test]
+    fn flycam_status_goes_with_the_hidden_interface() {
+        assert!(flycam_status_shown(true, false));
+        assert!(!flycam_status_shown(true, true), "hidden or immersive");
+        assert!(!flycam_status_shown(false, false));
+        assert!(!flycam_status_shown(false, true));
+    }
+
     #[test]
     fn gamepad_view_cycle_uses_first_person_avatar_flycam_order() {
         use crate::camera::VrView::{Avatar, FirstPerson, Flycam};

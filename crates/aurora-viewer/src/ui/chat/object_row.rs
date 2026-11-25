@@ -18,7 +18,7 @@
 //! of the Conversations window draws them here, the cards above the chat
 //! bar with `console.rs`.
 
-use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, object_sender, sender_name};
+use super::{LineEnv, Mark, chat_text_bracketed, hhmm, history_tone, object_sender, sender_name};
 use crate::ui::fonts::chat_size;
 use crate::world::notice_topics::Topic;
 use crate::world::{ChatKind, ChatLine, World};
@@ -94,7 +94,7 @@ pub(super) fn icon(world: &World, line: &ChatLine) -> &'static str {
     }
     match world.notice_topics.of(line) {
         Topic::Info => "info-circle-filled",
-        Topic::People => "user-filled",
+        Topic::People | Topic::Radar => "user-filled",
         Topic::Teleport => "plane-departure-filled",
         Topic::Items => "box",
         Topic::Region => "world-filled",
@@ -218,29 +218,26 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
             crate::ui::widgets::paint_on_baseline(ui.painter(), galley, r.left(), baseline, p.muted_dim);
             ui.add_space(GAP);
         }
-        let system;
-        let (text, italics) = if notice {
-            system = super::system_text(&line.text);
-            (&system[..], false)
-        } else {
-            body(line)
-        };
+        let brackets = notice && super::system_brackets(world, line);
+        let (text, italics) = if notice { (&line.text[..], false) } else { body(line) };
         let color = crate::ui::colors::keyword_color(line)
             .or(tone)
             .unwrap_or_else(|| text_color(line, p));
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
-            chat_text_marked(
+            chat_text_bracketed(
                 ui,
                 p,
                 env.emoji,
                 world,
+                line.wording(env.names),
                 env.want_names,
                 text,
                 size,
                 color,
                 super::message_emphasis(line.kind, italics),
                 mark,
+                brackets,
             );
         });
     });
@@ -273,6 +270,7 @@ pub(super) mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         }
     }
 
@@ -339,6 +337,7 @@ pub(super) mod tests {
                     emoji: &mut emoji,
                     pics: &pics,
                     world: &world,
+                    names: crate::world::names::NameScope::World,
                     want_names: &mut names,
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",
@@ -474,6 +473,7 @@ pub(super) mod tests {
                                 emoji: &mut emoji,
                                 pics: &pics,
                                 world: &world,
+                                names: crate::world::names::NameScope::World,
                                 want_names: &mut names,
                                 wanted: &mut wanted,
                                 own_name: "Aurora Demo",

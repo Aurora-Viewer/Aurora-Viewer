@@ -22,6 +22,7 @@ mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
 mod object_cache;
+mod proxy;
 mod render_info_net;
 mod scripts;
 mod sim_requests;
@@ -51,6 +52,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
+
+use crate::circuit_socket::CircuitSocket;
+use proxy::login_failed;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
@@ -66,6 +70,10 @@ mod land_net;
 /// Instant messages kept while offline and the answers to offline offers.
 #[path = "session_offline.rs"]
 mod offline_net;
+
+/// The transport of the grid's direct IM history requests.
+#[path = "session_chat_service.rs"]
+mod chat_service_net;
 
 /// Directory search: queries, replies, event and group details (search.rs).
 #[path = "session_search.rs"]
@@ -88,6 +96,8 @@ const LOGIN_ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
+/// LL_SIM_STAT_FPS (llviewerstats.h): the SimStats stat of the frame rate.
+const SIM_STAT_FPS: u32 = 1;
 
 /// The largest region side a grid can announce (Constants.MaximumRegionSize,
 /// OpenSim). The viewer sizes the region's land and parcel grids from it: a
@@ -169,6 +179,13 @@ struct Sim {
     link_up: bool,
     /// When the seed capability was last asked for (timelines).
     caps_asked_at: Option<Instant>,
+    /// The interest list mode this region was last told
+    /// (LLViewerRegion::mInterestListMode): the same one is not posted again.
+    interest_list: InterestListMode,
+    /// The queue of this region's InterestList posts: one task sends them
+    /// in order, so a slow `360` can never land after the `default` that
+    /// followed it.
+    interest_tx: Option<mpsc::UnboundedSender<(String, InterestListMode)>>,
 }
 
 impl Sim {
@@ -200,6 +217,8 @@ impl Sim {
             decode_failures: 0,
             link_up: false,
             caps_asked_at: None,
+            interest_list: InterestListMode::Default,
+            interest_tx: None,
         }
     }
 }
@@ -290,7 +309,7 @@ async fn post_appearance_request(http: &reqwest::Client, request: appearance_que
 
 struct Session<'a> {
     sh: &'a Shared,
-    sock: Arc<UdpSocket>,
+    sock: Arc<CircuitSocket>,
     login: Arc<LoginResponse>,
     sims: HashMap<SocketAddr, Sim>,
     main: Option<SocketAddr>,
@@ -325,6 +344,8 @@ struct Session<'a> {
     refuse_neighbours: bool,
     /// The camera's vertical viewing angle, last told to the simulator.
     fov: f32,
+    /// The interest list mode asked of the regions (LLAgent::mInterestListMode).
+    interest_list: InterestListMode,
     logout_started: Option<Instant>,
     finished: bool,
     agent_moved: bool,
@@ -389,6 +410,7 @@ fn emit(sh: &Shared, ev: NetEvent) {
 /// for the items then find their folder instead of Lost And Found.
 fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFolder) {
     let _ = events.send(NetEvent::InventoryUpdated {
+        bulk: false,
         folders: vec![folder],
         items: Vec::new(),
     });
@@ -442,6 +464,15 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             fraction: 0.1,
         },
     );
+    // The proxy first (LLStartUp::startLLProxy, before the login): a proxy
+    // that cannot be used stops here, before any request leaves.
+    let mut association = match proxy::start(sh).await {
+        Ok(association) => association,
+        Err(error) => {
+            emit(sh, login_failed(error));
+            return;
+        }
+    };
     let login = match login::login(&sh.login_http, &req).await {
         Ok(l) => Arc::new(l),
         Err(e) => {
@@ -468,8 +499,12 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     critical_required: critical,
                     bad_credentials,
                     previous_session,
-                    next_server: match e {
-                        LoginError::NextServer(server) => Some(server),
+                    next_server: match &e {
+                        LoginError::NextServer(server) => Some(server.clone()),
+                        _ => None,
+                    },
+                    unencrypted_server: match e {
+                        LoginError::Unencrypted(server) => Some(server),
                         _ => None,
                     },
                 },
@@ -486,10 +521,16 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         },
     );
 
-    let sock = match UdpSocket::bind("0.0.0.0:0").await {
+    // the relay's family: an IPv6 proxy needs an IPv6 socket
+    let ipv6 = association.as_ref().is_some_and(|a| a.relay().is_ipv6());
+    let sock = match crate::circuit_socket::bind(ipv6).await {
         Ok(s) => {
             size_socket_buffers(&s);
-            Arc::new(s)
+            let s = Arc::new(s);
+            Arc::new(match association.as_ref() {
+                Some(a) => CircuitSocket::relayed(s, a.relay(), a.announced()),
+                None => CircuitSocket::direct(s),
+            })
         }
         Err(e) => {
             emit(
@@ -502,6 +543,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     bad_credentials: false,
                     previous_session: false,
                     next_server: None,
+                    unencrypted_server: None,
                 },
             );
             return;
@@ -533,6 +575,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         far: FarStep::new(Instant::now()),
         refuse_neighbours: false,
         fov: DEFAULT_FOV,
+        interest_list: InterestListMode::Default,
         logout_started: None,
         finished: false,
         agent_moved: false,
@@ -594,7 +637,8 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             r = sock.recv_from(&mut buf) => {
                 woke = Instant::now();
                 match r {
-                    Ok((n, from)) => s.on_datagram(&buf[..n], from),
+                    Ok(Some((range, from))) => s.on_datagram(&buf[range], from),
+                    Ok(None) => {}
                     Err(e) => {
                         // Windows reports ICMP port unreachable as recv errors.
                         log::debug!("udp recv error: {e}");
@@ -604,6 +648,20 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             _ = tick.tick() => {
                 woke = Instant::now();
                 s.tick();
+            }
+            _ = proxy::closed(&mut association) => {
+                // the proxy ended the relay: the circuits are gone with it,
+                // and nothing may go direct instead
+                woke = Instant::now();
+                log::warn!("SOCKS 5 control channel closed: session ended");
+                emit(
+                    s.sh,
+                    NetEvent::Disconnected {
+                        reason: aurora_i18n::tr!("proxy-socks-lost").into(),
+                        lost: true,
+                    },
+                );
+                s.finished = true;
             }
             c = cmd_rx.recv() => {
                 woke = Instant::now();
@@ -773,11 +831,14 @@ impl Session<'_> {
     /// asked a second time (requestBaseCapabilitiesCompleteCoro): the first
     /// answer of a neighbour lacks the inventory capabilities, and the
     /// crossing or EstablishAgentCommunication that makes it the agent's
-    /// region repeats its seed (#750).
+    /// region repeats its seed (#750). Every seed (login,
+    /// EstablishAgentCommunication, TeleportFinish, CrossedRegion) gets the
+    /// scheme libcurl would guess here, so one seed has one spelling.
     fn set_seed(&mut self, addr: SocketAddr, seed: String) {
         let Some(sim) = self.sims.get_mut(&addr) else {
             return;
         };
+        let seed = crate::curl_url::ensure_scheme_owned(seed);
         if sim.seed.as_deref() == Some(seed.as_str()) {
             if sim.caps_requested {
                 self.request_caps_again(addr);
@@ -1021,6 +1082,11 @@ impl Session<'_> {
             self.update_agent_language();
             // LLEnvironment::onRegionChange -> requestRegion once caps arrive
             self.request_environment(None);
+            // LLAgent::capabilityReceivedCallback: the 360° snapshot's mode
+            // again for the agent's region
+            if self.interest_list != InterestListMode::Default {
+                self.post_interest_list(addr);
+            }
             if self.inventory_merchant_pending {
                 self.inventory_merchant_pending = false;
                 self.on_command(NetCommand::RequestInventoryMerchant);
@@ -1049,6 +1115,7 @@ impl Session<'_> {
                     let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
                     let lua_scripts = v["LuaScriptsEnabled"].as_bool();
                     let group_chat_post_links = v["GroupChatPostLinksEnabled"].as_bool();
+                    let game_control = v["GameControlEnabled"].as_bool();
                     // an OpenSim grid's status feed and page
                     // (LFSimFeatureHandler::setSupportedFeatures)
                     let extras = &v["OpenSimExtras"];
@@ -1075,6 +1142,7 @@ impl Session<'_> {
                         currency_symbol,
                         export_supported,
                         group_chat_post_links,
+                        game_control,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
@@ -1600,6 +1668,29 @@ impl Session<'_> {
 
     /// Controls handed over by the viewer because they changed enough to
     /// leave now (`NetCommand::AgentControls`).
+    /// sendGameControlData (llappviewer.cpp): to the agent's region,
+    /// unreliable, before the AgentUpdate of the same frame (the viewer sends
+    /// this command first).
+    fn send_game_control(&mut self, p: crate::types::GameControlPacket) {
+        if self.logout_started.is_some() {
+            return;
+        }
+        let mut m = GameControlData::default();
+        m.agent_data.agent_id = self.agent_id();
+        m.agent_data.session_id = self.session_id();
+        m.agent_data.packet = p.packet;
+        m.agent_data.action_mode = p.action_mode;
+        m.axes = p.axes.into_iter().map(|value| game_control_data::Axes { value }).collect();
+        m.buttons = p.buttons.map(|flags| game_control_data::Buttons { flags }).into_iter().collect();
+        m.mode_axes = p.mode_axes.into_iter().map(|value| game_control_data::ModeAxes { value }).collect();
+        m.mode_buttons = p
+            .mode_buttons
+            .map(|flags| game_control_data::ModeButtons { flags })
+            .into_iter()
+            .collect();
+        self.send_main(&m, false);
+    }
+
     fn on_agent_controls(&mut self, c: AgentControls) {
         self.control_flags = c.control_flags;
         if self.agent_moved && self.logout_started.is_none() {
@@ -1639,6 +1730,7 @@ impl Session<'_> {
         if self.on_object_action_command(&c)
             || self.on_social_command(&c)
             || self.on_offline_command(&c)
+            || self.on_chat_service_command(&c)
             || self.on_search_command(&c)
             || self.on_groups_command(&c)
         {
@@ -1797,6 +1889,17 @@ impl Session<'_> {
                     self.fov = angle;
                     if let Some(main) = self.main {
                         self.send_fov(main);
+                    }
+                }
+            }
+            // LLAgent::changeInterestListMode: every region alive with its
+            // capabilities, the ones already in that mode unaffected
+            NetCommand::SetInterestListMode(mode) => {
+                if mode != self.interest_list {
+                    self.interest_list = mode;
+                    let addrs: Vec<SocketAddr> = self.sims.keys().copied().collect();
+                    for addr in addrs {
+                        self.post_interest_list(addr);
                     }
                 }
             }
@@ -3100,6 +3203,7 @@ impl Session<'_> {
             }
             NetCommand::OneShotControl(f) => self.one_shot |= f,
             NetCommand::AgentControls(c) => self.on_agent_controls(c),
+            NetCommand::GameControlData(p) => self.send_game_control(p),
             NetCommand::ForceAgentUpdate => {
                 self.agent_update.force();
                 if self.agent_moved && self.logout_started.is_none() {
@@ -3137,6 +3241,8 @@ impl Session<'_> {
             | NetCommand::RequestOfflineMessagesLegacy
             | NetCommand::AnswerOfflineFriendship { .. }
             | NetCommand::AnswerOfflineGroupInvite { .. } => {}
+            // handled by on_chat_service_command
+            NetCommand::ChatServiceRequest { .. } => {}
             // handled by on_groups_command
             NetCommand::GroupMembersRequest { .. }
             | NetCommand::GroupRoleDataRequest { .. }
@@ -3270,7 +3376,7 @@ impl Session<'_> {
                 .post(&url)
                 .header("Content-Type", "application/llsd+xml")
                 .header("Accept", "application/llsd+xml")
-                .header("Accept-Language", aurora_i18n::language())
+                .header("Accept-Language", aurora_i18n::grid_language())
                 .body(aurora_llsd::to_xml(&body))
                 .send()
                 .await;
@@ -3599,6 +3705,39 @@ impl Session<'_> {
             crate::viewer_stats::post(&http, &url, &body).await;
             posts.end();
         });
+    }
+
+    /// LLViewerRegion::setInterestListMode: the mode posted to one region's
+    /// InterestList capability, `{"mode": "360" | "default"}` (nothing
+    /// without the capability, nothing to a region already in that mode);
+    /// the reply only logged.
+    fn post_interest_list(&mut self, addr: SocketAddr) {
+        let mode = self.interest_list;
+        let Some(sim) = self.sims.get_mut(&addr) else { return };
+        // (a region whose capabilities have not come is left for their
+        // arrival, as LLAgent::changeInterestListMode skips it)
+        let Some(url) = sim.caps.get("InterestList").cloned() else { return };
+        if sim.interest_list == mode {
+            return;
+        }
+        sim.interest_list = mode;
+        let handle = sim.handle;
+        let http = self.sh.caps_http.clone();
+        let tx = sim.interest_tx.get_or_insert_with(|| {
+            let (tx, rx) = mpsc::unbounded_channel();
+            tokio::spawn(interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |url, mode| {
+                let http = http.clone();
+                async move {
+                    let body = caps::interest_list_body(mode);
+                    match caps::post_llsd(&http, &url, &body).await {
+                        Ok(_) => log::info!("InterestList mode {} posted to region {handle}", mode.as_str()),
+                        Err(e) => log::warn!("InterestList mode {} not posted to region {handle}: {e}", mode.as_str()),
+                    }
+                }
+            }));
+            tx
+        });
+        let _ = tx.send((url, mode));
     }
 
     /// The capability of the agent's region (cloned for a request task).
@@ -4144,12 +4283,22 @@ impl Session<'_> {
             }
             "TeleportFailed" => {
                 let reason = b["Info"][0]["Reason"].as_str().to_owned();
+                let alert = &b["AlertInfo"][0];
+                let code = alert["Message"].as_str().to_owned();
                 transition::end(
                     Some(transition::Kind::Teleport),
-                    &format!("failed (TeleportFailed: {reason})"),
+                    &format!(
+                        "failed (TeleportFailed: {reason}{})",
+                        if code.is_empty() { String::new() } else { format!(", {code}") }
+                    ),
                     &self.sh.stats,
                 );
-                emit(self.sh, NetEvent::TeleportFailed { reason });
+                // handle_teleport_access_blocked: a refusal for the rating
+                let extra = crate::teleport_access::extra_bytes(&alert["ExtraParams"]);
+                if let Some(blocked) = crate::teleport_access::from_alert_info(&code, &extra) {
+                    emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
+                }
+                emit(self.sh, crate::teleport_failed::event(reason, Some((code, &extra))));
             }
             "DisableSimulator" => {
                 transition::link(|| {
@@ -4836,6 +4985,11 @@ impl Session<'_> {
             // process_sim_stats: the region flags ride along (an estate manager
             // turning off fly, voice, push... shows without a new handshake)
             let m: SimStats = pkt.decode()?;
+            // LL_SIM_STAT_FPS paces GameControlData, from whichever region
+            // sends it (process_sim_stats)
+            if let Some(fps) = m.stat.iter().find(|s| s.stat_id == SIM_STAT_FPS) {
+                emit(self.sh, NetEvent::SimFrameRate(fps.stat_value));
+            }
             if let Some(handle) = self.sims.get(&from).map(|s| s.handle) {
                 // the flags we use are all in the low 32 bits
                 let flags = m
@@ -5312,6 +5466,7 @@ impl Session<'_> {
                 emit(
                     self.sh,
                     NetEvent::InventoryUpdated {
+                        bulk: false,
                         folders: Vec::new(),
                         items,
                     },
@@ -5386,7 +5541,14 @@ impl Session<'_> {
                     })
                     .collect();
                 let delivered = folders.iter().map(|folder: &crate::inventory::InvFolder| folder.id).collect();
-                emit(self.sh, NetEvent::InventoryUpdated { folders, items });
+                emit(
+                    self.sh,
+                    NetEvent::InventoryUpdated {
+                        folders,
+                        items,
+                        bulk: true,
+                    },
+                );
                 if !m.agent_data.transaction_id.is_nil() {
                     emit(
                         self.sh,
@@ -5487,17 +5649,30 @@ impl Session<'_> {
             );
         } else if id == TeleportFailed::ID {
             let m: TeleportFailed = pkt.decode()?;
+            let alert = m
+                .alert_info
+                .first()
+                .map(|info| (field_str(&info.message), info.extra_params.as_slice()));
             transition::end(
                 Some(transition::Kind::Teleport),
-                &format!("failed (TeleportFailed: {})", field_str(&m.info.reason)),
+                &format!(
+                    "failed (TeleportFailed: {}{})",
+                    field_str(&m.info.reason),
+                    alert
+                        .as_ref()
+                        .filter(|(code, _)| !code.is_empty())
+                        .map_or(String::new(), |(code, _)| format!(", {code}"))
+                ),
                 &self.sh.stats,
             );
-            emit(
-                self.sh,
-                NetEvent::TeleportFailed {
-                    reason: field_str(&m.info.reason),
-                },
-            );
+            // handle_teleport_access_blocked: a refusal for the rating
+            if let Some(blocked) = alert
+                .as_ref()
+                .and_then(|(code, extra)| crate::teleport_access::from_alert_info(code, extra))
+            {
+                emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
+            }
+            emit(self.sh, crate::teleport_failed::event(field_str(&m.info.reason), alert));
         } else if id == ParcelMediaCommandMessage::ID {
             let m: ParcelMediaCommandMessage = pkt.decode()?;
             let c = &m.command_block;
@@ -5796,6 +5971,33 @@ fn coarse_position(x: u8, y: u8, z: u8, size: (u32, u32)) -> Vec3 {
         f32::from(y) * size.1 as f32 / 256.0,
         f32::from(z) * 4.0,
     )
+}
+
+/// How long one InterestList post may take: the caps client only bounds
+/// the connection, and a region that takes the request and never answers
+/// must not hold the next mode (the closing `default`) for good.
+const INTEREST_LIST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// One region's InterestList posts, in the order asked and one at a time
+/// (the Legacy Viewer's posts are independent coroutines; a slow reply
+/// must not reorder the modes here). Modes queued while one is being
+/// posted are folded into the last, which is the one the region must end on.
+/// A post with no reply after `timeout` ([`INTEREST_LIST_TIMEOUT`]) is
+/// given up.
+async fn interest_list_worker<F, Fut>(mut rx: mpsc::UnboundedReceiver<(String, InterestListMode)>, timeout: Duration, post: F)
+where
+    F: Fn(String, InterestListMode) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    while let Some(mut latest) = rx.recv().await {
+        while let Ok(next) = rx.try_recv() {
+            latest = next;
+        }
+        let mode = latest.1;
+        if tokio::time::timeout(timeout, post(latest.0, mode)).await.is_err() {
+            log::warn!("InterestList mode {} had no reply in {timeout:?}: given up", mode.as_str());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -6850,9 +7052,9 @@ mod event_queue_tests {
 
     pub(super) fn shared(events: crate::EventSender) -> Shared {
         Shared {
-            http: reqwest::Client::new(),
-            login_http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events,
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
@@ -6895,7 +7097,7 @@ mod event_queue_tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         Session {
             sh,
-            sock,
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock)),
             login,
             sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
             main: Some(main_addr),
@@ -6917,6 +7119,7 @@ mod event_queue_tests {
             far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,
@@ -7189,6 +7392,32 @@ mod event_queue_tests {
         assert_eq!(session.fetch_without_ais(), None);
         assert_eq!(caps_events(&received), [(20, 4)]);
     }
+
+    /// A seed sent once without its scheme (EstablishAgentCommunication)
+    /// and once with it (the crossing) is the same seed: its capabilities
+    /// stay and it is asked again, as in #750.
+    #[tokio::test]
+    async fn a_seed_with_and_without_its_scheme_is_the_same_seed() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main_addr: SocketAddr = "127.0.0.1:13011".parse().expect("address");
+        let neighbour_addr: SocketAddr = "127.0.0.1:13012".parse().expect("address");
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main_addr, neighbour_addr);
+        let seed = "http://127.0.0.1:9/neighbour-seed";
+        let caps = HashMap::from([("ViewerAsset".to_owned(), "http://127.0.0.1:9/ViewerAsset".to_owned())]);
+
+        session.set_seed(neighbour_addr, "127.0.0.1:9/neighbour-seed".to_owned());
+        assert_eq!(session.sims[&neighbour_addr].seed.as_deref(), Some(seed));
+        // the answer carries the stored spelling: it is not taken for a stale one
+        session.on_caps(neighbour_addr, seed, Ok(caps));
+        assert_eq!(session.sims[&neighbour_addr].caps.len(), 1);
+
+        session.switch_region(20, Some(Ipv4Addr::LOCALHOST), neighbour_addr.port(), seed.to_owned(), (256, 256));
+        assert_eq!(session.main, Some(neighbour_addr));
+        assert_eq!(session.sims[&neighbour_addr].caps.len(), 1);
+        assert!(session.sims[&neighbour_addr].caps_again_task.is_some());
+    }
 }
 
 #[cfg(test)]
@@ -7197,9 +7426,9 @@ mod script_dialog_tests {
 
     pub(in crate::session) fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
         Shared {
-            http: reqwest::Client::new(),
-            login_http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
@@ -7249,7 +7478,7 @@ mod script_dialog_tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         Session {
             sh,
-            sock,
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock)),
             login: test_login(main.port()),
             sims,
             main: Some(main),
@@ -7271,6 +7500,7 @@ mod script_dialog_tests {
             far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,
@@ -7816,5 +8046,80 @@ mod script_dialog_tests {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod interest_list_tests {
+    use super::*;
+
+    /// A slow `360` post finishes before the `default` asked after it is
+    /// sent, and the region ends on the latest mode.
+    #[tokio::test]
+    async fn interest_list_posts_are_ordered_and_end_on_the_latest() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        let worker = tokio::spawn(interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |_url, mode| {
+            let seen = seen.clone();
+            async move {
+                if mode == InterestListMode::Capture360 {
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                }
+                seen.lock().push(mode);
+            }
+        }));
+        tx.send(("u".into(), InterestListMode::Capture360)).expect("queue");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        tx.send(("u".into(), InterestListMode::Default)).expect("queue");
+        drop(tx);
+        worker.await.expect("worker");
+        assert_eq!(*log.lock(), vec![InterestListMode::Capture360, InterestListMode::Default]);
+    }
+
+    /// A post that never answers is given up, and the mode asked after it
+    /// (the closing `default`) is still sent.
+    #[tokio::test]
+    async fn a_post_with_no_reply_does_not_hold_the_next_mode() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        let worker = tokio::spawn(interest_list_worker(rx, Duration::from_millis(50), move |_url, mode| {
+            let seen = seen.clone();
+            async move {
+                if mode == InterestListMode::Capture360 {
+                    std::future::pending::<()>().await;
+                }
+                seen.lock().push(mode);
+            }
+        }));
+        tx.send(("u".into(), InterestListMode::Capture360)).expect("queue");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        tx.send(("u".into(), InterestListMode::Default)).expect("queue");
+        drop(tx);
+        worker.await.expect("worker");
+        assert_eq!(*log.lock(), vec![InterestListMode::Default]);
+    }
+
+    /// Modes queued behind a post in flight fold into the last one.
+    #[tokio::test]
+    async fn queued_modes_fold_into_the_last() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        for mode in [
+            InterestListMode::Capture360,
+            InterestListMode::Default,
+            InterestListMode::Capture360,
+        ] {
+            tx.send(("u".into(), mode)).expect("queue");
+        }
+        drop(tx);
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |_url, mode| {
+            let seen = seen.clone();
+            async move { seen.lock().push(mode) }
+        })
+        .await;
+        assert_eq!(*log.lock(), vec![InterestListMode::Capture360]);
     }
 }

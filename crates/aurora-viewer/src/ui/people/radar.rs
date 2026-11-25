@@ -681,7 +681,9 @@ fn paint_row(
                 }
                 let mut job = egui::text::LayoutJob::single_section(row.name.clone(), format);
                 // a member of the Aurora team's tag after the name, cut before it
-                let mark = crate::world::staff::mark(world, &row.id);
+                // (none on an anonymous row: FSRadarEntry::onAvatarNameCache
+                // clears `mIsLinden` under RLVa's `@shownames`)
+                let mark = crate::world::staff::mark(world, &row.id).filter(|_| !row.anonymous);
                 let staff = crate::ui::staff::width(ui, p, mark, 13.0);
                 let staff = if staff > 0.0 && room - staff - 6.0 >= 40.0 {
                     staff + 6.0
@@ -1021,7 +1023,15 @@ pub fn tab(
             resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(row.id));
             if !ui.is_rect_visible(rect) {
                 if !anonymous {
-                    super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                    super::rows::list_menu(
+                        &resp,
+                        p,
+                        world,
+                        crate::world::names::NameScope::World,
+                        &st.radar_selected,
+                        row.id,
+                        AvatarList::Nearby,
+                    );
                 }
                 continue;
             }
@@ -1059,7 +1069,15 @@ pub fn tab(
             }
             // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
             if !anonymous {
-                super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                super::rows::list_menu(
+                    &resp,
+                    p,
+                    world,
+                    crate::world::names::NameScope::World,
+                    &st.radar_selected,
+                    row.id,
+                    AvatarList::Nearby,
+                );
             }
             if let Some(tip) = tip {
                 resp.on_hover_text(tip);

@@ -215,6 +215,14 @@ pub mod flags {
     /// Bit of flags[3], above packed texture animation: local studio scenery
     /// is excluded from the avatar's temporary white reveal.
     pub const STUDIO_STAGE: u32 = 1 << 29;
+    /// Bit of flags[3], above the layer rank: the visible-surface pick
+    /// (Alt-focus, `fs_pick_visible`) keeps the face's clear texels. Set
+    /// for a legacy material in emissive mask mode whatever the face's
+    /// alpha, as LLVOVolume::lineSegmentIntersect ignores texture alpha
+    /// there, also where `EMISSIVE_MASK` is dropped for a transparent face.
+    pub const PICK_IGNORES_ALPHA: u32 = 1 << 28;
+    /// Bit 27 of flags[3]. World clicks skip this volume outside Build.
+    pub const IGNORE_OBJECT_PICK: u32 = 1 << 27;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -406,6 +414,10 @@ impl DrawRecord {
     /// flags[3]'s texture-animation mode and dimensions.
     pub fn set_world_blend_pick(&mut self, enabled: bool) {
         self.flags[3] = (self.flags[3] & !flags::WORLD_BLEND_PICK) | if enabled { flags::WORLD_BLEND_PICK } else { 0 };
+    }
+
+    pub fn set_ignore_object_pick(&mut self, ignored: bool) {
+        self.flags[3] = (self.flags[3] & !flags::IGNORE_OBJECT_PICK) | if ignored { flags::IGNORE_OBJECT_PICK } else { 0 };
     }
 
     /// Layer rank (0..=`flags::LAYER_RANK_MAX`) of a face that may lie
@@ -754,9 +766,18 @@ pub struct DrawLists {
     /// Selected texture faces (LLPipeline::renderSelectedFaces).
     pub select_faces: Vec<DrawCmd>,
     pub hud_select_faces: Vec<DrawCmd>,
+    /// The faces of `select_faces` / `hud_select_faces` picked with the
+    /// build tool's Select face mode: they also get the face-select
+    /// pattern laid along their texture mapping (LLFace::renderSelected).
+    pub select_pattern: Vec<DrawCmd>,
+    pub hud_select_pattern: Vec<DrawCmd>,
     /// The poser subject's skinned faces, while a part is hovered: the part
     /// is kept on them by its joints (`FrameParams::part_joints`).
     pub part_faces: Vec<DrawCmd>,
+    /// LiveMesh's Fit lab (fit_clip.rs): the garment's faces, and the
+    /// faces of the bodies that wear it, on the avatars it is checked on.
+    pub fit_garment: Vec<DrawCmd>,
+    pub fit_body: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -829,7 +850,11 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.select_pattern.clear();
+        self.hud_select_pattern.clear();
         self.part_faces.clear();
+        self.fit_garment.clear();
+        self.fit_body.clear();
     }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
@@ -886,7 +911,11 @@ impl DrawLists {
         self.select_child.clone_from(&src.select_child);
         self.select_faces.clone_from(&src.select_faces);
         self.hud_select_faces.clone_from(&src.hud_select_faces);
+        self.select_pattern.clone_from(&src.select_pattern);
+        self.hud_select_pattern.clone_from(&src.hud_select_pattern);
         self.part_faces.clone_from(&src.part_faces);
+        self.fit_garment.clone_from(&src.fit_garment);
+        self.fit_body.clone_from(&src.fit_body);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -945,7 +974,11 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.select_pattern.clear();
+        self.hud_select_pattern.clear();
         self.part_faces.clear();
+        self.fit_garment.clear();
+        self.fit_body.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -1013,6 +1046,17 @@ pub struct PointLight {
     pub falloff: f32,
     /// A light with a texture lights its frustum only, through the texture.
     pub projector: Option<Projector>,
+    /// Half the diagonal of the prim the light shines from (m): what lies
+    /// that near the light (its bulb, its lamp's body) does not shadow it in
+    /// the traced light (rt_lights.wgsl). 0 for lights of no prim.
+    pub source_radius: f32,
+    /// What the light shines from, the same number at every frame, for what
+    /// follows a light from a frame to the next (how far it moved, for the
+    /// history of its traced shadow): its prim's object index plus one, the
+    /// `CullFace::object` of the prim's faces plus one, which its traced
+    /// rays pass (rt_lights.wgsl `light_blocked`). 0 for lights of no prim,
+    /// which stay where they are.
+    pub source_id: u32,
 }
 
 /// Frustum and texture of a projector (a prim light with a light texture),
@@ -1162,6 +1206,11 @@ pub struct SnapshotSpec {
     /// tiles of different sizes, at full and half resolution side by
     /// side, would differ along their border.
     pub photo: (u32, u32),
+    /// A face of a 360° capture: the capture camera's step
+    /// (`CAPTURE_CAMERAS`). The frame is copied into the capture's cube on
+    /// the GPU and answers nothing; the main thread does not wait for it, and
+    /// the faces share one set of render targets (equirect.rs).
+    pub cube: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1180,6 +1229,145 @@ pub enum AoMethod {
     Legacy,
     /// Ground-truth ambient occlusion (gtao.rs), quality 0 low … 3 ultra.
     Gtao { quality: u8 },
+}
+
+/// What is ray-traced (rt_shadows.rs), on a device opened with ray
+/// queries ([`RayTracingSupport`]): Preferences › Graphics › Ray tracing,
+/// experimental and off by default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RayTracing {
+    /// The sun's and the moon's shadows of the main view, in the shadow
+    /// maps' place (with the sun shadows only). The others trace the scene
+    /// it builds: none without it.
+    pub shadows: bool,
+    /// The local lights' shadows.
+    pub lights: bool,
+    /// The indirect light, in the screen-space one's place.
+    pub indirect: bool,
+    /// The reflections, in the screen-space ones' place (with `ssr` only).
+    pub reflections: bool,
+}
+
+/// What Preferences › Graphics › Ray tracing sets of the traced shadows
+/// beside the effects ([`RayTracing`]): nothing a change of it makes anew.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RtTuning {
+    /// The sun's shadows' softness: the size of the disc its rays aim at,
+    /// 1 the real sun's (half a degree), 0 sharp.
+    pub sun_softness: f32,
+    /// The lamps' shadows' softness: their size, 1 as rt_lights.wgsl
+    /// measures it from the prim (`light_size`), 0 sharp.
+    pub lamp_softness: f32,
+    /// How many of the frame's first lights (the nearest and brightest,
+    /// `LightList`'s order) cast traced shadows; the others light
+    /// unshadowed, as the Legacy Viewer's point lights.
+    pub lamps: u32,
+    /// The lamps' cost against their noise, for the ray tracing quality
+    /// (rt_shadows.rs `LampQuality`; the defaults are its High, the
+    /// pass as it was before them): the lights a pixel weighs to draw the
+    /// one it traces, when more reach it (rt_lights.wgsl `candidates`, 1 to
+    /// 8), the neighbours whose samples it reuses (`neighbours`, 0 to 4),
+    /// and the denoiser's à-trous passes over their share (1 to 4).
+    pub lamp_candidates: u32,
+    pub lamp_reuse: u32,
+    pub lamp_denoise: u32,
+    /// The projectors cast traced shadows (the Legacy Viewer's "Sun/Moon +
+    /// Projectors" shadow detail, Aurora's projector shadows option).
+    pub projectors: bool,
+    /// The traced indirect light's global illumination probes (gi.rs):
+    /// more bounces, and the sky's light shut out of closed rooms.
+    /// `AURORA_GI=0` leaves them out whatever this says.
+    pub probes: bool,
+    // The traced indirect light's cost, set by the ray tracing quality
+    // (High is the default, as before the qualities: Medium 3, 1024, 2;
+    // Low 4, 512, 1). Each lowers its cost and keeps it on.
+    /// The screen pixels a side of a traced pixel of the indirect light
+    /// (rt_gi.wgsl `params.grid`): 2, one ray for each 2x2; 3 and 4 trace a
+    /// ninth and a sixteenth of the screen's pixels, upsampled through the
+    /// depth as at 2. Every pass of it follows (the reuse, the denoiser, the
+    /// probes' sight of the sky). Changing it makes its textures anew.
+    pub gi_step: u32,
+    /// The global illumination probes updated a frame (gi.rs `BUDGET` at
+    /// most): fewer, and each follows a change of the light more slowly.
+    pub gi_probe_updates: u32,
+    /// The neighbours whose picks the indirect light's reuse weighs
+    /// (rt_gi.wgsl `NEIGHBOURS`, 1 or 2): one shadow ray each.
+    pub gi_neighbours: u32,
+}
+
+impl Default for RtTuning {
+    fn default() -> Self {
+        RtTuning {
+            sun_softness: 1.0,
+            lamp_softness: 1.0,
+            lamps: 64,
+            lamp_candidates: 8,
+            lamp_reuse: 4,
+            lamp_denoise: 4,
+            projectors: true,
+            probes: true,
+            gi_step: 2,
+            gi_probe_updates: crate::gi::BUDGET,
+            gi_neighbours: 2,
+        }
+    }
+}
+
+/// The traced indirect light's knobs of each ray tracing quality, Low,
+/// Medium then High (`RtTuning::gi_step`, `gi_probe_updates`,
+/// `gi_neighbours`): High is the image before the qualities. Medium traces
+/// 4/9 of its rays and Low a quarter; Low also updates a quarter of the
+/// probes a frame and weighs one neighbour's pick.
+pub const GI_QUALITIES: [(u32, u32, u32); 3] = [
+    (4, crate::gi::BUDGET / 4, 1),
+    (3, crate::gi::BUDGET / 2, 2),
+    (2, crate::gi::BUDGET, 2),
+];
+
+impl RtTuning {
+    /// This tuning with the traced indirect light of quality `quality`
+    /// (0 Low, 1 Medium, 2 High; past 2, High): [`GI_QUALITIES`].
+    pub fn with_gi_quality(self, quality: usize) -> Self {
+        let (gi_step, gi_probe_updates, gi_neighbours) = GI_QUALITIES[quality.min(GI_QUALITIES.len() - 1)];
+        RtTuning {
+            gi_step,
+            gi_probe_updates,
+            gi_neighbours,
+            ..self
+        }
+    }
+
+    /// `AURORA_RT_GI_QUALITY=low|medium|high` (docs/TESTING.md): the
+    /// indirect light's quality for this launch, to measure each.
+    pub fn gi_quality_from_env() -> Option<usize> {
+        gi_quality_named(std::env::var("AURORA_RT_GI_QUALITY").ok()?.as_str())
+    }
+}
+
+fn gi_quality_named(name: &str) -> Option<usize> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "low" => Some(0),
+        "medium" => Some(1),
+        "high" => Some(2),
+        _ => None,
+    }
+}
+
+/// Whether the device can ray-trace: what Preferences › Graphics › Ray
+/// tracing shows of the graphics card.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RayTracingSupport {
+    /// The device was opened with ray queries: the options apply at once.
+    Ready,
+    /// The graphics card has ray queries and the device was opened without
+    /// them, for a launch that never traces (`AURORA_RT_SHADOWS=0`).
+    NotOpened,
+    /// The device is the VR runtime's: no ray tracing in a run set up for
+    /// VR.
+    Vr,
+    /// The graphics card or its driver has no ray queries.
+    #[default]
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1217,6 +1405,11 @@ pub struct RenderSettings {
     /// Screen-space contact shadows of the sun or the moon (contact_shadows.rs),
     /// with the sun shadows only.
     pub contact_shadows: bool,
+    /// Soft sun shadows (soft_shadows.rs, experimental): the penumbra of the
+    /// sun's shadows widens with the distance of the caster, from a
+    /// screen-space mask drawn once per frame. Off: the shadows are exactly
+    /// the ones of before (nothing is created or drawn).
+    pub soft_shadows: bool,
     /// Geometric specular anti-aliasing of the objects' highlights
     /// (common.wgsl `specular_aa_roughness`, AURORA_SPECULAR_AA).
     pub specular_aa: bool,
@@ -1227,6 +1420,9 @@ pub struct RenderSettings {
     pub mirror_scale: f32,
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
+    pub ray_tracing: RayTracing,
+    /// The traced shadows' softness and lamps.
+    pub rt_tuning: RtTuning,
     /// Rain prototype: the G-buffer of the screen-space reflections is drawn
     /// while it rains, even with them off, for the wet surfaces' smooth
     /// facings and materials (the reflections themselves only with `ssr`).
@@ -1275,10 +1471,13 @@ impl Default for RenderSettings {
             screen_indirect: false,
             screen_indirect_intensity: 1.0,
             contact_shadows: false,
+            soft_shadows: false,
             specular_aa: true,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
+            ray_tracing: RayTracing::default(),
+            rt_tuning: RtTuning::default(),
             rain_surfaces: false,
             anisotropy: 8,
             probe_slots: 32,
@@ -1499,8 +1698,8 @@ pub struct RainLook {
     /// Deep snow's reach around my avatar at High weather quality (m, 10 to
     /// 40); Low and Medium keep their share of it (two thirds, 13/15).
     pub deep_reach: f32,
-    /// How deep snow lies in the open at least (0..1): a region's weather
-    /// gives its whole history (who comes in late sees what has built up).
+    /// How deep snow lies in the open at least (0..1): `AURORA_SNOW_LYING`'s
+    /// floor for demo captures, else 0.
     pub snow_lying: f32,
     /// Snow lying on the ground is drawn ("Snow settles"), whatever falls
     /// now: off, none at once, nor while what lay melts after the weather
@@ -1612,11 +1811,18 @@ pub struct FrameParams {
     pub selection_pulse: f32,
     /// Logical halo width scaled to display pixels.
     pub selection_scale: f32,
+    /// Texture slot of the face-select pattern (the grid asset
+    /// IMG_FACE_SELECT) once it is loaded; 0 while it loads and offline,
+    /// where the shader draws its procedural stand-in.
+    pub face_select_texture: u32,
     /// The poser's hovered part (Aurora's own): bit j for the skeleton's
     /// palette joint j, drawn on `part_faces` in `part_color` (linear RGBA)
     /// as a selection's halo with a light tint inside.
     pub part_joints: [u32; 8],
     pub part_color: [f32; 4],
+    /// LiveMesh's Fit lab clipping map on `fit_body` (fit_clip.rs): off
+    /// when None.
+    pub fit_clip: Option<crate::FitClipParams>,
     /// Palette-joint part classes (0 occluder, 1 body, 2 face, 3/4 hands,
     /// 5 wings, 6 tail), eight four-bit classes per word. The shader sums
     /// each part's weights and interpolates them before picking a part.
@@ -1682,6 +1888,13 @@ pub struct FrameParams {
     pub shadows: bool,
     /// Distance covered by the shadow cascades.
     pub shadow_distance: f32,
+    /// With soft shadows: the size of the light, 1 = 2.3 degrees across (the
+    /// real sun, 0.53 degrees, is a softness of 0.23), 0 = a light with no size, the shadows
+    /// of before (the Preferences' value, or the photo's own).
+    pub shadow_softness: f32,
+    /// How dark the sun's shadows are, 1 = as before, 0 = no shadow (the
+    /// Preferences' value, or the photo's own).
+    pub shadow_intensity: f32,
     pub lights: Vec<PointLight>,
     /// The projectors of `lights` that cast shadows (drawn with `shadows`).
     pub spot_shadows: [Option<SpotShadow>; crate::projector_shadows::MAX_PROJECTOR_SHADOWS],
@@ -1736,9 +1949,36 @@ pub struct FrameParams {
     /// The sky's rendering type is hidden (the viewer's Advanced ›
     /// Rendering types): the view starts from `clear_color` instead.
     pub hide_sky: bool,
+    /// Hide the water's optical effects with its surface (Advanced › Rendering types).
+    pub hide_water: bool,
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
+    /// The photo filters' catalogue pictures (look_thumbs.rs): a new still
+    /// and one look drawn on it; None: none, at no cost (their images are
+    /// let go after a while).
+    pub look_thumbs: Option<crate::look_thumbs::ThumbRequest>,
+    /// Volumetric clouds in the place of the Legacy Viewer's flat layer
+    /// (clouds.rs); None: the Legacy layer, with nothing else running.
+    pub clouds: Option<CloudsFrame>,
+    /// Planet curvature (curvature.rs, Aurora's own): the planet's radius
+    /// in metres; None: the flat regions, as the Legacy Viewer draws them.
+    pub curvature: Option<f32>,
+}
+
+/// The volumetric clouds' inputs that are not in the sky: where the camera
+/// is on the grid, which the pattern is anchored to.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CloudsFrame {
+    /// The south-west corner of the region the camera's position is relative
+    /// to (metres on the grid): positions stay continuous across regions.
+    pub region_origin: [f64; 2],
+    /// Size of the cloud texture as loaded so far (it grows while it loads;
+    /// the weather map is drawn again for it).
+    pub texture_size: (u32, u32),
+    /// Revision of the cloud texture's texels (`Textures::revision_of`):
+    /// a reload of the same size changes it, and the weather map follows.
+    pub texture_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1914,6 +2154,10 @@ pub struct RenderStats {
     /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
     /// the photo's).
     pub gpu_pixels: u64,
+    /// The GPU time a photo of `gpu_pixels` is planned by: `gpu_ms`, and
+    /// the rounds a photo's traced passes run that the view's frame does
+    /// not (the ray-traced lamps' shadows and indirect light).
+    pub gpu_photo_ms: Option<f32>,
     /// Video memory the render targets that follow the image's size take
     /// for each of its pixels, with the MSAA samples, the effects and the
     /// TAA history of the current settings: measured with wgpu's counters
@@ -1959,6 +2203,12 @@ pub struct RenderStats {
     /// GPU time of the contact shadows alone (ms), part of
     /// [`GpuElement::Effects`].
     pub gpu_contact: Option<f32>,
+    /// GPU time of the volumetric clouds' compute passes and weather map
+    /// (ms), part of [`GpuElement::TerrainSky`]; None while off.
+    pub gpu_clouds: Option<f32>,
+    /// GPU time of the soft sun shadows alone (ms), part of
+    /// [`GpuElement::Effects`] (0 while off).
+    pub gpu_soft: Option<f32>,
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
@@ -1985,6 +2235,11 @@ pub struct RenderStats {
     pub ui_shapes: u32,
     pub ui_meshes: u32,
     pub ui_vertices: u32,
+    /// Windows of the interface outside the viewer's drawn after this
+    /// frame (outside.rs), and the render thread's time on them (ms),
+    /// their swapchains' images and presentations included.
+    pub outside_windows: u32,
+    pub outside_ms: f32,
     /// Draw commands recorded (multi-draws, fullscreen and sprite draws).
     pub draw_calls: u32,
     /// Bytes of draw records and joint palettes sent to the GPU this frame.
@@ -2096,6 +2351,25 @@ impl GpuElement {
 
 #[cfg(test)]
 mod tests {
+    /// High is the default (the image before the qualities); each quality
+    /// is cheaper than the one above.
+    #[test]
+    fn gi_qualities_go_down_from_high() {
+        let high = super::RtTuning::default();
+        assert_eq!(high.with_gi_quality(2), high);
+        assert_eq!(high.with_gi_quality(9), high);
+        let low = high.with_gi_quality(0);
+        assert_eq!((low.gi_step, low.gi_probe_updates, low.gi_neighbours), (4, 512, 1));
+        assert_eq!((low.lamps, low.probes), (high.lamps, high.probes));
+        for q in 0..2 {
+            let (a, b) = (super::GI_QUALITIES[q], super::GI_QUALITIES[q + 1]);
+            assert!(a.0 > b.0 && a.1 < b.1 && a.2 <= b.2, "{a:?} {b:?}");
+        }
+        assert_eq!(super::gi_quality_named(" Medium "), Some(1));
+        assert_eq!(super::gi_quality_named("low"), Some(0));
+        assert_eq!(super::gi_quality_named("ultra"), None);
+    }
+
     use super::*;
 
     #[test]
@@ -2252,6 +2526,8 @@ mod tests {
         scene.select_root.push(cmd(5));
         scene.select_faces.push(cmd(6));
         scene.hud_select_faces.push(cmd(22));
+        scene.select_pattern.push(cmd(30));
+        scene.hud_select_pattern.push(cmd(31));
         scene.particles.push(ParticleInstance::default());
         scene.impostor_sprites.push(ImpostorSprite {
             center: [1.0, 2.0, 3.0],
@@ -2304,6 +2580,8 @@ mod tests {
         assert_eq!(packet.terrain_pbr[0].record, 28);
         assert_eq!(packet.select_faces[0].record, 6);
         assert_eq!(packet.hud_select_faces[0].record, 22);
+        assert_eq!(packet.select_pattern[0].record, 30);
+        assert_eq!(packet.hud_select_pattern[0].record, 31);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));
         assert_eq!(packet.impostor_captures[0].blend[0].record, 12);
         assert_eq!(packet.gpu.map(|g| g.draw_distance), Some(128.0));
@@ -2326,6 +2604,8 @@ mod tests {
         assert!(scene.hud_debug_blue.is_empty());
         assert!(scene.select_faces.is_empty());
         assert!(scene.hud_select_faces.is_empty());
+        assert!(scene.select_pattern.is_empty());
+        assert!(scene.hud_select_pattern.is_empty());
         assert!(packet.hud_view.is_some());
         assert_eq!(packet.hud_opaque[0].record, 20);
         assert!(packet.gpu.is_some());
@@ -2589,5 +2869,114 @@ mod tests {
         assert_eq!(flags::STUDIO_STAGE & flags::WORLD_BLEND_PICK, 0);
         assert_eq!(flags::OBJECT_MASK_PICK & flags::WORLD_BLEND_PICK, 0);
         assert_eq!(flags::STUDIO_STAGE & (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT), 0);
+        let others = flags::STUDIO_STAGE
+            | flags::OBJECT_MASK_PICK
+            | flags::WORLD_BLEND_PICK
+            | (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT)
+            | 0x00ff_ffff;
+        assert_eq!(flags::PICK_IGNORES_ALPHA & others, 0);
+        assert_eq!(flags::IGNORE_OBJECT_PICK & (others | flags::PICK_IGNORES_ALPHA), 0);
+        let common = include_str!("shaders/common.wgsl");
+        assert!(common.contains(&format!("const FLAG_IGNORE_OBJECT_PICK: u32 = {}u;", flags::IGNORE_OBJECT_PICK)));
+    }
+
+    /// The visible-surface pick reads the bit with the same value, in the
+    /// same flags word, instead of the emissive mask flag.
+    #[test]
+    fn pick_ignores_alpha_bit_matches_wgsl() {
+        let common = include_str!("shaders/common.wgsl");
+        assert!(common.contains(&format!("const FLAG_PICK_IGNORES_ALPHA: u32 = {}u;", flags::PICK_IGNORES_ALPHA)));
+        let object = include_str!("shaders/object.wgsl");
+        let start = object.find("fn fs_pick_visible(").expect("fs_pick_visible");
+        let body = &object[start..start + object[start..].find("\n}").expect("end")];
+        assert!(body.contains("(rec.flags.w & FLAG_PICK_IGNORES_ALPHA) == 0u"));
+        assert!(!body.contains("FLAG_EMISSIVE_MASK"));
+    }
+
+    /// The flags the shaders test in `frame.light_mode.z`, by name, with
+    /// their value. The low byte is a number, not a flag: left out.
+    fn light_mode_flags(sources: &[&str]) -> Vec<(String, u32)> {
+        const READ: &str = "light_mode.z & ";
+        let mut names: Vec<&str> = Vec::new();
+        for src in sources {
+            for (at, _) in src.match_indices(READ) {
+                let rest = &src[at + READ.len()..];
+                let end = rest
+                    .find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+                    .unwrap_or(rest.len());
+                let name = &rest[..end];
+                if name.starts_with(|c: char| c.is_ascii_uppercase()) && !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        names
+            .into_iter()
+            .map(|name| {
+                let declared = format!("const {name}: u32 = 0x");
+                let value = sources.iter().find_map(|src| {
+                    let rest = &src[src.find(&declared)? + declared.len()..];
+                    u32::from_str_radix(&rest[..rest.find('u')?], 16).ok()
+                });
+                (
+                    name.to_owned(),
+                    value.unwrap_or_else(|| panic!("{name} is declared in hexadecimal")),
+                )
+            })
+            .collect()
+    }
+
+    /// The pairs of `flags` that have a bit in common.
+    fn sharing_a_bit(flags: &[(String, u32)]) -> Vec<(&str, &str)> {
+        let mut pairs = Vec::new();
+        for (k, (a, bits)) in flags.iter().enumerate() {
+            for (b, other) in &flags[k + 1..] {
+                if bits & other != 0 {
+                    pairs.push((a.as_str(), b.as_str()));
+                }
+            }
+        }
+        pairs
+    }
+
+    /// Each flag of `frame.light_mode.z` has a bit of its own. Two changes
+    /// that each take the next free one merge without a conflict, and each
+    /// option then turns the other on.
+    #[test]
+    fn the_flags_of_the_light_mode_word_share_no_bit() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaders");
+        let sources: Vec<String> = std::fs::read_dir(&dir)
+            .expect("the shaders' folder")
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .filter(|path| path.extension().is_some_and(|e| e == "wgsl"))
+            .map(|path| std::fs::read_to_string(&path).expect("a shader's source"))
+            .collect();
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let flags = light_mode_flags(&sources);
+        assert!(flags.len() >= 16, "the flags are found: {flags:?}");
+        for (name, bits) in &flags {
+            assert_eq!(bits.count_ones(), 1, "{name} is one bit");
+            assert!(*bits > 0xff, "{name} is clear of the view's number");
+        }
+        assert_eq!(sharing_a_bit(&flags), []);
+        // the traced lights' count, a number in the word's top bits, takes
+        // none of theirs either (common.wgsl `light_traced`)
+        let common = include_str!("shaders/common.wgsl");
+        let number = |name: &str| -> u32 {
+            let declared = format!("const {name}: u32 = ");
+            let rest = &common[common.find(&declared).expect(name) + declared.len()..];
+            let digits = rest[..rest.find('u').expect(name)].trim_start_matches("0x");
+            u32::from_str_radix(digits, if rest.starts_with("0x") { 16 } else { 10 }).expect(name)
+        };
+        let count = number("TRACED_LIGHTS_BITS") << number("TRACED_LIGHTS_SHIFT");
+        assert!(number("TRACED_LIGHTS_BITS") + 1 >= 64, "the 64 lamps of High fit");
+        for (name, bits) in &flags {
+            assert_eq!(bits & count, 0, "{name} is clear of the traced lights' count");
+        }
+
+        let clash = "const A: u32 = 0x800000u;\nconst B: u32 = 0x800000u;\nconst C: u32 = 0x400u;\n\
+                     if ((frame.light_mode.z & A) != 0u && (frame.light_mode.z & 0xffu) == 1u) {}\n\
+                     if ((frame.light_mode.z & B) != 0u || (frame.light_mode.z & C) != 0u) {}";
+        assert_eq!(sharing_a_bit(&light_mode_flags(&[clash])), [("A", "B")]);
     }
 }

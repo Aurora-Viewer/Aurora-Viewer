@@ -28,9 +28,17 @@ fn target(runtime: &Runtime) -> State {
     runtime.current.unwrap_or(State::Standing)
 }
 
+/// The name of the selected step in the state currently driven by the AO.
+pub(super) fn now_playing<'a>(set: Option<&'a Set>, runtime: &Runtime) -> Option<(State, &'a str)> {
+    let state = runtime.current?;
+    let config = set?.animation_config(state)?;
+    let index = runtime.index(state, config.folder);
+    config.steps.get(index).map(|step| (state, step.name.as_str()))
+}
+
 /// Previous, auto cycle, next, after the set selector.
 #[allow(clippy::too_many_arguments)]
-fn cycle_buttons(
+pub(super) fn cycle_buttons(
     ui: &mut egui::Ui,
     p: &Palette,
     set: Option<&Set>,
@@ -94,6 +102,114 @@ fn cycle_buttons(
     stepped(ui, "caret-right-filled", aurora_i18n::tr!("ao-quick-next", state = label), true);
 }
 
+/// Shared compact AO controls for the popup and persistent mini window.
+/// Differences with the Legacy Viewer's `animation_overrider_panel_small`
+/// (FloaterAO, indra/newview/ao.cpp), which has only the set list, Previous /
+/// Next, Sits and More: the auto-cycle button, the "now playing" line and the
+/// Enabled, Swimming and Water walk switches are Aurora's.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn body(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    catalog: &inventory::Catalog,
+    inv: &Inventory,
+    runtime: &mut Runtime,
+    account: &mut Account,
+    prefs: &mut Preferences,
+    busy: bool,
+    combo_id: &'static str,
+    list_open: &mut bool,
+    out: &mut Vec<Action>,
+) {
+    // A failed save of the Sits switch stays shown under the controls, as the
+    // manager shows its `state.message`, until a later save succeeds.
+    let message_id = egui::Id::unique((combo_id, "message"));
+    ui.label(aurora_i18n::tr!("ao-set"));
+    ui.horizontal(|ui| {
+        let buttons = 3.0 * 30.0 + 2.0 * 4.0 + ui.spacing().item_spacing.x;
+        ui.add_enabled_ui(!busy && !catalog.sets.is_empty(), |ui| {
+            let selected = catalog.selected(account.selected);
+            *list_open = egui::ComboBox::from_id_salt(combo_id)
+                .width(ui.available_width() - buttons)
+                .selected_text(selected.map_or(aurora_i18n::tr!("common-none-2"), |s| &s.name))
+                .show_ui(ui, |ui| {
+                    for set in &catalog.sets {
+                        if ui.selectable_label(selected.is_some_and(|s| s.id == set.id), &set.name).clicked() && account.selected != set.id
+                        {
+                            account.selected = set.id;
+                            out.push(Action::Preferences);
+                        }
+                    }
+                })
+                .inner
+                .is_some();
+        });
+        let set = catalog.selected(account.selected);
+        cycle_buttons(ui, p, set, inv, runtime, account.enabled, busy, out);
+    });
+    if super::enabled(ui, p, runtime, account) {
+        out.push(Action::Preferences);
+    }
+    let set = catalog.selected(account.selected);
+    if let Some(set) = set {
+        let mut sits = set.sits;
+        let changed = ui.add_enabled_ui(!busy, |ui| super::toggle(ui, p, "ao-sits", &mut sits)).inner;
+        if changed {
+            let mut edit = set.clone();
+            edit.sits = sits;
+            match inventory::save_set(inv, &edit) {
+                Ok(change) => {
+                    out.push(Action::Edit(change, None));
+                    ui.data_mut(|d| d.remove::<String>(message_id));
+                }
+                Err(reason) => {
+                    log::warn!("AO compact sit override: {reason}");
+                    ui.data_mut(|d| d.insert_temp(message_id, reason));
+                }
+            }
+        }
+    }
+    if let Some(message) = ui.data(|d| d.get_temp::<String>(message_id)) {
+        ui.label(RichText::new(message).color(p.warn));
+    }
+    if let Some((state, name)) = now_playing(set, runtime) {
+        ui.label(aurora_i18n::tr!("ao-now-playing", state = state.label(), name = name));
+    } else {
+        let state = runtime.current.unwrap_or(State::Standing);
+        ui.label(aurora_i18n::tr!("ao-now-playing-none", state = state.label()));
+    }
+    let ready = catalog.swimming_ready(account.selected);
+    // app/movement.rs's rule: only an AO loaded without swimming animations
+    // turns swimming off. While it loads (at login, when the mini window is
+    // drawn before the AO folder arrives) or after a failed fetch, the
+    // setting stays: it was switched off and saved at every login.
+    if !ready && !catalog.loading && !catalog.failed {
+        prefs.swimming = false;
+    }
+    let shown = prefs.swimming && ready;
+    let mut swimming = shown;
+    ui.add_enabled_ui(ready, |ui| {
+        widgets::switch_labeled(ui, p, &mut swimming, aurora_i18n::tr!("movement-swimming"));
+    });
+    if swimming != shown {
+        prefs.set_water_mode(false, swimming, ready);
+    }
+    let mut walking = prefs.water_walk;
+    widgets::switch_labeled(ui, p, &mut walking, aurora_i18n::tr!("movement-water-walk"));
+    if walking != prefs.water_walk {
+        prefs.set_water_mode(true, walking, ready);
+    }
+    if !ready {
+        if catalog.failed {
+            ui.label(RichText::new(aurora_i18n::tr!("ao-fetch-failed")).color(p.warn));
+        } else if catalog.loading {
+            ui.label(RichText::new(aurora_i18n::tr!("ao-loading")).color(p.muted));
+        } else {
+            super::swimming_warning(ui, p);
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Quick {
     pub open: bool,
@@ -106,7 +222,11 @@ impl Quick {
         if response.clicked() {
             self.open = !self.open;
         }
-        self.anchor = Some((response.clone(), align, response.ctx.cumulative_frame_nr()));
+        self.anchor = Some((
+            response.clone(),
+            align,
+            response.ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT),
+        ));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -124,7 +244,7 @@ impl Quick {
     ) -> Vec<Action> {
         let mut out = Vec::new();
         let Some((anchor, align, frame)) = &self.anchor else { return out };
-        if *frame != ctx.cumulative_frame_nr() {
+        if *frame != ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) {
             self.open = false;
             self.list_was_open = false;
             return out;
@@ -150,62 +270,33 @@ impl Quick {
                     // Tighter rows than the manager: a glance over the world.
                     ui.spacing_mut().item_spacing.y = 3.0;
                     ui.label(RichText::new(aurora_i18n::tr!("ao-title")).strong());
-                    ui.label(aurora_i18n::tr!("ao-set"));
-                    ui.horizontal(|ui| {
-                        let buttons = 3.0 * 30.0 + 2.0 * 4.0 + ui.spacing().item_spacing.x;
-                        ui.add_enabled_ui(!busy && !catalog.sets.is_empty(), |ui| {
-                            let selected = catalog.selected(account.selected);
-                            list_open = egui::ComboBox::from_id_salt("ao_quick_set")
-                                .width(ui.available_width() - buttons)
-                                .selected_text(selected.map_or(aurora_i18n::tr!("common-none-2"), |s| &s.name))
-                                .show_ui(ui, |ui| {
-                                    for set in &catalog.sets {
-                                        if ui.selectable_label(selected.is_some_and(|s| s.id == set.id), &set.name).clicked()
-                                            && account.selected != set.id
-                                        {
-                                            account.selected = set.id;
-                                            out.push(Action::Preferences);
-                                        }
-                                    }
-                                })
-                                .inner
-                                .is_some();
-                        });
-                        let set = catalog.selected(account.selected);
-                        cycle_buttons(ui, p, set, inv, runtime, account.enabled, busy, &mut out);
-                    });
-                    if super::enabled(ui, p, runtime, account) {
-                        out.push(Action::Preferences);
-                    }
-                    let ready = catalog.swimming_ready(account.selected);
-                    if !ready {
-                        prefs.swimming = false;
-                    }
-                    let mut swimming = prefs.swimming;
-                    ui.add_enabled_ui(ready, |ui| {
-                        widgets::switch_labeled(ui, p, &mut swimming, aurora_i18n::tr!("movement-swimming"));
-                    });
-                    if swimming != prefs.swimming {
-                        prefs.set_water_mode(false, swimming, ready);
-                    }
-                    let mut walking = prefs.water_walk;
-                    widgets::switch_labeled(ui, p, &mut walking, aurora_i18n::tr!("movement-water-walk"));
-                    if walking != prefs.water_walk {
-                        prefs.set_water_mode(true, walking, ready);
-                    }
-                    if !ready {
-                        if catalog.failed {
-                            ui.label(RichText::new(aurora_i18n::tr!("ao-fetch-failed")).color(p.warn));
-                        } else if catalog.loading {
-                            ui.label(RichText::new(aurora_i18n::tr!("ao-loading")).color(p.muted));
-                        } else {
-                            super::swimming_warning(ui, p);
-                        }
-                    }
+                    let mut set_list_open = false;
+                    body(
+                        ui,
+                        p,
+                        catalog,
+                        inv,
+                        runtime,
+                        account,
+                        prefs,
+                        busy,
+                        "ao_quick_set",
+                        &mut set_list_open,
+                        &mut out,
+                    );
+                    list_open = set_list_open;
                     ui.add_space(3.0);
                     if ui.button(aurora_i18n::tr!("ao-quick-manager")).clicked() {
                         manager_requested = true;
                         widgets::open_floater(ctx, "ao", manager_open);
+                        ui.close();
+                    }
+                    // Hidden while the mini window is already shown; on a
+                    // minimized one it expands it (LLFloaterReg::showInstance),
+                    // as Settings does for the manager.
+                    let mini_shown = account.mini_open && !widgets::floater_minimized(ctx, mini::WINDOW);
+                    if !mini_shown && ui.button(aurora_i18n::tr!("ao-quick-pin")).clicked() {
+                        widgets::open_floater(ctx, mini::WINDOW, &mut account.mini_open);
                         ui.close();
                     }
                 });

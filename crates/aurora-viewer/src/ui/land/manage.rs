@@ -1027,9 +1027,10 @@ fn visibility(
             }
             if r.on_hover_text(aurora_i18n::tr!("common-click-to-select-an-image")).clicked() {
                 s.texture_snapshot = true;
-                s.texture.open(aurora_i18n::tr!("ui-land-options-land-picture"), parcel.snapshot_id);
+                s.texture
+                    .open_copy_transfer(aurora_i18n::tr!("ui-land-options-land-picture"), parcel.snapshot_id);
             }
-            s.texture.drop_target_slot(ui, rect, false, can_identity, 1);
+            s.texture.drop_target_slot_copy_transfer(ui, rect, can_identity, 1);
         },
     );
 }
@@ -1357,9 +1358,9 @@ fn parcel_media(
             }
             if r.on_hover_text(aurora_i18n::tr!("common-click-to-select-an-image")).clicked() {
                 s.texture_snapshot = false;
-                s.texture.open(aurora_i18n::tr!("ui-land-media-media-texture"), id);
+                s.texture.open_copy_transfer(aurora_i18n::tr!("ui-land-media-media-texture"), id);
             }
-            s.texture.drop_target_slot(ui, rect, false, can, 0);
+            s.texture.drop_target_slot_copy_transfer(ui, rect, can, 0);
         },
     );
     line(ui, p);
@@ -1809,7 +1810,7 @@ fn sale(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut Wo
             aurora_i18n::tr!("common-everyone").to_owned()
         } else {
             world.social.want_name(parcel.auth_buyer);
-            world.social.name_of(&parcel.auth_buyer)
+            world.social.name_in(crate::world::names::NameScope::Roster, &parcel.auth_buyer)
         };
         t.push_str(&format!(" · {}", aurora_i18n::tr!("ui-land-manage-sold-to", who = to)));
         t.push_str(" · ");
@@ -1904,7 +1905,7 @@ fn sale(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut Wo
             if v.region.as_ref().is_some_and(|r| r.has_land_resources)
                 && button(ui, p, "code", aurora_i18n::tr!("ui-land-general-script-info"), true).clicked()
             {
-                s.scripts.open();
+                s.scripts.open(ui.ctx());
             }
         },
     );
