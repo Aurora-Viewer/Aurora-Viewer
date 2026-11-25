@@ -557,8 +557,10 @@ fn friendship_ended_offline_waits_for_world_and_name_resolution() {
     w.notifications.started = false;
     w.notifications.toasts.friendship_ended = true;
     w.login_had_buddy_list = true;
-    // Jane is missing from `social.friends` at login, and not cached yet under `TOM_NEW`.
+    // Jane is missing from `social.friends` at login, and not cached yet under `TOM_NEW`;
+    // another friend is still on the list (an empty list is not announced, below).
     let missing_id = Uuid::from_u128(0x99);
+    w.social.form_friendship(Uuid::from_u128(0x98));
     w.reconcile_friend_snapshot(
         None,
         Some(vec![SavedFriend {
@@ -619,6 +621,25 @@ fn friendship_ended_offline_waits_for_world_and_name_resolution() {
     );
     w.flush_friendship_ended_notices();
     assert!(w.notifications.list.is_empty());
+
+    // An empty `buddy-list` while friends were saved looks like a list the
+    // server failed to send: nobody is announced as gone.
+    let mut w = world();
+    w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
+    w.notifications.toasts.friendship_ended = true;
+    w.login_had_buddy_list = true;
+    assert!(w.social.friends.is_empty());
+    w.reconcile_friend_snapshot(
+        None,
+        Some(vec![SavedFriend {
+            id: missing_id,
+            name: "Old Name".into(),
+        }]),
+        true,
+    );
+    w.apply(aurora_net::NetEvent::Names(vec![(missing_id, "Fresh".into(), "Name".into())]));
+    w.flush_friendship_ended_notices();
+    assert!(w.notifications.list.is_empty());
 }
 
 #[test]
@@ -633,6 +654,8 @@ fn friendship_ended_waits_for_the_block_list() {
     assert!(!w.mutes.is_loaded());
     w.notifications.toasts.friendship_ended = true;
     w.login_had_buddy_list = true;
+    // a friend still on the list: an empty list is not announced
+    w.social.form_friendship(Uuid::from_u128(0x98));
     let saved = |id, name: &str| SavedFriend { id, name: name.into() };
     w.reconcile_friend_snapshot(None, Some(vec![saved(JANE, "Jane Doe"), saved(TOM, "Tom Smith")]), true);
     w.flush_friendship_ended_notices();

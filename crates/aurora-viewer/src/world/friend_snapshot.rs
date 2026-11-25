@@ -2,6 +2,8 @@
 //! announce when a resident ends a friendship live (`TerminateFriendship`),
 //! and which friends are no longer on the list since the previous login
 //! (`buddy-list` diff; who removed them is unknown then, see [`Ended`]).
+//! An empty login list while friends were saved is taken for a list the
+//! server failed to send: nothing is announced and the snapshot is kept.
 //! Aurora-only addition: the Legacy Viewer does not announce ended
 //! friendships.
 
@@ -48,11 +50,12 @@ struct Saved {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ended {
     /// The simulator's `TerminateFriendship`: the other resident ended it
-    /// ("X ended your friendship").
+    /// ("This resident ended your friendship." under their name).
     Live,
     /// Missing from the login `buddy-list`: the other resident may have
     /// ended it, but so may this account from another viewer or device, or
-    /// the account may be gone ("X is no longer on your friends list").
+    /// the account may be gone ("This resident is no longer on your friends
+    /// list." under their name).
     AtLogin,
 }
 
@@ -112,6 +115,10 @@ impl FriendSnapshot {
     /// queued for an [`Ended::AtLogin`] notice and its UUID is returned for
     /// name lookup, both sorted by saved name (ignoring case), then id, so
     /// that several notices always come in the same order.
+    ///
+    /// An empty `current` against a non-empty `previous` announces nothing
+    /// and saves nothing, whatever `notify` says: a friends list the server
+    /// failed to send at login looks the same as a list emptied since.
     pub fn reconcile(
         &mut self,
         path: Option<PathBuf>,
@@ -124,6 +131,20 @@ impl FriendSnapshot {
         self.pending.clear();
 
         let prev_map: Option<HashMap<Uuid, String>> = previous.map(|list| list.into_iter().map(|f| (f.id, f.name)).collect());
+
+        if current.iter().all(Uuid::is_nil) && prev_map.as_ref().is_some_and(|m| !m.is_empty()) {
+            let prev = prev_map.unwrap_or_default();
+            log::warn!(
+                "login friends list empty while {} friends were saved: taken for a failed list, no ended-friendship notice, snapshot kept",
+                prev.len()
+            );
+            // The saved list stays the reference in memory too: a friend
+            // added, removed or renamed in this session then saves it with
+            // that change, instead of a list that would make the next login
+            // announce every other friend as gone
+            self.friends = prev;
+            return Vec::new();
+        }
 
         let mut next_friends = HashMap::with_capacity(current.len());
         for &id in current {
@@ -380,13 +401,95 @@ mod tests {
                 id: id(1),
                 name: "Jane Doe".into(),
             }]),
-            &[],
-            |_| None,
+            &[id(4)],
+            |_| Some("Lou".into()),
             false,
         );
         assert!(missing_off.is_empty());
         assert!(snap3.take_ready(true, |_| true).is_empty());
-        assert_eq!(load(&path), Some(vec![]));
+        assert_eq!(
+            load(&path),
+            Some(vec![SavedFriend {
+                id: id(4),
+                name: "Lou".into(),
+            }])
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// An empty login list while friends were saved is taken for a list the
+    /// server failed to send: no notice, the snapshot kept on disk and in
+    /// memory, so that a friend added in the session joins the saved ones.
+    /// With no friend saved, an empty list goes on as before; a list with
+    /// friends still announces the missing ones.
+    #[test]
+    fn an_empty_login_list_after_saved_friends_announces_nothing_and_keeps_them() {
+        let root = std::env::temp_dir().join(format!("aurora-friends-empty-{}", Uuid::new_v4()));
+        let path = root.join(file_name("agni"));
+        let jane = || SavedFriend {
+            id: id(1),
+            name: "Jane Doe".into(),
+        };
+        let tom = || SavedFriend {
+            id: id(2),
+            name: "Tom Smith".into(),
+        };
+        let mut first = FriendSnapshot::default();
+        first.reconcile(
+            Some(path.clone()),
+            None,
+            &[id(1), id(2)],
+            |u| Some(if u.as_u128() == 1 { "Jane Doe" } else { "Tom Smith" }.into()),
+            true,
+        );
+        assert_eq!(load(&path), Some(vec![jane(), tom()]));
+
+        for notify in [true, false] {
+            let mut snap = FriendSnapshot::default();
+            let missing = snap.reconcile(Some(path.clone()), load(&path), &[], |_| None, notify);
+            assert!(missing.is_empty(), "notify {notify}");
+            assert!(snap.take_ready(true, |_| true).is_empty(), "notify {notify}");
+            assert_eq!(load(&path), Some(vec![jane(), tom()]), "snapshot kept (notify {notify})");
+            // a nil id alone is no friend either
+            let mut snap = FriendSnapshot::default();
+            assert!(
+                snap.reconcile(Some(path.clone()), load(&path), &[Uuid::nil()], |_| None, notify)
+                    .is_empty()
+            );
+            assert!(snap.take_ready(true, |_| true).is_empty());
+        }
+
+        // The session goes on from the saved list: a friend added saves it
+        // with the others, not alone
+        let mut snap = FriendSnapshot::default();
+        snap.reconcile(Some(path.clone()), load(&path), &[], |_| None, true);
+        snap.on_added(id(3), Some("Alice".into()));
+        let alice = SavedFriend {
+            id: id(3),
+            name: "Alice".into(),
+        };
+        assert_eq!(load(&path), Some(vec![jane(), tom(), alice.clone()]));
+
+        // No friend saved: an empty list goes on as before, nothing to
+        // announce; a first login saves the empty list, an empty saved list
+        // has nothing to change
+        for (previous, saved) in [(None, Some(Vec::new())), (Some(Vec::new()), None)] {
+            let other = root.join(file_name("aditi"));
+            let mut snap = FriendSnapshot::default();
+            assert!(
+                snap.reconcile(Some(other.clone()), previous.clone(), &[], |_| None, true)
+                    .is_empty()
+            );
+            assert!(snap.take_ready(true, |_| true).is_empty());
+            assert_eq!(load(&other), saved, "{previous:?}");
+            let _ = std::fs::remove_file(&other);
+        }
+
+        // A list with friends still announces the missing ones
+        let mut snap = FriendSnapshot::default();
+        let missing = snap.reconcile(Some(path.clone()), load(&path), &[id(3)], |_| None, true);
+        assert_eq!(missing, vec![id(1), id(2)]);
+        assert_eq!(load(&path), Some(vec![alice]));
         std::fs::remove_dir_all(root).unwrap();
     }
 
