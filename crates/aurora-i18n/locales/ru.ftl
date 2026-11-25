@@ -13055,7 +13055,6 @@ demo-buy-land-bought = Демонстрация покупки: участок �
 import-permissions-tab = Права доступа
 import-permissions-help = Эти настройки применяются к загружаемым текстурам, звукам, анимациям, материалам и мешам.
 import-permissions-sharing = Общий доступ
-import-permissions-payment = Оплата
 import-preview-enlarge = Увеличить предпросмотр
 import-preview-enlarged = Увеличенный предпросмотр · { $name }
 import-preview-gestures = Перетаскивание — вращение · Shift + перетаскивание — сдвиг · колёсико — зум

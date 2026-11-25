@@ -1290,7 +1290,6 @@ import-quick-materials-size = { $count ->
    *[other] 2048 × 2048でインポートできる画像を含むマテリアルがあります（{ $count }件）。サイズを選んでください：
 }
 import-quick-size-choice = { $size } px · L$ { $cost }
-import-quick-section = ツールバーのクイックインポート
 import-quick-free-full-size = 無料の画像は確認せずに2048 × 2048で送信
 import-quick-free-full-size-help = 「テクスチャをインポート」と「マテリアルをインポート」で1024か2048かを尋ねるのは、L$がかかる場合だけになります。
 import-invalid-request = ファイル名、フォルダ、設定を確認してください。
@@ -12889,7 +12888,7 @@ demo-buy-land-bought = 土地の購入をシミュレートしました：区画
 import-permissions-tab = 権限
 import-permissions-help = これらの設定は、アップロードするテクスチャ、サウンド、アニメーション、マテリアル、メッシュに適用されます。
 import-permissions-sharing = 共有
-import-permissions-payment = 支払い
+import-other-options = その他のオプション
 import-preview-enlarge = プレビューを拡大
 import-preview-enlarged = 拡大プレビュー‐{ $name }
 import-preview-gestures = ドラッグ：回転・Shift＋ドラッグ：パン・ホイール：ズーム

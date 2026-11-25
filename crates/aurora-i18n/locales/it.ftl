@@ -12604,7 +12604,6 @@ demo-buy-land-bought = Acquisto di terreno simulato: il lotto è ora di sua prop
 import-permissions-tab = Permessi
 import-permissions-help = Queste impostazioni valgono per texture, suoni, animazioni, materiali e mesh caricati.
 import-permissions-sharing = Condivisione
-import-permissions-payment = Pagamento
 import-preview-enlarge = Ingrandisci l'anteprima
 import-preview-enlarged = Anteprima ingrandita — { $name }
 import-preview-gestures = Trascinamento: ruota · Maiusc + trascinamento: sposta · Rotellina: zoom

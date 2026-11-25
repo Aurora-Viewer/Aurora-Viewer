@@ -12587,7 +12587,6 @@ demo-buy-land-bought = 模拟的土地购买：地块归您所有（演示）。
 import-permissions-tab = 权限
 import-permissions-help = 这些设置适用于上传的纹理、声音、动画、材质和网格模型。
 import-permissions-sharing = 分享
-import-permissions-payment = 支付
 import-preview-enlarge = 放大预览
 import-preview-enlarged = 放大预览 — { $name }
 import-preview-gestures = 拖动：旋转 · Shift + 拖动：平移 · 滚轮：缩放

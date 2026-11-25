@@ -12604,7 +12604,6 @@ demo-buy-land-bought = Simulert landkjøp: parsellen er din (demo).
 import-permissions-tab = Tillatelser
 import-permissions-help = Disse innstillingene gjelder for opplastede teksturer, lyder, animasjoner, materialer og mesh.
 import-permissions-sharing = Deling
-import-permissions-payment = Betaling
 import-preview-enlarge = Forstørr forhåndsvisning
 import-preview-enlarged = Forstørret forhåndsvisning — { $name }
 import-preview-gestures = Dra: roter · Shift + dra: panorer · Hjul: zoom

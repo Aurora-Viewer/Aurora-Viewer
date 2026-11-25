@@ -12748,7 +12748,6 @@ demo-buy-land-bought = Simulação de compra de terreno: a parcela é sua (demon
 import-permissions-tab = Permissões
 import-permissions-help = Essas configurações se aplicam a texturas, sons, animações, materiais e malhas carregados.
 import-permissions-sharing = Compartilhamento
-import-permissions-payment = Pagamento
 import-preview-enlarge = Ampliar visualização
 import-preview-enlarged = Visualização ampliada — { $name }
 import-preview-gestures = Arrastar: girar · Shift + arrastar: deslocar · Roda: zoom

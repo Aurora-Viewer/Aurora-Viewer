@@ -1316,7 +1316,6 @@ import-quick-materials-size = { $count ->
    *[other] These { $count } materials have images that can be imported at 2048 × 2048. Choose their size:
 }
 import-quick-size-choice = { $size } px · L${ $cost }
-import-quick-section = Toolbar quick import
 import-quick-free-full-size = Send free images at 2048 × 2048 without asking
 import-quick-free-full-size-help = "Import textures" and "Import materials" then ask 1024 or 2048 only when the upload costs L$.
 import-invalid-request = Check the file name, folder and settings.
@@ -13021,7 +13020,7 @@ demo-buy-land-bought = Simulated land purchase: the parcel is yours (demo).
 import-permissions-tab = Permissions
 import-permissions-help = These settings apply to uploaded textures, sounds, animations, materials and meshes.
 import-permissions-sharing = Sharing
-import-permissions-payment = Payment
+import-other-options = Other options
 import-preview-enlarge = Enlarge preview
 import-preview-enlarged = Enlarged preview — { $name }
 import-preview-gestures = Drag: rotate · Shift + drag: pan · Wheel: zoom

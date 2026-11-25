@@ -12620,7 +12620,6 @@ demo-buy-land-bought = Benzetimli arazi satın alma: parsel artık sizin (demo).
 import-permissions-tab = İzinler
 import-permissions-help = Bu ayarlar karşıya yüklenen dokulara, seslere, animasyonlara, malzemelere ve örgülere uygulanır.
 import-permissions-sharing = Paylaşım
-import-permissions-payment = Ödeme
 import-preview-enlarge = Önizlemeyi büyüt
 import-preview-enlarged = Büyütülmüş önizleme — { $name }
 import-preview-gestures = Sürükle: döndür · Shift + sürükle: kaydır · Tekerlek: yakınlaştır

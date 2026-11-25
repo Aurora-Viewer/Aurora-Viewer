@@ -12749,7 +12749,6 @@ demo-buy-land-bought = Simulierter Landkauf: Die Parzelle gehört Ihnen (Demo).
 import-permissions-tab = Berechtigungen
 import-permissions-help = Diese Einstellungen gelten für hochgeladene Texturen, Sounds, Animationen, Materialien und Meshes.
 import-permissions-sharing = Teilen
-import-permissions-payment = Zahlung
 import-preview-enlarge = Vorschau vergrößern
 import-preview-enlarged = Vergrößerte Vorschau – { $name }
 import-preview-gestures = Ziehen: Drehen · Umschalt + Ziehen: Schwenken · Rad: Zoomen

@@ -12900,7 +12900,6 @@ demo-buy-land-bought = Імітована купівля землі: ділян�
 import-permissions-tab = Дозволи
 import-permissions-help = Ці налаштування застосовуються до вивантажених текстур, звуків, анімацій, матеріалів і мешів.
 import-permissions-sharing = Спільний доступ
-import-permissions-payment = Оплата
 import-preview-enlarge = Збільшити попередній перегляд
 import-preview-enlarged = Збільшений попередній перегляд — { $name }
 import-preview-gestures = Перетягування: обертання · Shift + перетягування: зсув · Коліщатко: масштаб
