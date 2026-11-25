@@ -297,7 +297,9 @@ impl Scene {
             }
         }
         for &att in world.objects.children_of(&av.key) {
-            let Some(root) = world.objects.get(att) else {
+            // (nor the copies drawn from the cache, world/avatar_cache: the
+            // region's objects count once they come)
+            let Some(root) = world.objects.get(att).filter(|o| !o.is_client_preview()) else {
                 continue;
             };
             // HUD attachments (points 31..=38) do not count
@@ -384,7 +386,9 @@ impl Scene {
             let (c, area) = self.avatar_complexity(world, idx);
             self.avatar_complexity.insert(id, c);
             self.avatar_area.insert(id, area);
-            if rules.too_complex(&id, id == world.agent_id, c, area) {
+            // (our copies, the animation editor's mirror and the Fit lab's
+            // mannequins, are drawn as we are)
+            if rules.too_complex(&id, id == world.agent_id || world.is_local_copy(&id), c, area) {
                 self.too_complex.insert(idx);
             } else {
                 self.too_complex.remove(&idx);
@@ -411,7 +415,7 @@ impl Scene {
             } else if self.rlva_silhouettes.contains(&idx) {
                 let complexity = self.avatar_complexity.get(&object.full_id).copied().unwrap_or_default();
                 let area = self.avatar_area.get(&object.full_id).copied().unwrap_or_default();
-                if !rules.too_complex(&object.full_id, false, complexity, area) {
+                if !rules.too_complex(&object.full_id, world.is_local_copy(&object.full_id), complexity, area) {
                     self.too_complex.remove(&idx);
                 }
             }

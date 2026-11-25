@@ -577,6 +577,8 @@ pub enum NetEvent {
     /// its own flag in the next request; `error` is then the server's text.
     /// `next_server`: the login server sends the login on to this other
     /// server (`LoginError::NextServer`), which the user agrees to first.
+    /// `unencrypted_server`: the login would go to this server over plain
+    /// `http` (`LoginError::Unencrypted`), which the user agrees to first.
     LoginFailed {
         error: String,
         mfa_required: bool,
@@ -585,6 +587,7 @@ pub enum NetEvent {
         bad_credentials: bool,
         previous_session: bool,
         next_server: Option<String>,
+        unencrypted_server: Option<String>,
     },
     LoggedIn(Arc<LoginResponse>),
     /// A simulator circuit was established (main or neighbor).
@@ -843,6 +846,10 @@ pub enum NetEvent {
     TeleportFailed {
         reason: String,
     },
+    /// The TeleportFailed that follows is a refusal for the destination's
+    /// content rating (teleport_access.rs): the viewer may offer to change
+    /// the preference instead of reporting the reason.
+    TeleportAccessBlocked(crate::teleport_access::AccessBlocked),
     Alert {
         message: String,
     },
@@ -1283,6 +1290,10 @@ pub enum NetEvent {
     InventoryUpdated {
         folders: Vec<crate::inventory::InvFolder>,
         items: Vec<crate::inventory::InvItem>,
+        /// From BulkUpdateInventory (UDP or event queue): a delivery or an
+        /// unpack, whose folders the viewer reads at once so they sort by
+        /// their contents (#3025). Every other server change leaves it false.
+        bulk: bool,
     },
     /// Delivery identity follows InventoryUpdated, so observers see its headers.
     InventoryDelivery {

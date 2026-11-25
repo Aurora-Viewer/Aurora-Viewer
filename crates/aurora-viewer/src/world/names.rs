@@ -359,7 +359,14 @@ impl AvatarName {
     /// Username shown after the display name in chat headers
     /// (FSChatHistoryHeader: " - username" when a display name was chosen).
     pub fn chat_username(&self, o: &NameOptions) -> Option<String> {
-        (o.use_display_names && o.show_usernames && !self.is_default).then(|| self.user_name_for_display(o))
+        if !o.use_display_names || !o.show_usernames || self.is_default {
+            return None;
+        }
+        if self.legacy_first.is_empty() && self.legacy_last.is_empty() {
+            // A People API reply can supply only the account and display names.
+            return (!self.username.is_empty()).then(|| self.username.clone());
+        }
+        Some(self.user_name_for_display(o))
     }
 
     fn to_llsd(&self) -> Llsd {
@@ -479,6 +486,21 @@ impl AvatarNames {
         }
     }
 
+    /// A number that changes with what `shows` answers (RLVa's
+    /// `@shownames`, its exceptions, the residents around), for the views
+    /// that keep names a while (the inventory's creator column).
+    pub fn privacy_key(&self) -> u64 {
+        use std::hash::{BuildHasher, BuildHasherDefault};
+        if !self.rlva_private {
+            return 0;
+        }
+        let hasher = BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default();
+        // order-free: the sum of each id's hash
+        let sum = |ids: &HashSet<Uuid>| ids.iter().fold(0u64, |sum, id| sum.wrapping_add(hasher.hash_one(id)));
+        1u64.wrapping_add(sum(&self.rlva_allowed))
+            .wrapping_add(sum(&self.rlva_nearby).rotate_left(29))
+    }
+
     /// `scope` shows the real name of `id` (see `NameScope`).
     pub fn shows(&self, scope: NameScope, id: &Uuid) -> bool {
         !self.rlva_private || scope.shows(id, self.rlva_allowed.contains(id), || self.rlva_nearby.contains(id))
@@ -501,6 +523,21 @@ impl AvatarNames {
     pub fn raw(&self, id: &Uuid) -> Option<&AvatarName> {
         self.cache.get(id)
     }
+    /// The display name RlvUtil::filterNames (indra/newview/rlvcommon.cpp)
+    /// replaces for `id`: the one LLAvatarNameCache::get gives with the
+    /// contact sets' custom name check (indra/llmessage/llavatarnamecache.cpp,
+    /// LGGContactSets::checkCustomName): the alias in quotes, or the legacy
+    /// name, "Resident" included, when the display name is removed. None
+    /// until the name is cached. Canonical data for privacy filtering.
+    pub fn rlva_filter_display_name(&self, id: &Uuid) -> Option<String> {
+        let n = self.cache.get(id)?;
+        Some(match self.aliases.get(id) {
+            Some(alias) if alias == super::contact_sets::DN_REMOVED => format!("{} {}", n.legacy_first, n.legacy_last),
+            Some(alias) => format!("'{alias}'"),
+            None => n.display_name.clone(),
+        })
+    }
+
     /// The cached name (even expired, which queues a refresh); a missing
     /// one is queued for the next request. The name of someone met in the
     /// world (`NameScope::World`): `get_in` for the other cases.

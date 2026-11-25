@@ -43,15 +43,20 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
     };
     // in its own window, or back into Conversations (`popout.rs`)
     super::popout::menu_row(ui, p, actions, conversation);
-    // CONV_SESSION_NEARBY: its transcript only
+    if let Some(id) = conversation
+        && menu::item(ui, p, "x", close_tip(world, &id))
+    {
+        actions.push(ConvAction::Close(id));
+    }
+    if super::close_all::menu_item(ui, p, !world.social.ims.is_empty()) {
+        actions.push(ConvAction::CloseAll);
+    }
+    // Nearby chat itself always stays open.
     let Some(id) = conversation else {
         history(ui);
         return;
     };
     let kind = sidebar::kind(world, &id);
-    if menu::item(ui, p, "x", close_tip(world, &id)) {
-        actions.push(ConvAction::Close(id));
-    }
     // "Snooze Session" of a group's chiclet menu (menu_fs_imchiclet_group.xml)
     if super::can_snooze(world, &id) && menu::item(ui, p, super::SNOOZE_ICON, aurora_i18n::tr!("ui-chat-snooze")) {
         actions.push(ConvAction::Snooze(id));

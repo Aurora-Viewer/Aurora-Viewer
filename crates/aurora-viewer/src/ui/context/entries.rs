@@ -281,6 +281,19 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             ui.item_if(icon, label, o.scripts, CtxAction::Scripts { id, action });
         }
     });
+    // Not on the Legacy Viewer's object menu: its closest model is the
+    // attachment's "Show original" (handle_object_show_original,
+    // menu_attachment_self.xml), which keeps its icon and label here and is
+    // greyed out the same way under @showinv (enable_object_show_original,
+    // llviewermenu.cpp). Shown once the properties have named the object.
+    if o.owned && !o.local_preview && !o.name.trim().is_empty() {
+        ui.item_if(
+            "briefcase-filled",
+            aurora_i18n::tr!("ui-context-show-in-inventory"),
+            !o.inventory_hidden,
+            CtxAction::FindInInventory(id),
+        );
+    }
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point, None));
     ui.item(
         "list-details-filled",
@@ -519,7 +532,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.item_if(
         "briefcase-filled",
         aurora_i18n::tr!("ui-context-show-in-inventory"),
-        f.object.attachment_item.is_some(),
+        f.object.attachment_item.is_some() && !f.show_original_blocked,
         CtxAction::AttachmentInventory(f.object.attachment_item.unwrap_or_default()),
     );
     // Object.SetFavorite Add / Remove, the one that applies
@@ -548,6 +561,16 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         aurora_i18n::tr!("common-detach"),
         f.object.detach,
         CtxAction::Detach(key),
+    );
+    // An Aurora addition, in no Legacy menu: the confirmation that Delete
+    // of a worn item asks in Inventory ("DeleteWornItems"), offered on the
+    // worn object. It re-checks body parts, RLVa and the Trash move before
+    // anything comes off.
+    ui.item_if(
+        "trash-x-filled",
+        aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
+        f.object.detach && f.object.attachment_item.is_some_and(|item| !item.is_nil()),
+        CtxAction::DetachDelete(key),
     );
     save_as_submenu(ui, f.object.id);
     ui.separator();
@@ -774,7 +797,11 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
                 aurora_i18n::tr!("ui-context-inspect-2"),
                 CtxAction::Inspect(object),
             );
-            ui.item("code", aurora_i18n::tr!("ui-context-script-info"), CtxAction::ScriptInfo(object));
+            ui.item(
+                "code",
+                aurora_i18n::tr!("ui-context-script-information"),
+                CtxAction::ScriptInfo(object),
+            );
             ui.item(
                 "box",
                 aurora_i18n::tr!("ui-context-object-information"),
@@ -825,7 +852,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         |ui| {
             ui.item_if(
                 "zoom-scan-filled",
-                aurora_i18n::tr!("ui-context-inspect-2"),
+                aurora_i18n::tr!("ui-context-inspect-all-attachments"),
                 f.worn,
                 CtxAction::InspectAvatar(id),
             );
@@ -1756,7 +1783,7 @@ mod tests {
             attachment: None,
         };
         // "Inspect" lists what the avatar wears: greyed when it wears nothing in view
-        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-2", false);
+        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-all-attachments", false);
         assert!(!inspect(&Facts::default()).enabled);
         let wearing = Facts {
             worn: true,
@@ -1869,6 +1896,8 @@ mod tests {
             "common-edit",
             "ui-context-edit-pbr-material",
             "common-detach",
+            // ours: Detach and Delete, in no Legacy menu
+            "ui-inventory-dialogs-detach-and-delete",
             "common-save-as>",
             "-",
             "status-sit",
@@ -1934,6 +1963,46 @@ mod tests {
             .into_iter()
             .find(|e| e.label == label)
             .unwrap_or_else(|| panic!("{key} missing"))
+    }
+
+    /// "Show in inventory" of a rezzed object: on the menu of what the agent
+    /// owns itself (never a group-deeded or someone else's object, nor a
+    /// local mesh), greyed out under @showinv, with the attachment's icon.
+    #[test]
+    fn show_in_inventory_of_a_rezzed_object_follows_ownership_and_showinv() {
+        let (me, group, other) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let find = |f: &Facts| {
+            rows(world_menu(&object_target(), f, Vec3::ZERO))
+                .into_iter()
+                .find(|e| matches!(e.kind, Kind::Action(CtxAction::FindInInventory(_))))
+        };
+        let mut f = Facts::default();
+        f.object.name = "Chair".into();
+        // owned: shown and enabled, with the attachment's icon and label
+        f.object.owned = crate::ui::context::owns_rezzed(me, me);
+        let entry = find(&f).expect("owned object has the entry");
+        assert!(entry.enabled);
+        assert_eq!(entry.icon, "briefcase-filled");
+        assert_eq!(entry.label, aurora_i18n::text("ui-context-show-in-inventory"));
+        assert!(matches!(entry.kind, Kind::Action(CtxAction::FindInInventory(id)) if id == ID));
+        // @showinv greys it out
+        f.object.inventory_hidden = true;
+        assert!(!find(&f).expect("still listed under @showinv").enabled);
+        f.object.inventory_hidden = false;
+        // group owned (OwnerID is the group) and someone else's: not listed
+        for owner in [group, other, Uuid::nil()] {
+            f.object.owned = crate::ui::context::owns_rezzed(owner, me);
+            assert!(find(&f).is_none(), "owner {owner} must not offer it");
+        }
+        // a nil agent (not logged in) owns nothing
+        assert!(!crate::ui::context::owns_rezzed(Uuid::nil(), Uuid::nil()));
+        // no name yet (properties not arrived), or a local mesh: not listed
+        f.object.owned = true;
+        f.object.name = " ".into();
+        assert!(find(&f).is_none());
+        f.object.name = "Chair".into();
+        f.object.local_preview = true;
+        assert!(find(&f).is_none());
     }
 
     #[test]
@@ -2184,6 +2253,24 @@ mod tests {
             };
             assert!(!find(world_menu(&target, &friend, Vec3::ZERO), "common-become-friends").enabled);
         }
+    }
+
+    #[test]
+    fn our_attachment_offers_detach_and_delete_once_detach_and_its_item_allow_it() {
+        let key = ObjKey { region: 1, local_id: 42 };
+        let mut f = Facts::default();
+        let menu = |f: &Facts| world_menu(&Target::Attachment { key }, f, Vec3::ZERO);
+        let label = "ui-inventory-dialogs-detach-and-delete";
+        assert!(!row(menu(&f), label).enabled);
+        // detach allowed but no inventory item to delete: still greyed
+        f.object.detach = true;
+        assert!(!row(menu(&f), label).enabled);
+        f.object.attachment_item = Some(Uuid::from_u128(5));
+        let entry = row(menu(&f), label);
+        assert!(entry.enabled && matches!(entry.kind, Kind::Action(CtxAction::DetachDelete(k)) if k == key));
+        // an RLVa remove lock greys it with Detach
+        f.object.detach = false;
+        assert!(!row(menu(&f), label).enabled);
     }
 
     #[test]
@@ -2506,5 +2593,33 @@ mod rlva_fly_tests {
         for target in [&own, &worn] {
             assert!(fly_enabled(world_menu(target, &f, Vec3::ZERO)));
         }
+    }
+}
+
+#[cfg(test)]
+mod rlva_showinv_tests {
+    use super::*;
+
+    /// enable_object_show_original (indra/newview/llviewermenu.cpp):
+    /// "Show in inventory" of our attachment is greyed under @showinv.
+    #[test]
+    fn show_in_inventory_is_greyed_under_showinv() {
+        let key = ObjKey { region: 1, local_id: 42 };
+        let mut f = Facts::default();
+        f.object.attachment_item = Some(Uuid::from_u128(5));
+        let menu = |f: &Facts| world_menu(&Target::Attachment { key }, f, Vec3::ZERO);
+        let row = |entries: Vec<Entry>| {
+            fn find(entries: Vec<Entry>) -> Option<bool> {
+                entries.into_iter().find_map(|e| match e.kind {
+                    Kind::Submenu(inner) => find(inner),
+                    Kind::Action(CtxAction::AttachmentInventory(_)) => Some(e.enabled),
+                    _ => None,
+                })
+            }
+            find(entries).expect("a Show in inventory row")
+        };
+        assert!(row(menu(&f)));
+        f.show_original_blocked = true;
+        assert!(!row(menu(&f)));
     }
 }

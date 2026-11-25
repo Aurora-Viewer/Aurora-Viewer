@@ -1,7 +1,7 @@
 //! Preferences › Graphics (panel_preferences_graphics1.xml and its
 //! advanced floater): the level of the whole, then quality, light, the sky,
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
-//! depth of field), smoothness and parcel visibility.
+//! depth of field), smoothness, parcel visibility and ray tracing.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
@@ -21,6 +21,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
             overlays(cx);
         }
         6 => parcels(cx),
+        7 => ray_tracing(cx),
         _ => {}
     }
 }
@@ -83,6 +84,31 @@ fn environment(cx: &mut Cx) {
             tr!("ui-options-colored-sky-ambient-help"),
             &field!(colored_sky_ambient),
         );
+        // an Aurora difference: the world drawn on a round planet
+        cx.experimental().toggle(
+            tr!("ui-options-planet-curvature"),
+            tr!("ui-options-planet-curvature-help"),
+            &field!(planet_curvature),
+        );
+        let flat = !cx.s.planet_curvature;
+        cx.subs(flat, |cx| {
+            cx.row(
+                tr!("ui-options-planet-radius"),
+                tr!("ui-options-planet-radius-help"),
+                &field!(planet_radius_km),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.planet_radius_km, crate::settings::PLANET_RADIUS_KM_RANGE)
+                            .logarithmic(true)
+                            .step_by(1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .suffix(" km")
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+        });
         cx.toggle(
             tr!("ui-options-keep-environment"),
             tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
@@ -167,6 +193,113 @@ fn night_sky_rows(cx: &mut Cx) {
     }
 }
 
+/// Ray tracing (aurora-render's rt_shadows.rs): the sun's shadows, and
+/// behind their cog what else traces the scene they build. Greyed with the
+/// reason on a graphics card that cannot, in a run set up for VR, and
+/// without the shadows.
+fn ray_tracing(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    use aurora_render::RayTracingSupport as Support;
+    cx.group(tr!("ui-options-ray-tracing"), |cx| {
+        let p = cx.p;
+        let card = match cx.st.ray_tracing {
+            Support::Unsupported => Some(tr!("ui-options-ray-tracing-unsupported")),
+            Support::Vr => Some(tr!("ui-options-ray-tracing-vr")),
+            Support::Ready | Support::NotOpened => None,
+        };
+        if let Some(why) = card {
+            cx.note(why);
+        }
+        let blocked = card.or((cx.s.shadow_quality == 0).then(|| tr!("ui-options-ray-tracing-needs-shadows")));
+        // (on by default where the card can, in the shadow maps' place: no
+        // experimental mark; the indirect light and the reflections keep it)
+        cx.keywords("RT raytracing").row(
+            tr!("ui-options-ray-traced-shadows"),
+            tr!("ui-options-ray-traced-shadows-help"),
+            &field!(ray_tracing.enabled),
+            |ui, s| {
+                let r = ui.add_enabled_ui(blocked.is_none(), |ui| toggle(ui, &p, &mut s.ray_tracing.enabled));
+                if let Some(why) = blocked {
+                    r.response.on_disabled_hover_text(why);
+                }
+                r.inner
+            },
+        );
+        let off = blocked.is_some() || !cx.s.ray_tracing.enabled;
+        cx.subs(off, |cx| {
+            use crate::settings::{RT_QUALITY_HIGH, RT_SHADOW_LAMPS_MAX, RT_SOFTNESS_MAX, Settings};
+            // (Aurora's own, as the games that trace rays have it: every
+            // traced effect stays on, with fewer samples; choosing one sets
+            // its lamps' count, which the slider below still moves)
+            let levels = [
+                (0, tr!("ui-options-preset-low"), false),
+                (1, tr!("ui-options-preset-medium"), false),
+                (RT_QUALITY_HIGH, tr!("ui-options-preset-high"), false),
+            ];
+            if cx.keywords("RT raytracing").choice(
+                tr!("ui-options-rt-quality"),
+                tr!("ui-options-rt-quality-help"),
+                &field!(rt_quality),
+                &levels,
+            ) {
+                let lamps = Settings::rt_lamp_quality(cx.s.rt_quality).lamps;
+                cx.s.rt_shadow_lamps = u8::try_from(lamps).unwrap_or(RT_SHADOW_LAMPS_MAX).clamp(1, RT_SHADOW_LAMPS_MAX);
+            }
+            // (Aurora's own: the Legacy Viewer's maps blur by a kernel,
+            // RenderShadowBlurSize, a debug setting)
+            cx.slider(
+                tr!("ui-options-rt-sun-softness"),
+                tr!("ui-options-rt-sun-softness-help"),
+                &field!(rt_sun_softness),
+                0.0..=RT_SOFTNESS_MAX,
+                "×",
+            );
+            cx.toggle(
+                tr!("ui-options-ray-traced-lights"),
+                tr!("ui-options-ray-traced-lights-help"),
+                &field!(ray_tracing.lights),
+            );
+            cx.greyed(!cx.s.ray_tracing.lights);
+            cx.slider(
+                tr!("ui-options-rt-lamp-softness"),
+                tr!("ui-options-rt-lamp-softness-help"),
+                &field!(rt_lamp_softness),
+                0.0..=RT_SOFTNESS_MAX,
+                "×",
+            );
+            cx.slider(
+                tr!("ui-options-rt-shadow-lamps"),
+                tr!("ui-options-rt-shadow-lamps-help"),
+                &field!(rt_shadow_lamps),
+                1..=RT_SHADOW_LAMPS_MAX,
+                "",
+            );
+            cx.greyed(false);
+            cx.experimental().toggle(
+                tr!("ui-options-ray-traced-indirect"),
+                tr!("ui-options-ray-traced-indirect-help"),
+                &field!(ray_tracing.indirect),
+            );
+            // (Aurora's own, under the traced indirect light it completes)
+            cx.greyed(!cx.s.ray_tracing.indirect);
+            cx.experimental()
+                .toggle(tr!("ui-options-gi-probes"), tr!("ui-options-gi-probes-help"), &field!(rt_gi_probes));
+            cx.greyed(false);
+            let ssr = cx.s.ssr;
+            cx.experimental().row(
+                tr!("ui-options-ray-traced-reflections"),
+                tr!("ui-options-ray-traced-reflections-help"),
+                &field!(ray_tracing.reflections),
+                |ui, s| {
+                    let r = ui.add_enabled_ui(ssr, |ui| toggle(ui, &p, &mut s.ray_tracing.reflections));
+                    r.response.on_disabled_hover_text(tr!("ui-options-ray-tracing-needs-ssr"));
+                    r.inner
+                },
+            );
+        });
+    });
+}
+
 fn graphics_card(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-graphics-card"), |cx| {
@@ -192,6 +325,7 @@ fn graphics_card(cx: &mut Cx) {
                     &st.gpus,
                     COMBO_W,
                     tr!("ui-options-graphics-card-automatic"),
+                    false,
                 )
                 .0
             },
@@ -345,18 +479,19 @@ fn parcels(cx: &mut Cx) {
             true,
         );
     });
+    cx.group(tr!("parcel-environment-title"), parcel_environments);
 }
 
 fn quality(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-presets"), |cx| {
         let p = cx.p;
-        cx.wide().keywords(tr!("ui-options-preset-custom")).row(
+        cx.wide().keywords(tr!("ui-options-preset-custom")).row_with(
             tr!("ui-options-preset-level"),
             tr!("ui-options-preset-level-help"),
             // a level writes the page's settings: they are the rows below
             &Nothing,
-            |ui, s| preset_choice(ui, &p, s),
+            |ui, s, st, _| preset_choice(ui, &p, s, st.ray_tracing),
         );
         cx.below()
             .row_with(tr!("graphics-saved-title"), tr!("graphics-saved-help"), &Nothing, |ui, s, st, _| {
@@ -572,6 +707,11 @@ fn quality(cx: &mut Cx) {
             &field!(loading_avatars),
             &[tr!("ui-options-cloud-bar"), tr!("ui-options-bar-only"), tr!("common-nothing")],
         );
+        cx.toggle(
+            tr!("ui-options-avatar-cache"),
+            tr!("ui-options-avatar-cache-help"),
+            &field!(avatar_cache),
+        );
         cx.stepped(
             tr!("ui-options-limit-applied"),
             tr!("ui-options-always-fully-render-friends-or-fully-render-only-friends"),
@@ -685,6 +825,49 @@ fn light(cx: &mut Cx) {
                 tr!("ui-options-contact-shadows"),
                 tr!("ui-options-contact-shadows-help"),
                 &field!(contact_shadows),
+            );
+            cx.experimental().toggle(
+                tr!("ui-options-soft-shadows"),
+                tr!("ui-options-soft-shadows-help"),
+                &field!(soft_shadows),
+            );
+            // the size of the light acts with the soft shadows only
+            let soft = cx.s.soft_shadows;
+            cx.subs(!soft, |cx| {
+                cx.row(
+                    tr!("ui-options-shadow-softness"),
+                    tr!("ui-options-shadow-softness-help"),
+                    &field!(shadow_softness),
+                    |ui, s| {
+                        let slider = ui.add_enabled_ui(soft, |ui| {
+                            ui.add(
+                                egui::Slider::new(&mut s.shadow_softness, 0.0..=crate::settings::SHADOW_SOFTNESS_MAX)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .fixed_decimals(2)
+                                    .step_by(0.05)
+                                    .trailing_fill(true),
+                            )
+                            .changed()
+                        });
+                        slider.response.on_disabled_hover_text(tr!("ui-options-shadow-softness-needs-soft"));
+                        slider.inner
+                    },
+                );
+            });
+            cx.row(
+                tr!("ui-options-shadow-intensity"),
+                tr!("ui-options-shadow-intensity-help"),
+                &field!(shadow_intensity),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.shadow_intensity, 0.0..=1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .fixed_decimals(2)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
             );
         });
     });
@@ -1038,7 +1221,43 @@ fn image(cx: &mut Cx) {
             },
         );
     });
+    world_look(cx);
     depth_of_field(cx);
+}
+
+/// The world's own filters (`snapshot::looks::WorldLook`): switched on here,
+/// chosen in their window (`ui/world_look.rs`). Aurora's own.
+fn world_look(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-world-look"), |cx| {
+        cx.keywords("LUT look filter colour grading").toggle(
+            tr!("ui-options-world-look-on"),
+            tr!("ui-options-world-look-on-help"),
+            &field!(world_look.on),
+        );
+        let p = cx.p;
+        cx.row_with(
+            tr!("ui-options-world-look-choose"),
+            tr!("ui-options-world-look-choose-help"),
+            &Nothing,
+            |ui, _, _, r| {
+                use crate::ui::widgets::{ActionKind, action_button};
+                if action_button(
+                    ui,
+                    &p,
+                    "color-filter",
+                    tr!("ui-options-world-look-open"),
+                    ActionKind::Flat,
+                    egui::Vec2::new(0.0, 24.0),
+                )
+                .clicked()
+                {
+                    r.open_world_look = true;
+                }
+                false
+            },
+        );
+    });
 }
 
 /// Depth of field (panel_preferences_graphics1.xml, "DOF panel":
@@ -1099,6 +1318,11 @@ fn depth_of_field(cx: &mut Cx) {
                     (FocusMode::Locked, tr!("ui-options-dof-focus-locked"), true),
                 ],
             );
+            cx.toggle(
+                tr!("ui-options-dof-show-focus-point"),
+                tr!("ui-options-dof-show-focus-point-help"),
+                &field!(dof.show_focus_point),
+            );
             cx.row(
                 tr!("ui-options-dof-aperture"),
                 tr!("ui-options-dof-aperture-help"),
@@ -1139,6 +1363,39 @@ fn depth_of_field(cx: &mut Cx) {
     });
 }
 
+/// The environments saved for parcels (`world/parcel_env.rs`), set from the
+/// Environment window and the inventory: this list only removes them. They
+/// are the account's on this grid, in its own file, not settings: the app
+/// lists them in `OptionsUi::parcel_environments` and removes them.
+fn parcel_environments(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    let p = cx.p;
+    cx.section_body().row_with(
+        tr!("parcel-environment-title"),
+        tr!("parcel-environment-help"),
+        &Nothing,
+        |ui, _, st, r| {
+            ui.vertical(|ui| {
+                let entries = &st.parcel_environments;
+                if entries.is_empty() {
+                    ui.label(RichText::new(tr!("parcel-environment-empty")).color(p.muted));
+                    return;
+                }
+                let remove = parcel_rows(ui, &p, "parcel_environments", entries, |e| {
+                    ((e.region, e.local_id), &e.name, &e.region_name)
+                });
+                if let Some(e) = remove.and_then(|i| entries.get(i)) {
+                    r.forget_parcel_environment = Some((e.region, e.local_id));
+                }
+                if ui.button(tr!("parcel-environment-remove-all")).clicked() {
+                    st.confirm_remove_parcel_environments = true;
+                }
+            });
+            false
+        },
+    );
+}
+
 /// Scope and rendering exceptions use the same saved identities and list controls.
 fn parcel_list(
     cx: &mut Cx,
@@ -1147,7 +1404,6 @@ fn parcel_list(
     field: &super::super::cx::F<Vec<crate::world::parcel_visibility::Entry>>,
     selected: bool,
 ) {
-    use crate::ui::widgets;
     use aurora_i18n::tr;
     let p = cx.p;
     let get = field.get_mut;
@@ -1175,32 +1431,7 @@ fn parcel_list(
                 return;
             }
 
-            let mut remove = None;
-            egui::ScrollArea::vertical()
-                .id_salt(field.path)
-                .max_height(180.0)
-                // Cx measures controls from a short first-frame placeholder.
-                // Let the list establish its height, then shrink to its content.
-                .min_scrolled_height(180.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    for (i, entry) in entries.iter().enumerate() {
-                        ui.push_id((entry.region, entry.local_id), |ui| {
-                            ui.horizontal_top(|ui| {
-                                let width = (ui.available_width() - 20.0 - ui.spacing().item_spacing.x).max(1.0);
-                                ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                                    ui.set_min_width(width);
-                                    ui.spacing_mut().item_spacing.y = 2.0;
-                                    ui.add(egui::Label::new(RichText::new(&entry.name).strong()).wrap());
-                                    ui.add(egui::Label::new(RichText::new(&entry.region_name).size(12.0).color(p.muted)).wrap());
-                                });
-                                if widgets::icon_button(ui, &p, "trash-filled", tr!("common-remove"), true) {
-                                    remove = Some(i);
-                                }
-                            });
-                        });
-                    }
-                });
+            let remove = parcel_rows(ui, &p, field.path, entries, |e| ((e.region, e.local_id), &e.name, &e.region_name));
             if let Some(i) = remove {
                 entries.remove(i);
                 changed = true;
@@ -1208,4 +1439,47 @@ fn parcel_list(
         });
         changed
     });
+}
+
+/// The rows of a saved parcel list: the parcel's name over its region, and a
+/// remove button. Returns the index of the row whose button was clicked.
+/// Shared by the scope and rendering exceptions (`parcel_list`) and the
+/// parcels' saved environments (`parcel_environments`).
+fn parcel_rows<'a, T, K: egui::AsIdSalt>(
+    ui: &mut egui::Ui,
+    p: &crate::theme::Palette,
+    salt: impl egui::AsIdSalt,
+    entries: &'a [T],
+    row: impl Fn(&'a T) -> (K, &'a str, &'a str),
+) -> Option<usize> {
+    use crate::ui::widgets;
+    use aurora_i18n::tr;
+    let mut remove = None;
+    egui::ScrollArea::vertical()
+        .id_salt(salt)
+        .max_height(180.0)
+        // Cx measures controls from a short first-frame placeholder.
+        // Let the list establish its height, then shrink to its content.
+        .min_scrolled_height(180.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for (i, entry) in entries.iter().enumerate() {
+                let (key, name, region) = row(entry);
+                ui.push_id(key, |ui| {
+                    ui.horizontal_top(|ui| {
+                        let width = (ui.available_width() - 20.0 - ui.spacing().item_spacing.x).max(1.0);
+                        ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.set_min_width(width);
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.add(egui::Label::new(RichText::new(name).strong()).wrap());
+                            ui.add(egui::Label::new(RichText::new(region).size(12.0).color(p.muted)).wrap());
+                        });
+                        if widgets::icon_button(ui, p, "trash-filled", tr!("common-remove"), true) {
+                            remove = Some(i);
+                        }
+                    });
+                });
+            }
+        });
+    remove
 }

@@ -12,6 +12,7 @@ use crate::ui::widgets::{self, ActionKind, hero};
 use crate::world::World;
 use crate::world::group_data::GroupData;
 use crate::world::names::NameScope;
+use aurora_i18n::UiUpper;
 use aurora_net::GroupMembership;
 use aurora_net::groups::powers;
 use aurora_net::search::GroupProfile;
@@ -859,7 +860,7 @@ pub fn card_with<R>(
                 let mut job = egui::text::LayoutJob::default();
                 let mut format = crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 10.5, p.muted_dim);
                 format.extra_letter_spacing = 0.4;
-                job.append(&title.to_uppercase(), 0.0, format);
+                job.append(&title.ui_upper(), 0.0, format);
                 ui.label(job);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
             });

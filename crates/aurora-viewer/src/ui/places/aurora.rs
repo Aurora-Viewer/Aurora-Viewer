@@ -32,6 +32,7 @@ use crate::world::place_details::{Place as PlaceProfile, Source as Profile, Stag
 use crate::world::place_snapshots::Spot;
 use crate::world::tphistory::{self, HistoryItem};
 use crate::world::worldmap::WorldMap;
+use aurora_i18n::UiUpper;
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
@@ -43,6 +44,8 @@ use uuid::Uuid;
 /// From this width the window shows the rail and the preview.
 pub const WIDE: f32 = 760.0;
 const RAIL_W: f32 = 210.0;
+const RAIL_HANDLE: f32 = 8.0;
+const MIN_LIST_W: f32 = 220.0;
 const PREVIEW_W: f32 = 316.0;
 const TOOLBAR_H: f32 = 52.0;
 const FOOTER_H: f32 = 38.0;
@@ -149,6 +152,34 @@ pub struct Env<'a> {
     pub favorites: &'a [Uuid],
 }
 
+/// Width of the landmark folder pane. Keep the user's choice in the window
+/// layout. A temporarily smaller window only limits the displayed width.
+fn folder_rail_width(ui: &mut egui::Ui, p: &Palette, body: Rect) -> f32 {
+    let id = egui::Id::unique("places_folder_rail_width");
+    let max = (body.width() - PREVIEW_W - RAIL_HANDLE - MIN_LIST_W).max(140.0);
+    let saved = ui.data_mut(|data| data.get_persisted::<f32>(id)).unwrap_or(RAIL_W);
+    let mut width = saved.clamp(140.0, max);
+    let handle = Rect::from_min_size(body.min + Vec2::new(width, 0.0), Vec2::new(RAIL_HANDLE, body.height()));
+    let response = ui
+        .interact(handle, id, Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+        .on_hover_text(aurora_i18n::tr!("inventory-resize-sidebar"));
+    if response.double_clicked() {
+        ui.data_mut(|data| data.remove::<f32>(id));
+        width = RAIL_W.clamp(140.0, max);
+    } else if response.dragged() && response.drag_delta().x != 0.0 {
+        width = (width + response.drag_delta().x).clamp(140.0, max);
+        ui.data_mut(|data| data.insert_persisted(id, width));
+    }
+    let stroke = if response.hovered() || response.dragged() {
+        widgets::border_stroke(p, egui::Stroke::new(1.0, p.violet_light))
+    } else {
+        widgets::divider_stroke(p)
+    };
+    ui.painter().vline(body.left() + width + RAIL_HANDLE * 0.5, body.y_range(), stroke);
+    width
+}
+
 /// The profile the preview asks for a place.
 fn profile_of(place: &Place, inv: &Inventory, history: &[HistoryItem]) -> Option<Profile> {
     if let Some(item) = place.item {
@@ -204,7 +235,7 @@ fn paint_icon(painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
 
 /// A small caps section title ("LANDMARK FOLDERS").
 fn section(ui: &egui::Ui, p: &Palette, text: &str, at: Pos2) {
-    let g = line(ui, &text.to_uppercase(), 11.0, p.muted, true, 400.0);
+    let g = line(ui, &text.ui_upper(), 11.0, p.muted, true, 400.0);
     ui.painter().galley(at, g, p.muted);
 }
 
@@ -580,11 +611,14 @@ impl PlacesUi {
         self.sort_button(&mut tb, p, c.world, env.sort, actions);
 
         let body = Rect::from_min_max(Pos2::new(full.left(), bar.bottom()), full.max);
-        let rail = Rect::from_min_size(body.min, Vec2::new(RAIL_W, body.height()));
+        let rail_width = folder_rail_width(ui, p, body);
+        let rail = Rect::from_min_size(body.min, Vec2::new(rail_width, body.height()));
         let preview = Rect::from_min_max(Pos2::new(body.right() - PREVIEW_W, body.top()), body.max);
-        let list = Rect::from_min_max(Pos2::new(rail.right(), body.top()), Pos2::new(preview.left(), body.bottom()));
+        let list = Rect::from_min_max(
+            Pos2::new(rail.right() + RAIL_HANDLE, body.top()),
+            Pos2::new(preview.left(), body.bottom()),
+        );
         ui.painter().rect_filled(rail, 0.0, p.field.gamma_multiply(0.55));
-        ui.painter().vline(rail.right(), rail.y_range(), stroke);
         ui.painter().rect_filled(preview, 0.0, p.field.gamma_multiply(0.35));
         ui.painter().vline(preview.left(), preview.y_range(), stroke);
 
@@ -976,15 +1010,10 @@ impl PlacesUi {
     /// its position (LLPanelPlaces, LLTeleportHistoryPanel:
     /// canTeleportToLocation), a landmark under @tplm (LLLandmarksPanel).
     fn teleport_allowed(world: &World, key: Key, place: &Place) -> bool {
-        if let Key::Visit(i) = key
-            && let Some(entry) = world.tp_storage.items.get(i)
-        {
-            return world.rlva_can_teleport_global(entry.global);
-        }
-        if place.item.is_some() {
-            world.rlva_can_teleport_landmark()
+        if matches!(key, Key::Landmark(_)) && place.item.is_some() {
+            world.rlva_landmark_button_enabled()
         } else {
-            place.global.is_none_or(|g| world.rlva_can_teleport_global(g))
+            world.rlva_can_teleport_location()
         }
     }
 
@@ -1898,6 +1927,47 @@ mod tests {
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn folder_divider_drag_survives_a_restart_and_a_temporarily_smaller_window() {
+        let p = crate::theme::Theme::default().palette();
+        let frame = |ctx: &egui::Context, width: f32, events| {
+            let body = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 400.0));
+            let mut displayed = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(body),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    displayed = folder_rail_width(ui, &p, body);
+                },
+            );
+            output.textures_delta.clear();
+            displayed
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let ctx = egui::Context::default();
+        let start = Pos2::new(RAIL_W + RAIL_HANDLE * 0.5, 100.0);
+        let end = start + Vec2::new(82.0, 0.0);
+        assert_eq!(frame(&ctx, 1000.0, vec![]), RAIL_W);
+        frame(&ctx, 1000.0, vec![egui::Event::PointerMoved(start), button(start, true)]);
+        frame(&ctx, 1000.0, vec![egui::Event::PointerMoved(end)]);
+        let resized = frame(&ctx, 1000.0, vec![button(end, false)]);
+        assert_eq!(resized, RAIL_W + 82.0);
+
+        let saved = ron::to_string(&ctx.memory(|memory| memory.clone())).unwrap();
+        let restored = egui::Context::default();
+        restored.memory_mut(|memory| *memory = ron::from_str(&saved).unwrap());
+        assert_eq!(frame(&restored, WIDE, vec![]), WIDE - PREVIEW_W - RAIL_HANDLE - MIN_LIST_W);
+        assert_eq!(frame(&restored, 1000.0, vec![]), resized);
     }
 
     #[test]

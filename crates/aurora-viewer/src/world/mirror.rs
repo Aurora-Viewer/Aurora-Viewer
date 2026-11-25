@@ -29,7 +29,7 @@ pub fn mirror_id(agent: Uuid) -> Uuid {
 }
 
 /// A full update that makes `object` again, as a client-only copy.
-fn copy_of(object: &objects::Object, full_id: Uuid, local_id: u32, parent_id: u32) -> ObjectUpdate {
+pub(super) fn copy_of(object: &objects::Object, full_id: Uuid, local_id: u32, parent_id: u32) -> ObjectUpdate {
     ObjectUpdate {
         local_id,
         full_id,
@@ -74,7 +74,7 @@ impl World {
 
     /// Whose appearance `avatar` shows: ours for the mirror.
     pub(crate) fn appearance_of(&self, avatar: &Uuid) -> Uuid {
-        if self.is_mirror(avatar) { self.agent_id } else { *avatar }
+        if self.is_local_copy(avatar) { self.agent_id } else { *avatar }
     }
 
     /// Make the mirror (or keep the one there): a copy of our avatar and
@@ -102,7 +102,11 @@ impl World {
         // what we wear, parents before their children; not the HUDs, which
         // would show twice on the screen
         for idx in self.objects.subtree(own).into_iter().skip(1) {
-            let Some(object) = self.objects.get(idx) else { continue };
+            // (nor the copies drawn from the cache, which go when the
+            // region's objects come: the mirror would keep them)
+            let Some(object) = self.objects.get(idx).filter(|o| !super::avatar_cache::is_copy(o.key)) else {
+                continue;
+            };
             let Some(&parent) = object.parent_key().and_then(|key| locals.get(&key)) else {
                 continue;
             };

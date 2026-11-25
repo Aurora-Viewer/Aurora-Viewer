@@ -20,6 +20,9 @@ pub struct Reattach {
 }
 
 pub struct Wear {
+    /// The order of the request: arrivals seen in one pass are handled in
+    /// it, as the simulator attaches a batch one object after the other.
+    pub seq: u64,
     pub replace: bool,
     pub preserve: BTreeSet<Uuid>,
     pub allowed: BTreeSet<u8>,
@@ -36,6 +39,7 @@ pub struct Watchdog {
     pub rejected: BTreeSet<Uuid>,
     pub wears: BTreeMap<Uuid, Wear>,
     pub expected_detach: BTreeMap<Uuid, Instant>,
+    pub next_seq: u64,
     saved: BTreeMap<Uuid, Instant>,
     initialized: bool,
     pub(super) checked: Option<Checked>,
@@ -137,10 +141,24 @@ impl Watchdog {
                 allowed: !locked,
             });
         }
-        for (&item, &attachment) in &current {
-            if self.known.get(&item).is_some_and(|a| a.point == attachment.point) {
-                continue;
-            }
+        // RlvAttachmentLockWatchdog::onAttach runs once per object, in the
+        // order the simulator attaches them: the arrivals of this pass are
+        // taken in the order they were asked for
+        let mut arrivals: Vec<(Uuid, Attachment)> = current
+            .iter()
+            .filter(|(item, attachment)| !self.known.get(item).is_some_and(|a| a.point == attachment.point))
+            .map(|(item, attachment)| (*item, *attachment))
+            .collect();
+        arrivals.sort_by_key(|(item, _)| self.wears.get(item).map_or(0, |w| w.seq));
+        let mut later: BTreeSet<Uuid> = arrivals.iter().map(|(item, _)| *item).collect();
+        for (item, attachment) in arrivals {
+            later.remove(&item);
+            // what the point holds when this object arrives
+            let on_point: Vec<Uuid> = current
+                .iter()
+                .filter(|(other, a)| **other != item && a.point == attachment.point && !later.contains(*other))
+                .map(|(other, _)| *other)
+                .collect();
             if self.pending.get(&item).is_some_and(|p| p.attachment.point == attachment.point) {
                 self.pending.remove(&item);
                 self.wears.remove(&item);
@@ -160,25 +178,19 @@ impl Watchdog {
                         w.allowed.contains(&attachment.point)
                             && !(self.deny_locked_replacement
                                 && w.replace
-                                && w.previous.iter().any(|(old_item, old)| {
-                                    *old_item != item
-                                        && old.point == attachment.point
-                                        && (locked_removed.contains(old_item) || w.preserve.contains(old_item))
-                                }))
+                                && on_point.iter().any(|old| locked_removed.contains(old) || w.preserve.contains(old)))
                     },
                 );
+            // a replace detaches everything else on the point, an object of
+            // the same request that arrived first included, but what is
+            // locked (detach(idxAttachPt, idsAttachObjExcept))
             if allowed
                 && let Some(wear) = &wear
                 && wear.replace
             {
-                for (&old_item, old) in &wear.previous {
-                    if old_item != item
-                        && old.point == attachment.point
-                        && current.contains_key(&old_item)
-                        && !locked_removed.contains(&old_item)
-                        && !wear.preserve.contains(&old_item)
-                    {
-                        self.rejected.insert(old_item);
+                for old_item in &on_point {
+                    if !locked_removed.contains(old_item) && !wear.preserve.contains(old_item) {
+                        self.rejected.insert(*old_item);
                     }
                 }
             }
@@ -215,7 +227,8 @@ impl super::super::World {
             .children_of(&agent.key)
             .iter()
             .filter_map(|i| {
-                let object = self.objects.get(*i)?;
+                // (not the copies drawn from the cache, world/avatar_cache)
+                let object = self.objects.get(*i).filter(|o| !o.is_client_preview())?;
                 let item = object.attachment_item_id().filter(|item| !item.is_nil()).unwrap_or(object.full_id);
                 let point = object.attachment_point();
                 (point != 0).then_some((
@@ -266,9 +279,12 @@ impl super::super::World {
                         .copied()
                         .filter(|point| self.rlva_can_add(item.item_id, *point, actor))
                         .collect();
+                    self.rlva.watchdog.next_seq += 1;
+                    let seq = self.rlva.watchdog.next_seq;
                     self.rlva.watchdog.wears.insert(
                         item.item_id,
                         Wear {
+                            seq,
                             replace: !item.add,
                             preserve: previous.keys().filter(|id| !self.rlva_can_remove(**id, actor)).copied().collect(),
                             allowed,
@@ -283,16 +299,8 @@ impl super::super::World {
     }
 
     pub fn rlva_watchdog_tick(&mut self, now: Instant) {
-        // Changes noted while RLVa was on are still written after it is
-        // turned off.
-        self.rlva.last_points.save_due(now);
         if !self.rlva.enabled() || !self.movement_complete {
             return;
-        }
-        // The point each object is seen on, for the wear menus: an
-        // inventory item often carries no saved point.
-        for (item, point) in self.rlva_worn_attachment_points() {
-            self.rlva.last_points.note(item, point, now);
         }
         let current = self.rlva_attachment_snapshot();
         let bindings: Vec<_> = self
@@ -455,6 +463,53 @@ impl super::super::World {
 mod tests {
     use super::*;
 
+    /// RlvAttachmentLockWatchdog::onAttach (rlvlocks.cpp): a replacing
+    /// object detaches what its point holds when it arrives, an object of
+    /// the same request that arrived first included; the last one asked
+    /// stays, whether both arrive in one pass or in two.
+    #[test]
+    fn rlva_watchdog_replacing_objects_of_one_request_keep_the_last_asked() {
+        let now = Instant::now();
+        let (first, second) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let on_hand = |root| Attachment {
+            root: Uuid::from_u128(root),
+            point: 6,
+        };
+        let wear = |seq| Wear {
+            seq,
+            replace: true,
+            preserve: BTreeSet::new(),
+            allowed: BTreeSet::from([6]),
+            previous: BTreeMap::new(),
+            at: now,
+        };
+        // (the second asked has the smaller id: the order is the request's)
+        for (a, b) in [(second, first), (first, second)] {
+            let mut one_pass = Watchdog::default();
+            one_pass.observe(BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), |_| true, now);
+            one_pass.wears.insert(a, wear(1));
+            one_pass.wears.insert(b, wear(2));
+            let both = BTreeMap::from([(a, on_hand(11)), (b, on_hand(12))]);
+            one_pass.observe(both.clone(), &BTreeSet::new(), &BTreeMap::new(), |_| true, now);
+            assert_eq!(one_pass.rejected, BTreeSet::from([a]));
+
+            let mut two_passes = Watchdog::default();
+            two_passes.observe(BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), |_| true, now);
+            two_passes.wears.insert(a, wear(1));
+            two_passes.wears.insert(b, wear(2));
+            two_passes.observe(
+                BTreeMap::from([(a, on_hand(11))]),
+                &BTreeSet::new(),
+                &BTreeMap::new(),
+                |_| true,
+                now,
+            );
+            assert!(two_passes.rejected.is_empty());
+            two_passes.observe(both, &BTreeSet::new(), &BTreeMap::new(), |_| true, now);
+            assert_eq!(two_passes.rejected, BTreeSet::from([a]));
+        }
+    }
+
     #[test]
     fn rlva_watchdog_replacement_keeps_locked_predecessors_and_removes_only_the_wear_snapshot() {
         let now = Instant::now();
@@ -473,6 +528,7 @@ mod tests {
         watchdog.wears.insert(
             item,
             Wear {
+                seq: 0,
                 replace: true,
                 preserve: BTreeSet::from([nostrip]),
                 allowed: BTreeSet::from([5]),
@@ -491,6 +547,7 @@ mod tests {
         strict.wears.insert(
             item,
             Wear {
+                seq: 0,
                 replace: true,
                 preserve: BTreeSet::from([nostrip]),
                 allowed: BTreeSet::from([5]),
@@ -618,6 +675,7 @@ mod tests {
         watchdog.wears.insert(
             new,
             Wear {
+                seq: 0,
                 replace: true,
                 preserve: BTreeSet::new(),
                 allowed: BTreeSet::from([4]),

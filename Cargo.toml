@@ -24,6 +24,12 @@ overflow-checks = false
 [profile.dev.package."*"]
 opt-level = 3
 
+# The texture decoder is the hot loop of a region's loading, and replaces a
+# dependency (OpenJPEG, built with full optimisation like every dependency):
+# it is built as one. A small crate without dependents but aurora-assets.
+[profile.dev.package.aurora-j2k]
+opt-level = 3
+
 # The one exception to the single profile: the viewer crate's own test
 # executable, the heaviest compile of the workspace, is built without
 # optimisation. It only runs the tests, and the CI builds them unoptimised
@@ -53,6 +59,11 @@ incremental = false
 # task `ci-optimised-deps`, has the measures). Without this section `ci`
 # would inherit the 3 of `dev`.
 [profile.ci.package."*"]
+opt-level = 1
+
+# The texture decoder's tests decode thousands of codestreams with it and
+# with OpenJPEG: optimised like the dependencies, they take seconds.
+[profile.ci.package.aurora-j2k]
 opt-level = 1
 
 # "Debug viewer" of aurora-tools.cmd (target\debugging): a console window,
@@ -89,18 +100,23 @@ type_complexity = "allow"
 # integrated GPUs (`igvk64`) reads past and crashes on at every start
 # (#1302). The organisation's fork `Aurora-Viewer/wgpu` holds the branch
 # `aurora/v30.0.1-empty-pool`: the v30.0.1 tag plus that commit (11 lines in
-# wgpu-hal), pinned by `rev`; never delete or rewrite that branch. The whole
-# family comes from it, so the crates keep sharing one `wgpu-types` and one
-# `naga`. Remove this section with the upgrade.
+# wgpu-hal); never delete or rewrite that branch. The ray tracing needs one
+# more: the TLAS instance flags (facing cull off for double-sided faces,
+# flipped facing for mirrored instances, forced opacity), carried through
+# wgpu-core and wgpu-hal to Vulkan, DX12 and Metal, on the branch
+# `aurora/v30.0.1-rt-instance-flags` (that branch plus one commit), pinned
+# by `rev`; never delete or rewrite it either. The whole family comes from
+# it, so the crates keep sharing one `wgpu-types` and one `naga`. Remove
+# this section with the upgrade (the flags are to be offered upstream).
 [patch.crates-io]
-naga = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-naga-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-core = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-core-deps-apple = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-core-deps-emscripten = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-core-deps-wasm = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-core-deps-windows-linux-android = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-hal = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-naga-bridge = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+naga = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+naga-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-core = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-core-deps-apple = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-core-deps-emscripten = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-core-deps-wasm = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-core-deps-windows-linux-android = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-hal = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-naga-bridge = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
