@@ -502,17 +502,25 @@ impl Scene {
                 if !hit.t.is_finite() || hit.t > reach {
                     return None;
                 }
-                match point {
-                    Some(p) if hit.t > (p - ray.0).dot(ray.1) + DEPTH_NEAR => {
-                        // (the ray may have gone on beside the part drawn
-                        // there, through a gap of the same object); ranked
-                        // where it meets the texel's ray, so that a surface
-                        // a few centimetres behind the one drawn there (a
-                        // wall behind a poster) does not come before it
-                        let past = self.drawn_at(world, idx, ray.0, p, now, mode)?;
-                        Some(((p - ray.0).dot(ray.1) + past, idx, p))
-                    }
-                    _ => Some((hit.t, idx, ray.0 + ray.1 * hit.t)),
+                let Some(p) = point else {
+                    return Some((hit.t, idx, ray.0 + ray.1 * hit.t));
+                };
+                // Near the depth, ranked where the texel's ray meets it, the
+                // ray the depth was drawn on: on the click's, a surface a few
+                // centimetres behind the one drawn there (a wall behind a
+                // poster) could come before it, both seen at an angle.
+                let depth_t = (p - ray.0).dot(ray.1);
+                let drawn = if hit.t >= depth_t - DEPTH_NEAR {
+                    self.drawn_at(world, idx, ray.0, p, now, mode)
+                } else {
+                    None
+                };
+                if hit.t > depth_t + DEPTH_NEAR {
+                    // (the ray may have gone on beside the part drawn
+                    // there, through a gap of the same object)
+                    Some((depth_t + drawn?, idx, p))
+                } else {
+                    Some((drawn.map_or(hit.t, |past| depth_t + past), idx, ray.0 + ray.1 * hit.t))
                 }
             });
             let hit = nearest_hit(hits, |h| (h.0, h.1));
@@ -3003,31 +3011,44 @@ pub(crate) mod tests {
 
     #[test]
     fn a_surface_just_behind_the_one_drawn_at_the_depth_does_not_come_before_it() {
-        // A poster drawn 10 m away, slightly turned: the click's ray meets it
-        // 2 cm behind the depth. A wall 5 cm behind the depth, turned more,
-        // which that ray meets 15 cm behind it: drawn there only if nothing
-        // is in front, and then it is taken.
+        // A poster drawn 10 m away, turned: the click's ray, 10 cm beside the
+        // texel's, meets it a few centimetres behind the depth. A wall
+        // behind it, which that ray meets more than 6 cm behind the depth:
+        // drawn there only if nothing is in front, and then it is taken.
         let (mut world, mut scene, poster, wall) = indexed_scene_with_two_objects();
         let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         let point = Vec3::new(10.0, 0.1, 50.0);
-        // each quad (the -X side of a unit cube) through `at`, turned by
-        // atan(slope): the click's ray, 10 cm beside the depth, meets it
-        // `slope` × 10 cm behind `at`
-        for (idx, at, slope) in [(poster, point, 0.2f32), (wall, point + Vec3::X * 0.05, 1.0)] {
-            let turn = slope.atan();
-            let o = world.objects.get_mut(idx).unwrap();
-            o.rotation = Quat::from_rotation_z(turn);
-            o.position = at + Vec3::new(turn.cos(), turn.sin(), 0.0) * 0.5;
-        }
-        let pick = |scene: &Scene| {
+        let pick = |world: &World, scene: &Scene| {
             (
-                scene.left_selection_pick(&world, Some(ray), Some(point), true, false, 256.0).1,
-                scene.selection_pick(&world, Some(ray), Some(point), false, false, 256.0).1,
+                scene.left_selection_pick(world, Some(ray), Some(point), true, false, 256.0).1,
+                scene.selection_pick(world, Some(ray), Some(point), false, false, 256.0).1,
             )
         };
-        assert_eq!(pick(&scene), (Some(poster), Some(poster)));
-        scene.gpu[poster].hidden = true;
-        assert_eq!(pick(&scene), (Some(wall), Some(wall)));
+        // (the poster's slope, the wall's distance behind the depth on the
+        // texel's ray and its slope): the click's ray meets each `slope` ×
+        // 10 cm behind where the texel's ray does
+        for (poster_slope, wall_behind, wall_slope) in [
+            // the click's ray meets the poster 2 cm behind the depth, the
+            // wall 15 cm behind it
+            (0.2f32, 0.05, 1.0f32),
+            // the poster 5 cm behind the depth, the wall 7 cm: on that ray
+            // the poster is nearer than the wall is on the texel's
+            (0.5, 0.02, 0.5),
+        ] {
+            // each quad (the -X side of a unit cube) through `at`, turned
+            // by atan(slope)
+            for (idx, at, slope) in [(poster, point, poster_slope), (wall, point + Vec3::X * wall_behind, wall_slope)] {
+                let turn = slope.atan();
+                let o = world.objects.get_mut(idx).unwrap();
+                o.rotation = Quat::from_rotation_z(turn);
+                o.position = at + Vec3::new(turn.cos(), turn.sin(), 0.0) * 0.5;
+            }
+            let case = format!("{poster_slope}, {wall_behind}, {wall_slope}");
+            assert_eq!(pick(&world, &scene), (Some(poster), Some(poster)), "{case}");
+            scene.gpu[poster].hidden = true;
+            assert_eq!(pick(&world, &scene), (Some(wall), Some(wall)), "{case}");
+            scene.gpu[poster].hidden = false;
+        }
     }
 
     #[test]

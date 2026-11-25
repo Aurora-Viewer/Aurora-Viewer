@@ -5940,7 +5940,7 @@ impl App {
         // a rigged mesh, a worn mesh or a worn prim with an action shown
         // there: what the GPU drew at the click (scene/drawn.rs)
         let shown = (!alt)
-            .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit))
+            .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit, false))
             .flatten();
         let hit = shown.map_or(hit, |d| Some(d.hit.point));
         // Only our displayed body takes the press, not empty space inside
@@ -8588,7 +8588,7 @@ impl App {
                 .first()
                 .copied();
             let cpu_point = cpu_target.and_then(|idx| self.scene.edit_hit_point(&self.world, idx, ray));
-            let drawn = self.designate(crate::scene::drawn::Gesture::Build, &picked, cpu_point);
+            let drawn = self.designate(crate::scene::drawn::Gesture::Build, &picked, cpu_point, false);
             let (hit, target) = match drawn {
                 Some(d) => {
                     face_drawn = Some(d);
@@ -8619,11 +8619,12 @@ impl App {
             let ray = picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y));
             // a rigged mesh is selected where it is shown (Legacy Viewer: with
             // the move tool only, LLToolCompTranslate)
-            let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
+            let on_face = target.is_some_and(|idx| self.scene.gpu.get(idx).is_some_and(|g| !g.is_avatar));
+            let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit, on_face) {
                 Some(d) => (Some(d.hit.point), Some(d.idx)),
                 None => {
                     // a far face taken where it is drawn, beside the ray
-                    surface_ray = hit.filter(|_| target.is_some()).map(|p| crate::scene::Scene::surface_ray(ray, p));
+                    surface_ray = hit.filter(|_| on_face).map(|p| crate::scene::Scene::surface_ray(ray, p));
                     (hit, target)
                 }
             };

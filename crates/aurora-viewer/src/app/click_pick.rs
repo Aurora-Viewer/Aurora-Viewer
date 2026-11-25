@@ -714,12 +714,15 @@ impl App {
 
     /// The object a click designates from the faces drawn under its pixel
     /// (scene/drawn.rs); None when the search on the CPU speaks for it.
-    /// `found`: the point that search settled on.
+    /// `found`: the point that search settled on; `on_face`: it took an
+    /// object's face there, which bounds the faces drawn even at the depth's
+    /// own point (a far face taken where it is drawn, `Scene::drawn_at`).
     pub(super) fn designate(
         &mut self,
         gesture: crate::scene::drawn::Gesture,
         picked: &Picked,
         found: Option<Vec3>,
+        on_face: bool,
     ) -> Option<crate::scene::drawn::DrawnObject> {
         let shown = self.scene.designated(
             &self.world,
@@ -727,7 +730,7 @@ impl App {
             &picked.drawn,
             picked.ray,
             found,
-            picked.depth,
+            picked.depth.filter(|_| !on_face),
             self.build.open,
         );
         if self.clicks.scripted()

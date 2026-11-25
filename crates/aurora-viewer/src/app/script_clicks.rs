@@ -128,7 +128,7 @@ impl App {
         self.scene.rigged_clicks = self.rigged_clicks();
         let depth = self.scene.touch_depth(&self.world, &picked.drawn, ray, picked.depth, far);
         let hit = self.scene.action_point(&self.world, ray, depth, false, far);
-        let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);
+        let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit, false);
         if let Some(d) = shown {
             if let Some(target) = crate::interaction::target(&self.world, d.idx, &self.interactions.props)
                 && gun_acts_on(target.action)
