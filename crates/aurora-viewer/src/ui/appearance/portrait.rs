@@ -221,6 +221,28 @@ pub(super) fn choices_ui(ui: &mut egui::Ui, p: &Palette, s: &mut PortraitSetting
         widgets::checkbox(ui, p, &mut s.hide_others, aurora_i18n::tr!("ui-appearance-portrait-hide-others"));
     });
     widgets::checkbox(ui, p, &mut s.keep, aurora_i18n::tr!("ui-appearance-portrait-keep"));
+    ui.add_space(6.0);
+    ui.label(
+        RichText::new(aurora_i18n::tr!("ui-appearance-portrait-wait"))
+            .size(12.0)
+            .family(fonts::semibold(ui.ctx()))
+            .color(p.muted),
+    );
+    ui.add(
+        egui::Slider::new(&mut s.wait_seconds, 0.0..=60.0)
+            .custom_parser(aurora_i18n::parse_number)
+            .step_by(0.5)
+            .suffix(" s")
+            .trailing_fill(true),
+    );
+    ui.add(
+        egui::Label::new(
+            RichText::new(aurora_i18n::tr!("ui-appearance-portrait-wait-help"))
+                .size(12.0)
+                .color(p.muted),
+        )
+        .wrap(),
+    );
 }
 
 /// The paid HD picture: its price, the side, and why it cannot be had now

@@ -118,6 +118,8 @@ pub enum RowState<'a> {
     },
     /// Every item worn: the textures and the layers are still coming.
     LoadingLook,
+    /// Time reserved for the user to adjust alpha or pose.
+    Adjusting,
     Framing,
     Shooting,
     Saving,
@@ -456,6 +458,7 @@ fn state_text(p: &Palette, state: RowState) -> (String, egui::Color32, Mark) {
         RowState::Wearing => busy(aurora_i18n::tr!("ui-appearance-batch-wearing")),
         RowState::Loading { worn, total } => busy(&aurora_i18n::tr!("ui-appearance-batch-loading", worn = worn, total = total)),
         RowState::LoadingLook => busy(aurora_i18n::tr!("ui-appearance-batch-loading-look")),
+        RowState::Adjusting => busy(aurora_i18n::tr!("ui-appearance-batch-adjusting")),
         RowState::Framing => busy(aurora_i18n::tr!("ui-appearance-batch-framing")),
         RowState::Shooting => busy(aurora_i18n::tr!("ui-appearance-batch-shooting")),
         RowState::Saving => busy(aurora_i18n::tr!("ui-appearance-batch-saving")),

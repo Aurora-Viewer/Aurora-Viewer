@@ -11,6 +11,7 @@
 
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// How much of the avatar the photo holds.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,7 +66,7 @@ pub enum Lighting {
 
 /// The portrait's choices; kept in the settings when "Keep these settings"
 /// is on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PortraitSettings {
     pub framing: Framing,
@@ -78,6 +79,8 @@ pub struct PortraitSettings {
     pub hide_others: bool,
     /// The choices come back at the next portrait.
     pub keep: bool,
+    /// Extra time after an outfit has loaded before an automatic portrait is taken.
+    pub wait_seconds: f32,
     /// The paid HD picture sent with the free thumbnail, and its side;
     /// both kept whatever "keep" says (`opening`).
     pub hd: bool,
@@ -174,6 +177,7 @@ impl Default for PortraitSettings {
             lighting: Lighting::Studio,
             hide_others: true,
             keep: true,
+            wait_seconds: 0.0,
             hd: false,
             hd_side: HdSide::Side512,
         }
@@ -189,11 +193,21 @@ impl PortraitSettings {
         } else {
             Self {
                 keep: false,
+                wait_seconds: saved.wait_seconds,
                 hd: saved.hd,
                 hd_side: saved.hd_side,
                 ..Self::default()
             }
         }
+    }
+
+    /// The extra automatic-photo wait, bounded for settings read from disk.
+    pub fn wait(self) -> Duration {
+        Duration::from_secs_f32(if self.wait_seconds.is_finite() {
+            self.wait_seconds.clamp(0.0, 60.0)
+        } else {
+            0.0
+        })
     }
 }
 
@@ -419,16 +433,42 @@ mod tests {
         let opened = PortraitSettings::opening(&saved);
         assert_eq!(opened.framing, Framing::Body);
         assert!(!opened.keep);
+        assert_eq!(opened.wait_seconds, 0.0);
         let old: PortraitSettings = serde_json::from_str("{}").expect("old settings");
         assert_eq!(old, PortraitSettings::default());
         assert!(backdrop_rgb(Backdrop::Scene).is_none());
         assert_eq!(arms_lowered(Pose::Current), None);
+        assert_eq!(
+            PortraitSettings {
+                wait_seconds: 7.5,
+                ..Default::default()
+            }
+            .wait(),
+            Duration::from_millis(7500)
+        );
+        assert_eq!(
+            PortraitSettings {
+                wait_seconds: 80.0,
+                ..Default::default()
+            }
+            .wait(),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            PortraitSettings {
+                wait_seconds: f32::NAN,
+                ..Default::default()
+            }
+            .wait(),
+            Duration::ZERO
+        );
     }
 
     #[test]
     fn the_hd_choice_survives_settings_not_kept() {
         let saved = PortraitSettings {
             keep: false,
+            wait_seconds: 7.5,
             hd: true,
             hd_side: HdSide::Side1024,
             framing: Framing::Face,
@@ -436,6 +476,7 @@ mod tests {
         };
         let opened = PortraitSettings::opening(&saved);
         assert!(opened.hd);
+        assert_eq!(opened.wait_seconds, 7.5);
         assert_eq!(opened.hd_side, HdSide::Side1024);
         assert_eq!(opened.framing, Framing::Body);
         assert!(!PortraitSettings::default().hd, "off unless chosen");
