@@ -78,6 +78,11 @@ pub struct AreaSearchUi {
     menu_locks: MenuLocks,
     /// The result list the selection was last checked against.
     checked: u64,
+    /// What that list was asked for: the top row is picked again when it
+    /// changes.
+    asked: Option<(Filters, Column, bool, Option<Uuid>)>,
+    /// The pointer is over the window.
+    pointed: bool,
     /// AURORA_DEMO_AREA_SEARCH=menu: right click the second row once shown.
     pub(crate) demo_menu: bool,
     /// `select`: take the third row once shown.
@@ -183,6 +188,7 @@ impl AreaSearchUi {
         self.was_open = false;
         self.digest = None;
         self.several = false;
+        self.asked = None;
     }
 
     /// The objects the 3D view shows: the selected ones, a few at most.
@@ -219,6 +225,8 @@ impl AreaSearchUi {
                 .title_state(p.success, aurora_i18n::tr!("area-search-live"));
         }
         window.show(ctx, p, open, |ui| {
+            let pointer = ui.ctx().pointer_latest_pos();
+            self.pointed = pointer.and_then(|at| ui.ctx().layer_id_at(at)) == Some(ui.layer_id());
             let d = self.digest();
             let (mut body, footer) = widgets::above_footer(ui);
             action = if wide {
@@ -486,17 +494,42 @@ impl AreaSearchUi {
     }
 
     /// Selected rows that were filtered out or left the list cannot be
-    /// acted on; checked once per new result list.
+    /// acted on, and the top row is picked while the user chose none; checked
+    /// once per new result list.
     fn check_selection(&mut self) {
         if self.checked == self.table.generation {
             return;
         }
         self.checked = self.table.generation;
-        if self.selection.is_empty() {
+        if !self.selection.is_empty() {
+            let visible: HashSet<_> = self.table.visible.iter().map(|i| self.table.rows[*i].id).collect();
+            self.selection.retain(&visible);
+        }
+        // (an open menu never moves to another object)
+        if self.menu_at.is_some() {
             return;
         }
-        let visible: HashSet<_> = self.table.visible.iter().map(|i| self.table.rows[*i].id).collect();
-        self.selection.retain(&visible);
+        let t = &self.table;
+        let asked = self.asked.as_ref().is_none_or(|(filters, sort, descending, owner)| {
+            *filters != t.filters || *sort != t.sort || *descending != t.descending || *owner != t.owner
+        });
+        if asked {
+            self.asked = Some((t.filters.clone(), t.sort, t.descending, t.owner));
+            // a selection cleared by hand stays so until then
+            if self.selection.is_empty() {
+                self.selection.reset();
+            }
+        }
+        // Kept while the list only moves (walking, a pet passing by): the top
+        // row is taken again for another search or order, and while the list
+        // fills, never under the pointer.
+        let again = self.selection.is_empty() || asked || (t.pending > 0 && !self.pointed);
+        if self.selection.automatic()
+            && again
+            && let Some(top) = t.visible.first()
+        {
+            self.selection.pick(t.rows[*top].id);
+        }
     }
 
     /// menu_fs_area_search.xml with its enable rules (onContextMenuItemEnable):
@@ -610,6 +643,10 @@ impl AreaSearchUi {
             action = Some(Action::FilterMine);
         }
         menu::separator(ui, p);
+        // (the small window's footer has no room for its button)
+        if menu::check(ui, p, "list-check", aurora_i18n::tr!("area-search-several"), self.several, true) {
+            self.several = !self.several;
+        }
         if menu::item(ui, p, "select-all", aurora_i18n::tr!("common-select-all")) {
             let all = self.table.visible.iter().map(|i| self.table.rows[*i].id).collect();
             self.selection.select_all(all);

@@ -319,7 +319,7 @@ impl App {
             if self.area_search_feed.seeded {
                 self.area_search_feed.reset();
                 self.area_search_ui.table.replace(Vec::new());
-                self.area_search_ui.selection.clear();
+                self.area_search_ui.selection.reset();
                 self.area_search_ui.stage.stage.clear(&self.scene);
             }
             if self
@@ -338,7 +338,7 @@ impl App {
         if self.area_search_feed.region != self.world.main_region {
             self.area_search_feed.reset();
             self.area_search_feed.region = self.world.main_region;
-            self.area_search_ui.selection.clear();
+            self.area_search_ui.selection.reset();
         }
         if !self.area_search_feed.seeded {
             self.area_search_feed

@@ -5055,7 +5055,6 @@ board-more = ほか{ $count }件
 board-more-short = +{ $count }
 board-some-of = { $all }件中{ $shown }件
 board-of-all = / { $all }件
-board-find-keys = Ctrl F
 stage-turn-left = 左に回す
 stage-turn-right = 右に回す
 stage-higher = 上から見る

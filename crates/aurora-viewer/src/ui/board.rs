@@ -623,13 +623,14 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, rect: Rect, text: &mut String, hin
             .min_size(rect.size())
     });
     if empty && !field.has_focus() {
-        let keys = aurora_i18n::tr!("board-find-keys");
-        let width = |text: &str, font| ui.painter().layout_no_wrap(text.to_owned(), font, p.muted).size().x;
-        let body = width(hint, egui::TextStyle::Body.resolve(ui.style()));
-        let caps = width(keys, egui::FontId::proportional(11.0));
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let body = ui.painter().layout_no_wrap(hint.to_owned(), font, p.muted).size().x;
+        let caps = widgets::keycap::find_caps(ui, p);
+        let width = widgets::keycap::row_width(&caps);
         // (nothing over the hint with a large text)
-        if body + caps + 44.0 < rect.width() {
-            text_ending(ui, rect.right() - 10.0, rect.center().y, keys, 11.0, p.muted);
+        if body + width + 44.0 < rect.width() {
+            let at = egui::pos2(rect.right() - 10.0 - width, rect.center().y);
+            widgets::keycap::paint_row(ui, p, &caps, at, p.field);
         }
     }
     if super::find_shortcut::take(ui, &[field.id]) {

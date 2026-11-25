@@ -171,8 +171,21 @@ fn area_search_rows_select_and_dispatch_inspect_zoom_and_copy() {
 #[test]
 fn area_search_select_several_makes_clicks_add() {
     both(|mut h| {
-        h.click(aurora_i18n::tr!("area-search-several"));
-        h.click("Object 1");
+        if h.wide {
+            // the row picked for the user is no part of what they choose
+            assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
+            h.click(aurora_i18n::tr!("area-search-several"));
+            h.click("Object 2");
+            assert_eq!(h.ui.selection.ids, [Uuid::from_u128(2)]);
+            h.click("Object 2");
+            h.settle();
+            assert!(h.ui.selection.is_empty(), "taken out by hand, none is picked");
+            h.click("Object 1");
+        } else {
+            // the footer has no room for the button: the menu has it
+            assert!(!h.shown(aurora_i18n::tr!("area-search-several")));
+            h.menu("Object 1", aurora_i18n::tr!("area-search-several"));
+        }
         h.click("Object 3");
         assert_eq!(h.ui.selection.ids, [Uuid::from_u128(1), Uuid::from_u128(3)]);
         h.click("Object 1");
@@ -383,7 +396,8 @@ fn area_search_long_results_draw_only_what_shows_and_keep_the_footer_in_the_wind
                 (1..60).contains(&painted),
                 "only the viewport's rows: {painted} (wide {wide}, {scale})"
             );
-            let rect = h.find(aurora_i18n::tr!("area-search-several"));
+            // (a row is picked for the user: the footer has its buttons)
+            let rect = h.find(aurora_i18n::tr!("area-search-actions"));
             assert!(
                 egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect),
                 "the footer left the screen at {scale}: {rect:?}"
@@ -615,7 +629,7 @@ fn area_search_windows_keep_their_size() {
         crate::ui::widgets::steady_tests::assert_window_steady(
             WINDOW,
             sizes,
-            aurora_i18n::tr!("area-search-several"),
+            aurora_i18n::tr!("area-search-actions"),
             || {
                 let mut ui = AreaSearchUi {
                     was_open: true,
@@ -716,4 +730,113 @@ fn area_search_menu_hides_the_entries_rlva_refuses() {
     // nothing refused any more: the entries are back and answer
     h.locks = MenuLocks::default();
     assert!(matches!(h.menu("Object 5", touch), Some(Action::Touch(ids)) if ids == [Uuid::from_u128(5)]));
+}
+
+/// A result list that came anew, as the app makes one every half second.
+fn again(h: &mut Harness, change: impl Fn(&mut Vec<Row>)) {
+    let mut rows = h.ui.table.rows.clone();
+    change(&mut rows);
+    h.ui.table.replace(rows);
+    h.settle();
+}
+
+#[test]
+fn area_search_picks_the_top_row_until_the_user_chooses() {
+    let id = |n| Some(Uuid::from_u128(n));
+    both(|mut h| {
+        assert_eq!(h.ui.selection.single(), id(1), "as it opens");
+        // another search, another order
+        h.ui.table.filters.query = "object 3".into();
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(3));
+        h.ui.table.filters.query.clear();
+        h.settle();
+        assert_eq!(
+            h.ui.selection.single(),
+            id(1),
+            "a search cleared: the top row, though 3 still shows"
+        );
+        h.ui.table.sort_by(Column::Distance);
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(40));
+        h.ui.table.sort_by(Column::Distance);
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(1));
+        // nothing found, nothing picked
+        h.ui.table.filters.query = "does not match".into();
+        h.settle();
+        assert!(h.ui.selection.is_empty());
+        h.ui.table.filters.query.clear();
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(1));
+        // the one picked goes: the next top row
+        again(&mut h, |rows| rows.retain(|r| r.id != Uuid::from_u128(1)));
+        assert_eq!(h.ui.selection.single(), id(2));
+        // chosen: kept through searches that still show it
+        h.click("Object 5");
+        h.ui.table.filters.query = "object".into();
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(5));
+        h.ui.table.sort_by(Column::Distance);
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(5));
+        // and the top row once it does not
+        h.ui.table.filters.query = "object 7".into();
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(7));
+    });
+}
+
+#[test]
+fn area_search_pick_follows_a_filling_list_but_not_a_moving_one_nor_under_the_pointer() {
+    let id = |n| Some(Uuid::from_u128(n));
+    let nearest = |n: usize| move |rows: &mut Vec<Row>| rows[n].distance = 0.1 / (n as f32);
+    both(|mut h| {
+        again(&mut h, nearest(7));
+        assert_eq!(h.ui.table.rows[h.ui.table.visible[0]].id, Uuid::from_u128(8));
+        assert_eq!(h.ui.selection.single(), id(1), "passing by changes nothing");
+        h.ui.table.pending = 3;
+        again(&mut h, |_| ());
+        assert_eq!(h.ui.selection.single(), id(8), "the list fills");
+        let over = h.find("Object 5").center();
+        h.frame(vec![egui::Event::PointerMoved(over)]);
+        again(&mut h, nearest(9));
+        assert_eq!(h.ui.selection.single(), id(8), "never under the pointer");
+        h.frame(vec![egui::Event::PointerGone]);
+        again(&mut h, |_| ());
+        assert_eq!(h.ui.selection.single(), id(10));
+    });
+}
+
+#[test]
+fn area_search_open_menu_never_moves_to_another_object() {
+    both(|mut h| {
+        let at = h.find("Object 1").center();
+        h.press(at, egui::PointerButton::Secondary, Default::default());
+        assert!(h.ui.menu_at.is_some());
+        again(&mut h, |rows| rows.retain(|r| r.id != Uuid::from_u128(1)));
+        assert!(h.ui.selection.is_empty(), "its object is gone: nothing to delete");
+        egui::Popup::close_all(&h.ctx);
+        h.settle();
+        again(&mut h, |_| ());
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(2)));
+    });
+}
+
+#[test]
+fn area_search_cleared_selection_stays_so_until_another_search() {
+    both(|mut h| {
+        h.menu("Object 2", aurora_i18n::tr!("area-search-clear-selection"));
+        again(&mut h, |_| ());
+        assert!(h.ui.selection.is_empty());
+        h.ui.table.filters.query = "object 2".into();
+        h.settle();
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(2)));
+        // closed, then opened again
+        h.menu("Object 2", aurora_i18n::tr!("area-search-clear-selection"));
+        h.ui.closed();
+        h.ui.selection.reset();
+        again(&mut h, |_| ());
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(2)));
+    });
 }

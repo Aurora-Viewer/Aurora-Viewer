@@ -5129,7 +5129,6 @@ board-more = and { $count } more
 board-more-short = +{ $count }
 board-some-of = { $shown } of { $all }
 board-of-all = of { $all }
-board-find-keys = Ctrl F
 stage-turn-left = Turn left
 stage-turn-right = Turn right
 stage-higher = Look from higher

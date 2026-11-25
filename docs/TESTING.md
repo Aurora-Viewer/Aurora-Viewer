@@ -6483,7 +6483,7 @@ kinds' three states and the chips, the sort of every column, the sideways scroll
 with the name in view, the folded and open card, Reset, Save as default, Copy as
 link, the separate resets of the "…" menu, Refresh preserving filters, Select
 several, Ctrl+A and the arrow keys in the list, Inspect, Zoom / double click,
-Copy UUID, the 3D view empty with nothing selected, and the toolbar button
+Copy UUID, the top row selected as the window opens and for each new search or order (kept while you walk, replaced by the first click even with Ctrl, and none after Clear selection until another search), the 3D view empty once nothing is, and the toolbar button
 reopening a minimized window. The right-click menu (`menu`): Ctrl and Shift clicks select
 several rows and every entry acts on all of them; Sit, Teleport to and Buy need
 one row (Buy one for sale), Zoom one within the draw distance; a right click
