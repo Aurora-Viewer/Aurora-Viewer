@@ -115,10 +115,11 @@ With DLSS on, Preferences › Graphics › Anti-aliasing › **Ray Reconstructio
 (experimental, off by default) has DLSS also denoise the ray-traced
 shadows, lights, indirect light and reflections. The scene pass then draws
 its guides (normals, roughness, metallic and base colour) beside the image.
-The traced shadows' and lights' own à-trous filter steps aside; their
-temporal history stays, and so do the indirect light's and the reflections'
-own filters (the reflections hand DLSS no hit distance or motion of their
-own). Its model (Automatic, D, E, F) is chosen under it while it is on;
+Every traced pass keeps its own denoiser, temporal history and à-trous
+filter: handed to DLSS unfiltered, the sun's soft shadow (filtered with
+the lights') crawled as grain over shadowed skin and washed out a tattoo
+blended over it, and the reflections hand DLSS no hit distance or motion of
+their own. Its model (Automatic, D, E, F) is chosen under it while it is on;
 super resolution's model, changed while it draws, leaves it as it is.
 DLSS reads one surface for the depth, the motion and the guides, as
 NVIDIA's Ray Reconstruction guide asks: the opaque surface, the impostor

@@ -2400,8 +2400,8 @@ struct Denoise {
     /// take fewer at a lower ray tracing quality ([`LampQuality`]).
     passes: usize,
     /// What says it still runs when Ray Reconstruction takes the traced
-    /// passes undenoised (`set_raw`): `KEEP_GI` or `KEEP_REFLECTIONS`,
-    /// `None` for one that steps aside.
+    /// passes undenoised (`set_raw`): `KEEP_GI`, `KEEP_REFLECTIONS` or
+    /// `KEEP_LIGHTS`, `None` for one that steps aside.
     kept_under_rr: Option<&'static std::sync::atomic::AtomicBool>,
 }
 /// How far an indirect ray goes (m): the light bounced from further off
@@ -4633,6 +4633,9 @@ static RAW_TEMPORAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 static KEEP_GI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// The reflections' à-trous filter runs all the same (`set_raw`).
 static KEEP_REFLECTIONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The lights' à-trous filter, the sun's soft shadow's too, runs all the
+/// same (`set_raw`).
+static KEEP_LIGHTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Whether the traced passes' denoising is skipped: when DLSS Ray
 /// Reconstruction denoises the frame, the à-trous filter;
@@ -4649,8 +4652,13 @@ static KEEP_REFLECTIONS: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 /// the lights off). `AURORA_RT_GI_RAW=1` hands it raw to RR too. The
 /// reflections' stays too: RR is given no specular hit distance and no
 /// reflection motion (dlss.rs), so the camera's matrices alone would have
-/// to carry a moving reflection. So under RR only the local lights'
-/// shadows go to it without their à-trous filter.
+/// to carry a moving reflection. The lights' stays too: their passes
+/// average and filter the sun's soft shadow as well ([`Lights`]), and
+/// handed to RR unfiltered it crawled as grain over shadowed skin and
+/// washed out a blended layer over it, with the point lights off too (on
+/// the grid, 2026-11-25: grainy at RR's default, clean with
+/// `AURORA_RT_RAW=0`, the same build and place). So under RR, unforced,
+/// every traced pass keeps its own denoiser.
 pub(crate) fn set_raw(rr_on: bool) {
     static FORCED: OnceLock<Option<(bool, bool)>> = OnceLock::new();
     let forced = *FORCED.get_or_init(|| match std::env::var("AURORA_RT_RAW").ok()?.trim() {
@@ -4661,11 +4669,51 @@ pub(crate) fn set_raw(rr_on: bool) {
     });
     static GI_RAW: OnceLock<bool> = OnceLock::new();
     let gi_raw = *GI_RAW.get_or_init(|| std::env::var("AURORA_RT_GI_RAW").is_ok_and(|v| v.trim() == "1"));
-    let (spatial, temporal) = forced.unwrap_or((rr_on, false));
-    KEEP_GI.store(forced.is_none() && !gi_raw, std::sync::atomic::Ordering::Relaxed);
-    KEEP_REFLECTIONS.store(forced.is_none(), std::sync::atomic::Ordering::Relaxed);
-    RAW.store(spatial, std::sync::atomic::Ordering::Relaxed);
-    RAW_TEMPORAL.store(temporal, std::sync::atomic::Ordering::Relaxed);
+    let choice = RawChoice::new(rr_on, forced, gi_raw);
+    KEEP_GI.store(choice.keep_gi, std::sync::atomic::Ordering::Relaxed);
+    KEEP_REFLECTIONS.store(choice.keep_reflections, std::sync::atomic::Ordering::Relaxed);
+    KEEP_LIGHTS.store(choice.keep_lights, std::sync::atomic::Ordering::Relaxed);
+    RAW.store(choice.spatial, std::sync::atomic::Ordering::Relaxed);
+    RAW_TEMPORAL.store(choice.temporal, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// What `set_raw` skips this frame: the à-trous filter (`spatial`) and the
+/// temporal history, and the passes whose à-trous filter runs all the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RawChoice {
+    spatial: bool,
+    temporal: bool,
+    keep_gi: bool,
+    keep_reflections: bool,
+    keep_lights: bool,
+}
+
+impl RawChoice {
+    /// `forced`: `AURORA_RT_RAW`'s (à-trous, history) skipped, for every
+    /// pass; `gi_raw`: `AURORA_RT_GI_RAW=1`.
+    fn new(rr_on: bool, forced: Option<(bool, bool)>, gi_raw: bool) -> Self {
+        let (spatial, temporal) = forced.unwrap_or((rr_on, false));
+        let kept = forced.is_none();
+        RawChoice {
+            spatial,
+            temporal,
+            keep_gi: kept && !gi_raw,
+            keep_reflections: kept,
+            keep_lights: kept,
+        }
+    }
+
+    /// Whether a pass kept by `keep` goes without its à-trous filter.
+    #[cfg(test)]
+    fn skips(self, keep: bool) -> bool {
+        filter_skipped(self.spatial, keep)
+    }
+}
+
+/// Whether a pass goes without its à-trous filter this frame: skipped
+/// (`RAW`) and not kept all the same (`Denoise::kept_under_rr`).
+fn filter_skipped(spatial: bool, kept: bool) -> bool {
+    spatial && !kept
 }
 
 /// The most frames a traced pass's history averages this frame, 0 for its
@@ -4810,10 +4858,11 @@ impl Denoise {
         // an instance that keeps its first pass as next frame's history
         // (`first`) runs that pass alone, or that history would never be
         // written, and hands on its input unfiltered
-        let raw = RAW.load(std::sync::atomic::Ordering::Relaxed)
-            && !self
-                .kept_under_rr
-                .is_some_and(|keep| keep.load(std::sync::atomic::Ordering::Relaxed));
+        let raw = filter_skipped(
+            RAW.load(std::sync::atomic::Ordering::Relaxed),
+            self.kept_under_rr
+                .is_some_and(|keep| keep.load(std::sync::atomic::Ordering::Relaxed)),
+        );
         if raw && first.is_none() {
             return (history, input_tint);
         }
@@ -5167,7 +5216,10 @@ impl Lights {
             reuse,
             filter,
             buffer,
-            denoise: Denoise::new(device, "rt lights denoise", SHARE_NOISE_FLOOR, true),
+            denoise: Denoise {
+                kept_under_rr: Some(&KEEP_LIGHTS),
+                ..Denoise::new(device, "rt lights denoise", SHARE_NOISE_FLOOR, true)
+            },
             listed: Vec::new(),
             places: HashMap::new(),
             changes: crate::rt_light_changes::LightChanges::default(),
@@ -6405,6 +6457,37 @@ fn row_major(m: &[[f32; 4]; 4]) -> [f32; 12] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ray Reconstruction, unforced, takes no traced pass without its own
+    /// à-trous filter: the lights' (the sun's soft shadow's) unfiltered
+    /// crawled as grain on shadowed skin (`set_raw`). The variables still
+    /// force it either way.
+    #[test]
+    fn ray_reconstruction_keeps_every_traced_passs_own_filter() {
+        let rr = RawChoice::new(true, None, false);
+        for (pass, keep) in [("gi", rr.keep_gi), ("reflections", rr.keep_reflections), ("lights", rr.keep_lights)] {
+            assert!(!rr.skips(keep), "{pass} filter skipped under RR");
+        }
+        assert!(!rr.temporal);
+        // AURORA_RT_GI_RAW=1 hands GI alone to RR unfiltered
+        let gi_raw = RawChoice::new(true, None, true);
+        assert!(gi_raw.skips(gi_raw.keep_gi));
+        assert!(!gi_raw.skips(gi_raw.keep_lights) && !gi_raw.skips(gi_raw.keep_reflections));
+        // AURORA_RT_RAW=1 and spatial skip every filter, with or without RR;
+        // 0 none, even under RR
+        for rr_on in [false, true] {
+            for (forced, temporal) in [((true, true), true), ((true, false), false)] {
+                let c = RawChoice::new(rr_on, Some(forced), false);
+                assert!(c.skips(c.keep_gi) && c.skips(c.keep_reflections) && c.skips(c.keep_lights));
+                assert_eq!(c.temporal, temporal);
+            }
+            let none = RawChoice::new(rr_on, Some((false, false)), false);
+            assert!(!none.skips(none.keep_gi) && !none.skips(none.keep_lights) && !none.temporal);
+        }
+        // without RR nothing is skipped
+        let off = RawChoice::new(false, None, true);
+        assert!(!off.skips(off.keep_gi) && !off.skips(off.keep_lights) && !off.temporal);
+    }
 
     /// A photo's first round reads no history, whatever the passes kept,
     /// and each of the others reads the round before; the view's frame
