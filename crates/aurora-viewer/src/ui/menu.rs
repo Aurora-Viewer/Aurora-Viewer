@@ -65,7 +65,7 @@ fn rows_id() -> Id {
     Id::unique("aurora_menu_rows")
 }
 
-/// The layers the rows of a menu drew on, in this pass of the window and
+/// The layers this module's menus drew on, in this pass of the window and
 /// the one before: whatever opened the menu (an egui `Popup` kept in
 /// memory, [`popup_at`]'s bool, a submenu), a press on it is a press in a
 /// menu ([`is_menu_layer`]).
@@ -80,8 +80,9 @@ fn menu_layers_id(ctx: &egui::Context) -> Id {
     Id::unique(("aurora_menu_layers", ctx.viewport_id()))
 }
 
-/// A row of a menu drew on its layer. Only the foreground's: a window that
-/// lists its entries with menu rows is not a menu.
+/// A menu drew on its layer. Only its popup's body notes it, never a row:
+/// a hover card or a suggestion list built from menu rows (the top bar's
+/// graphics card, `bars/graphics.rs`) is not a menu.
 fn note_menu_layer(ui: &Ui) {
     let layer = ui.layer_id();
     if layer.order != egui::Order::Foreground {
@@ -117,6 +118,14 @@ pub(crate) fn is_menu_layer(ctx: &egui::Context, layer: LayerId) -> bool {
             Some(1) => m.now.contains(&layer),
             _ => false,
         })
+}
+
+/// `body`, as the content of a menu's popup, noting its layer first.
+fn noted<R>(body: impl FnOnce(&mut Ui) -> R) -> impl FnOnce(&mut Ui) -> R {
+    move |ui| {
+        note_menu_layer(ui);
+        body(ui)
+    }
 }
 
 /// Menu style: the popup and sub-menu frames (`Frame::menu`) are built
@@ -322,7 +331,7 @@ fn context_menu_popup(popup: Popup<'_>, p: &Palette, body: impl FnOnce(&mut Ui))
         .align_alternatives(&[])
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
         .style(style(p))
-        .show(body)
+        .show(noted(body))
         .is_some()
 }
 
@@ -393,7 +402,7 @@ fn placed(
         .close_behavior(close)
         .style(style(p))
         .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))
-        .show(body)
+        .show(noted(body))
         .is_some()
 }
 
@@ -440,7 +449,7 @@ pub fn popup_at(ctx: &egui::Context, id: Id, pos: egui::Pos2, open: &mut bool, p
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
         .style(style(p))
         .open_bool(open)
-        .show(body);
+        .show(noted(body));
     let hovered = ctx.data(|d| d.get_temp::<RowTrack>(rows_id())).and_then(|t| t.hovered);
     ctx.data_mut(|d| d.remove::<RowTrack>(rows_id()));
     hovered
@@ -507,7 +516,6 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
 
 #[allow(clippy::too_many_arguments)]
 fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, end: End, open: bool, sense: Sense) -> egui::Response {
-    note_menu_layer(ui);
     if !filter_row(ui, p, label) {
         return hidden(ui);
     }
@@ -752,7 +760,7 @@ pub(crate) fn choice_panel(ui: &Ui, p: &Palette, id: Id, pos: egui::Pos2, open: 
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
         .style(style(p))
         .open_bool(open)
-        .show(body);
+        .show(noted(body));
 }
 
 /// A menu's editing companion, kept beside its owner until it is locked again.
@@ -784,7 +792,7 @@ pub(crate) fn settings_panel(ui: &Ui, p: &Palette, id: Id, body: impl FnOnce(&mu
         .style(style(p))
         .frame(egui::Frame::NONE)
         .open(true)
-        .show(|ui| {
+        .show(noted(|ui| {
             let spacing = ui.ctx().global_style().spacing.item_spacing;
             ui.spacing_mut().item_spacing = spacing;
             super::widgets::overlay(ui, p, egui::Margin::same(12), |ui| {
@@ -792,7 +800,7 @@ pub(crate) fn settings_panel(ui: &Ui, p: &Palette, id: Id, body: impl FnOnce(&mu
                 super::widgets::organization_typography(ui);
                 body(ui);
             });
-        });
+        }));
 }
 
 /// Editing can cross between the menu, its submenus and the settings shelf.
@@ -852,7 +860,7 @@ pub(crate) fn editable_submenu(
             }
         });
     }
-    submenu.show(ui, response, body);
+    submenu.show(ui, response, noted(body));
     if click_only {
         egui::containers::menu::MenuState::from_ui(ui, |state, _| {
             if state.open_item == Some(hover_guard) {
@@ -1090,7 +1098,7 @@ pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enable
     let open = enabled && sub_menu_open(ui);
     let resp = row(ui, p, icon, label, enabled, End::Caret, open);
     if enabled {
-        egui::containers::menu::SubMenu::new().show(ui, &resp, body);
+        egui::containers::menu::SubMenu::new().show(ui, &resp, noted(body));
     }
     resp
 }
