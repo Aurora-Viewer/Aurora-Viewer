@@ -76,8 +76,20 @@ pub fn border_color(p: &Palette, s: f32, t: f32) -> Color32 {
 
 /// The curtains behind a plate whose rectangle is `rect`, at `alpha`. Two
 /// layers: a bright green one, folded, with fine rays, and a fainter one
-/// higher up turning violet, slower, like the top of a real aurora.
+/// higher up turning violet, slower, like the top of a real aurora. Their
+/// folds fill `rect`'s width whatever it is: the profile banner and the
+/// click combo counter. A name plate takes `plate_curtains`.
 pub fn curtains(mesh: &mut Mesh, p: &Palette, rect: Rect, ppp: f32, t: f32, alpha: f32) {
+    curtains_over(mesh, p, rect, ppp, t, alpha, false);
+}
+
+/// `curtains` behind a name plate, kept in proportion when the plate is
+/// narrow (`CURTAIN_SPAN`, `CURTAIN_FULL_WIDTH`).
+pub fn plate_curtains(mesh: &mut Mesh, p: &Palette, rect: Rect, ppp: f32, t: f32, alpha: f32) {
+    curtains_over(mesh, p, rect, ppp, t, alpha, true);
+}
+
+fn curtains_over(mesh: &mut Mesh, p: &Palette, rect: Rect, ppp: f32, t: f32, alpha: f32, plate: bool) {
     let r = rect.height() * 0.5;
     // the whole width of the plate, the foot following its round ends
     let (left, right) = (rect.left(), rect.right());
@@ -86,10 +98,15 @@ pub fn curtains(mesh: &mut Mesh, p: &Palette, rect: Rect, ppp: f32, t: f32, alph
         let off = (rect.left() + r - x).max(x - (rect.right() - r)).max(0.0);
         rect.center().y - (r * r - off * off).max(0.0).sqrt() + 1.0
     };
-    let full = rect.height() * CURTAIN_HEIGHT * (w / (rect.height() * CURTAIN_FULL_WIDTH)).clamp(CURTAIN_LOW, 1.0);
-    // where the folds are along a span of at least `CURTAIN_SPAN` heights,
-    // centered: a wide plate's is its own width, as before
-    let span = w.max(rect.height() * CURTAIN_SPAN);
+    let (low, span) = if plate {
+        // where the folds are along a span of at least `CURTAIN_SPAN`
+        // heights, centered: a wide plate's is its own width
+        let low = (w / (rect.height() * CURTAIN_FULL_WIDTH)).clamp(CURTAIN_LOW, 1.0);
+        (low, w.max(rect.height() * CURTAIN_SPAN))
+    } else {
+        (1.0, w)
+    };
+    let full = rect.height() * CURTAIN_HEIGHT * low;
     let columns = ((w * ppp / 3.0).ceil() as usize).clamp(8, 180);
     // only the very tips fade out
     let end = (0.25 * r / w).clamp(0.03, 0.12);
@@ -305,16 +322,26 @@ mod tests {
         // an icon only circle, 50 points across
         let circle = Rect::from_min_size(Pos2::new(100.0, 50.0), Vec2::splat(50.0));
         let mut mesh = Mesh::default();
-        curtains(&mut mesh, &p, circle, 1.0, 3.0, 1.0);
+        plate_curtains(&mut mesh, &p, circle, 1.0, 3.0, 1.0);
         assert!(mesh.is_valid());
         let top = mesh.vertices.iter().map(|v| v.pos.y).fold(f32::MAX, f32::min);
         assert!(top >= 50.0 - 50.0 * CURTAIN_HEIGHT * CURTAIN_LOW * 1.31, "{top}");
         // a wide plate keeps its full height and its folds across its width
         let wide = Rect::from_min_size(Pos2::new(100.0, 50.0), Vec2::new(250.0, 50.0));
         let mut mesh = Mesh::default();
-        curtains(&mut mesh, &p, wide, 1.0, 3.0, 1.0);
+        plate_curtains(&mut mesh, &p, wide, 1.0, 3.0, 1.0);
         let top = mesh.vertices.iter().map(|v| v.pos.y).fold(f32::MAX, f32::min);
         assert!(top < 50.0 - 50.0 * CURTAIN_HEIGHT * CURTAIN_LOW * 1.31, "{top}");
+        // and on a wide plate the plates' curtains are the banner's exactly
+        let mut banner = Mesh::default();
+        curtains(&mut banner, &p, wide, 1.0, 3.0, 1.0);
+        assert_eq!(mesh.vertices, banner.vertices);
+        // the combo counter's narrow pill keeps its folds across its width
+        let counter = Rect::from_min_size(Pos2::new(100.0, 50.0), Vec2::new(40.0, 18.0));
+        let (mut old, mut plate) = (Mesh::default(), Mesh::default());
+        curtains(&mut old, &p, counter, 1.0, 3.0, 1.0);
+        plate_curtains(&mut plate, &p, counter, 1.0, 3.0, 1.0);
+        assert_ne!(old.vertices, plate.vertices, "only plates are kept in proportion");
     }
 
     #[test]

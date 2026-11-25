@@ -757,7 +757,7 @@ fn contents(
                 r.center(),
                 egui::Align2::CENTER_CENTER,
                 format!("+{n}"),
-                FontId::proportional(9.0),
+                FontId::proportional(9.0 * s / SCALE),
                 ink(p.ink),
             );
         }

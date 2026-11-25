@@ -1581,6 +1581,13 @@ fn name_tag_size_and_height_are_bounded_like_the_legacy_viewer() {
     .sanitized();
     // FSNameTagZOffsetCorrection's -5..5 tenths of a metre
     assert_eq!((s.name_tag_size, s.name_tag_offset), (150.0, -0.5));
+    // snapped to the Legacy Viewer's tenths
+    let s = Settings {
+        name_tag_offset: 0.23,
+        ..Settings::default()
+    }
+    .sanitized();
+    assert!((s.name_tag_offset - 0.2).abs() < 1e-6);
     let s = Settings {
         name_tag_size: f32::NAN,
         name_tag_offset: f32::INFINITY,

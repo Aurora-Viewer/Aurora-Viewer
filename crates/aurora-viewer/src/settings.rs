@@ -3899,7 +3899,9 @@ impl Settings {
         };
         self.toast_gap = toast_gap(self.toast_gap);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
-        self.name_tag_offset = finite_or(self.name_tag_offset, 0.0).clamp(NAME_TAG_OFFSET_MIN, NAME_TAG_OFFSET_MAX);
+        // in tenths of a metre, the Legacy Viewer's increment (and Quick
+        // preferences' "Tags Offset" step)
+        self.name_tag_offset = (finite_or(self.name_tag_offset, 0.0).clamp(NAME_TAG_OFFSET_MIN, NAME_TAG_OFFSET_MAX) * 10.0).round() / 10.0;
         self.name_tag_size = finite_or(self.name_tag_size, 100.0).clamp(NAME_TAG_SIZE_MIN, NAME_TAG_SIZE_MAX);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
             self.name_tag_show_seconds.clamp(1.0, 60.0)

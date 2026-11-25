@@ -76,8 +76,8 @@ pub enum Level {
     /// plate, with its status dot, up to the far distance.
     Icon,
     /// "Name only" plates (`PlateStyle::Name`): the display name and the
-    /// group title in the compact pill, without badges, up to the far
-    /// distance.
+    /// group title in the compact pill, with only the contact sets'
+    /// badges, up to the far distance.
     Name,
 }
 

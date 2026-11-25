@@ -239,7 +239,8 @@ fn chest(world: &World, scene: &Scene, id: &Uuid, now: Instant, root: Vec3, tag_
         .and_then(|index| Scene::object_transform(world, index, now, 0));
     match avatar.zip(scene.joint_world(world, id, "mChest", now)) {
         Some(((position, ..), bone)) => root + bone - position,
-        None => root.lerp(tag_anchor, CHEST),
+        // the chest without the tags' height setting, which moves the tag only
+        None => root.lerp(tag_anchor - glam::Vec3::Z * scene.name_tag_offset, CHEST),
     }
 }
 
