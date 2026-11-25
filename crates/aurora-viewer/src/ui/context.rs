@@ -31,6 +31,7 @@ mod notecards;
 mod pathfinding;
 pub use pathfinding::PathfindingUi;
 mod pie;
+pub use pie::center as pie_center;
 
 #[cfg(test)]
 mod group_link_tests;
@@ -94,6 +95,10 @@ pub struct ContextMenu {
     pub pie_path: Vec<usize>,
     /// Ignore the opening release and repeated egui passes in the same frame.
     pub pie_input_frame: Option<u64>,
+    /// Opened by a right press still held (`pie_menu_on_press`): its release
+    /// chooses the slice under it, as PieMenu::handleMouseButtonUp's first
+    /// click does (indra/newview/piemenu.cpp).
+    pub held: bool,
 }
 
 /// What the object menu entries depend on (the on_enable functions of
@@ -2554,6 +2559,7 @@ mod tests {
                 target: Target::Attachment { key },
                 pie_path: Vec::new(),
                 pie_input_frame: None,
+                held: false,
             });
             let mut frame = |events: Vec<egui::Event>| {
                 let mut output = ctx.run_ui(
@@ -2766,6 +2772,7 @@ mod tests {
                 point: Vec3::ZERO,
                 pie_path: Vec::new(),
                 pie_input_frame: None,
+                held: false,
             });
             if editing {
                 customization.edit(&ctx, current.as_ref().expect("menu"), &facts, &mut prefs);
