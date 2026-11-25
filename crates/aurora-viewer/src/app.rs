@@ -8601,7 +8601,8 @@ impl App {
             let Some(picked) = self.click_pick() else {
                 return false;
             };
-            let (hit, target) = if matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
+            let searched = matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab);
+            let (hit, target) = if searched {
                 self.scene.left_selection_pick(
                     &self.world,
                     picked.ray,
@@ -8619,7 +8620,8 @@ impl App {
             let ray = picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y));
             // a rigged mesh is selected where it is shown (Legacy Viewer: with
             // the move tool only, LLToolCompTranslate)
-            let on_face = target.is_some_and(|idx| self.scene.gpu.get(idx).is_some_and(|g| !g.is_avatar));
+            // a face the search met, not a box around the depth (`pick_at`)
+            let on_face = searched && target.is_some_and(|idx| self.scene.gpu.get(idx).is_some_and(|g| !g.is_avatar));
             let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit, on_face) {
                 Some(d) => (Some(d.hit.point), Some(d.idx)),
                 None => {
