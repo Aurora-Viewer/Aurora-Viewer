@@ -1290,6 +1290,9 @@ import-quick-materials-size = { $count ->
    *[other] 2048 × 2048でインポートできる画像を含むマテリアルがあります（{ $count }件）。サイズを選んでください：
 }
 import-quick-size-choice = { $size } px · L$ { $cost }
+import-quick-section = ツールバーのクイックインポート
+import-quick-free-full-size = 無料の画像は確認せずに2048 × 2048で送信
+import-quick-free-full-size-help = 「テクスチャをインポート」と「マテリアルをインポート」で1024か2048かを尋ねるのは、L$がかかる場合だけになります。
 import-invalid-request = ファイル名、フォルダ、設定を確認してください。
 import-service-unavailable = このリージョンは必要なアップロードサービスを提供していません。
 import-rejected = サーバーがインポートを拒否しました。下書きは保持されています。
@@ -15762,7 +15765,7 @@ toolbar-import-animations = アニメーションをインポート
 toolbar-import-materials = マテリアルをインポート
 toolbar-import-meshes = メッシュをインポート
 toolbar-import-local = ローカルテクスチャとマテリアル
-toolbar-import-folder = フォルダーをインポート
+toolbar-import-advanced = 詳細インポート
 toolbar-import-settings = インポート設定
 toolbar-import-bar = インポートバー
 toolbar-icon-search = アイコンを検索…

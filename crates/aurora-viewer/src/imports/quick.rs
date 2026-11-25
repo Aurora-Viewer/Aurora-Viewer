@@ -2,7 +2,8 @@
 //! textures", "Import materials" and "Import sounds" send the files picked
 //! without the import list. A free upload starts at once, a paid one asks
 //! once with its price, and images that could go up at 2048 × 2048 ask the
-//! size with both prices. Cancelling empties the files picked from the
+//! size with both prices, unless they are free and the settings send free
+//! images at 2048 (`Preferences::quick_free_full_size`). Cancelling empties the files picked from the
 //! queue. What cannot go up as it is (an error, a sound to cut, no price)
 //! opens its type's import window instead. The upload itself is the import
 //! window's (`start_confirmed`), in the Legacy Viewer's order and messages.
@@ -194,6 +195,12 @@ impl Imports {
             let small = self.quick_total(&ids, choice, prices, Some(false));
             let large = self.quick_total(&ids, choice, prices, Some(true));
             match (small, large) {
+                // free at 2048 too: no question when the settings say so
+                (Some(_), Some(0)) if prefs.quick_free_full_size => {
+                    self.set_quick_size(&ids, true);
+                    self.send_quick(ctx, world, inventory, prefs, prices);
+                    return;
+                }
                 (Some(small), Some(large)) => Some(Ask::Size { count, small, large }),
                 _ => None,
             }

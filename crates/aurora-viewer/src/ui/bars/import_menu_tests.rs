@@ -188,15 +188,16 @@ fn menu_toolbar_import_is_a_ready_command_that_opens_the_import_bar() {
     assert!(matches!(run_command(&ctx, "import", &mut panels), BarAction::ImportBar));
 }
 
-/// The quick import bar's Folder and Settings are toolbar buttons too, and
-/// "Import" is named for what it shows (human request, 2026-11-25).
+/// The quick import bar's Settings is a toolbar button too, "Advanced import"
+/// opens the import window with all its options, and "Import" is named for
+/// what it shows (human requests, 2026-11-25).
 #[test]
-fn the_import_bar_folder_and_settings_are_toolbar_buttons() {
+fn the_import_bar_advanced_import_and_settings_are_toolbar_buttons() {
     let ctx = egui::Context::default();
     let mut panels = Panels::from_settings(&crate::settings::Settings::default());
     for (id, label, expected) in [
         ("import", "toolbar-import-bar", BarAction::ImportBar),
-        ("import_folder", "toolbar-import-folder", BarAction::ImportFolder),
+        ("import_advanced", "toolbar-import-advanced", BarAction::ImportAdvanced),
         ("import_settings", "toolbar-import-settings", BarAction::ImportSettings),
     ] {
         let command = crate::ui::toolbar::command(id).expect("in the catalogue");

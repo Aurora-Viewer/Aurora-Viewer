@@ -54,7 +54,7 @@ pub const COMMANDS: &[Command] = commands![
     "import_local", "eye-filled", "toolbar-import-local", true;
     // the quick import bar's Folder and Settings as buttons (human
     // request, 2026-11-25), with the bar's icons (imports/ui/launcher.rs)
-    "import_folder", "folder-open-filled", "toolbar-import-folder", true;
+    "import_advanced", "adjustments-filled", "toolbar-import-advanced", true;
     "import_settings", "settings-filled", "toolbar-import-settings", true;
     "location_bar", "map-pin-filled", "toolbar-location-bar", true;
     "aurora_menu", "wolf", "ui-bars-aurora-menu", true;

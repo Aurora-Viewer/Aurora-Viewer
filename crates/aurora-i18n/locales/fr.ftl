@@ -1316,6 +1316,9 @@ import-quick-materials-size = { $count ->
    *[other] Ces { $count } matériaux ont des images qui peuvent être importées en 2048 × 2048. Choisissez leur taille :
 }
 import-quick-size-choice = { $size } px · { $cost } L$
+import-quick-section = Import rapide de la barre d’outils
+import-quick-free-full-size = Envoyer les images gratuites en 2048 × 2048 sans demander
+import-quick-free-full-size-help = « Importer des textures » et « Importer des matériaux » ne demandent alors 1024 ou 2048 que si l’envoi coûte des L$.
 import-invalid-request = Vérifiez le nom, le dossier et les paramètres du fichier.
 import-service-unavailable = Cette région ne propose pas le service d’import nécessaire.
 import-rejected = Le serveur a refusé l’import. Le brouillon est conservé.
@@ -15934,7 +15937,7 @@ toolbar-import-animations = Importer des animations
 toolbar-import-materials = Importer des matériaux
 toolbar-import-meshes = Importer des maillages
 toolbar-import-local = Textures et matériaux locaux
-toolbar-import-folder = Importer un dossier
+toolbar-import-advanced = Import avancé
 toolbar-import-settings = Paramètres d’import
 toolbar-import-bar = Barre d’import
 toolbar-icon-search = Rechercher une icône…

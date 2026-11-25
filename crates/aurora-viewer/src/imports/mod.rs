@@ -129,6 +129,9 @@ pub struct Preferences {
     pub everyone_copy: bool,
     pub permissions_by_type: permissions::ByType,
     pub show_payment: bool,
+    /// The toolbar's quick import sends free images at 2048 × 2048 without
+    /// asking the size (human request, 2026-11-25; off by default).
+    pub quick_free_full_size: bool,
     pub use_default_folders: bool,
     pub include_source_folder: bool,
     pub batch_folder: Uuid,
@@ -167,6 +170,7 @@ impl Default for Preferences {
             everyone_copy: false,
             permissions_by_type: Default::default(),
             show_payment: true,
+            quick_free_full_size: false,
             use_default_folders: true,
             include_source_folder: true,
             batch_folder: Uuid::nil(),
@@ -726,9 +730,10 @@ impl Imports {
         crate::ui::widgets::toggle_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
     }
 
-    /// The quick import bar's Folder: the import window on its batch, for
-    /// files of every type. True when a folder may be chosen now (nothing
-    /// being read, sent or waiting for a confirmation).
+    /// The quick import bar's Folder and the toolbar's "Advanced import": the
+    /// import window on its batch, for files of every type. True when a
+    /// folder may be chosen now (nothing being read, sent or waiting for a
+    /// confirmation).
     pub fn open_folder_import(&mut self, ctx: &egui::Context) -> bool {
         let free = !self.busy() && self.pending_files.is_none() && !self.confirm;
         if free {

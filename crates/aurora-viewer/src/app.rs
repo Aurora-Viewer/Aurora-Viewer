@@ -16757,11 +16757,9 @@ impl App {
                 self.imports.toggle_bar(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
             }
-            BarAction::ImportFolder => {
-                if self.imports.open_folder_import(&self.egui_ctx) {
-                    self.imports
-                        .choose_folder(&self.scene.jobs, &self.egui_ctx, self.settings.imports.texture());
-                }
+            BarAction::ImportAdvanced => {
+                // its options first: the window's own buttons pick the files
+                self.imports.open_folder_import(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
             }
             BarAction::ImportSettings => {

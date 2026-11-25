@@ -1316,6 +1316,9 @@ import-quick-materials-size = { $count ->
    *[other] These { $count } materials have images that can be imported at 2048 × 2048. Choose their size:
 }
 import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-section = Toolbar quick import
+import-quick-free-full-size = Send free images at 2048 × 2048 without asking
+import-quick-free-full-size-help = "Import textures" and "Import materials" then ask 1024 or 2048 only when the upload costs L$.
 import-invalid-request = Check the file name, folder and settings.
 import-service-unavailable = This region does not provide the required upload service.
 import-rejected = The server refused the import. Your draft is preserved.
@@ -15925,7 +15928,7 @@ toolbar-import-animations = Import animations
 toolbar-import-materials = Import materials
 toolbar-import-meshes = Import meshes
 toolbar-import-local = Local textures and materials
-toolbar-import-folder = Import folder
+toolbar-import-advanced = Advanced import
 toolbar-import-settings = Import settings
 toolbar-import-bar = Import bar
 toolbar-icon-search = Find an icon…

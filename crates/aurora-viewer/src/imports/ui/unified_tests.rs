@@ -887,9 +887,9 @@ fn shared_routing_header_retains_layout_and_edited_paths_in_both_views() {
     assert_eq!(f.imports.entries[0].upload_path.as_ref(), Some(&edited));
 }
 
-/// The toolbar's "Import bar", "Import folder" and "Import settings" (human
-/// request, 2026-11-25): the bar whatever the Import entry opens, and the
-/// bar's own Folder and Settings.
+/// The toolbar's "Import bar", "Advanced import" and "Import settings"
+/// (human requests, 2026-11-25): the bar whatever the Import entry opens,
+/// the window in the bar's Folder mode, and the bar's Settings.
 #[test]
 fn the_toolbar_import_buttons_do_what_the_bar_does() {
     let mut f = Fixture::new();

@@ -73,9 +73,10 @@ pub enum BarAction {
     /// The toolbar's "Import bar": the quick import bar, shown or hidden,
     /// whatever the Import menu entry opens.
     ImportBar,
-    /// The toolbar's "Import folder" and "Import settings": the quick
-    /// import bar's Folder and Settings.
-    ImportFolder,
+    /// The toolbar's "Advanced import": the import window in its folder
+    /// mode, with every option, and no file chooser.
+    ImportAdvanced,
+    /// The toolbar's "Import settings": the quick import bar's Settings.
     ImportSettings,
     /// Advanced › Media streams backup (Streamlist.xml_import / xml_export).
     ImportStreamList,
@@ -3078,7 +3079,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "build_grab" => return BarAction::BuildButton(5),
         "edit_particles" => return BarAction::EditParticles,
         "import" => return BarAction::ImportBar,
-        "import_folder" => return BarAction::ImportFolder,
+        "import_advanced" => return BarAction::ImportAdvanced,
         "import_settings" => return BarAction::ImportSettings,
         "blender_live" => return BarAction::BlenderLive,
         "buy_currency" => return BarAction::BuyCurrency,

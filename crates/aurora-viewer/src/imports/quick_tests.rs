@@ -157,6 +157,21 @@ fn images_that_could_be_2048_ask_the_size_with_both_prices() {
 }
 
 #[test]
+fn free_images_can_go_up_at_2048_without_the_question() {
+    for (price, asked) in [(0, false), (10, true)] {
+        let mut f = fixture(price);
+        f.prefs.quick_free_full_size = true;
+        f.pick(Choice::Texture, vec![texture("big.png", 2048)]);
+        assert_eq!(f.ask().is_some(), asked, "price {price}");
+        assert_eq!(f.imports.busy(), !asked);
+        if !asked {
+            let big = f.imports.entries.iter().find(|entry| entry.name == "big").expect("big");
+            assert_eq!(f.imports.options(big).max_width, 2048);
+        }
+    }
+}
+
+#[test]
 fn cancelling_takes_the_files_picked_out_of_the_queue() {
     let mut f = fixture(10);
     let listed = texture("listed.png", 16);

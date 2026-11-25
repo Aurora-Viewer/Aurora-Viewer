@@ -6,6 +6,15 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
     ui.add_space(14.0);
     widgets::section_header(ui, p, "coin-filled", aurora_i18n::tr!("import-permissions-payment"));
     checkbox(ui, p, &mut prefs.show_payment, aurora_i18n::tr!("import-show-payment"));
+    ui.add_space(14.0);
+    widgets::section_header(ui, p, "file-upload-filled", aurora_i18n::tr!("import-quick-section"));
+    checkbox(
+        ui,
+        p,
+        &mut prefs.quick_free_full_size,
+        aurora_i18n::tr!("import-quick-free-full-size"),
+    )
+    .on_hover_text(aurora_i18n::tr!("import-quick-free-full-size-help"));
 }
 
 pub(crate) fn defaults(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
