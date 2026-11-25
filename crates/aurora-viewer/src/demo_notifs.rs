@@ -21,7 +21,8 @@
 //! (`PIE_TOASTS_GAP`) and a more transparent pie (`PIE_TOASTS_OPACITY`).
 //! `friendship-ended`, `legacy-friendship-ended`, `friendship-ended-history`
 //! and `friendship-ended-offline` show the ended-friendship notice live, or
-//! the neutral "no longer on your friends list" of a friend missing at login.
+//! the neutral "no longer on your friends list" of a friend missing at login;
+//! `legacy-friendship-ended-offline` shows the latter in the Legacy toasts.
 
 use aurora_net::NetEvent;
 use uuid::Uuid;
@@ -37,15 +38,22 @@ pub fn friendship_ended_demo() -> bool {
     mode().is_some_and(|m| {
         matches!(
             m.as_str(),
-            "friendship-ended" | "legacy-friendship-ended" | "friendship-ended-history" | "friendship-ended-offline"
+            "friendship-ended" | "legacy-friendship-ended" | "friendship-ended-history"
         )
-    })
+    }) || offline_ended_demo()
+}
+
+/// The ended-friendship scenarios of a friend missing at login, in either
+/// style: no live `TerminateFriendship`.
+fn offline_ended_demo() -> bool {
+    mode().is_some_and(|m| matches!(m.as_str(), "friendship-ended-offline" | "legacy-friendship-ended-offline"))
 }
 
 /// Synthetic prior friend snapshot for `AURORA_DEMO_NOTIFS=friendship-ended-offline`
-/// (`u(107)`, absent from the demo login's `buddy-list`).
+/// and `legacy-friendship-ended-offline` (`u(107)`, absent from the demo
+/// login's `buddy-list`).
 pub fn offline_ended_snapshot() -> Option<Vec<crate::world::friend_snapshot::SavedFriend>> {
-    if mode().as_deref() != Some("friendship-ended-offline") {
+    if !offline_ended_demo() {
         return None;
     }
     Some(vec![crate::world::friend_snapshot::SavedFriend {
@@ -297,7 +305,7 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
         };
     }
     if friendship_ended_demo() {
-        return if mode().as_deref() != Some("friendship-ended-offline") && frame == 700 {
+        return if !offline_ended_demo() && frame == 700 {
             vec![NetEvent::FriendshipTerminated(friend())]
         } else {
             Vec::new()
