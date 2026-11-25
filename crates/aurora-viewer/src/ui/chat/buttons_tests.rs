@@ -2067,6 +2067,28 @@ fn a_press_away_or_another_conversation_closes_the_pickers() {
     }
 }
 
+/// A picker open before the window first draws, as the startup demos open
+/// one (`AURORA_DEMO_EMOJI_PICKER`, `AURORA_DEMO_GIFS`), stays open: no
+/// conversation was shown before, so none changed (#4867).
+#[test]
+fn a_picker_open_before_the_first_frame_stays_open() {
+    for style in ALL {
+        for gif in [false, true] {
+            let mut h = H::new(style);
+            h.st.gifs.demo = true;
+            assert!(h.st.picker_view.is_none(), "{style:?}: not drawn yet");
+            h.st.selected = Some(JANE);
+            h.st.emoji_open = !gif;
+            h.st.gif_open = gif;
+            h.settle();
+            assert!(h.st.emoji_open != gif && h.st.gif_open == gif, "{style:?}: the picker stays open");
+            h.st.selected = Some(BOB);
+            h.settle();
+            assert!(!h.st.emoji_open && !h.st.gif_open, "{style:?}: another conversation closes it");
+        }
+    }
+}
+
 /// The field (Aurora, Compact): emoji, the volume's menu, inventory,
 /// channel, send.
 #[test]
