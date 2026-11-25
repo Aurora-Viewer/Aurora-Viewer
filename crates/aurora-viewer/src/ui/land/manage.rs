@@ -1905,7 +1905,7 @@ fn sale(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut Wo
             if v.region.as_ref().is_some_and(|r| r.has_land_resources)
                 && button(ui, p, "code", aurora_i18n::tr!("ui-land-general-script-info"), true).clicked()
             {
-                s.scripts.open();
+                s.scripts.open(ui.ctx());
             }
         },
     );
