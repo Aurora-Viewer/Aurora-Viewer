@@ -3,9 +3,10 @@
 //! originally LGPL 2.1): the object's inventory with its buttons, filter,
 //! item menu, and inventory items dropped on it.
 
+use super::ContentsFilters;
 use super::contents_selection;
 use crate::build::BuildTool;
-use crate::build::contents::{AT_LSL_TEXT, AT_NOTECARD, item_renameable};
+use crate::build::contents::{AT_LSL_TEXT, AT_NOTECARD, TaskInventory, item_renameable};
 use crate::build::contents_drop;
 use crate::theme::Palette;
 use crate::ui::inventory::item_icon;
@@ -14,6 +15,73 @@ use crate::ui::{menu, widgets};
 use crate::world::World;
 use aurora_net::build::{TaskItem, perm};
 use egui::{RichText, Vec2};
+use uuid::Uuid;
+
+/// The Contents list's filtered, ordered rows, kept between frames: rebuilt
+/// only when the object, its listing (generation), the filter or the filters
+/// change, so a large listing is not cloned and sorted on every frame.
+#[derive(Default)]
+pub struct Projection {
+    object: Option<Uuid>,
+    /// The listing's `generation` the order was built for.
+    generation: u64,
+    filter: String,
+    filters: ContentsFilters,
+    /// (item id, index in the listing) in list order.
+    order: Vec<(Uuid, usize)>,
+    /// The ids of `order`, for the selection's own copy.
+    ids: Vec<Uuid>,
+}
+
+impl Projection {
+    /// Rebuild the order when the object, the listing, the filter or the
+    /// filters changed. `inv` is the object's listing, if it is known.
+    fn ensure(&mut self, object: Uuid, inv: Option<&TaskInventory>, filter: &str, filters: ContentsFilters) {
+        let generation = inv.map(|inv| inv.generation).unwrap_or(0);
+        if self.object == Some(object) && self.generation == generation && self.filters == filters && self.filter == filter {
+            return;
+        }
+        self.object = Some(object);
+        self.generation = generation;
+        self.filters = filters;
+        self.filter.clear();
+        self.filter.push_str(filter);
+        self.order.clear();
+        self.ids.clear();
+        let Some(inv) = inv else { return };
+        let mut indices: Vec<usize> = (0..inv.items.len())
+            .filter(|&i| {
+                let item = &inv.items[i];
+                !item.is_folder
+                    && filters.matches(item)
+                    && (filter.is_empty() || crate::ui::inventory::view::matches_text(&searchable_name(item).to_uppercase(), filter))
+            })
+            .collect();
+        // The key function runs once per item, not once per comparison.
+        indices.sort_by_cached_key(|&i| crate::natural_order::key(&inv.items[i].name));
+        self.order = indices.into_iter().map(|i| (inv.items[i].item_id, i)).collect();
+        self.ids = self.order.iter().map(|(id, _)| *id).collect();
+    }
+
+    fn len(&self) -> usize {
+        self.order.len()
+    }
+
+    /// A copy of the ordered ids, for the selection (it keeps its own).
+    fn ids(&self) -> Vec<Uuid> {
+        self.ids.clone()
+    }
+
+    /// (item id, index in the listing) of the row at `index`.
+    fn at(&self, index: usize) -> Option<(Uuid, usize)> {
+        self.order.get(index).copied()
+    }
+
+    /// The row of `id` in the order, if it is shown.
+    fn position(&self, id: Uuid) -> Option<usize> {
+        self.order.iter().position(|&(row, _)| row == id)
+    }
+}
 
 /// Localized item name (LLTaskInvFVBridge::getDisplayName). Permissions are
 /// displayed with the same compact suffix as the user's inventory.
@@ -139,19 +207,17 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         #[cfg(not(test))]
         let _ = search;
     });
-    let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();
-    let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
+    let inv = tool.contents.objects.get(&object_id);
+    let loading = inv.is_some_and(|inv| inv.loading && inv.items.is_empty());
+    let item_count = inv.map(|inv| inv.items.iter().filter(|i| !i.is_folder).count()).unwrap_or(0);
     let filter = tool.ui.contents_filter.trim().to_uppercase();
     let filters = tool.ui.contents_filters;
-    let mut list: Vec<&TaskItem> = items
-        .iter()
-        .filter(|i| filters.matches(i))
-        .filter(|i| filter.is_empty() || crate::ui::inventory::view::matches_text(&searchable_name(i).to_uppercase(), &filter))
-        .collect();
-    list.sort_by_key(|i| crate::natural_order::key(&i.name));
+    tool.ui.contents_projection.ensure(object_id, inv, &filter, filters);
     tool.ui
         .contents_selection
-        .sync(object_id, list.iter().map(|it| it.item_id).collect(), ui.layer_id());
+        .sync(object_id, tool.ui.contents_projection.ids(), ui.layer_id());
+    let total = tool.ui.contents_projection.len();
+    let owned = crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id));
     // Fill the bounded section viewport, including after a user resize.
     // The list also accepts inventory drops; only its frame margins sit outside it.
     let height = (ui.clip_rect().bottom() - ui.cursor().top() - 8.0).max(40.0);
@@ -171,58 +237,55 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             background.request_focus();
             tool.ui.contents_selection.items.clear();
         }
-        egui::ScrollArea::both()
-            .id_salt("task_contents_list")
-            .max_width(ui.available_width())
-            .max_height(height)
-            .min_scrolled_height((height - ui.spacing().scroll.allocated_width()).max(40.0))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let open_icon = if inv.loading && items.is_empty() {
-                    "folder-filled"
-                } else {
-                    "folder-open-filled"
-                };
-                let loading = inv.loading && inv.items.is_empty();
-                let row = ui.horizontal(|ui| {
-                    if let Some(t) = crate::ui::icons::global(open_icon) {
-                        ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.violet_light));
-                    }
-                    let title = if loading {
-                        aurora_i18n::tr!("build-ui-contents-loading-contents").to_owned()
-                    } else {
-                        root_label(items.len())
-                    };
-                    ui.add(egui::Label::new(RichText::new(title).size(13.0).color(p.ink)).selectable(false));
-                });
-                // The root folder carries the whole contents to an inventory
-                // folder (LLTaskCategoryBridge::startDrag).
-                let root = ui
-                    .interact(
-                        row.response.rect,
-                        egui::Id::unique(("task_contents_root", object_id)),
-                        egui::Sense::click_and_drag(),
-                    )
-                    .on_hover_ui(|ui| {
-                        ui.label(aurora_i18n::tr!("common-object-contents"));
-                        ui.label(aurora_i18n::tr!("contents-root-drag-tip"));
-                    });
-                if !loading {
-                    crate::ui::inventory::task_drop::root_source(
-                        ui,
-                        &root,
-                        world,
-                        object_id,
-                        &items,
-                        crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
-                    );
+        // One row per item, the root folder first, at a fixed pitch: only the
+        // rows in sight are built (ScrollArea::show_rows).
+        let row_height = ui.spacing().interact_size.y;
+        // Reveal a selection a cleared search left out of sight (row 0 is the
+        // root folder).
+        let selected_row = tool
+            .ui
+            .contents_selection
+            .items
+            .iter()
+            .next()
+            .and_then(|id| tool.ui.contents_projection.position(*id))
+            .map(|index| index + 1);
+        let area = crate::ui::widgets::search_scroll_to_row(
+            ui,
+            egui::ScrollArea::both()
+                .id_salt("task_contents_list")
+                .max_width(ui.available_width())
+                .max_height(height)
+                .min_scrolled_height((height - ui.spacing().scroll.allocated_width()).max(40.0))
+                .auto_shrink([false, false]),
+            selected_row,
+            row_height,
+        );
+        area.show_rows(ui, row_height, total + 1, |ui, rows| {
+            let visible = rows.clone();
+            for row in rows {
+                if row == 0 {
+                    let items = tool.contents.objects.get(&object_id).map(|inv| inv.items.as_slice()).unwrap_or(&[]);
+                    root_row(ui, p, world, object_id, items, item_count, loading, owned);
+                } else if let Some(item) = row_item(tool, object_id, row - 1) {
+                    item_row(ui, p, tool, world, idx, object_id, &item, editable);
                 }
-                ui.indent("task_contents_items", |ui| {
-                    for item in list {
-                        item_row(ui, p, tool, world, idx, object_id, item, editable);
-                    }
+            }
+            // A renamer scrolled out of sight keeps its row drawn, so it keeps
+            // the keyboard (as ui/inventory/rows.rs does).
+            if let Some(item_id) = tool.ui.rename.as_ref().filter(|r| r.object == object_id).map(|r| r.item)
+                && let Some(index) = tool.ui.contents_projection.position(item_id)
+                && !visible.contains(&(index + 1))
+                && let Some(item) = row_item(tool, object_id, index)
+            {
+                let pitch = row_height + ui.spacing().item_spacing.y;
+                let top = ui.max_rect().top() + (index + 1 - visible.start) as f32 * pitch;
+                let rect = egui::Rect::from_min_size(egui::pos2(ui.max_rect().left(), top), egui::vec2(ui.max_rect().width(), row_height));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    item_row(ui, p, tool, world, idx, object_id, &item, editable);
                 });
-            });
+            }
+        });
     });
     if ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|pos| !zone.response.rect.contains(pos)))
         && !egui::Popup::is_any_open(ui.ctx())
@@ -272,6 +335,53 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
 }
 
+/// The item a virtualized row shows, cloned only while its row is built.
+fn row_item(tool: &BuildTool, object_id: Uuid, index: usize) -> Option<TaskItem> {
+    let (id, at) = tool.ui.contents_projection.at(index)?;
+    let inv = tool.contents.objects.get(&object_id)?;
+    inv.items.get(at).filter(|it| it.item_id == id).cloned()
+}
+
+/// The root "Contents" folder row (LLTaskCategoryBridge::startDrag): it
+/// carries the whole contents onto an inventory folder, whatever the list's
+/// filter shows. A fixed height keeps the virtualized rows' pitch.
+#[allow(clippy::too_many_arguments)]
+fn root_row(ui: &mut egui::Ui, p: &Palette, world: &World, object_id: Uuid, items: &[TaskItem], count: usize, loading: bool, owned: bool) {
+    let row = ui.allocate_ui_with_layout(
+        Vec2::new(ui.available_width(), ui.spacing().interact_size.y),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.horizontal(|ui| {
+                let open_icon = if loading { "folder-filled" } else { "folder-open-filled" };
+                if let Some(t) = crate::ui::icons::global(open_icon) {
+                    ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.violet_light));
+                }
+                let title = if loading {
+                    aurora_i18n::tr!("build-ui-contents-loading-contents").to_owned()
+                } else {
+                    root_label(count)
+                };
+                ui.add(egui::Label::new(RichText::new(title).size(13.0).color(p.ink)).selectable(false));
+            })
+            .response
+            .rect
+        },
+    );
+    let root = ui
+        .interact(
+            row.inner,
+            egui::Id::unique(("task_contents_root", object_id)),
+            egui::Sense::click_and_drag(),
+        )
+        .on_hover_ui(|ui| {
+            ui.label(aurora_i18n::tr!("common-object-contents"));
+            ui.label(aurora_i18n::tr!("contents-root-drag-tip"));
+        });
+    if !loading {
+        crate::ui::inventory::task_drop::root_source(ui, &root, world, object_id, items, owned);
+    }
+}
+
 /// `AURORA_DEMO_CONTENTS_DROP=panelâ€¦` carries inventory onto the list.
 fn demo_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -304,6 +414,8 @@ fn item_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         widgets::inventory_spacing(ui);
+        // Items are indented under the root folder, as LLPanelObjectInventory does.
+        ui.add_space(ui.spacing().indent);
         if let Some(t) = crate::ui::icons::global(item_icon(item.asset_type as i32, item.inv_type as i32, item.flags)) {
             let color = crate::ui::inventory::item_icon_color(item.asset_type as i32, item.inv_type as i32, p);
             ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(color));
@@ -344,20 +456,23 @@ fn item_row(
             tool.ui.contents_selection.select(ui, object_id, item.item_id, false);
         }
         let item_modify = item_renameable(world, item);
-        // A selected row carries the whole selection (LLFolderView::startDrag).
-        let dragged = if r.hovered() || r.drag_started() || r.dragged() {
-            contents_selection::acted_on(tool, object_id, item)
-        } else {
-            vec![item.clone()]
-        };
-        crate::ui::inventory::task_drop::source(
-            ui,
-            &r,
-            world,
-            object_id,
-            &dragged,
-            crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
-        );
+        // The transfer rule and the clone are only needed under the pointer.
+        if r.hovered() || r.dragged() || r.drag_started() || r.is_pointer_button_down_on() {
+            // A selected row carries the whole selection (LLFolderView::startDrag).
+            let dragged = if r.hovered() || r.drag_started() || r.dragged() {
+                contents_selection::acted_on(tool, object_id, item)
+            } else {
+                vec![item.clone()]
+            };
+            crate::ui::inventory::task_drop::source(
+                ui,
+                &r,
+                world,
+                object_id,
+                &dragged,
+                crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
+            );
+        }
         let script = item.asset_type == AT_LSL_TEXT;
         let preview =
             matches!(item.asset_type, 0 | 1 | 20) && item.to_inv_item().is_some_and(|it| tool.task_preview_offered(world, idx, &it));
@@ -475,6 +590,52 @@ fn new_script_language(ui: &mut egui::Ui, tool: &mut BuildTool, lua: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The cached order keeps the natural sort, rebuilds on the filter and
+    /// on a new listing (generation), so the list does not sort every frame.
+    #[test]
+    fn the_projection_orders_by_name_and_follows_the_filter_and_listing() {
+        let object = uuid::Uuid::from_u128(9);
+        let mut inv = TaskInventory::default();
+        inv.generation = 1;
+        inv.items = ["Pose 10", "Pose 2", "Pose 1"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| TaskItem {
+                item_id: uuid::Uuid::from_u128(1000 + i as u128),
+                name: (*name).into(),
+                owner_mask: perm::COPY | perm::MODIFY | perm::TRANSFER,
+                ..Default::default()
+            })
+            .collect();
+        let mut p = Projection::default();
+        p.ensure(object, Some(&inv), "", ContentsFilters::default());
+        assert_eq!(
+            p.ids(),
+            [1002, 1001, 1000].map(uuid::Uuid::from_u128),
+            "natural order: Pose 1, 2, 10"
+        );
+        assert_eq!(p.len(), 3);
+        assert_eq!(p.position(uuid::Uuid::from_u128(1000)), Some(2));
+        // The filter rebuilds the order.
+        p.ensure(object, Some(&inv), "POSE 2", ContentsFilters::default());
+        assert_eq!(p.ids(), [uuid::Uuid::from_u128(1001)]);
+        // A new listing (generation) rebuilds it: names and count changed.
+        inv.generation += 1;
+        inv.items = ["Beta", "Alpha"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| TaskItem {
+                item_id: uuid::Uuid::from_u128(2000 + i as u128),
+                name: (*name).into(),
+                owner_mask: perm::COPY | perm::MODIFY | perm::TRANSFER,
+                ..Default::default()
+            })
+            .collect();
+        p.ensure(object, Some(&inv), "", ContentsFilters::default());
+        assert_eq!(p.ids(), [2001, 2000].map(uuid::Uuid::from_u128), "the new listing, sorted");
+        assert_eq!(p.len(), 2);
+    }
 
     #[test]
     fn double_click_opens_scripts_and_notecards_even_read_only_and_never_starts_renaming() {

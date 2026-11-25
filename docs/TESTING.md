@@ -2127,6 +2127,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
 | `AURORA_DEMO_BUILD_STYLE=aurora\|legacy` | Construction window presentation for this demo run |
 | `AURORA_DEMO_CONTENTS_CAP=0` | The region without CreateTaskInventoryItem: New script by RezScript, New notecard disabled |
+| `AURORA_DEMO_CONTENTS_ITEMS=<n>` | The demo object holds `n` contents items, to profile the Contents list with `contents-perf` |
 | `AURORA_DEMO_OBJECT_SNAP=1\|on` | Boxes to snap together with "Snap to objects" |
 | `AURORA_DEMO_MOVE_HOLOGRAM=moving\|start` | The hologram of a move, for a build script |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
@@ -2821,6 +2822,15 @@ item and an empty area, and refusal on the outfit / library / Favorites
 folders for the texture. On the grid, the human also checks the group
 permissions, the contents of another owner and the non-copyable items of
 worn objects.
+
+`AURORA_DEMO_BUILD=contents-perf,object:118` with `AURORA_DEMO_BUILD_TAB=contents`
+opens one object's Contents and does nothing else, to profile the list at
+scale. `AURORA_DEMO_CONTENTS_ITEMS=<n>` gives the object `n` items instead of
+the four reference ones (mixed types, names carrying numbers for the natural
+order, a few without copy or without transfer). With `AURORA_PROFILE=1`,
+compare the `u_overlays` step (where the build window is timed) at `n=1` and
+`n=1000`: the clone, the sort and the row layout of the whole listing must not
+run on every frame, only the rows in sight.
 
 `AURORA_DEMO_BUILD=multi-rename,118,151` selects two independent roots,
 opens Edit > General, and applies the shared name `Shared edit`. Capture at
