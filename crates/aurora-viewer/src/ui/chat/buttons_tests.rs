@@ -2067,6 +2067,38 @@ fn a_press_away_or_another_conversation_closes_the_pickers() {
     }
 }
 
+/// A quick right click (press and release in one frame, a touchpad tap) on
+/// the GIF button opens its menu in the frame the emoji picker checks the
+/// press: the picker still closes, as a menu egui opens takes no pointer in
+/// its first frame (`egui::Popup` lays it out first), so the press is the
+/// button's (#4867).
+#[test]
+fn a_quick_right_click_on_the_gif_button_closes_the_emoji_picker() {
+    for style in ALL {
+        let mut h = H::new(style);
+        h.st.gifs.demo = true;
+        h.open(Some(JANE));
+        let (emoji_button, gif_button) = if style.workspace() {
+            (control_id("box-mood-smile-filled"), control_id("box-gif"))
+        } else {
+            (classic_id("mood-smile-filled"), classic_id("gif"))
+        };
+        h.press(emoji_button);
+        assert!(h.st.emoji_open, "{style:?}: the emoji picker opens");
+        let pos = h.shown(gif_button).unwrap().center();
+        h.frame(vec![egui::Event::PointerMoved(pos)]);
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.frame(vec![button(true), button(false)]);
+        assert!(egui::Popup::is_any_open(&h.frames.ctx), "{style:?}: the GIF button's menu opens");
+        assert!(!h.st.emoji_open, "{style:?}: a quick right click on the GIF button closes it");
+    }
+}
+
 /// A picker open before the window first draws, as the startup demos open
 /// one (`AURORA_DEMO_EMOJI_PICKER`, `AURORA_DEMO_GIFS`), stays open: no
 /// conversation was shown before, so none changed (#4867).

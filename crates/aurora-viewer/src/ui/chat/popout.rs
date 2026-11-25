@@ -346,10 +346,10 @@ pub(super) fn pressed_away(ctx: &egui::Context, picker: &egui::Response, buttons
             .collect()
     });
     // on the pass it first shows, the click that opened it ends with the
-    // last release, and a press after it (a slow frame) is a press away
+    // first release, and a press after it (a slow frame) is a press away
     let from = match seen {
         Some(_) => 0,
-        None => events.iter().rposition(|e| !e.2).map_or(events.len(), |i| i + 1),
+        None => events.iter().position(|e| !e.2).map_or(events.len(), |i| i + 1),
     };
     let mut presses = events[from..].iter().filter(|e| e.2).map(|&(pos, button, _)| (pos, button));
     presses.any(|(pos, button)| match ctx.layer_id_at(pos) {
@@ -1521,6 +1521,13 @@ mod tests {
         assert!(
             pass(&egui::Context::default(), then_away, false),
             "a press away after the click that opened it, in its first pass"
+        );
+        let mut click_away = vec![release(button.center())];
+        click_away.extend(primary(away));
+        click_away.push(release(away));
+        assert!(
+            pass(&egui::Context::default(), click_away, false),
+            "a click away after the click that opened it, in its first pass"
         );
         assert!(after(primary(away), false), "a press away");
         let mut click = primary(away);
