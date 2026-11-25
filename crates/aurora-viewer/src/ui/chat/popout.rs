@@ -318,8 +318,24 @@ pub(super) fn claim_picker(ctx: &egui::Context) -> bool {
 /// button's menu, away from this picker), nor a press on a menu open over
 /// it: an emoji's favourite menu, a field's right-click menu
 /// (`text_menu.rs`), a submenu (`menu::is_menu_layer`). A toast, in the
-/// foreground too, is not a menu.
+/// foreground too, is not a menu. The keyboard a widget of the picker
+/// holds leaves with it: a press on the world gives the keyboard up before
+/// the pass (`release_world_keyboard`), and the picker's search, finding
+/// it free, takes it back as it draws; kept, it would hold the world's
+/// next key.
 pub(super) fn pressed_away(ctx: &egui::Context, picker: &egui::Response, buttons: &[egui::Rect]) -> bool {
+    let away = landed_away(ctx, picker, buttons);
+    if away
+        && let Some(id) = ctx.memory(|m| m.focused())
+        && ctx.read_response(id).is_some_and(|r| r.layer_id == picker.layer_id)
+    {
+        ctx.memory_mut(|m| m.surrender_focus(id));
+    }
+    away
+}
+
+/// Whether this pass's input closes `picker` ([`pressed_away`]).
+fn landed_away(ctx: &egui::Context, picker: &egui::Response, buttons: &[egui::Rect]) -> bool {
     let id = picker.id.with("pressed_away_pass");
     let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let focus = crate::outside::focused_window(ctx);

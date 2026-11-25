@@ -2067,6 +2067,57 @@ fn a_press_away_or_another_conversation_closes_the_pickers() {
     }
 }
 
+/// A press on the world closes a picker without leaving it the keyboard
+/// (#4867): the world gives the keyboard up before the frame, the picker's
+/// search takes it back as it draws, and lets it go as the picker closes.
+#[test]
+fn a_press_on_the_world_leaves_the_closed_picker_no_keyboard() {
+    let away = egui::pos2(1150.0, 750.0);
+    for style in ALL {
+        for gif in [false, true] {
+            let mut h = H::new(style);
+            h.st.gifs.demo = true;
+            h.open(Some(JANE));
+            let button = match (style.workspace(), gif) {
+                (true, false) => control_id("box-mood-smile-filled"),
+                (true, true) => control_id("box-gif"),
+                (false, false) => classic_id("mood-smile-filled"),
+                (false, true) => classic_id("gif"),
+            };
+            h.press(button);
+            h.frame(Vec::new());
+            assert!(h.st.emoji_open || h.st.gif_open, "{style:?} gif {gif}: the picker opens");
+            assert!(
+                h.frames.ctx.memory(|m| m.focused()).is_some(),
+                "{style:?} gif {gif}: its search has the keyboard"
+            );
+            // what the world does with the press, before the frame
+            h.frames.ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+            h.frame(vec![
+                egui::Event::PointerMoved(away),
+                egui::Event::PointerButton {
+                    pos: away,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ]);
+            assert!(
+                !h.st.emoji_open && !h.st.gif_open,
+                "{style:?} gif {gif}: a press on the world closes it"
+            );
+            assert!(
+                h.frames.ctx.memory(|m| m.focused()).is_none(),
+                "{style:?} gif {gif}: the closed picker keeps no keyboard"
+            );
+        }
+    }
+}
+
 /// A quick right click (press and release in one frame, a touchpad tap) on
 /// the GIF button opens its menu in the frame the emoji picker checks the
 /// press: the picker still closes, as a menu egui opens takes no pointer in
