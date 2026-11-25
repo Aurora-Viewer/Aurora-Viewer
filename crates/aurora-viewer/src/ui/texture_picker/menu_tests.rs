@@ -253,6 +253,14 @@ fn rename_edits_the_name_in_the_picker_row_and_reaches_the_inventory() {
         bench.actions.len()
     );
     assert!(picker_menu::pending_actions(ui.ctx()).is_empty());
+    // the app answers in the main window's message (here a refusal, once
+    // the change came back): the picker's status line shows it too
+    bench.main.pending = Some(Uuid::from_u128(0x99));
+    ui.settle(|ctx, p| bench.draw(ctx, p));
+    bench.main.pending = None;
+    bench.main.message = "The name was refused".into();
+    ui.settle(|ctx, p| bench.draw(ctx, p));
+    assert!(ui.has("The name was refused"));
 }
 
 #[test]
@@ -376,6 +384,41 @@ fn a_right_click_selects_a_row_as_a_click_does_and_leaves_the_rest() {
     assert!(!ui.has(label(PROPERTIES)) && !ui.has(label("rename")));
     assert_eq!(bench.picker.selected, Some(asset_of(granite)));
     assert_eq!(bench.changes, [asset_of(granite)]);
+}
+
+#[test]
+fn the_no_copy_alert_of_a_right_click_leaves_the_menu_usable() {
+    // FSPanelFace::onTextureSelectionChanged warns of a no-copy choice
+    // (LivePreviewUnavailable) whatever selected it, a right-click included.
+    let mut bench = Bench::new(&[
+        Item::texture(0x10, "Brick wall"),
+        Item {
+            owner_mask: actions::MODIFY | actions::TRANSFER,
+            ..Item::texture(0x13, "No-copy stone")
+        },
+    ]);
+    bench
+        .picker
+        .open_with_defaults("Texture", asset_of(Uuid::from_u128(0x10)), None, true);
+    bench.picker.warn_live_preview = true;
+    let mut ui = PickerUi::new();
+    ui.settle(|ctx, p| bench.draw(ctx, p));
+    ui.right_click("No-copy stone", |ctx, p| bench.draw(ctx, p));
+    for _ in 0..6 {
+        ui.settle(|ctx, p| bench.draw(ctx, p));
+    }
+    assert_eq!(bench.picker.selected_item, Some(Uuid::from_u128(0x13)));
+    assert!(bench.changes.is_empty(), "a no-copy choice waits for OK");
+    // the Legacy Viewer's alert is not modal: this dialog waits for the menu
+    let warning = aurora_i18n::tr!("ui-texture-picker-live-preview-texture");
+    assert!(!ui.has(warning), "no dialog over the open menu");
+    assert!(ui.has(label("copy-name")), "the menu stays open");
+    ui.click(label("copy-name"), |ctx, p| bench.draw(ctx, p));
+    assert_eq!(ui.copied().last().map(String::as_str), Some("No-copy stone"));
+    for _ in 0..2 {
+        ui.settle(|ctx, p| bench.draw(ctx, p));
+    }
+    assert!(ui.has(warning), "then the alert, once the menu closed");
 }
 
 #[test]

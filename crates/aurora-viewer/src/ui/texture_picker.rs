@@ -141,6 +141,8 @@ pub struct TexturePicker {
     /// longer follow the click (a double click confirms instead).
     live_preview_warning: Option<f64>,
     live_preview_dont_show: bool,
+    /// A row's inventory menu is open: the warning waits for it to close.
+    row_menu_open: bool,
     /// The warning's "Do not show again" was ticked: the caller turns its
     /// setting off.
     pub(crate) stop_warning_live_preview: bool,
@@ -843,6 +845,7 @@ impl TexturePicker {
             // (the session id is unique to this opening, whichever caller's)
             let session = self.pipette_id.map_or(0, |id| id.value());
             let mut menu = (self.source != 1).then(|| super::inventory::picker_menu::Rows::begin(ctx, session));
+            let mut menu_open = false;
             let demo_menu = demo_menu_input();
             let mut scroll = egui::ScrollArea::vertical();
             if self.reveal_selection {
@@ -1048,10 +1051,11 @@ impl TexturePicker {
                             chosen = self.selected;
                         }
                         if !local && let Some(menu) = menu.as_mut() {
-                            menu.menu(&response, p, world, id);
+                            menu_open |= menu.menu(&response, p, world, id);
                         }
                     }
                 });
+            self.row_menu_open = menu_open;
             let menu_message = menu.as_ref().map(|menu| menu.message().to_owned()).filter(|text| !text.is_empty());
             if let Some(menu) = menu {
                 menu.finish(ctx, &world.inventory);
@@ -1261,6 +1265,13 @@ impl TexturePicker {
         let now = ctx.input(|i| i.time);
         if now < at {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(at - now));
+            return;
+        }
+        // A right-click's choice warns too (FSPanelFace's callback follows
+        // every selection), but once its inventory menu is closed: the
+        // Legacy Viewer's alert is not modal and leaves the menu usable,
+        // this dialog would take its clicks.
+        if self.row_menu_open {
             return;
         }
         let mut done = false;

@@ -48,6 +48,10 @@ struct Host {
     /// The picker opening (its session id) last drawn: a new
     /// one starts without the last one's message or rename.
     session: Option<u64>,
+    /// The app answers what the menu asked in the main window's message
+    /// (a refused change, frames later): its message last seen, and
+    /// whether a change of the menu's went on its way since.
+    answer: Option<(String, bool)>,
 }
 
 impl Default for Host {
@@ -71,6 +75,7 @@ impl Default for Host {
             clipboard: (Vec::new(), false),
             drawn: false,
             session: None,
+            answer: None,
         }
     }
 }
@@ -138,6 +143,9 @@ pub(super) fn receive(
         state.visible.clear();
         finish_hidden_rename(inv, state, &mut host.actions);
     }
+    if !host.actions.is_empty() {
+        host.answer = Some((st.message.clone(), false));
+    }
     actions.append(&mut host.actions);
     let window = std::mem::replace(&mut host.window, placeholder());
     st.windows.retain(|w| w.id != PICKER);
@@ -179,6 +187,22 @@ pub(super) fn lend(ctx: &egui::Context, st: &mut InventoryUi, prefs: &InventoryP
     state.merchant = st.merchant;
     host.clipboard = (st.clipboard.clone(), st.cut);
     host.appearance_busy = appearance_busy;
+    // The app's answer to the menu goes to the main window, which may be
+    // closed: the picker shows it too, as the listings panel does. Watched
+    // until a message comes or the change asked for is over.
+    if let Some((seen, sent)) = &mut host.answer {
+        if st.message != *seen && !st.message.is_empty() {
+            state.message.clone_from(&st.message);
+            host.answer = None;
+        } else {
+            *sent |= st.pending.is_some();
+            if *sent && st.pending.is_none() {
+                host.answer = None;
+            } else {
+                seen.clone_from(&st.message);
+            }
+        }
+    }
     // Copied only while a picker shows the list: its menu reads them.
     if host.drawn {
         host.prefs.clone_from(prefs);
@@ -210,6 +234,7 @@ impl Rows {
         }
         if host.session != Some(session) {
             host.session = Some(session);
+            host.answer = None;
             let state = &mut host.window.state;
             state.message.clear();
             state.rename = None;
@@ -235,11 +260,13 @@ impl Rows {
     }
 
     /// The row's right-click menu: the inventory's own for `id`, on the
-    /// picker's single selection (allow_multi_select="false").
-    pub(crate) fn menu(&mut self, response: &egui::Response, p: &Palette, world: &World, id: Uuid) {
+    /// picker's single selection (allow_multi_select="false"). Whether it
+    /// is open.
+    pub(crate) fn menu(&mut self, response: &egui::Response, p: &Palette, world: &World, id: Uuid) -> bool {
         let Self { host, facts } = self;
         if response.secondary_clicked() {
             host.window.state.message.clear();
+            host.answer = None;
         }
         crate::ui::menu::context_menu(response, p, |ui| {
             let facts = facts.get_or_insert_with(|| Facts::from_world(world, host.appearance_busy));
@@ -253,7 +280,7 @@ impl Rows {
             let before = Before::of(&host.prefs);
             context::show(ui, p, &world.inventory, id, state, &mut host.prefs, facts, &mut host.actions);
             before.compare(&host.prefs, &mut host.changed);
-        });
+        })
     }
 
     /// What the last command of the menu answered, for the picker's status
