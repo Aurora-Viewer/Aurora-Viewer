@@ -1316,7 +1316,7 @@ import-quick-materials-size = { $count ->
    *[other] These { $count } materials have images that can be imported at 2048 × 2048. Choose their size:
 }
 import-quick-size-choice = { $size } px · L${ $cost }
-import-quick-free-full-size = Send free images at 2048 × 2048 without asking
+import-quick-free-full-size = Upload free images at 2048 × 2048 without asking
 import-quick-free-full-size-help = "Import textures" and "Import materials" then ask 1024 or 2048 only when the upload costs L$.
 import-invalid-request = Check the file name, folder and settings.
 import-service-unavailable = This region does not provide the required upload service.
