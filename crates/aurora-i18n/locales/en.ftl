@@ -1,4 +1,4 @@
-language-name = English (United States)
+language-name = English
 avatar-studio-title = Avatar Studio
 avatar-studio-pose = Pose
 avatar-studio-pose-animated = AO / In-world
@@ -15276,7 +15276,7 @@ wearable-param-150 = Body Definition
 wearable-param-162 = Facial Definition
 wearable-param-165 = Freckles
 wearable-param-166 = Sideburns
-wearable-param-167 = Mustache
+wearable-param-167 = Moustache
 wearable-param-168 = Soulpatch
 wearable-param-169 = Chin Curtains
 wearable-param-177 = Rumpled Hair
