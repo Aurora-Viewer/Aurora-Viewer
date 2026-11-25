@@ -1464,7 +1464,7 @@ mod tests {
                 ..Default::default()
             };
             let mut away = false;
-            let _ = ctx.run_ui(raw, |ui| {
+            let mut output = ctx.run_ui(raw, |ui| {
                 let ctx = ui.ctx();
                 egui::Area::new(egui::Id::unique("toast"))
                     .order(egui::Order::Foreground)
@@ -1495,6 +1495,8 @@ mod tests {
                     });
                 }
             });
+            // no renderer here: the font atlas upload is dropped on purpose
+            output.textures_delta.clear();
             away
         };
         let press = |pos: egui::Pos2, button: egui::PointerButton| {
