@@ -268,29 +268,40 @@ impl App {
     /// nothing submitted yet"): wgpu answers that with a panic in the first
     /// buffer made (`aurora_render::start_guarded`), or the renderer finds
     /// the device lost once its objects are made (`RenderError::DeviceLost`).
-    /// Either start is made again once, after `RESTART_WAIT`. None when no
-    /// renderer could be made: the caller closes as before, and reports the
-    /// loss (`crash::gpu_lost`; for the VR reopen, when the new device was
-    /// lost).
+    /// Either start is made again once, after `RESTART_WAIT`, on a window of
+    /// its own: the failed start may have left its configured surface to the
+    /// process (`lost_at_start` in aurora-render renderer.rs, #1650), and a
+    /// window keeps one swapchain (the reason the recovery opens a new
+    /// window at all). The failed window was never shown, except on macOS.
+    /// None when no renderer could be made: the caller closes as before, and
+    /// reports the loss (`crash::gpu_lost`; for the VR reopen, when the new
+    /// device was lost).
     ///
     /// The wait holds the event loop, as the whole recovery does (it made
     /// the new renderer in up to 11 s in the crash reports): on this path
     /// the viewer used to end. Making the recovery wait in the event loop
     /// instead is noted in TASKS.md.
-    fn open_renderer_after_loss(&mut self, window: &Arc<Window>) -> Option<Renderer> {
+    fn open_renderer_after_loss(&mut self, event_loop: &ActiveEventLoop, plan: &WindowPlan) -> Option<(Arc<Window>, Renderer)> {
         // AURORA_DEMO_GPU_RESTART_FAIL=1: the first start fails as on a
         // device lost while it starts, with wgpu's panic (docs/TESTING.md)
         let demo_fail = self.demo && std::env::var_os("AURORA_DEMO_GPU_RESTART_FAIL").is_some();
         for attempt in 1..=RESTART_ATTEMPTS {
+            let window = match self.open_window(event_loop, plan) {
+                Ok(w) => w,
+                Err(e) => {
+                    log::error!("GPU recovery: cannot create a window: {e}");
+                    return None;
+                }
+            };
             match aurora_render::start_guarded(|| {
                 if demo_fail && attempt == 1 {
                     panic!(
                         "Failed to get mapped range for buffer created with mapped_at_creation: Buffer with '' label is invalid (AURORA_DEMO_GPU_RESTART_FAIL)"
                     );
                 }
-                self.open_renderer(window)
+                self.open_renderer(&window)
             }) {
-                Ok(Ok(renderer)) => return Some(renderer),
+                Ok(Ok(renderer)) => return Some((window, renderer)),
                 Ok(Err(aurora_render::RenderError::DeviceLost)) => {
                     log::error!("GPU recovery: the new device was lost while the renderer started (attempt {attempt})");
                 }
@@ -338,14 +349,7 @@ impl App {
         if safe {
             self.safe_graphics_after_losses();
         }
-        let window = match self.open_window(event_loop, &plan) {
-            Ok(w) => w,
-            Err(e) => {
-                log::error!("GPU recovery: cannot create a window: {e}");
-                return None;
-            }
-        };
-        let mut renderer = self.open_renderer_after_loss(&window)?;
+        let (window, mut renderer) = self.open_renderer_after_loss(event_loop, &plan)?;
         renderer.apply_settings(self.photo_render_settings());
         self.adopt_gpu_scene(&mut renderer);
         self.note_gpus(&renderer);
