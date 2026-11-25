@@ -102,7 +102,8 @@ impl World {
                 Cause::Mention,
                 Some(Notice {
                     title: self.session_title(&m.session),
-                    body: format!("{}: {}", l.from, strip_me(&l.text)),
+                    // named as its toast names it (`World::sender_name`)
+                    body: format!("{}: {}", self.sender_name(l), strip_me(&l.text)),
                     open,
                 }),
             ),
