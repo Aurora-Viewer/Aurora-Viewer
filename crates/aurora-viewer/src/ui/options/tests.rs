@@ -2628,6 +2628,102 @@ fn legacy_layout_status_shows_shared_folder_append_rule_and_login_prompt() {
 }
 
 #[test]
+fn dated_files_is_greyed_while_sharing_and_keeps_its_value() {
+    // Chat › History as painted
+    fn frame(frames: &mut Frames, s: &mut Settings, st: &mut OptionsUi, events: Vec<egui::Event>) -> Vec<egui::Shape> {
+        let p = crate::theme::Theme::default().palette();
+        let d = Settings::default();
+        let mut r = OptionsResult::default();
+        frames.shapes(events, |ui| {
+            ui.set_width(700.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            count(ui, &p, s, &d, st, &mut r);
+            let mut cx = Cx::new(ui, p, s, &d, st, &mut r, Mode::Show, "");
+            run_page(&mut cx, Page::Chat, Some(3));
+        })
+    }
+    fn settled(frames: &mut Frames, s: &mut Settings, st: &mut OptionsUi) -> Vec<egui::Shape> {
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame(frames, s, st, Vec::new());
+        }
+        shapes
+    }
+    // the switch at the right of the Dated files label: its place and its
+    // face (a disabled switch is painted faded)
+    fn switch(shapes: &[egui::Shape]) -> (egui::Pos2, egui::Color32) {
+        let label = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("ui-options-chat-logs-dated") => {
+                    Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+                }
+                _ => None,
+            })
+            .expect("the row of Dated files");
+        shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Rect(r)
+                    if r.rect.size() == crate::ui::widgets::SWITCH_SIZE
+                        && r.rect.left() > label.right()
+                        && (r.rect.center().y - label.center().y).abs() < 2.0 =>
+                {
+                    Some((r.rect, r.fill))
+                }
+                _ => None,
+            })
+            .min_by(|a, b| a.0.left().total_cmp(&b.0.left()))
+            .map(|(rect, fill)| (rect.center(), fill))
+            .expect("its switch")
+    }
+    fn shown(shapes: &[egui::Shape], text: &str) -> bool {
+        shapes
+            .iter()
+            .any(|shape| matches!(shape, egui::Shape::Text(t) if t.galley.text() == text))
+    }
+    let hint = aurora_i18n::tr!("ui-options-chat-logs-dated-shared");
+    let mut frames = Frames::new();
+    let mut s = Settings::default();
+    let mut st = OptionsUi {
+        chat_log_dir: Some(std::path::PathBuf::from("/data/aurora/accounts/0001/chat_logs/agni")),
+        ..Default::default()
+    };
+
+    // Aurora's own folder: the switch works, no hint
+    let shapes = settled(&mut frames, &mut s, &mut st);
+    assert!(!shown(&shapes, hint));
+    for events in click(switch(&shapes).0) {
+        frame(&mut frames, &mut s, &mut st, events);
+    }
+    assert!(s.log_dated_names, "turned on in Aurora's own folder");
+    let (_, on) = switch(&settled(&mut frames, &mut s, &mut st));
+
+    // sharing: greyed, the click changes nothing, and the sharing status
+    // says why
+    st.chat_log_custom = true;
+    st.chat_log_shared = true;
+    st.chat_log_dir = Some(std::path::PathBuf::from("/data/SecondLife/jane_doe"));
+    let shapes = settled(&mut frames, &mut s, &mut st);
+    let (at, greyed) = switch(&shapes);
+    assert_ne!(greyed, on, "the switch is painted greyed");
+    assert!(shown(&shapes, hint), "the hint under the sharing status");
+    for events in click(at) {
+        frame(&mut frames, &mut s, &mut st, events);
+    }
+    assert!(s.log_dated_names, "the stored value is kept while sharing");
+
+    // sharing stopped: the same value applies again
+    st.chat_log_custom = false;
+    st.chat_log_shared = false;
+    st.chat_log_dir = Some(std::path::PathBuf::from("/data/aurora/accounts/0001/chat_logs/agni"));
+    let shapes = settled(&mut frames, &mut s, &mut st);
+    assert_eq!(switch(&shapes).1, on);
+    assert!(!shown(&shapes, hint));
+    assert!(s.log_dated_names);
+}
+
+#[test]
 fn clicking_switch_to_offer_updates_account_folder_row() {
     let mut frames = Frames::new();
     let ctx = frames.ctx.clone();

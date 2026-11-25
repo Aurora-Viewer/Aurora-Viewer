@@ -1193,11 +1193,21 @@ fn history(cx: &mut Cx) {
             tr!("ui-options-open-on-offline-help"),
             &field!(conversation_options.open_on_offline),
         );
+        // in a shared folder the Legacy Viewer's files decide, dated or not
+        // (`names::shared_file_path`): greyed there, its value kept for
+        // Aurora's own folder
+        let shared = cx.st.chat_log_shared;
+        cx.greyed(shared);
         cx.toggle(
             tr!("ui-options-chat-logs-dated"),
-            tr!("ui-options-chat-logs-dated-help"),
+            if shared {
+                tr!("ui-options-chat-logs-dated-shared")
+            } else {
+                tr!("ui-options-chat-logs-dated-help")
+            },
             &field!(log_dated_names),
         );
+        cx.greyed(false);
         cx.toggle(
             tr!("ui-options-chat-logs-import-login"),
             tr!("ui-options-chat-logs-import-login-help"),
@@ -1329,6 +1339,8 @@ fn history(cx: &mut Cx) {
         {
             let line1 = tr!("ui-options-chat-logs-legacy-sharing", folder = folder);
             cx.status(&line1, tr!("ui-options-chat-logs-legacy-append-only"));
+            // why Dated files is greyed above
+            cx.note(tr!("ui-options-chat-logs-dated-shared"));
         }
     });
 }

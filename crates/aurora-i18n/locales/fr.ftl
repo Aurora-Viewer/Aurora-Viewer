@@ -11455,6 +11455,7 @@ ui-options-open-on-offline = Ouvrir les conversations à l’arrivée de message
 ui-options-open-on-offline-help = Ouvre la fenêtre des conversations quand des messages privés ou des invitations envoyés pendant votre absence arrivent à la connexion.
 ui-options-chat-logs-dated = Fichiers datés
 ui-options-chat-logs-dated-help = Un fichier par mois pour chaque conversation (nom-2026-10) et un par jour pour le chat local (chat-2026-10-12), au lieu d'un seul fichier qui grandit.
+ui-options-chat-logs-dated-shared = Pendant le partage, Aurora ajoute aux fichiers que lit le Legacy Viewer, datés ou non. « Fichiers datés » ne s'applique qu'au dossier propre à Aurora.
 ui-options-chat-logs-note = Ces fichiers sont du texte lisible par toute personne qui a accès à cet ordinateur. Ils restent sur cette machine, séparés pour chaque compte et chaque grille, et ne sont jamais joints à un rapport de bug.
 ui-options-chat-logs-open = Ouvrir le dossier
 ui-options-chat-logs-folder-help = Les fichiers de ce compte sont déplacés dans le nouveau dossier.

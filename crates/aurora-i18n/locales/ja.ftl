@@ -11324,6 +11324,7 @@ ui-options-open-on-offline = オフラインメッセージが届いたら会話
 ui-options-open-on-offline-help = 不在中に送られた個人メッセージや招待がログイン時に届いたら、会話ウィンドウを開きます。
 ui-options-chat-logs-dated = 日付付きのファイル
 ui-options-chat-logs-dated-help = １つのファイルが大きくなり続ける代わりに、会話ごとに月１つ（name-2026-10）、近くのチャットは日１つ（chat-2026-10-12）のファイルにします。
+ui-options-chat-logs-dated-shared = 共有中は、日付の有無にかかわらず、レガシービューアが読むファイルにAuroraが追記します。「日付付きのファイル」はAurora自身のフォルダにのみ適用されます。
 ui-options-chat-logs-note = これらのファイルはプレーンテキストで、このコンピュータを使える人なら誰でも読めます。アカウントとグリッドごとに分けてこのマシンに保存され、バグレポートに添付されることはありません。
 ui-options-chat-logs-open = フォルダを開く
 ui-options-chat-logs-folder-help = このアカウントのファイルは新しいフォルダに移動されます。
