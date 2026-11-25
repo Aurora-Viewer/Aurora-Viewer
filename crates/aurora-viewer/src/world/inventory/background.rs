@@ -601,12 +601,13 @@ impl BackgroundFetch {
     }
 
     fn step(&mut self, inv: &mut Inventory, agent: Uuid, id: Uuid, kind: Kind, out: &mut Vec<NetCommand>) {
-        if inv.retrying_folders.contains(&id) {
-            return;
-        }
-        // (a split part's own read: its parent's batches may take it again)
+        // Consume the split marker with its queue entry, even when another
+        // retry owns the folder. That retry still excludes it from batches.
         if kind == Kind::FolderAndContent {
             self.split.remove(&id);
+        }
+        if inv.retrying_folders.contains(&id) {
+            return;
         }
         let Some(folder) = inv.folders.get(&id) else {
             return;

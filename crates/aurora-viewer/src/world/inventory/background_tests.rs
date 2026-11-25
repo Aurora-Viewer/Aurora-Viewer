@@ -23,6 +23,24 @@ fn recovery_automatic_folder_reads_cannot_bypass_background_cooldown() {
 }
 
 #[test]
+fn a_split_step_consumes_its_mark_without_stealing_a_cooling_retry() {
+    let mut inv = skeleton(&[(10, 1, -1)]);
+    let now = Instant::now();
+    let mut fetch = cooling_read(&mut inv, Vec::new(), now);
+    let folder = id(10);
+    fetch.split.insert(folder);
+    fetch.queue.push_back((folder, Kind::FolderAndContent));
+
+    let reads = fetch.pump_at(&mut inv, AGENT, now);
+    assert!(reads.is_empty(), "the split step cannot bypass the pending cooldown");
+    assert!(!fetch.split.contains(&folder));
+    assert!(inv.retrying_folders.contains(&folder));
+
+    let reads = fetch.pump_at(&mut inv, AGENT, now + BACKGROUND_BACKOFF[0]);
+    assert!(matches!(&reads[..], [NetCommand::FetchInventoryTree { parent, .. }] if *parent == folder));
+}
+
+#[test]
 fn recovery_a_recovered_folder_is_not_reissued_by_a_delayed_retry() {
     let mut inv = skeleton(&[(10, 1, -1)]);
     let now = Instant::now();
