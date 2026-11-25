@@ -8682,11 +8682,7 @@ impl App {
             };
             (hit, target, picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y)))
         };
-        let mods = crate::build::Mods {
-            shift: self.shift,
-            ctrl: self.ctrl,
-            alt: self.alt,
-        };
+        let mods = self.build_mouse_mods();
         // the surface under the cursor: face tool, grab surface info
         let surface = if let Some(d) = face_drawn {
             self.scene.drawn_surface(&self.world, &d)
@@ -8892,12 +8888,44 @@ impl App {
         })
     }
 
+    fn build_mouse_mods(&self) -> crate::build::Mods {
+        crate::build::Mods {
+            shift: self.shift,
+            ctrl: self.ctrl,
+            alt: self.alt,
+        }
+    }
+
+    fn mouse_release(&self) -> click_pick::MouseRelease {
+        click_pick::MouseRelease {
+            cursor: self.cursor_pos,
+            mods: self.build_mouse_mods(),
+            command: self.command,
+        }
+    }
+
     fn on_left_release(&mut self) {
+        let release = self.mouse_release();
         if self.clicks.waiting() {
             // after the press it ends, which still waits for its depth
-            self.clicks.hold(click_pick::Held::LeftRelease);
-            return;
+            self.clicks.hold(click_pick::Held::LeftRelease(release));
+        } else {
+            self.apply_left_release(release);
         }
+    }
+
+    fn finish_build_release(&mut self, release: click_pick::MouseRelease) {
+        self.build.mouse_up(
+            &mut self.world,
+            &self.settings.build,
+            Some(&self.scene),
+            release.cursor,
+            release.mods,
+        );
+        self.flush_build();
+    }
+
+    fn apply_left_release(&mut self, release: click_pick::MouseRelease) {
         if self.left_down && self.texture_pipette() {
             if !self.egui_ctx.is_pointer_over_egui() {
                 self.sample_texture();
@@ -8921,13 +8949,12 @@ impl App {
         self.script_click_up();
         self.left_down = false;
         self.world_mouse_walk_pending = false;
-        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene));
-        self.flush_build();
+        self.finish_build_release(release);
         self.media.on_release(aurora_media::Modifiers {
-            control: self.ctrl,
-            alt: self.alt,
-            shift: self.shift,
-            command: self.command,
+            control: release.mods.ctrl,
+            alt: release.mods.alt,
+            shift: release.mods.shift,
+            command: release.command,
         });
         if self.mouse_mode == MouseMode::Steer && self.steer_by_right {
             // the right button steers (MMO-style buttons): the left one only
@@ -16056,6 +16083,7 @@ impl App {
                     crate::build::demo::Step::Press => self.click(click_pick::Click::Build),
                     crate::build::demo::Step::Release => self.build_release(),
                     crate::build::demo::Step::Shift(on) => self.shift = on,
+                    crate::build::demo::Step::Ctrl(on) => self.ctrl = on,
                     crate::build::demo::Step::FocusLost => {
                         self.drop_clicks();
                         self.on_left_release();
@@ -23877,7 +23905,9 @@ impl ApplicationHandler for App {
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(480.0, 560.0));
                 }
             }
-            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("cycle,") || v.starts_with("cycle-linked,")) {
+            // the cycle objects serve the cycle demos, and a rectangle that
+            // names one of them (rect-ctrl,object:99614)
+            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| crate::build::demo::uses_cycle_objects(&v)) {
                 for ev in crate::demo::selection_cycle_events() {
                     self.world.apply(ev);
                 }
