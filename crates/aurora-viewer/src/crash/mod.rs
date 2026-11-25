@@ -538,11 +538,22 @@ const UPDATE_ROLLBACK_WAIT: std::time::Duration = std::time::Duration::from_secs
 /// the helper is; the tests run it everywhere.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn ended_by_update(dir: &Path, exit_code: u32, ended: impl FnOnce() -> bool) -> bool {
-    exit_code == 1
-        && !["failed", "native.txt", "panic.txt", "oom.txt"]
+    exit_code == 1 && !own_record(dir) && ended()
+}
+
+/// Whether the session holds a record of its own end: the `failed` marker
+/// (written empty on purpose), or a trace with something in it. Every session
+/// opens `panic.txt`, `native.txt` and `oom.txt` empty at start, as the
+/// crash window and the report read an empty one as none (`len() > 0`). A GPU
+/// stall before the first frame (`gpu-stall.txt`, after 6 s) or a freeze is
+/// the viewer's too: its report and the safe graphics offered at the next
+/// start must stay.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn own_record(dir: &Path) -> bool {
+    dir.join("failed").exists()
+        || ["panic.txt", "native.txt", "oom.txt", "gpu-stall.txt", "freeze.txt"]
             .iter()
-            .any(|name| dir.join(name).exists())
-        && ended()
+            .any(|name| std::fs::metadata(dir.join(name)).is_ok_and(|m| m.len() > 0))
 }
 
 /// A viewer stopped by Windows ending the session (shutdown, restart, sign
@@ -1015,16 +1026,25 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         // ended by the helper, which rolled the update back
         assert!(ended_by_update(&dir, 1, || true));
+        // the traces every session opens empty at start are no record
+        for name in ["panic.txt", "native.txt", "oom.txt"] {
+            std::fs::write(dir.join(name), []).unwrap();
+        }
+        assert!(ended_by_update(&dir, 1, || true), "the empty traces of a start");
         // no rollback said, or another exit code (a crash's exception)
         assert!(!ended_by_update(&dir, 1, || false));
         assert!(!ended_by_update(&dir, 0xC0000005, || true));
         assert!(!ended_by_update(&dir, 0, || true));
-        // the viewer's own crash, panic or out-of-memory, even then
-        for name in ["native.txt", "panic.txt", "oom.txt", "failed"] {
-            std::fs::write(dir.join(name), []).unwrap();
+        // the viewer's own crash, panic, out-of-memory, GPU stall or freeze,
+        // even then: a trace with something in it, or the `failed` marker
+        for name in ["native.txt", "panic.txt", "oom.txt", "gpu-stall.txt", "freeze.txt"] {
+            std::fs::write(dir.join(name), b"trace").unwrap();
             assert!(!ended_by_update(&dir, 1, || true), "{name}");
-            std::fs::remove_file(dir.join(name)).unwrap();
+            std::fs::write(dir.join(name), []).unwrap();
         }
+        std::fs::write(dir.join("failed"), []).unwrap();
+        assert!(!ended_by_update(&dir, 1, || true), "failed");
+        std::fs::remove_file(dir.join("failed")).unwrap();
         // the helper is not even asked when the exit already says no
         assert!(!ended_by_update(&dir, 3, || panic!("not asked")));
         std::fs::remove_dir_all(dir).unwrap();
