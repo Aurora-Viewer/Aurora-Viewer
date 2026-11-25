@@ -1,4 +1,4 @@
-//! The Aurora Create window: its Center and Rotate on every prim
+//! The Aurora Create window: its placement options
 //! (`BuildSettings::creation_pose`), and its shape picker
 //! (`BuildTool::capture_shape`): the rule
 //! of LLPanelObject::onCopyParams (a prim we may modify, not a mesh), the
@@ -163,33 +163,145 @@ fn the_picker_is_put_down_with_the_create_window() {
     assert!(!tool.capturing_shape());
 }
 
+/// A prim clicked, turned a quarter around Z.
+fn clicked_prim() -> CreationPrim {
+    CreationPrim {
+        center: Vec3::new(10.0, 20.0, 30.0),
+        rotation: Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+        scale: Vec3::new(1.0, 2.0, 3.0),
+    }
+}
+
 #[test]
-fn center_and_rotate_place_the_prim_on_the_surface_clicked() {
-    let scale = Vec3::new(1.0, 2.0, 3.0);
-    let point = Vec3::new(10.0, 20.0, 30.0);
-    let wall = Vec3::X;
+fn center_and_rotate_do_what_copy_selection_does_for_a_copy() {
+    let prim = clicked_prim();
+    let small = Vec3::splat(0.5);
+    let top = CreationHit {
+        point: prim.center + Vec3::new(0.3, 0.2, 1.5),
+        normal: Vec3::Z,
+        prim: Some(prim),
+    };
+    // its local X face, which the quarter turn shows toward +Y
+    let side = CreationHit {
+        point: prim.center + Vec3::new(0.1, 0.5, 0.4),
+        normal: Vec3::Y,
+        prim: Some(prim),
+    };
     let mut s = BuildSettings::default();
-    // off: upright, resting on the point, whatever the surface
-    let (center, rotation) = s.creation_pose(Quat::IDENTITY, scale, point, wall);
+    // off: upright, resting on the point (the region's own place)
+    let (center, rotation) = s.creation_pose(Quat::IDENTITY, small, side);
     assert_eq!(rotation, Quat::IDENTITY);
-    assert!(center.abs_diff_eq(point + Vec3::Z * 1.5, 1e-5));
-    // Center: its centre on the point
+    assert!(center.abs_diff_eq(side.point + Vec3::Z * 0.25, 1e-5));
+    // Center: on the middle of the face clicked, beside the prim
     s.create_centers = true;
-    let (center, _) = s.creation_pose(Quat::IDENTITY, scale, point, wall);
-    assert!(center.abs_diff_eq(point, 1e-5));
-    // Rotate: standing on the wall, its top toward the camera
+    let (center, rotation) = s.creation_pose(Quat::IDENTITY, small, top);
+    assert_eq!(rotation, Quat::IDENTITY);
+    assert!(center.abs_diff_eq(prim.center + Vec3::Z * (1.5 + 0.25), 1e-5), "{center:?}");
+    let (center, _) = s.creation_pose(Quat::IDENTITY, small, side);
+    assert!(center.abs_diff_eq(prim.center + Vec3::Y * (0.5 + 0.25), 1e-5), "{center:?}");
+    // Rotate: the prim's rotation, resting on the point
     s.create_centers = false;
     s.create_rotates = true;
-    let (center, rotation) = s.creation_pose(Quat::IDENTITY, scale, point, wall);
-    assert!((rotation * Vec3::Z).abs_diff_eq(wall, 1e-5));
-    assert!(center.abs_diff_eq(point + wall * 1.5, 1e-5), "{center:?}");
-    // a shape with its own turn (the sphere's) keeps it on the surface
-    let turned = shapes::shapes()[8].rotation();
-    let (center, rotation) = s.creation_pose(turned, scale, point, Vec3::Z);
-    assert!(rotation.abs_diff_eq(turned, 1e-5));
+    let (center, rotation) = s.creation_pose(Quat::IDENTITY, small, top);
+    assert!(rotation.abs_diff_eq(prim.rotation, 1e-5));
+    assert!(center.abs_diff_eq(top.point + Vec3::Z * 0.25, 1e-5));
+    // both: turned as the prim, so its own X half faces the side clicked
+    s.create_centers = true;
+    let long = Vec3::new(0.5, 1.0, 0.5);
+    let (center, rotation) = s.creation_pose(Quat::IDENTITY, long, side);
+    assert!(rotation.abs_diff_eq(prim.rotation, 1e-5));
+    assert!(center.abs_diff_eq(prim.center + Vec3::Y * (0.5 + 0.25), 1e-5), "{center:?}");
+    s.create_rotates = false;
+    let (center, _) = s.creation_pose(Quat::IDENTITY, long, side);
     assert!(
-        center.abs_diff_eq(point + Vec3::Z * 0.5, 1e-5),
-        "the turned shape's own height: {center:?}"
+        center.abs_diff_eq(prim.center + Vec3::Y * (0.5 + 0.5), 1e-5),
+        "its own Y half: {center:?}"
+    );
+    // a shape with its own turn (the sphere's) keeps it, after the prim's
+    s.create_rotates = true;
+    let turned = shapes::shapes()[8].rotation();
+    let (_, rotation) = s.creation_pose(turned, small, top);
+    assert!(rotation.abs_diff_eq(prim.rotation * turned, 1e-5));
+    // on the ground, as for a copy: nothing to centre on nor turn as
+    let ground = CreationHit {
+        point: Vec3::new(5.0, 5.0, 21.0),
+        normal: Vec3::new(0.3, 0.0, 1.0).normalize(),
+        prim: None,
+    };
+    let (center, rotation) = s.creation_pose(Quat::IDENTITY, small, ground);
+    assert_eq!(rotation, Quat::IDENTITY);
+    assert!(center.abs_diff_eq(ground.point + Vec3::Z * 0.25, 1e-5));
+    // a prim of bad numbers leaves the region's own place
+    let mut broken = top;
+    broken.prim = Some(CreationPrim { center: Vec3::NAN, ..prim });
+    let (center, _) = s.creation_pose(Quat::IDENTITY, small, broken);
+    assert!(center.is_finite());
+}
+
+#[test]
+fn align_to_surface_stands_the_shape_on_the_surface_clicked() {
+    let scale = Vec3::new(1.0, 2.0, 3.0);
+    let mut s = BuildSettings {
+        create_aligns: true,
+        ..BuildSettings::default()
+    };
+    // on the ground's slope, with no prim
+    let slope = Vec3::new(0.3, 0.0, 1.0).normalize();
+    let ground = CreationHit {
+        point: Vec3::new(5.0, 5.0, 21.0),
+        normal: slope,
+        prim: None,
+    };
+    let (center, rotation) = s.creation_pose(Quat::IDENTITY, scale, ground);
+    assert!((rotation * Vec3::Z).abs_diff_eq(slope, 1e-5));
+    assert!(center.abs_diff_eq(ground.point + slope * 1.5, 1e-5), "{center:?}");
+    // on a wall, centred on the prim: its top toward the camera
+    s.create_centers = true;
+    let prim = clicked_prim();
+    let side = CreationHit {
+        point: prim.center + Vec3::new(0.1, 0.5, 0.4),
+        normal: Vec3::Y,
+        prim: Some(prim),
+    };
+    let (center, rotation) = s.creation_pose(Quat::IDENTITY, scale, side);
+    assert!((rotation * Vec3::Z).abs_diff_eq(Vec3::Y, 1e-5));
+    assert!(center.abs_diff_eq(prim.center + Vec3::Y * (0.5 + 1.5), 1e-5), "{center:?}");
+    // set with "Copy prim rotation" by hand, it is the one that turns
+    s.create_rotates = true;
+    let (_, rotation) = s.creation_pose(Quat::IDENTITY, scale, side);
+    assert!((rotation * Vec3::Z).abs_diff_eq(Vec3::Y, 1e-5));
+}
+
+#[test]
+fn a_shape_aligned_to_the_ground_is_put_there_once_it_arrives() {
+    let (mut world, mut tool, mut s, _) = fixture();
+    s.create_aligns = true;
+    let point = world.agent.position + Vec3::X * 5.0;
+    let slope = Vec3::new(0.0, 0.4, 1.0).normalize();
+    tool.creation_hit = Some(CreationHit {
+        point,
+        normal: slope,
+        prim: None,
+    });
+    tool.place(&mut world, &s, Some(point), None, (0.0, 0.0));
+    let prim = tool
+        .out
+        .iter()
+        .find_map(|command| match command {
+            NetCommand::Build(BuildCmd::Add(prim)) => Some(prim.clone()),
+            _ => None,
+        })
+        .expect("ObjectAdd");
+    assert!((prim.rotation * Vec3::Z).abs_diff_eq(slope, 1e-5));
+    tool.out.clear();
+    let mut sim = demo_sim::DemoSim::default();
+    for event in sim.reply(&world, &BuildCmd::Add(prim)) {
+        world.apply(event);
+    }
+    tool.pick_up_created(&mut world, &s);
+    assert!(
+        tool.out.iter().any(|c| matches!(c, NetCommand::Build(BuildCmd::Transform { .. }))),
+        "put on the slope"
     );
 }
 
@@ -199,11 +311,17 @@ fn a_prim_placed_by_center_and_rotate_is_put_there_once_it_arrives() {
     s.create_centers = true;
     s.create_rotates = true;
     s.new_prim_size = [0.5, 0.5, 0.5];
-    let point = world.agent.position + Vec3::X * 5.0;
-    let wall = Vec3::Y;
-    tool.creation_normal = Some(wall);
+    let mut prim = clicked_prim();
+    prim.center = world.agent.position + Vec3::X * 5.0;
+    let point = prim.center + Vec3::Z * 1.5;
+    tool.creation_hit = Some(CreationHit {
+        point,
+        normal: Vec3::Z,
+        prim: Some(prim),
+    });
     tool.place(&mut world, &s, Some(point), None, (0.0, 0.0));
-    assert!(tool.creation_normal.is_none(), "taken by the click");
+    assert!(tool.creation_hit.is_none(), "taken by the click");
+    let expected = prim.center + Vec3::Z * (1.5 + 0.25);
     let commands = std::mem::take(&mut tool.out);
     let prim = commands
         .iter()
@@ -212,7 +330,10 @@ fn a_prim_placed_by_center_and_rotate_is_put_there_once_it_arrives() {
             _ => None,
         })
         .expect("ObjectAdd");
-    assert!((prim.rotation * Vec3::Z).abs_diff_eq(wall, 1e-5), "sent turned to the surface");
+    assert!(
+        prim.rotation.abs_diff_eq(clicked_prim().rotation, 1e-5),
+        "sent turned as the prim clicked"
+    );
     let mut sim = demo_sim::DemoSim::default();
     for event in sim.reply(&world, &BuildCmd::Add(prim.clone())) {
         world.apply(event);
@@ -228,7 +349,7 @@ fn a_prim_placed_by_center_and_rotate_is_put_there_once_it_arrives() {
         .expect("the place sent again once the prim arrived");
     assert_eq!(handle, prim.handle);
     let off = world.region_offset(handle).expect("the region");
-    assert!(update.position.expect("a position").abs_diff_eq(point - off, 1e-4));
+    assert!(update.position.expect("a position").abs_diff_eq(expected - off, 1e-4));
     assert!(update.rotation.expect("a rotation").abs_diff_eq(prim.rotation, 1e-5));
 }
 
@@ -236,7 +357,11 @@ fn a_prim_placed_by_center_and_rotate_is_put_there_once_it_arrives() {
 fn a_prim_placed_as_the_legacy_viewer_does_is_left_where_the_region_puts_it() {
     let (mut world, mut tool, s, _) = fixture();
     let point = world.agent.position + Vec3::X * 5.0;
-    tool.creation_normal = Some(Vec3::Y);
+    tool.creation_hit = Some(CreationHit {
+        point,
+        normal: Vec3::Y,
+        prim: Some(clicked_prim()),
+    });
     tool.place(&mut world, &s, Some(point), None, (0.0, 0.0));
     let prim = tool
         .out
@@ -257,4 +382,28 @@ fn a_prim_placed_as_the_legacy_viewer_does_is_left_where_the_region_puts_it() {
         !tool.out.iter().any(|c| matches!(c, NetCommand::Build(BuildCmd::Transform { .. }))),
         "no place of our own"
     );
+}
+
+#[test]
+fn a_click_with_no_fresh_hit_is_placed_as_the_legacy_viewer_does() {
+    let (mut world, mut tool, mut s, _) = fixture();
+    s.create_centers = true;
+    s.create_rotates = true;
+    let point = world.agent.position + Vec3::X * 5.0;
+    // left from another click, somewhere else
+    tool.creation_hit = Some(CreationHit {
+        point: point + Vec3::X,
+        normal: Vec3::Z,
+        prim: Some(clicked_prim()),
+    });
+    tool.place(&mut world, &s, Some(point), None, (0.0, 0.0));
+    let prim = tool
+        .out
+        .iter()
+        .find_map(|command| match command {
+            NetCommand::Build(BuildCmd::Add(prim)) => Some(prim.clone()),
+            _ => None,
+        })
+        .expect("ObjectAdd");
+    assert_eq!(prim.rotation, Quat::IDENTITY, "not turned as a prim this click missed");
 }

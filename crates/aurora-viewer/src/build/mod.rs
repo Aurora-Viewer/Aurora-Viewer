@@ -309,13 +309,18 @@ pub struct BuildSettings {
     pub copy_selection: bool,
     pub copy_centers: bool,
     pub copy_rotates: bool,
-    /// The Aurora Create window's Center and Rotate, for every prim it
-    /// makes (Aurora's own, human request 2026-11-25): its centre on the
-    /// point clicked instead of resting on the surface, and turned to stand
-    /// on the surface clicked (`creation_pose`). Off, as the Legacy
-    /// Viewer's Create tool places a prim.
+    /// The Aurora Create window's placement options, for every shape it
+    /// makes (human requests, 2026-11-25; `creation_pose`). On a prim
+    /// clicked, `create_centers` ("Center on prim") and `create_rotates`
+    /// ("Copy prim rotation") do what "Copy selection"'s Center and Rotate
+    /// do for a copy: on the middle of the face clicked, and the prim's
+    /// rotation. `create_aligns` ("Align to surface", Aurora's own) turns
+    /// the shape to stand on the surface clicked, a prim's or the
+    /// ground's; it and `create_rotates` are one or the other. All off, as
+    /// the Legacy Viewer's Create tool places a prim.
     pub create_centers: bool,
     pub create_rotates: bool,
+    pub create_aligns: bool,
     /// LastSelectedTree / LastSelectedGrass: species name, empty = random.
     pub last_tree: String,
     pub last_grass: String,
@@ -429,32 +434,53 @@ impl BuildSettings {
     }
 
     /// Where the Create tool's prim of `scale`, turned by its shape's own
-    /// `rotation`, goes on the surface at `point` whose `normal` faces the
-    /// camera: its centre and its rotation. It rests on the point, upright,
-    /// as the region places LLToolPlacer's prim; with the Aurora window's
-    /// Rotate it stands on the surface instead, and with Center its centre
-    /// is the point (`create_centers`).
-    pub fn creation_pose(&self, rotation: Quat, scale: Vec3, point: Vec3, normal: Vec3) -> (Vec3, Quat) {
-        let up = if self.create_rotates {
-            normal.normalize_or(Vec3::Z)
-        } else {
-            Vec3::Z
+    /// `rotation`, goes for the click `hit`: its centre and its rotation. It
+    /// rests on the point, upright, as the region places LLToolPlacer's
+    /// prim. On a prim, "Center on prim" and "Copy prim rotation" do what
+    /// "Copy selection"'s Center and Rotate do for a copy
+    /// (ObjectDuplicateOnRay's CopyCenters and CopyRotates, which the
+    /// region applies): on the middle of the face clicked, beside the prim
+    /// and centred on it, and the prim's rotation; on the ground they do
+    /// nothing, as for a copy. "Align to surface" turns it to stand on the
+    /// surface clicked, the ground's too.
+    pub fn creation_pose(&self, rotation: Quat, scale: Vec3, hit: CreationHit) -> (Vec3, Quat) {
+        let half_along = |rotation: Quat, dir: Vec3| {
+            let axes = glam::Mat3::from_quat(rotation);
+            Vec3::new(axes.x_axis.dot(dir), axes.y_axis.dot(dir), axes.z_axis.dot(dir))
+                .abs()
+                .dot(scale)
+                * 0.5
         };
-        let rotation = if self.create_rotates {
-            (Quat::from_rotation_arc(Vec3::Z, up) * rotation).normalize()
-        } else {
-            rotation
-        };
-        if self.create_centers {
-            return (point, rotation);
+        let upright = (hit.point + Vec3::Z * half_along(rotation, Vec3::Z), rotation);
+        let prim = hit.prim.filter(|_| self.create_centers || self.create_rotates);
+        if prim.is_none() && !self.create_aligns {
+            return upright;
         }
-        // half its extent along `up`
-        let axes = glam::Mat3::from_quat(rotation);
-        let half = Vec3::new(axes.x_axis.dot(up), axes.y_axis.dot(up), axes.z_axis.dot(up))
-            .abs()
-            .dot(scale)
-            * 0.5;
-        (point + up * half, rotation)
+        let normal = hit.normal.normalize_or(Vec3::Z);
+        let rotation = match prim {
+            _ if self.create_aligns => (Quat::from_rotation_arc(Vec3::Z, normal) * rotation).normalize(),
+            Some(prim) if self.create_rotates => (prim.rotation * rotation).normalize(),
+            _ => rotation,
+        };
+        let pose = match prim.filter(|_| self.create_centers) {
+            Some(prim) => {
+                // the face clicked, as one of the prim's own axes (the
+                // face's axis-aligned normal the region uses for a centred
+                // copy)
+                let local = prim.rotation.inverse() * normal;
+                let axis = (0..3).max_by(|&a, &b| local[a].abs().total_cmp(&local[b].abs())).unwrap_or(2);
+                let mut face = Vec3::ZERO;
+                face[axis] = local[axis].signum();
+                let face = (prim.rotation * face).normalize_or(Vec3::Z);
+                prim.center + face * (prim.scale[axis] * 0.5 + half_along(rotation, face))
+            }
+            None => hit.point + normal * half_along(rotation, normal),
+        };
+        if pose.is_finite() && rotation.is_finite() {
+            (pose, rotation)
+        } else {
+            upright
+        }
     }
 
     /// Removes the captured shape `k`; the choice follows its shape, or
@@ -500,6 +526,24 @@ fn sane_distance(value: f32, default: f32) -> f32 {
 
 #[cfg(test)]
 mod worn_tests;
+
+/// What is under the Create tool's click: the point, the surface's normal
+/// toward the camera, and the prim clicked, if one was (`place::creation_hit`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CreationHit {
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub prim: Option<CreationPrim>,
+}
+
+/// The prim under the Create tool's click: its centre and rotation in the
+/// world, and its size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CreationPrim {
+    pub center: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+}
 
 /// LLManipTranslate / Rotate / Scale::canAffectSelection (Firestorm): the
 /// simulator's effective flags apply before any local transform. Moving a
@@ -913,6 +957,7 @@ impl Default for BuildSettings {
             copy_rotates: false,
             create_centers: false,
             create_rotates: false,
+            create_aligns: false,
             last_tree: String::new(),
             last_grass: String::new(),
             expanded: true,
@@ -1139,9 +1184,9 @@ pub struct BuildTool {
     /// region's own placement is not exact: FSFloaterImport::
     /// processPrimCreated sends the position again the same way).
     new_poses: std::collections::VecDeque<Option<(RegionHandle, Vec3, Quat)>>,
-    /// The normal of the surface under the Create tool's click, toward the
-    /// camera (`place::creation_normal`), given by the app with the click.
-    pub creation_normal: Option<Vec3>,
+    /// What is under the Create tool's click (`place::creation_hit`), given
+    /// by the app with the click.
+    pub creation_hit: Option<CreationHit>,
     /// Selection rectangle being dragged (start, current in pixels, extend).
     pub rect: Option<((f32, f32), (f32, f32), bool)>,
     /// The press behind `rect`, until it is known to be a click: the object
@@ -1222,7 +1267,7 @@ impl Default for BuildTool {
             shape_capture: false,
             new_defaults_pending: 0,
             new_poses: Default::default(),
-            creation_normal: None,
+            creation_hit: None,
             rect: None,
             press: None,
             press_face: None,
@@ -2961,9 +3006,17 @@ impl BuildTool {
                 return;
             };
             let scale = world.prim_limits().clamp3(own_size.unwrap_or(Vec3::from_array(s.new_prim_size)));
-            let normal = self.creation_normal.take().unwrap_or(Vec3::Z);
-            let (center, rotation) = s.creation_pose(rotation, scale, point, normal);
-            if s.create_centers || s.create_rotates {
+            let hit = self
+                .creation_hit
+                .take()
+                .filter(|hit| hit.point.abs_diff_eq(point, 1e-3))
+                .unwrap_or(CreationHit {
+                    point,
+                    normal: Vec3::Z,
+                    prim: None,
+                });
+            let (center, rotation) = s.creation_pose(rotation, scale, hit);
+            if s.create_aligns || (hit.prim.is_some() && (s.create_centers || s.create_rotates)) {
                 exact = Some((handle, center - off, rotation));
             }
             (

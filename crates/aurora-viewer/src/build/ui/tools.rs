@@ -111,6 +111,9 @@ pub enum CreateClick {
     Shape { again: bool },
     /// The shape picker's button (Aurora window only).
     Capture,
+    /// "Keep creating" just turned on (Aurora window only): Create is put
+    /// in use, as the option says (human request, 2026-11-25).
+    KeepCreating,
 }
 
 /// The Aurora Create panel, `active` while Create is the tool in use, with
@@ -122,10 +125,12 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, activ
         // no "Copy selection" in this window (human request, 2026-11-25):
         // the Legacy style's window keeps it
         s.copy_selection = false;
-        let picked = create_shapes(ui, p, s, cell, active, Some(capturing));
+        let mut picked = create_shapes(ui, p, s, cell, active, Some(capturing));
         if s.create_options_shown {
             ui.add_space(12.0);
-            create_options(ui, p, s, false);
+            if create_options(ui, p, s, false) && picked.is_none() {
+                picked = Some(CreateClick::KeepCreating);
+            }
         }
         ui.add_space(6.0);
         let icon = if s.create_options_shown {
@@ -314,9 +319,13 @@ fn capture_button(ui: &mut egui::Ui, p: &Palette, s: &BuildSettings, rect: egui:
 
 /// The Create options. The Legacy style's (`legacy`) are floater_tools.xml's:
 /// "Copy selection" with its Center and Rotate. The Aurora window's
-/// (human requests, 2026-11-25) have no "Copy selection", and its Center
-/// and Rotate place every shape it makes (`BuildSettings::create_centers`).
-fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, legacy: bool) {
+/// (human requests, 2026-11-25) have no "Copy selection", and its own
+/// placement options for every shape it makes (`BuildSettings::
+/// create_centers`); "Copy prim rotation" and "Align to surface" are one
+/// or the other.
+/// True when "Keep creating" was just turned on.
+fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, legacy: bool) -> bool {
+    let mut kept = false;
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
@@ -327,6 +336,7 @@ fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, legacy:
         };
         if let Some(v) = check(ui, p, s.keep_tool, false, keep, true) {
             s.keep_tool = v;
+            kept = v;
         }
         if legacy {
             if let Some(v) = check(
@@ -356,11 +366,37 @@ fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, legacy:
             });
         } else {
             let prim = s.create_volume().is_some();
-            if let Some(v) = check(ui, p, s.create_centers, false, aurora_i18n::tr!("build-ui-tools-center"), prim) {
+            if let Some(v) = check(
+                ui,
+                p,
+                s.create_centers,
+                false,
+                aurora_i18n::tr!("build-create-center-on-prim"),
+                prim,
+            ) {
                 s.create_centers = v;
             }
-            if let Some(v) = check(ui, p, s.create_rotates, false, aurora_i18n::tr!("common-rotate"), prim) {
+            if let Some(v) = check(
+                ui,
+                p,
+                s.create_rotates,
+                false,
+                aurora_i18n::tr!("build-create-copy-prim-rotation"),
+                prim,
+            ) {
                 s.create_rotates = v;
+                s.create_aligns &= !v;
+            }
+            if let Some(v) = check(
+                ui,
+                p,
+                s.create_aligns,
+                false,
+                aurora_i18n::tr!("build-create-align-to-surface"),
+                prim,
+            ) {
+                s.create_aligns = v;
+                s.create_rotates &= !v;
             }
         }
         // tree_grass_combo (FIRE-7802)
@@ -394,6 +430,7 @@ fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, legacy:
                 });
         });
     });
+    kept
 }
 
 /// Land tool: brush radio, size / force, apply.

@@ -20,7 +20,7 @@
 //! selection's move right counts.
 
 use super::object_snap::{self, same_box, support};
-use super::{Bounds, BuildSettings, BuildTool, EditMode, SelectType, Tool, draw::Painter3d, draw::fade};
+use super::{Bounds, BuildSettings, BuildTool, CreationHit, CreationPrim, EditMode, SelectType, Tool, draw::Painter3d, draw::fade};
 use crate::scene::Scene;
 use crate::world::World;
 use crate::world::objects::ObjKey;
@@ -200,21 +200,41 @@ fn unit(i: usize) -> Vec3 {
     v
 }
 
-/// The normal of the surface the Create tool's prim goes on at `point`,
-/// toward the camera: the object `target`'s face under the ray, else the
-/// ground's. Only looked for while the Aurora window's Center or Rotate is
-/// on (straight up otherwise: nothing reads it).
-pub fn creation_normal(world: &World, scene: &Scene, s: &BuildSettings, ray: (Vec3, Vec3), point: Vec3, target: Option<usize>) -> Vec3 {
-    if !s.create_centers && !s.create_rotates {
-        return Vec3::Z;
+/// What is under the Create tool's click at `point`: the normal toward the
+/// camera of the object `target`'s face under the ray, else the ground's,
+/// and that object when it is a prim of the world (no avatar nor anything
+/// worn: LLToolPlacer refuses them). Only looked for while one of the Aurora
+/// window's placement options is on (nothing reads it otherwise).
+pub fn creation_hit(world: &World, scene: &Scene, s: &BuildSettings, ray: (Vec3, Vec3), point: Vec3, target: Option<usize>) -> CreationHit {
+    if !s.create_centers && !s.create_rotates && !s.create_aligns {
+        return CreationHit {
+            point,
+            normal: Vec3::Z,
+            prim: None,
+        };
     }
-    let normal = target
-        .and_then(|i| scene.left_touch_surface(world, i, ray))
+    let face = target.and_then(|i| scene.left_touch_surface(world, i, ray));
+    let normal = face
         .map(|t| t.normal)
         .filter(|n| n.is_finite() && n.length_squared() > 1e-6)
         .unwrap_or_else(|| ground_normal(world, point))
         .normalize_or(Vec3::Z);
-    if normal.dot(ray.1) > 0.0 { -normal } else { normal }
+    let normal = if normal.dot(ray.1) > 0.0 { -normal } else { normal };
+    let prim = target.filter(|_| face.is_some()).and_then(|i| {
+        let o = world.objects.get(i)?;
+        if o.pcode != aurora_prim::params::LL_PCODE_VOLUME {
+            return None;
+        }
+        let (position, rotation) = crate::build::replace::region_transform(world, i)?;
+        let off = world.region_offset(o.key.region)?;
+        Some(CreationPrim {
+            center: position + off,
+            rotation: rotation.normalize(),
+            scale: o.scale,
+        })
+        .filter(|p| p.center.is_finite() && p.rotation.is_finite() && p.scale.is_finite())
+    });
+    CreationHit { point, normal, prim }
 }
 
 /// The ground's normal at `p`, from the height map around it.

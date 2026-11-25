@@ -815,7 +815,11 @@ pub(super) fn tool_panel(
                 // the picker's button arms or puts down the picker; the tool
                 // in use stays (a shape captured makes Create in use)
                 Some(tools::CreateClick::Capture) => tool.shape_capture = !tool.shape_capture,
-                None => {}
+                Some(tools::CreateClick::KeepCreating) if !active => {
+                    tool.shape_capture = false;
+                    tool.activate(Tool::Create);
+                }
+                Some(tools::CreateClick::KeepCreating) | None => {}
             }
         }
         Tool::Land => {

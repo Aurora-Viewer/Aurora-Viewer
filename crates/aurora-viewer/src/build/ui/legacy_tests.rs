@@ -758,15 +758,33 @@ fn the_aurora_create_window_has_its_own_center_and_rotate_and_the_legacy_one_cop
     assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-copy-selection")).is_none());
     assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-keep-selection-tool")).is_none());
     assert!(!inspector.settings.copy_selection, "no copy from a window that has no such option");
-    for (label, which) in [
-        (aurora_i18n::tr!("build-ui-tools-center"), 0),
-        (aurora_i18n::tr!("common-rotate"), 1),
+    assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-center")).is_none());
+    let options = |inspector: &Inspector| {
+        let s = &inspector.settings;
+        (s.create_centers, s.create_rotates, s.create_aligns)
+    };
+    // "Copy prim rotation" and "Align to surface" are one or the other
+    for (label, after) in [
+        (aurora_i18n::tr!("build-create-center-on-prim"), (true, false, false)),
+        (aurora_i18n::tr!("build-create-copy-prim-rotation"), (true, true, false)),
+        (aurora_i18n::tr!("build-create-align-to-surface"), (true, false, true)),
+        (aurora_i18n::tr!("build-create-copy-prim-rotation"), (true, true, false)),
     ] {
         let at = find(&texts, label).unwrap_or_else(|| panic!("{label}"));
         click(&mut inspector, at);
-        let on = [inspector.settings.create_centers, inspector.settings.create_rotates];
-        assert!(on[which], "{label} on with the cube chosen");
+        assert_eq!(options(&inspector), after, "{label} with the cube chosen");
     }
+    // "Keep creating" turned on puts Create in use
+    inspector.tool.set_tool(Tool::Edit);
+    assert!(!inspector.settings.keep_tool);
+    let (_, mut texts) = inspector.show(vec![]);
+    texts.retain(|(_, rect)| window.contains_rect(*rect));
+    click(
+        &mut inspector,
+        find(&texts, aurora_i18n::tr!("build-create-keep-creating")).expect("Keep creating"),
+    );
+    assert!(inspector.settings.keep_tool);
+    assert_eq!(inspector.tool.tool, Tool::Create);
     assert_eq!(
         (inspector.settings.copy_centers, inspector.settings.copy_rotates),
         (BuildSettings::default().copy_centers, BuildSettings::default().copy_rotates),
