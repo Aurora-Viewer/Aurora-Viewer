@@ -206,7 +206,9 @@ impl StreamTitleUi {
             Vec2::new(400.0, 240.0),
         );
         floater.min_size = Vec2::new(400.0, 150.0);
-        floater.show(ctx, p, open, |ui| {
+        // the bottom row measured a fraction of a point more than its room
+        // and the window grew to fit it at every frame (#4210)
+        floater.steady_size().show(ctx, p, open, |ui| {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                 ui.horizontal(|ui| {
                     let size = Vec2::new(0.0, 26.0);
@@ -406,5 +408,43 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(ui.selection_text(&titles), "C\nA");
+    }
+
+    fn played(names: &[&str]) -> (StreamTitleUi, StreamTitles, AudioSettings) {
+        let mut titles = StreamTitles::default();
+        for t in names {
+            titles.update(t, 10);
+        }
+        (StreamTitleUi::default(), titles, AudioSettings::default())
+    }
+
+    /// The history keeps its size, its "Max. entries" row inside it: that
+    /// row measured a fraction of a point more than its room and the window
+    /// grew downward at every frame, out of the user's reach (#4210).
+    #[test]
+    fn the_history_keeps_its_size() {
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            HISTORY,
+            &[Vec2::new(400.0, 240.0), Vec2::new(400.0, 150.0), Vec2::new(520.0, 420.0)],
+            aurora_i18n::tr!("stream-title-max-entries"),
+            || played(&["First title", "Second title", "Third title"]),
+            |(ui, titles, audio), ctx, p| {
+                ui.history(ctx, p, titles, audio, &mut true);
+            },
+        );
+    }
+
+    /// The title's window keeps its size too.
+    #[test]
+    fn the_title_window_keeps_its_size() {
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(400.0, 72.0), Vec2::new(220.0, 72.0)],
+            "Song title",
+            || played(&["Song title"]),
+            |(ui, titles, audio), ctx, p| {
+                ui.show(ctx, p, titles, audio, &mut true, &mut false);
+            },
+        );
     }
 }

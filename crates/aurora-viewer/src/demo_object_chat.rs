@@ -195,14 +195,19 @@ pub fn events(agent: Uuid) -> Vec<NetEvent> {
 }
 
 /// The notices of the scenario, said once the world is in: a friend
-/// online, then a teleport.
+/// online, a bump, then a teleport.
 pub fn notices(world: &mut crate::world::World) {
     use crate::world::notice_topics::Topic;
-    let online = aurora_i18n::tr!("world-social-is-online", n = aurora_i18n::tr!("demo-nova-example").to_string());
-    world.system_notice(online, Topic::People);
+    let friend = super::DEMO_FRIEND;
+    // a radar's line: the resident's name is a link, and the chat leaves the
+    // line plain (CHAT_TYPE_RADAR, #4300)
+    world.system_notice(crate::world::social::online_chat_line(friend, true), Topic::Radar);
+    // a bump: a system line in the option's brackets, its name a link too
+    // (#4386)
+    let link = format!("secondlife:///app/agent/{friend}/about");
+    world.system_notice(crate::world::collisions::Kind::Bump.sentence(&link), Topic::People);
     world.system_notice(aurora_i18n::tr!("world-mod-teleporting"), Topic::Teleport);
     // the friend's conversation: a call ended, an automatic reply
-    let friend = super::DEMO_FRIEND;
     let ended = aurora_i18n::tr!(
         "world-calls-ended-by-other",
         name = aurora_i18n::tr!("demo-orion-example").to_string()

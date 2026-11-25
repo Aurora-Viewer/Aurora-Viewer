@@ -48,6 +48,7 @@ pub fn tabs(page: Page) -> Vec<&'static str> {
             aurora_i18n::tr!("common-image"),
             aurora_i18n::tr!("ui-options-smoothness"),
             aurora_i18n::tr!("region-parcels"),
+            aurora_i18n::tr!("ui-options-tab-ray-tracing"),
         ],
         Page::Camera => vec![
             aurora_i18n::tr!("common-viewpoint"),

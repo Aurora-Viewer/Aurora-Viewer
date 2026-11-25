@@ -302,9 +302,6 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     });
 }
 
-/// GP_LAND_DIVIDE_JOIN, GP_LAND_RELEASE (llagent / roles_constants.h).
-const GP_LAND_DIVIDE_JOIN: u64 = 1 << 19;
-const GP_LAND_RELEASE: u64 = 1 << 20;
 /// REGION_FLAGS_ALLOW_PARCEL_CHANGES.
 const REGION_FLAGS_ALLOW_PARCEL_CHANGES: u32 = 1 << 26;
 
@@ -384,19 +381,21 @@ pub fn parcel_panel(
     // who may do what (LLPanelLandInfo::refresh)
     let (mine, owner_divide, owner_release, can_buy) = match parcel.as_ref() {
         Some(pi) => {
-            let group_power = |power: u64| pi.is_group_owned && world.groups.group(&pi.group_id).is_some_and(|g| g.powers & power != 0);
             let mine = pi.owner_id == world.agent_id;
+            // LLPanelLandInfo::refresh: LLViewerParcelMgr::isParcelOwnedByAgent
+            // with GP_LAND_DIVIDE_JOIN for Subdivide and GP_LAND_RELEASE for
+            // Abandon land, the rule About Land uses too (`owned_by_agent`:
+            // our land, a god, or the owning group's power)
+            use crate::world::land::{owned_by_agent, powers};
+            let rights = world.agent_rights();
+            let owner_divide = owned_by_agent(pi, &rights, powers::LAND_DIVIDE_JOIN);
+            let owner_release = owned_by_agent(pi, &rights, powers::LAND_RELEASE);
             let for_sale = pi.flags & aurora_net::parcel_flags::FOR_SALE != 0;
             let can_buy = for_sale
                 && !mine
                 && (pi.sale_price > 0 || !pi.auth_buyer.is_nil())
                 && (pi.auth_buyer.is_nil() || pi.auth_buyer == world.agent_id);
-            (
-                mine,
-                mine || group_power(GP_LAND_DIVIDE_JOIN),
-                mine || group_power(GP_LAND_RELEASE),
-                can_buy || pi.owner_id.is_nil(),
-            )
+            (mine, owner_divide, owner_release, can_buy || pi.owner_id.is_nil())
         }
         None => (false, false, false, false),
     };
@@ -474,7 +473,9 @@ impl BuildTool {
     pub fn set_edit_mode(&mut self, world: &mut World, s: &mut BuildSettings, m: EditMode) {
         let was_face = self.edit_mode == EditMode::Face;
         self.edit_mode = m;
-        if was_face && m != EditMode::Face {
+        // Align works on whole linksets: the faces picked in Move, Rotate
+        // or Stretch (face_buttons.rs) go with "Select face"
+        if (was_face && m != EditMode::Face) || m == EditMode::Align {
             self.faces.clear();
         }
         if m == EditMode::Align && s.edit_linked {
@@ -502,11 +503,10 @@ impl BuildTool {
         let Some(idx) = self.selection.first().and_then(|key| world.objects.index_of(key)) else {
             return "—".into();
         };
-        let Some(o) = world.objects.get(idx) else { return "—".into() };
-        let mut faces: Vec<usize> = match self.faces.get(&o.key).filter(|f| !f.is_empty()) {
-            Some(f) => f.iter().map(|&n| n as usize).collect(),
-            None => (0..self.num_faces(world, idx)).collect(),
-        };
+        let mut faces: Vec<usize> = self.sel_faces(world, idx).into_iter().map(usize::from).collect();
+        if faces.is_empty() {
+            return "—".into();
+        }
         faces.sort_unstable();
         faces.dedup();
         faces.into_iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
@@ -522,8 +522,8 @@ impl BuildTool {
         }
         if self.tool == Tool::Edit && self.effective_mode(mods) == EditMode::Face {
             let idx = self.selection.first().and_then(|key| world.objects.index_of(key))?;
-            let picked = self.faces.get(&world.objects.get(idx)?.key).map_or(0, Vec::len);
-            let list = if picked == 0 || picked >= self.num_faces(world, idx) {
+            let picked = self.faces.get(&world.objects.get(idx)?.key).map(Vec::len);
+            let list = if picked.is_none_or(|picked| picked >= self.num_faces(world, idx)) {
                 // The LSL constant, untranslated in the Legacy Viewer too.
                 "ALL_SIDES".to_string()
             } else {

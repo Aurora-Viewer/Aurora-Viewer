@@ -185,7 +185,7 @@ function New-AuroraRelease($Repo) {
         if ($LASTEXITCODE -eq 0) {
             $url = gh release view $tag -R $Repo.Slug --json url --jq .url 2>$null
             Write-Color "  Release published: $url" success
-            if ($url -and (Read-YesNo 'Open it in the browser?')) { Start-Process $url }
+            if ($url -and (Read-YesNo 'Open it in the browser?')) { Open-External $url }
         } else {
             $url = gh release view $tag -R $Repo.Slug --json url --jq .url 2>$null
             if ($url) {

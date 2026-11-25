@@ -9,7 +9,7 @@ use super::sim::Sim;
 use super::{Boundary, Ctx, FOLDER, Mode, Out, Prim, Runner, SEAT_NAME, guard};
 use crate::world::{World, appearance};
 use aurora_net::build::BuildCmd;
-use aurora_net::{AttachRequest, NetCommand, NetEvent};
+use aurora_net::{AttachRequest, ChatMessage, ChatSourceType, ChatType, NetCommand, NetEvent};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -29,8 +29,18 @@ struct Host {
     now: Instant,
     /// Everything that passed the boundary, as it left.
     sent: Vec<NetCommand>,
+    /// What the boundary refused outside the runner's own probes, whoever
+    /// sent it: a command the viewer sends on its own is never to be refused
+    /// (a "restricted" notice the user never asked for), the watchdog's
+    /// included even though it would not be told.
+    refused: Vec<NetCommand>,
+    /// The command being sent is one of the runner's probes.
+    probing: bool,
     /// What the simulator never answers (a fault to inject).
     lost: Option<fn(&NetCommand) -> bool>,
+    /// The arrivals and removals of objects the simulator answers a moment
+    /// later, as a grid does (`Sim::viewer_links` only).
+    late: Vec<(Instant, NetEvent)>,
     outfit: Option<Outfit>,
     online: bool,
     /// The inventory before the run (the outfit folder's links aside: the
@@ -102,7 +112,10 @@ impl Host {
             sim: Sim::default(),
             now: Instant::now(),
             sent: Vec::new(),
+            refused: Vec::new(),
+            probing: false,
             lost: None,
+            late: Vec::new(),
             outfit: None,
             online: true,
             folders,
@@ -123,6 +136,9 @@ impl Host {
     fn send(&mut self, mut command: NetCommand, actor: Uuid) {
         let outcome = self.world.rlva_send_boundary(&mut command, actor);
         self.runner.boundary(outcome, &command);
+        if outcome == Boundary::Refused && !self.probing {
+            self.refused.push(command.clone());
+        }
         if outcome != Boundary::Send {
             return;
         }
@@ -133,7 +149,11 @@ impl Host {
         }
         if let Some(events) = self.sim.reply(&mut self.world, &command, true) {
             for event in events {
-                self.receive(event);
+                if self.sim.viewer_links && matches!(event, NetEvent::ObjectUpdates { .. } | NetEvent::ObjectsKilled { .. }) {
+                    self.late.push((self.now + Duration::from_millis(200), event));
+                } else {
+                    self.receive(event);
+                }
             }
         }
     }
@@ -180,6 +200,9 @@ impl Host {
         let dropped = self.world.rlva_prepare_outfit(&mut command, actor);
         attachments.retain(|a| !dropped.contains(&a.item_id));
         if !self.world.rlva_allows_command(&command, actor) {
+            // the application sends it all the same: the boundary refuses it
+            // there, and that is where the user is told
+            self.send(command, actor);
             return;
         }
         if let NetCommand::UpdateOutfit { change, .. } = &mut command {
@@ -199,6 +222,11 @@ impl Host {
     fn rlva(&mut self) {
         use crate::world::rlva::Param;
         let now = self.now;
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.late).into_iter().partition(|(at, _)| *at <= now);
+        self.late = later;
+        for (_, event) in due {
+            self.receive(event);
+        }
         self.world.rlva.appearance_busy = self.outfit.is_some() || self.world.rlva_detach_in_flight(now);
         self.world.rlva_watchdog_tick(now);
         for command in std::mem::take(&mut self.world.rlva.recovery) {
@@ -231,6 +259,19 @@ impl Host {
                 self.runner.reply(*channel, message);
             }
         }
+        // the inventory edits the world decides itself (the link of a
+        // detached attachment), which `App::update_rlva` sends for it
+        if self.sim.viewer_links {
+            for change in self.world.take_inventory_edits() {
+                self.send(
+                    NetCommand::EditInventory {
+                        request: Uuid::new_v4(),
+                        change,
+                    },
+                    Uuid::nil(),
+                );
+            }
+        }
         if self.world.agent.flying && self.world.rlva.has("fly") {
             self.world.agent.flying = false;
         }
@@ -245,7 +286,9 @@ impl Host {
                 Out::Send(command) => self.send(command, Uuid::nil()),
                 Out::Probe(command) => {
                     self.runner.probe(true);
+                    self.probing = true;
                     self.send(command, Uuid::nil());
+                    self.probing = false;
                     self.runner.probe(false);
                 }
                 Out::Hear(event) => self.receive(event),
@@ -596,6 +639,9 @@ fn selftest_phase_1_passes_on_the_demo_world() {
     assert_all_pass(&report);
     assert!(report.count(|v| matches!(v, Verdict::Pass)) >= 40, "{}", report.text());
     assert!(report.notes.is_empty(), "{}", report.text());
+    // nothing the viewer sent on its own was refused: each refusal is a
+    // "restricted" notice for something the user did not ask (#3633)
+    assert!(host.refused.is_empty(), "refused at the boundary: {:#?}", host.refused);
     // the link case (#2677): held by the folder of its link
     assert_eq!(verdict_of(&report, "C4"), &Verdict::Pass, "{}", report.text());
     assert_eq!(report.count(|v| matches!(v, Verdict::Known(_))), 0, "{}", report.text());
@@ -762,6 +808,26 @@ fn selftest_failure_in_phase_2_still_stands_up_and_removes_its_prims() {
 }
 
 #[test]
+fn simulated_attachment_with_matching_uuid_suffix_leaves_the_hud_worn() {
+    let mut host = Host::new();
+    let hud = Uuid::from_u128(721);
+    let other = Uuid::from_u128(hud.as_u128() + 0x1_0000);
+    assert!(host.world.worn_attachment(&hud).is_some());
+
+    let request = crate::demo::avatar_cache::request(other, 1);
+    host.send(NetCommand::RezAttachments(vec![request]), Uuid::nil());
+    assert!(host.world.worn_attachment(&other).is_some());
+    assert!(
+        host.world.worn_attachment(&hud).is_some(),
+        "wearing another item displaced the demo HUD"
+    );
+
+    host.send(NetCommand::DetachAttachments(vec![other]), Uuid::nil());
+    assert!(host.world.worn_attachment(&other).is_none());
+    assert!(host.world.worn_attachment(&hud).is_some());
+}
+
+#[test]
 fn selftest_stop_in_phase_2_stands_up_and_removes_its_prims() {
     let mut host = Host::new();
     host.start(Mode::Simulated, true);
@@ -848,4 +914,250 @@ fn selftest_inventory_parity_cases_pass_on_the_demo_world() {
     ] {
         assert_eq!(verdict_of(&report, id), &Verdict::Pass, "{id}\n{}", report.text());
     }
+}
+
+/// The folders of the "RLVa Force Wear / Remove Tester" script (#3633):
+/// `#RLV/rlvtest/a` (TestA on the chest, TestA2 on the stomach), `c` (TestC on
+/// the stomach, TestShirt) and the avatar's own shirt.
+struct ForceTester {
+    host: Host,
+    hud: Uuid,
+    hud_object: Uuid,
+    a: Uuid,
+    a2: Uuid,
+    c: Uuid,
+    shirt: Uuid,
+    own_shirt: Uuid,
+}
+
+impl ForceTester {
+    fn new() -> Self {
+        use crate::world::inventory::{FetchState, Folder};
+        let mut host = Host::new();
+        host.world.movement_complete = true;
+        let agent = host.world.agent_id;
+        let root = host.world.inventory.root;
+        let cof = appearance::cof(&host.world.inventory).expect("the demo's outfit folder");
+        let folder = |world: &mut World, id: u128, parent: Uuid, name: &str| {
+            let id = Uuid::from_u128(id);
+            world.inventory.folders.insert(
+                id,
+                Folder {
+                    info: aurora_net::inventory::InvFolder {
+                        id,
+                        parent,
+                        name: name.into(),
+                        type_default: -1,
+                        ..Default::default()
+                    },
+                    children: vec![],
+                    items: vec![],
+                    state: FetchState::Fetched,
+                    library: false,
+                },
+            );
+            if let Some(parent) = world.inventory.folders.get_mut(&parent) {
+                parent.children.push(id);
+            }
+            id
+        };
+        let rlv = folder(&mut host.world, 0xE100, root, "#RLV");
+        let test = folder(&mut host.world, 0xE101, rlv, "rlvtest");
+        let (a, c) = (
+            folder(&mut host.world, 0xE102, test, "a"),
+            folder(&mut host.world, 0xE103, test, "c"),
+        );
+        let hud_folder = folder(&mut host.world, 0xE104, rlv, "tester");
+        let item = |id: u128, parent: Uuid, name: &str, asset_type: i32, flags: u32| aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(id),
+            parent,
+            name: format!("{FOLDER} {name}"),
+            asset_type,
+            inv_type: if asset_type == 6 { 6 } else { 18 },
+            flags,
+            owner: agent,
+            base_mask: 0x7fff_ffff,
+            owner_mask: 0x7fff_ffff,
+            ..Default::default()
+        };
+        host.world.inventory.add_items(vec![
+            item(0xE201, hud_folder, "tester", 6, 31),
+            item(0xE202, a, "TestA", 6, 1),
+            item(0xE203, a, "TestA2", 6, 28),
+            item(0xE204, c, "TestC", 6, 28),
+            item(0xE205, c, "TestShirt", 5, 4),
+            item(0xE206, root, "own shirt", 5, 4),
+        ]);
+        // the avatar's own shirt is worn, linked in the outfit folder
+        let own_shirt = Uuid::from_u128(0xE206);
+        let mut links = appearance::folder_links(&host.world.inventory, cof);
+        links.push(aurora_net::outfits::OutfitLink {
+            target: own_shirt,
+            name: "own shirt".into(),
+            desc: String::new(),
+            folder: false,
+            inv_type: 18,
+        });
+        let _ = appearance::demo_mutate(
+            &mut host.world.inventory,
+            agent,
+            &aurora_net::outfits::OutfitMutation {
+                folder: cof,
+                create: None,
+                links,
+                cof: None,
+            },
+        );
+        let mut tester = Self {
+            host,
+            hud: Uuid::from_u128(0xE201),
+            hud_object: Uuid::from_u128(0xE201),
+            a: Uuid::from_u128(0xE202),
+            a2: Uuid::from_u128(0xE203),
+            c: Uuid::from_u128(0xE204),
+            shirt: Uuid::from_u128(0xE205),
+            own_shirt,
+        };
+        // the tester is worn as a HUD
+        let request = AttachRequest {
+            item_id: tester.hud,
+            owner_id: agent,
+            point: 31,
+            add: true,
+            flags: 31,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            name: String::new(),
+            desc: String::new(),
+        };
+        tester.host.send(NetCommand::RezAttachments(vec![request]), Uuid::nil());
+        assert!(tester.host.world.worn_attachment(&tester.hud).is_some(), "the HUD is worn");
+        tester
+    }
+
+    /// The HUD says `text` (llOwnerSay) and the viewer runs for `seconds`.
+    fn say(&mut self, text: &str, seconds: u32) {
+        let world = &self.host.world;
+        let message = ChatMessage {
+            from_name: "Force tester".to_owned(),
+            source_id: self.hud_object,
+            owner_id: world.agent_id,
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            region: world.main_region,
+            position: world.agent.position,
+            message: text.to_owned(),
+        };
+        self.host.receive(NetEvent::Chat(message));
+        for _ in 0..seconds * 20 {
+            self.host.now += Duration::from_millis(50);
+            self.host.rlva();
+        }
+    }
+
+    fn worn(&self, item: Uuid) -> bool {
+        self.host.world.worn_attachment(&item).is_some()
+    }
+
+    fn in_outfit(&self, item: Uuid) -> bool {
+        outfit_targets(&self.host.world).contains(&item)
+    }
+}
+
+#[test]
+fn a_forced_replace_of_the_force_tester_refuses_nothing() {
+    // test 1 of the script: `@attach:rlvtest/c=force` over what
+    // `@attachover:rlvtest/a=force` put on, the HUD locked by `@detach=n`.
+    // The Legacy Viewer says nothing for any of it.
+    let mut t = ForceTester::new();
+    t.say("@clear", 1);
+    t.say("@detach=n", 1);
+    t.say("@detachall:rlvtest=force", 4);
+    t.say("@attachover:rlvtest/a=force", 4);
+    assert!(t.worn(t.a2), "TestA2 is worn on the stomach");
+    t.host.refused.clear();
+    t.say("@attach:rlvtest/c=force", 4);
+    assert!(t.worn(t.c), "TestC is worn");
+    assert!(!t.worn(t.a2), "TestA2 came off");
+    assert!(t.in_outfit(t.shirt) && !t.in_outfit(t.own_shirt), "TestShirt replaced the shirt");
+    assert!(t.worn(t.hud), "the locked HUD stays on");
+    assert!(t.host.refused.is_empty(), "refused: {:#?}", t.host.refused);
+}
+
+#[test]
+fn the_link_of_a_detached_attachment_is_deleted_without_a_refusal_but_an_unknown_item_is_not() {
+    use aurora_net::inventory::operations::{Mutation, Operation};
+    let mut t = ForceTester::new();
+    t.say("@detach=n", 1);
+    let gone = Uuid::new_v4();
+    let delete = |removed: Vec<Uuid>| NetCommand::EditInventory {
+        request: Uuid::new_v4(),
+        change: Mutation {
+            operations: vec![Operation::Delete { id: gone, folder: false }],
+            removed,
+            ..Default::default()
+        },
+    };
+    let world = &t.host.world;
+    assert!(world.rlva.inventory_locked(), "the inventory is locked");
+    assert!(
+        world.rlva_allows_command(&delete(vec![gone]), Uuid::nil()),
+        "dropped from the viewer's own model before it is sent"
+    );
+    assert!(
+        !world.rlva_allows_command(&delete(Vec::new()), Uuid::nil()),
+        "an item the viewer has no record of is not deleted"
+    );
+}
+
+#[test]
+fn an_object_already_worn_is_no_wear_for_the_watchdog_but_a_stranger_is() {
+    use crate::world::rlva::watchdog::ACTOR;
+    let t = ForceTester::new();
+    let world = &t.host.world;
+    assert!(world.rlva_can_add(t.hud, 0, ACTOR), "the worn HUD is only recorded");
+    assert!(
+        !world.rlva_can_add(t.hud, 31, ACTOR),
+        "a rez on a point is not a record: only what the watchdog lost may go back"
+    );
+    assert!(
+        !world.rlva_can_add(t.c, 0, ACTOR),
+        "an object that is not worn is not for the watchdog to put on"
+    );
+    assert!(
+        crate::world::rlva::refusal_shown(Uuid::nil()),
+        "the user is told of what they asked"
+    );
+    assert!(!crate::world::rlva::refusal_shown(ACTOR), "and never of the watchdog's own work");
+}
+
+#[test]
+fn a_forced_replace_refuses_nothing_while_the_viewer_keeps_the_outfit_links() {
+    // The same test 1 on a grid: the outfit folder is not the simulator's.
+    // TestC arrives before its link exists, so the outfit write that takes
+    // TestA2 off carries it along (plan keeps what is worn), and TestA2's
+    // link is dropped once its removal is seen. Both went out under the
+    // boundary and each posted "This action is restricted by RLVa." (#3633).
+    let mut t = ForceTester::new();
+    t.host.sim.viewer_links = true;
+    // TestC has no saved point yet: the outfit write cannot tell what it
+    // replaces, the watchdog does it once the object has arrived (the demo
+    // puts it on the chest, over TestA)
+    if let Some(c) = t.host.world.inventory.items.get_mut(&t.c) {
+        c.flags = 0;
+    }
+    t.say("@clear", 1);
+    t.say("@detach=n", 1);
+    t.say("@detachall:rlvtest=force", 4);
+    t.say("@attachover:rlvtest/a=force", 4);
+    assert!(t.worn(t.a), "TestA is worn on the chest");
+    t.host.refused.clear();
+    t.say("@attach:rlvtest/c=force", 4);
+    assert!(t.worn(t.c), "TestC is worn");
+    assert!(!t.worn(t.a), "TestA came off");
+    assert!(!t.in_outfit(t.a), "its link left the outfit folder");
+    assert!(t.in_outfit(t.shirt) && !t.in_outfit(t.own_shirt), "TestShirt replaced the shirt");
+    assert!(t.worn(t.hud), "the locked HUD stays on");
+    assert!(t.host.refused.is_empty(), "refused: {:#?}", t.host.refused);
 }

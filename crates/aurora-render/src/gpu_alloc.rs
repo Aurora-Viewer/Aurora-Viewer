@@ -130,9 +130,18 @@ pub fn scoped_apart<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, b
     let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let workers = Arc::new(WorkerRefusals::default());
-    let outer = ENCLOSING.with(|e| e.replace(Some(workers.clone())));
+    // the outer scope's back after `make`, a panic in it included (a
+    // renderer start caught by `start_guarded`)
+    struct Restore(Option<Arc<WorkerRefusals>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let outer = self.0.take();
+            ENCLOSING.with(|e| *e.borrow_mut() = outer);
+        }
+    }
+    let restore = Restore(ENCLOSING.with(|e| e.replace(Some(workers.clone()))));
     let made = make();
-    ENCLOSING.with(|e| *e.borrow_mut() = outer);
+    drop(restore);
     let invalid = pollster::block_on(invalid.pop());
     let oom = pollster::block_on(oom.pop());
     let is_invalid = memory_refused(None, invalid.as_ref().map(ToString::to_string).as_deref());

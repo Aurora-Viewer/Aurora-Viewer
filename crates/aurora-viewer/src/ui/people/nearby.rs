@@ -25,7 +25,8 @@ const COMPACT_H: f32 = 24.0;
 pub(super) const RICH_GAP: f32 = 3.0;
 /// Height of the header of a range.
 const BAND_H: f32 = 24.0;
-/// Width of the range and of the time since the arrival.
+/// Least width of the range (the list widens it to its widest range,
+/// `dist_width`), and the width of the time since the arrival.
 const DIST_W: f32 = 58.0;
 const COMPACT_DIST_W: f32 = 46.0;
 const SEEN_W: f32 = 44.0;
@@ -100,6 +101,52 @@ pub(super) fn distance_text(range: Option<f32>, draw_distance: f32) -> String {
         Some(d) => format!("{} m", aurora_i18n::number(f64::from(d), 1)),
         None => format!(">{} m", aurora_i18n::number(f64::from(draw_distance), 0)),
     }
+}
+
+/// The range of `row` laid out at its density's size, and its colour: the
+/// band's, muted when the range is unknown.
+fn distance_galley(ui: &egui::Ui, p: &Palette, row: &Row, draw_distance: f32, compact: bool) -> (std::sync::Arc<egui::Galley>, Color32) {
+    let color = if row.range.is_some() {
+        Band::of(row.range).color(p)
+    } else {
+        p.muted
+    };
+    let size = if compact { 11.5 } else { 13.0 };
+    let job = egui::text::LayoutJob::single_section(distance_text(row.range, draw_distance), semibold(ui, size, color));
+    (ui.painter().layout_job(job), color)
+}
+
+/// Width of the range column of `rows` (#4594): their widest range, never
+/// under the density's least width. A fixed width let "153.4 m" run into
+/// the badges (or the age) beside it; one width for the whole list keeps
+/// the badges lined up from row to row. Each range is measured with every
+/// digit as wide as the font's widest (as `region_restart::tabular` sets its
+/// digits): the font's digits are proportional, so the real text would move
+/// the column, and every badge with it, each time someone walks a step; the
+/// column only widens with one more digit (100 m, 1000 m).
+fn dist_width(ui: &egui::Ui, p: &Palette, rows: &[Row], draw_distance: f32, compact: bool) -> f32 {
+    let size = if compact { 11.5 } else { 13.0 };
+    let measure = |text: String| {
+        let job = egui::text::LayoutJob::single_section(text, semibold(ui, size, p.ink));
+        ui.painter().layout_job(job).size().x
+    };
+    let widest = ('0'..='9')
+        .map(|d| (d, measure(d.to_string())))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map_or('0', |(d, _)| d);
+    let templates: std::collections::BTreeSet<String> = rows
+        .iter()
+        .map(|row| {
+            distance_text(row.range, draw_distance)
+                .chars()
+                .map(|c| if c.is_ascii_digit() { widest } else { c })
+                .collect()
+        })
+        .collect();
+    templates
+        .into_iter()
+        .map(|text| measure(text).ceil())
+        .fold(metrics(compact).dist, f32::max)
 }
 
 /// Time since the arrival, short: "< 1 min", "12 min", "2 h".
@@ -415,6 +462,7 @@ fn list_part(
     ui.add_space(if compact { 4.0 } else { 3.0 });
     let order: Vec<Uuid> = list.iter().map(|r| r.id).collect();
     let by_range = Column::ALL.get(data.settings.sort as usize) == Some(&Column::Range);
+    let dist_w = dist_width(ui, p, &list, data.draw_distance, compact);
     let now = ui.input(|i| i.time);
     egui::ScrollArea::vertical()
         .id_salt("people-nearby-rows")
@@ -477,6 +525,7 @@ fn list_part(
                     badge_count,
                     shortcuts,
                     compact,
+                    dist_w,
                     data.settings.shows(Column::Seen),
                     !anonymous && row.age != Age::Unknown && data.settings.shows(Column::Age),
                 );
@@ -760,19 +809,23 @@ impl RightEnd {
 /// The right end of `row` for `badges` badges, its names starting at
 /// `names_left`; `actions` replaces the time and distance while the row
 /// is under the pointer, without covering the avatar or changing row height.
+/// The range takes `dist_w` (`dist_width`), at least the density's width.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn right_end(
     row: Rect,
     names_left: f32,
     badges: usize,
     actions: Option<usize>,
     compact: bool,
+    dist_w: f32,
     show_seen: bool,
     show_age: bool,
 ) -> RightEnd {
     let m = metrics(compact);
     let right = row.right() - m.pad;
     let y = row.center().y;
-    let dist = Rect::from_min_max(Pos2::new(right - m.dist, row.top()), Pos2::new(right, row.bottom()));
+    let dist_w = m.dist.max(dist_w);
+    let dist = Rect::from_min_max(Pos2::new(right - dist_w, row.top()), Pos2::new(right, row.bottom()));
     // Age and Seen drop on a narrow list so the name keeps its minimum, as
     // the badges already do.
     let names_floor = names_left + m.names_min + NAMES_GAP;
@@ -829,7 +882,7 @@ pub(super) fn right_end(
     let first = rects.first().map(|r| r.left()).or(more.map(|(r, _)| r.left())).unwrap_or(zone);
     // Hover controls cover the name instead of shortening its normal text layout.
     let names_right = if actions.is_some() {
-        right_end(row, names_left, badges, None, compact, show_seen, show_age).names_right
+        right_end(row, names_left, badges, None, compact, dist_w, show_seen, show_age).names_right
     } else {
         first - NAMES_GAP
     };
@@ -943,11 +996,7 @@ fn paint_rich(
     // Quick actions take the place of the range and arrival time.
     let band = Band::of(row.range);
     if let Some(dist) = end.dist {
-        let color = if row.range.is_some() { band.color(p) } else { p.muted };
-        let galley = ui.painter().layout_job(egui::text::LayoutJob::single_section(
-            distance_text(row.range, data.draw_distance),
-            semibold(ui, 13.0, color),
-        ));
+        let (galley, color) = distance_galley(ui, p, row, data.draw_distance, false);
         let left = dist.right() - galley.size().x;
         crate::ui::widgets::paint_row_text(ui.painter(), galley, left, dist.center().y, color);
     }
@@ -1050,11 +1099,7 @@ fn paint_compact(
     let left = names_left(rect, true);
     let band = Band::of(row.range);
     if let Some(dist) = end.dist {
-        let color = if row.range.is_some() { band.color(p) } else { p.muted };
-        let galley = ui.painter().layout_job(egui::text::LayoutJob::single_section(
-            distance_text(row.range, data.draw_distance),
-            semibold(ui, 11.5, color),
-        ));
+        let (galley, color) = distance_galley(ui, p, row, data.draw_distance, true);
         let left = dist.right() - galley.size().x;
         crate::ui::widgets::paint_row_text(ui.painter(), galley, left, dist.center().y, color);
     }
@@ -1193,6 +1238,7 @@ mod tests {
                         badges(&p, data.settings, &row).len(),
                         Some(buttons.len()),
                         compact,
+                        0.0,
                         true,
                         true,
                     );
@@ -1310,10 +1356,10 @@ mod tests {
                 let left = names_left(row, compact);
                 for badges in 0..=MAX_BADGES {
                     for actions in [None, Some(3), Some(4), Some(5)] {
-                        let end = right_end(row, left, badges, actions, compact, true, true);
+                        let end = right_end(row, left, badges, actions, compact, 0.0, true, true);
                         assert_eq!(
                             end.names_right,
-                            right_end(row, left, badges, None, compact, true, true).names_right,
+                            right_end(row, left, badges, None, compact, 0.0, true, true).names_right,
                             "hover actions never shorten the name's normal layout"
                         );
                         let mut parts: Vec<Rect> = end.badges.clone();
@@ -1364,7 +1410,7 @@ mod tests {
             // a usual window shows every badge beside the actions
             let row = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, RICH_H));
             if !compact {
-                let end = right_end(row, names_left(row, false), MAX_BADGES, Some(4), false, true, true);
+                let end = right_end(row, names_left(row, false), MAX_BADGES, Some(4), false, 0.0, true, true);
                 assert_eq!((end.badges.len(), end.more.is_none()), (MAX_BADGES, true));
             }
         }
@@ -1428,6 +1474,7 @@ mod tests {
             2,
             None,
             false,
+            0.0,
             settings.shows(Column::Seen),
             settings.shows(Column::Age),
         );
@@ -1458,6 +1505,72 @@ mod tests {
                     assert!(!label.galley.elided, "five figures fit beside the cake");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn the_range_keeps_its_gap_from_the_badges_at_every_distance() {
+        // #4594: "153.4 m" ran into the badges and the age beside it, the
+        // more so at a larger text size (Preferences › Appearance)
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let row = |range: Option<f32>| Row {
+            id: Uuid::from_u128(0xF200),
+            name: "Pax Example".into(),
+            friend: false,
+            muted: false,
+            voice: Some(true),
+            same_region: true,
+            typing: false,
+            sitting: false,
+            payment: Payment::None,
+            note: String::new(),
+            age: radar::Age::Unknown,
+            seen: 125.0,
+            range,
+            loaded: true,
+            left_behind: false,
+            anonymous: false,
+        };
+        let rows: Vec<Row> = [Some(4.7), Some(55.3), Some(153.4), Some(1234.5), None]
+            .into_iter()
+            .map(row)
+            .collect();
+        for text_size in [1.0, 1.6] {
+            theme.apply(&frames.ctx, text_size);
+            frames.run(Vec::new(), |ui| {
+                for compact in [false, true] {
+                    let width = dist_width(ui, &p, &rows, 4096.0, compact);
+                    // the same width while someone walks: the column does not
+                    // move with each step of the widest range
+                    for walked in [100.0, 108.8, 111.1, 150.0, 151.1, 199.9] {
+                        let steps = [Some(4.7), Some(walked)].into_iter().map(row).collect::<Vec<_>>();
+                        let first = [Some(4.7), Some(153.4)].into_iter().map(row).collect::<Vec<_>>();
+                        assert_eq!(
+                            dist_width(ui, &p, &steps, 4096.0, compact),
+                            dist_width(ui, &p, &first, 4096.0, compact),
+                            "{walked} m"
+                        );
+                    }
+                    assert!(width >= metrics(compact).dist);
+                    if text_size > 1.0 {
+                        assert!(width > metrics(compact).dist, "the large ranges need more than the least width");
+                    }
+                    let base = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(520.0, if compact { COMPACT_H } else { RICH_H }));
+                    // with Age and Seen, and without them (the report's case)
+                    for columns in [true, false] {
+                        let end = right_end(base, names_left(base, compact), 2, None, compact, width, columns, columns);
+                        let dist = end.dist.expect("a range without hover");
+                        let badges = end.badges.last().expect("badges").right();
+                        let (before, gap) = end.age.or(end.seen).map_or((badges, BADGES_GAP), |r| (r.right(), 6.0));
+                        for row in &rows {
+                            let left = dist.right() - distance_galley(ui, &p, row, 4096.0, compact).0.size().x;
+                            assert!(left >= before + gap - 0.01, "{:?} at {left} runs into {before}", row.range);
+                        }
+                    }
+                }
+            });
         }
     }
 

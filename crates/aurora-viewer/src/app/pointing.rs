@@ -88,7 +88,8 @@ impl App {
             points.set(None, now);
         }
         points.set(target, now);
-        self.update_own_beam(target, now);
+        let beam_target = selected.filter(|_| !self.settings.lookat.private_point_at && !self.settings.lookat.private_edit_beam);
+        self.update_own_beam(beam_target, now);
         let own = &mut self.world.point_at.own;
         if own.needs_send {
             let cmd = NetCommand::PointAt {
@@ -126,24 +127,29 @@ impl App {
         });
     }
 
-    /// LLVOAvatarSelf::idleUpdateTractorBeam: while we edit or grab (and the
-    /// point-at is not private, PrivatePointAtTarget), our beam points where
-    /// the point-at does, as a global position, and is sent every 0.25 s.
+    /// LLVOAvatarSelf::idleUpdateTractorBeam: while editing or grabbing, the
+    /// beam follows the point-at and is sent every 0.25 s, unless
+    /// PrivatePointAtTarget or Aurora's Hide Editing Beam suppresses it.
+    /// Hide Editing Beam also removes an existing local beam immediately.
     fn update_own_beam(&mut self, target: Option<lookat::Target>, now: Instant) {
-        let me = self.world.agent_id;
-        let aim = target
-            .and_then(|t| self.scene.look_target_pos(&self.world, me, &t, now))
-            .zip(self.world.main_origin())
-            .map(|(p, (mx, my))| DVec3::new(f64::from(p.x) + mx as f64, f64::from(p.y) + my as f64, f64::from(p.z)));
-        let color = self.settings.beams.color;
-        if let Some(send) = self.world.beams.update_own(me, aim, color, now) {
-            self.send(NetCommand::Beam {
-                effect: send.effect,
-                target: send.target,
-                position: send.position.to_array(),
-                color: send.color,
-                duration: send.duration,
-            });
+        if self.settings.lookat.private_edit_beam {
+            self.world.beams.hide_own(self.world.agent_id);
+        } else {
+            let me = self.world.agent_id;
+            let aim = target
+                .and_then(|t| self.scene.look_target_pos(&self.world, me, &t, now))
+                .zip(self.world.main_origin())
+                .map(|(p, (mx, my))| DVec3::new(f64::from(p.x) + mx as f64, f64::from(p.y) + my as f64, f64::from(p.z)));
+            let color = self.settings.beams.color;
+            if let Some(send) = self.world.beams.update_own(me, aim, color, now) {
+                self.send(NetCommand::Beam {
+                    effect: send.effect,
+                    target: send.target,
+                    position: send.position.to_array(),
+                    color: send.color,
+                    duration: send.duration,
+                });
+            }
         }
         let objects = &self.world.objects;
         self.world.beams.forget(now, |id| objects.index_of_uuid(id).is_some());
