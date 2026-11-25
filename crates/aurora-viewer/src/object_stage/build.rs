@@ -4,6 +4,7 @@
 use super::layout::{self, Bounds};
 use super::{Group, Place};
 use crate::scene::Scene;
+use crate::scene::anim::SkeletonBase;
 use crate::scene::avatar::{AvatarLibrary, IMG_INVISIBLE};
 use crate::scene::jobs::SculptMap;
 use crate::scene::meshes::MeshView;
@@ -43,6 +44,7 @@ enum Shape {
 
 /// Where a prim is held: on a joint of the avatar (and the point's own
 /// offset there), or in the space of its linkset.
+#[derive(Clone, Copy)]
 struct Hold {
     joint: Option<usize>,
     point: Vec3,
@@ -64,6 +66,8 @@ pub struct Input {
     prims: Vec<RawPrim>,
     roots: Vec<Uuid>,
     worn: bool,
+    /// The wearer's shape.
+    body: Option<Arc<SkeletonBase>>,
     textures: HashMap<Uuid, PreviewSource>,
     /// Changes when the model would.
     pub key: u64,
@@ -90,6 +94,10 @@ impl Input {
                 }
             }
         }
+        let body = wearer
+            .and_then(|i| world.objects.get(i))
+            .and_then(|o| scene.skeleton_base(&o.full_id));
+        body.as_ref().map(|b| Arc::as_ptr(b) as usize).hash(&mut hasher);
         let ids: HashSet<Uuid> = prims.iter().flat_map(|p| p.faces.iter().flat_map(|f| f.textures)).collect();
         let mut ids: Vec<Uuid> = ids.into_iter().filter(|id| !id.is_nil() && *id != IMG_INVISIBLE).collect();
         ids.sort_unstable();
@@ -104,6 +112,7 @@ impl Input {
             prims,
             roots: groups.iter().map(|g| g.root).collect(),
             worn,
+            body,
             textures,
             // (0 is "no model yet")
             key: hasher.finish().max(1),
@@ -219,7 +228,7 @@ fn hold(world: &World, index: usize, worn: bool) -> Option<Hold> {
 pub struct Unit {
     pub id: Uuid,
     pub group: usize,
-    pub bounds: Bounds,
+    clusters: Range<usize>,
     bones: Range<usize>,
     parts: Range<usize>,
 }
@@ -227,7 +236,26 @@ pub struct Unit {
 pub struct GroupShape {
     pub root: Uuid,
     pub units: Range<usize>,
-    pub bounds: Bounds,
+}
+
+/// What moves a bone of the model.
+enum Driver {
+    /// A joint of the avatar.
+    Joint(usize),
+    /// Held on one (or on the avatar's centre).
+    Held(Hold),
+    /// Nothing: an object of the world.
+    Still(Mat4),
+}
+
+/// The triangles of a part that follow one bone above all, in the space of
+/// their vertices: what is pointed at is looked for there, so that a body that
+/// moves needs no skinning.
+struct Cluster {
+    bone: usize,
+    part: usize,
+    bounds: Bounds,
+    triangles: Vec<[u32; 3]>,
 }
 
 pub struct StageModel {
@@ -235,11 +263,13 @@ pub struct StageModel {
     pub units: Vec<Unit>,
     /// In the order asked for; one with nothing to draw has no units.
     pub groups: Vec<GroupShape>,
-    /// Every bone, at rest in the model's space.
-    base: Vec<Mat4>,
-    whole: Bounds,
-    /// The triangles as they stand together, for picking.
-    skinned: Vec<Arc<[Vec3]>>,
+    drivers: Vec<Driver>,
+    /// From the vertices to each bone.
+    bind: Vec<Mat4>,
+    clusters: Vec<Cluster>,
+    pelvis: usize,
+    /// The bones standing: arms wide, arms down.
+    still: [Arc<[Mat4]>; 2],
     images: HashMap<Uuid, (PreviewRevision, Arc<Image>)>,
     meshes: HashMap<(Uuid, usize), Arc<Vec<aurora_assets::MeshFace>>>,
 }
@@ -297,7 +327,7 @@ impl Input {
             .map(|(asset, len, faces)| ((*asset, *len), faces.clone()))
             .collect();
         let rig = &lib.rig;
-        let skeleton = self.worn.then(|| stance(lib, &self.prims));
+        let skeletons = [false, true].map(|relaxed| self.worn.then(|| stance(lib, &self.prims, self.body.as_deref(), relaxed)));
         let mut out = Building::default();
         for (prim, decoded) in self.prims.iter().zip(&decoded) {
             let drawn = match (&prim.shape, decoded) {
@@ -317,9 +347,9 @@ impl Input {
                 Shape::Mesh { skin, .. } => skin.as_deref(),
                 _ => None,
             };
-            out.prim(prim, drawn, skin, skeleton.as_deref(), rig, &images);
+            out.prim(prim, drawn, skin, self.worn, rig, &images);
         }
-        out.finish(self.roots, self.worn, images, meshes)
+        out.finish(self.roots, skeletons, rig.pelvis, images, meshes)
     }
 }
 
@@ -354,9 +384,21 @@ fn relaxed() -> Vec<(String, Quat)> {
     out
 }
 
-/// The joints of a relaxed stance, with what the worn meshes ask of them.
-pub(super) fn stance(lib: &AvatarLibrary, prims: &[RawPrim]) -> Vec<Mat4> {
+/// The joints of a stance: arms wide, or relaxed.
+pub(super) fn stance(lib: &AvatarLibrary, prims: &[RawPrim], body: Option<&SkeletonBase>, arms_down: bool) -> Vec<Mat4> {
     let rig = &lib.rig;
+    let mut rotations = rig.local_rot.clone();
+    if arms_down {
+        for (name, rotation) in relaxed() {
+            if let Some(joint) = rig.names.get(name.as_str()).and_then(|j| rotations.get_mut(*j)) {
+                *joint *= rotation;
+            }
+        }
+    }
+    // in the wearer's own shape, with the joints their meshes move
+    if let Some(body) = body {
+        return rig.world_with(&rotations, Vec3::ZERO, &body.local_pos, &body.scale);
+    }
     let mut overrides = crate::scene::joint_overrides::JointOverrides::new(rig);
     for prim in prims {
         if let Shape::Mesh {
@@ -364,12 +406,6 @@ pub(super) fn stance(lib: &AvatarLibrary, prims: &[RawPrim]) -> Vec<Mat4> {
         } = &prim.shape
         {
             overrides.add(rig, *asset, skin);
-        }
-    }
-    let mut rotations = rig.local_rot.clone();
-    for (name, rotation) in relaxed() {
-        if let Some(joint) = rig.names.get(name.as_str()).and_then(|j| rotations.get_mut(*j)) {
-            *joint *= rotation;
         }
     }
     let (mut positions, mut scales) = (rig.local_pos.clone(), rig.scale.clone());
@@ -425,8 +461,9 @@ fn prim_faces(volume: &aurora_prim::VolumeMesh) -> Vec<Drawn> {
 struct Building {
     parts: Vec<Part>,
     units: Vec<Unit>,
-    base: Vec<Mat4>,
-    skinned: Vec<Arc<[Vec3]>>,
+    drivers: Vec<Driver>,
+    bind: Vec<Mat4>,
+    clusters: Vec<Cluster>,
     vertices: usize,
 }
 
@@ -436,52 +473,41 @@ impl Building {
         prim: &RawPrim,
         drawn: Vec<Drawn>,
         rigged: Option<&SkinInfo>,
-        skeleton: Option<&[Mat4]>,
+        worn: bool,
         rig: &crate::scene::anim::Rig,
         images: &HashMap<Uuid, (PreviewRevision, Arc<Image>)>,
     ) {
-        let (first_bone, first_part) = (self.base.len(), self.parts.len());
+        let (first_bone, first_part, first_cluster) = (self.bind.len(), self.parts.len(), self.clusters.len());
         let count: usize = drawn.iter().map(|d| d.vertices.len()).sum();
         if self.vertices + count > MAX_VERTICES {
             return;
         }
-        let mut bounds = Bounds::default();
-        let rigged = rigged.filter(|_| skeleton.is_some());
+        let rigged = rigged.filter(|_| worn);
         // a rigged mesh follows the stance, a bone per joint of its skin;
         // anything else has one bone of its own, at the place it is held
-        let skin = match (rigged, skeleton) {
-            (Some(info), Some(skeleton)) => {
-                let mut inverse_bind = Vec::with_capacity(info.joint_names.len());
+        match rigged {
+            Some(info) => {
                 for (name, matrix) in info.joint_names.iter().zip(&info.inverse_bind) {
                     let (joint, matrix) = rig.skin_bind(name, *matrix);
-                    self.base.push(skeleton.get(joint).copied().unwrap_or(Mat4::IDENTITY));
-                    inverse_bind.push(matrix * info.bind_shape);
+                    self.drivers.push(Driver::Joint(joint));
+                    self.bind.push(matrix * info.bind_shape);
                 }
-                inverse_bind
             }
-            _ => {
-                let held = match skeleton {
-                    Some(skeleton) => {
-                        // mRoot (Avatar Center) is outside the skeleton: the
-                        // pelvis' height, as the Shape editor's hints
-                        let joint = prim.hold.joint.and_then(|j| skeleton.get(j)).copied().unwrap_or_else(|| {
-                            Mat4::from_translation(skeleton.get(rig.pelvis).map_or(Vec3::ZERO, |m| m.w_axis.truncate()))
-                        });
-                        let (_, rotation, _) = joint.to_scale_rotation_translation();
-                        Mat4::from_rotation_translation(rotation.normalize() * prim.hold.rotation, joint.transform_point3(prim.hold.point))
-                            * prim.hold.local
-                    }
-                    None => prim.hold.local,
-                };
-                self.base.push(held);
-                vec![Mat4::IDENTITY]
+            None => {
+                self.drivers.push(if worn {
+                    Driver::Held(prim.hold)
+                } else {
+                    Driver::Still(prim.hold.local)
+                });
+                self.bind.push(Mat4::IDENTITY);
             }
-        };
-        if skin.is_empty() {
+        }
+        let bones = first_bone..self.bind.len();
+        if bones.is_empty() {
             return;
         }
-        let bones = first_bone..self.base.len();
-        let rest: Vec<Mat4> = bones.clone().zip(&skin).map(|(b, inverse)| self.base[b] * *inverse).collect();
+        let skin = self.bind[bones.clone()].to_vec();
+        let rest = vec![Mat4::IDENTITY; bones.len()];
         let shared = Arc::new(Skin {
             joints: bones.clone().collect(),
             inverse_bind: skin,
@@ -505,11 +531,11 @@ impl Building {
                     })
                     .collect()
             };
-            let posed: Arc<[Vec3]> = vertices.iter().map(|v| skinned(v, &rest)).collect();
-            if !posed.iter().all(|p| p.is_finite()) {
+            if !vertices.iter().all(|v| Vec3::from_array(v.position).is_finite()) {
                 continue;
             }
-            posed.iter().for_each(|p| bounds.add(*p));
+            self.clusters
+                .extend(clusters(&vertices, &d.indices, first_bone, bones.len(), self.parts.len()));
             let mut textures = look.textures.map(|id| images.get(&id).map(|(_, image)| image.clone()));
             if look.fullbright {
                 // it gives its own light
@@ -520,7 +546,6 @@ impl Building {
                     .as_ref()
                     .is_some_and(|image| image.rgba.iter().skip(3).step_by(4).any(|a| *a != 0 && *a != 255));
             self.vertices += vertices.len();
-            self.skinned.push(posed);
             self.parts.push(Part {
                 diagnostic: false,
                 vertices,
@@ -553,26 +578,26 @@ impl Building {
                 skin: Some(shared.clone()),
             });
         }
-        if self.parts.len() == first_part || bounds.empty() {
+        if self.parts.len() == first_part {
             // nothing of it shows
-            self.parts.truncate(first_part);
-            self.skinned.truncate(first_part);
-            self.base.truncate(first_bone);
+            self.drivers.truncate(first_bone);
+            self.bind.truncate(first_bone);
             return;
         }
         self.units.push(Unit {
             id: prim.id,
             group: prim.group,
-            bounds,
+            clusters: first_cluster..self.clusters.len(),
             bones,
             parts: first_part..self.parts.len(),
         });
     }
 
     fn finish(
-        mut self,
+        self,
         roots: Vec<Uuid>,
-        worn: bool,
+        skeletons: [Option<Vec<Mat4>>; 2],
+        pelvis: usize,
         images: HashMap<Uuid, (PreviewRevision, Arc<Image>)>,
         meshes: HashMap<(Uuid, usize), Arc<Vec<aurora_assets::MeshFace>>>,
     ) -> Option<StageModel> {
@@ -583,35 +608,15 @@ impl Building {
             let start = units.partition_point(|u| u.group < g);
             start..units.partition_point(|u| u.group <= g)
         };
-        let boxes_of = |units: &[Unit], r: Range<usize>| units[r].iter().map(|u| u.bounds).collect::<Vec<_>>();
-        if !worn {
-            // objects of the world, side by side
-            let ranges: Vec<Range<usize>> = (0..roots.len()).map(|g| range(&self.units, g)).filter(|r| !r.is_empty()).collect();
-            let boxes: Vec<Bounds> = ranges.iter().map(|r| layout::whole(&boxes_of(&self.units, r.clone()))).collect();
-            for (r, by) in ranges.into_iter().zip(layout::side_by_side(&boxes)) {
-                for unit in &mut self.units[r] {
-                    unit.bounds = unit.bounds.moved(by);
-                    for bone in unit.bones.clone() {
-                        self.base[bone] = Mat4::from_translation(by) * self.base[bone];
-                    }
-                    for part in unit.parts.clone() {
-                        self.skinned[part] = self.skinned[part].iter().map(|p| *p + by).collect();
-                    }
-                }
-            }
-        }
         let groups: Vec<GroupShape> = roots
             .into_iter()
             .enumerate()
-            .map(|(g, root)| {
-                let units = range(&self.units, g);
-                let bounds = layout::whole(&boxes_of(&self.units, units.clone()));
-                GroupShape { root, units, bounds }
+            .map(|(g, root)| GroupShape {
+                root,
+                units: range(&self.units, g),
             })
             .collect();
-        let boxes: Vec<Bounds> = groups.iter().filter(|g| !g.units.is_empty()).map(|g| g.bounds).collect();
-        let whole = layout::whole(&boxes);
-        Some(StageModel {
+        let mut model = StageModel {
             model: Arc::new(Model {
                 parts: self.parts,
                 // the palette brings everything into the unit sphere
@@ -620,54 +625,177 @@ impl Building {
             }),
             units: self.units,
             groups,
-            base: self.base,
-            whole,
-            skinned: self.skinned,
+            drivers: self.drivers,
+            bind: self.bind,
+            clusters: self.clusters,
+            pelvis,
+            still: [Arc::from([]), Arc::from([])],
             images,
             meshes,
-        })
+        };
+        let empty = Vec::new();
+        model.still = skeletons
+            .each_ref()
+            .map(|skeleton| model.bones(skeleton.as_ref().unwrap_or(&empty)));
+        if skeletons[0].is_none() {
+            // objects of the world, side by side
+            let shown: Vec<usize> = (0..model.groups.len()).filter(|g| !model.groups[*g].units.is_empty()).collect();
+            let boxes: Vec<Bounds> = shown.iter().map(|g| model.group_bounds(*g, &model.still[0])).collect();
+            for (g, by) in shown.into_iter().zip(layout::side_by_side(&boxes)) {
+                for unit in model.groups[g].units.clone() {
+                    for bone in model.units[unit].bones.clone() {
+                        if let Driver::Still(at) = &mut model.drivers[bone] {
+                            *at = Mat4::from_translation(by) * *at;
+                        }
+                    }
+                }
+            }
+            let bones = model.bones(&empty);
+            model.still = [bones.clone(), bones];
+        }
+        Some(model)
     }
 }
 
-fn skinned(v: &Vertex, bones: &[Mat4]) -> Vec3 {
-    let p = Vec3::from_array(v.position);
-    let (mut out, mut sum) = (Vec3::ZERO, 0.0);
-    for (joint, weight) in v.joints.iter().zip(v.weights) {
-        if weight > 0.0
-            && let Some(bone) = bones.get((*joint as usize).min(bones.len() - 1))
-        {
-            out += bone.transform_point3(p) * weight;
-            sum += weight;
+/// The triangles of a face by the bone that moves them most.
+fn clusters(vertices: &[Vertex], indices: &[u32], first_bone: usize, bones: usize, part: usize) -> Vec<Cluster> {
+    let mut by_bone: HashMap<usize, Cluster> = HashMap::new();
+    for tri in indices.as_chunks::<3>().0 {
+        let corners = tri.map(|i| vertices.get(i as usize));
+        let [Some(a), Some(b), Some(c)] = corners else { continue };
+        let mut most = (0, -1.0f32);
+        for v in [a, b, c] {
+            for (joint, weight) in v.joints.iter().zip(v.weights) {
+                let sum: f32 = [a, b, c]
+                    .iter()
+                    .flat_map(|o| o.joints.iter().zip(o.weights))
+                    .filter(|(j, _)| *j == joint)
+                    .map(|(_, w)| w)
+                    .sum();
+                if weight > 0.0 && sum > most.1 {
+                    most = (*joint as usize, sum);
+                }
+            }
+        }
+        let bone = first_bone + most.0.min(bones.saturating_sub(1));
+        let cluster = by_bone.entry(bone).or_insert_with(|| Cluster {
+            bone,
+            part,
+            bounds: Bounds::default(),
+            triangles: Vec::new(),
+        });
+        for v in [a, b, c] {
+            cluster.bounds.add(Vec3::from_array(v.position));
+        }
+        cluster.triangles.push(*tri);
+    }
+    let mut out: Vec<Cluster> = by_bone.into_values().collect();
+    out.sort_by_key(|c| c.bone);
+    out
+}
+
+/// Two sets of bones mixed: `t` 0 the first, 1 the second.
+pub fn mixed(a: &Arc<[Mat4]>, b: &Arc<[Mat4]>, t: f32) -> Arc<[Mat4]> {
+    if t <= 0.0 || a.len() != b.len() {
+        return a.clone();
+    }
+    if t >= 1.0 {
+        return b.clone();
+    }
+    a.iter().zip(b.iter()).map(|(a, b)| *a * (1.0 - t) + *b * t).collect()
+}
+
+/// What the view frames.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Frame {
+    pub center: Vec3,
+    pub radius: f32,
+    /// Height of what it stands on.
+    pub low: f32,
+}
+
+impl Frame {
+    fn of(b: Bounds) -> Self {
+        if b.empty() {
+            return Frame {
+                center: Vec3::ZERO,
+                radius: 1.0,
+                low: 0.0,
+            };
+        }
+        Frame {
+            center: b.center(),
+            radius: b.radius(),
+            low: b.lo.z,
         }
     }
-    if sum > 1e-5 { out / sum } else { p }
-}
 
-fn lerp(a: Vec3, b: Vec3, t: f32) -> Vec3 {
-    a + (b - a) * t
+    pub fn mix(self, to: Frame, t: f32) -> Frame {
+        Frame {
+            center: self.center + (to.center - self.center) * t,
+            radius: self.radius + (to.radius - self.radius) * t,
+            low: self.low + (to.low - self.low) * t,
+        }
+    }
+
+    /// The floor, in the view.
+    pub fn floor(&self) -> f32 {
+        (self.low - self.center.z) / self.radius
+    }
 }
 
 impl StageModel {
-    /// The sphere the view shows: its centre and radius.
-    fn framed(&self, standing: Standing) -> (Vec3, f32) {
-        let (center, radius) = (self.whole.center(), self.whole.radius());
-        match standing.focus.and_then(|(g, f)| Some((self.groups.get(g)?, f))) {
-            Some((group, f)) if !group.units.is_empty() => {
-                let (c, r) = (group.bounds.center(), group.bounds.radius());
-                (lerp(center, c, f), radius + (r - radius) * f)
-            }
-            _ => (center, radius),
-        }
+    /// Every bone, for the joints of `skeleton`.
+    pub fn bones(&self, skeleton: &[Mat4]) -> Arc<[Mat4]> {
+        self.drivers
+            .iter()
+            .map(|driver| match driver {
+                Driver::Joint(joint) => skeleton.get(*joint).copied().unwrap_or(Mat4::IDENTITY),
+                Driver::Still(at) => *at,
+                Driver::Held(hold) => {
+                    // mRoot (Avatar Center) is outside the skeleton: the
+                    // pelvis' height, as the Shape editor's hints
+                    let joint =
+                        hold.joint.and_then(|j| skeleton.get(j)).copied().unwrap_or_else(|| {
+                            Mat4::from_translation(skeleton.get(self.pelvis).map_or(Vec3::ZERO, |m| m.w_axis.truncate()))
+                        });
+                    let (_, rotation, _) = joint.to_scale_rotation_translation();
+                    Mat4::from_rotation_translation(rotation.normalize() * hold.rotation, joint.transform_point3(hold.point)) * hold.local
+                }
+            })
+            .collect()
     }
 
-    /// The floor what is shown stands on, as the view frames it.
-    pub fn floor(&self, standing: Standing) -> f32 {
-        let (center, radius) = self.framed(standing);
-        let low = match standing.focus.and_then(|(g, f)| Some((self.groups.get(g)?, f))) {
-            Some((group, f)) if !group.units.is_empty() => self.whole.lo.z + (group.bounds.lo.z - self.whole.lo.z) * f,
-            _ => self.whole.lo.z,
-        };
-        (low - center.z) / radius
+    /// The bones of a still stance.
+    pub fn still(&self, arms_down: bool) -> &Arc<[Mat4]> {
+        &self.still[usize::from(arms_down)]
+    }
+
+    /// The box of a unit, as its bones are.
+    fn unit_bounds(&self, unit: usize, bones: &[Mat4]) -> Bounds {
+        let mut out = Bounds::default();
+        for cluster in &self.clusters[self.units[unit].clusters.clone()] {
+            let m = bones[cluster.bone] * self.bind[cluster.bone];
+            for corner in cluster.bounds.corners() {
+                out.add(m.transform_point3(corner));
+            }
+        }
+        out
+    }
+
+    fn group_bounds(&self, group: usize, bones: &[Mat4]) -> Bounds {
+        let boxes: Vec<Bounds> = self.groups[group].units.clone().map(|u| self.unit_bounds(u, bones)).collect();
+        layout::whole(&boxes)
+    }
+
+    /// What the view frames: a sphere and its floor.
+    pub fn frame(&self, focus: Option<(usize, f32)>, bones: &[Mat4]) -> Frame {
+        let boxes: Vec<Bounds> = (0..self.units.len()).map(|u| self.unit_bounds(u, bones)).collect();
+        let all = Frame::of(layout::whole(&boxes));
+        match focus.and_then(|(g, f)| Some((self.groups.get(g)?, f))) {
+            Some((group, f)) if !group.units.is_empty() => all.mix(Frame::of(layout::whole(&boxes[group.units.clone()])), f),
+            _ => all,
+        }
     }
 
     /// How large a group shows: the others shrink away from one alone.
@@ -678,17 +806,17 @@ impl StageModel {
         }
     }
 
-    pub fn pose(&self, standing: Standing) -> Pose {
-        let (center, radius) = self.framed(standing);
+    pub fn pose(&self, standing: Standing, frame: &Frame, bones: &[Mat4]) -> Pose {
+        let Frame { center, radius, .. } = *frame;
         let view = Mat4::from_scale(Vec3::splat(1.0 / radius)) * Mat4::from_translation(-center);
-        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); self.base.len()];
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); bones.len()];
         for unit in &self.units {
-            let middle = self.groups[unit.group].bounds.center();
+            let middle = center;
             // (never quite 0: a matrix without an inverse has no normals)
             let size = self.shown(unit.group, standing).max(1e-4);
             let m = view * Mat4::from_translation(middle) * Mat4::from_scale(Vec3::splat(size)) * Mat4::from_translation(-middle);
             for bone in unit.bones.clone() {
-                out[bone] = (m * self.base[bone]).to_cols_array_2d();
+                out[bone] = (m * bones[bone]).to_cols_array_2d();
             }
         }
         out.into()
@@ -704,24 +832,31 @@ impl StageModel {
     }
 
     /// The prim a ray of the view meets first, as the model stands.
-    pub fn pick(&self, standing: Standing, from: Vec3, dir: Vec3) -> Option<&Unit> {
-        let (center, radius) = self.framed(standing);
+    pub fn pick(&self, standing: Standing, frame: &Frame, bones: &[Mat4], from: Vec3, dir: Vec3) -> Option<&Unit> {
         // back into the model's own space
-        let from = from * radius + center;
+        let from = from * frame.radius + frame.center;
         let mut best: Option<(f32, usize)> = None;
         for (u, unit) in self.units.iter().enumerate() {
             if self.shown(unit.group, standing) < 0.5 {
                 continue;
             }
-            let near = |t: f32| best.is_none_or(|(b, _)| t < b);
-            if !unit.bounds.hit(from, dir).is_some_and(near) {
-                continue;
-            }
-            for part in unit.parts.clone() {
-                let points = &self.skinned[part];
-                for tri in self.model.parts[part].indices.as_chunks::<3>().0 {
-                    let Some([a, b, c]) = corner(points, tri) else { continue };
-                    if let Some(t) = triangle(from, dir, a, b, c)
+            for cluster in &self.clusters[unit.clusters.clone()] {
+                // the ray where the bone's vertices are; its length along it
+                // stays the same
+                let m = bones[cluster.bone] * self.bind[cluster.bone];
+                if m.determinant().abs() < 1e-18 {
+                    continue;
+                }
+                let back = m.inverse();
+                let (at, along) = (back.transform_point3(from), back.transform_vector3(dir));
+                let near = |t: f32| best.is_none_or(|(b, _)| t < b);
+                if !cluster.bounds.hit(at, along).is_some_and(near) {
+                    continue;
+                }
+                let vertices = &self.model.parts[cluster.part].vertices;
+                for tri in &cluster.triangles {
+                    let Some([a, b, c]) = corner(vertices, tri) else { continue };
+                    if let Some(t) = triangle(at, along, a, b, c)
                         && best.is_none_or(|(b, _)| t < b)
                     {
                         best = Some((t, u));
@@ -738,12 +873,9 @@ impl StageModel {
     }
 }
 
-fn corner(points: &[Vec3], tri: &[u32; 3]) -> Option<[Vec3; 3]> {
-    Some([
-        *points.get(tri[0] as usize)?,
-        *points.get(tri[1] as usize)?,
-        *points.get(tri[2] as usize)?,
-    ])
+fn corner(vertices: &[Vertex], tri: &[u32; 3]) -> Option<[Vec3; 3]> {
+    let at = |i: u32| vertices.get(i as usize).map(|v| Vec3::from_array(v.position));
+    Some([at(tri[0])?, at(tri[1])?, at(tri[2])?])
 }
 
 /// Möller–Trumbore, either side of the triangle.
@@ -751,7 +883,7 @@ fn triangle(from: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
     let (e1, e2) = (b - a, c - a);
     let p = dir.cross(e2);
     let det = e1.dot(p);
-    if det.abs() < 1e-12 {
+    if det.abs() < 1e-20 {
         return None;
     }
     let s = from - a;

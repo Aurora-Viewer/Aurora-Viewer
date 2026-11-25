@@ -47,11 +47,15 @@ impl Bounds {
         (self.size() * 0.5).length().max(1e-3)
     }
 
-    pub fn moved(&self, by: Vec3) -> Bounds {
-        Bounds {
-            lo: self.lo + by,
-            hi: self.hi + by,
-        }
+    pub fn corners(&self) -> [Vec3; 8] {
+        std::array::from_fn(|i| {
+            let pick = |bit: usize, lo: f32, hi: f32| if i & bit == 0 { lo } else { hi };
+            Vec3::new(
+                pick(1, self.lo.x, self.hi.x),
+                pick(2, self.lo.y, self.hi.y),
+                pick(4, self.lo.z, self.hi.z),
+            )
+        })
     }
 
     /// Where a ray enters the box, if it does.

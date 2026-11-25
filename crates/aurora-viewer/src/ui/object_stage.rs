@@ -2,11 +2,12 @@
 //! in a photo studio, turned and moved by dragging or with the buttons. What
 //! the pointer is on is outlined and named. It never moves by itself.
 
-use crate::object_stage::{Absent, Stage, StageModel, Standing, build_standing};
+use crate::object_stage::{Absent, Frame, Stage, StageModel, Stance, Standing, mixed};
 use crate::theme::Palette;
 use crate::ui::widgets;
 use aurora_render::preview::{Highlight, Pose, Studio, View};
 use egui::{Color32, PointerButton, Rect, RichText, Sense, Vec2};
+use glam::Mat4;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -25,8 +26,10 @@ const CAMERA: Camera = Camera {
     zoom: 1.0,
     pan: [0.0, 0.0],
 };
-/// How far the objects can be moved, in pictures.
-const FAR: f32 = 2.0;
+/// How far the objects can be moved, in pictures (zoomed in as far as it goes).
+const FAR: f32 = 12.0;
+const NEAREST: f32 = 12.0;
+const FURTHEST: f32 = 0.4;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Camera {
@@ -58,13 +61,26 @@ pub struct Hit {
 /// The view of one window.
 pub struct StageUi {
     pub stage: Stage,
+    /// How what is worn stands, when there is a choice.
+    pub stance: Stance,
+    /// On a light ground.
+    pub light: bool,
+    /// What is shown is worn: there is a choice.
+    pub worn: bool,
+    /// The avatar's joints, while it is shown as it stands in the world.
+    live: Option<Vec<Mat4>>,
+    /// The bones drawn last, and what they frame.
+    bones: Arc<[Mat4]>,
+    steady: Option<Frame>,
+    /// How far the item alone has come to the middle (0 to 1).
+    near: f32,
     camera: Camera,
     /// The object alone, kept while the view goes back to them all.
     alone: Option<Uuid>,
     /// The last one shown alone: another starts in the middle.
     framed: Option<Uuid>,
     /// What the pose shown was made for.
-    posed: Option<(u64, build_standing::Key, Pose)>,
+    posed: Option<(u64, Standing, Frame, Arc<[Mat4]>, Pose)>,
     classes: Option<(u64, Classes, Arc<[u8]>)>,
     over: Option<Hit>,
     /// What is outlined as pointed at, kept while it fades out.
@@ -86,6 +102,13 @@ impl Default for StageUi {
     fn default() -> Self {
         StageUi {
             stage: Stage::default(),
+            stance: Stance::default(),
+            light: false,
+            worn: false,
+            live: None,
+            bones: Arc::from([]),
+            steady: None,
+            near: 0.0,
             camera: CAMERA,
             alone: None,
             framed: None,
@@ -108,6 +131,19 @@ impl StageUi {
         self.fading = None;
         self.posed = None;
         self.classes = None;
+        self.live = None;
+        self.steady = None;
+    }
+
+    /// The avatar's joints are wanted: it shows as it stands in the world, all
+    /// of it.
+    pub fn wants_joints(&self) -> bool {
+        self.worn && self.stance == Stance::Live && (self.framed.is_none() || self.near < 1.0)
+    }
+
+    /// The avatar's joints this frame; None: it has no pose.
+    pub fn set_joints(&mut self, joints: Option<Vec<Mat4>>) {
+        self.live = joints;
     }
 
     /// What the pointer is on in the view.
@@ -153,7 +189,8 @@ impl StageUi {
         let id = ui.scope_id().with("object_stage");
         let resp = ui.interact(view_rect, id, Sense::click_and_drag());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, spoken));
-        self.steer(ui, &resp, view_rect);
+        let middle = (free.center() - view_rect.center()) / view_rect.size().max(Vec2::splat(1.0));
+        self.steer(ui, &resp, view_rect, middle);
         // one alone comes to the middle, and goes back the same way
         if showing.alone.is_some() {
             self.alone = showing.alone;
@@ -166,18 +203,20 @@ impl StageUi {
         let quick = ui.style().animation_time > 0.0;
         let time = if quick { 0.22 } else { 0.0 };
         let near = ui.ctx().animate_bool_with_time(id.with("alone"), showing.alone.is_some(), time);
+        self.near = near;
         let group = self.alone.and_then(|root| model.groups.iter().position(|g| g.root == root));
         let standing = Standing {
             focus: group.filter(|_| near > 0.0).map(|g| (g, near)),
         };
-        let view = self.view(p, &model, standing, view_rect, free);
-        self.look(ui, &resp, &model, &view, view_rect, standing);
-        let pose = self.pose(&model, standing);
+        let frame = self.stand(ui, id, &model, standing, near);
+        let view = self.view(p, &frame, view_rect, free, middle);
+        self.look(ui, &resp, &model, &frame, &view, view_rect, standing);
+        let pose = self.pose(&model, standing, frame);
         let highlight = self.highlight(ui, p, id, &model, showing);
         aurora_render::preview::paint_stage(ui, id, model.model.clone(), view, view_rect, Some(pose), highlight);
         let hit = resp.clicked().then(|| resp.interact_pointer_pos()).flatten().and_then(|at| {
             let (from, dir) = view.ray(&model.model, view_rect, at);
-            let unit = model.pick(standing, from, dir)?;
+            let unit = model.pick(standing, &frame, &self.bones, from, dir)?;
             Some(Hit {
                 root: model.groups[unit.group].root,
                 prim: unit.id,
@@ -203,7 +242,7 @@ impl StageUi {
 
     /// Drag to turn, right or middle drag (or Shift) to move, wheel to come
     /// closer; the arrows do the same with the keyboard.
-    fn steer(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: Rect) {
+    fn steer(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: Rect, middle: Vec2) {
         let camera = &mut self.camera;
         let shift = ui.input(|i| i.modifiers.shift);
         let d = resp.drag_delta();
@@ -221,7 +260,9 @@ impl StageUi {
             let wheel = ui.input(|i| i.smooth_scroll_delta.y);
             if wheel != 0.0 {
                 ui.input_mut(|i| i.smooth_scroll_delta = Vec2::ZERO);
-                camera.zoom *= (wheel * 0.002).exp();
+                // what is under the pointer stays under it
+                let at = resp.hover_pos().unwrap_or(rect.center());
+                camera.zoom_at((wheel * 0.002).exp(), (at - rect.center()) / rect.size(), middle);
             }
         }
         if resp.has_focus() {
@@ -252,37 +293,45 @@ impl StageUi {
             }
         }
         camera.pitch = camera.pitch.clamp(-1.2, 1.4);
-        camera.zoom = camera.zoom.clamp(0.4, 12.0);
         camera.pan = camera.pan.map(|v| v.clamp(-FAR, FAR));
     }
 
     /// The camera over `rect`, its objects in the middle of `free`.
-    fn view(&self, p: &Palette, model: &StageModel, standing: Standing, rect: Rect, free: Rect) -> View {
+    fn view(&self, p: &Palette, frame: &Frame, rect: Rect, free: Rect, middle: Vec2) -> View {
         let height = rect.height().max(1.0);
         // all of it in sight, whichever side is the shorter
         let room = (height / free.height().max(1.0)).max(height / free.width().max(1.0));
-        let middle = (free.center() - rect.center()) / rect.size().max(Vec2::splat(1.0));
         View {
             yaw: self.camera.yaw,
             pitch: self.camera.pitch,
             distance: 2.7 * room / self.camera.zoom,
             pan: [self.camera.pan[0] + middle.x, self.camera.pan[1] + middle.y],
-            background: shown(ground_color(p)),
+            background: shown(self.ground(p)),
             studio: Some(Studio {
-                floor: Some(model.floor(standing)),
+                floor: Some(frame.floor()),
             }),
             ..Default::default()
         }
     }
 
     /// What the pointer is over, looked at some times a second.
-    fn look(&mut self, ui: &egui::Ui, resp: &egui::Response, model: &StageModel, view: &View, rect: Rect, standing: Standing) {
+    #[allow(clippy::too_many_arguments)]
+    fn look(
+        &mut self,
+        ui: &egui::Ui,
+        resp: &egui::Response,
+        model: &StageModel,
+        frame: &Frame,
+        view: &View,
+        rect: Rect,
+        standing: Standing,
+    ) {
         let now = ui.input(|i| i.time);
         match resp.hover_pos().filter(|_| !resp.dragged()) {
             Some(at) if now - self.looked > POINTED => {
                 self.looked = now;
                 let (from, dir) = view.ray(&model.model, rect, at);
-                self.over = model.pick(standing, from, dir).map(|unit| Hit {
+                self.over = model.pick(standing, frame, &self.bones, from, dir).map(|unit| Hit {
                     root: model.groups[unit.group].root,
                     prim: unit.id,
                 });
@@ -292,16 +341,68 @@ impl StageUi {
         }
     }
 
-    fn pose(&mut self, model: &Arc<StageModel>, standing: Standing) -> Pose {
-        let (at, key) = (self.stage.serial(), build_standing::key(standing));
-        if let Some((m, k, pose)) = &self.posed
-            && (*m, *k) == (at, key)
+    /// The bones of this frame, and what they frame. As the avatar stands in
+    /// the world while all of it is shown; still while one item is alone.
+    fn stand(&mut self, ui: &egui::Ui, id: egui::Id, model: &StageModel, standing: Standing, near: f32) -> Frame {
+        let still = model.still(self.stance == Stance::Relaxed);
+        let quick = ui.style().animation_time > 0.0;
+        let live = self.worn && self.stance == Stance::Live && self.live.is_some();
+        let time = if quick { 0.25 } else { 0.0 };
+        let mix = ui.ctx().animate_bool_with_time(id.with("live"), live, time) * (1.0 - near);
+        let bones = match &self.live {
+            Some(joints) if mix > 0.0 => mixed(still, &model.bones(joints), mix),
+            _ => still.clone(),
+        };
+        if *self.bones != *bones {
+            self.bones = bones;
+        }
+        let frame = model.frame(standing.focus, &self.bones);
+        if mix <= 0.0 {
+            self.steady = None;
+            return frame;
+        }
+        // an animation moves: the view follows it slowly, not at each step
+        let dt = ui.input(|i| i.stable_dt).min(0.1);
+        let steady = match self.steady {
+            Some(steady) if near == 0.0 => steady.mix(frame, 1.0 - (-dt * 1.5).exp()),
+            _ => frame,
+        };
+        self.steady = Some(steady);
+        ui.ctx().request_repaint();
+        steady
+    }
+
+    fn pose(&mut self, model: &Arc<StageModel>, standing: Standing, frame: Frame) -> Pose {
+        let at = self.stage.serial();
+        if let Some((m, s, f, b, pose)) = &self.posed
+            && (*m, *s, *f) == (at, standing, frame)
+            && Arc::ptr_eq(b, &self.bones)
         {
             return pose.clone();
         }
-        let pose = model.pose(standing);
-        self.posed = Some((at, key, pose.clone()));
+        let pose = model.pose(standing, &frame, &self.bones);
+        self.posed = Some((at, standing, frame, self.bones.clone(), pose.clone()));
         pose
+    }
+
+    /// The ground, and what is written over it.
+    pub fn ground(&self, p: &Palette) -> Color32 {
+        if self.light { light_ground(p) } else { ground_color(p) }
+    }
+
+    /// Text that reads over the ground.
+    pub fn ink(&self, p: &Palette) -> Color32 {
+        if self.light { dark(p) } else { p.ink }
+    }
+
+    /// Quieter text.
+    pub fn muted(&self, p: &Palette) -> Color32 {
+        if self.light { dark(p).gamma_multiply(0.78) } else { p.muted }
+    }
+
+    /// The face of a button over a light ground.
+    pub fn face(&self, p: &Palette) -> Option<Color32> {
+        self.light.then(|| p.bar.to_opaque())
     }
 
     /// What the pointer is on is outlined in light, fading in and out; the
@@ -360,7 +461,10 @@ impl StageUi {
         };
         Some(Highlight {
             classes,
-            colors: [color(p.ink, strength), color(p.violet_light, 1.0)],
+            colors: [
+                color(self.ink(p), strength * 0.8),
+                color(if self.light { p.violet } else { p.violet_light }, 0.9),
+            ],
         })
     }
 
@@ -368,7 +472,12 @@ impl StageUi {
     /// back to the start; what dragging does, written at their right.
     fn bar(&mut self, ui: &mut egui::Ui, p: &Palette, rect: Rect) {
         let radius = ui.visuals().window_corner_radius;
-        ui.painter().rect_filled(rect, radius, p.bar.gamma_multiply(0.78));
+        let face = if self.light {
+            p.bar.to_opaque()
+        } else {
+            p.bar.gamma_multiply(0.78)
+        };
+        ui.painter().rect_filled(rect, radius, face);
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt("object_stage_bar")
@@ -391,13 +500,25 @@ impl StageUi {
             camera.pitch = (camera.pitch - 0.25).max(-1.2);
         }
         if tool(ui, p, "plus", aurora_i18n::tr!("stage-nearer")) {
-            camera.zoom = (camera.zoom * 1.25).min(12.0);
+            camera.zoom_at(1.25, Vec2::ZERO, Vec2::ZERO);
         }
         if tool(ui, p, "minus", aurora_i18n::tr!("stage-further")) {
-            camera.zoom = (camera.zoom / 1.25).max(0.4);
+            camera.zoom_at(0.8, Vec2::ZERO, Vec2::ZERO);
         }
         if *camera != CAMERA && tool(ui, p, "restore", aurora_i18n::tr!("stage-reset")) {
             *camera = CAMERA;
+        }
+        let tip = if self.light {
+            aurora_i18n::tr!("stage-dark")
+        } else {
+            aurora_i18n::tr!("stage-light")
+        };
+        if tool_lit(ui, p, "bulb-filled", tip, self.light) {
+            self.light = !self.light;
+        }
+        if self.worn {
+            self.stances(ui, p, rect);
+            return;
         }
         let hint = aurora_i18n::tr!("stage-hint");
         let room = ui.available_width() - 8.0;
@@ -408,6 +529,80 @@ impl StageUi {
             widgets::paint_elided(ui, hint, at, width + 1.0, font, p.muted);
         }
     }
+
+    /// How what is worn stands: three choices at the right of the bar, or one
+    /// button that goes from one to the next where they do not fit.
+    fn stances(&mut self, ui: &mut egui::Ui, p: &Palette, rect: Rect) {
+        let short = Stance::ALL.map(|stance| match stance {
+            Stance::Live => aurora_i18n::tr!("stage-stance-live"),
+            Stance::Relaxed => aurora_i18n::tr!("stage-stance-relaxed-short"),
+            Stance::Wide => aurora_i18n::tr!("stage-stance-wide-short"),
+        });
+        let mut at = Stance::ALL.iter().position(|s| *s == self.stance).unwrap_or(0);
+        let options = short.map(|name| (name, true));
+        let width = widgets::segmented_size(ui, &options).x;
+        if width + 6.0 > ui.available_width() {
+            if widgets::action_button(ui, p, "", short[at], widgets::ActionKind::Flat, Vec2::new(0.0, BUTTON))
+                .on_hover_text(stance_tip(self.stance))
+                .clicked()
+            {
+                self.stance = Stance::ALL[(at + 1) % Stance::ALL.len()];
+            }
+            return;
+        }
+        let place = Rect::from_min_max(egui::pos2(rect.right() - 5.0 - width, rect.top()), rect.right_bottom());
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("object_stage_stance")
+                .max_rect(place)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        if widgets::segmented(&mut child, p, &mut at, &options) {
+            self.stance = Stance::ALL[at];
+        }
+        if let Some(pos) = ui.ctx().pointer_hover_pos().filter(|pos| place.contains(*pos)) {
+            let over = ((pos.x - place.left()) / place.width() * 3.0) as usize;
+            ui.interact(place, ui.scope_id().with("stance_tip"), Sense::hover())
+                .on_hover_text(stance_tip(Stance::ALL[over.min(2)]));
+        }
+    }
+}
+
+impl Camera {
+    /// Closer or further by `ratio`, what is at `at` staying there (from the
+    /// picture's middle, in widths and heights); `middle` is where the objects
+    /// stand.
+    fn zoom_at(&mut self, ratio: f32, at: Vec2, middle: Vec2) {
+        let zoom = (self.zoom * ratio).clamp(FURTHEST, NEAREST);
+        let ratio = zoom / self.zoom;
+        self.zoom = zoom;
+        for (pan, (at, middle)) in self.pan.iter_mut().zip([(at.x, middle.x), (at.y, middle.y)]) {
+            let from = at - middle;
+            *pan = from - (from - *pan) * ratio;
+        }
+    }
+}
+
+fn stance_tip(stance: Stance) -> &'static str {
+    match stance {
+        Stance::Live => aurora_i18n::tr!("stage-stance-live-tip"),
+        Stance::Relaxed => aurora_i18n::tr!("stage-stance-relaxed-tip"),
+        Stance::Wide => aurora_i18n::tr!("stage-stance-wide-tip"),
+    }
+}
+
+/// The darker and the lighter of the theme's text and ground: a light ground
+/// and its text, in any theme.
+fn dark(p: &Palette) -> Color32 {
+    let (a, b) = (p.ink.to_opaque(), p.bar.to_opaque());
+    if a.intensity() < b.intensity() { a } else { b }
+}
+
+fn light_ground(p: &Palette) -> Color32 {
+    let (a, b) = (p.ink.to_opaque(), p.bar.to_opaque());
+    let light = if a.intensity() < b.intensity() { b } else { a };
+    // (the studio's glow takes its middle to white)
+    light.lerp_to_gamma(dark(p), 0.1)
 }
 
 /// The name of what the pointer is on, beside it.
@@ -431,14 +626,22 @@ fn tag(ui: &egui::Ui, p: &Palette, rect: Rect, at: egui::Pos2, text: &str) {
 
 /// One button of the bar.
 fn tool(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> bool {
+    tool_lit(ui, p, icon, tip, false)
+}
+
+fn tool_lit(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(BUTTON), Sense::click());
     if resp.hovered() {
         ui.painter()
             .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
     }
-    let ink = if resp.hovered() { p.ink } else { p.muted };
+    let ink = match (on, resp.hovered()) {
+        (true, _) => p.warn,
+        (false, true) => p.ink,
+        (false, false) => p.muted,
+    };
     super::sheet::icon_at(ui, icon, rect.center(), 16.0, ink);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, tip));
     resp.on_hover_text(tip).clicked()
 }
 
@@ -464,4 +667,28 @@ pub fn ground_color(p: &Palette) -> Color32 {
 /// The view's target is not sRGB: its ground is given as it shows.
 fn shown(c: Color32) -> [f32; 4] {
     c.to_normalized_gamma_f32()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the pointer is on stays under it, in and out, off the middle too.
+    #[test]
+    fn zoom_keeps_what_is_under_the_pointer() {
+        let middle = Vec2::new(0.0, 0.05);
+        let at = Vec2::new(0.3, -0.2);
+        let mut camera = Camera {
+            pan: [0.1, 0.02],
+            ..CAMERA
+        };
+        // a point of the model, as far from its centre as the zoom is strong
+        let place = |c: &Camera, p: Vec2| Vec2::new(c.pan[0], c.pan[1]) + middle + p * c.zoom;
+        let point = (at - middle - Vec2::new(camera.pan[0], camera.pan[1])) / camera.zoom;
+        for ratio in [1.3, 2.0, 0.4, 100.0, 0.001] {
+            camera.zoom_at(ratio, at, middle);
+            assert!((place(&camera, point) - at).length() < 1e-3, "{ratio}: {camera:?}");
+            assert!((FURTHEST..=NEAREST).contains(&camera.zoom));
+        }
+    }
 }

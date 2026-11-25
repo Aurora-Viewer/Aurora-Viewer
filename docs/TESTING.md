@@ -6924,11 +6924,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the outlined one in violet), the Profile button on the line pointed at, a
   right click that looks at the item, the View panel and the Details table. `:open` opens the
   third object's card, `:creators` and `:details` show those tabs, `:view` the
-  View panel. `crowd` takes someone of `AURORA_DEMO_CROWD`, `pbr` the objects with a PBR material
+  View panel. `worn` inspects one worn object and `piece` one object of the market (both open
+  wide), `crowd` takes someone of `AURORA_DEMO_CROWD`, `pbr` the objects with a PBR material
   (`AURORA_DEMO_PBR_METAL=1`, `AURORA_DEMO_PBR_OVERRIDE=1`), `market` eight pieces
   of the market below, of several owners. `:small` and `:wide` force a view (never
   kept in the settings). In the wide one: `item` opens the third object, `hover`
-  outlines the fourth in 3D, `grow-3d`, `grow-items`, `grow-complexity`,
+  outlines the fourth in 3D, `tpose`, `apose` and `light` choose its stance and ground, `grow-3d`, `grow-items`, `grow-complexity`,
   `grow-makers`, `grow-places`, `grow-figures` and `grow-prims` grow that tile.
   Options go together, separated by commas (`wolf:wide,item,grow-prims`). Check
   that nothing spins by itself, dragging, a right drag, the arrow keys and each button, the outline

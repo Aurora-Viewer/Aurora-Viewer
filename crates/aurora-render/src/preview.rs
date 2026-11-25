@@ -1364,7 +1364,7 @@ impl Target {
                 1.0 / self.size[0] as f32,
                 1.0 / self.size[1] as f32,
                 // as wide on any screen: a small part of the picture's height
-                (self.size[1] as f32 / 220.0).clamp(1.5, 4.0),
+                (self.size[1] as f32 / 300.0).clamp(1.2, 3.0),
                 0.0,
             ],
         };

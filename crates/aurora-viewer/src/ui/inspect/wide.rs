@@ -373,13 +373,8 @@ fn stage(
 ) -> bool {
     let radius = ui.visuals().window_corner_radius;
     let stroke = widgets::border_stroke(p, Stroke::NONE);
-    ui.painter().rect(
-        rect,
-        radius,
-        crate::ui::object_stage::ground_color(p),
-        stroke,
-        egui::StrokeKind::Inside,
-    );
+    ui.painter()
+        .rect(rect, radius, state.stage.ground(p), stroke, egui::StrokeKind::Inside);
     let outfit = match state.subject {
         Subject::Avatar(_) => aurora_i18n::tr!("inspect-stage-outfit"),
         Subject::Objects => aurora_i18n::tr!("inspect-stage-objects"),
@@ -416,18 +411,31 @@ fn stage(
     }
     if form == Form::Small {
         let font = egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
-        widgets::paint_elided(ui, title, rect.left_top() + Vec2::new(10.0, 18.0), rect.width() - 44.0, font, p.ink);
+        widgets::paint_elided(
+            ui,
+            title,
+            rect.left_top() + Vec2::new(10.0, 18.0),
+            rect.width() - 44.0,
+            font,
+            state.stage.ink(p),
+        );
         let right = egui::pos2(rect.right() - 8.0, rect.top() + 18.0);
+        backing(ui, state.stage.face(p), right - Vec2::new(12.0, 0.0));
         return board::grow_button(ui, p, id, right, form, outfit);
     }
     // the title over the view, and its buttons on the right
     let top = rect.top() + 20.0;
     let mut right = rect.right() - 8.0;
+    let face = state.stage.face(p);
+    backing(ui, face, egui::pos2(right - 12.0, top));
     let toggled = board::grow_button(ui, p, id, egui::pos2(right, top), form, outfit);
     right -= 30.0;
     if let Some(item) = view.open {
         let row = view.row(item);
         let mut button = |icon: &str, tip: &str, enabled: bool| {
+            if enabled {
+                backing(ui, face, egui::pos2(right - 12.0, top));
+            }
             let pressed = enabled && corner_button(ui, p, id.with(icon), egui::pos2(right - 12.0, top), icon, tip);
             if enabled {
                 right -= 28.0;
@@ -451,7 +459,14 @@ fn stage(
     }
     let left = rect.left() + 12.0;
     let font = egui::FontId::new(16.0, crate::ui::fonts::semibold(ui.ctx()));
-    widgets::paint_elided(ui, title, egui::pos2(left, top - 1.0), (right - left - 8.0).max(30.0), font, p.ink);
+    widgets::paint_elided(
+        ui,
+        title,
+        egui::pos2(left, top - 1.0),
+        (right - left - 8.0).max(30.0),
+        font,
+        state.stage.ink(p),
+    );
     if let Some(item) = view.open {
         let row = view.row(item);
         let line = 17.0 * crate::ui::fonts::scale(ui.ctx());
@@ -462,11 +477,33 @@ fn stage(
         let made = aurora_i18n::tr!("inspect-place-made-by", place = place, name = row.creator_name.as_str());
         let small = egui::FontId::proportional(12.0);
         let width = rect.width() - 24.0;
-        widgets::paint_elided(ui, &made, egui::pos2(left, top + line + 2.0), width, small.clone(), p.ink);
+        widgets::paint_elided(
+            ui,
+            &made,
+            egui::pos2(left, top + line + 2.0),
+            width,
+            small.clone(),
+            state.stage.ink(p),
+        );
         let note = row.description.trim();
-        widgets::paint_elided(ui, note, egui::pos2(left, top + 2.0 * line + 2.0), width, small, p.muted);
+        widgets::paint_elided(
+            ui,
+            note,
+            egui::pos2(left, top + 2.0 * line + 2.0),
+            width,
+            small,
+            state.stage.muted(p),
+        );
     }
     toggled
+}
+
+/// The face under a button of the view's corner, on a light ground.
+fn backing(ui: &egui::Ui, face: Option<egui::Color32>, center: egui::Pos2) {
+    if let Some(face) = face {
+        let r = Rect::from_center_size(center, Vec2::splat(24.0));
+        ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, face);
+    }
 }
 
 /// What stands in the place of the view when there is none: the figures of
@@ -541,7 +578,8 @@ fn weight_of(tier: Tier) -> u8 {
 
 /// The figure an item is told by: its complexity, or its land impact.
 fn value_badge(ui: &egui::Ui, p: &Palette, right: f32, y: f32, item: &Item, row: &Row, tier: Tier, objects: bool) -> f32 {
-    if objects {
+    // (what is worn has no land impact)
+    if objects && item.point == 0 {
         let (text, weight) = match row.land_impact {
             Some(v) => (aurora_i18n::integer(v.round() as i64), land_weight(v)),
             None => ("…".to_owned(), 0),
@@ -991,6 +1029,17 @@ fn aside_button(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, view: &Vi
 
 /// The land impact of the objects on their parcel.
 fn land(ui: &mut egui::Ui, p: &Palette, frame: &Frame<'_>, view: &View<'_>, id: egui::Id, rect: Rect, form: Form) -> bool {
+    // worn objects inspected by themselves: their complexity
+    if !view.items.is_empty() && view.items.iter().all(|i| i.point != 0) {
+        let title = aurora_i18n::tr!("inspect-totals-complexity");
+        let value = aurora_i18n::integer(i64::from(frame.totals.complexity));
+        let head = board::Head {
+            title,
+            note: "",
+            spoken: &format!("{title}, {value}"),
+        };
+        return board::tile(ui, p, id, rect, form, Some(head), |ui| board::figure(ui, p, &value, "")).0;
+    }
     let title = aurora_i18n::tr!("area-search-land-impact");
     let known: Vec<f32> = view.items.iter().filter_map(|i| view.row(i).land_impact).collect();
     let total: f32 = known.iter().sum();

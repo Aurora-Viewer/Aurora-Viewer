@@ -20,6 +20,7 @@ pub(crate) mod wide;
 
 use super::board;
 use super::widgets::{self, Floater};
+use crate::object_stage::Stance;
 use crate::theme::Palette;
 use egui::{RichText, Sense, TextureHandle, Vec2};
 use model::Sort;
@@ -327,10 +328,14 @@ pub struct InspectUi {
     wide: wide::Wide,
     /// AURORA_DEMO_INSPECT's `hover`.
     demo_hover: bool,
+    demo_stance: Option<Stance>,
+    demo_light: bool,
     /// AURORA_DEMO_INSPECT's view; None: the one chosen last.
     pub forced_wide: Option<bool>,
     /// The window opens this frame: it takes the view chosen last.
     opening: bool,
+    /// One object was inspected: the window opens wide, on its 3D view.
+    single: bool,
 }
 
 /// Date and time in SLT (the timeStamp of floater_inspect.xml, kept short).
@@ -368,6 +373,7 @@ impl InspectUi {
         self.query.clear();
         self.tab = 0;
         self.opening = true;
+        self.single = roots.len() == 1;
         self.wide.restart();
         self.stage.restart();
         self.subject = subject;
@@ -377,7 +383,8 @@ impl InspectUi {
     /// AURORA_DEMO_INSPECT's options: `wide` or `small` the view; small, `open`
     /// the third object's card, `creators` or `details` that tab, `view` the
     /// View panel; wide, `item` the third object, `grow-…` a tile grown,
-    /// `hover` its 3D view with the fourth pointed at.
+    /// `hover` its 3D view with the fourth pointed at,
+    /// `tpose`, `apose` and `light` how it stands and its ground.
     pub fn demo(&mut self, option: &str) {
         match option {
             "open" => {
@@ -402,6 +409,9 @@ impl InspectUi {
             "grow-prims" => self.wide.grown = Some(wide::Tile::Prims),
             "grow-3d" => self.wide.grown = Some(wide::Tile::Stage),
             "hover" => self.demo_hover = true,
+            "tpose" => self.demo_stance = Some(Stance::Wide),
+            "apose" => self.demo_stance = Some(Stance::Relaxed),
+            "light" => self.demo_light = true,
             _ => {}
         }
     }
@@ -414,13 +424,32 @@ impl InspectUi {
         }
     }
 
+    /// The demo chose the window's view: its choices are not kept.
+    pub fn demo_forced(&self) -> bool {
+        self.forced_wide.is_some()
+    }
+
+    /// AURORA_DEMO_INSPECT's stance and ground.
+    pub fn demo_stage(&mut self) {
+        if let Some(stance) = self.demo_stance {
+            self.stage.stance = stance;
+        }
+        self.stage.light |= self.demo_light;
+    }
+
     fn avatar(&self) -> bool {
         matches!(self.subject, Subject::Avatar(_))
     }
 
     /// Whether the window shows its board of tiles this frame.
     pub fn is_wide(&self, ctx: &egui::Context, saved: bool) -> bool {
-        self.open && board::is_wide(ctx, &VIEWS, saved, self.opening)
+        self.open && board::is_wide(ctx, &VIEWS, self.starts_wide(saved), self.opening)
+    }
+
+    /// The view the window opens on: the one chosen last, the wide one for one
+    /// object (a demo's own view always).
+    fn starts_wide(&self, saved: bool) -> bool {
+        saved || (self.single && self.forced_wide.is_none())
     }
 
     /// Draw the window. Returns what the window asks of the app.
@@ -445,7 +474,7 @@ impl InspectUi {
             "inspect",
             aurora_i18n::tr!("inspect-window"),
             egui::pos2(240.0, 60.0),
-            VIEWS.size(ctx, *saved_wide),
+            VIEWS.size(ctx, self.starts_wide(*saved_wide)),
         );
         floater.min_size = Vec2::new(360.0, 380.0);
         let mut resize = false;

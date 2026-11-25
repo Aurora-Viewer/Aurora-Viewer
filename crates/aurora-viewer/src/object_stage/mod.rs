@@ -15,23 +15,43 @@ mod build;
 pub mod layout;
 #[cfg(test)]
 mod tests;
-pub use build::{Input, StageModel, Standing};
-
-/// A standing as a key: the same to the eye is the same pose.
-pub mod build_standing {
-    pub type Key = Option<(usize, i32)>;
-
-    pub fn key(s: super::Standing) -> Key {
-        let step = |v: f32| (v * 2000.0).round() as i32;
-        s.focus.map(|(g, f)| (g, step(f)))
-    }
-}
+pub use build::{Frame, Input, StageModel, Standing, mixed};
 
 use crate::scene::Scene;
 use crate::world::World;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
+
+/// How what an avatar wears stands in the view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum Stance {
+    /// As the avatar stands in the world: its AO, its animations.
+    #[default]
+    Live,
+    /// Still, the arms down.
+    Relaxed,
+    /// Still, the arms wide.
+    Wide,
+}
+
+impl Stance {
+    pub const ALL: [Stance; 3] = [Stance::Live, Stance::Relaxed, Stance::Wide];
+}
+
+/// The joints of an avatar as it was last drawn, in its own space; None while
+/// it has no pose (out of range, not loaded).
+pub fn live_joints(world: &World, avatar: &Uuid) -> Option<Vec<glam::Mat4>> {
+    let rig = &world.avatar_lib.rig;
+    let pose = world.avatar_poses.get(avatar)?;
+    // (a palette matrix maps the default rig's rest to the posed joint)
+    let joints: Vec<glam::Mat4> = pose
+        .iter()
+        .zip(&rig.default_world_inv)
+        .map(|(m, rest)| *m * rest.inverse())
+        .collect();
+    (joints.len() == rig.len() && joints.iter().all(|m| m.is_finite())).then_some(joints)
+}
 
 /// An object to show: its root prim, and its prims by index, the root first.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -26,8 +26,8 @@ struct Corner { @builtin(position) clip: vec4<f32>, @location(0) uv: vec2<f32> }
     for (var c = 0; c < 2; c++) {
         let color = u.colors[c];
         let edge = line[c]*(1.0 - inside[c]);
-        let around = glow[c]*(1.0 - inside[c])*0.55;
-        let strength = max(max(edge, around), inside[c]*0.10)*color.a;
+        let around = glow[c]*(1.0 - inside[c])*0.3;
+        let strength = max(max(edge, around), inside[c]*0.06)*color.a;
         out = vec4(mix(out.rgb, color.rgb, strength/max(strength + out.a*(1.0 - strength), 0.0001)), strength + out.a*(1.0 - strength));
     }
     return out;

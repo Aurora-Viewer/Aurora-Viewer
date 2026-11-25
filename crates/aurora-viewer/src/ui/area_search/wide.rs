@@ -147,7 +147,11 @@ fn one_tile(
 /// The selected objects in 3D; empty while none is, so that nothing jumps.
 fn stage(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, id: egui::Id, rect: Rect, form: Form) -> bool {
     let radius = ui.visuals().window_corner_radius;
-    let ground = crate::ui::object_stage::ground_color(p);
+    let ground = if state.selection.is_empty() {
+        crate::ui::object_stage::ground_color(p)
+    } else {
+        state.stage.ground(p)
+    };
     let stroke = widgets::border_stroke(p, Stroke::NONE);
     ui.painter().rect(rect, radius, ground, stroke, egui::StrokeKind::Inside);
     let title = aurora_i18n::tr!("area-search-tile-3d");
@@ -185,7 +189,7 @@ fn stage(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, id: egui::Id,
         let left = rect.left() + 12.0;
         let width = rect.width() - 54.0;
         let font = egui::FontId::new(if form == Form::Small { 12.5 } else { 16.0 }, crate::ui::fonts::semibold(ui.ctx()));
-        widgets::paint_elided(ui, name.trim(), egui::pos2(left, top - 1.0), width, font, p.ink);
+        widgets::paint_elided(ui, name.trim(), egui::pos2(left, top - 1.0), width, font, state.stage.ink(p));
         if let Some(row) = row.filter(|_| form != Form::Small) {
             let line = aurora_i18n::tr!(
                 "area-search-stage-line",
@@ -200,12 +204,18 @@ fn stage(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, id: egui::Id,
                 egui::pos2(left, y),
                 width + 30.0,
                 egui::FontId::proportional(12.0),
-                p.ink,
+                state.stage.ink(p),
             );
         }
     }
     if several > 0 || form == Form::Grown {
         let at = egui::pos2(rect.right() - 8.0, rect.top() + 20.0);
+        if several > 0
+            && let Some(face) = state.stage.face(p)
+        {
+            let r = Rect::from_center_size(at - Vec2::new(12.0, 0.0), Vec2::splat(24.0));
+            ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, face);
+        }
         toggled = board::grow_button(ui, p, id, at, form, title);
     }
     toggled

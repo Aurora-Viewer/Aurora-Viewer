@@ -26,7 +26,7 @@ pub fn enabled() -> bool {
     ["AURORA_DEMO_AREA_SEARCH", "AURORA_DEMO_INSPECT"]
         .iter()
         .filter_map(|v| std::env::var(v).ok())
-        .any(|v| v.split([',', ':']).any(|o| o == "market"))
+        .any(|v| v.split([',', ':']).any(|o| o == "market" || o == "piece"))
 }
 
 /// A number that looks random, the same at each launch.

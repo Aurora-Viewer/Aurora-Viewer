@@ -292,12 +292,19 @@ impl App {
             },
             &mut wide,
         );
+        let (stance, light) = (self.inspect_ui.stage.stance, self.inspect_ui.stage.light);
+        let stage = board && !self.inspect_ui.demo_forced();
+        let stage = stage && (stance, light) != (self.settings.stage_stance, self.settings.stage_light);
+        if stage {
+            self.settings.stage_stance = stance;
+            self.settings.stage_light = light;
+        }
         let kept = if objects {
             &mut self.settings.inspect_columns
         } else {
             &mut self.settings.inspect_avatar_columns
         };
-        if columns != *kept || view != self.settings.inspect_view || (forced.is_none() && wide != self.settings.inspect_wide) {
+        if stage || columns != *kept || view != self.settings.inspect_view || (forced.is_none() && wide != self.settings.inspect_wide) {
             *kept = columns;
             self.settings.inspect_view = view;
             if forced.is_none() {
@@ -331,12 +338,25 @@ impl App {
         let w = &self.world;
         let place = match self.inspect_ui.subject {
             Subject::Avatar(id) => w.objects.index_of_uuid(&id).map_or(Place::World, Place::Worn),
-            Subject::Objects => Place::World,
+            // one worn object, or several of one avatar: as they are worn
+            Subject::Objects => wearer_of(w, &self.inspect_ui.roots).map_or(Place::World, Place::Worn),
         };
         let group = |root: &Uuid| stage_group(w, root);
         let now = std::time::Instant::now();
         let ui = &mut self.inspect_ui;
         ui.stage.stage.update(w, &self.scene, &ui.roots, group, place, ctx, now);
+        // (one item does not move)
+        ui.stage.worn = matches!(place, Place::Worn(_)) && ui.roots.len() > 1;
+        ui.stage.stance = self.settings.stage_stance;
+        ui.stage.light = self.settings.stage_light;
+        ui.demo_stage();
+        let joints = match place {
+            Place::Worn(avatar) if ui.stage.wants_joints() => {
+                w.objects.get(avatar).and_then(|o| crate::object_stage::live_joints(w, &o.full_id))
+            }
+            _ => None,
+        };
+        ui.stage.set_joints(joints);
     }
 
     /// The people here and their complexity, as the world names them.
@@ -441,11 +461,20 @@ impl App {
                 }
                 self.inspect_objects(&ids);
             }
-            "market" => {
+            // one worn object of the wolf, as its own menu inspects it
+            "worn" => {
+                let Some(id) = worn_roots(&self.world, &crate::demo::DEMO_LOUP).get(2).copied() else {
+                    return;
+                };
+                self.inspect_object(id);
+            }
+            "market" | "piece" => {
+                let most = if who == "piece" { 1 } else { usize::MAX };
                 let ids: Vec<Uuid> = crate::demo::market::some()
                     .into_iter()
                     .filter_map(|local| self.world.objects.iter().find(|(_, o)| o.key.local_id == local))
                     .map(|(_, o)| o.full_id)
+                    .take(most)
                     .collect();
                 if ids.is_empty() {
                     return;
@@ -495,6 +524,20 @@ impl App {
         };
         self.on_ctx_action(crate::ui::context::CtxAction::Zoom(position, Some(id)));
     }
+}
+
+/// The avatar that wears every object of `roots`, if one does.
+fn wearer_of(world: &crate::world::World, roots: &[Uuid]) -> Option<usize> {
+    let mut wearer = None;
+    for root in roots {
+        let object = world.objects.index_of_uuid(root).and_then(|i| world.objects.get(i))?;
+        let parent = world.objects.parent_of(object)?;
+        if !world.objects.get(parent)?.is_avatar() || wearer.is_some_and(|w| w != parent) {
+            return None;
+        }
+        wearer = Some(parent);
+    }
+    wearer
 }
 
 /// An object and its prims, for the 3D views of Inspect and Area Search.

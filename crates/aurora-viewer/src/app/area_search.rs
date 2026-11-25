@@ -374,7 +374,8 @@ impl App {
         // (a demo's view is never kept in the settings)
         let forced = self.area_search_ui.forced_wide;
         let mut wide = forced.unwrap_or(self.settings.area_search_wide);
-        if self.area_search_ui.is_wide(ctx, wide) {
+        let board = self.area_search_ui.is_wide(ctx, wide);
+        if board {
             self.area_search_stage(ctx, now);
         } else {
             self.area_search_ui.stage.stage.clear(&self.scene);
@@ -392,8 +393,13 @@ impl App {
         if let Some(action) = action {
             self.area_search_action(action, now);
         }
-        if forced.is_none() && wide != self.settings.area_search_wide {
+        let light = self.area_search_ui.stage.light;
+        let ground = board && light != self.settings.stage_light;
+        if forced.is_none() && (ground || wide != self.settings.area_search_wide) {
             self.settings.area_search_wide = wide;
+            if ground {
+                self.settings.stage_light = light;
+            }
             self.settings.save();
         }
         let columns = self.area_search_ui.saved_columns();
@@ -414,6 +420,7 @@ impl App {
         let ui = &mut self.area_search_ui;
         let roots = ui.staged().to_vec();
         ui.stage.stage.update(w, &self.scene, &roots, group, Place::World, ctx, now);
+        ui.stage.light = self.settings.stage_light;
     }
 
     /// Figures of the one selected object, for its card.
