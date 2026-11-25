@@ -1373,6 +1373,61 @@ fn select_by_surrounding_takes_only_what_the_rectangle_surrounds() {
 }
 
 #[test]
+fn a_hand_that_moves_a_little_still_clicks_with_any_keys() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let first = object(&world, 99610);
+    let other = object(&world, 99614);
+    let id = |world: &World, idx: usize| world.objects.get(root_of(world, idx)).unwrap().key.local_id;
+    let (first_id, other_id) = (id(&world, first), id(&world, other));
+    // one UI point is two pixels: the slop is in points
+    tool.cam = geom::Cam::new(Vec3::ZERO, Vec3::X, glam::Mat4::IDENTITY, 1.0, 800.0, 800.0, 2.0);
+    let (shift, ctrl) = (
+        Mods {
+            shift: true,
+            ..Mods::default()
+        },
+        Mods {
+            ctrl: true,
+            ..Mods::default()
+        },
+    );
+    let both = Mods { shift: true, ..ctrl };
+    for mods in [Mods::default(), shift, ctrl, both] {
+        tool.deselect_all(&world);
+        tool.click_select(&mut world, &settings, Some(other), false);
+        tool.mouse_down(&mut world, &mut settings, None, Some(first), None, (100.0, 100.0), mods);
+        // 9 points away, out and back: never a rectangle
+        tool.update(&mut world, &settings, None, (112.0, 112.0), false, mods);
+        assert_eq!(selected(&tool), [other_id], "{mods:?}: a wobble deselects nothing");
+        tool.update(&mut world, &settings, None, (101.0, 99.0), false, mods);
+        tool.mouse_up(&mut world, &settings, None);
+        let want: &[u32] = if mods.shift || mods.ctrl {
+            &[first_id, other_id]
+        } else {
+            &[first_id]
+        };
+        let mut got = selected(&tool);
+        got.sort_unstable();
+        let mut want = want.to_vec();
+        want.sort_unstable();
+        assert_eq!(got, want, "{mods:?}: the wobble is the click it was");
+    }
+
+    // once out of the slop it is a rectangle, even back on the press
+    tool.deselect_all(&world);
+    tool.click_select(&mut world, &settings, Some(other), false);
+    tool.mouse_down(&mut world, &mut settings, None, Some(first), None, (100.0, 100.0), Mods::default());
+    tool.update(&mut world, &settings, None, (121.0, 100.0), false, Mods::default());
+    assert!(tool.selection.is_empty(), "10 points out, the rectangle starts");
+    tool.update(&mut world, &settings, None, (100.0, 100.0), false, Mods::default());
+    tool.mouse_up(&mut world, &settings, None);
+    assert!(
+        !selected(&tool).contains(&first_id),
+        "back on the press it stays a rectangle, not a click"
+    );
+}
+
+#[test]
 fn a_rectangle_started_on_an_object_takes_it_only_if_the_rectangle_does() {
     let (mut world, mut tool, mut settings) = fixture();
     let first = object(&world, 99610);
@@ -1947,4 +2002,123 @@ fn animated_mesh_checkbox_takes_a_whole_linkset_like_the_legacy_panel() {
     let (mut world, mut tool, settings, [_, child, _]) = mesh_linkset_fixture(OBJECT_MOVE);
     tool.click_select(&mut world, &settings, Some(child), false);
     assert!(!tool.animated_mesh_editable(&world));
+}
+
+#[test]
+fn creator_navigation_crosses_single_face_links_and_wraps_both_ways() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let root = object(&world, 99610);
+    let child = object(&world, 99611);
+    tool.face_counts.insert(world.objects.get(root).unwrap().full_id, 3);
+    tool.face_counts.insert(world.objects.get(child).unwrap().full_id, 1);
+    settings.edit_linked = true;
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(root), Some(2), false);
+    for expected in [(child, 0), (root, 0), (root, 1), (root, 2), (child, 0)] {
+        tool.select_next_part(&mut world, &mut settings, true, false);
+        assert_eq!(tool.sel_te(&world), [expected]);
+    }
+    tool.select_next_part(&mut world, &mut settings, false, false);
+    assert_eq!(tool.sel_te(&world), [(root, 2)]);
+}
+
+#[test]
+fn creator_navigation_shift_skips_selected_neighbors_in_both_directions() {
+    for next in [true, false] {
+        let (mut world, mut tool, mut settings) = fixture();
+        let root = object(&world, 99610);
+        let child = object(&world, 99611);
+        let handle = world.objects.get(root).unwrap().key.region;
+        let mut extra = crate::demo::worn::root();
+        extra.local_id = 99615;
+        extra.full_id = crate::demo::action_id(99615);
+        extra.parent_id = 99610;
+        extra.name_values.clear();
+        let last = world.objects.upsert(handle, extra);
+        settings.edit_linked = true;
+        tool.selection_linked = true;
+        let anchor = if next { root } else { last };
+        let wanted = if next { last } else { root };
+        tool.add(&world, world.objects.get(child).unwrap().key);
+        tool.add(&world, world.objects.get(anchor).unwrap().key);
+        tool.select_next_link(&mut world, &mut settings, next, true);
+        assert_eq!(tool.selection.first(), Some(&world.objects.get(wanted).unwrap().key));
+        assert_eq!(tool.selection.len(), 3);
+        let full = tool.selection.clone();
+        tool.select_next_link(&mut world, &mut settings, next, true);
+        assert_eq!(tool.selection, full);
+    }
+}
+
+/// LLToolSelectRect::handleRectangleSelection (llglsandbox.cpp): under
+/// @fartouch its distance stands for MaxSelectDistance, limit or no limit,
+/// and under @interact no rectangle selects anything.
+#[test]
+fn rlva_rectangles_follow_fartouch_and_select_nothing_under_interact() {
+    use crate::ui::context::flags::{OBJECT_MOVE, OBJECT_YOU_OWNER};
+    let (mut world, mut tool, mut settings) = fixture();
+    let mine = object(&world, 99614);
+    let position = world.objects.get(mine).unwrap().position;
+    let eye = position - Vec3::X * 10.0;
+    let view = glam::camera::rh::view::look_at_mat4(eye, position, Vec3::Z);
+    let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1);
+    tool.cam = geom::Cam::new(eye, position, projection * view, 1.0, 800.0, 800.0, 1.0);
+    world.agent.position = eye;
+    set_root_flags(&mut world, mine, OBJECT_YOU_OWNER | OBJECT_MOVE);
+    let root = world.objects.get(root_of(&world, mine)).unwrap().key;
+    let issuer = world.objects.get(mine).unwrap().full_id;
+    let agent = world.agent_id;
+    world.rlva_configure(true);
+    let restrict = |world: &mut World, text: &str| {
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Controller".to_owned(),
+            source_id: issuer,
+            owner_id: agent,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: text.to_owned(),
+        }));
+    };
+    let take = |world: &mut World, tool: &mut BuildTool, settings: &BuildSettings| {
+        tool.deselect_all(world);
+        tool.rect_select(world, settings, None, (0.0, 0.0), (800.0, 800.0), false);
+        tool.selection.contains(&root)
+    };
+    settings.select_owned_only = true;
+    (settings.limit_select_distance, settings.max_select_distance) = (true, 5.0);
+    assert!(!take(&mut world, &mut tool, &settings), "farther than MaxSelectDistance");
+    restrict(&mut world, "@fartouch:12=n");
+    assert!(take(&mut world, &mut tool, &settings), "the @fartouch distance stands for it");
+    restrict(&mut world, "@fartouch:12=y");
+    settings.limit_select_distance = false;
+    assert!(take(&mut world, &mut tool, &settings));
+    restrict(&mut world, "@fartouch:5=n");
+    assert!(!take(&mut world, &mut tool, &settings), "@fartouch limits with the setting off");
+    restrict(&mut world, "@fartouch:5=y");
+    restrict(&mut world, "@interact=n");
+    assert!(!take(&mut world, &mut tool, &settings) && tool.selection.is_empty());
+}
+
+#[test]
+fn a_prim_is_counted_again_when_a_hollow_gives_it_a_seventh_face() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99614);
+    // the box's count, kept by the app for its shape
+    let count = tool.num_faces(&world, idx);
+    assert_eq!(count, 6);
+    tool.set_face_count(&world, idx, count);
+    assert!(tool.face_count_known(&world, idx));
+    // LLPrimitive::setVolume: the TE count follows the new volume
+    world.objects.get_mut(idx).unwrap().volume.profile.hollow = 0.5;
+    assert!(!tool.face_count_known(&world, idx));
+    assert_eq!(tool.num_faces(&world, idx), 7);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(idx), Some(6), false);
+    assert_eq!(tool.sel_te(&world), [(idx, 6)]);
+    tool.set_face_count(&world, idx, 7);
+    assert!(tool.face_count_known(&world, idx));
+    tool.forget_face_count(&world.objects.get(idx).unwrap().full_id);
+    assert!(!tool.face_count_known(&world, idx));
 }

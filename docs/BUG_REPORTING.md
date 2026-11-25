@@ -105,6 +105,12 @@ What each part tells the one who fixes it:
   to) and the card was lost again, each later loss in the same words,
   numbered (`loss 2: …`). "nothing submitted yet (lost while starting)"
   there is a recovery whose new device was lost before its first frame.
+- **Open files at the loss** (Linux): how many files the viewer had open
+  when the card was lost, against its open-file limit, and what held them
+  (`812 of 1024 (sockets 690, sync files 3, files 119)`). At the limit,
+  Mesa reports the descriptor it could not get as "out of memory" and the
+  card is lost, so the row tells that apart from video memory that ran out
+  (#2970). Counts only, never a file name.
 - **GPU recoveries**: the graphics card resets the viewer recovered from
   during the session (Preferences › Graphics, on by default), how many, and for the first
   five when in the session, how long the recovery took and whether it came
@@ -143,7 +149,12 @@ What each part tells the one who fixes it:
   Meta, Virtual Desktop, Monado, Windows Mixed Reality or other), and
   whether it created the Vulkan device. Only shown when one was loaded.
 - **Last state**: screen, frame rate, frame time, window size, graphics
-  preset, memory, video memory used / budget, the tightest video memory
+  preset, memory (the viewer's working set, and what it has committed,
+  resident or paged out), the PC's memory (available / total, and on
+  Windows the commit charge of all programs against its limit, RAM and
+  page file: at the limit every allocation fails, so an out of memory with
+  a viewer far below it means another program filled the PC), video
+  memory used / budget, the tightest video memory
   headroom of the last 60 seconds (the driver's budget less what it
   counted for the viewer, in MB, negative while the viewer was past its
   budget: a card shared with another program, where the driver moves
@@ -202,7 +213,11 @@ inlined functions included, to functions and source lines. It then:
   the process start and the system modules are skipped, so the same crash
   keeps its signature across versions and offsets. Without symbols
   (development build, release older than the symbols), the signature is the
-  build's debug id and its first offsets;
+  build's debug id and its first offsets. A stack with no frame of the
+  viewer at all (a thread of another program's DLL loaded in the process)
+  is signed by that module's first three offsets and its debug or code ID.
+  This groups the same DLL crashing at the same place across viewer builds.
+  If both IDs are missing, the report needs manual duplicate triage;
 - when an open issue already has the same signature, comments there with
   the new occurrence (version, system, GPU) and closes the new issue as its
   duplicate; otherwise renames the issue `Crash: <kind> in <function>` and

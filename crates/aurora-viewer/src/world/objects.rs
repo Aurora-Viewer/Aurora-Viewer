@@ -27,6 +27,10 @@ pub const CARRIED_LOCAL_ID: u32 = u32::MAX;
 /// Private namespace for render-only Blender attachments, never a grid handle.
 pub const PREVIEW_REGION: RegionHandle = u64::MAX;
 
+/// Every texture entry of a prim in a `blinn_phong_faces` mask.
+#[cfg(test)]
+const ALL_TES: u64 = (1u64 << aurora_prim::te::MAX_TES) - 1;
+
 mod local_appearance;
 pub use local_appearance::{LocalAppearance, LocalTextureSlot};
 mod local_duplicates;
@@ -43,8 +47,10 @@ pub struct RenderState {
     pub local_fit: Option<Vec3>,
     /// None applies to all faces, Some(face) overrides that face only.
     pub local_appearance: HashMap<Option<u8>, LocalAppearance>,
-    /// Temporary material-inspector display mode; no simulator state changes.
-    pub blinn_phong_preview: bool,
+    /// Temporary material-inspector display mode, one bit per face (no
+    /// simulator state changes). The Blinn-Phong tab hides only the faces it
+    /// edits, so the PBR faces of the same prim keep rendering (#4467).
+    pub blinn_phong_faces: u64,
     /// Geometry cache key currently bound (and its LOD).
     pub geom: Option<crate::scene::GeomKey>,
     /// Geometry requested but not ready yet.
@@ -54,6 +60,8 @@ pub struct RenderState {
     /// Texture handles held by this object (for refcounting).
     pub textures: Vec<Uuid>,
     pub needs_records: bool,
+    /// Only the Ignore Object bit of existing draw records needs an update.
+    pub click_pick_dirty: bool,
     pub lod: u8,
     pub last_lod_check: u32,
     /// World bounds (render space): center, radius.
@@ -196,8 +204,15 @@ impl Object {
         }
         value
     }
+    /// Whether the material inspector shows this face in Blinn-Phong. The
+    /// bits follow the faces the tab edits, so a Blinn-Phong face of a mixed
+    /// prim no longer hides the prim's PBR faces (#4467).
+    pub fn is_blinn_phong_preview(&self, face: usize) -> bool {
+        face < u64::BITS as usize && self.render.blinn_phong_faces & (1u64 << face) != 0
+    }
+
     pub fn visual_material(&self, face: usize) -> Option<Uuid> {
-        if self.render.blinn_phong_preview {
+        if self.is_blinn_phong_preview(face) {
             return None;
         }
         match self.local_appearance(face).and_then(LocalAppearance::surface) {
@@ -338,6 +353,15 @@ impl Object {
         })
     }
 
+    /// Only Ignore Object is part of the GPU face records.
+    pub fn set_click_action(&mut self, action: u8) {
+        let ignore = crate::interaction::code::IGNORE;
+        if (self.click_action == ignore) != (action == ignore) {
+            self.render.click_pick_dirty = true;
+        }
+        self.click_action = action;
+    }
+
     pub fn apply_full(&mut self, mut u: ObjectUpdate) {
         // Like LLViewerObject::processUpdateMessage
         // (indra/newview/llviewerobject.cpp), retain an existing flexi
@@ -357,7 +381,7 @@ impl Object {
             self.render.local_scale = None;
             self.render.local_fit = None;
             self.render.local_appearance.clear();
-            self.render.blinn_phong_preview = false;
+            self.render.blinn_phong_faces = 0;
             self.foot_plane = None;
         }
         self.full_update_serial = self.full_update_serial.wrapping_add(1);
@@ -393,7 +417,7 @@ impl Object {
         self.parent_id = u.parent_id;
         self.pcode = u.pcode;
         self.state = u.state;
-        self.click_action = u.click_action;
+        self.set_click_action(u.click_action);
         self.position = u.position;
         self.rotation = u.rotation;
         self.scale = u.scale;
@@ -565,8 +589,19 @@ impl Object {
             rotation: self.angular_rotation * self.rotation,
             velocity,
             acceleration,
-            angular_velocity: self.angular_velocity,
+            angular_velocity: self.spin(),
         }
+    }
+
+    /// The angular velocity the object turns with between updates. An
+    /// avatar does not turn by it: LLVOAvatar::idleUpdate (llvoavatar.cpp,
+    /// originally LGPL 2.1) puts back the rotation of another avatar after
+    /// LLViewerObject::idleUpdate, "leave out the angular update part", and
+    /// our own avatar's facing comes from the agent. OpenSim leaves the yaw
+    /// rate of its flying roll in an avatar's updates after it lands
+    /// (ScenePresence.m_AngularVelocity), which spun the avatar for good.
+    fn spin(&self) -> Vec3 {
+        if self.is_avatar() { Vec3::ZERO } else { self.angular_velocity }
     }
 
     /// LLVOVolume::isAttachment: a prim worn by an avatar (trees, grass and
@@ -592,7 +627,7 @@ impl Object {
     /// acceleration or spin).
     pub fn extrapolates(&self) -> bool {
         let (velocity, acceleration) = self.linear_motion();
-        velocity != Vec3::ZERO || acceleration != Vec3::ZERO || self.angular_velocity != Vec3::ZERO
+        velocity != Vec3::ZERO || acceleration != Vec3::ZERO || self.spin() != Vec3::ZERO
     }
 
     /// Whether `predicted` changes from a frame to the next: a reported
@@ -814,19 +849,34 @@ impl ObjectStore {
         self.count = 0;
     }
 
+    /// The whole prim in Blinn-Phong (the tests' shorthand; the Texture tab
+    /// uses `set_blinn_phong_faces` with the faces it edits).
+    #[cfg(test)]
     pub fn set_blinn_phong_preview(&mut self, idx: usize, preview: bool) {
+        self.set_blinn_phong_faces(idx, ALL_TES, preview);
+    }
+
+    /// Show or hide the given faces (one bit per face) in Blinn-Phong for
+    /// the material inspector. The other faces keep their own choice: the
+    /// tab acts on the selected faces alone (#4467).
+    pub fn set_blinn_phong_faces(&mut self, idx: usize, faces: u64, preview: bool) {
         let Some(o) = self.get(idx) else { return };
-        if o.render.blinn_phong_preview == preview {
+        let next = if preview {
+            o.render.blinn_phong_faces | faces
+        } else {
+            o.render.blinn_phong_faces & !faces
+        };
+        if next == o.render.blinn_phong_faces {
             return;
         }
         let id = o.full_id;
-        if preview {
-            self.blinn_phong_previews.insert(id);
-        } else {
+        if next == 0 {
             self.blinn_phong_previews.remove(&id);
+        } else {
+            self.blinn_phong_previews.insert(id);
         }
         if let Some(o) = self.get_mut(idx) {
-            o.render.blinn_phong_preview = preview;
+            o.render.blinn_phong_faces = next;
             o.material_dirty = true;
         }
     }
@@ -838,7 +888,7 @@ impl ObjectStore {
             if let Some(idx) = self.index_of_uuid(&id)
                 && let Some(o) = self.get_mut(idx)
             {
-                o.render.blinn_phong_preview = false;
+                o.render.blinn_phong_faces = 0;
                 o.material_dirty = true;
             }
         }
@@ -1073,7 +1123,7 @@ impl ObjectStore {
                     (target.0, target.1, o.scale),
                     k,
                     visible,
-                    o.angular_velocity != Vec3::ZERO,
+                    o.spin() != Vec3::ZERO,
                     o.parent_id != 0,
                 )
             };
@@ -2057,6 +2107,26 @@ mod tests {
     }
 
     const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    #[test]
+    fn only_entering_or_leaving_ignore_invalidates_click_draw_records() {
+        use crate::interaction::code::{BUY, IGNORE, TOUCH};
+        let mut update = update(1, PRIM, "");
+        update.click_action = TOUCH;
+        let mut object = Object::from_update(1, update.clone());
+        object.material_dirty = false;
+        for (action, dirty) in [(BUY, false), (IGNORE, true), (IGNORE, false), (TOUCH, true)] {
+            object.render.click_pick_dirty = false;
+            object.set_click_action(action);
+            assert_eq!(object.render.click_pick_dirty, dirty);
+            assert!(!object.material_dirty);
+        }
+        update.click_action = IGNORE;
+        object.render.click_pick_dirty = false;
+        object.apply_full(update);
+        assert!(object.render.click_pick_dirty);
+        assert!(!object.material_dirty);
+    }
 
     #[test]
     fn full_update_with_empty_name_values_keeps_previous() {
@@ -3102,6 +3172,29 @@ mod tests {
         assert!(!s.get(ground).expect("prim").is_attachment());
         s.advance_motion(1, 2.0);
         near(s.predicted(s.get(ground).expect("prim"), now).0, Vec3::X * 0.2 + Vec3::Y);
+    }
+
+    #[test]
+    fn an_avatar_does_not_turn_by_its_reported_angular_velocity() {
+        // OpenSim keeps the yaw rate of its flying roll in an avatar's
+        // updates after it lands: the avatar faces its reported rotation,
+        // as LLVOAvatar::idleUpdate keeps it, and only a prim spins
+        let now = Instant::now();
+        let mut s = ObjectStore::default();
+        let mut avatar = update(1, AVATAR, "");
+        avatar.rotation = Quat::from_rotation_z(0.3);
+        avatar.angular_velocity = Vec3::Z * 0.8;
+        let idx = s.upsert(1, avatar);
+        let o = s.get(idx).expect("avatar");
+        assert!(o.is_avatar());
+        assert!(!o.has_motion());
+        s.advance_motion(1, 5.0);
+        let (_, rotation) = s.predicted(s.get(idx).expect("avatar"), now);
+        assert!(rotation.abs_diff_eq(Quat::from_rotation_z(0.3), 1e-5), "{rotation:?}");
+        let mut prim = update(2, PRIM, "");
+        prim.angular_velocity = Vec3::Z * 0.8;
+        let idx = s.upsert(1, prim);
+        assert!(s.get(idx).expect("prim").has_motion());
     }
 
     #[test]

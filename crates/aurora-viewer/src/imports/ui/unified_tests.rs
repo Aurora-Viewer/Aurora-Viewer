@@ -1,5 +1,55 @@
 use super::*;
 
+#[test]
+fn file_picker_closes_with_its_import_floater_and_reopening_keeps_existing_drafts() {
+    for owner in [Choice::Bulk, Choice::Texture, Choice::Local] {
+        let mut f = Fixture::new();
+        if owner != Choice::Bulk {
+            f.imports.open = false;
+            f.imports.open_type_window(&f.ctx, owner);
+        }
+        f.settle();
+        let cancellation = crate::imports::file_picker::Cancellation::default();
+        f.imports.pending_files = Some(Uuid::new_v4());
+        f.imports.pending_file_choice = Some(owner);
+        f.imports.pending_picker = Some(crate::imports::file_picker::Pending {
+            owner: Some(owner),
+            cancellation: cancellation.clone(),
+        });
+        widgets::close_floater(&f.ctx, owner.window_id());
+        f.frame(Vec::new());
+        assert!(!f.imports.window_open(owner));
+        assert!(cancellation.cancelled());
+        assert!(f.imports.pending_files.is_none());
+        assert_eq!(f.imports.entries.len(), 2);
+        f.imports.open_type_window(&f.ctx, owner);
+        let output = f.settle();
+        assert!(f.imports.window_open(owner));
+        assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-loading"))));
+        let pos = text_position(&output, aurora_i18n::tr!("import-choose-files")) + egui::vec2(5.0, 5.0);
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(
+                f.frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ])
+                .1,
+            );
+        }
+        assert!(
+            actions.iter().any(|action| matches!(action, Action::Files | Action::Choose(_))),
+            "Add files must be enabled after reopening"
+        );
+    }
+}
+
 struct Fixture {
     ctx: egui::Context,
     theme: crate::theme::Theme,
@@ -231,7 +281,7 @@ fn unified_import_queue_clicks_switch_panels_without_changing_mesh_options_or_wi
     let output = f.settle();
     assert_eq!(f.imports.active, Some(texture));
     assert_eq!(f.imports.tab, Tab::Batch);
-    text_position(&output, aurora_i18n::tr!("import-max-size"));
+    text_position(&output, aurora_i18n::tr!("import-image-size-limit"));
     assert!(
         !output
             .shapes

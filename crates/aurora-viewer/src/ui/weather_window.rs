@@ -1,9 +1,13 @@
 //! The Aurora Weather window: the weather drawn for this viewer only
 //! (Aurora's own: the Legacy Viewer has none). A summary of the sky shown
-//! now, then cards in two columns: what
-//! falls and what it leaves on the ground on the left; the wind (with its
-//! compass), thunder and the northern lights (with their preview) on the
-//! right; the quality and the clean-up and snow-fill actions at the foot.
+//! now with the main switch on its right; cards in as many columns as the
+//! window's width holds, one to five (narrowed, the right ones go under the
+//! left ones): what falls and what it leaves on the ground; the wind (with
+//! its compass), thunder and the northern lights (with their preview), each
+//! switch on its title row greying its card; the quality and the clean-up
+//! and snow-fill actions at the foot. The window resizes by its edges: the
+//! summary stays on top and the foot at the bottom, the cards scrolling
+//! between them.
 //!
 //! The settings are those of [`WeatherSettings`], unchanged: this module is
 //! their window only.
@@ -14,12 +18,24 @@ use crate::theme::Palette;
 use crate::weather::{AuroraColours, DEEP_SNOW_REACH, PUDDLE_DISTANCE, Precipitation, SNOW_DISTANCE, WeatherQuality, WeatherSettings};
 use egui::{Align, Layout, RichText, Sense, Stroke, Vec2};
 
-/// The window's width: two columns of cards.
-pub const WINDOW_W: f32 = 700.0;
-/// The side of the summary's picture of the sky.
+/// The window's size when it first opens: two columns of cards, all of
+/// them shown (the floater keeps it within the screen).
+pub const WINDOW_SIZE: Vec2 = Vec2::new(700.0, 880.0);
+/// The smallest it resizes to: one column of cards, the summary, a card's
+/// first rows and the foot.
+pub const WINDOW_MIN_SIZE: Vec2 = Vec2::new(360.0, 320.0);
+/// The least width of a column of cards at a text scale of 1: one more
+/// column fits each time the body widens by this much (and a gap).
+const COLUMN_MIN_W: f32 = 300.0;
+/// Narrower than this body width at a text scale of 1, the summary
+/// compacts: a smaller picture and title.
+const COMPACT_SUMMARY_W: f32 = 520.0;
+/// The side of the summary's picture of the sky, and in a compact summary.
 const SKY_TILE: f32 = 72.0;
-/// The side of the wind's compass.
+const SKY_TILE_COMPACT: f32 = 44.0;
+/// The side of the wind's compass, at most and at least.
 const COMPASS: f32 = 112.0;
+const COMPASS_MIN: f32 = 84.0;
 /// The height of the northern lights' preview.
 const AURORA_PREVIEW_H: f32 = 70.0;
 /// The size of a row's label and of its value.
@@ -40,33 +56,128 @@ pub struct WeatherActions {
     pub fill: bool,
 }
 
-/// The window's body: the summary, the cards and the foot.
+/// The window, at `pos`: resized by its edges, its body laid out in its
+/// exact rect (`steady_size`) so that nothing in it, rounded to the screen's
+/// pixels, measures past the window: at 127 % the columns came out a point
+/// wider than it, and a resize took that for the least width the window
+/// could have (a window widened into more columns could not be narrowed).
+pub fn floater<'a>(pos: egui::Pos2) -> widgets::Floater<'a> {
+    let mut floater = widgets::Floater::new("aurora_weather", aurora_i18n::tr!("ui-weather-aurora"), pos, WINDOW_SIZE)
+        .help(aurora_i18n::tr!("ui-weather-window-help"))
+        .steady_size();
+    floater.min_size = WINDOW_MIN_SIZE;
+    floater
+}
+
+/// The window's body, in the window of [`floater`]: the summary on top and
+/// the foot at the bottom (`widgets::above_footer`, the foot's height as it
+/// was drawn), the cards scrolling between them in as many columns as its
+/// width holds.
 pub fn body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) -> WeatherActions {
     let before = w.clone();
     let mut actions = WeatherActions::default();
     ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
     summary(ui, p, w);
     ui.add_space(4.0);
-    ui.columns(2, |cols| {
-        let [left, right] = cols else { return };
-        left.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-        right.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-        precipitation_card(left, p, w);
-        left.add_space(4.0);
-        ground_card(left, p, w);
-        wind_card(right, p, w);
-        right.add_space(4.0);
-        thunder_card(right, p, w);
-        right.add_space(4.0);
-        northern_lights_card(right, p, w);
-    });
-    ui.add_space(4.0);
-    foot(ui, p, w, &mut actions);
+    let one_row = foot_in_one_row(ui, w);
+    let (mut list, footer) = widgets::above_footer(ui);
+    egui::ScrollArea::vertical()
+        .id_salt("weather_cards")
+        .auto_shrink([false, false])
+        .show(&mut list, |ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+            // the main switch off, every card is greyed, its settings kept
+            ui.add_enabled_ui(w.enabled, |ui| cards(ui, p, w));
+        });
+    footer.show(ui, |ui| foot(ui, p, w, &mut actions, one_row));
     if *w != before {
         w.take_over(&before);
         w.touched = true;
     }
     actions
+}
+
+/// The cards, in the order they stack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Card {
+    Precipitation,
+    Ground,
+    Wind,
+    Thunder,
+    NorthernLights,
+}
+
+/// How many columns of cards a body `width` wide holds, each at least
+/// `column_min` wide: 1 to 5.
+fn column_count(width: f32, gap: f32, column_min: f32) -> usize {
+    (((width + gap) / (column_min + gap)).floor() as usize).clamp(1, 5)
+}
+
+/// The cards of each of `n` columns, left to right: what falls and what it
+/// leaves together, then the wind and thunder, then the northern lights;
+/// narrowed, the right columns go under the left ones.
+fn layout(n: usize) -> &'static [&'static [Card]] {
+    use Card::*;
+    match n {
+        0 | 1 => &[&[Precipitation, Ground, Wind, Thunder, NorthernLights]],
+        2 => &[&[Precipitation, Ground], &[Wind, Thunder, NorthernLights]],
+        3 => &[&[Precipitation, Ground], &[Wind, Thunder], &[NorthernLights]],
+        4 => &[&[Precipitation], &[Ground], &[Wind, Thunder], &[NorthernLights]],
+        _ => &[&[Precipitation], &[Ground], &[Wind], &[Thunder], &[NorthernLights]],
+    }
+}
+
+/// The cards in as many columns as the width holds (wider columns at a
+/// larger text scale), each laid out in its own rect, its width a whole
+/// number of the screen's pixels: the room the columns take is what they
+/// are given, whatever a card measures (egui's `columns` rounded their
+/// edges past it).
+fn cards(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    let gap = ui.spacing().item_spacing.x;
+    let room = ui.available_width();
+    let column_min = COLUMN_MIN_W * crate::ui::fonts::scale(ui.ctx());
+    let columns = layout(column_count(room, gap, column_min));
+    let n = columns.len() as f32;
+    let ppp = ui.ctx().pixels_per_point();
+    let column_w = (((room - gap * (n - 1.0)) / n) * ppp).floor() / ppp;
+    let top_left = ui.cursor().min;
+    let mut bottom = top_left.y;
+    for (i, cards) in columns.iter().enumerate() {
+        let x = top_left.x + i as f32 * (column_w + gap);
+        let rect = egui::Rect::from_min_size(egui::pos2(x, top_left.y), Vec2::new(column_w, f32::INFINITY));
+        // the column's place in the order, not the frame's count: the same
+        // ids from frame to frame at one width (a card changes column, and
+        // its widgets their ids, when the width changes the column count)
+        let mut col = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt(("weather_column", i))
+                .max_rect(rect)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        col.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+        for (j, card) in cards.iter().enumerate() {
+            if j > 0 {
+                col.add_space(4.0);
+            }
+            show_card(&mut col, p, w, *card);
+        }
+        bottom = bottom.max(col.min_rect().bottom());
+    }
+    let used = column_w * n + gap * (n - 1.0);
+    ui.advance_cursor_after_rect(egui::Rect::from_min_max(top_left, egui::pos2(top_left.x + used, bottom)));
+}
+
+fn show_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, card: Card) {
+    match card {
+        Card::Precipitation => precipitation_card(ui, p, w),
+        // what falls leaves it: greyed with the "Falling" card
+        Card::Ground => {
+            ui.add_enabled_ui(w.precipitation_on, |ui| ground_card(ui, p, w));
+        }
+        Card::Wind => wind_card(ui, p, w),
+        Card::Thunder => thunder_card(ui, p, w),
+        Card::NorthernLights => northern_lights_card(ui, p, w),
+    }
 }
 
 /// What the summary shows: its picture, the picture's colour, its title.
@@ -132,10 +243,17 @@ fn wind_summary(w: &WeatherSettings) -> String {
     format!("{} · {from}", wind_word(w.wind_max))
 }
 
+/// The sky `w` draws (its settings [`WeatherSettings::in_effect`]).
 fn sky_now(p: &Palette, w: &WeatherSettings) -> SkyNow {
     let amount = w.rain_or_amount();
     let snow = w.snowing();
-    if amount <= 0.0 {
+    if !w.enabled {
+        SkyNow {
+            icon: "cloud-off",
+            color: p.muted,
+            title: aurora_i18n::tr!("ui-weather-now-off"),
+        }
+    } else if amount <= 0.0 {
         SkyNow {
             icon: "moon-filled",
             color: p.violet_pale,
@@ -163,23 +281,40 @@ fn sky_now(p: &Palette, w: &WeatherSettings) -> SkyNow {
 }
 
 /// The top of the window: the sky shown now (its picture, its name and a
-/// few chips).
+/// few chips), and on its right the main switch. Narrowed, a smaller
+/// picture and title, its chips wrapping under them.
 fn summary(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     widgets::surface(ui, p, |ui| {
         ui.set_min_width(ui.available_width());
+        let compact = ui.available_width() < COMPACT_SUMMARY_W * crate::ui::fonts::scale(ui.ctx());
+        let (side, title_size) = if compact { (SKY_TILE_COMPACT, 16.0) } else { (SKY_TILE, 20.0) };
         ui.horizontal_top(|ui| {
-            let now = sky_now(p, w);
-            let (tile, _) = ui.allocate_exact_size(Vec2::splat(SKY_TILE), Sense::hover());
+            // what is drawn, not what the greyed cards still hold
+            let drawn = w.in_effect();
+            let now = sky_now(p, &drawn);
+            let (tile, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
             ui.painter().rect_filled(tile, ui.visuals().window_corner_radius, p.bar);
-            widgets::paint_glyph(ui.painter(), now.icon, tile.center(), SKY_TILE * 0.58, now.color);
-            let text_w = ui.available_width().max(120.0);
-            ui.allocate_ui_with_layout(Vec2::new(text_w, SKY_TILE), Layout::top_down(Align::Min), |ui| {
+            widgets::paint_glyph(ui.painter(), now.icon, tile.center(), side * 0.58, now.color);
+            let gap = ui.spacing().item_spacing.x;
+            let text_w = (ui.available_width() - widgets::SWITCH_SIZE.x - gap).max(80.0);
+            ui.allocate_ui_with_layout(Vec2::new(text_w, side), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(text_w);
-                ui.spacing_mut().item_spacing.y = 3.0;
+                ui.spacing_mut().item_spacing.y = if compact { 2.0 } else { 3.0 };
                 ui.label(RichText::new(aurora_i18n::tr!("ui-weather-now")).size(VALUE_SIZE).color(p.muted));
-                ui.add(egui::Label::new(RichText::new(now.title).font(widgets::control_font(ui, 20.0)).strong().color(p.ink)).wrap());
-                ui.add_space(2.0);
-                chips(ui, p, w);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(now.title)
+                            .font(widgets::control_font(ui, title_size))
+                            .strong()
+                            .color(p.ink),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(if compact { 1.0 } else { 2.0 });
+                chips(ui, p, &drawn);
+            });
+            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                widgets::switch(ui, p, &mut w.enabled).on_hover_text(aurora_i18n::tr!("ui-weather-enabled-tip"));
             });
         });
     });
@@ -187,18 +322,25 @@ fn summary(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
 
 /// The chips under the sky's name: the wind, and what else the weather
 /// brings now (lightning, puddles, snow on the ground, the northern lights).
+/// `w`: what is drawn ([`WeatherSettings::in_effect`]).
 fn chips(ui: &mut egui::Ui, p: &Palette, w: &WeatherSettings) {
+    if !w.enabled {
+        return;
+    }
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
-        chip(ui, p, "wind", p.teal, &wind_summary(w));
-        let raining = !w.snowing() && w.rain_or_amount() > 0.0;
+        if w.wind_on {
+            chip(ui, p, "wind", p.teal, &wind_summary(w));
+        }
+        let falling = w.rain_or_amount() > 0.0;
+        let raining = !w.snowing() && falling;
         if stormy(w) {
             chip(ui, p, "bolt-filled", p.amber, aurora_i18n::tr!("ui-weather-chip-lightning"));
         }
         if raining && w.puddles {
             chip(ui, p, "droplet-filled", p.indigo_light, aurora_i18n::tr!("ui-weather-puddles"));
         }
-        if w.snowing() && w.snow_settles {
+        if w.snowing() && falling && w.snow_settles {
             chip(ui, p, "mountain-filled", p.ink, aurora_i18n::tr!("ui-weather-chip-snow-lying"));
         }
         if w.aurora {
@@ -225,12 +367,11 @@ fn chip(ui: &mut egui::Ui, p: &Palette, icon: &str, tint: egui::Color32, text: &
     widgets::paint_row_text(ui.painter(), galley, rect.left() + 27.0, rect.center().y, p.ink);
 }
 
-/// The switch on a card's title row, on its right: what it turns on, its
-/// tip, and a word before it (none: the switch alone).
+/// The switch on a card's title row, on its right: what it turns on and
+/// its tip.
 struct Head<'a> {
     on: &'a mut bool,
     tip: &'a str,
-    word: Option<&'a str>,
 }
 
 /// A card: its icon and title, its switch on the right of the title
@@ -254,9 +395,6 @@ fn card<R>(
             if let Some(head) = head {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     widgets::switch(ui, p, head.on).on_hover_text(head.tip);
-                    if let Some(word) = head.word {
-                        ui.label(RichText::new(word).size(VALUE_SIZE).color(p.muted));
-                    }
                 });
                 on = *head.on;
             }
@@ -329,83 +467,101 @@ fn slider_row(
 /// "Precipitation": rain or snow as two tiles, how hard it falls and, in
 /// snow, how big the flakes are.
 fn precipitation_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
-    card(ui, p, "cloud-rain", aurora_i18n::tr!("ui-weather-precipitation"), None, |ui, _| {
-        // AURORA_SNOW shows as snow until the window is used
-        let snowing = w.snowing();
-        let (rain_line, snow_line) = (aurora_i18n::tr!("ui-weather-rain-sub"), aurora_i18n::tr!("ui-weather-snow-sub"));
-        // both as tall as the taller: a line that wraps in one language
-        // keeps the pair even
-        let column = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
-        let height = tile_height(ui, rain_line, column).max(tile_height(ui, snow_line, column));
-        ui.columns(2, |tiles| {
-            let [rain, snow] = tiles else { return };
-            if tile(
-                rain,
-                p,
-                "cloud-rain",
-                aurora_i18n::tr!("ui-weather-rain"),
-                (rain_line, height),
-                !snowing,
-            ) {
-                w.precipitation = Precipitation::Rain;
-            }
-            if tile(
-                snow,
-                p,
-                "snowflake",
-                aurora_i18n::tr!("ui-weather-snow"),
-                (snow_line, height),
-                snowing,
-            ) {
-                w.precipitation = Precipitation::Snow;
-            }
-        });
-        let snowing = w.snowing();
-        let mut amount = w.rain_or_amount();
-        let ends = if snowing {
-            (
-                aurora_i18n::tr!("ui-weather-now-flurries"),
-                aurora_i18n::tr!("ui-weather-now-blizzard"),
-            )
-        } else {
-            (
-                aurora_i18n::tr!("ui-weather-now-drizzle"),
-                aurora_i18n::tr!("ui-weather-now-downpour"),
-            )
-        };
-        if slider_row(
-            ui,
+    let mut on = w.precipitation_on;
+    let head = Head {
+        on: &mut on,
+        tip: aurora_i18n::tr!("ui-weather-precipitation-on-tip"),
+    };
+    card(
+        ui,
+        p,
+        "cloud-rain",
+        aurora_i18n::tr!("ui-weather-precipitation"),
+        Some(head),
+        |ui, on| {
+            w.precipitation_on = on;
+            ui.add_enabled_ui(on, |ui| precipitation_rows(ui, p, w));
+        },
+    );
+}
+
+/// The "Falling" card's rows, under its switch.
+fn precipitation_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    // AURORA_SNOW shows as snow until the window is used
+    let snowing = w.snowing();
+    let (rain_line, snow_line) = (aurora_i18n::tr!("ui-weather-rain-sub"), aurora_i18n::tr!("ui-weather-snow-sub"));
+    // both as tall as the taller: a line that wraps in one language
+    // keeps the pair even
+    let column = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
+    let height = tile_height(ui, rain_line, column).max(tile_height(ui, snow_line, column));
+    ui.columns(2, |tiles| {
+        let [rain, snow] = tiles else { return };
+        if tile(
+            rain,
             p,
-            (aurora_i18n::tr!("ui-weather-amount"), aurora_i18n::tr!("ui-weather-amount-tip")),
-            amount_word(snowing, amount),
-            Some(ends),
-            egui::Slider::new(&mut amount, 0.0..=1.0),
-        )
-        .changed()
-        {
-            w.amount = amount;
+            "cloud-rain",
+            aurora_i18n::tr!("ui-weather-rain"),
+            (rain_line, height),
+            !snowing,
+        ) {
+            w.precipitation = Precipitation::Rain;
         }
-        if snowing {
-            let size = if w.snow_size < 0.33 {
-                aurora_i18n::tr!("ui-weather-flake-fine")
-            } else if w.snow_size < 0.67 {
-                aurora_i18n::tr!("ui-weather-flake-medium")
-            } else {
-                aurora_i18n::tr!("ui-weather-flake-big")
-            };
-            slider_row(
-                ui,
-                p,
-                (
-                    aurora_i18n::tr!("ui-weather-flake-size"),
-                    aurora_i18n::tr!("ui-weather-flake-size-tip"),
-                ),
-                size,
-                Some((aurora_i18n::tr!("ui-weather-flake-fine"), aurora_i18n::tr!("ui-weather-flake-big"))),
-                egui::Slider::new(&mut w.snow_size, 0.0..=1.0),
-            );
+        if tile(
+            snow,
+            p,
+            "snowflake",
+            aurora_i18n::tr!("ui-weather-snow"),
+            (snow_line, height),
+            snowing,
+        ) {
+            w.precipitation = Precipitation::Snow;
         }
     });
+    let snowing = w.snowing();
+    let mut amount = w.rain_or_amount();
+    let ends = if snowing {
+        (
+            aurora_i18n::tr!("ui-weather-now-flurries"),
+            aurora_i18n::tr!("ui-weather-now-blizzard"),
+        )
+    } else {
+        (
+            aurora_i18n::tr!("ui-weather-now-drizzle"),
+            aurora_i18n::tr!("ui-weather-now-downpour"),
+        )
+    };
+    if slider_row(
+        ui,
+        p,
+        (aurora_i18n::tr!("ui-weather-amount"), aurora_i18n::tr!("ui-weather-amount-tip")),
+        amount_word(snowing, amount),
+        Some(ends),
+        egui::Slider::new(&mut amount, 0.0..=1.0),
+    )
+    .changed()
+    {
+        w.amount = amount;
+    }
+    if snowing {
+        let size = if w.snow_size < 0.33 {
+            aurora_i18n::tr!("ui-weather-flake-fine")
+        } else if w.snow_size < 0.67 {
+            aurora_i18n::tr!("ui-weather-flake-medium")
+        } else {
+            aurora_i18n::tr!("ui-weather-flake-big")
+        };
+        slider_row(
+            ui,
+            p,
+            (
+                aurora_i18n::tr!("ui-weather-flake-size"),
+                aurora_i18n::tr!("ui-weather-flake-size-tip"),
+            ),
+            size,
+            Some((aurora_i18n::tr!("ui-weather-flake-fine"), aurora_i18n::tr!("ui-weather-flake-big"))),
+            egui::Slider::new(&mut w.snow_size, 0.0..=1.0),
+        );
+    }
 }
 
 /// The line under a tile's name, wrapped to a tile `width` wide.
@@ -583,72 +739,92 @@ fn deep_snow_row(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     });
 }
 
-/// "Wind": its compass (where it comes from: click or drag on it) beside
-/// its lulls, its gusts and its direction; on the title's right, whether it
-/// blows the region's way.
+/// "Wind": its switch on the title's right; whether it blows the region's
+/// way, then its compass (where it comes from: click or drag on it) beside
+/// its lulls, its gusts and its direction.
 fn wind_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
-    let mut follow = w.wind_follow_region;
+    let mut on = w.wind_on;
     let head = Head {
-        on: &mut follow,
-        tip: aurora_i18n::tr!("ui-weather-wind-follow-region-tip"),
-        word: Some(aurora_i18n::tr!("ui-weather-wind-region")),
+        on: &mut on,
+        tip: aurora_i18n::tr!("ui-weather-wind-on-tip"),
     };
-    card(ui, p, "wind", aurora_i18n::tr!("ui-weather-wind"), Some(head), |ui, follow| {
-        w.wind_follow_region = follow;
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ui.add_enabled_ui(!w.wind_follow_region, |ui| compass(ui, p, w));
-                let summary = wind_summary(w);
-                ui.allocate_ui_with_layout(Vec2::new(COMPASS, 16.0), Layout::top_down(Align::Center), |ui| {
-                    ui.label(RichText::new(summary).size(ENDS_SIZE).color(p.muted));
-                });
+    card(ui, p, "wind", aurora_i18n::tr!("ui-weather-wind"), Some(head), |ui, on| {
+        w.wind_on = on;
+        ui.add_enabled_ui(on, |ui| wind_rows(ui, p, w));
+    });
+}
+
+/// The "Wind" card's rows, under its switch.
+fn wind_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    switch_row(
+        ui,
+        p,
+        "map-pin-filled",
+        aurora_i18n::tr!("ui-weather-wind-follow-region"),
+        aurora_i18n::tr!("ui-weather-wind-follow-region-tip"),
+        &mut w.wind_follow_region,
+    );
+    // the compass gives up some of its size before the sliders beside it do
+    let side = compass_side(ui.available_width());
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.add_enabled_ui(!w.wind_follow_region, |ui| compass(ui, p, w, side));
+            let summary = wind_summary(w);
+            ui.allocate_ui_with_layout(Vec2::new(side, 16.0), Layout::top_down(Align::Center), |ui| {
+                ui.label(RichText::new(summary).size(ENDS_SIZE).color(p.muted));
             });
-            ui.vertical(|ui| {
-                // the wind wanders between its lulls and its gusts;
-                // dragging one past the other takes it along
-                let lulls = wind_word(w.wind_min);
-                if slider_row(
+        });
+        ui.vertical(|ui| {
+            // the wind wanders between its lulls and its gusts;
+            // dragging one past the other takes it along
+            let lulls = wind_word(w.wind_min);
+            if slider_row(
+                ui,
+                p,
+                (aurora_i18n::tr!("ui-weather-lulls"), aurora_i18n::tr!("ui-weather-wind-tip")),
+                lulls,
+                None,
+                egui::Slider::new(&mut w.wind_min, 0.0..=1.0),
+            )
+            .changed()
+            {
+                w.wind_max = w.wind_max.max(w.wind_min);
+            }
+            let gusts = wind_word(w.wind_max);
+            if slider_row(
+                ui,
+                p,
+                (aurora_i18n::tr!("ui-weather-gusts"), aurora_i18n::tr!("ui-weather-gusts-tip")),
+                gusts,
+                None,
+                egui::Slider::new(&mut w.wind_max, 0.0..=1.0),
+            )
+            .changed()
+            {
+                w.wind_min = w.wind_min.min(w.wind_max);
+            }
+            ui.add_enabled_ui(!w.wind_follow_region, |ui| {
+                let from = format!("{} · {:.0}°", compass_point(w.wind_from), w.wind_from);
+                slider_row(
                     ui,
                     p,
-                    (aurora_i18n::tr!("ui-weather-lulls"), aurora_i18n::tr!("ui-weather-wind-tip")),
-                    lulls,
+                    (
+                        aurora_i18n::tr!("ui-weather-wind-from"),
+                        aurora_i18n::tr!("ui-weather-wind-from-tip"),
+                    ),
+                    &from,
                     None,
-                    egui::Slider::new(&mut w.wind_min, 0.0..=1.0),
-                )
-                .changed()
-                {
-                    w.wind_max = w.wind_max.max(w.wind_min);
-                }
-                let gusts = wind_word(w.wind_max);
-                if slider_row(
-                    ui,
-                    p,
-                    (aurora_i18n::tr!("ui-weather-gusts"), aurora_i18n::tr!("ui-weather-gusts-tip")),
-                    gusts,
-                    None,
-                    egui::Slider::new(&mut w.wind_max, 0.0..=1.0),
-                )
-                .changed()
-                {
-                    w.wind_min = w.wind_min.min(w.wind_max);
-                }
-                ui.add_enabled_ui(!w.wind_follow_region, |ui| {
-                    let from = format!("{} · {:.0}°", compass_point(w.wind_from), w.wind_from);
-                    slider_row(
-                        ui,
-                        p,
-                        (
-                            aurora_i18n::tr!("ui-weather-wind-from"),
-                            aurora_i18n::tr!("ui-weather-wind-from-tip"),
-                        ),
-                        &from,
-                        None,
-                        egui::Slider::new(&mut w.wind_from, 0.0..=355.0).step_by(f64::from(DIRECTION_STEP)),
-                    );
-                });
+                    egui::Slider::new(&mut w.wind_from, 0.0..=355.0).step_by(f64::from(DIRECTION_STEP)),
+                );
             });
         });
     });
+}
+
+/// The side of the wind's compass in a card row `width` wide: about a
+/// third of it (0.36), between [`COMPASS_MIN`] and [`COMPASS`].
+fn compass_side(width: f32) -> f32 {
+    (width * 0.36).clamp(COMPASS_MIN, COMPASS)
 }
 
 /// Degrees clockwise from north of `pos` seen from `center`, north up.
@@ -671,8 +847,8 @@ fn at(center: egui::Pos2, radius: f32, degrees: f32) -> egui::Pos2 {
 /// The wind's compass, north up: a dot on its rim where the wind comes
 /// from, an arrow the way it blows. A click or a drag sets where it comes
 /// from.
-fn compass(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(COMPASS), Sense::click_and_drag());
+fn compass(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, side: f32) {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), Sense::click_and_drag());
     let enabled = ui.is_enabled();
     if enabled
         && (resp.dragged() || resp.clicked())
@@ -688,7 +864,7 @@ fn compass(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     let fade = |c: egui::Color32| if enabled { c } else { c.gamma_multiply(0.45) };
     let painter = ui.painter();
     let c = rect.center();
-    let r = COMPASS * 0.5 - 1.0;
+    let r = side * 0.5 - 1.0;
     painter.circle_filled(c, r, p.bar);
     painter.circle_stroke(c, r * 0.84, Stroke::new(1.0, fade(p.raised)));
     for i in 0..8 {
@@ -721,15 +897,14 @@ fn compass(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
 }
 
 /// "Thunder": the switch, then how often lightning strikes. It comes with
-/// heavy rain: greyed while it snows.
+/// heavy rain: greyed while it snows, or while nothing falls.
 fn thunder_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     let snowing = w.snowing();
     let mut on = w.thunder;
-    ui.add_enabled_ui(!snowing, |ui| {
+    ui.add_enabled_ui(!snowing && w.precipitation_on, |ui| {
         let head = Head {
             on: &mut on,
             tip: aurora_i18n::tr!("ui-weather-thunder-tip"),
-            word: None,
         };
         card(
             ui,
@@ -791,7 +966,6 @@ fn northern_lights_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings)
     let head = Head {
         on: &mut on,
         tip: aurora_i18n::tr!("ui-weather-northern-lights-tip"),
-        word: None,
     };
     card(
         ui,
@@ -940,6 +1114,14 @@ fn aurora_preview(ui: &mut egui::Ui, p: &Palette, w: &WeatherSettings) {
     );
 }
 
+/// How much of the curtain shows at `u` across it (0 and 1 its sides).
+/// `sin(PI)` is a hair below zero in `f32`, and its power 1.5 is NaN: a NaN
+/// alpha that stopped a development build at the colour's assertion (the
+/// merge queue's run of 2026-11-21), so the sine is held at zero first.
+fn side_fade(u: f32) -> f32 {
+    (u * std::f32::consts::PI).sin().max(0.0).powf(1.5)
+}
+
 /// The curtain of light: a mesh whose colour goes from `low` at its foot to
 /// `high` toward its top, fading out at its top, its foot and its sides.
 #[allow(clippy::too_many_arguments)]
@@ -964,7 +1146,7 @@ fn curtain(
         for col in 0..=COLS {
             let u = col as f32 / COLS as f32;
             // a gentle wave along it, the sides fading out
-            let side = (u * std::f32::consts::PI).sin().powf(1.5);
+            let side = side_fade(u);
             let wave = (u * std::f32::consts::TAU * 1.5).sin() * 3.0 * v;
             let alpha = (profile * side * strength * if enabled { 1.0 } else { 0.4 }).clamp(0.0, 1.0);
             let pos = egui::pos2(cx - width * 0.5 + u * width, foot - v * height + wave);
@@ -982,67 +1164,127 @@ fn curtain(
     mesh
 }
 
+/// The height of the foot's buttons.
+const FOOT_BUTTON_H: f32 = 24.0;
+
+/// The quality's options, in their order.
+fn quality_options() -> [(&'static str, bool); 3] {
+    [
+        (aurora_i18n::tr!("ui-weather-quality-low"), true),
+        (aurora_i18n::tr!("ui-weather-quality-medium"), true),
+        (aurora_i18n::tr!("ui-weather-quality-high"), true),
+    ]
+}
+
+/// Whether the quality and the foot's buttons fit side by side in `ui`'s
+/// width, measured in its language and text scale (a fixed width let a long
+/// language's buttons run over the quality).
+fn foot_in_one_row(ui: &egui::Ui, w: &WeatherSettings) -> bool {
+    let gap = ui.spacing().item_spacing.x;
+    let label = ui
+        .painter()
+        .layout_no_wrap(
+            aurora_i18n::tr!("ui-weather-quality").to_owned(),
+            egui::FontId::proportional(LABEL_SIZE),
+            egui::Color32::PLACEHOLDER,
+        )
+        .size()
+        .x;
+    let quality = 15.0 + gap + label + gap + widgets::segmented_size(ui, &quality_options()).x;
+    let mut buttons = widgets::action_button_fit(ui, "eraser", aurora_i18n::tr!("ui-weather-clean-up"));
+    if w.snowing() {
+        buttons += gap + widgets::action_button_fit(ui, "snowflake", aurora_i18n::tr!("ui-weather-snow-fill"));
+    }
+    // a gap at least between the two groups
+    quality + gap * 2.0 + buttons <= ui.available_width()
+}
+
 /// The foot of the window: the quality on the left; on the right the
-/// clean-up and, in snow, the snow fill.
-fn foot(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, actions: &mut WeatherActions) {
+/// clean-up and, in snow, the snow fill, or under the quality when they do
+/// not fit beside it (`one_row`). The main switch off greys all but the
+/// clean-up: what the weather left can still go at once.
+fn foot(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, actions: &mut WeatherActions, one_row: bool) {
     ui.horizontal(|ui| {
-        ui.horizontal(|ui| {
-            widgets::glyph(ui, "adjustments-horizontal-filled", p.muted, 15.0);
-            ui.label(RichText::new(aurora_i18n::tr!("ui-weather-quality")).size(LABEL_SIZE).color(p.ink))
-                .on_hover_text(aurora_i18n::tr!("ui-weather-quality-tip"));
-            let low = aurora_i18n::tr!("ui-weather-quality-low");
-            let medium = aurora_i18n::tr!("ui-weather-quality-medium");
-            let high = aurora_i18n::tr!("ui-weather-quality-high");
-            let mut i = match w.quality {
-                WeatherQuality::Low => 0,
-                WeatherQuality::Medium => 1,
-                WeatherQuality::High => 2,
-            };
-            if widgets::segmented(ui, p, &mut i, &[(low, true), (medium, true), (high, true)]) {
-                w.quality = match i {
-                    0 => WeatherQuality::Low,
-                    1 => WeatherQuality::Medium,
-                    _ => WeatherQuality::High,
-                };
-            }
-        });
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let size = Vec2::new(0.0, 24.0);
-            if widgets::action_button(
-                ui,
-                p,
-                "eraser",
-                aurora_i18n::tr!("ui-weather-clean-up"),
-                widgets::ActionKind::Flat,
-                size,
-            )
-            .on_hover_text(aurora_i18n::tr!("ui-weather-clean-up-tip"))
-            .clicked()
-            {
-                actions.clean = true;
-            }
-            if w.snowing()
-                && widgets::action_button_if(
-                    ui,
-                    p,
-                    "snowflake",
-                    aurora_i18n::tr!("ui-weather-snow-fill"),
-                    widgets::ActionKind::Flat,
-                    size,
-                    w.snow_settles,
-                )
-                .on_hover_text(aurora_i18n::tr!("ui-weather-snow-fill-tip"))
-                .clicked()
-            {
-                actions.fill = true;
-            }
-        });
+        quality(ui, p, w);
+        if one_row {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| foot_buttons(ui, p, w, actions));
+        }
     });
+    if !one_row {
+        // a row of its own, as tall as its buttons
+        let row = Vec2::new(ui.available_width(), FOOT_BUTTON_H);
+        ui.allocate_ui_with_layout(row, Layout::right_to_left(Align::Center), |ui| foot_buttons(ui, p, w, actions));
+    }
+}
+
+/// The weather's quality, greyed with the main switch.
+fn quality(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    ui.add_enabled_ui(w.enabled, |ui| {
+        widgets::glyph(ui, "adjustments-horizontal-filled", p.muted, 15.0);
+        ui.label(RichText::new(aurora_i18n::tr!("ui-weather-quality")).size(LABEL_SIZE).color(p.ink))
+            .on_hover_text(aurora_i18n::tr!("ui-weather-quality-tip"));
+        let mut i = match w.quality {
+            WeatherQuality::Low => 0,
+            WeatherQuality::Medium => 1,
+            WeatherQuality::High => 2,
+        };
+        if widgets::segmented(ui, p, &mut i, &quality_options()) {
+            w.quality = match i {
+                0 => WeatherQuality::Low,
+                1 => WeatherQuality::Medium,
+                _ => WeatherQuality::High,
+            };
+        }
+    });
+}
+
+/// The clean-up and, in snow, the snow fill, right to left.
+fn foot_buttons(ui: &mut egui::Ui, p: &Palette, w: &WeatherSettings, actions: &mut WeatherActions) {
+    let size = Vec2::new(0.0, FOOT_BUTTON_H);
+    if widgets::action_button(
+        ui,
+        p,
+        "eraser",
+        aurora_i18n::tr!("ui-weather-clean-up"),
+        widgets::ActionKind::Flat,
+        size,
+    )
+    .on_hover_text(aurora_i18n::tr!("ui-weather-clean-up-tip"))
+    .clicked()
+    {
+        actions.clean = true;
+    }
+    if w.snowing()
+        && widgets::action_button_if(
+            ui,
+            p,
+            "snowflake",
+            aurora_i18n::tr!("ui-weather-snow-fill"),
+            widgets::ActionKind::Flat,
+            size,
+            w.enabled && w.precipitation_on && w.snow_settles,
+        )
+        .on_hover_text(aurora_i18n::tr!("ui-weather-snow-fill-tip"))
+        .clicked()
+    {
+        actions.fill = true;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_curtain_fades_out_at_both_sides_without_a_nan() {
+        // the right side's sine is a hair below zero in f32
+        for col in 0..=16 {
+            let side = side_fade(col as f32 / 16.0);
+            assert!(side.is_finite() && (0.0..=1.0).contains(&side), "{col}: {side}");
+        }
+        assert_eq!(side_fade(1.0), 0.0);
+        assert!((side_fade(0.5) - 1.0).abs() < 1e-6);
+    }
 
     #[test]
     fn the_compass_reads_clockwise_from_north_with_north_up() {
@@ -1055,6 +1297,71 @@ mod tests {
         for deg in [0.0, 45.0, 135.0, 270.0, 315.0] {
             assert!((bearing(c, at(c, 30.0, deg)) - deg).abs() < 0.01, "{deg}");
         }
+    }
+
+    #[test]
+    fn the_columns_follow_the_width_and_every_card_shows_once() {
+        assert_eq!(column_count(WINDOW_MIN_SIZE.x - 24.0, 6.0, COLUMN_MIN_W), 1);
+        assert_eq!(column_count(WINDOW_SIZE.x - 24.0, 6.0, COLUMN_MIN_W), 2);
+        assert_eq!(column_count(960.0, 6.0, COLUMN_MIN_W), 3);
+        assert_eq!(column_count(4000.0, 6.0, COLUMN_MIN_W), 5);
+        // a larger text: wider columns, fewer of them
+        assert_eq!(column_count(960.0, 6.0, COLUMN_MIN_W * 1.5), 2);
+        for n in 1..=5 {
+            let cards: Vec<Card> = layout(n).iter().flat_map(|c| c.iter().copied()).collect();
+            assert_eq!(layout(n).len(), n);
+            assert_eq!(
+                cards,
+                [Card::Precipitation, Card::Ground, Card::Wind, Card::Thunder, Card::NorthernLights],
+                "{n}"
+            );
+        }
+    }
+
+    /// The body at `width` and `height`: the width it took.
+    fn laid_out(width: f32, height: f32) -> f32 {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut w = WeatherSettings {
+            touched: true,
+            precipitation: Precipitation::Snow,
+            aurora: true,
+            ..WeatherSettings::default()
+        };
+        let mut taken = 0.0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(2000.0, 1400.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), Vec2::new(width, height));
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                child.set_min_size(rect.size());
+                body(&mut child, &p, &mut w);
+                taken = child.min_rect().width();
+            },
+        );
+        output.textures_delta.clear();
+        taken
+    }
+
+    #[test]
+    fn the_body_fits_its_width_from_the_narrowest_to_five_columns() {
+        for width in [WINDOW_MIN_SIZE.x - 24.0, 420.0, 520.0, 610.0, 676.0, 960.0, 1300.0, 1700.0] {
+            for height in [WINDOW_MIN_SIZE.y - 60.0, 900.0] {
+                let taken = laid_out(width, height);
+                assert!(taken <= width + 0.5, "{width} x {height}: took {taken}");
+            }
+        }
+    }
+
+    #[test]
+    fn narrowed_the_compass_shrinks() {
+        assert_eq!(compass_side(400.0), COMPASS);
+        assert_eq!(compass_side(200.0), COMPASS_MIN);
+        let mid = compass_side(280.0);
+        assert!(mid > COMPASS_MIN && mid < COMPASS, "{mid}");
     }
 
     #[test]
@@ -1087,5 +1394,180 @@ mod tests {
         w.precipitation = Precipitation::Rain;
         w.thunder = false;
         assert!(!stormy(&w));
+    }
+}
+
+/// The window resized by its edges, as on a screen at 127 %: it follows the
+/// pointer both ways. Its body once came out a few points taller than the
+/// window (the foot's height guessed short), and every frame of a resize
+/// grew the window to it: dragging the bottom up made it taller, and a
+/// corner widened into more columns could not be brought back.
+#[cfg(test)]
+mod resize_tests {
+    use super::*;
+
+    struct Fixture {
+        ctx: egui::Context,
+        weather: WeatherSettings,
+        frame: u32,
+    }
+
+    impl Fixture {
+        fn show(&mut self, events: Vec<egui::Event>) -> egui::Rect {
+            self.frame += 1;
+            let p = crate::theme::Theme::default().palette();
+            let weather = &mut self.weather;
+            let mut out = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(2400.0, 1300.0))),
+                    time: Some(f64::from(self.frame) / 60.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    floater(egui::pos2(100.0, 80.0))
+                        .silent()
+                        .show(ui.ctx(), &p, &mut true, |ui| body(ui, &p, weather));
+                },
+            );
+            out.textures_delta.clear();
+            self.ctx.memory(|m| m.area_rect(egui::Id::unique("aurora_weather"))).expect("shown")
+        }
+
+        fn button(&mut self, pos: egui::Pos2, pressed: bool) -> egui::Rect {
+            self.show(vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }])
+        }
+
+        /// Drags from `grip` through `steps` (offsets), checking each
+        /// frame's size against `expected`.
+        fn drag(&mut self, grip: egui::Pos2, steps: &[Vec2], expected: impl Fn(Vec2) -> Vec2) -> egui::Rect {
+            self.show(vec![egui::Event::PointerMoved(grip)]);
+            self.button(grip, true);
+            for step in steps {
+                let rect = self.show(vec![egui::Event::PointerMoved(grip + *step)]);
+                let want = expected(*step);
+                assert!(
+                    (rect.width() - want.x).abs() < 1.0 && (rect.height() - want.y).abs() < 1.0,
+                    "dragged by {step:?}: {} x {}, expected {want:?}",
+                    rect.width(),
+                    rect.height()
+                );
+            }
+            self.button(grip + *steps.last().expect("a step"), false);
+            self.show(vec![])
+        }
+    }
+
+    #[test]
+    fn the_window_follows_its_edges_both_ways() {
+        for mode in ["rain", "snow"] {
+            follows_its_edges(mode);
+        }
+    }
+
+    /// In the demo's `mode` weather, the viewer's own fonts.
+    fn follows_its_edges(mode: &str) {
+        let ctx = egui::Context::default();
+        ctx.set_pixels_per_point(1.27);
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        crate::ui::fonts::apply(&ctx, &crate::settings::Settings::default().font);
+        let mut weather = WeatherSettings::default();
+        crate::demo::env::weather_scene(mode, &mut weather);
+        let mut f = Fixture { ctx, weather, frame: 0 };
+        let mut start = f.show(vec![]);
+        for _ in 0..8 {
+            start = f.show(vec![]);
+        }
+        let size = start.size();
+        // the bottom dragged up: shorter at every frame
+        let ys = [-50.0, -150.0, -300.0];
+        let steps: Vec<Vec2> = ys.iter().map(|y| Vec2::new(0.0, *y)).collect();
+        let shorter = f.drag(egui::pos2(start.center().x, start.bottom() - 1.0), &steps, |d| size + d);
+        // the corner: wider into more columns, then back narrower than at first
+        let size = shorter.size();
+        let steps = [
+            Vec2::new(300.0, 100.0),
+            Vec2::new(700.0, 200.0),
+            Vec2::new(100.0, 50.0),
+            Vec2::new(-200.0, -100.0),
+        ];
+        let back = f.drag(shorter.max - Vec2::splat(4.0), &steps, |d| size + d);
+        // at rest, it keeps its size and the foot stays at the bottom
+        let mut rest = back;
+        for _ in 0..60 {
+            rest = f.show(vec![]);
+        }
+        assert_eq!(rest.size(), back.size());
+        // five columns and back to one, by the right side
+        let size = rest.size();
+        let steps = [
+            Vec2::new(900.0, 0.0),
+            Vec2::new(1200.0, 0.0),
+            Vec2::new(600.0, 0.0),
+            Vec2::new(0.0, 0.0),
+            Vec2::new(-(size.x - WINDOW_MIN_SIZE.x), 0.0),
+        ];
+        let narrow = f.drag(egui::pos2(rest.right() - 1.0, rest.center().y), &steps, |d| size + d);
+        // one column, the foot in two rows: it stays put at rest too
+        let mut rest = narrow;
+        for _ in 0..60 {
+            rest = f.show(vec![]);
+        }
+        assert_eq!(rest.size(), narrow.size(), "{mode}");
+        // from there the corner, wider and taller: the foot goes back to
+        // one row on the way, and both sides keep following the pointer
+        let size = rest.size();
+        let steps = [
+            Vec2::new(80.0, 40.0),
+            Vec2::new(200.0, 120.0),
+            Vec2::new(420.0, 200.0),
+            Vec2::new(150.0, 60.0),
+        ];
+        f.drag(rest.max - Vec2::splat(4.0), &steps, |d| size + d);
+    }
+
+    /// Snow, rain and the night, the viewer's own fonts and a 127 %
+    /// screen: the right side dragged a screen pixel at a time from the
+    /// narrowest out to five columns and back, the window as wide as the
+    /// pointer asks at every frame (a column a point too wide held it).
+    #[test]
+    fn every_width_follows_the_pointer_at_127_percent() {
+        for mode in ["snow", "rain", "night"] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(1.27);
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            crate::ui::fonts::apply(&ctx, &crate::settings::Settings::default().font);
+            let mut weather = WeatherSettings::default();
+            crate::demo::env::weather_scene(mode, &mut weather);
+            let mut f = Fixture { ctx, weather, frame: 0 };
+            let mut start = f.show(vec![]);
+            for _ in 0..8 {
+                start = f.show(vec![]);
+            }
+            let size = start.size();
+            let pixel = 1.0 / 1.27;
+            let narrowest = WINDOW_MIN_SIZE.x - size.x;
+            let widest = 1800.0 - size.x;
+            let mut steps = Vec::new();
+            let mut x = 0.0;
+            while x > narrowest {
+                steps.push(Vec2::new(x, 0.0));
+                x -= pixel;
+            }
+            while x < widest {
+                steps.push(Vec2::new(x, 0.0));
+                x += pixel;
+            }
+            while x > narrowest {
+                steps.push(Vec2::new(x, 0.0));
+                x -= pixel;
+            }
+            f.drag(egui::pos2(start.right() - 1.0, start.center().y), &steps, |d| size + d);
+        }
     }
 }

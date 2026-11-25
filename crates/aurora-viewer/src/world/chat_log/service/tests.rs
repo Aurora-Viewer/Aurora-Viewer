@@ -2685,3 +2685,54 @@ fn case_82_capture_priority_can_leave_one_duplicate() {
         assert_eq!(result[0], newest, "capture priority keeps its deterministic historical choice");
     }
 }
+
+/// #4233: a computer 133 s behind the grid. The live rows are stamped on
+/// the grid's clock (time_corrected, as the LL viewer's capture and its
+/// transcript writer do): the service copies of a receipt and of an echo,
+/// and the plaintext line logged with them, are consumed. Stamped on the
+/// computer's own clock instead, the receipt falls outside its window (5 s
+/// ahead, 60 s behind) and the echo outside its 59 s, and both service
+/// rows show again as history.
+#[test]
+fn live_rows_on_the_grids_clock_consume_their_service_copies() {
+    let behind = 133;
+    let grid = 1_795_068_780; // 2026-11-19 06:13:00 UTC
+    let received = Hm {
+        from_id: Some(RESIDENT),
+        from: "Example Resident".to_owned(),
+        message: "sorry I missed you".to_owned(),
+        timestamp: Some(grid + 2),
+        ..Hm::default()
+    };
+    let sent = Hm {
+        from_id: Some(AGENT),
+        from: "Me".to_owned(),
+        message: "welp.. see you around".to_owned(),
+        timestamp: Some(grid + 40),
+        ..Hm::default()
+    };
+    let archive = vec![service_copy(&received, FIRST), service_copy(&sent, SECOND)];
+    let live_at = |now: i32| {
+        let mut timestamp = 0;
+        let context = capture_live_message(&received.message, &mut timestamp, &incoming_context(None, true), now as u32);
+        let mut receipt = live_copy(&received);
+        receipt.timestamp = Some(timestamp as i32);
+        record_live_message(&mut receipt, &context, now as u32);
+        let mut timestamp = 0;
+        let context = capture_live_message(&sent.message, &mut timestamp, &LiveContext::default(), (now + 38) as u32);
+        let mut echo = live_copy(&sent);
+        echo.timestamp = Some(timestamp as i32);
+        record_live_message(&mut echo, &context, (now + 38) as u32);
+        vec![echo, receipt]
+    };
+
+    // the computer's clock: both service rows come back
+    let computer = grid + 2 - behind;
+    assert_eq!(filter(&archive, &live_at(computer)), archive);
+    // the grid's clock: none does, nor the logged plaintext line
+    let corrected = live_at(computer + behind);
+    assert!(filter(&archive, &corrected).is_empty());
+    let mut logged = plaintext_copy(&corrected[1]);
+    logged.legacy_wall_time = Some(f64::from(corrected[1].log_timestamp.unwrap_or(0) / 60 * 60) - 8.0 * 3600.0);
+    assert!(filter(&[logged], &corrected).is_empty());
+}

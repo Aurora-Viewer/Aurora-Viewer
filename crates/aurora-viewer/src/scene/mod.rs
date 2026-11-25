@@ -466,6 +466,12 @@ pub struct ObjGpu {
     /// the reflections and probes, so that the subject keeps the scene's
     /// light (#2316).
     pub unseen: bool,
+    /// What our avatar wears and RLVa's @showself or @showselfhead hide: not
+    /// drawn, and not picked either, the ray going on to what is behind
+    /// (LLViewerJointAttachment::setAttachmentVisibility clears the bridge's
+    /// drawable type, which LLOctreeIntersect::check skips,
+    /// llspatialpartition.cpp).
+    pub rlva_hidden: bool,
     pub hud: bool,
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
@@ -916,6 +922,8 @@ pub struct Scene {
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
+    /// LiveMesh's elbow and knee bend of our avatar (`anim::PreviewBend`).
+    pub preview_bend: anim::PreviewBend,
     /// Session-only keyframe animation rate for every avatar and animesh.
     pub animation_speed: f32,
     /// Session-only slow motion on our avatar (the Legacy Viewer's 0.2 factor).
@@ -942,6 +950,9 @@ pub struct Scene {
     /// The kinds of objects not drawn (Advanced › Rendering types), set by
     /// the app at each frame, and those the objects were last flagged for.
     pub hidden_types: render_types::Hidden,
+    /// Planet curvature's radius (m), None for the flat regions: the void
+    /// water reaches the horizon and is drawn finely enough to bend.
+    pub planet_radius: Option<f32>,
     hidden_types_applied: render_types::Hidden,
     /// The instant a photo drawn in several frames shows
     /// (`snapshot::Hold`): the sync places and moves what it visits at it,
@@ -954,6 +965,10 @@ pub struct Scene {
     /// and what it wears go to `part_faces`, the part kept on its skinned
     /// faces by the frame's `part_joints`.
     pub poser_part: Option<usize>,
+    /// LiveMesh's Fit lab clipping map: the avatars it is drawn on (object
+    /// indices) and the garments' objects; their faces go to `fit_garment`
+    /// and the other skinned faces of those avatars to `fit_body`.
+    pub fit_clip: Option<(HashSet<usize>, HashSet<usize>)>,
     /// Whether the last lists drew any of that avatar's skinned faces (its
     /// body or a rigged mesh): without, the poser keeps the bone outline.
     pub poser_part_skinned: bool,
@@ -1000,6 +1015,8 @@ pub struct Scene {
     /// Bounds of the objects for the hover search, and its kept answer
     /// (hover.rs).
     pick: hover::PickIndex,
+    /// Drawn world volumes with the Ignore Object click action.
+    ignored_draws: FastSet<usize>,
     pub hover: hover::HoverCache,
     /// Our own HUD objects with a geometry, in index order, as
     /// `build_huds` found them for the HUD view of the frame: what a HUD
@@ -1149,6 +1166,8 @@ pub struct Scene {
     /// FirstPersonAvatarVisible while in mouselook; None otherwise.
     pub first_person: Option<bool>,
     rlva_render_state: (Option<Uuid>, bool, bool),
+    /// The glTF materials `@setcam_textures` covers (`rlva_pbr_snapshot`).
+    rlva_pbr_covered: HashSet<Uuid>,
     pub lists: DrawLists,
     pub creation_preview: creation_preview::CreationPreview,
     pub build_hologram: build_hologram::BuildHologram,
@@ -1408,6 +1427,23 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
         spec_color: [sl, sl, sl, 1.0],
         ..Default::default()
     }
+}
+
+/// The glTF materials of one object that `@setcam_textures` covers when it
+/// comes (`Scene::rlva_pbr_snapshot`): none on a worn object or one that is
+/// not a volume, and of the others the loaded materials of the faces
+/// without an override (setAllObjectPBRDefaultTextures: a face whose render
+/// material is not its plain material is left).
+fn rlva_pbr_covered_faces<'a>(
+    worn: bool,
+    faces: &'a [(u8, Uuid)],
+    overridden: impl Fn(u8) -> bool + 'a,
+    loaded: impl Fn(&Uuid) -> bool + 'a,
+) -> impl Iterator<Item = Uuid> + 'a {
+    faces
+        .iter()
+        .filter(move |(face, id)| !worn && !id.is_nil() && !overridden(*face) && loaded(id))
+        .map(|(_, id)| *id)
 }
 
 /// Texture animation fields of face `fi` of `o`, if it is animated.
@@ -1730,6 +1766,7 @@ impl Scene {
             ik_edit_others: HashMap::new(),
             poser: HashMap::new(),
             synchronize_animations: false,
+            preview_bend: anim::PreviewBend::default(),
             animation_speed: 1.0,
             slow_motion_animations: false,
             ground_avatar_feet: false,
@@ -1748,10 +1785,12 @@ impl Scene {
             studio_floor_offset: 0.0,
             studio_hover_height: 0.0,
             hidden_types: Default::default(),
+            planet_radius: None,
             hidden_types_applied: Default::default(),
             held_at: None,
             photo_marks: Default::default(),
             poser_part: None,
+            fit_clip: None,
             poser_part_skinned: false,
             give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
@@ -1774,6 +1813,7 @@ impl Scene {
             sync_budget: std::time::Duration::from_millis(1),
             geom_trash: Default::default(),
             pick: Default::default(),
+            ignored_draws: Default::default(),
             hover: Default::default(),
             hud_own: Vec::new(),
             exact_tests: Default::default(),
@@ -1842,6 +1882,7 @@ impl Scene {
             agent_idx: None,
             first_person: None,
             rlva_render_state: (None, false, false),
+            rlva_pbr_covered: HashSet::new(),
             lists: DrawLists::default(),
             creation_preview: creation_preview::CreationPreview::default(),
             build_hologram: build_hologram::BuildHologram::default(),
@@ -2340,8 +2381,31 @@ impl Scene {
 
     // ------------------------------------------------------------ objects
 
+    /// Changing a click action leaves geometry, textures and draw lists intact.
+    fn update_click_records(&mut self, records: &mut aurora_render::arena::RecordStore, idx: usize, action: u8) {
+        let g = &self.gpu[idx];
+        if g.hud || g.is_avatar || g.faces.is_empty() {
+            return;
+        }
+        let ignored = action == crate::interaction::code::IGNORE;
+        let changed = if ignored {
+            self.ignored_draws.insert(idx)
+        } else {
+            self.ignored_draws.remove(&idx)
+        };
+        if changed {
+            for face in &g.faces {
+                if let Some(mut rec) = records.get(face.record).copied() {
+                    rec.set_ignore_object_pick(ignored);
+                    records.set(face.record, rec);
+                }
+            }
+        }
+    }
+
     /// Free the draw records of an object's faces.
     fn drop_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+        self.ignored_draws.remove(&idx);
         for f in g.faces.drain(..) {
             renderer.records.free(f.record);
             self.slot_users.remove(&(f.base_slot, idx as u32));
@@ -3106,6 +3170,9 @@ impl Scene {
             world.rlva.has("showselfhead"),
         );
         if self.rlva_render_state != rlva_state {
+            if self.rlva_render_state.0 != rlva_state.0 {
+                self.rlva_pbr_snapshot(world, rlva_state.0.is_some());
+            }
             self.rlva_render_state = rlva_state;
             for (idx, object) in world.objects.slots.iter_mut().enumerate() {
                 if let Some(object) = object {
@@ -3152,12 +3219,13 @@ impl Scene {
 
         if self.update_origin(world) {
             renderer.cut_motion_history();
+            renderer.rebase_world();
             self.water.clear(renderer);
         }
 
         step(&mut slow, "origin");
         self.sync_terrain(renderer, world, view.eye);
-        self.water.sync(renderer, world);
+        self.water.sync(renderer, world, view.eye, self.planet_radius);
         step(&mut slow, "terrain");
 
         if self.gpu.len() < world.objects.slots.len() {
@@ -3187,6 +3255,11 @@ impl Scene {
             }
             let rigged = self.gpu.get(idx).is_some_and(|g| g.moves_with_skeleton());
             self.sets.touched(&world.objects, agent, idx, rigged);
+            if let Some(object) = world.objects.get_mut_untracked(idx)
+                && std::mem::take(&mut object.render.click_pick_dirty)
+            {
+                self.update_click_records(&mut renderer.records, idx, object.click_action);
+            }
             // (its click action or flags may have changed)
             self.pick.changed(idx);
         }
@@ -4200,6 +4273,11 @@ impl Scene {
         animesh::owner(&world.objects, idx)
     }
 
+    /// The palette base of a skeleton owner that has one.
+    pub fn palette_of(&self, owner: &Uuid) -> Option<u32> {
+        self.palette_slots.get(owner).map(|s| *s * anim::PALETTE_JOINTS as u32)
+    }
+
     /// Palette base (first matrix index) for a skeleton owner.
     fn palette_base(&mut self, owner: Uuid) -> u32 {
         if let Some(s) = self.palette_slots.get(&owner) {
@@ -4234,6 +4312,7 @@ impl Scene {
         let old_tex: Vec<Uuid> = std::mem::take(&mut g.tex_ids);
         g.material_ids.clear();
         let wearer = Self::wearer_avatar(world, idx);
+        let ignored = !g.hud && o.click_action == crate::interaction::code::IGNORE;
         let bake_wearer = Self::bake_wearer(world, idx, g.hud);
         let rigged_owner = match g.geom {
             Some(GeomKey::Mesh { id, .. }) => match self.meshes.meta(&id).and_then(|m| m.skin).filter(|s| !s.joint_names.is_empty()) {
@@ -4250,6 +4329,7 @@ impl Scene {
         // its texture entry says
         let plant = plants::plant_face(o);
         let visible = world.rlva_object_visible(idx);
+        g.rlva_hidden = !visible;
         for (fi, face) in geom.faces.iter().enumerate() {
             if !visible {
                 continue;
@@ -4295,6 +4375,9 @@ impl Scene {
             let mut two_sided = false;
             // GLTF material?
             let mut base_tex = tf.texture;
+            // a face without a glTF material takes `@setcam_textures` while
+            // it is held (LLFace::getTexture)
+            let mut rlva_pbr_covered = true;
             if let Some(mid) = mat_id {
                 g.material_ids.push(mid);
                 // render material: the asset with the face's override on
@@ -4311,6 +4394,8 @@ impl Scene {
                             .and_then(crate::world::objects::LocalAppearance::surface)
                             .is_none()
                     });
+                // (`rlva_pbr_snapshot`: the shared material, no override)
+                rlva_pbr_covered = ov.is_none() && self.rlva_pbr_covered.contains(&mid);
                 let mut m = meshes::render_material(&self.materials.resolve(&mid), ov);
                 if let Some(appearance) = o.local_appearance(fi) {
                     appearance.apply_pbr(&mut m);
@@ -4420,7 +4505,8 @@ impl Scene {
                     legacy_glare = gloss > 0.0 || env > 0.0;
                     rec.spec_color = [lin(spec_rgb[0]), lin(spec_rgb[1]), lin(spec_rgb[2]), 1.0];
                     rec.params[3] = lm.alpha_cutoff as f32 / 255.0;
-                    if lm.diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE {
+                    // (the alpha `classify` reads too, so flag and pass agree)
+                    if emissive_mask_applies(lm.diffuse_alpha_mode, rec.base_color[3]) {
                         rec.flags[0] |= flags::EMISSIVE_MASK;
                     }
                     legacy_alpha = Some(lm.diffuse_alpha_mode);
@@ -4437,7 +4523,8 @@ impl Scene {
                 source = TexSource::Asset;
             }
             if wearer.is_none()
-                && plant.is_none()
+                && plants::takes_camera_texture(o)
+                && rlva_pbr_covered
                 && let Some(texture) = world.rlva.camera_texture()
             {
                 base_tex = texture;
@@ -4510,8 +4597,15 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            rec.set_ignore_object_pick(ignored);
             if !g.hud {
                 rec.flags[3] |= flags::OBJECT_MASK_PICK;
+            }
+            // Alt-focus keeps an emissive mask's clear texels whatever the
+            // face's alpha, also where EMISSIVE_MASK is dropped above
+            // (LLVOVolume::lineSegmentIntersect's `ignore_alpha`).
+            if legacy_alpha == Some(legacy_mat::alpha_mode::EMISSIVE) {
+                rec.flags[3] |= flags::PICK_IGNORES_ALPHA;
             }
             rec.set_world_blend_pick(
                 !g.hud
@@ -4562,6 +4656,9 @@ impl Scene {
         // just bound so the first classify already skips auto-Mask.
         let object_auto_mask = rigged_owner.is_none() && !g.hud;
         self.finish_faces(renderer, idx, &mut g, object_auto_mask);
+        if ignored && !g.faces.is_empty() {
+            self.ignored_draws.insert(idx);
+        }
         self.gpu[idx] = g;
     }
 
@@ -4636,6 +4733,33 @@ impl Scene {
     }
 
     /// For an attachment, the wearing avatar (full id, object index).
+    /// LLViewerObjectList::setAllObjectPBRDefaultTextures (called by the
+    /// RLVa handler of `RLV_MODIFIER_SETCAM_TEXTURE`, rlvhandler.cpp): when
+    /// the forced texture comes or changes, the glTF materials then loaded on
+    /// the faces of the volumes present that are not worn and carry no
+    /// override get it as their base colour. The material is shared, so a
+    /// face that shows it later without an override takes it too; a
+    /// material loaded afterwards, or a face with an override, keeps its
+    /// own. Cleared when the texture goes.
+    fn rlva_pbr_snapshot(&mut self, world: &World, on: bool) {
+        if !on {
+            self.rlva_pbr_covered.clear();
+            return;
+        }
+        for (idx, o) in world.objects.slots.iter().enumerate() {
+            let Some(o) = o else {
+                continue;
+            };
+            let worn = o.pcode != aurora_prim::params::LL_PCODE_VOLUME || Self::wearer_avatar(world, idx).is_some();
+            let overrides = world.gltf_overrides.get(&o.key);
+            let overridden = |face: u8| overrides.is_some_and(|s| s.iter().any(|(f, _)| *f == face));
+            let materials = &self.materials;
+            let covered: Vec<Uuid> =
+                rlva_pbr_covered_faces(worn, &o.extra.render_materials, overridden, |id| materials.is_loaded(id)).collect();
+            self.rlva_pbr_covered.extend(covered);
+        }
+    }
+
     fn wearer_avatar(world: &World, mut idx: usize) -> Option<(Uuid, usize)> {
         for _ in 0..16 {
             let o = world.objects.get(idx)?;
@@ -5071,7 +5195,9 @@ impl Scene {
         }
         // (a hidden water draws neither itself nor its reflection pass)
         if !self.hidden_types.water {
-            self.lists.water.extend(self.water.draws(view, self.water_effects.geometry));
+            self.lists
+                .water
+                .extend(self.water.draws(view, self.water_effects.geometry, self.planet_radius));
         }
 
         // nearest avatars in full (own avatar always), the others as
@@ -5237,7 +5363,13 @@ impl Scene {
             let selection = &self.selection_wire;
             let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
             // the poser's hovered part: its avatar and what it wears
-            let posed = |g: &ObjGpu, i: usize| self.poser_part.is_some() && g.avatar(i) == self.poser_part;
+            let posed = |g: &ObjGpu, i: usize| {
+                (self.poser_part.is_some() && g.avatar(i) == self.poser_part)
+                    || self
+                        .fit_clip
+                        .as_ref()
+                        .is_some_and(|(avatars, _)| g.avatar(i).is_some_and(|a| avatars.contains(&a)))
+            };
             if by_index {
                 // (the pictured avatars and what they wear: read in the
                 // objects, on the frames a picture is taken)
@@ -5305,6 +5437,7 @@ impl Scene {
         let pattern_faces = &self.pattern_faces;
         let photo_marks = &self.photo_marks;
         let poser_part = self.poser_part;
+        let fit_clip = self.fit_clip.as_ref();
         let give_marks = &self.give_marks.1;
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
@@ -5335,6 +5468,8 @@ impl Scene {
             select_faces: Vec<DrawCmd>,
             select_pattern: Vec<DrawCmd>,
             part_faces: Vec<DrawCmd>,
+            fit_garment: Vec<DrawCmd>,
+            fit_body: Vec<DrawCmd>,
             part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
             debug_green: Vec<DrawCmd>,
@@ -5364,6 +5499,8 @@ impl Scene {
             select_faces: Vec::new(),
             select_pattern: Vec::new(),
             part_faces: Vec::new(),
+            fit_garment: Vec::new(),
+            fit_body: Vec::new(),
             part_skinned: 0,
             debug_blue: Vec::new(),
             debug_green: Vec::new(),
@@ -5550,6 +5687,18 @@ impl Scene {
                         l.part_faces.push(cmd);
                         l.part_skinned += usize::from(g.rigged || g.is_avatar);
                     }
+                    // the Fit lab's map: the garment, and the bodies that
+                    // wear it (the system body and the rigged meshes worn)
+                    if let Some((avatars, garments)) = fit_clip
+                        && pass != Pass::Hidden
+                        && avatar.is_some_and(|a| avatars.contains(&a))
+                    {
+                        if garments.contains(&idx) {
+                            l.fit_garment.push(cmd);
+                        } else if g.rigged || g.is_avatar {
+                            l.fit_body.push(cmd);
+                        }
+                    }
                 }
                 if pass == Pass::Hidden {
                     // LLVolumeGeometryManager excludes attachments and rigged
@@ -5684,6 +5833,8 @@ impl Scene {
             a.select_faces.append(&mut b.select_faces);
             a.select_pattern.append(&mut b.select_pattern);
             a.part_faces.append(&mut b.part_faces);
+            a.fit_garment.append(&mut b.fit_garment);
+            a.fit_body.append(&mut b.fit_body);
             a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
             a.shelter.append(&mut b.shelter);
@@ -5766,6 +5917,8 @@ impl Scene {
         self.lists.select_faces = result.select_faces;
         self.lists.select_pattern = result.select_pattern;
         self.lists.part_faces = result.part_faces;
+        self.lists.fit_garment = result.fit_garment;
+        self.lists.fit_body = result.fit_body;
         self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
@@ -6101,6 +6254,12 @@ impl Scene {
             motions.aurora_feet = self.ground_avatar_feet;
             motions.look_over_animations = photo_look;
             motions.look_glance = if photo_look { world.look_at.photo.glance } else { 0.0 };
+            // (LiveMesh's bend shows on the Fit lab's mannequins too)
+            motions.preview_bend = if owner == world.agent_id || world.is_mannequin(&owner) {
+                self.preview_bend
+            } else {
+                anim::PreviewBend::default()
+            };
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {
@@ -6769,6 +6928,20 @@ struct AvatarSkeleton {
 /// `FaceDraw::fully_transparent` decides.
 fn te_invisible(o: &Object, face: usize) -> bool {
     o.visual_texture_face(face).color[3] < 0.004 && o.visual_material(face).is_none()
+}
+
+/// Whether a legacy material's "emissive mask" applies to a face whose
+/// texture-entry alpha is `te_alpha`. A transparent face (alpha below
+/// 0.999) takes the alpha pass with the blend shader whatever the
+/// material's mode, so its texture alpha is opacity again, not glow:
+/// LLVolumeGeometryManager::genDrawInfo (`blinn_phong_transparent` sends
+/// the face to PASS_ALPHA) and LLVolumeGeometryManager::registerFace (the
+/// shader mask of PASS_ALPHA is DIFFUSE_ALPHA_MODE_BLEND's), llvovolume.cpp.
+/// The click pick keeps the material's mode (`legacy_alpha`) and Alt-focus
+/// keeps the face's clear texels (`flags::PICK_IGNORES_ALPHA`), as
+/// LLVOVolume::lineSegmentIntersect ignores the face's alpha there.
+fn emissive_mask_applies(diffuse_alpha_mode: u8, te_alpha: f32) -> bool {
+    diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE && te_alpha >= 0.999
 }
 
 fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
@@ -8109,6 +8282,21 @@ mod tests {
         assert!(usage.contains(&(source, texture_importance::per_repeats(256.0, 2.0), true)));
     }
 
+    /// #4517: an emissive mask on a transparent face blends like any
+    /// transparent face (texture alpha = opacity), as in the Legacy Viewer;
+    /// on an opaque face it stays an emissive mask.
+    #[test]
+    fn emissive_mask_is_dropped_on_a_transparent_face() {
+        use legacy_mat::alpha_mode::{BLEND, EMISSIVE, MASK, NONE};
+        assert!(emissive_mask_applies(EMISSIVE, 1.0));
+        assert!(emissive_mask_applies(EMISSIVE, 0.999));
+        assert!(!emissive_mask_applies(EMISSIVE, 0.99));
+        assert!(!emissive_mask_applies(EMISSIVE, 0.5));
+        for other in [NONE, BLEND, MASK] {
+            assert!(!emissive_mask_applies(other, 1.0));
+        }
+    }
+
     /// materialF.glsl (blend): a transparent texture under a glossy or shiny
     /// legacy material still shows its reflections (alpha = max(texture
     /// alpha, glare)), the "wet" layers over mesh bodies (#1420). Without
@@ -8662,5 +8850,18 @@ mod tests {
             drawn > 50 && casting > 100,
             "the scene exercises the tests ({drawn} drawn, {casting} casting)"
         );
+    }
+
+    /// setAllObjectPBRDefaultTextures: the loaded plain materials of the
+    /// volumes in the world at the toggle, not the worn ones nor a face with
+    /// an override.
+    #[test]
+    fn rlva_camera_texture_covers_the_plain_materials_loaded_at_the_toggle() {
+        let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let faces = [(0, a), (1, b), (2, c), (3, Uuid::nil())];
+        let loaded = |id: &Uuid| *id != c;
+        let covered: Vec<Uuid> = rlva_pbr_covered_faces(false, &faces, |face| face == 1, loaded).collect();
+        assert_eq!(covered, vec![a], "b has an override, c is still loading");
+        assert_eq!(rlva_pbr_covered_faces(true, &faces, |_| false, loaded).count(), 0, "worn");
     }
 }

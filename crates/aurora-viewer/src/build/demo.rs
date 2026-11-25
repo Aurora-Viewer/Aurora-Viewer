@@ -14,6 +14,8 @@
 //!   to linked editing and click the requested part (ready stops before switching).
 //!   faces | faces-invisible | faces-ready: plain / Shift face clicks on
 //!   three prims of two objects (ready stops before the face clicks).
+//!   mixed-face,object:<id>,<face>: select one prim, then pick one of its
+//!   faces (AURORA_DEMO_PBR_MIXED, #4467).
 //!   faces-picker | faces-picker-material: select one face and keep its picker open.
 //!   faces-picker-local | faces-picker-material-local: the same, on its Local tab.
 //!   faces-picker-normal-local | faces-picker-specular-local: local legacy maps.
@@ -33,6 +35,7 @@
 //!   contents-copy | contents-move | contents-move-plain | contents-ready:
 //!   take an item into inventory or show the move warning (ready stops).
 //!   contents-properties: open a task item in the shared properties panel.
+//!   contents-properties-multi: open three items at once, one window each.
 //!   contents-multi | contents-rename-ready: show task multi-selection or rename.
 //!   contents-move-many: drop every item into inventory at once (two no-copy
 //!   items share one move warning).
@@ -56,7 +59,8 @@
 //!
 //! `AURORA_DEMO_BUILD_TAB` shows a section: general | rights | object | transform |
 //! shape | features | texture | contents, the texture tab with `:pbr`, `:bp` or
-//! `:media` (e.g. `texture:bp`); `:bp-normal` / `:bp-specular` select empty
+//! `:media` (e.g. `texture:bp`); `:bp-alpha` paints the selection with the
+//! built-in Transparent texture; `:bp-normal` / `:bp-specular` select empty
 //! legacy map channels, and opens `+weights`, `+grid`, `+media`
 //! (e.g. `general+weights+grid`); `contents+permissions` opens bulk rights.
 //! `AURORA_DEMO_BUILD_HANDLES=<percent>` sets the edit handle size.
@@ -94,7 +98,8 @@ pub enum Step {
     CreationPreview(usize),
     Delete,
     Contents,
-    ContentsProperties,
+    /// Properties of the first n items, one window each.
+    ContentsProperties(usize),
     ContentsSelection(bool),
     /// "New notecard" then "New script" in the Contents tab.
     ContentsNew,
@@ -119,6 +124,8 @@ pub enum Step {
     ReplaceApply,
     /// "Place on surface" on or off.
     Place(bool),
+    /// Paint the selection with the built-in Transparent texture.
+    TransparentDiffuse,
     /// Its Auto rotate, with that side.
     PlaceRotate(super::place::Side),
 }
@@ -248,12 +255,15 @@ pub fn apply_tab(tool: &mut BuildTool) {
     };
     tool.ui.tex_tab = match sub.trim() {
         "pbr" => 1,
-        "bp" | "classic" | "bp-normal" | "bp-specular" => 0,
+        "bp" | "classic" | "bp-normal" | "bp-specular" | "bp-alpha" => 0,
         "media" => 2,
         _ => tool.ui.tex_tab,
     };
     // The scenario's tab, not the one its selection would open on.
-    if matches!(sub.trim(), "pbr" | "bp" | "classic" | "bp-normal" | "bp-specular" | "media") {
+    if matches!(
+        sub.trim(),
+        "pbr" | "bp" | "classic" | "bp-normal" | "bp-specular" | "bp-alpha" | "media"
+    ) {
         tool.keep_texture_tab();
     }
     match sub.trim() {
@@ -562,7 +572,8 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
             220 => object.into_iter().map(Step::Select).collect(),
             225 => vec![Step::Contents],
-            260 if parts[0] == "contents-properties" => vec![Step::ContentsProperties],
+            260 if parts[0] == "contents-properties" => vec![Step::ContentsProperties(1)],
+            260 if parts[0] == "contents-properties-multi" => vec![Step::ContentsProperties(3)],
             260 if matches!(parts[0], "contents-multi" | "contents-rename-ready") => {
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }
@@ -610,6 +621,20 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             295 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(Some(1))],
             320 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(Some(2))],
             345 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(None)],
+            _ => Vec::new(),
+        };
+    }
+    if parts[0] == "mixed-face" {
+        // `mixed-face,object:<id>,<face>`: select a whole prim, then pick one
+        // of its faces, for AURORA_DEMO_PBR_MIXED (#4467).
+        let face = parts.get(2).and_then(|part| part.parse::<u8>().ok());
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            240 => match (object, face) {
+                (Some(idx), Some(face)) => vec![Step::Face(idx, face, false)],
+                _ => Vec::new(),
+            },
             _ => Vec::new(),
         };
     }
@@ -757,6 +782,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         215 => vec![Step::Open(t, m, land)],
         280 if parts[0] == "material-deselect" => vec![Step::CloseEditor],
         220 if object.is_some() => object.into_iter().map(Step::Select).collect(),
+        230 if bp_alpha_demo() => vec![Step::TransparentDiffuse],
         220 => vec![Step::Cursor(x, y), Step::Press],
         // land brush / selection: held (land: no release), others released
         226 if t != Tool::Land => vec![Step::Release],
@@ -819,6 +845,18 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     }
 }
 
+/// `AURORA_DEMO_BUILD_TAB=texture:bp-alpha`: the texture tab only, as
+/// `apply_tab` reads it.
+fn bp_alpha_demo() -> bool {
+    std::env::var("AURORA_DEMO_BUILD_TAB").is_ok_and(|value| is_bp_alpha_tab(&value))
+}
+
+fn is_bp_alpha_tab(value: &str) -> bool {
+    let head = value.split('+').next().unwrap_or("");
+    head.split_once(':')
+        .is_some_and(|(tab, sub)| tab.trim() == "texture" && sub.trim() == "bp-alpha")
+}
+
 fn x_start(tool: &BuildTool) -> f32 {
     tool.manip.drag.as_ref().map(|d| d.start_cursor.0).unwrap_or(0.0)
 }
@@ -857,5 +895,17 @@ pub fn link_setup(world: &mut World, tool: &mut BuildTool, settings: &BuildSetti
         if let Some(index) = world.objects.index_of_uuid(&crate::demo::action_id(id)) {
             tool.click_select(world, settings, Some(index), id == 99751);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bp_alpha_needs_the_texture_tab() {
+        assert!(super::is_bp_alpha_tab("texture:bp-alpha"));
+        assert!(super::is_bp_alpha_tab(" texture : bp-alpha +grid"));
+        assert!(!super::is_bp_alpha_tab("general:bp-alpha"));
+        assert!(!super::is_bp_alpha_tab("texture:bp"));
+        assert!(!super::is_bp_alpha_tab("general+texture:bp-alpha"));
     }
 }

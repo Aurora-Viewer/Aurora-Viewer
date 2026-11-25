@@ -21,6 +21,9 @@ pub struct Preferences {
     pub experimental_commands: bool,
     pub debug_commands: bool,
     pub debug_hide_unset_duplicate: bool,
+    /// RLVaDebugDeprecateExplicitPoint: rez_attachment no longer takes the
+    /// point an item or its folder names while a point is locked.
+    pub debug_deprecate_explicit_point: bool,
     pub compatibility_list: String,
     pub legacy_naming: bool,
     pub shared_wear: bool,
@@ -49,6 +52,7 @@ impl Default for Preferences {
             experimental_commands: true,
             debug_commands: false,
             debug_hide_unset_duplicate: false,
+            debug_deprecate_explicit_point: false,
             compatibility_list: String::new(),
             legacy_naming: true,
             shared_wear: true,

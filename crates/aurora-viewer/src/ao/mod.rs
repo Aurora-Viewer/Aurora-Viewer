@@ -32,6 +32,8 @@ pub struct Settings {
 pub struct Account {
     pub enabled: bool,
     pub selected: Uuid,
+    /// Whether the compact AO window is open for this account.
+    pub mini_open: bool,
     /// Last animation link or group per state/track folder, across sets.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub animations: HashMap<Uuid, Uuid>,
@@ -466,13 +468,13 @@ impl Set {
         }
     }
     pub fn folder_name(&self) -> String {
-        format!(
-            "{}{}{}{}{}",
-            self.name,
+        let suffix = format!(
+            "{}{}{}{}",
             if self.sits { ":SO" } else { "" },
             if self.smart { ":SM" } else { "" },
             if self.mouselook { ":DM" } else { "" },
             if self.default { ":**" } else { "" }
-        )
+        );
+        inventory::encoded_name(&self.name, &suffix)
     }
 }
