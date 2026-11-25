@@ -1602,6 +1602,11 @@ when unfocused") is ignored during a screenshot.
   the camera must follow the animated eyes without orbiting around the head;
   returning to third person at 1060 restores the seat camera, then standing at
   1100 restores the normal rear view.
+  `sit-ml-periscope` is `sit-ml` with a seat animation that raises only the
+  left system eye (mEyeLeft) 1.5 m above the head, as a vehicle's periscope
+  does (#4606):
+  capture at 860, the camera looks from 1.5 m above the avatar's head (its
+  head and seat below), not from inside the head.
   `ml-body-on` / `ml-body-off` set the own-avatar preference for this demo,
   enter first person at 600, look down at 620–640 and leave at 700. Capture at
   650 and 740. The enabled body and yellow chest attachment stay visible below

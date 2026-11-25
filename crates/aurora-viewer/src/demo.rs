@@ -946,6 +946,33 @@ pub fn first_person_eye_animation() -> aurora_assets::Animation {
     animation
 }
 
+/// AURORA_DEMO_CAMERA=sit-ml-periscope: a vehicle's sit animation that
+/// raises only the left system eye (mEyeLeft) to its periscope, 1.5 m above
+/// the head, the right eye and the Bento eyes left in it (#4606).
+pub const PERISCOPE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0104);
+
+/// The animation of PERISCOPE_ANIM: a position key on mEyeLeft, from its
+/// rest place in `rig`.
+pub fn periscope_animation(rig: &crate::scene::anim::Rig) -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, PosKey};
+    let mut animation = idle_animation();
+    animation.base_priority = 6;
+    animation.ease_in = 0.0;
+    animation.joints.clear();
+    if let Some(rest) = rig.names.get("mEyeLeft").and_then(|&i| rig.local_pos.get(i)) {
+        animation.joints.push(JointMotion {
+            joint_name: "mEyeLeft".into(),
+            priority: 5,
+            rot_keys: Vec::new(),
+            pos_keys: vec![PosKey {
+                time: 0.0,
+                position: *rest + Vec3::Z * 1.5,
+            }],
+        });
+    }
+    animation
+}
+
 /// A looping joint translation for third-person bone-camera captures.
 pub fn third_person_joint_animation(joint_name: &str, joint_rest: Vec3, axis: Vec3) -> aurora_assets::Animation {
     use aurora_assets::anim::{JointMotion, PosKey};

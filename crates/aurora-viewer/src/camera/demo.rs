@@ -52,6 +52,8 @@
 //!   at 700 (demo::sit_events)
 //! - `sit-ml` / `sit-ml-reclined`: the same seat, upright or tilted, delayed
 //!   400 frames past the loading fade; first person with mouse look on both axes.
+//! - `sit-ml-periscope`: `sit-ml` with a seat animation that raises only the
+//!   left system eye 1.5 m (a vehicle's periscope): the camera goes up with it
 //! - `right-click,x,y` / `right-jitter,x,y`: right click with small motion / repeated
 //!   back-and-forth motion: the camera stays still and the menu opens on release
 //! - `right-drag,x,y` / `right-slow,x,y`: held right button with fast / slow motion:
@@ -389,6 +391,7 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
         | "scripted-sit"
         | "sit-ml"
         | "sit-ml-reclined"
+        | "sit-ml-periscope"
         | "sit-ml-body-on"
         | "sit-ml-body-off"
         | "sit-ml-reclined-body-on"
@@ -442,6 +445,13 @@ pub fn sit_events(spec: &str, frame: u64) -> Vec<aurora_net::NetEvent> {
         frame
     };
     let mut events = crate::demo::sit_events(frame);
+    if spec == "sit-ml-periscope" {
+        for event in &mut events {
+            if let aurora_net::NetEvent::AvatarAnimations { anims, .. } = event {
+                anims.push((crate::demo::PERISCOPE_ANIM, 1));
+            }
+        }
+    }
     if spec.starts_with("sit-ml-reclined") {
         for event in &mut events {
             if let aurora_net::NetEvent::ObjectUpdates { objects, .. } = event {
