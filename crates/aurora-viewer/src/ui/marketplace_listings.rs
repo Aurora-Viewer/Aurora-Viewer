@@ -290,9 +290,10 @@ pub fn alert_text(alert: &Alert) -> (String, Option<String>) {
 impl ListingsUi {
     /// LLFloaterMarketplaceListings::onOpen; true when GET /merchant must
     /// be sent (initializeSLM).
-    pub fn open(&mut self) -> bool {
+    pub fn open(&mut self, ctx: &egui::Context) -> bool {
         log::info!("marketplace listings window opened");
-        self.open = true;
+        // shown again, a minimized window expands (LLFloaterReg::showInstance)
+        super::widgets::open_floater(ctx, WINDOW, &mut self.open);
         self.data.initialize()
     }
 
@@ -1164,9 +1165,22 @@ mod tests {
         inv
     }
 
+    /// Me › Marketplace listings expands the minimized window
+    /// (LLFloaterReg::showInstance → LLFloater::openFloater).
+    #[test]
+    fn the_listings_shown_again_expand() {
+        let ctx = egui::Context::default();
+        let mut ui = ListingsUi::default();
+        ui.open(&ctx);
+        assert!(ui.open);
+        crate::ui::widgets::minimize_floater(&ctx, WINDOW);
+        ui.open(&ctx);
+        assert!(crate::ui::widgets::floater_expand_asked(&ctx, WINDOW));
+    }
+
     fn merchant(inv: &Inventory) -> ListingsUi {
         let mut ui = ListingsUi::default();
-        assert!(ui.open());
+        assert!(ui.open(&egui::Context::default()));
         let mut slm = demo::DemoSlm::new(demo::Mode::Merchant);
         ui.data.set_status(slm.merchant());
         let root = mp::root(inv).unwrap();

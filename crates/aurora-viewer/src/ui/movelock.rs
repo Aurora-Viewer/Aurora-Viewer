@@ -5,6 +5,9 @@ use crate::{
     world::bridge::{LockMode, Preferences},
 };
 
+/// The window id of MoveLock Options.
+pub const WINDOW: &str = "movelock";
+
 #[derive(Default)]
 pub struct MoveLockUi {
     pub open: bool,
@@ -23,7 +26,7 @@ impl MoveLockUi {
         let before = *prefs;
         let mut repair = false;
         Floater::new(
-            "movelock",
+            WINDOW,
             aurora_i18n::tr!("movelock-title"),
             egui::pos2(460.0, 180.0),
             egui::vec2(470.0, 420.0),

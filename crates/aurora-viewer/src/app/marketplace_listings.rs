@@ -66,7 +66,7 @@ impl App {
     }
     /// Me › Marketplace listings (LLFloaterMarketplaceListings::onOpen).
     pub(super) fn open_marketplace_listings(&mut self) {
-        if self.listings_ui.open() {
+        if self.listings_ui.open(&self.egui_ctx) {
             self.send(NetCommand::RequestMerchantStatus);
         }
     }

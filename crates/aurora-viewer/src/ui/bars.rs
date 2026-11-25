@@ -1593,7 +1593,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             let perf = aurora_i18n::tr!("ui-bars-performance-ctrl-shift-1");
             flip_window(ui, p, "gauge-filled", perf, "perf", &mut panels.perf);
             let graphics = aurora_i18n::tr!("ui-bars-graphics-preferences");
-            flip_window(ui, p, "settings-filled", graphics, "options", &mut panels.settings);
+            flip_window(ui, p, "settings-filled", graphics, super::options::WINDOW, &mut panels.settings);
             let toolbox = aurora_i18n::tr!("dev-toolbox-menu");
             flip_window(
                 ui,

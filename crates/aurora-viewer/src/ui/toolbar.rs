@@ -759,6 +759,7 @@ fn sizing_rows() -> [(Sizing, &'static str, &'static str); 3] {
     ]
 }
 
+pub(crate) use editor::WINDOW as EDITOR_WINDOW;
 pub use editor::{demo_events, demo_settings};
 
 #[cfg(test)]
