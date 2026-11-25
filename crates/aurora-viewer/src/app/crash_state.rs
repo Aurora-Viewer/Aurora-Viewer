@@ -253,12 +253,12 @@ impl Timeline {
 
 /// The GPU effects and quality switches on, as the report's fixed words
 /// (`EFFECT_WORDS` in crash/watchdog.rs): what tells a hang caused by an effect
-/// from one that is not. Conditions follow the renderer: the contact and the
-/// soft shadows need the shadows, the indirect light needs the GTAO, ray
-/// tracing needs the shadows and its reflections SSR (what the settings ask:
-/// the graphics card may trace none). `drawn` is the shadow quality and the
-/// ambient occlusion the world is drawn with (the photo window's over
-/// Preferences', `App::photo_shadow_quality`).
+/// from one that is not. Conditions follow the renderer: the contact, the
+/// soft and the point-light shadows need the shadows, the indirect light
+/// needs the GTAO, ray tracing needs the shadows and its reflections SSR
+/// (what the settings ask: the graphics card may trace none). `drawn` is the
+/// shadow quality and the ambient occlusion the world is drawn with (the
+/// photo window's over Preferences', `App::photo_shadow_quality`).
 pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr: bool) -> String {
     use std::fmt::Write;
     let mut out = String::new();
@@ -277,6 +277,10 @@ pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr:
     word(shadows && settings.projector_shadows, format_args!("projector-shadows"));
     word(shadows && settings.contact_shadows, format_args!("contact-shadows"));
     word(shadows && settings.soft_shadows, format_args!("soft-shadows"));
+    word(
+        shadows && settings.point_shadows,
+        format_args!("point-shadows{}", settings.point_shadow_limit),
+    );
     let traced = shadows && settings.ray_tracing.enabled;
     word(traced, format_args!("ray-tracing"));
     word(traced && settings.ray_tracing.lights, format_args!("rt-lights"));
@@ -609,6 +613,8 @@ mod tests {
             shadow_quality: 3,
             contact_shadows: true,
             soft_shadows: true,
+            point_shadows: true,
+            point_shadow_limit: 2,
             ssao: 2,
             ao_method: 1,
             gtao_quality: 2,
@@ -623,6 +629,7 @@ mod tests {
             "shadows3",
             "contact-shadows",
             "soft-shadows",
+            "point-shadows2",
             "ao-gtao2",
             "aa-smaa",
             "bloom",
@@ -642,7 +649,10 @@ mod tests {
         settings.ssao = 0;
         let list = effects(&settings, (settings.shadow_quality, settings.ssao), false);
         assert!(
-            !list.contains("contact-shadows") && !list.contains("indirect-light") && !list.contains("shadows"),
+            !list.contains("contact-shadows")
+                && !list.contains("point-shadows")
+                && !list.contains("indirect-light")
+                && !list.contains("shadows"),
             "{list}"
         );
         assert!(!list.contains("vr"), "{list}");
@@ -654,6 +664,8 @@ mod tests {
             shadow_quality: 4,
             projector_shadows: true,
             contact_shadows: true,
+            point_shadows: true,
+            point_shadow_limit: 4,
             ssao: 1,
             ao_method: 0,
             ssr: true,

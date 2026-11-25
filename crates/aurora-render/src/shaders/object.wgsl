@@ -1339,7 +1339,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
             let dist = length(to_l);
             let radius = lt.pos_radius.w;
             if (dist < radius) {
-                let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
+                let atten = ll_light_atten(dist / radius, lt.color_falloff.w) * point_shadow(i, world_pos, n);
                 let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
                 let sc = clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
                 col += sc;
@@ -3619,8 +3619,11 @@ struct ShadowOut {
 struct ShadowParams {
     vp: mat4x4<f32>,
     anim_clock: vec4<u32>,  // the animation clocks, as Frame's
-    // x: 1 for the rain prototype's shelter map
+    // x: 1 for the rain prototype's shelter map; y: 1 for a point light's
+    // face whose see-through blended texels go to its tint map instead
     kind: vec4<u32>,
+    // a point light's face: the light's position and radius (fs_shadow_tint)
+    light: vec4<f32>,
 };
 
 @group(3) @binding(0) var<uniform> shadow_params: ShadowParams;
@@ -3683,9 +3686,36 @@ fn fs_shadow(in: ShadowOut, @builtin(front_facing) front: bool) {
             if (!pbr && !skinned && tex_alpha < 0.598) { discard; }
             if (alpha < 0.05) { discard; }
             let cutoff = select(0.88, 0.598, skinned && !pbr);
+            // with the tint maps, a point light's see-through glass colours
+            // its light (fs_shadow_tint) instead of shading it by half
+            if (alpha < cutoff && shadow_params.kind.y == 1u) { discard; }
             if (alpha < cutoff && (u32(in.clip.x) % 2u) == 0u) { discard; }
         }
     }
+}
+
+// The tint map of a point light's face (`point_shadow_tint`, an Aurora
+// addition: the Legacy Viewer has no coloured shadows). Of the casters of
+// the face, the blended texels that fs_shadow leaves out of its map (under
+// its cutoff, the texture's alpha whatever it is) write the light they let
+// through, mix(1, rgb, a) x (1 - a): a faint pane barely tints, a dense one
+// colours and darkens, clear glass shades as its alpha says. The map
+// multiplies the rgb of every pane and keeps the nearest one's distance.
+@fragment
+fn fs_shadow_tint(in: ShadowOut) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
+    if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) { discard; }
+    let texel = sample_tex_unbiased(rec.tex.x, in.uv);
+    let alpha = texel.a * rec.base_color.a;
+    let pbr = (rec.flags.x & FLAG_PBR) != 0u;
+    let skinned = (rec.flags.x & FLAG_SKINNED) != 0u;
+    let cutoff = select(0.88, 0.598, skinned && !pbr);
+    if (alpha < 0.004 || alpha >= cutoff) { discard; }
+    let rgb = clamp(texel.rgb * rec.base_color.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    let through = mix(vec3<f32>(1.0), rgb, alpha) * (1.0 - alpha);
+    let d = distance(in.world_pos, shadow_params.light.xyz) / max(shadow_params.light.w, 0.001);
+    return vec4<f32>(through, clamp(d, 0.0, 1.0));
 }
 
 // --------------------------------------------------------------- particles

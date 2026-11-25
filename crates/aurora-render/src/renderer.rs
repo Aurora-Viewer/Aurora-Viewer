@@ -66,6 +66,11 @@ const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// The point lights' tint maps: the light the blended casters let through
+/// (rgb) and the distance of the nearest of them over the light's radius (a).
+/// Half floats: in 8 bits that distance moves by 1/255 of the radius (5 cm
+/// at 12 m), and a frame against its pane showed those steps as teeth.
+const POINT_TINT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -160,7 +165,8 @@ struct FrameU {
     light_sets: LightSets,
     /// Projector of light `i`, for the lights of `light_projectors`.
     projectors: [ProjectorU; MAX_LIGHTS],
-    /// Bit `i` (low word, then high word): light `i` is a projector.
+    /// Bit `i` (low word, then high word): light `i` is a projector. Third
+    /// word: not 0 when a point light has a shadow map.
     light_projectors: [u32; 4],
     /// World to the clip space of each projector shadow map.
     spot_vp: [[[f32; 4]; 4]; SPOT_SHADOWS],
@@ -241,8 +247,13 @@ struct FrameU {
 struct ShadowU {
     vp: [[f32; 4]; 4],
     anim_clock: [u32; 4],
-    /// x: 1 for the rain prototype's shelter map (`fs_shadow`)
+    /// x: 1 for the rain prototype's shelter map (`fs_shadow`); y: 1 for a
+    /// point light's face whose blended casters go to its tint map instead
+    /// (`point_shadow_tint`)
     kind: [u32; 4],
+    /// A point light's face: the light's position and radius, for the
+    /// distances of its tint map (`fs_shadow_tint`)
+    light: [f32; 4],
 }
 
 #[repr(C)]
@@ -552,29 +563,73 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
     }
 }
 
-/// The projector shadow maps of a frame: each projector of the frame's list
-/// that casts shadows, with the view-projection of its map. None without
-/// shadows (reflections, probe faces and impostor pictures draw none), nor
-/// for a projector among the first `traced` lights, whose shadows the
-/// traced lights' pass draws (`Renderer::traced_projectors`).
+/// Size of the point lights' tint maps, `maps` of them: each laid out as its
+/// light's map (three faces across, two down, `point_face_origin`'s side),
+/// four maps to a row (`point_tint` in common.wgsl reads the same).
+fn point_tint_size(cascade: u32, maps: u8) -> (u32, u32) {
+    let side = cascade / 2 / 3;
+    let maps = u32::from(maps);
+    (maps.min(4) * 3 * side, maps.div_ceil(4) * 2 * side)
+}
+
+/// Where face `face` of tint map `j` lies, in texels: x, y and its side.
+fn point_tint_origin(cascade: u32, j: usize, face: usize) -> (u32, u32, u32) {
+    let side = cascade / 2 / 3;
+    let (j, face) = (j as u32, face as u32);
+    ((j % 4 * 3 + face % 3) * side, (j / 4 * 2 + face / 3) * side, side)
+}
+
+fn shadow_vp_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("shadow vp"),
+        size: std::mem::size_of::<ShadowU>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// The shadow maps of a frame beyond the cascades: each projector of the
+/// frame's list that casts shadows with the view-projection of its map, then
+/// each such point light, in the maps from `projectors` to `count` (no view of
+/// its own: its faces have theirs, `point_shadow_faces`). None
+/// without shadows (reflections, probe faces and impostor pictures draw none),
+/// nor for a projector among the first `traced` lights or a point light among
+/// the first `traced_points`, whose shadows the traced lights' pass draws
+/// (`Renderer::traced_projectors`, `Renderer::traced_points`).
 fn spot_shadow_views(
     f: &FrameParams,
-    limit: usize,
+    projectors: usize,
+    count: usize,
     shelter: Option<(usize, Mat4)>,
     traced: usize,
+    traced_points: usize,
 ) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
-        let s = f.spot_shadows[k].filter(|_| k < limit);
-        let s = s.filter(|s| f.shadows && projector_map_drawn(s.light, traced))?;
+        let point = k >= projectors;
+        let s = if point {
+            f.point_shadows
+                .get(k - projectors)
+                .copied()
+                .flatten()
+                .filter(|s| k < count && projector_map_drawn(s.light, traced_points))
+        } else {
+            f.spot_shadows[k].filter(|s| projector_map_drawn(s.light, traced))
+        };
+        let s = s.filter(|_| f.shadows)?;
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
+        if point {
+            return light.projector.is_none().then_some((s, Mat4::IDENTITY));
+        }
         Some((s, light.projector?.shadow_matrix))
     });
     // Aurora Weather: while it rains (or the ground is still wet, see
     // `Backend::rain_shelter`), map `shelter` is the shelter map, the depth
     // of what is overhead seen straight down: the first map past the
-    // projectors' (`projector_shadows::shelter_slot`), so that none of them
-    // loses its shadow; the last projector's only at the full budget. No
-    // light uses it (`RAIN_SHELTER_LIGHT` in the frame's spot lights).
+    // projectors' and the point lights' (`projector_shadows::shelter_slot`),
+    // so that none of them loses its shadow; the last one's only at the full
+    // budget. No light uses it (`RAIN_SHELTER_LIGHT` in the frame's spot
+    // lights), and a point light whose map it takes has no faces
+    // (`point_shadow_faces`).
     if let Some((slot, vp)) = shelter.filter(|&(k, _)| k < SPOT_SHADOWS) {
         views[slot] = Some((
             SpotShadow {
@@ -638,6 +693,34 @@ fn rain_shelter_matrix(camera: Vec3, map_px: u32) -> Mat4 {
         Vec4::new(0.0, 0.0, -1.0 / DEPTH, 0.0),
         Vec4::new(-cx / HALF, -cy / HALF, top / DEPTH, 1.0),
     )
+}
+
+/// The faces each point light's map draws, per map of `spot_shadow_views`:
+/// the view-projection of those that can light what the camera sees.
+type PointFaces = [Option<Mat4>; crate::projector_shadows::POINT_FACES];
+/// A lit mirror (`mirror_vp`) shades with these maps too, so a face it sees
+/// is drawn as well: a skipped face reads as lit.
+fn point_shadow_faces(
+    f: &FrameParams,
+    views: &[Option<(SpotShadow, Mat4)>; SPOT_SHADOWS],
+    projectors: usize,
+    mirror_vp: Option<Mat4>,
+) -> [Option<PointFaces>; SPOT_SHADOWS] {
+    use crate::projector_shadows::{point_face_matrix, point_face_seen, point_near};
+    if views[projectors.min(SPOT_SHADOWS)..].iter().all(Option::is_none) {
+        return [None; SPOT_SHADOWS];
+    }
+    let planes = crate::gpu_cull::view_planes(f.proj * f.view);
+    let mirror = mirror_vp.map(crate::gpu_cull::view_planes);
+    std::array::from_fn(|k| {
+        let (s, _) = views[k].filter(|_| k >= projectors)?;
+        let l = f.lights.get(s.light as usize)?;
+        let near = point_near(l.radius, l.source_radius);
+        Some(std::array::from_fn(|face| {
+            let seen = |p: &[Vec4; 6]| point_face_seen(p, l.position, l.radius, face);
+            (seen(&planes) || mirror.as_ref().is_some_and(seen)).then(|| point_face_matrix(l.position, l.radius, near, face))
+        }))
+    })
 }
 
 /// Screen-space glow as LLPipeline::generateGlow / combineGlow (originally LGPL 2.1,
@@ -1230,6 +1313,9 @@ struct Pipelines {
     shadow: wgpu::RenderPipeline,
     /// Opaque shadow casters: the same vertices, no fragment shader.
     shadow_depth: wgpu::RenderPipeline,
+    /// The blended casters of a point light's face, into its tint map
+    /// (`fs_shadow_tint`, `point_shadow_tint`).
+    shadow_tint: wgpu::RenderPipeline,
     /// Terrain casters with the terrain's alpha test (`fs_shadow_terrain`):
     /// the other casters keep `fs_shadow` without the terrain's inputs.
     shadow_terrain: wgpu::RenderPipeline,
@@ -2150,9 +2236,15 @@ pub(crate) struct Backend {
     /// The shadow atlas's real size in texels (the shed one is small).
     shadow_dims: (u32, u32),
     shadow_count: u8,
+    /// Of `shadow_count`, the maps of the projectors; the rest are point
+    /// lights'.
+    projector_maps: u8,
     /// The projector map the rain's shelter takes while it is drawn
     /// (`projector_shadows::shelter_slot`): past the projectors' maps.
     shelter_slot: usize,
+    /// The point lights' tint maps (`point_shadow_tint`), made only while
+    /// the setting asks for them, and how many maps they hold.
+    point_tint: Option<(wgpu::TextureView, u8)>,
     /// With the shadows off, the shelter map drawn alone: its matrix and
     /// when (kept in the atlas, which nothing else draws then; drawn again
     /// when it follows the camera, or after `SHELTER_REFRESH`).
@@ -3026,6 +3118,18 @@ impl Backend {
         let tuning = self.settings.rt_tuning;
         let traced = self.rt_now
             && tuning.projectors
+            && self.rt.as_ref().is_some_and(|r| r.traces_lights())
+            && self.targets.rt.as_ref().is_some_and(|t| t.lights.is_some());
+        if traced { crate::rt_shadows::traced_count(tuning) } else { 0 }
+    }
+
+    /// How many of the frame's first lights have their point lights'
+    /// shadows traced this frame (common.wgsl `light_traced`): their point
+    /// shadow maps are not drawn, as the traced projectors' are not
+    /// (`traced_projectors`). 0 while the lights are not traced.
+    fn traced_points(&self) -> usize {
+        let tuning = self.settings.rt_tuning;
+        let traced = self.rt_now
             && self.rt.as_ref().is_some_and(|r| r.traces_lights())
             && self.targets.rt.as_ref().is_some_and(|t| t.lights.is_some());
         if traced { crate::rt_shadows::traced_count(tuning) } else { 0 }
@@ -4236,6 +4340,8 @@ impl Backend {
                 },
                 count: None,
             },
+            // the point lights' tint maps (`point_shadow_tint`)
+            float_tex(33),
             // the Milky Way map (stars.rs milky_way_texels)
             wgpu::BindGroupLayoutEntry {
                 binding: 25,
@@ -4389,17 +4495,10 @@ impl Backend {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        // one per cascade, then one per projector shadow map
-        let shadow_buffers: Vec<wgpu::Buffer> = (0..CASCADES + SPOT_SHADOWS)
-            .map(|_| {
-                device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("shadow vp"),
-                    size: std::mem::size_of::<ShadowU>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })
-            })
-            .collect();
+        // one per cascade, then one per shadow map; the faces of the point
+        // lights' maps get theirs once the setting asks for them
+        // (`grow_shadow_views`)
+        let shadow_buffers: Vec<wgpu::Buffer> = (0..CASCADES + SPOT_SHADOWS).map(|_| shadow_vp_buffer(&device)).collect();
         let shadow_bind_groups = shadow_buffers
             .iter()
             .map(|b| shadow_bind_group(&device, &shadow_layout, b, &lin_clamp))
@@ -4614,6 +4713,7 @@ impl Backend {
             &water_effects,
             &stars,
             &milky_way,
+            None,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -4748,7 +4848,9 @@ impl Backend {
             shadow_size,
             shadow_dims: crate::projector_shadows::atlas_size(shadow_size, crate::projector_shadows::atlas_maps(2, 2)),
             shadow_count: 2,
+            projector_maps: 2,
             shelter_slot: 2,
+            point_tint: None,
             shelter_drawn: None,
             shelter_centre: None,
             shadow_merge,
@@ -4817,6 +4919,21 @@ impl Backend {
         };
         r.rebuild_bind_groups();
         Ok(r)
+    }
+
+    /// Uniforms for the faces of `point_maps` point light maps, created the
+    /// first time the setting asks for them and then kept until the viewer
+    /// closes: with the setting never turned on, the shadow pass allocates
+    /// what it did before.
+    fn grow_shadow_views(&mut self, point_maps: usize) {
+        let want =
+            CASCADES + SPOT_SHADOWS + point_maps.min(crate::projector_shadows::MAX_POINT_SHADOWS) * crate::projector_shadows::POINT_FACES;
+        while self.shadow_buffers.len() < want {
+            let buffer = shadow_vp_buffer(&self.device);
+            self.shadow_bind_groups
+                .push(shadow_bind_group(&self.device, &self.shadow_layout, &buffer, &self.lin_clamp));
+            self.shadow_buffers.push(buffer);
+        }
     }
 
     /// Shadow atlas, two cascade tiles wide (cascade i at (i % 2, i / 2)),
@@ -6212,6 +6329,31 @@ impl Backend {
         // vertex shader alone writes the same depth, without a texture read
         // per fragment
         let shadow_depth = batch.add(&module, &shadow_pl, shadow_desc("shadow depth", None));
+        // the tint map: what light the blended casters let through, each
+        // multiplying it (rgb), and the nearest of them (alpha, its smallest)
+        let shadow_tint = batch.add(
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                blend: Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::Zero,
+                        dst_factor: wgpu::BlendFactor::Src,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Min,
+                    },
+                }),
+                format: Some(POINT_TINT_FORMAT),
+                depth_format: None,
+                depth_write: false,
+                depth_bias: wgpu::DepthBiasState::default(),
+                ..shadow_desc("shadow tint", Some("fs_shadow_tint"))
+            },
+        );
         let shadow_terrain = batch.add(
             &module,
             &shadow_pl,
@@ -6371,6 +6513,7 @@ impl Backend {
             refl_blend: refl_blend.resolve(&mut done),
             shadow: shadow.resolve(&mut done),
             shadow_depth: shadow_depth.resolve(&mut done),
+            shadow_tint: shadow_tint.resolve(&mut done),
             shadow_terrain: shadow_terrain.resolve(&mut done),
             shelter: shelter.resolve(&mut done),
             shelter_terrain: shelter_terrain.resolve(&mut done),
@@ -6663,7 +6806,9 @@ impl Backend {
         water_effects: &crate::water_effects::WaterGpu,
         stars: &wgpu::Buffer,
         milky_way: &wgpu::TextureView,
+        point_tint: Option<&wgpu::TextureView>,
     ) -> FrameGroups {
+        let point_tint = point_tint.unwrap_or(&dummies.white);
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
                   ao: &wgpu::TextureView,
@@ -6700,6 +6845,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 30,
                         resource: wgpu::BindingResource::TextureView(soft.unwrap_or(milky_way)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 33,
+                        resource: wgpu::BindingResource::TextureView(point_tint),
                     },
                     wgpu::BindGroupEntry {
                         binding: 26,
@@ -7156,6 +7305,7 @@ impl Backend {
             &self.water_effects,
             &self.stars,
             &self.milky_way,
+            self.point_tint.as_ref().map(|t| &t.0),
         );
     }
 
@@ -7633,13 +7783,16 @@ impl Backend {
         if probes_dirty {
             self.probes = crate::probes::Probes::new(&self.device, slots);
         }
-        // the atlas is two tiles wide
-        let res = s
-            .shadow_resolution
-            .clamp(512, 8192)
-            .min(self.device.limits().max_texture_dimension_2d / 2);
+        let res = crate::projector_shadows::map_resolution(s.shadow_resolution, self.device.limits().max_texture_dimension_2d);
+        let (projector_maps, point_maps) = crate::projector_shadows::budget_split(
+            res,
+            s.projector_shadow_limit,
+            s.point_shadow_limit,
+            self.device.limits().max_texture_dimension_2d,
+        );
+        let count = projector_maps + point_maps;
+        self.projector_maps = projector_maps;
         let max_dimension = self.device.limits().max_texture_dimension_2d;
-        let count = crate::projector_shadows::effective_limit(res, s.projector_shadow_limit, max_dimension);
         let shadows_dirty = (s.shadow_resolution > 0 && res != self.shadow_size) || count != self.shadow_count;
         // (the soft shadows' mask reads the atlas)
         targets_dirty |= shadows_dirty && self.targets.soft.is_some();
@@ -7666,6 +7819,36 @@ impl Backend {
             );
             self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
+        // the budget can change without the map count (one projector for one light)
+        self.grow_shadow_views(usize::from(point_maps));
+        // the point lights' tint maps: as many as their maps, the faces as
+        // large as theirs, none while the setting is off
+        let tint_maps = if s.point_shadow_tint { point_maps } else { 0 };
+        let tint_dirty = shadows_dirty || self.point_tint.as_ref().map_or(0, |t| t.1) != tint_maps;
+        if tint_dirty {
+            self.point_tint = (tint_maps > 0).then(|| {
+                let (width, height) = point_tint_size(res, tint_maps);
+                log::info!(
+                    "point light tint maps: {tint_maps}, {width}x{height} ({} KiB)",
+                    u64::from(width) * u64::from(height) * 8 / 1024
+                );
+                let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("point light tint maps"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: POINT_TINT_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                (tex.create_view(&wgpu::TextureViewDescriptor::default()), tint_maps)
+            });
+        }
         self.settings = s;
         self.follow_ray_tracing();
         if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
@@ -7684,7 +7867,7 @@ impl Backend {
         }
         if targets_dirty {
             self.rebuild_targets();
-        } else if shadows_dirty || probes_dirty {
+        } else if tint_dirty || probes_dirty {
             self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
         }
     }
@@ -8226,10 +8409,17 @@ impl Backend {
             }
         }
         u.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
-        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f), self.traced_projectors())
-            .into_iter()
-            .enumerate()
-            .filter_map(|(k, v)| Some((k, v?)))
+        for (k, (spot, vp)) in spot_shadow_views(
+            f,
+            self.projector_maps as usize,
+            self.shadow_count as usize,
+            self.rain_shelter_map(f),
+            self.traced_projectors(),
+            self.traced_points(),
+        )
+        .into_iter()
+        .enumerate()
+        .filter_map(|(k, v)| Some((k, v?)))
         {
             u.spot_vp[k] = vp.to_cols_array_2d();
             u.spot_fade[k / 4][k % 4] = 1.0 - spot.fade.clamp(0.0, 1.0);
@@ -8241,6 +8431,19 @@ impl Backend {
             u.spot_lights[k / 4][k % 4] = spot.light as i32;
             if let Some(p) = u.projectors.get_mut(spot.light as usize) {
                 p.tex[1] = k as u32 + 1;
+            }
+            // a point light's map: where its casters start (`point_shadow`)
+            if let Some(light) = f.lights.get(spot.light as usize).filter(|l| l.projector.is_none()) {
+                let tint = self
+                    .point_tint
+                    .as_ref()
+                    .is_some_and(|t| k.checked_sub(self.projector_maps as usize).is_some_and(|j| j < usize::from(t.1)));
+                if let Some(p) = u.projectors.get_mut(spot.light as usize) {
+                    p.params[0] = crate::projector_shadows::point_near(light.radius, light.source_radius);
+                    // its tint map, from 1 (`point_tint`)
+                    p.params[1] = if tint { (k - self.projector_maps as usize + 1) as f32 } else { 0.0 };
+                }
+                u.light_projectors[2] = u.light_projectors[2].max(if tint { 2 } else { 1 });
             }
         }
         u
@@ -10028,6 +10231,7 @@ impl Backend {
                         anim_clock: self.anim_now,
                         // not the rain prototype's shelter map
                         kind: [0; 4],
+                        light: [0.0; 4],
                     };
                     self.queue.write_buffer(&self.probe_shadow_buffer, 0, bytemuck::bytes_of(&shadow));
                 }
@@ -10081,18 +10285,68 @@ impl Backend {
                 bytemuck::cast_slice(&lists.impostor_sprites[..n_sprites]),
             );
         }
-        // projector shadow maps of the frame (none without shadows)
+        // projector and point light shadow maps of the frame (none without
+        // shadows), and the rain's shelter map; the faces of the point lights have their own views
+        let projector_maps = self.projector_maps as usize;
         let shelter_map = self.rain_shelter_map(f);
-        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] =
-            spot_shadow_views(f, self.shadow_count as usize, shelter_map, self.traced_projectors()).map(|v| v.map(|(_, m)| m));
-        for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
+        let views = spot_shadow_views(
+            f,
+            projector_maps,
+            self.shadow_count as usize,
+            shelter_map,
+            self.traced_projectors(),
+            self.traced_points(),
+        );
+        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] = views.map(|v| v.map(|(_, m)| m));
+        let point_faces = point_shadow_faces(f, &views, projector_maps, mirror.is_some().then_some(mirror_vp));
+        let spot_bins = {
+            use crate::projector_shadows::{SpotBins, SpotMap, point_near};
+            SpotBins::new(&std::array::from_fn(|k| {
+                let (s, vp) = views[k]?;
+                Some(match point_faces[k] {
+                    Some(faces) => {
+                        let l = f.lights.get(s.light as usize)?;
+                        SpotMap::Point {
+                            center: l.position,
+                            radius: l.radius,
+                            near: point_near(l.radius, l.source_radius),
+                            seen: faces.map(|f| f.is_some()),
+                        }
+                    }
+                    None => SpotMap::Projector(vp),
+                })
+            }))
+        };
+        let face_views = point_faces[projector_maps.min(SPOT_SHADOWS)..]
+            .iter()
+            .take(crate::projector_shadows::MAX_POINT_SHADOWS)
+            .flat_map(|faces| faces.unwrap_or([None; crate::projector_shadows::POINT_FACES]));
+        // each point map's light, for its tint map (`fs_shadow_tint`)
+        let tint_on = self.point_tint.is_some();
+        let point_lights: [[f32; 4]; crate::projector_shadows::MAX_POINT_SHADOWS] = std::array::from_fn(|j| {
+            views
+                .get(projector_maps + j)
+                .copied()
+                .flatten()
+                .and_then(|(s, _)| f.lights.get(s.light as usize))
+                .map_or([0.0; 4], |l| [l.position.x, l.position.y, l.position.z, l.radius])
+        });
+        for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).chain(face_views).enumerate() {
             let Some(m) = m else { continue };
+            let face = i.checked_sub(CASCADES + SPOT_SHADOWS);
             let u = ShadowU {
                 vp: m.to_cols_array_2d(),
                 anim_clock: self.anim_now,
-                kind: [u32::from(shelter_map.is_some_and(|(k, _)| i == CASCADES + k)), 0, 0, 0],
+                kind: [
+                    u32::from(shelter_map.is_some_and(|(k, _)| i == CASCADES + k)),
+                    u32::from(tint_on && face.is_some()),
+                    0,
+                    0,
+                ],
+                light: face.map_or([0.0; 4], |face| point_lights[face / crate::projector_shadows::POINT_FACES]),
             };
-            self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
+            let Some(buffer) = self.shadow_buffers.get(i) else { continue };
+            self.queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
         }
         // glow passes only when some visible face glows (RenderGlow)
         // (a cut-out photo's alpha holds its coverage instead, cutout.rs)
@@ -10330,15 +10584,15 @@ impl Backend {
                 }
             }
         }
-        // casters of the CPU lists in each projector's shadow map
+        // casters of the CPU lists in each shadow bin
         let mut spot_lists: [Vec<DrawCmd>; SPOT_SHADOWS] = Default::default();
         let mut spot_terrain_lists: [Vec<DrawCmd>; SPOT_SHADOWS] = Default::default();
-        for (k, vp) in spot_vp.iter().enumerate() {
-            let Some(vp) = vp else { continue };
-            let planes = crate::gpu_cull::view_planes(*vp).map(|p| p.to_array());
-            let inside = |c: &&ShadowCaster| crate::gpu_cull::sphere_in(&planes, c.center, c.radius);
+        for (k, planes) in spot_bins.planes.iter().enumerate() {
+            let Some(planes) = planes else { continue };
+            let inside = |c: &&ShadowCaster| crate::gpu_cull::sphere_in(planes, c.center, c.radius);
             // the shelter map: what stands still, glass too (as the GPU's
-            // shelter bin), not the shadows' casters
+            // shelter bin), not the shadows' casters; it is a projector's
+            // kind of map, so its bin is its own (SpotBins)
             let casters = if shelter_map.is_some_and(|(s, _)| s == k) {
                 &lists.shelter_casters
             } else {
@@ -10460,7 +10714,7 @@ impl Backend {
                 &caster_planes,
                 merge_size,
                 [water_vp, mirror_vp, probe_vp],
-                spot_vp,
+                spot_bins.planes,
                 probe_shadow_now,
                 flags,
             );
@@ -11011,26 +11265,49 @@ impl Backend {
                                     pass_mark(&mut pass, MARK_SHELTER_BEGIN);
                                     shelter_marked = true;
                                 }
-                                let (x, y) = crate::projector_shadows::map_origin(size, k);
-                                pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
-                                pass.set_scissor_rect(x, y, half, half);
-                                pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
-                                let (objects, terrain) = if shelter && k == self.shelter_slot {
-                                    (&self.pipelines.shelter, &self.pipelines.shelter_terrain)
-                                } else {
-                                    (&self.pipelines.shadow, &self.pipelines.shadow_terrain)
-                                };
-                                draw(&mut pass, terrain, rg.spot_terrain[k]);
-                                let (off, count) = rg.spot[k];
-                                if count == 0 && !gpu_on {
-                                    continue;
+                                // a point light draws each face it needs,
+                                // with that face's bin (SpotBins)
+                                let faces = point_faces[k];
+                                for face in 0..faces.map_or(1, |_| crate::projector_shadows::POINT_FACES) {
+                                    let (x, y, side, bind) = if let Some(faces) = faces {
+                                        if faces[face].is_none() {
+                                            continue;
+                                        }
+                                        let (x, y, side) = crate::projector_shadows::point_face_origin(size, k, face);
+                                        let j = k - projector_maps;
+                                        (
+                                            x,
+                                            y,
+                                            side,
+                                            CASCADES + SPOT_SHADOWS + j * crate::projector_shadows::POINT_FACES + face,
+                                        )
+                                    } else {
+                                        let (x, y) = crate::projector_shadows::map_origin(size, k);
+                                        (x, y, half, CASCADES + k)
+                                    };
+                                    pass.set_viewport(x as f32, y as f32, side as f32, side as f32, 0.0, 1.0);
+                                    pass.set_scissor_rect(x, y, side, side);
+                                    pass.set_bind_group(3, &self.shadow_bind_groups[bind], &[]);
+                                    // the shelter map has its own pipelines; a
+                                    // point light's face never takes its slot
+                                    let (objects, terrain) = if shelter && faces.is_none() && k == self.shelter_slot {
+                                        (&self.pipelines.shelter, &self.pipelines.shelter_terrain)
+                                    } else {
+                                        (&self.pipelines.shadow, &self.pipelines.shadow_terrain)
+                                    };
+                                    let bin = spot_bins.faces[k][face];
+                                    draw(&mut pass, terrain, rg.spot_terrain[bin]);
+                                    let (off, count) = rg.spot[bin];
+                                    if count == 0 && !gpu_on {
+                                        continue;
+                                    }
+                                    pass.set_pipeline(objects);
+                                    if count > 0 {
+                                        pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                                        calls.set(calls.get() + 1);
+                                    }
+                                    draw_bin(&mut pass, None, BIN_SPOT + bin, BIN_SPOT + bin);
                                 }
-                                pass.set_pipeline(objects);
-                                if count > 0 {
-                                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
-                                    calls.set(calls.get() + 1);
-                                }
-                                draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
                             }
                             if !shelter_marked {
                                 pass_mark(&mut pass, MARK_SHELTER_BEGIN);
@@ -11048,6 +11325,56 @@ impl Backend {
                     && i + 1 < passes.len()
                 {
                     self.shadow_merge.extract(&mut encoder, i, &merges[i]);
+                }
+            }
+            // the point lights' tint maps (`point_shadow_tint`): the same
+            // casters as each face's map, of which `fs_shadow_tint` keeps the
+            // blended texels that map leaves out; no depth test, the receiver
+            // compares with the map's own nearest blended distance
+            if let Some((tint_view, tint_maps)) = self.point_tint.as_ref().filter(|_| f.shadows) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("point light tint"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: tint_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_pipeline(&self.pipelines.shadow_tint);
+                for (j, k) in (projector_maps..SPOT_SHADOWS).take(usize::from(*tint_maps)).enumerate() {
+                    let Some(faces) = point_faces[k].filter(|_| spot_vp[k].is_some()) else {
+                        continue;
+                    };
+                    for (face, seen) in faces.iter().enumerate() {
+                        if seen.is_none() {
+                            continue;
+                        }
+                        let (x, y, side) = point_tint_origin(size, j, face);
+                        pass.set_viewport(x as f32, y as f32, side as f32, side as f32, 0.0, 1.0);
+                        pass.set_scissor_rect(x, y, side, side);
+                        let bind = CASCADES + SPOT_SHADOWS + j * crate::projector_shadows::POINT_FACES + face;
+                        pass.set_bind_group(3, &self.shadow_bind_groups[bind], &[]);
+                        let bin = spot_bins.faces[k][face];
+                        let (off, count) = rg.spot[bin];
+                        if count > 0 {
+                            pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                            calls.set(calls.get() + 1);
+                        }
+                        draw_bin(&mut pass, None, BIN_SPOT + bin, BIN_SPOT + bin);
+                    }
                 }
             }
         }

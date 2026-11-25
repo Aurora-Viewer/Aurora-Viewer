@@ -16,7 +16,7 @@
 
 use super::{CullView, Scene};
 use crate::world::World;
-use aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS;
+use aurora_render::projector_shadows::{MAX_POINT_SHADOWS, MAX_PROJECTOR_SHADOWS};
 use aurora_render::{PointLight, Projector, Renderer, SpotShadow};
 use glam::Vec3;
 use std::time::Instant;
@@ -32,6 +32,24 @@ const PROJECTED_PIXELS: f32 = 512.0;
 const SHADOW_AREA_RETENTION: f32 = 1.2;
 /// A fast camera still leaves at least a quarter-second for each fade.
 const MAX_SHADOW_FADE_SPEED: f32 = 4.0;
+/// Point lights: a camera turning this fast (radians a second) fades their
+/// shadows as fast as one moving `MAX_SHADOW_FADE_SPEED` metres a second.
+/// Their ranking turns with the camera, so a glance aside can hand a map to
+/// another light, and a one-second fade out then in left the light shining
+/// through walls for up to two seconds after the camera turned back.
+const TURN_FADE_RATE: f32 = 1.0;
+/// Seconds the turn's fade speed holds after the camera stops turning, so
+/// the hand-over a turn starts ends quickly too.
+const TURN_FADE_HOLD: f32 = 0.5;
+/// Point lights: with the camera within this distance of our avatar, their
+/// shadows are ranked from the avatar, not from the camera, so orbiting,
+/// zooming or turning the camera hands no map from light to light.
+const POINT_ANCHOR_NEAR: f32 = 6.0;
+/// Point lights: with the camera this far from our avatar or more, they are
+/// ranked from the camera, as the camera is then looking at another place.
+/// Between the two, the ranking point slides from the avatar to the camera,
+/// so zooming out moves it smoothly instead of re-ranking every light at once.
+const POINT_ANCHOR_FAR: f32 = 10.0;
 
 /// The camera of a frame, for its lights.
 #[derive(Clone, Copy)]
@@ -48,6 +66,12 @@ pub struct LightView {
     /// Projectors cast shadows (the setting, with the sun's shadows on).
     pub projector_shadows: bool,
     pub projector_shadow_limit: u8,
+    /// Point lights that may cast shadows (0: none).
+    pub point_shadow_limit: u8,
+    /// Where our avatar is (render space), which point-light shadows are
+    /// ranked from while the camera stays near it (`point_anchor`); None
+    /// before it is loaded.
+    pub avatar: Option<Vec3>,
     /// Keep lights worn by other residents (Preferences › Graphics).
     pub others_attached_lights: bool,
     /// Lights the frame keeps at most (Preferences › Graphics, "Maximum
@@ -67,6 +91,8 @@ struct Candidate {
     light: PointLight,
     /// A projector's texture, given a table slot once the light is kept.
     texture: Option<Uuid>,
+    /// Worn: a face light sits inside its avatar, which would swallow it.
+    worn: bool,
 }
 
 /// LLPipeline's calc_light_dist (pipeline.cpp): from the camera to the
@@ -105,6 +131,9 @@ pub struct Scratch {
     /// `Scene::light_objects`, copied: the loop borrows the scene.
     objects: Vec<usize>,
     shadow_map_count: usize,
+    point_map_count: usize,
+    /// Point lights in view at the last frame, sorted (`show_entered`).
+    point_in_view: Vec<usize>,
 }
 
 /// Projectors that cast shadows and how far each has faded in:
@@ -117,6 +146,13 @@ pub struct SpotShadowSlots {
     pub lights: Vec<Option<usize>>,
     pub fade: Vec<f32>,
     last_eye: Option<Vec3>,
+    /// Targets that came into view and wait for a map (`show_entered`).
+    entering: Vec<usize>,
+    /// Point lights: the camera's last direction, the fade speed of its
+    /// turn, and how long that speed still holds (`turn_speed`).
+    last_forward: Option<Vec3>,
+    turn_speed: f32,
+    turn_hold: f32,
 }
 
 impl SpotShadowSlots {
@@ -139,12 +175,18 @@ impl SpotShadowSlots {
     /// `targets`: the projectors that weigh most on screen within the budget.
     /// The fade lasts a second, less as the camera moves faster.
     pub fn update(&mut self, targets: &[Option<usize>], eye: Vec3, dt: f32) {
+        self.update_at_least(targets, eye, dt, 1.0);
+    }
+
+    /// `update`, the fade going at least as fast as for a camera moving at
+    /// `min_speed` metres a second.
+    fn update_at_least(&mut self, targets: &[Option<usize>], eye: Vec3, dt: f32, min_speed: f32) {
         let limit = targets.len().min(MAX_PROJECTOR_SHADOWS);
         self.lights.resize(limit, None);
         self.fade.resize(limit, 0.0);
         let speed = self.last_eye.map_or(0.0, |e| e.distance(eye) / dt.max(1e-4));
         self.last_eye = Some(eye);
-        let amount = dt * speed.clamp(1.0, MAX_SHADOW_FADE_SPEED);
+        let amount = dt * speed.clamp(min_speed, MAX_SHADOW_FADE_SPEED);
         // Fade every old owner first, then fill free slots. Assigning while
         // visiting a slot can duplicate an owner which is still fading out.
         for i in 0..limit {
@@ -168,22 +210,126 @@ impl SpotShadowSlots {
         }
     }
 
+    /// Point lights: a target that `entered` the view since the last frame
+    /// casts its full shadow at once, as soon as it has a map. Its light was
+    /// off screen, so there is no unshadowed image to fade from, and a fade
+    /// would let it light through walls as the camera turns to it. One that
+    /// waits for a map keeps that right until it gets one, while it stays a
+    /// target.
+    fn show_entered(&mut self, targets: &[Option<usize>], entered: impl Fn(usize) -> bool) {
+        self.entering.retain(|idx| targets.contains(&Some(*idx)));
+        for idx in targets.iter().flatten().copied() {
+            if entered(idx) && !self.entering.contains(&idx) {
+                self.entering.push(idx);
+            }
+        }
+        for (owner, fade) in self.lights.iter().zip(self.fade.iter_mut()) {
+            if let Some(idx) = *owner
+                && let Some(k) = self.entering.iter().position(|e| *e == idx)
+            {
+                *fade = 1.0;
+                self.entering.swap_remove(k);
+            }
+        }
+    }
+
+    /// Point lights: the fade speed of the camera's turn, as `update_at_least`
+    /// takes it. A turn fades as fast as a moving camera, up to the same
+    /// quarter-second, and keeps that speed for `TURN_FADE_HOLD` after it
+    /// stops; a still camera fades in the usual second.
+    fn turn_speed(&mut self, forward: Vec3, dt: f32) -> f32 {
+        let dt = dt.max(1e-4);
+        let angle = self.last_forward.map_or(0.0, |f| f.angle_between(forward));
+        self.last_forward = Some(forward);
+        let rate = if angle.is_finite() { angle / dt } else { 0.0 };
+        let speed = (rate / TURN_FADE_RATE * MAX_SHADOW_FADE_SPEED).min(MAX_SHADOW_FADE_SPEED);
+        if speed >= self.turn_speed {
+            self.turn_speed = speed;
+            self.turn_hold = TURN_FADE_HOLD;
+        } else if self.turn_hold > 0.0 {
+            self.turn_hold -= dt;
+        } else {
+            self.turn_speed = speed;
+        }
+        self.turn_speed.max(1.0)
+    }
+
     fn clear(&mut self) {
         *self = SpotShadowSlots::default();
     }
 }
 
-/// LLVOVolume::updateSpotLightPriority: apparent size of a sphere of the
-/// light's radius, one radius down its beam and one radius towards the
-/// camera (LLPipeline::calcPixelArea's angle; only the order matters).
-fn spot_priority(position: Vec3, direction: Vec3, radius: f32, view: &LightView) -> f32 {
-    let center = position + direction * radius - view.forward * radius;
-    let mut dist = center.distance(view.eye);
+/// LLPipeline::calcPixelArea's angle of a sphere seen from `from` (only the
+/// order matters).
+fn apparent_size(center: Vec3, radius: f32, from: Vec3) -> f32 {
+    let mut dist = center.distance(from);
     if dist < 16.0 {
         // calcPixelArea ramps the distance down for nearby objects
         dist = (dist / 16.0).powi(2) * 16.0;
     }
     (radius * 3f32.sqrt() / dist.max(1e-4)).atan()
+}
+
+/// LLVOVolume::updateSpotLightPriority: apparent size of a sphere of the
+/// light's radius, one radius down its beam and one radius towards the
+/// camera.
+fn spot_priority(position: Vec3, direction: Vec3, radius: f32, view: &LightView) -> f32 {
+    apparent_size(position + direction * radius - view.forward * radius, radius, view.eye)
+}
+
+/// Where point-light shadows are ranked from: (the point, the direction
+/// its sphere is moved towards, whether that point is near our avatar).
+/// The avatar while the camera is within `POINT_ANCHOR_NEAR` of it, with no
+/// direction, as the camera turns around it; the camera from
+/// `POINT_ANCHOR_FAR` on, as projectors are; in between a point that slides
+/// from one to the other. The camera's own ranking turns with it, and each
+/// turn or orbit around the avatar handed maps from light to light: the
+/// shadows went out, then came back, as the camera moved.
+fn point_anchor(view: &LightView) -> (Vec3, Vec3, bool) {
+    let Some(avatar) = view.avatar.filter(|a| a.is_finite()) else {
+        return (view.eye, view.forward, false);
+    };
+    let t = (avatar.distance(view.eye) - POINT_ANCHOR_NEAR) / (POINT_ANCHOR_FAR - POINT_ANCHOR_NEAR);
+    if t.is_nan() || t >= 1.0 {
+        return (view.eye, view.forward, false);
+    }
+    let t = t.max(0.0);
+    let t = t * t * (3.0 - 2.0 * t);
+    (avatar.lerp(view.eye, t), view.forward * t, true)
+}
+
+/// Whether point-light shadows may be ranked from our avatar
+/// (`point_anchor`): `AURORA_POINT_SHADOW_ANCHOR=0` ranks them from the
+/// camera alone, as before, to compare.
+pub fn point_anchor_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("AURORA_POINT_SHADOW_ANCHOR").as_deref() != Ok("0"))
+}
+
+/// Weight of a point light on the image: its apparent size from `from`, its
+/// sphere moved one radius towards `forward` as `spot_priority` does, times
+/// the square root of its brightness (`targets` squares this, so a light
+/// counts by the light it sends).
+fn point_priority(light: &PointLight, from: Vec3, forward: Vec3) -> f32 {
+    let radius = light.radius / 1.5;
+    apparent_size(light.position - forward * radius, radius, from) * light.color.length().sqrt()
+}
+
+/// The point lights that may take a shadow map, with their weight
+/// (`point_priority` from `point_anchor`): those whose light reaches the
+/// view, and, ranked from near our avatar, those that hold a map (`held`)
+/// even out of it. The map of a light the camera turned away from then
+/// waits for it, and its shadow is whole when the camera turns back; the
+/// faces of a light out of view are not drawn (`point_shadow_faces`), so
+/// the map costs nothing meanwhile.
+fn point_ranking(lights: &[Candidate], view: &LightView, held: &[Option<usize>]) -> Vec<(f32, usize)> {
+    let (from, forward, anchored) = point_anchor(view);
+    lights
+        .iter()
+        .filter(|c| !c.worn && c.light.projector.is_none())
+        .filter(|c| c.in_view || (anchored && held.contains(&Some(c.idx))))
+        .map(|c| (point_priority(&c.light, from, forward), c.idx))
+        .collect()
 }
 
 /// The avatar that wears the light, if any: a parent up its link is one
@@ -219,7 +365,11 @@ impl Scene {
         world: &World,
         renderer: &mut Renderer,
         view: &LightView,
-    ) -> (Vec<PointLight>, [Option<SpotShadow>; MAX_PROJECTOR_SHADOWS]) {
+    ) -> (
+        Vec<PointLight>,
+        [Option<SpotShadow>; MAX_PROJECTOR_SHADOWS],
+        [Option<SpotShadow>; MAX_POINT_SHADOWS],
+    ) {
         let eye = view.eye;
         let now = Instant::now();
         let Scratch {
@@ -227,6 +377,8 @@ impl Scene {
             mut projecting,
             mut objects,
             shadow_map_count,
+            point_map_count,
+            mut point_in_view,
         } = std::mem::take(&mut self.light_scratch);
         // with no local light allowed, none is even looked at (the Legacy
         // Viewer's calcNearbyLights and renderDeferredLighting skip them all
@@ -251,12 +403,19 @@ impl Scene {
                 continue;
             }
             // the wearer is looked up only while a switch drops worn lights
-            // (with both on, every light is kept: no walk up its links)
+            // or point lights cast shadows (with both on and no point
+            // shadows, every light is kept: no walk up its links)
             // (the 360° snapshot's "Hide all avatars" also turns the worn
             // lights off, LLFloater360Capture's sRenderAttachedLights)
             let photo_attached = self.attached_lights && !world.photo_isolation.hide_avatars;
             let filtered = !photo_attached || !view.others_attached_lights;
-            if filtered && !light_visible(worn(world, o), world.agent_id, photo_attached, view.others_attached_lights) {
+            let wearer = if filtered || view.point_shadow_limit > 0 {
+                worn(world, o)
+            } else {
+                None
+            };
+            let is_worn = wearer.is_some();
+            if filtered && !light_visible(wearer, world.agent_id, photo_attached, view.others_attached_lights) {
                 continue;
             }
             let dist = light_dist(center, l.radius, eye);
@@ -297,6 +456,7 @@ impl Scene {
                     source_id: u32::try_from(idx + 1).unwrap_or(0),
                 },
                 texture,
+                worn: is_worn,
             });
         }
         select(&mut lights, view.max_lights);
@@ -348,6 +508,45 @@ impl Scene {
                 fade: slots.fade[k],
             })
         });
+        // the point lights that weigh most around our avatar, or on what the
+        // camera sees when it is away from the avatar (`point_anchor`)
+        if view.point_shadow_limit > 0 {
+            let mut ranked = point_ranking(&lights, view, &self.point_shadows.lights);
+            let limit = usize::from(view.point_shadow_limit).min(MAX_POINT_SHADOWS);
+            let targets = self.point_shadows.targets(&mut ranked, limit);
+            let turn = self.point_shadows.turn_speed(view.forward, view.dt);
+            self.point_shadows.update_at_least(&targets[..limit], eye, view.dt, turn);
+            self.point_shadows
+                .show_entered(&targets[..limit], |idx| point_in_view.binary_search(&idx).is_err());
+            if std::env::var_os("AURORA_PROJECTOR_TRACE").is_some() {
+                log::info!(
+                    "point trace: eye={eye:?} avatar={:?} targets={:?} slots={:?} fade={:?}",
+                    view.avatar,
+                    &targets[..limit],
+                    self.point_shadows.lights,
+                    self.point_shadows.fade
+                );
+            }
+        } else {
+            self.point_shadows.clear();
+        }
+        point_in_view.clear();
+        point_in_view.extend(lights.iter().filter(|c| c.in_view && c.light.projector.is_none()).map(|c| c.idx));
+        point_in_view.sort_unstable();
+        let slots = &self.point_shadows;
+        let point_shadows = std::array::from_fn(|k| {
+            let idx = slots.lights.get(k).copied().flatten()?;
+            // a light just put on keeps no map while its slot fades out
+            let light = lights.iter().position(|c| c.idx == idx && !c.worn && c.light.projector.is_none())?;
+            Some(SpotShadow {
+                light: light as u32,
+                fade: slots.fade[k],
+            })
+        });
+        let point_active = point_shadows.iter().flatten().count();
+        if point_active != point_map_count {
+            log::info!("point light shadow maps active: {point_active}, limit {}", view.point_shadow_limit);
+        }
         let active = shadows.iter().flatten().count();
         if active != shadow_map_count {
             log::info!("projector shadow maps active: {active}, limit {}", view.projector_shadow_limit);
@@ -360,8 +559,10 @@ impl Scene {
             projecting,
             objects,
             shadow_map_count: active,
+            point_map_count: point_active,
+            point_in_view,
         };
-        (list, shadows)
+        (list, shadows, point_shadows)
     }
 
     /// Texture table slot of the texture object `idx` projects, held while
@@ -557,6 +758,8 @@ mod tests {
             dt: 0.016,
             projector_shadows: true,
             projector_shadow_limit: 2,
+            point_shadow_limit: 0,
+            avatar: None,
             others_attached_lights: true,
             max_lights: MAX_LIGHTS,
         }
@@ -577,6 +780,7 @@ mod tests {
                 source_id: 0,
             },
             texture: None,
+            worn: false,
         }
     }
 
@@ -670,5 +874,194 @@ mod tests {
         let far = spot_priority(Vec3::new(40.0, 0.0, 3.0), down, 10.0, &view);
         let small = spot_priority(Vec3::new(10.0, 0.0, 3.0), down, 2.0, &view);
         assert!(near > far && near > small, "{near} {far} {small}");
+    }
+
+    #[test]
+    fn a_point_light_that_enters_the_view_casts_its_full_shadow_at_once() {
+        let mut slots = SpotShadowSlots::default();
+        for _ in 0..70 {
+            slots.update(&[Some(1), None], Vec3::ZERO, 0.016);
+        }
+        // 2 was off screen, 3 in view without a map: 2 shows at once, 3
+        // (given the other map later) fades in
+        let targets = [Some(1), Some(2)];
+        slots.update(&targets, Vec3::ZERO, 0.016);
+        slots.show_entered(&targets, |idx| idx == 2);
+        assert_eq!(slots.lights, [Some(1), Some(2)]);
+        assert_eq!(slots.fade, [1.0, 1.0]);
+        let mut slots = SpotShadowSlots::default();
+        for _ in 0..70 {
+            slots.update(&[Some(1), None], Vec3::ZERO, 0.016);
+        }
+        slots.update(&[Some(1), Some(3)], Vec3::ZERO, 0.016);
+        slots.show_entered(&[Some(1), Some(3)], |idx| idx == 2);
+        assert_eq!(slots.fade, [1.0, 0.0]);
+        // a light that left the view is no target: its fade-out goes on
+        // until it comes back, then it is whole again
+        slots.update(&[Some(3), None], Vec3::ZERO, 0.25);
+        slots.show_entered(&[Some(3), None], |idx| idx == 1);
+        assert_eq!(slots.fade, [0.75, 0.25]);
+        slots.update(&[Some(3), Some(1)], Vec3::ZERO, 0.016);
+        slots.show_entered(&[Some(3), Some(1)], |idx| idx == 1);
+        assert_eq!(slots.lights, [Some(1), Some(3)]);
+        assert_eq!(slots.fade[0], 1.0);
+    }
+
+    #[test]
+    fn a_light_that_enters_the_view_while_the_maps_are_taken_shows_at_once_when_it_gets_one() {
+        let mut slots = SpotShadowSlots::default();
+        for _ in 0..70 {
+            slots.update(&[Some(1)], Vec3::ZERO, 0.016);
+        }
+        // 2 comes into view and outranks 1, whose map fades out first
+        let targets = [Some(2)];
+        slots.update(&targets, Vec3::ZERO, 0.5);
+        slots.show_entered(&targets, |idx| idx == 2);
+        assert_eq!(slots.lights, [Some(1)]);
+        slots.update(&targets, Vec3::ZERO, 0.5);
+        slots.show_entered(&targets, |_| false);
+        assert_eq!(slots.lights, [Some(2)]);
+        assert_eq!(slots.fade, [1.0]);
+        // one that stops being a target while it waits loses that right
+        let mut slots = SpotShadowSlots::default();
+        for _ in 0..70 {
+            slots.update(&[Some(1)], Vec3::ZERO, 0.016);
+        }
+        slots.update(&[Some(2)], Vec3::ZERO, 0.5);
+        slots.show_entered(&[Some(2)], |idx| idx == 2);
+        slots.update(&[Some(3)], Vec3::ZERO, 0.5);
+        slots.show_entered(&[Some(3)], |_| false);
+        assert_eq!(slots.lights, [Some(3)]);
+        slots.update(&[Some(2)], Vec3::ZERO, 1.0);
+        slots.update(&[Some(2)], Vec3::ZERO, 0.016);
+        slots.show_entered(&[Some(2)], |_| false);
+        assert_eq!(slots.lights, [Some(2)]);
+        assert!(slots.fade[0] < 0.1, "{:?}", slots.fade);
+    }
+
+    /// The owners a point light's map has, in turn, as the camera circles
+    /// our avatar twice at `radius` metres, among three lamps around it;
+    /// ranked from the camera alone without `avatar`.
+    fn point_map_owners_around(avatar: bool, radius: f32) -> Vec<Option<usize>> {
+        let at = Vec3::new(128.0, 128.0, 25.0);
+        let lamps = [
+            (1, at + Vec3::new(3.0, 0.0, 0.5)),
+            (2, at + Vec3::new(-2.5, 2.0, 0.5)),
+            (3, at + Vec3::new(0.5, -3.5, 0.5)),
+        ];
+        let mut slots = SpotShadowSlots::default();
+        let mut owners = Vec::new();
+        for step in 0..=720u16 {
+            let angle = f32::from(step).to_radians();
+            let eye = at + Vec3::new(angle.cos() * radius, angle.sin() * radius, 1.5);
+            let mut view = camera(eye, (at - eye).normalize());
+            view.avatar = avatar.then_some(at);
+            let lights: Vec<_> = lamps.iter().map(|&(idx, p)| candidate(&view, idx, p, 3.0)).collect();
+            let mut ranked = point_ranking(&lights, &view, &slots.lights);
+            let targets = slots.targets(&mut ranked, 1);
+            slots.update(&targets[..1], eye, 1.0 / 60.0);
+            if owners.last() != Some(&slots.lights[0]) {
+                owners.push(slots.lights[0]);
+            }
+        }
+        owners
+    }
+
+    #[test]
+    fn the_camera_circling_our_avatar_hands_no_point_light_map_over() {
+        assert_eq!(point_map_owners_around(true, 4.0), [Some(1)]);
+        // ranked from the camera, as before, the map follows the nearest
+        // lamp around the circle
+        assert!(point_map_owners_around(false, 4.0).len() > 2);
+        // a camera far from the avatar looks at another place: ranked from it
+        assert!(point_map_owners_around(true, 12.0).len() > 2);
+    }
+
+    #[test]
+    fn point_shadows_are_ranked_from_the_avatar_then_from_the_camera_as_it_moves_away() {
+        let avatar = Vec3::new(128.0, 128.0, 25.0);
+        let at = |d: f32| {
+            let mut view = camera(avatar + Vec3::new(-d, 0.0, 0.0), Vec3::X);
+            view.avatar = Some(avatar);
+            point_anchor(&view)
+        };
+        assert_eq!(at(3.0), (avatar, Vec3::ZERO, true));
+        assert_eq!(at(POINT_ANCHOR_NEAR), (avatar, Vec3::ZERO, true));
+        let far = at(POINT_ANCHOR_FAR);
+        assert_eq!(far, (avatar - Vec3::new(POINT_ANCHOR_FAR, 0.0, 0.0), Vec3::X, false));
+        // no jump between the two: the ranking point slides with the camera
+        let mut last = at(POINT_ANCHOR_NEAR).0;
+        let mut d = POINT_ANCHOR_NEAR;
+        while d < POINT_ANCHOR_FAR + 0.5 {
+            d += 0.01;
+            let (from, forward, _) = at(d);
+            assert!(from.distance(last) < 0.05, "{d}: {from} after {last}");
+            assert!(forward.length() <= 1.0 + 1e-6);
+            last = from;
+        }
+        // no avatar yet, or a broken position: the camera
+        let mut view = camera(avatar, Vec3::X);
+        assert_eq!(point_anchor(&view), (avatar, Vec3::X, false));
+        view.avatar = Some(Vec3::NAN);
+        assert_eq!(point_anchor(&view), (avatar, Vec3::X, false));
+    }
+
+    #[test]
+    fn near_our_avatar_a_point_light_out_of_view_keeps_its_map_but_takes_none() {
+        let avatar = Vec3::new(128.0, 128.0, 25.0);
+        // the camera looks away from a lamp 10 m behind it
+        let mut view = camera(avatar - Vec3::new(3.0, 0.0, 0.0), Vec3::X);
+        let behind = candidate(&view, 7, avatar - Vec3::new(13.0, 0.0, 0.0), 2.0);
+        assert!(!behind.in_view);
+        view.avatar = Some(avatar);
+        assert!(point_ranking(&[behind], &view, &[None]).is_empty());
+        assert_eq!(point_ranking(&[behind], &view, &[Some(7)]).len(), 1);
+        // ranked from the camera it gives its map up, as before
+        view.avatar = None;
+        assert!(point_ranking(&[behind], &view, &[Some(7)]).is_empty());
+    }
+
+    /// Frames a point light's map takes to go from light 1 to light 2, the
+    /// camera turning by `turn(frame)` radians at each frame.
+    fn point_hand_over_frames(turn: impl Fn(u32) -> f32) -> u32 {
+        let mut slots = SpotShadowSlots::default();
+        let dt = 1.0 / 60.0;
+        let mut yaw = 0.0f32;
+        let mut step = |slots: &mut SpotShadowSlots, targets: &[Option<usize>], frame: u32| {
+            yaw += turn(frame);
+            let speed = slots.turn_speed(Vec3::new(yaw.cos(), yaw.sin(), 0.0), dt);
+            slots.update_at_least(targets, Vec3::ZERO, dt, speed);
+        };
+        for frame in 0..100 {
+            step(&mut slots, &[Some(1)], frame);
+        }
+        assert_eq!(slots.fade, [1.0]);
+        let mut frames = 0;
+        while slots.lights != [Some(2)] || slots.fade[0] < 1.0 {
+            step(&mut slots, &[Some(2)], 100 + frames);
+            frames += 1;
+            assert!(frames < 200);
+        }
+        frames
+    }
+
+    #[test]
+    fn a_camera_turn_hands_a_point_light_map_over_in_half_a_second() {
+        // still: a second out, a second in
+        let still = point_hand_over_frames(|_| 0.0);
+        assert!((119..=122).contains(&still), "{still}");
+        // a flick at the frame the ranking changes, then still: the speed
+        // of the turn holds long enough for the whole hand-over
+        let flick = point_hand_over_frames(|frame| if frame == 100 { 1.5 } else { 0.0 });
+        assert!((29..=32).contains(&flick), "{flick}");
+        // a steady pan of 60 degrees a second
+        let pan = point_hand_over_frames(|_| 1.0 / 60.0);
+        assert!((29..=32).contains(&pan), "{pan}");
+        // a slow drift of 6 degrees a second barely counts
+        let drift = point_hand_over_frames(|_| 0.1 / 60.0);
+        assert!(drift > 100, "{drift}");
+        // the speed of a flick before the change has run out by then
+        let early = point_hand_over_frames(|frame| if frame == 40 { 1.5 } else { 0.0 });
+        assert_eq!(early, still);
     }
 }

@@ -100,7 +100,8 @@ struct Frame {
     light_rows: array<vec4<u32>, 16>,
     light_slices: array<vec4<u32>, 16>,
     // projector of light i, for the lights whose bit is set in
-    // `light_projectors` (x: lights 0..31, y: lights 32..63)
+    // `light_projectors` (x: lights 0..31, y: lights 32..63); its z is not 0
+    // when a point light has a shadow map
     projectors: array<ProjectorLight, 64>,
     light_projectors: vec4<u32>,
     // shadow maps of the projectors within the configured budget: world to the
@@ -289,6 +290,8 @@ const PALETTE_STRIDE: u32 = 261u;
 // The traced probes' sight of the sky at half resolution (rt_gi.wgsl
 // `cs_gi_sky`): in g how open each place is (`screen_open`).
 @group(0) @binding(32) var gi_open_tex: texture_2d<f32>;
+// the point lights' tint maps (point_tint)
+@group(0) @binding(33) var point_tint_tex: texture_2d<f32>;
 
 // Reflection probes (probes.rs, reflectionProbeF.glsl).
 // The probes of the frame's list at most (probes::MAX_PROBES).
@@ -2244,7 +2247,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
                 let f = f_schlick(f0, vh);
                 let spec = d_ggx(nh, a) * v_smith(nv, lnl, a) * f;
                 let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-                local += (kd + spec) * lt.color_falloff.rgb * lnl * atten;
+                local += (kd + spec) * lt.color_falloff.rgb * lnl * atten * point_shadow(i, world_pos, n);
             }
         }
     }
@@ -2688,14 +2691,8 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     // a map is a quarter of the atlas wide: its texel in map coordinates
     let texel = 4.0 / f32(textureDimensions(shadow_map).x);
     let dims = vec2<f32>(textureDimensions(shadow_map));
-    let size = dims.x * 0.5;
-    let half = size * 0.5;
-    var origin: vec2<f32>;
-    if (k < 4u) {
-        origin = vec2<f32>(size + f32(k % 2u) * half, size + f32(k / 2u) * half);
-    } else {
-        origin = vec2<f32>(f32((k - 4u) % 4u) * half, 2.0 * size + f32((k - 4u) / 4u) * half);
-    }
+    let half = dims.x * 0.25;
+    let origin = spot_map_origin(k);
     var s = -1.0;
     if (SOFT_PATH && frame.soft.z > 0.0) {
         s = projector_soft(k, world_pos + n * 0.04, n, uv, ndc.z, lp.w, origin, half, dims, texel);
@@ -2714,6 +2711,137 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     // the map fades in and out as its projector takes or loses it
     s = clamp(s + frame.spot_fade[k / 4u][k % 4u], 0.0, 1.0);
     return mix(1.0, s, clamp((far - depth) / (far * 0.1), 0.0, 1.0));
+}
+
+// Where shadow map `k` of the projectors and point lights lies in the atlas,
+// in texels (projector_shadows.rs map_origin).
+fn spot_map_origin(k: u32) -> vec2<f32> {
+    let size = f32(textureDimensions(shadow_map).x) * 0.5;
+    let half = size * 0.5;
+    if (k < 4u) {
+        return vec2<f32>(size + f32(k % 2u) * half, size + f32(k / 2u) * half);
+    }
+    return vec2<f32>(f32((k - 4u) % 4u) * half, 2.0 * size + f32((k - 4u) / 4u) * half);
+}
+
+// Mirror of projector_shadows.rs.
+const POINT_GUARD: f32 = 1.04;
+
+// Light left by the shadow map of point light `i` (1: lit, or no map). An
+// Aurora addition, off by default: multiPointLightF has no shadow term, the
+// Legacy Viewer's point lights cross walls. `tex.y` of the projector table
+// holds the map of a point light too and `params.x` where its casters start
+// (that entry is otherwise unused: the light's bit in `light_projectors`
+// stays off). The map is six faces of a
+// cube around the light; projector_shadows.rs point_face_matrix is this same
+// projection, and its tests compare the two. With the tint maps
+// (`light_projectors.z` 2), the light left is coloured by the blended glass
+// it crossed (point_tint).
+fn point_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    // checked first and alone: with the setting off, this is all a lit
+    // fragment pays
+    if (frame.light_projectors.z == 0u) {
+        return vec3<f32>(1.0);
+    }
+    let slot = frame.projectors[i].tex.y;
+    if (slot == 0u || frame.params.z < 0.5) {
+        return vec3<f32>(1.0);
+    }
+    let k = slot - 1u;
+    let far = frame.cascade_splits.z;
+    let depth = distance(world_pos, frame.camera_pos.xyz);
+    if (depth >= far) {
+        return vec3<f32>(1.0);
+    }
+    let lt = frame.lights[i];
+    let radius = lt.pos_radius.w;
+    let v = world_pos + n * 0.04 - lt.pos_radius.xyz;
+    let a = abs(v);
+    var s: f32;
+    var across: vec2<f32>;
+    var axis: u32;
+    if (a.x >= a.y && a.x >= a.z) {
+        axis = 0u;
+        s = v.x;
+        across = v.yz;
+    } else if (a.y >= a.z) {
+        axis = 1u;
+        s = v.y;
+        across = v.zx;
+    } else {
+        axis = 2u;
+        s = v.z;
+        across = v.xy;
+    }
+    if (s > 0.0) {
+        across.y = -across.y;
+    }
+    let d = abs(s);
+    let near = frame.projectors[i].params.x;
+    if (d <= near) {
+        return vec3<f32>(1.0);
+    }
+    let face = axis * 2u + select(0u, 1u, s < 0.0);
+    let ndc = across / (d * POINT_GUARD);
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    // 2 cm towards the light, as the distance: depth is not linear here
+    let compare = radius / (radius - near) * (1.0 - near / max(d - 0.02, near));
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    let side = floor(dims.x * 0.25 / 3.0);
+    let corner = spot_map_origin(k) + vec2<f32>(f32(face % 3u), f32(face / 3u)) * side;
+    let texel = 1.0 / side;
+    var sum = 0.0;
+    // pcfSpotShadow's footprint, in pairs one texel apart across: blended
+    // glass casts its half shadow as alternating columns (fs_shadow), and
+    // the filtered compare of two taps one column apart always sums to one
+    // lit tap, so the glass shades by half instead of striping the light as
+    // the five taps of a projector's map did on these small faces
+    let taps = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 0.75), vec2<f32>(1.0, 0.75),
+        vec2<f32>(-0.5, 0.0), vec2<f32>(0.5, 0.0),
+        vec2<f32>(-1.0, -0.75), vec2<f32>(0.0, -0.75));
+    for (var t = 0; t < 6; t++) {
+        let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (corner + at * side) / dims, compare);
+    }
+    var light = vec3<f32>(sum / 6.0);
+    let tint_map = u32(frame.projectors[i].params.y);
+    if (frame.light_projectors.z == 2u && tint_map > 0u) {
+        light *= point_tint(tint_map - 1u, face, uv, side, length(v) / radius, radius);
+    }
+    // the map fades in and out as its light takes or loses it
+    light = clamp(light + frame.spot_fade[k / 4u][k % 4u], vec3<f32>(0.0), vec3<f32>(1.0));
+    return mix(vec3<f32>(1.0), light, clamp((far - depth) / (far * 0.1), 0.0, 1.0));
+}
+
+// What the blended glass in front of a point lets through of a point
+// light's light (fs_shadow_tint): its tint map `j`, laid out as its shadow
+// map, four maps to a row (renderer.rs point_tint_origin). The four texels
+// around the point, each of them only where its nearest pane lies before the
+// point (the pane does not tint itself nor what stands before it), weighted
+// as a bilinear filter: a pane's edge seen at a grazing angle, against its
+// frame, blends instead of stepping texel by texel. `dist`:
+// the point's distance over the radius, as the map holds it. An Aurora
+// addition: the Legacy Viewer has no coloured shadows.
+fn point_tint(j: u32, face: u32, uv: vec2<f32>, side: f32, dist: f32, radius: f32) -> vec3<f32> {
+    let corner = vec2<f32>(f32((j % 4u) * 3u + face % 3u), f32((j / 4u) * 2u + face / 3u)) * side;
+    let at = corner + clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)) * side - vec2<f32>(0.5);
+    let base = vec2<i32>(floor(at));
+    let f = fract(at);
+    let lo = vec2<i32>(corner);
+    let hi = lo + vec2<i32>(i32(side) - 1);
+    // the map's distances are half floats (steps of 1/2048 to 1/1024 below
+    // the radius); 3 cm more for the receiver's own offset along its normal
+    let bias = 2.0 / 1024.0 + 0.03 / max(radius, 0.001);
+    var sum = vec3<f32>(0.0);
+    for (var t = 0; t < 4; t++) {
+        let step = vec2<i32>(t % 2, t / 2);
+        let texel = clamp(base + step, lo, hi);
+        let pane = textureLoad(point_tint_tex, texel, 0);
+        let w = mix(1.0 - f, f, vec2<f32>(step));
+        sum += select(vec3<f32>(1.0), pane.rgb, dist > pane.a + bias) * (w.x * w.y);
+    }
+    return sum;
 }
 
 // What a local light sends to a point.
@@ -3049,7 +3177,7 @@ fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: v
         if (dist < radius) {
             let nl = dot(n, to_l / max(dist, 1e-4));
             if (nl > 0.0) {
-                local += lt.color_falloff.rgb / 3.25 * nl * ll_light_atten(dist / radius, lt.color_falloff.w) * base;
+                local += point_shadow(i, world_pos, n) * lt.color_falloff.rgb / 3.25 * nl * ll_light_atten(dist / radius, lt.color_falloff.w) * base;
             }
         }
     }
@@ -3146,7 +3274,7 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
                 let f = f_schlick(f0, max(dot(v, h), 0.0));
                 let spec = d_ggx(max(dot(n, h), 0.0), ra) * v_smith(nv, lnl, ra) * f;
                 let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-                let intensity = ll_light_atten(dist / radius, lt.color_falloff.w) * lt.color_falloff.rgb;
+                let intensity = ll_light_atten(dist / radius, lt.color_falloff.w) * lt.color_falloff.rgb * point_shadow(i, world_pos, n);
                 col += intensity * clamp(lnl * (diff + spec), vec3<f32>(0.0), vec3<f32>(10.0));
             }
         }
