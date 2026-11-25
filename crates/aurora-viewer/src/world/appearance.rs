@@ -308,11 +308,12 @@ pub fn wear_entry(inv: &Inventory, entry: Uuid, original: Uuid) -> Uuid {
 
 /// The Aurora bridge, which never belongs to an outfit: the Legacy Viewer
 /// skips its own when it links an outfit's items (`FSLSLBridge::
-/// currentFullName` in LLAppearanceMgr's link loops) and leaves it out of the
-/// outfit's "changed" check (FIRE-3018, LLAppearanceMgr::updateIsDirty),
-/// indra/newview/llappearancemgr.cpp. Saved into an outfit, another viewer
-/// would wear it with that outfit, next to its own bridge (#4865).
-fn is_bridge(inv: &Inventory, target: Uuid) -> bool {
+/// currentFullName` in LLAppearanceMgr's link loops) and leaves the worn one
+/// out of the outfit's "changed" check (FIRE-3018, LLAppearanceMgr::
+/// updateIsDirty), indra/newview/llappearancemgr.cpp. Saved into an outfit,
+/// another viewer would wear it with that outfit, next to its own bridge
+/// (#4865); an outfit backup leaves it out too (`outfit_backup.rs`).
+pub(crate) fn is_bridge(inv: &Inventory, target: Uuid) -> bool {
     inv.items
         .get(&target)
         .is_some_and(|it| it.asset_type == 6 && it.name == super::bridge::NAME)
@@ -326,8 +327,10 @@ pub fn dirty(inv: &Inventory) -> bool {
         let mut keys: Vec<_> = folder_links(inv, id)
             .into_iter()
             .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13 | 21)))
-            // the worn bridge is no change to the outfit
-            .filter(|l| !is_bridge(inv, l.target))
+            // the worn bridge is no change to the outfit; one an older save
+            // put into the outfit is (only the COF's is dropped, as
+            // updateIsDirty does), so that Save takes it out
+            .filter(|l| id != cof || !is_bridge(inv, l.target))
             // read as the Legacy Viewer holds them (LLInventoryItem::fromLLSD):
             // an outfit saved before the links went out in plain ASCII is
             // not a change
@@ -776,7 +779,8 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 version: 1,
                 ..Default::default()
             });
-            change.links = links.clone();
+            // (a backup made before #4865 may hold the bridge)
+            change.links = links.iter().filter(|l| !is_bridge(inv, l.target)).cloned().collect();
             links.push(OutfitLink {
                 target: id,
                 name,
@@ -2955,6 +2959,42 @@ mod tests {
         inv.items.retain(|_, it| !(it.parent == cof_id && it.asset_id == bridge));
         let (change, _) = plan(&inv, Action::Save(Some("Worn list".into())), &worn).expect("save from worn");
         assert!(!change.links.iter().any(|l| l.target == bridge));
+        let (_, cof_links) = change.cof.as_ref().expect("COF rewritten");
+        assert!(cof_links.iter().any(|l| l.target == bridge), "the worn bridge gets its COF link");
+    }
+
+    /// #4865, review: an outfit an older save put the bridge into is a
+    /// change, so that Save can take it out (updateIsDirty drops only the
+    /// COF's bridge), and Save does.
+    #[test]
+    fn an_outfit_holding_the_bridge_can_be_saved_clean() {
+        let mut inv = fixture();
+        let (cof_id, base_id) = (cof(&inv).expect("COF"), base(&inv).expect("worn outfit"));
+        let (change, _) = plan(&inv, Action::Save(None), &HashMap::new()).expect("save");
+        demo_mutate(&mut inv, Uuid::from_u128(1), &change).expect("mutation");
+        assert!(!dirty(&inv));
+        let object = inv
+            .items
+            .values()
+            .find(|it| it.parent == cof_id && it.asset_type == 24 && inv.items.get(&it.asset_id).is_some_and(|o| o.asset_type == 6))
+            .expect("a worn object's COF link")
+            .clone();
+        let bridge = Uuid::from_u128(0xB41D);
+        let mut item = inv.items[&object.asset_id].clone();
+        item.id = bridge;
+        item.name = crate::world::bridge::NAME.into();
+        inv.items.insert(bridge, item);
+        for (n, folder) in [(0xB41E, cof_id), (0xB41F, base_id)] {
+            let mut link = object.clone();
+            link.id = Uuid::from_u128(n);
+            link.parent = folder;
+            link.asset_id = bridge;
+            inv.folders.get_mut(&folder).expect("folder").items.push(link.id);
+            inv.items.insert(link.id, link);
+        }
+        assert!(dirty(&inv), "the saved bridge is a change: Save is offered");
+        let (change, _) = plan(&inv, Action::Save(None), &HashMap::new()).expect("save");
+        assert!(!change.links.iter().any(|l| l.target == bridge), "and Save takes it out");
     }
     #[test]
     fn body_parts_cannot_be_removed_and_unloaded_outfits_cannot_be_worn() {

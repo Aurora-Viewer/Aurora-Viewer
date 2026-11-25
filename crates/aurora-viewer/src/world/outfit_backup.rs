@@ -60,7 +60,8 @@ impl Backup {
             }
         }
         let mut items = Vec::new();
-        for link in links.into_iter().filter(|l| !l.folder) {
+        // the worn bridge is never part of an outfit (#4865)
+        for link in links.into_iter().filter(|l| !l.folder && !appearance::is_bridge(inv, l.target)) {
             let original = inv.items.get(&link.target);
             // Retain known broken links too, so a subsequent import reports
             // them rather than silently pretending the backup is complete.
