@@ -24,7 +24,7 @@ pub(super) fn start(
     start_listener(listener, secret, supported, rest_axes, ctx, pool)
 }
 
-/// The thread returned holds `pool`, and through it the GPU device: the
+/// The thread returned shares `pool`, and through it the GPU device: the
 /// viewer waits for it at exit ([`Live::close_for_exit`]).
 pub(super) fn start_listener(
     listener: TcpListener,
@@ -35,13 +35,16 @@ pub(super) fn start_listener(
     pool: Option<Arc<aurora_render::StagingPool>>,
 ) -> io::Result<(Arc<Shared>, JoinHandle<()>)> {
     listener.set_nonblocking(true)?;
-    let shared = Arc::new(Shared::default());
+    let shared = Arc::new(Shared {
+        staging: Mutex::new(staging::Staging::new(pool)),
+        ..Default::default()
+    });
     let worker = shared.clone();
     let thread = std::thread::Builder::new().name("blender-live".into()).spawn(move || {
         while !worker.stop.load(Ordering::Acquire) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    if let Err(error) = serve(&mut stream, &secret, &worker, &supported, &rest_axes, &ctx, pool.as_deref())
+                    if let Err(error) = serve(&mut stream, &secret, &worker, &supported, &rest_axes, &ctx)
                         && !worker.stop.load(Ordering::Acquire)
                         && !matches!(
                             error.kind(),
@@ -50,6 +53,7 @@ pub(super) fn start_listener(
                     {
                         worker.status.lock().error = Some(error.to_string());
                     }
+                    worker.staging.lock().clear_images();
                     worker.status.lock().connected = false;
                     worker.status.lock().shape_capable = false;
                     worker.status.lock().shape_apply_capable = false;
@@ -99,7 +103,6 @@ fn serve(
     supported: &HashSet<String>,
     rest_axes: &std::collections::HashMap<String, [f32; 16]>,
     ctx: &egui::Context,
-    pool: Option<&aurora_render::StagingPool>,
 ) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_millis(150)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -138,7 +141,6 @@ fn serve(
     }
     ctx.request_repaint();
     let mut previous = None;
-    let mut images = std::collections::HashMap::new();
     while !shared.stop.load(Ordering::Acquire) {
         let mut len = [0; 4];
         // A zero-length heartbeat lets a quiet Blender retain the connection.
@@ -195,18 +197,10 @@ fn serve(
             ctx.request_repaint();
             continue;
         }
-        let result = protocol::prepare_staged(&bytes, supported, pool, &images).and_then(|prepared| {
-            if previous.is_some_and(|old| prepared.revision <= old) {
-                return Err(aurora_i18n::tr!("blender-live-invalid-revision").into());
-            }
-            Ok(prepared)
-        });
+        let result = receive(&bytes, shared, supported, previous);
         let reply = match result {
-            Ok(prepared) => {
-                let revision = prepared.revision;
+            Ok(revision) => {
                 previous = Some(revision);
-                images = prepared.images.iter().map(|image| (image.id, image.clone())).collect();
-                *shared.latest.lock() = Some(prepared);
                 let mut status = shared.status.lock();
                 status.received += 1;
                 status.error = None;
@@ -227,6 +221,26 @@ fn serve(
         ctx.request_repaint();
     }
     Ok(())
+}
+
+/// Prepares a snapshot, its images staged on the GPU, and leaves it to the
+/// main thread: its revision. The sender is asked to send it again while the
+/// GPU device is being replaced, or when it was lost during the preparation
+/// (the images would belong to a pool nothing copies from any more).
+fn receive(bytes: &[u8], shared: &Shared, supported: &HashSet<String>, previous: Option<u64>) -> Result<u64, String> {
+    let busy = || protocol::STAGING_BUSY.to_owned();
+    let turn = shared.staging.lock().begin().ok_or_else(busy)?;
+    let prepared = protocol::prepare_staged(bytes, supported, turn.pool.as_deref(), &turn.images)?;
+    let revision = prepared.revision;
+    if previous.is_some_and(|old| revision <= old) {
+        return Err(aurora_i18n::tr!("blender-live-invalid-revision").into());
+    }
+    let mut staging = shared.staging.lock();
+    if !staging.finish(&turn, &prepared) {
+        return Err(busy());
+    }
+    *shared.latest.lock() = Some(prepared);
+    Ok(revision)
 }
 
 fn control(bytes: &[u8], shared: &Shared) -> bool {

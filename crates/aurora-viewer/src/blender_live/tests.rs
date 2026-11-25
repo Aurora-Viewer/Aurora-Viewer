@@ -1310,6 +1310,57 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     drop(owner);
 }
 
+/// While the GPU device is replaced the add-on is asked to send again, and the
+/// same revision is taken once the new device is there (without a GPU here:
+/// the images are not staged).
+#[test]
+fn blender_live_transport_asks_again_while_the_gpu_device_is_replaced() {
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
+    let port = listener.local_addr().expect("address").port();
+    let (shared, thread) = transport::start_listener(
+        listener,
+        TEST_KEY.to_owned(),
+        supported(),
+        Default::default(),
+        egui::Context::default(),
+        None,
+    )
+    .expect("server");
+    let mut live = Live {
+        server: Some(Server {
+            shared: shared.clone(),
+            thread: Some(thread),
+            _token: None,
+        }),
+        ..Default::default()
+    };
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+    stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+    stream.write_all(&greeting()).expect("magic");
+    let mut reader = BufReader::new(stream.try_clone().expect("reader"));
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("hello");
+    let mut send = |revision: u64| -> serde_json::Value {
+        let mut value = triangle();
+        value["revision"] = revision.into();
+        let bytes = serde_json::to_vec(&value).expect("snapshot");
+        stream.write_all(&(bytes.len() as u32).to_le_bytes()).expect("length");
+        stream.write_all(&bytes).expect("data");
+        line.clear();
+        reader.read_line(&mut line).expect("reply");
+        serde_json::from_str(&line).expect("JSON reply")
+    };
+    assert_eq!(send(1)["ok"], true);
+    live.forget_gpu();
+    let refused = send(2);
+    assert_eq!(refused["ok"], false);
+    assert_eq!(refused["retry"], true);
+    assert_eq!(shared.latest.lock().as_ref().expect("kept").revision, 1);
+    live.gpu_reset(None);
+    assert_eq!(send(2)["ok"], true);
+    assert_eq!(live.take_latest().expect("latest").revision, 2);
+}
+
 /// The listener thread shares the GPU's staging memory: the viewer's exit
 /// waits for it, an add-on connected or not, and whatever the thread held is
 /// released when the wait is over.

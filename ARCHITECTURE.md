@@ -1515,7 +1515,9 @@ add-selection and remove operators. Enabled object pointers drive capture and
 dependency watching; membership polling detects Undo/Redo and scene switches.
 Disconnecting stops the worker while leaving entries and pause flags intact.
 `blender_live/appearance.rs` validates image dimensions, bytes and PBR fields,
-builds mips and stages uploads on the socket worker. Image UUIDs derive from
+builds mips and stages uploads on the socket worker. `blender_live/staging.rs`
+holds the pool it stages in and the last snapshot's images: one GPU device's,
+replaced together at a GPU recovery. Image UUIDs derive from
 pixel content. Preview geometry owns material/image references: retirement
 waits for the last geometry reference before freeing materials and GPU slots.
 
