@@ -102,12 +102,14 @@ mod tests {
                 color: [1.0, 0.0, 0.0, 0.5],
                 ..Default::default()
             },
+            ..Default::default()
         };
         let prim = SourcePrim {
             position: Vec3::new(100.0, 100.0, 20.0),
             rotation: Quat::IDENTITY,
             scale: Vec3::new(2.0, 2.0, 2.0),
             faces: vec![face],
+            skin: None,
         };
         build(
             &[

@@ -19,6 +19,11 @@
 //! - A texture is written only with an inventory item that lets it be
 //!   exported, or (Second Life) our own upload of which we hold an item:
 //!   the file takes that item's name. The blank texture is never written.
+//! - A face's PBR material (glTF only; Aurora's own, the Legacy Viewer
+//!   exports none) is written only with an inventory item that lets it be
+//!   exported, by the same item rule as a texture (a material has no
+//!   upload comment); each of its textures still needs its own right. The
+//!   blank material, the viewer's built-in default, needs none.
 
 use crate::world::inventory::Inventory;
 use crate::world::inventory::actions::{ExportGrid, asset_export_allowed};
@@ -150,6 +155,24 @@ pub fn texture(cx: &Context, id: Uuid, uploader: Option<Uuid>) -> Option<String>
     let comment = cx.grid == ExportGrid::SecondLife && uploader == Some(cx.agent);
     let allowed = comment || items.iter().any(|i| asset_export_allowed(i, cx.agent, cx.grid));
     allowed.then(|| file_stem(&first.name))
+}
+
+/// The name a face's PBR material is written under, when it may be: the
+/// first item holding it (by name). The blank material (BLANK_MATERIAL_ASSET_ID,
+/// the default glTF look, nobody's work) needs no item.
+pub fn material(cx: &Context, id: Uuid) -> Option<String> {
+    if id.is_nil() || cx.agent.is_nil() {
+        return None;
+    }
+    if id == crate::scene::meshes::BLANK_MATERIAL {
+        return Some("Blank material".to_owned());
+    }
+    let items = cx.items_of(id);
+    let first = items.first()?;
+    items
+        .iter()
+        .any(|i| asset_export_allowed(i, cx.agent, cx.grid))
+        .then(|| first.name.trim().to_owned())
 }
 
 /// LLDir::getScrubbedFileName, then spaces to underscores: a name every
@@ -472,6 +495,94 @@ mod tests {
                 assert_eq!(name(SL).as_deref(), Some("My_wood"));
             }
         }
+    }
+
+    #[test]
+    fn a_pbr_material_needs_an_item_that_allows_its_export() {
+        let mat = Uuid::from_u128(0x3A7);
+        // (what, item, Second Life, OpenSim without export, with export)
+        let cases = [
+            (
+                "its own, full permissions",
+                item(1, "Steel", mat, ME, ME, FULL | EXPORT, 0, false),
+                true,
+                true,
+                true,
+            ),
+            (
+                "its own, no copy",
+                item(1, "Steel", mat, ME, ME, MODIFY | TRANSFER, 0, false),
+                true,
+                true,
+                false,
+            ),
+            (
+                "its own, no transfer",
+                item(1, "Steel", mat, ME, ME, COPY | MODIFY, 0, false),
+                true,
+                true,
+                false,
+            ),
+            (
+                "its own, no modify",
+                item(1, "Steel", mat, ME, ME, COPY | TRANSFER, 0, false),
+                true,
+                true,
+                false,
+            ),
+            (
+                "bought, full permissions",
+                item(1, "Steel", mat, ME, OTHER, FULL, 0, false),
+                false,
+                false,
+                false,
+            ),
+            (
+                "bought, Export allowed",
+                item(1, "Steel", mat, ME, OTHER, FULL | EXPORT, 0, false),
+                false,
+                false,
+                true,
+            ),
+            (
+                "group owned",
+                item(1, "Steel", mat, ME, OTHER, FULL | EXPORT, 0, true),
+                false,
+                false,
+                false,
+            ),
+            (
+                "someone else's",
+                item(1, "Steel", mat, OTHER, OTHER, FULL | EXPORT, 0, false),
+                false,
+                false,
+                false,
+            ),
+            (
+                "a Library item",
+                item(1, "Steel", mat, LIBRARY, LIBRARY, FULL | EXPORT, COPY, false),
+                false,
+                false,
+                false,
+            ),
+        ];
+        for (what, it, sl, denied, allowed) in cases {
+            let inv = inventory(vec![it]);
+            let name = |grid| material(&cx(grid, &inv), mat);
+            assert_eq!(name(SL).is_some(), sl, "Second Life: {what}");
+            assert_eq!(name(OS_DENIED).is_some(), denied, "OpenSim without export: {what}");
+            assert_eq!(name(OS_EXPORT).is_some(), allowed, "OpenSim with export: {what}");
+            if sl {
+                assert_eq!(name(SL).as_deref(), Some("Steel"));
+            }
+        }
+        let empty = inventory(vec![]);
+        assert_eq!(material(&cx(SL, &empty), mat), None, "no item: never written");
+        assert!(
+            material(&cx(SL, &empty), crate::scene::meshes::BLANK_MATERIAL).is_some(),
+            "the built-in blank material"
+        );
+        assert_eq!(material(&cx(SL, &empty), Uuid::nil()), None);
     }
 
     #[test]
