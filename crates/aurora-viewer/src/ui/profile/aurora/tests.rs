@@ -580,7 +580,7 @@ fn both_profile_styles_keep_the_draft_through_retry_and_only_save_on_another_cli
         w.confirm_close = true;
         f.world.profiles.pick_read(f.id, id, Instant::now() - Duration::from_secs(5));
         let out = f.settle();
-        label(&out, aurora_i18n::tr!("voice-waiting-for-parcel"));
+        label(&out, aurora_i18n::tr!("ui-profile-pick-location-pending"));
         let save = label(&out, aurora_i18n::tr!("common-save"));
         assert!(click(&mut f, save).is_empty());
         assert!(f.profiles.windows[0].confirm_close);

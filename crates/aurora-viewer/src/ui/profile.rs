@@ -233,6 +233,43 @@ struct Window {
     demo_photo: Option<(PictureSlot, bool)>,
     /// Demo captures: the classic Picks tab clicks New once it shows.
     demo_new_pick: bool,
+    /// The pick this window last sent, and when: its confirmation is waited
+    /// for `PICK_CONFIRM_WAIT` before it counts as refused.
+    pick_saved_at: Option<(Uuid, std::time::Instant)>,
+}
+
+/// The longest pick name and description sent, in bytes of UTF-8: the
+/// Legacy Viewer's `pick_name` line editor (its default `max_length_bytes`)
+/// and `pick_desc` text editor (`max_length="1023"`, a byte limit:
+/// `mMaxTextByteLength`, panel_profile_pick.xml). Counted in characters, a
+/// text of styled letters (4 bytes each) passed what the simulator keeps and
+/// the pick was refused without a word (#4916).
+pub(super) const PICK_NAME_MAX_BYTES: usize = 254;
+pub(super) const PICK_DESC_MAX_BYTES: usize = 1023;
+
+/// How long a saved pick's parcel is waited for before the pick counts as
+/// not saved (the simulator answers a stored pick within a second or two).
+const PICK_CONFIRM_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Cuts `text` to `max` bytes on a character boundary, as the Legacy
+/// editors stop typing and cut a paste there (LLTextEditor, FIRE-4885).
+/// True when something was cut.
+pub(super) fn fit_utf8(text: &mut String, max: usize) -> bool {
+    if text.len() <= max {
+        return false;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    true
+}
+
+/// A pick's name and description kept within what the simulator stores.
+pub(super) fn fit_pick_text(name: &mut String, desc: &mut String) {
+    fit_utf8(name, PICK_NAME_MAX_BYTES);
+    fit_utf8(desc, PICK_DESC_MAX_BYTES);
 }
 
 enum CloseChoice {
@@ -282,6 +319,7 @@ impl Window {
             demo_classified: None,
             demo_photo: None,
             demo_new_pick: false,
+            pick_saved_at: None,
         }
     }
 
@@ -304,6 +342,7 @@ impl Window {
         edit.location = None;
         *base = edit.clone();
         self.pick_sel = Some(id);
+        self.pick_saved_at = Some((id, std::time::Instant::now()));
         actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick))));
         if refresh {
             self.asked.remove(&id);
@@ -325,18 +364,35 @@ impl Window {
             .is_some_and(|(e, base)| e != base && !e.id.is_nil() && e.location.is_none() && e.parcel.is_nil())
     }
 
-    fn pick_wait_notice(&self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<ProfileAction>) {
+    fn pick_wait_notice(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<ProfileAction>) {
         if self.id != world.agent_id || (self.tab != TAB_PICKS && !self.pick_save_waits()) {
             return;
         }
         let Some(id) = self.pick_edit.as_ref().map(|(e, _)| e.id).or(self.pick_sel) else {
             return;
         };
-        let Some(wait) = world.profiles.pick_retry_in(self.id, id, std::time::Instant::now()) else {
+        let now = std::time::Instant::now();
+        let Some(wait) = world.profiles.pick_retry_in(self.id, id, now) else {
             return;
         };
+        let state = pick_wait_state(self.pick_saved_at, id, now);
+        if state == PickWait::Refused {
+            self.release_refused_pick(id);
+        }
         ui.horizontal_wrapped(|ui| {
-            ui.label(aurora_i18n::tr!("voice-waiting-for-parcel"));
+            match state {
+                PickWait::Saving(left) => {
+                    ui.label(aurora_i18n::tr!("ui-profile-pick-saving"));
+                    ui.ctx().request_repaint_after(left);
+                    return;
+                }
+                PickWait::Refused => {
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-profile-pick-not-confirmed")).color(p.warn));
+                }
+                PickWait::Location => {
+                    ui.label(aurora_i18n::tr!("ui-profile-pick-location-pending"));
+                }
+            }
             if wait.is_zero() {
                 if flat_button(ui, p, aurora_i18n::tr!("script-retry")).clicked() {
                     actions.push(ProfileAction::Net(NetCommand::PickInfoRequest {
@@ -348,6 +404,24 @@ impl Window {
                 ui.ctx().request_repaint_after(wait);
             }
         });
+    }
+
+    /// A pick the simulator never confirmed was most likely refused, so it
+    /// is not kept waiting: an edit made since is saved again at the pick's
+    /// place, as when it was created, instead of waiting for a parcel that
+    /// will not come.
+    fn release_refused_pick(&mut self, id: Uuid) {
+        if let Some((edit, base)) = &mut self.pick_edit
+            && edit.id == id
+            && edit != base
+            && edit.location.is_none()
+            && edit.parcel.is_nil()
+        {
+            edit.location = Some(location_text(
+                &[aurora_i18n::tr!("ui-profile-updated-after-saving"), "", ""],
+                edit.pos,
+            ));
+        }
     }
 
     /// Both styles edit a copy of the server's pick. A reply can resolve the
@@ -1096,12 +1170,37 @@ fn classified_of(e: &ClassifiedEdit) -> aurora_net::ClassifiedInfo {
     }
 }
 
+/// Where a pick's parcel wait stands for the notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickWait {
+    /// Just saved by this window: the confirmation can still come.
+    Saving(std::time::Duration),
+    /// Saved by this window and not confirmed within `PICK_CONFIRM_WAIT`:
+    /// most likely refused.
+    Refused,
+    /// A pick this window did not just save, its parcel not known yet.
+    Location,
+}
+
+fn pick_wait_state(saved_at: Option<(Uuid, std::time::Instant)>, id: Uuid, now: std::time::Instant) -> PickWait {
+    match saved_at.filter(|(saved, _)| *saved == id) {
+        Some((_, at)) => match PICK_CONFIRM_WAIT.checked_sub(now.saturating_duration_since(at)) {
+            Some(left) if !left.is_zero() => PickWait::Saving(left),
+            _ => PickWait::Refused,
+        },
+        None => PickWait::Location,
+    }
+}
+
 fn pick_of(e: &PickEdit) -> PickInfo {
+    // (the editors keep within it already; any other path is cut here)
+    let (mut name, mut desc) = (e.name.clone(), e.desc.clone());
+    fit_pick_text(&mut name, &mut desc);
     PickInfo {
         id: if e.id.is_nil() { Uuid::new_v4() } else { e.id },
         parcel: e.parcel,
-        name: e.name.clone(),
-        desc: e.desc.clone(),
+        name,
+        desc,
         snapshot: e.snapshot,
         pos_global: e.pos,
         enabled: true,
@@ -2171,6 +2270,7 @@ fn pick_detail(
     ui.label(RichText::new(aurora_i18n::tr!("common-name-2")).size(12.0).strong().color(p.ink));
     if let (true, Some((e, _))) = (own, w.pick_edit.as_mut()) {
         ui.add(egui::TextEdit::singleline(&mut e.name).desired_width(width).char_limit(63));
+        fit_utf8(&mut e.name, PICK_NAME_MAX_BYTES);
     } else {
         inset(ui, p, width, 22.0, |ui| {
             ui.label(RichText::new(&name).size(12.5).color(p.ink));
@@ -2196,6 +2296,7 @@ fn pick_detail(
                     [width, desc_h],
                     egui::TextEdit::multiline(&mut e.desc).desired_width(width).char_limit(1023),
                 );
+                fit_utf8(&mut e.desc, PICK_DESC_MAX_BYTES);
             });
     } else {
         inset(ui, p, width, desc_h, |ui| {
@@ -3092,6 +3193,74 @@ mod tests {
         assert_eq!(saved.pos_global, edit.pos);
         assert_eq!(saved.id, edit.id);
         assert_eq!(saved.snapshot, edit.snapshot);
+    }
+
+    /// #4916: the pick's text is limited in bytes, as the Legacy editors
+    /// limit it, and cut on a character boundary: styled letters (4 bytes
+    /// each) can no longer make a description the simulator refuses.
+    #[test]
+    fn pick_text_stops_at_the_legacy_byte_limits_on_a_character_boundary() {
+        let styled = "\u{1D4D0}"; // MATHEMATICAL BOLD SCRIPT CAPITAL A, 4 bytes
+        let mut name = styled.repeat(100);
+        let mut desc = styled.repeat(PICK_DESC_MAX_BYTES);
+        fit_pick_text(&mut name, &mut desc);
+        assert!(
+            desc.len() <= PICK_DESC_MAX_BYTES && desc.len() > PICK_DESC_MAX_BYTES - 4,
+            "{}",
+            desc.len()
+        );
+        assert!(
+            name.len() <= PICK_NAME_MAX_BYTES && name.len() > PICK_NAME_MAX_BYTES - 4,
+            "{}",
+            name.len()
+        );
+        assert!(desc.chars().all(|c| c == '\u{1D4D0}') && name.chars().all(|c| c == '\u{1D4D0}'));
+        // plain text within the limit is left alone
+        let mut plain = "a".repeat(PICK_DESC_MAX_BYTES);
+        assert!(!fit_utf8(&mut plain, PICK_DESC_MAX_BYTES));
+        assert_eq!(plain.len(), PICK_DESC_MAX_BYTES);
+        // whatever the editor let through, the update sent stays within it
+        let edit = PickEdit {
+            name: styled.repeat(100),
+            desc: styled.repeat(PICK_DESC_MAX_BYTES),
+            ..Default::default()
+        };
+        let sent = pick_of(&edit);
+        assert!(sent.name.len() <= PICK_NAME_MAX_BYTES && sent.desc.len() <= PICK_DESC_MAX_BYTES);
+    }
+
+    /// #4916: a pick this window saved and the simulator never confirmed is
+    /// shown as not saved, and an edit made since is no longer held back.
+    #[test]
+    fn a_pick_not_confirmed_in_time_is_shown_as_not_saved_and_released() {
+        let id = Uuid::from_u128(4916);
+        let t = std::time::Instant::now();
+        let saved = Some((id, t));
+        assert!(matches!(
+            pick_wait_state(saved, id, t + std::time::Duration::from_secs(2)),
+            PickWait::Saving(_)
+        ));
+        assert_eq!(pick_wait_state(saved, id, t + PICK_CONFIRM_WAIT), PickWait::Refused);
+        // a pick this window did not just save keeps the neutral wait
+        assert_eq!(pick_wait_state(None, id, t), PickWait::Location);
+        assert_eq!(pick_wait_state(Some((Uuid::from_u128(1), t)), id, t), PickWait::Location);
+
+        let mut w = Window::new(Uuid::from_u128(40));
+        let info = PickInfo {
+            id,
+            pos_global: DVec3::new(256_001.0, 256_002.0, 30.0),
+            ..Default::default()
+        };
+        w.follow_pick(&info);
+        w.pick_edit.as_mut().unwrap().0.desc = "Edited while waiting".into();
+        assert!(w.pick_save_waits(), "held back while the parcel can still come");
+        w.release_refused_pick(id);
+        assert!(!w.pick_save_waits(), "saved again once the pick counts as refused");
+        let mut actions = Vec::new();
+        assert!(w.save_pick(&mut actions));
+        assert!(
+            matches!(&actions[..], [ProfileAction::Net(NetCommand::PickUpdate(pick)), ..] if pick.id == id && pick.desc == "Edited while waiting")
+        );
     }
 
     #[test]
