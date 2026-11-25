@@ -104,15 +104,18 @@ impl Default for Config {
         }
     }
 }
-/// What the poser window asks of the app, which owns the consent state
-/// and the bridge: the subject menu lists the nearby avatars with their
-/// consent action.
+/// What the poser window asks of the app, which owns the consent state,
+/// the bridge and the simulator object-property requests: the subject menu
+/// lists the nearby avatars with their consent action, and asks for the
+/// names of your animesh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
     Ask(Uuid),
     Cancel(Uuid),
     /// The bridge's Repair, offered when its query service is silent or failed.
     RepairBridge,
+    /// Fetch the simulator name for an owned animesh shown in the subject picker.
+    ObjectName(Uuid),
 }
 /// Which side of the paired joints the window edits: the Côté selector. In
 /// `Mirror` the left joint is edited and its counterpart follows (the
@@ -131,6 +134,9 @@ pub(super) struct State {
     settings_loaded: bool,
     subject: Uuid,
     sessions: HashMap<Uuid, data::Session>,
+    subject_names: HashMap<Uuid, String>,
+    subject_name_requested: HashMap<Uuid, Instant>,
+    subject_skip_logged: HashMap<Uuid, Instant>,
     pub(super) transform: usize,
     delta: bool,
     settings_open: bool,
@@ -301,6 +307,20 @@ impl State {
     }
 }
 impl Editor {
+    /// Keeps the names the poser asked for (`Request::ObjectName`), and
+    /// refreshes a name it already keeps from any properties of that object
+    /// (a rename in the build window); the properties of every other object
+    /// (hover tips, area search, the build selection) are not the poser's.
+    pub(crate) fn update_poser_subject_names(&mut self, props: &[aurora_net::build::ObjectProps]) {
+        for prop in props.iter().filter(|p| !p.name.trim().is_empty()) {
+            let asked = self.poser.subject_name_requested.remove(&prop.object_id).is_some();
+            if let Some(name) = self.poser.subject_names.get_mut(&prop.object_id) {
+                name.clone_from(&prop.name);
+            } else if asked {
+                self.poser.subject_names.insert(prop.object_id, prop.name.clone());
+            }
+        }
+    }
     pub fn take_poser_focus_request(&mut self) -> Option<(usize, crate::camera::PoserFraming)> {
         self.poser.focus_requested.take()
     }
@@ -586,6 +606,21 @@ impl Editor {
         self.drag = None;
         self.gizmo.cancel();
         self.poser.scale_gizmo.cancel();
+    }
+    /// The IK Edit toolbar button and Build › IK Edit
+    /// (LLFloaterReg::toggleInstance): a minimized window expands, a shown
+    /// one closes, a closed one opens expanded.
+    pub fn toggle_ik(&mut self, ctx: &egui::Context) {
+        let window = self.window_id();
+        if self.open && !self.poser.active && crate::ui::widgets::floater_minimized(ctx, window) {
+            crate::ui::widgets::expand_floater(ctx, window);
+            return;
+        }
+        self.toggle();
+        if self.open {
+            let window = self.window_id();
+            crate::ui::widgets::open_floater(ctx, window, &mut self.open);
+        }
     }
     pub fn open_ik(&mut self) {
         if self.poser.active || !self.open {

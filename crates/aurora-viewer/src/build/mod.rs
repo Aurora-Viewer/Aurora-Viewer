@@ -24,6 +24,7 @@ pub mod draw;
 mod edge_pan;
 pub mod edits;
 pub mod export;
+pub mod face_buttons;
 pub mod geom;
 pub mod grab;
 pub mod hud_drag;
@@ -32,6 +33,7 @@ pub mod layout;
 mod linking;
 pub mod manip;
 mod material_preview;
+pub mod mesh_physics;
 use material_preview::MaterialTabKey;
 pub mod materials;
 mod new_defaults;
@@ -122,6 +124,26 @@ impl PrimLimits {
 /// (llviewerjointattachment.h).
 pub const MAX_ATTACHMENT_DIST: f32 = 3.5;
 
+/// What Ctrl+right click on an object does (BuildSettings::ctrl_right_click).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CtrlRightClick {
+    /// The menu, as the Legacy Viewer opens it.
+    Menu,
+    /// The menu's "Edit": the build tools open on Move with that object
+    /// selected; the default (the human's choice, 2026-11-23).
+    #[default]
+    Edit,
+}
+
+impl CtrlRightClick {
+    /// A right click with these keys opens the build tools on the object
+    /// instead of its menu: Ctrl alone, set to Edit.
+    pub fn edits(s: &BuildSettings, shift: bool, ctrl: bool, alt: bool) -> bool {
+        s.ctrl_right_click == Self::Edit && ctrl && !shift && !alt
+    }
+}
+
 /// Build preferences (Firestorm settings.xml names in comments).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -181,6 +203,25 @@ pub struct BuildSettings {
     /// steps only the field being typed in, and scrolls the panel over the
     /// others, so scrolling down the window edits nothing by accident.
     pub wheel_on_hover: bool,
+    /// Aurora: what Shift+click and Ctrl+click on an object do with the
+    /// Edit tool outside "Select face" (the human's request, 2026-11-22):
+    /// add or take out the object, as the Legacy Viewer does
+    /// (LLToolSelect::handleObjectSelection), or select the clicked face.
+    pub shift_click: face_buttons::ModifierClick,
+    pub ctrl_click: face_buttons::ModifierClick,
+    /// Aurora: what Ctrl+right click on an object does, with the build
+    /// tools open or not (the human's request, 2026-11-22): the menu, as a
+    /// right click opens it, Ctrl adding the object to the selection or
+    /// taking it out (LLToolSelect::handleObjectSelection), or the menu's
+    /// "Edit" at once, the default (the human's choice, 2026-11-23; the
+    /// Legacy Viewer opens the menu).
+    pub ctrl_right_click: CtrlRightClick,
+    /// Aurora: a double click on a prim with the Edit tool (Move, Rotate,
+    /// Stretch) switches "Edit linked parts", and selects that prim when it
+    /// turns it on (the human's request, 2026-11-22). On by default (the
+    /// human's choice, 2026-11-23); off, the second press is a click, as
+    /// LLToolCompTranslate::handleDoubleClick makes it.
+    pub double_click_linked: bool,
     /// RenderHighlightSelections.
     pub show_highlight: bool,
     /// RenderHiddenSelections (off): the outline edges on the far side of
@@ -265,6 +306,10 @@ pub struct BuildSettings {
     pub show_parcel_owners: bool,
     /// SyncMaterialSettings: normal / specular maps follow the diffuse UVs.
     pub sync_materials: bool,
+    /// The build picker warns when a click cannot preview the item chosen
+    /// (LivePreviewUnavailable / LivePreviewUnavailablePBR, their "ignore"
+    /// box turns it off; one setting here for the two).
+    pub warn_live_preview: bool,
     /// Texture tab: a new selection opens the PBR or Blinn-Phong tab that
     /// fits its faces, as LLPanelFace::updateUI does (`material_preview.rs`).
     /// On by default; off keeps the last tab chosen.
@@ -753,6 +798,10 @@ impl Default for BuildSettings {
             scale_stretch_textures: true,
             follow_edit_object: false,
             wheel_on_hover: false,
+            shift_click: face_buttons::ModifierClick::Object,
+            ctrl_click: face_buttons::ModifierClick::Object,
+            ctrl_right_click: CtrlRightClick::Edit,
+            double_click_linked: true,
             show_highlight: true,
             show_hidden_selection: false,
             show_light_radius: false,
@@ -791,6 +840,7 @@ impl Default for BuildSettings {
             expanded: true,
             show_parcel_owners: false,
             sync_materials: false,
+            warn_live_preview: true,
             auto_material_tab: true,
             show_physics_shape: false,
             copy_key_separator: ",".into(),
@@ -924,9 +974,18 @@ pub struct BuildTool {
     pub faces: HashMap<ObjKey, Vec<u8>>,
     /// Last face picked (LLSelectMgr::getLastOperatedTE, ◄ ► part buttons).
     pub last_face: Option<u8>,
+    /// The press `mouse_down` is given is the second of a double click
+    /// (set by the app before it).
+    pub double_press: bool,
     /// Number of faces of the selected prims (filled by the app from the
     /// meshes / volumes: the texture entry always carries all of them).
     pub face_counts: HashMap<uuid::Uuid, usize>,
+    /// The shape each count of `face_counts` was taken from: a prim whose
+    /// shape has changed since (hollow, cut, twist, another mesh) is counted
+    /// again, as LLPrimitive::setVolume sets the TE count to the new
+    /// volume's faces (indra/llprimitive/llprimitive.cpp). A count with no
+    /// shape (set by a test) holds whatever the shape.
+    pub face_count_shapes: HashMap<uuid::Uuid, aurora_prim::params::VolumeParams>,
     /// Objects used as the reference grid (LLSelectMgr::mGridObjects).
     pub grid_objects: Vec<ObjKey>,
     /// Physics shape and material values of selected prims
@@ -935,6 +994,9 @@ pub struct BuildTool {
     /// Materials actually received from the server, rather than defaults
     /// accompanying a GetObjectPhysicsData reply containing only shape type.
     pub physics_materials_known: HashSet<u32>,
+    /// Whether a mesh has a physics shape of its own (the Features tab's
+    /// Prim entry), and the collision blocks asked for to find out.
+    pub mesh_physics: mesh_physics::MeshPhysics,
     /// Land impact, weights and parcel capacity.
     pub costs: costs::Costs,
     /// Object inventories (Contents tab).
@@ -991,9 +1053,16 @@ pub struct BuildTool {
     /// past the slop drops it, so the object it started on has to be taken
     /// by the rectangle like any other (LLToolSelectRect::handleHover).
     press: Option<Option<ObjKey>>,
+    /// What a click (not a drag) of `press` does with the face under it,
+    /// outside "Select face": Ctrl+Shift, or Shift / Ctrl set to select a
+    /// face (face_buttons.rs).
+    press_face: Option<(u8, face_buttons::FaceClick)>,
     /// The rectangle being dragged started in HUD space, which it keeps
     /// after the drag has cleared the selection that said so.
     rect_hud: bool,
+    /// The press has left the click's slop (`rect_dragged`): a rectangle
+    /// until its release, even if the cursor comes back.
+    rect_walked: bool,
     /// Compact section (Rights, Transform, Features, Materials, Contents, Shape).
     pub tab: usize,
     /// Last message for the floater's status line.
@@ -1020,10 +1089,13 @@ impl Default for BuildTool {
             point_pick: None,
             faces: HashMap::new(),
             last_face: None,
+            double_press: false,
             face_counts: HashMap::new(),
+            face_count_shapes: HashMap::new(),
             grid_objects: Vec::new(),
             physics: HashMap::new(),
             physics_materials_known: HashSet::new(),
+            mesh_physics: mesh_physics::MeshPhysics::default(),
             costs: costs::Costs::default(),
             contents: contents::Contents::default(),
             replacement: replace::Replacement::default(),
@@ -1052,7 +1124,9 @@ impl Default for BuildTool {
             new_defaults_pending: 0,
             rect: None,
             press: None,
+            press_face: None,
             rect_hud: false,
+            rect_walked: false,
             tab: 6,
             status: String::new(),
             last_frame: None,
@@ -1214,9 +1288,18 @@ pub fn family(world: &World, root: usize) -> Vec<usize> {
     out
 }
 
-/// Whether a press moved from `a` to `b` is a rectangle and not a click.
-fn rect_dragged(a: (f32, f32), b: (f32, f32)) -> bool {
-    (a.0 - b.0).abs() >= 3.0 || (a.1 - b.1).abs() >= 3.0
+/// UI points a press may wander and still be a click, with or without
+/// Shift / Ctrl: the hand moves a little as it clicks, and a 3 pixel slop
+/// turned such clicks into a tiny rectangle that selected or deselected
+/// (the human's report, 2026-11-22). The same radius as a right click
+/// that does not orbit (app.rs, RightGesture).
+const CLICK_SLOP_POINTS: f32 = 10.0;
+
+/// Whether a press moved from `a` to `b` (physical pixels, `ppp` of them
+/// per UI point) left the click's slop.
+fn rect_dragged(a: (f32, f32), b: (f32, f32), ppp: f32) -> bool {
+    let (dx, dy) = ((a.0 - b.0) / ppp, (a.1 - b.1) / ppp);
+    dx * dx + dy * dy >= CLICK_SLOP_POINTS * CLICK_SLOP_POINTS
 }
 
 /// Object indices of a selection with their highlight (true = root color):
@@ -1605,6 +1688,14 @@ impl BuildTool {
         if self.is_selected(&unit) {
             return;
         }
+        // A unit comes in with all its faces: the picks its prims kept from
+        // an earlier selection would narrow the texture edits unseen. The
+        // callers that pick faces do it after adding.
+        for (idx, _) in highlighted_of(world, &[unit], self.selection_linked) {
+            if let Some(o) = world.objects.get(idx) {
+                self.faces.remove(&o.key);
+            }
+        }
         self.selection.insert(0, unit);
         if let Some(id) = world
             .objects
@@ -1648,6 +1739,7 @@ impl BuildTool {
             return;
         }
         let old: Vec<usize> = self.highlighted(world).into_iter().map(|(i, _)| i).collect();
+        let faces = self.faces.clone();
         self.deselect_all(world);
         s.edit_linked = on;
         self.selection_linked = on;
@@ -1659,6 +1751,7 @@ impl BuildTool {
                 self.add(world, unit);
             }
         }
+        self.faces = faces;
     }
 
     /// What a menu entry that works on the selection acts on, for a menu
@@ -2190,7 +2283,8 @@ impl BuildTool {
     /// Without `scene` (tests) or geometry yet, a prim across the edge is
     /// taken only without "Select by surrounding".
     fn rect_select(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, a: (f32, f32), b: (f32, f32), extend: bool) {
-        if !rect_dragged(a, b) {
+        // a press that left the slop, or a rectangle given whole
+        if !(std::mem::take(&mut self.rect_walked) || rect_dragged(a, b, self.cam.ppp)) {
             return; // a click, handled by `mouse_up`
         }
         // LLToolSelectRect::handleRectangleSelection (llglsandbox.cpp): no
@@ -2387,10 +2481,13 @@ impl BuildTool {
     /// is in another space: a selection never mixes them, as
     /// LLToolSelect::handleObjectSelection's click would have decided.
     fn drag_rect(&mut self, world: &World, cursor: (f32, f32)) {
+        let ppp = self.cam.ppp;
         let Some(r) = self.rect.as_mut() else { return };
         r.1 = cursor;
-        let (dragged, extend) = (rect_dragged(r.0, r.1), r.2);
+        self.rect_walked |= rect_dragged(r.0, r.1, ppp);
+        let (dragged, extend) = (self.rect_walked, r.2);
         if dragged && let Some(pick) = self.press.take() {
+            self.press_face = None;
             let other_space = pick
                 .and_then(|key| world.objects.index_of(&key))
                 .is_some_and(|idx| select_type(world, idx) != self.select_type(world));
@@ -2457,6 +2554,7 @@ impl BuildTool {
                 true
             }
             Tool::Edit => {
+                let double = std::mem::take(&mut self.double_press);
                 let mode = self.effective_mode(mods);
                 match mode {
                     EditMode::Face => {
@@ -2479,12 +2577,20 @@ impl BuildTool {
                         {
                             return true;
                         }
+                        if double && s.double_click_linked && !mods.shift && !mods.ctrl && pick.is_some() {
+                            self.double_click_linked(world, s, pick);
+                            return true;
+                        }
                         // not on a handle: select, or drag a selection rectangle
                         // (LLToolCompTranslate -> LLToolSelectRect)
                         let extend = mods.shift || mods.ctrl;
                         self.press = Some(pick.and_then(|idx| world.objects.get(idx)).map(|o| o.key));
+                        self.press_face = face_buttons::FaceClick::of(s, mods)
+                            .zip(surface.and_then(|s| u8::try_from(s.face).ok()))
+                            .map(|(click, face)| (face, click));
                         self.rect_hud = pick.is_some_and(|idx| select_type(world, idx) == SelectType::Hud);
                         self.rect = Some((cursor, cursor, extend));
+                        self.rect_walked = false;
                         true
                     }
                 }
@@ -2548,6 +2654,41 @@ impl BuildTool {
         })
     }
 
+    /// Entering face selection from a whole linkset keeps all its selected
+    /// prims and faces (LLToolFace::pickCallback): each prim becomes a
+    /// selection unit of its own, so that its faces can be chosen apart.
+    fn select_prims_individually(&mut self, world: &mut World) {
+        if self.selection_linked {
+            return;
+        }
+        let prims: Vec<_> = self
+            .sel_prims(world)
+            .into_iter()
+            .filter_map(|i| Self::unit_of(world, i, true))
+            .collect();
+        // the faces picked outside "Select face" (face buttons, Ctrl+Shift
+        // click) stay picked
+        let kept: Vec<_> = prims.iter().filter_map(|k| self.faces.get(k).map(|f| (*k, f.clone()))).collect();
+        self.deselect_all(world);
+        self.faces.clear();
+        self.selection_linked = true;
+        for prim in prims {
+            self.add(world, prim);
+        }
+        self.faces.extend(kept);
+    }
+
+    /// A double click on prim `pick` with BuildSettings::double_click_linked:
+    /// "Edit linked parts" switched, and that prim selected alone when it
+    /// comes on (the first press already selected its linkset).
+    fn double_click_linked(&mut self, world: &mut World, s: &mut BuildSettings, pick: Option<usize>) {
+        let on = !s.edit_linked;
+        self.set_edit_linked(world, s, on);
+        if on {
+            self.click_select(world, s, pick, false);
+        }
+    }
+
     /// LLToolFace::pickCallback: a click selects that face of that prim
     /// alone; Shift adds it or takes it out.
     fn face_click(&mut self, world: &mut World, target: Option<usize>, face: Option<u8>, shift: bool) {
@@ -2577,21 +2718,7 @@ impl BuildTool {
             self.faces.clear();
             self.faces.insert(unit, vec![face]);
         } else {
-            if !self.selection_linked {
-                // Entering face selection from a whole linkset keeps all its
-                // selected prims and faces (LLToolFace::pickCallback).
-                let prims: Vec<_> = self
-                    .sel_prims(world)
-                    .into_iter()
-                    .filter_map(|i| Self::unit_of(world, i, true))
-                    .collect();
-                self.deselect_all(world);
-                self.faces.clear();
-                self.selection_linked = true;
-                for prim in prims {
-                    self.add(world, prim);
-                }
-            }
+            self.select_prims_individually(world);
             if !self.is_selected(&unit) {
                 self.add(world, unit);
                 self.faces.insert(unit, vec![face]);
@@ -2618,7 +2745,10 @@ impl BuildTool {
             match self.press.take() {
                 Some(pick) => {
                     let pick = pick.and_then(|key| world.objects.index_of(&key));
-                    self.click_select(world, s, pick, extend);
+                    match (pick, self.press_face.take()) {
+                        (Some(idx), Some((face, click))) => self.face_pick_click(world, s, idx, face, click),
+                        _ => self.click_select(world, s, pick, extend),
+                    }
                 }
                 None => self.rect_select(world, s, scene, a, b, extend),
             }
@@ -2940,11 +3070,17 @@ impl BuildTool {
     /// the face-select pattern is drawn for them anyway
     /// (LLPipeline::renderHighlights draws renderSelectedFaces in TE mode;
     /// RenderHighlightSelections gates only the silhouettes, llselectmgr.cpp).
+    /// Outside "Select face", once faces are picked on one selected prim
+    /// (face buttons, ◄ ►, Ctrl+Shift click), every selected prim shows its
+    /// faces, so that the objects that kept all theirs show it too (the
+    /// human's request, 2026-11-22).
     pub fn face_picks(&self, world: &World) -> HashMap<usize, u64> {
-        if !self.face_mode() {
+        let prims = self.sel_prims(world);
+        let picked = |idx: &usize| world.objects.get(*idx).is_some_and(|o| self.faces.contains_key(&o.key));
+        if !self.face_mode() && !(self.face_picking() && prims.iter().any(picked)) {
             return HashMap::new();
         }
-        self.sel_prims(world)
+        prims
             .into_iter()
             .map(|idx| {
                 let mask = self
@@ -3014,7 +3150,7 @@ impl BuildTool {
             Tool::Create | Tool::Grab | Tool::Focus => {}
         }
         if let Some((a, b, _)) = self.rect
-            && (a.0 - b.0).abs() + (a.1 - b.1).abs() > 3.0
+            && self.rect_walked
         {
             let k = 1.0 / cam.ppp;
             let r = egui::Rect::from_two_pos(egui::pos2(a.0 * k, a.1 * k), egui::pos2(b.0 * k, b.1 * k));

@@ -168,7 +168,7 @@ fn category_wheel(
         *remainder = 0.0;
         return None;
     }
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     if *last_frame == Some(frame) {
         return None;
     }

@@ -103,6 +103,12 @@ pub struct ObjectFacts {
     /// Local meshes use the ordinary object menu and build selection, with
     /// only actions that can be carried out without a simulator identity.
     pub local_preview: bool,
+    /// The agent owns the rezzed linkset itself (`owns_rezzed`): "Show in
+    /// inventory" is on its menu.
+    pub owned: bool,
+    /// RLVa `@showinv`: "Show in inventory" is greyed out
+    /// (enable_object_show_original, llviewermenu.cpp).
+    pub inventory_hidden: bool,
     pub local_hud_scale: Option<f32>,
     pub saved_hud_scale: bool,
     pub hud_move_locked: bool,
@@ -316,6 +322,8 @@ pub enum CtxAction {
     LookAtAvatar(Uuid),
     EditPbr(Uuid),
     ObjectProfile(Uuid),
+    /// Search inventory for an object seen in-world.
+    FindInInventory(Uuid),
     /// "View profile" from a list of people known besides the world
     /// (friends list, group members): it opens under RLVa's `@shownames`
     /// too, as these lists name their residents (`NameScope::Roster`).
@@ -761,8 +769,8 @@ pub fn show(
     // eight slices of Firestorm's default pie menu, PieMenu::draw)
     let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::unique(HOVERED)).flatten());
     if hovered != before {
-        if let Some(i) = hovered.filter(|i| *i < 8) {
-            super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i as u8));
+        if let Some(i) = pie_hover_sound(hovered, use_pie, customization.force_list()) {
+            super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i));
         }
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique(HOVERED), hovered));
     }
@@ -961,6 +969,14 @@ pub fn can_pay_resident(world: &World) -> bool {
 /// FSFloaterContacts::refreshUI): the map itself does not open.
 pub fn can_show_on_map(world: &World) -> bool {
     !world.rlva.has("showworldmap")
+}
+
+/// "Show in inventory" of a rezzed object is for a linkset the agent owns
+/// itself. A group-deeded one is owned by the group (its OwnerID), and its
+/// items are not in the agent's inventory, even when the group's object
+/// powers give it the OBJECT_YOU_OWNER flag: that flag is left out here.
+pub fn owns_rezzed(owner_id: Uuid, agent_id: Uuid) -> bool {
+    !agent_id.is_nil() && owner_id == agent_id
 }
 
 fn avatar_menu_reporting(
@@ -1821,6 +1837,40 @@ pub fn suitcase_confirm(
     answer
 }
 
+/// A teleport the simulator refused or could not finish
+/// (`world::teleport_failure`): the Legacy Viewer's `CouldNotTeleportReason`
+/// alert, "Teleport failed." and the reason, with the line that explains an
+/// OpenSim Hypergrid refusal under it. True once closed.
+pub fn teleport_failed(ctx: &egui::Context, p: &Palette, world: &World, reason: &str, hint: Option<&str>) -> bool {
+    use egui::RichText;
+    let mut closed = false;
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("teleport_failed")).show(ctx, |ui| {
+        ui.set_width(400.0);
+        ui.horizontal(|ui| {
+            super::widgets::glyph(ui, "alert-triangle-filled", p.amber, 20.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("teleport-failed-title"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
+        });
+        ui.add_space(6.0);
+        // its links clickable, as the alert's text parses them (the Skill
+        // Gaming FAQ of RegionTPSpecialUsageBlocked)
+        super::chat::text_with_links(ui, p, world, NameScope::World.into(), reason, &[], 12.5, p.ink);
+        if let Some(hint) = hint {
+            ui.add_space(6.0);
+            ui.add(egui::Label::new(RichText::new(hint).size(12.0).color(p.muted)).wrap());
+        }
+        ui.add_space(10.0);
+        if super::widgets::default_button(super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-ok"))).clicked() {
+            closed = true;
+        }
+    });
+    closed || modal.should_close()
+}
+
 /// Warning before opening a web link outside the trusted domains (phishing,
 /// fake login pages...). Some(true) opens it, Some(false) cancels;
 /// `dont_warn` is the "Do not warn me again" box. A dangerous link
@@ -1974,9 +2024,34 @@ pub fn grid_link_confirm(ctx: &egui::Context, p: &Palette, address: &str, name: 
     answer
 }
 
+fn pie_hover_sound(hovered: Option<usize>, use_pie: bool, force_list: bool) -> Option<u8> {
+    if use_pie && !force_list {
+        hovered.filter(|i| *i < 8).map(|i| i as u8)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropdown_menus_do_not_play_pie_slice_sounds() {
+        for i in 0..12 {
+            assert_eq!(pie_hover_sound(Some(i), false, false), None);
+            assert_eq!(pie_hover_sound(Some(i), true, true), None);
+        }
+    }
+
+    #[test]
+    fn radial_menus_retain_their_slice_sounds() {
+        for i in 0..8 {
+            assert_eq!(pie_hover_sound(Some(i), true, false), Some(i as u8));
+        }
+        assert_eq!(pie_hover_sound(Some(8), true, false), None);
+        assert_eq!(pie_hover_sound(None, true, false), None);
+    }
 
     #[test]
     fn remote_friend_menu_location_clicks_follow_live_received_rights() {

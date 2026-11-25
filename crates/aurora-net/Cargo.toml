@@ -22,17 +22,23 @@ md5 = "0.8.1"
 parking_lot = "0.13.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "gzip"] }
 rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12", "aws-lc-rs"] }
-rustls-webpki = { version = "0.103.15", default-features = false, features = ["alloc"] }
+rustls-webpki = { version = "0.103.17", default-features = false, features = ["alloc"] }
 serde_json = "1.0.151"
 serde = { version = "1.0.229", features = ["derive"] }
 socket2 = "0.6.5"
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["full"] }
 uuid = { version = "1.27.0", features = ["v4", "serde"] }
-webpki-root-certs = "1.0.9"
+webpki-root-certs = "1.0.12"
 
 [dev-dependencies]
 rcgen = "0.14.10"
+# the bundle test (sim_tls.rs): the DER validity and the fingerprint of the
+# certificates shipped in lindenlab.pem
+sha2 = "0.11.1"
+# paused time for the tests of retries and backoffs (`start_paused`)
+tokio = { version = "1.53.2", features = ["test-util"] }
+x509-parser = "0.18.1"
 
 # rustls-webpki is used: its library is named `webpki` (sim_tls.rs), which
 # cargo-machete does not see from the package name

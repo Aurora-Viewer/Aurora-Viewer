@@ -14,12 +14,16 @@ pub(crate) struct Pose {
     /// undo restores it with the rotations. Port of FSJointState::mBaseRotation
     /// (indra/newview/fsjointpose.h).
     pub origin: Vec<Quat>,
+    /// The user chose a complete T-pose. Its rotations are authored even
+    /// where numerically equal to rest; a joint reset can release one again.
+    pub hold_rotation: Vec<bool>,
 }
 impl Pose {
     pub fn capture(rig: &Rig, frame: &Frame) -> Option<Self> {
         let (pose, scales) = authoring::local_pose(rig, frame)?;
         Some(Self {
             origin: pose.rotations.clone(),
+            hold_rotation: vec![false; rig.len()],
             rotations: pose.rotations,
             positions: pose.positions,
             scales,
@@ -31,6 +35,7 @@ impl Pose {
             && self.positions.len() == rig.len()
             && self.scales.len() == rig.len()
             && self.origin.len() == rig.len()
+            && self.hold_rotation.len() == rig.len()
             && self
                 .rotations
                 .iter()
@@ -51,11 +56,15 @@ impl Pose {
             scales: self.scales.clone(),
             locks: HashMap::new(),
             origin: self.origin.clone(),
+            hold_rotation: self.hold_rotation.clone(),
         };
         for bone in self.locks.keys() {
             pose.locks.insert(*bone, joints[*bone]);
         }
         pose.valid(rig).then_some(pose)
+    }
+    pub(super) fn authored_rotation(&self, rig: &Rig, bone: usize) -> Quat {
+        (rig.local_rot[bone] * self.origin[bone].inverse() * self.rotations[bone]).normalize()
     }
     pub fn matrices(&self, rig: &Rig, model: Mat4) -> Vec<Mat4> {
         if self.locks.is_empty() {
@@ -162,15 +171,14 @@ impl Session {
     pub fn authored(&self, rig: &Rig, model: Mat4) -> Option<Pose> {
         let resolved = self.pose.snapshot(rig, model)?;
         let pose = Pose {
-            rotations: (0..rig.len())
-                .map(|b| (rig.local_rot[b] * resolved.origin[b].inverse() * resolved.rotations[b]).normalize())
-                .collect(),
+            rotations: (0..rig.len()).map(|b| resolved.authored_rotation(rig, b)).collect(),
             positions: (0..rig.len())
                 .map(|b| rig.local_pos[b] + resolved.positions[b] - self.base.positions[b])
                 .collect(),
             scales: rig.scale.clone(),
             locks: HashMap::new(),
             origin: rig.local_rot.clone(),
+            hold_rotation: resolved.hold_rotation,
         };
         pose.valid(rig).then_some(pose)
     }

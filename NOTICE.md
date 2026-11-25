@@ -41,7 +41,8 @@ the avatar definition files (`crates/aurora-viewer/assets/character/`) come from
 the Second Life viewer sources (originally LGPL 2.1).
 The `character/bake/` subdirectory contains the same sources' TGA skin,
 clothing and visibility masks, used by the local wearable preview.
-The Blender extension bundles the same `avatar_skeleton.xml` and retains its
+The Maya plug-in's ZIP bundles the same `avatar_skeleton.xml`, as does the
+Blender extension, which retains its
 provenance in `blender/aurora_live/SKELETON-NOTICE.txt`.
 
 The terrain alpha ramp (`crates/aurora-render/src/terrain_alpha_ramp.r8`) is the
@@ -54,7 +55,10 @@ The RLVa command parser, restriction rules, inventory conventions and camera
 behaviors in `crates/aurora-viewer/src/world/rlva/` and `world/rlva.rs` follow
 the Legacy Viewer's `indra/newview/rlv*.cpp` and `rlv*.h`, and
 `world/rlva/legacy_strings.rs` the texts of its
-`skins/default/xui/*/rlva_strings.xml`: Copyright © 2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
+`skins/default/xui/*/rlva_strings.xml`; the outfit link comparison in
+`crates/aurora-net/src/outfits.rs` follows its `sync_inventory_folder`
+(`indra/newview/llviewerinventory.cpp`) and `RlvPredIsEqualOrLinkedItem`
+(`rlvcommon.cpp`): Copyright © 2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
 GPL-3.0-or-later as described above.
 
 ## Authors of the ported code
@@ -107,6 +111,7 @@ GPL-3.0-or-later as described above.
 | Search and replace, `newview/llfloatersearchreplace.cpp` — Copyright © 2010-2013 Kitty Barnett | `aurora-viewer/src/ui/scripts/dialogs.rs`, `ui/inventory/find.rs` | Originally LGPL 2.1 |
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
+| Minimap world map overlay (Catznip, `[SL:KB] - Patch: World-MinimapOverlay`): the region's map tiles, `LLViewerRegion::getWorldMapTiles` in `newview/llviewerregion.cpp` and the tile overlay of `LLNetMap` in `newview/llnetmap.cpp` — by Kitty Barnett | `aurora-viewer/src/ui/map_tiles.rs`, `ui/minimap.rs` | Originally LGPL 2.1 |
 | Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
 
 ## Ideas from other viewers
@@ -122,7 +127,8 @@ written anew for Aurora, without its code. Their authors are thanked here.
 
 | Asset | Location | License |
 |---|---|---|
-| Tabler Icons — Copyright © 2020-2026 Paweł Kuna | `assets/tabler-icons/`, `crates/aurora-viewer/assets/icons/tabler/` | MIT ([LICENSE](assets/tabler-icons/LICENSE)) |
+| Tabler Icons — Copyright © 2020-2026 Paweł Kuna | `assets/tabler-icons/`, `crates/aurora-viewer/assets/icons/tabler/`, `assets/icons/aurora/folders/` and `assets/icons/aurora/links/` (Tabler icons combined by `scripts/generate-inventory-icons.py`) | MIT ([LICENSE](assets/tabler-icons/LICENSE)) |
+| Pants, skirt, underpants and undershirt icons, drawn for Aurora by Zakka in the Tabler filled style and dedicated by them to the public domain on 2026-11-20 ("I Zakka approve the use of the pants, skirt, and undies icons that I designed for the Aurora Viewer to the public domain under CC0 1.0"; "undies" came as one drawing of a set, split afterwards into the underpants and the undershirt icons); their link icons add the shortcut corner (`scripts/generate-inventory-icons.py`) | `assets/icons/aurora/clothing/`, `assets/icons/aurora/links/{pants,skirt,underpants,undershirt}-link.svg` | CC0 1.0 |
 | Inter typeface, Regular and SemiBold, version 4.001 | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-Inter.txt](crates/aurora-viewer/assets/fonts/LICENSE-Inter.txt)) |
 | Noto Sans, Regular and SemiBold, version 2.015 (notofonts/latin-greek-cyrillic, hinted) | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-NotoSans.txt](crates/aurora-viewer/assets/fonts/LICENSE-NotoSans.txt)) |
 | Roboto, Regular and Medium, version 3.011 (googlefonts/roboto-3-classic, hinted) | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-Roboto.txt](crates/aurora-viewer/assets/fonts/LICENSE-Roboto.txt)) |
@@ -210,6 +216,99 @@ cryptography (`aws-lc-sys`, `ring`: ISC, Apache-2.0 and the OpenSSL and
 BoringSSL notices they carry), the OpenXR loader (`openxr-sys`, Apache-2.0) and
 egui's default fonts (`epaint_default_fonts`: Ubuntu Font Licence 1.0 and SIL
 Open Font License 1.1).
+
+## JPEG 2000 decoder (neo-j2k and OpenJPEG)
+
+The texture decoder, `crates/aurora-j2k/`, is a Rust port of neo-j2k by Anne
+Skydancer (https://github.com/anne-skydancer/neo-j2k, revision `16eb836d`),
+a C++ decoder derived from OpenJPEG 2.5.4
+(https://github.com/uclouvain/openjpeg). Each ported file names the files it
+follows and keeps their copyright notices at its top: `src/header.rs`,
+`decode.rs`, `tile.rs`, `t2.rs`, `t1.rs`, `t1_luts.rs`, `dwt.rs` and `mct.rs`.
+Both are under the BSD 2-Clause License; this port is distributed under
+GPL-3.0-or-later with the rest of Aurora Viewer, and their notices follow.
+
+neo-j2k:
+
+```text
+BSD 2-Clause License
+
+Copyright (c) 2026, Anne Skydancer (neo-j2k)
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+OpenJPEG, whose code neo-j2k ports (the ported files carry these notices as
+well):
+
+```text
+The copyright in this software is being made available under the 2-clauses
+BSD License, included below. This software may be subject to other third
+party and contributor rights, including patent rights, and no such rights
+are granted under this license.
+
+Copyright (c) 2002-2014, Universite catholique de Louvain (UCL), Belgium
+Copyright (c) 2002-2014, Professor Benoit Macq
+Copyright (c) 2003-2014, Antonin Descampe
+Copyright (c) 2003-2009, Francois-Olivier Devaux
+Copyright (c) 2005, Herve Drolon, FreeImage Team
+Copyright (c) 2002-2003, Yannick Verschueren
+Copyright (c) 2001-2003, David Janssens
+Copyright (c) 2011-2012, Centre National d'Etudes Spatiales (CNES), France
+Copyright (c) 2012, CS Systemes d'Information, France
+Copyright (c) 2006-2007, Parvatha Elangovan
+Copyright (c) 2008, Jerome Fimes, Communications & Systemes <jerome.fimes@c-s.fr>
+Copyright (c) 2010-2011, Kaori Hagihara
+Copyright (c) 2008, 2011-2012, Centre National d'Etudes Spatiales (CNES), FR
+Copyright (c) 2017, IntoPIX SA <support@intopix.com>
+Copyright (c) 2003-2007, Francois-Olivier Devaux
+Copyright (c) 2007, Callum Lerwick <seg@haxxed.com>
+Copyright (c) 2007, Jonathan Ballard <dzonatas@dzonux.net>
+Copyright (c) 2012, Carl Hetherington
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS `AS IS'
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+```
 
 ## HIDAPI
 

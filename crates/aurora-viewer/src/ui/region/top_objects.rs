@@ -83,9 +83,10 @@ impl TopState {
     }
 }
 
-/// The window opens on `report`, asked as the Debug panel asks it.
-pub(super) fn open(s: &mut RegionUi, v: &View, world: &mut World, report: u32) {
-    s.top.open = true;
+/// The window opens on `report`, asked as the Debug panel asks it; shown
+/// again, a minimized one expands (LLFloaterReg::showInstance).
+pub(super) fn open(ctx: &egui::Context, s: &mut RegionUi, v: &View, world: &mut World, report: u32) {
+    widgets::open_floater(ctx, WINDOW, &mut s.top.open);
     s.top.report = report;
     s.top.selected.clear();
     s.top.sort = None;
@@ -143,7 +144,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
     if world.estate.region.is_some()
         && let Some(report) = s.top.demo.take()
     {
-        open(s, v, world, report);
+        open(ctx, s, v, world, report);
     }
     if !s.top.open {
         return;

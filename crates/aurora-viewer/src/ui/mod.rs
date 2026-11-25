@@ -27,6 +27,7 @@ pub mod beams;
 pub mod buy_currency;
 pub mod buy_land;
 pub mod call_invite;
+pub mod camera_position;
 pub mod chat;
 pub mod chat_bubbles;
 pub mod click_away_focus;
@@ -229,6 +230,11 @@ pub struct Panels {
     pub about_land: bool,
     /// "Region / Estate" (World menu, Alt+R).
     pub region_estate: bool,
+    /// The layouts of About Land and Region / Estate (kept in the
+    /// settings), for their floater ids: a toggle expands the window
+    /// drawn, which has an id per layout.
+    pub about_land_classic: bool,
+    pub region_estate_classic: bool,
     /// "Places" (favorites, landmarks, teleport history, place profiles).
     pub places: bool,
     /// "Search" (Firestorm's legacy search floater, Ctrl+F).
@@ -288,6 +294,10 @@ pub struct Panels {
     /// window).
     pub camera_controls: bool,
     pub movement_controls: bool,
+    /// The camera position window, from the Controls window's Position
+    /// button (LLFloaterPreferenceViewAdvanced); not kept across sessions,
+    /// like the Legacy Viewer's.
+    pub camera_position: bool,
     /// Navigation bar location being edited (text) and "just opened" (select all).
     pub nav_edit: Option<String>,
     pub nav_edit_new: bool,
@@ -303,6 +313,7 @@ impl Panels {
             chat: settings.show_chat,
             perf: settings.show_perf,
             debug_settings: false,
+            camera_position: false,
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,
@@ -338,6 +349,8 @@ impl Panels {
             contacts: settings.contacts.torn_off,
             about_land: false,
             region_estate: false,
+            about_land_classic: settings.classic_about_land,
+            region_estate_classic: settings.classic_region_estate,
             places: false,
             search: false,
             area_search: false,

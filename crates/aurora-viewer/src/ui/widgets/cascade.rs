@@ -83,7 +83,7 @@ pub(super) struct Opening {
 /// must not override a new instance's group placement. Existing instances
 /// keep their position, including when raised/restored or the UI is hidden.
 pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: Rect) -> Option<Opening> {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         let saved = group.saves_rect().then(|| data.get_persisted::<Rect>(group.saved_id())).flatten();
         let windows = data.get_temp_mut_or_default::<Windows>(registry_id());
@@ -121,7 +121,7 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
 }
 
 pub(super) fn shown(ctx: &Context, id: Id, rect: Rect, minimized: bool) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         let saved = {
             let windows = data.get_temp_mut_or_default::<Windows>(registry_id());
@@ -144,7 +144,7 @@ pub(super) fn shown(ctx: &Context, id: Id, rect: Rect, minimized: bool) {
 }
 
 pub(super) fn hidden(ctx: &Context, id: Id) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         let windows = data.get_temp_mut_or_default::<Windows>(registry_id());
         if let Some(w) = windows.0.iter_mut().find(|w| w.id == id) {

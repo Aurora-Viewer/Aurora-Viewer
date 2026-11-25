@@ -263,8 +263,8 @@ worktree, branch, `target` folder and logs.
   A task that resumes rebuilds: its dependencies come from sccache.
 - To see the space taken by builds and free some: `./scripts/clean.ps1`
   (deletes nothing without `-Apply`).
-- `aurora-tools.cmd` (repository root) is the humans' menu: do not launch it,
-  it waits for key presses. Its actions exist without the menu if needed:
+- `aurora-tools.cmd` (repository root; `aurora-tools.sh` on Linux) is the
+  humans' menu: do not launch it, it waits for key presses. Its actions exist without the menu if needed:
   `./scripts/tools/aurora-tools.ps1 -Action diagnose` (environment),
   `repair`, `tasks`… If you change these tools, update HUMANS.md.
 - Once the PR is merged:
@@ -849,7 +849,10 @@ the review comment.
 - The human can publish or delete a release themselves, with the "Manage
   releases" choice of `aurora-tools.cmd`; they can also ask you to.
 - A release is made **when the human asks for it** ("release 0.4.0"), never
-  on your own initiative. If they give no number, propose one from the labels
+  on your own initiative, and only by an admin of the repository: the
+  version tags' ruleset and the Release and Nightly workflows refuse anyone
+  else, betas included. If your human is not an admin, say so instead of
+  trying. If they give no number, propose one from the labels
   of the PRs merged since the last version and wait for their agreement.
   Then:
 
