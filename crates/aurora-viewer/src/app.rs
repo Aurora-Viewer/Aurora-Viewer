@@ -2520,6 +2520,19 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        // a link's original confirmed gone is not read again this session,
+        // one given up after its attempts only after its pause
+        // (`Inventory::drop_broken`): on a huge inventory, hundreds of dead
+        // links each read over and over took requests from the folder walk.
+        // Aurora's own rule: the Legacy Viewer's
+        // LLViewerInventoryItem::getIsBrokenLink (llviewerinventory.cpp) is
+        // only a state check and suppresses no read.
+        if let NetCommand::FetchItems { items, .. } = &mut cmd {
+            self.world.inventory.drop_broken(items);
+            if items.is_empty() {
+                return;
+            }
+        }
         if let NetCommand::SetAlwaysRun(run) = &mut cmd {
             *run &= !self.vr_walk_override.active();
         }
@@ -3435,6 +3448,15 @@ impl App {
         }
         let mut cmd = cmd;
         self.world.prepare_inventory_command(&mut cmd);
+        // (nor an item already on its way: one read an item at a time,
+        // claimed only as it is really sent)
+        let attachment = matches!(cmd, NetCommand::FetchAttachmentItems { .. });
+        if let NetCommand::FetchItems { items, .. } | NetCommand::FetchAttachmentItems { items } = &mut cmd {
+            self.world.inventory.claim_item_reads(items, attachment, std::time::Instant::now());
+            if items.is_empty() {
+                return;
+            }
+        }
         self.net.send(cmd);
     }
 
