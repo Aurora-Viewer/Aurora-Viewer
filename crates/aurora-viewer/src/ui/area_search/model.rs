@@ -100,6 +100,18 @@ pub(super) enum Scope {
 impl Scope {
     pub const ALL: [Scope; 3] = [Scope::Parcel, Scope::Region, Scope::Neighbours];
 
+    /// Those that differ where we are: a parcel as large as its region, or a
+    /// region alone, makes no choice.
+    pub fn here(parcel_part: bool, neighbours: bool) -> Vec<Scope> {
+        let mut out = Scope::ALL.to_vec();
+        out.retain(|scope| match scope {
+            Scope::Parcel => parcel_part,
+            Scope::Region => true,
+            Scope::Neighbours => neighbours,
+        });
+        out
+    }
+
     /// (a parcel lies in the region: with both, the neighbours add nothing)
     pub fn of(f: &Filters) -> Scope {
         match (f.parcel_only, f.neighbors) {
@@ -601,6 +613,9 @@ mod tests {
             scope.set(&mut f);
             assert_eq!(Scope::of(&f), scope);
         }
+        assert_eq!(Scope::here(false, false), [Scope::Region]);
+        assert_eq!(Scope::here(true, false), [Scope::Parcel, Scope::Region]);
+        assert_eq!(Scope::here(true, true), Scope::ALL);
         // a Legacy link may ask for both
         (f.parcel_only, f.neighbors) = (true, true);
         assert_eq!(Scope::of(&f), Scope::Parcel);

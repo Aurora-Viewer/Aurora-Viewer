@@ -34,6 +34,8 @@ impl Harness {
                 let locks = self.locks;
                 let env = Env {
                     parcel_known: false,
+                    parcel_part: true,
+                    neighbours: true,
                     draw_distance: self.draw_distance,
                     locks: &|_| locks,
                     pics: &HashMap::new(),
@@ -514,6 +516,27 @@ fn area_search_regex_error_is_said_and_recovers_when_corrected() {
 }
 
 #[test]
+fn area_search_where_to_look_is_one_click() {
+    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 10);
+    for (n, row) in h.ui.table.rows.iter_mut().enumerate() {
+        row.on_parcel = n < 4;
+    }
+    h.ui.table.dirty = true;
+    h.settle();
+    h.click(aurora_i18n::tr!("area-search-scope-parcel"));
+    h.settle();
+    assert!(h.ui.table.filters.parcel_only);
+    assert_eq!(h.ui.table.visible.len(), 4);
+    h.click(aurora_i18n::tr!("area-search-scope-neighbours"));
+    h.settle();
+    assert!(!h.ui.table.filters.parcel_only && h.ui.table.filters.neighbors);
+    h.click(aurora_i18n::tr!("area-search-scope-region"));
+    h.settle();
+    assert!(!h.ui.table.filters.neighbors);
+    assert_eq!(h.ui.table.visible.len(), 10);
+}
+
+#[test]
 fn area_search_waits_for_the_parcel_aloud() {
     both(|mut h| {
         h.ui.table.filters.parcel_only = true;
@@ -605,6 +628,8 @@ fn area_search_windows_keep_their_size() {
                 let mut saved = wide;
                 let env = Env {
                     parcel_known: true,
+                    parcel_part: true,
+                    neighbours: true,
                     draw_distance: 64.0,
                     locks: &|_| MenuLocks::default(),
                     pics: &HashMap::new(),

@@ -64,6 +64,7 @@ pub mod pipeline_cache;
 mod portal_tests;
 pub mod present;
 pub mod preview;
+mod preview_blend;
 mod preview_mesh;
 mod preview_mips;
 pub mod probes;

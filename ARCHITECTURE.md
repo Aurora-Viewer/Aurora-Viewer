@@ -1270,8 +1270,9 @@ what has a skeleton of its own: an animesh, and the parts of the avatar's own bo
 `aurora_render::preview::paint_stage` and its controls. `View::studio` lights it
 (`preview.wgsl`: analytic lamps that a rough surface blurs, a key light with a
 shadow map, a floor, Khronos PBR Neutral tone mapping), `Highlight` outlines
-parts (`preview_outline.wgsl`), `preview_mips.rs` makes the smaller sizes of
-every preview's textures. It asks nothing of the
+parts (`preview_outline.wgsl`), `preview_blend.rs` sorts a studio's see-through faces pixel by pixel with the
+lists and shader functions of the world's exact order (`blend_exact.rs`),
+`preview_mips.rs` makes the smaller sizes of every preview's textures. It asks nothing of the
 network and shows no asset id.
 
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search

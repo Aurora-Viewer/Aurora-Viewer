@@ -55,7 +55,9 @@ pub struct AreaSearchUi {
     sheet: bool,
     /// The wide window's grown tile.
     grown: Option<wide::Tile>,
-    /// The wide window's header has room for where to look.
+    /// The places to look in that differ here, and whether the wide window's
+    /// header has room for them.
+    scopes: Vec<model::Scope>,
     scope_shown: bool,
     /// The 3D view of the wide window.
     pub(crate) stage: super::object_stage::StageUi,
@@ -103,6 +105,10 @@ pub struct Facts {
 pub struct Env<'a> {
     /// The boundaries of the current parcel are known.
     pub parcel_known: bool,
+    /// The current parcel is only a part of its region (or not known yet).
+    pub parcel_part: bool,
+    /// Other regions are in sight.
+    pub neighbours: bool,
     /// Zoom is enabled within it (onContextMenuItemEnable "in_dd").
     pub draw_distance: f32,
     /// What RLVa refuses on the rows a menu opens on.
@@ -196,6 +202,7 @@ impl AreaSearchUi {
         let mut action = None;
         let wide = self.is_wide(ctx, *saved_wide);
         self.was_open = true;
+        self.scopes = model::Scope::here(env.parcel_part, env.neighbours);
         let mut window = Floater::new(
             WINDOW,
             aurora_i18n::tr!("toolbar-command-area-search"),

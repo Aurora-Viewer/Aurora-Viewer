@@ -3,6 +3,7 @@
 //! UI gets an image in the same frame without a readback or a GPU wait.
 
 use crate::pipeline_cache::CachedPipelines;
+use crate::preview_blend::{Exact, Order};
 pub use crate::preview_mesh::paint as paint_antialiased_mesh;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
@@ -396,6 +397,8 @@ struct Pipelines {
     /// Without anti-aliasing, and with it, each made when first used.
     passes: [Option<Passes>; 2],
     extras: Option<Extras>,
+    /// The exact order of the see-through faces, for each of `passes`.
+    order: [Option<Order>; 2],
     mips: crate::preview_mips::Mips,
     sampler: wgpu::Sampler,
     /// The shadow map, for the passes that read it, and the map of none.
@@ -424,6 +427,10 @@ struct Target {
     last_highlight: Option<Highlight>,
     shadow: Option<Shadow>,
     outline: Option<Outline>,
+    /// For its see-through faces, in a studio.
+    exact: Option<Exact>,
+    /// The memory had no room for it, at this size: not asked again.
+    no_exact: bool,
 }
 #[derive(Default)]
 pub(crate) struct Cache {
@@ -594,6 +601,7 @@ impl Pipelines {
             pipeline_layout,
             passes: [None, None],
             extras: None,
+            order: [None, None],
             mips: crate::preview_mips::Mips::new(device),
             sampler,
             shadow_layout,
@@ -622,6 +630,16 @@ impl Pipelines {
         if self.extras.is_none() {
             self.extras = Some(Extras::new(device, self));
         }
+    }
+
+    fn prepare_order(&mut self, device: &wgpu::Device, samples: u32) -> &Order {
+        let Self {
+            layout,
+            shadow_layout,
+            order,
+            ..
+        } = self;
+        order[usize::from(samples > 1)].get_or_insert_with(|| Order::new(device, layout, shadow_layout, VERTEX_LAYOUT, samples))
     }
 
     fn passes(&self, samples: u32) -> &Passes {
@@ -953,6 +971,7 @@ impl Target {
         (self.color, self.smooth, self.depth) = Self::surfaces(device, size, samples);
         egui.update_egui_texture_from_wgpu_texture(device, &self.color, wgpu::FilterMode::Linear, self.texture);
         (self.size, self.samples, self.last) = (size, samples, None);
+        (self.exact, self.no_exact) = (None, false);
     }
 
     fn new(
@@ -1141,6 +1160,8 @@ impl Target {
             last_highlight: None,
             shadow: None,
             outline: None,
+            exact: None,
+            no_exact: false,
         }
     }
     #[allow(clippy::too_many_arguments)]
@@ -1166,7 +1187,9 @@ impl Target {
             _ => false,
         };
         let same_highlight = Highlight::same(highlight, self.last_highlight.as_ref());
-        if self.last == Some(view) && same_pose && same_highlight {
+        // (the last picture may have found its pool too small)
+        let short = self.exact.as_ref().is_some_and(|e| e.short(device));
+        if self.last == Some(view) && same_pose && same_highlight && !short {
             return;
         }
         self.last = Some(view);
@@ -1184,7 +1207,26 @@ impl Target {
         if highlight.is_some() && self.outline.as_ref().is_none_or(|o| o.size != self.size) {
             self.outline = Some(Outline::new(device, pipeline, self.size));
         }
+        let blends = view.studio.is_some()
+            && !self.no_exact
+            && Exact::possible(device)
+            && self
+                .parts
+                .iter()
+                .any(|p| effective_material(&self.model.parts[p.source], &view).alpha_mode == 1);
+        if blends {
+            let order = pipeline.prepare_order(device, self.samples);
+            match &mut self.exact {
+                Some(exact) if exact.fits(self.size, self.samples) => exact.follow(device),
+                exact => *exact = Exact::new(device, order, self.size, self.samples, &self.depth),
+            }
+            self.no_exact = self.exact.is_none();
+        } else {
+            self.exact = None;
+        }
         let pipeline = &*pipeline;
+        let exact = self.exact.as_ref().zip(pipeline.order[usize::from(self.samples > 1)].as_ref());
+        let drawn = exact.map_or(&self.color, |(exact, _)| &exact.solid);
         let light = shadow_matrix(&self.model, view.yaw).to_cols_array_2d();
         let floor = view.studio.and_then(|s| s.floor);
         let radius = self.model.radius.max(0.001);
@@ -1286,9 +1328,9 @@ impl Target {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Asset preview"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: self.smooth.as_ref().unwrap_or(&self.color),
+                view: self.smooth.as_ref().unwrap_or(drawn),
                 depth_slice: None,
-                resolve_target: self.smooth.is_some().then_some(&self.color),
+                resolve_target: self.smooth.is_some().then_some(drawn),
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
                         r: view.background[0] as f64,
@@ -1331,6 +1373,9 @@ impl Target {
         // Like the world passes, skin/masked faces precede blended cosmetics.
         // A transparent layer must never write depth over the face behind it.
         for blended in [false, true] {
+            if blended && exact.is_some() {
+                continue;
+            }
             pass.set_pipeline(if blended { &passes.blended } else { &passes.triangles });
             for part in &self.parts {
                 if (effective_material(&self.model.parts[part.source], &view).alpha_mode == 1) != blended {
@@ -1355,6 +1400,20 @@ impl Target {
             }
         }
         drop(pass);
+        if let Some((exact, order)) = exact {
+            let shadow = shadow.map_or(&pipeline.no_shadow, |s| &s.group);
+            exact.record(encoder, order, shadow, &self.color, |pass| {
+                for part in &self.parts {
+                    if effective_material(&self.model.parts[part.source], &view).alpha_mode != 1 {
+                        continue;
+                    }
+                    pass.set_bind_group(0, &part.group, &[]);
+                    pass.set_vertex_buffer(0, part.vertices.slice(..));
+                    pass.set_index_buffer(part.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..part.count, 0, 0..1);
+                }
+            });
+        }
         let (Some(highlight), Some(outline), Some(extras)) = (highlight, &self.outline, &pipeline.extras) else {
             return;
         };
@@ -1681,6 +1740,147 @@ mod tests {
         };
         assert_eq!(between(1), 0);
         assert!(between(SMOOTH) > 20);
+    }
+
+    /// Layers of hair: the nearer is over the farther whichever comes first in
+    /// the model, and what is solid hides both.
+    #[test]
+    fn see_through_faces_of_a_studio_are_sorted_pixel_by_pixel() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let early = crate::blend_exact::EARLY_TEST;
+        if !adapter.features().contains(early) {
+            eprintln!("no early depth test: skipped");
+            return;
+        }
+        let wanted = wgpu::DeviceDescriptor {
+            required_features: early | (adapter.features() & crate::blend_exact::WIDE_RANGE),
+            ..Default::default()
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wanted)).expect("GPU device");
+        let mut egui = egui_wgpu::Renderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, Default::default());
+        const SIZE: u32 = 64;
+        // a pane facing the camera at `x`, nearer when greater
+        let pane = |x: f32, light: [f32; 3], alpha: f32| {
+            let corner = |y: f32, z: f32| Vertex::new([x, y, z], [1.0, 0.0, 0.0], [0.0, 0.0]);
+            Part {
+                diagnostic: false,
+                vertices: vec![corner(-0.9, -0.9), corner(0.9, -0.9), corner(0.9, 0.9), corner(-0.9, 0.9)].into(),
+                indices: vec![0, 1, 2, 0, 2, 3].into(),
+                textures: [None, None, None, None],
+                material: Material {
+                    color: [0.0, 0.0, 0.0, alpha],
+                    emissive: light,
+                    alpha_mode: u32::from(alpha < 1.0),
+                    double_sided: true,
+                    ..Default::default()
+                },
+                skin: None,
+            }
+        };
+        let mut pipeline = Pipelines::new(&device);
+        let mut middle = |parts: Vec<Part>, samples| -> [u8; 4] {
+            let model = Arc::new(Model {
+                parts,
+                center: Vec3::ZERO,
+                radius: 1.0,
+            });
+            let mut target = Target::new(&device, &queue, &mut egui, &mut pipeline, model, [SIZE; 2], samples);
+            let color = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Order test"),
+                size: wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            target.color = color.create_view(&Default::default());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let view = View {
+                yaw: 0.0,
+                pitch: 0.0,
+                distance: 3.0,
+                background: [0.0, 0.0, 0.0, 1.0],
+                studio: Some(Studio { floor: None }),
+                ..Default::default()
+            };
+            target.draw(&device, &queue, &mut encoder, &mut pipeline, view, None, None);
+            let pixels = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Order pixels"),
+                size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_texture_to_buffer(
+                color.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &pixels,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(SIZE * 4),
+                        rows_per_image: Some(SIZE),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([encoder.finish()]);
+            pixels.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU work");
+            let data = pixels.slice(..).get_mapped_range().expect("mapped").to_vec();
+            let at = ((SIZE / 2 * SIZE + SIZE / 2) * 4) as usize;
+            [data[at], data[at + 1], data[at + 2], data[at + 3]]
+        };
+        let eye = View {
+            yaw: 0.0,
+            pitch: 0.0,
+            distance: 3.0,
+            ..Default::default()
+        }
+        .camera(
+            &Model {
+                parts: Vec::new(),
+                center: Vec3::ZERO,
+                radius: 1.0,
+            },
+            1.0,
+        )
+        .0;
+        let near = 0.3 * eye.x.signum();
+        let (red, green) = (|| pane(near, [0.6, 0.0, 0.0], 0.6), || pane(-near, [0.0, 0.6, 0.0], 0.6));
+        for samples in [1, SMOOTH] {
+            let a = middle(vec![red(), green()], samples);
+            let b = middle(vec![green(), red()], samples);
+            assert_eq!(a, b, "the same whichever comes first");
+            assert!(a[0] > a[1] + 20 && a[1] > 20, "the red one is over the green: {a:?}");
+            // many layers, more than a pixel's own slots
+            let mut stack: Vec<Part> = (0..20)
+                .map(|i| pane(-near + near * 0.05 * i as f32, [0.0, 0.6, 0.0], 0.2))
+                .collect();
+            let one = middle(stack.clone(), samples);
+            stack.reverse();
+            let other = middle(stack, samples);
+            assert!(one.iter().zip(other).all(|(a, b)| a.abs_diff(b) <= 2), "{one:?} {other:?}");
+            // a solid one between them hides the farther
+            let solid = middle(vec![green(), red(), pane(0.0, [0.0, 0.0, 0.6], 1.0)], samples);
+            assert!(solid[2] > 60 && solid[1] < a[1], "{solid:?}");
+            let behind = middle(vec![red(), green(), pane(near * 2.0, [0.0, 0.0, 0.6], 1.0)], samples);
+            let alone = middle(vec![pane(near * 2.0, [0.0, 0.0, 0.6], 1.0)], samples);
+            assert_eq!(behind, alone, "what is behind a solid face does not show");
+        }
     }
 
     #[test]

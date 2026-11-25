@@ -660,7 +660,15 @@ impl Building {
             let blend = look.material.color[3] < 1.0
                 || textures[0]
                     .as_ref()
-                    .is_some_and(|image| image.rgba.iter().skip(3).step_by(4).any(|a| *a != 0 && *a != 255));
+                    // (a rigged face is never cut out by itself: LLFace::canRenderAsMask)
+                    .is_some_and(|image| {
+                        image
+                            .rgba
+                            .iter()
+                            .skip(3)
+                            .step_by(4)
+                            .any(|a| *a != 255 && (*a != 0 || rigged.is_some()))
+                    });
             self.vertices += vertices.len();
             self.parts.push(Part {
                 diagnostic: false,

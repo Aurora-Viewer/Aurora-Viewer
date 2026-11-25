@@ -186,15 +186,44 @@ struct Floor { @builtin(position) clip: vec4<f32>, @location(0) position: vec3<f
     let fade = 1.0 - smoothstep(0.25, 0.75, length(v.at));
     return vec4(0.0, 0.0, 0.0, (1.0 - lit(v.position))*0.38*fade);
 }
-@fragment fn fs(v: Vertex, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+// Where each map is read, and how that changes from a pixel to the next: taken
+// before anything leaves, for what reads its maps after.
+struct Maps {
+    uv: array<vec2<f32>,4>, dx: array<vec2<f32>,4>, dy: array<vec2<f32>,4>,
+    px: vec3<f32>, py: vec3<f32>,
+}
+fn maps(v: Vertex) -> Maps {
     let coord = vec4(v.uv,1.0,0.0);
-    let base_uv = vec2(dot(u.uv[0][0],coord),dot(u.uv[0][1],coord));
-    let normal_uv = vec2(dot(u.uv[1][0],coord),dot(u.uv[1][1],coord));
-    let mr_uv = vec2(dot(u.uv[2][0],coord),dot(u.uv[2][1],coord));
-    let emissive_uv = vec2(dot(u.uv[3][0],coord),dot(u.uv[3][1],coord));
-    let base_color = textureSample(base, samp, base_uv) * u.color;
+    var m: Maps;
+    for (var i = 0; i < 4; i++) {
+        m.uv[i] = vec2(dot(u.uv[i][0],coord),dot(u.uv[i][1],coord));
+        m.dx[i] = dpdx(m.uv[i]);
+        m.dy[i] = dpdy(m.uv[i]);
+    }
+    m.px = dpdx(v.position); m.py = dpdy(v.position);
+    return m;
+}
+fn map_at(map: texture_2d<f32>, m: Maps, i: i32) -> vec4<f32> {
+    return textureSampleGrad(map, samp, m.uv[i], m.dx[i], m.dy[i]);
+}
+@fragment fn fs(v: Vertex, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let m = maps(v);
+    let base_color = map_at(base, m, 0) * u.color;
     // how much of the pixel a cut-out covers, its edge one pixel wide
     let covered = clamp((base_color.a - u.params.y) / max(fwidth(base_color.a), 0.0001) + 0.5, 0.0, 1.0);
+    let color = shade(v, front, m, base_color);
+    var opacity = select(1.0, base_color.a, u.params.z == 1.0);
+    if u.params.z == 2.0 {
+        // several samples a pixel: the coverage smooths the edge
+        if u.surface.z > 0.5 { opacity = covered; if covered <= 0.0 { discard; } }
+        else if base_color.a < u.params.y { discard; }
+    }
+    if !front && u.surface.y < 0.5 { discard; }
+    let shown = pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+    return vec4(shown, opacity);
+}
+// The light of a point, as it shows (not yet encoded).
+fn shade(v: Vertex, front: bool, at: Maps, base_color: vec4<f32>) -> vec3<f32> {
     let facing = select(-1.0, 1.0, front);
     var n = normalize(v.normal) * facing;
     // Cotangent frame from screen derivatives, the construction of
@@ -208,20 +237,20 @@ struct Floor { @builtin(position) clip: vec4<f32>, @location(0) position: vec3<f
     // gl_FrontFacing ? 1.0 : -1.0); n is flipped above, the frame follows.
     // The floor only guards a face without UVs: a larger one would flatten
     // the relief of small models, whose derivatives are tiny.
-    let dp1 = dpdx(v.position); let dp2 = dpdy(v.position);
-    let duv1 = dpdx(normal_uv); let duv2 = dpdy(normal_uv);
+    let dp1 = at.px; let dp2 = at.py;
+    let duv1 = at.dx[1]; let duv2 = at.dy[1];
     let dp2perp = cross(dp2, n); let dp1perp = cross(n, dp1);
     let tangent = dp2perp * duv1.x + dp1perp * duv2.x;
     let bitangent = dp2perp * duv1.y + dp1perp * duv2.y;
     let norm = max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 1e-30);
     let frame = facing * sign(dot(dp1, dp2perp)) * inverseSqrt(norm);
-    var nm = textureSample(normal_map, samp, normal_uv).xyz * 2.0 - 1.0;
+    var nm = map_at(normal_map, at, 1).xyz * 2.0 - 1.0;
     nm = vec3(nm.x*u.surface.x,-nm.y*u.surface.x,nm.z);
     n = normalize(mat3x3(tangent * frame, bitangent * frame, n) * nm);
     let view = normalize(u.eye.xyz - v.position);
     let light = normalize(vec3<f32>(0.4, -0.6, 0.8));
     let half_vector = normalize(light + view);
-    let metallic_roughness = textureSample(mr, samp, mr_uv);
+    let metallic_roughness = map_at(mr, at, 2);
     let metallic = metallic_roughness.b * u.emissive_metallic.w;
     let roughness = max(metallic_roughness.g * u.params.x, 0.045);
     let n_dot_l = max(dot(n, light), 0.0);
@@ -238,10 +267,10 @@ struct Floor { @builtin(position) clip: vec4<f32>, @location(0) position: vec3<f
     let specular = distribution * geometry * fresnel / max(4.0 * n_dot_l * n_dot_v, 0.001);
     let diffuse = (vec3<f32>(1.0) - fresnel) * (1.0 - metallic) * base_color.rgb / 3.14159265;
     var color = (diffuse + specular) * n_dot_l * 2.4 + (base_color.rgb * u.ambient.rgb * (1.0 - metallic) + f0 * 0.15) * metallic_roughness.r;
-    color += textureSample(emissive_map, samp, emissive_uv).rgb * u.emissive_metallic.xyz;
+    color += map_at(emissive_map, at, 3).rgb * u.emissive_metallic.xyz;
     if u.studio.x > 0.5 {
         let m = Surface(base_color.rgb, clamp(metallic,0.0,1.0), clamp(roughness,0.045,1.0), metallic_roughness.r);
-        let emitted = textureSampleLevel(emissive_map, samp, emissive_uv, 0.0).rgb * u.emissive_metallic.xyz;
+        let emitted = textureSampleLevel(emissive_map, samp, at.uv[3], 0.0).rgb * u.emissive_metallic.xyz;
         color = neutral(studio_light(m, n, view, v.position) + emitted);
     } else {
         color = color / (vec3<f32>(1.0) + color);
@@ -250,14 +279,6 @@ struct Floor { @builtin(position) clip: vec4<f32>, @location(0) position: vec3<f
         let grid = abs(fract(v.uv * 10.0) - vec2<f32>(0.5));
         if max(grid.x, grid.y) > 0.48 { color = u.edge_color.rgb; }
     }
-    var opacity = select(1.0, base_color.a, u.params.z == 1.0);
-    if u.params.z == 2.0 {
-        // several samples a pixel: the coverage smooths the edge
-        if u.surface.z > 0.5 { opacity = covered; if covered <= 0.0 { discard; } }
-        else if base_color.a < u.params.y { discard; }
-    }
-    if !front && u.surface.y < 0.5 { discard; }
-    let shown = pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
-    return vec4(shown, opacity);
+    return color;
 }
 @fragment fn fs_edge(v: Vertex) -> @location(0) vec4<f32> { return u.edge_color; }

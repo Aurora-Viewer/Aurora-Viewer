@@ -115,18 +115,24 @@ fn heading(ui: &mut egui::Ui, p: &Palette, text: &str, note: &str) {
 }
 
 /// Where to look: the parcel, the region, or its neighbours too.
-pub(super) fn scope_choice(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
-    let labels = Scope::ALL.map(|s| (s.label(), true));
-    let mut at = Scope::of(f) as usize;
-    if widgets::segmented(ui, p, &mut at, &labels) {
-        Scope::ALL[at].set(f);
+pub(super) fn scope_choice(ui: &mut egui::Ui, p: &Palette, f: &mut Filters, scopes: &[Scope]) {
+    let labels: Vec<_> = scopes.iter().map(|s| (s.label(), true)).collect();
+    let chosen = Scope::of(f);
+    // (one that makes no difference here is the region)
+    let region = scopes.iter().position(|s| *s == Scope::Region).unwrap_or(0);
+    let mut at = scopes.iter().position(|s| *s == chosen).unwrap_or(region);
+    if widgets::segmented(ui, p, &mut at, &labels)
+        && let Some(scope) = scopes.get(at)
+    {
+        scope.set(f);
     }
 }
 
-/// Everything but the buttons; `scope`: where to look too.
-pub(super) fn body(ui: &mut egui::Ui, p: &Palette, f: &mut Filters, scope: bool) {
+/// Everything but the buttons; `scopes`: where to look too, when there is a
+/// choice.
+pub(super) fn body(ui: &mut egui::Ui, p: &Palette, f: &mut Filters, scopes: &[Scope]) {
     ui.spacing_mut().item_spacing.y = 0.0;
-    if scope {
+    if scopes.len() > 1 {
         let reach = super::table::metres(model::REACH);
         heading(
             ui,
@@ -134,7 +140,7 @@ pub(super) fn body(ui: &mut egui::Ui, p: &Palette, f: &mut Filters, scope: bool)
             aurora_i18n::tr!("area-search-scope-heading"),
             &aurora_i18n::tr!("area-search-within", distance = reach),
         );
-        ui.horizontal(|ui| scope_choice(ui, p, f));
+        ui.horizontal(|ui| scope_choice(ui, p, f, scopes));
     }
     heading(
         ui,

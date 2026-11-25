@@ -543,6 +543,28 @@ impl App {
         };
         let (who, option) = scenario.split_once(':').unwrap_or((scenario.as_str(), ""));
         match who {
+            // see-through faces and cut-outs
+            "glass" => {
+                let ids: Vec<Uuid> = self
+                    .world
+                    .objects
+                    .iter()
+                    .filter(|(_, o)| !o.is_avatar() && !o.is_attachment() && o.parent_id == 0)
+                    .filter(|(_, o)| {
+                        o.te.as_ref().is_some_and(|te| {
+                            te.faces
+                                .iter()
+                                .any(|f| (0.02..0.98).contains(&f.color[3]) || !f.material_id.is_nil())
+                        })
+                    })
+                    .map(|(_, o)| o.full_id)
+                    .take(12)
+                    .collect();
+                if ids.len() < 4 {
+                    return;
+                }
+                self.inspect_objects(&ids);
+            }
             "objects" | "pbr" => {
                 // (`pbr`: those with a PBR material)
                 let ids: Vec<Uuid> = self

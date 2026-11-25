@@ -369,6 +369,12 @@ impl App {
             self.area_search_feed.next = Some(now + Duration::from_millis(500));
             self.area_search_snapshot(now);
         }
+        let parcel_part = self
+            .world
+            .parcel
+            .as_ref()
+            .is_none_or(|p| p.bitmap.iter().any(|cells| *cells != 0xff) || p.bitmap.is_empty());
+        let neighbours = self.world.regions.len() > 1;
         let parcel_known = self.world.parcel.as_ref().is_some_and(|p| !p.bitmap.is_empty());
         let draw_distance = self.settings.draw_distance;
         // (a demo's view is never kept in the settings)
@@ -384,6 +390,8 @@ impl App {
         let world = &self.world;
         let env = Env {
             parcel_known,
+            parcel_part,
+            neighbours,
             draw_distance,
             locks: &|ids: &[Uuid]| menu_locks(world, ids, now),
             pics: &self.avatar_pics,
