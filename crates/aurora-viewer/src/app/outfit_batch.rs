@@ -65,6 +65,10 @@ enum State {
         until: Instant,
         missing: usize,
     },
+    Adjusting {
+        until: Instant,
+        missing: usize,
+    },
     Shooting {
         since: Instant,
         missing: usize,
@@ -446,7 +450,10 @@ impl App {
         let check_due = b.checked.is_none_or(|t| now.saturating_duration_since(t) >= CHECK_EVERY);
         // the photo mode opened over the batch closes its session: the
         // batch waits for it
-        if matches!(state, State::Framing { .. } | State::Shooting { .. }) && !self.outfit_portrait_batch_open() && self.panels.snapshot {
+        if matches!(state, State::Adjusting { .. } | State::Framing { .. } | State::Shooting { .. })
+            && !self.outfit_portrait_batch_open()
+            && self.panels.snapshot
+        {
             self.outfit_batch_set_paused(true);
             return;
         }
@@ -522,10 +529,17 @@ impl App {
                             "outfit batch: {outfit} loaded in {:.1} s, {missing} items missing",
                             now.saturating_duration_since(since).as_secs_f32()
                         );
-                        self.outfit_portrait_batch(outfit, settings);
-                        Some(State::Framing {
-                            until: now + FRAME_WAIT,
-                            missing,
+                        Some(if settings.wait().is_zero() {
+                            self.outfit_portrait_batch(outfit, settings);
+                            State::Framing {
+                                until: now + FRAME_WAIT,
+                                missing,
+                            }
+                        } else {
+                            State::Adjusting {
+                                until: now + settings.wait(),
+                                missing,
+                            }
                         })
                     }
                     Load::TooLong => {
@@ -545,6 +559,17 @@ impl App {
                 } else if now >= until && !paused && !self.outfit_photo_busy() {
                     self.outfit_portrait_shoot();
                     Some(State::Shooting { since: now, missing })
+                } else {
+                    None
+                }
+            }
+            State::Adjusting { until, missing } => {
+                if now >= until && !paused && !self.outfit_photo_busy() {
+                    self.outfit_portrait_batch(outfit, settings);
+                    Some(State::Framing {
+                        until: now + FRAME_WAIT,
+                        missing,
+                    })
                 } else {
                     None
                 }
@@ -772,11 +797,12 @@ impl App {
             .filter(|(_, e)| setup || e.chosen)
             .map(|(i, e)| {
                 let image = model::outfit_image(inv, e.outfit);
-                let picture = if current == Some(i) && matches!(e.state, State::Framing { .. } | State::Shooting { .. }) {
-                    preview
-                } else {
-                    e.picture.as_ref()
-                };
+                let picture =
+                    if current == Some(i) && matches!(e.state, State::Adjusting { .. } | State::Framing { .. } | State::Shooting { .. }) {
+                        preview
+                    } else {
+                        e.picture.as_ref()
+                    };
                 let state = match &e.state {
                     _ if setup && e.locked => window::RowState::Locked,
                     _ if setup && e.empty => window::RowState::Empty,
@@ -791,6 +817,7 @@ impl App {
                         total: *total,
                     },
                     State::Loading { .. } => window::RowState::LoadingLook,
+                    State::Adjusting { .. } => window::RowState::Adjusting,
                     State::Framing { .. } => window::RowState::Framing,
                     State::Shooting { .. } => window::RowState::Shooting,
                     State::Saving { .. } => window::RowState::Saving,
@@ -1030,6 +1057,20 @@ mod tests {
         assert!(wear_due(Some(now), now + MIN_GAP));
         // a clock read before the last change never sends early
         assert!(!wear_due(Some(now + Duration::from_secs(1)), now));
+    }
+
+    #[test]
+    fn an_adjustment_delay_does_not_change_the_framing_time() {
+        let settings = PortraitSettings {
+            wait_seconds: 7.5,
+            ..Default::default()
+        };
+        assert_eq!(settings.wait(), Duration::from_millis(7500));
+        assert_eq!(
+            FRAME_WAIT,
+            Duration::from_secs(2),
+            "the camera still gets its full framing pass after the wait"
+        );
     }
 
     #[test]
