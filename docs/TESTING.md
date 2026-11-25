@@ -4221,6 +4221,12 @@ retouches replace the shell, invalid data preserves the previous geometry,
 and Stop removes all preview objects. The demo log reports `ready_skinned`
 objects using our avatar's skeleton. See [LiveMesh](BLENDER_LIVE.md).
 
+The Maya plug-in's rules run without Maya: `python maya/tests/test_convert.py`
+(frames, binds, weights, packing, colour tables, and a fake viewer checking
+which optional controls it negotiates, LOD settings, palettes and slot mapping,
+shape checks, a fake MayaStar). Capture itself needs Maya: see
+[LiveMesh](BLENDER_LIVE.md#maya).
+
 Blender's synchronization-list linksets are exercised by
 `blender --background --factory-startup --python-exit-code 1 --python blender/tests/test_groups.py`.
 It covers unparented multi-add, active roots, plain/Ctrl/Shift row selection,

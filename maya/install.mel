@@ -1,0 +1,17 @@
+// Aurora LiveMesh for Maya: drag this file into a Maya viewport to install it.
+// It copies the aurora_live_maya folder next to it into your Maya scripts
+// folder, adds a LiveMesh button to an "Aurora" shelf and opens the window.
+
+global proc auroraLiveMayaInstallAnchor() {}
+
+{
+    string $where = `whatIs auroraLiveMayaInstallAnchor`;
+    string $file = `substitute "^Mel procedure found in: " $where ""`;
+    string $folder = dirname(fromNativePath($file));
+    $folder = substituteAllString($folder, "\\", "/");
+    $folder = substituteAllString($folder, "'", "\\'");
+    python("import sys\nif '" + $folder + "' not in sys.path: sys.path.insert(0, '" + $folder + "')");
+    // The extraction folder only serves this install: leaving it first in
+    // Python's path would let its files shadow modules for the session.
+    python("import importlib, sys, aurora_live_maya_install\nimportlib.reload(aurora_live_maya_install)\ntry:\n    aurora_live_maya_install.install('" + $folder + "')\nfinally:\n    while '" + $folder + "' in sys.path: sys.path.remove('" + $folder + "')");
+}

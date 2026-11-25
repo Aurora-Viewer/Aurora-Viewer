@@ -219,8 +219,12 @@ def prepare_frame(snapshot, hello):
 
 
 class Client:
-    def __init__(self, port):
+    def __init__(self, port, capabilities=None):
+        """`capabilities` limits the optional controls this client negotiates
+        (shape-transfer, shape-apply, import-lods); None offers every one the
+        viewer has. The Maya plug-in shares this module and names its own."""
         self.port = port
+        self._capabilities = capabilities
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -266,7 +270,7 @@ class Client:
             if self._shape is not None and time.monotonic() - self._shape_received > 30:
                 identity = self._shape.get("id", "") if isinstance(self._shape, dict) else ""
                 self._shape_result = {"type": "shape-result", "id": identity,
-                                      "error": "Switch to Object Mode and send the shape again"}
+                                      "error": "The program was busy (in Blender, switch to Object Mode); send the shape again"}
                 self._shape = None
                 self._wake.set()
             apply_in_pose = pose and isinstance(self._shape, dict) and self._shape.get("action") == "apply"
@@ -283,7 +287,7 @@ class Client:
     def take_import(self, ready=True):
         with self._lock:
             if self._import is not None and time.monotonic() - self._import_received > 30:
-                self._import_result = dict(self._import, error="Switch to Object Mode and click Import again")
+                self._import_result = dict(self._import, error="The program was busy (in Blender, switch to Object Mode); click Import again")
                 self._import = None
                 self._wake.set()
             if not ready:
@@ -361,8 +365,9 @@ class Client:
                             self._rest_axes = hello.get("rest_axes", {})
                             self._features = frozenset(hello.get("features", []))
                         self._set_status("Connected to Aurora", hello["joints"])
-                        if "shape-transfer" in hello.get("features", []):
-                            features = [name for name in ("shape-transfer", "shape-apply", "import-lods") if name in hello.get("features", [])]
+                        features = [name for name in ("shape-transfer", "shape-apply", "import-lods") if name in hello.get("features", [])
+                                    and (self._capabilities is None or name in self._capabilities)]
+                        if "shape-transfer" in hello.get("features", []) and features:
                             payload = json.dumps({"type": "features", "features": features}).encode("utf-8")
                             connection.sendall(struct.pack("<I", len(payload)) + payload)
                             self._reply(reader)

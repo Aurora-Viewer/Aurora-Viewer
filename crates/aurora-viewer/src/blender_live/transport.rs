@@ -124,7 +124,7 @@ fn serve(
     if !token::matches(&received, secret) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            aurora_i18n::tr!("blender-live-token-refused").to_string(),
+            aurora_i18n::tr!("livemesh-token-refused").to_string(),
         ));
     }
     let mut joints: Vec<_> = supported.iter().collect();
@@ -359,7 +359,7 @@ mod tests {
         assert_eq!(refused(port, &[MAGIC.as_slice(), other.as_bytes()].concat()), "");
         assert_eq!(
             shared.status.lock().error.as_deref(),
-            Some(aurora_i18n::tr!("blender-live-token-refused").as_ref())
+            Some(aurora_i18n::tr!("livemesh-token-refused").as_ref())
         );
 
         assert_eq!(refused(port, b"GET / HTTP/1.1\r\n\r\n"), "");

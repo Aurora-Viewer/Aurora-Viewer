@@ -4,8 +4,8 @@
 //!
 //! The format of LLVOAvatar::dumpArchetypeXML with `group_by_wearables` and
 //! dump_visual_param (indra/newview/llvoavatar.cpp, originally LGPL 2.1), for
-//! the one wearable the editor holds: a `<param id name value wearable
-//! group>` for every tweakable parameter of its type (LLViewerVisualParam::
+//! the one wearable the editor holds: a `<param id name display value u8
+//! type wearable group>` for every tweakable parameter of its type (LLViewerVisualParam::
 //! isTweakable: groups 0 and 2; the animated ones the physics drives are
 //! left out, as there), with the draft's weight (its default when the asset
 //! has none) at three decimals.
@@ -44,14 +44,28 @@ pub fn document(name: &str, kind: u8, weights: &BTreeMap<i32, f32>, lad: &ShapeP
             .clamp(param.min, param.max);
         let _ = writeln!(
             out,
-            "\t\t<param id=\"{}\" name=\"{}\" value=\"{value:.3}\" wearable=\"{wearable}\" group=\"{}\"/>",
+            "\t\t<param id=\"{}\" name=\"{}\" display=\"{}\" value=\"{value:.3}\" u8=\"{}\" type=\"{}\" \
+             wearable=\"{wearable}\" group=\"{}\"/>",
             param.id,
             escape(param.name),
+            escape(param.display),
+            to_u8(value, param.min, param.max),
+            param.element,
             param.group
         );
     }
     out.push_str("\t</archetype>\n</linden_genepool>\n");
     out
+}
+
+/// The weight as the byte an appearance message carries: F32_to_U8
+/// (indra/llmath/llquantize.h), which rounds down. Tools such as MayaStar
+/// read this `u8=` rather than `value=`.
+fn to_u8(value: f32, min: f32, max: f32) -> u8 {
+    if max <= min {
+        return 0;
+    }
+    ((value.clamp(min, max) - min) / (max - min) * 255.0).floor() as u8
 }
 
 fn tweakable(lad: &ShapeParams, kind: u8) -> impl Iterator<Item = crate::scene::shape::WearableParam<'_>> {
@@ -248,6 +262,28 @@ mod tests {
         // Imported back, the shape gets the same weights.
         let mut back = BTreeMap::new();
         assert_eq!(super::super::xml_import::apply(&archetype, 0, lad(), &mut back), expected.len());
+    }
+
+    #[test]
+    fn an_export_writes_each_parameter_like_the_legacy_viewer() {
+        // dump_visual_param: id, name, display, value, u8, type, wearable,
+        // group; MayaStar's shape import reads u8.
+        let (height_min, height_max) = lad().wearable_range(33, 0).expect("height");
+        let text = document("S", 0, &BTreeMap::from([(33, height_max)]), lad());
+        let line = text.lines().find(|line| line.contains("id=\"33\"")).expect("height line");
+        assert!(line.starts_with("\t\t<param id=\"33\" name=\""), "{line}");
+        let order: Vec<_> = ["name=", "display=", "value=", "u8=", "type=", "wearable=", "group="]
+            .iter()
+            .map(|key| line.find(key).expect(key))
+            .collect();
+        assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "attribute order: {line}");
+        assert!(line.contains("display=\"Height\""), "the label: {line}");
+        assert!(line.contains("u8=\"255\""), "the maximum: {line}");
+        assert!(line.contains("type=\"param_"), "{line}");
+        assert_eq!(to_u8(height_min, height_min, height_max), 0);
+        assert_eq!(to_u8(0.5, 0.0, 1.0), 127, "rounded down like F32_to_U8");
+        assert_eq!(to_u8(2.0, 0.0, 1.0), 255, "clamped");
+        assert_eq!(to_u8(1.0, 1.0, 1.0), 0, "an empty range");
     }
 
     #[test]

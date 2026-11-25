@@ -1347,6 +1347,14 @@ always capture. Comparing prepared content suppresses identical automatic
 revisions, including idle texture-paint ticks, while sharing payload buffers
 with the worker. `docs/BLENDER_LIVE.md` describes setup and
 wire limits; `blender/tests/` exercises real Blender capture and transport.
+`maya/aurora_live_maya/` is the Maya 2022+ client of the same protocol: `convert.py`
+holds its pure rules (Y-up centimetres to SL metres, skin binds, weight ranking,
+corner packing, colour tables; `maya/tests/test_convert.py` runs them without
+Maya), `capture.py` reads meshes and skinClusters through OpenMaya,
+`materials.py` reads shaders and file textures, `lods.py` prepares the Import / LOD bundle (existing or `polyReduce` levels), `shape.py` builds the skeleton and reference body of a shape transfer (its checks in `shape_rules.py`, with the bundled `avatar_skeleton.xml`), `build.py` holds the undoable skeleton/skinned-mesh/weight builders, `rigs.py` finds SL rigs, `rig.py` creates a rig and its display layers (rules in `rig_rules.py`), `weights.py` the weight tools, `controls.py` IK, Root/COG and look-at controls, `mayastar.py` and `shape_apply.py` apply a shape (through MayaStar, or by moving joints and rest geometry; `bindinfo.py` records the shape's bind), `session.py` tracks changes
+with dirty-plug callbacks and a Qt timer, `ui.py` is its window. It ships with
+the Blender plug-in's `client.py` (no Blender import) and a drag-and-drop
+`install.mel`; `blender_live/addon.rs` bundles it for Plugins › Maya.
 For packed peers, capture reads RNA weights once, ranks/normalizes the strongest
 four in NumPy and creates detached immutable geometry buffers directly, avoiding
 per-corner dictionaries and a second Python packing loop. Legacy export/LOD

@@ -114,6 +114,7 @@ pub struct Live {
     pub snapshot: Option<protocol::Prepared>,
     pub owner: Option<Uuid>,
     pub addon: addon::Addon,
+    pub maya_addon: addon::Addon,
     pub shape: shape::State,
     pub import: import::State,
     pub(super) installer: installer::Installer,
@@ -121,6 +122,7 @@ pub struct Live {
     pub(super) installer_choose: bool,
     pub(super) installer_target: Option<std::path::PathBuf>,
     pub save_addon: bool,
+    pub save_maya_addon: bool,
     pub start_requested: bool,
     pub states: HashMap<Uuid, SourceState>,
     pub selected: Option<Uuid>,
@@ -174,6 +176,7 @@ impl Default for Live {
             snapshot: None,
             owner: None,
             addon: Default::default(),
+            maya_addon: addon::Addon::maya(),
             shape: Default::default(),
             import: Default::default(),
             installer: Default::default(),
@@ -181,6 +184,7 @@ impl Default for Live {
             installer_choose: false,
             installer_target: None,
             save_addon: false,
+            save_maya_addon: false,
             start_requested: false,
             states: HashMap::new(),
             selected: None,
@@ -214,9 +218,9 @@ impl Live {
             .as_ref()
             .map(|server| &server.shared)
             .filter(|shared| shared.status.lock().connected)
-            .ok_or_else(|| aurora_i18n::tr!("blender-shape-connect").to_owned())?;
+            .ok_or_else(|| aurora_i18n::tr!("livemesh-shape-connect").to_owned())?;
         if !shared.status.lock().shape_capable {
-            return Err(aurora_i18n::tr!("blender-shape-update-plugin").into());
+            return Err(aurora_i18n::tr!("livemesh-shape-update-plugin").into());
         }
         Ok(shared.clone())
     }
@@ -224,7 +228,7 @@ impl Live {
     pub(crate) fn shape_apply_connection(&self) -> Result<Arc<Shared>, String> {
         let shared = self.shape_connection()?;
         if !shared.status.lock().shape_apply_capable {
-            return Err(aurora_i18n::tr!("blender-shape-update-apply").into());
+            return Err(aurora_i18n::tr!("livemesh-shape-update-apply").into());
         }
         Ok(shared)
     }
@@ -497,6 +501,7 @@ impl Live {
 
     pub fn show(&mut self, ctx: &egui::Context, p: &crate::theme::Palette, can_upload: bool) -> bool {
         self.addon.poll();
+        self.maya_addon.poll();
         self.installer.poll();
         ui::show(self, ctx, p, can_upload)
     }

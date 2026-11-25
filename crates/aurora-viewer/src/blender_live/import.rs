@@ -182,7 +182,7 @@ impl Live {
             status.connected && status.import_capable
         });
         if !capable {
-            self.import.message = aurora_i18n::tr!("blender-import-connect").into();
+            self.import.message = aurora_i18n::tr!("livemesh-import-connect").into();
             self.import.error = true;
             return;
         }
@@ -195,7 +195,7 @@ impl Live {
             *shared.import_request.lock() = Some(request);
             self.import.active = Some((request, Instant::now()));
             self.import.error = false;
-            self.import.message = aurora_i18n::tr!("blender-import-preparing").into();
+            self.import.message = aurora_i18n::tr!("livemesh-import-preparing").into();
         }
     }
     pub fn poll_import(&mut self) {
@@ -216,9 +216,9 @@ impl Live {
                         [triangles(&bundle.high.scene), triangles(medium), triangles(low), triangles(lowest)],
                     ));
                     self.import.ready = Some(bundle);
-                    self.import.message = aurora_i18n::tr!("blender-import-ready").into();
+                    self.import.message = aurora_i18n::tr!("livemesh-import-ready").into();
                 }
-                Err(error) => self.import.message = aurora_i18n::tr!("blender-import-failed", error = error),
+                Err(error) => self.import.message = aurora_i18n::tr!("livemesh-import-failed", error = error),
             }
         } else if start.elapsed() > Duration::from_secs(180) || shared.is_none_or(|s| !s.status.lock().connected) {
             if let Some(shared) = shared {
@@ -227,7 +227,7 @@ impl Live {
             }
             self.import.active = None;
             self.import.error = true;
-            self.import.message = aurora_i18n::tr!("blender-import-timeout").into();
+            self.import.message = aurora_i18n::tr!("livemesh-import-timeout").into();
         }
     }
 }
