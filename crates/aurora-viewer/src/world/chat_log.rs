@@ -642,7 +642,7 @@ impl ChatLog {
     pub fn file_of(&self, stem: &str) -> Option<PathBuf> {
         let place = self.place()?;
         if place.shared {
-            names::shared_file_path(&place.dir, None, stem, self.today(), place.scheme)
+            names::shared_file_path(&place.dir, None, stem, names::local_date(), place.scheme)
         } else {
             names::file_path(&place.dir, stem, self.today())
         }
@@ -793,13 +793,13 @@ impl ChatLog {
         let Some(place) = self.place() else {
             return;
         };
+        // in a shared folder the Legacy Viewer's files decide, dated or not
         let target = if place.shared {
             Ok(store::SharedAppendTarget {
                 epoch,
                 dir: place.dir.clone(),
                 peer,
                 stem: stem.to_owned(),
-                today,
                 scheme: place.scheme,
             })
         } else {
@@ -1967,21 +1967,20 @@ mod tests {
         assert_eq!(texts(&legacy.join("bob_smith.txt")), ["line 0", "line 1", "line 2"]);
         assert_eq!(texts(&legacy.join("bob_override.txt")), ["base"]);
 
-        // Toggling `dated_names` uses a distinct cache key (`today = Some(...)`)
-        // and formats the resolved spelling with the current date suffix.
-        let legacy_dated_override = names::file_path(&legacy, "bob_override", Some(names::local_date())).unwrap();
+        // Aurora's Dated files option does not pick the file in a shared
+        // folder (the Legacy Viewer's files do): the cached file is kept,
+        // and no dated file is started beside it
         log.cfg.dated_names = true;
         log.append_peer(Some(bob), "Bob Smith", now(), "Jane Doe", "line 3");
         assert!(log.flush(WAIT));
-        assert_eq!(texts(&legacy_dated_override), ["line 3"]);
-        assert_eq!(texts(&legacy.join("bob_override.txt")), ["base"]);
-
-        // Switching back to undated keeps the cached `(bob, "Bob Smith", None)` entry,
-        // until leaving and returning bumps `append_epoch`.
         log.cfg.dated_names = false;
         log.append_peer(Some(bob), "Bob Smith", now(), "Jane Doe", "line 4");
         assert!(log.flush(WAIT));
-        assert_eq!(texts(&legacy.join("bob_smith.txt")), ["line 0", "line 1", "line 2", "line 4"]);
+        assert_eq!(
+            texts(&legacy.join("bob_smith.txt")),
+            ["line 0", "line 1", "line 2", "line 3", "line 4"]
+        );
+        assert_eq!(std::fs::read_dir(&legacy).unwrap().count(), 3);
 
         log.change_folder(None, false);
         settled(&mut log);
@@ -2015,6 +2014,60 @@ mod tests {
         assert!(log.flush(WAIT));
         assert_eq!(texts(&other_legacy.join("Bob Smith.txt")), ["line 7"]);
         assert_eq!(texts(&legacy.join("Bob Override.txt")), ["base", "line 5", "line 6"]);
+    }
+
+    /// Dated files on while sharing: the lines go to the file the Legacy
+    /// Viewer reads back (LLLogChat::loadChatHistory), never to a dated
+    /// file of Aurora's beside it; in Aurora's own folder dated names stay.
+    #[test]
+    fn dated_files_while_sharing_follow_the_legacy_viewer_s_files() {
+        let guard = TempGuard::new();
+        let root = guard.path().join("Firestorm");
+        let legacy = root.join("jane_doe");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("Jane Doe.txt"), "[2026/10/12 14:00]  Jane Doe: legacy\n").unwrap();
+        let today = names::local_date();
+        let mut log = ChatLog::in_folder(root.clone());
+        log.set_default_folder(guard.path().join("default"));
+        log.set_grid("agni".into());
+        log.set_sharing(true);
+        log.cfg.dated_names = true;
+        log.login_named(Uuid::from_u128(0xA11CE), JANE);
+        settled(&mut log);
+        assert!(log.shared());
+        let jane = Some(Uuid::from_u128(0x7A7E));
+
+        // `Jane Doe.txt` and no file for this month: appended to it
+        log.append_peer(jane, "Jane Doe", now(), "Jane Doe", "first");
+        assert!(log.flush(WAIT));
+        assert_eq!(texts(&legacy.join("Jane Doe.txt")), ["legacy", "first"]);
+        let this_month = names::file_path(&legacy, "Jane Doe", Some(today)).unwrap();
+        assert!(!this_month.exists());
+        // the Legacy Viewer (dated names on) starts this month's file: the
+        // next line follows it the same day
+        std::fs::write(&this_month, "[2026/10/12 14:00]  Jane Doe: dated\n").unwrap();
+        log.append_peer(jane, "Jane Doe", now(), "Jane Doe", "second");
+        assert!(log.flush(WAIT));
+        assert_eq!(texts(&this_month), ["dated", "second"]);
+        assert_eq!(texts(&legacy.join("Jane Doe.txt")), ["legacy", "first"]);
+        // a new conversation and the nearby chat: the undated names, which
+        // the Legacy Viewer reads with either setting
+        log.append_peer(Some(Uuid::from_u128(0xB0B)), "Bob Smith", now(), "Bob Smith", "new");
+        log.append(names::NEARBY, now(), "Bob Smith", "nearby");
+        assert!(log.flush(WAIT));
+        assert_eq!(texts(&legacy.join("Bob Smith.txt")), ["new"]);
+        assert_eq!(texts(&legacy.join("chat.txt")), ["nearby"]);
+        assert_eq!(std::fs::read_dir(&legacy).unwrap().count(), 4);
+
+        // Aurora's own folder: dated names as before
+        assert!(log.change_folder(None, false));
+        settled(&mut log);
+        assert!(!log.shared());
+        log.append_peer(jane, "Jane Doe", now(), "Jane Doe", "own");
+        assert!(log.flush(WAIT));
+        let own = log.dir().unwrap().to_path_buf();
+        assert_eq!(texts(&names::file_path(&own, "Jane Doe", Some(today)).unwrap()), ["own"]);
+        assert!(!own.join("Jane Doe.txt").exists());
     }
 
     #[test]

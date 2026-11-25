@@ -396,19 +396,36 @@ impl DirEntries {
         if let Some(found) = self.find_ci(current_name) {
             return Some(found);
         }
+        if let Some(latest) = self.latest_dated(stem) {
+            return Some(latest);
+        }
+        self.find_ci(&format!("{}.{EXTENSION}", clean_file_name(stem.trim())))
+    }
+
+    /// The newest dated file of `stem` (`<stem>-YYYY-MM.txt`, the nearby
+    /// chat's `chat-YYYY-MM-DD.txt`): the last of LLLogChat::oldLogFileName's
+    /// sorted list.
+    fn latest_dated(&self, stem: &str) -> Option<PathBuf> {
         let clean = clean_file_name(stem.trim());
         let clean_lower = clean.to_lowercase();
         let pattern_len = nearby_or_month_pattern_len(&clean);
-        let mut dated: Vec<(&str, &str)> = self
-            .files
+        self.files
             .iter()
             .filter_map(|f| match_dated_txt(&f.name, &clean, &clean_lower, pattern_len))
-            .collect();
-        dated.sort();
-        if let Some((_, latest)) = dated.pop() {
-            return Some(self.dir.join(latest));
-        }
-        self.find_ci(&format!("{clean}.{EXTENSION}"))
+            .max()
+            .map(|(_, latest)| self.dir.join(latest))
+    }
+
+    /// The existing file of `stem` a shared folder's lines are appended to
+    /// (`shared_file_path`): the current period's dated file, else the
+    /// undated one, else the newest dated one.
+    fn shared_existing(&self, stem: &str, today: (i64, i64, i64)) -> Option<PathBuf> {
+        let name = |path: PathBuf| path.file_name()?.to_str().map(str::to_owned);
+        let current = file_path(&self.dir, stem, Some(today)).and_then(name)?;
+        let undated = file_path(&self.dir, stem, None).and_then(name)?;
+        self.find_ci(&current)
+            .or_else(|| self.find_ci(&undated))
+            .or_else(|| self.latest_dated(stem))
     }
 
     fn conversation_log_stem(&self, participant: Uuid) -> Option<String> {
@@ -569,29 +586,33 @@ pub(super) fn stem_from_matched_file(path: &Path) -> Option<String> {
     Some(strip_date_suffix(stem).to_owned())
 }
 
-fn best_peer_file_with(entries: &DirEntries, peer: Option<Uuid>, stem: &str, today: Option<(i64, i64, i64)>) -> Option<PathBuf> {
+/// The file of a 1:1 conversation found by `find` for its best spelling:
+/// the one `conversation.log` names when that spelling has a file, else the
+/// newer of the Legacy and the username spellings' files.
+fn best_peer_file_with(
+    entries: &DirEntries,
+    peer: Option<Uuid>,
+    stem: &str,
+    find: impl Fn(&DirEntries, &str) -> Option<PathBuf>,
+) -> Option<PathBuf> {
     if let Some(id) = peer
         && let Some(conv_stem) = entries.conversation_log_stem(id)
-        && let Some(path) = entries.existing_file_with(&conv_stem, today)
+        && let Some(path) = find(entries, &conv_stem)
     {
         return Some(path);
     }
     let (legacy, username) = peer_stems(stem);
     let mut candidates = Vec::with_capacity(2);
-    if let Some(path) = entries.existing_file_with(&legacy, today) {
+    if let Some(path) = find(entries, &legacy) {
         candidates.push(path);
     }
     if let Some(user) = username
-        && let Some(path) = entries.existing_file_with(&user, today)
+        && let Some(path) = find(entries, &user)
         && !candidates.iter().any(|p| same_file(p, &path))
     {
         candidates.push(path);
     }
     pick_newest_by_mtime(candidates)
-}
-
-fn shared_chosen_stem(entries: &DirEntries, peer: Option<Uuid>, stem: &str, today: Option<(i64, i64, i64)>) -> Option<String> {
-    best_peer_file_with(entries, peer, stem, today).and_then(|p| stem_from_matched_file(&p))
 }
 
 /// Best single existing file path for a conversation on disk (used when
@@ -601,38 +622,63 @@ pub fn existing_source_file(dir: &Path, peer: Option<Uuid>, stem: &str, today: O
     if !is_peer_stem(stem) {
         return entries.existing_file_with(stem, today);
     }
-    best_peer_file_with(&entries, peer, stem, today)
+    best_peer_file_with(&entries, peer, stem, |e, s| e.existing_file_with(s, today))
 }
 
-/// The file a conversation is appended to in a shared folder:
-/// picks the spelling (`conversation.log` entry if its file exists, else the
-/// spelling of the most recently modified existing candidate, else the folder's
-/// detected `scheme`) and formats the current target via `file_path(dir, stem, today)`
-/// so dated rollovers and undated-vs-dated preferences always write to the
-/// right period's file.
-pub fn shared_file_path(
-    dir: &Path,
-    peer: Option<Uuid>,
-    stem: &str,
-    today: Option<(i64, i64, i64)>,
-    scheme: NamingScheme,
-) -> Option<PathBuf> {
-    let entries = DirEntries::read(dir);
-    let resolve_target = |chosen_stem: &str| -> Option<PathBuf> {
-        let target = file_path(dir, chosen_stem, today)?;
-        if let Some(entries) = entries.as_ref()
-            && let Some(name) = target.file_name().and_then(|n| n.to_str())
-            && let Some(found) = entries.find_ci(name)
-        {
-            return Some(found);
+/// The file a conversation is appended to in a shared folder, whatever
+/// Aurora's own Dated files option says: the file the Legacy Viewer reads
+/// back, with LogFileNamewithDate on or off (off by default).
+///
+/// LLLogChat::saveHistory appends to LLLogChat::makeLogFileName's name: the
+/// current period's dated file (`<name>-YYYY-MM`, the nearby chat's
+/// `chat-YYYY-MM-DD`) with the option on, the undated one with it off.
+/// LLLogChat::loadChatHistory opens that name, else LLLogChat::oldLogFileName's:
+/// the newest dated file, or the undated name when there is no dated file
+/// at all (indra/newview/lllogchat.cpp). So, for the spelling chosen
+/// (`conversation.log`'s, else the newer existing one, else the folder's
+/// `scheme`; any name for a group, a conference or the nearby chat):
+/// 1. the current period's dated file when it exists: only a Legacy Viewer
+///    with dated names starts it, and it reads only that one;
+/// 2. else the undated file when it exists: what a Legacy Viewer with
+///    dated names off writes and reads (with them on, it reads it only
+///    while it has no dated file);
+/// 3. else the newest dated file: with either setting, the one opened when
+///    the setting's own name is missing;
+/// 4. else (no file at all) a new undated file: makeLogFileName's name with
+///    the option off, oldLogFileName's fallback with it on.
+///
+/// Aurora appends to an existing file and creates only the undated name, so
+/// a current dated file always comes from the Legacy Viewer.
+pub fn shared_file_path(dir: &Path, peer: Option<Uuid>, stem: &str, today: (i64, i64, i64), scheme: NamingScheme) -> Option<PathBuf> {
+    let found = DirEntries::read(dir).and_then(|entries| {
+        if is_peer_stem(stem) {
+            best_peer_file_with(&entries, peer, stem, |e, s| e.shared_existing(s, today))
+        } else {
+            entries.shared_existing(stem, today)
         }
-        Some(target)
-    };
-    if !is_peer_stem(stem) {
-        return resolve_target(stem);
+    });
+    match found {
+        Some(path) => Some(path),
+        None if is_peer_stem(stem) => file_path(dir, &scheme.stem(stem), None),
+        None => file_path(dir, stem, None),
     }
-    let chosen = entries.as_ref().and_then(|e| shared_chosen_stem(e, peer, stem, today));
-    resolve_target(chosen.as_deref().unwrap_or(&scheme.stem(stem)))
+}
+
+/// Whether a file `shared_file_path` picked is no longer its pick: a file
+/// it ranks higher has appeared since (the Legacy Viewer started the current
+/// period's dated file, or the undated one beside an older dated file). One
+/// or two file checks, no listing of the folder.
+pub fn shared_file_outranked(path: &Path, today: (i64, i64, i64)) -> bool {
+    let (Some(dir), Some(stem)) = (path.parent(), stem_from_matched_file(path)) else {
+        return false;
+    };
+    let (current, undated) = (file_path(dir, &stem, Some(today)), file_path(dir, &stem, None));
+    let is_path = |other: &Option<PathBuf>| other.as_deref() == Some(path);
+    let there = |other: &Option<PathBuf>| other.as_deref().is_some_and(Path::is_file);
+    if is_path(&current) {
+        return false;
+    }
+    there(&current) || (!is_path(&undated) && there(&undated))
 }
 
 pub(super) fn strip_date_suffix(stem: &str) -> &str {
@@ -1214,45 +1260,63 @@ mod tests {
     }
 
     #[test]
-    fn shared_append_target_priority_and_dated_rollover() {
+    fn shared_append_target_priority_and_legacy_reading_rule() {
         let dir = temp_dir();
         let jane = Uuid::from_u128(0x77);
         let session = Uuid::from_u128(0x88);
-        let oct = Some((2026, 10, 12));
+        let oct = (2026, 10, 12);
 
-        // 1. No existing candidate: uses the folder's detected scheme
+        // 1. No existing candidate: a new undated file in the folder's
+        //    detected scheme
         assert_eq!(
-            shared_file_path(&dir, Some(jane), "Jane Doe", None, NamingScheme::Username),
+            shared_file_path(&dir, Some(jane), "Jane Doe", oct, NamingScheme::Username),
             Some(dir.join("jane_doe.txt"))
         );
         assert_eq!(
-            shared_file_path(&dir, Some(jane), "Jane Doe", None, NamingScheme::Legacy),
+            shared_file_path(&dir, Some(jane), "Jane Doe", oct, NamingScheme::Legacy),
             Some(dir.join("Jane Doe.txt"))
         );
 
-        // 2. Old dated candidate picks the spelling without reusing the expired file
+        // 2. Only an older dated file: its spelling, and that file (the one
+        //    LLLogChat::oldLogFileName opens with either date setting)
         let f_user_sept = dir.join("jane_doe-2026-09.txt");
         std::fs::write(&f_user_sept, "sept").unwrap();
         assert_eq!(
             shared_file_path(&dir, Some(jane), "Jane Doe", oct, NamingScheme::Legacy),
-            Some(dir.join("jane_doe-2026-10.txt"))
-        );
-        assert_eq!(
-            shared_file_path(&dir, Some(jane), "Jane Doe", None, NamingScheme::Legacy),
-            Some(dir.join("jane_doe.txt"))
+            Some(f_user_sept.clone())
         );
         std::fs::remove_file(&f_user_sept).unwrap();
 
-        // 3. Undated non-1:1 appends do not write into an old dated file
+        // 3. Groups and the nearby chat (by day) follow the same rule
         std::fs::write(dir.join("chat-2026-09-10.txt"), "old nearby").unwrap();
         std::fs::write(dir.join("Northern Wolves (group)-2026-09.txt"), "old group").unwrap();
         assert_eq!(
-            shared_file_path(&dir, None, NEARBY, None, NamingScheme::Legacy),
+            shared_file_path(&dir, None, NEARBY, oct, NamingScheme::Legacy),
+            Some(dir.join("chat-2026-09-10.txt"))
+        );
+        assert_eq!(
+            shared_file_path(&dir, None, "Northern Wolves (group)", oct, NamingScheme::Legacy),
+            Some(dir.join("Northern Wolves (group)-2026-09.txt"))
+        );
+        std::fs::write(dir.join("chat.txt"), "nearby").unwrap();
+        std::fs::write(dir.join("Northern Wolves (group).txt"), "group").unwrap();
+        assert_eq!(
+            shared_file_path(&dir, None, NEARBY, oct, NamingScheme::Legacy),
             Some(dir.join("chat.txt"))
         );
         assert_eq!(
-            shared_file_path(&dir, None, "Northern Wolves (group)", None, NamingScheme::Legacy),
+            shared_file_path(&dir, None, "Northern Wolves (group)", oct, NamingScheme::Legacy),
             Some(dir.join("Northern Wolves (group).txt"))
+        );
+        std::fs::write(dir.join("chat-2026-10-12.txt"), "today").unwrap();
+        std::fs::write(dir.join("Northern Wolves (group)-2026-10.txt"), "this month").unwrap();
+        assert_eq!(
+            shared_file_path(&dir, None, NEARBY, oct, NamingScheme::Legacy),
+            Some(dir.join("chat-2026-10-12.txt"))
+        );
+        assert_eq!(
+            shared_file_path(&dir, None, "Northern Wolves (group)", oct, NamingScheme::Legacy),
+            Some(dir.join("Northern Wolves (group)-2026-10.txt"))
         );
 
         // 4. Undated candidate exists: never creates the second spelling even if scheme differs
@@ -1260,7 +1324,7 @@ mod tests {
         let f_legacy = dir.join("Jane Doe.txt");
         std::fs::write(&f_user, "u").unwrap();
         assert_eq!(
-            shared_file_path(&dir, Some(jane), "Jane Doe", None, NamingScheme::Legacy),
+            shared_file_path(&dir, Some(jane), "Jane Doe", oct, NamingScheme::Legacy),
             Some(f_user.clone())
         );
 
@@ -1276,11 +1340,13 @@ mod tests {
         let f = std::fs::File::create(&f_legacy).unwrap();
         f.set_modified(t_new).unwrap();
         assert_eq!(
-            shared_file_path(&dir, Some(jane), "Jane Doe", None, NamingScheme::Username),
+            shared_file_path(&dir, Some(jane), "Jane Doe", oct, NamingScheme::Username),
             Some(f_legacy.clone())
         );
 
-        // 6. conversation.log entry whose file exists wins and rolls forward with preserved casing
+        // 6. conversation.log entry whose file exists wins, with its on-disk
+        //    casing: its older dated file, then its undated one, then the
+        //    current period's dated one as they appear
         std::fs::write(dir.join("Jane_Custom-2026-09.txt"), "custom").unwrap();
         std::fs::write(
             dir.join("conversation.log"),
@@ -1289,12 +1355,75 @@ mod tests {
         .unwrap();
         assert_eq!(
             shared_file_path(&dir, Some(jane), "Jane Doe", oct, NamingScheme::Legacy),
-            Some(dir.join("Jane_Custom-2026-10.txt"))
+            Some(dir.join("Jane_Custom-2026-09.txt"))
         );
+        std::fs::write(dir.join("Jane_Custom.txt"), "custom").unwrap();
         assert_eq!(
-            shared_file_path(&dir, Some(jane), "Jane Doe", None, NamingScheme::Legacy),
+            shared_file_path(&dir, Some(jane), "Jane Doe", oct, NamingScheme::Legacy),
             Some(dir.join("Jane_Custom.txt"))
         );
+        std::fs::write(dir.join("Jane_Custom-2026-10.txt"), "custom").unwrap();
+        assert_eq!(
+            shared_file_path(&dir, Some(jane), "Jane Doe", oct, NamingScheme::Legacy),
+            Some(dir.join("Jane_Custom-2026-10.txt"))
+        );
+    }
+
+    /// By LLLogChat::saveHistory and loadChatHistory: the file Aurora
+    /// appends to in a shared folder is the one the Legacy Viewer reads
+    /// back with LogFileNamewithDate off (its default) and on.
+    #[test]
+    fn a_shared_folder_s_lines_go_where_the_legacy_viewer_reads_them() {
+        let nov = (2026, 11, 25);
+        let path = |dir: &Path, stem: &str| shared_file_path(dir, None, stem, nov, NamingScheme::Legacy).unwrap();
+
+        // `Jane Doe.txt`, no file for this month: the undated file (a dated
+        // name beside it would be read by neither setting while the
+        // undated one is there)
+        let dir = temp_dir();
+        std::fs::write(dir.join("Jane Doe.txt"), "").unwrap();
+        assert_eq!(path(&dir, "Jane Doe"), dir.join("Jane Doe.txt"));
+        // this month's dated file there too (a Legacy Viewer with dated
+        // names wrote it, and reads only it): that one
+        std::fs::write(dir.join("Jane Doe-2026-11.txt"), "").unwrap();
+        assert_eq!(path(&dir, "Jane Doe"), dir.join("Jane Doe-2026-11.txt"));
+        // only last month's dated file: that one, opened by either setting
+        let dir = temp_dir();
+        std::fs::write(dir.join("Jane Doe-2026-10.txt"), "").unwrap();
+        assert_eq!(path(&dir, "Jane Doe"), dir.join("Jane Doe-2026-10.txt"));
+        // a new conversation: the undated name, read with dated names off,
+        // and with them on as long as no dated file exists
+        let dir = temp_dir();
+        assert_eq!(path(&dir, "Jane Doe"), dir.join("Jane Doe.txt"));
+        assert_eq!(path(&dir, NEARBY), dir.join("chat.txt"));
+        // a conference has no date in either viewer
+        let conference = "Jane Doe Conference 2026/11/25 14:05 f0f4";
+        assert_eq!(path(&dir, conference), file_path(&dir, conference, None).unwrap());
+    }
+
+    #[test]
+    fn a_shared_target_is_outranked_by_a_file_the_legacy_viewer_starts() {
+        let nov = (2026, 11, 25);
+        let dir = temp_dir();
+        let undated = dir.join("Jane Doe.txt");
+        let older = dir.join("Jane Doe-2026-10.txt");
+        let current = dir.join("Jane Doe-2026-11.txt");
+        std::fs::write(&older, "").unwrap();
+        // the older dated file in use: kept until the undated or this
+        // month's file appears
+        assert!(!shared_file_outranked(&older, nov));
+        std::fs::write(&undated, "").unwrap();
+        assert!(shared_file_outranked(&older, nov));
+        // the undated file in use: kept until this month's file appears
+        assert!(!shared_file_outranked(&undated, nov));
+        std::fs::write(&current, "").unwrap();
+        assert!(shared_file_outranked(&undated, nov));
+        assert!(shared_file_outranked(&older, nov));
+        // this month's file is never outranked, nor a conference's
+        assert!(!shared_file_outranked(&current, nov));
+        let conference = dir.join("Jane Doe Conference 2026_11_25 14_05 f0f4.txt");
+        std::fs::write(&conference, "").unwrap();
+        assert!(!shared_file_outranked(&conference, nov));
     }
 
     #[test]
@@ -1328,8 +1457,8 @@ mod tests {
         );
         assert_eq!(candidate_files(&dir, None, "💜", Some((2026, 10, 12))), vec![dir.join("💜.txt")]);
         assert_eq!(
-            shared_file_path(&dir, None, "Club 💜 (group)", Some((2026, 10, 12)), NamingScheme::Username),
-            Some(dir.join("Club 💜 (group)-2026-10.txt"))
+            shared_file_path(&dir, None, "Club 💜 (group)", (2026, 10, 12), NamingScheme::Username),
+            Some(dir.join("Club 💜 (group).txt"))
         );
     }
 
@@ -1397,7 +1526,7 @@ mod tests {
         std::fs::write(dir.join("Jane_Custom-2026-09.TXT"), "sept\n").unwrap();
         std::fs::write(dir.join("JANE_DOE.TXT"), "user\n").unwrap();
 
-        let target = shared_file_path(&dir, Some(jane), "Jane Doe", Some((2026, 9, 1)), NamingScheme::Legacy).unwrap();
+        let target = shared_file_path(&dir, Some(jane), "Jane Doe", (2026, 9, 1), NamingScheme::Legacy).unwrap();
         assert_eq!(target.file_name().and_then(|n| n.to_str()), Some("Jane_Custom-2026-09.TXT"));
         let all = all_candidate_files(&dir, Some(jane), "Jane Doe");
         let file_names: Vec<&str> = all.iter().filter_map(|p| p.file_name()?.to_str()).collect();

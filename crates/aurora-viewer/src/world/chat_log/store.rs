@@ -62,13 +62,15 @@ pub struct Loaded {
     pub entries: Vec<Entry>,
 }
 
+/// A line of a conversation in a shared folder: its file is worked out on
+/// the transcript thread (`names::shared_file_path`), from the folder's
+/// files and the local date, whatever Aurora's Dated files option says.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SharedAppendTarget {
     pub epoch: u64,
     pub dir: PathBuf,
     pub peer: Option<Uuid>,
     pub stem: String,
-    pub today: Option<(i64, i64, i64)>,
     pub scheme: super::names::NamingScheme,
 }
 
@@ -430,13 +432,14 @@ fn publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .and_then(|()| crate::atomic_file::write(path, bytes))
 }
 
-type SharedKey = (PathBuf, Option<Uuid>, String, Option<(i64, i64, i64)>, super::names::NamingScheme);
+type SharedKey = (PathBuf, Option<Uuid>, String, super::names::NamingScheme);
 
 /// The files the shared targets of one append epoch go to, so a line does
 /// not list the folder again. A file is resolved again once the local date
-/// changed since (a dated file the Legacy Viewer starts for the new month)
-/// or when it is missing (renamed or moved by the other viewer), so a file
-/// the Legacy Viewer starts during the session is followed.
+/// changed since (a dated file the Legacy Viewer starts for the new month),
+/// when it is missing (renamed or moved by the other viewer), or when a file
+/// the rule ranks higher appeared (`names::shared_file_outranked`), so a
+/// file the Legacy Viewer starts during the session is followed.
 #[derive(Default)]
 struct SharedTargets {
     epoch: u64,
@@ -450,23 +453,17 @@ impl SharedTargets {
         &mut self,
         shared: &SharedAppendTarget,
         date: (i64, i64, i64),
-        exists: impl Fn(&Path) -> bool,
+        still_valid: impl Fn(&Path) -> bool,
         resolve: impl FnOnce() -> Option<PathBuf>,
     ) -> Option<PathBuf> {
         if self.epoch != shared.epoch {
             self.files.clear();
             self.epoch = shared.epoch;
         }
-        let key = (
-            shared.dir.clone(),
-            shared.peer,
-            shared.stem.to_lowercase(),
-            shared.today,
-            shared.scheme,
-        );
+        let key = (shared.dir.clone(), shared.peer, shared.stem.to_lowercase(), shared.scheme);
         if let Some((path, on)) = self.files.get(&key)
             && *on == date
-            && exists(path)
+            && still_valid(path)
         {
             return Some(path.clone());
         }
@@ -479,12 +476,15 @@ impl SharedTargets {
 fn resolve_append_target(target: &AppendTarget, shared_targets: &mut SharedTargets) -> Option<PathBuf> {
     match target {
         AppendTarget::Exact(path) => Some(path.clone()),
-        AppendTarget::Shared(shared) => shared_targets.target(
-            shared,
-            super::names::local_date(),
-            |p| p.is_file(),
-            || super::names::shared_file_path(&shared.dir, shared.peer, &shared.stem, shared.today, shared.scheme),
-        ),
+        AppendTarget::Shared(shared) => {
+            let date = super::names::local_date();
+            shared_targets.target(
+                shared,
+                date,
+                |p| p.is_file() && !super::names::shared_file_outranked(p, date),
+                || super::names::shared_file_path(&shared.dir, shared.peer, &shared.stem, date, shared.scheme),
+            )
+        }
     }
 }
 
@@ -1443,7 +1443,6 @@ mod tests {
             dir: PathBuf::from("shared"),
             peer: Some(Uuid::from_u128(7)),
             stem: "Jane Doe".into(),
-            today: None,
             scheme: super::super::names::NamingScheme::Legacy,
         };
         let mut targets = SharedTargets::default();
