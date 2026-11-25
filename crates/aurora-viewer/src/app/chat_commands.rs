@@ -31,6 +31,43 @@ fn script_channel_chat(message: &str, channel: i32) -> Option<NetCommand> {
     })
 }
 
+/// `/zoffset_up`, `/zoffset_down`, `/zoffset_reset`, `/zoffset`: the
+/// Legacy Viewer sets AvatarHoverOffsetZ, the height of the Hover Height
+/// window, saved and sent like the window's (cmd_line_chat,
+/// indra/newview/chatbar_as_cmdline.cpp), without a report in the chat.
+/// Aurora's own heights follow the window's controls:
+/// - a sitting posture with its own height moves that height;
+/// - under automatic height, a step moves the automatic offset, so the avatar
+///   moves by the step and automatic height stays on (the window's offset
+///   buttons);
+/// - otherwise, and for a value or a reset, the manual height changes and
+///   automatic height turns off (the window's manual slider).
+///
+/// Returns whether the settings changed.
+fn hover_height_command(
+    height: &mut crate::world::hover_height::HoverHeight,
+    automatic: &mut bool,
+    offset: &mut f32,
+    amount: cmdline::Amount,
+) -> bool {
+    let posture = height.posture();
+    if height.seated(posture).separate {
+        height.preview_seated(posture, amount.apply(height.seated_value(posture)));
+        height.commit_seated(posture);
+        return false;
+    }
+    if *automatic && amount.relative {
+        let Some(moved) = crate::world::hover_height::bounded(amount.apply(*offset)) else {
+            return false;
+        };
+        return std::mem::replace(offset, moved) != moved;
+    }
+    let changed = std::mem::replace(automatic, false);
+    height.preview(amount.apply(height.value()));
+    height.commit();
+    changed
+}
+
 impl App {
     /// FSCommon::send_message_to_script_channel builds its ChatFromViewer
     /// itself, past the chat path RLVa filters (send_chat_from_viewer):
@@ -104,7 +141,16 @@ impl App {
                     self.report_command(l);
                 }
             }
-            Command::Unavailable(text) => self.report_command(text),
+            Command::HoverHeight(amount) => {
+                if hover_height_command(
+                    &mut self.world.hover_height,
+                    &mut self.settings.auto_hover_height,
+                    &mut self.settings.auto_hover_offset,
+                    amount,
+                ) {
+                    self.settings.save();
+                }
+            }
             Command::TeleportLocal { x, y, z } => {
                 let z = z.unwrap_or(self.world.agent.position.z);
                 self.teleport_in_region(Vec3::new(x, y, z));
@@ -411,6 +457,76 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::hover_height::{self, HoverHeight, Posture};
+
+    fn step(value: f32) -> cmdline::Amount {
+        cmdline::Amount { value, relative: true }
+    }
+
+    fn set(value: f32) -> cmdline::Amount {
+        cmdline::Amount { value, relative: false }
+    }
+
+    /// /zoffset_up, /zoffset_down, /zoffset_reset and /zoffset change and
+    /// commit the manual height, within the window's range.
+    #[test]
+    fn zoffset_commands_move_the_manual_height() {
+        let (mut height, mut automatic, mut offset) = (HoverHeight::default(), false, 0.0);
+        let mut run = |height: &mut HoverHeight, amount| hover_height_command(height, &mut automatic, &mut offset, amount);
+        assert!(!run(&mut height, step(cmdline::HOVER_STEP)));
+        assert!(!run(&mut height, step(cmdline::HOVER_STEP)));
+        assert!((height.value() - 0.1).abs() < 1e-6);
+        run(&mut height, step(-cmdline::HOVER_STEP));
+        assert!((height.value() - 0.05).abs() < 1e-6);
+        run(&mut height, set(2.5));
+        run(&mut height, step(1.0));
+        assert_eq!(height.value(), hover_height::MAX);
+        run(&mut height, set(0.0));
+        assert_eq!(height.value(), 0.0);
+        run(&mut height, set(-9.0));
+        assert_eq!(height.value(), hover_height::MIN);
+    }
+
+    /// Under automatic height a step moves the offset and keeps automatic
+    /// height; a value or a reset is a manual height and turns it off.
+    #[test]
+    fn zoffset_commands_under_automatic_height() {
+        let (mut height, mut automatic, mut offset) = (HoverHeight::default(), true, 0.0);
+        assert!(hover_height_command(
+            &mut height,
+            &mut automatic,
+            &mut offset,
+            step(cmdline::HOVER_STEP)
+        ));
+        assert!(automatic);
+        assert_eq!(offset, cmdline::HOVER_STEP);
+        assert_eq!(height.value(), 0.0, "the automatic estimate applies the offset");
+        offset = hover_height::MAX;
+        assert!(!hover_height_command(&mut height, &mut automatic, &mut offset, step(1.0)));
+        assert_eq!(offset, hover_height::MAX);
+        assert!(hover_height_command(&mut height, &mut automatic, &mut offset, set(0.0)));
+        assert!(!automatic);
+        assert_eq!(height.value(), 0.0);
+    }
+
+    /// A sitting posture with its own height moves that height alone.
+    #[test]
+    fn zoffset_commands_move_a_separate_sitting_height() {
+        let (mut height, mut automatic, mut offset) = (HoverHeight::default(), true, 0.0);
+        height.set_separate(Posture::OnGround, true);
+        height.set_posture(Posture::OnGround);
+        assert!(!hover_height_command(&mut height, &mut automatic, &mut offset, step(0.2)));
+        assert!((height.effective() - 0.2).abs() < 1e-6);
+        assert_eq!(height.value(), 0.0);
+        assert!(automatic);
+        assert_eq!(offset, 0.0);
+        // a sitting posture without its own height moves the usual one
+        height.set_posture(Posture::OnObject);
+        automatic = false;
+        hover_height_command(&mut height, &mut automatic, &mut offset, step(0.3));
+        assert!((height.value() - 0.3).abs() < 1e-6);
+        assert!((height.effective() - 0.3).abs() < 1e-6);
+    }
 
     /// The viewer's reports to a script channel are sent as they are, and
     /// past RLVa: a channel @sendchannel closes still gets them.

@@ -184,10 +184,13 @@ impl Default for Profile {
                             "separator:folder-navigation",
                             "reload",
                             "clean-broken-links",
+                            // #4735: menu_inventory.xml's order, Show in Main
+                            // View and Show in new Window, then Open and Open
+                            // in new window (without its separator)
                             "show-main",
                             "show-window",
-                            "open-window",
                             "open-current",
+                            "open-window",
                             "separator:purge",
                             "purge",
                             "empty-trash",
@@ -338,7 +341,36 @@ impl Preferences {
                 }
                 after = id;
             }
+            migrate_open_rows(profile);
         }
+    }
+}
+
+/// The rows that open a folder, in Aurora's previous default order and in
+/// today's, the Legacy Viewer's (menu_inventory.xml): Open now comes before
+/// Open in a new window (#4735).
+const OPEN_ROWS_BEFORE: [&str; 4] = ["show-main", "show-window", "open-window", "open-current"];
+const OPEN_ROWS: [&str; 4] = ["show-main", "show-window", "open-current", "open-window"];
+
+/// #4735: a menu its user never arranged, still in Aurora's previous default
+/// order (older menus reach it once `unify` gives them Open), takes today's
+/// order of the rows that open a folder. An arranged menu keeps its own.
+fn migrate_open_rows(profile: &mut Profile) {
+    let Some(order) = profile.layout.orders.get(TEXT) else { return };
+    let Some(start) = order.iter().position(|id| id == OPEN_ROWS_BEFORE[0]) else {
+        return;
+    };
+    if order.get(start..start + 4).is_none_or(|rows| rows != OPEN_ROWS_BEFORE) {
+        return;
+    }
+    let mut candidate = profile.clone();
+    if let Some(order) = candidate.layout.orders.get_mut(TEXT) {
+        for (slot, id) in order[start..start + 4].iter_mut().zip(OPEN_ROWS) {
+            *slot = id.into();
+        }
+    }
+    if candidate == Profile::default() {
+        *profile = candidate;
     }
 }
 
@@ -918,6 +950,62 @@ impl Layout {
 
 #[cfg(test)]
 mod tests {
+    /// #4735: the rows that open a folder in the Legacy Viewer's order
+    /// (menu_inventory.xml: Show in Main View, Show in new Window, Open, Open
+    /// in new window) for every menu its user never arranged; an arranged
+    /// menu keeps its order.
+    #[test]
+    fn untouched_menus_take_the_legacy_order_of_the_open_rows() {
+        let current = Profile::default();
+        let order = &current.layout.orders[TEXT];
+        let start = order.iter().position(|id| id == "clean-broken-links").expect("clean-broken-links");
+        assert_eq!(
+            order[start..start + 6],
+            [
+                "clean-broken-links",
+                "show-main",
+                "show-window",
+                "open-current",
+                "open-window",
+                "separator:purge"
+            ]
+        );
+        // Aurora's previous default: Open in a new window before Open
+        let mut previous = current.clone();
+        let order = previous.layout.orders.get_mut(TEXT).expect("text order");
+        for (slot, id) in order[start + 1..start + 5].iter_mut().zip(OPEN_ROWS_BEFORE) {
+            *slot = id.into();
+        }
+        assert_ne!(previous, current);
+        // a menu older than Open, which gains it on the way
+        let mut older = previous.clone();
+        older
+            .layout
+            .orders
+            .get_mut(TEXT)
+            .expect("text order")
+            .retain(|id| id != "open-current");
+        for profile in [previous.clone(), older] {
+            let mut prefs = Preferences {
+                profiles: [(SHARED.into(), profile)].into(),
+            };
+            prefs.unify();
+            assert_eq!(prefs.profiles[SHARED], current);
+            prefs.unify();
+            assert_eq!(prefs.profiles[SHARED], current, "a second pass changes nothing");
+        }
+        // an arranged menu (Rename moved first) keeps its own order
+        let mut arranged = previous;
+        let order = arranged.layout.orders.get_mut(TEXT).expect("text order");
+        order.retain(|id| id != "rename");
+        order.insert(1, "rename".into());
+        let mut prefs = Preferences {
+            profiles: [(SHARED.into(), arranged.clone())].into(),
+        };
+        prefs.unify();
+        assert_eq!(prefs.profiles[SHARED], arranged);
+    }
+
     #[test]
     fn saved_sound_menus_gain_world_playback_immediately_after_local_playback() {
         let mut profile = Profile::default();
