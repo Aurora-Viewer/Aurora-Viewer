@@ -66,6 +66,9 @@ const SMALL_BUTTON_GAP: f32 = 2.0;
 /// The top row (the buttons and the room under them).
 const SMALL_ROW: f32 = 22.0;
 const SMALL_STICK: f32 = 50.0;
+/// The least room around each joystick and the zoom of an enlarged small
+/// window (the default one has 10.75).
+const SMALL_STICK_GAP: f32 = 4.0;
 const SMALL_ZOOM_W: f32 = 16.0;
 const SMALL_ZOOM_BUTTON: f32 = 14.0;
 /// The small zoom slider's thumb.
@@ -342,19 +345,21 @@ impl ControlsUi {
                 // the Legacy Viewer's small camera window (#677 on the
                 // feedback board): no title bar, moved by its background,
                 // closed by its toolbar button or menu entry (Ctrl+W
-                // passes over it, as `without_close` says). Its size is
-                // fixed: the Legacy Viewer's can be enlarged (can_resize,
-                // 165×77 at least), a difference noted in TASKS.md
-                Floater::new(
+                // passes over it, as `without_close` says). It is enlarged
+                // by its edges from its default size, as the Legacy
+                // Viewer's (can_resize, 165×77 at least; #4840)
+                let size = Vec2::new(SMALL_WIDTH, SMALL_ROW + SMALL_STICK);
+                let mut small = Floater::new(
                     CLASSIC_CAMERA_SMALL,
                     aurora_i18n::tr!("controls-camera-title"),
                     Pos2::new(60.0, 160.0),
-                    Vec2::new(SMALL_WIDTH, SMALL_ROW + SMALL_STICK),
+                    size,
                 )
-                .auto_height()
                 .without_close()
                 .margin(SMALL_MARGIN)
-                .show(ctx, p, camera, |ui| small_camera(ui, p, view, &mut out));
+                .steady_size();
+                small.min_size = size;
+                small.show(ctx, p, camera, |ui| small_camera(ui, p, view, &mut out));
             } else if *camera {
                 let size = Vec2::new(controls_width(ctx, view, true), 210.0);
                 Floater::new(
@@ -1452,8 +1457,10 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: &mut Shot
 /// reset view on top, then the orbit joystick with the roll buttons in its
 /// bottom corners, the zoom's column and the pan joystick.
 fn small_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
-    let (body, _) = ui.allocate_exact_size(Vec2::new(SMALL_BODY, SMALL_ROW + SMALL_STICK), Sense::hover());
-    let at = SmallCamera::new(body.min);
+    // the whole body of the window, enlarged or not (#4840)
+    let room = ui.available_size().max(Vec2::new(SMALL_BODY, SMALL_ROW + SMALL_STICK));
+    let (body, _) = ui.allocate_exact_size(room, Sense::hover());
+    let at = SmallCamera::sized(body.min, body.size());
     let presets = [
         (CameraPreset::Front, "user-circle"),
         (CameraPreset::Side, "user-square"),
@@ -1598,7 +1605,20 @@ pub struct SmallCamera {
 }
 
 impl SmallCamera {
+    /// At the window's default size (`SMALL_BODY` × `SMALL_ROW` +
+    /// `SMALL_STICK`).
+    #[cfg(test)]
     pub fn new(min: Pos2) -> SmallCamera {
+        SmallCamera::sized(min, Vec2::new(SMALL_BODY, SMALL_ROW + SMALL_STICK))
+    }
+
+    /// In a body of `size`, the window enlarged (#4840): the buttons keep
+    /// their place on top, as their panel follows the top left, and the
+    /// joysticks and the zoom grow into the room under them as
+    /// floater_fs_camera_small.xml's layout panels do (follows="all"),
+    /// still round, `SMALL_STICK` at the least.
+    pub fn sized(min: Pos2, size: Vec2) -> SmallCamera {
+        let size = size.max(Vec2::new(SMALL_BODY, SMALL_ROW + SMALL_STICK));
         let button = |left: f32| Rect::from_min_size(egui::pos2(left, min.y), Vec2::splat(SMALL_BUTTON));
         let step = SMALL_BUTTON + SMALL_BUTTON_GAP;
         // floater_fs_camera_small.xml, from the window's left edge: the
@@ -1606,8 +1626,14 @@ impl SmallCamera {
         // 85 to 143; the body starts SMALL_INSET in
         let views = std::array::from_fn(|i| button(min.x + 5.0 - SMALL_INSET + i as f32 * step));
         let tools = std::array::from_fn(|i| button(min.x + 85.0 - SMALL_INSET + i as f32 * step));
-        let row = Rect::from_min_size(egui::pos2(min.x, min.y + SMALL_ROW), Vec2::new(SMALL_BODY, SMALL_STICK));
-        let sticks = SticksRow::sized(row, SMALL_STICK, SMALL_ZOOM_W);
+        let row = Rect::from_min_size(egui::pos2(min.x, min.y + SMALL_ROW), Vec2::new(size.x, size.y - SMALL_ROW));
+        // as tall as the row, and both as wide as the zoom and the four
+        // gaps leave them
+        let stick = row
+            .height()
+            .min((row.width() - SMALL_ZOOM_W - 4.0 * SMALL_STICK_GAP) / 2.0)
+            .max(SMALL_STICK);
+        let sticks = SticksRow::sized(row, stick, SMALL_ZOOM_W);
         let o = sticks.orbit;
         let corner = |x: f32| Rect::from_min_size(egui::pos2(x, o.bottom() - SMALL_ROLL), Vec2::splat(SMALL_ROLL));
         SmallCamera {
@@ -3025,6 +3051,34 @@ mod tests {
         assert_eq!((x(at.tools[0]).0, x(at.tools[2]).1), (85.0, 143.0));
     }
 
+    /// #4840: the small window enlarged, its joysticks grow into the room,
+    /// still round and apart, the buttons keep their place; squeezed below
+    /// its default size, it keeps the default layout.
+    #[test]
+    fn the_small_camera_window_grows_like_the_legacy_one() {
+        let default = SmallCamera::new(Pos2::ZERO);
+        for size in [Vec2::new(400.0, 160.0), Vec2::new(200.0, 300.0), Vec2::new(600.0, 90.0)] {
+            let at = SmallCamera::sized(Pos2::ZERO, size);
+            let body = Rect::from_min_size(Pos2::ZERO, size);
+            assert_eq!((at.views, at.tools), (default.views, default.tools), "the buttons stay on top");
+            let s = at.sticks;
+            for r in [s.orbit, s.zoom, s.pan] {
+                assert!(body.contains_rect(r), "{r:?} in the body {size:?}");
+                assert!(r.top() >= at.views[0].bottom(), "under the buttons");
+            }
+            assert!(
+                s.orbit.right() < s.zoom.left() && s.zoom.right() < s.pan.left(),
+                "apart at {size:?}"
+            );
+            assert_eq!(s.orbit.width(), s.orbit.height(), "round");
+            assert_eq!(s.orbit.size(), s.pan.size());
+            assert!(s.orbit.width() > default.sticks.orbit.width(), "larger at {size:?}");
+            assert_eq!(s.zoom.height(), s.orbit.height(), "the zoom as tall");
+            assert!(s.orbit.contains_rect(at.roll_left) && s.orbit.contains_rect(at.roll_right));
+        }
+        assert_eq!(SmallCamera::sized(Pos2::ZERO, Vec2::new(100.0, 40.0)).sticks, default.sticks);
+    }
+
     /// The small window's controls, a frame with `events` at `mouselook`.
     fn small_frame(
         ctx: &egui::Context,
@@ -3063,7 +3117,11 @@ mod tests {
             },
             |ui| {
                 origin = ui.cursor().min;
-                small_camera(ui, p, &view, &mut out);
+                // the body of the window at its default size, as the
+                // floater gives it: the body takes the room it has (#4840)
+                let body = Rect::from_min_size(origin, Vec2::new(SMALL_BODY, SMALL_ROW + SMALL_STICK));
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
+                small_camera(&mut child, p, &view, &mut out);
             },
         );
         output.textures_delta.clear();
