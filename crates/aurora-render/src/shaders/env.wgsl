@@ -983,46 +983,58 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
     surface_occlusion = normal_map_occlusion(geo, material.normal, in.world_pos, 1.0 / in.clip.w);
     screen_share = 1.0;
     contact_share = 1.0;
-    if (material.color.a < material.cutoff) { discard; }
-    let n = material.normal;
-    let v = normalize(frame.camera_pos.xyz - in.world_pos);
-    let dist = distance(in.world_pos, frame.camera_pos.xyz);
-    let sh = sun_shadow(in.world_pos, geo, dist, in.clip.xy);
-    let metal = clamp(material.orm.b, 0.0, 1.0);
-    // pbrterrainF.glsl writes the material's ORM unchanged. Broadening its
-    // roughness from normal derivatives washes out terrain relief.
-    let rough = clamp(material.orm.g, 0.03, 1.0);
-    let ao = select(1.0, material.orm.r, frame.sky_ll.z > 0.5);
-    // pbrterrainF.glsl writes its emissive only with HAS_EMISSIVE
-    let emissive = select(material.emissive, vec3<f32>(0.0), deferred_emissive_off());
-    var color: vec3<f32>;
-    if (is_classic_sky()) {
-        let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        let local = ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
-        color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
-            + emissive) * ll_final_scale() + local;
-        // (the caustics lift the classic sky's shadow themselves, as above)
-        color = ll_haze(color + material.color.rgb * water_caustic_light(in.world_pos, n) * shadow_lift(sh), a);
-        if (water_fogs_source(in.world_pos)) {
-            color = apply_fog(water_scene_lit(color, (local + emissive * ll_final_scale()) * a.atten, in.world_pos), in.world_pos);
+    // The shading only on the branch that keeps the fragment, the discard on
+    // the other (see fs_terrain). `!(a < cutoff)` keeps a NaN alpha, as before.
+    var out: Shaded;
+    if (!(material.color.a < material.cutoff)) {
+        let n = material.normal;
+        let v = normalize(frame.camera_pos.xyz - in.world_pos);
+        let dist = distance(in.world_pos, frame.camera_pos.xyz);
+        let sh = sun_shadow(in.world_pos, geo, dist, in.clip.xy);
+        let metal = clamp(material.orm.b, 0.0, 1.0);
+        // pbrterrainF.glsl writes the material's ORM unchanged. Broadening its
+        // roughness from normal derivatives washes out terrain relief.
+        let rough = clamp(material.orm.g, 0.03, 1.0);
+        let ao = select(1.0, material.orm.r, frame.sky_ll.z > 0.5);
+        // pbrterrainF.glsl writes its emissive only with HAS_EMISSIVE
+        let emissive = select(material.emissive, vec3<f32>(0.0), deferred_emissive_off());
+        var color: vec3<f32>;
+        if (is_classic_sky()) {
+            let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+            let local = ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
+            color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
+                + emissive) * ll_final_scale() + local;
+            // (the caustics lift the classic sky's shadow themselves, as above)
+            color = ll_haze(color + material.color.rgb * water_caustic_light(in.world_pos, n) * shadow_lift(sh), a);
+            if (water_fogs_source(in.world_pos)) {
+                color = apply_fog(water_scene_lit(color, (local + emissive * ll_final_scale()) * a.atten, in.world_pos), in.world_pos);
+            }
+        } else {
+            color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + emissive;
+            let own = shade_pbr_local + emissive;
+            color += material.color.rgb * water_caustic_light(in.world_pos, n) * sh;
+            color = apply_fog(water_scene_lit(color, own, in.world_pos), in.world_pos);
         }
+        color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
+        out = Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
     } else {
-        color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + emissive;
-        let own = shade_pbr_local + emissive;
-        color += material.color.rgb * water_caustic_light(in.world_pos, n) * sh;
-        color = apply_fog(water_scene_lit(color, own, in.world_pos), in.world_pos);
+        discard;
     }
-    color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
-    return Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
+    return out;
 }
 
 @fragment
 fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
-    let col = terrain_color(in);
-    if (reflection_clip(in.world_pos)) {
+    // The shading only on the branch that keeps the fragment, the discard
+    // on the other: with the discard after it, Apple's shader compiler on
+    // M3 and later (AGX G15/G16) aborts while emitting this pipeline.
+    var out = vec4<f32>(0.0);
+    if (!reflection_clip(in.world_pos)) {
+        out = vec4<f32>(terrain_color(in), 1.0);
+    } else {
         discard;
     }
-    return vec4<f32>(col, 1.0);
+    return out;
 }
 
 @fragment
