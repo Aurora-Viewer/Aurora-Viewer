@@ -1,0 +1,26 @@
+<!-- aurora-generated: folder-filled + cube-3d-sphere (scripts/generate-inventory-icons.py; Tabler icons, MIT, assets/tabler-icons/LICENSE) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+  <defs>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+      <rect width="24" height="24" fill="#ffffff" />
+      <g transform="translate(12.0 13.0) scale(0.42) translate(-12 -12)" fill="none" stroke="#000000" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 17.6l-2 -1.1v-2.5" />
+        <path d="M4 10v-2.5l2 -1.1" />
+        <path d="M10 4.1l2 -1.1l2 1.1" />
+        <path d="M18 6.4l2 1.1v2.5" />
+        <path d="M20 14v2.5l-2 1.12" />
+        <path d="M14 19.9l-2 1.1l-2 -1.1" />
+        <path d="M12 12l2 -1.1" />
+        <path d="M18 8.6l2 -1.1" />
+        <path d="M12 12l0 2.5" />
+        <path d="M12 18.5l0 2.5" />
+        <path d="M12 12l-2 -1.12" />
+        <path d="M6 8.6l-2 -1.1" />
+      </g>
+    </mask>
+  </defs>
+  <g mask="url(#cut)">
+    <path d="M9 3a1 1 0 0 1 .608 .206l.1 .087l2.706 2.707h6.586a3 3 0 0 1 2.995 2.824l.005 .176v8a3 3 0 0 1 -2.824 2.995l-.176 .005h-14a3 3 0 0 1 -2.995 -2.824l-.005 -.176v-11a3 3 0 0 1 2.824 -2.995l.176 -.005h4z" />
+  </g>
+  <path fill="#ffffff" stroke="#202222" stroke-width="0.267044" stroke-linejoin="round" d="m 0.40847535,23.751788 v -1.982789 c 0,-1.143281 0.93587905,-2.082204 2.10152605,-2.082204 h 0.8406115 v -1.667974 l 2.790827,2.247896 -2.790827,2.115345 V 21.255353 H 2.5100014 c -0.4875543,0 -0.6220516,0.281675 -0.6220516,0.673816 v 1.822619 z" />
+</svg>

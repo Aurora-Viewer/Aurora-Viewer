@@ -577,6 +577,8 @@ pub enum NetEvent {
     /// its own flag in the next request; `error` is then the server's text.
     /// `next_server`: the login server sends the login on to this other
     /// server (`LoginError::NextServer`), which the user agrees to first.
+    /// `unencrypted_server`: the login would go to this server over plain
+    /// `http` (`LoginError::Unencrypted`), which the user agrees to first.
     LoginFailed {
         error: String,
         mfa_required: bool,
@@ -585,6 +587,7 @@ pub enum NetEvent {
         bad_credentials: bool,
         previous_session: bool,
         next_server: Option<String>,
+        unencrypted_server: Option<String>,
     },
     LoggedIn(Arc<LoginResponse>),
     /// A simulator circuit was established (main or neighbor).
