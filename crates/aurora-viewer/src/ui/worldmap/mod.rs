@@ -2355,6 +2355,14 @@ mod reshow_tests {
                 assert!(map.focus_search, "minimized: {minimized}: the user's show keeps its keyboard");
             }
         }
+        // closed by its toggle, then shown by a script before it draws: quiet
+        let ctx = egui::Context::default();
+        let mut map = WorldMapUi::default();
+        let mut open = true;
+        widgets::toggle_floater(&ctx, "worldmap", &mut open);
+        assert!(!open);
+        widgets::show_floater_quietly(&ctx, "worldmap", &mut open);
+        assert!(map.take_show(&ctx), "the close gave no keyboard");
         // the script's show alone still takes nothing
         let ctx = egui::Context::default();
         let mut map = WorldMapUi {

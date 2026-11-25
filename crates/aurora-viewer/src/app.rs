@@ -16766,9 +16766,7 @@ impl App {
             BarAction::ToggleHuds => self.set_show_huds(!self.settings.show_huds),
             BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(self.world.hud_zoom_min(), 1.0),
             BarAction::None => {}
-            BarAction::IkEdit => {
-                self.ik_editor.toggle();
-            }
+            BarAction::IkEdit => self.ik_editor.toggle_ik(&self.egui_ctx),
             BarAction::Poser => {
                 self.ik_editor.open_poser();
                 let window = self.ik_editor.poser_window(&self.settings.poser);

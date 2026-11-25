@@ -2830,6 +2830,9 @@ pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
         return;
     }
     *open = !*open;
+    if !*open {
+        forget_keyboard(ctx, id);
+    }
     unminimize_quietly(ctx, id);
 }
 
@@ -2846,6 +2849,7 @@ pub fn toggle_floater_closing(ctx: &egui::Context, id: &str, open: bool) -> bool
         expand_floater(ctx, id);
     } else if open {
         close_floater(ctx, id);
+        forget_keyboard(ctx, id);
     }
     !open
 }
@@ -2966,6 +2970,12 @@ fn shown_with_keyboard(ctx: &egui::Context, id: &str) {
     });
 }
 
+/// A toggle that closes the floater gives it no keyboard: a quiet show
+/// after it stays quiet.
+fn forget_keyboard(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(KEYBOARD)));
+}
+
 /// A show, open or toggle of the floater `id` that may take the keyboard
 /// came since the last call, a quiet show after it or not: true once. Its
 /// keyboard is given at once (LLFloater::openFloater, onOpen), and a quiet
@@ -2975,8 +2985,8 @@ pub fn take_floater_keyboard(ctx: &egui::Context, id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The floater `id` was shown by [`show_floater`] since the last call: true
-/// once.
+/// The floater `id` was shown by [`show_floater`] or
+/// [`show_floater_quietly`] since the last call: true once.
 pub fn take_floater_shown(ctx: &egui::Context, id: &str) -> bool {
     ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(SHOWN)))
         .unwrap_or(false)
