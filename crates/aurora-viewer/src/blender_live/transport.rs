@@ -126,7 +126,7 @@ fn serve(
     }
     let mut joints: Vec<_> = supported.iter().collect();
     joints.sort();
-    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "max_decoded_bytes": protocol::MAX_DECODED_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer", "shape-apply", "import-lods", "static-meshes", "object-links", "compressed-snapshots", "packed-geometry", "object-warnings"] });
+    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "max_decoded_bytes": protocol::MAX_DECODED_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer", "shape-apply", "import-lods", "static-meshes", "object-links", "compressed-snapshots", "packed-geometry", "object-warnings", "compressed-lods"] });
     writeln!(stream, "{hello}")?;
     {
         let mut status = shared.status.lock();
@@ -155,24 +155,38 @@ fn serve(
         read(stream, &mut bytes, shared, Duration::from_secs(5))?;
         if bytes.starts_with(b"LODS") {
             let expected = *shared.import_expected.lock();
-            if let Some(expected) = expected
-                && serde_json::from_slice::<super::import::Request>(&bytes[4..]).is_ok_and(|request| request == expected)
-            {
-                let result = super::import::decode(&bytes[4..], expected, supported);
-                let current = {
-                    let mut pending = shared.import_expected.lock();
-                    if *pending == Some(expected) {
-                        pending.take();
-                        true
-                    } else {
-                        false
-                    }
-                };
-                if current {
+            // The import that waits gets its result, unless another took
+            // its place meanwhile.
+            let finish = |expected: super::import::Request, result: Result<super::import::Bundle, String>| {
+                let mut pending = shared.import_expected.lock();
+                if *pending == Some(expected) {
+                    pending.take();
                     *shared.import_result.lock() = Some((expected.id, result));
                 }
+            };
+            // "compressed-lods": the prepared LODs may come deflated, as
+            // snapshots do; four LOD levels of JSON outgrow MAX_BYTES first.
+            // Inflated only while an import waits: with none pending, a
+            // frame is dropped without spending up to MAX_DECODED_BYTES on
+            // it. One for an abandoned request that comes while another
+            // import waits is inflated, then dropped on its id.
+            let mut answer = serde_json::json!({"ok": true});
+            if let Some(expected) = expected {
+                match protocol::lods_body(&bytes[4..]) {
+                    // (truncated, or over MAX_DECODED_BYTES once inflated):
+                    // the import fails with the cause instead of waiting out
+                    // its time, and the plug-in is told, as for a snapshot
+                    Err(error) => {
+                        answer = serde_json::json!({"ok": false, "error": error});
+                        finish(expected, Err(error));
+                    }
+                    Ok(body) if serde_json::from_slice::<super::import::Request>(&body).is_ok_and(|request| request == expected) => {
+                        finish(expected, super::import::decode(&body, expected, supported));
+                    }
+                    Ok(_) => {}
+                }
             }
-            reply(stream, shared, serde_json::json!({"ok":true}))?;
+            reply(stream, shared, answer)?;
             ctx.request_repaint();
             continue;
         }

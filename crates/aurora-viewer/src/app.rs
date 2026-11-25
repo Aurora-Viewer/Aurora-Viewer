@@ -3399,21 +3399,7 @@ impl App {
                         {
                             c.items.push(offer.clone());
                         }
-                        if let Some(folder) = self.world.inventory.folders.get(&c.folder_id)
-                            && matches!(folder.info.type_default, 46..=48)
-                        {
-                            c.version = folder.info.version;
-                            c.folders = folder
-                                .children
-                                .iter()
-                                .filter_map(|id| self.world.inventory.folders.get(id).map(|f| f.info.clone()))
-                                .collect();
-                            c.items = folder
-                                .items
-                                .iter()
-                                .filter_map(|id| self.world.inventory.items.get(id).cloned())
-                                .collect();
-                        }
+                        crate::world::inventory::demo::keep_live_listing(&self.world.inventory, c);
                     }
                 }
                 if let Some(e) = self.world.apply(ev) {
@@ -21355,6 +21341,8 @@ impl App {
                             self.world.start_group_chat(id, true);
                             self.show_conversations();
                         }
+                        // LLAvatarActions::inviteToGroup (indra/newview/llavataractions.cpp)
+                        ui::profile::ProfileAction::InviteToGroup(id) => self.group_profile_ui.invite.choose_group(vec![id]),
                         // the conversations' give confirmation (#991)
                         ui::profile::ProfileAction::Give { to, items } => {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));

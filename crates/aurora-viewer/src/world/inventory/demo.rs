@@ -1436,9 +1436,98 @@ pub fn fetch_reply(cmd: &NetCommand, inv: &Inventory, source: &FetchSource, faul
     }
 }
 
+/// The demo answers the outfit folders from the live model: the Current
+/// Outfit, the outfits and My Outfits (types 46..=48), and the groups of My
+/// Outfits the demo seeded (`outfit_folders::seed_demo`). The groups exist
+/// only in the live model: the demo's dataserver does not know them and
+/// answers each with made-up objects and no subfolders, which wiped them
+/// when Appearance read them again on opening (their outfits gone, "Night"
+/// no longer a group). Such a listing is rewritten with what the model
+/// holds, as the grid would answer; any other folder keeps the
+/// dataserver's answer.
+pub fn keep_live_listing(inv: &Inventory, c: &mut FolderContents) {
+    let Some(folder) = inv.folders.get(&c.folder_id) else {
+        return;
+    };
+    if !matches!(folder.info.type_default, 46..=48) && !crate::world::outfit_folders::is_group(inv, c.folder_id) {
+        return;
+    }
+    c.version = folder.info.version;
+    c.folders = folder
+        .children
+        .iter()
+        .filter_map(|id| inv.folders.get(id).map(|f| f.info.clone()))
+        .collect();
+    c.items = folder.items.iter().filter_map(|id| inv.items.get(id).cloned()).collect();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Appearance reads the seeded groups of My Outfits again on opening:
+    /// they come back with their subgroups and outfits, and a folder outside
+    /// My Outfits keeps the dataserver's answer.
+    #[test]
+    fn the_seeded_outfit_groups_keep_their_contents_when_read_again() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let agent = crate::demo::DEMO_AGENT;
+        world.agent_id = agent;
+        crate::world::appearance::seed_demo(&mut world.inventory, agent);
+        crate::world::outfit_folders::seed_demo(&mut world.inventory, agent);
+        let inv = &mut world.inventory;
+        let [beach, night, beach_day, beach_night] = [741, 742, 746, 747].map(Uuid::from_u128);
+        // what the demo's dataserver answers, rewritten as App::send does
+        let dataserver = |folders: Vec<Uuid>| -> Vec<FolderContents> {
+            let cmd = NetCommand::FetchInventory {
+                folders,
+                owner: agent,
+                library: false,
+            };
+            crate::demo::demo_reply(&cmd)
+                .into_iter()
+                .flat_map(|ev| match ev {
+                    NetEvent::InventoryContents(c) => c,
+                    _ => Vec::new(),
+                })
+                .collect()
+        };
+        let mut contents = dataserver(vec![beach, night]);
+        assert_eq!(contents.len(), 2, "both groups answered");
+        for c in &mut contents {
+            keep_live_listing(inv, c);
+        }
+        let plain = inv
+            .folders
+            .values()
+            .find(|f| !matches!(f.info.type_default, 46..=48) && !f.library && !crate::world::outfit_folders::container(inv, f.info.id))
+            .map(|f| f.info.id)
+            .expect("a folder outside My Outfits");
+        let mut answered = dataserver(vec![plain]);
+        let ids = |c: &[FolderContents]| -> Vec<Uuid> { c.iter().flat_map(|c| c.items.iter().map(|i| i.id)).collect() };
+        let before = ids(&answered);
+        for c in &mut answered {
+            keep_live_listing(inv, c);
+        }
+        assert_eq!(
+            ids(&answered),
+            before,
+            "a folder outside My Outfits is left as the dataserver answered"
+        );
+        for f in inv.folders.values_mut() {
+            f.state = FetchState::Unknown;
+        }
+        inv.apply(contents);
+        let entries = crate::world::outfit_folders::tree(inv, "", Default::default(), crate::world::outfit_folders::Order::Gallery);
+        let entry = |id| entries.iter().find(|e| e.id == id).copied();
+        assert!(entry(night).is_some_and(|e| e.group), "Night is still a group");
+        assert_eq!(
+            entry(beach).map(|e| e.outfits),
+            Some(2),
+            "Beach counts its outfits, Night's included"
+        );
+        assert!(entry(beach_day).is_some() && entry(beach_night).is_some());
+    }
 
     #[test]
     fn big_mode_reads_its_size_and_options() {
