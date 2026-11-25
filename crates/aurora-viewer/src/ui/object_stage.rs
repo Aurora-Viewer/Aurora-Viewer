@@ -356,20 +356,24 @@ impl StageUi {
         if *self.bones != *bones {
             self.bones = bones;
         }
-        let frame = model.frame(standing.focus, &self.bones);
-        if mix <= 0.0 {
+        let Some(joints) = self.live.as_ref().filter(|_| mix > 0.0) else {
             self.steady = None;
-            return frame;
-        }
-        // an animation moves: the view follows it slowly, not at each step
+            return model.frame(standing.focus, still);
+        };
+        let asked = model.live_frame(joints);
         let dt = ui.input(|i| i.stable_dt).min(0.1);
+        // (a body that leaves its place is followed without a jolt)
         let steady = match self.steady {
-            Some(steady) if near == 0.0 => steady.mix(frame, 1.0 - (-dt * 1.5).exp()),
-            _ => frame,
+            Some(steady) => steady.mix(asked, 1.0 - (-dt * 2.5).exp()),
+            None => asked,
         };
         self.steady = Some(steady);
         ui.ctx().request_repaint();
-        steady
+        // the still frame, or the item's, as far as it comes to it
+        match standing.focus {
+            Some((group, near)) => steady.mix(model.frame(Some((group, 1.0)), still), near),
+            None => model.frame(None, still).mix(steady, mix),
+        }
     }
 
     fn pose(&mut self, model: &Arc<StageModel>, standing: Standing, frame: Frame) -> Pose {
@@ -530,41 +534,128 @@ impl StageUi {
         }
     }
 
-    /// How what is worn stands: three choices at the right of the bar, or one
-    /// button that goes from one to the next where they do not fit.
+    /// How what is worn stands: a switch of three little figures at the right
+    /// of the bar, the chosen one named.
     fn stances(&mut self, ui: &mut egui::Ui, p: &Palette, rect: Rect) {
-        let short = Stance::ALL.map(|stance| match stance {
-            Stance::Live => aurora_i18n::tr!("stage-stance-live"),
-            Stance::Relaxed => aurora_i18n::tr!("stage-stance-relaxed-short"),
-            Stance::Wide => aurora_i18n::tr!("stage-stance-wide-short"),
-        });
-        let mut at = Stance::ALL.iter().position(|s| *s == self.stance).unwrap_or(0);
-        let options = short.map(|name| (name, true));
-        let width = widgets::segmented_size(ui, &options).x;
-        if width + 6.0 > ui.available_width() {
-            if widgets::action_button(ui, p, "", short[at], widgets::ActionKind::Flat, Vec2::new(0.0, BUTTON))
-                .on_hover_text(stance_tip(self.stance))
-                .clicked()
-            {
-                self.stance = Stance::ALL[(at + 1) % Stance::ALL.len()];
-            }
-            return;
-        }
-        let place = Rect::from_min_max(egui::pos2(rect.right() - 5.0 - width, rect.top()), rect.right_bottom());
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt("object_stage_stance")
-                .max_rect(place)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        const ICON: f32 = 30.0;
+        const HEIGHT: f32 = 26.0;
+        const INSET: f32 = 2.0;
+        let font = egui::FontId::new(12.0, super::fonts::semibold(ui.ctx()));
+        let names = Stance::ALL.map(stance_name);
+        let wide = |name: &str| ui.painter().layout_no_wrap(name.to_owned(), font.clone(), p.ink).size().x + 8.0;
+        let longest = names.iter().map(|n| wide(n)).fold(0.0, f32::max);
+        let room = ui.available_width() - 4.0;
+        let small = ICON * 3.0 + 2.0 * INSET;
+        // the name where there is room for it, the figures alone otherwise
+        let named = if small + longest <= room { longest } else { 0.0 };
+        let track = Rect::from_min_size(
+            egui::pos2(rect.right() - 4.0 - small - named, rect.center().y - HEIGHT / 2.0 - INSET),
+            Vec2::new(small + named, HEIGHT + 2.0 * INSET),
         );
-        if widgets::segmented(&mut child, p, &mut at, &options) {
-            self.stance = Stance::ALL[at];
+        let radius = ui.visuals().widgets.inactive.corner_radius;
+        let edge = egui::Stroke::new(1.0, p.muted.gamma_multiply(0.55));
+        ui.painter()
+            .rect(track, radius, p.field.to_opaque(), edge, egui::StrokeKind::Inside);
+        let id = ui.scope_id().with("object_stage_stance");
+        let at = Stance::ALL.iter().position(|s| *s == self.stance).unwrap_or(0);
+        let time = if ui.style().animation_time > 0.0 { 0.16 } else { 0.0 };
+        // how open each segment is, and where the lit face stands
+        let open: [f32; 3] = std::array::from_fn(|i| ui.ctx().animate_bool_with_time(id.with(("open", i)), i == at, time));
+        let total: f32 = open.iter().sum::<f32>().max(0.001);
+        let mut x = track.left() + INSET;
+        let segments: [Rect; 3] = std::array::from_fn(|i| {
+            let width = ICON + named * open[i] / total;
+            let r = Rect::from_min_size(egui::pos2(x, track.top() + INSET), Vec2::new(width, HEIGHT));
+            x += width;
+            r
+        });
+        let left = ui
+            .ctx()
+            .animate_value_with_time(id.with("left"), segments[at].left() - track.left(), time);
+        let right = ui
+            .ctx()
+            .animate_value_with_time(id.with("right"), segments[at].right() - track.left(), time);
+        let lit = Rect::from_x_y_ranges(track.left() + left..=track.left() + right, segments[at].y_range());
+        ui.painter().rect_filled(lit, radius, p.violet);
+        for (i, stance) in Stance::ALL.into_iter().enumerate() {
+            let r = segments[i];
+            let resp = ui.interact(r, id.with(i), Sense::click());
+            let chosen = i == at;
+            if !chosen && resp.hovered() {
+                ui.painter().rect_filled(r, radius, p.raised);
+            }
+            if i > 0 && i != at && i != at + 1 {
+                let y = r.center().y;
+                ui.painter()
+                    .vline(r.left(), y - 6.0..=y + 6.0, egui::Stroke::new(1.0, p.muted.gamma_multiply(0.35)));
+            }
+            let ink = match (chosen, resp.hovered()) {
+                (true, _) => p.on_accent,
+                (false, true) => p.ink,
+                (false, false) => p.muted,
+            };
+            // the figure of AO moves while it is the one chosen
+            let moving = chosen && stance == Stance::Live && time > 0.0 && self.live.is_some();
+            let sway = if moving { (ui.input(|s| s.time) * 2.6).sin() as f32 } else { 0.0 };
+            let center = egui::pos2(r.left() + ICON / 2.0, r.center().y);
+            figure(ui, center, stance, sway, ink);
+            if chosen && named > 0.0 && open[i] > 0.6 {
+                // in the middle of the room the longest name takes
+                let text = (wide(names[i]) - 8.0).min(named);
+                let left = r.left() + ICON - 2.0 + (named - 8.0 - text).max(0.0) / 2.0;
+                let width = (r.right() - left).max(1.0);
+                let ink = ink.gamma_multiply((open[i] - 0.6) / 0.4);
+                widgets::paint_elided(ui, names[i], egui::pos2(left, r.center().y), width, font.clone(), ink);
+            }
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, chosen, names[i]));
+            if resp.on_hover_text(stance_tip(stance)).clicked() {
+                self.stance = stance;
+            }
         }
-        if let Some(pos) = ui.ctx().pointer_hover_pos().filter(|pos| place.contains(*pos)) {
-            let over = ((pos.x - place.left()) / place.width() * 3.0) as usize;
-            ui.interact(place, ui.scope_id().with("stance_tip"), Sense::hover())
-                .on_hover_text(stance_tip(Stance::ALL[over.min(2)]));
+    }
+}
+
+/// A little person standing as `stance`, in a square of sixteen points.
+fn figure(ui: &egui::Ui, center: egui::Pos2, stance: Stance, sway: f32, ink: Color32) {
+    let at = |x: f32, y: f32| center + Vec2::new(x, y);
+    let stroke = egui::Stroke::new(1.7, ink);
+    let painter = ui.painter();
+    let limb = |points: &[egui::Pos2]| {
+        for pair in points.windows(2) {
+            painter.line_segment([pair[0], pair[1]], stroke);
         }
+        for p in points {
+            painter.circle_filled(*p, stroke.width / 2.0, ink);
+        }
+    };
+    let lean = if stance == Stance::Live { sway * 0.7 } else { 0.0 };
+    painter.circle_filled(at(lean, -6.2), 2.2, ink);
+    let (neck, hip) = (at(lean * 0.6, -3.0), at(0.0, 1.8));
+    limb(&[neck, hip]);
+    match stance {
+        Stance::Wide => {
+            limb(&[at(-6.6, -2.4), at(6.6, -2.4)]);
+            limb(&[at(-2.2, 7.6), hip, at(2.2, 7.6)]);
+        }
+        Stance::Relaxed => {
+            limb(&[at(-4.6, 3.0), neck, at(4.6, 3.0)]);
+            limb(&[at(-2.6, 7.6), hip, at(2.6, 7.6)]);
+        }
+        Stance::Live => {
+            // one arm up, a step
+            limb(&[neck, at(3.6, -1.4 - sway * 0.6), at(5.6, -5.0 - sway)]);
+            limb(&[neck, at(-3.4, -0.2 + sway * 0.4), at(-4.6, 3.0 + sway * 0.6)]);
+            limb(&[hip, at(2.6, 4.2), at(1.6, 7.6)]);
+            limb(&[hip, at(-1.8, 4.8), at(-4.0, 7.2)]);
+        }
+    }
+}
+
+fn stance_name(stance: Stance) -> &'static str {
+    match stance {
+        Stance::Live => aurora_i18n::tr!("stage-stance-live"),
+        Stance::Relaxed => aurora_i18n::tr!("stage-stance-relaxed"),
+        Stance::Wide => aurora_i18n::tr!("stage-stance-wide"),
     }
 }
 

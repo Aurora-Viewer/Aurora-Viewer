@@ -375,6 +375,8 @@ impl InspectUi {
         self.opening = true;
         self.single = roots.len() == 1;
         self.wide.restart();
+        // one object: its 3D view, large
+        self.wide.grown = self.single.then_some(wide::Tile::Stage);
         self.stage.restart();
         self.subject = subject;
         self.roots = roots;

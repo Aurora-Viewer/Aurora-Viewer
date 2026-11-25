@@ -268,6 +268,8 @@ pub struct StageModel {
     bind: Vec<Mat4>,
     clusters: Vec<Cluster>,
     pelvis: usize,
+    /// Where the pelvis is in the still stances.
+    pelvis_rest: Vec3,
     /// The bones standing: arms wide, arms down.
     still: [Arc<[Mat4]>; 2],
     images: HashMap<Uuid, (PreviewRevision, Arc<Image>)>,
@@ -629,6 +631,10 @@ impl Building {
             bind: self.bind,
             clusters: self.clusters,
             pelvis,
+            pelvis_rest: skeletons[1]
+                .as_ref()
+                .and_then(|s| s.get(pelvis))
+                .map_or(Vec3::ZERO, |m| m.w_axis.truncate()),
             still: [Arc::from([]), Arc::from([])],
             images,
             meshes,
@@ -796,6 +802,22 @@ impl StageModel {
             Some((group, f)) if !group.units.is_empty() => all.mix(Frame::of(layout::whole(&boxes[group.units.clone()])), f),
             _ => all,
         }
+    }
+
+    /// What the view frames while the avatar moves. Anchored where it stands:
+    /// a tail, an arm or a swaying hip never moves the picture; only a body
+    /// that leaves its place (a dance, a sit pose set aside) is followed, by
+    /// what it is past `SLACK` of the frame.
+    pub fn live_frame(&self, joints: &[Mat4]) -> Frame {
+        const SLACK: f32 = 0.3;
+        let mut frame = self.frame(None, &self.still[1]);
+        let at = joints.get(self.pelvis).map_or(self.pelvis_rest, |m| m.w_axis.truncate());
+        let away = at - self.pelvis_rest;
+        let past = away.length() - frame.radius * SLACK;
+        if past > 0.0 {
+            frame.center += away.normalize() * past;
+        }
+        frame
     }
 
     /// How large a group shows: the others shrink away from one alone.
