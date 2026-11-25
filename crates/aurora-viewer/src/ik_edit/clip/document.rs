@@ -645,8 +645,9 @@ impl Document {
         let frame = 1.0 / self.fps as f32;
         self.meta.loop_in = self.meta.loop_in.clamp(0.0, (d - frame).max(0.0));
         self.meta.loop_out = self.meta.loop_out.clamp(self.meta.loop_in + frame, d);
-        self.meta.ease_in = self.meta.ease_in.clamp(0.0, d);
-        self.meta.ease_out = self.meta.ease_out.clamp(0.0, d);
+        let max_ease = if self.meta.looping { f32::MAX } else { d };
+        self.meta.ease_in = self.meta.ease_in.clamp(0.0, max_ease);
+        self.meta.ease_out = self.meta.ease_out.clamp(0.0, max_ease);
         if !self.meta.looping && self.meta.ease_in + self.meta.ease_out > d {
             let factor = d / (self.meta.ease_in + self.meta.ease_out);
             self.meta.ease_in *= factor;
@@ -1088,12 +1089,9 @@ impl Document {
 }
 
 /// The position a track's keys start from when its first position key is
-/// recorded after frame 0. `Document::record` stores the pelvis as an offset
-/// from its rest position and every other joint as its position under its
-/// parent, so a loaded track takes the same: no offset for the pelvis (its
-/// rest height here would lift the avatar by it), the rest position else.
+/// recorded after frame 0, in the native asset's parent-relative coordinates.
 fn base_position(rig: &Rig, bone: usize) -> Vec3 {
-    if bone == rig.pelvis { Vec3::ZERO } else { rig.local_pos[bone] }
+    rig.local_pos[bone] - rig.key_origin(bone)
 }
 
 /// A key belongs to the frame its time rounds to, exactly as the timeline

@@ -406,7 +406,11 @@ pub(super) fn show(
         *open = false;
     } else if back {
         menu.pie_path.pop();
-    } else if (primary_released || secondary_released) && menu.pie_input_frame.is_some_and(|frame| frame != ctx.cumulative_frame_nr()) {
+    } else if (primary_released || secondary_released)
+        && menu
+            .pie_input_frame
+            .is_some_and(|frame| frame != ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
+    {
         if secondary_released {
             if menu.pie_path.pop().is_none() {
                 *open = false;
@@ -436,7 +440,7 @@ pub(super) fn show(
             }
         }
     }
-    menu.pie_input_frame = Some(ctx.cumulative_frame_nr());
+    menu.pie_input_frame = Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT));
     hot
 }
 
@@ -499,6 +503,34 @@ mod tests {
             pie_path: Vec::new(),
             pie_input_frame: None,
         })
+    }
+
+    #[test]
+    fn the_whole_appearance_export_is_on_the_appearance_ring_after_edit_shape() {
+        let target = Target::Avatar {
+            id: uuid::Uuid::nil(),
+            own: true,
+            attachment: None,
+        };
+        let facts = Facts {
+            worn_shape: Some(uuid::Uuid::from_u128(43)),
+            appearance_xml_export: true,
+            ..Default::default()
+        };
+        let entries = super::super::entries::world_menu(&target, &facts, Vec3::ZERO);
+        let root = layout(&target, &entries);
+        let Kind::Submenu(slices) = &root.iter().find(|e| e.icon == "man-filled").expect("Appearance").kind else {
+            panic!("Appearance is a submenu");
+        };
+        assert_eq!(slices.len(), SLICES);
+        let at = slices[..SLICES - 1]
+            .iter()
+            .position(|e| matches!(e.kind, Kind::Action(CtxAction::ExportAppearanceXml)))
+            .expect("on the ring, not in More");
+        assert!(
+            matches!(slices[at - 1].kind, Kind::Action(CtxAction::EditWorn(_))),
+            "after Edit shape"
+        );
     }
 
     #[test]

@@ -298,7 +298,8 @@ const NAV_GLYPH_GAP: f32 = 5.0;
 
 /// A rail button showing its icon, its `label` or both (`display`), with
 /// `tip` on hover; `underline_only` marks it lit by its underline alone (a
-/// section shown in a window of its own), the active tab being also tinted.
+/// section shown in a window of its own), the active tab being also tinted;
+/// `half` lights it at half (the second section, second_tab.rs).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn navigation_button_marked(
     ui: &mut egui::Ui,
@@ -309,22 +310,38 @@ pub(super) fn navigation_button_marked(
     display: crate::build::layout::ButtonDisplay,
     active: bool,
     underline_only: bool,
+    half: bool,
     height: f32,
 ) -> egui::Response {
     use crate::build::layout::ButtonDisplay;
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), egui::Sense::click());
     let tinted = active && !underline_only;
+    let strength = if half { 0.5 } else { 1.0 };
+    if tinted && response.hovered() && half {
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+    }
     if tinted || response.hovered() {
         ui.painter().rect_filled(
             rect,
             ui.visuals().window_corner_radius,
-            if tinted { p.violet.gamma_multiply(0.3) } else { p.raised },
+            if tinted {
+                p.violet.gamma_multiply(0.3 * strength)
+            } else {
+                p.raised
+            },
         );
     }
     if active {
-        ui.painter().hline(rect.x_range(), rect.bottom(), Stroke::new(2.0, p.violet));
+        ui.painter()
+            .hline(rect.x_range(), rect.bottom(), Stroke::new(2.0, p.violet.gamma_multiply(strength)));
     }
-    let color = if tinted { p.violet_light } else { p.muted };
+    let color = if tinted && !half {
+        p.violet_light
+    } else if tinted {
+        p.violet_light.lerp_to_gamma(p.muted, 0.5)
+    } else {
+        p.muted
+    };
     if display == ButtonDisplay::Icon {
         glyph(ui, egui::Rect::from_center_size(rect.center(), Vec2::splat(18.0)), icon, color);
     } else {
@@ -356,6 +373,8 @@ pub(super) fn navigation_button_marked(
         painter.galley(egui::pos2(left + lead, rect.center().y - galley.size().y / 2.0), galley, color);
     }
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), active, title));
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(("build-rail", title)), rect));
     response.on_hover_text(title)
 }
 
@@ -449,17 +468,21 @@ pub(super) fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world
     let start = ui.cursor().min.y;
     layout::panel(ui, p, tool, world, s, mods, crate::build::layout::Panel::Footer);
     ui.add_enabled_ui(!tool.ui.layout.organizing, |ui| {
+        // the face selector, Invert and All, then Global / Local /
+        // Reference; the link number is in "Edit linked parts" (the human's
+        // trial, 2026-11-22)
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
-            let reference_width = 3.0 * 26.0 + 22.0 + 3.0 * ui.spacing().item_spacing.x;
-            let selector_width = ((ui.available_width() - reference_width - 2.0 * ui.spacing().item_spacing.x) * 0.5).max(1.0);
-            for item in [crate::build::layout::Item::Linked, crate::build::layout::Item::Face] {
-                layout::selection_navigation(ui, p, tool, world, s, mods, item, selector_width);
-            }
+            let buttons = 5.0 * (layout::FOOTER_BUTTON + ui.spacing().item_spacing.x);
+            let face_width = (ui.available_width() - buttons).clamp(1.0, layout::FACE_SELECTOR);
+            layout::face_navigation(ui, p, tool, world, s.edit_linked, mods, face_width);
+            layout::face_actions(ui, p, tool, world, Vec2::splat(layout::FOOTER_BUTTON));
+            // the references at the right edge, as before
+            let references = 3.0 * layout::FOOTER_BUTTON + 3.0 * ui.spacing().item_spacing.x;
+            ui.add_space((ui.available_width() - references).max(0.0));
             for mode in 0..3 {
                 grid_mode_button(ui, p, tool, world, s, mode);
             }
-            layout::gear(ui, p, tool);
         });
     });
     tool.ui.layout.footer_height = Some(ui.cursor().min.y - start + 12.0);
@@ -587,7 +610,11 @@ fn transform(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut W
     let rect = ui.available_rect_before_wrap();
     let mut values = pane(ui, rect, "shared-values");
     let top = values.cursor().min.y;
-    object::show_transform(&mut values, p, tool, world, s, mods);
+    // arranged by its width, as in a window of its own (the human's
+    // request, 2026-11-23): the build window widened for two sections
+    // gives it fewer lines
+    let arrange = object::TransformArrange::for_width(values.available_width());
+    object::show_transform_arranged(&mut values, p, tool, world, s, mods, arrange, true);
     if !tool.selection.is_empty() {
         tool.ui.transform_height = Some(values.cursor().min.y - top + 8.0);
     }
@@ -650,59 +677,43 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             layout::navigation(ui, p, tool, world, s, mods, false);
         });
     }
-    let mut main = pane(
-        ui,
-        egui::Rect::from_min_max(egui::pos2(rect.left(), primary_top), egui::pos2(rect.right(), primary_bottom)),
-        "construction-primary",
-    );
-    if !sectionless {
-        band(&mut main, egui::Color32::TRANSPARENT, 10, 8, |ui| {
-            // Lay the content out at the width it keeps once the bar shows: the
-            // Create shape grid (and any wrapped text) grows taller as it widens,
-            // so a width that follows the bar would show it, narrow, fit, hide it
-            // and widen again on every frame (#1092).
-            let width = crate::ui::widgets::scrolled_width(ui).max(1.0);
-            egui::ScrollArea::vertical()
-                .id_salt(("c3_section", tool.tool as u8, tool.tab))
-                .max_height((primary_bottom - primary_top - 16.0).max(1.0))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.set_max_width(width);
-                    if tool.tool == Tool::Edit {
-                        if detach::tab_detached(s, tool.tab) {
-                            // Every section is in a window of its own.
-                        } else if !tool.selection.is_empty() || matches!(tool.tab, 3 | 5) {
-                            section(ui, p, tool, world, s, mods, env);
-                        }
-                    } else {
-                        match tool.tool {
-                            Tool::Focus => tools::focus_panel(ui, p, tool, mods, env),
-                            Tool::Grab => tools::grab_panel(ui, p, tool, mods),
-                            Tool::Create => tools::create_panel(ui, p, s),
-                            Tool::Land => {
-                                tools::land_panel(ui, p, tool, world, s);
-                                tools::parcel_panel(ui, p, tool, world, s, env.property_lines);
-                            }
-                            Tool::Edit => {}
-                        }
-                        common::small(ui, p, tools::status_text(tool, s, mods));
-                    }
-                });
-        });
+    let primary = egui::Rect::from_min_max(egui::pos2(rect.left(), primary_top), egui::pos2(rect.right(), primary_bottom));
+    // a second section in the right half (second_tab.rs)
+    let mut columns = vec![(tool.tab, primary)];
+    if let Some(tab) = super::second_tab::shown(tool, s).filter(|_| !sectionless) {
+        let middle = primary.center().x.round();
+        columns = vec![
+            (
+                tool.tab,
+                egui::Rect::from_min_max(primary.min, egui::pos2(middle, primary.bottom())),
+            ),
+            (tab, egui::Rect::from_min_max(egui::pos2(middle, primary.top()), primary.max)),
+        ];
+        tool.ui.second.shown = Some(tab);
+        ui.painter().vline(middle, primary.y_range(), crate::ui::widgets::divider_stroke(p));
     }
-    if tool.tool == Tool::Edit
-        && !detach::tab_detached(s, tool.tab)
-        && let Some(block) = crate::build::layout::Block::of_tab(tool.tab)
-    {
-        detach::source(
+    for (column, (tab, area)) in columns.into_iter().enumerate() {
+        let mut main = pane(
             ui,
-            p,
-            tool,
-            s,
-            block,
-            "content",
-            egui::Rect::from_min_max(egui::pos2(rect.left(), primary_top), egui::pos2(rect.right(), primary_bottom)),
+            area,
+            if column == 0 {
+                "construction-primary"
+            } else {
+                "construction-second"
+            },
         );
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique(("build_section_column", column)), (tab, area)));
+        if !sectionless {
+            section_column(&mut main, p, tool, world, s, mods, env, tab, (area.height() - 16.0).max(1.0));
+        }
+        if tool.tool == Tool::Edit
+            && !detach::tab_detached(s, tab)
+            && let Some(block) = crate::build::layout::Block::of_tab(tab)
+        {
+            detach::source(ui, p, tool, s, block, "content", area);
+        }
     }
     if shared {
         let values_bottom = if sectionless {
@@ -737,9 +748,10 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
 }
 
-/// One rendering path for all presentations; permission checks, drafts and
-/// simulator commands stay with the original controls.
-pub(super) fn section(
+/// The section `tab` scrolled in its column of the build window, or the
+/// panel of the tool in use, at most `height` tall.
+#[allow(clippy::too_many_arguments)]
+fn section_column(
     ui: &mut egui::Ui,
     p: &Palette,
     tool: &mut BuildTool,
@@ -747,11 +759,47 @@ pub(super) fn section(
     s: &mut BuildSettings,
     mods: Mods,
     env: &mut Env,
+    tab: usize,
+    height: f32,
 ) {
-    section_tab(ui, p, tool, world, s, mods, env, tool.tab);
+    band(ui, egui::Color32::TRANSPARENT, 10, 8, |ui| {
+        // Lay the content out at the width it keeps once the bar shows: the
+        // Create shape grid (and any wrapped text) grows taller as it widens,
+        // so a width that follows the bar would show it, narrow, fit, hide it
+        // and widen again on every frame (#1092).
+        let width = crate::ui::widgets::scrolled_width(ui).max(1.0);
+        egui::ScrollArea::vertical()
+            .id_salt(("c3_section", tool.tool as u8, tab))
+            .max_height(height)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_max_width(width);
+                if tool.tool == Tool::Edit {
+                    if detach::tab_detached(s, tab) {
+                        // Every section is in a window of its own.
+                    } else if !tool.selection.is_empty() || matches!(tab, 3 | 5) {
+                        section_tab(ui, p, tool, world, s, mods, env, tab);
+                    }
+                } else {
+                    match tool.tool {
+                        Tool::Focus => tools::focus_panel(ui, p, tool, mods, env),
+                        Tool::Grab => tools::grab_panel(ui, p, tool, mods),
+                        Tool::Create => tools::create_panel(ui, p, s),
+                        Tool::Land => {
+                            tools::land_panel(ui, p, tool, world, s);
+                            tools::parcel_panel(ui, p, tool, world, s, env.property_lines);
+                        }
+                        Tool::Edit => {}
+                    }
+                    common::small(ui, p, tools::status_text(tool, s, mods));
+                }
+            });
+    });
 }
 
-/// The section of `tab`, in the build window or in a window of its own.
+/// The section of `tab`, in the build window or in a window of its own:
+/// one rendering path for all presentations; permission checks, drafts and
+/// simulator commands stay with the original controls.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn section_tab(
     ui: &mut egui::Ui,

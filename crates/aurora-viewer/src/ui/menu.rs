@@ -65,6 +65,69 @@ fn rows_id() -> Id {
     Id::unique("aurora_menu_rows")
 }
 
+/// The layers this module's menus drew on, in this pass of the window and
+/// the one before: whatever opened the menu (an egui `Popup` kept in
+/// memory, [`popup_at`]'s bool, a submenu), a press on it is a press in a
+/// menu ([`is_menu_layer`]).
+#[derive(Clone, Default)]
+struct MenuLayers {
+    pass: u64,
+    now: Vec<LayerId>,
+    last: Vec<LayerId>,
+}
+
+fn menu_layers_id(ctx: &egui::Context) -> Id {
+    Id::unique(("aurora_menu_layers", ctx.viewport_id()))
+}
+
+/// A menu drew on its layer. Only its popup's body notes it, never a row:
+/// a hover card or a suggestion list built from menu rows (the top bar's
+/// graphics card, `bars/graphics.rs`) is not a menu.
+fn note_menu_layer(ui: &Ui) {
+    let layer = ui.layer_id();
+    if layer.order != egui::Order::Foreground {
+        return;
+    }
+    let ctx = ui.ctx();
+    let (id, pass) = (menu_layers_id(ctx), ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
+    ctx.data_mut(|d| {
+        let m = d.get_temp_mut_or_default::<MenuLayers>(id);
+        if m.pass != pass {
+            m.last = if m.pass + 1 == pass {
+                std::mem::take(&mut m.now)
+            } else {
+                Vec::new()
+            };
+            m.now.clear();
+            m.pass = pass;
+        }
+        if !m.now.contains(&layer) {
+            m.now.push(layer);
+        }
+    });
+}
+
+/// `layer` is a menu's, drawn in this pass or the last (where
+/// `Context::layer_id_at` finds it): a picker under it stays open
+/// (`chat::popout::pressed_away`).
+pub(crate) fn is_menu_layer(ctx: &egui::Context, layer: LayerId) -> bool {
+    let (id, pass) = (menu_layers_id(ctx), ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
+    ctx.data(|d| d.get_temp::<MenuLayers>(id))
+        .is_some_and(|m| match pass.checked_sub(m.pass) {
+            Some(0) => m.now.contains(&layer) || m.last.contains(&layer),
+            Some(1) => m.now.contains(&layer),
+            _ => false,
+        })
+}
+
+/// `body`, as the content of a menu's popup, noting its layer first.
+fn noted<R>(body: impl FnOnce(&mut Ui) -> R) -> impl FnOnce(&mut Ui) -> R {
+    move |ui| {
+        note_menu_layer(ui);
+        body(ui)
+    }
+}
+
 /// Menu style: the popup and sub-menu frames (`Frame::menu`) are built
 /// from it, so every level gets the panel color and border.
 fn style(p: &Palette) -> egui::style::StyleModifier {
@@ -113,7 +176,7 @@ fn stock_frame(shape: &egui::Shape, tint: Color32, border: Color32) -> Option<(e
 pub fn glaze(ctx: &egui::Context, p: &Palette) {
     let distinct = ctx
         .data(|d| d.get_temp::<(u64, Vec<LayerId>)>(Id::unique("distinct_menu_surfaces")))
-        .filter(|(frame, _)| *frame == ctx.cumulative_frame_nr())
+        .filter(|(frame, _)| *frame == ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
         .map(|(_, layers)| layers)
         .unwrap_or_default();
     // FSMenuBackgroundAlpha (LLMenuGL::draw), `ui::surface_opacity`
@@ -184,7 +247,7 @@ pub fn glaze(ctx: &egui::Context, p: &Palette) {
 /// A denser menu face and clearer edge when its parent uses the same panel face.
 /// Registration keeps all surface painting in the shared menu glass pass.
 pub fn distinct_surface(ui: &Ui) {
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ui.ctx().data_mut(|d| {
         let surfaces = d.get_temp_mut_or_default::<(u64, Vec<LayerId>)>(Id::unique("distinct_menu_surfaces"));
         if surfaces.0 != frame {
@@ -241,7 +304,7 @@ pub fn context_menu_at(ui: &Ui, id: Id, pos: egui::Pos2, p: &Palette, body: impl
 pub(crate) fn dismiss_on_window_change(ctx: &egui::Context) -> bool {
     let changed = ctx
         .data(|d| d.get_temp::<u64>(Id::unique("menus_native_window_change")))
-        .is_some_and(|frame| ctx.cumulative_frame_nr() <= frame);
+        .is_some_and(|frame| ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) <= frame);
     if !changed && !super::widgets::window_dragging(ctx) {
         return false;
     }
@@ -252,7 +315,7 @@ pub(crate) fn dismiss_on_window_change(ctx: &egui::Context) -> bool {
 /// Native move/resize events arrive between egui frames. Keep dismissal through
 /// the next frame and all its layout passes, including externally owned menus.
 pub(crate) fn window_geometry_changed(ctx: &egui::Context) {
-    let through = ctx.cumulative_frame_nr() + 1;
+    let through = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) + 1;
     ctx.data_mut(|d| d.insert_temp(Id::unique("menus_native_window_change"), through));
     Popup::close_all(ctx);
 }
@@ -268,7 +331,7 @@ fn context_menu_popup(popup: Popup<'_>, p: &Palette, body: impl FnOnce(&mut Ui))
         .align_alternatives(&[])
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
         .style(style(p))
-        .show(body)
+        .show(noted(body))
         .is_some()
 }
 
@@ -339,7 +402,7 @@ fn placed(
         .close_behavior(close)
         .style(style(p))
         .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))
-        .show(body)
+        .show(noted(body))
         .is_some()
 }
 
@@ -386,7 +449,7 @@ pub fn popup_at(ctx: &egui::Context, id: Id, pos: egui::Pos2, open: &mut bool, p
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
         .style(style(p))
         .open_bool(open)
-        .show(body);
+        .show(noted(body));
     let hovered = ctx.data(|d| d.get_temp::<RowTrack>(rows_id())).and_then(|t| t.hovered);
     ctx.data_mut(|d| d.remove::<RowTrack>(rows_id()));
     hovered
@@ -616,6 +679,34 @@ pub(crate) fn editable_row(
     row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, open, sense)
 }
 
+/// [`editable_row`] with the keys of the entry's shortcut at its right end
+/// (an empty `keys` shows none).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn editable_row_keys(
+    ui: &mut Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    enabled: bool,
+    checked: Option<bool>,
+    down: Option<bool>,
+    editable: bool,
+    keys: &str,
+) -> egui::Response {
+    if keys.is_empty() || down.is_some() {
+        return editable_row(ui, p, icon, label, enabled, checked, down, editable);
+    }
+    let end = checked.map_or(End::Keys(keys), |on| End::CheckKeys(on, keys));
+    let sense = if editable {
+        Sense::click_and_drag()
+    } else if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, false, sense)
+}
+
 /// One absolute cell of an editable menu toolbar, including its empty cells.
 pub(crate) fn icon_cell(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, editable: bool, size: Vec2) -> egui::Response {
     let sense = if editable {
@@ -669,7 +760,7 @@ pub(crate) fn choice_panel(ui: &Ui, p: &Palette, id: Id, pos: egui::Pos2, open: 
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
         .style(style(p))
         .open_bool(open)
-        .show(body);
+        .show(noted(body));
 }
 
 /// A menu's editing companion, kept beside its owner until it is locked again.
@@ -701,7 +792,7 @@ pub(crate) fn settings_panel(ui: &Ui, p: &Palette, id: Id, body: impl FnOnce(&mu
         .style(style(p))
         .frame(egui::Frame::NONE)
         .open(true)
-        .show(|ui| {
+        .show(noted(|ui| {
             let spacing = ui.ctx().global_style().spacing.item_spacing;
             ui.spacing_mut().item_spacing = spacing;
             super::widgets::overlay(ui, p, egui::Margin::same(12), |ui| {
@@ -709,7 +800,7 @@ pub(crate) fn settings_panel(ui: &Ui, p: &Palette, id: Id, body: impl FnOnce(&mu
                 super::widgets::organization_typography(ui);
                 body(ui);
             });
-        });
+        }));
 }
 
 /// Editing can cross between the menu, its submenus and the settings shelf.
@@ -769,7 +860,7 @@ pub(crate) fn editable_submenu(
             }
         });
     }
-    submenu.show(ui, response, body);
+    submenu.show(ui, response, noted(body));
     if click_only {
         egui::containers::menu::MenuState::from_ui(ui, |state, _| {
             if state.open_item == Some(hover_guard) {
@@ -1007,7 +1098,7 @@ pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enable
     let open = enabled && sub_menu_open(ui);
     let resp = row(ui, p, icon, label, enabled, End::Caret, open);
     if enabled {
-        egui::containers::menu::SubMenu::new().show(ui, &resp, body);
+        egui::containers::menu::SubMenu::new().show(ui, &resp, noted(body));
     }
     resp
 }
@@ -1091,7 +1182,10 @@ pub fn voice_volume(ui: &mut Ui, p: &Palette, v: VoiceVolume) -> Option<VoiceEdi
         ui.available_width().max(natural)
     };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, VOICE_ROW_H), Sense::hover());
-    let (key, frame) = (keep_open_id(ui.layer_id()), ui.ctx().cumulative_frame_nr());
+    let (key, frame) = (
+        keep_open_id(ui.layer_id()),
+        ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),
+    );
     ui.ctx().data_mut(|d| d.insert_temp(key, (frame, rect)));
     if !ui.is_rect_visible(rect) {
         return None;
@@ -1171,7 +1265,7 @@ pub(crate) fn clicks_kept_row(ctx: &egui::Context, popup: Id) -> bool {
     let Some((frame, rect)) = ctx.data(|d| d.get_temp::<(u64, egui::Rect)>(keep_open_id(layer))) else {
         return false;
     };
-    frame + 1 >= ctx.cumulative_frame_nr()
+    frame + 1 >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
         && ctx.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|pos| rect.contains(pos)))
 }
 
@@ -1436,7 +1530,7 @@ fn hidden(ui: &mut Ui) -> egui::Response {
 /// Aurora's own: the Legacy Viewer's menus have no search.
 pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
     let id = ui.layer_id().id.with("aurora_menu_search");
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let mut state = ui.data(|d| d.get_temp::<SearchState>(id)).unwrap_or_default();
     let opened = state.frame + 1 < frame;
     if opened {

@@ -89,20 +89,7 @@ pub(crate) fn set_tile_number(
     number: TileNumber,
 ) {
     let color = tile_face(ui, p, tile, set);
-    let painter = ui.painter().with_clip_rect(tile.intersect(ui.clip_rect()));
-    let font = crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), tile.height() * 0.5, color).font_id;
-    let k = number.turn.clamp(0.0, 1.0);
-    // eased out, with a touch of overshoot as it lands
-    let e = 1.0 - (1.0 - k).powi(3);
-    let travel = tile.height() * 0.6;
-    if let Some(before) = number.before.filter(|_| k < 1.0) {
-        let g = painter.layout_no_wrap(aurora_i18n::integer(before as i64), font.clone(), color);
-        let at = tile.center() - Vec2::new(0.0, travel * e);
-        widgets::paint_ink_centered(&painter, g, at, color.gamma_multiply(1.0 - e));
-    }
-    let g = painter.layout_no_wrap(aurora_i18n::integer(number.now as i64), font, color);
-    let at = tile.center() + Vec2::new(0.0, travel * (1.0 - e));
-    widgets::paint_ink_centered(&painter, g, at, color.gamma_multiply(e.max(0.15)));
+    widgets::turning_number(ui, tile, number.now, number.before, number.turn, color);
 }
 
 #[cfg(test)]

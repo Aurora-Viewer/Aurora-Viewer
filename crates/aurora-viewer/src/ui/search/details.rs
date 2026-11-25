@@ -80,16 +80,10 @@ impl<'a> Btn<'a> {
 /// Split the buttons in rows that fit `width` (their natural widths, in
 /// order).
 fn button_rows(ui: &egui::Ui, buttons: &[Btn], width: f32) -> Vec<Vec<usize>> {
-    let font = egui::FontId::proportional(12.5);
     let mut rows: Vec<Vec<usize>> = Vec::new();
     let mut used = 0.0;
     for (i, b) in buttons.iter().enumerate() {
-        let text = ui
-            .painter()
-            .layout_no_wrap(b.label.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
-            .size()
-            .x;
-        let w = text + 22.0 + 24.0;
+        let w = widgets::action_button_fit(ui, b.icon, b.label);
         match rows.last_mut() {
             Some(row) if used + BUTTON_GAP + w <= width => {
                 row.push(i);
@@ -108,7 +102,7 @@ fn button_rows(ui: &egui::Ui, buttons: &[Btn], width: f32) -> Vec<Vec<usize>> {
 /// Returns the index of the button clicked.
 pub(super) fn pane(ui: &mut egui::Ui, p: &Palette, salt: (&str, Key), buttons: &[Btn], body: impl FnOnce(&mut egui::Ui)) -> Option<usize> {
     let rows = button_rows(ui, buttons, ui.available_width());
-    let buttons_h = rows.len() as f32 * BUTTON_H + rows.len().saturating_sub(1) as f32 * BUTTON_GAP;
+    let buttons_h = rows.len() as f32 * button_height(ui) + rows.len().saturating_sub(1) as f32 * BUTTON_GAP;
     // the layout also puts its spacing around the gap before the buttons
     let gaps = 8.0 + 2.0 * ui.spacing().item_spacing.y;
     let body_h = (ui.available_height() - buttons_h - gaps).max(60.0);
@@ -117,14 +111,24 @@ pub(super) fn pane(ui: &mut egui::Ui, p: &Palette, salt: (&str, Key), buttons: &
         .auto_shrink([false, false])
         .max_height(body_h)
         .show(ui, body);
+    action_buttons(ui, p, buttons)
+}
+
+fn button_height(ui: &egui::Ui) -> f32 {
+    (ui.fonts_mut(|f| f.row_height(&widgets::control_font(ui, 12.5))) + 2.0 * ui.spacing().button_padding.y).max(BUTTON_H)
+}
+
+fn action_buttons(ui: &mut egui::Ui, p: &Palette, buttons: &[Btn]) -> Option<usize> {
+    let rows = button_rows(ui, buttons, ui.available_width());
+    let height = button_height(ui);
     ui.add_space(8.0);
     let mut clicked = None;
     ui.spacing_mut().item_spacing = Vec2::splat(BUTTON_GAP);
     for row in rows {
-        ui.horizontal(|ui| {
+        ui.horizontal_top(|ui| {
             for i in row {
                 let b = &buttons[i];
-                let resp = widgets::action_button_if(ui, p, b.icon, b.label, b.kind, Vec2::new(0.0, BUTTON_H), b.enabled);
+                let resp = widgets::action_button_if(ui, p, b.icon, b.label, b.kind, Vec2::new(0.0, height), b.enabled);
                 if let Some(body) = b.menu {
                     menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| body(ui));
                 } else if resp.clicked() {
@@ -143,19 +147,25 @@ pub(super) fn muted(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.label(RichText::new(text).size(12.0).color(p.muted));
 }
 
-/// A labelled value: the label in a fixed column, the value wrapping.
+/// A labelled value: grow the label's column with its text, or put it
+/// above the value when both columns would leave too little room.
 pub(super) fn field(ui: &mut egui::Ui, p: &Palette, label: &str, value: impl FnOnce(&mut egui::Ui)) {
-    ui.horizontal_top(|ui| {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 16.0), egui::Sense::hover());
-        ui.painter().text(
-            rect.left_center(),
-            egui::Align2::LEFT_CENTER,
-            label,
-            egui::FontId::proportional(12.0),
-            p.muted,
-        );
-        ui.vertical(value);
-    });
+    let font = widgets::control_font(ui, 12.0);
+    let label_size = ui.painter().layout_no_wrap(label.to_owned(), font.clone(), p.muted).size();
+    let label_width = LABEL_W.max(label_size.x);
+    let label = RichText::new(label).font(font).color(p.muted);
+    if label_width + ui.spacing().item_spacing.x + LABEL_W > ui.available_width() {
+        ui.add(egui::Label::new(label).wrap());
+        value(ui);
+    } else {
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui(Vec2::new(label_width, label_size.y), |ui| {
+                ui.set_min_width(label_width);
+                ui.add(egui::Label::new(label).wrap());
+            });
+            ui.vertical(value);
+        });
+    }
 }
 
 pub(super) fn text_field(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
@@ -209,9 +219,13 @@ pub(super) fn text_box(ui: &mut egui::Ui, c: &mut Ctx, text: &str, height: f32) 
 
 /// A key on one line, selectable, with its copy button.
 fn key_row(ui: &mut egui::Ui, p: &Palette, id: Uuid) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        ui.add(egui::Label::new(RichText::new(id.to_string()).size(11.0).monospace().color(p.muted)).selectable(true));
+        ui.add(
+            egui::Label::new(RichText::new(id.to_string()).size(11.0).monospace().color(p.muted))
+                .wrap()
+                .selectable(true),
+        );
         if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("search-copy-key"), true) {
             ui.ctx().copy_text(id.to_string());
         }
@@ -390,7 +404,7 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
         // LLGroupActions::show
         buttons.push(Btn::new("users-group", aurora_i18n::tr!("search-show-profile")).primary());
     }
-    let clicked = pane(ui, p, ("search-group", Key::Id(id)), &buttons, |ui| {
+    let mut body = |ui: &mut egui::Ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         ui.horizontal_top(|ui| {
             let insignia = data.map(|g| g.insignia).filter(|i| !i.is_nil());
@@ -403,9 +417,9 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
             ui.vertical(|ui| {
                 ui.add(egui::Label::new(RichText::new(&name).size(15.0).strong().color(p.ink)).truncate());
                 key_row(ui, p, id);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    let size = Vec2::new(0.0, 22.0);
+                    let size = Vec2::new(0.0, button_height(ui));
                     let uri = aurora_i18n::tr!("search-group-copy-uri");
                     if widgets::action_button(ui, p, "link-filled", uri, ActionKind::Flat, size).clicked() {
                         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
@@ -459,7 +473,16 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
                 },
             )
         });
-    });
+    };
+    let clicked = if standalone {
+        // The classic profile already scrolls its whole page. Let General
+        // take its measured height instead of clipping it inside a second
+        // fixed-height pane (LLPanelGroupGeneral's fields and actions).
+        body(ui);
+        action_buttons(ui, p, &buttons)
+    } else {
+        pane(ui, p, ("search-group", Key::Id(id)), &buttons, body)
+    };
     match clicked {
         Some(0) => actions.push(SearchAction::RefreshGroup(id)),
         Some(1) => context::request(ui.ctx(), CtxAction::GroupChat(id)),
@@ -668,5 +691,34 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row: Option<&Row>, actions: &m
         (Some(0), Some(g)) => actions.push(SearchAction::Teleport(g)),
         (Some(1), Some(g)) => actions.push(SearchAction::ShowOnMap(g)),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+
+    #[test]
+    fn enlarged_french_field_labels_leave_the_value_its_own_space() {
+        let p = crate::theme::Theme::default().palette();
+        for width in [240.0, 400.0] {
+            for scale in [1.0, 2.0] {
+                let mut frames = Frames::new();
+                crate::theme::Theme::default().apply(&frames.ctx, scale);
+                let label = aurora_i18n::text_in("fr", "search-group-founder");
+                let texts = frames.run(Vec::new(), |ui| {
+                    ui.set_width(width);
+                    field(ui, &p, label, |ui| {
+                        ui.add(egui::Label::new(RichText::new("Orion Resident").size(12.0)).wrap());
+                    });
+                });
+                let label = painted(&texts, label);
+                let value = painted(&texts, "Orion Resident");
+                assert!(!label.cut && !value.cut);
+                assert!(!label.rect.intersects(value.rect), "overlap at {width}/{scale}");
+                assert!(label.rect.right() <= width && value.rect.right() <= width);
+            }
+        }
     }
 }

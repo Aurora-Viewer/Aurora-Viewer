@@ -567,6 +567,9 @@ impl App {
                         .into_iter()
                         .filter_map(|index| self.world.objects.get(index))
                         .filter(|object| object.pcode == aurora_prim::params::LL_PCODE_VOLUME)
+                        // an empty list is the whole object, a prim kept selected
+                        // with no face takes nothing
+                        .filter(|object| self.build.faces.get(&object.key).is_none_or(|faces| !faces.is_empty()))
                         .map(|object| (object.full_id, self.build.faces.get(&object.key).cloned().unwrap_or_default()))
                         .collect();
                     if targets.is_empty() {
@@ -679,7 +682,9 @@ impl App {
                             draft.invalidate();
                             self.imports.discarded_quotes.append(&mut draft.discarded_quotes);
                         }
-                        self.world.local_assets.remove(&id);
+                        if let Some((_, false)) = self.world.local_assets.remove(&id) {
+                            self.wearable_ui.preview.forget_local_texture(id);
+                        }
                         self.ui_images.remove(&id);
                         if entry.local_published {
                             self.scene.materials.remove_local(&id);
@@ -1011,7 +1016,7 @@ impl App {
             object.shape_dirty = true;
             object.render.needs_records = true;
             // counted again from the local mesh (face stepping, texturing)
-            self.build.face_counts.remove(id);
+            self.build.forget_face_count(id);
         }
         self.clear_local_mesh_targets(&invalid);
     }
@@ -1027,7 +1032,7 @@ impl App {
                 object.shape_dirty = true;
                 object.render.needs_records = true;
             }
-            self.build.face_counts.remove(id);
+            self.build.forget_face_count(id);
         }
     }
     pub(super) fn apply_local_imports(&mut self, renderer: &mut aurora_render::Renderer) {
@@ -1189,7 +1194,14 @@ impl App {
     }
 
     pub(super) fn demo_asset_upload(&mut self, request: uuid::Uuid, upload: aurora_net::inventory::upload::Request) {
-        let result = upload.body().map(|_| {
+        // `bulk-failed`: the first upload gets no usable answer, as after an HTTP 500
+        let fails = self.imports.demo_mode == "bulk-failed" && !std::mem::replace(&mut self.imports.demo_upload_failed, true);
+        let body = if fails {
+            Err(aurora_net::inventory::upload::Error::Unknown)
+        } else {
+            upload.body()
+        };
+        let result = body.map(|_| {
             let item = aurora_net::inventory::InvItem {
                 id: uuid::Uuid::new_v4(),
                 asset_id: uuid::Uuid::new_v4(),

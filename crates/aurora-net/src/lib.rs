@@ -11,6 +11,7 @@ mod chat_reply;
 pub mod chat_service;
 pub mod circuit;
 mod circuit_socket;
+mod curl_url;
 pub mod currency;
 pub mod estate;
 pub mod experience;
@@ -54,6 +55,7 @@ pub mod social;
 pub mod stats;
 pub mod task_inventory;
 pub mod teleport_access;
+pub mod teleport_failed;
 pub mod terrain;
 #[cfg(test)]
 mod test_http;

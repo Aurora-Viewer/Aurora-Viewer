@@ -407,6 +407,7 @@ pub struct ToolbarUi {
     /// the app).
     pub flash_nearby: bool,
     pub conversations_menu: Option<crate::ui::chat::ButtonMenu>,
+    pub has_open_ims: bool,
     /// The look the bars are drawn in (given by the app): the islands' dock
     /// or Firestorm's bars.
     pub islands: bool,
@@ -498,7 +499,8 @@ impl ToolbarUi {
                 menu::separator(ui, p);
             }
             if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-edit")) {
-                self.open = true;
+                // shown again, a minimized window expands
+                super::widgets::open_floater(ui.ctx(), EDITOR_WINDOW, &mut self.open);
             }
             if button.is_some_and(|b| b.command == "speak")
                 && menu::item(ui, p, "microphone-filled", aurora_i18n::tr!("ui-bars-microphone-options"))
@@ -514,7 +516,7 @@ impl ToolbarUi {
             // out of its flash
             if button.is_some_and(|b| b.command == "conversations") {
                 menu::separator(ui, p);
-                if let Some(choice) = crate::ui::chat::button_menu(ui, p, self.flash_nearby) {
+                if let Some(choice) = crate::ui::chat::button_menu(ui, p, self.flash_nearby, self.has_open_ims) {
                     self.conversations_menu = Some(choice);
                 }
             }
@@ -758,6 +760,7 @@ fn sizing_rows() -> [(Sizing, &'static str, &'static str); 3] {
     ]
 }
 
+pub(crate) use editor::WINDOW as EDITOR_WINDOW;
 pub use editor::{demo_events, demo_settings};
 
 #[cfg(test)]

@@ -129,11 +129,12 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
-        // the animation editor's mirror of us is no one: no menu on it nor
+        // the copies of us (the animation editor's mirror, the Fit lab's
+        // mannequins) are no one: no menu on them nor
         // on what it wears
         if picked
             .and_then(|idx| ui::context::wearer(&self.world, idx).or_else(|| self.world.objects.get(idx).map(|o| o.full_id)))
-            .is_some_and(|id| self.world.is_mirror(&id))
+            .is_some_and(|id| self.world.is_local_copy(&id))
         {
             return;
         }
@@ -146,6 +147,14 @@ impl App {
             if picked.is_some() {
                 self.world.ui_sounds.push(UiSound::InvalidOp);
             }
+            return;
+        }
+        // Ctrl+right click set to "Edit the object": the menu's Edit at once,
+        // where the menu would offer it; elsewhere the menu
+        if crate::build::CtrlRightClick::edits(&self.settings.build, self.shift, self.ctrl, self.alt)
+            && let Some(idx) = picked
+            && self.ctrl_right_click_edit(idx)
+        {
             return;
         }
         if let Some(source) = picked
@@ -242,6 +251,38 @@ impl App {
         });
     }
 
+    /// Ctrl+right click on object `idx` set to "Edit the object": what the
+    /// menu's Edit does (CtxAction::Edit, or EditAttachment for what we
+    /// wear), when its menu would enable Edit (`context_facts`: selectable,
+    /// within @fartouch). False for an avatar, someone else's attachment or
+    /// an object Edit is greyed for: the menu opens.
+    fn ctrl_right_click_edit(&mut self, idx: usize) -> bool {
+        let w = &self.world;
+        let Some(o) = w.objects.get(idx) else { return false };
+        if o.is_avatar() {
+            return false;
+        }
+        let (key, id) = (o.key, o.full_id);
+        let root = linkset_root(w, idx);
+        let wearer = ui::context::wearer(w, idx);
+        let editable = crate::build::selectable_within(w, idx)
+            && (w.rlva_within_fartouch(idx) || w.objects.get(root).is_some_and(|r| self.object_menu.near == Some(r.key)));
+        match wearer {
+            _ if !editable => false,
+            Some(wearer) if wearer != w.agent_id => false,
+            Some(_) => {
+                self.build.release_menu_selection(&self.world);
+                self.on_ctx_action(CtxAction::EditAttachment(key));
+                true
+            }
+            None => {
+                self.build.release_menu_selection(&self.world);
+                self.on_ctx_action(CtxAction::Edit(id));
+                true
+            }
+        }
+    }
+
     /// The prims of the object another avatar wears that the open menu is
     /// about: Firestorm selects it while the menu is open
     /// (LLToolSelect::handleObjectSelection) and shows its outline. What we
@@ -262,7 +303,9 @@ impl App {
         let w = &self.world;
         let mut f = Facts {
             worn_shape: crate::shape_editor::worn_shape(&self.world),
-            shape_xml_export: self.worn_shape_xml_allowed() && !self.shape_ui.xml_menu.busy(),
+            appearance_xml_export: crate::world::appearance_xml::ready(w)
+                && !self.appearance_ui.json.busy()
+                && self.appearance_ui.pending.is_none(),
             me: w.agent_id,
             seated: w.agent.is_sitting(),
             flying: w.agent.flying,
@@ -446,9 +489,52 @@ impl App {
             self.place_ui.raise(serial);
         } else {
             w.place_details.open_panel(source, &w.map, &mut w.landmarks, now);
-            self.panels.places = true;
+            crate::ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
             self.places_ui.show_profile();
         }
+    }
+
+    /// Show on map, from any button or link: the map tracks the place and
+    /// opens, or comes to the front, expanded when it is minimized
+    /// (LLFloaterReg::showInstance "world_map" → LLFloater::openFloater).
+    /// Its search takes the keyboard (LLFloaterWorldMap::onOpen, on every
+    /// show).
+    pub(super) fn show_on_map(&mut self, x: f64, y: f64, z: f32) {
+        self.world.map.show_location(x, y, z);
+        self.show_world_map();
+    }
+
+    /// The world map from a button or a link (LLFloaterReg::showInstance
+    /// "world_map"): opened, or brought to the front, expanded when it is
+    /// minimized; its search takes the keyboard (`WorldMapUi::show`).
+    pub(super) fn show_world_map(&mut self) {
+        ui::widgets::show_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+    }
+
+    /// About Land of the selected parcel (LLFloaterReg::showInstance
+    /// "about_land"): opened, or expanded when it is minimized.
+    pub(super) fn open_about_land(&mut self) {
+        let id = ui::land::window_id(self.classic_land());
+        ui::widgets::open_floater(&self.egui_ctx, id, &mut self.panels.about_land);
+    }
+
+    /// About Land shows the Legacy Viewer's tabs
+    /// (AURORA_DEMO_LAND=…:classic shows them without saving it).
+    pub(super) fn classic_land(&self) -> bool {
+        self.settings.classic_about_land || (self.demo && crate::demo::land::scenario().is_some_and(|s| s.classic))
+    }
+
+    /// Region / Estate shows the Legacy Viewer's tabs
+    /// (AURORA_DEMO_REGION=…:classic shows them without saving it).
+    pub(super) fn classic_region(&self) -> bool {
+        self.settings.classic_region_estate || self.region_ui.forced_classic()
+    }
+
+    /// The layouts About Land and Region / Estate draw, for the bars'
+    /// buttons that expand them by window id.
+    pub(super) fn sync_layout_mirrors(&mut self) {
+        self.panels.about_land_classic = self.classic_land();
+        self.panels.region_estate_classic = self.classic_region();
     }
 
     /// "Show in inventory" of a rezzed object the agent owns. The Legacy
@@ -672,7 +758,7 @@ impl App {
             CtxAction::EstateTeleportHome(id) => self.ask_estate(id, land_moderation::EstateAct::TeleportHome),
             CtxAction::EstateBan(id) => self.ask_estate(id, land_moderation::EstateAct::Ban),
             CtxAction::GodKick(id, flags) => self.ask_god_kick(id, flags),
-            CtxAction::ExportShapeXml(item) => self.export_worn_shape_xml(item),
+            CtxAction::ExportAppearanceXml => self.appearance_ui.json.export_appearance(&self.egui_ctx, &self.world),
             CtxAction::EditWorn(item) => {
                 if self.world.inventory.items.get(&item).is_some_and(crate::wearable_editor::supported) {
                     self.open_wearable_editor(item);
@@ -774,7 +860,7 @@ impl App {
             CtxAction::AboutLand(point) => {
                 let (gx, gy) = ui::minimap::to_global(&self.world, point);
                 ui::land::LandUi::select_at_global(&mut self.world, gx, gy);
-                self.panels.about_land = true;
+                self.open_about_land();
             }
             // handle_buy_land on the parcel LLToolPie selected
             CtxAction::BuyLand(point) => {
@@ -790,12 +876,12 @@ impl App {
                 self.settings.world_overlays.property_lines = on;
                 self.settings.save();
             }
-            CtxAction::DisplayName => self.display_name_ui.open(),
-            CtxAction::HoverHeight => self.hover_height_ui.open = true,
+            CtxAction::DisplayName => self.display_name_ui.open(&self.egui_ctx),
+            CtxAction::HoverHeight => ui::widgets::open_floater(&self.egui_ctx, ui::hover_height::WINDOW, &mut self.hover_height_ui.open),
             CtxAction::ReportAbuse(target) => self.open_report_abuse(target),
             CtxAction::CreateLandmark => self.open_create_landmark(None),
             CtxAction::OpenAppearance { tab, editing } => {
-                self.panels.appearance = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance);
                 // "Change outfit" (tab 0) opens the outfit view in use,
                 // the gallery or the list, rather than always the gallery
                 if tab == 0 && !editing {
@@ -1031,7 +1117,7 @@ impl App {
                 }
             }
             CtxAction::OpenPeople(tab) => {
-                self.panels.people = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, crate::ui::people::WINDOW, &mut self.panels.people);
                 self.panels.people_tab = tab;
             }
             CtxAction::ZoomAvatar(id) => {
@@ -1049,7 +1135,7 @@ impl App {
             CtxAction::TeleportToAvatar(id) | CtxAction::ShowOnMap(id) => {
                 let teleport = matches!(act, CtxAction::TeleportToAvatar(_));
                 if self.world.locate_avatar(id, teleport) && !teleport {
-                    ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+                    self.show_world_map();
                 }
             }
             CtxAction::ShowPlaceInfo(region, pos) => {
@@ -1064,7 +1150,7 @@ impl App {
                 // LLWorldMapHandler::handle: trackURL, then the map opens
                 // centred on the place ("center")
                 self.world.map.show_region(&region, pos);
-                ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+                self.show_world_map();
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
             CtxAction::TeleportToPlace(region, pos) => {

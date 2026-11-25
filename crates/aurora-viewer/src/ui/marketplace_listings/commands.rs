@@ -78,6 +78,13 @@ impl Command {
 }
 
 impl ListingsUi {
+    /// Open the window for a question or a window of an inventory command,
+    /// expanded when minimized (LLFloaterReg::showInstance).
+    fn bring_up(&mut self) {
+        self.open = true;
+        self.shown = true;
+    }
+
     /// LLFolderBridge::pasteFromClipboard: validate again after confirmation,
     /// since stock, permissions or the clipboard may have changed meanwhile.
     #[allow(clippy::too_many_arguments)]
@@ -115,7 +122,7 @@ impl ListingsUi {
             ids.iter().any(|id| mp::depth(inv, root, *id) < 0).then_some(Prompt::MoveInventory)
         };
         if let Some(prompt) = prompt.filter(|prompt| !confirmed && self.asks(*prompt)) {
-            self.open = true;
+            self.bring_up();
             self.confirm = Some(Confirm::Paste {
                 to,
                 ids: ids.to_vec(),
@@ -123,7 +130,11 @@ impl ListingsUi {
                 prompt,
             });
         } else {
-            actions.push(Action::Paste { change, cut: !copy });
+            actions.push(Action::Paste {
+                change,
+                cut: !copy,
+                editor: Uuid::nil(),
+            });
         }
     }
 
@@ -138,8 +149,8 @@ impl ListingsUi {
     /// dragItemIntoFolder and pasteFromClipboard (llinventorybridge.cpp), in
     /// their order. A listed listing and its version folder never get here:
     /// they cannot move or go to the Trash (`marketplace::Holds`).
-    pub fn guard_inventory_change(&mut self, inv: &Inventory, change: Mutation, cut: bool, drag: bool) -> Option<Mutation> {
-        self.guard_inventory_edit(inv, change, cut, drag, None)
+    pub fn guard_inventory_change(&mut self, inv: &Inventory, change: Mutation, cut: bool, drag: bool, editor: Uuid) -> Option<Mutation> {
+        self.guard_inventory_edit(inv, change, cut, drag, editor, None)
     }
 
     /// Keep a deletion's originating selection through the merchant question;
@@ -150,7 +161,7 @@ impl ListingsUi {
         deletion: super::super::inventory::DeleteRequest,
     ) -> Option<super::super::inventory::DeleteRequest> {
         let super::super::inventory::DeleteRequest { change, selection } = deletion;
-        self.guard_inventory_edit(inv, change, false, false, Some(&selection))
+        self.guard_inventory_edit(inv, change, false, false, selection.window(), Some(&selection))
             .map(|change| super::super::inventory::DeleteRequest { change, selection })
     }
 
@@ -160,6 +171,7 @@ impl ListingsUi {
         change: Mutation,
         cut: bool,
         drag: bool,
+        editor: Uuid,
         after_delete: Option<&super::super::inventory::DeleteSelection>,
     ) -> Option<Mutation> {
         let Some(root) = mp::root(inv) else { return Some(change) };
@@ -212,11 +224,12 @@ impl ListingsUi {
         };
         match prompt.filter(|prompt| self.asks(*prompt)) {
             Some(prompt) => {
-                self.open = true;
+                self.bring_up();
                 self.confirm = Some(Confirm::Inventory {
                     change,
                     cut,
                     prompt,
+                    editor,
                     after_delete: after_delete.map(|selection| std::sync::Arc::new(selection.clone())),
                 });
                 None
@@ -288,11 +301,11 @@ impl ListingsUi {
         match command {
             Command::Create => self.create_listing(inv, worn, root, id, actions),
             Command::Associate => {
-                self.open = true;
+                self.bring_up();
                 self.associate = Some((id, String::new()));
             }
             Command::Check => {
-                self.open = true;
+                self.bring_up();
                 self.run_audit(inv, worn, root, id);
             }
             Command::List => self.list(inv, worn, root, id, actions),

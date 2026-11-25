@@ -5,8 +5,10 @@
     -Beta serves the next version as a nightly beta (a GitHub pre-release)
     and starts the isolated profile on the Beta channel: switching to Stable
     in Preferences › Language and updates hides the offer, Beta shows it.
+    -Unsigned publishes the next version as a release made by hand on GitHub
+    (no signature): the viewer must not offer it ("up to date").
 #>
-param([string]$Title = 'Test viewer-update', [Nullable[int]]$FpsLimit, [string]$Language = 'fr', [switch]$ClearCache, [switch]$ResetSettings, [switch]$Required, [switch]$Beta)
+param([string]$Title = 'Test viewer-update', [Nullable[int]]$FpsLimit, [string]$Language = 'fr', [switch]$ClearCache, [switch]$ResetSettings, [switch]$Required, [switch]$Beta, [switch]$Unsigned)
 $ErrorActionPreference = 'Stop'
 # UTF-8 without a BOM in Windows PowerShell 5.1 too, which has no
 # Set-Content -Encoding utf8NoBOM.
@@ -58,7 +60,11 @@ $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
 $listener.Start(); $port = $listener.LocalEndpoint.Port; $listener.Stop()
 $base = "http://127.0.0.1:$port"
-@{ schema = 1; feed = "$base/releases.json" } | ConvertTo-Json | Write-Utf8 -LiteralPath (Join-Path $taskRoot 'aurora-update-test.json')
+# Signed as the Release workflow signs them, with a key made for this test:
+# the isolated viewer trusts it from the loopback feed only.
+$taskKey = Join-Path $taskRoot 'test-signing-key.pem'
+$taskPublic = & "$PSScriptRoot/sign-release.ps1" -NewTestKey $taskKey
+@{ schema = 1; feed = "$base/releases.json"; public_key = $taskPublic } | ConvertTo-Json | Write-Utf8 -LiteralPath (Join-Path $taskRoot 'aurora-update-test.json')
 $taskPolicyPath = Join-Path $taskFeed 'aurora-update-policy.json'
 # A real $null, not an empty `$(if …)`, which ConvertTo-Json of Windows
 # PowerShell 5.1 writes as {} (the viewer then refuses the whole policy).
@@ -66,6 +72,7 @@ $taskMinimum = if ($Required) { '0.2.101' } else { $null }
 $taskCache = if ($ClearCache) { '0.2.101' } else { $null }
 $taskSettings = if ($ResetSettings) { '0.2.101' } else { $null }
 @{ schema = 1; version = $next; minimum_supported_version = $taskMinimum; cache_invalidation_before = $taskCache; settings_reset_before = $taskSettings } | ConvertTo-Json | Write-Utf8 -LiteralPath $taskPolicyPath
+& "$PSScriptRoot/sign-release.ps1" -Files "$zip.sha256", $taskPolicyPath -KeyFile $taskKey -PublicKey $taskPublic | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $taskRoot 'profile'), (Join-Path $taskRoot 'cache') | Out-Null
 @{ settings_version = 9; language = $Language; draw_distance = 300; update_channel = $(if ($Beta) { 'Beta' } else { 'Stable' }) } | ConvertTo-Json | Write-Utf8 -LiteralPath (Join-Path $taskRoot 'profile/settings.json')
 'Isolated cache preservation proof' | Set-Content -LiteralPath (Join-Path $taskRoot 'cache/update-marker.txt')
@@ -75,6 +82,12 @@ $assets = @(
     @{ name = "$name.sha256"; size = (Get-Item -LiteralPath "$zip.sha256").Length; browser_download_url = "$base/$name.sha256" },
     @{ name = 'aurora-update-policy.json'; size = (Get-Item -LiteralPath $taskPolicyPath).Length; browser_download_url = "$base/aurora-update-policy.json" }
 )
+if (!$Unsigned) {
+    $assets += @(
+        @{ name = "$name.sha256.sig"; size = 64; browser_download_url = "$base/$name.sha256.sig" },
+        @{ name = 'aurora-update-policy.json.sig'; size = 64; browser_download_url = "$base/aurora-update-policy.json.sig" }
+    )
+}
 ConvertTo-Json -InputObject @(@{ tag_name = "v$next"; draft = $false; prerelease = [bool]$Beta; html_url = "$base/release.html"; body = "Trial of the real installation in an isolated folder.`nMaintenance policy announced before the restart."; assets = $assets }) -Depth 6 | Write-Utf8 -LiteralPath (Join-Path $taskFeed 'releases.json')
 "<!doctype html><meta charset=`"utf-8`"><title>Test release</title><p>Local test release of Aurora $next.</p>" | Write-Utf8 -LiteralPath (Join-Path $taskFeed 'release.html')
 $server = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile', '-File', "`"$PSScriptRoot/update-test-server.ps1`"", '-Root', "`"$taskRoot`"", '-Port', $port) -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $taskRoot 'server.stdout.log') -RedirectStandardError (Join-Path $taskRoot 'server.stderr.log')

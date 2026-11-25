@@ -410,6 +410,7 @@ fn emit(sh: &Shared, ev: NetEvent) {
 /// for the items then find their folder instead of Lost And Found.
 fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFolder) {
     let _ = events.send(NetEvent::InventoryUpdated {
+        bulk: false,
         folders: vec![folder],
         items: Vec::new(),
     });
@@ -498,8 +499,12 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     critical_required: critical,
                     bad_credentials,
                     previous_session,
-                    next_server: match e {
-                        LoginError::NextServer(server) => Some(server),
+                    next_server: match &e {
+                        LoginError::NextServer(server) => Some(server.clone()),
+                        _ => None,
+                    },
+                    unencrypted_server: match e {
+                        LoginError::Unencrypted(server) => Some(server),
                         _ => None,
                     },
                 },
@@ -538,6 +543,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     bad_credentials: false,
                     previous_session: false,
                     next_server: None,
+                    unencrypted_server: None,
                 },
             );
             return;
@@ -825,11 +831,14 @@ impl Session<'_> {
     /// asked a second time (requestBaseCapabilitiesCompleteCoro): the first
     /// answer of a neighbour lacks the inventory capabilities, and the
     /// crossing or EstablishAgentCommunication that makes it the agent's
-    /// region repeats its seed (#750).
+    /// region repeats its seed (#750). Every seed (login,
+    /// EstablishAgentCommunication, TeleportFinish, CrossedRegion) gets the
+    /// scheme libcurl would guess here, so one seed has one spelling.
     fn set_seed(&mut self, addr: SocketAddr, seed: String) {
         let Some(sim) = self.sims.get_mut(&addr) else {
             return;
         };
+        let seed = crate::curl_url::ensure_scheme_owned(seed);
         if sim.seed.as_deref() == Some(seed.as_str()) {
             if sim.caps_requested {
                 self.request_caps_again(addr);
@@ -4274,18 +4283,22 @@ impl Session<'_> {
             }
             "TeleportFailed" => {
                 let reason = b["Info"][0]["Reason"].as_str().to_owned();
+                let alert = &b["AlertInfo"][0];
+                let code = alert["Message"].as_str().to_owned();
                 transition::end(
                     Some(transition::Kind::Teleport),
-                    &format!("failed (TeleportFailed: {reason})"),
+                    &format!(
+                        "failed (TeleportFailed: {reason}{})",
+                        if code.is_empty() { String::new() } else { format!(", {code}") }
+                    ),
                     &self.sh.stats,
                 );
                 // handle_teleport_access_blocked: a refusal for the rating
-                let alert = &b["AlertInfo"][0];
                 let extra = crate::teleport_access::extra_bytes(&alert["ExtraParams"]);
-                if let Some(blocked) = crate::teleport_access::from_alert_info(alert["Message"].as_str(), &extra) {
+                if let Some(blocked) = crate::teleport_access::from_alert_info(&code, &extra) {
                     emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
                 }
-                emit(self.sh, NetEvent::TeleportFailed { reason });
+                emit(self.sh, crate::teleport_failed::event(reason, Some((code, &extra))));
             }
             "DisableSimulator" => {
                 transition::link(|| {
@@ -5453,6 +5466,7 @@ impl Session<'_> {
                 emit(
                     self.sh,
                     NetEvent::InventoryUpdated {
+                        bulk: false,
                         folders: Vec::new(),
                         items,
                     },
@@ -5527,7 +5541,14 @@ impl Session<'_> {
                     })
                     .collect();
                 let delivered = folders.iter().map(|folder: &crate::inventory::InvFolder| folder.id).collect();
-                emit(self.sh, NetEvent::InventoryUpdated { folders, items });
+                emit(
+                    self.sh,
+                    NetEvent::InventoryUpdated {
+                        folders,
+                        items,
+                        bulk: true,
+                    },
+                );
                 if !m.agent_data.transaction_id.is_nil() {
                     emit(
                         self.sh,
@@ -5628,25 +5649,30 @@ impl Session<'_> {
             );
         } else if id == TeleportFailed::ID {
             let m: TeleportFailed = pkt.decode()?;
+            let alert = m
+                .alert_info
+                .first()
+                .map(|info| (field_str(&info.message), info.extra_params.as_slice()));
             transition::end(
                 Some(transition::Kind::Teleport),
-                &format!("failed (TeleportFailed: {})", field_str(&m.info.reason)),
+                &format!(
+                    "failed (TeleportFailed: {}{})",
+                    field_str(&m.info.reason),
+                    alert
+                        .as_ref()
+                        .filter(|(code, _)| !code.is_empty())
+                        .map_or(String::new(), |(code, _)| format!(", {code}"))
+                ),
                 &self.sh.stats,
             );
             // handle_teleport_access_blocked: a refusal for the rating
-            if let Some(blocked) = m
-                .alert_info
-                .first()
-                .and_then(|info| crate::teleport_access::from_alert_info(&field_str(&info.message), &info.extra_params))
+            if let Some(blocked) = alert
+                .as_ref()
+                .and_then(|(code, extra)| crate::teleport_access::from_alert_info(code, extra))
             {
                 emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
             }
-            emit(
-                self.sh,
-                NetEvent::TeleportFailed {
-                    reason: field_str(&m.info.reason),
-                },
-            );
+            emit(self.sh, crate::teleport_failed::event(field_str(&m.info.reason), alert));
         } else if id == ParcelMediaCommandMessage::ID {
             let m: ParcelMediaCommandMessage = pkt.decode()?;
             let c = &m.command_block;
@@ -7365,6 +7391,32 @@ mod event_queue_tests {
         assert!(session.main_cap("InventoryAPIv3").is_some());
         assert_eq!(session.fetch_without_ais(), None);
         assert_eq!(caps_events(&received), [(20, 4)]);
+    }
+
+    /// A seed sent once without its scheme (EstablishAgentCommunication)
+    /// and once with it (the crossing) is the same seed: its capabilities
+    /// stay and it is asked again, as in #750.
+    #[tokio::test]
+    async fn a_seed_with_and_without_its_scheme_is_the_same_seed() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main_addr: SocketAddr = "127.0.0.1:13011".parse().expect("address");
+        let neighbour_addr: SocketAddr = "127.0.0.1:13012".parse().expect("address");
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main_addr, neighbour_addr);
+        let seed = "http://127.0.0.1:9/neighbour-seed";
+        let caps = HashMap::from([("ViewerAsset".to_owned(), "http://127.0.0.1:9/ViewerAsset".to_owned())]);
+
+        session.set_seed(neighbour_addr, "127.0.0.1:9/neighbour-seed".to_owned());
+        assert_eq!(session.sims[&neighbour_addr].seed.as_deref(), Some(seed));
+        // the answer carries the stored spelling: it is not taken for a stale one
+        session.on_caps(neighbour_addr, seed, Ok(caps));
+        assert_eq!(session.sims[&neighbour_addr].caps.len(), 1);
+
+        session.switch_region(20, Some(Ipv4Addr::LOCALHOST), neighbour_addr.port(), seed.to_owned(), (256, 256));
+        assert_eq!(session.main, Some(neighbour_addr));
+        assert_eq!(session.sims[&neighbour_addr].caps.len(), 1);
+        assert!(session.sims[&neighbour_addr].caps_again_task.is_some());
     }
 }
 
