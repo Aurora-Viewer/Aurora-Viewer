@@ -1352,14 +1352,13 @@ impl App {
         true
     }
 
+    /// The resource joins the library's recent ones. Nothing is posted: like
+    /// LLToolDragAndDrop::dropTextureOneFace / dropMaterialOneFace, only a
+    /// refusal or the no-copy confirmation speaks (ApplyInventoryToObject).
     fn texture_resource_applied(&mut self, id: Uuid) {
         self.settings.texture_library.activate(self.world.agent_id);
         self.settings.texture_library.record(id);
         self.settings.save();
-        self.world.system_notice(
-            aurora_i18n::tr!("texture-library-applied"),
-            crate::world::notice_topics::Topic::Items,
-        );
     }
 }
 

@@ -313,7 +313,7 @@ impl App {
             .apply(self.world.rlva.has("showminimap"), &mut self.panels.minimap);
         keep_windows_closed(&self.world.rlva, &mut self.panels);
         if self.world.rlva.has("showinv") {
-            self.inventory_ui.close_additional_window();
+            self.inventory_ui.close_showinv_windows();
         }
         if self.world.rlva.has("alwaysrun") && self.always_run {
             self.set_always_run(false);

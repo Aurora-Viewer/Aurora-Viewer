@@ -177,6 +177,40 @@ pub(super) fn static_triangle() -> serde_json::Value {
 }
 
 #[test]
+fn blender_live_object_warnings_are_bounded_and_never_refuse_the_snapshot() {
+    use protocol::WarningKind;
+    let id = Uuid::from_u128(7);
+    let mut value = static_triangle();
+    value["warnings"] = serde_json::json!([
+        {"source_id": id, "name": "Textured", "kind": "textures", "reason": "Bake procedural shaders"},
+        {"name": "Too large", "kind": "not-sent", "reason": format!("limit\n{}", "r".repeat(900))},
+        {"name": "Later plug-in", "kind": "something-new", "reason": "skipped"},
+        {"name": "  ", "kind": "textures", "reason": "no name: skipped"}
+    ]);
+    let prepared = prepare(&value).expect("a snapshot with warnings");
+    assert_eq!(prepared.sources.len(), 1, "the meshes are untouched");
+    assert_eq!(prepared.warnings.len(), 2, "unknown kinds and empty names are dropped");
+    assert_eq!(prepared.warnings[0].source, Some(id));
+    assert_eq!(prepared.warnings[0].kind, WarningKind::Textures);
+    assert_eq!(prepared.warnings[1].source, None);
+    assert_eq!(prepared.warnings[1].kind, WarningKind::NotSent);
+    let reason = &prepared.warnings[1].reason;
+    assert!(
+        reason.starts_with("limit r") && !reason.contains('\n'),
+        "control characters become spaces"
+    );
+    assert_eq!(reason.chars().count(), 512);
+    // many warnings are cut, not refused
+    value["warnings"] = serde_json::json!(vec![serde_json::json!({"name": "n", "kind": "not-sent", "reason": ""}); 200]);
+    assert_eq!(prepare(&value).expect("many warnings").warnings.len(), protocol::MAX_WARNINGS);
+    // an unknown field in a warning is a protocol error, like the rest of the snapshot
+    value["warnings"] = serde_json::json!([{"name": "n", "kind": "textures", "reason": "", "extra": 1}]);
+    assert!(prepare(&value).is_err());
+    // a snapshot without warnings has none
+    assert!(prepare(&static_triangle()).expect("plain").warnings.is_empty());
+}
+
+#[test]
 fn blender_live_static_sources_have_normalized_geometry_without_a_skin() {
     let mut value = static_triangle();
     let source = Uuid::new_v4();
@@ -1065,6 +1099,64 @@ fn blender_live_static_controls_request_derez_rez_and_hud_attachment_for_the_sel
 }
 
 #[test]
+fn blender_live_cards_show_blenders_warnings_and_list_what_it_could_not_send() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
+    let palette = theme.palette();
+    let lib = crate::scene::avatar::AvatarLibrary::load();
+    let mut live = Live {
+        open: true,
+        ..Default::default()
+    };
+    live.receive(super::demo::warnings_fixture(&lib.rig).expect("fixture"));
+    let texts = |live: &mut Live| -> Vec<String> {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1200.0))),
+                ..Default::default()
+            },
+            |ui| {
+                super::ui::show(live, ui.ctx(), &palette, true);
+            },
+        );
+        out.textures_delta.clear();
+        out.shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    };
+    for _ in 0..3 {
+        texts(&mut live);
+    }
+    let shown = texts(&mut live);
+    let textures = aurora_i18n::tr!("blender-live-warning-textures");
+    let not_sent = aurora_i18n::tr!("blender-live-warning-not-sent");
+    assert!(
+        shown
+            .iter()
+            .any(|t| t.starts_with(textures) && t.ends_with("Bake procedural shaders to UV image textures for live materials")),
+        "the textured object's card says why: {shown:?}"
+    );
+    for name in ["Sculpted rock", "Hair cards"] {
+        assert!(shown.iter().any(|t| t == name), "{name} has its own card");
+    }
+    assert_eq!(shown.iter().filter(|t| t.starts_with(not_sent)).count(), 2);
+    // the next revision without warnings clears them
+    live.receive(prepare(&static_triangle()).expect("plain"));
+    let shown = texts(&mut live);
+    assert!(
+        !shown
+            .iter()
+            .any(|t| t.starts_with(textures) || t.starts_with(not_sent) || t == "Hair cards")
+    );
+}
+
+#[test]
 fn blender_live_undo_toast_shows_over_the_world_while_the_window_is_closed() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
@@ -1177,9 +1269,11 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     let ctx = egui::Context::default();
     let probe = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("free port");
     let port = probe.local_addr().expect("address").port();
-    let shared = transport::start_listener(probe, TEST_KEY.to_owned(), supported(), Default::default(), ctx, None).expect("start");
+    let (shared, thread) =
+        transport::start_listener(probe, TEST_KEY.to_owned(), supported(), Default::default(), ctx, None).expect("start");
     let owner = Server {
         shared: shared.clone(),
+        thread: Some(thread),
         _token: None,
     };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
@@ -1216,11 +1310,137 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     drop(owner);
 }
 
+/// While the GPU device is replaced the add-on is asked to send again, and the
+/// same revision is taken once the new device is there (without a GPU here:
+/// the images are not staged).
+#[test]
+fn blender_live_transport_asks_again_while_the_gpu_device_is_replaced() {
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
+    let port = listener.local_addr().expect("address").port();
+    let (shared, thread) = transport::start_listener(
+        listener,
+        TEST_KEY.to_owned(),
+        supported(),
+        Default::default(),
+        egui::Context::default(),
+        None,
+    )
+    .expect("server");
+    let mut live = Live {
+        server: Some(Server {
+            shared: shared.clone(),
+            thread: Some(thread),
+            _token: None,
+        }),
+        ..Default::default()
+    };
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+    stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+    stream.write_all(&greeting()).expect("magic");
+    let mut reader = BufReader::new(stream.try_clone().expect("reader"));
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("hello");
+    let mut send = |revision: u64| -> serde_json::Value {
+        let mut value = triangle();
+        value["revision"] = revision.into();
+        let bytes = serde_json::to_vec(&value).expect("snapshot");
+        stream.write_all(&(bytes.len() as u32).to_le_bytes()).expect("length");
+        stream.write_all(&bytes).expect("data");
+        line.clear();
+        reader.read_line(&mut line).expect("reply");
+        serde_json::from_str(&line).expect("JSON reply")
+    };
+    assert_eq!(send(1)["ok"], true);
+    live.forget_gpu();
+    let refused = send(2);
+    assert_eq!(refused["ok"], false);
+    assert_eq!(refused["retry"], true);
+    assert_eq!(shared.latest.lock().as_ref().expect("kept").revision, 1);
+    live.gpu_reset(None);
+    assert_eq!(send(2)["ok"], true);
+    assert_eq!(live.take_latest().expect("latest").revision, 2);
+}
+
+/// The listener thread shares the GPU's staging memory: the viewer's exit
+/// waits for it, an add-on connected or not, and whatever the thread held is
+/// released when the wait is over.
+#[test]
+fn blender_live_exit_waits_for_the_listener_thread() {
+    for connected in [false, true] {
+        // running, stopped by hand, or stopped by the end of the session (a
+        // quit on the grid: `App::back_to_login`)
+        for before in ["running", "stopped", "logged out"] {
+            let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
+            let port = listener.local_addr().expect("address").port();
+            let (shared, thread) = transport::start_listener(
+                listener,
+                TEST_KEY.to_owned(),
+                supported(),
+                Default::default(),
+                egui::Context::default(),
+                None,
+            )
+            .expect("server");
+            let mut live = Live {
+                server: Some(Server {
+                    shared: shared.clone(),
+                    thread: Some(thread),
+                    _token: None,
+                }),
+                ..Default::default()
+            };
+            // an add-on that stays silent: the thread waits for its next message
+            let _stream = connected.then(|| {
+                let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+                stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+                stream.write_all(&greeting()).expect("magic");
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("reader"))
+                    .read_line(&mut line)
+                    .expect("hello");
+                stream
+            });
+            if before != "running" {
+                live.stop();
+                assert!(!live.running());
+            }
+            if before == "logged out" {
+                live.reset();
+                assert!(!live.closing.is_empty(), "the thread is still waited for");
+            }
+            assert!(
+                live.close_for_exit(Duration::from_secs(10)),
+                "connected: {connected}, before: {before}"
+            );
+            assert!(!live.running());
+            assert_eq!(Arc::strong_count(&shared), 1, "the thread let go of what it held");
+            assert!(live.close_for_exit(Duration::ZERO), "nothing left to wait for");
+        }
+    }
+}
+
+/// A listener that does not end (a large snapshot, a blocked reply) holds
+/// the exit for the time given only.
+#[test]
+fn blender_live_exit_wait_is_bounded() {
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let mut live = Live {
+        closing: vec![std::thread::spawn(move || {
+            let _ = held.recv();
+        })],
+        ..Default::default()
+    };
+    assert!(!live.close_for_exit(Duration::from_millis(20)));
+    assert!(!live.close_for_exit(Duration::ZERO), "it still runs");
+    drop(release);
+    assert!(live.close_for_exit(Duration::from_secs(10)));
+}
+
 #[test]
 fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separately() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
     let port = listener.local_addr().expect("address").port();
-    let shared = transport::start_listener(
+    let (shared, thread) = transport::start_listener(
         listener,
         TEST_KEY.to_owned(),
         supported(),
@@ -1231,6 +1451,7 @@ fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separat
     .expect("server");
     let owner = Server {
         shared: shared.clone(),
+        thread: Some(thread),
         _token: None,
     };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
@@ -1287,11 +1508,13 @@ fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separat
     drop(owner);
 }
 
+/// #3519: four LOD levels of JSON can pass the 64 MiB frame limit; a client
+/// that sees "compressed-lods" sends LODS + ZLIB, which reaches the import.
 #[test]
-fn blender_lods_transport_negotiates_ignores_stale_results_and_keeps_live_revision() {
+fn blender_lods_transport_accepts_compressed_lods() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
     let port = listener.local_addr().expect("address").port();
-    let shared = transport::start_listener(
+    let (shared, thread) = transport::start_listener(
         listener,
         TEST_KEY.to_owned(),
         supported(),
@@ -1302,6 +1525,124 @@ fn blender_lods_transport_negotiates_ignores_stale_results_and_keeps_live_revisi
     .expect("server");
     let owner = Server {
         shared: shared.clone(),
+        thread: Some(thread),
+        _token: None,
+    };
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+    stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+    stream.write_all(&greeting()).expect("hello");
+    let mut reader = BufReader::new(stream.try_clone().expect("reader"));
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("hello");
+    assert!(line.contains("compressed-lods"));
+    let request = import::Request {
+        id: Uuid::from_u128(321),
+        source: Uuid::from_u128(654),
+    };
+    *shared.import_expected.lock() = Some(request);
+    let json = serde_json::to_vec(&serde_json::json!({"id":request.id,"source":request.source,"error":"Missing LOD"})).expect("result");
+    let mut bytes = b"LODS".to_vec();
+    bytes.extend(compressed_snapshot(&json));
+    stream.write_all(&(bytes.len() as u32).to_le_bytes()).expect("length");
+    stream.write_all(&bytes).expect("data");
+    line.clear();
+    reader.read_line(&mut line).expect("reply");
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&line).expect("JSON")["ok"], true);
+    let (id, result) = shared.import_result.lock().take().expect("compressed result delivered");
+    assert_eq!(id, request.id);
+    assert!(result.is_err_and(|message| message == "Missing LOD"));
+    assert!(shared.import_expected.lock().is_none());
+    drop(owner);
+}
+
+/// A compressed LOD body that cannot be inflated fails the import that
+/// waits, with the cause, and the plug-in is told: the Import tab no longer
+/// waits out its time with nothing shown.
+#[test]
+fn blender_lods_transport_fails_the_import_on_a_body_that_does_not_inflate() {
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
+    let port = listener.local_addr().expect("address").port();
+    let (shared, thread) = transport::start_listener(
+        listener,
+        TEST_KEY.to_owned(),
+        supported(),
+        Default::default(),
+        egui::Context::default(),
+        None,
+    )
+    .expect("server");
+    let owner = Server {
+        shared: shared.clone(),
+        thread: Some(thread),
+        _token: None,
+    };
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+    stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+    stream.write_all(&greeting()).expect("hello");
+    let mut reader = BufReader::new(stream.try_clone().expect("reader"));
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("hello");
+    let request = import::Request {
+        id: Uuid::from_u128(322),
+        source: Uuid::from_u128(655),
+    };
+    *shared.import_expected.lock() = Some(request);
+    let json = serde_json::to_vec(&serde_json::json!({"id":request.id,"source":request.source,"error":"Missing LOD"})).expect("result");
+    let mut bytes = b"LODS".to_vec();
+    let compressed = compressed_snapshot(&json);
+    // cut short: the deflate stream ends before its data
+    bytes.extend(&compressed[..compressed.len() - 8]);
+    stream.write_all(&(bytes.len() as u32).to_le_bytes()).expect("length");
+    stream.write_all(&bytes).expect("data");
+    line.clear();
+    reader.read_line(&mut line).expect("reply");
+    let answer: serde_json::Value = serde_json::from_str(&line).expect("JSON");
+    assert_eq!(answer["ok"], false, "{line}");
+    assert!(answer["error"].as_str().is_some_and(|error| !error.is_empty()), "{line}");
+    let (id, result) = shared.import_result.lock().take().expect("the import gets the failure");
+    assert_eq!(id, request.id);
+    assert!(result.is_err());
+    assert!(shared.import_expected.lock().is_none());
+    drop(owner);
+}
+
+/// "compressed-lods": an inflated LOD body may be larger than one frame
+/// (`MAX_BYTES`, 64 MiB), up to the decoded budget.
+#[test]
+fn blender_lods_decode_takes_a_body_larger_than_a_frame() {
+    const { assert!(protocol::MAX_DECODED_BYTES > protocol::MAX_BYTES) };
+    let request = import::Request {
+        id: Uuid::from_u128(323),
+        source: Uuid::from_u128(656),
+    };
+    // past MAX_BYTES: not refused on its size, only on its (blank) JSON
+    let big = vec![b' '; protocol::MAX_BYTES + 1];
+    let Err(error) = import::decode(&big, request, &supported()) else {
+        panic!("blank JSON decoded");
+    };
+    assert_ne!(error, "Invalid Blender LOD payload size");
+    let Err(empty) = import::decode(&[], request, &supported()) else {
+        panic!("an empty body decoded");
+    };
+    assert_eq!(empty, "Invalid Blender LOD payload size");
+}
+
+#[test]
+fn blender_lods_transport_negotiates_ignores_stale_results_and_keeps_live_revision() {
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
+    let port = listener.local_addr().expect("address").port();
+    let (shared, thread) = transport::start_listener(
+        listener,
+        TEST_KEY.to_owned(),
+        supported(),
+        Default::default(),
+        egui::Context::default(),
+        None,
+    )
+    .expect("server");
+    let owner = Server {
+        shared: shared.clone(),
+        thread: Some(thread),
         _token: None,
     };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");

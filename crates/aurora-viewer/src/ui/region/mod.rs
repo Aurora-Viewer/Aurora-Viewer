@@ -41,6 +41,11 @@ use uuid::Uuid;
 /// Id of the window (its place and size are kept by the layout).
 pub const WINDOW: &str = "region_estate";
 
+/// The Region / Estate window's floater id: the Legacy layout has its own.
+pub fn window_id(classic: bool) -> &'static str {
+    if classic { CLASSIC_WINDOW } else { WINDOW }
+}
+
 /// The three pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Page {
@@ -262,6 +267,12 @@ impl RegionUi {
     pub fn demo_classic(&mut self, tab: ClassicTab) {
         self.force_classic = true;
         self.classic_tab = tab;
+    }
+
+    /// AURORA_DEMO_REGION's `classic` holds: the window shows the Legacy
+    /// Viewer's tabs whatever the saved layout.
+    pub fn forced_classic(&self) -> bool {
+        self.force_classic
     }
 
     /// AURORA_DEMO_REGION on People: a row ticked, a dialog or the picker.
