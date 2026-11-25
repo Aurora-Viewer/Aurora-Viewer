@@ -1528,6 +1528,23 @@ impl Scene {
         off.try_normalize().map_or(ray, |dir| (point - dir * DEPTH_NEAR, dir))
     }
 
+    /// The point by which an object a selection pick on `ray` took at
+    /// `point` bounds the faces the GPU drew behind it on that ray
+    /// (`Scene::designated`): the farther along it of `point` and where the
+    /// ray meets the object. A far face taken at the depth beside the ray
+    /// (#4869) can lie nearer along it than the object does on the ray,
+    /// where an attachment drawn in front of the object would be cut off.
+    pub fn found_bound(&self, world: &World, idx: usize, ray: (Vec3, Vec3), point: Vec3) -> Vec3 {
+        let Some(hit) = self.face_hit_mode(world, idx, ray, Instant::now(), true, FacePick::Surface) else {
+            return point;
+        };
+        if hit.t > (point - ray.0).dot(ray.1) {
+            ray.0 + ray.1 * hit.t
+        } else {
+            point
+        }
+    }
+
     pub fn touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
         self.touch_surface_mode(world, idx, ray, FacePick::Surface)
     }
@@ -3034,8 +3051,9 @@ pub(crate) mod tests {
             // the click's ray meets the poster 2 cm behind the depth, the
             // wall 15 cm behind it
             (0.2f32, 0.05, 1.0f32),
-            // the poster 5 cm behind the depth, the wall 7 cm: on that ray
-            // the poster is nearer than the wall is on the texel's
+            // the poster 5 cm behind the depth, the wall 7 cm: but on the
+            // texel's ray the wall is 2 cm behind it, nearer than the poster
+            // is on the click's
             (0.5, 0.02, 0.5),
         ] {
             // each quad (the -X side of a unit cube) through `at`, turned
@@ -3080,6 +3098,30 @@ pub(crate) mod tests {
         assert_eq!(pick(&scene), (Some(wall), Some(wall)));
         scene.gpu[wall].hidden = true;
         assert_eq!(pick(&scene), (Some(prim), Some(prim)));
+    }
+
+    #[test]
+    fn a_far_face_taken_beside_the_ray_bounds_what_is_drawn_where_the_ray_meets_it() {
+        // A face turned 45° 100 m away, taken at a texel 28 cm nearer along
+        // the click's ray than where that ray meets it: what is drawn in
+        // front of the face on the click's ray (an attachment) is not cut
+        // off at the texel (`Scene::designated`).
+        let (mut world, scene, front, _) = indexed_scene_with_two_objects();
+        let (x, deg) = (100.0, 45.0f32);
+        let o = world.objects.get_mut(front).unwrap();
+        o.position = Vec3::new(x, 0.0, 50.0);
+        o.rotation = Quat::from_rotation_z(deg.to_radians());
+        let (c, s) = (deg.to_radians().cos(), deg.to_radians().sin());
+        let at = Vec3::new(x - 0.5 * c, -0.5 * s, 50.0);
+        let point = at + Vec3::new(-s, c, 0.0) * (0.28 / s);
+        let ray = (Vec3::new(0.0, at.y, 50.0), Vec3::X);
+        let near = |a: Vec3, b: Vec3| a.distance(b) < 1e-3;
+        assert!(near(scene.found_bound(&world, front, ray, point), at), "where the ray meets it");
+        assert!(near(scene.found_bound(&world, front, ray, at), at), "a point on the ray");
+        let past = at + Vec3::X * 0.5;
+        assert_eq!(scene.found_bound(&world, front, ray, past), past, "never nearer than the point");
+        let beside = (Vec3::new(0.0, 20.0, 50.0), Vec3::X);
+        assert_eq!(scene.found_bound(&world, front, beside, point), point, "a ray that misses it");
     }
 
     #[test]

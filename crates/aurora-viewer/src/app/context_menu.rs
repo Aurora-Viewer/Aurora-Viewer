@@ -95,7 +95,7 @@ impl App {
         // cursor's
         let mut touch_ray = None;
         // (an object's face, not an avatar's point)
-        let on_face = target.is_some_and(|idx| self.scene.gpu.get(idx).is_some_and(|g| !g.is_avatar));
+        let on_face = target.filter(|&idx| self.scene.gpu.get(idx).is_some_and(|g| !g.is_avatar));
         let surface = match self.pick_name_tag(hit, ray) {
             Some((idx, p)) => Some((
                 Some(idx),
@@ -108,7 +108,7 @@ impl App {
             None => match self.designate(crate::scene::drawn::Gesture::Menu, &picked, hit, on_face) {
                 Some(d) => Some((Some(d.idx), d.hit.point)),
                 None => {
-                    if on_face {
+                    if on_face.is_some() {
                         touch_ray = ray.zip(hit).map(|(r, p)| Scene::surface_ray(r, p));
                     }
                     hit.map(|p| (target, p))
