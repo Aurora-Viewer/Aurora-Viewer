@@ -199,7 +199,7 @@ pub(super) fn row(
         }
         focus(ui, state);
     }
-    if response.clicked_by(PointerButton::Primary) {
+    if response.clicked_by(PointerButton::Primary) && !drag::dragged_this_press(ui.ctx()) {
         match state.input.press {
             Some((pressed, modifiers, deferred)) if pressed == row => {
                 if deferred {
@@ -214,10 +214,10 @@ pub(super) fn row(
         state.select(row, Modifiers::NONE);
         focus(ui, state);
     }
-    if response.double_clicked_by(PointerButton::Primary) {
+    if response.double_clicked_by(PointerButton::Primary) && !drag::dragged_this_press(ui.ctx()) {
         *open = Some(row);
     }
-    if response.drag_started_by(PointerButton::Primary) && !gutter_press {
+    if !gutter_press && drag::begins(ui, response) {
         if state.on_dashboard() && !matches!(row, Row::Place(Location::Folder(id)) if layout.is_home_child(inv, id)) {
             return false;
         }

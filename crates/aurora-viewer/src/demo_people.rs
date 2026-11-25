@@ -544,7 +544,7 @@ fn rich() -> Vec<Resident> {
         far(9, "Vega", Some(63.0), 31.0),
         far(10, "Kiri", Some(88.0), 35.0),
         far(11, "Oda", Some(96.0), 41.0),
-        far(12, "Pax", Some(108.0), 47.0),
+        far(12, "Pax", Some(153.4), 47.0),
         far(13, "Rhea", Some(116.0), 52.0),
         far(14, "Zed", Some(119.0), 58.0),
         far(15, "Wren", None, 64.0),

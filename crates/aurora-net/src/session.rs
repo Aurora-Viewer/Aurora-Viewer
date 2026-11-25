@@ -828,11 +828,14 @@ impl Session<'_> {
     /// asked a second time (requestBaseCapabilitiesCompleteCoro): the first
     /// answer of a neighbour lacks the inventory capabilities, and the
     /// crossing or EstablishAgentCommunication that makes it the agent's
-    /// region repeats its seed (#750).
+    /// region repeats its seed (#750). Every seed (login,
+    /// EstablishAgentCommunication, TeleportFinish, CrossedRegion) gets the
+    /// scheme libcurl would guess here, so one seed has one spelling.
     fn set_seed(&mut self, addr: SocketAddr, seed: String) {
         let Some(sim) = self.sims.get_mut(&addr) else {
             return;
         };
+        let seed = crate::curl_url::ensure_scheme_owned(seed);
         if sim.seed.as_deref() == Some(seed.as_str()) {
             if sim.caps_requested {
                 self.request_caps_again(addr);
@@ -7412,6 +7415,32 @@ mod event_queue_tests {
         assert!(session.main_cap("InventoryAPIv3").is_some());
         assert_eq!(session.fetch_without_ais(), None);
         assert_eq!(caps_events(&received), [(20, 4)]);
+    }
+
+    /// A seed sent once without its scheme (EstablishAgentCommunication)
+    /// and once with it (the crossing) is the same seed: its capabilities
+    /// stay and it is asked again, as in #750.
+    #[tokio::test]
+    async fn a_seed_with_and_without_its_scheme_is_the_same_seed() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main_addr: SocketAddr = "127.0.0.1:13011".parse().expect("address");
+        let neighbour_addr: SocketAddr = "127.0.0.1:13012".parse().expect("address");
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main_addr, neighbour_addr);
+        let seed = "http://127.0.0.1:9/neighbour-seed";
+        let caps = HashMap::from([("ViewerAsset".to_owned(), "http://127.0.0.1:9/ViewerAsset".to_owned())]);
+
+        session.set_seed(neighbour_addr, "127.0.0.1:9/neighbour-seed".to_owned());
+        assert_eq!(session.sims[&neighbour_addr].seed.as_deref(), Some(seed));
+        // the answer carries the stored spelling: it is not taken for a stale one
+        session.on_caps(neighbour_addr, seed, Ok(caps));
+        assert_eq!(session.sims[&neighbour_addr].caps.len(), 1);
+
+        session.switch_region(20, Some(Ipv4Addr::LOCALHOST), neighbour_addr.port(), seed.to_owned(), (256, 256));
+        assert_eq!(session.main, Some(neighbour_addr));
+        assert_eq!(session.sims[&neighbour_addr].caps.len(), 1);
+        assert!(session.sims[&neighbour_addr].caps_again_task.is_some());
     }
 }
 

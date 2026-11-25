@@ -1,0 +1,10 @@
+<!-- aurora-generated: sun-moon + shortcut (scripts/generate-inventory-icons.py; Tabler icons, MIT, assets/tabler-icons/LICENSE) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M9.173 14.83a4 4 0 1 1 5.657 -5.657" />
+  <path d="M11.294 12.707l.174 .247a7.5 7.5 0 0 0 8.845 2.492a9 9 0 0 1 -14.671 2.914" />
+  <path d="M3 12h1" />
+  <path d="M12 3v1" />
+  <path d="M5.6 5.6l.7 .7" />
+  <path d="M3 21l18 -18" />
+  <path fill="#ffffff" stroke="#202222" stroke-width="0.267044" stroke-linejoin="round" d="m 0.40847535,23.751788 v -1.982789 c 0,-1.143281 0.93587905,-2.082204 2.10152605,-2.082204 h 0.8406115 v -1.667974 l 2.790827,2.247896 -2.790827,2.115345 V 21.255353 H 2.5100014 c -0.4875543,0 -0.6220516,0.281675 -0.6220516,0.673816 v 1.822619 z" />
+</svg>

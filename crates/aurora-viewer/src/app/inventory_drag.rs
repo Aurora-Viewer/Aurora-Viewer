@@ -474,7 +474,7 @@ impl App {
     /// the inventory folders keep the cargo (`task_drop::target`).
     fn task_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
         let cargo = egui::DragAndDrop::payload::<TaskDrag>(ctx)?;
-        if ctx.is_pointer_over_egui() {
+        if !ui::inventory::drag::over_world(ctx) {
             return None;
         }
         let (pos, released, ctrl) = ctx.input(|i| {
@@ -565,7 +565,7 @@ impl App {
     /// on an object (`prepare_notecard`).
     fn notecard_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
         let cargo = *egui::DragAndDrop::payload::<NotecardDrag>(ctx)?;
-        if ctx.is_pointer_over_egui() {
+        if !ui::inventory::drag::over_world(ctx) {
             return None;
         }
         let (pos, released, ctrl) = ctx.input(|i| {

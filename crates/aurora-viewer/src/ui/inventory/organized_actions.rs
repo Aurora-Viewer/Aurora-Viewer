@@ -220,9 +220,9 @@ pub(super) fn execute(
             };
             state.select_and_reveal(row);
         }
-        Request::Native(native_menu::Command::DefaultFolder(selected)) => {
+        Request::Native(native_menu::Command::Restore(selected)) => {
             if let Some(roots) = restore_roots(inv, &selected) {
-                native_menu::execute(native_menu::Command::DefaultFolder(roots), ui, inv, native, prefs, facts, actions);
+                native_menu::execute(native_menu::Command::Restore(roots), ui, inv, native, prefs, facts, actions);
             } else {
                 state.status = tr!("explorer-real-unavailable").into();
             }
@@ -442,6 +442,54 @@ mod tests {
         assert_eq!(restore_roots(&inv, &[id(20)]), Some(vec![id(20)]));
         assert_eq!(restore_roots(&inv, &[id(5), id(20)]), None);
         assert_eq!(restore_roots(&inv, &[]), None);
+    }
+
+    #[test]
+    fn explorer_trash_restore_returns_to_the_remembered_inventory_folder() {
+        let mut inv = super::super::tests::fixture();
+        let (item, workshop, trash) = (id(20), id(3), id(4));
+        inv.folders.get_mut(&trash).unwrap().info.type_default = 14;
+        let mut origins = std::mem::take(&mut inv.trash_origins);
+        let request = id(100);
+        let change = rules::move_selection(&inv, &[item], trash, &Default::default(), &Default::default()).unwrap();
+        origins.begin(request, crate::world::inventory::trash_origins::TrashOrigins::moves(&inv, &change));
+        origins.finish(request, &inv, true);
+        inv.trash_origins = origins;
+        inv.folders.get_mut(&workshop).unwrap().items.retain(|id| *id != item);
+        inv.folders.get_mut(&trash).unwrap().items.push(item);
+        inv.items.get_mut(&item).unwrap().parent = trash;
+
+        let mut state = ExplorerState::at(Location::Folder(trash));
+        let mut native = InventoryUi::default();
+        let mut prefs = InventoryPreferences::default();
+        let facts = Facts::default();
+        let mut catalog = native_menu::build_for_selection(&inv, item, &native, &prefs, &facts, vec![item], false, false);
+        let entry = catalog.entries.iter().find(|entry| entry.id == "restore").unwrap();
+        assert!(entry.enabled);
+        let super::super::super::menu_layout::Kind::Action(index) = entry.kind else {
+            panic!("Restore must execute an inventory command");
+        };
+        state.file_request = Some(Request::Native(catalog.commands[index].take().unwrap()));
+        let mut actions = Vec::new();
+        let mut frame = egui::Context::default().run_ui(Default::default(), |ui| {
+            execute(
+                ui,
+                &inv,
+                &Preferences::default(),
+                &mut state,
+                &mut native,
+                &mut prefs,
+                &facts,
+                &mut actions,
+            );
+        });
+        frame.textures_delta.clear();
+        let [InvAction::Edit(change)] = actions.as_slice() else {
+            panic!("expected one restore mutation")
+        };
+        assert!(
+            matches!(change.operations.as_slice(), [Operation::Patch { id, body, .. }] if *id == item && body["parent_id"].as_uuid() == workshop)
+        );
     }
 
     #[test]

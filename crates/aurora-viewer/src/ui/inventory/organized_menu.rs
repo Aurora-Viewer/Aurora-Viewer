@@ -34,7 +34,7 @@ pub(super) struct NewDestination {
 }
 
 fn catalog(files: &Menu, inv: &Inventory, id: Uuid, selected: Vec<Uuid>) -> native::Catalog {
-    native::build_for_selection(inv, id, files.native, files.prefs, files.facts, selected, false)
+    native::build_for_selection(inv, id, files.native, files.prefs, files.facts, selected, false, false)
 }
 
 fn entry(c: &native::Catalog, key: &str) -> Option<(usize, bool)> {

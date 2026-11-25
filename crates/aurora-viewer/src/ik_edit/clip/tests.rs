@@ -513,6 +513,41 @@ fn selected_avatar_frame_values_stay_still_until_the_playhead_moves() {
 }
 
 #[test]
+fn avatar_center_preview_and_project_round_trip_keep_root_relative_keys() {
+    use aurora_assets::{JointMotion, anim::PosKey};
+
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let center = rig.names["Avatar Center"];
+    let key = Vec3::new(0.4, -0.1, 0.2);
+    let mut imported = Document::new().meta;
+    imported.joints = vec![JointMotion {
+        joint_name: "Avatar Center".to_owned(),
+        priority: 4,
+        rot_keys: Vec::new(),
+        pos_keys: vec![PosKey { time: 0.0, position: key }],
+    }];
+    let document = Document::from_animation(imported, rig).unwrap();
+    let saved = document.project_json().unwrap();
+    let reopened = Document::from_project_json(&saved, rig).unwrap();
+    assert_eq!(reopened.tracks[0].motion.pos_keys[0].position, key);
+    let bytes = aurora_assets::import_animation::encode(&reopened.animation().unwrap()).unwrap();
+    let exported = aurora_assets::anim::parse_animation_upload(&bytes).unwrap();
+    assert!(exported.joints[0].pos_keys[0].position.abs_diff_eq(key, 0.0002));
+    let sample = ik::animations::Sample {
+        animation: Arc::new(BoundAnim::bind(exported, rig)),
+        frame: 0,
+        time_seconds: None,
+    };
+    let mut pose = ik::LocalPose {
+        rotations: rig.local_rot.clone(),
+        positions: rig.local_pos.clone(),
+    };
+    ik::animations::apply(rig, &mut pose, Vec3::Z * 0.37, &[sample]);
+    assert!(pose.positions[center].abs_diff_eq(rig.local_pos[rig.pelvis] + key, 0.0002));
+}
+
+#[test]
 fn pelvis_height_keys_lift_the_whole_avatar_in_the_native_animation() {
     let lib = AvatarLibrary::load();
     let rig = &lib.rig;
@@ -1430,6 +1465,21 @@ fn playback_pause_resumes_fractional_time_and_restarts_from_clip_start_at_the_en
     assert!(editor.clip.playing);
     assert_eq!(editor.clip.frame, 10);
     assert_eq!(editor.clip.cursor, 10.0, "a completed clip restarts at its trimmed start");
+}
+
+#[test]
+fn one_frame_loop_preserves_fades_longer_than_its_period() {
+    let mut document = Document::new();
+    document.range(0, 1);
+    document.meta.looping = true;
+    document.meta.ease_in = 1.25;
+    document.meta.ease_out = 12.5;
+    document.timing();
+    let animation = document.preview().expect("loop preview");
+    assert_eq!((animation.ease_in, animation.ease_out), (1.25, 12.5));
+    document.meta.looping = false;
+    document.timing();
+    assert!(document.meta.ease_in + document.meta.ease_out <= document.meta.duration + 1e-6);
 }
 
 #[test]

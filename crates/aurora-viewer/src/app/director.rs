@@ -67,6 +67,9 @@ fn saved_tracks(folder: &std::path::Path) -> Vec<String> {
 #[derive(Default)]
 pub(super) struct DirectorState {
     pub(super) d: Director,
+    /// The Filters tab's editor: the photo window's stack, with its own
+    /// cards and catalogue state, since both windows can show at once.
+    pub(super) looks: ui::looks_editor::LooksUi,
     /// The window's "Free camera" switch (the photo window's free camera,
     /// `App::photo_free_camera`).
     pub(super) free: bool,
@@ -776,7 +779,13 @@ impl App {
         let mut open = self.panels.director;
         let mut capture_out = Vec::new();
         let (capture, key_rows) = self.director.extra.views(&self.world.inventory, live.restricted, &mut capture_out);
-        let looks_before = (self.settings.snapshot.looks.clone(), self.settings.snapshot.look_settings.clone());
+        let looks_before = (
+            self.settings.snapshot.looks.clone(),
+            self.settings.snapshot.look_settings.clone(),
+            self.settings.snapshot.look_favorites.clone(),
+        );
+        // set again below when a tile is pointed (the tab may not show)
+        self.director.looks.hover = None;
         let mut looks_out = Vec::new();
         ui::director::window(
             ctx,
@@ -824,9 +833,10 @@ impl App {
             capture,
             key_rows,
             ui::director::Looks {
-                ui: &mut self.snapshots.ui.looks,
+                ui: &mut self.director.looks,
                 settings: &mut self.settings.snapshot,
                 luts: &self.snapshots.ui.lut_names,
+                thumbs: &self.snapshots.ui.thumbs,
                 out: &mut looks_out,
             },
             &mut actions,
@@ -851,11 +861,19 @@ impl App {
     /// and folder), as the Photo window does it.
     fn director_looks_after(
         &mut self,
-        before: (Vec<crate::snapshot::looks::Layer>, std::collections::BTreeMap<String, Vec<f32>>),
+        before: (
+            Vec<crate::snapshot::looks::Layer>,
+            std::collections::BTreeMap<String, Vec<f32>>,
+            Vec<String>,
+        ),
         out: Vec<ui::snapshot::Action>,
         ctx: &egui::Context,
     ) {
-        if before.0 != self.settings.snapshot.looks || before.1 != self.settings.snapshot.look_settings {
+        // (a star toggled in the tab is saved too: one list for every editor)
+        if before.0 != self.settings.snapshot.looks
+            || before.1 != self.settings.snapshot.look_settings
+            || before.2 != self.settings.snapshot.look_favorites
+        {
             self.director.looks_unsaved = true;
         }
         if self.director.looks_unsaved && !ctx.input(|i| i.pointer.any_down()) {
@@ -863,7 +881,7 @@ impl App {
             self.settings.save();
         }
         for action in out {
-            self.photo_lut_action(action);
+            self.photo_lut_action(action, true);
         }
     }
 

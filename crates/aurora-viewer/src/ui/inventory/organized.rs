@@ -2380,7 +2380,7 @@ mod tests {
                 let mut output = p.ctx.run_ui(raw, |ui| {
                     // The source list no longer renders (eg. after a hover tab switch).
                     let hit = ui.ctx().layer_id_at(pos);
-                    super::super::drag::badge(ui.ctx(), &p.palette, &p.inv);
+                    super::super::drag::badge_with_inventory(ui.ctx(), &p.palette, &p.inv);
                     assert_eq!(ui.ctx().layer_id_at(pos), hit, "the image is never a drop target");
                 });
                 output.textures_delta.clear();

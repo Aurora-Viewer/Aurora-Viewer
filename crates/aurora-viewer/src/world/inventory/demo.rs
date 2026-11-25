@@ -383,6 +383,39 @@ pub fn seed_sidebar(inv: &mut Inventory) {
     }
 }
 
+/// One folder of each system folder type the inventory gives a symbol
+/// (`ui::inventory::category`) that the demo lacks, under the root, for
+/// the system folder icons (`AURORA_DEMO_INVENTORY=aurora-system-folders`).
+pub fn seed_system_folders(inv: &mut Inventory) {
+    let missing: Vec<(i32, String)> = crate::ui::inventory::category::ROWS
+        .iter()
+        .flat_map(|row| {
+            row.folder_types
+                .iter()
+                .map(move |kind| (*kind, format!("{:?} ({kind})", row.category)))
+        })
+        .filter(|(kind, _)| !inv.folders.values().any(|f| f.info.type_default == *kind))
+        .collect();
+    inv.created_folders(
+        missing
+            .iter()
+            .enumerate()
+            .map(|(n, (kind, name))| InvFolder {
+                id: Uuid::from_u128(31_000 + n as u128),
+                parent: inv.root,
+                name: name.clone(),
+                type_default: *kind,
+                ..Default::default()
+            })
+            .collect(),
+    );
+    for n in 0..missing.len() {
+        if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(31_000 + n as u128)) {
+            folder.state = FetchState::Fetched;
+        }
+    }
+}
+
 /// A Marketplace inbox separate from the normal inventory, for tab validation.
 pub fn seed_received(inv: &mut Inventory, agent: Uuid) {
     let inbox = Uuid::from_u128(8_300_000);
@@ -584,6 +617,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "folder-window"
         | "move-folder"
         | "folder-window-search"
+        | "single-folder-window"
         | "image-layout-folder"
         | "image-layout-folder-wide" => 8000,
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,

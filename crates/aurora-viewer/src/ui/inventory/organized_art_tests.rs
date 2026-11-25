@@ -105,24 +105,16 @@ fn organized_special_folder_symbols_use_real_types_and_legacy_colors_on_both_sur
                 super::super::super::tree::icon(ui, &icons, tree.0, &palette, Some(tree.1));
             });
             legacy.textures_delta.clear();
-            let (legacy_texture, tint) = legacy
-                .shapes
-                .iter()
-                .find_map(|s| match &s.shape {
-                    egui::Shape::Rect(rect) => rect.brush.as_ref().map(|brush| (brush.fill_texture_id, rect.fill)),
-                    _ => None,
-                })
-                .expect("Legacy tree painted its folder");
-            assert_eq!(legacy_texture, icons.get(tree.0).unwrap().id());
-            assert_eq!(
-                tint,
-                if colored {
-                    custom
-                } else if kind == 14 {
-                    palette.ink
-                } else {
-                    palette.violet_light
-                }
+            let tint = if colored {
+                custom
+            } else if kind == 14 {
+                palette.ink
+            } else {
+                palette.violet_light
+            };
+            assert!(
+                has_image(&legacy, icons.get(tree.0).unwrap(), tint),
+                "native folder icon {kind}, custom color {colored}"
             );
             let row = Row::Place(Location::Folder(folder));
             for selected in [false, true] {

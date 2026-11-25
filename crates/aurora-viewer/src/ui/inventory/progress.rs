@@ -185,6 +185,7 @@ impl InventoryUi {
         self.pending = None;
         self.pending_refresh.clear();
         self.created_selection = None;
+        self.created_in_all = false;
         self.consume_clipboard = false;
     }
 

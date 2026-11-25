@@ -471,6 +471,26 @@ mod tests {
     }
 
     #[test]
+    fn the_environments_saved_for_parcels_stay_out_of_settings_and_backups() {
+        // they hold the asset ids of what was applied (`world/parcel_env.rs`)
+        let asset = Uuid::from_u128(0x5E7_A55E7);
+        let from = scratch();
+        let dir = from.join("accounts").join(Uuid::from_u128(1).to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = crate::world::parcel_env::file_name("agni");
+        assert!(!ACCOUNT_FILES.contains(&name.as_str()));
+        std::fs::write(dir.join(&name), format!("[{{\"environment\":\"{{'sky_id':u{asset}}}\"}}]")).unwrap();
+        let mut backup = Backup::new(&Settings::default(), None);
+        backup.read_files(&from);
+        let text = String::from_utf8(backup.to_bytes().unwrap()).unwrap();
+        assert!(!text.contains(&asset.to_string()), "an asset id written in the backup");
+        assert!(!text.contains("parcel_environments"), "the file named in the backup");
+        let settings = serde_json::to_string(&Settings::default().to_saved()).unwrap();
+        assert!(!settings.contains("parcel_environments"), "a settings key");
+        let _ = std::fs::remove_dir_all(from);
+    }
+
+    #[test]
     fn files_go_back_where_they_came_from_and_nowhere_else() {
         let (from, to) = (scratch(), scratch());
         let (first, second) = (Uuid::from_u128(1), Uuid::from_u128(2));

@@ -55,6 +55,7 @@ pub enum Action {
     Paste {
         change: Mutation,
         cut: bool,
+        editor: Uuid,
     },
     /// A Marketplace page, in the Marketplace window.
     OpenMarketplace(String),
@@ -116,6 +117,7 @@ enum Confirm {
         cut: bool,
         prompt: Prompt,
         // Dialog redraws clone Confirm; share the potentially large row order.
+        editor: Uuid,
         after_delete: Option<std::sync::Arc<super::inventory::DeleteSelection>>,
     },
     Paste {
@@ -383,7 +385,9 @@ impl ListingsUi {
         }
         if let (true, Some(root)) = (merchant, root) {
             self.data.fetch_contents(root);
-            if inv.folders.get(&root).is_some_and(|f| f.state != FetchState::Fetched) || ui.ctx().cumulative_pass_nr().is_multiple_of(30) {
+            if inv.folders.get(&root).is_some_and(|f| f.state != FetchState::Fetched)
+                || ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT).is_multiple_of(30)
+            {
                 // LLInventoryModelBackgroundFetch::start(mRootFolderId)
                 request_tree(inv, root);
             }
@@ -957,7 +961,11 @@ impl ListingsUi {
                             self.data.associate_listing(inv, folder, source, id);
                         }
                         Confirm::Inventory {
-                            change, cut, after_delete, ..
+                            change,
+                            cut,
+                            editor,
+                            after_delete,
+                            ..
                         } => {
                             if let Some(selection) = after_delete {
                                 actions.push(Action::Delete(Box::new(super::inventory::DeleteRequest {
@@ -965,7 +973,7 @@ impl ListingsUi {
                                     selection: std::sync::Arc::unwrap_or_clone(selection),
                                 })));
                             } else {
-                                actions.push(Action::Paste { change, cut });
+                                actions.push(Action::Paste { change, cut, editor });
                             }
                         }
                         Confirm::Paste { to, ids, copy, .. } => self.paste_inventory(inv, worn, protected, to, &ids, copy, true, actions),
@@ -1224,30 +1232,33 @@ mod tests {
         // doToSelected asks before "rename" and "properties" too
         let change =
             crate::world::inventory::actions::patch(&inv, item, aurora_llsd::llsd_map! { "name" => "Renamed" }).expect("name edit");
-        assert!(ui.guard_inventory_change(&inv, change, false, false).is_none());
+        let origin = Uuid::from_u128(102);
+        assert!(ui.guard_inventory_change(&inv, change, false, false, origin).is_none());
         assert!(matches!(
             ui.confirm,
             Some(Confirm::Inventory {
                 prompt: Prompt::ActiveChange,
+                editor,
                 ..
-            })
+            }) if editor == origin
         ));
         assert!(ui.open);
         ui.confirm = None;
         let change = crate::world::inventory::actions::patch(&inv, item, aurora_llsd::llsd_map! { "parent_id" => inv.root }).expect("move");
-        assert!(ui.guard_inventory_change(&inv, change, false, false).is_none());
+        assert!(ui.guard_inventory_change(&inv, change, false, false, origin).is_none());
         assert!(matches!(
             ui.confirm,
             Some(Confirm::Inventory {
                 prompt: Prompt::ActiveChange,
+                editor,
                 ..
-            })
+            }) if editor == origin
         ));
         // the same edits outside an active listing go through
         let idle = Uuid::from_u128(8_400_101);
         let change =
             crate::world::inventory::actions::patch(&inv, idle, aurora_llsd::llsd_map! { "name" => "Renamed" }).expect("name edit");
-        assert!(ui.guard_inventory_change(&inv, change, false, false).is_some());
+        assert!(ui.guard_inventory_change(&inv, change, false, false, origin).is_some());
     }
 
     #[test]
@@ -1411,7 +1422,7 @@ mod tests {
                 Way::Paste => (true, false),
                 Way::Menu => (false, false),
             };
-            let passed = ui.guard_inventory_change(&inv, change, cut, drag).is_some();
+            let passed = ui.guard_inventory_change(&inv, change, cut, drag, Uuid::nil()).is_some();
             match &ui.confirm {
                 Some(Confirm::Inventory { prompt, .. }) => Some(*prompt),
                 _ => {

@@ -44,6 +44,8 @@ Open a new tab with **+** or **Ctrl+T**. Each tab shows its location’s icon an
 | Create a real folder | Choose **New → Folder** or press **Ctrl+Shift+N**, enter the name and press **Enter**. In **General Inventory**, the folder lives at your personal SL root. From **Home**, it lives under a real **Home Folders** container. In a combined category, choose the destination when prompted. |
 | Edit real inventory | With the file pane focused, **F2** renames, **Delete** moves eligible entries to Trash, and **Ctrl+X**, **Ctrl+C**, **Ctrl+V** operate the inventory clipboard across tabs. The context menu also offers type-specific actions. **Paste as link** creates another SL reference to an eligible item. |
 
+When an item is in the real **Trash**, its Restore command uses the original Second Life folder if the viewer remembers it and the folder still exists. Otherwise it uses the usual destination for that inventory type. **Restore original location** in a locally arranged view clears only the Explorer placement.
+
 ## Share items and use them in-world
 
 Drag a real item, folder or eligible selection onto a resident in the scene, their profile, their private IM or their resident row in People, Contacts or the conversation list. Dropping a texture into a resident’s IM opens the standard **Share** dialog for that resident. Review the selection there and confirm to send it. SL transfer and no-copy permissions apply. For a group chat, choose an individual recipient to share with.

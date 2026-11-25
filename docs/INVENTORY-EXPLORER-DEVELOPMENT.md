@@ -4,7 +4,7 @@ Explorer adds a third inventory presentation to Aurora Viewer. A reviewer can st
 
 ## Settings and ownership
 
-Preferences → Aurora → Windows → Inventory selects Classic Window (Legacy), Aurora, or Explorer. A fresh profile defaults to Aurora. `Settings::read_values` also handles old profiles and backup restores. An explicit `inventory_style` wins. In older settings, `classic_inventory = true` selects Classic even if `inventory.organized_explorer` is true. Otherwise an enabled Explorer flag selects Explorer. A style switch suspends the Explorer host and cancels an in-progress tab drag. [Settings and migration](../crates/aurora-viewer/src/settings.rs) · [Backup restore](../crates/aurora-viewer/src/settings/backup.rs) · [Preferences UI](../crates/aurora-viewer/src/ui/options/pages/aurora.rs)
+Preferences → Aurora → Windows → Inventory selects Classic Window (Legacy), Aurora, or Explorer. A fresh profile defaults to Aurora. `Settings::read_values` also handles old profiles and backup restores. An explicit `inventory_style` wins. In older settings, `classic_inventory = true` selects Classic even if `inventory.organized_explorer` is true. Otherwise an enabled Explorer flag selects Explorer. Settings schema 48 lets a stock schema-47 viewer save its own preferences while retaining the newer inventory style for the next Explorer launch. A style switch suspends the Explorer host and cancels an in-progress tab drag. [Settings and migration](../crates/aurora-viewer/src/settings.rs) · [Backup restore](../crates/aurora-viewer/src/settings/backup.rs) · [Preferences UI](../crates/aurora-viewer/src/ui/options/pages/aurora.rs)
 
 | State | Owner and lifetime |
 | --- | --- |
@@ -59,4 +59,6 @@ Aurora and Classic retain the native dual-panel button and independent pane sele
 
 Explorer Cut uses native relocatable and RLVa folder-removal checks both when enabling the command and immediately before updating the clipboard. The edit-availability cache tracks the immutable RLVa snapshot and active gestures as well as inventory, layout, protected folders and worn items, without rewalking a large selection on an unchanged repaint. Menus and controls use shared theme primitives; no theme-guard exemptions are added.
 
-The port references #2520 as partial work. Full repository checks and human validation must be repeated on the integration candidate; the historical handoff results do not establish candidate readiness.
+Real Trash restoration uses the shared inventory command and the account’s recorded move origins. A missing origin falls back to the system folder for the item type. Local placement changes do not enter the shared grid-mutation history.
+
+[PR #4541](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4541) covers the optional presentation and account-local organization within [issue #2520](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2520). The PR records the source revisions for each automated and human check.

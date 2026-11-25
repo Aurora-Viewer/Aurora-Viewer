@@ -774,8 +774,8 @@ pub fn show(
     // eight slices of Firestorm's default pie menu, PieMenu::draw)
     let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::unique(HOVERED)).flatten());
     if hovered != before {
-        if let Some(i) = hovered.filter(|i| *i < 8) {
-            super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i as u8));
+        if let Some(i) = pie_hover_sound(hovered, use_pie, customization.force_list()) {
+            super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i));
         }
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique(HOVERED), hovered));
     }
@@ -1995,9 +1995,34 @@ pub fn grid_link_confirm(ctx: &egui::Context, p: &Palette, address: &str, name: 
     answer
 }
 
+fn pie_hover_sound(hovered: Option<usize>, use_pie: bool, force_list: bool) -> Option<u8> {
+    if use_pie && !force_list {
+        hovered.filter(|i| *i < 8).map(|i| i as u8)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropdown_menus_do_not_play_pie_slice_sounds() {
+        for i in 0..12 {
+            assert_eq!(pie_hover_sound(Some(i), false, false), None);
+            assert_eq!(pie_hover_sound(Some(i), true, true), None);
+        }
+    }
+
+    #[test]
+    fn radial_menus_retain_their_slice_sounds() {
+        for i in 0..8 {
+            assert_eq!(pie_hover_sound(Some(i), true, false), Some(i as u8));
+        }
+        assert_eq!(pie_hover_sound(Some(8), true, false), None);
+        assert_eq!(pie_hover_sound(None, true, false), None);
+    }
 
     #[test]
     fn remote_friend_menu_location_clicks_follow_live_received_rights() {
