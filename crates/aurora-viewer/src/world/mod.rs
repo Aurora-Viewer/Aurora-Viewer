@@ -1001,6 +1001,15 @@ fn saved_prefix(timestamp: u32) -> String {
 pub const MAX_REGION_SIZE: u32 = 4096;
 
 impl World {
+    /// At exit: the objects of the live store and of the regions parked
+    /// after a far teleport (`Parked`, kept about 50 s until their
+    /// simulator is removed) are let go without freeing them on the main
+    /// thread (`ObjectStore::leak_at_exit`). Nothing in them saves a file.
+    pub(crate) fn leak_at_exit(&mut self) {
+        self.objects.leak_at_exit();
+        std::mem::forget(std::mem::take(&mut self.parked));
+    }
+
     pub fn add_tracked_region(&mut self, name: &str, label: &str) {
         if self.region_tracker.add(name, label) {
             self.save_tracked_regions();

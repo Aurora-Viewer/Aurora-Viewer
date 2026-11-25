@@ -1526,6 +1526,16 @@ impl PreviewSource {
 }
 
 impl TextureStreamer {
+    /// At exit: the textures' downloaded bytes (`Entry::data`, up to
+    /// thousands of files) are let go without freeing them on the main
+    /// thread (`Scene::leak_at_exit`). The entries hold no GPU handle; the
+    /// uploads and the staging pool, which do, drop as usual. The writes the
+    /// 2 s housekeeping had not made yet are lost as before.
+    pub(crate) fn leak_at_exit(&mut self) {
+        std::mem::forget(std::mem::take(&mut self.entries));
+        std::mem::forget(std::mem::take(&mut self.by_fetch_key));
+    }
+
     pub fn new(cache_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(cache_dir.join("tex"));
         TextureStreamer {
@@ -4658,6 +4668,23 @@ mod tests {
 
     /// A 1024 × 1024 texture in use, loaded at `decoded`, covering `need_px`
     /// pixels in view.
+    /// At exit the textures' bytes are let go, not freed on the main thread.
+    #[test]
+    fn the_texture_bytes_are_let_go_at_exit() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let bytes = Arc::new(vec![7u8; 64]);
+        s.entries.insert(
+            Uuid::from_u128(0x2894),
+            Entry {
+                data: bytes.clone(),
+                ..entry(None, 100.0)
+            },
+        );
+        s.leak_at_exit();
+        drop(s);
+        assert_eq!(Arc::strong_count(&bytes), 2, "left behind, not freed");
+    }
+
     pub(super) fn entry(decoded: Option<u8>, need_px: f32) -> Entry {
         Entry {
             slot: 9,

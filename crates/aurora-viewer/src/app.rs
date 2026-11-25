@@ -7545,8 +7545,8 @@ impl App {
     /// and the scene's meshes to the system instead of freeing them one by
     /// one on the main thread (`ObjectStore::leak_at_exit`).
     pub fn leak_session_at_exit(&mut self) {
-        self.world.objects.leak_at_exit();
-        self.scene.meshes.leak_at_exit();
+        self.world.leak_at_exit();
+        self.scene.leak_at_exit();
     }
 
     fn record_inventory_logout(&mut self) {
