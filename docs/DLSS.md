@@ -151,6 +151,26 @@ window's device first and starts again on the headset's. Streamline normally als
 presented. The viewer calls DLSS without that, which Streamline allows,
 but whether its long-running cleanup then runs has not been checked.
 
+## Which DLSS version
+
+The version is that of NVIDIA's files, not of the viewer:
+
+- **Linux:** the setup takes the newest DLSS SDK on
+  <https://github.com/NVIDIA/DLSS> when it runs (310.9.16 on 2026-11-25).
+  The installed file's name gives it: `libnvidia-ngx-dlss.so.<version>`.
+  Run the setup again for a newer one.
+- **Windows:** the `nvngx_dlss.dll` of the Streamline release the setup
+  pins (v2.14.16). Its file properties give the version.
+
+"DLSS 4.5" is NVIDIA's name for its second-generation transformer models,
+L and M, added in DLSS SDK 310.5.0; K is the DLSS 4 transformer model
+([NVIDIA](https://www.nvidia.com/en-us/geforce/news/dlss-4-5-super-resolution-available-now/)).
+On Automatic, NVIDIA's defaults pick K for DLAA, Quality and Balanced, M
+for Performance and L for Ultra Performance (`nvsdk_ngx_defs.h` in the
+SDK); NVIDIA may change them in a driver update. Choosing L or M uses
+them in every mode. RTX 20 and 30 cards lack FP8, so L and M cost them
+more than K does.
+
 ## For a test
 
 - `AURORA_DLSS=1` turns DLSS on for one launch, whatever the DLSS
