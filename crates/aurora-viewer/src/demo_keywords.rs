@@ -5,7 +5,9 @@
 //! line is coloured, plays the sound and, with the system notifications on,
 //! is told as a "Keyword alert". `prefs` keeps the settings of the
 //! preferences (to try them by hand) and sends the same lines again every
-//! `PERIOD` frames.
+//! `PERIOD` frames. `sets` puts the two residents in a contact set that
+//! colours their chat (#3879): the keyword lines still take the keyword
+//! colour, the line without one the set's.
 
 use crate::keywords::KeywordSettings;
 use aurora_net::{ChatMessage, ChatSourceType, ChatType, InstantMessage, NetEvent};
@@ -34,6 +36,27 @@ pub fn settings() -> Option<KeywordSettings> {
         play_sound: true,
         ..Default::default()
     })
+}
+
+/// `sets`: Tess and Nova in a contact set that colours their chat text, in
+/// memory only (the demo account's file stays as it was).
+pub fn seed(world: &mut crate::world::World) {
+    if mode().as_deref() != Some("sets") {
+        return;
+    }
+    let sets = &mut world.contact_sets;
+    sets.keep_in_memory();
+    let name = aurora_i18n::tr!("demo-family");
+    sets.add_set(name);
+    sets.set_color(name, [0.2, 0.8, 0.5, 1.0]);
+    sets.add_to_set(&[super::DEMO_TESS, super::DEMO_NOVA], name, |_| true);
+    sets.set_visuals(
+        name,
+        crate::world::contact_sets::Visuals {
+            chat_text: true,
+            ..Default::default()
+        },
+    );
 }
 
 const OBJECT: Uuid = Uuid::from_u128(0x0E1C_0000_0000_0000_0000_0000_0000_0001);

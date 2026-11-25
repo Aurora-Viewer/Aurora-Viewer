@@ -1206,12 +1206,14 @@ fn message_emphasis(kind: ChatKind, italics: bool) -> super::fonts::TextEmphasis
 /// An emote takes the colour of its sender's other lines, keyword included:
 /// LLViewerChat::getChatColor (indra/newview/llviewerchat.cpp) has no colour
 /// of its own for `/me`, only the italics (`message_emphasis`).
+/// A keyword wins over a contact set's colour (`keyword_or_contact_color`);
+/// a history line keeps its tone unless its contact set colours it.
 fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> Color32 {
-    if let Some(color) = super::colors::contact_chat_color(line, world) {
-        return color;
-    }
-    history_tone(p, line.origin)
-        .or_else(|| super::colors::keyword_color(line))
+    let tone = history_tone(p, line.origin);
+    let keyword = tone.is_none().then(|| super::colors::keyword_color(line)).flatten();
+    keyword
+        .or_else(|| super::colors::contact_chat_color(line, world))
+        .or(tone)
         .unwrap_or_else(|| match line.kind.volume() {
             Some(ChatType::Whisper) => p.muted,
             Some(ChatType::Shout) => p.ink,
@@ -1657,17 +1659,15 @@ fn line_job(
     let col = if body_only {
         message_color(line, p, world)
     } else {
-        super::colors::contact_chat_color(line, world)
-            .or_else(|| super::colors::keyword_color(line))
-            .unwrap_or_else(|| {
-                if compact {
-                    object_row::text_color(line, p)
-                } else if line.kind.volume() == Some(ChatType::Whisper) {
-                    p.muted
-                } else {
-                    color_for(line.kind, p)
-                }
-            })
+        super::colors::keyword_or_contact_color(line, world).unwrap_or_else(|| {
+            if compact {
+                object_row::text_color(line, p)
+            } else if line.kind.volume() == Some(ChatType::Whisper) {
+                p.muted
+            } else {
+                color_for(line.kind, p)
+            }
+        })
     };
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
