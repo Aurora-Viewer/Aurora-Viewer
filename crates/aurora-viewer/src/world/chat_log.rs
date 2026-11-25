@@ -861,8 +861,9 @@ impl ChatLog {
 
     /// Erase the transcripts of the account logged in (on this grid), after
     /// the lines already queued. False when there is no account. The answer
-    /// comes through `take_erased`. Refused in the Legacy layout: the files
-    /// are the Legacy Viewer's too.
+    /// comes through `take_erased`, a failure when the transcript thread
+    /// refused or dropped the erasing. Refused in the Legacy layout: the
+    /// files are the Legacy Viewer's too.
     pub fn erase(&mut self) -> bool {
         if self.importing.is_some() || self.placing.is_some() || self.shared() {
             return false;
@@ -870,8 +871,14 @@ impl ChatLog {
         let Some(dir) = self.dir().map(Path::to_path_buf) else {
             return false;
         };
-        self.erasing = self.worker().map(|w| w.erase(dir));
-        self.erasing.is_some()
+        let done = self.worker().and_then(|w| w.erase(dir)).unwrap_or_else(|| {
+            // refused (queue full, no thread): nothing is erased, and the
+            // answer, a closed channel, reads as a failure
+            log::warn!("conversation transcripts: the erasing could not be queued");
+            crossbeam_channel::bounded(1).1
+        });
+        self.erasing = Some(done);
+        true
     }
 
     /// The transcripts' part of a Chat Service delete, asked now or resumed
@@ -1117,7 +1124,13 @@ impl ChatLog {
 
     /// The answer of the last erasing, once: the number of files removed.
     pub fn take_erased(&mut self) -> Option<std::io::Result<usize>> {
-        let done = self.erasing.as_ref()?.try_recv().ok()?;
+        let done = match self.erasing.as_ref()?.try_recv() {
+            Ok(done) => done,
+            Err(crossbeam_channel::TryRecvError::Empty) => return None,
+            // the erasing's job refused or dropped unanswered (the thread
+            // gone with it queued): nothing was erased, and it fails
+            Err(crossbeam_channel::TryRecvError::Disconnected) => Err(std::io::Error::other("the transcript thread dropped the erasing")),
+        };
         self.erasing = None;
         Some(done)
     }
@@ -1388,6 +1401,36 @@ mod tests {
         assert!(!dir(bob).exists());
         assert_eq!(texts(&dir(alice).join("Jane Doe.txt")), ["hello"]);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_erasing_the_transcript_thread_never_takes_fails_and_frees_the_history() {
+        let guard = TempGuard::new();
+        let mut log = ChatLog::in_folder(guard.path().to_path_buf());
+        log.set_grid("agni".into());
+        log.login(Uuid::from_u128(0xA11CE));
+        log.append("Jane Doe", now(), "Jane Doe", "kept");
+        assert!(log.flush(WAIT));
+        let file = log.dir().unwrap().join("Jane Doe.txt");
+        // the thread gone: refused at once, a failure the next frame reads
+        let (worker, queue) = store::Worker::stalled();
+        drop(queue);
+        log.set_worker(worker);
+        assert!(log.erase());
+        assert!(log.take_erased().unwrap().is_err());
+        assert!(!log.busy());
+        // taken, then dropped unanswered (the thread gone with it queued):
+        // busy until then, a failure after
+        let (worker, queue) = store::Worker::stalled();
+        log.set_worker(worker);
+        assert!(log.erase());
+        assert!(log.busy());
+        assert!(log.take_erased().is_none(), "no answer yet");
+        drop(queue);
+        assert!(log.take_erased().unwrap().is_err());
+        assert!(!log.busy());
+        assert!(log.take_erased().is_none());
+        assert_eq!(texts(&file), ["kept"]);
     }
 
     fn conversation(name: &str, session: u128, time: i64) -> conversations::Conversation {

@@ -243,11 +243,11 @@ impl Worker {
     }
 
     /// Erase the transcripts of a folder; the answer is the number of files
-    /// removed.
-    pub fn erase(&self, dir: PathBuf) -> Receiver<std::io::Result<usize>> {
+    /// removed. None when the queue refused the erasing (full, or the
+    /// thread is gone): nothing is erased.
+    pub fn erase(&self, dir: PathBuf) -> Option<Receiver<std::io::Result<usize>>> {
         let (done, rx) = crossbeam_channel::bounded(1);
-        self.send(Job::Erase { dir, done });
-        rx
+        self.queue(Job::Erase { dir, done }).then_some(rx)
     }
 
     /// Move the transcripts of a folder to another, after the lines already
@@ -1287,12 +1287,26 @@ mod tests {
         std::fs::write(logs.join("keep.json"), b"c").unwrap();
         std::fs::write(logs.join("sub").join("deep.txt"), b"d").unwrap();
         let w = Worker::start().unwrap();
-        assert_eq!(w.erase(logs.clone()).recv_timeout(Duration::from_secs(10)).unwrap().unwrap(), 2);
+        assert_eq!(
+            w.erase(logs.clone())
+                .expect("queued")
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap()
+                .unwrap(),
+            2
+        );
         assert!(!logs.join("chat.txt").exists());
         assert!(logs.join("keep.json").exists());
         assert!(logs.join("sub").join("deep.txt").exists());
         // nothing there: nothing to do
-        assert_eq!(w.erase(dir.join("none")).recv_timeout(Duration::from_secs(10)).unwrap().unwrap(), 0);
+        assert_eq!(
+            w.erase(dir.join("none"))
+                .expect("queued")
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap()
+                .unwrap(),
+            0
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
