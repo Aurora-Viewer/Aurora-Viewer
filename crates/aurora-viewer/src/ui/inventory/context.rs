@@ -158,21 +158,34 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mu
         actions.push(InvAction::Preview(original, Some(clipboard::focus_id(st))));
     }
 }
+/// Remember the exact folder requested by the toolbar or shortcut. The
+/// Marketplace guard can defer or cancel the edit before submission.
+pub(super) fn new_folder(st: &mut InventoryUi, actions: &mut Vec<InvAction>, parent: Uuid, in_all: bool) {
+    let plan = rules::create_folder(parent, crate::text_validation::default_name("common-new-folder"));
+    if let Ok(change) = &plan
+        && let [aurora_net::inventory::operations::Operation::Folder { id, .. }] = change.operations.as_slice()
+        && in_all
+    {
+        st.new_folder_in_all = Some(*id);
+    }
+    submit(st, actions, plan);
+}
+
+/// The "+" menu: what it creates goes in `id`. `in_all`: its new folder is
+/// shown on the All tab, search cleared (`InventoryUi::show_created`).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn new_menu(
     ui: &mut egui::Ui,
     p: &Palette,
     id: Uuid,
     enabled: bool,
+    in_all: bool,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     actions: &mut Vec<InvAction>,
 ) {
     if menu::item_if(ui, p, "folder-filled", aurora_i18n::tr!("common-new-folder"), enabled) {
-        submit(
-            st,
-            actions,
-            rules::create_folder(id, crate::text_validation::default_name("common-new-folder")),
-        );
+        new_folder(st, actions, id, in_all);
     }
     for (kind, icon, name) in [
         (NewItem::Script, "code", aurora_i18n::tr!("common-new-script")),
@@ -337,7 +350,40 @@ pub(super) fn show(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
-    let mut catalog = super::context_catalog::build(inv, id, st, prefs, facts);
+    let catalog = super::context_catalog::build(inv, id, st, prefs, facts);
+    show_catalog(ui, p, inv, id, catalog, st, prefs, facts, actions);
+}
+
+/// The menu of the explorer's empty space, for the folder it shows
+/// (`context_catalog::build_background`), arranged with the same
+/// customizable layout as the others.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn show_background(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    folder: Uuid,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let catalog = super::context_catalog::build_background(inv, folder, st, prefs, facts);
+    show_catalog(ui, p, inv, folder, catalog, st, prefs, facts, actions);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn show_catalog(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    id: Uuid,
+    mut catalog: super::context_catalog::Catalog,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
     let scope = super::context_catalog::scope(inv, id);
     prefs.context_menus.unify();
     st.menu_editor

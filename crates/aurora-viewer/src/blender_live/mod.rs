@@ -4,6 +4,7 @@
 
 mod addon;
 mod demo;
+pub mod fit_lab;
 mod geometry;
 pub(crate) mod import;
 mod installer;
@@ -21,6 +22,7 @@ mod ui;
 pub use demo::fixture as demo_fixture;
 pub use demo::sleeves_fixture as demo_sleeves_fixture;
 pub use demo::static_fixture as demo_static_fixture;
+pub use demo::warnings_fixture as demo_warnings_fixture;
 pub(crate) use installer::{Removal as AddonRemoval, remove_everywhere as remove_addon_everywhere};
 
 use parking_lot::Mutex;
@@ -125,6 +127,8 @@ pub struct Live {
     pub placement_dirty: HashSet<Uuid>,
     /// The Avatar tab's elbow and knee bend, while the preview runs.
     pub bend: crate::scene::anim::PreviewBend,
+    /// The Avatar tab's Fit lab (`fit_lab.rs`).
+    pub fit: fit_lab::FitLab,
     /// When each source last changed (`PreparedSource::digest`), and when
     /// the last snapshot came: the cards' and the status line's times.
     pub changed: HashMap<Uuid, (u64, std::time::Instant)>,
@@ -181,6 +185,7 @@ impl Default for Live {
             attach_choices: Vec::new(),
             placement_dirty: HashSet::new(),
             bend: Default::default(),
+            fit: Default::default(),
             changed: HashMap::new(),
             received_at: None,
             thumbnails: Default::default(),

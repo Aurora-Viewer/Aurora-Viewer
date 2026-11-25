@@ -1485,6 +1485,11 @@ fn shortcut_claims_focus(
     if mods.ctrl && !shift && !alt && letter("s") && ui::inventory::document_save_focused(ctx) {
         return false;
     }
+    // a focused inventory list keeps its file manager's chords (Ctrl+Shift+A
+    // inverts there, not People; Ctrl+Shift+N makes a folder, not the sunset)
+    if ui::inventory::list_keeps_chord(ctx, &Input::key(code), mods.ctrl, shift, alt) {
+        return false;
+    }
     true
 }
 
@@ -3544,6 +3549,7 @@ impl App {
                 || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
                 || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
                 || (mode == "next-server" && self.login_form.accepted_next_servers.is_empty())
+                || (mode == "unencrypted" && self.login_form.accepted_unencrypted.is_empty())
                 || mode == "server-error"
             {
                 if mode == "terms" {
@@ -3637,7 +3643,21 @@ impl App {
             last_exec: self.last_exec(),
             platform: crate::system_info::login_platform(),
             accepted_next_servers: self.login_form.accepted_next_servers.clone(),
+            accepted_unencrypted: self
+                .settings
+                .unencrypted_logins
+                .iter()
+                .chain(&self.login_form.accepted_unencrypted)
+                .cloned()
+                .collect(),
         };
+        // a plain http server agreed to is asked once (saved just below)
+        for server in std::mem::take(&mut self.login_form.accepted_unencrypted) {
+            if !self.settings.unencrypted_logins.contains(&server) {
+                log::info!("login: the user agreed to log in to {server} without encryption");
+                self.settings.unencrypted_logins.push(server);
+            }
+        }
         self.login_form.busy = true;
         self.login_form.error = None;
         self.login_progress = Some((aurora_i18n::tr!("app-connecting").into(), 0.05));
@@ -3821,6 +3841,7 @@ impl App {
         if let Some(g) = &mut self.gfx {
             self.scene.clear(&mut g.renderer);
         }
+        self.scene.forget_login();
         self.world.reset();
         // the next session's network starts with the neighbours allowed
         self.neighbours_refused = false;
@@ -4457,6 +4478,7 @@ impl App {
                 bad_credentials,
                 previous_session,
                 next_server,
+                unencrypted_server,
             } => {
                 // A refused login spends its code, whatever the reason: the next
                 // attempt sends none, so the server can ask for a new one
@@ -4493,6 +4515,9 @@ impl App {
                 } else if let Some(server) = next_server {
                     self.login_form.next_server = Some(server);
                     self.login_form.accept_next_server = false;
+                } else if let Some(server) = unencrypted_server {
+                    self.login_form.unencrypted_server = Some(server);
+                    self.login_form.accept_unencrypted = false;
                 } else if tos_required {
                     self.login_form.tos_message = Some(error);
                 } else if critical_required {
@@ -4556,6 +4581,13 @@ impl App {
                 } else {
                     crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
                 };
+                // where the Trash's entries came from (Restore to their
+                // folder); the demo keeps them in memory
+                if !self.demo {
+                    self.world.inventory.trash_origins = crate::world::inventory::trash_origins::TrashOrigins::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::inventory::trash_origins::FILE),
+                    );
+                }
                 // the environments saved for parcels, on the grid of the
                 // login; the demo keeps them in memory
                 self.world.parcel_env.saves = if self.demo {
@@ -5903,6 +5935,8 @@ impl App {
         };
         let hit = if alt {
             picked.visible_point()
+        } else if picked.through_ignored && !self.build.open {
+            ray.and_then(|r| self.scene.drawn_action_point(&self.world, r, depth, self.settings.draw_distance))
         } else {
             self.scene
                 .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance)
@@ -6396,6 +6430,12 @@ impl App {
         let o = self.world.objects.get(idx)?;
         if Scene::skeleton_owner(&self.world, idx).is_some_and(|(owner, _)| owner == me) {
             return None;
+        }
+        // our copies (the mirror, the Fit lab's mannequins): their made-up
+        // ids are not sent; the eyes go to the point alone
+        if self.world.on_local_copy(idx) {
+            let (mx, my) = self.world.main_origin()?;
+            return Some((None, glam::DVec3::new(mx as f64, my as f64, 0.0) + point.as_dvec3()));
         }
         let (at, rot, hud) = Scene::object_transform(&self.world, idx, now, 0)?;
         if hud {
@@ -8099,6 +8139,17 @@ impl App {
                 );
                 return;
             }
+            // the inventory lists' keys: one the list could never see, or
+            // keeps fixed, is refused the same way (`inventory_accepts`)
+            if crate::keybinds::is_inventory(action) && !crate::keybinds::inventory_accepts(action, &b) {
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    aurora_i18n::tr!("common-inventory").to_owned(),
+                    aurora_i18n::tr!("keybinds-inventory-refused", keys = b.label()),
+                    crate::world::notifications::Data::None,
+                );
+                return;
+            }
             self.settings.keybinds.set(action, slot, Some(b));
             if action == Action::HudDrag {
                 self.down.clear();
@@ -8297,6 +8348,18 @@ impl App {
                 crate::demo::action_overlay(if id == 980 { 980 } else { 981 }, pos + direction * 1.0, rotation)
             });
         }
+        // Exercise action-only changes after the panel already has GPU records.
+        if ((self.frame_count == 270 && mode.starts_with("ignore-alt-switch"))
+            || (self.frame_count == 275 && mode == "ignore-alt-switch-on"))
+            && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(981))
+            && let Some(panel) = self.world.objects.get_mut(idx)
+        {
+            panel.set_click_action(if self.frame_count == 270 {
+                crate::interaction::code::DISABLED
+            } else {
+                crate::interaction::code::IGNORE
+            });
+        }
         if self.frame_count == 275 && (mode == "pause" || mode == "open-media-playing") {
             self.media.play_parcel(&self.world, &self.settings.media);
         }
@@ -8329,6 +8392,17 @@ impl App {
             } else if mode.starts_with("buy-touch-menu") {
                 self.on_ctx_action(ui::context::CtxAction::Buy(crate::demo::action_id(id)));
                 log::info!("demo menu purchase: prim={id}, dialog={}", self.interactions.dialog.is_some());
+            } else if mode.starts_with("ignore-alt") || mode == "ignore-object-view" {
+                if mode.ends_with("-build") {
+                    self.build.open_build(crate::build::Tool::Edit);
+                }
+                self.alt = mode.starts_with("ignore-alt");
+                if mode == "ignore-object-view" {
+                    self.panels.camera_controls = true;
+                    self.object_view = true;
+                }
+                self.on_left_press();
+                self.alt = false;
             } else if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
                 self.click(click_pick::Click::Build);
@@ -11010,6 +11084,7 @@ impl App {
             self.pump_network_events(t_ev);
         }
         self.poll_inventory_offers();
+        self.world.inventory.trash_origins.poll();
         self.net_profile.events_left(self.net.events.len());
         for (id, bytes) in self.world.take_host_images() {
             self.scene.textures.note_host_image(id, bytes);
@@ -11063,6 +11138,10 @@ impl App {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
             crate::demo::snow_spin::tick(&mut self.world, self.frame_count);
+            crate::demo::footprints::tick(&mut self.scene, self.frame_count);
+            if let Some((eye, at)) = crate::demo::footprints::view(self.frame_count) {
+                self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
+            }
             if let Some((eye, at)) = crate::demo::snow_spin::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
@@ -11346,6 +11425,7 @@ impl App {
         }
         self.local_bakes.apply(&mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
+        self.update_fit_clip();
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
@@ -11405,6 +11485,7 @@ impl App {
         self.update_weather_now();
         if self.demo {
             crate::demo::snow_spin::weather(self.frame_count, &mut self.weather_now);
+            crate::demo::footprints::weather(self.frame_count, &mut self.weather_now);
         }
         self.update_audio();
         self.update_wind_sound(dt);
@@ -12064,6 +12145,10 @@ impl App {
             // shapes. The tools may be open behind the photo view, or in a
             // window outside.
             let bare = self.photo_full_frame() || self.director_playing() || self.director_filming() || self.interface.ui_off;
+            // (and LiveMesh's Fit lab clipping map)
+            if bare {
+                self.scene.fit_clip = None;
+            }
             let mut selection_wire = if bare {
                 Default::default()
             } else {
@@ -12934,6 +13019,23 @@ impl App {
                 let [r, g, b, _] = egui::Rgba::from(self.palette.violet_light).to_array();
                 [r, g, b, 0.65]
             },
+            // LiveMesh's Fit lab: red where the body comes through the
+            // garment, amber where they meet; never in a photo
+            fit_clip: self
+                .scene
+                .fit_clip
+                .as_ref()
+                .filter(|_| self.snapshots.capturing.is_none())
+                .map(|_| {
+                    let [r, g, b, _] = egui::Rgba::from(self.palette.danger).to_array();
+                    let [tr, tg, tb, _] = egui::Rgba::from(self.palette.warn).to_array();
+                    aurora_render::FitClipParams {
+                        clip_color: [r, g, b, 0.75],
+                        touch_color: [tr, tg, tb, 0.6],
+                        reach: crate::blender_live::fit_lab::CLIP_REACH,
+                        touch: crate::blender_live::fit_lab::CLIP_TOUCH,
+                    }
+                }),
             selection_color: egui::Rgba::from(if self.imports.local_status.revealing() {
                 self.palette.warn
             } else {
@@ -13491,6 +13593,7 @@ impl App {
             ui::close_key::begin(ui.ctx());
             // the chat fields' shortcuts, as Preferences › Shortcuts set them
             ui::chat::shortcuts::publish(ui.ctx(), &self.settings.keybinds);
+            ui::inventory::publish_shortcuts(ui.ctx(), &self.settings.keybinds);
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             // A discarded pass (`request_discard`) is followed by one that
@@ -15870,6 +15973,12 @@ impl App {
                     crate::build::demo::Step::CloseEditor => self.build.close(&mut self.world, &mut self.settings.build),
                     crate::build::demo::Step::Select(idx) => {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::TransparentDiffuse => {
+                        self.build.edit_faces(&mut self.world, |face, _, _| {
+                            face.texture = aurora_prim::te::TRANSPARENT_TEXTURE;
+                        });
                         self.flush_build();
                     }
                     crate::build::demo::Step::LinkSetup(denied) => {
@@ -18483,6 +18592,24 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: Some("login.other-grid.example".into()),
+                        unencrypted_server: None,
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("unencrypted")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the grid's login address is a plain http one
+                    // (LoginError::Unencrypted): nothing was sent
+                    log::info!("demo login: the login address is not encrypted");
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: String::new(),
+                        mfa_required: false,
+                        tos_required: false,
+                        critical_required: false,
+                        bad_credentials: false,
+                        previous_session: false,
+                        next_server: None,
+                        unencrypted_server: Some("grid.example:8002".into()),
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("server-error")
@@ -18499,6 +18626,7 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: None,
+                        unencrypted_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
@@ -18520,6 +18648,7 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: None,
+                        unencrypted_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
                     self.demo_mfa_challenge = None;
@@ -18540,6 +18669,7 @@ impl App {
                         bad_credentials: refused,
                         previous_session: false,
                         next_server: None,
+                        unencrypted_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some() {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -22101,6 +22231,7 @@ impl ApplicationHandler for App {
                         | "mfa-refused"
                         | "terms"
                         | "next-server"
+                        | "unencrypted"
                         | "server-error"
                         | "add"
                         | "password"
@@ -22111,7 +22242,8 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "unencrypted" | "server-error"
+                        | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -22158,7 +22290,16 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "add" | "add-mfa" | "password"
+                        "first"
+                            | "first-mfa"
+                            | "mfa-refused"
+                            | "terms"
+                            | "next-server"
+                            | "unencrypted"
+                            | "server-error"
+                            | "add"
+                            | "add-mfa"
+                            | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -22168,7 +22309,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server" | "server-error") {
+                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server" | "unencrypted" | "server-error") {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
@@ -23961,7 +24102,17 @@ impl ApplicationHandler for App {
                         | "aurora-wide"
                         | "aurora-columns"
                         | "aurora-columns-hidden"
+                        | "aurora-columns-all"
+                        | "aurora-explorer-filter"
+                        | "aurora-explorer-preview"
+                        | "aurora-compact"
+                        | "aurora-groups"
+                        | "aurora-folder-previews"
+                        | "aurora-tiles"
                         | "aurora-gallery"
+                        | "aurora-gallery-system-folders"
+                        | "aurora-system-folders"
+                        | "aurora-filtered"
                         | "aurora-gallery-medium"
                         | "aurora-gallery-large"
                         | "aurora-combination"
@@ -23984,6 +24135,7 @@ impl ApplicationHandler for App {
                         | "aurora-favorites-parents"
                         | "aurora-folder-window"
                         | "aurora-folder-window-wide"
+                        | "aurora-single-folder-window"
                         | "additional"
                         | "aurora-additional"
                         | "show-original"
@@ -23995,8 +24147,18 @@ impl ApplicationHandler for App {
                         | "aurora-folder-colors"
                         | "aurora-folder-colors-behind"
                         | "aurora-folder-colors-follow"
+                        | "aurora-explorer"
+                        | "aurora-explorer-path"
+                        | "aurora-explorer-menu"
+                        | "aurora-explorer-medium"
+                        | "aurora-explorer-undo"
+                        | "aurora-explorer-tabs"
+                        | "aurora-explorer-split"
                 );
                 if configured_view {
+                    // the demo's settings outlive a run: each scenario
+                    // states the dual-panel layout (the split view's) itself
+                    self.panels.inventory_dual = view == "aurora-explorer-split";
                     crate::world::inventory::demo::seed_view(
                         &mut self.world.inventory,
                         self.world.agent_id,
@@ -24070,13 +24232,26 @@ impl ApplicationHandler for App {
                             self.settings.inventory.rights = ui::inventory::permissions::Rights::Both;
                         }
                         if view.starts_with("aurora-columns") {
-                            let columns = &mut self.settings.inventory.explorer;
-                            columns.sidebar_width = 280;
-                            columns.kind_width = 176;
-                            columns.rights_width = 80;
-                            columns.date_width = 110;
-                            columns.show_kind = view != "aurora-columns-hidden";
-                            columns.show_date = view != "aurora-columns-hidden";
+                            use ui::inventory::view::{ColumnId, SortColumn};
+                            let explorer = &mut self.settings.inventory.explorer;
+                            explorer.sidebar_width = 280;
+                            let columns = &mut explorer.columns;
+                            columns.slot_mut(ColumnId::Kind).width = 176;
+                            columns.slot_mut(ColumnId::Rights).width = 80;
+                            columns.slot_mut(ColumnId::Date).width = 110;
+                            columns.slot_mut(ColumnId::Kind).show = view != "aurora-columns-hidden";
+                            columns.slot_mut(ColumnId::Date).show = view != "aurora-columns-hidden";
+                            // every column, the creator first, sorted by type
+                            // in reverse: the details' columns and their order
+                            if view == "aurora-columns-all" {
+                                for id in ColumnId::ALL {
+                                    columns.slot_mut(id).show = true;
+                                }
+                                columns.move_to(ColumnId::Creator, 0);
+                                let sort = &mut self.settings.inventory.sort;
+                                sort.column = Some(SortColumn::Kind);
+                                sort.descending = true;
+                            }
                         }
                         if view.ends_with("-no-details") {
                             self.settings.inventory.show_details = false;
@@ -24091,9 +24266,78 @@ impl ApplicationHandler for App {
                                 ui::inventory::view::ExplorerView::Gallery
                             };
                         }
+                        // the Compact and Tiles views of the right-click
+                        // tests, with the gallery's pictures
+                        if view == "aurora-groups" {
+                            self.settings.inventory.explorer.group_by = ui::inventory::groups::GroupBy::Kind;
+                        }
+                        if view == "aurora-compact" || view == "aurora-tiles" {
+                            crate::world::inventory::demo::seed_gallery(&mut self.world.inventory);
+                            self.settings.inventory.explorer.view = if view == "aurora-tiles" {
+                                ui::inventory::view::ExplorerView::Tiles
+                            } else {
+                                ui::inventory::view::ExplorerView::Compact
+                            };
+                        }
+                        if view.ends_with("system-folders") {
+                            // every system folder's icon, at the root, and
+                            // the open icon of the sidebar's selected one
+                            crate::world::inventory::demo::seed_system_folders(&mut self.world.inventory);
+                            self.inventory_ui.demo_browse_root(&self.world.inventory);
+                            self.panels.camera_controls = false;
+                        }
+                        // the preview pane on the demo's notecard
+                        if view == "aurora-explorer-preview" {
+                            self.settings.inventory.preview_pane = true;
+                            self.settings.inventory.show_details = true;
+                        }
+                        // the folders' borrowed pictures: the top in the
+                        // large gallery
+                        if view == "aurora-folder-previews" {
+                            crate::world::inventory::demo::seed_gallery(&mut self.world.inventory);
+                            self.inventory_ui.demo_browse_root(&self.world.inventory);
+                            self.settings.inventory.explorer.view = ui::inventory::view::ExplorerView::Gallery;
+                            self.settings.inventory.explorer.tile_size = 192;
+                            // the right-click tests, which hold pictures
+                            self.inventory_ui.demo_reveal(uuid::Uuid::from_u128(8000));
+                            self.panels.camera_controls = false;
+                        }
+                        // the Ctrl+I bar open on the right-click tests' folder
+                        if view == "aurora-explorer-filter" {
+                            self.inventory_ui.demo_folder_filter("demo o");
+                        }
+                        if view == "aurora-filtered" {
+                            // the type filters' symbols in the list and on
+                            // the chip naming them
+                            self.inventory_ui.demo_type_filters((1 << 0) | (1 << 6) | (1 << 19));
+                            self.panels.camera_controls = false;
+                        }
+                        if view.starts_with("aurora-explorer") {
+                            // Back, Up, the breadcrumb's chevrons and two
+                            // folders pinned to Quick access
+                            self.inventory_ui.demo_explorer(&view);
+                            if view == "aurora-explorer-undo" {
+                                // a Delete to undo, a rename to redo
+                                self.world.inventory.demo_history(self.world.agent_id);
+                            }
+                            if view == "aurora-explorer-split" {
+                                // the split view: two explorers side by side
+                                self.dual_inventory_ui.demo_explorer("aurora-explorer-split-right");
+                            }
+                            // the column lists a pin once its folder is there
+                            self.settings.inventory.pinned = vec![uuid::Uuid::from_u128(8000), uuid::Uuid::from_u128(8001)];
+                            self.panels.camera_controls = false;
+                        }
                         if view.starts_with("aurora-folder-window") {
                             // the right-click tests in a window of their own
                             self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                            if let Some(window) = self.inventory_ui.windows.last_mut() {
+                                window.id = ui::inventory::AURORA_DEMO_FOLDER_WINDOW;
+                            }
+                        }
+                        if view == "aurora-single-folder-window" {
+                            // "Open in a new window" on the right-click tests
+                            self.inventory_ui.open_single_folder_window(uuid::Uuid::from_u128(8000));
                             if let Some(window) = self.inventory_ui.windows.last_mut() {
                                 window.id = ui::inventory::AURORA_DEMO_FOLDER_WINDOW;
                             }
@@ -24381,6 +24625,8 @@ impl ApplicationHandler for App {
                             }
                             .into(),
                         });
+                    } else if view == "single-folder-window" {
+                        self.inventory_ui.open_single_folder_window(id);
                     } else if matches!(view.as_str(), "folder-window" | "folder-window-search") {
                         self.inventory_ui.open_folder_window(id);
                         if view == "folder-window-search"
@@ -25688,12 +25934,17 @@ impl ApplicationHandler for App {
                         && !self.alt
                         && matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s"))
                         && ui::inventory::document_save_focused(&self.egui_ctx);
+                    // the focused inventory list's chord is the list's only
+                    // (shortcut_claims_focus gave it to egui)
+                    let inventory_chord =
+                        pressed && ui::inventory::list_keeps_chord(&self.egui_ctx, &Input::key(code), mods.ctrl, self.shift, self.alt);
                     if pressed
                         && ((!resp.consumed && !typing) || shortcut || chat_pass)
                         && !ke.repeat
                         && !find_taken
                         && !script_command
                         && !document_save
+                        && !inventory_chord
                         && !ui_shortcut
                     {
                         self.on_input(Input::key(code), pressed);

@@ -1755,7 +1755,21 @@ impl TextureStreamer {
     /// LLPanelFace::LLSelectedTE::getImageFormat reads the image format. A
     /// channel of flat alpha 250-254 or 255 is still classed opaque for the
     /// render passes, `has_alpha`.
+    ///
+    /// The built-in transparent textures are never downloaded, so they report
+    /// an alpha channel before any loaded check. The Legacy Viewer preloads
+    /// `transparent.j2c` as RGBA and the alpha ramp as `GL_ALPHA8`
+    /// (`LLViewerTextureList::doPreloadImages`, llviewertexturelist.cpp), so
+    /// getImageFormat (llpanelface.cpp) reports an alpha channel, the combo
+    /// is offered and a new material defaults to Alpha blending. The
+    /// invisible bake is not preloaded there (IMG_INVISIBLE is a dataserver
+    /// asset, whose alpha comes from the downloaded image); here it is
+    /// drawn with the transparent slot and never fetched, so it reports the
+    /// alpha of the texture it is drawn with.
     pub fn has_alpha_channel(&self, id: &Uuid) -> Option<bool> {
+        if is_builtin_transparent(id) {
+            return Some(true);
+        }
         // Local previews bypass downloaded entries. Their resident GPU slot
         // carries the same format information, including after a file reload.
         if let Some(slot) = self.local_slots.get(id) {
@@ -4803,6 +4817,23 @@ mod tests {
         assert_ne!(held, source(5_000, Some(3)).image_revision(), "a coarser level shows");
         assert_ne!(source(5_000, None).image_revision(), source(9_000, None).image_revision());
         assert_ne!(source(90_000, Some(0)).revision(), source(40_000, Some(1)).revision());
+    }
+
+    #[test]
+    fn builtin_transparent_texture_has_an_alpha_channel_before_it_is_loaded() {
+        let textures = TextureStreamer::new(PathBuf::new());
+        for id in [
+            aurora_prim::te::TRANSPARENT_TEXTURE,
+            super::super::avatar::IMG_INVISIBLE,
+            aurora_prim::te::WATER_EXCLUSION_TEXTURE,
+        ] {
+            assert_eq!(textures.has_alpha_channel(&id), Some(true), "{id}");
+            assert_eq!(textures.default_alpha_mode(&id), alpha_mode::BLEND, "{id}");
+        }
+        for id in [Uuid::nil(), aurora_prim::te::BLANK_TEXTURE] {
+            assert_eq!(textures.has_alpha_channel(&id), None, "{id}");
+            assert_eq!(textures.default_alpha_mode(&id), alpha_mode::NONE, "{id}");
+        }
     }
 
     #[test]

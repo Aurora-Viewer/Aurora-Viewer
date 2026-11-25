@@ -76,6 +76,14 @@ pub struct LoginForm {
     /// The other servers agreed to for this account and grid, named in
     /// every attempt (`LoginRequest::accepted_next_servers`).
     pub accepted_next_servers: Vec<String>,
+    /// The login server the login would reach over plain http
+    /// (`NetEvent::LoginFailed::unencrypted_server`), until the next
+    /// attempt; `accept_unencrypted` is its own checkbox.
+    pub unencrypted_server: Option<String>,
+    pub accept_unencrypted: bool,
+    /// The plain http servers agreed to since the viewer started; the app
+    /// keeps them in `Settings::unencrypted_logins` outside demo mode.
+    pub accepted_unencrypted: Vec<String>,
     pub error: Option<String>,
     /// The session ended with its region's restart: the login button reads
     /// "Reconnect" (region_restart.rs).
@@ -118,11 +126,15 @@ pub struct LoginForm {
 }
 
 impl LoginForm {
-    /// Another account or grid: no other login server is agreed to any more.
+    /// Another account or grid: no other login server is agreed to any more,
+    /// and the unencrypted login step of the previous one goes (the servers
+    /// agreed to over plain http stay agreed to).
     pub fn forget_next_server(&mut self) {
         self.next_server = None;
         self.accept_next_server = false;
         self.accepted_next_servers.clear();
+        self.unencrypted_server = None;
+        self.accept_unencrypted = false;
     }
 }
 
@@ -1068,6 +1080,28 @@ pub fn show(
                         action = LoginAction::Login;
                     }
                 }
+                // the login would travel unencrypted: the user decides
+                if let Some(server) = form.unencrypted_server.clone() {
+                    ui.add_space(8.0);
+                    widgets::divider(ui, p);
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-login-unencrypted")).strong().color(p.amber));
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-login-unencrypted-body", server = server.as_str()))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                    if ui
+                        .add_enabled(
+                            form.block_reason.is_none() && !form.busy,
+                            egui::Button::new(aurora_i18n::tr!("ui-login-unencrypted-accept")),
+                        )
+                        .clicked()
+                    {
+                        form.accepted_unencrypted.push(server);
+                        form.unencrypted_server = None;
+                        action = LoginAction::Login;
+                    }
+                }
                 if let Some((msg, frac)) = progress {
                     ui.add_space(10.0);
                     widgets::progress(ui, p, "login_progress", frac, ui.available_width(), "", None);
@@ -1420,6 +1454,85 @@ mod tests {
         assert!(!form.agree_tos && !form.read_critical);
         form.forget_next_server();
         assert!(form.accepted_next_servers.is_empty());
+    }
+
+    /// A plain http login address is a step of its own: agreeing names that
+    /// server in the next attempt, and nothing else; another account keeps
+    /// the agreement but not a pending step.
+    #[test]
+    fn an_unencrypted_login_is_agreed_to_in_its_own_step() {
+        fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, label)),
+                _ => None,
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut settings = Settings {
+            username: "Demo Resident".into(),
+            ..Default::default()
+        };
+        let mut form = LoginForm {
+            password: "synthetic".into(),
+            unencrypted_server: Some("grid.example:8002".into()),
+            ..Default::default()
+        };
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let mut draw = |events, form: &mut LoginForm| {
+            let mut action = LoginAction::None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    action = show(ui, &p, &icons, None, &mut settings, form, &info, None);
+                },
+            );
+            output.textures_delta.clear();
+            (action, output)
+        };
+        draw(vec![], &mut form);
+        let (_, output) = draw(vec![], &mut form);
+        let body = aurora_i18n::tr!("ui-login-unencrypted-body", server = "grid.example:8002");
+        assert!(
+            output.shapes.iter().any(|s| position(&s.shape, &body).is_some()),
+            "the server is named"
+        );
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-unencrypted-accept")))
+            .expect("the unencrypted login's button");
+        let mut last = LoginAction::None;
+        for pressed in [true, false] {
+            last = draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                &mut form,
+            )
+            .0;
+        }
+        assert!(matches!(last, LoginAction::Login));
+        assert_eq!(form.accepted_unencrypted, ["grid.example:8002"]);
+        assert!(form.unencrypted_server.is_none());
+        assert!(form.accepted_next_servers.is_empty() && !form.agree_tos && !form.read_critical);
+        form.unencrypted_server = Some("other.example".into());
+        form.accept_unencrypted = true;
+        form.forget_next_server();
+        assert!(form.unencrypted_server.is_none() && !form.accept_unencrypted);
+        assert_eq!(form.accepted_unencrypted, ["grid.example:8002"]);
     }
 
     /// At 1280 × 720 the news, as tall as the login card, stood over the
