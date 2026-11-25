@@ -201,6 +201,9 @@ pub mod land;
 /// (AURORA_DEMO_LEGACY_BUMP).
 #[path = "demo_legacy_bump.rs"]
 pub mod legacy_bump;
+/// A Legacy Viewer's lists to import (AURORA_DEMO_LEGACY_LISTS).
+#[path = "demo_legacy_lists.rs"]
+pub mod legacy_lists;
 #[path = "demo_link.rs"]
 pub mod link;
 /// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
