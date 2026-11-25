@@ -3509,6 +3509,7 @@ impl App {
         }
         // no file moves: a no-op once applied
         log.set_legacy_layout(s.log_legacy_layout);
+        self.world.sync_recent_logging();
     }
 
     // ------------------------------------------------------------------ login
@@ -7426,9 +7427,6 @@ impl App {
         }
         if action == ui::exit::Action::Quit {
             self.hide_windows_for_exit();
-        }
-        if self.in_world() {
-            self.world.save_social_history();
         }
         if self.in_world() && !self.demo {
             self.record_inventory_logout();

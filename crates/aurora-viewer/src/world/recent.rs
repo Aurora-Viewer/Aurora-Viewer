@@ -33,6 +33,7 @@ impl Met {
 pub struct RecentPeople {
     people: Vec<Met>,
     pub(super) revision: u64,
+    pub(super) membership_revision: u64,
     /// Names still being resolved for the accepted list, never serialized.
     pending: Vec<Met>,
     name_deadline: Option<Instant>,
@@ -52,6 +53,9 @@ impl RecentPeople {
         entry.bound_region();
         if self.people.first() == Some(&entry) {
             return;
+        }
+        if !self.people.iter().any(|m| m.id == id) {
+            self.membership_revision = self.membership_revision.wrapping_add(1);
         }
         self.people.retain(|m| m.id != id);
         self.people.insert(0, entry);
@@ -76,6 +80,10 @@ impl RecentPeople {
         people.sort_by(|a, b| b.when.cmp(&a.when).then_with(|| a.id.cmp(&b.id)));
         people.truncate(MAX_PEOPLE);
         if people != self.people {
+            let ids: std::collections::HashSet<_> = self.people.iter().map(|m| m.id).collect();
+            if people.len() != ids.len() || people.iter().any(|m| !ids.contains(&m.id)) {
+                self.membership_revision = self.membership_revision.wrapping_add(1);
+            }
             self.people = people;
             self.revision = self.revision.wrapping_add(1);
         }

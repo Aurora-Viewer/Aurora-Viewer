@@ -3356,7 +3356,12 @@ impl World {
                 if hidden > 0 {
                     log::info!("invisible: hidden again from {hidden} friend(s) the login still showed us to");
                 }
-                self.social_history = social_history::History::load(&crate::settings::accounts_dir(), l.agent_id, &self.social_grid);
+                self.social_history = social_history::History::load(
+                    &crate::settings::accounts_dir(),
+                    l.agent_id,
+                    &self.social_grid,
+                    self.chat_log.cfg.log_conversations,
+                );
                 self.experiences.log = experience_log::ExperienceLog::load(account.join(experience_log::FILE), &experience_log::now().0);
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));

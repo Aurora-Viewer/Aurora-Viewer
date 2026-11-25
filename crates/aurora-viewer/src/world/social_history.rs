@@ -17,9 +17,10 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const FILE: &str = "social_history.json";
+const TABS_FILE: &str = "open_tabs.json";
+const ACTIVITY_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
-/// Coalesce bursts before cloning/serializing. The first dirty frame fixes
-/// the deadline, so continuous chat still checkpoints every two seconds.
+/// New residents and tab changes have a short crash-recovery window.
 const SAVE_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -95,6 +96,10 @@ pub struct History {
     loading: bool,
     closed: HashSet<Uuid>,
     recent_revision: u64,
+    membership_revision: u64,
+    profile: Option<(PathBuf, Uuid, String)>,
+    log_recent: bool,
+    restore_tabs: bool,
     conversations: Vec<Conversation>,
     ready: bool,
     save_due: Option<Instant>,
@@ -122,7 +127,7 @@ fn path(accounts: &Path, agent: Uuid, grid: &str) -> PathBuf {
     accounts.join(agent.to_string()).join("social").join(grid).join(FILE)
 }
 
-fn read(path: &Path) -> io::Result<Option<Saved>> {
+fn read_fields(path: &Path, include_recent: bool) -> io::Result<Option<Saved>> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -134,7 +139,21 @@ fn read(path: &Path) -> io::Result<Option<Saved>> {
         return Err(io::Error::other("social history exceeds size limit"));
     }
     crate::disk_io::read(crate::disk_io::Origin::Other, bytes.len());
-    let mut saved: Saved = serde_json::from_slice(&bytes).map_err(|_| io::Error::other("invalid social history"))?;
+    #[derive(Deserialize)]
+    struct Tabs {
+        version: u32,
+        conversations: Vec<Conversation>,
+    }
+    let mut saved: Saved = if include_recent {
+        serde_json::from_slice(&bytes)
+    } else {
+        serde_json::from_slice::<Tabs>(&bytes).map(|tabs| Saved {
+            version: tabs.version,
+            conversations: tabs.conversations,
+            recent: Vec::new(),
+        })
+    }
+    .map_err(|_| io::Error::other("invalid social history"))?;
     if saved.version != 1 {
         return Err(io::Error::other("unsupported social history version"));
     }
@@ -162,15 +181,44 @@ fn write_if(path: &Path, saved: &Saved, still: impl FnOnce() -> bool) -> io::Res
     }
 }
 
-fn run(loaded: Sender<io::Result<Saved>>, writes: Receiver<Job>, path: PathBuf, legacy: Option<PathBuf>, cancelled: Arc<AtomicBool>) {
-    let saved = read(&path).map(|saved| {
-        saved.unwrap_or_else(|| Saved {
-            // Old files did not identify their grid. Import only into the main SL
-            // grid; never copy its residents to Aditi or a custom grid.
-            conversations: legacy.map(|p| super::open_ims::load(&p)).unwrap_or_default(),
-            ..Saved::default()
-        })
+/// The sidecar always owns tab recovery. Before the split, development builds
+/// kept tabs in the recent file. Read only its tab fields when logging is off.
+fn read_profile(path: &Path, log_recent: bool, legacy: Option<&Path>) -> io::Result<Saved> {
+    let tabs = read_fields(&path.with_file_name(TABS_FILE), false)?;
+    let mut saved = if log_recent || tabs.is_none() {
+        read_fields(path, log_recent)?
+    } else {
+        None
+    }
+    .unwrap_or_else(|| Saved {
+        conversations: legacy.map(super::open_ims::load).unwrap_or_default(),
+        ..Saved::default()
     });
+    if let Some(tabs) = tabs {
+        saved.conversations = tabs.conversations;
+    }
+    Ok(saved)
+}
+
+#[cfg(test)]
+fn read(path: &Path) -> io::Result<Option<Saved>> {
+    if !path.exists() && !path.with_file_name(TABS_FILE).exists() {
+        return Ok(None);
+    }
+    read_profile(path, true, None).map(Some)
+}
+
+fn run(
+    loaded: Sender<io::Result<Saved>>,
+    writes: Receiver<Job>,
+    path: PathBuf,
+    legacy: Option<PathBuf>,
+    cancelled: Arc<AtomicBool>,
+    log_recent: bool,
+) {
+    let saved = read_profile(&path, log_recent, legacy.as_deref());
+    let mut last_recent = saved.as_ref().ok().map(|s| s.recent.clone()).unwrap_or_default();
+    let mut last_tabs = None;
     let writable = saved.is_ok();
     let _ = loaded.send(saved);
     if !writable {
@@ -202,7 +250,33 @@ fn run(loaded: Sender<io::Result<Saved>>, writes: Receiver<Job>, path: PathBuf, 
                         }
                     }
                 }
-                match write_if(&path, &saved, || !cancelled.load(Ordering::Acquire)) {
+                let still = || !cancelled.load(Ordering::Acquire);
+                let mut publish = || -> io::Result<()> {
+                    if last_tabs.as_ref() != Some(&saved.conversations) {
+                        write_if(
+                            &path.with_file_name(TABS_FILE),
+                            &Saved {
+                                conversations: saved.conversations.clone(),
+                                ..Saved::default()
+                            },
+                            still,
+                        )?;
+                        last_tabs = Some(saved.conversations.clone());
+                    }
+                    if log_recent && last_recent != saved.recent {
+                        write_if(
+                            &path,
+                            &Saved {
+                                recent: saved.recent.clone(),
+                                ..Saved::default()
+                            },
+                            still,
+                        )?;
+                        last_recent.clone_from(&saved.recent);
+                    }
+                    Ok(())
+                };
+                match publish() {
                     Ok(()) => retry = None,
                     Err(_) => {
                         if retry.is_none() {
@@ -220,7 +294,7 @@ fn run(loaded: Sender<io::Result<Saved>>, writes: Receiver<Job>, path: PathBuf, 
 }
 
 impl History {
-    pub fn load(accounts: &Path, agent: Uuid, grid: &str) -> Self {
+    pub fn load(accounts: &Path, agent: Uuid, grid: &str, log_recent: bool) -> Self {
         if agent.is_nil() || grid.is_empty() {
             return Self::default();
         }
@@ -233,7 +307,7 @@ impl History {
         let worker_cancelled = Arc::clone(&cancelled);
         let legacy = (grid == "agni").then(|| accounts.join(agent.to_string()).join(super::open_ims::FILE));
         match std::thread::Builder::new().name("aurora-social-history".into()).spawn(move || {
-            run(loaded_tx, writes, file, legacy, worker_cancelled);
+            run(loaded_tx, writes, file, legacy, worker_cancelled, log_recent);
             let _ = finished.send(());
         }) {
             Ok(_) => Self {
@@ -245,6 +319,9 @@ impl History {
                     cancelled,
                 }),
                 loading: true,
+                log_recent,
+                restore_tabs: true,
+                profile: Some((accounts.to_owned(), agent, grid.to_owned())),
                 ..Self::default()
             },
             Err(_) => {
@@ -268,6 +345,7 @@ impl History {
         self.loading = false;
         match result {
             Ok(mut saved) => {
+                self.conversations.clone_from(&saved.conversations);
                 saved.conversations.retain(|c| !c.id().is_nil() && !self.closed.contains(&c.id()));
                 self.closed.clear();
                 self.ready = true;
@@ -286,10 +364,11 @@ impl History {
             return;
         }
         self.recent_revision = recent.revision;
+        self.membership_revision = recent.membership_revision;
         self.conversations = conversations.clone();
         if let Some(storage) = &self.storage {
             storage.save(Saved {
-                recent: recent.list().to_vec(),
+                recent: if self.log_recent { recent.list().to_vec() } else { Vec::new() },
                 conversations,
                 ..Saved::default()
             });
@@ -302,6 +381,26 @@ impl History {
 }
 
 impl World {
+    /// Switch per-profile storage before processing the next frame's interactions.
+    /// The last enabled snapshot survives an opt-out. A fresh enable starts
+    /// from that history, so encounters during the disabled period stay private.
+    pub fn sync_recent_logging(&mut self) {
+        let enabled = self.chat_log.cfg.log_conversations;
+        if self.social_history.log_recent == enabled {
+            return;
+        }
+        let Some((accounts, agent, grid)) = self.social_history.profile.clone() else {
+            return;
+        };
+        self.flush_social_history();
+        drop(std::mem::take(&mut self.social_history));
+        if enabled {
+            self.recent = Default::default();
+        }
+        self.social_history = History::load(&accounts, agent, &grid, enabled);
+        self.social_history.restore_tabs = false;
+    }
+
     pub fn poll_social_history(&mut self) {
         self.apply_social_history(Duration::ZERO);
     }
@@ -316,9 +415,11 @@ impl World {
 
     fn apply_social_history(&mut self, timeout: Duration) {
         if let Some(saved) = self.social_history.take_loaded(timeout) {
-            self.recent.merge(self.agent_id, saved.recent);
-            for person in self.recent.list() {
-                self.social.want_name(person.id);
+            if self.social_history.log_recent {
+                self.recent.merge(self.agent_id, saved.recent);
+            }
+            if !self.social_history.restore_tabs {
+                return;
             }
             for conversation in saved.conversations {
                 if conversation.id() != self.agent_id && !self.reopen_ims.iter().any(|c| c.id() == conversation.id()) {
@@ -338,13 +439,20 @@ impl World {
         if !self.social_history.ready {
             return;
         }
-        if self.social_history.recent_revision == self.recent.revision
-            && self.open_conversations().eq(self.social_history.conversations.iter().copied())
-        {
+        let tabs_changed = !self.open_conversations().eq(self.social_history.conversations.iter().copied());
+        let recent_changed = self.social_history.log_recent && self.social_history.recent_revision != self.recent.revision;
+        if !tabs_changed && !recent_changed {
             self.social_history.save_due = None;
             return;
         }
-        let due = *self.social_history.save_due.get_or_insert(now + SAVE_INTERVAL);
+        let interval = if tabs_changed || self.social_history.membership_revision != self.recent.membership_revision {
+            SAVE_INTERVAL
+        } else {
+            ACTIVITY_INTERVAL
+        };
+        let deadline = now + interval;
+        let due = self.social_history.save_due.map_or(deadline, |old| old.min(deadline));
+        self.social_history.save_due = Some(due);
         if !force && now < due {
             return;
         }
@@ -389,7 +497,7 @@ mod tests {
     fn start(root: &Path, agent: Uuid, grid: &str) -> World {
         let mut w = world();
         w.agent_id = agent;
-        w.social_history = History::load(root, agent, grid);
+        w.social_history = History::load(root, agent, grid, true);
         loaded(&mut w);
         w
     }
@@ -478,7 +586,7 @@ mod tests {
         .unwrap();
         let mut w = world();
         w.agent_id = me;
-        w.social_history = History::load(&root, me, "agni");
+        w.social_history = History::load(&root, me, "agni", true);
         w.recent.add(me, a, false, "", old + Duration::from_secs(10));
         w.recent.add(me, b, false, "", old + Duration::from_secs(20));
         w.cancel_saved_im(a);
@@ -526,7 +634,7 @@ mod tests {
         write(&file, &previous).unwrap();
         let mut w = world();
         w.agent_id = me;
-        w.social_history = History::load(&root, me, "agni");
+        w.social_history = History::load(&root, me, "agni", true);
         w.recent.add(me, b, false, "", SystemTime::UNIX_EPOCH + Duration::from_secs(10));
         w.social.session_mut(b);
         w.flush_social_history();
@@ -535,7 +643,7 @@ mod tests {
         assert_eq!(saved.conversations, [Conversation::Resident(b), Conversation::Resident(a)]);
         assert!(write_if(&file, &Saved::default(), || false).is_err());
         assert_eq!(read(&file).unwrap().unwrap().recent, saved.recent);
-        assert_eq!(std::fs::read_dir(file.parent().unwrap()).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(file.parent().unwrap()).unwrap().count(), 2);
         drop(w);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -558,7 +666,12 @@ mod tests {
                 assert!(!file.exists(), "no per-line snapshot before the coalescing deadline");
             }
         }
-        assert_eq!(publications, 4, "600 chat updates in 9.6 seconds need four checkpoints");
+        assert_eq!(publications, 1, "only the new resident needs a checkpoint in the first 9.6 seconds");
+        let before = w.social_history.recent_revision;
+        w.save_social_history_at(base + Duration::from_secs(29), false);
+        assert_eq!(w.social_history.recent_revision, before);
+        w.save_social_history_at(base + Duration::from_secs(33), false);
+        assert_eq!(w.social_history.recent_revision, w.recent.revision);
         w.social.session_mut(peer);
         w.flush_social_history();
         let saved = read(&file).unwrap().unwrap();
@@ -588,6 +701,76 @@ mod tests {
         assert_eq!(restored.recent.len(), super::super::recent::MAX_PEOPLE);
         assert_eq!(restored.recent[0].id, saved.recent.last().unwrap().id);
         assert_eq!(restored.recent.last().unwrap().id, saved.recent[100].id);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_changed_tab_shortens_an_existing_activity_deadline() {
+        let root = root();
+        let me = Uuid::from_u128(1);
+        let peer = Uuid::from_u128(2);
+        let mut w = start(&root, me, "agni");
+        let base = Instant::now();
+        w.recent.add(me, peer, false, "", SystemTime::UNIX_EPOCH);
+        w.flush_social_history();
+        w.recent.add(me, peer, false, "", SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        w.save_social_history_at(base, false);
+        w.social.session_mut(peer);
+        w.save_social_history_at(base + Duration::from_secs(5), false);
+        w.save_social_history_at(base + Duration::from_secs(7), false);
+        assert!(w.social_history.flush(Duration::from_secs(10)));
+        assert_eq!(
+            read(&path(&root, me, "agni")).unwrap().unwrap().conversations,
+            [Conversation::Resident(peer)]
+        );
+        drop(w);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn logging_off_preserves_old_history_and_only_recovers_tabs() {
+        let root = root();
+        let me = Uuid::from_u128(1);
+        let old = Uuid::from_u128(2);
+        let private = Uuid::from_u128(3);
+        let tab = Uuid::from_u128(4);
+        let file = path(&root, me, "agni");
+        let mut w = start(&root, me, "agni");
+        w.recent.add(me, old, false, "saved", SystemTime::UNIX_EPOCH);
+        w.flush_social_history();
+        let original = std::fs::read(&file).unwrap();
+        w.chat_log.cfg.log_conversations = false;
+        w.sync_recent_logging();
+        loaded(&mut w);
+        w.recent.add(me, private, false, "private", SystemTime::now());
+        w.social.session_mut(tab);
+        w.flush_social_history();
+        drop(w);
+        assert_eq!(std::fs::read(&file).unwrap(), original);
+        let mut w = world();
+        w.agent_id = me;
+        w.chat_log.cfg.log_conversations = false;
+        w.social_history = History::load(&root, me, "agni", false);
+        loaded(&mut w);
+        assert!(w.recent.is_empty());
+        w.restore_open_ims(true);
+        assert_eq!(w.social.ims[0].other, tab);
+        w.recent.add(me, private, false, "private", SystemTime::now());
+        // Reopening the private tab legitimately wants its display name.
+        // Start measuring after that independent operation.
+        let asks = w.social.avatar_names.take_asks();
+        assert!(!asks.contains(&old), "opted-out login must not look up a saved contact");
+        w.chat_log.cfg.log_conversations = true;
+        w.sync_recent_logging();
+        loaded(&mut w);
+        assert_eq!(w.recent.list().iter().map(|m| m.id).collect::<Vec<_>>(), [old]);
+        assert!(
+            w.social.avatar_names.take_asks().is_empty(),
+            "restoring Recent cannot queue name lookups"
+        );
+        w.flush_social_history();
+        assert_eq!(std::fs::read(&file).unwrap(), original);
+        drop(w);
         std::fs::remove_dir_all(root).unwrap();
     }
 
