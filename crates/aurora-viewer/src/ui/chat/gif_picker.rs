@@ -909,7 +909,9 @@ pub(super) fn button(resp: &egui::Response, p: &Palette, st: &mut super::ChatUi)
 /// bottom corner `gap` points over it), when it is open. A GIF clicked is
 /// sent at once as the conversation's message (`chat_type` in the nearby
 /// chat); then, or on Escape, the picker closes and `field` gets the
-/// keyboard back.
+/// keyboard back. A press away from it closes it too, leaving the keyboard
+/// where the press went (`popout::pressed_away`; not on `buttons`, the
+/// field's emoji and GIF buttons).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn popup(
     ctx: &egui::Context,
@@ -918,6 +920,7 @@ pub(super) fn popup(
     st: &mut super::ChatUi,
     anchor: egui::Pos2,
     gap: f32,
+    buttons: &[egui::Rect],
     field: egui::Id,
     chat_type: aurora_net::ChatType,
     actions: &mut Vec<super::ConvAction>,
@@ -927,7 +930,7 @@ pub(super) fn popup(
     }
     let mut out = Out::default();
     // one per conversation: one in each window (`popout.rs`)
-    egui::Area::new(egui::Id::unique(("gif_picker", st.selected)))
+    let shown = egui::Area::new(egui::Id::unique(("gif_picker", st.selected)))
         .fade_in(false)
         .order(egui::Order::Foreground)
         .pivot(egui::Align2::LEFT_BOTTOM)
@@ -955,6 +958,8 @@ pub(super) fn popup(
     if out.escape {
         st.gif_open = false;
         ctx.memory_mut(|m| m.request_focus(field));
+    } else if super::popout::pressed_away(ctx, &shown.response, buttons) {
+        st.gif_open = false;
     }
 }
 
