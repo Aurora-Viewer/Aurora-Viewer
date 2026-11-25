@@ -608,6 +608,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "animation-open"
         | "animation-play-local"
         | "animation-play-world"
+        | "animation-play-two"
         | "animation-properties"
         | "image"
         | "image-photo"

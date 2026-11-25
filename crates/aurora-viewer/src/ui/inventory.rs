@@ -55,6 +55,7 @@ pub use markdown::View as NotecardView;
 mod move_to;
 pub use document::document_demo_events;
 pub(crate) mod permissions;
+pub mod plays;
 mod progress;
 pub(crate) mod properties;
 mod received;
@@ -904,7 +905,11 @@ pub struct InventoryUi {
     pub wanted_hover_images: HashSet<Uuid>,
     /// Residents whose profile picture the give confirmation wants.
     pub wanted_pics: HashSet<Uuid>,
-    pub playing: Option<(Uuid, bool)>,
+    /// The animations the previews' Play buttons started (the main state's
+    /// list, mirrored to every pane and window).
+    pub plays: Vec<plays::PreviewPlay>,
+    /// The animation the open preview shows, to stop if its item goes.
+    animation_asset: Option<Uuid>,
     pub animation_stats: Option<(Uuid, AnimationStats)>,
     pub animation_description: Option<(Uuid, String)>,
     pub animation_details: bool,
@@ -3311,7 +3316,7 @@ pub fn show(
         dual.thumbnail_notice.clone_from(&st.thumbnail_notice);
         dual.merchant = st.merchant;
         dual.marketplace_commands.clone_from(&st.marketplace_commands);
-        dual.playing = st.playing;
+        dual.plays.clone_from(&st.plays);
         clipboard::prepare(dual);
         context_catalog::process_deferred(inv, dual, prefs, &facts, &mut dual_actions);
         bulk_permissions::show(ctx, p, inv, dual, world.agent_id, &mut dual_actions);
@@ -3587,7 +3592,7 @@ pub fn show(
         w.state.thumbnail_notice.clone_from(&st.thumbnail_notice);
         w.state.merchant = st.merchant;
         w.state.marketplace_commands.clone_from(&st.marketplace_commands);
-        w.state.playing = st.playing;
+        w.state.plays.clone_from(&st.plays);
         let before = (w.state.clipboard.clone(), w.state.cut);
         let window_id = floater_id(w.id);
         let floater = if w.additional {
