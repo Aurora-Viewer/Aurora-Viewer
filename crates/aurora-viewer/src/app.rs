@@ -11010,6 +11010,21 @@ impl App {
         {
             self.chat_ui.conv_focus_request = true;
         }
+        // AURORA_DEMO_CHAT_INPUT=os-ime (scripts/test-ime-linux.py): what the
+        // system's input method put in the empty field, once a second
+        if self.demo
+            && self.frame_count >= 700
+            && self.frame_count.is_multiple_of(60)
+            && std::env::var("AURORA_DEMO_CHAT_INPUT").is_ok_and(|mode| mode == "os-ime")
+        {
+            let field = egui::Id::unique(("conv_input", self.chat_ui.selected));
+            let focused = self.egui_ctx.memory(|m| m.has_focus(field));
+            log::info!(
+                "demo chat os-ime: frame={}, text={:?}, field_focus={focused}",
+                self.frame_count,
+                self.chat_ui.draft_mut(self.chat_ui.selected)
+            );
+        }
         // AURORA_DEMO_SPELLING=menu|replace: the chat bar takes the keyboard,
         // its caret at the end
         if self.demo
@@ -13730,6 +13745,22 @@ impl App {
         full.platform_output.commands.splice(0..0, self.outside.take_commands());
         ui::chat::previews::clipboard_update(&ctx, &mut full.platform_output);
         self.inventory_ui.clipboard_output(&full.platform_output.commands);
+        // AURORA_DEMO_INVENTORY=ime, AURORA_DEMO_CHAT_INPUT=os-ime: what the
+        // viewer asks of the system's input method, once a second
+        // (scripts/test-ime-linux.py)
+        if self.demo
+            && self.frame_count >= 700
+            && self.frame_count.is_multiple_of(60)
+            && (std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "ime" | "aurora-ime"))
+                || std::env::var("AURORA_DEMO_CHAT_INPUT").is_ok_and(|mode| mode == "os-ime"))
+        {
+            let ime = match &full.platform_output.ime {
+                None => "off",
+                Some(ime) if ime.should_interrupt_composition => "interrupt",
+                Some(_) => "on",
+            };
+            log::info!("demo ime output: frame={}, ime={ime}", self.frame_count);
+        }
         // interface sounds of the widgets; the sounds are SL assets, loaded
         // once logged in
         let in_world_view = matches!(self.screen, Screen::World);
@@ -25106,7 +25137,7 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 let text = if mode == "long" {
                     "A long paragraph with café and emoji 🙂 that wraps within the chat field.\n".repeat(12)
-                } else if mode == "ime" {
+                } else if matches!(mode.as_str(), "ime" | "os-ime") {
                     String::new()
                 } else {
                     "First paragraph with café 🙂\n\nSecond paragraph\nCtrl+Shift+Enter adds a new line".into()
