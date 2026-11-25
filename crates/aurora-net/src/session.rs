@@ -2028,8 +2028,8 @@ impl Session<'_> {
                 // a click is a grab immediately followed by a release
                 // (LLToolGrab), each sent once, unreliable, as the Legacy
                 // Viewer's send_ObjectGrab_message / send_ObjectDeGrab_message
-                // (lltoolgrab.cpp): a resend reaching the simulator after it
-                // forgot the original is taken for a second click (#4948)
+                // (lltoolgrab.cpp): the simulator gets the click exactly as
+                // it expects it, never a resend of it
                 let mut g = ObjectGrab::default();
                 g.agent_data.agent_id = self.agent_id();
                 g.agent_data.session_id = self.session_id();
@@ -8051,10 +8051,9 @@ mod script_dialog_tests {
         }
         out
     }
-    /// #4948: a click (grab, release) and a spin go out once and
-    /// unreliable, as the Legacy Viewer's lltoolgrab.cpp sends them
-    /// (`sendMessage`): never kept for a resend, which a simulator that
-    /// forgot the original takes for a second touch.
+    /// A click (grab, release) and a spin go out once and unreliable, as the
+    /// Legacy Viewer's lltoolgrab.cpp sends them (`sendMessage`): never kept
+    /// for a resend (#4948).
     #[tokio::test]
     async fn clicks_and_spins_go_out_once_unreliable_like_the_legacy_viewer() {
         let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
@@ -8120,7 +8119,7 @@ mod script_dialog_tests {
                 "{name} is not kept for a resend"
             );
         }
-        assert!(sim.try_recv_from(&mut [0; 1200]).is_err(), "nothing else, no resend");
+        assert!(sim.try_recv_from(&mut [0; 1200]).is_err(), "nothing else");
     }
 }
 

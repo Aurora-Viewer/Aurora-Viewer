@@ -106,8 +106,7 @@ impl Session<'_> {
                         binormal: surface.binormal,
                     });
                     // sent once, unreliable, as send_ObjectGrab_message
-                    // (indra/newview/lltoolgrab.cpp, sendMessage): a resend
-                    // the simulator no longer recognises is a second touch
+                    // (indra/newview/lltoolgrab.cpp, sendMessage)
                     self.send(addr, &m, false);
                 }
             }
