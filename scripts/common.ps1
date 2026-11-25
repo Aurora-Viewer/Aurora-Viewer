@@ -418,8 +418,19 @@ function Select-BranchPr($Prs, [string[]]$Owners, [scriptblock]$HasHead) {
 
 # $Commit is $Head or one of its ancestors. False for a commit missing
 # here (a head pushed from elsewhere, not fetched): nothing is assumed.
+# A missing object is caught by `cat-file -e` first, which writes nothing:
+# merge-base would print "fatal: Not a valid commit name" on stderr, and a
+# caller under $ErrorActionPreference = 'Stop' (check.ps1's steps) turns that
+# into a terminating error in Windows PowerShell 5.1, `2>$null` or not. The
+# local 'Continue' covers whatever else git may print. No `<oid>^{commit}`:
+# when git is a .bat (depot_tools), cmd eats the `^`.
 function Test-CommitIn([string]$Dir, [string]$Commit, [string]$Head) {
     if (-not $Commit -or -not $Head) { return $false }
+    $ErrorActionPreference = 'Continue'
+    foreach ($oid in $Commit, $Head) {
+        git -C $Dir cat-file -e $oid 2>$null
+        if ($LASTEXITCODE -ne 0) { return $false }
+    }
     git -C $Dir merge-base --is-ancestor $Commit $Head 2>$null
     $LASTEXITCODE -eq 0
 }

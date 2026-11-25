@@ -2694,7 +2694,6 @@ app-gpu-lost =
     • закройте другие программы, которые сильно нагружают видеокарту;
     • при следующем запуске выберите безопасную графику, которую предложит Aurora.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = В Aurora пока нет набора замены анимаций (AO).
-cmdline-mod-use-hover-height-in-appearance = Настройте высоту аватара в меню «Внешность → Высота над землёй».
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora рекомендует не открывать эту ссылку. Если сайт просит войти в аккаунт или заплатить, скорее всего, это мошенничество. Никогда не передавайте ему пароль или платёжные данные.
 demo-auto-blend = Авто: смешивание
 demo-auto-mask = Авто: маска

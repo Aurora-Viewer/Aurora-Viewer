@@ -124,7 +124,12 @@ pub fn show(
         }
         return LoginAction::None;
     }
-    if form.error.is_some() || form.show_mfa || form.tos_message.is_some() || form.critical_message.is_some() || form.next_server.is_some()
+    if form.error.is_some()
+        || form.show_mfa
+        || form.tos_message.is_some()
+        || form.critical_message.is_some()
+        || form.next_server.is_some()
+        || form.unencrypted_server.is_some()
     {
         form.editing = true;
     }
