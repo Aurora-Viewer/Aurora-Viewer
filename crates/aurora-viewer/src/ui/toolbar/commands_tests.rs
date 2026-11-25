@@ -1083,7 +1083,7 @@ fn drawer_context_unfolds_a_separate_block_without_entering_edit_mode() {
             for _ in 0..3 {
                 bench.frame(Vec::new());
             }
-            let unfold = menu_point(&bench, aurora_i18n::tr!("toolbar-drawer-unfold"));
+            let unfold = menu_point(&bench, aurora_i18n::tr!("toolbar-block-kind-fixed"));
             bench.pointer(unfold, Some(true));
             bench.pointer(unfold, Some(false));
             assert!(!bench.state.open);

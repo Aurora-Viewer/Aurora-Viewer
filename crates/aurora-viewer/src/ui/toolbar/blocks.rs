@@ -269,6 +269,78 @@ fn control_bounds(bar: Bar, block: Rect, screen: Rect) -> Rect {
     )
 }
 
+/// What a block is (human request, 2026-11-25: three modes to choose from,
+/// told apart at a glance): a fixed block of its bar, a drawer, or a
+/// floating block.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Kind {
+    Fixed,
+    Drawer,
+    Floating,
+}
+
+pub(super) fn kind(settings: &ToolbarSettings, command: &str) -> Kind {
+    if drawers::is_floating(settings, command) {
+        Kind::Floating
+    } else if drawers::is_drawer(command) {
+        Kind::Drawer
+    } else {
+        Kind::Fixed
+    }
+}
+
+/// The block's type, one of three rows under a heading. `command` is a
+/// fixed block's button, a drawer's or a floating block's id; `from` is the
+/// bar and the button it stands at, where a new floating block appears
+/// (none for a floating block). The quick import bar stays floating.
+pub(super) fn kind_menu(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    toolbar: &mut ToolbarUi,
+    settings: &ToolbarSettings,
+    command: &str,
+    from: Option<(Bar, Rect)>,
+) {
+    let layout = Layout::default();
+    let current = kind(settings, command);
+    let unlocked = !settings.locked && command != drawers::IMPORT_BAR;
+    menu::heading(ui, p, aurora_i18n::tr!("toolbar-block-kind"));
+    for (choice, icon, key) in [
+        (Kind::Fixed, "layout-navbar-filled", "toolbar-block-kind-fixed"),
+        (Kind::Drawer, "folder-filled", "toolbar-block-kind-drawer"),
+        (Kind::Floating, drawers::FLOATING_ICON, "toolbar-block-kind-floating"),
+    ] {
+        let allowed = choice == current
+            || unlocked
+                && match (current, choice, from) {
+                    (Kind::Fixed, Kind::Drawer, Some((bar, _))) => edit_mode::fold_allowed(settings.bar(bar, &layout), command),
+                    (Kind::Fixed | Kind::Drawer, Kind::Floating, Some((bar, _))) => drawers::floatable(settings, &layout, bar, command),
+                    (Kind::Drawer, Kind::Fixed, Some(_)) | (Kind::Floating, _, _) => true,
+                    _ => false,
+                };
+        if !menu::check(ui, p, icon, aurora_i18n::text(key), choice == current, allowed) || choice == current {
+            continue;
+        }
+        toolbar.pending = match (current, from) {
+            (Kind::Floating, _) => Some(Edit::Dock(command.into(), choice == Kind::Drawer)),
+            (Kind::Drawer, Some((bar, _))) if choice == Kind::Fixed => Some(Edit::Unfold(bar, command.into())),
+            (Kind::Fixed, Some((bar, _))) if choice == Kind::Drawer => Some(Edit::Fold(bar, command.into())),
+            (_, Some((bar, rect))) => Some(Edit::Float(bar, command.into(), float_position(bar, rect))),
+            (_, None) => None,
+        };
+    }
+}
+
+/// Where a block made floating appears: beside the bar it leaves.
+fn float_position(bar: Bar, rect: Rect) -> egui::Pos2 {
+    match bar {
+        Bar::Top => rect.left_bottom() + Vec2::new(0.0, 12.0),
+        Bar::Bottom => rect.left_top() - Vec2::new(0.0, 60.0),
+        Bar::Left => rect.right_top() + Vec2::new(12.0, 0.0),
+        Bar::Right => rect.left_top() - Vec2::new(240.0, 0.0),
+    }
+}
+
 /// The settings gear acts on the complete canonical block, including temporarily
 /// hidden native controls. Every mutation uses the same guarded commit path.
 #[allow(clippy::too_many_arguments)]
@@ -281,6 +353,7 @@ fn settings_menu(
     bar: Bar,
     command: &str,
     base: Style,
+    rect: Rect,
 ) {
     let buttons = settings.bar(bar, layout);
     let Some(range) = edit_mode::group(buttons, command) else { return };
@@ -289,6 +362,11 @@ fn settings_menu(
     let unlocked = !settings.locked;
     menu::info(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-block-settings"));
     style_menu(ui, p, toolbar, settings, bar, command, base);
+    menu::separator(ui, p);
+    // a drawer's or a floating block's button stands for it in its bar
+    let single = (members.len() == 1 && drawers::is_drawer(&first.command)).then_some(first.command.as_str());
+    let own = single.unwrap_or(command);
+    kind_menu(ui, p, toolbar, settings, own, Some((bar, rect)));
     menu::separator(ui, p);
     let splits: Vec<_> = members
         .iter()
@@ -332,24 +410,23 @@ fn settings_menu(
             toolbar.pending = Some(Edit::Merge(bar, command.into(), before));
         }
     }
-    if members.len() == 1 && drawers::is_drawer(&first.command) {
-        if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-drawer-settings"), unlocked) {
-            toolbar.drawer_editor = Some(first.command.clone());
+    if let Some(id) = single {
+        let key = if drawers::is_floating(settings, id) {
+            "toolbar-floating-settings"
+        } else {
+            "toolbar-drawer-settings"
+        };
+        if menu::item_if(ui, p, "pencil-filled", aurora_i18n::text(key), unlocked) {
+            toolbar.drawer_editor = Some(id.to_owned());
         }
-        if menu::item_if(ui, p, "folder-open-filled", aurora_i18n::tr!("toolbar-drawer-unfold"), unlocked) {
-            toolbar.pending = Some(Edit::Unfold(bar, first.command.clone()));
-        }
-    } else if menu::item_if(
-        ui,
-        p,
-        "folder-filled",
-        aurora_i18n::tr!("toolbar-drawer-fold"),
-        unlocked && edit_mode::fold_allowed(buttons, command),
-    ) {
-        toolbar.pending = Some(Edit::Fold(bar, command.into()));
     }
-    if menu::item_if(ui, p, "separator-vertical", aurora_i18n::tr!("toolbar-add-separator"), unlocked) {
-        toolbar.pending = Some(Edit::DividerAfter(bar, members.last().map(|button| button.command.clone())));
+    // the block's shortcut: a drawer's or a floating block's is its own; a
+    // fixed block's works once it is one of them
+    if let Some(key) = single
+        .map(str::to_owned)
+        .or_else(|| super::shortcuts::block_of(settings, buttons, command))
+    {
+        toolbar.block_shortcut_item(ui, p, settings, &key);
     }
     menu::separator(ui, p);
     if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-block-remove"), unlocked) {
@@ -432,7 +509,17 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, toolbar: &mut ToolbarUi, se
                     egui::PopupCloseBehavior::CloseOnClickOutside,
                     Some((place, 6.0)),
                     |ui| {
-                        settings_menu(ui, p, toolbar, settings, layout, target.bar, &first.command, target.style);
+                        settings_menu(
+                            ui,
+                            p,
+                            toolbar,
+                            settings,
+                            layout,
+                            target.bar,
+                            &first.command,
+                            target.style,
+                            target.rect,
+                        );
                     },
                 );
                 if response.hovered() || settings_button.hovered() || opened {

@@ -446,6 +446,16 @@ impl ToolbarUi {
         } else {
             aurora_i18n::tr!("toolbar-shortcut")
         };
+        self.shortcut_row(ui, p, settings, key, label);
+    }
+
+    /// "Block shortcut…", in a block's menu: a drawer's and a floating
+    /// block's own shortcut included.
+    pub(super) fn block_shortcut_item(&mut self, ui: &mut egui::Ui, p: &Palette, settings: &ToolbarSettings, key: &str) {
+        self.shortcut_row(ui, p, settings, key, aurora_i18n::tr!("toolbar-shortcut-block"));
+    }
+
+    fn shortcut_row(&mut self, ui: &mut egui::Ui, p: &Palette, settings: &ToolbarSettings, key: &str, label: &str) {
         let current = settings.shortcuts.get(key);
         let keys = current.map(Binding::label).unwrap_or_default();
         if menu::item_keys(ui, p, "keyboard", label, &keys) {

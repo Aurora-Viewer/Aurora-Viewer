@@ -5778,7 +5778,7 @@ impl App {
             Action::ToggleUiFeature => self.toggle_ui_feature(),
             Action::HoverTips => self.toggle_hover_tips(),
             Action::ShowHuds => self.set_show_huds(!self.settings.show_huds),
-            Action::Import => self.imports.toggle_import(&self.egui_ctx, &self.settings.imports),
+            Action::Import => self.imports.toggle_import(&self.egui_ctx),
             Action::Beacons => ui::widgets::toggle_floater(&self.egui_ctx, ui::beacons::WINDOW, &mut self.panels.beacons),
             Action::ContactMarkers => {
                 self.settings.contact_markers = !self.settings.contact_markers;
@@ -16766,7 +16766,7 @@ impl App {
             // FSCommon::report_to_nearby_chat(gAgent.mMOTD)
             BarAction::MessageOfTheDay => self.world.system_message(self.world.motd.clone()),
             BarAction::Import => {
-                self.imports.toggle_import(&self.egui_ctx, &self.settings.imports);
+                self.imports.toggle_import(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
             }
             BarAction::ImportType(choice) => {

@@ -128,7 +128,7 @@ pub const COMMANDS: &[Command] = commands![
     "build_land", "mountain-filled", "toolbar-command-build-tool-land", true;
     "edit_particles", "sparkles-filled", "ui-bars-edit-particles", true;
     // the quick import bar (human request, 2026-11-25: "Import bar")
-    "import", "file-upload-filled", "toolbar-import-bar", true;
+    "import", "file-upload-filled", "import-menu", true;
     "blender_live", "cube-3d-sphere", "blender-live-title", true;
     "buy_currency", "coin-filled", "currency-menu", true;
     "money_tracker", "receipt-filled", "money-tracker-title", true;

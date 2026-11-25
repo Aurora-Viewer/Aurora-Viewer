@@ -253,7 +253,17 @@ mod tests {
                     .split(|button| structure::is_separator(&button.command))
                     .find(|group| group.iter().any(|button| button.command == "edit_interface"))
                     .expect("Aurora presets expose interface customization");
-                assert_eq!(editor.len(), 1, "the editor has its own block");
+                // the Aurora layout's block also shows and hides the quick
+                // import bar (human request, 2026-11-25)
+                let commands: Vec<_> = editor.iter().map(|button| button.command.as_str()).collect();
+                if matches!(preset, Preset::Light | Preset::Photographer) {
+                    let import = crate::ui::toolbar::drawers::IMPORT_BAR;
+                    assert_eq!(commands, ["edit_interface", import]);
+                    assert_eq!(toolbar.drawers[import].buttons.len(), 9, "its buttons");
+                    assert!(toolbar.shortcuts.contains_key(import), "its Ctrl+U");
+                } else {
+                    assert_eq!(commands, ["edit_interface"], "the editor has its own block");
+                }
             }
             let all = Bar::ALL
                 .into_iter()

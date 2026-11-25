@@ -176,8 +176,11 @@ fn contents_menu_opens_the_legacy_content_pages_and_the_message_of_the_day() {
     }
 }
 
+/// The toolbar's Import is Build › Import: the import window (the quick
+/// import bar it opened is the import floating block now, human request,
+/// 2026-11-25).
 #[test]
-fn menu_toolbar_import_is_a_ready_command_that_opens_the_import_bar() {
+fn menu_toolbar_import_is_a_ready_command_that_opens_the_import_window() {
     let ctx = egui::Context::default();
     let mut panels = Panels::from_settings(&crate::settings::Settings::default());
     assert!(
@@ -185,7 +188,7 @@ fn menu_toolbar_import_is_a_ready_command_that_opens_the_import_bar() {
             .iter()
             .any(|command| command.id == "import" && command.ready)
     );
-    assert!(matches!(run_command(&ctx, "import", &mut panels), BarAction::ImportBar));
+    assert!(matches!(run_command(&ctx, "import", &mut panels), BarAction::Import));
 }
 
 /// The quick import bar's Settings is a toolbar button too, "Advanced import"
@@ -196,7 +199,7 @@ fn the_import_bar_advanced_import_and_settings_are_toolbar_buttons() {
     let ctx = egui::Context::default();
     let mut panels = Panels::from_settings(&crate::settings::Settings::default());
     for (id, label, expected) in [
-        ("import", "toolbar-import-bar", BarAction::ImportBar),
+        ("import", "import-menu", BarAction::Import),
         ("import_advanced", "toolbar-import-advanced", BarAction::ImportAdvanced),
         ("import_settings", "toolbar-import-settings", BarAction::ImportSettings),
     ] {
@@ -220,7 +223,7 @@ fn menu_toolbar_first_batch_dispatches_the_existing_actions_and_windows() {
         ("build_focus", BarAction::BuildButton(4)),
         ("build_grab", BarAction::BuildButton(5)),
         ("edit_particles", BarAction::EditParticles),
-        ("import", BarAction::ImportBar),
+        ("import", BarAction::Import),
         ("blender_live", BarAction::BlenderLive),
         ("buy_currency", BarAction::BuyCurrency),
         ("stand_up", BarAction::StandUp),

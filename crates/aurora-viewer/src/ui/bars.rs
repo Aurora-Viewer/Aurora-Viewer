@@ -2048,9 +2048,7 @@ fn build_menu(
         build_options_menu(ui, p, action, options);
     });
     menu::separator(ui, p);
-    // the menu's own label: its command is the toolbar's "Import bar",
-    // where this entry opens the bar or the window as the Quick import bar
-    // preference says
+    // the toolbar's "Import" is this entry: the import window
     if menu::command(ui, p, "import-menu").toolbar_command_keys_if("import", aurora_i18n::tr!("import-menu"), true, "") {
         *action = BarAction::Import;
     }
@@ -3078,7 +3076,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "build_focus" => return BarAction::BuildButton(4),
         "build_grab" => return BarAction::BuildButton(5),
         "edit_particles" => return BarAction::EditParticles,
-        "import" => return BarAction::ImportBar,
+        "import" => return BarAction::Import,
         "import_advanced" => return BarAction::ImportAdvanced,
         "import_settings" => return BarAction::ImportSettings,
         "blender_live" => return BarAction::BlenderLive,
@@ -4195,6 +4193,10 @@ pub(crate) fn toolbar_row(
         }
         if super::toolbar::drawers::is_drawer(&b.command) {
             super::toolbar::drawers::show(&response, p, icons, toolbar, panels, mic, row, b);
+            // the import block's button shows and hides it like Ctrl+U
+            if b.command == super::toolbar::drawers::IMPORT_BAR && response.clicked() && !super::toolbar::ToolbarUi::editing(ui.ctx()) {
+                *action = BarAction::ImportBar;
+            }
             continue;
         }
         if !super::toolbar::ready(&b.command) || !usable {

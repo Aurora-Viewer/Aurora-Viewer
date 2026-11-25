@@ -365,7 +365,9 @@ mod tests {
             let drawer = super::super::drawers::create(&mut toolbar, Bar::Right, &layout);
             // the import bar and a floating block of the user's, its button
             // placed nowhere, keep their buttons and their options
-            assert!(toolbar.ensure_import_bar(&layout));
+            // the Aurora layouts bring it (`assets/toolbar/aurora.json`)
+            toolbar.ensure_import_bar(&layout);
+            assert!(!toolbar.drawers[super::super::drawers::IMPORT_BAR].buttons.is_empty());
             let floating = super::super::drawers::create_floating(&mut toolbar, "Tools");
             toolbar
                 .buttons

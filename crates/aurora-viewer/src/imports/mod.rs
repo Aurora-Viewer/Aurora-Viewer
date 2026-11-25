@@ -117,7 +117,6 @@ impl ImageSizeLimit {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
-    pub icon_bar: bool,
     /// Shared by texture uploads, material maps and mesh images. Keep the
     /// serialized name so an existing explicit 1K choice survives the change.
     pub limit_texture_size: bool,
@@ -160,7 +159,6 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            icon_bar: false,
             limit_texture_size: false,
             lossless_small: true,
             next_modify: false,
@@ -719,16 +717,14 @@ impl Imports {
         self.entries.push(entry);
         self.open(Choice::Animation);
     }
-    /// The shortcut and menu use the same saved entry point.
-    pub fn toggle_import(&mut self, ctx: &egui::Context, prefs: &Preferences) {
-        if prefs.icon_bar {
-            crate::ui::widgets::toggle_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
-        } else {
-            self.toggle_window(ctx);
-        }
+    /// Import (Build › Import, its shortcut, the toolbar's "Import"): the
+    /// import window. The quick import bar it could open is the import
+    /// floating block now, with its own Ctrl+U (human request, 2026-11-25).
+    pub fn toggle_import(&mut self, ctx: &egui::Context) {
+        self.toggle_window(ctx);
     }
 
-    /// The quick import bar, shown or hidden (the toolbar's "Import bar").
+    /// The import floating block, shown or hidden (its button, its Ctrl+U).
     pub fn toggle_bar(&mut self, ctx: &egui::Context) {
         crate::ui::widgets::toggle_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
     }

@@ -7069,7 +7069,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, system folder icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open\|delete` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
-| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
+| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the import floating block; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel\|deleted` | Applied-local-appearance warning, highlight toggle, confirmed removal and object deletion |
@@ -7481,19 +7481,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   of the question. Capture at frame 620. `AURORA_DEMO_RCLICK="x,y"` on the
   ground shows the entry in the menu.
 - **`AURORA_DEMO_IMPORTS=launcher|settings`** opens the empty unified import
-  window or its Permissions tab. Ctrl+U and Build > Import follow the saved
-  Preferences > Inventory > Open imports with choice (Upload window by default).
-- **`AURORA_DEMO_IMPORTS=icon-bar`** opens the movable quick import bar without
-  a disk dialog. The Aurora glass surface groups flat action buttons and
-  a grip for moving the bar; the open inspector or Permissions is accented.
+  window or its Permissions tab. Build > Import and its Preferences shortcut
+  open the upload window; the import floating block's own Ctrl+U goes first.
+- **`AURORA_DEMO_IMPORTS=icon-bar`** opens the import floating block without
+  a disk dialog: a toolbar block of the import buttons, moved by a drag on it.
   Texture, sound, animation, material and mesh each open their own window,
   reusing existing drafts or requesting the corresponding file filter if empty.
   Local previews have a separate window; Folder opens the unified uploader
   and immediately asks for a directory. Each type window retains its own
   selection, tab and geometry, with fees and confirmation limited to that type.
-  The uploader's Quick import bar switch changes
-  the same saved entry-point preference and shows or hides the strip at once.
-  The preference is at the bottom of Inventory, after Received items.
   Closing a window leaves the shared drafts intact.
 - **`AURORA_DEMO_IMPORTS=type-texture|type-sound|type-animation|type-material|type-mesh|type-local`**
   loads that type's synthetic draft into its dedicated window with the bar visible.
@@ -7682,8 +7678,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   to the grid's asset maximum; long WAV sources enable splitting on load.
   `animation` shows aligned settings beside its preview, with loop units
   labelled and easing fields aligned. A mixed queue containing meshes needs their
-  quotes before confirmation. Ctrl+U toggles the saved entry point (the unified
-  window by default, or the quick import bar). Add files requests a file picker;
+  quotes before confirmation. Ctrl+U shows and hides the import floating block
+  (Build > Import's shortcut opens the unified window when the block has another
+  key). Add files requests a file picker;
   an empty type icon requests its filtered picker and Folder requests a directory.
   Rebind the shortcut in Preferences › Shortcuts.
   The quote and the uploads stay entirely inside the demo server.

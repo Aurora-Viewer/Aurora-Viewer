@@ -3,6 +3,75 @@
   "version": 2,
   "base": "aurora",
   "toolbar": {
+    "shortcuts": {
+      "drawer:import_bar": {
+        "input": {
+          "Key": "KeyU"
+        },
+        "ctrl": true,
+        "shift": false,
+        "alt": false
+      }
+    },
+    "drawers": {
+      "drawer:import_bar": {
+        "buttons": [
+          {
+            "icon": "photo-filled",
+            "command": "import_texture",
+            "tooltip": ""
+          },
+          {
+            "icon": "run",
+            "command": "import_animation",
+            "tooltip": ""
+          },
+          {
+            "icon": "file-music-filled",
+            "command": "import_sound",
+            "tooltip": ""
+          },
+          {
+            "icon": "droplet-filled",
+            "command": "import_material",
+            "tooltip": ""
+          },
+          {
+            "icon": "cube-3d-sphere",
+            "command": "import_mesh",
+            "tooltip": ""
+          },
+          {
+            "icon": "separator-vertical",
+            "command": "divider:import-bar-files",
+            "tooltip": ""
+          },
+          {
+            "icon": "adjustments-filled",
+            "command": "import_advanced",
+            "tooltip": ""
+          },
+          {
+            "icon": "eye-filled",
+            "command": "import_local",
+            "tooltip": ""
+          },
+          {
+            "icon": "settings-filled",
+            "command": "import_settings",
+            "tooltip": ""
+          }
+        ],
+        "mode": "icons_only",
+        "closes": true,
+        "floating": {
+          "name": "",
+          "icon": "file-upload-filled",
+          "vertical": false,
+          "shown": false
+        }
+      }
+    },
     "buttons": [
       {
         "icon": "message-filled",
@@ -196,6 +265,11 @@
       {
         "icon": "layout-grid-filled",
         "command": "edit_interface",
+        "tooltip": ""
+      },
+      {
+        "icon": "file-upload-filled",
+        "command": "drawer:import_bar",
         "tooltip": ""
       },
       {

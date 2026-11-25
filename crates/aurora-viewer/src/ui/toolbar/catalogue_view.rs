@@ -345,13 +345,7 @@ pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &comman
         settings
             .drawers
             .iter()
-            .filter_map(|(id, drawer)| {
-                drawer
-                    .floating
-                    .as_ref()
-                    .filter(|_| id != super::drawers::IMPORT_BAR)
-                    .map(|floating| (id, floating))
-            })
+            .filter_map(|(id, drawer)| drawer.floating.as_ref().map(|floating| (id, floating)))
             .map(|(id, floating)| Tile {
                 button: floating.button(id),
                 category: Category::Interface,

@@ -359,71 +359,23 @@ fn open_type(f: &mut Fixture, choice: Choice) {
     f.settle();
 }
 
+/// Import (Build › Import, its shortcut, the toolbar's "Import") opens the
+/// import window and leaves the import floating block as it is: the quick
+/// import bar it could open is that block now (human request, 2026-11-25).
 #[test]
-fn import_icon_bar_preference_round_trips_and_toggles_independently_of_the_queue() {
+fn import_opens_the_window_and_leaves_the_import_block_alone() {
     let mut f = Fixture::new();
-    let defaults: Preferences = serde_json::from_str("{}").unwrap();
-    assert!(!defaults.icon_bar);
-    f.prefs.icon_bar = true;
-    let saved = serde_json::to_string(&f.prefs).unwrap();
-    f.prefs = serde_json::from_str(&saved).unwrap();
-    assert!(f.prefs.icon_bar);
     let ids: Vec<_> = f.imports.entries.iter().map(|e| e.id).collect();
     f.imports.open = false;
-    f.imports.toggle_import(&f.ctx, &f.prefs);
+    f.imports.toggle_import(&f.ctx);
     let (_, actions) = f.frame(Vec::new());
-    assert!(f.imports.launcher_open);
-    assert!(!f.imports.open);
+    assert!(f.imports.open);
+    assert!(!f.imports.launcher_open);
     assert!(actions.is_empty());
-    assert!(f.imports.open_folder_import(&f.ctx));
-    assert!(f.imports.open);
-    f.imports.toggle_import(&f.ctx, &f.prefs);
-    assert!(!f.imports.launcher_open);
-    assert!(f.imports.open);
+    f.imports.toggle_bar(&f.ctx);
+    f.imports.toggle_import(&f.ctx);
+    assert!(f.imports.launcher_open && !f.imports.open);
     assert_eq!(f.imports.entries.iter().map(|e| e.id).collect::<Vec<_>>(), ids);
-}
-
-#[test]
-fn unified_import_switch_updates_the_saved_entry_point_and_bar_without_changing_the_queue() {
-    let mut f = Fixture::new();
-    let output = f.settle();
-    let pos = text_position(&output, aurora_i18n::tr!("import-icon-bar")) + egui::vec2(5.0, 5.0);
-    for pressed in [true, false] {
-        let (_, actions) = f.frame(vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ]);
-        assert!(actions.is_empty());
-    }
-    assert!(f.imports.launcher_open && f.imports.open);
-    assert!(f.prefs.icon_bar);
-    assert_eq!(f.imports.entries.len(), 2);
-    let output = f.settle();
-    let pos = text_position(&output, aurora_i18n::tr!("import-icon-bar")) + egui::vec2(5.0, 5.0);
-    for pressed in [true, false] {
-        let (_, actions) = f.frame(vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ]);
-        assert!(actions.is_empty());
-    }
-    assert!(!f.prefs.icon_bar);
-    assert!(!f.imports.launcher_open);
-    assert!(f.imports.open);
-    assert_eq!(f.imports.entries.len(), 2);
-    f.imports.open = false;
-    f.imports.toggle_import(&f.ctx, &f.prefs);
-    assert!(f.imports.open && !f.imports.launcher_open, "off restores the window entry point");
 }
 
 #[test]
@@ -845,13 +797,12 @@ fn shared_routing_header_retains_layout_and_edited_paths_in_both_views() {
     assert_eq!(f.imports.entries[0].upload_path.as_ref(), Some(&edited));
 }
 
-/// The toolbar's "Import bar", "Advanced import" and "Import settings"
-/// (human requests, 2026-11-25): the bar whatever the Import entry opens,
-/// the window in the bar's Folder mode, and the bar's Settings.
+/// The import block's button, "Advanced import" and "Import settings"
+/// (human requests, 2026-11-25): the block, the window in the bar's Folder
+/// mode, and the bar's Settings.
 #[test]
 fn the_toolbar_import_buttons_do_what_the_bar_does() {
     let mut f = Fixture::new();
-    assert!(!f.prefs.icon_bar, "the Import entry opens the window");
     f.imports.open = false;
     f.imports.toggle_bar(&f.ctx);
     assert!(f.imports.launcher_open && !f.imports.open);

@@ -21,6 +21,8 @@ pub const PREFIX: &str = "drawer:";
 /// The quick import bar's floating block; the toolbar's "Import bar" (the
 /// `import` command) shows and hides it, and it cannot be deleted.
 pub const IMPORT_BAR: &str = "drawer:import_bar";
+/// The import block's button: the import icon (human request, 2026-11-25).
+pub const IMPORT_ICON: &str = "file-upload-filled";
 /// The catalogue's "Floating block": dropped on the screen, or on a bar with
 /// its button there, a new empty floating block.
 pub const FLOATING: &str = "toolbar_floating";
@@ -112,6 +114,12 @@ pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout)
     // its first fill had a separator where a block's divider belongs
     let mut changed = false;
     if let Some(drawer) = settings.drawers.get_mut(IMPORT_BAR) {
+        if let Some(floating) = drawer.floating.as_mut()
+            && floating.icon.is_empty()
+        {
+            floating.icon = IMPORT_ICON.into();
+            changed = true;
+        }
         for button in &mut drawer.buttons {
             if button.command == "separator:import-bar-files" {
                 *button = structure::divider("import-bar-files");
@@ -179,12 +187,41 @@ pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout)
         .collect();
     let drawer = settings.drawers.entry(IMPORT_BAR.into()).or_insert_with(|| Drawer {
         mode: ButtonMode::IconsOnly,
-        floating: Some(Floating::default()),
+        floating: Some(Floating {
+            icon: IMPORT_ICON.into(),
+            ..Floating::default()
+        }),
         ..Drawer::default()
     });
     drawer.buttons = buttons;
     drawer.floating.get_or_insert_default();
     true
+}
+
+/// The import block as it first came (human request, 2026-11-25: it cannot
+/// be deleted, but can be reset): its buttons, taken back from wherever they
+/// stand, its look, and Ctrl+U, taken from another target if one has it.
+pub(super) fn reset_import_bar(settings: &mut ToolbarSettings, layout: &Layout) -> bool {
+    if settings.locked {
+        return false;
+    }
+    let before = settings.clone();
+    settings.drawers.remove(IMPORT_BAR);
+    settings.appearance.remove(IMPORT_BAR);
+    settings.import_bar_filled = false;
+    settings.import_shortcut_given = true;
+    ensure_import_bar(settings, layout);
+    super::shortcuts::set(
+        settings,
+        IMPORT_BAR,
+        Some(crate::keybinds::Binding {
+            input: crate::keybinds::Input::Key("KeyU".into()),
+            ctrl: true,
+            shift: false,
+            alt: false,
+        }),
+    );
+    *settings != before
 }
 
 /// A drawer or a bar's block made a floating block (human request,
@@ -848,9 +885,14 @@ pub fn show(
     let Some(drawer) = settings.drawers.get(&button.command) else {
         return;
     };
-    // a floating block's button shows and hides it, without a chevron
+    // a floating block's button shows and hides it, without a chevron; the
+    // import block's display is the import windows' (`toolbar_row`)
     if drawer.floating.is_some() {
-        if !ToolbarUi::editing(ctx) && !super::surface_drop::claimed(ctx, &button.command) && response.clicked() {
+        if button.command != IMPORT_BAR
+            && !ToolbarUi::editing(ctx)
+            && !super::surface_drop::claimed(ctx, &button.command)
+            && response.clicked()
+        {
             toolbar.pending = Some(Edit::FloatingShown(button.command.clone(), !is_open(ctx, &button.command)));
         }
         return;

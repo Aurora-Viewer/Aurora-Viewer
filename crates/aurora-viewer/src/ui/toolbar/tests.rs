@@ -2125,7 +2125,7 @@ fn menu_toolbar_added_import_button_runs_import_in_both_bar_layouts() {
         let pos = bench.pos("import");
         bench.pointer(pos, true, false);
         bench.pointer(pos, false, false);
-        assert!(matches!(bench.action, bars::BarAction::ImportBar));
+        assert!(matches!(bench.action, bars::BarAction::Import));
     }
 }
 
@@ -2439,7 +2439,10 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
         !tiles.iter().any(|tile| tile.button.command == drawers::FLOATING),
         "it stands beside the separator, out of the grid"
     );
-    assert!(!tiles.iter().any(|tile| tile.button.command == drawers::IMPORT_BAR));
+    assert!(
+        !tiles.iter().any(|tile| tile.button.command == drawers::IMPORT_BAR),
+        "no import block yet"
+    );
 
     state.pending = Some(Edit::Insert(Bar::Top, drawers::floating_toggle(&id, "x"), 0));
     assert!(state.commit(&layout(), &mut settings));
@@ -2462,10 +2465,14 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
     state.pending = Some(Edit::FloatingOptions(id.clone(), options));
     assert!(!state.commit(&layout(), &mut settings), "no change, no save");
 
-    // a stale button of the import bar's or the catalogue's entry never stays on a bar
+    // the catalogue's entry never stays on a bar; the import block's button
+    // does, and the catalogue offers it (human request, 2026-11-25)
+    assert!(settings.ensure_import_bar(&layout()));
+    let tiles = catalogue_view::entries(&layout(), &settings, &Default::default());
+    assert!(tiles.iter().any(|tile| tile.button.command == drawers::IMPORT_BAR));
     settings.left = vec![button(drawers::FLOATING), button(drawers::IMPORT_BAR)];
     settings.sanitize();
-    assert!(settings.left.is_empty());
+    assert_eq!(commands(&settings.left), [drawers::IMPORT_BAR]);
 }
 
 /// The import bar takes its buttons once, out of a drawer included (the
@@ -2668,4 +2675,47 @@ fn the_import_bar_gets_its_divider_and_ctrl_u_once() {
     settings.shortcuts.clear();
     assert!(!settings.ensure_import_bar(&layout()), "once: a removed shortcut stays removed");
     assert!(settings.shortcuts.is_empty());
+}
+
+/// The import block cannot be deleted but can be reset: its buttons back,
+/// taken from where they went, its look, and Ctrl+U taken back from another
+/// target (human request, 2026-11-25).
+#[test]
+fn the_import_block_resets_to_its_buttons_look_and_ctrl_u() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(Vec::new()),
+        ..Default::default()
+    };
+    assert!(settings.ensure_import_bar(&layout()));
+    let fresh = settings.drawers[drawers::IMPORT_BAR].clone();
+    assert_eq!(
+        fresh.floating.as_ref().map(|floating| floating.icon.as_str()),
+        Some(drawers::IMPORT_ICON)
+    );
+    let ctrl_u = settings.shortcuts[drawers::IMPORT_BAR].clone();
+    let drawer = settings.drawers.get_mut(drawers::IMPORT_BAR).expect("the import block");
+    let moved = drawer.buttons.remove(0);
+    drawer.mode = ButtonMode::IconsWithText;
+    settings.buttons = Some(vec![button("inventory"), moved.clone()]);
+    settings.shortcuts.clear();
+    settings.shortcuts.insert("inventory".into(), ctrl_u.clone());
+    assert!(drawers::reset_import_bar(&mut settings, &layout()));
+    assert_eq!(settings.drawers[drawers::IMPORT_BAR], fresh);
+    assert_eq!(
+        commands(settings.buttons.as_deref().unwrap_or_default()),
+        ["inventory"],
+        "its button taken back"
+    );
+    assert_eq!(settings.shortcuts.get(drawers::IMPORT_BAR), Some(&ctrl_u));
+    assert!(!settings.shortcuts.contains_key("inventory"), "Ctrl+U taken back");
+    assert!(!drawers::reset_import_bar(&mut settings, &layout()), "nothing left to reset");
+    settings.locked = true;
+    settings
+        .drawers
+        .get_mut(drawers::IMPORT_BAR)
+        .expect("the import block")
+        .buttons
+        .clear();
+    assert!(!drawers::reset_import_bar(&mut settings, &layout()), "locked bars stay");
 }
