@@ -1054,7 +1054,7 @@ fn avatar(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
         ui,
         p,
         "blender_live_shape",
-        aurora_i18n::tr!("blender-live-shape-section"),
+        aurora_i18n::tr!("livemesh-shape-section"),
         true,
         |ui| {
             for (action, label, tooltip, blocked, kind) in [

@@ -85,7 +85,7 @@ def rig_joints(names):
 
 
 def apply(payload):
-    """Reshape the MayaStar rig with the shape; one undo step."""
+    """Reshape the MayaStar rig with the shape; one undo step, undone if it fails."""
     module, shape_import = importer()
     if shape_import is None:
         raise ValueError("Applying a shape in Maya uses MayaStar's shape import: open MayaStar first")
@@ -96,7 +96,8 @@ def apply(payload):
         raise ValueError("Update Aurora Viewer to apply a shape with MayaStar")
     joints = rig_joints({joint["name"] for joint in payload["joints"]})
     handle, path = tempfile.mkstemp(prefix="aurora-shape-", suffix=".xml")
-    original, opened = module.cmds, False
+    original, opened, done = module.cmds, False, False
+    undo = cmds.undoInfo(query=True, state=True)
     try:
         # MayaStar opens the file with the system's default encoding: ASCII
         # with character references reads the same everywhere.
@@ -104,16 +105,25 @@ def apply(payload):
             file.write(archetype.encode("ascii", "xmlcharrefreplace"))
         cmds.undoInfo(openChunk=True, chunkName="Aurora shape (MayaStar)")
         opened = True
+        # Never an empty step: undoing a failure must not reach the user's own
+        # previous action (build.undoable).
+        cmds.delete(cmds.createNode("network", name="auroraLiveStep", skipSelect=True))
         try:
             module.cmds = _Answer(path)
             shape_import.importShape()
         finally:
             module.cmds = original
         bindinfo.remember(payload, joints)
+        done = True
     finally:
         module.cmds = original
         if opened:
             cmds.undoInfo(closeChunk=True)
+            if undo and not done:
+                try:
+                    cmds.undo()
+                except RuntimeError:
+                    pass
         try:
             os.remove(path)
         except OSError:

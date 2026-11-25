@@ -42,6 +42,12 @@ def _reduced(source, target):
     copy = cmds.duplicate(source.transform, returnRootsOnly=True)[0]
     copy = cmds.ls(copy, long=True)[0]
     try:
+        # A linkset root's children come along: only the mesh itself is needed.
+        shapes = set(cmds.listRelatives(copy, shapes=True, fullPath=True) or [])
+        children = [child for child in cmds.listRelatives(copy, children=True, fullPath=True) or []
+                    if child not in shapes]
+        if children:
+            cmds.delete(children)
         for shape in cmds.listRelatives(copy, shapes=True, fullPath=True) or []:
             if cmds.getAttr(shape + ".intermediateObject"):
                 cmds.delete(shape)
@@ -106,6 +112,7 @@ def prepare(request, transform, settings, supported, rest_axes, base, axes_mode)
             origin = found.rsplit("|", 1)[-1]
         else:
             copy = None
+            selection = cmds.ls(selection=True, long=True) or []
             try:
                 # The copy is scratch work: keep it out of the undo queue.
                 cmds.undoInfo(stateWithoutFlush=False)
@@ -123,6 +130,11 @@ def prepare(request, transform, settings, supported, rest_axes, base, axes_mode)
             finally:
                 if copy is not None and cmds.objExists(copy):
                     cmds.delete(copy)
+                # duplicate selected the copy: give the user's selection back.
+                if selection:
+                    cmds.select(selection, replace=True)
+                else:
+                    cmds.select(clear=True)
                 cmds.undoInfo(stateWithoutFlush=undo)
             origin = "Automatic"
         mesh["name"], mesh["source_id"] = source.name, source_id

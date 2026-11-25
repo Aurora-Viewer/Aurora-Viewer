@@ -74,15 +74,16 @@ def _metre(heads):
 # ------------------------------------------------------------- the group
 
 def group_for(root, create=True):
-    """The rig's controls group, found by its attribute."""
+    """The rig's controls group, found by the node id it keeps: a renamed or
+    moved rig keeps its controls, a new rig at the same path has none."""
     for node in cmds.ls("*." + FOR_ATTRIBUTE, objectsOnly=True, long=True, recursive=True) or []:
-        if cmds.getAttr(node + "." + FOR_ATTRIBUTE) == root:
+        if root in (cmds.ls(cmds.getAttr(node + "." + FOR_ATTRIBUTE), long=True) or []):
             return node
     if not create:
         return None
     short = root.rsplit("|", 1)[-1].replace(":", "_")
     node = cmds.ls(cmds.group(empty=True, world=True, name=":" + short + "_AuroraControls"), long=True)[0]
-    build.string_attribute(node, FOR_ATTRIBUTE, root)
+    build.string_attribute(node, FOR_ATTRIBUTE, cmds.ls(root, uuid=True)[0])
     return node
 
 

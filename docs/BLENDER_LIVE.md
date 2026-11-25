@@ -790,7 +790,7 @@ position overrides are not applied to Aurora's skeleton.
 
 ## Maya
 
-Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.5.0). It uses the same
+Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.5.1). It uses the same
 connection, port (17655) and key as the Blender plug-in, so the viewer side is
 the same: start the preview in Aurora's **LiveMesh** window first.
 
@@ -858,7 +858,7 @@ now** sends at once and reloads the texture files.
 - **Import / LOD.** Click **Import** next to a mesh in Aurora's LiveMesh
   list: the plug-in prepares four levels and Aurora opens its Import window
   with them, as with Blender. High is the synchronized mesh. Medium, Low and
-  Lowest are set in the Maya window's **Import / LOD** section, for the mesh
+  Lowest are set in the Maya window's **Import / LOD** tab, for the mesh
   selected in its list: **Existing or automatic** (default) uses the mesh
   named in the field, or else the one named after High with the level's
   suffix (`Body_medium`, `Body_low`, `Body_lowest`; a trailing `_high` of

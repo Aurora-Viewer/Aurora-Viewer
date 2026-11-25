@@ -80,7 +80,10 @@ class Session:
         values = cmds.fileInfo(GROUPS_KEY, query=True)
         self.overrides = {child: parent for child, parent in convert.overrides_parse(values[0] if values else "").items()
                           if child in self.sources}
-        self.errors, self.dirty = {}, True
+        self.errors, self.dirty, self._rows = {}, True, None
+        # A reopened scene has the same node ids on new nodes: never keep the
+        # old scene's callbacks.
+        self._clear_callbacks()
         self._rewatch()
 
     def save(self):
@@ -237,6 +240,7 @@ class Session:
         # Import / LOD, shape creation, and shape application through MayaStar.
         self.client = client.Client(int(port), capabilities=("import-lods", "shape-transfer", "shape-apply"))
         self.revision, self.last_content, self.forced = 0, None, True
+        self._rewatch()
         self._start_timer()
 
     def disconnect(self):
@@ -244,6 +248,7 @@ class Session:
             self.client.close()
             self.client = None
         self.last_content = None
+        self._clear_callbacks()
 
     def status(self):
         if self.client is None:
@@ -304,14 +309,18 @@ class Session:
 
     def _rewatch(self):
         self._rewatch_later = False
+        if self.client is None:
+            return  # connect() starts watching
         try:
             nodes = self._nodes()
         except RuntimeError:
             nodes = set()
-        if nodes == self.watched:
+        # Compared by node id: a rebound skin can take the freed name.
+        watched = set(cmds.ls(list(nodes), uuid=True) or []) if nodes else set()
+        if watched == self.watched:
             return
         self._clear_callbacks()
-        self.watched = nodes
+        self.watched = watched
         for name in nodes:
             selection = om.MSelectionList()
             try:
@@ -370,6 +379,10 @@ class Session:
                     listener()
                 except Exception:
                     self.listeners.remove(listener)
+            if self.client is None and not self.listeners and self.timer is not None:
+                # Disconnected with the window closed: nothing left to do.
+                self.timer.stop()
+                self.timer = None
 
     def _tick(self):
         if self.client is None:
@@ -428,10 +441,11 @@ class Session:
         """Build the skeleton Aurora sent with the worn shape; Aurora reports
         success only once this answers."""
         identity = payload.get("id", "") if isinstance(payload, dict) else ""
+        applying = isinstance(payload, dict) and payload.get("action") == "apply"
         try:
-            if isinstance(payload, dict) and payload.get("action") == "apply":
+            if applying:
                 shape_rules.validate(payload, shape_rules.skeleton())
-                if cmds.objExists(mayastar.CONTROL):
+                if cmds.objExists(mayastar.CONTROL) and not rigs.made_by_aurora():
                     # A MayaStar rig reshapes itself (like Avastar in Blender).
                     rig = mayastar.apply(payload)
                     self.notice = "Shape applied with MayaStar to " + rig
@@ -448,7 +462,7 @@ class Session:
             self.notice = "Shape received: " + group.rsplit("|", 1)[-1]
             self.client.shape_result(identity)
         except Exception as error:  # Aurora waits for an answer: always send one.
-            self.notice = "Shape not received: " + (str(error) or type(error).__name__)
+            self.notice = ("Shape not applied: " if applying else "Shape not received: ") + (str(error) or type(error).__name__)
             self.client.shape_result(identity, self.notice[:512])
 
     def _issues(self):
@@ -456,8 +470,9 @@ class Session:
         if revision == self.revision and issues:
             for identity in self.sources:
                 message = issues.get(_uuid_for(identity))
-                if message:
+                if message and self.errors.get(identity) != message:
                     self.errors[identity] = message
+                    self._rows = None
 
     def snapshot(self, supported, rest_axes, revision):
         """Capture every source; a failing one is skipped with its reason."""
@@ -479,7 +494,7 @@ class Session:
                 mesh, count = capture.mesh(transform, supported, rest_axes, images, warnings, axes_mode, base)
                 if corners + count > convert.MAX_CORNERS:
                     raise ValueError("Snapshot exceeds 600,000 mesh corners")
-            except (ValueError, RuntimeError) as error:
+            except Exception as error:  # One mesh's failure never stops the others.
                 images.rollback(mark)
                 errors[identity] = str(error) or type(error).__name__
                 continue

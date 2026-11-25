@@ -10,6 +10,8 @@ names. Each part goes to a display layer (`SL_Body`, `SL_Bento_Hands`,
 Hiding a layer changes the display only, never deformation.
 """
 
+import re
+
 from maya import cmds
 
 from . import build, rig_rules, rigs, shape_rules
@@ -21,6 +23,14 @@ def layer_name(group):
     return "SL_" + group
 
 
+def _existing(name):
+    """A display layer by its SL name, or the numbered one Maya made when
+    another node held that name."""
+    pattern = re.compile(re.escape(name) + r"\d*")
+    return next((layer for layer in sorted(cmds.ls(name + "*", type="displayLayer") or [])
+                 if pattern.fullmatch(layer)), None)
+
+
 def sort_layers(root, visible=None):
     """Put the rig's joints into the SL display layers (existing layers are
     reused). `visible` sets the starting visibility; None keeps it."""
@@ -30,18 +40,20 @@ def sort_layers(root, visible=None):
         if name in definition:
             members.setdefault(layer_name(rig_rules.layer(definition[name])), []).append(joint)
     for layer, joints in members.items():
-        if not cmds.objExists(layer):
-            cmds.createDisplayLayer(name=":" + layer, empty=True, noRecurse=True)
-        cmds.editDisplayLayerMembers(layer, joints, noRecurse=True)
+        node = _existing(layer)
+        if node is None:
+            node = cmds.createDisplayLayer(name=":" + layer, empty=True, noRecurse=True)
+        cmds.editDisplayLayerMembers(node, joints, noRecurse=True)
         if visible is not None:
-            cmds.setAttr(layer + ".visibility", layer[3:] in visible)
+            cmds.setAttr(node + ".visibility", layer[3:] in visible)
     return sorted(members)
 
 
 def layers():
     """(layer, visible) of every SL display layer in the scene."""
-    return [(layer, bool(cmds.getAttr(layer + ".visibility")))
-            for layer in sorted(cmds.ls("SL_*", type="displayLayer") or [])]
+    names = sorted({layer_name(rig_rules.layer(joint)) for joint in rig_rules.default_joints()})
+    found = [node for node in map(_existing, names) if node]
+    return [(node, bool(cmds.getAttr(node + ".visibility"))) for node in found]
 
 
 def show(layer, visible):

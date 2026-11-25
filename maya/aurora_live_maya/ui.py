@@ -308,9 +308,10 @@ class Window:
         self.live.notice = "Created " + group.rsplit("|", 1)[-1]
 
     def sort_layers(self):
-        from . import rig, rigs
+        from . import build, rig, rigs
         root = rigs.resolve()
-        rig.sort_layers(root, visible=rig_rules.VISIBLE_LAYERS)
+        with build.undoable("Aurora SL layers"):
+            rig.sort_layers(root, visible=rig_rules.VISIBLE_LAYERS)
         self.live.notice = "Sorted " + root.rsplit("|", 1)[-1] + " into SL layers"
 
     def show_layer(self, layer, visible):

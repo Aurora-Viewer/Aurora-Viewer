@@ -3,9 +3,19 @@ joints (namespaces ignored, or an `auroraJoint` string attribute)."""
 
 from maya import cmds
 
-from . import capture, convert
+from . import capture, convert, shape_rules
 
 CORE = ("mPelvis", "mTorso", "mChest", "mHead")
+
+
+_NAMES = None
+
+
+def _sl_names():
+    global _NAMES
+    if _NAMES is None:
+        _NAMES = {name for name, _parent in shape_rules.skeleton()}
+    return _NAMES
 
 
 def sl_name(joint):
@@ -26,11 +36,14 @@ def top_joint(node):
 
 
 def joint_map(root):
-    """SL name -> joint path, for the joints at and under `root`."""
+    """SL name -> joint path, for the joints at and under `root`. Helper joints
+    may share a name: the first keeps it, the others go by their path."""
     joints = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or [])
-    mapping = {}
+    mapping, known = {}, _sl_names()
     for joint in joints:
         name = sl_name(joint)
+        if name in mapping and name not in known:
+            name = joint
         if name in mapping:
             raise ValueError("Two joints of this rig map to the SL joint " + name)
         mapping[name] = joint
@@ -77,8 +90,7 @@ def _rigs_of(node):
     for index in range(len(parts), 1, -1):
         ancestor = "|".join(parts[:index])
         if cmds.attributeQuery("auroraControlsFor", node=ancestor, exists=True):
-            root = cmds.getAttr(ancestor + ".auroraControlsFor")
-            return [root] if cmds.objExists(root) else []
+            return cmds.ls(cmds.getAttr(ancestor + ".auroraControlsFor"), long=True)
     tops = {top_joint(joint) for joint in cmds.listRelatives(node, allDescendents=True, type="joint",
                                                              fullPath=True) or []}
     return [top for top in tops if top and is_rig(top)]
@@ -102,6 +114,22 @@ def resolve(selection=None):
     if len(every) == 1:
         return every[0]
     raise ValueError("Select the rig (or a mesh skinned to it)" if every else "No Second Life rig in this scene")
+
+
+def made_by_aurora(selection=None):
+    """Whether the selection points to rigs this plug-in built (Create SL
+    avatar rig, a received shape): never the rig MayaStar drives."""
+    selection = cmds.ls(selection=True, long=True) if selection is None else selection
+    found = set()
+    for node in selection or []:
+        try:
+            found.update(_rigs_of(node))
+        except RuntimeError:
+            continue
+    tops = {"|" + root.split("|")[1] for root in found}
+    return bool(tops) and all(
+        any(cmds.attributeQuery(name, node=top, exists=True) for name in ("auroraStarter", "auroraShapeId"))
+        for top in tops)
 
 
 def meshes(selection=None):

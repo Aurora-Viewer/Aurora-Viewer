@@ -558,8 +558,21 @@ class FakeCmds:
     def getAttr(self, plug):
         return self.attributes.get(tuple(plug.rsplit(".", 1)))
 
-    def undoInfo(self, **kwargs):
+    def undoInfo(self, query=False, state=False, **kwargs):
+        if query:
+            return True
         self.chunks.append(kwargs)
+
+    def createNode(self, kind, name=None, skipSelect=False):
+        return name
+
+    def delete(self, node):
+        pass
+
+    undone = 0
+
+    def undo(self):
+        self.undone += 1
 
 
 def load_mayastar(fake):
@@ -632,6 +645,7 @@ class MayaStar(unittest.TestCase):
         self.assertEqual(module.cmds, "the real cmds")
         self.assertEqual(set(glob.glob(tempfile.gettempdir() + "/aurora-shape-*.xml")), before)
         self.assertEqual(fake.chunks[-1], {"closeChunk": True})
+        self.assertEqual(fake.undone, 1)  # a failed import leaves no half shape
 
     def test_apply_is_refused_without_mayastar_its_rig_or_the_xml(self):
         mayastar = load_mayastar(FakeCmds(self.RIG))

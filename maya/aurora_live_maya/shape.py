@@ -31,7 +31,7 @@ def create(payload, up_axis, unit):
     joints_definition = shape_rules.skeleton()
     shape_rules.validate(payload, joints_definition)
     if payload.get("action", "create") != "create":
-        raise ValueError("The Maya plug-in cannot apply a shape to an existing skeleton yet")
+        raise ValueError("The Maya plug-in builds new skeletons here only")
     found = existing(payload["id"])
     if found:
         return found

@@ -21,9 +21,13 @@ def install(folder):
     target = os.path.join(scripts, PACKAGE)
     if os.path.normcase(os.path.abspath(source)) != os.path.normcase(os.path.abspath(target)):
         _close_running()
+        # Copied aside first: a failed copy keeps the installed plug-in.
+        fresh = target + "_new"
+        shutil.rmtree(fresh, ignore_errors=True)
+        shutil.copytree(source, fresh, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         if os.path.isdir(target):
             shutil.rmtree(target)
-        shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        os.rename(fresh, target)
     if scripts not in sys.path:
         sys.path.append(scripts)
     # Import the installed copy, not the extracted one install.mel put first.

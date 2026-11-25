@@ -18,7 +18,7 @@ shapes would also need moving.
 import maya.api.OpenMaya as om
 from maya import cmds
 
-from . import bindinfo, build, convert, rigs, shape_rules
+from . import bindinfo, build, controls, convert, rigs, shape_rules
 
 
 def _previous(joint, payload_joint):
@@ -62,7 +62,7 @@ def _driven(mapping):
     """Refuse joints that controls or animation drive: moving their rest
     under a constraint would fight it."""
     for name, joint in mapping.items():
-        for attribute in ("translate", "translateX", "translateY", "translateZ", "rotate"):
+        for attribute in controls.DRIVEN:
             if cmds.listConnections(joint + "." + attribute, source=True, destination=False, skipConversionNodes=True):
                 raise ValueError("{} is driven by a control, constraint or animation; remove the Aurora "
                                  "controls (or that driver) before applying a shape".format(name))
@@ -125,7 +125,12 @@ def apply(payload, root, up_axis, unit=None):
         by_joint[path] = matrix or convert.identity()
     plans = []
     for skin in _skins(root):
-        mesh = (cmds.skinCluster(skin, query=True, geometry=True) or [None])[0]
+        meshes = cmds.skinCluster(skin, query=True, geometry=True) or []
+        if not meshes:
+            continue  # deforms nothing
+        if len(meshes) > 1:
+            raise ValueError("{} skins several meshes; give each its own skin first".format(skin))
+        mesh = meshes[0]
         orig = _orig(skin, mesh)
         geometry = convert.from_maya(cmds.getAttr(skin + ".geomMatrix"))
         weights = build.get_weights(skin, mesh)
@@ -137,11 +142,11 @@ def apply(payload, root, up_axis, unit=None):
                                                                 convert.point(geometry, (p.x, p.y, p.z))))
                  for p, groups in zip(points, weights)]
         plans.append((skin, orig, moved))
-    joints = sorted(mapping.values(), key=lambda path: path.count("|"))
+    ordered = sorted(mapping.items(), key=lambda item: item[1].count("|"))
+    joints = [path for _name, path in ordered]
     with build.undoable("Aurora apply shape"):
         # Parents first: a child keeps its own new head after its parent moved.
-        for path in joints:
-            name = rigs.sl_name(path)
+        for name, path in ordered:
             cmds.xform(path, worldSpace=True,
                        translation=[build.to_ui(v) for v in convert.point(by_joint[path], heads[name])])
         rig_joints = set(joints)
