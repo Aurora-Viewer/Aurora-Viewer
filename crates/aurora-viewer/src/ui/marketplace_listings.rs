@@ -140,6 +140,9 @@ impl Confirm {
 #[derive(Default)]
 pub struct ListingsUi {
     pub open: bool,
+    /// A question or a window of an inventory command shown in it: it
+    /// expands when minimized, at its next frame (`widgets::open_floater`).
+    shown: bool,
     pub data: MarketplaceData,
     tab: usize,
     filter: String,
@@ -323,6 +326,9 @@ impl ListingsUi {
         let mut actions = Vec::new();
         if !self.open {
             return actions;
+        }
+        if std::mem::take(&mut self.shown) {
+            super::widgets::open_floater(ctx, WINDOW, &mut self.open);
         }
         panel.begin();
         self.expanded.extend(panel.reveal());

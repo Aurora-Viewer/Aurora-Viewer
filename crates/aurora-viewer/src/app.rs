@@ -15548,7 +15548,7 @@ impl App {
                     .map(|n| n.display_name.clone())
                     .unwrap_or_default();
                 self.send(NetCommand::SetDisplayName { old, new });
-                self.display_name_ui.open();
+                self.display_name_ui.open(&self.egui_ctx);
             }
             self.demo_buy_currency();
             self.demo_buy_land();
@@ -17554,7 +17554,7 @@ impl App {
         if self.world.rlva.has("showloc") {
             return;
         }
-        if let Some(cmd) = self.create_landmark_ui.open(&self.world, dest) {
+        if let Some(cmd) = self.create_landmark_ui.open(&self.egui_ctx, &self.world, dest) {
             self.send(cmd);
         }
     }
@@ -17586,9 +17586,9 @@ impl App {
                 self.create_landmark_ui.quick(&self.world, FOLDER_FAVORITES)
             }
             StarAction::AddLandmark => self.create_landmark_ui.quick(&self.world, FOLDER_LANDMARKS),
-            StarAction::MoreOptions => self.create_landmark_ui.open(&self.world, None),
+            StarAction::MoreOptions => self.create_landmark_ui.open(&self.egui_ctx, &self.world, None),
             StarAction::Edit(item) => {
-                self.create_landmark_ui.open_edit(&self.world.inventory, item);
+                self.create_landmark_ui.open_edit(&self.egui_ctx, &self.world.inventory, item);
                 None
             }
         };
@@ -21349,7 +21349,7 @@ impl App {
                         ui::profile::ProfileAction::Im(id) => a.ctx_action = Some(ui::context::CtxAction::Im(id)),
                         ui::profile::ProfileAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::profile::ProfileAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
-                        ui::profile::ProfileAction::DisplayName => self.display_name_ui.open(),
+                        ui::profile::ProfileAction::DisplayName => self.display_name_ui.open(&self.egui_ctx),
                         ui::profile::ProfileAction::ModifyRights { friend, rights, grant } => {
                             self.contacts_ui.ask_modify_rights(friend, rights, grant)
                         }

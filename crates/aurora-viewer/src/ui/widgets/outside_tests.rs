@@ -810,3 +810,32 @@ fn a_window_asked_to_the_front_from_outside_goes_up_when_drawn() {
     draw(&mut frames, &|_| {});
     assert!(floater_above(&ctx, "test front a", "test front b"));
 }
+
+/// A window outside expanded by a button is drawn in front in its own
+/// window: the ask to the front among the viewer's layers is not kept to
+/// lift it over the others when it comes back inside.
+#[test]
+fn an_expand_outside_leaves_no_ask_to_the_front_for_inside() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let name = "test outside front";
+    let window = egui::Id::unique(name);
+    let ctx = frames.ctx.clone();
+    crate::outside::want(&ctx, window, true);
+    crate::outside::set_native(&ctx, window, true);
+    minimize_floater(&ctx, name);
+    let mut open = true;
+    open_floater(&ctx, name, &mut open);
+    assert!(floater_expand_asked(&ctx, name));
+    frames.run(Vec::new(), |ui| {
+        window_named(name).show(ui.ctx(), &p, &mut open, |ui| {
+            ui.label("body");
+        });
+    });
+    assert!(!floater_minimized(&ctx, name));
+    assert_eq!(ctx.data(|d| d.get_temp::<bool>(window.with(FRONT))), None);
+}
+
+fn window_named(name: &str) -> Floater<'_> {
+    Floater::new(name, "Window", egui::pos2(20.0, 20.0), Vec2::new(300.0, 200.0)).silent()
+}

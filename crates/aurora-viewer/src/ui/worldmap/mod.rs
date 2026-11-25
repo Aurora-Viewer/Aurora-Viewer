@@ -158,7 +158,10 @@ impl WorldMapUi {
     /// Its title button only unminimizes (LLFloater::setMinimized) and takes
     /// nothing. A minimized map hidden with the interface expands when the
     /// interface comes back: a script's show waits with it, until a show by
-    /// the user replaces it.
+    /// the user replaces it. A script's show after the user's leaves the
+    /// keyboard that show gave the search (LLFloaterWorldMap::onOpen has
+    /// focused it already; setVisibleAndFrontmost(false) takes nothing back),
+    /// also while it waits for the map to draw.
     fn take_show(&mut self, ctx: &egui::Context) -> bool {
         let shown = widgets::take_floater_shown(ctx, "worldmap");
         let expanding = widgets::floater_expand_asked(ctx, "worldmap") && widgets::floater_minimized(ctx, "worldmap");
@@ -2300,5 +2303,27 @@ mod reshow_tests {
         widgets::show_floater(&ctx, "worldmap", &mut open);
         assert!(!map.take_show(&ctx));
         assert!(map.focus_search);
+    }
+
+    /// The user's show of the minimized map waiting for a hidden interface
+    /// keeps the keyboard it gave the search when a script without
+    /// BEACON_FOCUS_MAP shows the map after it: onOpen focused the search
+    /// at once, and the script's show takes nothing back.
+    #[test]
+    fn a_script_show_after_the_users_leaves_the_search_its_keyboard() {
+        let ctx = egui::Context::default();
+        let mut map = WorldMapUi {
+            was_open: true,
+            ..WorldMapUi::default()
+        };
+        widgets::minimize_floater(&ctx, "worldmap");
+        let mut open = true;
+        widgets::show_floater(&ctx, "worldmap", &mut open);
+        assert!(!map.take_show(&ctx));
+        assert!(map.focus_search);
+        // the interface hidden: the map waits, its search not drawn
+        widgets::show_floater_quietly(&ctx, "worldmap", &mut open);
+        assert!(map.take_show(&ctx));
+        assert!(map.focus_search, "the user's show keeps its keyboard");
     }
 }

@@ -874,7 +874,7 @@ impl App {
                 self.settings.world_overlays.property_lines = on;
                 self.settings.save();
             }
-            CtxAction::DisplayName => self.display_name_ui.open(),
+            CtxAction::DisplayName => self.display_name_ui.open(&self.egui_ctx),
             CtxAction::HoverHeight => ui::widgets::open_floater(&self.egui_ctx, ui::hover_height::WINDOW, &mut self.hover_height_ui.open),
             CtxAction::ReportAbuse(target) => self.open_report_abuse(target),
             CtxAction::CreateLandmark => self.open_create_landmark(None),

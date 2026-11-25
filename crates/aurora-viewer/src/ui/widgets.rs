@@ -1703,6 +1703,9 @@ impl<'a> Floater<'a> {
         if ctx.data_mut(|d| d.remove_temp::<bool>(window_id.with(EXPAND))).unwrap_or(false) && floater_minimized(ctx, self.id) {
             ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((self.id, "minimized")), false));
         }
+        // its own window is in front of the viewer's layers: an ask to the
+        // front among them (`to_front`) is not kept for its return inside
+        ctx.data_mut(|d| d.remove_temp::<bool>(window_id.with(FRONT)));
         let flush = self.flush_body;
         let framed = self.framed_header.is_some();
         // as tall as its content (fixed, or of automatic height), and for a
@@ -2327,6 +2330,17 @@ pub fn floater_size(ctx: &egui::Context, id: &str) -> Option<Vec2> {
     egui::AreaState::load(ctx, window_id).and_then(|state| state.size)
 }
 
+/// The size of the floater `id` expanded: while it is minimized, the size
+/// it comes back to (LLFloater::setMinimized keeps the expanded geometry),
+/// not its title bar's.
+pub fn floater_expanded_size(ctx: &egui::Context, id: &str) -> Option<Vec2> {
+    let window_id = egui::Id::unique(id);
+    if !floater_outside(ctx, window_id) && floater_minimized(ctx, id) {
+        return ctx.data_mut(|d| d.get_persisted::<Vec2>(window_id.with("expanded_size")));
+    }
+    floater_size(ctx, id)
+}
+
 /// A window without a title bar, dragged by its whole surface (the
 /// mini-map): `frame` around `body`, which fills it. Like a floater it is
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
@@ -2915,12 +2929,9 @@ pub fn show_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
 pub fn show_floater_quietly(ctx: &egui::Context, id: &str, open: &mut bool) {
     let was_open = *open;
     open_floater(ctx, id, open);
-    if was_open {
-        if !crate::outside::native(ctx, egui::Id::unique(id)) {
-            bring_floater_front(ctx, id);
-        } else if floater_minimized(ctx, id) {
-            expand_floater(ctx, id);
-        }
+    // (`open_floater` has expanded it when minimized)
+    if was_open && !crate::outside::native(ctx, egui::Id::unique(id)) {
+        bring_floater_front(ctx, id);
     }
     ctx.data_mut(|d| {
         d.insert_temp(egui::Id::unique(id).with(SHOWN), true);

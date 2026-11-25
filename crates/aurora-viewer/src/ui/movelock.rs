@@ -99,7 +99,8 @@ impl MoveLockUi {
                         .on_hover_text(status)
                         .clicked()
                     {
-                        self.open = true;
+                        // shown again, its minimized options expand
+                        widgets::open_floater(ui.ctx(), WINDOW, &mut self.open);
                     }
                 });
             });

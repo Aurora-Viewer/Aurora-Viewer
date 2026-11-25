@@ -622,8 +622,9 @@ pub const DUAL_ICON: &str = "columns-2-filled";
 /// The size the window takes when it turns to two panes: twice its width
 /// (each pane keeps the width of the single one), at least `DUAL_SIZE`;
 /// back to one pane, half of it. A size the user sets afterwards stays.
+/// A minimized window's is the size it expands to, not its title bar's.
 pub fn resize_for_dual(ctx: &egui::Context, dual: bool) {
-    let size = super::widgets::floater_size(ctx, "inventory").unwrap_or(DEFAULT_SIZE);
+    let size = super::widgets::floater_expanded_size(ctx, "inventory").unwrap_or(DEFAULT_SIZE);
     let size = if dual {
         Vec2::new((size.x * 2.0).max(DUAL_SIZE.x), size.y.max(DUAL_SIZE.y))
     } else {
@@ -7582,5 +7583,51 @@ mod tests {
         assert!(frame(pos, vec![]).is_none(), "no duplicate drop next frame");
         egui::DragAndDrop::set_payload(&ctx, InvDrag(id));
         assert!(frame(pos, vec![key(egui::Key::Escape)]).is_none());
+    }
+}
+
+#[cfg(test)]
+mod dual_size_tests {
+    use super::*;
+    use crate::ui::widgets;
+
+    /// The dual-panel button on a minimized Inventory expands it at twice
+    /// the width it had expanded, and back to one pane at that width and
+    /// height again, not from its title bar's size.
+    #[test]
+    fn a_minimized_inventory_turns_dual_from_its_expanded_size() {
+        let mut frames = widgets::elide_tests::Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let ctx = frames.ctx.clone();
+        let mut open = true;
+        let draw = |frames: &mut widgets::elide_tests::Frames, open: &mut bool| {
+            frames.run(Vec::new(), |ui| {
+                widgets::Floater::new("inventory", "Inventory", egui::pos2(10.0, 10.0), Vec2::new(400.0, 500.0))
+                    .silent()
+                    .show(ui.ctx(), &p, open, |ui| {
+                        ui.label("body");
+                    });
+            });
+        };
+        draw(&mut frames, &mut open);
+        draw(&mut frames, &mut open);
+        let single = widgets::floater_size(&ctx, "inventory").expect("drawn");
+        for dual in [true, false] {
+            widgets::minimize_floater(&ctx, "inventory");
+            draw(&mut frames, &mut open);
+            assert!(widgets::floater_minimized(&ctx, "inventory"));
+            widgets::open_floater(&ctx, "inventory", &mut open);
+            resize_for_dual(&ctx, dual);
+            draw(&mut frames, &mut open);
+            draw(&mut frames, &mut open);
+            assert!(!widgets::floater_minimized(&ctx, "inventory"));
+            let size = widgets::floater_size(&ctx, "inventory").expect("drawn");
+            let want = if dual {
+                Vec2::new((single.x * 2.0).max(DUAL_SIZE.x), single.y.max(DUAL_SIZE.y))
+            } else {
+                Vec2::new((single.x * 2.0).max(DUAL_SIZE.x) * 0.5, single.y.max(DUAL_SIZE.y))
+            };
+            assert!((size - want).length() < 1.0, "dual {dual}: {size:?}, want {want:?}");
+        }
     }
 }
