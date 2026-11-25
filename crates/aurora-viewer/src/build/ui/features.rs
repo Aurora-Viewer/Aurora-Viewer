@@ -4,7 +4,9 @@
 
 use super::common::{Edit, check, color_swatch, combo, label, linear_to_srgb, row, small};
 use super::{Confirm, Env, FeaturesClip, PickTarget};
-use crate::build::edits::{CLICK_ACTION_SIT, CLICK_ACTION_TOUCH, Extra, FLEX_DEFAULT, LIGHT_DEFAULT, LIGHT_IMAGE_DEFAULT, PROBE_DEFAULT};
+use crate::build::edits::{
+    CLICK_ACTION_SIT, CLICK_ACTION_TOUCH, Extra, FLEX_DEFAULT, LIGHT_DEFAULT, LIGHT_IMAGE_DEFAULT, PHYSICS_SHAPE_NONE, PROBE_DEFAULT,
+};
 use crate::build::{BuildSettings, BuildTool};
 use crate::theme::Palette;
 use crate::ui::widgets::collapsing;
@@ -39,9 +41,63 @@ fn physics_shapes() -> [(&'static str, u8); 3] {
     ]
 }
 
+/// The shapes the combo offers. The Legacy Viewer always lists None
+/// (LLPanelVolume::refresh, indra/newview/llpanelvolume.cpp), but the
+/// simulator refuses it on a root prim and the choice snaps back. Aurora lists
+/// None only when a child prim of a linkset is selected (stricter, the same
+/// final state), and keeps it while a prim already shows None.
+///
+/// Prim is listed for a prim, and for a mesh only when it has a physics shape
+/// of its own (LLPanelVolume::refresh: `gMeshRepo.hasPhysicsShape`); like
+/// None, it stays while the prim already shows it.
+fn physics_shape_choices(child_selected: bool, prim_allowed: bool, current: Option<u8>) -> Vec<(&'static str, u8)> {
+    physics_shapes()
+        .into_iter()
+        .filter(|&(_, v)| match v {
+            PHYSICS_SHAPE_NONE => child_selected || current == Some(v),
+            PHYSICS_SHAPE_PRIM => prim_allowed || current == Some(v),
+            _ => true,
+        })
+        .collect()
+}
+
+/// PHYSICS_SHAPE_PRIM (LLViewerObject::PHYSICS_SHAPE_*).
+const PHYSICS_SHAPE_PRIM: u8 = 0;
+
 /// Reflection probe flags (LLReflectionProbeParams).
 const PROBE_BOX: u8 = 0x01;
 const PROBE_DYNAMIC: u8 = 0x02;
+const PROBE_MIRROR: u8 = 0x04;
+const PROBE_UPDATE: u8 = PROBE_DYNAMIC | PROBE_MIRROR;
+
+fn probe_updates() -> [(&'static str, u8); 4] {
+    [
+        (aurora_i18n::tr!("build-ui-features-probe-static"), 0),
+        (aurora_i18n::tr!("build-ui-features-dynamic"), PROBE_DYNAMIC),
+        (aurora_i18n::tr!("build-ui-features-probe-mirror-environment"), PROBE_MIRROR),
+        (aurora_i18n::tr!("build-ui-features-probe-mirror-everything"), PROBE_UPDATE),
+    ]
+}
+
+/// LLPanelVolume::onCommitProbe: mirrors are boxes; keep unrelated flags.
+fn probe_update_flags(flags: u8, update: u8) -> u8 {
+    let flags = (flags & !PROBE_UPDATE) | (update & PROBE_UPDATE);
+    if flags & PROBE_MIRROR != 0 { flags | PROBE_BOX } else { flags }
+}
+
+#[cfg(test)]
+#[test]
+fn probe_modes_preserve_unknown_flags_and_keep_mirrors_boxed() {
+    for flags in 0..=u8::MAX {
+        for mode in [0, PROBE_DYNAMIC, PROBE_MIRROR, PROBE_UPDATE] {
+            let changed = probe_update_flags(flags, mode);
+            assert_eq!(changed & PROBE_UPDATE, mode);
+            assert_eq!(changed & !(PROBE_UPDATE | PROBE_BOX), flags & !(PROBE_UPDATE | PROBE_BOX));
+            assert_eq!(changed & PROBE_BOX != 0, flags & PROBE_BOX != 0 || mode & PROBE_MIRROR != 0);
+            assert_eq!(probe_update_flags(changed, mode), changed);
+        }
+    }
+}
 
 const W: f32 = 56.0;
 
@@ -72,8 +128,9 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let enabled = editable && single;
     let (extra, volume, material, click, flexible) = (o.extra.clone(), o.volume, o.prim_material, o.click_action, o.has_flexible_path());
     let mesh = volume.is_mesh();
-    let legacy_canvas =
-        super::legacy::active(ui).then(|| egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 460.0)));
+    let probe_height = 110.0 * super::common::font_scale(ui);
+    let legacy_canvas = super::legacy::active(ui)
+        .then(|| egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 380.0 + probe_height)));
 
     ui.horizontal(|ui| {
         small(
@@ -209,9 +266,38 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         |ui| {
             label(ui, p, aurora_i18n::tr!("build-ui-features-physics-shape-type"));
             let phys = tool.physics.get(&key.local_id).copied();
+            let shape = phys.map(|x| x.shape_type);
+            let roots: Vec<bool> = tool
+                .sel_prims(world)
+                .into_iter()
+                .map(|i| crate::build::root_of(world, i) == i)
+                .collect();
+            let (child_selected, root_selected) = (roots.contains(&false), roots.contains(&true));
+            let mesh_id = volume.sculpt.filter(|sc| sc.is_mesh()).map(|sc| sc.texture);
+            let prim_allowed = mesh_id.is_none_or(|id| {
+                let meshes = &env.scene.meshes;
+                let lookup = || {
+                    let view = meshes.view(&id)?;
+                    let convex = view.header.physics_convex.and_then(|r| view.bytes.section(r));
+                    aurora_assets::mesh_physics::has_physics_shape(&view.header, convex)
+                };
+                tool.mesh_physics.ask(id, lookup) == Some(true)
+            });
+            let shapes = physics_shape_choices(child_selected, prim_allowed, shape);
             ui.horizontal(|ui| {
-                if let Some(t) = combo(ui, "physics_shape", phys.map(|x| x.shape_type), &physics_shapes(), 110.0, editable) {
+                if let Some(t) = combo(ui, "physics_shape", shape, &shapes, 110.0, editable) {
                     tool.set_physics(world, |x| x.shape_type = t);
+                }
+                if root_selected {
+                    // why None is missing, or why a whole linkset set to None
+                    // still shows the root's shape: only child prims take it
+                    let _ = super::common::icon_button(
+                        ui,
+                        p,
+                        "info-circle-filled",
+                        aurora_i18n::tr!("build-ui-features-physics-none-root-hint"),
+                        true,
+                    );
                 }
                 let eye = if s.show_physics_shape { "eye-filled" } else { "eye-off" };
                 if super::common::icon_button(
@@ -289,7 +375,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         probe,
         open,
         legacy_canvas,
-        [0.0, 360.0, 275.0, 80.0],
+        [0.0, 360.0, 275.0, probe_height],
         |ui| {
             probe_section(ui, p, tool, world, idx, &extra, enabled && !mesh);
         },
@@ -507,21 +593,31 @@ fn probe_section(
                 tool.set_extra(world, idx, Extra::Probe(None));
             }
         }
-        if let Some(b) = combo(ui, "probe_shape", on.then_some(pr.flags & PROBE_BOX), &shape_items, 90.0, on) {
+        if let Some(b) = combo(
+            ui,
+            "probe_shape",
+            probe.map(|_| pr.flags & PROBE_BOX),
+            &shape_items,
+            90.0,
+            on && pr.flags & PROBE_MIRROR == 0,
+        ) {
             np.flags = (pr.flags & !PROBE_BOX) | b;
             send = true;
         }
     });
     ui.add_enabled_ui(on, |ui| {
-        if let Some(d) = check(
+        // Unlike LLPanelVolume, keep the mode visible even when graphics
+        // mirrors are disabled: editing an object's flags does not need them.
+        label(ui, p, aurora_i18n::tr!("build-ui-features-probe-update"));
+        if let Some(update) = combo(
             ui,
-            p,
-            on && pr.flags & PROBE_DYNAMIC != 0,
-            false,
-            aurora_i18n::tr!("build-ui-features-dynamic"),
+            "probe_update",
+            probe.map(|_| pr.flags & PROBE_UPDATE),
+            &probe_updates(),
+            ui.available_width(),
             on,
         ) {
-            np.flags = if d { np.flags | PROBE_DYNAMIC } else { np.flags & !PROBE_DYNAMIC };
+            np.flags = probe_update_flags(np.flags, update);
             send = true;
         }
         let mut e = Edit::default();
@@ -533,20 +629,27 @@ fn probe_section(
             };
             row(ui, p, name, 70.0, |ui| spin(ui, value, 0.05, 0.0..=max, 3, W, false))
         };
-        if super::legacy::active(ui) {
-            ui.columns(2, |columns| {
-                e = e.or(field(&mut columns[0], true));
-                e = e.or(field(&mut columns[1], false));
-            });
-        } else {
-            ui.vertical(|ui| {
-                e = e.or(field(ui, true));
-                e = e.or(field(ui, false));
-            });
-        }
+        ui.add_enabled_ui(np.flags & PROBE_MIRROR == 0, |ui| {
+            if super::legacy::active(ui) {
+                ui.columns(2, |columns| {
+                    e = e.or(field(&mut columns[0], true));
+                    e = e.or(field(&mut columns[1], false));
+                });
+            } else {
+                ui.vertical(|ui| {
+                    e = e.or(field(ui, true));
+                    e = e.or(field(ui, false));
+                });
+            }
+        });
         send |= e.commit;
     });
     if send && np != pr && on {
+        // LLPanelVolume::onCommitProbe turns a spherical probe into a box
+        // when Mirror is chosen. Its volume must agree with its probe flag.
+        if pr.flags & PROBE_BOX == 0 && np.flags & PROBE_BOX != 0 && np.flags & PROBE_MIRROR != 0 {
+            tool.set_shape(world, idx, crate::build::shapes::shapes()[0].raw().to_params());
+        }
         tool.set_extra(world, idx, Extra::Probe(Some(np)));
     }
 }
@@ -634,6 +737,31 @@ fn paste_features(tool: &mut BuildTool, world: &mut World, idx: usize, c: Featur
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prim_is_offered_only_for_a_mesh_with_its_own_physics_shape() {
+        let values = |v: Vec<(&str, u8)>| v.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
+        // a mesh without one (or not known yet): None and Convex hull
+        assert_eq!(values(physics_shape_choices(true, false, Some(2))), [PHYSICS_SHAPE_NONE, 2]);
+        assert_eq!(values(physics_shape_choices(false, false, Some(2))), [2]);
+        // a mesh already showing Prim keeps it in the list
+        assert_eq!(values(physics_shape_choices(false, false, Some(0))), [0, 2]);
+    }
+
+    #[test]
+    fn none_is_offered_only_for_a_child_prim() {
+        let values = |v: Vec<(&str, u8)>| v.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
+        // root or lone prim: Prim and Convex hull only
+        assert_eq!(values(physics_shape_choices(false, true, Some(0))), [0, 2]);
+        assert_eq!(values(physics_shape_choices(false, true, None)), [0, 2]);
+        // a child prim in the selection: None too, in the Legacy Viewer's order
+        assert_eq!(values(physics_shape_choices(true, true, Some(0))), [PHYSICS_SHAPE_NONE, 0, 2]);
+        // a root already showing None keeps it in the list, so the combo can name it
+        assert_eq!(
+            values(physics_shape_choices(false, true, Some(PHYSICS_SHAPE_NONE))),
+            [PHYSICS_SHAPE_NONE, 0, 2]
+        );
+    }
 
     #[test]
     fn a_projector_the_agent_cannot_copy_leaves_the_target_its_own() {

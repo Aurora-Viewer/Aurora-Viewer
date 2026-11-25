@@ -53,6 +53,12 @@ pub struct LoginForm {
     pub portraits: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     pub portrait_rx: Option<crossbeam_channel::Receiver<(uuid::Uuid, egui::ColorImage)>>,
     pub password: String,
+    /// "Create an account" was pressed: the page the app opens
+    /// (`ui/signup.rs`).
+    pub create_account: Option<super::signup::SignupPage>,
+    /// The sign-up window is open over the form: the keys typed in its page
+    /// reach egui too, so the form's Enter and arrow shortcuts wait.
+    pub signup_open: bool,
     pub mfa_token: String,
     pub show_mfa: bool,
     pub tos_message: Option<String>,
@@ -70,6 +76,14 @@ pub struct LoginForm {
     /// The other servers agreed to for this account and grid, named in
     /// every attempt (`LoginRequest::accepted_next_servers`).
     pub accepted_next_servers: Vec<String>,
+    /// The login server the login would reach over plain http
+    /// (`NetEvent::LoginFailed::unencrypted_server`), until the next
+    /// attempt; `accept_unencrypted` is its own checkbox.
+    pub unencrypted_server: Option<String>,
+    pub accept_unencrypted: bool,
+    /// The plain http servers agreed to since the viewer started; the app
+    /// keeps them in `Settings::unencrypted_logins` outside demo mode.
+    pub accepted_unencrypted: Vec<String>,
     pub error: Option<String>,
     /// The session ended with its region's restart: the login button reads
     /// "Reconnect" (region_restart.rs).
@@ -112,11 +126,15 @@ pub struct LoginForm {
 }
 
 impl LoginForm {
-    /// Another account or grid: no other login server is agreed to any more.
+    /// Another account or grid: no other login server is agreed to any more,
+    /// and the unencrypted login step of the previous one goes (the servers
+    /// agreed to over plain http stay agreed to).
     pub fn forget_next_server(&mut self) {
         self.next_server = None;
         self.accept_next_server = false;
         self.accepted_next_servers.clear();
+        self.unencrypted_server = None;
+        self.accept_unencrypted = false;
     }
 }
 
@@ -182,6 +200,63 @@ pub(crate) fn terms_link(ui: &mut egui::Ui, p: &Palette, url: &str) {
     {
         ui.ctx().open_url(egui::OpenUrl::new_tab(url));
     }
+}
+
+/// "Create an account" (LLPanelLogin::onClickSignUp, FSPanelLogin::
+/// onClickNewAccount): Second Life's sign-up page, or the grid's own
+/// registration page, in the sign-up window; hidden on a grid that has none.
+/// `size`: its room (a width of 0 fits the label).
+pub(crate) fn create_account_button(ui: &mut egui::Ui, p: &Palette, settings: &Settings, form: &mut LoginForm, size: Vec2) {
+    let Some(page) = super::signup::signup_page(settings) else {
+        return;
+    };
+    let hint = match &page {
+        super::signup::SignupPage::SecondLife => aurora_i18n::tr!("ui-login-create-account-hint").to_owned(),
+        super::signup::SignupPage::Grid(url) => url.clone(),
+    };
+    if widgets::action_button(
+        ui,
+        p,
+        "user-plus",
+        aurora_i18n::tr!("ui-login-create-account"),
+        ActionKind::Flat,
+        size,
+    )
+    .on_hover_text(hint)
+    .clicked()
+    {
+        form.create_account = Some(page);
+    }
+}
+
+/// The new account the sign-up page created, in the login form, as
+/// LLPanelLogin::setCredentialFields does: its name and password, with
+/// "Remember me" and "Remember password" on. On the account cards, the
+/// "Add an account" form opens for it. The form then reads as typed: the
+/// password is not saved before a login, like any typed one.
+pub fn fill_from_signup(settings: &mut Settings, form: &mut LoginForm, username: String, password: String) {
+    if form.accounts_loaded && !form.accounts.is_empty() && !form.adding {
+        carousel::begin_adding(settings, form);
+    }
+    settings.username = username;
+    settings.remember_username = true;
+    settings.remember_password = true;
+    form.password = password;
+    form.show_password = false;
+    // the name and password arrive together: the remembered one of another
+    // name must not clear the password given here (`sync_remembered_password`)
+    form.stored = None;
+    form.stored_for = Some((settings.login_uri(), settings.username.trim().to_lowercase()));
+    form.show_mfa = false;
+    form.mfa_token.clear();
+    form.error = None;
+    form.tos_message = None;
+    form.agree_tos = false;
+    form.critical_message = None;
+    form.read_critical = false;
+    form.forget_next_server();
+    // the login button takes the keyboard
+    form.focused = false;
 }
 
 /// Animated aurora background (also behind the loading screens without a
@@ -356,7 +431,7 @@ pub(super) fn demo_open_start_menu(ui: &egui::Ui, salt: &str, favorites: &StartF
     static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !favorites.list.is_empty()
         && crate::login_favorites::demo() == Some(crate::login_favorites::Demo::Open)
-        && ui.ctx().cumulative_frame_nr() >= 30
+        && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 30
         && !OPENED.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
         egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup"));
@@ -857,6 +932,11 @@ pub fn show(
                     ui.horizontal(|ui| {
                         super::widgets::switch(ui, p, &mut settings.remember_username);
                         ui.label(RichText::new(aurora_i18n::tr!("ui-login-remember-me")).size(12.5).color(p.muted));
+                        // "Create an account" at the end of the row: the card
+                        // keeps its height in a low window
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            create_account_button(ui, p, settings, form, Vec2::new(0.0, 24.0));
+                        });
                     });
                     ui.horizontal(|ui| {
                         super::widgets::switch(ui, p, &mut settings.remember_password);
@@ -920,8 +1000,10 @@ pub fn show(
                     if hot {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
-                    let enter =
-                        (user.lost_focus() || pass.lost_focus() || resp.has_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    // the keys typed in the sign-up page reach egui too
+                    let enter = !form.signup_open
+                        && (user.lost_focus() || pass.lost_focus() || resp.has_focus())
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if (resp.clicked() || enter) && can && enabled {
                         action = LoginAction::Login;
                     }
@@ -995,6 +1077,28 @@ pub fn show(
                     {
                         form.accepted_next_servers.push(server);
                         form.next_server = None;
+                        action = LoginAction::Login;
+                    }
+                }
+                // the login would travel unencrypted: the user decides
+                if let Some(server) = form.unencrypted_server.clone() {
+                    ui.add_space(8.0);
+                    widgets::divider(ui, p);
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-login-unencrypted")).strong().color(p.amber));
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-login-unencrypted-body", server = server.as_str()))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                    if ui
+                        .add_enabled(
+                            form.block_reason.is_none() && !form.busy,
+                            egui::Button::new(aurora_i18n::tr!("ui-login-unencrypted-accept")),
+                        )
+                        .clicked()
+                    {
+                        form.accepted_unencrypted.push(server);
+                        form.unencrypted_server = None;
                         action = LoginAction::Login;
                     }
                 }
@@ -1352,6 +1456,85 @@ mod tests {
         assert!(form.accepted_next_servers.is_empty());
     }
 
+    /// A plain http login address is a step of its own: agreeing names that
+    /// server in the next attempt, and nothing else; another account keeps
+    /// the agreement but not a pending step.
+    #[test]
+    fn an_unencrypted_login_is_agreed_to_in_its_own_step() {
+        fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, label)),
+                _ => None,
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut settings = Settings {
+            username: "Demo Resident".into(),
+            ..Default::default()
+        };
+        let mut form = LoginForm {
+            password: "synthetic".into(),
+            unencrypted_server: Some("grid.example:8002".into()),
+            ..Default::default()
+        };
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let mut draw = |events, form: &mut LoginForm| {
+            let mut action = LoginAction::None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    action = show(ui, &p, &icons, None, &mut settings, form, &info, None);
+                },
+            );
+            output.textures_delta.clear();
+            (action, output)
+        };
+        draw(vec![], &mut form);
+        let (_, output) = draw(vec![], &mut form);
+        let body = aurora_i18n::tr!("ui-login-unencrypted-body", server = "grid.example:8002");
+        assert!(
+            output.shapes.iter().any(|s| position(&s.shape, &body).is_some()),
+            "the server is named"
+        );
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-unencrypted-accept")))
+            .expect("the unencrypted login's button");
+        let mut last = LoginAction::None;
+        for pressed in [true, false] {
+            last = draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                &mut form,
+            )
+            .0;
+        }
+        assert!(matches!(last, LoginAction::Login));
+        assert_eq!(form.accepted_unencrypted, ["grid.example:8002"]);
+        assert!(form.unencrypted_server.is_none());
+        assert!(form.accepted_next_servers.is_empty() && !form.agree_tos && !form.read_critical);
+        form.unencrypted_server = Some("other.example".into());
+        form.accept_unencrypted = true;
+        form.forget_next_server();
+        assert!(form.unencrypted_server.is_none() && !form.accept_unencrypted);
+        assert_eq!(form.accepted_unencrypted, ["grid.example:8002"]);
+    }
+
     /// At 1280 × 720 the news, as tall as the login card, stood over the
     /// version and the Quit button of the line along the bottom.
     #[test]
@@ -1420,7 +1603,7 @@ mod tests {
         let p = crate::theme::Theme::default().palette();
         let icons = Icons::default();
         let info = LoginInfo::preview_release("0.3.0");
-        for size in [Vec2::new(1000.0, 700.0), Vec2::new(1600.0, 900.0)] {
+        for size in [Vec2::new(1000.0, 700.0), Vec2::new(1280.0, 600.0), Vec2::new(1600.0, 900.0)] {
             let ctx = egui::Context::default();
             let mut settings = Settings::default();
             let mut form = LoginForm::default();
@@ -1587,5 +1770,45 @@ mod tests {
         assert!(!has_mask(&draw(REMEMBERED_PASSWORD_MASK, vec![])));
         assert_eq!(password, "replacement");
         assert!(!show_password);
+    }
+    #[test]
+    fn the_new_account_from_the_sign_up_page_fills_the_form() {
+        // the first account: the form shown fills in place
+        let mut settings = Settings::default();
+        let mut form = LoginForm {
+            accounts_loaded: true,
+            error: Some("old".into()),
+            mfa_token: "123456".into(),
+            ..Default::default()
+        };
+        form.stored_for = Some((settings.login_uri(), "someone else".into()));
+        fill_from_signup(&mut settings, &mut form, "synthetic.resident".into(), "synthetic-input".into());
+        assert_eq!(settings.username, "synthetic.resident");
+        assert_eq!(form.password, "synthetic-input");
+        assert!(settings.remember_username && settings.remember_password);
+        assert!(!form.adding);
+        assert_eq!(form.error, None);
+        assert!(form.mfa_token.is_empty());
+        // the remembered password of another name no longer clears it
+        assert_eq!(form.stored_for, Some((settings.login_uri(), "synthetic.resident".into())));
+        assert_eq!(form.stored, None);
+        // on the cards: the "Add an account" form opens for it
+        let mut settings = Settings {
+            username: "saved.resident".into(),
+            ..Default::default()
+        };
+        let mut form = LoginForm {
+            accounts_loaded: true,
+            accounts: vec![crate::login_accounts::Account::from_settings(&settings, false, None)],
+            ..Default::default()
+        };
+        fill_from_signup(&mut settings, &mut form, "synthetic.resident".into(), "synthetic-input".into());
+        assert!(form.adding && form.editing);
+        assert_eq!(form.add_return, Some((settings.login_uri(), "saved.resident".into())));
+        assert_eq!(
+            (settings.username.as_str(), form.password.as_str()),
+            ("synthetic.resident", "synthetic-input")
+        );
+        assert!(settings.remember_password);
     }
 }

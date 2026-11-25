@@ -106,6 +106,11 @@ enum Job {
     RemoveBackups {
         dir: PathBuf,
     },
+    /// Another job on the files of the account, in turn with the lines
+    /// (the Chat Service's archives, its stitched reads and its delete,
+    /// which must never interleave with a transcript write: the LL viewer's
+    /// transcript mutation mutex, LLLogChat::saveHistory).
+    Run(Box<dyn FnOnce() + Send>),
     Sync(Sender<()>),
 }
 
@@ -211,6 +216,13 @@ impl Worker {
     /// Remove the backups of the conversation log of a folder.
     pub fn remove_backups(&self, dir: PathBuf) {
         self.send(Job::RemoveBackups { dir });
+    }
+
+    /// Run `job` on the transcript thread after what is queued. False when
+    /// the queue refused it (full, or the thread is gone): the job did not
+    /// and will not run, and the caller answers for it.
+    pub fn run(&self, job: impl FnOnce() + Send + 'static) -> bool {
+        self.jobs.try_send(Job::Run(Box::new(job))).is_ok()
     }
 
     pub fn merge_port(&self) -> MergePort {
@@ -406,6 +418,7 @@ fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
                     }
                 }
             }
+            Job::Run(job) => job(),
             Job::Sync(done) => {
                 // the exit's flush: what is owed is tried once more first
                 owed.retry();
@@ -438,8 +451,9 @@ fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 /// Remove the transcript files of a folder (and the folder once empty).
-/// Only `.txt` files directly in it: nothing else is ever touched.
-fn erase(dir: &Path) -> std::io::Result<usize> {
+/// Only `.txt` files directly in it: nothing else is ever touched. Only
+/// `ChatLog` decides which folder: never a shared one (`ChatLog::shared`).
+pub(super) fn erase(dir: &Path) -> std::io::Result<usize> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),

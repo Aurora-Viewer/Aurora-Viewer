@@ -115,6 +115,10 @@ impl App {
         let particle_only = surface.is_none();
         let (object, point) = surface.or_else(|| particles.first().map(|p| (None, p.point)))?;
         self.object_menu_pick(object, ray, particles, particle_only);
+        self.object_menu.near = object
+            .filter(|_| point.is_finite() && point.distance(self.world.agent.position) <= 1.5)
+            .and_then(|idx| self.world.objects.get(linkset_root(&self.world, idx)))
+            .map(|root| root.key);
         Some((object, point))
     }
 
@@ -125,6 +129,15 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
+        // the copies of us (the animation editor's mirror, the Fit lab's
+        // mannequins) are no one: no menu on them nor
+        // on what it wears
+        if picked
+            .and_then(|idx| ui::context::wearer(&self.world, idx).or_else(|| self.world.objects.get(idx).map(|o| o.full_id)))
+            .is_some_and(|id| self.world.is_local_copy(&id))
+        {
+            return;
+        }
         // LLToolPie::handleRightClickPick shows no menu on what @interact or
         // @fartouch keeps out of the selection, with UISndInvalidOp on an
         // avatar or an object (not on the land)
@@ -134,6 +147,14 @@ impl App {
             if picked.is_some() {
                 self.world.ui_sounds.push(UiSound::InvalidOp);
             }
+            return;
+        }
+        // Ctrl+right click set to "Edit the object": the menu's Edit at once,
+        // where the menu would offer it; elsewhere the menu
+        if crate::build::CtrlRightClick::edits(&self.settings.build, self.shift, self.ctrl, self.alt)
+            && let Some(idx) = picked
+            && self.ctrl_right_click_edit(idx)
+        {
             return;
         }
         if let Some(source) = picked
@@ -152,6 +173,11 @@ impl App {
         // Shift or Ctrl alone adds to the selection or takes out of it
         // (LLToolPie::handleRightClickPick, the click's mask)
         let extend = crate::build::BuildTool::menu_extends(self.shift, self.ctrl, self.alt);
+        // (the surface clicked is within 1.5 m: `ObjectMenu::near`)
+        let near_root = self.object_menu.near;
+        let near = |world: &World, idx: usize| {
+            near_root.is_some() && world.objects.get(linkset_root(world, idx)).map(|root| root.key) == near_root
+        };
         let me = self.world.agent_id;
         let target = match picked.and_then(|i| self.world.objects.get(i).map(|o| (i, o))) {
             Some((_, o)) if o.is_avatar() => Target::Avatar {
@@ -163,7 +189,15 @@ impl App {
                 let (key, full_id) = (o.key, o.full_id);
                 match ui::context::wearer(&self.world, idx) {
                     Some(w) if w == me => {
-                        self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
+                        let near = near(&self.world, idx);
+                        if self.build.open
+                            && crate::build::menu_selectable(&self.world, idx, near)
+                            && crate::build::BuildTool::menu_only(&self.world, idx)
+                        {
+                            self.build.close(&mut self.world, &mut self.settings.build);
+                        }
+                        self.build
+                            .select_for_menu_near(&mut self.world, &self.settings.build, idx, extend, near);
                         self.flush_build();
                         Target::Attachment { key }
                     }
@@ -180,7 +214,15 @@ impl App {
                             super::object_actions::object_sit_offset(&self.world, &self.camera, idx, point, ray).unwrap_or(Vec3::ZERO);
                         // selected and outlined while the menu is open
                         // (LLToolSelect::handleObjectSelection, temp_select)
-                        self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
+                        let near = near(&self.world, idx);
+                        if self.build.open
+                            && crate::build::menu_selectable(&self.world, idx, near)
+                            && crate::build::BuildTool::menu_only(&self.world, idx)
+                        {
+                            self.build.close(&mut self.world, &mut self.settings.build);
+                        }
+                        self.build
+                            .select_for_menu_near(&mut self.world, &self.settings.build, idx, extend, near);
                         self.flush_build();
                         if let Some(bounds) = self.build.bounds(&self.world, Instant::now()) {
                             self.turn_to_selection(idx, bounds.center);
@@ -207,6 +249,38 @@ impl App {
             pie_path: Vec::new(),
             pie_input_frame: None,
         });
+    }
+
+    /// Ctrl+right click on object `idx` set to "Edit the object": what the
+    /// menu's Edit does (CtxAction::Edit, or EditAttachment for what we
+    /// wear), when its menu would enable Edit (`context_facts`: selectable,
+    /// within @fartouch). False for an avatar, someone else's attachment or
+    /// an object Edit is greyed for: the menu opens.
+    fn ctrl_right_click_edit(&mut self, idx: usize) -> bool {
+        let w = &self.world;
+        let Some(o) = w.objects.get(idx) else { return false };
+        if o.is_avatar() {
+            return false;
+        }
+        let (key, id) = (o.key, o.full_id);
+        let root = linkset_root(w, idx);
+        let wearer = ui::context::wearer(w, idx);
+        let editable = crate::build::selectable_within(w, idx)
+            && (w.rlva_within_fartouch(idx) || w.objects.get(root).is_some_and(|r| self.object_menu.near == Some(r.key)));
+        match wearer {
+            _ if !editable => false,
+            Some(wearer) if wearer != w.agent_id => false,
+            Some(_) => {
+                self.build.release_menu_selection(&self.world);
+                self.on_ctx_action(CtxAction::EditAttachment(key));
+                true
+            }
+            None => {
+                self.build.release_menu_selection(&self.world);
+                self.on_ctx_action(CtxAction::Edit(id));
+                true
+            }
+        }
     }
 
     /// The prims of the object another avatar wears that the open menu is
@@ -250,6 +324,7 @@ impl App {
         // what `toggle_fly` itself answers
         f.fly_blocked = !w.agent.flying && !crate::autopilot::can_takeoff(w);
         f.build_blocked = !self.build.open && !w.rlva_can_build();
+        f.show_original_blocked = w.rlva.has("showinv");
         if let Some(Target::Object { key, full_id, offset }) = self.context_menu.as_ref().map(|m| &m.target) {
             f.object_sit_blocked = refused(NetCommand::RequestSit {
                 handle: key.region,
@@ -292,6 +367,8 @@ impl App {
                 f.sound_blocks = w.derender.owner_sound_flags(*id);
                 f.contact_sets = w.contact_sets.set_names();
                 f.im_blocked = !w.rlva_can_start_im(*id);
+                f.name_hidden = !w.rlva_can_name(*id);
+                f.names_hidden = w.rlva.has("shownames");
                 f.pay_blocked = !crate::ui::context::can_pay_resident(w) || !w.rlva_can_name(*id);
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
@@ -358,10 +435,18 @@ impl App {
             for_sale,
         );
         f.open = interaction::allow_open(w, idx);
-        f.edit = crate::build::selectable(w, idx);
+        // (handle_object_edit: the tools open on the menu's selection, and
+        // drop it at once when @fartouch finds the object too far)
+        f.edit = crate::build::selectable_within(w, idx)
+            && (w.rlva_within_fartouch(idx) || w.objects.get(root).is_some_and(|r| self.object_menu.near == Some(r.key)));
         f.id = o.full_id;
+        f.owned = w
+            .objects
+            .get(root)
+            .is_some_and(|root| crate::ui::context::owns_rezzed(root.owner_id, w.agent_id));
+        f.inventory_hidden = w.rlva.has("showinv");
         f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
-        f.blocked = w.mutes.is_muted_id(&root_id);
+        f.blocked = w.object_block_entry(&o.full_id).is_some();
         f.name = props.map(|p| p.name.clone()).unwrap_or_default();
         if let Some(root) = w.hud_root(idx).and_then(|i| w.objects.get(i)) {
             f.local_hud_scale = Some(w.hud_scales.scale(root.full_id));
@@ -404,6 +489,54 @@ impl App {
             w.place_details.open_panel(source, &w.map, &mut w.landmarks, now);
             self.panels.places = true;
             self.places_ui.show_profile();
+        }
+    }
+
+    /// "Show in inventory" of a rezzed object the agent owns. The Legacy
+    /// Viewer has it on attachments only (handle_object_show_original,
+    /// menu_attachment_self.xml), its closest model: the item goes through
+    /// the same Show original path (show_item_original refuses @showinv,
+    /// a minimised Inventory is restored).
+    fn show_rezzed_in_inventory(&mut self, id: Uuid) {
+        // enable_object_show_original greys the entry; refuse it here too,
+        // before the inventory selection or filters change
+        if self.world.rlva.has("showinv") {
+            return;
+        }
+        let w = &self.world;
+        let Some(root) = w
+            .objects
+            .index_of_uuid(&id)
+            .and_then(|idx| w.objects.get(linkset_root(w, idx)))
+            .filter(|root| crate::ui::context::owns_rezzed(root.owner_id, w.agent_id))
+        else {
+            return;
+        };
+        let Some(props) = self
+            .build
+            .props
+            .get(&root.full_id)
+            .or_else(|| self.interactions.props.get(&root.full_id))
+        else {
+            return;
+        };
+        // ItemID and CreatorID come with full properties only; family ones
+        // leave them nil, and the name alone decides
+        let origin = crate::ui::inventory::rezzed_origin(&w.inventory, props.item_id, &props.name, props.creator_id);
+        match origin {
+            crate::ui::inventory::RezzedOrigin::Item(item) => {
+                self.apply_appearance_action(crate::world::appearance::Action::ShowOriginal(item));
+            }
+            crate::ui::inventory::RezzedOrigin::Items(items) => {
+                ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+                self.inventory_ui
+                    .find_similar(crate::ui::inventory::smart::SmartQuery::items(&items));
+            }
+            // a no-copy object rezzed out of inventory, or a renamed one:
+            // say so rather than show other items as if one were it
+            crate::ui::inventory::RezzedOrigin::None => {
+                self.world.system_message(aurora_i18n::tr!("ui-context-show-in-inventory-none"));
+            }
         }
     }
 
@@ -475,6 +608,7 @@ impl App {
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
             CtxAction::ObjectProfile(id) => self.open_object_profile(id),
+            CtxAction::FindInInventory(id) => self.show_rezzed_in_inventory(id),
             CtxAction::SaveAs(id, format) => self.open_object_export(id, format),
             CtxAction::Pathfinding { id, characters } => {
                 if let Some(index) = self.world.objects.index_of_uuid(&id)
@@ -635,6 +769,30 @@ impl App {
                     self.apply_appearance_action(crate::world::appearance::Action::Remove(item));
                 }
             }
+            CtxAction::DetachDelete(key) => {
+                // the worn object's item, as Detach finds it; Inventory's
+                // "Detach and Delete" confirmation then asks about it without
+                // opening the Inventory window (refused under @showinv)
+                if let Some(idx) = self.world.objects.index_of(&key)
+                    && ui::context::wearer(&self.world, idx) == Some(self.world.agent_id)
+                    && let Some(item) = self
+                        .world
+                        .objects
+                        .get(linkset_root(&self.world, idx))
+                        .and_then(|o| o.attachment_item_id())
+                    && !self.world.rlva.has("showinv")
+                {
+                    // the same rules as Inventory's entry, checked before the
+                    // confirmation: its window may be closed to say why not
+                    let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+                    if let Err(reason) = self
+                        .inventory_ui
+                        .ask_detach_delete(&self.world.inventory, &self.settings.inventory, &facts, item)
+                    {
+                        self.world.system_message(reason);
+                    }
+                }
+            }
             CtxAction::Touch(local_id) => self.menu_touch(local_id),
             CtxAction::Sit { target, offset } => {
                 if let Some(idx) = self.world.objects.index_of_uuid(&target)
@@ -756,21 +914,7 @@ impl App {
             CtxAction::InviteToGroup(id) => self.group_profile_ui.invite.choose_group(vec![id]),
             CtxAction::GiveCallingCard(id) => self.world.offer_calling_card(id),
             CtxAction::ToggleBlockObject { id, name } => {
-                // the whole object is blocked: its root (LLMute of getRootEdit)
-                let root = self
-                    .world
-                    .objects
-                    .index_of_uuid(&id)
-                    .and_then(|i| self.world.objects.get(linkset_root(&self.world, i)))
-                    .map_or(id, |r| r.full_id);
-                let name = if name.is_empty() {
-                    aurora_i18n::tr!("common-object-2", value0 = root.to_string()[..8].to_string())
-                } else {
-                    name
-                };
-                if self.world.mutes.is_muted_id(&root) {
-                    self.world.unblock(root, &name, 0);
-                } else if let Err(e) = self.world.block(root, &name, crate::world::mutes::MuteType::Object) {
+                if let Err(e) = self.world.toggle_block_object(id, &name) {
                     self.world.system_message(e);
                 }
             }
@@ -809,13 +953,11 @@ impl App {
             CtxAction::ReloadAvatar(id) => self.reload_avatar(id),
             CtxAction::Take(id) | CtxAction::TakeCopy(id) => {
                 let copy = matches!(act, CtxAction::TakeCopy(_));
-                if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-                    self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                if let Some(idx) = self.world.objects.index_of_uuid(&id)
+                    && self.build.select_for_action(&mut self.world, &self.settings.build, idx)
+                {
                     self.build.take(&mut self.world, copy);
-                    if !self.build.open {
-                        self.build.deselect_all(&self.world);
-                    }
-                    self.flush_build();
+                    self.release_action_selection();
                 }
             }
             CtxAction::Delete(id) => {
@@ -837,8 +979,9 @@ impl App {
                 }
             }
             CtxAction::DeleteConfirmed(id) => {
-                if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-                    self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                if let Some(idx) = self.world.objects.index_of_uuid(&id)
+                    && self.build.select_for_action(&mut self.world, &self.settings.build, idx)
+                {
                     self.build.delete(&mut self.world);
                     self.flush_build();
                 }
@@ -857,13 +1000,11 @@ impl App {
                 }
             }
             CtxAction::Unlink(id) => {
-                if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-                    self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                if let Some(idx) = self.world.objects.index_of_uuid(&id)
+                    && self.build.select_for_action(&mut self.world, &self.settings.build, idx)
+                {
                     self.build.unlink(&mut self.world);
-                    if !self.build.open {
-                        self.build.deselect_all(&self.world);
-                    }
-                    self.flush_build();
+                    self.release_action_selection();
                 }
             }
             CtxAction::SaveToObjectContents => {
@@ -927,7 +1068,7 @@ impl App {
             }
             CtxAction::OfferTeleport(id) => {
                 if self.world.rlva_can_offer_teleport(id) {
-                    self.contacts_ui.ask_teleport_offer(vec![id], &self.world.rlva_region_label());
+                    self.contacts_ui.ask_teleport_offer(vec![id], &self.world.rlva_lure_region());
                 }
             }
             CtxAction::OpenPeople(tab) => {
@@ -996,12 +1137,28 @@ impl App {
             }
             CtxAction::OfferTeleports(ids) => {
                 let ids = ids.into_iter().filter(|id| self.world.rlva_can_offer_teleport(*id)).collect();
-                self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_region_label());
+                self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_lure_region());
             }
             CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id, self.world.status.cfg.reject_teleports),
-            CtxAction::ActivateGroup(id) => self.send(NetCommand::ActivateGroup(id)),
+            CtxAction::ActivateGroup(id) => {
+                if self.world.rlva_can_change_group() {
+                    self.send(NetCommand::ActivateGroup(id));
+                }
+            }
+            // the menu greys Join otherwise (ui::context::GroupLinkItems):
+            // checked again for a click on a menu drawn before the change
+            CtxAction::JoinGroup(id) => {
+                if crate::ui::context::GroupLinkItems::of(&self.world, id, false).join {
+                    self.group_profile_ui.join(&self.world, id);
+                }
+            }
+            CtxAction::RequestGroupData(id) => self.world.search.request_group(id),
             CtxAction::PinGroup(id) => self.world.groups.toggle_favorite(id),
-            CtxAction::LeaveGroup(id) => self.contacts_ui.ask_leave_group(id),
+            CtxAction::LeaveGroup(id) => {
+                if self.world.rlva_can_leave_group(id) {
+                    self.contacts_ui.ask_leave_group(id);
+                }
+            }
             CtxAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.start_group_chat(id, true);
@@ -1018,7 +1175,7 @@ impl App {
             CtxAction::ClearAllMarks => self.world.avatar_marks.clear_all(),
             CtxAction::ShowHistory(conversation) => {
                 let (title, file) = self.world.transcript_of(conversation);
-                self.history_ui.show_file(title, file);
+                self.open_history(conversation, title, file);
             }
         }
     }

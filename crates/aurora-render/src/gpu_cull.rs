@@ -66,13 +66,18 @@ pub mod object_flags {
     pub const POSED: u32 = 32;
     /// Attachment point marked invisible in first person by avatar_lad.xml.
     pub const FIRST_PERSON_HIDDEN: u32 = 64;
-    /// Left out of the photo by its isolation (the viewer's
-    /// `snapshot::isolate`) or by a hidden rendering type
-    /// (`scene::render_types`): not drawn, casting no shadow, in no
+    /// Left out by a hidden rendering type (`scene::render_types`), the
+    /// avatar studio, or an avatar the photo's isolation leaves out (the
+    /// viewer's `snapshot::isolate`): not drawn, casting no shadow, in no
     /// reflection.
     pub const HIDDEN: u32 = 128;
     /// Physical (moves on its own): not in the rain's shelter map.
     pub const PHYSICAL: u32 = 256;
+    /// A linkset the photo's isolation leaves out of the picture only
+    /// (`snapshot::isolate::View::Unseen`): not in the main view, but still
+    /// casting its shadow and in the reflections and probe captures, so
+    /// that the subject keeps the scene's light (#2316).
+    pub const UNSEEN: u32 = 512;
 }
 
 /// `CullObject::state` of an avatar entry, set every frame by the scene.
@@ -535,7 +540,8 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let fl = frame.sizes[3];
-    let viewed = sphere_in(&frame.planes, c, r)
+    let viewed = o.flags & object_flags::UNSEEN == 0
+        && sphere_in(&frame.planes, c, r)
         && !(own_first_person && (o.flags & object_flags::FIRST_PERSON_HIDDEN != 0 || f.bits & FACE_FIRST_PERSON_HIDDEN != 0));
     let shadow_reach = fl & frame_flags::SHADOWS != 0 && d - r < frame.dist[0];
     let reflect_reach = fl & frame_flags::REFLECTIONS != 0 && d - r < frame.dist[1];
@@ -743,6 +749,55 @@ impl DirtyChunks {
     }
 }
 
+/// The entries of a mirrored table that changed, for a reader that follows
+/// the changes instead of comparing every entry each frame (the ray
+/// tracer's faces, rt_shadows.rs `gather`): each entry once, until taken.
+/// Off until a reader asks, so that nothing piles up unread.
+#[derive(Default, Debug)]
+pub(crate) struct Touched {
+    on: bool,
+    /// The entries in `ids`, a bit each.
+    bits: Vec<u64>,
+    ids: Vec<u32>,
+}
+
+impl Touched {
+    /// Starts following the changes: whether it already did (what changed
+    /// before is not known).
+    pub(crate) fn watch(&mut self) -> bool {
+        std::mem::replace(&mut self.on, true)
+    }
+
+    /// Stops following: nothing is kept until the next `watch`.
+    pub(crate) fn unwatch(&mut self) {
+        self.on = false;
+        self.bits.clear();
+        self.ids.clear();
+    }
+
+    pub(crate) fn mark(&mut self, i: usize) {
+        if !self.on {
+            return;
+        }
+        let (word, bit) = (i / 64, 1u64 << (i % 64));
+        if self.bits.len() <= word {
+            self.bits.resize(word + 1, 0);
+        }
+        if self.bits[word] & bit == 0 {
+            self.bits[word] |= bit;
+            self.ids.push(i as u32);
+        }
+    }
+
+    /// Adds the changed entries to `into`, and starts again.
+    pub(crate) fn take(&mut self, into: &mut Vec<u32>) {
+        for &id in &self.ids {
+            self.bits[id as usize / 64] = 0;
+        }
+        into.append(&mut self.ids);
+    }
+}
+
 /// Storage buffer mirrored on the CPU; only changed chunks are uploaded.
 pub struct GpuTable<T: Pod + PartialEq> {
     label: &'static str,
@@ -750,6 +805,9 @@ pub struct GpuTable<T: Pod + PartialEq> {
     mirror: Vec<T>,
     fill: T,
     dirty: DirtyChunks,
+    /// The entries whose change `differs` tells, for `take_touched`.
+    touched: Touched,
+    differs: Option<fn(&T, &T) -> bool>,
     /// Bumped when the buffer is reallocated (bind groups must follow).
     pub generation: u64,
     /// Bytes sent by the last `flush`.
@@ -766,10 +824,31 @@ impl<T: Pod + PartialEq> GpuTable<T> {
             mirror: Vec::with_capacity(cap),
             fill,
             dirty: DirtyChunks::default(),
+            touched: Touched::default(),
+            differs: None,
             generation: 0,
             uploaded: 0,
             backoff: Backoff::default(),
         }
+    }
+
+    /// Follows the entries that change in a way `differs` tells (from what
+    /// they were to what they are), for `take_touched`: whether it already
+    /// did.
+    pub(crate) fn watch(&mut self, differs: fn(&T, &T) -> bool) -> bool {
+        self.differs = Some(differs);
+        self.touched.watch()
+    }
+
+    /// Stops following the changes (`watch`).
+    pub(crate) fn unwatch(&mut self) {
+        self.differs = None;
+        self.touched.unwatch();
+    }
+
+    /// Adds the entries that changed since the last call to `into`.
+    pub(crate) fn take_touched(&mut self, into: &mut Vec<u32>) {
+        self.touched.take(into);
     }
 
     fn desc(label: &str, cap: usize) -> wgpu::BufferDescriptor<'_> {
@@ -811,6 +890,9 @@ impl<T: Pod + PartialEq> GpuTable<T> {
             }
         }
         if self.mirror[i] != v {
+            if self.differs.is_some_and(|differs| differs(&self.mirror[i], &v)) {
+                self.touched.mark(i);
+            }
             self.mirror[i] = v;
             self.dirty.mark(i);
         }
@@ -832,6 +914,9 @@ impl<T: Pod + PartialEq> GpuTable<T> {
         let fill = self.fill;
         for i in 0..self.mirror.len() {
             if self.mirror[i] != fill {
+                if self.differs.is_some_and(|differs| differs(&self.mirror[i], &fill)) {
+                    self.touched.mark(i);
+                }
                 self.mirror[i] = fill;
                 self.dirty.mark(i);
             }
@@ -1649,7 +1734,7 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 51] = [
+        let pairs: [(&str, u32); 52] = [
             ("F_PROBE_SHADOW", frame_flags::PROBE_SHADOW),
             ("F_FIRST_PERSON", frame_flags::FIRST_PERSON),
             ("F_SHOW_SELF", frame_flags::SHOW_SELF),
@@ -1695,6 +1780,7 @@ mod tests {
             ("OBJ_POSED", object_flags::POSED),
             ("OBJ_HIDDEN", object_flags::HIDDEN),
             ("OBJ_PHYSICAL", object_flags::PHYSICAL),
+            ("OBJ_UNSEEN", object_flags::UNSEEN),
             ("F_SPOT_SHELTER", frame_flags::SPOT_SHELTER),
             ("SKELETON_ANCHOR", SKELETON_ANCHOR),
             ("AV_FULL", avatar_state::FULL),
@@ -1716,6 +1802,38 @@ mod tests {
             assert_eq!(value(name), v, "{name}");
         }
         const { assert!(REGION_PRE2 + MAIN_BINS == REGIONS && REGION_PRE1 == BINS) };
+    }
+
+    #[test]
+    fn touched_entries_are_given_once_when_followed() {
+        let mut t = Touched::default();
+        let mut ids = Vec::new();
+        // not followed: nothing is kept
+        t.mark(3);
+        t.take(&mut ids);
+        assert!(ids.is_empty());
+        assert!(!t.watch() && t.watch());
+        for i in [3, 700, 3, 64, 700] {
+            t.mark(i);
+        }
+        t.take(&mut ids);
+        assert_eq!(ids, [3, 700, 64]);
+        // taken: the next changes are new
+        t.mark(3);
+        t.take(&mut ids);
+        assert_eq!(ids, [3, 700, 64, 3]);
+        // no longer followed: what was marked is dropped, and the next
+        // `watch` starts from nothing
+        t.mark(9);
+        t.unwatch();
+        t.mark(10);
+        ids.clear();
+        t.take(&mut ids);
+        assert!(ids.is_empty());
+        assert!(!t.watch());
+        t.mark(9);
+        t.take(&mut ids);
+        assert_eq!(ids, [9]);
     }
 
     #[test]

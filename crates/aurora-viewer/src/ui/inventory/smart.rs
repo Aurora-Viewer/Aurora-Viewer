@@ -218,6 +218,18 @@ impl SmartQuery {
         self.root.uses(field)
     }
 
+    /// Exactly these items, by their inventory ids: "Show in inventory" of
+    /// a rezzed object when several items share its name.
+    pub fn items(ids: &[Uuid]) -> Self {
+        let mut query = Self::default();
+        query.root.any = true;
+        query.root.nodes = ids
+            .iter()
+            .map(|id| Node::Rule(Rule::text(Field::Uuid, Op::Pattern, &id.to_string())))
+            .collect();
+        query
+    }
+
     /// The advanced search a quick search stands for, so switching keeps
     /// what was typed: `a+b` is all of its words, `"word"` a whole word,
     /// the All field any of the text fields.
@@ -659,5 +671,17 @@ mod tests {
         assert_eq!(name_stem("Hair_04"), "hair");
         assert_eq!(name_stem("Plain hat"), "plain hat");
         assert_eq!(name_stem("2024"), "2024");
+    }
+
+    #[test]
+    fn items_query_matches_exactly_its_ids() {
+        let (a, b) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let m = Matcher::new(&SmartQuery::items(&[a, b]), &HashMap::new(), 0, 0);
+        let mut s = subject("chair");
+        assert!(m.matches(&s));
+        s.id = b;
+        assert!(m.matches(&s));
+        s.id = Uuid::from_u128(0x70);
+        assert!(!m.matches(&s), "an id is matched whole, never as a part");
     }
 }

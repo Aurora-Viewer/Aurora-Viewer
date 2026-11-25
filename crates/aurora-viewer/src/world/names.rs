@@ -94,7 +94,7 @@ impl Default for NameOptions {
 ///
 /// A lookup that names no scope is `World`: stricter than the Legacy Viewer
 /// where that one asks nothing, never looser.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NameScope {
     /// Someone met in the world: name tag, local chat, radar and nearby
     /// lists, mini-map, hover tip, avatar menus, the notices that are not
@@ -139,6 +139,70 @@ impl NameScope {
                 NameScope::Creator { owner } => owner != *id && !nearby(),
                 NameScope::Roster => true,
             }
+    }
+}
+
+/// A text about to be shown under RLVa's `@shownames` and `@showloc`: the
+/// names its avatar links and mentions give (`names`), and whether what is
+/// written in it is rewritten (the names of the residents around, the
+/// regions and the parcel replaced by their stand-ins).
+///
+/// The Legacy Viewer rewrites what no resident typed: an object's chat and
+/// instant messages, the system's messages, its own notices
+/// (LLFloaterIMNearbyChatHandler::processChat tests
+/// `CHAT_SOURCE_AGENT != mSourceType` before RlvUtil::filterNames and
+/// filterLocation, llfloaterimnearbychathandler.cpp; process_alert_core,
+/// llviewermessage.cpp). What a resident typed is shown as typed, in the
+/// nearby chat as in an IM session ("avatar => filter only their name",
+/// process_chat_from_simulator; process_improved_im runs neither filter),
+/// and so is what a script wrote in its dialog, its text box or its link
+/// prompt (process_script_dialog and process_load_url have no RLVa test).
+/// A scope alone (`NameScope::into`) is a rewritten text.
+///
+/// A `/mention` link is rewritten where RlvUtil::filterMentions
+/// (rlvcommon.cpp) runs: on every line of the nearby chat, a resident's
+/// included (LLFloaterIMNearbyChatHandler::processChat), and at the end of
+/// RlvUtil::filterNames, so in every rewritten text. Nothing runs it on a
+/// script's prompt, where LLUrlEntryAgentMention (indra/llui/llurlentry.cpp,
+/// no RLVa test) writes "@" and the resident's name: `mentions` is
+/// `NameScope::Roster` there, and `names` everywhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextScope {
+    pub names: NameScope,
+    /// The names its `/mention` links give.
+    pub mentions: NameScope,
+    pub rewritten: bool,
+}
+
+impl TextScope {
+    /// A text shown as written, its links named as `names` names them: what
+    /// a resident typed.
+    pub fn verbatim(names: NameScope) -> Self {
+        Self {
+            names,
+            mentions: names,
+            rewritten: false,
+        }
+    }
+
+    /// A script's prompt (`notifications::Kind::as_received`): shown as
+    /// written, a mention in it naming its resident.
+    pub fn as_received(names: NameScope) -> Self {
+        Self {
+            names,
+            mentions: NameScope::Roster,
+            rewritten: false,
+        }
+    }
+}
+
+impl From<NameScope> for TextScope {
+    fn from(names: NameScope) -> Self {
+        Self {
+            names,
+            mentions: names,
+            rewritten: true,
+        }
     }
 }
 
@@ -295,7 +359,14 @@ impl AvatarName {
     /// Username shown after the display name in chat headers
     /// (FSChatHistoryHeader: " - username" when a display name was chosen).
     pub fn chat_username(&self, o: &NameOptions) -> Option<String> {
-        (o.use_display_names && o.show_usernames && !self.is_default).then(|| self.user_name_for_display(o))
+        if !o.use_display_names || !o.show_usernames || self.is_default {
+            return None;
+        }
+        if self.legacy_first.is_empty() && self.legacy_last.is_empty() {
+            // A People API reply can supply only the account and display names.
+            return (!self.username.is_empty()).then(|| self.username.clone());
+        }
+        Some(self.user_name_for_display(o))
     }
 
     fn to_llsd(&self) -> Llsd {
@@ -415,15 +486,58 @@ impl AvatarNames {
         }
     }
 
+    /// A number that changes with what `shows` answers (RLVa's
+    /// `@shownames`, its exceptions, the residents around), for the views
+    /// that keep names a while (the inventory's creator column).
+    pub fn privacy_key(&self) -> u64 {
+        use std::hash::{BuildHasher, BuildHasherDefault};
+        if !self.rlva_private {
+            return 0;
+        }
+        let hasher = BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default();
+        // order-free: the sum of each id's hash
+        let sum = |ids: &HashSet<Uuid>| ids.iter().fold(0u64, |sum, id| sum.wrapping_add(hasher.hash_one(id)));
+        1u64.wrapping_add(sum(&self.rlva_allowed))
+            .wrapping_add(sum(&self.rlva_nearby).rotate_left(29))
+    }
+
     /// `scope` shows the real name of `id` (see `NameScope`).
     pub fn shows(&self, scope: NameScope, id: &Uuid) -> bool {
         !self.rlva_private || scope.shows(id, self.rlva_allowed.contains(id), || self.rlva_nearby.contains(id))
+    }
+
+    /// `id` stands in a region around while names are private
+    /// (`set_rlva_nearby`).
+    pub fn rlva_around(&self, id: &Uuid) -> bool {
+        self.rlva_nearby.contains(id)
+    }
+
+    /// `shows` for the Legacy windows that test `mID != gAgent.getID()`
+    /// where the others ask RlvActions::canShowName: `me` alone is named,
+    /// an `@shownames:<uuid>` exception is hidden as anyone.
+    pub fn shows_but_exceptions(&self, scope: NameScope, id: &Uuid, me: &Uuid) -> bool {
+        !self.rlva_private || scope.shows(id, id == me, || self.rlva_nearby.contains(id))
     }
 
     /// Canonical data for privacy filtering; never a display accessor.
     pub fn raw(&self, id: &Uuid) -> Option<&AvatarName> {
         self.cache.get(id)
     }
+    /// The display name RlvUtil::filterNames (indra/newview/rlvcommon.cpp)
+    /// replaces for `id`: the one LLAvatarNameCache::get gives with the
+    /// contact sets' custom name check (indra/llmessage/llavatarnamecache.cpp,
+    /// LGGContactSets::checkCustomName): the alias in quotes, or the legacy
+    /// name, "Resident" included, when the display name is removed. None
+    /// until the name is cached. Canonical data for privacy filtering.
+    pub fn rlva_filter_display_name(&self, id: &Uuid) -> Option<String> {
+        let n = self.cache.get(id)?;
+        Some(match self.aliases.get(id) {
+            Some(alias) if alias == super::contact_sets::DN_REMOVED => format!("{} {}", n.legacy_first, n.legacy_last),
+            Some(alias) => format!("'{alias}'"),
+            None => n.display_name.clone(),
+        })
+    }
+
     /// The cached name (even expired, which queues a refresh); a missing
     /// one is queued for the next request. The name of someone met in the
     /// world (`NameScope::World`): `get_in` for the other cases.

@@ -6,6 +6,7 @@
 use super::widgets::{self, Floater, flat_button};
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::NameScope;
 use egui::{RichText, Vec2};
 use uuid::Uuid;
 
@@ -26,6 +27,17 @@ const TAB_UUID: usize = 3;
 /// (LLFloaterAvatarPicker::onList, llfloateravatarpicker.cpp).
 fn open_tab(tab: usize, nearby_allowed: bool) -> usize {
     if tab == TAB_NEAR && !nearby_allowed { TAB_SEARCH } else { tab }
+}
+
+/// The "Near me" tab's rows: who is around within its range, nearest
+/// first, with the distance. LLFloaterAvatarPicker greys the tab under
+/// @shownames (`open_tab`) and has no @shownearby test: `people::around`.
+fn near_rows(world: &World) -> Vec<(Uuid, String, String)> {
+    super::people::around(world)
+        .into_iter()
+        .filter(|n| n.3 <= NEAR_ME_RANGE)
+        .map(|n| (n.0, n.1, format!("{:.0} m", n.3)))
+        .collect()
 }
 
 #[derive(Default)]
@@ -100,16 +112,15 @@ impl AvatarPicker {
                         .social
                         .friends
                         .iter()
-                        .map(|f| (f.id, world.social.name_of(&f.id), String::new()))
+                        // (LLFloaterAvatarPicker has an RLVa test on its
+                        // "near me" tab alone: a list of people known
+                        // besides the world, `NameScope::Roster`)
+                        .map(|f| (f.id, world.social.name_in(NameScope::Roster, &f.id), String::new()))
                         .collect();
                     v.sort_by_key(|r| crate::natural_order::key(&r.1));
                     v
                 }
-                TAB_NEAR => super::people::nearby(world)
-                    .into_iter()
-                    .filter(|n| n.3 <= NEAR_ME_RANGE)
-                    .map(|n| (n.0, n.1, format!("{:.0} m", n.3)))
-                    .collect(),
+                TAB_NEAR => near_rows(world),
                 TAB_UUID => {
                     ui.label(
                         RichText::new(aurora_i18n::tr!("ui-avatar-picker-enter-a-person-s-uuid"))
@@ -120,7 +131,7 @@ impl AvatarPicker {
                     match Uuid::parse_str(self.uuid_text.trim()) {
                         Ok(id) if !id.is_nil() => {
                             world.social.want_name(id);
-                            vec![(id, world.social.name_of(&id), String::new())]
+                            vec![(id, world.social.name_in(NameScope::Roster, &id), String::new())]
                         }
                         _ => Vec::new(),
                     }
@@ -427,5 +438,20 @@ mod tests {
         };
         click_select(&mut sel, &mut anchor, &order, order[39], shift);
         assert_eq!(sel.len(), 40);
+    }
+    /// LLFloaterAvatarPicker has no @shownearby test: its "Near me" tab
+    /// still lists who is around.
+    #[test]
+    fn the_near_me_tab_lists_who_is_around_under_shownearby() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let rows = near_rows(&world);
+        assert!(!rows.is_empty(), "fixture: residents around");
+        world.rlva.configure(true);
+        world.rlva_console_input("@shownearby=n");
+        assert!(super::super::people::nearby(&world).is_empty(), "the nearby list is hidden");
+        assert_eq!(near_rows(&world), rows);
     }
 }

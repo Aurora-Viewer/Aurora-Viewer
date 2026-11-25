@@ -74,8 +74,12 @@ fn color(uv: vec2<f32>) -> vec3<f32> {
             result = mix(original, drift, strength);
         }
         case 4u: {
+            // the grid starts at the bottom-left corner, as GL's texture
+            // coordinates there
             let block = max(vec2<f32>(1.0), round(p.effect.xy * sign(strength))) / p.screen.xy;
-            result = color(block * floor(in.uv / block));
+            let gl = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
+            let snapped = block * floor(gl / block);
+            result = color(vec2<f32>(snapped.x, 1.0 - snapped.y));
         }
         default: {}
     }

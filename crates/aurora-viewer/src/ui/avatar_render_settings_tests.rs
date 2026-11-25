@@ -6,7 +6,6 @@ fn row(n: u128, name: &str, mode: u8) -> Row {
         id: Uuid::from_u128(n),
         name: name.to_owned(),
         mode,
-        can_name: true,
     }
 }
 
@@ -137,10 +136,7 @@ fn avatar_render_settings_controls_edit_multiple_entries_and_track_external_remo
 #[test]
 fn avatar_render_settings_filter_sort_and_privacy_use_current_display_names() {
     let mut editor = AvatarRenderSettings::default();
-    let mut rows = vec![row(11, "Zulu Demo", 2), row(12, "Alice Demo", 1)];
-    rows[0].can_name = false;
-    editor.filter = rows[0].id.to_string();
-    assert!(editor.rows(&rows).is_empty(), "anonymous UUID cannot be searched");
+    let rows = vec![row(11, "Zulu Demo", 2), row(12, "Alice Demo", 1)];
     editor.filter = rows[1].id.to_string();
     assert_eq!(editor.rows(&rows)[0].name, "Alice Demo");
     editor.filter.clear();

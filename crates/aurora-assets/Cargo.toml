@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 base64 = "0.23.1"
 flate2 = "1.1.10"
+zopfli = { version = "0.8.4", default-features = false, features = ["std", "zlib"] }
 glam = "0.34.1"
 image = { version = "0.25.10", default-features = false, features = ["png", "tga", "jpeg", "bmp"] }
 log = "0.4.34"
@@ -24,6 +25,9 @@ parry3d = "0.31.1"
 # the tree through the voice stack (webrtc), ISC / MIT / Apache-2.0
 ring = "0.17.14"
 aurora-llsd = { path = "../aurora-llsd" }
+# The texture decoder (JPEG 2000); openjpeg-sys stays for what it refuses
+# and for encoding
+aurora-j2k = { path = "../aurora-j2k" }
 
 [build-dependencies]
 cc = "1.6.0"

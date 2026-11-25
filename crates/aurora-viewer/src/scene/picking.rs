@@ -122,6 +122,22 @@ pub(super) fn worn_unrigged_mesh(o: &Object, g: &super::ObjGpu) -> bool {
     !g.rigged && !g.is_avatar && g.owner_avatar.is_some() && o.visual_volume().is_mesh()
 }
 
+/// Where an avatar's click box stands: where its body is drawn. The
+/// animation editor's couple partner is drawn away from their place
+/// (`World::couple_shift`), and a click on them where they show picks them.
+fn avatar_center(world: &World, idx: usize, g: &ObjGpu) -> Vec3 {
+    world
+        .objects
+        .get(idx)
+        .and_then(|o| {
+            world
+                .avatar_models
+                .get(&o.full_id)
+                .and_then(|model| world.couple_shift(o.full_id, *model))
+        })
+        .map_or(g.center, |shift| shift.transform_point3(g.center))
+}
+
 pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let mut near = 0.0f32;
     let mut far = f32::INFINITY;
@@ -593,7 +609,7 @@ impl Scene {
                 || g.rigged
                 || o.extra.reflection_probe.is_some()
                 || !self.first_person_object_visible(idx, g)
-                || !ray_may_hit(g, ray)
+                || (!g.is_avatar && !ray_may_hit(g, ray))
             {
                 return None;
             }
@@ -604,8 +620,8 @@ impl Scene {
                     ray_box(
                         ray.0,
                         ray.1,
-                        g.center - Vec3::new(0.35, 0.35, 1.0),
-                        g.center + Vec3::new(0.35, 0.35, 1.0),
+                        avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                        avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                     )?,
                     None,
                 )
@@ -750,8 +766,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else {
                 self.face_hit_mode(world, idx, ray, now, false, FacePick::Inventory).map(|h| h.t)
@@ -812,8 +828,9 @@ impl Scene {
             .chain(all)
             .filter_map(|idx| Some((idx, self.gpu.get(idx)?)))
             // (what is not drawn is not picked: a hidden rendering type, as
-            // LLPipeline::lineSegmentIntersectInWorld skips its partitions)
-            .filter(|(idx, gpu)| !gpu.hidden && self.first_person_object_visible(*idx, gpu))
+            // LLPipeline::lineSegmentIntersectInWorld skips its partitions,
+            // or what the photo leaves out)
+            .filter(|(idx, gpu)| !gpu.hidden && !gpu.unseen && !gpu.rlva_hidden && self.first_person_object_visible(*idx, gpu))
     }
 
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {
@@ -1549,8 +1566,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else if mode == FacePick::Left {
                 self.face_hit_mode(world, idx, ray, now, false, mode).map(|h| h.t)
@@ -1635,8 +1652,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else if ray_may_hit(g, ray) {
                 self.face_hit_mode(world, idx, ray, now, clicker, FacePick::Left).map(|h| h.t)
@@ -1792,6 +1809,16 @@ impl Scene {
         })
     }
 
+    /// Only a press near an ignored volume needs to see behind occluders.
+    pub fn may_pick_ignored(&self, ray: (Vec3, Vec3)) -> bool {
+        self.ignored_draws.iter().any(|&idx| {
+            let object = &self.gpu[idx];
+            // A deforming or anchored volume can move beyond its static
+            // bounds. A bent planet is outside the straight-ray test too.
+            self.planet_radius.is_some() || object.anchor.is_some() || self.flexibles.contains_key(&idx) || ray_may_hit(object, ray)
+        })
+    }
+
     pub fn action_point(&self, world: &World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, build: bool, far: f32) -> Option<Vec3> {
         if build {
             return depth;
@@ -1827,7 +1854,26 @@ impl Scene {
         } else {
             depth
         };
-        let point = self.transparent_action_point_mode(world, ray, point, true, far, among, FacePick::Left);
+        self.left_action_surfaces(world, ray, point, far, among)
+    }
+
+    /// The pick pass already went through ignored volumes, including opaque
+    /// ones. Keep the usual priority of scripted and transparent surfaces.
+    pub fn drawn_action_point(&self, world: &World, ray: (Vec3, Vec3), depth: Option<Vec3>, far: f32) -> Option<Vec3> {
+        let mut candidates = Vec::new();
+        self.pick.point_candidates(ray, depth, &mut candidates);
+        self.left_action_surfaces(world, ray, depth, far, Some(&candidates))
+    }
+
+    fn left_action_surfaces(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        depth: Option<Vec3>,
+        far: f32,
+        among: Option<&[usize]>,
+    ) -> Option<Vec3> {
+        let point = self.transparent_action_point_mode(world, ray, depth, true, far, among, FacePick::Left);
         // Unlike HUDs and worn clickers, world Blend faces let alpha-zero
         // texels through (#1574). Hover keeps its existing geometric policy.
         let blend = self.blend_hit_mode(world, ray, point, far, among, FacePick::LeftBlend);
@@ -3207,9 +3253,9 @@ pub(crate) mod tests {
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
-        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = true;
+        world.objects.get_mut(front).unwrap().render.blinn_phong_faces = u64::MAX;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
-        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = false;
+        world.objects.get_mut(front).unwrap().render.blinn_phong_faces = 0;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
     }
 
@@ -3532,6 +3578,20 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_couple_partner_is_clicked_where_the_animation_editor_draws_them() {
+        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let id = world.objects.get(front).unwrap().full_id;
+        scene.gpu[front].is_avatar = true;
+        scene.gpu[front].center = Vec3::new(10.0, 10.0, 1.0);
+        world.avatar_models.insert(id, Mat4::from_translation(Vec3::new(10.0, 10.0, 0.0)));
+        assert_eq!(avatar_center(&world, front, &scene.gpu[front]), Vec3::new(10.0, 10.0, 1.0));
+        world.couple_partner = Some(id);
+        world.couple_place = (Vec3::new(0.0, 2.0, 0.0), 0.0);
+        let at = avatar_center(&world, front, &scene.gpu[front]);
+        assert!(at.abs_diff_eq(Vec3::new(10.0, 12.0, 1.0), 1e-4), "{at}");
+    }
+
+    #[test]
     fn resource_drops_target_the_nearest_transparent_face_without_changing_rez_picking() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         for idx in [front, back] {
@@ -3696,9 +3756,9 @@ pub(crate) mod tests {
         ov.transforms[0].offset = [0.2, 0.1];
         world.gltf_overrides.insert(key, vec![(0, ov)].into());
         assert!((uv(&world, &scene) - Vec2::new(0.9, 0.55)).length() < 0.0001);
-        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = true;
+        world.objects.get_mut(front).unwrap().render.blinn_phong_faces = u64::MAX;
         assert!((uv(&world, &scene) - Vec2::new(0.25, 0.65)).length() < 0.0001);
-        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = false;
+        world.objects.get_mut(front).unwrap().render.blinn_phong_faces = 0;
         assert!((uv(&world, &scene) - Vec2::new(0.9, 0.55)).length() < 0.0001);
     }
 
@@ -4765,5 +4825,42 @@ pub(crate) mod tests {
                 f.color[3] = 1.0;
             }
         }
+    }
+
+    /// LLViewerJointAttachment::setAttachmentVisibility and
+    /// LLOctreeIntersect::check (llspatialpartition.cpp): what @showself or
+    /// @showselfhead hides of our avatar is not picked, the ray goes on.
+    #[test]
+    fn rlva_hidden_attachments_let_the_pick_through() {
+        let (world, mut scene, front, _) = indexed_scene_with_two_objects();
+        let key = GeomKey::Prim { hash: 2, lod: 0 };
+        scene.geoms.insert(
+            key,
+            GeomEntry {
+                refs: 1,
+                zero_since: 0,
+                state: GeomState::Ready(Arc::new(GpuGeom {
+                    faces: vec![None],
+                    min: Vec3::new(2.0, -0.5, -0.5),
+                    max: Vec3::new(2.0, 0.5, 0.5),
+                    joint_bounds: Vec::new(),
+                    pick_faces: vec![Some(PickFace::new(
+                        vec![[2.0, -0.5, -0.5], [2.0, 0.5, -0.5], [2.0, 0.5, 0.5], [2.0, -0.5, 0.5]],
+                        vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        vec![0, 2, 1, 0, 3, 2],
+                    ))],
+                })),
+            },
+        );
+        scene.gpu[front].geom = Some(key);
+        let (point, ray) = (Vec3::new(5.0, 0.0, 50.0), (Vec3::new(0.0, 0.0, 50.0), Vec3::X));
+        assert_eq!(scene.interaction_at_ray(&world, point, ray, false), Some(front));
+        scene.gpu[front].rlva_hidden = true;
+        assert_ne!(scene.interaction_at_ray(&world, point, ray, false), Some(front));
+        assert_ne!(
+            scene.interaction_at_ray(&world, point, ray, true),
+            Some(front),
+            "hidden faces included"
+        );
     }
 }

@@ -32,20 +32,14 @@ fn batch(queue: &mut Vec<(Uuid, Action)>, source: Uuid) -> (&mut Vec<Uuid>, &mut
     }
 }
 
-/// The slot a wear replaces: an attachment point (none for the default
-/// point, which RlvForceWear::addAttachment never clears), a clothing layer
-/// or a body part type.
+/// The slot a wear replaces: the attachment point the item names (none
+/// when it names none: RlvForceWear::addAttachment never clears the default
+/// point, whatever point the object was saved with), a clothing layer or a
+/// body part type.
 fn slot(world: &World, request: &WearRequest) -> Option<(i32, u32)> {
     let it = world.inventory.items.get(&request.item)?;
     match it.asset_type {
-        6 => {
-            let point = if request.point == 0 {
-                it.flags & 0xff
-            } else {
-                u32::from(request.point)
-            };
-            (point != 0).then_some((6, point))
-        }
+        6 => (request.point != 0).then_some((6, u32::from(request.point))),
         5 | 13 => Some((it.asset_type, it.flags & 0xff)),
         _ => None,
     }

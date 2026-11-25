@@ -1,12 +1,19 @@
-//! Portable Windows updates. Optional choices follow llvvmquery.cpp and
-//! llvelopack.cpp (Firestorm, originally LGPL 2.1); package operations use
-//! a separate process because Windows keeps the running executable mapped.
+//! Portable updates, on Windows and Linux. Optional choices follow
+//! llvvmquery.cpp and llvelopack.cpp (the Legacy Viewer, originally LGPL
+//! 2.1); package operations use a separate process because Windows keeps
+//! the running executable mapped, and because it has to wait for the old
+//! viewer to close on every system.
+//!
+//! The packages differ: a ZIP named after the Windows build, a tar.gz after
+//! the Linux one ([`package::Format`]). macOS is installed by hand: its
+//! application bundle is signed and replaced as a whole.
 
 pub mod feed;
 pub mod ffmpeg_pack;
 pub mod install;
 pub mod media_pack;
 pub mod package;
+pub mod signature;
 mod user_data;
 
 pub use user_data::clear_deferred_cache;
@@ -25,6 +32,8 @@ pub struct TestEnvironment {
 
 /// A disposable test installation must opt in with a local marker and feed.
 /// This also isolates settings/cache and disables credential-store access.
+/// The marker names the key the test releases are signed with: a key of the
+/// test script's own, trusted by the loopback feed only (never by GitHub's).
 pub fn test_environment() -> Option<&'static TestEnvironment> {
     static TEST: std::sync::OnceLock<Option<TestEnvironment>> = std::sync::OnceLock::new();
     TEST.get_or_init(|| {
@@ -41,7 +50,8 @@ pub fn test_environment() -> Option<&'static TestEnvironment> {
         if config["schema"].as_u64()? != 1 {
             return None;
         }
-        let source = feed::Source::local(config["feed"].as_str()?).ok()?;
+        let key = signature::parse_key(config["public_key"].as_str()?).ok()?;
+        let source = feed::Source::local(config["feed"].as_str()?).ok()?.trusting(key).ok()?;
         Some(TestEnvironment { root, source })
     })
     .as_ref()
@@ -83,8 +93,19 @@ pub enum Failure {
     /// The viewer's folder sits at the root of a drive (`E:\Aurora Viewer`):
     /// no folder above it to hold the update, the backup and the lock.
     DriveRoot,
+    /// Something other than the viewer owns the installation folder: a
+    /// sandbox's read-only package (Flatpak, Snap, AppImage) or a folder this
+    /// account may not write (a system package installed by root). The
+    /// package manager or the bundle updates it, never us.
+    Protected,
     Busy,
     Startup,
+}
+
+/// Whether a release installs itself in place on this system. macOS does
+/// not: its application bundle is signed and replaced by hand.
+pub const fn installs_here() -> bool {
+    cfg!(any(windows, target_os = "linux"))
 }
 
 #[derive(Clone, Copy, Debug, Default)]

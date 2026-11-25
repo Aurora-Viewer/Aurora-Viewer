@@ -357,6 +357,25 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-aurora-controls-classic"),
                 &field!(classic_controls),
             );
+            // the compact camera is both styles' (the Classic style's small
+            // camera window, the Legacy Viewer's FSUseSmallCameraFloater);
+            // the compact Movement tab is Aurora's: greyed in the Classic
+            // style, whose movement window is small already
+            let classic_controls = cx.s.classic_controls;
+            cx.subs(false, |cx| {
+                cx.toggle(
+                    tr!("ui-options-aurora-controls-compact"),
+                    tr!("ui-options-aurora-controls-compact-help"),
+                    &field!(compact_controls),
+                );
+                cx.greyed(classic_controls);
+                cx.toggle(
+                    tr!("ui-options-aurora-controls-compact-movement"),
+                    tr!("ui-options-aurora-controls-compact-movement-help"),
+                    &field!(compact_movement_controls),
+                );
+                cx.greyed(false);
+            });
         }),
         1 => {
             cx.group(tr!("ui-options-aurora-in-the-world"), |cx| {
@@ -468,18 +487,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-aurora-use-bridge"),
                     tr!("ui-options-aurora-use-bridge-help"),
                     &field!(use_bridge),
-                );
-                use crate::world::portals::Sources;
-                cx.combo(
-                    tr!("ui-options-aurora-portal-sources"),
-                    tr!("ui-options-aurora-portal-sources-help"),
-                    &field!(portal_sources),
-                    &[
-                        (Sources::Friends, tr!("ui-options-aurora-portal-sources-friends")),
-                        (Sources::FriendsAndGroups, tr!("ui-options-aurora-portal-sources-groups")),
-                        (Sources::Everyone, tr!("ui-options-aurora-portal-sources-everyone")),
-                        (Sources::Nobody, tr!("ui-options-aurora-portal-sources-nobody")),
-                    ],
                 );
             });
             cx.group(tr!("ui-options-aurora-gaze"), |cx| {

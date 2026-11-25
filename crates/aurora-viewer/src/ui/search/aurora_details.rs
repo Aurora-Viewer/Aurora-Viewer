@@ -16,6 +16,7 @@ use crate::world::names::NameScope;
 use crate::world::place_details::{Place, Source, Stage};
 use crate::world::profiles::{self, Online};
 use crate::world::search::{self, Key, Row, RowIcon, Tab, Value};
+use aurora_i18n::UiUpper;
 use aurora_net::profile::classified_flags;
 use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Vec2};
 use glam::DVec3;
@@ -101,7 +102,7 @@ fn stats(ui: &mut egui::Ui, p: &Palette, items: &[(&str, String)]) {
 fn caps(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(2.0);
     ui.label(
-        RichText::new(text.to_uppercase())
+        RichText::new(text.ui_upper())
             .size(11.0)
             .color(p.muted)
             .family(crate::ui::fonts::semibold(ui.ctx())),
@@ -148,7 +149,7 @@ fn person(
         .avatar_names
         .complete_in(NameScope::Roster, &id)
         .unwrap_or_else(|| row_name.to_owned());
-    let gear = |ui: &mut egui::Ui| context::avatar_roster_menu(ui, p, world, id, context::AvatarList::Name);
+    let gear = |ui: &mut egui::Ui| context::avatar_roster_menu(ui, p, world, id, context::AvatarList::Search);
     let buttons = [
         Btn::new("user-filled", aurora_i18n::tr!("search-aurora-profile")).primary(),
         Btn::new("message-circle-filled", aurora_i18n::tr!("search-aurora-message")).enabled(!own),
@@ -551,7 +552,7 @@ fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, minutes: u32) {
                 let font = crate::ui::fonts::semibold(ui.ctx());
                 let mon = crate::ui::land::months()[(month.max(1) - 1).min(11)]
                     .trim_end_matches('.')
-                    .to_uppercase();
+                    .ui_upper();
                 let m = ui.painter().layout_no_wrap(mon, FontId::new(11.0, font.clone()), p.violet_light);
                 widgets::paint_ink_centered(ui.painter(), m, Pos2::new(rect.center().x, rect.top() + 7.0), p.violet_light);
                 let d = ui.painter().layout_no_wrap(day.to_string(), FontId::new(24.0, font), p.ink);

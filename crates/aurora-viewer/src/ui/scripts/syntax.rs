@@ -529,11 +529,12 @@ struct Style {
     colors: [Color32; 15],
     query: String,
     insensitive: bool,
+    whole_words: bool,
     highlight: Color32,
 }
 
 impl Style {
-    fn new(p: &Palette, font: FontId, settings: &ScriptSettings, query: &str, insensitive: bool) -> Self {
+    fn new(p: &Palette, font: FontId, settings: &ScriptSettings, query: &str, insensitive: bool, whole_words: bool) -> Self {
         Self {
             font,
             colors: [
@@ -556,6 +557,7 @@ impl Style {
             .map(|kind| settings.color(kind.role(), p)),
             query: query.into(),
             insensitive,
+            whole_words,
             highlight: p.amber.gamma_multiply(0.3),
         }
     }
@@ -572,12 +574,25 @@ pub(super) struct Highlighter {
     lua: bool,
     job: LayoutJob,
     pub colors: Vec<ColorLiteral>,
+    /// Character-indexed Find matches, cached with the highlighted layout.
+    matches: Vec<Range<usize>>,
 }
 
 impl Highlighter {
     #[cfg(test)]
     pub(super) fn layout(&mut self, source: &str, p: &Palette, font: FontId) -> LayoutJob {
-        self.custom(source, p, font, &ScriptSettings::default(), "", false, false)
+        self.custom(source, p, font, &ScriptSettings::default(), "", false, false, false)
+    }
+
+    /// Reuse highlighted matches only for the source and search options
+    /// that produced them. An edit can invalidate the cache mid-frame.
+    pub(super) fn matches_for(&self, source: &str, query: &str, insensitive: bool, whole_words: bool) -> Option<&[Range<usize>]> {
+        (self.job.text == source
+            && self
+                .style
+                .as_ref()
+                .is_some_and(|style| style.query == query && style.insensitive == insensitive && style.whole_words == whole_words))
+        .then_some(self.matches.as_slice())
     }
 
     pub(super) fn custom(
@@ -588,9 +603,10 @@ impl Highlighter {
         settings: &ScriptSettings,
         query: &str,
         insensitive: bool,
+        whole_words: bool,
         lua: bool,
     ) -> LayoutJob {
-        let style = Style::new(p, font, settings, query, insensitive);
+        let style = Style::new(p, font, settings, query, insensitive, whole_words);
         let keywords = lsl_keywords::generation();
         if self.style.as_ref() != Some(&style) || self.job.text != source || self.keywords != keywords || self.lua != lua {
             self.keywords = keywords;
@@ -620,10 +636,14 @@ impl Highlighter {
                     });
                 }
             }
+            self.matches = if query.is_empty() {
+                Vec::new()
+            } else {
+                super::editing::matches_filtered(source, query, insensitive, whole_words)
+            };
             if !query.is_empty() {
-                let ranges = super::editing::matches(source, query, insensitive);
                 let boundaries: Vec<_> = source.char_indices().map(|(i, _)| i).chain([source.len()]).collect();
-                let mut highlights = ranges.into_iter().map(|r| boundaries[r.start]..boundaries[r.end]).peekable();
+                let mut highlights = self.matches.iter().map(|r| boundaries[r.start]..boundaries[r.end]).peekable();
                 let mut sections = Vec::new();
                 for section in job.sections.drain(..) {
                     let mut start = section.byte_range.start.0;
@@ -695,6 +715,60 @@ mod tests {
     }
 
     #[test]
+    fn cached_find_matches_refresh_and_reject_stale_inputs() {
+        let mut highlighter = Highlighter::default();
+        let palette = Theme::default().palette();
+        let font = FontId::monospace(14.0);
+        let settings = ScriptSettings::default();
+        let source = "hi hi_there hi";
+
+        highlighter.custom(source, &palette, font.clone(), &settings, "hi", false, true, false);
+
+        assert_eq!(highlighter.matches_for(source, "hi", false, true), Some(&[0..2, 12..14][..]));
+        assert!(highlighter.matches_for("hi hi_there", "hi", false, true).is_none());
+        assert!(highlighter.matches_for(source, "there", false, true).is_none());
+        assert!(highlighter.matches_for(source, "hi", true, true).is_none());
+        assert!(highlighter.matches_for(source, "hi", false, false).is_none());
+
+        highlighter.custom(source, &palette, font.clone(), &settings, "hi", false, false, false);
+
+        assert_eq!(highlighter.matches_for(source, "hi", false, false), Some(&[0..2, 3..5, 12..14][..]));
+        assert!(highlighter.matches_for(source, "hi", false, true).is_none());
+
+        highlighter.custom("hi", &palette, font, &settings, "hi", false, true, false);
+
+        assert_eq!(
+            highlighter.matches_for("hi", "hi", false, true),
+            Some(std::slice::from_ref(&(0..2)))
+        );
+        assert!(highlighter.matches_for(source, "hi", false, true).is_none());
+    }
+
+    #[test]
+    fn whole_word_search_highlights_only_complete_word_sections() {
+        let source = "This hi high hi_there";
+        let mut highlighter = Highlighter::default();
+        let job = highlighter.custom(
+            source,
+            &Theme::default().palette(),
+            FontId::monospace(14.0),
+            &ScriptSettings::default(),
+            "hi",
+            true,
+            true,
+            false,
+        );
+        let highlight = Theme::default().palette().amber.gamma_multiply(0.3);
+        let marks: Vec<_> = job
+            .sections
+            .iter()
+            .filter(|section| section.format.background == highlight)
+            .map(|section| section.byte_range.start.0..section.byte_range.end.0)
+            .collect();
+        assert_eq!(marks, vec![5..7]);
+    }
+
+    #[test]
     fn swatch_spacing_keeps_source_and_character_ranges_with_search_highlights() {
         let source = "vector c = <0,1,0>; vector d = <1,0,0>;";
         let mut highlighter = Highlighter::default();
@@ -704,6 +778,7 @@ mod tests {
             FontId::monospace(14.0),
             &ScriptSettings::default(),
             "0",
+            false,
             false,
             false,
         );

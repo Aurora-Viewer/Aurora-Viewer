@@ -29,7 +29,10 @@ rustls-platform-verifier = "0.7.1"
 serde_json = "1.0.154"
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "aac", "ogg", "vorbis", "wav", "pcm", "id3v2"] }
 thiserror = "2.0.21"
-url = "2"
+url = "2.5.9"
+# the end of validity of an expired radio certificate, which the Windows
+# verifier does not report (tls.rs)
+x509-parser = "0.18.1"
 
 [dev-dependencies]
 rcgen = "0.14.10"

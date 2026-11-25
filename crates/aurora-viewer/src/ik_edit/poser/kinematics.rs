@@ -9,7 +9,6 @@ fn solve(rig: &Rig, pose: &mut LocalPose, scales: &[Vec3], bone: usize, position
         Vec3::ZERO,
         scales,
         &Goal {
-            follow: None,
             weight: 1.0,
             bone,
             root: ik::default_root(rig, bone),

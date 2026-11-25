@@ -140,6 +140,18 @@ impl Rig {
         self.parent.len()
     }
 
+    /// Origin of a native translation key in the rig's local coordinates.
+    /// mPelvis and Avatar Center hang from the omitted mRoot, whose rest
+    /// translation is folded into their joints. Every other key is
+    /// already relative to its joint's parent.
+    pub(crate) fn key_origin(&self, bone: usize) -> Vec3 {
+        if bone == self.pelvis || self.parent[bone].is_none() && self.names.get("Avatar Center") == Some(&bone) {
+            self.local_pos[self.pelvis]
+        } else {
+            Vec3::ZERO
+        }
+    }
+
     /// LLVOAvatar::initAttachmentPoints (indra/newview/llvoavatar.cpp,
     /// originally LGPL 2.1): every body attachment point is an
     /// LLViewerJointAttachment, a joint below its bone that
@@ -543,6 +555,55 @@ impl Motion {
     }
 }
 
+/// LiveMesh's elbow and knee bend (Avatar tab): our avatar's elbows and
+/// knees turned on top of what it plays, or of its rest pose when `hold`,
+/// to check how a rigged mesh in progress deforms. Drawn here only: nothing
+/// is sent, animations and uploads are unchanged. The axes are those of the
+/// mesh importer's test bend (`imports/mesh/preview.rs`). Aurora's own.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PreviewBend {
+    /// Degrees, 0..=150.
+    pub elbows: f32,
+    /// Degrees, 0..=150.
+    pub knees: f32,
+    /// The rest pose instead of the animations.
+    pub hold: bool,
+}
+
+impl PreviewBend {
+    /// The largest bend the sliders give, degrees.
+    pub const MAX: f32 = 150.0;
+
+    pub fn active(&self) -> bool {
+        self.hold || self.elbows > 0.0 || self.knees > 0.0
+    }
+
+    /// The local rotations bent, or `None` when there is nothing to bend.
+    pub fn apply(&self, rig: &Rig, rotations: &[Quat]) -> Option<Vec<Quat>> {
+        if !self.active() {
+            return None;
+        }
+        let mut out = if self.hold && rig.local_rot.len() == rotations.len() {
+            rig.local_rot.clone()
+        } else {
+            rotations.to_vec()
+        };
+        let elbows = self.elbows.clamp(0.0, Self::MAX).to_radians();
+        let knees = self.knees.clamp(0.0, Self::MAX).to_radians();
+        for (name, turn) in [
+            ("mElbowLeft", Quat::from_rotation_z(-elbows)),
+            ("mElbowRight", Quat::from_rotation_z(elbows)),
+            ("mKneeLeft", Quat::from_rotation_y(knees)),
+            ("mKneeRight", Quat::from_rotation_y(knees)),
+        ] {
+            if let Some(rotation) = rig.names.get(name).and_then(|&joint| out.get_mut(joint)) {
+                *rotation *= turn;
+            }
+        }
+        Some(out)
+    }
+}
+
 /// Motions and held pose of one avatar (or animesh).
 #[derive(Default)]
 pub struct Controller {
@@ -605,6 +666,8 @@ pub struct Controller {
     /// keeps the animation's and only the eyes look, a side glance; ½ a
     /// three-quarter turn. The photo window's "Look intensity" (1 − it).
     pub look_glance: f32,
+    /// LiveMesh's elbow and knee bend, on our avatar only.
+    pub preview_bend: PreviewBend,
     /// `look_over_animations` as last logged, with the head's strongest
     /// animation priority.
     look_over_logged: bool,
@@ -864,12 +927,19 @@ const EYES_FROM_HEAD: Vec3 = Vec3::new(0.098, 0.0, 0.079);
 /// skeleton, and LLHeadRotMotion turns both); without eyes, mHead with
 /// the default offset.
 fn eyes_between(eyes: Option<(Vec3, Vec3)>, alt: Option<(Vec3, Vec3)>, head: Option<(Quat, Vec3)>) -> Option<Vec3> {
+    eye_pair(eyes, alt)
+        .map(|(l, r)| (l + r) * 0.5)
+        .or_else(|| head.map(|(r, p)| p + r * EYES_FROM_HEAD))
+}
+
+/// The pair of eyes `eyes_between` goes by, left then right: the Bento
+/// ones when a mesh head has moved them away from the system eyes.
+fn eye_pair(eyes: Option<(Vec3, Vec3)>, alt: Option<(Vec3, Vec3)>) -> Option<(Vec3, Vec3)> {
     let mid = |(l, r): (Vec3, Vec3)| (l + r) * 0.5;
-    match (eyes.map(mid), alt.map(mid)) {
-        (Some(e), Some(a)) if a.distance(e) > 0.005 => Some(a),
+    match (eyes, alt) {
+        (Some(e), Some(a)) if mid(a).distance(mid(e)) > 0.005 => Some(a),
         (Some(e), _) => Some(e),
-        (None, Some(a)) => Some(a),
-        (None, None) => head.map(|(r, p)| p + r * EYES_FROM_HEAD),
+        (None, a) => a,
     }
 }
 
@@ -1063,6 +1133,19 @@ impl Controller {
     /// Skeleton-space position of the head as posed last frame.
     pub fn head_pos(&self) -> Option<Vec3> {
         self.posed.head.map(|h| h.1)
+    }
+
+    /// Skeleton-space rotation of the head as posed last frame.
+    pub fn head_rot(&self) -> Option<Quat> {
+        self.posed.head.map(|h| h.0)
+    }
+
+    /// Skeleton-space places of the two eyes as posed last frame, left
+    /// then right (`eye_pair`): the joints the eyeballs turn about.
+    pub fn eyes_each(&self) -> Option<(Vec3, Vec3)> {
+        let p = &self.posed;
+        let pair = |l: Option<(Quat, Vec3)>, r: Option<(Quat, Vec3)>| Some((l?.1, r?.1));
+        eye_pair(pair(p.eye_l, p.eye_r), pair(p.alt_l, p.alt_r))
     }
 
     /// Skeleton-space point between the eyes as posed last frame
@@ -1750,8 +1833,9 @@ impl Controller {
                     self.pelvis_offset = Some(pos);
                     self.tag_pelvis_offset = top;
                 } else if let Some(rest) = rest_pos.get(j) {
-                    self.pos_delta[j] = pos - *rest;
-                    self.tag_pos_delta[j] = top - rest.z;
+                    let origin = rig.key_origin(j);
+                    self.pos_delta[j] = origin + pos - *rest;
+                    self.tag_pos_delta[j] = origin.z + top - rest.z;
                 }
             }
             if j != rig.pelvis
@@ -1880,6 +1964,8 @@ impl Controller {
         let (rotations, positions) = edited.as_ref().map_or((rotations, local_pos.as_slice()), |p| {
             (p.rotations.as_slice(), p.positions.as_slice())
         });
+        let bent = self.preview_bend.apply(rig, rotations);
+        let rotations = bent.as_deref().unwrap_or(rotations);
         let world = self.poser.as_ref().map_or_else(
             || rig.world_with(rotations, pelvis, positions, scale),
             |(pose, model)| pose.matrices(rig, *model),
@@ -2261,6 +2347,37 @@ mod tests {
                 assert!(!manager.is_playing(item));
             }
         }
+    }
+
+    #[test]
+    fn avatar_center_keys_use_the_root_even_with_a_pelvis_override() {
+        let mut rig = rig();
+        rig.add_attachment_points(&[("Avatar Center".to_owned(), None, Vec3::ZERO, Quat::IDENTITY)]);
+        let center = rig.names["Avatar Center"];
+        let mut base = SkeletonBase {
+            local_pos: rig.local_pos.clone(),
+            scale: rig.scale.clone(),
+        };
+        base.local_pos[rig.pelvis].z += 0.35;
+        let offset = Vec3::new(0.5, -0.1, 0.22);
+        let mut animation = swing(&rig).anim.clone();
+        animation.joints = vec![aurora_assets::JointMotion {
+            joint_name: "Avatar Center".into(),
+            priority: 4,
+            rot_keys: Vec::new(),
+            pos_keys: vec![aurora_assets::anim::PosKey {
+                time: 0.0,
+                position: offset,
+            }],
+        }];
+        let motion = Arc::new(BoundAnim::bind(animation, &rig));
+        let start = Instant::now();
+        let mut controller = Controller::default();
+        controller.sync(&[signal(Uuid::from_u128(42), 1, start)], start, |_| Some(motion.clone()));
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        controller.evaluate(&rig, start + Duration::from_millis(500), Some(&base), &mut out);
+        let center_world = Mat4::from_cols_array_2d(&out[center]).w_axis.truncate();
+        assert!(center_world.abs_diff_eq(rig.local_pos[rig.pelvis] + offset, 1e-5));
     }
 
     #[test]
@@ -3357,6 +3474,50 @@ mod tests {
     /// "Look intensity": the share of the turn the head takes, the eyes
     /// doing the rest; a glance leaves the head straight on the neck while
     /// the eyes still turn to the target.
+    /// LiveMesh's bend turns the elbows and knees about the importer's test
+    /// bend axes, over the pose played or the rest pose, and nothing else.
+    #[test]
+    fn the_preview_bend_turns_only_the_elbows_and_knees() {
+        let rig = rig();
+        let played: Vec<Quat> = (0..rig.len()).map(|i| Quat::from_rotation_x(i as f32 * 0.01)).collect();
+        assert!(PreviewBend::default().apply(&rig, &played).is_none(), "nothing to bend");
+        let bend = PreviewBend {
+            elbows: 90.0,
+            knees: 40.0,
+            hold: false,
+        };
+        let bent = bend.apply(&rig, &played).expect("bent");
+        let joint = |name: &str| rig.names[name];
+        for (name, turn) in [
+            ("mElbowLeft", Quat::from_rotation_z(-90f32.to_radians())),
+            ("mElbowRight", Quat::from_rotation_z(90f32.to_radians())),
+            ("mKneeLeft", Quat::from_rotation_y(40f32.to_radians())),
+            ("mKneeRight", Quat::from_rotation_y(40f32.to_radians())),
+        ] {
+            assert!(bent[joint(name)].angle_between(played[joint(name)] * turn) < 1e-3, "{name}");
+        }
+        let untouched = ["mElbowLeft", "mElbowRight", "mKneeLeft", "mKneeRight"].map(joint);
+        for (index, (a, b)) in bent.iter().zip(&played).enumerate() {
+            if !untouched.contains(&index) {
+                assert_eq!(a, b, "joint {index} keeps the pose played");
+            }
+        }
+        // held: the rest pose, bent
+        let held = PreviewBend { hold: true, ..bend }.apply(&rig, &played).expect("held");
+        assert_eq!(held[joint("mTorso")], rig.local_rot[joint("mTorso")]);
+        let knee = joint("mKneeLeft");
+        assert!(held[knee].angle_between(rig.local_rot[knee] * Quat::from_rotation_y(40f32.to_radians())) < 1e-3);
+        // the sliders' range
+        let far = PreviewBend {
+            elbows: 400.0,
+            ..Default::default()
+        }
+        .apply(&rig, &played)
+        .expect("bent");
+        let elbow = joint("mElbowRight");
+        assert!(far[elbow].angle_between(played[elbow] * Quat::from_rotation_z(PreviewBend::MAX.to_radians())) < 1e-3);
+    }
+
     #[test]
     fn the_look_glance_leaves_the_turn_to_the_eyes() {
         let rig = rig();

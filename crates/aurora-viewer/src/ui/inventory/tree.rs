@@ -4,6 +4,7 @@
 //! of a drop target. One look for every inventory tree.
 
 use super::super::icons::Icons;
+use super::category::{self, Category};
 use crate::theme::Palette;
 use egui::Vec2;
 
@@ -12,9 +13,12 @@ pub fn spacing(ui: &mut egui::Ui) {
     super::super::widgets::inventory_spacing(ui);
 }
 
+/// The room of [`caret`], kept before a folder that has none.
+pub const CARET: Vec2 = Vec2::splat(12.0);
+
 /// The open / closed triangle before a folder; clicked to toggle it.
 pub fn caret(ui: &mut egui::Ui, p: &Palette, open: bool) -> egui::Response {
-    let (r, resp) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::click());
+    let (r, resp) = ui.allocate_exact_size(CARET, egui::Sense::click());
     let c = r.center();
     let pts = if open {
         vec![c + egui::vec2(-4.0, -2.0), c + egui::vec2(4.0, -2.0), c + egui::vec2(0.0, 3.0)]
@@ -25,15 +29,24 @@ pub fn caret(ui: &mut egui::Ui, p: &Palette, open: bool) -> egui::Response {
     resp
 }
 
-/// The icon of a folder by its preferred type.
+/// The icon of a folder by its preferred type: a system folder shows its
+/// category's symbol (llviewerfoldertype.cpp, see `category`).
 pub fn folder_icon(type_default: i32, open: bool) -> &'static str {
+    // stock and version folders keep their Legacy names (see `category`)
+    if let Some((_, closed, opened)) = category::MARKETPLACE_SUBFOLDERS.iter().find(|(t, _, _)| *t == type_default) {
+        return if open { opened } else { closed };
+    }
     match type_default {
         14 => "Inv_TrashClosed",
         // FT_MY_SUITCASE (llviewerfoldertype.cpp: Inv_SuitcaseOpen / Closed)
         100 if open => "Inv_SuitcaseOpen",
         100 => "Inv_SuitcaseClosed",
-        _ if open => "Inv_FolderOpen",
-        _ => "Inv_FolderClosed",
+        _ => match Category::of_folder(type_default) {
+            Some(category) if open => category.row().open,
+            Some(category) => category.row().closed,
+            None if open => "Inv_FolderOpen",
+            None => "Inv_FolderClosed",
+        },
     }
 }
 
@@ -41,8 +54,15 @@ pub fn folder_icon(type_default: i32, open: bool) -> &'static str {
 /// `tint` when given (a state the row shows by its icon).
 pub fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette, tint: Option<egui::Color32>) {
     if let Some(t) = icons.get(name) {
-        let tint = tint.unwrap_or(if name.starts_with("Inv_Folder") { p.violet_light } else { p.ink });
-        ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(tint));
+        let tint = tint.unwrap_or(if category::is_folder_icon(name) { p.violet_light } else { p.ink });
+        // a folder is drawn larger than the 16-point slot, in the row's
+        // height; its slot widens to the folder's own width (5/6 of the
+        // icon: Tabler's margins) so it keeps its gap to the caret and label
+        let size = category::row_icon_size(name, 16.0);
+        let (rect, _) = ui.allocate_exact_size(Vec2::new((size * 5.0 / 6.0).max(16.0), 16.0), egui::Sense::hover());
+        let shown = egui::Rect::from_center_size(rect.center(), Vec2::splat(size));
+        let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+        ui.painter().image(t.id(), shown, uv, tint);
     } else {
         ui.add_space(16.0);
     }
@@ -126,8 +146,11 @@ pub fn search_field(
         return (field, false);
     }
     let rect = egui::Rect::from_center_size(field.rect.right_center() - Vec2::new(14.0, 0.0), Vec2::splat(20.0));
+    // Not a Tab stop, like the clear button of LLSearchEditor (`tab_stop(false)`,
+    // indra/llui/llsearcheditor.cpp): Tab leaves the field for the next control.
+    // `Sense::click()` would make it focusable.
     let clear = ui
-        .interact(rect, field.id.with("clear"), egui::Sense::click())
+        .interact(rect, field.id.with("clear"), egui::Sense::CLICK)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(clear_tip);
     clear.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), clear_tip));
@@ -171,4 +194,58 @@ pub fn drop_outline(ui: &egui::Ui, p: &Palette, rect: egui::Rect, allowed: bool)
 /// The footer line of a tree window: small text, a message colour.
 pub fn status_text(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Response {
     ui.add(egui::Label::new(egui::RichText::new(text).size(11.0).color(color)).truncate())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(ctx: &egui::Context, text: &mut String, events: Vec<egui::Event>) -> egui::Response {
+        let p = crate::theme::Theme::default().palette();
+        let mut field = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 240.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                field = Some(search_field(ui, &p, text, "Filter", 240.0, !text.is_empty(), "Clear").0);
+                let _ = ui.button("Next");
+            },
+        );
+        // No renderer consumes the font atlas in this headless test.
+        output.textures_delta.clear();
+        field.expect("the field is drawn every frame")
+    }
+
+    #[test]
+    fn tab_skips_the_filter_clear_action() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut text = String::from("query");
+        let mut field = frame(&ctx, &mut text, vec![]);
+        for _ in 0..3 {
+            field = frame(&ctx, &mut text, vec![]);
+        }
+        let clear = field.id.with("clear");
+        assert!(ctx.read_response(clear).is_some(), "a filled field has a clear action");
+        ctx.memory_mut(|m| m.request_focus(field.id));
+        frame(&ctx, &mut text, vec![]);
+        assert_eq!(ctx.memory(|m| m.focused()), Some(field.id), "the field holds the focus before Tab");
+        let tab = egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, &mut text, vec![tab]);
+        for _ in 0..2 {
+            frame(&ctx, &mut text, vec![]);
+        }
+        let focused = ctx.memory(|m| m.focused());
+        assert_ne!(focused, Some(clear), "Tab must not stop on the cross");
+        assert_ne!(focused, Some(field.id), "Tab leaves the field");
+    }
 }

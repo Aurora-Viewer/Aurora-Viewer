@@ -51,7 +51,7 @@ fn op_label(op: Op) -> &'static str {
 /// The permission bits, in the order of the legacy Filters floater.
 fn rights() -> [(u32, &'static str); 3] {
     [
-        (super::rules::MODIFY, aurora_i18n::tr!("common-edit")),
+        (super::rules::MODIFY, aurora_i18n::tr!("common-modify")),
         (super::rules::COPY, aurora_i18n::tr!("common-copy-2")),
         (super::rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
     ]

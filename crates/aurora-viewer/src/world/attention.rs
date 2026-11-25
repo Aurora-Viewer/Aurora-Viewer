@@ -14,9 +14,12 @@ use uuid::Uuid;
 /// Why the attention is asked: it picks the setting of the flash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cause {
-    /// An instant message, a group chat or conference line, an offer or a
-    /// notice sent as an IM (FSFlashOnMessage).
+    /// An instant message, a group chat or conference line, a notice sent
+    /// as an IM (FSFlashOnMessage).
     Message,
+    /// An offer sent as an IM: a teleport, a friendship, an object, a group
+    /// invitation (FSFlashOnMessage, as a message).
+    Offer,
     /// An object's llInstantMessage (FSFlashOnObjectIM, under FSFlashOnMessage).
     ObjectIm,
     /// A script dialog or text box (FSFlashOnScriptDialog).
@@ -28,8 +31,11 @@ pub enum Cause {
     /// A line that holds one of the keywords (FSKeywords::notify): its
     /// sound, told to the system, no flash of its own.
     Keyword,
-    /// A notice that never flashes (a friend online, a simulator alert, the
-    /// region restart, whose alert flashes on its own…).
+    /// A friend came online (`true`) or went offline: told, never flashed
+    /// (FriendOnlineOffline).
+    Presence(bool),
+    /// A notice that never flashes (a simulator alert, the region restart,
+    /// whose alert flashes on its own…).
     Notice,
 }
 
@@ -126,13 +132,25 @@ impl World {
 
     /// A system notification of the notification just pushed: its title
     /// and body (the Legacy list names it, growl_notifications.xml).
+    ///
+    /// The notice is not settled yet (`Notifications::settle`): what RLVa's
+    /// `@shownames` and `@showloc` hide of it is rewritten here, as it will
+    /// be in the list.
     pub(crate) fn notice_of(&self, id: u64, open: Open) -> Option<Notice> {
         let n = self.notifications.list.iter().find(|n| n.id == id)?;
-        Some(Notice {
-            title: n.title.clone(),
-            body: n.body.clone(),
-            open,
-        })
+        let text = self.notifications.text_of(n);
+        let (title, body) = if n.kind.as_received() {
+            (n.title.clone(), n.body.clone())
+        } else {
+            let filter = self.rlva_filter_in(text.names);
+            let body = if text.rewritten {
+                filter.apply(&n.body).into_owned()
+            } else {
+                n.body.clone()
+            };
+            (filter.apply(&n.title).into_owned(), body)
+        };
+        Some(Notice { title, body, open })
     }
 }
 

@@ -1702,7 +1702,26 @@ impl TextureStreamer {
     /// LLPanelFace::LLSelectedTE::getImageFormat reads the image format. A
     /// channel of flat alpha 250-254 or 255 is still classed opaque for the
     /// render passes, `has_alpha`.
+    ///
+    /// The built-in transparent textures are never downloaded, so they report
+    /// an alpha channel before any loaded check. The Legacy Viewer preloads
+    /// `transparent.j2c` as RGBA and the alpha ramp as `GL_ALPHA8`
+    /// (`LLViewerTextureList::doPreloadImages`, llviewertexturelist.cpp), so
+    /// getImageFormat (llpanelface.cpp) reports an alpha channel, the combo
+    /// is offered and a new material defaults to Alpha blending. The
+    /// invisible bake is not preloaded there (IMG_INVISIBLE is a dataserver
+    /// asset, whose alpha comes from the downloaded image); here it is
+    /// drawn with the transparent slot and never fetched, so it reports the
+    /// alpha of the texture it is drawn with.
     pub fn has_alpha_channel(&self, id: &Uuid) -> Option<bool> {
+        if is_builtin_transparent(id) {
+            return Some(true);
+        }
+        // Local previews bypass downloaded entries. Their resident GPU slot
+        // carries the same format information, including after a file reload.
+        if let Some(slot) = self.local_slots.get(id) {
+            return self.alpha_channel_by_slot.get(*slot as usize).copied();
+        }
         if !self.is_loaded(id) {
             return None;
         }
@@ -3420,6 +3439,15 @@ impl TextureStreamer {
         self.entries.insert(id, e);
     }
 
+    /// For the tests of its users: a texture used `refs` times, shown at
+    /// the discard level `decoded` (None: nothing on the GPU yet).
+    #[cfg(test)]
+    pub(crate) fn test_used(&mut self, id: Uuid, refs: u32, decoded: Option<u8>) {
+        let mut e = tests::entry(decoded, 0.0);
+        e.refs = refs;
+        self.entries.insert(id, e);
+    }
+
     /// For the tests of its users: the texture's sculpt map decoded.
     #[cfg(test)]
     pub(super) fn test_sculpt_map(&mut self, id: Uuid) {
@@ -4565,6 +4593,23 @@ mod tests {
     }
 
     #[test]
+    fn builtin_transparent_texture_has_an_alpha_channel_before_it_is_loaded() {
+        let textures = TextureStreamer::new(PathBuf::new());
+        for id in [
+            aurora_prim::te::TRANSPARENT_TEXTURE,
+            super::super::avatar::IMG_INVISIBLE,
+            aurora_prim::te::WATER_EXCLUSION_TEXTURE,
+        ] {
+            assert_eq!(textures.has_alpha_channel(&id), Some(true), "{id}");
+            assert_eq!(textures.default_alpha_mode(&id), alpha_mode::BLEND, "{id}");
+        }
+        for id in [Uuid::nil(), aurora_prim::te::BLANK_TEXTURE] {
+            assert_eq!(textures.has_alpha_channel(&id), None, "{id}");
+            assert_eq!(textures.default_alpha_mode(&id), alpha_mode::NONE, "{id}");
+        }
+    }
+
+    #[test]
     fn pick_mask_threshold_repeated_uvs_and_invalid_pixels() {
         let mut rgba = vec![0; 4 * 4 * 4];
         rgba[(3 * 4) * 4 + 3] = 32;
@@ -5211,6 +5256,23 @@ mod tests {
         assert_eq!(s.has_alpha(&id), Some(false));
         assert_eq!(s.default_alpha_mode(&id), alpha_mode::BLEND, "RGBA, opaque texels");
         assert_eq!(s.has_alpha_channel(&Uuid::from_u128(2)), None, "unknown");
+    }
+
+    #[test]
+    fn creator_local_alpha_format_follows_gpu_registration_and_reload() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let id = Uuid::from_u128(1);
+        s.alpha_channel_by_slot = vec![false; 2];
+        s.entries.insert(id, entry(None, 0.0));
+        assert_eq!(s.has_alpha_channel(&id), None);
+        s.register_local_image(id, 1, AlphaKind::Opaque, true);
+        assert_eq!(s.has_alpha_channel(&id), Some(true));
+        assert_eq!(s.default_alpha_mode(&id), alpha_mode::BLEND);
+        s.register_local_image(id, 1, AlphaKind::Opaque, false);
+        assert_eq!(s.has_alpha_channel(&id), Some(false));
+        assert_eq!(s.default_alpha_mode(&id), alpha_mode::NONE);
+        s.unregister_local(&id);
+        assert_eq!(s.has_alpha_channel(&id), None);
     }
 
     #[test]

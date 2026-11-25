@@ -168,6 +168,69 @@ pub fn parse_tilt(text: &str) -> Option<f64> {
         .then(|| ((v * 10.0).round() / 10.0).clamp(-f64::from(ROLL_MAX), f64::from(ROLL_MAX)))
 }
 
+/// How far (metres) the avatar may move from where it stood when the view
+/// was kept before the view is dropped (#4604). The kept framing is there to
+/// survive a trip out of the photo mode to change a setting; once the avatar
+/// has walked or flown away, the photo mode opens on the camera as it is,
+/// on the avatar, as the Legacy Viewer's snapshot floater always does (it
+/// never moves the camera: `LLFloaterSnapshot`, indra/newview/
+/// llfloatersnapshot.cpp). 4 m tolerates what a pose does in place (sitting
+/// down, standing up, a pose ball's offset, a nudge) but not a few steps
+/// away, after which the old framing points at the old spot.
+pub const KEPT_VIEW_MOVE_MAX: f64 = 4.0;
+
+/// The view the viewfinder had when it last closed, taken back at the next
+/// opening of the session, like its tilt (the human's request, 2026-11-18:
+/// leaving the photo mode to change a setting lost the framing), as long as
+/// the avatar has not moved away (`KEPT_VIEW_MOVE_MAX`). In global metres
+/// (`camera::presets::to_global`), so that it holds across a region
+/// crossing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KeptView {
+    pub eye: [f64; 3],
+    pub at: [f64; 3],
+    /// Where the avatar stood when the view was kept.
+    pub avatar: [f64; 3],
+    /// The photo's field of view (radians).
+    pub fov: f32,
+    /// The free camera flew it: the next opening flies it again.
+    pub free: bool,
+}
+
+impl KeptView {
+    /// The camera and the point it looks at, in the render space of the
+    /// main region at `origin`; None when the avatar, now at `avatar`, has
+    /// moved more than `KEPT_VIEW_MOVE_MAX` from where it stood (the view
+    /// frames the old spot), when the view is more than `reach` metres from
+    /// the avatar (the scene there is not loaded, as for a place preset) or
+    /// when the view is broken.
+    pub fn back(&self, origin: (u32, u32), avatar: glam::Vec3, reach: f32) -> Option<(glam::Vec3, glam::Vec3)> {
+        let eye = crate::camera::presets::from_global(origin, self.eye);
+        let at = crate::camera::presets::from_global(origin, self.at);
+        let sound = eye.is_finite() && at.is_finite() && eye.distance_squared(at) > 1e-6;
+        let now = crate::camera::presets::to_global(origin, avatar);
+        let moved = (0..3).map(|i| (now[i] - self.avatar[i]).powi(2)).sum::<f64>().sqrt();
+        // (a NaN position fails the comparison: the view is dropped)
+        let stayed = moved <= KEPT_VIEW_MOVE_MAX;
+        (sound && stayed && eye.distance(avatar) <= reach).then_some((eye, at))
+    }
+
+    /// The camera is already at this view (to the centimetre): taking it back
+    /// would only unlock the avatar's camera from its avatar.
+    pub fn shown(eye: glam::Vec3, at: glam::Vec3, eye_now: glam::Vec3, at_now: glam::Vec3) -> bool {
+        eye.distance(eye_now) < 0.01 && at.distance(at_now) < 0.01
+    }
+}
+
+/// The tilt to take back at an opening: the one the viewfinder closed on
+/// (`roll_kept`), with the view it closed on only (`view_back`: a view
+/// dropped because the avatar moved away, #4604, takes its tilt with it),
+/// and unless the camera controls tilted the view meanwhile (`roll_now`,
+/// theirs is kept). None: the roll stays as it is.
+pub fn tilt_back(view_back: bool, roll_now: f32, roll_kept: f32) -> Option<f32> {
+    (view_back && roll_now == 0.0 && roll_kept != 0.0).then_some(roll_kept)
+}
+
 /// The viewfinder's settings kept between sessions (the rest of the photo
 /// is `snapshot::Settings`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -192,6 +255,15 @@ pub struct Prefs {
     /// Where the photo reel's tray was moved: its top left in fractions of
     /// the screen (None: bottom left).
     pub reel_at: Option<[f32; 2]>,
+    /// The next opening of the session takes back the framing it closed on
+    /// (`KeptView` and the tilt). Off: every opening starts from the
+    /// camera as it is, level, as before the framing was kept (the human's
+    /// request, 2026-11-22).
+    pub keep_framing: bool,
+    /// Where the filters panel was moved: its top left in fractions of the
+    /// screen (None: left of the dock). Its top stays there: it grows and
+    /// shrinks from its bottom.
+    pub filters_at: Option<[f32; 2]>,
 }
 
 impl Default for Prefs {
@@ -207,6 +279,8 @@ impl Default for Prefs {
             timer: 0,
             dof_defaulted: false,
             reel_at: None,
+            keep_framing: true,
+            filters_at: None,
         }
     }
 }
@@ -509,6 +583,45 @@ pub fn sharp_zone(coc_scale: f32, near: f32, far: f32) -> (f32, f32) {
     let front = sharp_range(coc_scale, near).0;
     let back = sharp_range(coc_scale * near / far.max(1e-3), far).1;
     (front, back)
+}
+
+/// From mHead, at the base of the skull, up to the head's middle (m).
+const HEAD_MIDDLE: f32 = 0.09;
+/// About half a head's depth (m): from its middle to its outside.
+const HEAD_RADIUS: f32 = 0.09;
+/// An eyeball's radius (m): from its joint, at its centre, to the cornea.
+const EYE_RADIUS: f32 = 0.012;
+
+/// The point of an avatar's head the lens takes from `camera`: the cornea
+/// of its nearer eye, like a camera's eye autofocus, since the eyes are
+/// what a portrait must hold sharp and only a few centimetres are sharp
+/// close up at a wide aperture (3 cm either side at 0.4 m and f/2.8). The
+/// eyes are their animated joints (`eyes`, left and right), so the lens
+/// follows a head that an animation tilts, turns or leans, on any head
+/// shape; a place worked out from mHead (`head`) alone was off by the tilt
+/// and by the head's own depth, and the eyes blurred. Once the face is
+/// turned away (`forward` is the way it looks) there are no eyes to hold:
+/// the lens goes over to the outside of the head on the camera's side, as
+/// it does on a skeleton without eyes.
+pub fn face_focus(camera: glam::Vec3, head: glam::Vec3, forward: glam::Vec3, eyes: Option<(glam::Vec3, glam::Vec3)>) -> glam::Vec3 {
+    let centre = head + glam::Vec3::Z * HEAD_MIDDLE;
+    let toward = (camera - centre).normalize_or_zero();
+    let outside = centre + toward * HEAD_RADIUS;
+    let Some((left, right)) = eyes else {
+        return outside;
+    };
+    let eye = if left.distance_squared(camera) <= right.distance_squared(camera) {
+        left
+    } else {
+        right
+    };
+    let cornea = eye + (camera - eye).normalize_or_zero() * EYE_RADIUS;
+    // 1 with the camera before the face, 0 behind it; the nearer eye still
+    // shows a little past the profile, and the lens goes over slowly (from
+    // 96° to 134° off the face), not in a step
+    let facing = forward.normalize_or_zero().dot(toward);
+    let t = ((facing + 0.7) / 0.6).clamp(0.0, 1.0);
+    outside.lerp(cornea, t * t * (3.0 - 2.0 * t))
 }
 
 /// What the focus holds: an avatar's face, or a point of the world.
@@ -925,6 +1038,54 @@ mod tests {
     }
 
     #[test]
+    fn the_lens_takes_the_nearer_eye_of_a_face_and_the_outside_of_a_head_turned_away() {
+        use glam::Vec3;
+        // a head at the origin looking along +X, its eyes where the default
+        // skeleton has them (mEyeLeft / mEyeRight from mHead)
+        let head = Vec3::ZERO;
+        let forward = Vec3::X;
+        let eyes = (Vec3::new(0.098, 0.036, 0.079), Vec3::new(0.098, -0.036, 0.079));
+        // straight before the face, 0.4 m from the eyes: both are as near,
+        // the lens is an eyeball's radius before one of them
+        let camera = Vec3::new(0.498, 0.0, 0.079);
+        let f = face_focus(camera, head, forward, Some(eyes));
+        assert!((f.x - (0.098 + EYE_RADIUS)).abs() < 1e-3, "{f}");
+        assert!((f.z - 0.079).abs() < 1e-3);
+        // from its left, the left eye
+        let f = face_focus(Vec3::new(0.4, 0.3, 0.079), head, forward, Some(eyes));
+        assert!(f.distance(eyes.0) <= EYE_RADIUS + 1e-4 && f.distance(eyes.1) > 0.05, "{f}");
+        let f = face_focus(Vec3::new(0.4, -0.3, 0.079), head, forward, Some(eyes));
+        assert!(f.distance(eyes.1) <= EYE_RADIUS + 1e-4);
+        // a head an animation tilts 30° forward carries its eyes 3 cm
+        // nearer the camera: the lens goes with them, where a place worked
+        // out from mHead alone stays put
+        let tilt = glam::Quat::from_rotation_y(30f32.to_radians());
+        let tilted = (tilt * eyes.0, tilt * eyes.1);
+        assert!(tilted.0.x - eyes.0.x > 0.025);
+        let still = face_focus(camera, head, forward, Some(eyes));
+        let moved = face_focus(camera, head, tilt * forward, Some(tilted));
+        assert!((moved.x - still.x - (tilted.0.x - eyes.0.x)).abs() < 2e-3, "{still} {moved}");
+        // from behind, the outside of the head on the camera's side, as on
+        // a skeleton without eyes
+        let behind = Vec3::new(-2.0, 0.0, 0.09);
+        let f = face_focus(behind, head, forward, Some(eyes));
+        assert!((f - Vec3::new(-HEAD_RADIUS, 0.0, HEAD_MIDDLE)).length() < 1e-4, "{f}");
+        assert_eq!(f, face_focus(behind, head, forward, None));
+        // and no jump of the lens on the way round, from one eye to the
+        // other nor over to the back of the head, 16 cm from the eyes: a
+        // degree more never moves its distance by a centimetre
+        let at = |deg: f32| {
+            let a = deg.to_radians();
+            let camera = Vec3::new(a.cos(), a.sin(), 0.09) * 2.0;
+            face_focus(camera, head, forward, Some(eyes)).distance(camera)
+        };
+        for deg in 0..360 {
+            let step = (at(deg as f32) - at(deg as f32 + 1.0)).abs();
+            assert!(step < 0.01, "{deg}°: {step}");
+        }
+    }
+
+    #[test]
     fn shift_click_adds_a_subject_then_takes_it_out() {
         use glam::Vec3;
         let eye = Vec3::ZERO;
@@ -1030,6 +1191,99 @@ mod tests {
         assert_eq!(parse_tilt("-400"), Some(-f64::from(ROLL_MAX)));
         assert_eq!(parse_tilt("level"), None);
         assert_eq!(parse_tilt(""), None);
+    }
+
+    #[test]
+    fn a_kept_view_comes_back_within_reach_across_a_region_crossing() {
+        use glam::Vec3;
+        let kept = KeptView {
+            eye: [256_010.0, 512_020.0, 25.0],
+            at: [256_012.0, 512_020.0, 24.5],
+            avatar: [256_013.0, 512_020.0, 22.0],
+            fov: 0.6,
+            free: false,
+        };
+        // the region where it was kept
+        let (eye, at) = kept.back((256_000, 512_000), Vec3::new(13.0, 20.0, 22.0), 64.0).unwrap();
+        assert_eq!((eye, at), (Vec3::new(10.0, 20.0, 25.0), Vec3::new(12.0, 20.0, 24.5)));
+        // the next region east: the same place, 256 m west of its corner
+        let (eye, _) = kept.back((256_256, 512_000), Vec3::new(-243.0, 20.0, 22.0), 64.0).unwrap();
+        assert_eq!(eye, Vec3::new(-246.0, 20.0, 25.0));
+        // a view flown farther than the view reaches from the avatar: the
+        // scene there is not loaded, the photo mode opens on the view it has
+        let far = KeptView {
+            eye: [256_210.0, 512_020.0, 25.0],
+            at: [256_212.0, 512_020.0, 24.5],
+            ..kept
+        };
+        assert!(far.back((256_000, 512_000), Vec3::new(13.0, 20.0, 22.0), 64.0).is_none());
+        let broken = KeptView { at: kept.eye, ..kept };
+        assert!(broken.back((256_000, 512_000), Vec3::new(13.0, 20.0, 22.0), 64.0).is_none());
+        let nan = KeptView {
+            eye: [f64::NAN, 0.0, 0.0],
+            ..kept
+        };
+        assert!(nan.back((256_000, 512_000), Vec3::new(13.0, 20.0, 22.0), 64.0).is_none());
+    }
+
+    #[test]
+    fn a_kept_view_is_dropped_once_the_avatar_moved_away() {
+        // #4604: the photo mode opened on the spot it last closed on, far
+        // from an avatar that had walked away since
+        use glam::Vec3;
+        let kept = KeptView {
+            eye: [256_010.0, 512_020.0, 25.0],
+            at: [256_012.0, 512_020.0, 24.5],
+            avatar: [256_013.0, 512_020.0, 22.0],
+            fov: 0.6,
+            free: false,
+        };
+        let origin = (256_000, 512_000);
+        // a pose in place (sat down, a step aside): the framing comes back
+        assert!(kept.back(origin, Vec3::new(13.0, 20.0, 21.4), 64.0).is_some());
+        assert!(kept.back(origin, Vec3::new(13.0, 23.9, 22.0), 64.0).is_some());
+        // walked a few metres away, the view still well within reach: it is
+        // dropped, the photo mode opens on the camera as it is
+        assert!(kept.back(origin, Vec3::new(13.0, 24.5, 22.0), 64.0).is_none());
+        assert!(kept.back(origin, Vec3::new(40.0, 20.0, 22.0), 64.0).is_none());
+        // flown up
+        assert!(kept.back(origin, Vec3::new(13.0, 20.0, 30.0), 64.0).is_none());
+        // the same walk measured from the next region east
+        assert!(kept.back((256_256, 512_000), Vec3::new(-216.0, 20.0, 22.0), 64.0).is_none());
+        // a broken avatar position drops it
+        assert!(kept.back(origin, Vec3::NAN, 64.0).is_none());
+    }
+
+    #[test]
+    fn the_tilt_comes_back_only_with_its_view() {
+        let tilt = 20f32.to_radians();
+        assert_eq!(tilt_back(true, 0.0, tilt), Some(tilt));
+        // #4604: the view was dropped (the avatar moved away), or "Keep the
+        // framing" is off: the photo mode opens level
+        assert_eq!(tilt_back(false, 0.0, tilt), None);
+        // the camera controls tilted the view meanwhile: theirs stays
+        assert_eq!(tilt_back(true, 5f32.to_radians(), tilt), None);
+        // it closed level
+        assert_eq!(tilt_back(true, 0.0, 0.0), None);
+    }
+
+    #[test]
+    fn a_kept_view_already_shown_is_not_taken_again() {
+        use glam::Vec3;
+        let (eye, at) = (Vec3::new(10.0, 20.0, 25.0), Vec3::new(12.0, 20.0, 24.5));
+        assert!(KeptView::shown(eye, at, eye + Vec3::splat(0.001), at));
+        assert!(!KeptView::shown(eye, at, eye + Vec3::X * 0.5, at), "the camera moved");
+        assert!(!KeptView::shown(eye, at, eye, at + Vec3::Z), "it looks elsewhere");
+    }
+
+    #[test]
+    fn the_framing_is_kept_by_default_and_for_older_profiles() {
+        assert!(Prefs::default().keep_framing);
+        // a profile saved before the switch existed keeps the framing
+        let old: Prefs = serde_json::from_str(r#"{"beep": false, "timer": 2}"#).expect("old prefs");
+        assert!(old.keep_framing);
+        let off: Prefs = serde_json::from_str(r#"{"keep_framing": false}"#).expect("prefs");
+        assert!(!off.keep_framing);
     }
 
     #[test]

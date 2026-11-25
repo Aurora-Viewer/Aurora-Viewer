@@ -477,6 +477,11 @@ pub struct DebugView {
     pub check_probe_sets: bool,
     pub probes: bool,
     pub skeletons: bool,
+    /// The avatars' hitboxes with the Legacy Viewer's Avatar Hitboxes parity
+    /// (Developer › Render Metadata › Avatar Hitboxes): the avatar's own
+    /// oriented box, half its scale in either direction. Visual parity only:
+    /// picking still tests the fixed click box (see `scene::picking`).
+    pub avatar_hitboxes: bool,
     /// Detail level of the objects around the pointer, with the distance
     /// and the radius it comes from (Firestorm: Develop › Render Metadata ›
     /// LOD Info).
@@ -517,7 +522,14 @@ impl DebugView {
 
     /// An overlay drawn over the 3D view is on.
     pub fn any_overlay(&self) -> bool {
-        self.bounds || self.culling || self.lights || self.glow_objects || self.probes || self.skeletons || self.lod_info
+        self.bounds
+            || self.culling
+            || self.lights
+            || self.glow_objects
+            || self.probes
+            || self.skeletons
+            || self.avatar_hitboxes
+            || self.lod_info
     }
 }
 
@@ -591,6 +603,12 @@ pub struct Settings {
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
     pub language_is_public: bool,
+    /// The interface uses `custom_language_file` instead of `language`
+    /// (an Aurora addition, language_file.rs).
+    pub custom_language: bool,
+    /// The Fluent catalog file chosen for the interface, "" for none: read
+    /// at startup (language_file.rs). A path of this PC.
+    pub custom_language_file: String,
     /// The Legacy Viewer's FSBrowserHomePage: the page the built-in web browser (toolbar
     /// button) opens on (Preferences › Network and cache).
     pub browser_home_page: String,
@@ -633,11 +651,16 @@ pub struct Settings {
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
     pub joystick: crate::joystick::Settings,
     pub gamepad: crate::joystick::Settings,
+    /// Game Controls: GameControlData and the controller's action mappings
+    /// (the LL viewer's "GameControl" setting).
+    pub game_control: crate::game_control::Settings,
     /// Pre-split profile awaiting device classification after an upgrade.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_legacy_gamepad: Option<crate::joystick::Settings>,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
+    /// What the second camera frames (View › Second camera, Aurora's own).
+    pub second_camera_framing: crate::camera::second::Framing,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
     pub auto_hover_offset: f32,
     /// None keeps the former shared hover options until the first login.
@@ -668,6 +691,9 @@ pub struct Settings {
     pub parcel_music_accounts: std::collections::HashSet<uuid::Uuid>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
+    /// The world look (Preferences › Graphics › Image): a stack of looks of
+    /// its own on the 3D view, apart from the photos' (`snapshot::looks`).
+    pub world_look: crate::snapshot::looks::WorldLook,
     /// Depth of field (Preferences › Graphics).
     pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
@@ -680,6 +706,12 @@ pub struct Settings {
     /// Viewer always does; Preferences › Avatars › Animations). Off, our
     /// avatar keeps its pose. Camera framing is controlled independently.
     pub customize_animation: bool,
+    /// FSPlayDefaultBentoAnimation: a priority 0 Bento pose plays under
+    /// every other animation, so hands, mouth, wings and tail fall back to
+    /// a natural pose instead of staying stuck where the last animation
+    /// left them (off, as in the Legacy Viewer; Preferences › Avatars ›
+    /// Animations).
+    pub bento_idle: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
@@ -697,6 +729,10 @@ pub struct Settings {
     pub custom_login_uri: String,
     /// Saved grid metadata, independent of the account catalogue.
     pub grids: Vec<crate::grids::Grid>,
+    /// The login servers (`aurora_net::login::unencrypted_server`) the user
+    /// agreed to log in to over plain http, asked once each. "Reset
+    /// everything" forgets them: the question comes back.
+    pub unencrypted_logins: Vec<String>,
     pub start_location: String,
     pub start_region: String,
     pub draw_distance: f32,
@@ -742,6 +778,10 @@ pub struct Settings {
     pub env_persist: bool,
     /// The weather of this viewer (the Environment window's "Weather").
     pub weather: crate::weather::WeatherSettings,
+    /// Sky, water and day cycle lists A–Z instead of the inventory's order
+    /// (an Aurora switch on the lists, off: the order since #812; the
+    /// Legacy Viewer's lists are always by name).
+    pub env_lists_by_name: bool,
     /// Which stars the night sky shows: the real sky over Paris (Aurora's
     /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
     pub night_sky: crate::world::night_sky::NightSky,
@@ -771,6 +811,11 @@ pub struct Settings {
     pub bloom: bool,
     /// The share of the light over the threshold it spreads (0.05 to 1).
     pub bloom_strength: f32,
+    /// Planet curvature (aurora_render::curvature, Aurora's own; the
+    /// Legacy Viewer draws the regions flat): off by default.
+    pub planet_curvature: bool,
+    /// The planet's radius (km), the Earth's by default.
+    pub planet_radius_km: f32,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -851,6 +896,8 @@ pub struct Settings {
     pub confirm_return_to_owner: bool,
     pub confirm_attachment_drop: bool,
     pub confirm_script_modify: bool,
+    /// ConfirmCloseAll when an open IM has an active voice call.
+    pub confirm_close_all_ims: bool,
     /// The Marketplace listings ask before a move from the inventory
     /// (ConfirmMerchantMoveInventory), a change to an active listing
     /// (ConfirmMerchantActiveChange), a version folder leaving its place
@@ -930,6 +977,9 @@ pub struct Settings {
     /// The Appearance tab shown at exit (gallery, outfit list, worn), shown
     /// again at the next start, as the Legacy Viewer's `LastAppearanceTab`.
     pub appearance_tab: u8,
+    /// The order of the Appearance outfits (FSOutfitListSortOrder and
+    /// OutfitGallerySortOrder, saved like them).
+    pub appearance_outfit_sort: crate::world::outfit_folders::Sort,
     pub show_ao: bool,
     /// Loading / teleport screens show the last view, blurred.
     pub loading_backdrop: bool,
@@ -992,6 +1042,11 @@ pub struct Settings {
     /// viewer's notices (#475, off by default; Preferences > Chat). Not in
     /// the Legacy Viewer.
     pub compact_automated_chat: bool,
+    /// An emote ("/me waves") joins its sender's group under one header in
+    /// the Aurora style, instead of standing alone (off by default;
+    /// Preferences > Chat). An Aurora option; the Legacy Viewer always groups
+    /// emotes.
+    pub group_emotes: bool,
     /// With it, the system lines of the conversations (calls, automatic
     /// replies) too (off, the human's choice of 2026-10-24).
     pub compact_im_system_lines: bool,
@@ -1002,10 +1057,11 @@ pub struct Settings {
     /// name)", so that its line cannot pass for a resident's (FSMarkObjects,
     /// off; Preferences > Chat).
     pub mark_unnamed_objects: bool,
-    /// The local chat bar keeps the keyboard after a message is sent; Enter
-    /// on the empty bar gives it back to the world (the Legacy Viewer's
-    /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
-    /// off, the bar lets go after sending.
+    /// The local chat bar keeps the keyboard after a message is sent, and
+    /// an empty Enter leaves it there (the Legacy Viewer's CloseChatOnReturn
+    /// off, FSNearbyChatControl::autohide). On by default (human choice of
+    /// 2026-10-16, empty Enter kept since #3349). Off, sending lets the
+    /// keyboard go and the next Enter takes the bar back.
     pub chat_keep_focus: bool,
     /// Aurora extension, Enter toggles typing: Enter on an empty field gives
     /// the keyboard back to the world in every conversation too (IMs and
@@ -1219,6 +1275,10 @@ pub struct Settings {
     pub reopen_ims: bool,
     /// Show the end of a conversation's file when it opens (LogShowHistory).
     pub log_show_history: bool,
+    /// The Chat Service's history of the private conversations, fetched
+    /// from the region and shown with the transcripts (the LL viewer's
+    /// ChatServiceEnabled, on). Read at login only.
+    pub chat_service_history: bool,
     /// Date in the names of these files (LogFileNamewithDate, off).
     pub log_dated_names: bool,
     /// Import the Legacy Viewer's transcripts at each login. On by default
@@ -1285,7 +1345,6 @@ pub struct Settings {
     /// Global RLVa opt-in. Session restrictions are never persisted.
     pub rlva_enabled: bool,
     pub rlva: crate::world::rlva::preferences::Preferences,
-    pub pose_requests: crate::world::poser_consent::Preferences,
     pub poser: crate::ik_edit::poser::Config,
     /// The pose stand's lock and last pose (FSPoseStandLock,
     /// FSPoseStandLastSelectedPose).
@@ -1415,9 +1474,6 @@ pub struct Settings {
     /// Preferences › Aurora › Behavior: make, wear and use the Aurora bridge
     /// (`world/bridge.rs`). On by default, as the Legacy Viewer's UseLSLBridge.
     pub use_bridge: bool,
-    /// Preferences › Aurora › Behavior: whose portals the bridge shows. Friends
-    /// by default; our own portals and returns are always shown.
-    pub portal_sources: crate::world::portals::Sources,
     /// Experimental filing of new deliveries by the sender's legacy name.
     pub sort_received_items: bool,
     pub received_items_since: i64,
@@ -1466,6 +1522,11 @@ pub struct Settings {
     /// (`crate::high_contrast`, #906) instead of the skin's colours, off by
     /// default.
     pub high_contrast: bool,
+    /// Preferences › Accessibility › Vision: skip the glass of windows,
+    /// bars, menus and dialogs (`crate::disable_glass`), off by default.
+    /// Surfaces stay opaque, without frosting the world. High contrast
+    /// already does this.
+    pub disable_glass: bool,
     /// Preferences › Appearance › Skin: the accent, background and text
     /// colours of the interface (`crate::interface_colors`), each the
     /// skin's by default.
@@ -1473,6 +1534,14 @@ pub struct Settings {
     /// Firestorm's camera and movement windows (floater_camera.xml,
     /// floater_moveview.xml) instead of `ui/controls.rs`.
     pub classic_controls: bool,
+    /// The Controls window opens compact on the camera: its joysticks, zoom
+    /// and roll (the title button's compact / full, kept: #3904). With
+    /// `classic_controls`, the camera opens in the Legacy Viewer's small
+    /// camera window instead (`FSUseSmallCameraFloater`).
+    pub compact_controls: bool,
+    /// The Controls window's Movement tab opens compact: the movement
+    /// buttons and walk / run / fly (its title button, kept: #3904).
+    pub compact_movement_controls: bool,
     /// Camera presets, saved from the Controls window (Firestorm's camera
     /// presets) or the viewfinder (`camera::presets`); kept apart from
     /// `camera`, which "Reset" sets back.
@@ -1665,6 +1734,18 @@ pub struct Settings {
     /// Legacy Viewer (contact_shadows.rs): what the shadow map is too coarse
     /// to show, where things touch. Off by default; only with the shadows.
     pub contact_shadows: bool,
+    /// Soft sun shadows, experimental (aurora-render `soft_shadows.rs`): the
+    /// penumbra widens with the distance of the caster, like the sun's in
+    /// real life. Beyond the Legacy Viewer, off by default and in every
+    /// graphics level; only with the shadows.
+    pub soft_shadows: bool,
+    /// With soft shadows, the size of the light: 1 = 2.3 degrees across (the
+    /// real sun, 0.53 degrees, is a softness of 0.23), 0 = no size, up to 2. Without soft
+    /// shadows it has no effect.
+    pub shadow_softness: f32,
+    /// How dark the sun's shadows are, 0 to 1: 1 = as the Legacy Viewer's,
+    /// less lets the light through. Works with or without soft shadows.
+    pub shadow_intensity: f32,
     /// 0 none, 1 FXAA, 2 MSAA 2x, 3 MSAA 4x, 4 MSAA 8x, 5 TAA, 6 SMAA (the
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt), 7 AMD FSR 3.1 (beyond the Legacy Viewer)
@@ -1802,6 +1883,10 @@ pub struct Settings {
     /// Avatars still loading: 0 particle cloud + progress bar under the name
     /// (Firestorm), 1 progress bar only (drawn as they load), 2 nothing.
     pub loading_avatars: u8,
+    /// Aurora's own: while an avatar's worn objects are on their way, draw
+    /// copies of the ones kept from the last time (world/avatar_cache), then
+    /// the region's own.
+    pub avatar_cache: bool,
     /// RenderAvatarComplexityMode: 0 limit everyone, 1 always show friends
     /// fully, 2 show only friends.
     pub complexity_mode: u8,
@@ -1841,6 +1926,30 @@ pub struct Settings {
     pub display_name_notices: bool,
     /// Screen-space reflections.
     pub ssr: bool,
+    /// Preferences › Graphics › Ray tracing.
+    pub ray_tracing: RayTracingSettings,
+    /// The warning of Deluxe (RT) was shown and accepted once
+    /// (ui/options.rs `deluxe_rt_warning`): choosing the level again
+    /// applies it at once.
+    pub deluxe_rt_warned: bool,
+    /// The traced sun's shadows' softness: 1 the real sun's, 0 sharp
+    /// (aurora-render `RtTuning`). Apart from `ray_tracing`, which the
+    /// graphics levels set.
+    pub rt_sun_softness: f32,
+    /// The traced lamps' shadows' softness: 1 as measured, 0 sharp.
+    pub rt_lamp_softness: f32,
+    /// How many of the nearest lamps cast traced shadows.
+    pub rt_shadow_lamps: u8,
+    /// The traced indirect light's global illumination probes (aurora-render
+    /// `RtTuning::probes`): more bounces, and no sky's light in a closed
+    /// room. On by default; read only with the traced indirect light.
+    pub rt_gi_probes: bool,
+    /// The ray tracing quality, 0 Low, 1 Medium, 2 High (`RT_QUALITY_HIGH`,
+    /// the default and Deluxe (RT)'s image): every traced effect stays on,
+    /// traced with fewer samples, at a coarser grid for the indirect light
+    /// (aurora-render `LampQuality` and `RtTuning::with_gi_quality`). Apart
+    /// from the graphics levels, like the softness.
+    pub rt_quality: u8,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -1917,6 +2026,13 @@ pub struct Settings {
 /// around the foot of objects, at 4 it is grainy (captures of 2026-10-17).
 pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 
+/// The default shadow softness, 0.25 (a light about 0.6 degrees across, close
+/// to the real sun (0.53 degrees, a softness of 0.23); 1 is 2.3 degrees), and the range of the slider.
+pub(crate) const SHADOW_SOFTNESS: f32 = 0.25;
+pub(crate) const SHADOW_SOFTNESS_MAX: f32 = 2.0;
+/// The shadows as the Legacy Viewer draws them.
+pub(crate) const SHADOW_INTENSITY: f32 = 1.0;
+
 pub(crate) const DEFAULT_GROUND_FEET_HEIGHT: f32 = 0.4;
 pub(crate) const DEFAULT_GROUND_FEET_AVATARS: u32 = 5;
 pub(crate) const MAX_GROUND_FEET_AVATARS: u32 = 100;
@@ -1939,6 +2055,10 @@ pub(crate) const FONT_SCALE_MAX: f32 = 2.0;
 
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
+/// Planet curvature's radius (km): the Earth's, and the slider's range.
+pub(crate) const PLANET_RADIUS_KM: f32 = aurora_render::curvature::EARTH_RADIUS / 1000.0;
+pub(crate) const PLANET_RADIUS_KM_RANGE: std::ops::RangeInclusive<f32> =
+    aurora_render::curvature::RADIUS_MIN / 1000.0..=aurora_render::curvature::RADIUS_MAX / 1000.0;
 
 /// RenderTonemapMix's default (settings.xml).
 pub(crate) const TONEMAP_MIX: f32 = 0.7;
@@ -1963,7 +2083,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 42;
+const SETTINGS_VERSION: u32 = 47;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2104,6 +2224,9 @@ impl Default for ColorSettings {
     }
 }
 
+/// Index of the voice channel in the audio settings (`audio_channels`).
+pub const VOICE_CHANNEL: usize = 6;
+
 /// Audio channels in Firestorm's order: Main, Interface, Ambient, Sounds,
 /// Music, Multimedia, Voice.
 pub fn audio_channels() -> [&'static str; 7] {
@@ -2187,6 +2310,15 @@ pub struct AudioSettings {
     pub mute_when_minimized: bool,
     /// Output device name (empty = system default).
     pub output_device: String,
+    /// Voice-only output device, the counterpart of the Legacy Viewer's
+    /// `VoiceOutputAudioDevice` (`LLPanelVoiceDeviceSettings`,
+    /// indra/newview/llpanelvoicedevicesettings.cpp). Two deliberate
+    /// differences: empty follows Aurora's `output_device`, where the Legacy
+    /// Viewer's "Default" is the system's default playout device
+    /// (indra/llwebrtc/llwebrtc.cpp); and a chosen device that is missing is
+    /// kept, voice playing on `output_device` until it comes back, where the
+    /// Legacy Viewer's panel rewrites the setting to "Default".
+    pub voice_output_device: String,
     /// Microphone name (empty = system default).
     pub input_device: String,
     /// Connect to voice chat.
@@ -2194,12 +2326,20 @@ pub struct AudioSettings {
     /// Microphone button of the bottom bar: false = toggle (click on / click
     /// off), true = hold to talk (Firestorm PushToTalkToggle inverted).
     pub mic_hold: bool,
+    /// Close the microphone while muted, so that a Bluetooth headset leaves
+    /// its hands-free mode (StopMicCaptureWhenMuted, the LL viewer 26.5's
+    /// "Bluetooth only: Better in-world audio", on; off is "Better voice":
+    /// open the whole time voice is on).
+    pub stop_mic_when_muted: bool,
     /// Microphone gain (0..2).
     pub mic_gain: f32,
     /// Collision sounds (EnableCollisionSounds, on).
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// Where world sounds and media are heard from: the camera or the
+    /// avatar (MediaSoundsEarLocation, panel_preferences_sound.xml; camera).
+    pub media_sounds_ear: VoiceEar,
     /// Doppler shift of moving world sounds, 0 (off) to 2: the Legacy
     /// Viewer's is a fixed 1 (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp).
     pub doppler: f32,
@@ -2261,12 +2401,15 @@ impl Default for AudioSettings {
             stream_title_history: 10,
             mute_when_minimized: false,
             output_device: String::new(),
+            voice_output_device: String::new(),
             input_device: String::new(),
             voice_enabled: true,
             mic_hold: false,
+            stop_mic_when_muted: true,
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            media_sounds_ear: VoiceEar::Camera,
             doppler: 1.0,
             sound_occlusion: true,
             sound_hrtf: false,
@@ -2281,7 +2424,8 @@ impl Default for AudioSettings {
     }
 }
 
-/// VoiceEarLocation (panel_preferences_sound.xml); SL exposes two choices.
+/// VoiceEarLocation and MediaSoundsEarLocation (panel_preferences_sound.xml):
+/// the same two choices for voice and for sounds and media.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum VoiceEar {
     #[default]
@@ -2290,6 +2434,22 @@ pub enum VoiceEar {
 }
 
 impl AudioSettings {
+    /// What the enable box of a channel switches. The voice one is the voice
+    /// connection itself, microphone included (EnableVoiceChat of
+    /// panel_preferences_sound.xml and panel_volume_pulldown.xml).
+    pub fn channel_box(&mut self, i: usize) -> &mut bool {
+        if i == VOICE_CHANNEL {
+            &mut self.voice_enabled
+        } else {
+            &mut self.enabled[i]
+        }
+    }
+
+    /// The state of [`AudioSettings::channel_box`].
+    pub fn channel_on(&self, i: usize) -> bool {
+        if i == VOICE_CHANNEL { self.voice_enabled } else { self.enabled[i] }
+    }
+
     pub fn world_voice_visualizer(&self, own: bool, in_call: bool, mouselook: bool) -> bool {
         self.voice_visualizer && (!in_call || self.voice_visualizers_in_calls) && (!own || (self.voice_visualizer_self && !mouselook))
     }
@@ -2314,6 +2474,8 @@ impl Default for Settings {
             crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
+            custom_language: false,
+            custom_language_file: String::new(),
             browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
             browser_behavior: BrowserBehavior::default(),
             show_bug_report: true,
@@ -2331,8 +2493,10 @@ impl Default for Settings {
             crosshair: Default::default(),
             joystick: Default::default(),
             gamepad: crate::joystick::Settings::gamepad_defaults(),
+            game_control: Default::default(),
             pending_legacy_gamepad: None,
             auto_hover_height: false,
+            second_camera_framing: Default::default(),
             auto_hover_offset: 0.0,
             hover_height_accounts: None,
             hover_height_account: None,
@@ -2346,6 +2510,7 @@ impl Default for Settings {
             shape_height_feet: false,
             customize_animation: true,
             appearance_camera_movement: true,
+            bento_idle: false,
             imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
@@ -2357,6 +2522,7 @@ impl Default for Settings {
             grid: GridChoice::SecondLife,
             custom_login_uri: "http://127.0.0.1:9000/".into(),
             grids: Vec::new(),
+            unencrypted_logins: Vec::new(),
             start_location: "last".into(),
             start_region: String::new(),
             draw_distance: 96.0,
@@ -2375,6 +2541,7 @@ impl Default for Settings {
             env_manual_transition: 0.0,
             env_persist: true,
             weather: Default::default(),
+            env_lists_by_name: false,
             night_sky: Default::default(),
             night_sky_place: Default::default(),
             night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
@@ -2387,6 +2554,8 @@ impl Default for Settings {
             glow: true,
             bloom: false,
             bloom_strength: BLOOM_STRENGTH,
+            planet_curvature: false,
+            planet_radius_km: PLANET_RADIUS_KM,
             occlusion_culling: true,
             lod_factor: 2.0,
             tree_lod_factor: 0.5,
@@ -2423,6 +2592,7 @@ impl Default for Settings {
             confirm_return_to_owner: true,
             confirm_attachment_drop: true,
             confirm_script_modify: true,
+            confirm_close_all_ims: true,
             confirm_merchant_move: true,
             confirm_merchant_active_change: true,
             confirm_merchant_clear_version: true,
@@ -2454,6 +2624,7 @@ impl Default for Settings {
             wearable_favorites_sort: Default::default(),
             wearable_favorites_order: Default::default(),
             appearance_tab: 0,
+            appearance_outfit_sort: Default::default(),
             show_ao: false,
             ao: Default::default(),
             bridge: Default::default(),
@@ -2461,6 +2632,7 @@ impl Default for Settings {
             friends_only: Default::default(),
             parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
+            world_look: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
@@ -2485,6 +2657,7 @@ impl Default for Settings {
             script_errors_to_channel: false,
             script_errors_channel: 1,
             compact_automated_chat: false,
+            group_emotes: false,
             compact_im_system_lines: false,
             blocked_chat: BlockedChat::Hidden,
             mark_unnamed_objects: false,
@@ -2558,6 +2731,7 @@ impl Default for Settings {
             conversation_log: Default::default(),
             reopen_ims: false,
             log_show_history: true,
+            chat_service_history: true,
             log_dated_names: false,
             log_import_at_login: true,
             log_legacy_layout: false,
@@ -2581,7 +2755,6 @@ impl Default for Settings {
             anti_spam: Default::default(),
             rlva_enabled: false,
             rlva: Default::default(),
-            pose_requests: Default::default(),
             poser: Default::default(),
             pose_stand: Default::default(),
             autoresponse: Default::default(),
@@ -2623,7 +2796,6 @@ impl Default for Settings {
             predict_own_motion: false,
             synchronize_animations: false,
             use_bridge: true,
-            portal_sources: Default::default(),
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,
@@ -2641,8 +2813,11 @@ impl Default for Settings {
             color_blindness: crate::colorblind::Deficiency::Off,
             color_blindness_strength: 1.0,
             high_contrast: false,
+            disable_glass: false,
             interface_colors: Default::default(),
             classic_controls: false,
+            compact_controls: false,
+            compact_movement_controls: false,
             camera_shots: Vec::new(),
             camera_views: Default::default(),
             plates_friends_only_full: false,
@@ -2712,6 +2887,9 @@ impl Default for Settings {
             local_light_count: crate::scene::lights::MAX_LIGHTS as u32,
             projector_shadow_limit: 2,
             contact_shadows: false,
+            soft_shadows: false,
+            shadow_softness: SHADOW_SOFTNESS,
+            shadow_intensity: SHADOW_INTENSITY,
             antialiasing: 6,
             blend_order: crate::graphics_presets::BLEND_ORDER_FULL,
             fsr_quality: 1,
@@ -2751,6 +2929,7 @@ impl Default for Settings {
             max_attachment_area: 1000.0,
             complexity_notice_seconds: 0,
             loading_avatars: 0,
+            avatar_cache: true,
             complexity_mode: 0,
             avatar_physics: true,
             avatar_physics_detail: 1.0,
@@ -2769,6 +2948,13 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
+            ray_tracing: RayTracingSettings::OFF,
+            deluxe_rt_warned: false,
+            rt_sun_softness: RT_SOFTNESS,
+            rt_gi_probes: true,
+            rt_lamp_softness: RT_SOFTNESS,
+            rt_shadow_lamps: RT_SHADOW_LAMPS_MAX,
+            rt_quality: RT_QUALITY_HIGH,
             // an opt-in: the Legacy Viewer sorts its blended faces, and the
             // method's targets take video memory while it is on
             anisotropy: 8,
@@ -2833,11 +3019,25 @@ fn allow_overlays_in(file: Option<&[u8]>) -> bool {
         .unwrap_or(false)
 }
 
-/// `language` of a settings file's bytes; "default" for anything else.
-fn language_in(file: Option<&[u8]>) -> String {
-    file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+/// `language` of a settings file's bytes ("default" for anything else),
+/// and its language file when its use is chosen.
+fn language_in(file: Option<&[u8]>) -> (String, Option<String>) {
+    let value = file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok());
+    let language = value
+        .as_ref()
         .and_then(|value| value.get("language").and_then(serde_json::Value::as_str).map(str::to_owned))
-        .unwrap_or_else(|| "default".into())
+        .unwrap_or_else(|| "default".into());
+    (language, value.as_ref().and_then(language_file_in))
+}
+
+/// The language file of a parsed settings file, when its use is chosen.
+fn language_file_in(value: &serde_json::Value) -> Option<String> {
+    let enabled = value.get("custom_language").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    let file = value
+        .get("custom_language_file")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    crate::language_file::chosen(enabled, file).map(str::to_owned)
 }
 
 fn for_mode(dir: PathBuf) -> PathBuf {
@@ -3012,8 +3212,9 @@ impl Settings {
 
     /// The saved language, read the same way for the startup splash
     /// (`splash/`), which loads nothing else; "default" (the system's) when
-    /// the file or the field is missing.
-    pub fn language_at_start() -> String {
+    /// the file or the field is missing. Also the language file, when its
+    /// use is chosen.
+    pub fn language_at_start() -> (String, Option<String>) {
         language_in(std::fs::read(Self::path()).ok().as_deref())
     }
 
@@ -3034,10 +3235,9 @@ impl Settings {
                 saved_window = saved_window_state(&value);
                 // Select before serde fills missing fields: default auto-replies
                 // must use the saved locale too, without replacing custom text.
-                aurora_i18n::select(
-                    value["language"].as_str().unwrap_or("default"),
-                    crate::cli::get().language.as_deref(),
-                );
+                let file = language_file_in(&value);
+                crate::language_file::start(file.as_deref());
+                crate::language_file::select(value["language"].as_str().unwrap_or("default"), file.is_some());
                 let (s, from_newer) = Self::read_document(value, path)?;
                 newer = from_newer;
                 Some(s)
@@ -3064,6 +3264,12 @@ impl Settings {
             if read.value.joystick.mapping == preset.mapping {
                 read.value.finish_legacy_gamepad_migration(None);
             }
+        }
+        if version < 45 && value.get("ray_tracing").is_none() {
+            // a file written before ray tracing traced nothing: the earlier
+            // levels' migrations compare it so, before the version 45 one
+            // turns the shadows on (`sanitized`)
+            read.value.ray_tracing = RayTracingSettings::OFF;
         }
         let mut newer = None;
         if version > SETTINGS_VERSION as u64 {
@@ -3156,6 +3362,12 @@ impl Settings {
         profile.first_person.zoom_out_button = -1;
         self.gamepad = profile;
         self.joystick.enabled = false;
+    }
+
+    /// The radius of the planet the world is drawn on (m), None while the
+    /// curvature is off (FrameParams::curvature).
+    pub(crate) fn planet_radius(&self) -> Option<f32> {
+        self.planet_curvature.then_some(self.planet_radius_km * 1000.0)
     }
 
     pub(crate) fn sanitized(mut self) -> Settings {
@@ -3461,6 +3673,7 @@ impl Settings {
                 by_date: true,
                 folders_by_name: false,
                 system_first: true,
+                ..Default::default()
             };
             if self.inventory.recent_sort == former {
                 self.inventory.recent_sort.system_first = false;
@@ -3480,6 +3693,47 @@ impl Settings {
             // back once to the simulator's movement (Legacy), its row in
             // Preferences › Aurora keeps Instant as a choice
             self.predict_own_motion = false;
+        }
+        if self.settings_version < 43 {
+            // Aurora Weather's main and card switches, off by default: an
+            // earlier file keeps on what it drew (none of its own where
+            // regions set the weather)
+            self.weather.upgrade_to_switches();
+        }
+        // only the migration above reads the former region switch
+        self.weather.former_region_weather = None;
+        if self.settings_version < 44 {
+            // the wind's defaults, a breeze: a wind off and left still
+            // takes them, so that switching it on blows
+            self.weather.upgrade_wind_defaults();
+        }
+        if self.settings_version < 46 {
+            // ray tracing is Deluxe (RT)'s alone (graphics_presets.rs):
+            // an earlier file, which traced the shadows by default since
+            // version 45, goes back to the shadow maps once, and a profile
+            // still exactly on the former Deluxe moves to High
+            self.ray_tracing = RayTracingSettings::OFF;
+            crate::graphics_presets::upgrade_deluxe_to_high(&mut self);
+        }
+        if self.settings_version < 47 {
+            // the traced shadows' softness moved from 1 to `RT_SOFTNESS`:
+            // a file still on the former default takes the new one once, a
+            // softness chosen by hand stays
+            if self.rt_sun_softness == 1.0 {
+                self.rt_sun_softness = RT_SOFTNESS;
+            }
+            if self.rt_lamp_softness == 1.0 {
+                self.rt_lamp_softness = RT_SOFTNESS;
+            }
+        }
+        if !self.audio.enabled[VOICE_CHANNEL] {
+            // this box used to switch a mixer channel of its own, leaving
+            // voice connected and the microphone open: whoever unticked it
+            // wanted voice off. Repaired at every load, not once by version:
+            // no control ticks this channel back on, and an earlier build
+            // sharing the file can still write it
+            self.audio.enabled[VOICE_CHANNEL] = true;
+            self.audio.voice_enabled = false;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -3547,12 +3801,28 @@ impl Settings {
             toolbar.sanitize();
         }
         self.snapshot.sanitize();
+        // the world filters keep the photo stack's rules (8 looks at most,
+        // strengths up to 100): a longer or edited file would otherwise
+        // show "10 of 8", and a card opened would clamp its strength and
+        // switch the world filters on with no edit
+        crate::snapshot::looks::sanitize(&mut self.world_look.looks);
         self.dof.sanitize();
+        self.game_control.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.screen_indirect_intensity = if self.screen_indirect_intensity.is_finite() {
             self.screen_indirect_intensity.clamp(0.0, 4.0)
         } else {
             SCREEN_INDIRECT_INTENSITY
+        };
+        self.shadow_softness = if self.shadow_softness.is_finite() {
+            self.shadow_softness.clamp(0.0, SHADOW_SOFTNESS_MAX)
+        } else {
+            SHADOW_SOFTNESS
+        };
+        self.shadow_intensity = if self.shadow_intensity.is_finite() {
+            self.shadow_intensity.clamp(0.0, 1.0)
+        } else {
+            SHADOW_INTENSITY
         };
         self.sharpen = if self.sharpen.is_finite() {
             self.sharpen.clamp(0.0, 1.0)
@@ -3563,6 +3833,12 @@ impl Settings {
             self.bloom_strength.clamp(0.05, 1.0)
         } else {
             BLOOM_STRENGTH
+        };
+        self.planet_radius_km = if self.planet_radius_km.is_finite() {
+            self.planet_radius_km
+                .clamp(*PLANET_RADIUS_KM_RANGE.start(), *PLANET_RADIUS_KM_RANGE.end())
+        } else {
+            PLANET_RADIUS_KM
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
         let area = |v: f32, default: f32| if v.is_finite() { v.clamp(0.0, 1.0e6) } else { default };
@@ -3744,6 +4020,21 @@ impl Settings {
         });
     }
 
+    /// `save`, with the view angle `fov` (radians) written as the user's
+    /// own: the viewfinder puts its focal length in `camera.fov` while it
+    /// is on and gives the user's back when it closes, so a save made in
+    /// the meantime must not keep the focal length.
+    pub fn save_with_fov(&self, fov: Option<f32>) {
+        match fov {
+            Some(fov) if (fov - self.camera.fov).abs() > 1e-6 => {
+                let mut copy = self.clone();
+                copy.camera.fov = fov;
+                copy.save();
+            }
+            _ => self.save(),
+        }
+    }
+
     /// What is written to the file: the user's own graphics values while
     /// the photo quality raises them, no user name unless remembered.
     pub(crate) fn to_saved(&self) -> Settings {
@@ -3872,6 +4163,34 @@ impl Settings {
         }
     }
 
+    /// The ray tracing quality's lamps (aurora-render `LampQuality`), Low,
+    /// Medium then High.
+    pub fn rt_lamp_quality(level: u8) -> aurora_render::LampQuality {
+        use aurora_render::LampQuality;
+        [LampQuality::LOW, LampQuality::MEDIUM, LampQuality::HIGH][usize::from(level.min(RT_QUALITY_HIGH))]
+    }
+
+    /// What the traced effects are asked for: the softness and the lamps of
+    /// Preferences, and the ray tracing quality's samples (its lamps' count
+    /// is the slider's, which choosing a quality moves:
+    /// ui/options/pages/graphics.rs `ray_tracing`). AURORA_RT_GI_QUALITY
+    /// sets the indirect light's alone for a launch (docs/TESTING.md).
+    fn rt_tuning(&self) -> aurora_render::RtTuning {
+        let level = self.rt_quality.min(RT_QUALITY_HIGH);
+        let base = aurora_render::RtTuning {
+            sun_softness: self.rt_sun_softness.clamp(0.0, RT_SOFTNESS_MAX),
+            lamp_softness: self.rt_lamp_softness.clamp(0.0, RT_SOFTNESS_MAX),
+            projectors: self.projector_shadows,
+            probes: self.rt_gi_probes,
+            ..aurora_render::RtTuning::default()
+        };
+        let gi = aurora_render::RtTuning::gi_quality_from_env().unwrap_or(usize::from(level));
+        aurora_render::RtTuning {
+            lamps: u32::from(self.rt_shadow_lamps.clamp(1, RT_SHADOW_LAMPS_MAX)),
+            ..Self::rt_lamp_quality(level).apply(base).with_gi_quality(gi)
+        }
+    }
+
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
         use aurora_render::{AntiAliasing, AoMethod, FsrQuality, Tonemapper};
         let mut water_effects = self.water_effects.render();
@@ -3918,11 +4237,14 @@ impl Settings {
             screen_indirect: self.ao_method == 1 && self.screen_indirect_light,
             screen_indirect_intensity: self.screen_indirect_intensity,
             contact_shadows: self.contact_shadows,
+            soft_shadows: self.soft_shadows,
             specular_aa: self.specular_aa,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
+            ray_tracing: self.ray_tracing.render(),
+            rt_tuning: self.rt_tuning(),
             // set each frame by the app while it rains
             rain_surfaces: false,
             anisotropy: self.anisotropy,
@@ -4039,6 +4361,76 @@ impl Default for MapSettings {
     }
 }
 
+/// The most the traced shadows' softness goes to (Preferences' sliders).
+pub const RT_SOFTNESS_MAX: f32 = 4.0;
+/// The traced shadows' default softness, the sun's and the lamps' (decided
+/// by the human on 2026-11-22 after the grid tests: crisper and prettier
+/// than 1, the size measured, which version 47 moves to it once).
+pub const RT_SOFTNESS: f32 = 0.2;
+/// The ray tracing quality's levels (`Settings::rt_quality`): Low, Medium,
+/// High, the default.
+pub const RT_QUALITY_HIGH: u8 = 2;
+/// The most lamps that cast traced shadows (aurora-render's
+/// `MAX_TRACED_LIGHTS`).
+pub const RT_SHADOW_LAMPS_MAX: u8 = 64;
+
+/// Preferences › Graphics › Ray tracing (aurora-render's rt_shadows.rs):
+/// only on a graphics card with ray queries
+/// (`aurora_render::RayTracingSupport`); elsewhere the shadow maps stay. Off
+/// by default: the Deluxe (RT) level turns on the sun's and the local
+/// lights' shadows and the indirect light (`RayTracingSettings::DELUXE`),
+/// in the shadow maps' and the screen-space light's place; the reflections,
+/// experimental, stay off. The renderer adds what each needs:
+/// the sun's shadows only with the shadows, the reflections only with the
+/// screen-space ones. (`Default` is all off: what a saved graphics profile
+/// written before ray tracing reads.)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct RayTracingSettings {
+    /// The sun's and the moon's shadows traced, in the shadow maps' place.
+    /// The others trace the scene it builds: none without it.
+    pub enabled: bool,
+    /// The local lights' shadows.
+    pub lights: bool,
+    /// The indirect light, in the screen-space one's place.
+    pub indirect: bool,
+    /// The reflections, in the screen-space ones' place.
+    pub reflections: bool,
+}
+
+impl RayTracingSettings {
+    pub const OFF: RayTracingSettings = RayTracingSettings {
+        enabled: false,
+        lights: false,
+        indirect: false,
+        reflections: false,
+    };
+
+    /// The shadows traced, the sun's and the local lights', in the shadow
+    /// maps' place.
+    pub const SHADOWS: RayTracingSettings = RayTracingSettings {
+        enabled: true,
+        lights: true,
+        indirect: false,
+        reflections: false,
+    };
+
+    /// Deluxe (RT)'s: the shadows and the indirect light traced.
+    pub const DELUXE: RayTracingSettings = RayTracingSettings {
+        indirect: true,
+        ..RayTracingSettings::SHADOWS
+    };
+
+    pub fn render(self) -> aurora_render::RayTracing {
+        aurora_render::RayTracing {
+            shadows: self.enabled,
+            lights: self.lights,
+            indirect: self.indirect,
+            reflections: self.reflections,
+        }
+    }
+}
+
 /// Per-effect choices survive quality changes and the master switch.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(default)]
@@ -4099,6 +4491,51 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    /// A settings file whose world filters break the stack's rules (more
+    /// than 8 looks, a strength past 100) is brought back to them on load,
+    /// as the photo stack is, and stays off.
+    #[test]
+    fn loaded_world_filters_keep_to_the_stacks_rules() {
+        use crate::snapshot::looks::{Layer, MAX_LAYERS, WorldLook};
+        let settings = super::Settings {
+            world_look: WorldLook {
+                on: false,
+                looks: (0..12)
+                    .map(|_| Layer {
+                        id: "Sepia".into(),
+                        strength: 250,
+                        on: true,
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .sanitized();
+        assert_eq!(settings.world_look.looks.len(), MAX_LAYERS);
+        assert!(settings.world_look.looks.iter().all(|l| l.strength == 100));
+        assert!(!settings.world_look.on);
+    }
+
+    #[test]
+    fn voice_output_device_defaults_to_audio_output_and_survives_settings_round_trip() {
+        use super::Settings;
+
+        assert!(Settings::default().audio.voice_output_device.is_empty());
+        // An older settings file has no voice-specific output choice. Empty
+        // means the selected normal output remains in use.
+        let old: Settings = serde_json::from_str(r#"{"audio":{"output_device":"Speakers"}}"#).expect("older preferences");
+        assert_eq!(old.audio.output_device, "Speakers");
+        assert!(old.audio.voice_output_device.is_empty());
+
+        let mut settings = old;
+        settings.audio.voice_output_device = "Headset".into();
+        let saved = serde_json::to_vec(&settings).expect("save preferences");
+        let restored: Settings = serde_json::from_slice(&saved).expect("restore preferences");
+        assert_eq!(restored.audio.output_device, "Speakers");
+        assert_eq!(restored.audio.voice_output_device, "Headset");
+    }
+
     #[test]
     fn avatar_only_hover_tips_are_off_by_default_and_for_older_preferences() {
         use super::HoverTips;
@@ -4252,6 +4689,24 @@ mod tests {
     }
 
     #[test]
+    fn planet_curvature_is_off_by_default_on_the_earth_and_kept_on_its_slider() {
+        let s = super::Settings::default();
+        assert!(!s.planet_curvature);
+        assert_eq!(s.planet_radius(), None);
+        assert_eq!(s.planet_radius_km, 6371.0);
+        for (asked, kept) in [(1.0, 1000.0), (6371.0, 6371.0), (1.0e9, 100_000.0), (f32::NAN, 6371.0)] {
+            let s = super::Settings {
+                planet_curvature: true,
+                planet_radius_km: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.planet_radius_km, kept, "{asked} km");
+            assert_eq!(s.planet_radius(), Some(kept * 1000.0));
+        }
+    }
+
+    #[test]
     fn the_toast_gap_starts_at_the_legacy_seven_and_stays_on_its_slider() {
         // ToastGap: 7 px by default, whole pixels from 0 to 30
         assert_eq!(super::Settings::default().toast_gap, 7.0);
@@ -4277,6 +4732,63 @@ mod tests {
         assert!(old.log_import_at_login);
         let off: Settings = serde_json::from_str(r#"{"log_import_at_login":false}"#).expect("preferences");
         assert!(!off.log_import_at_login);
+    }
+
+    #[test]
+    fn gi_probes_default_on_keep_a_saved_off_and_reach_the_renderer() {
+        use super::Settings;
+        assert!(Settings::default().rt_gi_probes);
+        assert!(Settings::default().render_settings().rt_tuning.probes);
+        // preferences saved before the setting existed
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert!(old.rt_gi_probes);
+        let off: Settings = serde_json::from_str(r#"{"rt_gi_probes":false}"#).expect("preferences");
+        assert!(!off.render_settings().rt_tuning.probes);
+    }
+
+    #[test]
+    fn the_ray_tracing_quality_defaults_to_high_and_lowers_the_samples_only() {
+        use super::{RT_QUALITY_HIGH, Settings};
+        use aurora_render::LampQuality;
+        let high = Settings::default();
+        assert_eq!(high.rt_quality, RT_QUALITY_HIGH);
+        // preferences saved before the setting existed keep today's image
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert_eq!(old.rt_quality, RT_QUALITY_HIGH);
+        let t = high.render_settings().rt_tuning;
+        assert_eq!(LampQuality::of(t), LampQuality::HIGH);
+        if aurora_render::RtTuning::gi_quality_from_env().is_none() {
+            let full = aurora_render::RtTuning::default().with_gi_quality(2);
+            assert_eq!(
+                (t.gi_step, t.gi_probe_updates, t.gi_neighbours),
+                (full.gi_step, full.gi_probe_updates, full.gi_neighbours)
+            );
+        }
+        for level in 0..=RT_QUALITY_HIGH + 3 {
+            let s = Settings {
+                rt_quality: level,
+                rt_shadow_lamps: 5,
+                ..Settings::default()
+            };
+            let t = s.render_settings().rt_tuning;
+            let q = Settings::rt_lamp_quality(level);
+            assert_eq!(
+                (t.lamp_candidates, t.lamp_reuse, t.lamp_denoise),
+                (q.candidates, q.reuse, q.denoise),
+                "{level}"
+            );
+            // the lamps' count stays the slider's; the other effects stay on
+            assert_eq!(t.lamps, 5, "{level}");
+            assert_eq!((t.probes, t.projectors), (s.rt_gi_probes, s.projector_shadows), "{level}");
+            assert_eq!(
+                (t.sun_softness, t.lamp_softness),
+                (s.rt_sun_softness, s.rt_lamp_softness),
+                "{level}"
+            );
+        }
+        assert_eq!(Settings::rt_lamp_quality(0), LampQuality::LOW);
+        assert_eq!(Settings::rt_lamp_quality(1), LampQuality::MEDIUM);
+        assert_eq!(Settings::rt_lamp_quality(9), LampQuality::HIGH);
     }
 
     #[test]
@@ -4460,16 +4972,36 @@ mod tests {
     /// The splash's early read of the language agrees with the settings.
     #[test]
     fn the_splash_reads_the_saved_language() {
-        assert_eq!(super::language_in(Some(br#"{"draw_distance":96,"language":"fr"}"#)), "fr");
+        let language = |file: Option<&[u8]>| super::language_in(file).0;
+        assert_eq!(language(Some(br#"{"draw_distance":96,"language":"fr"}"#)), "fr");
         for file in [Some(&br#"{"language":7}"#[..]), Some(b"not json"), None] {
-            assert_eq!(super::language_in(file), "default", "{file:?}");
+            assert_eq!(language(file), "default", "{file:?}");
         }
         let saved = serde_json::to_vec(&super::Settings {
             language: "ja".into(),
             ..Default::default()
         })
         .expect("settings json");
-        assert_eq!(super::language_in(Some(&saved)), "ja");
+        assert_eq!(super::language_in(Some(&saved)), ("ja".into(), None));
+    }
+
+    /// The language file is read at startup only when its use is chosen.
+    #[test]
+    fn the_splash_reads_the_language_file_when_it_is_chosen() {
+        let saved = |on: bool, file: &str| {
+            serde_json::to_vec(&super::Settings {
+                language: "fr".into(),
+                custom_language: on,
+                custom_language_file: file.into(),
+                ..Default::default()
+            })
+            .expect("settings json")
+        };
+        let file = r"C:\translations\de.ftl";
+        assert_eq!(super::language_in(Some(&saved(true, file))), ("fr".into(), Some(file.into())));
+        assert_eq!(super::language_in(Some(&saved(false, file))).1, None, "not chosen");
+        assert_eq!(super::language_in(Some(&saved(true, ""))).1, None, "no file");
+        assert_eq!(super::language_in(Some(br#"{"custom_language":"yes"}"#)).1, None);
     }
 
     /// The teleport history's zone: SLT by default (FSTPHistoryTZ), each
@@ -4925,9 +5457,10 @@ mod tests {
         deluxe_v18().write(&mut old);
         old.ao_method = 0;
         let now = old.sanitized();
-        // straight to the Deluxe of now
-        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
-        assert_eq!((now.ao_method, now.gtao_quality), (1, 3));
+        // to the Deluxe of then (GTAO at Ultra), then to High once Deluxe
+        // became Deluxe (RT) (version 46)
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
+        assert_eq!((now.ao_method, now.gtao_quality), (1, 2));
         // chosen after the change: kept
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
@@ -4944,10 +5477,10 @@ mod tests {
         };
         deluxe_v18().write(&mut old);
         let now = old.sanitized();
-        // through version 19 to the Deluxe of now: the contact shadows and
-        // the indirect light, the experimental bloom off
-        assert!(now.contact_shadows && !now.bloom && now.screen_indirect_light);
-        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
+        // through version 19 to the Deluxe of then, then to High (version
+        // 46): the contact shadows, the experimental bloom off
+        assert!(now.contact_shadows && !now.bloom && !now.screen_indirect_light);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
         // turned off after the change: kept off
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
@@ -4964,9 +5497,9 @@ mod tests {
         };
         deluxe_v19().write(&mut old);
         let now = old.sanitized();
-        // to the Deluxe of now: the bloom off, the indirect light on again
-        assert!(now.contact_shadows && !now.bloom && now.screen_indirect_light);
-        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
+        // to the Deluxe of then (the bloom off), then to High (version 46)
+        assert!(now.contact_shadows && !now.bloom && !now.screen_indirect_light);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
         // turned on again after the change: kept on
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
@@ -5002,7 +5535,8 @@ mod tests {
         for (former, preset) in [
             (medium_v20(), Preset::Medium),
             (high_v20(), Preset::High),
-            (deluxe_v20(), Preset::Deluxe),
+            // (the Deluxe of then, then High since Deluxe became Deluxe (RT))
+            (deluxe_v20(), Preset::High),
         ] {
             let mut old = Settings {
                 settings_version: 20,
@@ -5029,6 +5563,98 @@ mod tests {
             let kept = custom.sanitized();
             assert_eq!((kept.ssao, kept.gtao_quality, kept.draw_distance), before);
         }
+    }
+
+    #[test]
+    fn earlier_files_go_back_to_the_shadow_maps_once_and_the_former_deluxe_to_high() {
+        use crate::graphics_presets::{Preset, deluxe_v45, high_v20};
+        let path = scratch_settings_file();
+        // a file written before ray tracing holds none: it reads as off, so
+        // the earlier levels' migrations still find their level
+        let without = |version: u32, level: &dyn Fn(&mut Settings)| {
+            let mut s = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            level(&mut s);
+            let mut file = serde_json::to_value(s).expect("synthetic saved settings");
+            file.as_object_mut().expect("settings object").remove("ray_tracing");
+            let (s, newer) = Settings::read_document(file, &path).expect("readable settings");
+            s.finished(newer)
+        };
+        let now = without(44, &|s| Preset::High.apply(s));
+        assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
+        // the former Deluxe moves to High, nothing traced
+        let now = without(44, &|s| deluxe_v45().write(s));
+        assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
+        let now = without(20, &|s| high_v20().write(s));
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
+        let now = without(44, &|s| Preset::Low.apply(s));
+        assert_eq!(Preset::matching(&now), Some(Preset::Low));
+        // a file of version 45, which traced the shadows by default: back to
+        // the shadow maps once, its High and its Deluxe both to High
+        for level in [Preset::High.values(), deluxe_v45()] {
+            let mut old = Settings {
+                settings_version: 45,
+                ..Settings::default()
+            };
+            level.write(&mut old);
+            old.ray_tracing = RayTracingSettings::SHADOWS;
+            let now = old.sanitized();
+            assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
+            assert_eq!(Preset::matching(&now), Some(Preset::High));
+        }
+        // chosen after the migration, Deluxe (RT) and ray tracing by hand: kept
+        let mut deluxe = Settings::default();
+        Preset::Deluxe.apply(&mut deluxe);
+        let kept = deluxe.sanitized();
+        assert_eq!(kept.ray_tracing, RayTracingSettings::DELUXE);
+        assert_eq!(Preset::matching(&kept), Some(Preset::Deluxe));
+        let by_hand = Settings {
+            ray_tracing: RayTracingSettings::SHADOWS,
+            ..Settings::default()
+        };
+        assert_eq!(by_hand.sanitized().ray_tracing, RayTracingSettings::SHADOWS);
+        // nothing traced by default, and the warning of Deluxe (RT) not seen
+        let d = Settings::default();
+        assert_eq!(d.ray_tracing, RayTracingSettings::OFF);
+        assert!(!d.deluxe_rt_warned);
+    }
+
+    #[test]
+    fn the_traced_shadows_softness_moves_from_the_former_default_once() {
+        assert_eq!(
+            (Settings::default().rt_sun_softness, Settings::default().rt_lamp_softness),
+            (RT_SOFTNESS, RT_SOFTNESS)
+        );
+        // a file of version 46 still on the former default, 1: the new one
+        let old = Settings {
+            settings_version: 46,
+            rt_sun_softness: 1.0,
+            rt_lamp_softness: 1.0,
+            ..Settings::default()
+        };
+        let now = old.sanitized();
+        assert_eq!((now.rt_sun_softness, now.rt_lamp_softness), (RT_SOFTNESS, RT_SOFTNESS));
+        // a softness chosen by hand stays, the other follows
+        let mine = Settings {
+            settings_version: 46,
+            rt_sun_softness: 0.5,
+            rt_lamp_softness: 1.0,
+            ..Settings::default()
+        };
+        let now = mine.sanitized();
+        assert_eq!((now.rt_sun_softness, now.rt_lamp_softness), (0.5, RT_SOFTNESS));
+        // once migrated, 1 chosen again stays
+        let again = Settings {
+            rt_sun_softness: 1.0,
+            rt_lamp_softness: 1.0,
+            ..Settings::default()
+        };
+        let now = again.sanitized();
+        assert_eq!((now.rt_sun_softness, now.rt_lamp_softness), (1.0, 1.0));
     }
 
     #[test]
@@ -5073,6 +5699,7 @@ mod tests {
             by_date: true,
             folders_by_name: false,
             system_first: true,
+            ..Default::default()
         };
         for version in [39, 40] {
             for by_date in [false, true] {
@@ -5082,6 +5709,7 @@ mod tests {
                             by_date,
                             folders_by_name,
                             system_first,
+                            ..Default::default()
                         };
                         let mut saved = Settings {
                             settings_version: version,
@@ -5124,6 +5752,41 @@ mod tests {
         assert!(!loaded.inventory.recent_sort.system_first);
         assert_eq!(loaded.inventory.sort, Settings::default().inventory.sort);
         assert_eq!(loaded.inventory.received_sort, Settings::default().inventory.received_sort);
+    }
+
+    /// A file from before Aurora Weather's switches turns on only the
+    /// weather it drew: with "Let regions set the weather" on, none of its
+    /// own, so the main switch stays off. A file from since keeps its
+    /// switch, whatever an older build wrote back.
+    #[test]
+    fn weather_from_before_the_switches_stays_off_where_regions_set_it() {
+        let read = |file: serde_json::Value| serde_json::from_value::<Settings>(file).expect("read settings").sanitized();
+        let own_weather = |regions: Option<bool>| {
+            let mut weather = serde_json::json!({ "amount": 0.6, "wind_max": 0.3, "aurora": true });
+            if let Some(on) = regions {
+                weather["region_weather"] = serde_json::json!(on);
+            }
+            weather
+        };
+        for version in [0, 41, 42] {
+            let regions = read(serde_json::json!({ "settings_version": version, "weather": own_weather(Some(true)) }));
+            assert!(!regions.weather.enabled, "version {version}");
+            assert!(regions.weather.precipitation_on && regions.weather.wind_on, "version {version}");
+            for regions in [None, Some(false)] {
+                let mine = read(serde_json::json!({ "settings_version": version, "weather": own_weather(regions) }));
+                assert!(mine.weather.enabled, "version {version}, {regions:?}");
+            }
+        }
+        let saved = serde_json::to_value(read(
+            serde_json::json!({ "settings_version": 42, "weather": own_weather(Some(true)) }),
+        ))
+        .expect("serialize");
+        assert!(saved["weather"].get("region_weather").is_none());
+        // switched on since: an older build's region switch changes nothing
+        let mut since = own_weather(Some(true));
+        since["enabled"] = serde_json::json!(true);
+        let kept = read(serde_json::json!({ "settings_version": SETTINGS_VERSION, "weather": since }));
+        assert!(kept.weather.enabled && kept.weather.former_region_weather.is_none());
     }
 
     /// "Hide the chat bar when not in use" became the "Chat bar" choice
@@ -5749,6 +6412,38 @@ mod tests {
     }
 
     #[test]
+    fn a_voice_box_unticked_before_it_meant_voice_turns_voice_off() {
+        // any version: an earlier build sharing the file can write it again
+        for version in [30, SETTINGS_VERSION] {
+            let mut old = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            old.audio.enabled[VOICE_CHANNEL] = false;
+            let audio = old.sanitized().audio;
+            assert!(!audio.voice_enabled);
+            assert!(audio.enabled[VOICE_CHANNEL], "nothing else can tick this channel back on");
+        }
+        // ticked: voice stays as it was
+        assert!(Settings::default().sanitized().audio.voice_enabled);
+        // only the voice box repairs
+        let mut music = Settings::default();
+        music.audio.enabled[4] = false;
+        let audio = music.sanitized().audio;
+        assert!(audio.voice_enabled && !audio.enabled[4]);
+    }
+
+    #[test]
+    fn the_voice_box_of_every_panel_is_the_voice_connection() {
+        let mut audio = AudioSettings::default();
+        *audio.channel_box(VOICE_CHANNEL) = false;
+        assert!(!audio.voice_enabled && !audio.channel_on(VOICE_CHANNEL));
+        assert!(audio.enabled[VOICE_CHANNEL], "the mixer channel keeps playing");
+        *audio.channel_box(1) = false;
+        assert!(!audio.enabled[1] && !audio.channel_on(1));
+    }
+
+    #[test]
     fn the_simulator_version_notice_is_off_by_default_and_for_earlier_files() {
         assert!(!Settings::default().sanitized().sim_version_alert);
         // a file that wrote the former default, on
@@ -5846,7 +6541,11 @@ mod tests {
             old.blend_order = Settings::default().blend_order;
             let read = old.sanitized();
             assert_eq!(read.blend_order, order, "{level:?}");
-            assert_eq!(Preset::matching(&read), Some(level));
+            // (Deluxe (RT)'s values in a file of then: its ray tracing goes
+            // off once with version 46, which leaves High's with the
+            // projectors' shadows, a custom profile)
+            let shown = if level == Preset::Deluxe { None } else { Some(level) };
+            assert_eq!(Preset::matching(&read), shown, "{level:?}");
             // and the level itself, chosen now
             let mut new = Settings::default();
             level.apply(&mut new);
@@ -5982,6 +6681,21 @@ mod tests {
             .join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&dir).expect("scratch folder");
         dir.join("settings.json")
+    }
+
+    #[test]
+    fn glow_off_survives_saving_and_loading_settings() {
+        let path = scratch_settings_file();
+        let settings = Settings {
+            glow: false,
+            ..Settings::default()
+        };
+
+        settings.save_to(&path);
+        let loaded = Settings::load_from(&path);
+
+        assert!(!loaded.glow);
+        let _ = std::fs::remove_dir_all(path.parent().expect("settings directory"));
     }
 
     fn read_back(path: &Path) -> serde_json::Value {

@@ -571,6 +571,7 @@ impl App {
 
     pub(super) fn open_script_from(&mut self, target: ScriptTarget, owner: Option<egui::Id>) {
         if self.world.rlva.has("viewscript") {
+            self.rlva_view_blocked(10);
             return;
         }
         // LLTaskLSLBridge::openItem (llpanelobjectinventory.cpp): the scripts
@@ -581,6 +582,7 @@ impl App {
             .index_of_uuid(&target.object)
             .is_some_and(|i| self.world.rlva_locked_attachment(i))
         {
+            self.rlva_view_blocked(10);
             return;
         }
         if task_script_refused(&self.build, &self.world, target.object) {
@@ -660,6 +662,21 @@ impl App {
     pub(super) fn apply_script_action(&mut self, action: Action) {
         match action {
             Action::Debug => self.script_editors.open_debug(),
+            Action::Rename { target, name } => {
+                // Permissions are rechecked when the UI action is executed.
+                if self.script_info(target).is_some_and(|info| info.can_edit) {
+                    if target.object.is_nil() {
+                        let inv = &self.world.inventory;
+                        if rules::renameable(inv, target.item)
+                            && let Ok(change) = rules::patch(inv, target.item, aurora_llsd::llsd_map! { "name" => name })
+                        {
+                            self.edit_inventory(change, false, Uuid::nil());
+                        }
+                    } else if let Some(idx) = self.world.objects.index_of_uuid(&target.object) {
+                        self.build.rename_item(&self.world, idx, target.item, &name);
+                    }
+                }
+            }
             Action::Include { request, name } => {
                 // of the scripts of that name, the one the include may use
                 // most (FSLSLPreprocessor::findInventoryByName takes the
@@ -738,6 +755,14 @@ impl App {
                 options,
                 source,
             } => {
+                // LLLiveLSLEditor::saveIfNeeded: a locked attachment's script
+                // is not saved, and the editor keeps its text
+                if !self.world.rlva_can_save_script(target.object) {
+                    let blocked = aurora_i18n::tr!("rlva-blocked");
+                    self.script_editors.saved(request, target, &Err(blocked.into()));
+                    self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                    return;
+                }
                 let Some(info) = self.script_info(target).filter(|i| i.can_edit) else {
                     self.script_editors
                         .saved(request, target, &Err(aurora_i18n::tr!("script-no-permission").into()));

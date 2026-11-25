@@ -107,16 +107,28 @@ would show, and the same row shows the progress. They go to
 
 ## Updates
 
-The viewer tells you when a new version is out, but it cannot replace
-itself on Linux yet: its "Open the release page" button leads to the new
-archive. Extract it as in step 2, in place of the old folder or next to it.
-Your settings, cache and logs are kept: they are not in the viewer's folder.
+The viewer tells you when a new version is out and installs it in place, as
+on Windows: "Install and restart Aurora" downloads the release's archive,
+checks its published SHA-256, then replaces the viewer's folder while the
+old instance closes. The previous version is kept until the new one has
+drawn a frame; if it stops before that, the old one is restored and
+restarted. Your settings, cache and logs are kept: they are not in the
+viewer's folder.
 
 | What | Where |
 |---|---|
 | Settings | `~/.config/auroraviewer` |
 | Cache | `~/.cache/auroraviewer` |
 | Logs, media plugins | `~/.local/share/auroraviewer` |
+
+The viewer must own its folder: it replaces it from the folder above, and
+only the package's own entries are moved, so your own files beside it stay
+where they are. A folder it cannot write to (a system-wide installation made
+by root) or a sandbox that mounts the package read-only (Flatpak, Snap,
+AppImage) is refused rather than forced: the update window says so and links
+the release page, for the package manager or the bundle to update. Aurora
+asks for no elevation, and an installation updated by such a tool keeps
+working: the viewer only offers the new version.
 
 ## Saved passwords
 
@@ -155,7 +167,6 @@ your desktop (GNOME, KDE and other GLib desktops read such paths).
 
 ## Not on Linux yet
 
-- Automatic installation of updates (above).
 - The crash window right after a crash: it opens at the next launch
   instead, and a native crash (a signal) leaves no trace in it.
 - Preferences › Sound and voice › "Mute when minimised" on Wayland: the
@@ -180,15 +191,30 @@ Rust from [rustup.rs](https://rustup.rs).
 
 To work on the code with an AI agent, also install the search tools the
 agents are told to use ([AGENTS.md](../AGENTS.md), section 5, "Tools"):
-ripgrep (`rg`), `fd`, `jq` and `ast-grep`. They are optional; on Windows the
-Aurora tools install them.
+ripgrep (`rg`), `fd`, `jq` and `ast-grep`. They are optional; the Aurora
+tools' Repair installs them (below), or by hand:
 
 ```bash
 sudo pacman -S --needed ripgrep fd jq ast-grep
 ```
 
 On Debian and Ubuntu: `sudo apt install ripgrep fd-find jq` (`fd` is named
-`fdfind` there), and `cargo install ast-grep --locked`.
+`fdfind` there), and `cargo install ast-grep --locked`; Repair installs
+all but ast-grep there.
+
+### Development environment
+
+The Aurora tools run on Linux with PowerShell 7 (`pwsh`, needed first): the
+same menus as `aurora-tools.cmd`, explained in
+[the guide for humans](../HUMANS.md#the-aurora-tools-aurora-toolscmd). Clone the
+repository into a folder for the project, then run `aurora-tools.sh`:
+
+```bash
+git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
+./aurora-viewer/aurora-tools.sh
+```
+
+Repair installs what is missing with `pacman` or `apt`, through `sudo`.
 
 ## Reporting a problem
 

@@ -5,8 +5,10 @@
 
 pub mod animation;
 pub mod animation_model;
+mod attachments;
 mod automatic;
 pub mod demo;
+mod file_picker;
 pub mod files;
 pub mod folders;
 mod live;
@@ -93,26 +95,30 @@ impl Choice {
     }
 }
 
-/// Eligibility follows the encoded dimensions, not the source file's size.
-fn texture_needs_size_limit(image: &DecodedImage) -> bool {
-    let (width, height) = import_texture::dimensions(
-        image.width,
-        image.height,
-        import_texture::Options {
-            max_width: 2048,
-            max_height: 2048,
-            ..Default::default()
-        },
-    );
-    width > 1024 || height > 1024
+/// An individual file may override the shared image limit in either direction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ImageSizeLimit {
+    #[default]
+    Default,
+    Size1024,
+    Size2048,
+}
+impl ImageSizeLimit {
+    pub fn maximum(self, limit_texture_size: bool) -> u32 {
+        match self {
+            Self::Default if limit_texture_size => 1024,
+            Self::Default | Self::Size2048 => 2048,
+            Self::Size1024 => 1024,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
     pub icon_bar: bool,
-    pub max_width: u32,
-    pub max_height: u32,
+    /// Shared by texture uploads, material maps and mesh images. Keep the
+    /// serialized name so an existing explicit 1K choice survives the change.
     pub limit_texture_size: bool,
     pub lossless_small: bool,
     pub next_modify: bool,
@@ -151,8 +157,6 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             icon_bar: false,
-            max_width: 1024,
-            max_height: 1024,
             limit_texture_size: false,
             lossless_small: true,
             next_modify: false,
@@ -190,9 +194,10 @@ impl Default for Preferences {
 }
 impl Preferences {
     pub fn texture(&self) -> import_texture::Options {
+        let maximum = ImageSizeLimit::Default.maximum(self.limit_texture_size);
         import_texture::Options {
-            max_width: self.max_width,
-            max_height: self.max_height,
+            max_width: maximum,
+            max_height: maximum,
             lossless_small: self.lossless_small,
             strip_alpha: true,
         }
@@ -328,8 +333,11 @@ pub struct Entry {
     pub source_folders: Vec<String>,
     pub upload_path: Option<Vec<String>>,
     pub selected: bool,
+    /// The tick a failed step took: `restore_draft` gives it back.
+    pub reselect: bool,
     pub source: Option<Source>,
     pub options: import_texture::Options,
+    pub image_size_limit: ImageSizeLimit,
     pub preview: Option<egui::TextureHandle>,
     pub preview_generation: u64,
     pub model_generation: Option<u64>,
@@ -344,6 +352,7 @@ pub struct Entry {
     pub material_previews: [Option<(Uuid, egui::TextureHandle)>; 4],
     pub material_large_previews: [Option<(Uuid, u64, egui::TextureHandle)>; 4],
     pub material_large_pending: [bool; 4],
+    material_map_requests: [Option<Uuid>; 4],
     pub texture_target: usize,
     pub player: animation::Player,
     pub animation_model: animation_model::Selection,
@@ -379,6 +388,43 @@ pub enum Status {
     Cancelled,
 }
 impl Entry {
+    /// A step of the row's upload failed (encoding, the upload itself, a map
+    /// it needs). The row leaves the selection: a selected row with an error
+    /// holds the price and the upload of the whole queue (`total`), the
+    /// files added later included, which is meant for a file to fix, not
+    /// for an answer of the server. do_bulk_upload (llviewermenufile.cpp)
+    /// sends each file as its own request, so one failure never holds the
+    /// others. `restore_draft` gives the tick back.
+    fn failed(&mut self, reason: String) {
+        self.status = Status::Error(reason);
+        self.reselect |= std::mem::take(&mut self.selected);
+    }
+    /// Keep the cached preparation options and preview revisions in step with
+    /// the effective limit; the original decoded pixels remain available.
+    pub fn sync_image_size(&mut self, limit_texture_size: bool) -> bool {
+        if !matches!(self.source, Some(Source::Texture(_) | Source::Material { .. } | Source::Mesh(_))) {
+            return false;
+        }
+        let maximum = self.image_size_limit.maximum(limit_texture_size);
+        if (self.options.max_width, self.options.max_height) == (maximum, maximum) {
+            return false;
+        }
+        self.options.max_width = maximum;
+        self.options.max_height = maximum;
+        // Unlike the 3D model cache, 2D previews have no generation alongside
+        // their handle: clearing it schedules the replacement automatically.
+        self.preview = None;
+        if let Some(Source::Mesh(draft)) = &mut self.source
+            && (draft.options.textures || draft.pending.is_some())
+        {
+            // Fee preparation shares the preview generation even when texture
+            // upload is off. Retire that work before its replies become stale.
+            draft.invalidate_quote();
+        }
+        self.invalidate_preview();
+        true
+    }
+
     pub fn invalidate_preview(&mut self) -> Option<String> {
         self.preview_generation += 1;
         // Keep the last model on screen while a worker prepares its replacement.
@@ -412,11 +458,13 @@ impl Entry {
             source_folders: Vec::new(),
             upload_path: None,
             selected: source.is_some(),
+            reselect: false,
             empty_alpha: empty_alpha
                 .unwrap_or_else(|| matches!(&source,Some(Source::Texture(image)) if import_texture::empty_alpha(image))),
             sound: sound::Editor::new(source.as_ref()),
             source,
             options,
+            image_size_limit: ImageSizeLimit::Default,
             preview: None,
             preview_generation: 0,
             model_generation: None,
@@ -431,6 +479,7 @@ impl Entry {
             material_previews: std::array::from_fn(|_| None),
             material_large_previews: std::array::from_fn(|_| None),
             material_large_pending: [false; 4],
+            material_map_requests: [None; 4],
             texture_target: 0,
             player: Default::default(),
             animation_model: Default::default(),
@@ -480,7 +529,7 @@ pub(super) enum Worker {
     ),
     Local(Uuid, u64, Result<local::Prepared, String>),
     Watch(Uuid, local::Stamp),
-    Map(Uuid, u64, usize, Result<LocalImage, String>),
+    Map(Uuid, Uuid, usize, Result<Option<LocalImage>, String>),
     Remote(Uuid, LocalImage),
     Audio(Uuid, Uuid, aurora_audio::SoundClip, f32),
     Animation(Uuid, Uuid, Arc<crate::scene::anim::BoundAnim>),
@@ -524,8 +573,8 @@ pub struct Imports {
     pub message: String,
     pub confirm: bool,
     pub confirm_choice: Option<Choice>,
-    pub scale_bulk_1k: bool,
     pub pending_files: Option<Uuid>,
+    pending_picker: Option<file_picker::Pending>,
     pending_file_choice: Option<Choice>,
     /// The pending files come from the texture picker's Local tab.
     pub picker_files: bool,
@@ -549,6 +598,8 @@ pub struct Imports {
     pub demo_mode: String,
     pub demo_local_applied: bool,
     pub demo_upload_started: bool,
+    /// `bulk-failed` has answered its one failure.
+    pub demo_upload_failed: bool,
     pub demo_animation_positioned: bool,
     pub own_avatar_preview: Option<Uuid>,
     pub animation_model_cache: HashMap<Uuid, std::sync::Weak<animation_model::Model>>,
@@ -585,8 +636,8 @@ impl Default for Imports {
             message: String::new(),
             confirm: false,
             confirm_choice: None,
-            scale_bulk_1k: false,
             pending_files: None,
+            pending_picker: None,
             pending_file_choice: None,
             picker_files: false,
             tx,
@@ -609,6 +660,7 @@ impl Default for Imports {
             demo_mode: String::new(),
             demo_local_applied: false,
             demo_upload_started: false,
+            demo_upload_failed: false,
             demo_animation_positioned: false,
             own_avatar_preview: None,
             animation_model_cache: HashMap::new(),
@@ -627,13 +679,6 @@ impl Default for Imports {
         }
     }
 }
-/// The largest side of a material's maps: the Legacy Viewer material
-/// editor encodes each map with LLViewerTextureList::convertToUploadFile at
-/// its default, MAX_IMAGE_SIZE_DEFAULT (2048; llmaterialeditor.cpp). Given
-/// to every material row, when added and when a saved local preview is
-/// restored.
-pub(super) const MATERIAL_MAP_MAX: u32 = 2048;
-
 impl Imports {
     /// Stage a locally authored, already validated native file in the ordinary
     /// inspector. Upload/payment still follows the existing explicit action.
@@ -758,15 +803,24 @@ impl Imports {
     }
     pub fn options(&self, entry: &Entry) -> import_texture::Options {
         let mut options = entry.options;
-        if self.choice == Choice::Bulk && self.scale_bulk_1k {
-            options.max_width = options.max_width.min(1024);
-            options.max_height = options.max_height.min(1024);
-        }
+        let maximum = entry.image_size_limit.maximum(self.load_preferences.limit_texture_size);
+        options.max_width = maximum;
+        options.max_height = maximum;
         options
+    }
+
+    pub fn sync_image_limits(&mut self, prefs: &Preferences) {
+        self.load_preferences.limit_texture_size = prefs.limit_texture_size;
+        for entry in &mut self.entries {
+            entry.sync_image_size(prefs.limit_texture_size);
+            if let Some(Source::Mesh(draft)) = &mut entry.source {
+                self.discarded_quotes.append(&mut draft.discarded_quotes);
+            }
+        }
     }
     // LLInventoryModel::findUserDefinedCategoryUUIDForType (llinventorymodel.cpp):
     // a user lock keeps the folder in place; it does not redirect uploads (#1981).
-    fn default_folder(world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences, kind: Kind) -> Uuid {
+    pub(crate) fn default_folder(world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences, kind: Kind) -> Uuid {
         use crate::world::inventory::actions;
         let folder = prefs.upload_folders[kind.folder_slot()];
         if actions::destination(&world.inventory, folder) {
@@ -1000,6 +1054,7 @@ impl Imports {
                 draft.invalidate_quote();
             }
             entry.status = Status::Ready;
+            entry.selected |= std::mem::take(&mut entry.reselect);
             entry.preview_error = None;
             entry.preview_pending = false;
             entry.preview_generation += 1;
@@ -1056,7 +1111,7 @@ impl Imports {
     }
     fn fail(&mut self, entry: Option<Uuid>, reason: String) {
         if let Some(entry) = entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
-            entry.status = Status::Error(reason.clone());
+            entry.failed(reason.clone());
         }
         self.message = reason;
         self.cancel_remaining();
@@ -1115,7 +1170,7 @@ impl Imports {
                     if !matches!(entry.status, Status::Preparing) {
                         return None;
                     }
-                    // The same options as the map's step in `start`, "scale to 1K" included.
+                    // The same effective image limit as the map's step in `start`.
                     let options = self.options(entry);
                     let depends_on_failed_texture = matches!(
                         &entry.source,
@@ -1130,7 +1185,7 @@ impl Imports {
         };
         for entry in &mut self.entries {
             if failed.contains(&entry.id) {
-                entry.status = Status::Error(reason.clone());
+                entry.failed(reason.clone());
             }
         }
         self.queue
@@ -1163,27 +1218,16 @@ impl Imports {
             match worker {
                 Worker::Loaded(request, mut entries) if self.pending_files == Some(request) => {
                     self.pending_files = None;
+                    self.pending_picker = None;
                     let loaded_choice = self.pending_file_choice.take();
                     let batch_folder = Self::batch_folder(world, self.load_preferences.batch_folder);
                     for entry in &mut entries {
                         if entry.source.is_none() {
                             entry.load_choice = loaded_choice;
                         }
-                        // Capture the latest choice on admission, not when the
-                        // asynchronous file dialog/load started. Existing rows
-                        // keep their independent choices.
-                        if let Some(Source::Texture(image)) = &entry.source {
-                            let maximum = if self.load_preferences.limit_texture_size && texture_needs_size_limit(image) {
-                                1024
-                            } else {
-                                2048
-                            };
-                            entry.options.max_width = maximum;
-                            entry.options.max_height = maximum;
-                        } else if matches!(&entry.source, Some(Source::Material { .. })) {
-                            entry.options.max_width = MATERIAL_MAP_MAX;
-                            entry.options.max_height = MATERIAL_MAP_MAX;
-                        }
+                        // A file loaded asynchronously follows the latest shared
+                        // limit, unless it already carries an explicit override.
+                        entry.sync_image_size(self.load_preferences.limit_texture_size);
                         if let Some(source) = &entry.source {
                             entry.folder = if self.folders.active() || self.load_preferences.use_default_folders {
                                 Self::default_folder(world, prefs, source.kind())
@@ -1216,6 +1260,8 @@ impl Imports {
                 Worker::Reloaded(id, result) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
                         entry.reloading = false;
+                        // a reload the watch started (not the Reload button)
+                        let auto = entry.watch.as_mut().is_some_and(|watch| std::mem::take(&mut watch.auto));
                         match result {
                             Ok(mut loaded) if entry.material_index < loaded.len() || (loaded.len() == 1 && loaded[0].id == id) => {
                                 let index = if loaded.len() == 1 && loaded[0].id == id {
@@ -1230,6 +1276,7 @@ impl Imports {
                                 }
                                 jobs.discard(entry.source.take());
                                 entry.source = updated.source.take();
+                                entry.material_map_requests = [None; 4];
                                 entry.sound = std::mem::take(&mut updated.sound);
                                 entry.status = Status::Ready;
                                 entry.preview = None;
@@ -1239,9 +1286,32 @@ impl Imports {
                                 entry.model = None;
                                 entry.player = Default::default();
                                 entry.empty_alpha = updated.empty_alpha;
+                                let seen = entry.watch.take().map(|watch| watch.stamp);
                                 entry.watch = updated.watch.take();
+                                // A manual reload keeps the stamp taken when
+                                // the files were read: the one the watch held
+                                // is the previous load's, and would reload
+                                // the same file again at the next check.
+                                if auto && let (Some(watch), Some(seen)) = (&mut entry.watch, &seen) {
+                                    watch.reloaded(seen);
+                                }
+                                entry.sync_image_size(self.load_preferences.limit_texture_size);
                             }
                             Ok(_) => entry.status = Status::Error(aurora_i18n::tr!("import-reload-material-count").into()),
+                            // A file still being written fails to read or
+                            // decode: the local preview keeps its last good
+                            // version and tries again at the next check
+                            // (LLLocalBitmap::updateSelf), and only shows the
+                            // error once the retries are spent. A press on
+                            // Reload shows its error at once.
+                            Err(_)
+                                if auto
+                                    && entry.local_live
+                                    && entry.source.is_some()
+                                    && entry.watch.as_mut().is_some_and(local::Watch::failed) =>
+                            {
+                                entry.status = Status::Ready;
+                            }
                             Err(error) => entry.status = Status::Error(error),
                         }
                     }
@@ -1347,20 +1417,38 @@ impl Imports {
                         && let Some(watch) = &mut entry.watch
                     {
                         watch.pending = false;
-                        changed = stamp != watch.stamp;
-                        watch.stamp = stamp;
+                        changed = stamp != watch.stamp || (entry.source.is_none() && stamp.iter().all(|(_, value)| value.is_some()));
                     }
-                    if changed {
-                        self.reload(id, jobs, ctx);
+                    // A change whose reload cannot start now (one already
+                    // running) stays unseen and is noticed again at the next
+                    // check, instead of being lost.
+                    if changed
+                        && self.reload(id, jobs, ctx)
+                        && let Some(watch) = self.entries.iter_mut().find(|e| e.id == id).and_then(|e| e.watch.as_mut())
+                    {
+                        // An empty stamp is a retry of a failed reload; any
+                        // other is a new change, with its own retries.
+                        if !watch.stamp.is_empty() {
+                            watch.failures = 0;
+                        }
+                        watch.stamp = stamp;
+                        watch.auto = true;
                     }
                 }
                 Worker::Remote(asset, image) => self.cached_map(asset, image),
-                Worker::Map(id, generation, slot, result) => {
-                    if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation)
-                        && let Some(Source::Material { value, images }) = &mut entry.source
+                Worker::Map(id, request, slot, result) => {
+                    if let Some(entry) = self
+                        .entries
+                        .iter_mut()
+                        .find(|entry| entry.id == id && entry.material_map_requests.get(slot).copied().flatten() == Some(request))
                     {
+                        entry.material_map_requests[slot] = None;
+                        entry.sync_image_size(self.load_preferences.limit_texture_size);
+                        let Some(Source::Material { value, images }) = &mut entry.source else {
+                            continue;
+                        };
                         match result {
-                            Ok(image) => {
+                            Ok(Some(image)) => {
                                 if entry.local
                                     && let Some(path) = &image.path
                                 {
@@ -1374,6 +1462,7 @@ impl Imports {
                                 entry.model = None;
                                 entry.preview_error = None;
                             }
+                            Ok(None) => {}
                             Err(error) => self.message = error,
                         }
                     }
@@ -1411,13 +1500,14 @@ impl Imports {
                                 draft.invalidate();
                                 if level == 3 {
                                     let triangles = scene.models.iter().map(aurora_assets::import_mesh::Model::triangles).sum::<usize>();
+                                    let targets = mesh::default_lod_targets(triangles, mesh::minimum_lod_triangles(&scene));
                                     for (i, lod) in draft.lods.iter_mut().enumerate() {
                                         if lod.file.as_ref().is_some_and(|file| file.models.len() != scene.models.len()) {
                                             lod.file = None;
                                             lod.path = None;
-                                            lod.source = mesh::LodSource::Auto;
+                                            lod.source = mesh::LodSource::Legacy;
                                         }
-                                        lod.triangles = (triangles / 4usize.pow((3 - i) as u32)).max(1);
+                                        lod.triangles = targets[i];
                                     }
                                     draft.lods[3].file = None;
                                     draft.lods[3].path = Some(path.clone());
@@ -1467,6 +1557,9 @@ impl Imports {
                         entry.player.playing = true;
                     }
                 }
+                // Closing a picker retires its request immediately. A decode
+                // already in progress may still finish; release it off-frame.
+                Worker::Loaded(_, entries) => jobs.discard(entries),
                 _ => {}
             }
         }

@@ -99,7 +99,7 @@ pub(super) fn show_default_hint(ui: &egui::Ui) -> bool {
 /// Before the dialog's body.
 pub(super) fn begin(ctx: &Context, layer: LayerId) -> Scope {
     let id = layer.id;
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let mut state: State = ctx.data(|d| d.get_temp(state_id(id))).unwrap_or_default();
     if state.last_pass == 0 || state.last_pass + 1 < pass {
         // opening: not shown on the previous pass
@@ -167,7 +167,7 @@ pub(super) fn end(ctx: &Context, scope: Scope) {
             Some(field) => is_text_field(ctx, field) && focused_now != Some(field),
         };
         if let Some(button) = current.and_then(|c| c.primary.or(c.danger)).filter(|_| answers) {
-            let pass = ctx.cumulative_pass_nr();
+            let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
             state.click = Some((button, pass + 1));
             ctx.request_repaint();
         }

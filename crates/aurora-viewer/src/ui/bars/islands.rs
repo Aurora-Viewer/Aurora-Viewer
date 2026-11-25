@@ -236,7 +236,7 @@ fn readout_width(text_w: f32) -> f32 {
 
 /// Demo captures (`AURORA_DEMO_BARS`): the menu to open once, at frame 300.
 pub(super) fn demo_open(ctx: &egui::Context, resp: &egui::Response, which: super::demo::Open) {
-    if super::demo::get().open == Some(which) && ctx.cumulative_frame_nr() == 300 {
+    if super::demo::get().open == Some(which) && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 {
         egui::Popup::open_id(ctx, egui::Popup::default_response_id(resp));
     }
 }
@@ -489,7 +489,7 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
     menu::context_menu_of_button(&status, p, |ui| super::balance_menu(ui, p, st, action));
     // the demo cannot right-click: the same menu under the island
     let ctx = ui.ctx().clone();
-    if super::demo::get().open == Some(super::demo::Open::Account) && ctx.cumulative_frame_nr() >= 300 {
+    if super::demo::get().open == Some(super::demo::Open::Account) && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300 {
         let id = Id::unique("bars_account_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         let at = Pos2::new(rect.left(), island.bottom() + MARGIN);
@@ -725,7 +725,7 @@ fn system(
         .is_some_and(|pos| !back.secondary_clicked() && island.contains(pos) && ctx.layer_id_at(pos) == Some(ui.layer_id()));
     menu::context_menu_also(&back, p, on_button, |ui| system_menu(ui, p, panels, st, island, action));
     // the demo cannot right-click: the same menu where the pointer would be
-    if super::demo::get().open == Some(super::demo::Open::System) && ctx.cumulative_frame_nr() >= 300 {
+    if super::demo::get().open == Some(super::demo::Open::System) && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300 {
         let id = Id::unique("bars_system_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         // under the island at its right end, as the mockup draws it
@@ -736,7 +736,7 @@ fn system(
     // the demo cannot click: Performance opened from the island at frame
     // 300, by its frame rate or its network
     let demo = super::demo::get().perf;
-    if demo.is_some() && ctx.cumulative_frame_nr() == 300 && !panels.perf {
+    if demo.is_some() && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 && !panels.perf {
         crate::ui::perf::place_under(&ctx, island);
         if demo == Some(super::demo::Perf::Network) {
             *action = BarAction::NetworkGraph;
@@ -1076,6 +1076,13 @@ fn tip_body(
     );
     ui.painter()
         .galley(Pos2::new(rect.left() + 22.0, rect.top() + TIP_ROW), music, p.muted);
+    // the station's failed certificate, in red as on the radio button
+    if let Some(issue) = media.music_status.certificate() {
+        ui.scope(|ui| {
+            ui.set_max_width(w);
+            crate::ui::audio::warning_line(ui, p, icons, &crate::ui::audio::certificate_warning(issue), 11.5);
+        });
+    }
 
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 11.0), Sense::hover());
     ui.painter()
@@ -1165,6 +1172,7 @@ mod tests {
             fps: 60.0,
             flying: false,
             seated: false,
+            clouds_paused: false,
             ping_ms: 38,
             balance: Some(1000),
             show_balance: true,
@@ -1232,6 +1240,7 @@ mod tests {
             show_transparency: false,
             hidden_types: Default::default(),
             render_type_keys: Default::default(),
+            ui_feature_keys: Default::default(),
             conversation_thumbnails: 0,
         }
     }
@@ -1927,6 +1936,7 @@ mod tests {
             adapters: Vec::new(),
             notice: None,
             vulkan: None,
+            ray_tracing: Default::default(),
         };
         let input = egui::RawInput {
             screen_rect: Some(screen),
@@ -2096,5 +2106,56 @@ mod tests {
             frame(&ctx, &mut open);
         }
         assert_eq!(perf_rect(&ctx).width(), compact_w, "the frame rate opens the compact view");
+    }
+
+    /// LLLocationInputCtrl::changeLocationPresentation
+    /// (indra/newview/lllocationinputctrl.cpp): under @showloc the location
+    /// field still opens on the SLURL, "(Hidden region)" in it, and the
+    /// place menu copies it (LLStatusBar::onContextMenuItemClicked "copy").
+    #[test]
+    fn showloc_keeps_the_location_field_open_on_the_hidden_slurl() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let skin = crate::ui::skin::Layout::default();
+        let settings = crate::settings::Settings::default();
+        let mut panels = Panels::from_settings(&settings);
+        let mut audio = settings.audio.clone();
+        let mut audio_ui = crate::ui::audio::AudioUi::default();
+        let mut notif = crate::ui::notifications::NotifUi::default();
+        let hidden = "http://maps.secondlife.com/secondlife/(Hidden region)".to_owned();
+        let mut st = status(false, false);
+        st.classic_bars = true;
+        st.location_hidden = true;
+        st.region = "(Hidden region)";
+        st.parcel = "(Hidden parcel)";
+        st.slurl = hidden.clone();
+        assert!(super::super::place::slurl_copy_enabled(&st), "the hidden SLURL is copied");
+        panels.nav_edit = Some(hidden.clone());
+        panels.nav_edit_new = true;
+        for frame in 0..4 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0))),
+                time: Some(0.1 * f64::from(frame)),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                super::super::top_bars(
+                    ui,
+                    &p,
+                    &icons,
+                    &skin,
+                    &mut panels,
+                    &st,
+                    &mut audio,
+                    &mut audio_ui,
+                    Default::default(),
+                    &mut notif,
+                    BellState::default(),
+                );
+            });
+            out.textures_delta.clear();
+        }
+        assert_eq!(panels.nav_edit.as_deref(), Some(hidden.as_str()), "the field stays open");
     }
 }

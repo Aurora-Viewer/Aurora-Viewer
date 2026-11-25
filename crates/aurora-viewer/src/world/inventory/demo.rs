@@ -329,6 +329,39 @@ pub fn seed_sidebar(inv: &mut Inventory) {
     }
 }
 
+/// One folder of each system folder type the inventory gives a symbol
+/// (`ui::inventory::category`) that the demo lacks, under the root, for
+/// the system folder icons (`AURORA_DEMO_INVENTORY=aurora-system-folders`).
+pub fn seed_system_folders(inv: &mut Inventory) {
+    let missing: Vec<(i32, String)> = crate::ui::inventory::category::ROWS
+        .iter()
+        .flat_map(|row| {
+            row.folder_types
+                .iter()
+                .map(move |kind| (*kind, format!("{:?} ({kind})", row.category)))
+        })
+        .filter(|(kind, _)| !inv.folders.values().any(|f| f.info.type_default == *kind))
+        .collect();
+    inv.created_folders(
+        missing
+            .iter()
+            .enumerate()
+            .map(|(n, (kind, name))| InvFolder {
+                id: Uuid::from_u128(31_000 + n as u128),
+                parent: inv.root,
+                name: name.clone(),
+                type_default: *kind,
+                ..Default::default()
+            })
+            .collect(),
+    );
+    for n in 0..missing.len() {
+        if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(31_000 + n as u128)) {
+            folder.state = FetchState::Fetched;
+        }
+    }
+}
+
 /// A Marketplace inbox separate from the normal inventory, for tab validation.
 pub fn seed_received(inv: &mut Inventory, agent: Uuid) {
     let inbox = Uuid::from_u128(8_300_000);
@@ -530,6 +563,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "folder-window"
         | "move-folder"
         | "folder-window-search"
+        | "single-folder-window"
         | "image-layout-folder"
         | "image-layout-folder-wide" => 8000,
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,
@@ -540,6 +574,10 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "properties-no-mod"
         | "properties-no-creator"
         | "rename"
+        | "rename-focus"
+        | "aurora-rename-focus"
+        | "rename-window"
+        | "aurora-rename-window"
         | "multi-add"
         | "multi-detach"
         | "delete"
@@ -560,9 +598,12 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "clipboard-window"
         | "keyboard"
         | "keyboard-fold"
+        | "keyboard-down"
         | "aurora-keyboard"
         | "aurora-keyboard-fold"
+        | "aurora-keyboard-down"
         | "aurora-keyboard-wide" => 8100,
+        "keyboard-click-top" | "keyboard-click-bottom" | "aurora-keyboard-click-top" | "aurora-keyboard-click-bottom" => 11000,
         "animation"
         | "animation-open"
         | "animation-play-local"
@@ -578,7 +619,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
         | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" | "note-drop" | "note-image" | "note-landmark"
         | "note-copy" | "note-task-embedded" | "note-menu-right" | "note-markdown" | "note-source" | "note-classic" | "note-format"
-        | "note-remember" | "note-lsl" | "note-lsl-markdown" | "note-rez" | "task-preview" => 8103,
+        | "note-remember" | "note-lsl" | "note-lsl-markdown" | "note-rez" | "note-find" | "note-replace" | "task-preview" => 8103,
         "nocopy" | "offer-unsent" | "offer-sent" | "offer-uncertain" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
@@ -635,6 +676,17 @@ pub fn seed_clipboard_tree(inv: &mut Inventory) {
     inv.add_items(items);
 }
 
+/// The pose notecard of `AURORA_DEMO_INVENTORY=note-find` and `note-replace`:
+/// data lines, not interface text.
+const POSE_NOTE: &str = "SITTER 0\n\
+    POSE Sit1|sit_female_01|<0.0,0.0,0.6>|<0,0,0>\n\
+    POSE Sit2|sit_female_02|<0.1,0.0,0.6>|<0,0,0>\n\
+    POSE Lean|lean_female_01|<0.0,0.2,0.6>|<0,0,90>\n\
+    SITTER 1\n\
+    POSE Sit1|sit_male_01|<0.0,0.6,0.6>|<0,0,180>\n\
+    POSE Sit2|sit_male_02|<0.1,0.6,0.6>|<0,0,180>\n\
+    POSE Lean|lean_male_01|<0.0,0.8,0.6>|<0,0,270>";
+
 pub fn note_asset(embedded: bool) -> Vec<u8> {
     let markdown = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| {
         matches!(
@@ -643,14 +695,19 @@ pub fn note_asset(embedded: bool) -> Vec<u8> {
         )
     });
     let lsl = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "note-lsl" | "note-lsl-markdown"));
-    let text = if lsl {
+    // the find scenarios: a pose notecard, the kind creators clean with
+    // Replace all (#4153), with items to show that they stay
+    let poses = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "note-find" | "note-replace"));
+    let text = if poses {
+        POSE_NOTE
+    } else if lsl {
         aurora_i18n::tr!("notecard-lsl-demo")
     } else if markdown {
         aurora_i18n::tr!("notecard-markdown-demo")
     } else {
         aurora_i18n::tr!("notecard-demo-text")
     };
-    let embedded = embedded || markdown;
+    let embedded = embedded || markdown || poses;
     if embedded {
         let mut card = aurora_net::inventory::notecard::Notecard::default();
         let mut text = format!("{text}\n");
@@ -786,6 +843,35 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
     }
     inv.add_items(items);
     inv.sort_all();
+}
+
+/// The pictures of the gallery scenarios (`AURORA_DEMO_INVENTORY=aurora-
+/// gallery…`, `aurora-combination`): the demo's own textures on some of the
+/// right-click tests' entries, a folder among them, and on every item of the
+/// large folder; the others keep their type's icon.
+pub fn seed_gallery(inv: &mut Inventory) {
+    use crate::demo::{TEX_FRAMES, TEX_GRADIENT, TEX_ORM_DISC, TEX_SNAPSHOT, TEX_TILES};
+    let pictures = [TEX_SNAPSHOT, TEX_TILES, TEX_GRADIENT, TEX_FRAMES, TEX_ORM_DISC];
+    for (n, picture) in [
+        (8100, TEX_SNAPSHOT),
+        (8106, TEX_FRAMES),
+        (8107, TEX_GRADIENT),
+        (8108, TEX_ORM_DISC),
+        (8111, TEX_TILES),
+    ] {
+        if let Some(it) = inv.items.get_mut(&Uuid::from_u128(n)) {
+            it.thumbnail = picture;
+        }
+    }
+    for n in 0..1500u128 {
+        if let Some(it) = inv.items.get_mut(&Uuid::from_u128(10000 + n)) {
+            it.thumbnail = pictures[(n % pictures.len() as u128) as usize];
+        }
+    }
+    if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(8001)) {
+        folder.info.thumbnail = TEX_TILES;
+    }
+    inv.generation += 1;
 }
 
 /// Hundreds of empty top folders, as some residents keep: still a long list

@@ -80,6 +80,7 @@ impl App {
         self.options_ui.gpus = renderer.info.adapters.clone();
         self.options_ui.gpu_in_use = renderer.info.name.clone();
         self.options_ui.gpu_notice = renderer.info.notice;
+        self.options_ui.ray_tracing = renderer.info.ray_tracing;
     }
 
     pub(super) fn egui_state_for(&self, window: &Window, renderer: &Renderer) -> egui_winit::State {
@@ -192,6 +193,11 @@ impl App {
         self.republish_local_imports();
         self.wearable_ui.preview.gpu_reset();
         self.blender_live.gpu_reset(self.scene.textures.staging.as_deref());
+        // AURORA_DEMO_STREAM's textures arrive decoded, with no data the
+        // streamer could load them again from
+        if let Some(demo) = &mut self.stream_demo {
+            demo.gpu_reset();
+        }
     }
 
     /// After a GPU device loss: a new window and renderer, the session and
@@ -266,7 +272,13 @@ impl App {
         };
         let maximized = old.window.is_maximized();
         let Gfx { mut renderer, window, .. } = old;
+        let released = Instant::now();
         self.forget_gpu_scene(&mut renderer);
+        // (#2997: a scene paged out to the disk once took over 10 s here)
+        log::info!(
+            "GPU recovery: the scene let go of the lost device in {} ms",
+            released.elapsed().as_millis()
+        );
         // the lost renderer first: its surface is made from this window's
         // handles (Renderer::new's contract)
         drop(renderer);
@@ -293,6 +305,7 @@ impl App {
         self.note_gpus(&renderer);
         self.screen_rate.poll(&window, Instant::now());
         let egui_state = self.egui_state_for(&window, &renderer);
+        self.cursor_shown.forget();
         self.gfx = Some(Gfx {
             renderer,
             egui_state,
@@ -308,6 +321,8 @@ impl App {
         self.crash_recent = Default::default();
         // the new egui renderer has none of egui's textures
         self.egui_replay = true;
+        // nor a surface for a window outside the viewer's
+        self.outside.renderer_replaced(&self.egui_ctx);
         Some(started)
     }
 }
