@@ -1125,6 +1125,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_TP_CAM=alt\|alt-off` | The camera on a point before the demo teleport, "Return after a teleport in the region" on or off |
 | `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
 | `AURORA_DEMO_TP_NO_ARRIVAL=1` | The region never confirms the demo teleport |
+| `AURORA_DEMO_TELEPORT_FAILED=<reason>\|empty[,hypergrid]` | Every teleport is refused with that reason: the Teleport failed popup |
 | `AURORA_DEMO_TP_CANCEL=1\|locked` | The teleport screen's Cancel pressed during the demo teleport, or a teleport that cannot be cancelled |
 | `AURORA_DEMO_TP_AWAY=1\|snow` | Departure out of range of the demo region, then return; `snow`: over lying snow |
 | `AURORA_DEMO_AUTO_UNMUTE=1` | Ambient sounds and sound effects muted, unmuted by the demo teleport (see Details) |
@@ -1668,6 +1669,20 @@ when unfocused") is ignored during a screenshot.
   0.4 s have passed, its bar finishing in 0.15 s
   (`app/teleport_screen.rs`). With `AURORA_PROFILE=1` the teleport
   timeline ends `arrived (teleport screen hidden)`, or `…, old screen)`.
+- **`AURORA_DEMO_TELEPORT_FAILED=<reason>|empty[,hypergrid]`** (issue #3416): every
+  teleport the resident asks for (map, landmark, Home, a link, in the region
+  or to another one, `AURORA_DEMO_TP=remote` included) starts, then the
+  region refuses it with that reason as a TeleportFailed would. A code of
+  the Legacy Viewer's teleport_strings.xml (`noaccess_tport`, `no_host`…)
+  shows its readable text; anything else is shown as sent. `,hypergrid` puts
+  the agent on another OpenSim grid: `Unauthorized,hypergrid` adds the line
+  that explains a refused return home, `Could not resolve Landmark grid
+  gatekeeper,hypergrid` the one for an unreachable grid.
+  `RegionTPSpecialUsageBlocked` (no region name in the demo) gives the Skill
+  Gaming sentence without a name, its FAQ link clickable. `empty` sends an
+  empty reason, as OpenSim's EntityTransferModule does: the popup still
+  opens, with "Teleport failed." alone. The popup says "Teleport failed."
+  with the reason, OK closes it, and the nearby chat keeps the same wording.
 - **`AURORA_DEMO_TP_NO_ARRIVAL=1`**: with `AURORA_DEMO_TP=remote`, the bar
   stops at 50 % and no arrival comes. After 15 s + 3 s per attachment the
   screen closes on the world, a notice says the region did not confirm the
@@ -2141,7 +2156,7 @@ when unfocused") is ignored during a screenshot.
 
 **UI rendering feature details.** `AURORA_DEMO_UI_FEATURE=off` unticks Advanced › Rendering features › UI at frame 600, as Ctrl+Alt+F1 (Ctrl+Shift+F1 on Linux) does: capture at frame 700 or later. Only the world is left: no bar, window, toast, chat line, name tag, floating text, beacon nor selection outline; the HUD attachments stay (with `AURORA_DEMO_HUDS=1`), and so does RLVa's overlay (`AURORA_DEMO_RLVA=overlay`). The clicks go to the world, and the shortcut brings everything back where it was, the hidden interface (Alt+Shift+U) or immersive mode included. `cycle` turns it back on at frame 900: capture at frame 1000 to see the interface again. The grid check compares Advanced › Rendering Features › UI of the Legacy Viewer in a busy region.
 
-**Release keys details.** `AURORA_DEMO_RELEASE_KEYS=1` makes a vehicle script take the arrow keys and Page Up / Down at frame 400 (taken, not passed on), as llTakeControls does. Advanced › Release keys is then enabled (it is greyed without the variable); choosing it sends ForceScriptControlRelease, the demo region answers with the releases and the entry is greyed again. With `AURORA_DEMO_MENU_SEARCH=` a word of the label in the interface's language (`release` in English, `touches` in French), `AURORA_FPS_LIMIT=60` and a capture at frame 640, the entry shows under Advanced in the wolf menu's search. The demo does not block the avatar's movement while the keys are taken (the region does that on the grid).
+**Release keys details.** `AURORA_DEMO_RELEASE_KEYS=1` makes a vehicle script take the arrow keys and Page Up / Down at frame 400 (taken, not passed on), as llTakeControls does. Advanced › Release keys is then enabled (it is greyed without the variable); choosing it sends ForceScriptControlRelease, the demo region answers with the releases and the entry is greyed again. With `AURORA_DEMO_MENU_SEARCH=` a word of the label in the interface's language (`release` in English, `touches` in French), `AURORA_FPS_LIMIT=60` and a capture at frame 640, the entry shows under Advanced in the wolf menu's search. From frame 400 the script has taken left/right outright, so those keys do not turn the avatar or the camera ([#3450](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/3450)). Walking keys still move the avatar in this offline demo; on a grid the region is what stops them. Choosing Release keys restores turning.
 
 
 ### Details
@@ -2752,10 +2767,12 @@ leaves a drag running: the far-selection check waits for the drag to end.
 
 `AURORA_DEMO_BUILD=rect,<x>,<y>,-,<dx>,<dy>` presses the Edit tool at a pixel
 through the real click path, drags and releases; `rect,object:<id>,-,<dx>,<dy>`
-presses on an object. `rect-shift` holds Shift, `rect-focus` loses the window
-focus and `rect-tool` changes tool with the button down, and `keep:<id>` at the
-end selects an object first. The `demo rect:` lines of the log give the
-selection and its space before, during and after the gesture.
+presses on an object. `rect-shift` holds Shift and `rect-ctrl` Ctrl (a deselect
+rectangle, whose box turns red; with `object:<id>`, the box surrounds that
+prim); `rect-focus` loses the window focus and `rect-tool` changes tool with
+the button down; `keep:<id>` (repeat it for several objects) selects objects
+first. The `demo rect:` lines of the log give the selection and its space
+before, during and after the gesture.
 
 `AURORA_DEMO_BUILD=cycle,object:99610` adds three nested objects, two of
 them linksets, selects A then simulates two notches towards the back and one
@@ -4154,7 +4171,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns; `far`: an animesh carried far by its animation and one worn far from its point |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-derez-closed\|warnings\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-derez-closed\|warnings\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|fit-lab\|fit-lab-walk\|fit-lab-sit\|fit-lab-sit-stand\|fit-lab-clip\|fit-lab-range\|fit-lab-pose-<name>\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_LIVE_TAB=place\|avatar\|import\|plugins\|quick-look\|sweep` | Opens the LiveMesh window of the Blender demo on that tab, Quick look, or a card's update sweep |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -4195,7 +4212,22 @@ object, under the Objects cards and their live thumbnails (with
 and the Avatar tab's bend set to 90° elbows and 60° knees, so the bend shows
 on the avatar and in Quick look); `sweep` has
 Blender send the selected object again every eight frames from frame 400, as
-during a drag, so its card's update sweep keeps running. `static-hud` attaches it at HUD Center;
+during a drag, so its card's update sweep keeps running.
+`AURORA_DEMO_BLENDER_LIVE=fit-lab` sends the same sleeves and opens the Avatar
+tab with the Fit lab on: three mannequins (Slim, Curvy, Full figure) stand
+2.2 m in front of the avatar, facing it, each dressed as it is, sleeves
+included, in its own shape; `fit-lab-walk` has them walk in place;
+`fit-lab-sit` sit on the ground (the demo's stand-in for the stock
+sit_ground_constrained, which the grid's asset server gives), and
+`fit-lab-sit-stand` stand up again at frame 520, back at their full height;
+`fit-lab-range` has them take the range of motion's poses in turn (arms
+up, reach, arms crossed, squat, kneel, knee raised, twist, bend forward);
+`fit-lab-pose-<name>` holds one of them (`arms-up`, `reach`, `hug`, `squat`,
+`kneel`, `knee-up`, `twist`, `bend`);
+`fit-lab-clip` turns on the clipping map: red where an arm comes out of a
+sleeve (the Full figure's thicker arms), amber where skin and sleeve meet. Look for
+the sleeves following each body, the shared skin, and no name tag, radar or
+minimap entry for the mannequins. `static-hud` attaches it at HUD Center;
 `static-attached` attaches it to the right hand; `static-detached` removes its
 draw object while retaining the source row; these three show the Undo
 toast under the status line for 8 s. Check numeric/gizmo transforms,
@@ -4205,6 +4237,12 @@ The listener accepts the Blender extension on port 17655. Check that live
 retouches replace the shell, invalid data preserves the previous geometry,
 and Stop removes all preview objects. The demo log reports `ready_skinned`
 objects using our avatar's skeleton. See [LiveMesh](BLENDER_LIVE.md).
+
+The Maya plug-in's rules run without Maya: `python maya/tests/test_convert.py`
+(frames, binds, weights, packing, colour tables, and a fake viewer checking
+which optional controls it negotiates, LOD settings, palettes and slot mapping,
+shape checks, a fake MayaStar). Capture itself needs Maya: see
+[LiveMesh](BLENDER_LIVE.md#maya).
 
 Blender's synchronization-list linksets are exercised by
 `blender --background --factory-startup --python-exit-code 1 --python blender/tests/test_groups.py`.
@@ -6731,7 +6769,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_SLOW_START=<seconds>[,stuck]` | The updated viewer of this test starts slowly, moving on or stuck |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent (no effect while the form is disabled) |
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
-| `AURORA_DEMO_MAP=1`, `mini`, `mini,names` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `switch`, `show-on-map`, `show-link`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, layout switched with the map open, Show on map, coordinate entry and clickable 3D beacon |
+| `AURORA_DEMO_MAP=1`, `mini`, `mini,names` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `switch`, `show-on-map`, `show-link`, `minimized`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, layout switched with the map open, Show on map, a minimized map expanded by Show on map, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat bar autohide / Conversations window only; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
@@ -6822,7 +6860,6 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_SHAPE_XML=<file>` | With `AURORA_DEMO_SHAPE`: imports an appearance XML into the shape draft |
 | `AURORA_DEMO_SHAPE_XML_EXPORT=<file>` | With `AURORA_DEMO_SHAPE`: exports the shape draft to an appearance XML |
-| `AURORA_DEMO_SHAPE_XML_MENU=<file>` | With `AURORA_DEMO_SHAPE`: Appearance › Export shape XML of our avatar's menu |
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
@@ -9320,6 +9357,7 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_LOGIN=server-error`**: the first-account form, ready to submit. The offline login server answers the login with an HTTP 500, as a grid whose login server fails: Log in shows the translated "The login server could not complete the login (HTTP 500)…" text under the form, never the raw "network error: HTTP 500 Internal Server Error". With `AURORA_DEMO_LOGIN_SUBMIT=40` the log reads `demo login: the login server answers HTTP 500` (capture frame 200; `--language fr|ja` for the other texts).
 - **`AURORA_DEMO_LOGIN=terms`**: the first-account form with a synthetic identity typed in. The offline server asks first to accept the Terms of Service (reason "tos"), then to read a critical message (reason "critical"), then answers as the other demo forms do. The terms step shows the server's text, a "Read the Terms of Service" link (Linden Lab's page on their grids, else the address the message names) and its checkbox; the critical step shows its own title, text and checkbox. With `AURORA_DEMO_LOGIN_SUBMIT=40,300,560` (check each box by hand between the presses, or capture frames 200 and 460), the log reads `demo login: agree_to_tos false, read_critical false`, then `agree_to_tos true, read_critical false`: accepting the terms never acknowledges the message.
 - **`AURORA_DEMO_LOGIN=next-server`**: the first-account form with a synthetic identity typed in. The offline server sends the login on to another server, `login.other-grid.example` (`LoginError::NextServer`): the form shows the "Another login server" step with that name and its checkbox, and Log in stays disabled until the box is checked. With `AURORA_DEMO_LOGIN_SUBMIT=40,300` (check the box by hand between the presses, or capture frame 200), the log reads `demo login: the login server sends the login on to another server` once; the second press ends as the other demo forms do. The rule itself (same server followed, another one asked, encrypted to unencrypted refused) is in the unit tests of `aurora-net/src/login.rs`.
+- **`AURORA_DEMO_LOGIN=unencrypted`**: the same form, for a grid whose login address is a plain `http://` one, `grid.example:8002` (`LoginError::Unencrypted`): the form shows the "Unencrypted login" step with that name, what it exposes, and its checkbox; Log in stays disabled until the box is checked. With `AURORA_DEMO_LOGIN_SUBMIT=40,300` (check the box by hand between the presses, or capture frame 200), the log reads `demo login: the login address is not encrypted` once; the second press ends as the other demo forms do. In demo mode the agreement is not saved to the settings. The rule itself (`https` and this machine sent as before, any other `http` server asked first, on the first request and on every later hop) is in the unit tests of `aurora-net/src/login.rs`.
 
 - **`AURORA_DEMO_LOGIN=drag|drag2|drag-card|drag-card2`**: eight/two synthetic profiles with a left-button side-grip or portrait gesture injected into egui at frames 20–44. Capture frame 40 while held and frame 75 after release. With eight profiles, check continuous card motion, clipped neighbours, circular wrapping, final alignment and central selection without connecting. With two profiles, the same gesture must keep the cards fixed, without arrows or connecting. Input injection never moves the OS pointer. Manually drag in both directions from portraits, place images, names, card padding and Connect buttons; release over a card/outside the window and resize during motion. A simple click still connects, while grid/start menus and text-field drag selection remain usable. Also check Enter, dialogs and short-window vertical scrolling outside the browse row.
 
@@ -9841,7 +9879,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   same place from a place link, by region name (a chat link's Show on map, a
   `secondlife:///app/worldmap` link): the region is not known yet, so the
   map waits for its answer and slides to the place, never back to the spot
-  tracked before. What to see: the place
+  tracked before. `minimized` minimizes the map, then at frame 700 shows the
+  same place the way every Show on map button does (#4868): the map expands
+  on it instead of staying a title bar. What to see: the place
   card at the bottom left (rating, people, X / Y / Z, distance, five buttons
   on one line), the layer pills at the top right (greyed when zoomed out),
   zoom / my position / home at the bottom right; the panels fade while the map
@@ -9951,7 +9991,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   location you've chosen is rated Adult." with "Allow Adult content", the
   same restart without the last notice. `lure`: an accepted teleport offer
   is refused; the prompt offers "Change preferences" only, since a lure
-  cannot be sent again. Cancel leaves the preference and the teleport as
+  cannot be sent again. The prompt replaces the "Teleport failed." popup
+  and its nearby chat line. Cancel leaves the preference and the teleport as
   they are. `:accept` presses the prompt's first button at frame 760
   (the log shows `demo: the rating prompt accepted`); capture after about
   frame 1000 to see the arrival and its notice.
@@ -10498,7 +10539,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   one), `self:edit:3:form` (our classified in its form, with its clicks)
   and `self:3:publish` (a new classified and the strip that asks its
   price). Publishing takes the price from the demo balance; the demo keeps
-  our classifieds for the run.
+  our classifieds for the run. Under `AURORA_DEMO_PROFILE` (without
+  `AURORA_DEMO_GROUP_PROFILE`), our abilities in "Aurora Builders" are an
+  officer's, so clicking "Invite" on another resident's profile opens the
+  group picker with "Aurora Builders" and then the group invitation window.
+  "Invite to group" in the "…" menu (Aurora) or the ☰ menu beside Block
+  (classic window) does the same; neither menu is on our own profile.
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`
   are appended to the address; a `data:` URL can put them in a comment.
 - **`AURORA_DEMO_LAND=<tab>[:role][:classic]`**: the pages of Aurora's
@@ -11217,6 +11263,9 @@ at frame 700. `tattoo:local-reload` replaces the violet checker with a green
 one at frame 900 using the importer's reload generation; capture before and
 after frame 1100. `tattoo:local-cancel` cancels at frame 1000 and restores the
 server appearance. These modes also accept the other wearable types.
+`tattoo:local-shape` opens the worn shape at frame 900 with the checker still
+on the unsaved tattoo. Move a shape slider, then close Shape to resume the tattoo.
+`skin:local-save-shape` saves the layer at frame 650 before opening Shape.
 `tattoo:local-save` saves at frame 650 and acknowledges the saved wearable;
 `skin:local-save` and `universal:local-save` cover body parts and extra slots.
 Save, Save As and Save on closing accept confirmed local bitmap references,
@@ -11521,11 +11570,6 @@ dialog: one `<param>` per shape parameter, no texture or other id; the footer
 says where it was saved. `readonly` (no modify rights) refuses it with the
 "needs modify rights" message, and the button is greyed out. The file reads
 back with `AURORA_DEMO_SHAPE_XML`.
-`AURORA_DEMO_SHAPE_XML_MENU=<file>` runs Appearance › Export shape XML of our
-avatar's right-click menu without its save dialog: the worn shape's asset is
-read (not the editor's draft) and written as the button does, then a notice
-in the nearby chat says where. With `readonly` nothing is written and the
-menu entry is greyed out.
 Opening the editor stands our avatar up (a seated avatar leaves its seat, as
 in the Legacy Viewer), and while the editor is open our avatar plays the
 customise animation (not the physics layer editor, which keeps the camera,
@@ -12316,6 +12360,9 @@ separate searches enabled and disabled; that preference controls only the text.
   other mode disabled. Stop and replay must keep that same window (#1445).
   `animation-open` uses the same opening path without starting playback, for
   checking both buttons manually. Capture around frame 700.
+- `animation-play-two`: two animations, one per arm, played locally from the
+  inventory. Both previews must show Stop and both arms be raised; stopping or
+  closing one lowers its arm alone (#4790).
 - `note-open`, `note-new`, `note-readonly`: editor of an existing note,
   empty note without an asset or note that cannot be modified. Edit the text
   then Save (or Ctrl+S); closing and reopening keeps the text during the

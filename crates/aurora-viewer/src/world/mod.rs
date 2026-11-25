@@ -43,6 +43,7 @@ pub mod estate;
 pub mod experience_log;
 pub mod experiences;
 pub mod favorites;
+pub mod fit_poses;
 pub mod flying_at_exit;
 mod friend_join;
 pub mod friends_only;
@@ -64,6 +65,7 @@ pub mod landmarks;
 pub mod lookat;
 pub mod lsl_syntax;
 pub mod lslbridge;
+pub mod mannequins;
 pub mod marketplace;
 pub mod maturity;
 pub mod mirror;
@@ -115,6 +117,7 @@ pub mod suitcase;
 pub mod system_messages;
 pub mod teleport_access;
 pub mod teleport_cancel;
+pub mod teleport_failure;
 pub mod teleport_invites;
 pub mod temp_attachments;
 pub mod terrain;
@@ -461,6 +464,17 @@ impl PlayingAnimation {
     }
 }
 
+/// An animation played locally on our avatar (LLPreviewAnim::play), over the
+/// simulator's own motion of the same id, if it plays one.
+#[derive(Debug, Clone, Copy)]
+struct LocalPreview {
+    signal: PlayingAnimation,
+    server: Option<PlayingAnimation>,
+    /// Played to its end: kept until the simulator no longer lists it, so
+    /// that a list already on its way does not start it again.
+    finished: bool,
+}
+
 /// The Local tab of the texture picker (LLFloaterTexturePicker::onBtnAdd,
 /// onBtnRemove, onBtnUpload, indra/newview/lltexturectrl.cpp).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -644,6 +658,8 @@ pub struct World {
     pub tp_progress: f32,
     pub tp_status: String,
     pub tp_failed: bool,
+    /// The simulator's last teleport failure, for its popup (`teleport_failure`).
+    pub tp_failure: Option<teleport_failure::Failure>,
     /// Whether the teleport screen offers Cancel, and a cancel sent.
     pub tp_cancel: teleport_cancel::TeleportCancel,
     /// Outfit restore at login (Current Outfit folder).
@@ -704,6 +720,8 @@ pub struct World {
     held_partner: Vec<(ObjKey, Uuid)>,
     /// The stand-in Person B, a mirror of our avatar (mirror.rs).
     mirror: Option<mirror::Mirror>,
+    /// LiveMesh's Fit lab: mannequins dressed as our avatar (mannequins.rs).
+    fit_lab: mannequins::FitLab,
     /// Interface sounds to play (drained by the app).
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
@@ -779,10 +797,11 @@ pub struct World {
     own_drawn: Option<Vec<PlayingAnimation>>,
     /// When the network read the event being applied (`apply_received`).
     received: Option<Instant>,
-    local_preview: Option<PlayingAnimation>,
+    /// The animations played locally, oldest first: each runs until its own
+    /// stop, like the motions LLVOAvatar::startMotion starts.
+    local_previews: Vec<LocalPreview>,
     /// (motion, start, sample) for the importer's locally controlled timeline.
     pub animation_preview_clock: Option<(Uuid, Instant, Instant)>,
-    preview_server_motion: Option<PlayingAnimation>,
     /// Our animation sources, kept until the simulator stops the motion.
     animation_sources: HashMap<Uuid, HashSet<Uuid>>,
     /// The motions sources started on our avatar (Animation explorer).
@@ -1145,6 +1164,7 @@ impl World {
             tp_progress: 0.0,
             tp_status: String::new(),
             tp_failed: false,
+            tp_failure: None,
             tp_cancel: Default::default(),
             own_animations_awaited: None,
             outfit: Default::default(),
@@ -1171,6 +1191,7 @@ impl World {
             couple_anchor: None,
             held_partner: Vec::new(),
             mirror: None,
+            fit_lab: Default::default(),
             social: social::Social::default(),
             contact_sets: Default::default(),
             avatar_marks: Default::default(),
@@ -1203,9 +1224,8 @@ impl World {
             own_locomotion: Default::default(),
             own_drawn: None,
             received: None,
-            local_preview: None,
+            local_previews: Vec::new(),
             animation_preview_clock: None,
-            preview_server_motion: None,
             animation_sources: HashMap::new(),
             animation_log: Default::default(),
             animation_stops: Vec::new(),
@@ -2878,6 +2898,9 @@ impl World {
 
     /// Visual parameter values (shape) of an avatar's last appearance.
     pub fn visual_params(&self, avatar: &Uuid) -> Option<&[u8]> {
+        if let Some(values) = self.mannequin_params(avatar) {
+            return Some(values);
+        }
         let avatar = &self.appearance_of(avatar);
         if *avatar == self.agent_id
             && let Some(values) = &self.shape_preview
@@ -3177,6 +3200,11 @@ impl World {
     }
 
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
+        // a mannequin's moves with ours (mannequins.rs: its shape is made
+        // again from ours each time ours changes)
+        if let Some(generation) = self.mannequin_generation(avatar) {
+            return generation;
+        }
         let avatar = &self.appearance_of(avatar);
         self.shown_appearance(avatar).map(|(_, g)| *g).unwrap_or(0)
             + self.bake_refreshes.get(avatar).copied().unwrap_or(0)
@@ -3228,7 +3256,7 @@ impl World {
     /// Baked texture id for an avatar (by object index) and TE slot.
     pub fn bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
-        if self.is_mirror(&o.full_id) {
+        if self.is_local_copy(&o.full_id) {
             return self.bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
         }
         if o.full_id == self.agent_id
@@ -3256,7 +3284,7 @@ impl World {
 
     pub fn server_bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
-        if self.is_mirror(&o.full_id) {
+        if self.is_local_copy(&o.full_id) {
             return self.server_bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
         }
         if let Some((a, _)) = self.shown_appearance(&o.full_id)
@@ -3309,6 +3337,7 @@ impl World {
                 self.anti_spam.reset();
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
+                self.agent.rotate_grabbed = false;
                 // the account is known: its transcripts open
                 self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
                 // LLChatServiceHistory::start, in the account's own folder
@@ -4051,7 +4080,7 @@ impl World {
                 );
                 None
             }
-            NetEvent::TeleportFailed { reason } => {
+            NetEvent::TeleportFailed { reason, code, region } => {
                 self.cancel_friend_join_flight();
                 self.cancel_friend_join();
                 self.tp_history.failed();
@@ -4060,13 +4089,23 @@ impl World {
                 self.teleporting = false;
                 self.tp_failed = true;
                 self.teleport_access_ended(false);
-                // handle_teleport_access_blocked: a refusal for the rating
-                // gets its prompt instead of the reason
-                if !self.teleport_access_failed() {
+                // handle_teleport_access_blocked: a refusal for the rating gets
+                // its prompt instead of the reason, and process_teleport_failed
+                // returns before CouldNotTeleportReason (the call takes the
+                // refusal: once only)
+                let prompted = self.teleport_access_failed();
+                if !prompted {
+                    let said = teleport_failure::text(code.as_deref().unwrap_or_default(), &reason, &region);
                     self.system_notice(
-                        aurora_i18n::tr!("world-mod-teleport-failed", reason = reason.to_string()),
+                        aurora_i18n::tr!("world-mod-teleport-failed", reason = said.clone()),
                         crate::world::notice_topics::Topic::Teleport,
                     );
+                    // CouldNotTeleportReason: the simulator's failures only,
+                    // the viewer's own ones stay a notice
+                    if let Some(code) = code {
+                        log::warn!("teleport failed: '{reason}' (code '{code}')");
+                        self.tp_failure = Some(teleport_failure::Failure { text: said, reason });
+                    }
                 }
                 None
             }
@@ -4074,6 +4113,8 @@ impl World {
                 for (take, controls, pass_on) in blocks {
                     self.script_controls.apply(take, controls, pass_on);
                 }
+                // LLAgent::rotateGrabbed, read by AgentState::yaw_by
+                self.agent.rotate_grabbed = self.script_controls.rotate_grabbed();
                 None
             }
             NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
@@ -4479,12 +4520,15 @@ impl World {
                         }
                     }
                 }
-                if avatar == self.agent_id
-                    && let Some(preview) = self.local_preview
-                {
-                    self.preview_server_motion = list.iter().find(|a| a.id == preview.id).copied();
-                    list.retain(|a| a.id != preview.id);
-                    list.push(preview);
+                if avatar == self.agent_id {
+                    for preview in &mut self.local_previews {
+                        preview.server = list.iter().find(|a| a.id == preview.signal.id).copied();
+                    }
+                    self.local_previews.retain(|p| !p.finished || p.server.is_some());
+                    for preview in &self.local_previews {
+                        list.retain(|a| a.id != preview.signal.id);
+                        list.push(preview.signal);
+                    }
                 }
                 self.animations.insert(avatar, list);
                 self.note_friend_join_animations(avatar);
@@ -6883,6 +6927,9 @@ impl World {
     }
 
     pub fn animations_of(&self, owner: &Uuid) -> &[PlayingAnimation] {
+        if let Some(playing) = self.mannequin_animations(owner) {
+            return playing;
+        }
         if *owner == self.agent_id {
             if let Some(pose) = &self.ao_pose {
                 return pose;
@@ -6924,32 +6971,62 @@ impl World {
 
     /// LLPreviewAnim::play locally: keep the motion across server signals,
     /// and restore a server-owned motion with the same UUID when stopping.
+    /// Several play at once, blended like any other motions; a start of one
+    /// already playing starts it over.
     pub fn preview_animation(&mut self, id: Uuid, start: bool) {
-        if start && let Some(previous) = self.local_preview {
-            self.preview_animation(previous.id, false);
+        // The importer's timeline drives the whole avatar: it ends, or a
+        // preview started over it would wait on a timeline that has stopped.
+        if start && let Some((clock, _, _)) = self.animation_preview_clock.filter(|(clock, _, _)| *clock != id) {
+            self.preview_animation(clock, false);
         }
+        let server = self.end_preview(id);
         let motions = self.animations.entry(self.agent_id).or_default();
         if start {
-            self.animation_preview_clock = None;
-            self.preview_server_motion = motions.iter().find(|a| a.id == id).copied();
-            let preview = PlayingAnimation::from_signal(id, 0, Instant::now(), None);
-            self.local_preview = Some(preview);
+            let server = server.or_else(|| motions.iter().find(|a| a.id == id).copied());
+            let signal = PlayingAnimation::from_signal(id, 0, Instant::now(), None);
             motions.retain(|a| a.id != id);
-            motions.push(preview);
-        } else if self.local_preview.is_some_and(|a| a.id == id) {
-            self.animation_preview_clock = None;
-            motions.retain(|a| a.id != id);
-            if let Some(motion) = self.preview_server_motion.take() {
-                motions.push(motion);
-            }
-            self.local_preview = None;
+            motions.push(signal);
+            self.local_previews.push(LocalPreview {
+                signal,
+                server,
+                finished: false,
+            });
+        } else {
+            motions.extend(server);
         }
+    }
+
+    /// A local preview that played to its end: the simulator's motion of the
+    /// same id ends with it (LLVOAvatarSelf::requestStopMotion).
+    pub fn preview_finished(&mut self, id: Uuid) {
+        let Some(preview) = self.local_previews.iter_mut().find(|p| p.signal.id == id) else {
+            return;
+        };
+        preview.finished = true;
+        if preview.server.is_none() {
+            self.end_preview(id);
+        }
+    }
+
+    /// Take a local preview out, returning the simulator's motion it covered.
+    fn end_preview(&mut self, id: Uuid) -> Option<PlayingAnimation> {
+        let at = self.local_previews.iter().position(|p| p.signal.id == id)?;
+        let preview = self.local_previews.remove(at);
+        if self.animation_preview_clock.is_some_and(|(clock, _, _)| clock == id) {
+            self.animation_preview_clock = None;
+        }
+        if let Some(motions) = self.animations.get_mut(&self.agent_id) {
+            motions.retain(|a| a.id != id);
+        }
+        preview.server
     }
 
     /// LLFloaterBvhPreview::onSliderMove/onBtnPlayPause (LGPL 2.1):
     /// keep preview time independent of server motion signals.
     pub fn set_animation_preview_clock(&mut self, id: Uuid, start: Instant, sample: Instant) {
-        self.animation_preview_clock = self.local_preview.filter(|p| p.id == id).map(|_| (id, start, sample));
+        if self.local_previews.iter().any(|p| p.signal.id == id) {
+            self.animation_preview_clock = Some((id, start, sample));
+        }
     }
 
     /// LLVOAvatar::getOffObject and LLVOAvatarSelf::detachObject
@@ -8519,6 +8596,45 @@ mod motion_tests {
         assert!(!world.arrived_by_local_teleport, "another region: the camera comes back");
     }
 
+    /// CouldNotTeleportReason: a simulator's refusal keeps its popup, worded
+    /// as the Legacy Viewer words its code; the viewer's own failures stay a
+    /// notice.
+    #[test]
+    fn a_simulator_teleport_failure_gets_the_popup() {
+        let (mut world, _) = teleport_fixture();
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
+        world.apply(NetEvent::TeleportFailed {
+            reason: "You cannot go there".into(),
+            code: Some("noaccess_tport".into()),
+            region: String::new(),
+        });
+        let failure = world.tp_failure.clone().expect("popup kept");
+        assert_eq!(failure.text, aurora_i18n::tr!("teleport-error-noaccess-tport"));
+        assert_eq!(failure.reason, "You cannot go there");
+        let said = aurora_i18n::tr!(
+            "world-mod-teleport-failed",
+            reason = aurora_i18n::tr!("teleport-error-noaccess-tport").to_owned()
+        );
+        assert!(world.chat.iter().any(|line| line.text == said), "the notice uses the same wording");
+
+        world.tp_failure = None;
+        world.begin_teleport(true);
+        world.apply(NetEvent::viewer_teleport_failed(aurora_i18n::tr!("rlva-blocked")));
+        assert!(world.tp_failure.is_none());
+
+        // OpenSim's EntityTransferModule: an empty reason and no AlertInfo is
+        // still the simulator's failure (the Legacy Viewer's popup, empty)
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportFailed {
+            reason: String::new(),
+            code: Some(String::new()),
+            region: String::new(),
+        });
+        let failure = world.tp_failure.clone().expect("popup kept for an empty reason");
+        assert!(failure.text.is_empty() && failure.reason.is_empty());
+    }
+
     #[test]
     fn known_remote_destination_shows_progress_and_failure_ends_the_teleport() {
         let (mut world, handle) = teleport_fixture();
@@ -8530,9 +8646,9 @@ mod motion_tests {
             flying: false,
         });
         assert_eq!(world.ui_sounds.iter().filter(|s| **s == UiSound::TeleportOut).count(), 1);
-        world.apply(NetEvent::TeleportFailed {
-            reason: aurora_i18n::tr!("world-mod-destination-unavailable").into(),
-        });
+        world.apply(NetEvent::viewer_teleport_failed(aurora_i18n::tr!(
+            "world-mod-destination-unavailable"
+        )));
         assert!(!world.teleporting && world.tp_failed);
         // The screen remains eligible for its failure fade-out.
         assert!(world.tp_show_progress);
@@ -8572,7 +8688,7 @@ mod motion_tests {
             world.apply(NetEvent::TeleportStarted { flags: 0 });
             world.apply(NetEvent::TeleportFinished { handle: to, flying: false });
             if fail {
-                world.apply(NetEvent::TeleportFailed { reason: "no".into() });
+                world.apply(NetEvent::viewer_teleport_failed("no"));
                 return from;
             }
             world.apply(NetEvent::MainRegionChanged { handle: to });
@@ -9904,6 +10020,80 @@ mod motion_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn local_previews_play_together_and_stop_one_by_one() {
+        let (mut world, _, _) = fixture();
+        let me = world.agent_id;
+        let [server, first, second] = [1, 2, 3].map(Uuid::from_u128);
+        let signal = |world: &mut World| {
+            world.apply(NetEvent::AvatarAnimations {
+                avatar: me,
+                anims: vec![(server, 1), (second, 7)],
+                sources: Vec::new(),
+            });
+        };
+        let ids = |world: &World| {
+            let mut ids: Vec<_> = world.animations_of(&me).iter().map(|a| a.id).collect();
+            ids.sort();
+            ids
+        };
+        signal(&mut world);
+        world.preview_animation(first, true);
+        world.preview_animation(second, true);
+        assert_eq!(ids(&world), [server, first, second]);
+        // they outlive the simulator's lists, once each
+        signal(&mut world);
+        assert_eq!(ids(&world), [server, first, second]);
+        // started over: still once
+        world.preview_animation(first, true);
+        assert_eq!(ids(&world), [server, first, second]);
+        world.preview_animation(first, false);
+        assert_eq!(ids(&world), [server, second]);
+        // the simulator's own motion of that id comes back
+        world.preview_animation(second, false);
+        assert_eq!(ids(&world), [server, second]);
+        assert!(world.animations_of(&me).iter().any(|a| a.id == second && a.sequence == 7));
+        // played to its end, it does not: a list on its way changes nothing,
+        // the one without it ends it
+        world.preview_animation(second, true);
+        let played = world.animations_of(&me).iter().find(|a| a.id == second).copied();
+        world.preview_finished(second);
+        signal(&mut world);
+        assert_eq!(world.animations_of(&me).iter().find(|a| a.id == second).copied(), played);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: me,
+            anims: vec![(server, 1)],
+            sources: Vec::new(),
+        });
+        assert_eq!(ids(&world), [server]);
+        world.preview_animation(first, true);
+        world.preview_finished(first);
+        assert_eq!(ids(&world), [server], "local alone, it ends at once");
+        world.preview_animation(first, false);
+        assert_eq!(ids(&world), [server], "a stop of one not playing");
+    }
+
+    #[test]
+    fn a_preview_ends_the_importers_timeline() {
+        let (mut world, _, _) = fixture();
+        let [imported, other] = [1, 2].map(Uuid::from_u128);
+        let now = Instant::now();
+        let plays = |world: &World, id| world.animations_of(&world.agent_id).iter().any(|a| a.id == id);
+        world.preview_animation(imported, true);
+        world.set_animation_preview_clock(imported, now, now);
+        world.preview_animation(other, true);
+        assert!(world.animation_preview_clock.is_none());
+        assert!(!plays(&world, imported) && plays(&world, other));
+        world.set_animation_preview_clock(imported, now, now);
+        assert!(world.animation_preview_clock.is_none(), "no longer previewed");
+        // and the timeline started after it leaves it playing
+        world.preview_animation(imported, true);
+        world.set_animation_preview_clock(imported, now, now);
+        assert!(plays(&world, imported) && plays(&world, other));
+        world.preview_animation(imported, false);
+        assert!(world.animation_preview_clock.is_none() && plays(&world, other));
     }
 
     #[test]

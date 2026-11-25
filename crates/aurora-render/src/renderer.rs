@@ -1177,6 +1177,10 @@ struct Pipelines {
     part_mask: wgpu::RenderPipeline,
     /// The visible part of the subject's faces (part_pick.rs).
     part_pick: wgpu::RenderPipeline,
+    /// LiveMesh's Fit lab (fit_clip.rs): the garment's outer surface as a
+    /// depth, the body's visible faces as a mask.
+    fit_garment: wgpu::RenderPipeline,
+    fit_body: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
     /// SSR's composite of the traced reflections (rt_shadows.rs), when they
     /// are on.
@@ -2031,6 +2035,8 @@ pub(crate) struct Backend {
     hud_selection: Option<crate::selection::Overlay>,
     /// The poser's hovered part (`part_faces`), as the selection's halo.
     part: Option<crate::selection::Overlay>,
+    /// LiveMesh's Fit lab clipping map (fit_clip.rs), while it is on.
+    fit_clip: Option<crate::fit_clip::FitClip>,
     /// Seeded from post depth while hovering; part faces resolve their own
     /// nearest surface here, including blended unrigged accessories.
     part_depth: Option<wgpu::TextureView>,
@@ -2197,6 +2203,11 @@ pub(crate) struct Backend {
     /// Frames since a part was last lit: its overlay images go after
     /// `PART_IDLE_FRAMES`.
     part_idle: u32,
+    /// Frames without the Fit lab's map: its images go after
+    /// `PART_IDLE_FRAMES`, so a garment out of view a moment keeps them.
+    fit_idle: u32,
+    /// This frame draws the Fit lab's map: it has its parameters and faces.
+    fit_lit: bool,
     /// The world's labels, drawn behind what the scene has in front of
     /// them (label_depth.rs).
     label_depth: crate::label_depth::LabelDepth,
@@ -3874,6 +3885,8 @@ struct Ranges {
     select_faces: (u64, u32),
     select_pattern: (u64, u32),
     part_faces: (u64, u32),
+    fit_garment: (u64, u32),
+    fit_body: (u64, u32),
     refl_water: (u64, u32),
     water_air: (u64, u32),
     water_air_terrain: (u64, u32),
@@ -4678,6 +4691,7 @@ impl Backend {
             cube_step: None,
             hud_selection: None,
             part: None,
+            fit_clip: None,
             part_depth: None,
             frame_layout,
             records_layout,
@@ -4764,6 +4778,8 @@ impl Backend {
             part_pick_px: None,
             part_lit: false,
             part_idle: 0,
+            fit_idle: 0,
+            fit_lit: false,
             label_depth,
             impostors,
             motion_history,
@@ -5861,6 +5877,27 @@ impl Backend {
             crate::part_pick::FORMAT,
             wgpu::ColorWrites::RED,
         ));
+        // LiveMesh's Fit lab (fit_clip.rs), on the main pass's posed
+        // vertices: the garment's nearest outer surface in a depth of its
+        // own, then the body where it is the scene's visible surface (the
+        // scene's depth read only, with the part passes' bias)
+        let fit_garment = pipe(PipeDesc {
+            cull: None,
+            samples: 1,
+            format: None,
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("fit lab garment depth", "vs_part_mask", "fs_fit_garment")
+        });
+        let fit_body = pipe(PipeDesc {
+            cull: None,
+            samples: 1,
+            format: Some(wgpu::TextureFormat::R8Unorm),
+            depth_write: false,
+            write_mask: wgpu::ColorWrites::RED,
+            depth_bias: PART_DEPTH_BIAS,
+            ..base("fit lab body coverage", "vs_part_mask", "fs_fit_body")
+        });
         let ssr_pipes = ssr.then(|| {
             let src = format!("{}\n{}", common_shader_for(soft), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -6308,6 +6345,8 @@ impl Backend {
             selection_pattern_hdr: selection_pattern_hdr.resolve(&mut done),
             part_mask: part_mask.resolve(&mut done),
             part_pick: part_pick.resolve(&mut done),
+            fit_garment: fit_garment.resolve(&mut done),
+            fit_body: fit_body.resolve(&mut done),
             ssr: ssr_pipe.resolve(&mut done),
             ssr_rt: ssr_rt.resolve(&mut done),
             pre_opaque: pre_opaque.resolve(&mut done),
@@ -7255,6 +7294,7 @@ impl Backend {
         self.rlva_scaled = None;
         self.selection = None;
         self.hud_selection = None;
+        self.fit_clip = None;
         if let Some(dof) = &mut self.dof {
             dof.release();
         }
@@ -9324,6 +9364,34 @@ impl Backend {
                 part.update(&self.queue, f.part_color, PART_TINT, f.selection_scale * PART_HALO);
             }
         }
+        // the Fit lab's map: its images while it is on and has a garment
+        // and a body in view
+        // (kept images are not drawn without this frame's parameters: a
+        // photo's frame has none, and another size)
+        let fit_params = f.fit_clip.filter(|_| !lists.fit_garment.is_empty() && !lists.fit_body.is_empty());
+        self.fit_lit = fit_params.is_some();
+        match fit_params {
+            Some(params) => {
+                self.fit_idle = 0;
+                let size = [post_size.0, post_size.1];
+                if self.fit_clip.as_ref().is_none_or(|fit| fit.size != size) {
+                    let format = self.config.format;
+                    self.fit_clip = extra(&mut self.oom, &self.device, self.lost.get(), "fit lab clipping", |device| {
+                        crate::fit_clip::FitClip::new(device, format, DEPTH_FORMAT, size)
+                    });
+                }
+                // (refused by a full video memory: nothing of the old size is left)
+                if let Some(fit) = &self.fit_clip {
+                    fit.update(&self.queue, &params, f.proj);
+                }
+            }
+            None => {
+                self.fit_idle = self.fit_idle.saturating_add(1);
+                if self.fit_idle > PART_IDLE_FRAMES {
+                    self.fit_clip = None;
+                }
+            }
+        }
         if !lists.hud_select_faces.is_empty() {
             let size = [self.config.width, self.config.height];
             if self.hud_selection.as_ref().is_none_or(|selection| selection.size != size) {
@@ -10427,6 +10495,8 @@ impl Backend {
         rg.select_faces = push(cpu, &lists.select_faces);
         rg.select_pattern = push(cpu, &lists.select_pattern);
         rg.part_faces = push(cpu, &lists.part_faces);
+        rg.fit_garment = push(cpu, &lists.fit_garment);
+        rg.fit_body = push(cpu, &lists.fit_body);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
         if let Some(c) = &capture {
@@ -13139,14 +13209,17 @@ impl Backend {
         // timestamp goes to whichever pass really ends it
         let draws_selection = rg.select_faces.1 > 0 && self.selection.is_some();
         let draws_part = rg.part_faces.1 > 0 && self.part_lit && self.part.is_some() && self.part_depth.is_some();
+        let draws_fit = self.fit_lit && rg.fit_garment.1 > 0 && rg.fit_body.1 > 0 && self.fit_clip.is_some();
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds && !draws_selection && !draws_part => Some(wgpu::RenderPassTimestampWrites {
-                    query_set: &t.query_set,
-                    beginning_of_pass_write_index: None,
-                    end_of_pass_write_index: Some(1),
-                }),
+                (Some(t), Some(_)) if !draw_huds && !draws_selection && !draws_part && !draws_fit => {
+                    Some(wgpu::RenderPassTimestampWrites {
+                        query_set: &t.query_set,
+                        beginning_of_pass_write_index: None,
+                        end_of_pass_write_index: Some(1),
+                    })
+                }
                 _ => None,
             };
             // with SMAA the post pass fills its gamma-encoded input image
@@ -13220,7 +13293,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.selection_mask, rg.select_faces);
             drop(pass);
             let timestamps = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds && !draws_part => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_part && !draws_fit => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -13289,7 +13362,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.part_mask, rg.part_faces);
             drop(pass);
             let timestamps = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_fit => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -13298,6 +13371,28 @@ impl Backend {
             };
             part.encode(&mut encoder, scene_target, timestamps);
             calls.set(calls.get() + 2);
+        }
+
+        // LiveMesh's Fit lab: where the body pokes through the garment
+        if draws_fit && let Some(fit) = &self.fit_clip {
+            let mut pass = fit.begin_garment(&mut encoder);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.fit_garment, rg.fit_garment);
+            drop(pass);
+            let mut pass = fit.begin_body(&mut encoder, post_depth);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.fit_body, rg.fit_body);
+            drop(pass);
+            let timestamps = match (&self.timer, timer_slot) {
+                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                    query_set: &t.query_set,
+                    beginning_of_pass_write_index: None,
+                    end_of_pass_write_index: Some(1),
+                }),
+                _ => None,
+            };
+            fit.encode(&self.device, &mut encoder, scene_target, post_depth, timestamps);
+            calls.set(calls.get() + 3);
         }
 
         if let Some(effects) = &mut self.rlva_spheres {

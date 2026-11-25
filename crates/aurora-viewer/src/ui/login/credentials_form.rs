@@ -184,6 +184,13 @@ pub fn content(
                 ui.label(aurora_i18n::tr!("ui-login-next-server-body", server = server.as_str()));
                 widgets::checkbox(ui, p, &mut form.accept_next_server, aurora_i18n::tr!("ui-login-next-server-accept"));
             }
+            // the login would travel unencrypted: the user decides
+            if let Some(server) = &form.unencrypted_server {
+                ui.add_space(8.0);
+                ui.label(RichText::new(aurora_i18n::tr!("ui-login-unencrypted")).strong().color(p.amber));
+                ui.label(aurora_i18n::tr!("ui-login-unencrypted-body", server = server.as_str()));
+                widgets::checkbox(ui, p, &mut form.accept_unencrypted, aurora_i18n::tr!("ui-login-unencrypted-accept"));
+            }
             if let Some(error) = &form.error {
                 ui.label(RichText::new(error).color(p.danger));
             }
@@ -198,6 +205,7 @@ pub fn content(
                 && (form.tos_message.is_none() || form.agree_tos)
                 && (form.critical_message.is_none() || form.read_critical)
                 && (form.next_server.is_none() || form.accept_next_server)
+                && (form.unencrypted_server.is_none() || form.accept_unencrypted)
         })
         .inner
         && !grids_open;
@@ -241,6 +249,12 @@ pub fn content(
             && let Some(server) = next_server
         {
             form.accepted_next_servers.push(server);
+        }
+        let unencrypted = form.unencrypted_server.take();
+        if std::mem::take(&mut form.accept_unencrypted)
+            && let Some(server) = unencrypted
+        {
+            form.accepted_unencrypted.push(server);
         }
     }
     pressed
