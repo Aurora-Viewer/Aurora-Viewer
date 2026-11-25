@@ -505,6 +505,38 @@ mod tests {
         assert!(p.distance(target) < 1e-3, "{p:?}");
     }
 
+    /// A texel's depth drawn with the temporal jitter (TAA, FSR) lands on
+    /// the surface drawn there only when unprojected with the jittered
+    /// camera, as the renderer keeps it for clicks (`last_inv_vp`); with
+    /// the still one, it lands beside it, off a face seen at an angle.
+    #[test]
+    fn a_jittered_depth_lands_on_its_surface_with_the_jittered_camera() {
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.5);
+        let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::X, Vec3::Z);
+        // 0.4 of a texel to the right and up, as renderer.rs applies it
+        let jittered = Mat4::from_translation(Vec3::new(0.8 / 101.0, 0.8 / 101.0, 0.0)) * proj;
+        let (still_vp, jittered_vp) = (proj * view, jittered * view);
+        // a face 20 m away, turned 60° off the view
+        let normal = Vec3::new(0.5, 0.75_f32.sqrt(), 0.0);
+        let on_face = Vec3::new(20.0, 0.0, 0.0);
+        // where the jittered camera's ray through the texel's centre meets it
+        let px = pixel(jittered_vp);
+        let near = px.inv_view_proj.project_point3(Vec3::new(0.0, 0.0, 1.0));
+        let far = px.inv_view_proj.project_point3(Vec3::new(0.0, 0.0, 0.001));
+        let dir = (far - near).normalize();
+        let drawn = near + dir * (on_face - near).dot(normal) / dir.dot(normal);
+        let clip = jittered_vp * drawn.extend(1.0);
+        let depth = clip.z / clip.w;
+        let off_face = |p: Vec3| (p - on_face).dot(normal).abs();
+        let with_jitter = px.world(depth).expect("a surface");
+        assert!(
+            with_jitter.distance(drawn) < 1e-3 && off_face(with_jitter) < 1e-3,
+            "{with_jitter:?}"
+        );
+        let still = pixel(still_vp).world(depth).expect("a surface");
+        assert!(off_face(still) > 0.02, "{still:?} {}", off_face(still));
+    }
+
     #[test]
     fn sky_and_broken_depths_give_nothing() {
         let px = pixel(Mat4::IDENTITY);

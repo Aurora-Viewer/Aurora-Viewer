@@ -470,15 +470,19 @@ impl Scene {
             // (cull.wgsl), so a large one shows surfaces beyond it, and a
             // click there selected nothing (#4869). With no depth (the sky,
             // the photo camera's probe), the draw distance bounds the ray as
-            // before. LLPickInfo::fetchResults
-            // (indra/newview/llviewerwindow.cpp) casts 512 m, whatever the
-            // draw distance. A hit farther than `DEPTH_NEAR` behind the depth
-            // is taken only when it is the surface drawn there (`drawn_at`),
-            // at the depth's point (read its surface on `surface_ray`). What
-            // is not drawn is not clicked where a depth is drawn: a hidden
-            // rendering type, or what the photo or RLVa leaves out, as
-            // `pick_objects` skips them. The photo camera's probe still
-            // meets them: a wall left out of the picture stops it as before.
+            // before; with a depth, the depth does (`drawn_at`). A hit
+            // farther than `DEPTH_NEAR` behind the depth is taken only when
+            // it is the surface drawn there (`drawn_at`), at the depth's
+            // point (read its surface on `surface_ray`). What is not drawn is
+            // not clicked where a depth is drawn: a hidden rendering type, or
+            // what the photo or RLVa leaves out, as `pick_objects` skips
+            // them. The photo camera's probe still meets them: a wall left
+            // out of the picture stops it as before. The Legacy Viewer casts
+            // a CPU ray: LLPickInfo::fetchResults (llviewerwindow.cpp) 512 m
+            // whatever the draw distance, over what LLOctreeIntersect::check
+            // (llspatialpartition.cpp) finds drawn (its rendering type on,
+            // visible). It needs no depth check: its ray meets no surface the
+            // GPU posed elsewhere.
             let eye = self.last_cull.map_or(ray.0, |view| view.eye);
             let hits = ray_hits(&candidates, |&idx| {
                 let g = self.gpu.get(idx)?;
@@ -994,15 +998,23 @@ impl Scene {
 
     /// Whether `idx` is the surface drawn at `depth`, a point read from the
     /// depth under the cursor: met within `DEPTH_NEAR` of it on the way from
-    /// `origin`, and then how far past the depth (negative: in front). The depth is that of a render texel, up to a texel beside
-    /// the click's ray: on a face seen at an angle far away, that puts it
-    /// well short of where the ray meets the same face (with FSR, 9 to 28 cm
-    /// 70 to 120 m away, one click in ten, #4869), and on a surface drawn in
-    /// front (the terrain, an avatar, a wall) it is that surface's, which
-    /// the face behind does not meet there. Only that stretch is cast: a
-    /// face of the same object farther in front writes no depth there (an
+    /// `origin`, and then how far past the depth (negative: in front). The
+    /// depth is that of a render texel, up to a texel beside the click's
+    /// ray: on a face seen at an angle far away, that puts it well short of
+    /// or behind where the ray meets the same face, with any anti-aliasing
+    /// (demo, FSR: 9 to 28 cm 70 to 120 m away; SMAA, the issue's settings:
+    /// 7 to 34 cm 105 to 228 m away, #4869), and on a surface drawn in front
+    /// (the terrain, an avatar, a wall) it is that surface's, which the face
+    /// behind does not meet there. Only a hit in that stretch counts: a face
+    /// of the same object farther in front writes no depth there (an
     /// invisible, blended or cut-out face), or the depth would be its own.
+    /// An object whose bounding sphere does not reach the stretch is passed
+    /// before its faces are cast.
     fn drawn_at(&self, world: &World, idx: usize, origin: Vec3, depth: Vec3, now: Instant, mode: FacePick) -> Option<f32> {
+        let (center, radius) = self.gpu.get(idx)?.sphere();
+        if radius > 0.0 && center.distance_squared(depth) > (radius * 1.05 + 0.05 + DEPTH_NEAR).powi(2) {
+            return None;
+        }
         let dir = (depth - origin).try_normalize()?;
         let hit = self.face_hit_mode(world, idx, (depth - dir * DEPTH_NEAR, dir), now, true, mode)?;
         (hit.t <= 2.0 * DEPTH_NEAR).then_some(hit.t - DEPTH_NEAR)
