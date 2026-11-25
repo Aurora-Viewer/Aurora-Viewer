@@ -1272,6 +1272,8 @@ import-confirm-price = これらのインポートにはL$ { $cost }かかりま
 import-confirm-shared-textures = 共有テクスチャは1回だけアップロードされます。
 import-price-unavailable = 価格を取得できません。アップロードの前にログインしてください。
 import-insufficient-balance = このインポートには残高が足りません。
+import-upload-payment-title = アップロード
+import-upload-payment = アップロードにL$ { $cost }支払いました。
 import-quick-textures = { $count ->
    *[other] テクスチャ{ $count }件をL$ { $cost }でインポートしますか？
 }

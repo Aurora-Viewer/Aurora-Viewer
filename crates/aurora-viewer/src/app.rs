@@ -4036,13 +4036,14 @@ impl App {
                 return;
             }
             let material_map = self.imports.uploading_entry(request);
+            let cost = result.as_ref().map_or(0, |receipt| receipt.cost);
             if let Some(item) = self.imports.uploaded(request, result) {
                 if let Some(entry) = material_map {
                     self.texture_library.map_uploaded(entry, &item);
                 }
                 let id = item.id;
                 self.world.inventory.add_items(vec![item]);
-                self.inventory_ui.show_original(&self.world.inventory, id);
+                self.show_uploaded(id, cost);
             }
             return;
         }

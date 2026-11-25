@@ -1293,6 +1293,8 @@ import-confirm-price = Ces imports coûteront { $cost } L$.
 import-confirm-shared-textures = Les textures partagées ne seront chargées qu’une fois.
 import-price-unavailable = Tarif indisponible ; connectez-vous avant l’import.
 import-insufficient-balance = Le solde ne permet pas cet import.
+import-upload-payment-title = Import
+import-upload-payment = L’import a coûté { $cost } L$.
 import-quick-textures = { $count ->
     [one] Importer 1 texture pour { $cost } L$ ?
    *[other] Importer { $count } textures pour { $cost } L$ ?

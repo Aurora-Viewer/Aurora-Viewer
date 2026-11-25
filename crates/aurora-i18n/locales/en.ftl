@@ -1293,6 +1293,8 @@ import-confirm-price = These imports will cost L${ $cost }.
 import-confirm-shared-textures = Shared textures will only be uploaded once.
 import-price-unavailable = Price unavailable; log in before uploading.
 import-insufficient-balance = Your balance is insufficient for this import.
+import-upload-payment-title = Upload
+import-upload-payment = You paid L${ $cost } to upload.
 import-quick-textures = { $count ->
     [one] Import 1 texture for L${ $cost }?
    *[other] Import { $count } textures for L${ $cost }?

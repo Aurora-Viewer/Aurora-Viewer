@@ -8,6 +8,30 @@ use aurora_net::inventory::upload::{Prices, Receipt};
 const SOUND_PREVIEW: u64 = u64::MAX - 10;
 
 impl App {
+    /// A file uploaded, as the upload callback of LLViewerAssetUpload says it
+    /// (indra/newview/llviewerassetupload.cpp): the UploadPayment toast for
+    /// what it cost, under "Show upload payments" (FSShowUploadPaymentToast,
+    /// on by default), then the
+    /// inventory opened on the new item (openInventoryPanelAndSetSelection),
+    /// never past @showinv. The L$ spent sound is the balance's, past
+    /// UISndMoneyChangeThreshold, as there: the balance is asked again after
+    /// every upload.
+    pub(super) fn show_uploaded(&mut self, id: uuid::Uuid, cost: i32) {
+        if cost > 0 && self.settings.imports.show_payment {
+            self.world.notifications.push(
+                crate::world::notifications::Kind::Info,
+                aurora_i18n::tr!("import-upload-payment-title"),
+                aurora_i18n::tr!("import-upload-payment", cost = cost),
+                crate::world::notifications::Data::None,
+            );
+        }
+        let shown = self.panels.inventory && !ui::widgets::floater_minimized(&self.egui_ctx, "inventory");
+        self.inventory_ui.show_uploaded(&self.world.inventory, id, shown);
+        if !self.world.rlva.has("showinv") {
+            ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+        }
+    }
+
     /// The upload prices: the grid's, or the demo server's.
     fn import_prices(&self) -> Prices {
         let prices = if self.demo {
