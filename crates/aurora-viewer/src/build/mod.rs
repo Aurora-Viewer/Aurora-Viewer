@@ -33,6 +33,7 @@ pub mod layout;
 mod linking;
 pub mod manip;
 mod material_preview;
+pub mod mesh_physics;
 use material_preview::MaterialTabKey;
 pub mod materials;
 mod new_defaults;
@@ -305,6 +306,10 @@ pub struct BuildSettings {
     pub show_parcel_owners: bool,
     /// SyncMaterialSettings: normal / specular maps follow the diffuse UVs.
     pub sync_materials: bool,
+    /// The build picker warns when a click cannot preview the item chosen
+    /// (LivePreviewUnavailable / LivePreviewUnavailablePBR, their "ignore"
+    /// box turns it off; one setting here for the two).
+    pub warn_live_preview: bool,
     /// Texture tab: a new selection opens the PBR or Blinn-Phong tab that
     /// fits its faces, as LLPanelFace::updateUI does (`material_preview.rs`).
     /// On by default; off keeps the last tab chosen.
@@ -835,6 +840,7 @@ impl Default for BuildSettings {
             expanded: true,
             show_parcel_owners: false,
             sync_materials: false,
+            warn_live_preview: true,
             auto_material_tab: true,
             show_physics_shape: false,
             copy_key_separator: ",".into(),
@@ -1008,6 +1014,9 @@ pub struct BuildTool {
     /// Materials actually received from the server, rather than defaults
     /// accompanying a GetObjectPhysicsData reply containing only shape type.
     pub physics_materials_known: HashSet<u32>,
+    /// Whether a mesh has a physics shape of its own (the Features tab's
+    /// Prim entry), and the collision blocks asked for to find out.
+    pub mesh_physics: mesh_physics::MeshPhysics,
     /// Land impact, weights and parcel capacity.
     pub costs: costs::Costs,
     /// Object inventories (Contents tab).
@@ -1106,6 +1115,7 @@ impl Default for BuildTool {
             grid_objects: Vec::new(),
             physics: HashMap::new(),
             physics_materials_known: HashSet::new(),
+            mesh_physics: mesh_physics::MeshPhysics::default(),
             costs: costs::Costs::default(),
             contents: contents::Contents::default(),
             replacement: replace::Replacement::default(),

@@ -20,6 +20,9 @@ use egui::{FontId, Pos2, Rect, Sense, Vec2};
 pub const WINDOW: &str = "controls";
 pub const CLASSIC_CAMERA: &str = "camera_controls";
 pub const CLASSIC_MOVEMENT: &str = "movement_controls";
+/// The Classic style's small camera window (the Legacy Viewer's
+/// fs_camera_floater_small, its own window with its own place, as there).
+pub const CLASSIC_CAMERA_SMALL: &str = "camera_controls_small";
 
 const WIDTH: f32 = 300.0;
 /// The body's width inside the window's margins (`widgets::Floater`).
@@ -39,6 +42,40 @@ const CAPTION_H: f32 = 16.0;
 const ZOOM_W: f32 = 24.0;
 /// The zoom's + and −.
 const ZOOM_BUTTON: f32 = 18.0;
+// The Classic style's small camera window, as floater_fs_camera_small.xml
+// lays it out in 165 × 77: a row of 18 px buttons on top (the four views,
+// then object view, mouselook and reset view), the orbit joystick, the
+// zoom's column and the pan joystick under it, 50 px tall, the roll
+// buttons in the orbit joystick's bottom corners.
+const SMALL_WIDTH: f32 = 165.0;
+/// Its body: the window less its margins and its border.
+const SMALL_BODY: f32 = SMALL_WIDTH - 2.0 * SMALL_INSET;
+const SMALL_PAD: f32 = 2.0;
+/// Where the body starts in the window: its margin and its border.
+const SMALL_INSET: f32 = SMALL_PAD + 1.0;
+/// The top row's 22 px take the Legacy window's top (its buttons at 0, its
+/// joysticks at 25), so 1 px above them where it has none.
+const SMALL_MARGIN: egui::Margin = egui::Margin {
+    left: SMALL_PAD as i8,
+    right: SMALL_PAD as i8,
+    top: 1,
+    bottom: SMALL_PAD as i8,
+};
+const SMALL_BUTTON: f32 = 18.0;
+const SMALL_BUTTON_GAP: f32 = 2.0;
+/// The top row (the buttons and the room under them).
+const SMALL_ROW: f32 = 22.0;
+const SMALL_STICK: f32 = 50.0;
+const SMALL_ZOOM_W: f32 = 16.0;
+const SMALL_ZOOM_BUTTON: f32 = 14.0;
+/// The small zoom slider's thumb.
+const SMALL_ZOOM_THUMB: Vec2 = Vec2::new(10.0, 4.0);
+/// Pixels of drag on the small zoom slider for the whole zoom range.
+const SMALL_ZOOM_TRAVEL: f32 = 200.0;
+/// An arrow key or a wheel notch on the small zoom slider: LLF32UICtrl's
+/// default increment (LLSlider::handleKeyHere, handleScrollWheel).
+const SMALL_ZOOM_STEP: f32 = 0.1;
+const SMALL_ROLL: f32 = 12.0;
 /// Room between two items of a row of buttons.
 const ROW_GAP: f32 = 4.0;
 const BUTTON_H: f32 = 26.0;
@@ -301,7 +338,24 @@ impl ControlsUi {
         let mut out = Output::default();
         // the free camera keeps Aurora's window (Firestorm has none)
         if classic && view.free.is_none() {
-            if *camera {
+            if *camera && compact.camera {
+                // the Legacy Viewer's small camera window (#677 on the
+                // feedback board): no title bar, moved by its background,
+                // closed by its toolbar button or menu entry (Ctrl+W
+                // passes over it, as `without_close` says). Its size is
+                // fixed: the Legacy Viewer's can be enlarged (can_resize,
+                // 165×77 at least), a difference noted in TASKS.md
+                Floater::new(
+                    CLASSIC_CAMERA_SMALL,
+                    aurora_i18n::tr!("controls-camera-title"),
+                    Pos2::new(60.0, 160.0),
+                    Vec2::new(SMALL_WIDTH, SMALL_ROW + SMALL_STICK),
+                )
+                .auto_height()
+                .without_close()
+                .margin(SMALL_MARGIN)
+                .show(ctx, p, camera, |ui| small_camera(ui, p, view, &mut out));
+            } else if *camera {
                 let size = Vec2::new(controls_width(ctx, view, true), 210.0);
                 Floater::new(
                     CLASSIC_CAMERA,
@@ -651,12 +705,18 @@ pub struct SticksRow {
 
 impl SticksRow {
     pub fn new(row: Rect) -> SticksRow {
-        let gap = (row.width() - 2.0 * STICK - ZOOM_W) / 4.0;
+        SticksRow::sized(row, STICK, ZOOM_W)
+    }
+
+    /// Joysticks `stick` wide and a zoom `zoom_w` wide (the Classic
+    /// style's small camera window), spread as `new` spreads them.
+    pub fn sized(row: Rect, stick: f32, zoom_w: f32) -> SticksRow {
+        let gap = (row.width() - 2.0 * stick - zoom_w) / 4.0;
         let y = row.center().y;
-        let at = |left: f32, w: f32| Rect::from_center_size(egui::pos2(left + w / 2.0, y), Vec2::new(w, STICK));
-        let orbit = at(row.left() + gap, STICK);
-        let zoom = at(orbit.right() + gap, ZOOM_W);
-        let pan = at(zoom.right() + gap, STICK);
+        let at = |left: f32, w: f32| Rect::from_center_size(egui::pos2(left + w / 2.0, y), Vec2::new(w, stick));
+        let orbit = at(row.left() + gap, stick);
+        let zoom = at(orbit.right() + gap, zoom_w);
+        let pan = at(zoom.right() + gap, stick);
         SticksRow { orbit, zoom, pan }
     }
 }
@@ -786,11 +846,25 @@ fn compact_choice(by_title: bool, now: bool, free: bool) -> Option<bool> {
 /// the camera presets' Camera controls). Compact, the window shows
 /// the tab it is on (#3904): the button of that tab closes it with
 /// `toggle`, as it closes the full window; the other tab's button turns
-/// to it (#1815), in that tab's saved form (`ControlsUi::show`). `classic`: Legacy's two windows, each its own.
-pub fn request(ctx: &egui::Context, camera: &mut bool, movement: &mut bool, classic: bool, want_movement: bool, toggle: bool) {
+/// to it (#1815), in that tab's saved form (`ControlsUi::show`). `classic`: Legacy's two windows, each its own,
+/// the camera's the small one when `small_camera` (Compact camera controls,
+/// as the Legacy Viewer's `FSUseSmallCameraFloater`).
+pub fn request(
+    ctx: &egui::Context,
+    camera: &mut bool,
+    movement: &mut bool,
+    classic: bool,
+    small_camera: bool,
+    want_movement: bool,
+    toggle: bool,
+) {
     if classic {
+        // the camera's window of the form shown: the full one may be left
+        // minimized, which the small one never is
         let (id, open) = if want_movement {
             (CLASSIC_MOVEMENT, movement)
+        } else if small_camera {
+            (CLASSIC_CAMERA_SMALL, camera)
         } else {
             (CLASSIC_CAMERA, camera)
         };
@@ -871,21 +945,27 @@ fn roll_controls(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) 
                     .interact(Sense::click_and_drag())
                     .on_hover_text(label);
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-                let id = response.id.with("roll-start");
-                let now = ui.input(|i| i.time);
-                if ui.is_enabled() && response.is_pointer_button_down_on() {
-                    let start = ui.ctx().data_mut(|d| *d.get_temp_mut_or_insert_with(id, || now));
-                    let rate = 0.05 + ((now - start) as f32 / 0.25).clamp(0.0, 1.0) * 0.95;
-                    let dt = ui.input(|i| i.stable_dt).min(0.1);
-                    out.actions
-                        .push(ControlAction::RollBy(direction * rate * 45.0_f32.to_radians() * dt));
-                    ui.ctx().request_repaint();
-                } else {
-                    ui.ctx().data_mut(|d| d.remove::<f64>(id));
-                }
+                roll_held(ui, &response, direction, out);
             }
         });
     });
+}
+
+/// A roll button held: the camera rolls `direction` (-1 left, 1 right),
+/// slowly at first, at full speed after 250 ms (`roll_controls`).
+fn roll_held(ui: &egui::Ui, response: &egui::Response, direction: f32, out: &mut Output) {
+    let id = response.id.with("roll-start");
+    let now = ui.input(|i| i.time);
+    if ui.is_enabled() && response.is_pointer_button_down_on() {
+        let start = ui.ctx().data_mut(|d| *d.get_temp_mut_or_insert_with(id, || now));
+        let rate = 0.05 + ((now - start) as f32 / 0.25).clamp(0.0, 1.0) * 0.95;
+        let dt = ui.input(|i| i.stable_dt).min(0.1);
+        out.actions
+            .push(ControlAction::RollBy(direction * rate * 45.0_f32.to_radians() * dt));
+        ui.ctx().request_repaint();
+    } else {
+        ui.ctx().data_mut(|d| d.remove::<f64>(id));
+    }
 }
 
 /// The orbit and pan joysticks, with zoom between them.
@@ -1367,6 +1447,225 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: &mut Shot
     });
 }
 
+/// The Legacy Viewer's small camera window (floater_fs_camera_small.xml),
+/// laid out to its pixels: the four views, object view, mouselook and
+/// reset view on top, then the orbit joystick with the roll buttons in its
+/// bottom corners, the zoom's column and the pan joystick.
+fn small_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
+    let (body, _) = ui.allocate_exact_size(Vec2::new(SMALL_BODY, SMALL_ROW + SMALL_STICK), Sense::hover());
+    let at = SmallCamera::new(body.min);
+    let presets = [
+        (CameraPreset::Front, "user-circle"),
+        (CameraPreset::Side, "user-square"),
+        (CameraPreset::Rear, "user"),
+        (CameraPreset::Shoulder, "user-scan"),
+    ];
+    for (rect, (preset, icon)) in at.views.into_iter().zip(presets) {
+        let button = small_button(ui, p, rect, icon, &view_tip(preset), view.preset == preset);
+        view_menu(&button, p, view, preset, out);
+        if button.clicked() {
+            out.actions.push(ControlAction::Preset(preset));
+        }
+    }
+    let [object, mouselook, reset] = at.tools;
+    if small_button(ui, p, object, "box", aurora_i18n::tr!("controls-object-view-tip"), view.object_view).clicked() {
+        out.actions.push(ControlAction::ObjectView);
+    }
+    let look = match pad_binding(view.keys, Action::Mouselook) {
+        Some(b) => format!("{} ({})", aurora_i18n::tr!("common-mouselook"), b.label()),
+        None => aurora_i18n::tr!("common-mouselook").to_owned(),
+    };
+    if small_button(ui, p, mouselook, "eye-filled", &look, view.mouselook).clicked() {
+        out.actions.push(ControlAction::Mouselook);
+    }
+    if small_button(ui, p, reset, "refresh", aurora_i18n::tr!("controls-reset-view"), false).clicked() {
+        out.actions.push(ControlAction::ResetOrbit);
+    }
+    let orbit = joystick(ui, p, at.sticks.orbit, "rotate-360", aurora_i18n::tr!("controls-orbit-tip"));
+    if orbit.center {
+        out.actions.push(ControlAction::ResetOrbit);
+    }
+    out.held.extend(orbit_actions(orbit.dir));
+    let pan = joystick(ui, p, at.sticks.pan, "arrows-move", aurora_i18n::tr!("controls-pan-tip"));
+    out.held.extend(pan_actions(pan.dir));
+    let z = at.sticks.zoom;
+    let plus = Rect::from_min_size(
+        z.min + Vec2::new((z.width() - SMALL_ZOOM_BUTTON) / 2.0, 0.0),
+        Vec2::splat(SMALL_ZOOM_BUTTON),
+    );
+    let minus = Rect::from_min_size(
+        egui::pos2(plus.left(), z.bottom() - SMALL_ZOOM_BUTTON),
+        Vec2::splat(SMALL_ZOOM_BUTTON),
+    );
+    if hold_icon(ui, p, plus, "zoom-in-filled", &key_tip(view.keys, Action::CamZoomIn), false) {
+        out.held.push(Action::CamZoomIn);
+    }
+    if hold_icon(ui, p, minus, "zoom-out-filled", &key_tip(view.keys, Action::CamZoomOut), false) {
+        out.held.push(Action::CamZoomOut);
+    }
+    let rail = Rect::from_min_max(egui::pos2(z.left(), plus.bottom() + 1.0), egui::pos2(z.right(), minus.top() - 1.0));
+    if let Some(zoom) = small_zoom(ui, p, rail, view.zoom) {
+        out.actions.push(ControlAction::Zoom(zoom));
+    }
+    // after the orbit joystick, so that a press in a corner rolls; greyed
+    // in mouselook, as the full window's, still taking the press there
+    // rather than letting it orbit
+    for (rect, icon, label, direction) in [
+        (at.roll_left, "rotate-2", aurora_i18n::tr!("controls-roll-left"), -1.0),
+        (at.roll_right, "rotate-clockwise-2", aurora_i18n::tr!("controls-roll-right"), 1.0),
+    ] {
+        let response = small_hold(ui, p, rect, icon, label, !view.mouselook);
+        if !view.mouselook {
+            roll_held(ui, &response, direction, out);
+        }
+    }
+}
+
+/// The small window's zoom slider: a thin track and a small thumb in the
+/// 16 px column. Unlike the Legacy Viewer's slider, which puts the zoom
+/// where the pointer is, a drag moves it by the drag over
+/// `SMALL_ZOOM_TRAVEL`: on a rail of some 20 px the pointer threw the camera
+/// across its whole range. As the Legacy Viewer's, an arrow key (once the
+/// slider has focus, by Tab or a press) or a wheel notch over it moves the
+/// zoom by `SMALL_ZOOM_STEP`, up and right zooming in. Gives the new zoom
+/// fraction (1 zoomed in, at the top).
+fn small_zoom(ui: &mut egui::Ui, p: &Palette, rail: Rect, zoom: f32) -> Option<f32> {
+    let label = aurora_i18n::tr!("common-zoom");
+    let id = ui.scope_id().with("small_zoom");
+    let resp = ui.interact(rail, id, Sense::click_and_drag());
+    if resp.drag_started() || resp.clicked() {
+        resp.request_focus();
+    }
+    let mut steps = 0.0;
+    if resp.has_focus() {
+        ui.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                id,
+                egui::EventFilter {
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    ..Default::default()
+                },
+            );
+        });
+        steps += ui.input(|i| {
+            let up = i.num_presses(egui::Key::ArrowUp) + i.num_presses(egui::Key::ArrowRight);
+            let down = i.num_presses(egui::Key::ArrowDown) + i.num_presses(egui::Key::ArrowLeft);
+            up as f32 - down as f32
+        });
+    }
+    steps += ui.input(|i| {
+        use egui::accesskit::Action;
+        i.num_accesskit_action_requests(id, Action::Increment) as f32 - i.num_accesskit_action_requests(id, Action::Decrement) as f32
+    });
+    steps += widgets::spin_wheel(ui, rail, id, true, true).notches;
+    let resp = resp.on_hover_text(label);
+    let travel = rail.height() - SMALL_ZOOM_THUMB.y;
+    let y = rail.bottom() - SMALL_ZOOM_THUMB.y / 2.0 - zoom.clamp(0.0, 1.0) * travel;
+    let painter = ui.painter();
+    painter.line_segment(
+        [
+            egui::pos2(rail.center().x, rail.top() + 1.0),
+            egui::pos2(rail.center().x, rail.bottom() - 1.0),
+        ],
+        egui::Stroke::new(2.0, p.raised),
+    );
+    let thumb = Rect::from_center_size(egui::pos2(rail.center().x, y), SMALL_ZOOM_THUMB);
+    let ink = if resp.dragged() || resp.hovered() || resp.has_focus() {
+        p.violet
+    } else {
+        p.ink
+    };
+    painter.rect_filled(thumb, widgets::inner_radius(ui.visuals()), ink);
+    resp.widget_info(|| egui::WidgetInfo::slider(true, f64::from(zoom), label));
+    let dy = resp.drag_delta().y;
+    let dragged = resp.dragged() && dy != 0.0;
+    let drag = if dragged { dy / SMALL_ZOOM_TRAVEL } else { 0.0 };
+    (dragged || steps != 0.0).then(|| (zoom - drag + steps * SMALL_ZOOM_STEP).clamp(0.0, 1.0))
+}
+
+/// Where the small camera window's parts sit in its body, from the body's
+/// top left corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SmallCamera {
+    /// Front, side, rear and over the shoulder.
+    pub views: [Rect; 4],
+    /// Object view, mouselook and reset view, right after the views.
+    pub tools: [Rect; 3],
+    pub sticks: SticksRow,
+    pub roll_left: Rect,
+    pub roll_right: Rect,
+}
+
+impl SmallCamera {
+    pub fn new(min: Pos2) -> SmallCamera {
+        let button = |left: f32| Rect::from_min_size(egui::pos2(left, min.y), Vec2::splat(SMALL_BUTTON));
+        let step = SMALL_BUTTON + SMALL_BUTTON_GAP;
+        // floater_fs_camera_small.xml, from the window's left edge: the
+        // views at 5 (buttons_view, 76 wide), the tools 4 px after them, at
+        // 85 to 143; the body starts SMALL_INSET in
+        let views = std::array::from_fn(|i| button(min.x + 5.0 - SMALL_INSET + i as f32 * step));
+        let tools = std::array::from_fn(|i| button(min.x + 85.0 - SMALL_INSET + i as f32 * step));
+        let row = Rect::from_min_size(egui::pos2(min.x, min.y + SMALL_ROW), Vec2::new(SMALL_BODY, SMALL_STICK));
+        let sticks = SticksRow::sized(row, SMALL_STICK, SMALL_ZOOM_W);
+        let o = sticks.orbit;
+        let corner = |x: f32| Rect::from_min_size(egui::pos2(x, o.bottom() - SMALL_ROLL), Vec2::splat(SMALL_ROLL));
+        SmallCamera {
+            views,
+            tools,
+            sticks,
+            roll_left: corner(o.left()),
+            roll_right: corner(o.right() - SMALL_ROLL),
+        }
+    }
+}
+
+/// One of the small camera window's 18 px buttons: its icon on the field,
+/// on the accent while `on` (the view shown, object view, mouselook), named
+/// `tip` for its tooltip and screen readers. Placed at `rect`, unlike
+/// `widgets::icon_toggle_sized`, and its response kept for the views'
+/// right click.
+fn small_button(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str, on: bool) -> egui::Response {
+    let resp = ui.interact(rect, ui.scope_id().with(("small", icon)), Sense::click());
+    let fill = if on {
+        p.violet
+    } else if resp.hovered() {
+        p.raised
+    } else {
+        p.field
+    };
+    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
+    paint_icon(ui, icon, rect.center(), 14.0, if on { p.on_accent } else { p.ink });
+    let resp = resp.on_hover_text(tip);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, tip));
+    resp
+}
+
+/// A roll button in a corner of the small window's orbit joystick: held,
+/// it rolls (`roll_held`); greyed when not `enabled`.
+fn small_hold(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, label: &str, enabled: bool) -> egui::Response {
+    // a sustained press belongs to this control, as `roll_controls` says
+    let resp = ui.interact(rect, ui.scope_id().with(("small", icon)), Sense::click_and_drag());
+    let held = enabled && resp.is_pointer_button_down_on();
+    let fill = if held {
+        p.violet
+    } else if resp.hovered() && enabled {
+        p.raised.gamma_multiply(1.3)
+    } else {
+        p.raised
+    };
+    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
+    let ink = match (held, enabled) {
+        (true, _) => p.on_accent,
+        (false, true) => p.ink,
+        (false, false) => p.muted_dim,
+    };
+    paint_icon(ui, icon, rect.center(), 10.0, ink);
+    let resp = resp.on_hover_text(label);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    resp
+}
+
 /// Firestorm's movement window: the 4 × 2 buttons, then walk / run / fly.
 fn classic_movement(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
     ui.spacing_mut().item_spacing.y = 6.0;
@@ -1494,12 +1793,17 @@ struct Stick {
 
 /// lljoystickbutton.cpp's joysticks: pressed and pulled, the knob follows
 /// the pointer and the camera moves while it is held; a click on the centre
-/// without pulling resets.
+/// without pulling resets. As wide as `rect` (`STICK` in the Controls
+/// window, `SMALL_STICK` in the Classic style's small camera window), its
+/// knob, arrows and icon in proportion.
 fn joystick(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str) -> Stick {
     let resp = ui.interact(rect, ui.scope_id().with(icon), Sense::click_and_drag());
     let resp = resp.on_hover_text(tip);
     let center = rect.center();
-    let reach = (STICK - KNOB) / 2.0;
+    let size = rect.width();
+    let scale = size / STICK;
+    let knob_size = KNOB * scale;
+    let reach = (size - knob_size) / 2.0;
     let mut out = Stick::default();
     let mut knob = center;
     if resp.is_pointer_button_down_on()
@@ -1514,18 +1818,22 @@ fn joystick(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str) -
         knob = center + offset;
         out.dir = Vec2::new(offset.x, -offset.y) / reach;
     }
-    if resp.clicked() && resp.interact_pointer_pos().is_some_and(|pos| pos.distance(center) < KNOB / 2.0) {
+    if resp.clicked()
+        && resp
+            .interact_pointer_pos()
+            .is_some_and(|pos| pos.distance(center) < knob_size / 2.0)
+    {
         out.center = true;
     }
     let painter = ui.painter();
-    painter.circle_filled(center, STICK / 2.0, p.field);
-    painter.circle_stroke(center, STICK / 2.0 - 0.5, egui::Stroke::new(1.0, p.raised));
+    painter.circle_filled(center, size / 2.0, p.field);
+    painter.circle_stroke(center, size / 2.0 - 0.5, egui::Stroke::new(1.0, p.raised));
     // the four directions
     for (dx, dy) in [(0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
         let d = Vec2::new(dx, dy);
-        let tip = center + d * (STICK / 2.0 - 6.0);
-        let base = center + d * (STICK / 2.0 - 11.0);
-        let side = Vec2::new(-d.y, d.x) * 4.0;
+        let tip = center + d * (size / 2.0 - 6.0 * scale);
+        let base = center + d * (size / 2.0 - 11.0 * scale);
+        let side = Vec2::new(-d.y, d.x) * 4.0 * scale;
         painter.add(egui::Shape::convex_polygon(
             vec![tip, base + side, base - side],
             p.muted_dim,
@@ -1533,11 +1841,11 @@ fn joystick(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str) -
         ));
     }
     let held = resp.is_pointer_button_down_on();
-    painter.circle_filled(knob, KNOB / 2.0, if held { p.violet } else { p.raised });
+    painter.circle_filled(knob, knob_size / 2.0, if held { p.violet } else { p.raised });
     if let Some(t) = super::icons::global(icon) {
         let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
         let tint = if held { p.on_accent } else { p.violet_light };
-        painter.image(t.id(), Rect::from_center_size(knob, Vec2::splat(16.0)), uv, tint);
+        painter.image(t.id(), Rect::from_center_size(knob, Vec2::splat(16.0 * scale)), uv, tint);
     }
     out
 }
@@ -1604,7 +1912,8 @@ fn hold_icon(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str, 
         (false, true) => p.ink,
         (false, false) => p.muted,
     };
-    paint_icon(ui, icon, rect.center(), 15.0, ink);
+    // 15 px, smaller on the small camera window's 14 px buttons
+    paint_icon(ui, icon, rect.center(), (rect.height() - 3.0).min(15.0), ink);
     held
 }
 
@@ -1621,7 +1930,7 @@ fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Op
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(PAD_BUTTON), Sense::click_and_drag());
     // Continue only a primary press observed on this pad in consecutive frames.
     // A hidden pad may miss a release; a fresh press must start on a visible button.
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let (down, pressed) = ui.input(|i| (i.pointer.primary_down(), i.pointer.primary_pressed()));
     let pad_pressed = down
         && ui.data_mut(|d| {
@@ -2196,25 +2505,25 @@ mod tests {
         let (mut camera, mut movement) = (true, false);
         widgets::minimize_floater(&ctx, WINDOW);
         assert!(widgets::floater_minimized(&ctx, WINDOW));
-        request(&ctx, &mut camera, &mut movement, false, true, true);
+        request(&ctx, &mut camera, &mut movement, false, false, true, true);
         assert!(movement, "the movement tab asked for");
         let expand = ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(WINDOW).with(widgets::EXPAND)));
         assert_eq!(expand, Some(true), "the window expands");
         // shown on that tab, the button closes it; again, it opens
         let ctx = egui::Context::default();
         let (mut camera, mut movement) = (false, true);
-        request(&ctx, &mut camera, &mut movement, false, true, true);
+        request(&ctx, &mut camera, &mut movement, false, false, true, true);
         assert!(!movement && !camera);
-        request(&ctx, &mut camera, &mut movement, false, true, true);
+        request(&ctx, &mut camera, &mut movement, false, false, true, true);
         assert!(movement && !camera);
         // a menu item only opens
-        request(&ctx, &mut camera, &mut movement, false, true, false);
+        request(&ctx, &mut camera, &mut movement, false, false, true, false);
         assert!(movement);
         // Legacy's two windows: each toggles on its own
         let (mut camera, mut movement) = (true, false);
-        request(&ctx, &mut camera, &mut movement, true, true, true);
+        request(&ctx, &mut camera, &mut movement, true, false, true, true);
         assert!(camera && movement);
-        request(&ctx, &mut camera, &mut movement, true, false, true);
+        request(&ctx, &mut camera, &mut movement, true, false, false, true);
         assert!(!camera && movement);
     }
 
@@ -2226,7 +2535,7 @@ mod tests {
         let ctx = egui::Context::default();
         let (mut camera, mut movement) = (true, false);
         widgets::minimize_floater(&ctx, WINDOW);
-        request(&ctx, &mut camera, &mut movement, false, false, true);
+        request(&ctx, &mut camera, &mut movement, false, false, false, true);
         let expand = ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(WINDOW).with(widgets::EXPAND)));
         assert_eq!(expand, None, "not expanded");
         let close = ctx.data(|d| d.get_temp::<u64>(egui::Id::unique(WINDOW).with("close")));
@@ -2234,7 +2543,7 @@ mod tests {
         let ctx = egui::Context::default();
         let (mut camera, mut movement) = (true, false);
         widgets::minimize_floater(&ctx, WINDOW);
-        request(&ctx, &mut camera, &mut movement, false, false, false);
+        request(&ctx, &mut camera, &mut movement, false, false, false, false);
         let expand = ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(WINDOW).with(widgets::EXPAND)));
         assert!(camera && !movement && expand.is_none() && widgets::floater_minimized(&ctx, WINDOW));
     }
@@ -2293,22 +2602,22 @@ mod tests {
         };
         let minimized = || widgets::floater_minimized(&ctx, WINDOW);
         // the toolbar's camera: it opens compact
-        request(&ctx, &mut camera, &mut movement, false, false, true);
+        request(&ctx, &mut camera, &mut movement, false, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && minimized(), "opens compact");
         // the button again closes it, a third press opens it compact
-        request(&ctx, &mut camera, &mut movement, false, false, true);
+        request(&ctx, &mut camera, &mut movement, false, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(!camera && !movement, "closed");
-        request(&ctx, &mut camera, &mut movement, false, false, true);
+        request(&ctx, &mut camera, &mut movement, false, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && minimized() && compact.camera, "compact again");
         // Movement: the full window on its tab, the choice kept
-        request(&ctx, &mut camera, &mut movement, false, true, true);
+        request(&ctx, &mut camera, &mut movement, false, false, true, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(movement && !camera && !minimized() && compact.camera);
         // back to the camera from the toolbar: compact, as saved
-        request(&ctx, &mut camera, &mut movement, false, false, true);
+        request(&ctx, &mut camera, &mut movement, false, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && minimized());
         // the photo window's Controls asks for it full: the choice kept
@@ -2316,9 +2625,9 @@ mod tests {
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && !minimized() && compact.camera, "an expand asked for is no choice");
         // closed and opened again: compact
-        request(&ctx, &mut camera, &mut movement, false, false, true);
+        request(&ctx, &mut camera, &mut movement, false, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
-        request(&ctx, &mut camera, &mut movement, false, false, true);
+        request(&ctx, &mut camera, &mut movement, false, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && minimized());
         // "Reset window positions and sizes" expands it: the choice kept
@@ -2327,9 +2636,9 @@ mod tests {
         assert!(camera && !minimized() && compact.camera, "a reset is no choice");
         // the choice made full, then closed and opened again: full
         compact.camera = false;
-        request(&ctx, &mut camera, &mut movement, false, false, true);
+        request(&ctx, &mut camera, &mut movement, false, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
-        request(&ctx, &mut camera, &mut movement, false, false, true);
+        request(&ctx, &mut camera, &mut movement, false, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && !minimized());
         // the Preferences switch while the window is open: at once, both ways
@@ -2337,7 +2646,7 @@ mod tests {
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && minimized() && compact.camera, "switched on in Preferences");
         // Movement, then back by the Camera tab: the camera compact again
-        request(&ctx, &mut camera, &mut movement, false, true, true);
+        request(&ctx, &mut camera, &mut movement, false, false, true, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(movement && !minimized(), "Movement full, as saved");
         controls.tab = Tab::Camera;
@@ -2348,17 +2657,17 @@ mod tests {
         assert!(camera && !minimized() && !compact.camera, "switched off in Preferences");
         // the Movement tab's own choice: it opens compact, the camera full
         compact.movement = true;
-        request(&ctx, &mut camera, &mut movement, false, true, true);
+        request(&ctx, &mut camera, &mut movement, false, false, true, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(movement && minimized(), "Movement compact, as saved");
-        request(&ctx, &mut camera, &mut movement, false, false, true);
+        request(&ctx, &mut camera, &mut movement, false, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && !minimized(), "the camera full, as saved");
-        request(&ctx, &mut camera, &mut movement, false, true, true);
+        request(&ctx, &mut camera, &mut movement, false, false, true, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(movement && minimized(), "Movement compact again");
         // its button closes the compact movement, as the full one
-        request(&ctx, &mut camera, &mut movement, false, true, true);
+        request(&ctx, &mut camera, &mut movement, false, false, true, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(!camera && !movement, "closed from Movement");
     }
@@ -2375,6 +2684,8 @@ mod tests {
         movement: bool,
         compact: Compact,
         free: Option<FreeView>,
+        /// The Legacy Viewer's windows (Preferences › Aurora).
+        classic: bool,
         time: f64,
     }
 
@@ -2393,6 +2704,7 @@ mod tests {
                 movement: false,
                 compact,
                 free: None,
+                classic: false,
                 time: 0.0,
             }
         }
@@ -2416,8 +2728,14 @@ mod tests {
                 keys: &self.keys,
                 free: self.free,
             };
-            let (controls, camera, movement, compact, p) =
-                (&mut self.controls, &mut self.camera, &mut self.movement, &mut self.compact, &self.p);
+            let (controls, camera, movement, compact, p, classic) = (
+                &mut self.controls,
+                &mut self.camera,
+                &mut self.movement,
+                &mut self.compact,
+                &self.p,
+                self.classic,
+            );
             let mut output = self.ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1000.0))),
@@ -2426,7 +2744,9 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    controls.show(ui.ctx(), p, camera, movement, compact, false, &view);
+                    // as App does at the start of the interface's frame
+                    crate::ui::close_key::begin(ui.ctx());
+                    controls.show(ui.ctx(), p, camera, movement, compact, classic, &view);
                 },
             );
             output.textures_delta.clear();
@@ -2434,7 +2754,16 @@ mod tests {
 
         /// The toolbar's camera (or Move) button, then one frame only.
         fn press(&mut self, want_movement: bool) {
-            request(&self.ctx, &mut self.camera, &mut self.movement, false, want_movement, true);
+            let classic = self.classic && self.free.is_none();
+            request(
+                &self.ctx,
+                &mut self.camera,
+                &mut self.movement,
+                classic,
+                self.compact.camera,
+                want_movement,
+                true,
+            );
             self.frame(Vec::new());
         }
 
@@ -2557,6 +2886,342 @@ mod tests {
         h.press(false);
         h.settle();
         assert!(h.camera && h.minimized(), "compact, the frame after a close");
+    }
+
+    /// The window `id`'s rect on the last frame, if it was shown.
+    fn shown_rect(ctx: &egui::Context, id: &str) -> Option<Rect> {
+        ctx.memory(|m| m.area_rect(egui::Id::unique(id))).filter(|_| {
+            ctx.memory(|m| {
+                m.areas()
+                    .visible_last_frame(&egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)))
+            })
+        })
+    }
+
+    /// Feedback board #677: the Classic style's compact camera is the
+    /// Legacy Viewer's small window, 165 × 77, without a title bar or a
+    /// close cross; full, it is the Classic camera window as before.
+    #[test]
+    fn the_classic_compact_camera_is_the_legacy_small_window() {
+        let mut h = Harness::new(Compact {
+            camera: true,
+            movement: true,
+        });
+        h.classic = true;
+        h.press(false);
+        h.settle();
+        assert!(h.camera, "opened");
+        let small = shown_rect(&h.ctx, CLASSIC_CAMERA_SMALL).expect("the small window shown");
+        assert!(
+            (small.width() - 165.0).abs() < 0.5 && (small.height() - 77.0).abs() < 0.5,
+            "the Legacy Viewer's 165 × 77, got {:?}",
+            small.size()
+        );
+        assert!(shown_rect(&h.ctx, CLASSIC_CAMERA).is_none(), "not the full window");
+        let cross = egui::Id::unique(CLASSIC_CAMERA_SMALL).with("headless_close");
+        assert!(h.ctx.memory(|m| m.area_rect(cross)).is_none(), "no close cross");
+        // the Classic movement window is small already: unchanged
+        h.press(true);
+        h.settle();
+        assert!(shown_rect(&h.ctx, CLASSIC_MOVEMENT).is_some(), "the movement window");
+        // Preferences switches compact camera off: the full window, as before
+        h.compact.camera = false;
+        h.settle();
+        assert!(shown_rect(&h.ctx, CLASSIC_CAMERA).is_some(), "the full window");
+        assert!(shown_rect(&h.ctx, CLASSIC_CAMERA_SMALL).is_none(), "the small one gone");
+        // the same saved choice is the Aurora window's compact camera
+        let mut h = Harness::new(Compact {
+            camera: true,
+            movement: false,
+        });
+        h.classic = true;
+        h.press(false);
+        h.settle();
+        h.classic = false;
+        h.settle();
+        assert!(h.camera && h.minimized(), "compact in the Aurora style too");
+    }
+
+    /// The toolbar button closes the small window even when the full one
+    /// was left minimized (its persisted state is the full window's).
+    #[test]
+    fn the_toolbar_closes_the_small_window_whatever_the_full_one_was_left() {
+        let ctx = egui::Context::default();
+        widgets::minimize_floater(&ctx, CLASSIC_CAMERA);
+        let (mut camera, mut movement) = (true, false);
+        request(&ctx, &mut camera, &mut movement, true, true, false, true);
+        assert!(!camera, "closed at the first press");
+        request(&ctx, &mut camera, &mut movement, true, true, false, true);
+        assert!(camera, "open again");
+    }
+
+    /// Ctrl+W passes over the small window, which has no close cross, and
+    /// closes the window behind it; Ctrl+Shift+W closes it with the others
+    /// (LLFloaterView::getFrontmostClosableFloater skips a floater that is
+    /// not closeable, closeAllChildren does not).
+    #[test]
+    fn ctrl_w_passes_over_the_small_window_and_close_all_takes_it() {
+        let mut h = Harness::new(Compact {
+            camera: true,
+            movement: true,
+        });
+        h.classic = true;
+        h.press(false);
+        h.press(true);
+        h.settle();
+        h.ctx
+            .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(CLASSIC_CAMERA_SMALL)));
+        h.settle();
+        assert!(h.camera && h.movement, "both open");
+        let w = |modifiers, pressed| egui::Event::Key {
+            key: egui::Key::W,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        };
+        h.frame(vec![w(egui::Modifiers::COMMAND, true)]);
+        h.frame(vec![w(egui::Modifiers::COMMAND, false)]);
+        assert!(h.camera, "the small window stays, on top");
+        assert!(!h.movement, "the window behind it closed");
+        h.frame(vec![w(egui::Modifiers::COMMAND, true)]);
+        h.frame(vec![w(egui::Modifiers::COMMAND, false)]);
+        assert!(h.camera, "alone, it still stays");
+        h.frame(vec![w(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, true)]);
+        h.frame(Vec::new());
+        assert!(!h.camera, "Close All closes it");
+    }
+
+    /// The small window's parts, as floater_fs_camera_small.xml places them:
+    /// all in its body, none over another, the roll buttons in the orbit
+    /// joystick's bottom corners.
+    #[test]
+    fn the_small_camera_window_is_laid_out_like_the_legacy_one() {
+        let at = SmallCamera::new(Pos2::ZERO);
+        let body = Rect::from_min_size(Pos2::ZERO, Vec2::new(SMALL_BODY, SMALL_ROW + SMALL_STICK));
+        let buttons: Vec<Rect> = at.views.iter().chain(at.tools.iter()).copied().collect();
+        for (i, a) in buttons.iter().enumerate() {
+            assert!(body.contains_rect(*a), "button {i} in the body");
+            assert_eq!(a.size(), Vec2::splat(18.0), "18 px buttons");
+            for b in &buttons[i + 1..] {
+                assert!(!a.intersects(*b), "{a:?} over {b:?}");
+            }
+        }
+        let s = at.sticks;
+        for r in [s.orbit, s.zoom, s.pan] {
+            assert!(body.contains_rect(r), "{r:?} in the body");
+            assert!(r.top() >= buttons[0].bottom(), "under the buttons");
+        }
+        assert!(s.orbit.right() < s.zoom.left() && s.zoom.right() < s.pan.left());
+        assert_eq!((s.orbit.size(), s.zoom.width()), (Vec2::splat(50.0), 16.0));
+        for roll in [at.roll_left, at.roll_right] {
+            assert!(s.orbit.contains_rect(roll), "in the orbit joystick's square");
+            assert_eq!(roll.bottom(), s.orbit.bottom());
+        }
+        assert_eq!((at.roll_left.left(), at.roll_right.right()), (s.orbit.left(), s.orbit.right()));
+        // from the window's left edge: the views at 5 to 83, the tools at 85 to 143
+        let x = |r: Rect| (r.left() + SMALL_INSET, r.right() + SMALL_INSET);
+        assert_eq!((x(at.views[0]).0, x(at.views[3]).1), (5.0, 83.0));
+        assert_eq!((x(at.tools[0]).0, x(at.tools[2]).1), (85.0, 143.0));
+    }
+
+    /// The small window's controls, a frame with `events` at `mouselook`.
+    fn small_frame(
+        ctx: &egui::Context,
+        p: &Palette,
+        keys: &KeyBindings,
+        time: f64,
+        events: Vec<egui::Event>,
+        mouselook: bool,
+    ) -> (Pos2, Output) {
+        let views = SavedViews::default();
+        let view = View {
+            zoom: 0.5,
+            roll: 0.0,
+            preset: CameraPreset::Rear,
+            shots: &[],
+            views: &views,
+            flying: false,
+            always_run: false,
+            seated: false,
+            run_locked: false,
+            fly_locked: false,
+            stand_locked: false,
+            mouselook,
+            object_view: false,
+            keys,
+            free: None,
+        };
+        let mut out = Output::default();
+        let mut origin = Pos2::ZERO;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                origin = ui.cursor().min;
+                small_camera(ui, p, &view, &mut out);
+            },
+        );
+        output.textures_delta.clear();
+        (origin, out)
+    }
+
+    /// A press in a corner of the orbit joystick rolls and does not orbit;
+    /// in mouselook it does nothing, as the full window's roll buttons; the
+    /// views and the tools do what the full window's do.
+    #[test]
+    fn the_small_window_rolls_in_its_corners_and_takes_the_views() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let keys = KeyBindings::default();
+        let (origin, _) = small_frame(&ctx, &p, &keys, 0.0, vec![], false);
+        let at = SmallCamera::new(origin);
+        let press = |pos, pressed| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let mut time = 0.0;
+        for (corner, sign) in [(at.roll_right, 1.0), (at.roll_left, -1.0)] {
+            for mouselook in [false, true] {
+                // the pointer comes over the button, then presses it
+                time += 0.05;
+                small_frame(&ctx, &p, &keys, time, vec![egui::Event::PointerMoved(corner.center())], mouselook);
+                time += 0.05;
+                let (_, out) = small_frame(&ctx, &p, &keys, time, press(corner.center(), true), mouselook);
+                if mouselook {
+                    assert!(out.actions.is_empty(), "no roll in mouselook");
+                } else {
+                    assert!(
+                        matches!(out.actions.as_slice(), [ControlAction::RollBy(v)] if v * sign > 0.0),
+                        "{:?}",
+                        out.actions
+                    );
+                }
+                time += 0.05;
+                let (_, held) = small_frame(&ctx, &p, &keys, time, vec![], mouselook);
+                assert!(held.held.is_empty(), "the orbit joystick not pulled: {:?}", held.held);
+                time += 0.05;
+                small_frame(&ctx, &p, &keys, time, press(corner.center(), false), mouselook);
+            }
+        }
+        let click = |time: &mut f64, rect: Rect| {
+            *time += 0.05;
+            small_frame(&ctx, &p, &keys, *time, press(rect.center(), true), false);
+            *time += 0.05;
+            small_frame(&ctx, &p, &keys, *time, press(rect.center(), false), false).1.actions
+        };
+        assert_eq!(click(&mut time, at.views[0]), vec![ControlAction::Preset(CameraPreset::Front)]);
+        assert_eq!(click(&mut time, at.views[3]), vec![ControlAction::Preset(CameraPreset::Shoulder)]);
+        assert_eq!(click(&mut time, at.tools[0]), vec![ControlAction::ObjectView]);
+        assert_eq!(click(&mut time, at.tools[1]), vec![ControlAction::Mouselook]);
+        assert_eq!(click(&mut time, at.tools[2]), vec![ControlAction::ResetOrbit]);
+    }
+
+    #[test]
+    fn the_small_zoom_slider_follows_the_drag_slowly() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let keys = KeyBindings::default();
+        let (origin, _) = small_frame(&ctx, &p, &keys, 0.0, vec![], false);
+        let rail = SmallCamera::new(origin).sticks.zoom.center();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut time = 0.05;
+        small_frame(
+            &ctx,
+            &p,
+            &keys,
+            time,
+            vec![egui::Event::PointerMoved(rail), button(rail, true)],
+            false,
+        );
+        // up the whole rail and past it, 4 px a frame: the zoom (0.5 in
+        // `small_frame`) moves by the drag, never to the pointer
+        let mut zooms = vec![];
+        for step in 1..=10 {
+            time += 0.05;
+            let at = rail - Vec2::new(0.0, 4.0 * step as f32);
+            let (_, out) = small_frame(&ctx, &p, &keys, time, vec![egui::Event::PointerMoved(at)], false);
+            zooms.extend(out.actions.iter().filter_map(|a| match a {
+                ControlAction::Zoom(z) => Some(*z),
+                _ => None,
+            }));
+        }
+        assert!(!zooms.is_empty(), "the drag zooms");
+        for z in zooms {
+            assert!(z > 0.5 && z <= 0.5 + 8.0 / SMALL_ZOOM_TRAVEL, "in, by the frame's drag: {z}");
+        }
+    }
+
+    #[test]
+    fn the_small_zoom_slider_takes_the_arrows_and_the_wheel() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let keys = KeyBindings::default();
+        let (origin, _) = small_frame(&ctx, &p, &keys, 0.0, vec![], false);
+        let rail = SmallCamera::new(origin).sticks.zoom.center();
+        let away = rail + Vec2::new(120.0, 0.0);
+        let zooms = |out: Output| -> Vec<f32> {
+            out.actions
+                .iter()
+                .filter_map(|a| match a {
+                    ControlAction::Zoom(z) => Some(*z),
+                    _ => None,
+                })
+                .collect()
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let wheel = |y| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut time = 0.0;
+        let mut frame = |events| {
+            time += 0.05;
+            small_frame(&ctx, &p, &keys, time, events, false).1
+        };
+        // not focused yet: an arrow is not the slider's
+        assert!(zooms(frame(vec![key(egui::Key::ArrowUp)])).is_empty());
+        // a press on it gives it the keys (the zoom is 0.5 in `small_frame`)
+        frame(vec![egui::Event::PointerMoved(rail), button(rail, true)]);
+        frame(vec![button(rail, false)]);
+        frame(vec![egui::Event::PointerMoved(away)]);
+        assert_eq!(zooms(frame(vec![key(egui::Key::ArrowUp)])), vec![0.5 + SMALL_ZOOM_STEP]);
+        assert_eq!(zooms(frame(vec![key(egui::Key::ArrowLeft)])), vec![0.5 - SMALL_ZOOM_STEP]);
+        // the wheel, over the slider only: rolled up, it zooms in
+        assert!(zooms(frame(vec![wheel(1.0)])).is_empty());
+        frame(vec![egui::Event::PointerMoved(rail)]);
+        assert_eq!(zooms(frame(vec![wheel(1.0)])), vec![0.5 + SMALL_ZOOM_STEP]);
+        assert_eq!(zooms(frame(vec![wheel(-2.0)])), vec![0.5 - 2.0 * SMALL_ZOOM_STEP]);
     }
 
     #[test]

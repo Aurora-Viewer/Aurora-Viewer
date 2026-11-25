@@ -45,7 +45,7 @@ fn search_top_id(editor: Uuid) -> egui::Id {
 }
 
 fn active(ctx: &egui::Context) -> bool {
-    ctx.input(|i| i.pointer.primary_down())
+    ctx.input(|i| i.pointer.primary_down() || i.pointer.secondary_down())
         && (egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx)
             || egui::DragAndDrop::has_payload_of_type::<FolderDrag>(ctx)
             || egui::DragAndDrop::has_payload_of_type::<SelectionDrag>(ctx)
@@ -67,7 +67,7 @@ pub(crate) fn folder(ui: &egui::Ui, r: &egui::Response, editor: Uuid, id: Uuid, 
         return;
     }
     let key = egui::Id::unique(("inventory_drag_folder_visit", editor, id));
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let now = ui.input(|i| i.time);
     let toggle = ui.ctx().data_mut(|data| {
         let state = data.get_temp_mut_or_insert_with(egui::Id::unique("inventory_drag_folder_hover"), || Hover {
@@ -119,14 +119,15 @@ pub(crate) fn scroll<R>(ui: &egui::Ui, out: &egui::scroll_area::ScrollAreaOutput
     if cfg!(test) || demo::enabled() {
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("inventory_drag_viewport", editor)), (rect, out.id)));
     }
-    if !active(ctx) {
+    // a rubber band scrolls the list as a drag does (`aurora::marquee`)
+    if !active(ctx) && !(ctx.input(|i| i.pointer.primary_down()) && super::super::aurora::marquee::active(ctx)) {
         ctx.data_mut(|d| {
             d.remove::<Owner>(owner_id);
             d.remove::<Motion>(motion_id);
         });
         return;
     }
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) else {
         return;
     };

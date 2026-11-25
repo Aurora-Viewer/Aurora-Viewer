@@ -123,7 +123,11 @@ impl ListingsUi {
                 prompt,
             });
         } else {
-            actions.push(Action::Paste { change, cut: !copy });
+            actions.push(Action::Paste {
+                change,
+                cut: !copy,
+                editor: Uuid::nil(),
+            });
         }
     }
 
@@ -138,8 +142,8 @@ impl ListingsUi {
     /// dragItemIntoFolder and pasteFromClipboard (llinventorybridge.cpp), in
     /// their order. A listed listing and its version folder never get here:
     /// they cannot move or go to the Trash (`marketplace::Holds`).
-    pub fn guard_inventory_change(&mut self, inv: &Inventory, change: Mutation, cut: bool, drag: bool) -> Option<Mutation> {
-        self.guard_inventory_edit(inv, change, cut, drag, None)
+    pub fn guard_inventory_change(&mut self, inv: &Inventory, change: Mutation, cut: bool, drag: bool, editor: Uuid) -> Option<Mutation> {
+        self.guard_inventory_edit(inv, change, cut, drag, editor, None)
     }
 
     /// Keep a deletion's originating selection through the merchant question;
@@ -150,7 +154,7 @@ impl ListingsUi {
         deletion: super::super::inventory::DeleteRequest,
     ) -> Option<super::super::inventory::DeleteRequest> {
         let super::super::inventory::DeleteRequest { change, selection } = deletion;
-        self.guard_inventory_edit(inv, change, false, false, Some(&selection))
+        self.guard_inventory_edit(inv, change, false, false, selection.window(), Some(&selection))
             .map(|change| super::super::inventory::DeleteRequest { change, selection })
     }
 
@@ -160,6 +164,7 @@ impl ListingsUi {
         change: Mutation,
         cut: bool,
         drag: bool,
+        editor: Uuid,
         after_delete: Option<&super::super::inventory::DeleteSelection>,
     ) -> Option<Mutation> {
         let Some(root) = mp::root(inv) else { return Some(change) };
@@ -217,6 +222,7 @@ impl ListingsUi {
                     change,
                     cut,
                     prompt,
+                    editor,
                     after_delete: after_delete.map(|selection| std::sync::Arc::new(selection.clone())),
                 });
                 None
