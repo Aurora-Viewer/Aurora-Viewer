@@ -12,6 +12,7 @@ use crate::ui::{self, Panels, bars::BarAction, chat::ChatUi, login::LoginAction,
 use crate::ui_sound::UiSound;
 use crate::world::World;
 use crate::world::env::Environment;
+use crate::world::rlva::land_gate::GateView;
 use aurora_net::{LoginRequest, NetClient, NetCommand, NetEvent, StartLocation, control};
 use aurora_render::{DrawLists, EguiHandOver, FrameParams, RenderStats, Renderer};
 use glam::{Mat4, Vec3, Vec4};
@@ -1231,6 +1232,9 @@ pub struct App {
     place_groups: std::collections::HashSet<uuid::Uuid>,
     /// "About Land".
     land_ui: ui::land::LandUi,
+    /// `@showloc`: the open-time check of About Land and of Region / Estate.
+    land_gate: crate::world::rlva::land_gate::LandGate,
+    region_gate: crate::world::rlva::land_gate::LandGate,
     region_ui: ui::region::RegionUi,
     group_profile_ui: ui::group_profile::GroupProfileUi,
     /// Environment selector and "Personal lighting".
@@ -2415,6 +2419,8 @@ impl App {
             lod_infos: Vec::new(),
             place_groups: Default::default(),
             land_ui: Default::default(),
+            land_gate: Default::default(),
+            region_gate: Default::default(),
             region_ui: Default::default(),
             group_profile_ui: Default::default(),
             env_ui: Default::default(),
@@ -20997,30 +21003,55 @@ impl App {
                 }
                 self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
-                let mut open = self.panels.about_land && self.world.rlva_can_view_parcel();
-                // the mini-map's image of the selection's region, for the header
-                let land_map = open
-                    .then(|| self.world.land.sel.as_ref().map(|s| s.handle).or(self.world.main_region))
-                    .flatten()
-                    .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
-                // AURORA_DEMO_LAND=…:classic shows Firestorm's tabs without saving it
-                let classic_land =
-                    self.settings.classic_about_land || (self.demo && crate::demo::land::scenario().is_some_and(|s| s.classic));
-                if self.land_ui.show(
-                    &ctx,
-                    &p,
-                    &mut self.world,
-                    &self.ui_images,
-                    &self.avatar_pics,
-                    land_map.as_ref(),
-                    &mut self.settings.audio.saved_streams,
-                    self.demo,
-                    classic_land,
-                    &mut open,
-                ) {
-                    self.settings.save();
+                // RlvUIEnabler::filterFloaterShowLoc, asked again for what the window shows
+                let land_view = self.land_gate.step(
+                    "About Land",
+                    self.panels.about_land,
+                    self.world.rlva.has("showloc"),
+                    self.world.rlva_parcel_region(),
+                    || self.world.rlva_parcel_verdict(),
+                    std::time::Instant::now(),
+                );
+                if land_view == GateView::Refused {
+                    self.panels.about_land = false;
+                    // the parcel picked for a refused window (the ground menu's) must
+                    // not stay selected: the next request would be judged on it.
+                    // The Buy access question and the Buy Land window keep the one
+                    // they use, as the floater's close does (EXT-6464).
+                    let buy_land_holds = self.buy_land_ui.open && self.buy_land_source == buy_land::BuyLandSource::Parcel;
+                    if !self.land_ui.keeps_selection() && !buy_land_holds {
+                        self.world.land.deselect();
+                    }
                 }
-                self.panels.about_land = open;
+                // a hidden window keeps its request while the parcel arrives, and is
+                // neither drawn nor closed (a close would drop the selection it waits on)
+                let mut open = land_view == GateView::Shown;
+                if land_view != GateView::Hidden {
+                    // the mini-map's image of the selection's region, for the header
+                    let land_map = open
+                        .then(|| self.world.land.sel.as_ref().map(|s| s.handle).or(self.world.main_region))
+                        .flatten()
+                        .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
+                    // AURORA_DEMO_LAND=…:classic shows Firestorm's tabs without saving it
+                    let classic_land =
+                        self.settings.classic_about_land || (self.demo && crate::demo::land::scenario().is_some_and(|s| s.classic));
+                    if self.land_ui.show(
+                        &ctx,
+                        &p,
+                        &mut self.world,
+                        &self.ui_images,
+                        &self.avatar_pics,
+                        land_map.as_ref(),
+                        &mut self.settings.audio.saved_streams,
+                        self.demo,
+                        classic_land,
+                        &mut open,
+                    ) {
+                        self.settings.save();
+                    }
+                }
+                // a window closed from inside leaves its request; one that is waiting keeps it
+                self.panels.about_land = open || land_view == GateView::Hidden;
                 // Region / Estate: asked by About Land or the restart notice
                 if ui::region::take_open_request(&ctx) {
                     let id = if self.settings.classic_region_estate {
@@ -21030,27 +21061,40 @@ impl App {
                     };
                     ui::widgets::open_floater(&ctx, id, &mut self.panels.region_estate);
                 }
-                let mut open = self.panels.region_estate && self.world.rlva_can_view_region();
-                if open {
-                    self.feed_region_window(&ctx);
+                let region_view = self.region_gate.step(
+                    "Region / Estate",
+                    self.panels.region_estate,
+                    self.world.rlva.has("showloc"),
+                    self.world.main_region,
+                    || self.world.rlva_region_verdict(),
+                    std::time::Instant::now(),
+                );
+                if region_view == GateView::Refused {
+                    self.panels.region_estate = false;
                 }
-                let region_map = open
-                    .then_some(self.world.main_region)
-                    .flatten()
-                    .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
-                if self.region_ui.show(
-                    &ctx,
-                    &p,
-                    &mut self.world,
-                    &self.avatar_pics,
-                    &self.ui_images,
-                    region_map.as_ref(),
-                    &mut self.settings,
-                    &mut open,
-                ) {
-                    self.settings.save();
+                let mut open = region_view == GateView::Shown;
+                if region_view != GateView::Hidden {
+                    if open {
+                        self.feed_region_window(&ctx);
+                    }
+                    let region_map = open
+                        .then_some(self.world.main_region)
+                        .flatten()
+                        .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
+                    if self.region_ui.show(
+                        &ctx,
+                        &p,
+                        &mut self.world,
+                        &self.avatar_pics,
+                        &self.ui_images,
+                        region_map.as_ref(),
+                        &mut self.settings,
+                        &mut open,
+                    ) {
+                        self.settings.save();
+                    }
                 }
-                self.panels.region_estate = open;
+                self.panels.region_estate = open || region_view == GateView::Hidden;
                 match self.region_ui.action.take() {
                     Some(ui::region::RegionAction::AboutLand) => self.panels.about_land = true,
                     Some(ui::region::RegionAction::WorldMap) => ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map),

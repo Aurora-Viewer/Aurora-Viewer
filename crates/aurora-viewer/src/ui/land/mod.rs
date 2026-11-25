@@ -419,6 +419,12 @@ impl LandUi {
         matches!(self.dialog, Some(Dialog::Confirm(dialogs::Confirm::BuyPass)))
     }
 
+    /// The ground menu's pass question, awaited or shown, uses the selection:
+    /// closing the floater keeps it (EXT-6464).
+    pub fn keeps_selection(&self) -> bool {
+        self.pass_wanted.is_some() || self.asks_pass()
+    }
+
     /// LLPanelLandGeneral::onClickBuyPass, once the parcel asked by the
     /// ground menu is known. The menu cannot grey the entry as
     /// LLMenuParcelObserver does (it does not know the parcel before it is
@@ -598,7 +604,7 @@ impl LandUi {
                 if !self.asks_pass() {
                     self.dialog = None;
                 }
-                if self.pass_wanted.is_none() && !self.asks_pass() {
+                if !self.keeps_selection() {
                     world.land.deselect();
                 }
                 self.scripts.open = false;
