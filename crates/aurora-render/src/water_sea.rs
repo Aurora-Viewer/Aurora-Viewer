@@ -330,6 +330,27 @@ impl Sea {
         }
         level + self.open(source, xy, time, trains, &swell, &local, at.ocean.as_deref()).z
     }
+
+    /// How fast the water at rendered world `xy` moves sideways at `time`
+    /// (m/s), where the sea is read as `at`: the trains' orbital motion as
+    /// `surface` places it, forward under a crest and back in a trough. What
+    /// a body standing in the water feels pushing past it
+    /// (scene/water_contacts.rs). (The spectrum's maps are this frame's
+    /// alone: its chop gives none.)
+    pub fn flow(&self, xy: Vec2, time: f32, trains: usize, at: &SeaPoint) -> Vec2 {
+        let swell = self.swell_at(xy, at);
+        let local = self.local(at, swell.shadow, swell.chop);
+        let ocean = at.ocean.as_deref();
+        let mut source = xy;
+        for _ in 0..3 {
+            source = xy - self.open(source, xy, time, trains, &swell, &local, ocean).truncate();
+        }
+        const H: f32 = 0.05;
+        let ahead = self.open(source, xy, time + H, trains, &swell, &local, ocean);
+        let behind = self.open(source, xy, time - H, trains, &swell, &local, ocean);
+        let flow = (ahead - behind).truncate() / (2.0 * H);
+        if flow.is_finite() { flow } else { Vec2::ZERO }
+    }
 }
 
 /// How much of the wind sea's sway (its horizontal displacement) is kept
@@ -703,6 +724,36 @@ impl SeaDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_water_flows_forward_under_a_crest_and_back_in_a_trough() {
+        let mut driver = SeaDriver::default();
+        for i in 0..400 {
+            driver.advance(i as f32 * 0.5, Vec2::new(14.0, 0.0), Vec2::ZERO);
+        }
+        let sea = driver.sea();
+        let at = SeaPoint::open(60.0);
+        let toward = Vec2::new(sea.trains[0][0], sea.trains[0][1]);
+        let period = TAU / sea.omega[0].max(1e-3);
+        let (mut top, mut low) = ((f32::MIN, 0.0), (f32::MAX, 0.0));
+        let mut fastest = 0.0f32;
+        for i in 0..200 {
+            let t = 200.0 + period * i as f32 / 200.0;
+            let z = sea.surface(Vec2::ZERO, t, 1, 0.0, &at);
+            let along = sea.flow(Vec2::ZERO, t, 1, &at).dot(toward);
+            fastest = fastest.max(along.abs());
+            if z > top.0 {
+                top = (z, along);
+            }
+            if z < low.0 {
+                low = (z, along);
+            }
+        }
+        // as fast as the swell's orbits: some aω
+        let orbit = sea.trains[0][3] * sea.omega[0];
+        assert!(fastest > 0.3 * orbit && fastest < 1.5 * orbit, "{fastest} {orbit}");
+        assert!(top.1 > 0.5 * fastest && low.1 < -0.5 * fastest, "{top:?} {low:?}");
+    }
 
     #[test]
     fn a_chop_turned_far_up_does_not_fold_the_surface_over() {

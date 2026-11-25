@@ -2263,6 +2263,9 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
     if(event.params.y==12.0) {
         return water_spindrift_particle(event,index,corner*select(0.0,1.0,segment<0.5),age);
     }
+    if(event.params.y==13.0) {
+        return water_avatar_splash(event,index,corner*select(0.0,1.0,segment<0.5),age);
+    }
     if(fan && index<2u) {
         let forward=normalize(event.motion.xy+vec2<f32>(0.0001,0.0));
         let side=vec2<f32>(-forward.y,forward.x)*select(-1.0,1.0,index==0u);
@@ -2513,6 +2516,118 @@ fn water_spindrift_particle(event: WaterFxEvent, index: u32, quad: vec2<f32>, ag
     // (the water thrown up, denser drops than the spindrift's mist: kind 13)
     o.clip=frame.view_proj*vec4<f32>(pos,1.0);o.world=pos;o.uv=quad;o.life=life;o.kind=select(12u,13u,event.params.x>=0.9);
     o.level=-1e9;o.normal=vec3<f32>(0.0,0.0,1.0);o.seed=fract(event.params.w*7.0+f32(index)*0.29);
+    return o;
+}
+// An avatar's splash (scene/water_contacts.rs, `WaterEvent` kind 13), after
+// Radiance Viewer's rdwatersplash.cpp (PyKat Resident's, originally LGPL
+// 2.1): masses of spray that bloom out of the contact point fast, then
+// slowly, and settle back into the water, and clusters of drops thrown out
+// of it on arcs of their own (air drag, gravity; the light splashes' drops
+// fall slower, to hang a moment), streaked along their flight, gone where
+// they meet the water. What happened (`params.x`) sets how many of each and
+// how they fly: a step (a burst and drops kicked forward and up), an arm or
+// a leg slapping in (a burst, a few drops), a limb leaving the water fast
+// (drops thrown along its swing), a part ploughing through the surface
+// (spray off its leading edge), the torso jumped in (a ring of bursts low
+// on the water, a core, a top, a crown of drops out and a jet up).
+// `motion.xyz` the part's velocity through the water, `motion.w` the
+// splash's size. Drawn as the crests' drops, water_crash_color kind 13.
+fn water_avatar_splash(event: WaterFxEvent, index: u32, quad: vec2<f32>, age: f32) -> WaterParticleOut {
+    var o:WaterParticleOut;
+    o.clip=vec4<f32>(0.0,0.0,-1.0,1.0);o.world=vec3<f32>(0.0);o.uv=quad;o.life=0.0;o.kind=13u;
+    o.level=-1e9;o.normal=vec3<f32>(0.0,0.0,1.0);o.seed=0.0;
+    if(age<0.0 || !water_fx_on(64u)){return o;}
+    let h=water_fx_hash(vec2<f32>(f32(index)*5.3+event.params.w*31.0,event.position.w*7.7));
+    let g=water_fx_hash(vec2<f32>(f32(index)*2.9+event.params.w*13.0,event.position.w*3.1+0.7));
+    let what=u32(event.params.x+0.5);
+    let s=event.motion.w;
+    let v=event.motion.xyz;
+    let drift=vec3<f32>(v.xy,0.0);
+    let up=vec3<f32>(0.0,0.0,1.0);
+    let angle=6.283185*g.x;
+    let out=vec3<f32>(cos(angle),sin(angle),0.0);
+    let level=event.params.z;
+    // how many bursts lead the event's instances; the rest are drops
+    var bursts=1u;
+    if(what==4u){bursts=4u;}
+    if(what==2u || (what==3u && h.y>0.4)){bursts=0u;}
+    var pos=event.position.xyz;
+    var size=0.0;
+    var life=0.0;
+    var flight=vec3<f32>(0.0,0.0,1.0);
+    if(index<bursts) {
+        // a mass of spray on the contact point: zooming out of it fast, then
+        // slowly, fading in, then out, sinking into the water from a third
+        // of its life (Radiance's burst_update)
+        var reach=select((0.45+0.25*h.x)*(0.6+0.4*s),(0.55+0.2*h.x)*s,what==4u);
+        var offset=up*(0.3*reach);
+        var span=0.75+0.2*h.y;
+        if(what==4u) {
+            // the torso's: a ring low on the water, a core, and a top
+            if(index==3u){offset=out*(0.1*reach)+up*(1.1*reach);span=0.9;}
+            else if(index==2u){offset=out*(0.1*reach)+up*(0.55*reach);reach*=1.3;span=1.0;}
+            else {offset=out*(0.55*reach)+up*(0.2*reach);reach*=1.2;span=1.1;}
+        }
+        if(what==2u){reach*=0.7;}
+        let t=clamp(age/span,0.0,1.0);
+        let rest=(1.0-t)*(1.0-t);
+        let zoom=mix(0.2,1.0,1.0-rest*rest);
+        let sink=max(t-0.3,0.0)/0.7;
+        let moved=drift*0.2*(1.0-exp(-age*3.0))/3.0;
+        pos=event.position.xyz+moved+offset*zoom-up*(offset.z+0.4*reach)*sink*sink;
+        size=0.5*reach*zoom;
+        let fade=smoothstep(0.0,0.1,t);
+        life=fade*pow(1.0-t,1.3)*0.9;
+        o.seed=fract(event.params.w*7.0+f32(index)*0.29);
+    } else {
+        // drops thrown out of it
+        var velocity=vec3<f32>(0.0);
+        var gravity=5.0;var drag=0.8;var size0=0.05*(0.5+0.5*s);
+        if(what==0u) {
+            velocity=out*(0.2+0.4*h.x)+up*((0.8+0.6*h.y)*s)+drift*0.3;
+        } else if(what==1u) {
+            velocity=out*(0.3+0.5*h.x)+up*((0.8+0.8*h.y)*s)+drift*0.4;
+        } else if(what==2u) {
+            // along the limb's swing
+            velocity=v*(0.5+0.3*h.x)+vec3<f32>((h.y-0.5)*0.4,(g.y-0.5)*0.4,(h.x-0.3)*0.3);
+            size0=0.04+0.02*h.y;
+        } else if(what==3u) {
+            velocity=drift*(0.4+0.3*h.x)+up*(0.6+0.7*h.y)+vec3<f32>((g.y-0.5)*0.3,(h.y-0.5)*0.3,0.0);
+        } else {
+            // the torso's: a crown thrown out, every third a jet straight up
+            let jet=index%3u==0u;
+            let rise=select(0.95+0.35*h.y,1.4+0.14*h.y,jet);
+            let speed=select(3.0+1.5*h.x,4.5+2.5*h.x,jet)*sqrt(s);
+            velocity=(out*cos(rise)+up*sin(rise))*speed+drift*0.2;
+            gravity=9.81;drag=0.7;size0=(0.06+0.03*h.y)*(0.7+0.3*s);
+        }
+        let delay=h.y*0.05;
+        let t=max(age-delay,0.0);
+        let k=drag;
+        let ease=(1.0-exp(-k*t))/k;
+        // (drag on the throw, gravity on the fall: near enough for drops
+        // a moment in the air)
+        let start=event.position.xyz+out*(0.1*s)+up*0.06;
+        pos=start+velocity*ease-up*0.5*gravity*t*t;
+        flight=velocity*exp(-k*t)-up*gravity*t;
+        size=size0*(0.6+0.4*(1.0-exp(-t*4.0)));
+        // gone where they meet the water, fading as they reach it
+        let water=particle_water_level(pos.xy,level);
+        let above=pos.z-water;
+        life=smoothstep(0.0,0.03,age-delay)*smoothstep(-0.02,0.06,above)*select(1.0,0.0,flight.z<0.0 && above<-0.02);
+        life*=1.0-smoothstep(1.4,2.0,t);
+        o.seed=fract(event.params.w*3.0+f32(index)*0.41);
+    }
+    // (no splash in one's face)
+    life*=smoothstep(0.3,1.0,distance(pos,frame.camera_pos.xyz));
+    // drawn out along its flight as it is seen (a burst stays round)
+    let seen=vec2<f32>(dot(flight,frame.cam_right.xyz),dot(flight,frame.cam_up.xyz));
+    let speed=length(seen);
+    let dir=select(vec2<f32>(0.0,1.0),seen/max(speed,1e-4),speed>0.05);
+    let stretch=select(1.0+min(speed*0.35,2.0),1.0,index<bursts);
+    let offset=dir*quad.y*size*stretch+vec2<f32>(dir.y,-dir.x)*quad.x*size;
+    pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
+    o.clip=frame.view_proj*vec4<f32>(pos,1.0);o.world=pos;o.life=life;
     return o;
 }
 // The crests' fuzz (water_effects.rs `crest_mist`): from a fresh breeze

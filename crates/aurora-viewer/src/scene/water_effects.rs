@@ -305,6 +305,7 @@ impl Effects {
                 // `room`.)
                 12.0 if event.params[0] >= 0.9 => 1.3,
                 12.0 => 1.6,
+                13.0 => 2.0, // An avatar's splash falls back within a second or two.
                 0.0 | 7.0 => 0.8,
                 _ => 3.0,
             };
@@ -775,6 +776,7 @@ impl Effects {
                         surface,
                         ground,
                         carrier_z: world.water_visual_dz(&o.full_id),
+                        flow: sea.flow(center.truncate(), time, 4, &at),
                     });
                 }
                 samples

@@ -171,7 +171,10 @@ pub const WATER_PARTICLE_FLOOR: u32 = 1024;
 /// water it leaves (10: as 9, motion z the face's height above the water),
 /// or drops dripping off a wet avatar (11: motion xyz the limb's, w how
 /// many drops; params x their size, z where they stop falling, w seconds
-/// between them).
+/// between them), spray off the sea's crests (12: scene/water_spindrift.rs),
+/// or an avatar's splash (13: motion xyz the part's velocity through the
+/// water, w its size; params x what happened, scene/water_contacts.rs
+/// `STEP`..`BODY`, w its seed).
 /// Footprints are bounded approximations, not a replacement for mesh physics.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
@@ -435,7 +438,8 @@ fn bilinear<const N: usize>(grid: &[[f32; N]], size: usize, origin: [f32; 2], ex
 fn pack_events(events: &[WaterEvent], settings: WaterEffects, packed: &mut [WaterEvent]) -> (usize, usize) {
     let flags = settings.flags();
     let particle = |e: &&WaterEvent| {
-        (matches!(e.params[1], 0.0 | 5.0 | 7.0 | 9.0 | 10.0 | 11.0 | 12.0) && flags & 64 != 0) || (e.params[1] == 1.0 && flags & 128 != 0)
+        (matches!(e.params[1], 0.0 | 5.0 | 7.0 | 9.0 | 10.0 | 11.0 | 12.0 | 13.0) && flags & 64 != 0)
+            || (e.params[1] == 1.0 && flags & 128 != 0)
     };
     let recent = &events[events.len().saturating_sub(packed.len())..];
     let mut n = 0;
