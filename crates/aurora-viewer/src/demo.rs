@@ -3769,11 +3769,26 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             ];
             // AURORA_DEMO_GROUPS=many: exercise the Conversations group
             // picker with more entries than fit in its submenu.
-            if std::env::var("AURORA_DEMO_GROUPS").is_ok_and(|mode| mode == "many") {
-                groups.extend((0..64).map(|i| {
-                    let id = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_1000 + i);
+            match std::env::var("AURORA_DEMO_GROUPS").as_deref() {
+                Ok("many") => groups.extend((0..64).map(|i| {
+                    let id = Uuid::from_u128(group::MANY_GROUPS + i);
                     g(id, &format!("Demo group {:02}", i + 1), true)
-                }));
+                })),
+                // AURORA_DEMO_GROUPS=150: the grid's most, two in three
+                // with our abilities of the first group, to copy a notice
+                // to many groups
+                Ok("150") => {
+                    let room = group::MAX_GROUPS.saturating_sub(groups.len()) as u128;
+                    groups.extend((0..room).map(|i| {
+                        let id = Uuid::from_u128(group::MANY_GROUPS + i);
+                        let mut m = g(id, &format!("Demo group {:03}", i + 1), true);
+                        if group::many_group_sends(id) {
+                            m.powers |= group::my_powers();
+                        }
+                        m
+                    }));
+                }
+                _ => {}
             }
             if !group::adjust_groups(&mut groups) {
                 return vec![NetEvent::Groups(groups)];

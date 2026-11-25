@@ -194,3 +194,31 @@ fn cascade_group_profiles_keep_their_step_when_taller_than_the_room() {
     let again = f.open(CascadeGroup::Texture, tall);
     assert!((f.rect(again).min.y - f.rect(texture).min.y).abs() < 1.0);
 }
+
+#[test]
+fn cascade_group_profiles_start_a_new_column_before_getting_too_small() {
+    let mut f = Fixture::default();
+    let profile = CascadeGroup::Profile { classic: false };
+    let opened: Vec<usize> = (0..30).map(|_| f.open(profile, egui::vec2(500.0, 600.0))).collect();
+    let first = f.rect(opened[0]);
+    let mut wrapped = false;
+    let mut at_edge = false;
+    for pair in opened.windows(2) {
+        let (a, b) = (f.rect(pair[0]), f.rect(pair[1]));
+        assert!(b.height() >= first.height() * 0.5 - 1.0, "never under half the first: {b:?}");
+        assert!((b.width() - first.width()).abs() < 1.0, "the width is kept: {b:?}");
+        assert!(b.right() <= 1000.5 && b.bottom() <= 800.5, "on screen: {b:?}");
+        if (b.min.y - first.min.y).abs() < 1.0 {
+            wrapped = true;
+        } else {
+            same(egui::vec2(0.0, b.min.y - a.min.y), egui::vec2(0.0, 32.0));
+        }
+        if (b.right() - 1000.0).abs() < 1.0 && (a.right() - 1000.0).abs() < 1.0 {
+            // at the right edge: down only
+            assert!((b.min.x - a.min.x).abs() < 1.0);
+            at_edge = true;
+        }
+    }
+    assert!(wrapped, "30 windows on an 800 px screen start a new column");
+    assert!(at_edge, "and reach the right edge");
+}

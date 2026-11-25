@@ -12743,6 +12743,19 @@ ui-group-notices-message = Message…
 ui-group-notices-drop = Drag an item or landmark from Inventory, Favorites, or Places (copy + transfer)
 ui-group-notices-not-attachable = This item cannot be attached: it must be copyable and transferable, and not worn.
 ui-group-notices-remove-attachment = Remove the attachment
+ui-group-notices-copy-tip = Copy this notice to other groups you can send notices to: each opens in its own window, ready to send
+ui-group-notices-copy-to = Copy this notice to
+ui-group-notices-copy-replaces = { $group } (replaces the notice being written)
+ui-group-notices-copy-limit = Up to { $count } groups at a time: copy again for more.
+ui-group-notices-copy-tick-pinned = Tick the pinned groups
+ui-group-notices-copy-others = Other groups
+ui-group-notices-copy-copied = { $group } (copied)
+ui-group-notices-copy-clear = Clear selection
+ui-group-notices-copy-do = { $count ->
+    [0] Copy
+    [one] Copy to { $shown } group
+   *[other] Copy to { $shown } groups
+    }
 ui-group-notices-send = { $count ->
     [one] Send to { $shown } member
    *[other] Send to { $shown } members

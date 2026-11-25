@@ -12610,6 +12610,19 @@ ui-group-notices-message = メッセージ…
 ui-group-notices-drop = インベントリ、お気に入り、場所からアイテムまたはランドマークをドラッグ（コピー・譲渡可）
 ui-group-notices-not-attachable = このアイテムは添付できません：コピー可能かつ譲渡可能で、着用していないものである必要があります。
 ui-group-notices-remove-attachment = 添付を削除
+ui-group-notices-copy-tip = 通知を送信できる他のグループにこの通知をコピーします：それぞれのグループが専用のウィンドウで開き、すぐに送信できます
+ui-group-notices-copy-to = この通知のコピー先
+ui-group-notices-copy-replaces = { $group }（作成中の通知を置き換えます）
+ui-group-notices-copy-limit = 一度にコピーできるのは{ $count }グループまでです：さらにコピーするにはもう一度実行してください。
+ui-group-notices-copy-tick-pinned = ピン留めしたグループを選択
+ui-group-notices-copy-others = その他のグループ
+ui-group-notices-copy-copied = { $group }（コピー済み）
+ui-group-notices-copy-clear = 選択をクリア
+ui-group-notices-copy-do = { $count ->
+    [0] コピー
+    [one] { $shown }グループにコピー
+   *[other] { $shown }グループにコピー
+    }
 ui-group-notices-send = { $count ->
     [one] { $shown }人のメンバーに送信
    *[other] { $shown }人のメンバーに送信

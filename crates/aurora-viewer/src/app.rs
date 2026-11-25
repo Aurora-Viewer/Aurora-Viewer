@@ -18105,6 +18105,10 @@ impl App {
                     self.world.group_data.open_notice(group, notice);
                 }
                 GroupAction::SaveAttachment(group) => self.world.save_notice_attachment(group),
+                GroupAction::CopyNotice { draft, groups } => {
+                    log::info!("group notice draft copied to {} group(s)", groups.len());
+                    self.group_profile_ui.copy_notice(&mut self.world, draft, groups);
+                }
                 GroupAction::SendNotice {
                     group,
                     subject,

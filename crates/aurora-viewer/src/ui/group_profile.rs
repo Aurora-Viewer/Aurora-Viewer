@@ -48,7 +48,7 @@ use super::search::SearchAction;
 use super::widgets::{self, Floater};
 use crate::world::World;
 use egui::Vec2;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use uuid::Uuid;
 
 /// Ask for the profile of a group from anywhere in the interface (a link, a
@@ -93,6 +93,9 @@ pub enum GroupAction {
     OpenNotice { group: Uuid, notice: Uuid },
     /// The notice's attachment, accepted into the inventory.
     SaveAttachment(Uuid),
+    /// "Copy to other groups" of a draft: each group's window opened on a
+    /// new notice holding it (`GroupProfileUi::copy_notice`).
+    CopyNotice { draft: notices::Compose, groups: Vec<Uuid> },
     /// send_group_notice: subject, message, (item, owner) attached.
     SendNotice {
         group: Uuid,
@@ -207,6 +210,11 @@ pub struct GroupWindow {
     win_id: String,
     open: bool,
     raise: bool,
+    /// Frames to wait before raising (a copy's windows, one per frame in
+    /// their order): egui's move_to_top keeps the remembered order of the
+    /// layers raised in the same frame, even from the last session, so the
+    /// last one opened could end up behind the others.
+    raise_after: u8,
     /// Frames left to scroll the classic window to the section of the tab a
     /// `show_*` asked for (while the section unfolds; the Aurora window
     /// ignores it).
@@ -227,6 +235,9 @@ pub struct GroupWindow {
     /// residents shown without a picture, the invitation.
     pics: Vec<Uuid>,
     invite: bool,
+    /// The other groups whose windows hold a notice being written (a copy
+    /// replaces it), told by the owner before the window draws.
+    pub(super) drafting: BTreeSet<Uuid>,
 }
 
 #[derive(Default)]
@@ -287,6 +298,29 @@ impl GroupProfileUi {
             None => self.windows.push(GroupWindow::new(id)),
         }
         self.latest = Some(id);
+    }
+
+    /// "Copy to other groups": each group's window, opened or raised, on a
+    /// new notice holding the draft (one that was being written there is
+    /// replaced, as the menu said). Only our groups where we may still send
+    /// notices, `MAX_COPY` at most; each is sent from its own window.
+    pub fn copy_notice(&mut self, world: &mut World, draft: notices::Compose, groups: Vec<Uuid>) {
+        let mut done = HashSet::new();
+        for id in groups {
+            if done.len() >= notices::MAX_COPY || !notices::may_send(world, id) || !done.insert(id) {
+                continue;
+            }
+            self.open(world, id);
+            let step = done.len() as u8;
+            if let Some(w) = self.windows.iter_mut().find(|w| w.group == id) {
+                w.show_tab(Tab::Notices);
+                w.notices.selected = None;
+                w.notices.compose = Some(notices::copied(&draft, world));
+                // raised one per frame in this order: the last in front
+                w.raise = false;
+                w.raise_after = step;
+            }
+        }
     }
 
     /// The window opened or raised last.
@@ -376,7 +410,15 @@ impl GroupProfileUi {
         if let Some(group) = self.invite.take_reload() {
             actions.push(GroupAction::ReloadForInvite(group));
         }
+        let drafting: BTreeSet<Uuid> = self
+            .windows
+            .iter()
+            .filter(|w| w.notices.compose.is_some())
+            .map(|w| w.group)
+            .collect();
         for i in 0..self.windows.len() {
+            let w = &mut self.windows[i];
+            w.drafting = drafting.iter().copied().filter(|g| *g != w.group).collect();
             self.profile_window(ctx, c, env, i, &mut actions);
         }
         // FSFloaterGroup is not single_instance: a closed window goes, with
@@ -501,6 +543,11 @@ impl GroupWindow {
             return None;
         }
         let id = self.group;
+        if self.raise_after > 0 {
+            self.raise_after -= 1;
+            self.raise = self.raise_after == 0;
+            ctx.request_repaint();
+        }
         if std::mem::take(&mut self.raise) {
             widgets::expand_floater(ctx, &self.win_id);
         }

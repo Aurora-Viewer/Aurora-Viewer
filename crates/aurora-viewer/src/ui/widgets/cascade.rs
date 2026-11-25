@@ -67,6 +67,11 @@ impl Group {
 
 const OFFSET: Vec2 = Vec2::splat(32.0); // Human-requested double of Firestorm's 16 px UIFloaterOffset
 
+/// A `keeps_step` window shrinks at most to this part of the group's first
+/// window, then the stack starts a new column (Aurora's: the Legacy Viewer
+/// piles them against the screen's edge).
+const WRAP_LEAST: f32 = 0.5;
+
 #[derive(Clone)]
 struct Window {
     id: Id,
@@ -113,7 +118,21 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
         let anchor = windows.0.iter().rev().find(|w| w.group == group && w.visible && !w.minimized);
         let primary = anchor.is_none();
         let mut size = saved.map_or(default.size(), |r| r.size()).min(work.size());
-        let target = anchor.map_or_else(|| saved.map_or(default.min, |r| r.min), |w| w.rect.min + OFFSET);
+        let mut target = anchor.map_or_else(|| saved.map_or(default.min, |r| r.min), |w| w.rect.min + OFFSET);
+        // a step down that would leave less than half the group's first
+        // window starts a new column, back at that window's top; at the
+        // screen's right edge the windows stop moving right and keep their
+        // width, stepping down only (human request, #4788: past ~13 group
+        // profiles the shrunk windows ended up anywhere)
+        if anchor.is_some()
+            && group.keeps_step()
+            && let Some(first) = windows.0.iter().find(|w| w.group == group && w.visible && !w.minimized)
+        {
+            if work.max.y - target.y < first.rect.height() * WRAP_LEAST {
+                target.y = first.rect.min.y;
+            }
+            target.x = target.x.min(work.max.x - size.x).max(work.min.x);
+        }
         let room = (work.max - target).max(Vec2::ZERO);
         let shrunk = !primary && group.keeps_step() && (size.x > room.x || size.y > room.y);
         if shrunk {

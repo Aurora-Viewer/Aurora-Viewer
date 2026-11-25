@@ -137,6 +137,19 @@ pub fn second_group() -> Option<Uuid> {
     })
 }
 
+/// The first id of the extra groups of `AURORA_DEMO_GROUPS=many|150`.
+pub const MANY_GROUPS: u128 = 0x6E00_0000_0000_0000_0000_0000_0000_1000;
+
+/// The groups a resident may belong to at most (the grid's 150).
+pub const MAX_GROUPS: usize = 150;
+
+/// `AURORA_DEMO_GROUPS=150`: an extra group where we have the first
+/// group's abilities (two in three), so a notice is written and sent there.
+pub fn many_group_sends(id: Uuid) -> bool {
+    let n = id.as_u128().wrapping_sub(MANY_GROUPS);
+    std::env::var("AURORA_DEMO_GROUPS").is_ok_and(|m| m == "150") && n < MAX_GROUPS as u128 && n % 3 != 2
+}
+
 /// The group the profile opens on in this scenario.
 pub fn shown_group() -> Uuid {
     match scenario() {
@@ -1005,7 +1018,7 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
             message,
             bucket,
             ..
-        } if *to == DEMO_GROUP1 || second_group() == Some(*to) => {
+        } if *to == DEMO_GROUP1 || second_group() == Some(*to) || many_group_sends(*to) => {
             // the group named: `:second` checks a draft went to its own
             log::info!(
                 "demo group: notice sent to {to} ({} bytes attached)",

@@ -1205,3 +1205,213 @@ fn the_classic_title_names_the_group() {
     let want = aurora_i18n::tr!("ui-group-profile-title-named", name = "Aurora Builders".to_owned());
     assert_eq!(win(&mut st).title.1, want);
 }
+
+/// Our groups: (id, name, powers).
+fn memberships(world: &mut World, groups: &[(Uuid, &str, u64)]) {
+    world.apply(NetEvent::Groups(
+        groups
+            .iter()
+            .map(|(id, name, powers)| aurora_net::GroupMembership {
+                id: *id,
+                name: (*name).into(),
+                insignia: Uuid::nil(),
+                powers: *powers,
+                accept_notices: true,
+                list_in_profile: true,
+                contribution: 0,
+            })
+            .collect(),
+    ));
+}
+
+#[test]
+fn a_notice_copies_to_the_other_groups_we_may_send_notices_to() {
+    use crate::demo::DEMO_GROUP2;
+    let send = MEMBER | powers::NOTICES_SEND;
+    let readers = Uuid::from_u128(0x4788_0001);
+    let zebra = Uuid::from_u128(0x4788_0002);
+    let mut world = world(true, send);
+    memberships(
+        &mut world,
+        &[
+            (DEMO_GROUP1, "Aurora Builders", send),
+            (zebra, "zebra club", send),
+            (readers, "Readers", MEMBER),
+            (DEMO_GROUP2, "Northern Wolves", send),
+        ],
+    );
+    let targets: Vec<Uuid> = notices::copy_targets(&world, DEMO_GROUP1).into_iter().map(|t| t.id).collect();
+    assert_eq!(
+        targets,
+        vec![DEMO_GROUP2, zebra],
+        "not this group nor one without the ability, by name"
+    );
+}
+
+#[test]
+fn copying_a_draft_opens_each_group_on_it_and_replaces_a_draft_there() {
+    use crate::demo::DEMO_GROUP2;
+    let send = MEMBER | powers::NOTICES_SEND;
+    let third = Uuid::from_u128(0x4788_0003);
+    let readers = Uuid::from_u128(0x4788_0004);
+    let mut world = world(true, send);
+    memberships(
+        &mut world,
+        &[
+            (DEMO_GROUP1, "Aurora Builders", send),
+            (DEMO_GROUP2, "Northern Wolves", send),
+            (third, "Third", send),
+            (readers, "Readers", MEMBER),
+        ],
+    );
+    let mut st = opened(&mut world);
+    st.open(&mut world, DEMO_GROUP2);
+    st.show_notices(true);
+    window_of(&mut st, DEMO_GROUP2).notices.compose.as_mut().expect("a draft").subject = "Old".into();
+    let went: std::collections::BTreeSet<Uuid> = [DEMO_GROUP1, DEMO_GROUP2, third, readers].into();
+    let draft = notices::Compose {
+        subject: "Live at 8".into(),
+        message: "Come and dance".into(),
+        copied_to: went.clone(),
+        ..Default::default()
+    };
+    st.copy_notice(&mut world, draft, vec![DEMO_GROUP2, third, readers]);
+    for group in [DEMO_GROUP2, third] {
+        let w = window_of(&mut st, group);
+        assert_eq!(w.tab, Tab::Notices);
+        let d = w.notices.compose.as_ref().expect("the copy");
+        assert_eq!((d.subject.as_str(), d.message.as_str()), ("Live at 8", "Come and dance"));
+        // the next batch can be ticked from this window
+        assert_eq!(d.copied_to, went);
+    }
+    assert!(!st.is_shown(readers), "no window for a group we may not send notices to");
+    // raised one per frame in the copy's order, the last one in front
+    let order: Vec<u8> = [DEMO_GROUP2, third].iter().map(|g| window_of(&mut st, *g).raise_after).collect();
+    assert_eq!(order, vec![1, 2]);
+    assert!(!window_of(&mut st, third).raise, "not all raised in one frame");
+    assert!(
+        window_of(&mut st, DEMO_GROUP1).notices.compose.is_none(),
+        "the first window is left as it was"
+    );
+}
+
+#[test]
+fn a_copy_carries_the_attachment_only_with_copy_and_transfer() {
+    use crate::world::inventory::actions::{COPY, MODIFY, TRANSFER};
+    use aurora_net::inventory::InvItem;
+    let mut world = world(true, MEMBER | powers::NOTICES_SEND);
+    let cases = [
+        (COPY | MODIFY | TRANSFER, true),
+        (COPY | TRANSFER, true),
+        (MODIFY | TRANSFER, false),
+        (COPY | MODIFY, false),
+    ];
+    for (i, (mask, kept)) in cases.into_iter().enumerate() {
+        let id = Uuid::from_u128(0x4788_1000 + i as u128);
+        world.inventory.add_items(vec![InvItem {
+            id,
+            name: "Flyer".into(),
+            asset_type: 7,
+            inv_type: 7,
+            owner: DEMO_AGENT,
+            owner_mask: mask,
+            ..Default::default()
+        }]);
+        let draft = notices::Compose {
+            subject: "Flyer".into(),
+            item: Some(id),
+            ..Default::default()
+        };
+        assert_eq!(notices::copied(&draft, &world).item, kept.then_some(id), "mask {mask:#x}");
+    }
+}
+
+#[test]
+fn a_copy_opens_ten_groups_at_most_once_each() {
+    let send = MEMBER | powers::NOTICES_SEND;
+    let mut world = world(true, send);
+    // 150 groups, the most a resident can join
+    let mut groups: Vec<(Uuid, String, u64)> = vec![(DEMO_GROUP1, "Aurora Builders".into(), send)];
+    for i in 0..149u128 {
+        let powers = if i % 3 == 0 { MEMBER } else { send };
+        groups.push((Uuid::from_u128(0x4788_2000 + i), format!("Group {i:03}"), powers));
+    }
+    let named: Vec<(Uuid, &str, u64)> = groups.iter().map(|(id, name, p)| (*id, name.as_str(), *p)).collect();
+    memberships(&mut world, &named);
+    let targets = notices::copy_targets(&world, DEMO_GROUP1);
+    assert_eq!(targets.len(), 99, "only the groups with the ability, not this one");
+    assert!(notices::has_copy_target(&world, DEMO_GROUP1));
+    let mut st = opened(&mut world);
+    let mut asked: Vec<Uuid> = targets.iter().map(|t| t.id).collect();
+    asked.insert(0, asked[0]);
+    st.copy_notice(&mut world, notices::Compose::default(), asked);
+    let copies = st.windows.iter().filter(|w| w.notices.compose.is_some()).count();
+    assert_eq!(copies, notices::MAX_COPY, "the cap, and the group named twice opened once");
+    assert_eq!(st.windows.len(), notices::MAX_COPY + 1);
+}
+
+#[test]
+fn a_group_whose_ability_is_lost_takes_no_copy() {
+    use crate::demo::DEMO_GROUP2;
+    let send = MEMBER | powers::NOTICES_SEND;
+    let mut world = world(true, send);
+    memberships(
+        &mut world,
+        &[(DEMO_GROUP1, "Aurora Builders", send), (DEMO_GROUP2, "Northern Wolves", send)],
+    );
+    assert!(notices::may_send(&world, DEMO_GROUP2));
+    // AgentGroupDataUpdate after a role change: the ability is gone
+    memberships(
+        &mut world,
+        &[(DEMO_GROUP1, "Aurora Builders", send), (DEMO_GROUP2, "Northern Wolves", MEMBER)],
+    );
+    assert!(!notices::may_send(&world, DEMO_GROUP2));
+    assert!(!notices::has_copy_target(&world, DEMO_GROUP1), "the button hides");
+    let mut st = opened(&mut world);
+    st.copy_notice(&mut world, notices::Compose::default(), vec![DEMO_GROUP2]);
+    assert!(!st.is_shown(DEMO_GROUP2));
+    assert!(!notices::may_send(&world, Uuid::nil()));
+}
+
+#[test]
+fn pinned_groups_come_first_in_the_copy_menu_and_tick_at_once() {
+    let send = MEMBER | powers::NOTICES_SEND;
+    let mut world = world(true, send);
+    let mut groups: Vec<(Uuid, String, u64)> = vec![(DEMO_GROUP1, "Aurora Builders".into(), send)];
+    for i in 0..30u128 {
+        groups.push((Uuid::from_u128(0x4788_3000 + i), format!("Group {i:02}"), send));
+    }
+    let named: Vec<(Uuid, &str, u64)> = groups.iter().map(|(id, name, p)| (*id, name.as_str(), *p)).collect();
+    memberships(&mut world, &named);
+    // FSFavoriteGroups: the pins of People's group list, here 12 of them
+    let pinned: Vec<Uuid> = (0..12u128).map(|i| Uuid::from_u128(0x4788_3000 + 29 - i)).collect();
+    world.groups.favorites.extend(pinned.iter().copied());
+    world.groups.favorites.insert(DEMO_GROUP1);
+    let targets = notices::copy_targets(&world, DEMO_GROUP1);
+    assert!(targets[..12].iter().all(|t| t.pinned), "the pinned groups first");
+    assert!(targets[12..].iter().all(|t| !t.pinned));
+    assert_eq!(targets[0].name, "Group 18", "by name among the pinned");
+    assert!(targets.iter().all(|t| t.id != DEMO_GROUP1), "never the group writing the notice");
+    let mut ticked = std::collections::BTreeSet::from([targets[20].id]);
+    notices::tick_pinned(&targets, &mut ticked, &std::collections::BTreeSet::new());
+    assert_eq!(ticked.len(), notices::MAX_COPY, "the limit holds");
+    assert!(ticked.contains(&targets[20].id), "what was ticked stays");
+    assert!(targets[..9].iter().all(|t| ticked.contains(&t.id)), "the first pinned ones by name");
+    // after that copy, the next click takes the pinned groups not copied to
+    let mut next = std::collections::BTreeSet::new();
+    notices::tick_pinned(&targets, &mut next, &ticked);
+    let rest: std::collections::BTreeSet<Uuid> = targets[9..12].iter().map(|t| t.id).collect();
+    assert_eq!(next, rest, "the three pinned groups left, nothing copied again");
+}
+
+#[test]
+fn a_draft_remembers_the_groups_it_was_copied_to() {
+    let draft = notices::Compose {
+        subject: "Live".into(),
+        copied_to: std::collections::BTreeSet::from([Uuid::from_u128(0x4788_4000)]),
+        ..Default::default()
+    };
+    let world = world(true, MEMBER | powers::NOTICES_SEND);
+    let copy = notices::copied(&draft, &world);
+    assert_eq!(copy.copied_to, draft.copied_to, "the copy knows where the notice already went");
+}

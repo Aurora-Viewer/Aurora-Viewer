@@ -21,6 +21,7 @@ use crate::world::inventory::actions::{COPY, TRANSFER};
 use aurora_i18n::UiUpper;
 use aurora_net::groups::{NoticeSummary, powers};
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
+use std::collections::BTreeSet;
 use uuid::Uuid;
 
 /// The list's width.
@@ -37,6 +38,11 @@ pub struct Compose {
     pub item: Option<Uuid>,
     /// Why the last item dropped was refused.
     pub refused: bool,
+    /// The groups this notice already went to by copy, with the group it
+    /// was written in: "Tick the pinned groups" moves on to the next ones,
+    /// and their rows say so. Every copy carries it, so the next batch can
+    /// be ticked from any window of the last one. Gone with the draft.
+    pub copied_to: BTreeSet<Uuid>,
 }
 
 #[derive(Default)]
@@ -44,6 +50,93 @@ pub struct NoticesState {
     pub search: String,
     pub selected: Option<Uuid>,
     pub compose: Option<Compose>,
+    /// The groups ticked in the draft's "Copy to other groups" menu, and
+    /// its search.
+    pub copy_to: BTreeSet<Uuid>,
+    pub copy_filter: String,
+}
+
+/// Groups one copy opens at most: each opens a window that asks for the
+/// group's members, roles and notices at once, as an opened group does.
+/// Half of what the group data keeps (MAX_CACHED_GROUPS, LLGroupMgr's 20),
+/// so a copy never pushes the groups already shown out; with up to 150
+/// groups the user copies again for more.
+pub const MAX_COPY: usize = 10;
+
+/// The menu's search shows past this many groups.
+const COPY_FILTER_FROM: usize = 8;
+
+/// A notice may still be sent to this group by us: one of our groups,
+/// with the ability (LLAgent::hasPowerInGroup(GP_NOTICES_SEND), from
+/// AgentGroupDataUpdate, the same source as "New notice").
+pub fn may_send(world: &World, group: Uuid) -> bool {
+    !group.is_nil() && world.groups.group(&group).is_some_and(|g| g.powers & powers::NOTICES_SEND != 0)
+}
+
+/// Some other group can take a copy (the button shows), without building
+/// the list: cheap every frame with 150 groups.
+pub fn has_copy_target(world: &World, from: Uuid) -> bool {
+    world
+        .groups
+        .groups
+        .iter()
+        .any(|g| g.id != from && !g.id.is_nil() && g.powers & powers::NOTICES_SEND != 0)
+}
+
+/// The other groups a draft may be copied to: ours where we may send
+/// notices (the power that shows "New notice"), by name. Aurora's: the
+/// Legacy Viewer has no copy, its users copy the text by hand into each
+/// group's window.
+pub fn copy_targets(world: &World, from: Uuid) -> Vec<CopyTarget> {
+    let mut groups: Vec<CopyTarget> = world
+        .groups
+        .groups
+        .iter()
+        .filter(|g| g.id != from && may_send(world, g.id))
+        .map(|g| CopyTarget {
+            id: g.id,
+            name: g.name.clone(),
+            pinned: world.groups.favorites.contains(&g.id),
+        })
+        .collect();
+    // the pinned groups first, as the group lists show them
+    // (FSFavoriteGroups, `GroupChats::sorted`)
+    groups.sort_by_cached_key(|t| (!t.pinned, t.name.to_lowercase(), t.id));
+    groups
+}
+
+/// A group of the copy menu.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CopyTarget {
+    pub id: Uuid,
+    pub name: String,
+    /// Pinned (FSFavoriteGroups): the same pins as People's group list.
+    pub pinned: bool,
+}
+
+/// "Tick the pinned groups": the pinned ones this draft was not copied to
+/// yet added to what is ticked, up to `MAX_COPY` in all, in the menu's
+/// order, so a second click after a copy takes the next ones.
+pub fn tick_pinned(targets: &[CopyTarget], ticked: &mut BTreeSet<Uuid>, copied: &BTreeSet<Uuid>) {
+    for t in targets.iter().filter(|t| t.pinned && !copied.contains(&t.id)) {
+        if ticked.len() >= MAX_COPY {
+            break;
+        }
+        ticked.insert(t.id);
+    }
+}
+
+/// The draft as another group's window gets it: subject, message, the
+/// groups it already went to, and the attachment only while a notice may
+/// still carry it (`attachable`, the same rule as a drop).
+pub fn copied(draft: &Compose, world: &World) -> Compose {
+    Compose {
+        subject: draft.subject.clone(),
+        message: draft.message.clone(),
+        item: draft.item.and_then(|id| attachable(world, id)),
+        refused: false,
+        copied_to: draft.copied_to.clone(),
+    }
 }
 
 /// The tab shows with the abilities to receive or to send notices
@@ -481,11 +574,21 @@ pub(crate) fn asset_label(asset_type: u8) -> &'static str {
 /// inventory; sent to every member.
 fn compose(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
+    if st.notices.compose.is_none() {
+        return;
+    }
+    // a group left or an ability lost since it was ticked is unticked
+    if !st.notices.copy_to.is_empty() {
+        st.notices.copy_to.retain(|id| *id != v.id && may_send(c.world, *id));
+    }
+    let can_copy = has_copy_target(c.world, v.id);
+    let drafts = st.drafting.clone();
     let Some(draft) = st.notices.compose.as_mut() else {
         return;
     };
     let mut cancel = false;
     let mut send = false;
+    let mut copy = false;
     egui::Frame::new()
         .fill(p.field)
         .corner_radius(ui.visuals().window_corner_radius)
@@ -563,12 +666,27 @@ fn compose(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
                 }
             }
             ui.horizontal(|ui| {
+                // "Copy" at the far left, away from Cancel and Send
+                if can_copy {
+                    copy = copy_menu(
+                        ui,
+                        p,
+                        c.world,
+                        v.id,
+                        &mut st.notices.copy_to,
+                        &mut st.notices.copy_filter,
+                        &drafts,
+                        &draft.copied_to,
+                    );
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 5.0;
                     let count = v.member_count().unwrap_or(0);
                     let label = aurora_i18n::tr!("ui-group-notices-send", count = count, shown = aurora_i18n::integer(count));
                     // MustSpecifyGroupNoticeSubject
-                    let ready = !draft.subject.trim().is_empty();
+                    // and the ability still held: a role changed since the
+                    // draft opened greys Send, as it hides "New notice"
+                    let ready = !draft.subject.trim().is_empty() && v.can(powers::NOTICES_SEND);
                     if widgets::action_button_if(ui, p, "send-filled", &label, ActionKind::Primary, Vec2::new(0.0, 28.0), ready).clicked() {
                         send = true;
                     }
@@ -590,7 +708,134 @@ fn compose(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
         });
     } else if cancel {
         st.notices.compose = None;
+    } else if copy && let Some(d) = st.notices.compose.as_mut() {
+        let groups: Vec<Uuid> = std::mem::take(&mut st.notices.copy_to).into_iter().take(MAX_COPY).collect();
+        if !groups.is_empty() {
+            // the group written in, and this batch: a window of the batch
+            // ticks the next pinned groups, not these again
+            d.copied_to.insert(v.id);
+            d.copied_to.extend(groups.iter().copied());
+            actions.push(GroupAction::CopyNotice {
+                draft: copied(d, c.world),
+                groups,
+            });
+        }
     }
+}
+
+/// "Copy to other groups": the groups we may send notices to, ticked in a
+/// menu that stays open (up to `MAX_COPY`), then copied at once. Each gets
+/// its own window on a new notice with the draft, sent from there with its
+/// own "Send". The list is built only while the menu is open; the pinned
+/// groups (pinned in People or a group's menu) come first, under their
+/// heading, and can be ticked at once, those not copied to yet. True when
+/// the copy was asked.
+#[allow(clippy::too_many_arguments)]
+fn copy_menu(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    from: Uuid,
+    ticked: &mut BTreeSet<Uuid>,
+    filter: &mut String,
+    drafts: &BTreeSet<Uuid>,
+    copied: &BTreeSet<Uuid>,
+) -> bool {
+    let button = widgets::action_button(
+        ui,
+        p,
+        "copy-filled",
+        aurora_i18n::tr!("common-copy-2"),
+        ActionKind::Flat,
+        Vec2::new(0.0, 28.0),
+    )
+    .on_hover_text(aurora_i18n::tr!("ui-group-notices-copy-tip"));
+    let mut copy = false;
+    let open = crate::ui::menu::dropdown(&button, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        let targets = copy_targets(world, from);
+        crate::ui::menu::section(ui, p, aurora_i18n::tr!("ui-group-notices-copy-to"));
+        if targets.len() > COPY_FILTER_FROM {
+            widgets::search_field(ui, p, filter, aurora_i18n::tr!("ui-group-notices-search"), 240.0);
+        }
+        let pinned = targets.iter().filter(|t| t.pinned).count();
+        if pinned > 0 {
+            let room = MAX_COPY.saturating_sub(ticked.len());
+            let all = targets
+                .iter()
+                .filter(|t| t.pinned && !copied.contains(&t.id))
+                .all(|t| ticked.contains(&t.id));
+            // the menu stays open: "Copy to N groups" is still to click
+            if crate::ui::menu::item_stays(
+                ui,
+                p,
+                "pinned-filled",
+                aurora_i18n::tr!("ui-group-notices-copy-tick-pinned"),
+                room > 0 && !all,
+            ) {
+                tick_pinned(&targets, ticked, copied);
+            }
+        }
+        // the menu stays open: other groups are then ticked by hand
+        if crate::ui::menu::item_stays(
+            ui,
+            p,
+            "deselect",
+            aurora_i18n::tr!("ui-group-notices-copy-clear"),
+            !ticked.is_empty(),
+        ) {
+            ticked.clear();
+        }
+        let needle = filter.trim().to_lowercase();
+        let full = ticked.len() >= MAX_COPY;
+        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+            let mut heading = None;
+            for t in &targets {
+                if !needle.is_empty() && !t.name.to_lowercase().contains(&needle) {
+                    continue;
+                }
+                // "Pinned", then the others, as People's group list
+                if pinned > 0 && heading != Some(t.pinned) {
+                    heading = Some(t.pinned);
+                    let title = if t.pinned {
+                        aurora_i18n::tr!("people-groups-pinned")
+                    } else {
+                        aurora_i18n::tr!("ui-group-notices-copy-others")
+                    };
+                    crate::ui::menu::section(ui, p, title);
+                }
+                let mut on = ticked.contains(&t.id);
+                let label = if drafts.contains(&t.id) {
+                    aurora_i18n::tr!("ui-group-notices-copy-replaces", group = t.name.clone())
+                } else if copied.contains(&t.id) {
+                    aurora_i18n::tr!("ui-group-notices-copy-copied", group = t.name.clone())
+                } else {
+                    t.name.clone()
+                };
+                let enabled = on || !full;
+                if crate::ui::menu::toggle_if(ui, p, "users-group", &label, &mut on, enabled) {
+                    if on {
+                        ticked.insert(t.id);
+                    } else {
+                        ticked.remove(&t.id);
+                    }
+                }
+            }
+        });
+        if full {
+            let text = aurora_i18n::tr!("ui-group-notices-copy-limit", count = MAX_COPY as i64);
+            crate::ui::menu::info(ui, p, "info-circle-filled", &text);
+        }
+        crate::ui::menu::separator(ui, p);
+        let n = ticked.len();
+        let label = aurora_i18n::tr!("ui-group-notices-copy-do", count = n, shown = aurora_i18n::integer(n as i64));
+        if crate::ui::menu::item_if(ui, p, "copy-filled", &label, n > 0) {
+            copy = true;
+        }
+    });
+    if !open {
+        filter.clear();
+    }
+    copy
 }
 
 #[cfg(test)]
