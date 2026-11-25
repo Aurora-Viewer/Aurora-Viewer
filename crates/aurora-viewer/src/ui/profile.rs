@@ -238,10 +238,11 @@ struct Window {
     pick_saved_at: Option<(Uuid, std::time::Instant)>,
 }
 
-/// The longest pick name and description sent, in bytes of UTF-8: the
-/// Legacy Viewer's `pick_name` line editor (its default `max_length_bytes`)
-/// and `pick_desc` text editor (`max_length="1023"`, a byte limit:
-/// `mMaxTextByteLength`, panel_profile_pick.xml). Counted in characters, a
+/// The longest pick name and description sent, in bytes of UTF-8: the name
+/// fills `PickInfoUpdate`'s `Name`, a Variable 1 field (255 bytes, its NUL
+/// included), and the description the Legacy Viewer's `pick_desc` text
+/// editor's `max_length="1023"`, a byte limit (`mMaxTextByteLength`,
+/// panel_profile_pick.xml, lltextbase.cpp). Counted in characters, a
 /// text of styled letters (4 bytes each) passed what the simulator keeps and
 /// the pick was refused without a word (#4916).
 pub(super) const PICK_NAME_MAX_BYTES: usize = 254;
@@ -359,12 +360,19 @@ impl Window {
     }
 
     fn pick_save_waits(&self) -> bool {
-        self.pick_edit
-            .as_ref()
-            .is_some_and(|(e, base)| e != base && !e.id.is_nil() && e.location.is_none() && e.parcel.is_nil())
+        self.pick_edit.as_ref().is_some_and(|(e, base)| {
+            e != base
+                && !e.id.is_nil()
+                && e.location.is_none()
+                && e.parcel.is_nil()
+                // a pick this window saved and the simulator never confirmed
+                // is not held: the edit is saved as a content edit, and a
+                // late reply can still fill its parcel before that (#4916)
+                && pick_wait_state(self.pick_saved_at, e.id, std::time::Instant::now()) != PickWait::Refused
+        })
     }
 
-    fn pick_wait_notice(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<ProfileAction>) {
+    fn pick_wait_notice(&self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<ProfileAction>) {
         if self.id != world.agent_id || (self.tab != TAB_PICKS && !self.pick_save_waits()) {
             return;
         }
@@ -376,15 +384,12 @@ impl Window {
             return;
         };
         let state = pick_wait_state(self.pick_saved_at, id, now);
-        if state == PickWait::Refused {
-            self.release_refused_pick(id);
-        }
         ui.horizontal_wrapped(|ui| {
             match state {
                 PickWait::Saving(left) => {
                     ui.label(aurora_i18n::tr!("ui-profile-pick-saving"));
+                    // (shown again when the wait turns into "not confirmed")
                     ui.ctx().request_repaint_after(left);
-                    return;
                 }
                 PickWait::Refused => {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-profile-pick-not-confirmed")).color(p.warn));
@@ -404,24 +409,6 @@ impl Window {
                 ui.ctx().request_repaint_after(wait);
             }
         });
-    }
-
-    /// A pick the simulator never confirmed was most likely refused, so it
-    /// is not kept waiting: an edit made since is saved again at the pick's
-    /// place, as when it was created, instead of waiting for a parcel that
-    /// will not come.
-    fn release_refused_pick(&mut self, id: Uuid) {
-        if let Some((edit, base)) = &mut self.pick_edit
-            && edit.id == id
-            && edit != base
-            && edit.location.is_none()
-            && edit.parcel.is_nil()
-        {
-            edit.location = Some(location_text(
-                &[aurora_i18n::tr!("ui-profile-updated-after-saving"), "", ""],
-                edit.pos,
-            ));
-        }
     }
 
     /// Both styles edit a copy of the server's pick. A reply can resolve the
@@ -3253,13 +3240,25 @@ mod tests {
         };
         w.follow_pick(&info);
         w.pick_edit.as_mut().unwrap().0.desc = "Edited while waiting".into();
+        w.pick_saved_at = Some((id, std::time::Instant::now()));
         assert!(w.pick_save_waits(), "held back while the parcel can still come");
-        w.release_refused_pick(id);
-        assert!(!w.pick_save_waits(), "saved again once the pick counts as refused");
+        // not confirmed in time: no longer held, and still a content edit
+        w.pick_saved_at = Some((
+            id,
+            std::time::Instant::now() - PICK_CONFIRM_WAIT - std::time::Duration::from_secs(1),
+        ));
+        assert!(!w.pick_save_waits(), "saved again once the pick counts as not confirmed");
+        assert!(w.pick_edit.as_ref().unwrap().0.location.is_none(), "not turned into a move");
+        // a late reply still gives its parcel, which the next save carries
+        let parcel = Uuid::from_u128(4917);
+        w.follow_pick(&PickInfo { parcel, ..info.clone() });
         let mut actions = Vec::new();
         assert!(w.save_pick(&mut actions));
         assert!(
-            matches!(&actions[..], [ProfileAction::Net(NetCommand::PickUpdate(pick)), ..] if pick.id == id && pick.desc == "Edited while waiting")
+            matches!(&actions[..], [ProfileAction::Net(NetCommand::PickUpdate(pick))]
+                if pick.id == id && pick.parcel == parcel && pick.desc == "Edited while waiting" && pick.pos_global == info.pos_global),
+            "one content update with the replied parcel, no relocation request: {} actions",
+            actions.len()
         );
     }
 
