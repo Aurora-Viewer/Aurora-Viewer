@@ -791,11 +791,10 @@ impl Camera {
         // mouselook ends the free camera (the flycam's toggle the other way)
         self.free = None;
         self.clear_flycam();
-        // the view keeps its direction: the avatar turns to it
-        // the view comes back along the body; while a script holds left and
-        // right the body keeps its heading (LLAgentCamera::changeCameraTo-
-        // Mouselook never turns it, and the orbit around the avatar was
-        // LLAgent::yaw, which rotateGrabbed blocks, #3450)
+        // the view keeps its direction: the avatar turns to it, unless a
+        // script holds left and right (#3450): LLAgentCamera::changeCameraTo-
+        // Mouselook never turns the avatar, so the body keeps its heading and
+        // the view comes back along it
         if !agent.rotate_grabbed {
             agent.yaw += self.orbit_yaw;
         }

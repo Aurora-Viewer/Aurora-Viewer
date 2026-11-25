@@ -11495,8 +11495,13 @@ impl App {
             self.update_pointing();
             self.update_look_at(w as f32, h as f32);
             let mut c = self.studio_agent_controls();
-            if self.vr_mode.is_some() && self.world.agent.is_sitting() {
-                // Vehicle scripts need the original digital turn controls,
+            if joystick::vr_sends_digital_turns(
+                self.vr_mode.is_some(),
+                self.world.agent.is_sitting(),
+                self.world.agent.rotate_grabbed,
+            ) {
+                // Vehicle scripts, and a script that took left and right
+                // while standing, need the original digital turn controls,
                 // rather than desktop mouselook's turn-to-strafe conversion.
                 c.control_flags = self.world.agent.control_flags(&self.input, false) | (c.control_flags & control::MOUSELOOK);
             }
