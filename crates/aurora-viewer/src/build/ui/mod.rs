@@ -337,6 +337,22 @@ fn prefetch_contents(tool: &mut BuildTool, world: &World) {
     }
 }
 
+impl FloaterState {
+    /// The selections the floater compares with follow objects that changed
+    /// key (`BuildTool::follow_rekeyed`): a border crossing keeps the drafts,
+    /// the colour being picked and the texture being previewed.
+    pub(super) fn follow_rekeyed(&mut self, pairs: &[(ObjKey, ObjKey)]) {
+        crate::build::rekey_all(&mut self.last_selection, pairs);
+        self.mesh_inspection.follow_rekeyed(pairs);
+        if let Some(session) = &mut self.color_edit {
+            session.follow_rekeyed(pairs);
+        }
+        if let Some(session) = &mut self.texture_edit {
+            session.follow_rekeyed(pairs);
+        }
+    }
+}
+
 /// Width of the label column of the tabs.
 const LABEL_W: f32 = 112.0;
 pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";

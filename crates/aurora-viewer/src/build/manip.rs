@@ -395,6 +395,23 @@ impl Manip {
         self.drag.as_ref().is_some_and(|d| d.started)
     }
 
+    /// A drag goes on with an object that crossed into another region: its
+    /// updates go to that region under the object's new number, and its
+    /// place there is counted from that region's corner (LLSelectMgr::
+    /// sendMultipleUpdate and setPositionGlobal read the object's region).
+    pub fn follow_rekeyed(&mut self, world: &World, pairs: &[(ObjKey, ObjKey)]) {
+        let Some(d) = &mut self.drag else { return };
+        for m in &mut d.movers {
+            let key = super::rekeyed(m.key, pairs);
+            if key != m.key {
+                m.key = key;
+                if let Some(off) = world.region_offset(key.region) {
+                    m.region_off = off;
+                }
+            }
+        }
+    }
+
     /// The move the handles are dragging, once it has started.
     pub fn move_ghost(&self) -> Option<MoveGhost> {
         let d = self.drag.as_ref().filter(|d| d.started && d.mode == EditMode::Move)?;
@@ -3418,5 +3435,61 @@ mod tests {
         let m = tool.ui.legacy_pending[&(id, 1)].1.clone().unwrap();
         assert_eq!(m.normal_st[..2], [2.0, 2.0]);
         assert_eq!(m.specular_st[..2], [2.0, 2.0]);
+    }
+
+    #[test]
+    fn a_drag_follows_its_object_into_the_next_region() {
+        // #4483: the updates go to the object's new region under its new
+        // number, and its place there counts from that region's corner
+        let mut world = hud_world();
+        let events = crate::demo::face_selection_events(false);
+        let update = events
+            .iter()
+            .find_map(|event| match event {
+                aurora_net::NetEvent::ObjectUpdates { objects, .. } => objects.iter().find(|o| o.local_id == 99622).cloned(),
+                _ => None,
+            })
+            .expect("demo object");
+        for event in events {
+            world.apply(event);
+        }
+        let settings = BuildSettings {
+            snap: false,
+            actual_root: false,
+            ..Default::default()
+        };
+        let idx = world.objects.index_of_uuid(&update.full_id).unwrap();
+        let key = world.objects.get(idx).unwrap().key;
+        let now = Instant::now();
+        let pivot = bounds_of(&world, &[key], false, now).unwrap().center;
+        let eye = pivot + Vec3::new(4.0, -6.0, 3.0);
+        let fov = 60f32.to_radians();
+        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 1280.0 / 720.0, 0.01);
+        let cam = Cam::new(
+            eye,
+            pivot,
+            projection * glam::camera::rh::view::look_at_mat4(eye, pivot, Vec3::Z),
+            fov,
+            1280.0,
+            720.0,
+            1.0,
+        );
+        let start = cam.project_px(pivot + Vec3::X * cam.meters_for_pixels(pivot, 45.0)).unwrap();
+        let mut manip = Manip::default();
+        assert!(manip.try_grab(&mut world, &settings, &cam, &[key], false, EditMode::Move, start, now));
+        let new = super::super::selection_tests::cross_east(&mut world, update, 7622);
+        let rekeys = world.take_rekeyed();
+        manip.follow_rekeyed(&world, &rekeys);
+        let drag = manip.drag.take().unwrap();
+        let mover = &drag.movers[0];
+        assert_eq!(mover.key, new);
+        let target = (mover.pos + Vec3::X, mover.rot, mover.scale);
+        apply(&mut world, &drag, &[target]);
+        let off = world.region_offset(new.region).unwrap();
+        assert!(world.objects.get(idx).unwrap().position.abs_diff_eq(target.0 - off, 1e-4));
+        let mut out = Vec::new();
+        send_updates(&world, &drag, false, &mut out);
+        assert!(matches!(&out[..], [BuildCmd::Transform { handle, updates }]
+            if *handle == new.region && updates.len() == 1 && updates[0].local_id == new.local_id));
     }
 }

@@ -506,6 +506,11 @@ pub struct World {
     /// from the objects like LL's region override cache: a message may come
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
+    /// Objects that changed key without being removed (old, new), in
+    /// order, until the build tool takes them (`take_rekeyed`): its
+    /// selection follows an object across a border. At most
+    /// [`REKEYS_KEPT`]; a logout drops them with the rest (`reset`).
+    rekeyed: Vec<(ObjKey, ObjKey)>,
     pub chat: VecDeque<ChatLine>,
     /// The origin of each object's chat line (its object and the line's
     /// time), as the Legacy Viewer links each line to its own `objectim`
@@ -1000,6 +1005,10 @@ fn saved_prefix(timestamp: u32) -> String {
 /// OpenSim): a corrupt patch number must not make a land grid of gigabytes.
 pub const MAX_REGION_SIZE: u32 = 4096;
 
+/// Key changes kept for the build tool between two of its frames
+/// (`World::take_rekeyed`): far more than the crossings of a frame.
+const REKEYS_KEPT: usize = 1024;
+
 impl World {
     pub fn add_tracked_region(&mut self, name: &str, label: &str) {
         if self.region_tracker.add(name, label) {
@@ -1087,6 +1096,7 @@ impl World {
             scripted_camera: Default::default(),
             motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
+            rekeyed: Vec::new(),
             chat: VecDeque::new(),
             chat_objects: HashMap::new(),
             bubble_chat: Default::default(),
@@ -1521,7 +1531,21 @@ impl World {
             if let Some(sides) = self.gltf_overrides.remove(&old) {
                 self.gltf_overrides.insert(new, sides);
             }
+            self.rekeyed.push((old, new));
         }
+        // only frames in the world take them: none may pile up meanwhile
+        if self.rekeyed.len() > REKEYS_KEPT {
+            let extra = self.rekeyed.len() - REKEYS_KEPT;
+            self.rekeyed.drain(..extra);
+        }
+    }
+
+    /// The objects that changed key since last taken (old, new), in order.
+    /// The build tool takes them every frame in the world: the Legacy
+    /// Viewer keeps the same LLViewerObject, and so its selection, when an
+    /// object changes region (LLViewerObjectList::processObjectUpdate).
+    pub fn take_rekeyed(&mut self) -> Vec<(ObjKey, ObjKey)> {
+        std::mem::take(&mut self.rekeyed)
     }
 
     /// process_kill_object: our avatar is never killed, and neither is what
