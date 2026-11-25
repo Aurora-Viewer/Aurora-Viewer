@@ -2570,3 +2570,58 @@ fn blocks_drawers_and_floating_blocks_switch_into_one_another() {
     state.pending = Some(Edit::Dock(drawers::IMPORT_BAR.into(), true));
     assert!(!state.commit(&layout(), &mut settings));
 }
+
+/// A plain block's shortcut follows it into a drawer, a floating block and
+/// back (human request, 2026-11-25).
+#[test]
+fn a_blocks_shortcut_follows_it_through_drawers_and_floating_blocks() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(Vec::new()),
+        top: vec![button("inventory"), button("people"), structure::separator("gap"), button("search")],
+        ..Default::default()
+    };
+    let binding = crate::keybinds::Binding {
+        input: crate::keybinds::Input::Key("KeyK".into()),
+        ctrl: true,
+        shift: false,
+        alt: false,
+    };
+    // saved under its second button: the block's all the same
+    settings.shortcuts.insert(shortcuts::block_key("people"), binding.clone());
+    let top = settings.top.clone();
+    assert_eq!(shortcuts::block_of(&settings, &top, "inventory").as_deref(), Some("block:people"));
+    assert_eq!(shortcuts::block_of(&settings, &top, "search").as_deref(), Some("block:search"));
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Fold(Bar::Top, "inventory".into())),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout(), &mut settings));
+    let id = settings.top[0].command.clone();
+    assert_eq!(settings.shortcuts.get(&id), Some(&binding));
+    assert_eq!(shortcuts::target(&settings, &layout(), &binding).as_deref(), Some(id.as_str()));
+    state.pending = Some(Edit::Unfold(Bar::Top, id.clone()));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(settings.shortcuts.keys().collect::<Vec<_>>(), ["block:inventory"]);
+    assert_eq!(shortcuts::target(&settings, &layout(), &binding), None, "a plain block's waits");
+    state.pending = Some(Edit::Float(Bar::Top, "people".into(), egui::pos2(10.0, 60.0)));
+    assert!(state.commit(&layout(), &mut settings));
+    let floating = settings.top[0].command.clone();
+    assert!(drawers::is_floating(&settings, &floating));
+    assert_eq!(settings.shortcuts.get(&floating), Some(&binding));
+    state.pending = Some(Edit::Dock(floating.clone(), false));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(settings.shortcuts.keys().collect::<Vec<_>>(), ["block:inventory"]);
+    // a floating block deleted takes its shortcut with it
+    state.pending = Some(Edit::Float(Bar::Top, "inventory".into(), egui::pos2(10.0, 60.0)));
+    assert!(state.commit(&layout(), &mut settings));
+    let floating = settings.top[0].command.clone();
+    state.pending = Some(Edit::FloatingDelete(floating));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(settings.shortcuts.is_empty());
+    // the shortcut window's edit, locked bars included
+    settings.locked = true;
+    state.pending = Some(Edit::Shortcut("search".into(), Some(binding.clone())));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(settings.shortcuts.get("search"), Some(&binding));
+}

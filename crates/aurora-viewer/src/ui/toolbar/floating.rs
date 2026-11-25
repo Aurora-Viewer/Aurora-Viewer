@@ -44,6 +44,8 @@ pub(super) fn context(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, i
     if menu::item_if(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-floating-settings"), !locked) {
         toolbar.drawer_editor = Some(id.into());
     }
+    let settings = super::appearance::settings(ui.ctx());
+    toolbar.shortcut_item(ui, p, &settings, id);
     dock_items(ui, p, toolbar, id, locked);
     if id != IMPORT_BAR && menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-floating-delete"), !locked) {
         toolbar.pending = Some(Edit::FloatingDelete(id.into()));

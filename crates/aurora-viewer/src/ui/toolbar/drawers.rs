@@ -210,7 +210,8 @@ pub(super) fn float(settings: &mut ToolbarSettings, layout: &Layout, bar: Bar, c
         icon: icon.clone(),
         tooltip: name.clone(),
     };
-    let contents = buttons.splice(range, [toggle]).collect();
+    let contents: Vec<ToolButton> = buttons.splice(range, [toggle]).collect();
+    super::shortcuts::into_drawer(settings, &contents, &id);
     settings.set_bar(bar, buttons);
     settings.block_styles.insert(id.clone(), block_style);
     settings.drawers.insert(

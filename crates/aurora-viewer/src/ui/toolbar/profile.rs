@@ -10,7 +10,7 @@ use crate::ui::skin::{Layout, ToolButton};
 const FORMAT: &str = "aurora-toolbar-interface";
 const MAX_BUTTONS: usize = 512;
 const MAX_MAP: usize = 1024;
-const FIELDS: [&str; 20] = [
+const FIELDS: [&str; 21] = [
     "buttons",
     "locked",
     "vr_button_migrated",
@@ -27,6 +27,7 @@ const FIELDS: [&str; 20] = [
     "appearance",
     "separators",
     "drawers",
+    "shortcuts",
     "menu_layout",
     "address_visible",
     "composed",
@@ -110,6 +111,7 @@ fn fields(value: &serde_json::Value) -> bool {
         ("block_styles", &["mode", "align", "sizing"][..]),
         ("appearance", &["mode", "icon"][..]),
         ("separators", &["size", "stretch"][..]),
+        ("shortcuts", &["input", "ctrl", "shift", "alt"][..]),
     ] {
         if let Some(value) = value.get(key)
             && !value
@@ -135,6 +137,18 @@ fn fields(value: &serde_json::Value) -> bool {
     true
 }
 
+/// Keyboard shortcuts: a key the capture would take (`shortcuts::refusal`),
+/// one target each.
+fn shortcuts_valid(toolbar: &ToolbarSettings) -> bool {
+    let mut seen = HashSet::new();
+    toolbar.shortcuts.iter().all(|(key, binding)| {
+        id(key)
+            && matches!(&binding.input, crate::keybinds::Input::Key(code) if code.len() <= 64 && icon(code))
+            && super::shortcuts::refusal(binding).is_none()
+            && seen.insert(binding)
+    })
+}
+
 fn valid(toolbar: &ToolbarSettings) -> bool {
     if !toolbar.composed
         || !toolbar.chat_composed
@@ -144,6 +158,7 @@ fn valid(toolbar: &ToolbarSettings) -> bool {
             toolbar.block_styles.len(),
             toolbar.appearance.len(),
             toolbar.separators.len(),
+            toolbar.shortcuts.len(),
             toolbar.menu_layout.len(),
         ]
         .into_iter()
@@ -192,6 +207,7 @@ fn valid(toolbar: &ToolbarSettings) -> bool {
             .iter()
             .any(|command| drawers::is_drawer(command) && !toolbar.drawers.contains_key(*command))
         || !toolbar.block_styles.keys().all(|key| id(key))
+        || !shortcuts_valid(toolbar)
         || !toolbar
             .appearance
             .iter()
@@ -360,6 +376,14 @@ mod tests {
                 tooltip: String::new(),
             }];
             block.floating.as_mut().expect("floating").vertical = true;
+            let shortcut = |code: &str, ctrl: bool| crate::keybinds::Binding {
+                input: crate::keybinds::Input::Key(code.into()),
+                ctrl,
+                shift: false,
+                alt: !ctrl,
+            };
+            toolbar.shortcuts.insert("soundexplorer".into(), shortcut("KeyK", true));
+            toolbar.shortcuts.insert(floating.clone(), shortcut("KeyJ", false));
             toolbar
                 .buttons
                 .as_mut()
@@ -396,6 +420,7 @@ mod tests {
             assert_eq!(loaded.drawers, toolbar.drawers);
             assert_eq!(loaded.menu_layout, toolbar.menu_layout);
             assert_eq!(loaded.separators, toolbar.separators);
+            assert_eq!(loaded.shortcuts, toolbar.shortcuts);
             for bar in Bar::ALL {
                 assert_eq!(loaded.style(bar).resolve(bar, !islands), toolbar.style(bar).resolve(bar, islands));
                 assert_eq!(loaded.bar(bar, &layout), toolbar.bar(bar, &layout));
@@ -464,6 +489,16 @@ mod tests {
             "menu:common-world/common-environment": ["menu:common-world"]
         });
         assert!(read(&value.to_string()).is_err());
+        // a key the capture refuses, or two targets on one key
+        value = serde_json::from_str(&text).expect("json");
+        let copy = serde_json::json!({"input": {"Key": "KeyC"}, "ctrl": true, "shift": false, "alt": false});
+        value["toolbar"]["shortcuts"] = serde_json::json!({ "inventory": copy });
+        assert!(read(&value.to_string()).is_err());
+        let k = serde_json::json!({"input": {"Key": "KeyK"}, "ctrl": true, "shift": false, "alt": false});
+        value["toolbar"]["shortcuts"] = serde_json::json!({ "inventory": k.clone(), "people": k.clone() });
+        assert!(read(&value.to_string()).is_err());
+        value["toolbar"]["shortcuts"] = serde_json::json!({ "inventory": k });
+        assert!(read(&value.to_string()).is_ok());
     }
 
     #[test]

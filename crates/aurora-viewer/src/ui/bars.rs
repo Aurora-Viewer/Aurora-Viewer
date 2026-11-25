@@ -4151,7 +4151,7 @@ pub(crate) fn toolbar_row(
                 "build" | "build_focus" | "build_grab" | "build_edit" | "build_create" | "build_land"
             ) && build_locked
             || b.command == "fly" && fly_locked;
-        let response = tool_button(
+        let mut response = tool_button(
             ui,
             p,
             icons,
@@ -4177,6 +4177,11 @@ pub(crate) fn toolbar_row(
             },
             rlva_locked,
         );
+        // its keyboard shortcut clicks it, with a click's rules
+        // (toolbar/shortcuts.rs)
+        if !row.editing && super::toolbar::shortcuts::claim(ui.ctx(), &b.command) {
+            response.flags.insert(egui::response::Flags::FAKE_PRIMARY_CLICKED);
+        }
         rects.push(response.rect);
         toolbar.button(&response, row.bar, row.style, b, p, row.locked);
         if b.command == "location_bar" {

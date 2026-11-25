@@ -4273,3 +4273,43 @@ fn menu_row_right_click_adds_and_removes_its_toolbar_command_without_running_it(
     click(&mut bench, entry, egui::PointerButton::Primary);
     assert_eq!(bench.settings.location("import", &layout), None);
 }
+
+/// A toolbar shortcut clicks its button where it is drawn: a drawer's
+/// button opens it, a button in it runs its command; a button not drawn (in
+/// the closed drawer) runs like its menu entry (human request, 2026-11-25).
+#[test]
+fn a_toolbar_shortcut_clicks_its_button_or_runs_its_menu_entry() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1920.0, 1080.0),
+        ..Default::default()
+    };
+    bench.settings.compose_top();
+    let id = drawers::create(&mut bench.settings, Bar::Bottom, &Layout::default());
+    bench.state.pending = Some(Edit::DrawerInsert(id.clone(), bars::top::button("inventory", "folder-filled"), 0));
+    assert!(bench.state.commit(&Layout::default(), &mut bench.settings));
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    assert!(!drawers::is_open(&bench.ctx, &id));
+    shortcuts::press(&bench.ctx, "inventory".into());
+    bench.frame(Vec::new());
+    assert_eq!(shortcuts::fallback(&bench.ctx, &mut bench.settings), shortcuts::Fallback::None);
+    assert_eq!(
+        commands::take_request(&bench.ctx).as_deref(),
+        Some("inventory"),
+        "not drawn: the menu's way"
+    );
+    shortcuts::press(&bench.ctx, id.clone());
+    bench.frame(Vec::new());
+    assert!(drawers::is_open(&bench.ctx, &id), "its button clicked");
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    let before = bench.panels.inventory;
+    shortcuts::press(&bench.ctx, "inventory".into());
+    bench.frame(Vec::new());
+    assert_ne!(bench.panels.inventory, before, "drawn: clicked");
+    assert_eq!(shortcuts::fallback(&bench.ctx, &mut bench.settings), shortcuts::Fallback::None);
+    assert_eq!(commands::take_request(&bench.ctx), None);
+}

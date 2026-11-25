@@ -131,6 +131,9 @@ privacy guards without changing integrated navigation placement or visibility.
 `ui/toolbar/drawers.rs` anchors collapsible glass panels to toolbar buttons.
 `ui/toolbar/floating.rs` draws the floating blocks, drawers of their own on
 the screen that the quick import bar is one of.
+`ui/toolbar/shortcuts.rs` holds the keyboard shortcuts of toolbar buttons,
+drawers and blocks: the keys refused at capture, the target of a press, and the
+click it gives the drawn button (or the menu's way when it is not drawn).
 One-level drawer contents persist in the toolbar settings, reuse the same native
 handlers and drag payload, and can move between drawers and all four bars.
 `ui/toolbar/surface_drop.rs` freezes idle button-face geometry throughout a drag,

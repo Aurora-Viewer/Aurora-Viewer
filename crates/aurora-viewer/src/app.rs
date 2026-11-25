@@ -5604,6 +5604,22 @@ impl App {
         }
     }
 
+    /// The toolbar shortcut a key press is, if any: never while the bars are
+    /// edited.
+    fn toolbar_shortcut(&self, input: &Input, mods: Mods) -> Option<String> {
+        if self.toolbar_ui.open || !matches!(input, Input::Key(_)) {
+            return None;
+        }
+        let toolbar = self.settings.toolbar.as_ref()?;
+        let binding = crate::keybinds::Binding {
+            input: input.clone(),
+            ctrl: mods.ctrl,
+            shift: mods.shift,
+            alt: mods.alt,
+        };
+        ui::toolbar::shortcuts::target(toolbar, &ui::skin::Layout::default(), &binding)
+    }
+
     /// A key or a bindable mouse button changed state.
     fn on_input(&mut self, input: Input, pressed: bool) {
         // the Director's playback (or a held playhead) ends on Escape,
@@ -5633,6 +5649,12 @@ impl App {
             return;
         }
         if !pressed || !self.in_world() {
+            return;
+        }
+        // a toolbar button's, drawer's or floating block's shortcut, before
+        // a Preferences action a modifier-less binding would fall back to
+        if let Some(key) = self.toolbar_shortcut(&input, mods) {
+            ui::toolbar::shortcuts::press(&self.egui_ctx, key);
             return;
         }
         // push-to-talk key in toggle mode: each press switches the microphone
@@ -19780,7 +19802,13 @@ impl App {
                 let conversation_slot =
                     |settings: &ui::toolbar::ToolbarSettings| settings.command_placement("bar_conversations", bar_layout);
                 let previous_conversations = conversation_slot(toolbar_settings);
-                let toolbar_changed = self.toolbar_ui.commit_with_menus(ui.ctx(), bar_layout, toolbar_settings);
+                let mut toolbar_changed = self.toolbar_ui.commit_with_menus(ui.ctx(), bar_layout, toolbar_settings);
+                // a shortcut whose button was not drawn this frame
+                match ui::toolbar::shortcuts::fallback(ui.ctx(), toolbar_settings) {
+                    ui::toolbar::shortcuts::Fallback::None => {}
+                    ui::toolbar::shortcuts::Fallback::Changed => toolbar_changed = true,
+                    ui::toolbar::shortcuts::Fallback::ImportBar => a.bar = BarAction::ImportBar,
+                }
                 if toolbar_changed && previous_conversations != conversation_slot(toolbar_settings) {
                     self.settings.chat_thumbnails = if conversation_slot(toolbar_settings).is_some() {
                         crate::settings::ChatThumbnails::TopRight
@@ -25650,7 +25678,8 @@ impl ApplicationHandler for App {
                             key_mods,
                             self.shift,
                             self.alt,
-                            self.settings.keybinds.triggered(&Input::key(code), key_mods).is_some(),
+                            self.settings.keybinds.triggered(&Input::key(code), key_mods).is_some()
+                                || self.toolbar_shortcut(&Input::key(code), key_mods).is_some(),
                         ))
         );
         let fullscreen_toggle = matches!(
@@ -25881,6 +25910,22 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
+                    // a toolbar shortcut being chosen (ui/toolbar/shortcuts.rs)
+                    if self.toolbar_ui.shortcut_capturing() {
+                        if pressed && !ke.repeat && !Input::is_modifier(code) {
+                            let binding = crate::keybinds::Binding::captured(Input::key(code), mods);
+                            let toolbar = self.settings.toolbar.clone().unwrap_or_default();
+                            self.toolbar_ui.shortcut_captured(
+                                binding,
+                                code == KeyCode::Escape,
+                                &self.settings.keybinds,
+                                &toolbar,
+                                &ui::skin::Layout::default(),
+                            );
+                            self.egui_ctx.request_repaint();
+                        }
+                        return;
+                    }
                     // The animation editor owns its accelerators before the
                     // global keybind table (Home=Fly, Ctrl+S=Resync). egui
                     // already received this event above; only route it when
@@ -26089,7 +26134,7 @@ impl ApplicationHandler for App {
                             mods,
                             code,
                             Some(&ke.logical_key),
-                            self.settings.keybinds.triggered(&input, mods).is_some(),
+                            self.settings.keybinds.triggered(&input, mods).is_some() || self.toolbar_shortcut(&input, mods).is_some(),
                         );
                     // Ctrl+F belongs to the window with its own find when the
                     // script editor is active, the keyboard is in a conversation, or the

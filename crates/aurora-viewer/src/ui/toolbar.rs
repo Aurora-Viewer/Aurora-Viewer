@@ -25,6 +25,7 @@ pub(crate) mod notecards;
 pub(crate) mod presets;
 pub(crate) mod profile;
 pub(crate) mod selection;
+pub(crate) mod shortcuts;
 pub(crate) mod structure;
 mod surface_drop;
 
@@ -210,6 +211,10 @@ pub struct ToolbarSettings {
     pub separators: std::collections::BTreeMap<String, structure::SeparatorStyle>,
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub drawers: std::collections::BTreeMap<String, drawers::Drawer>,
+    /// Keyboard shortcuts of buttons, drawers, floating blocks and blocks
+    /// (`shortcuts.rs`).
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub shortcuts: std::collections::BTreeMap<String, crate::keybinds::Binding>,
     /// Explicit menu placements; commands absent here follow their native menu.
     pub menu_layout: std::collections::BTreeMap<String, Vec<String>>,
     /// None preserves the existing visible address bar.
@@ -684,6 +689,8 @@ enum Edit {
     Float(Bar, String, Pos2),
     /// A floating block made a drawer (true) or a block of its bar again.
     Dock(String, bool),
+    /// A shortcut set or removed, locked bars included.
+    Shortcut(String, Option<crate::keybinds::Binding>),
 }
 
 /// Windows whose toolbar button lights while they are open
@@ -808,6 +815,8 @@ pub struct ToolbarUi {
     pub(crate) drawer_action: Option<crate::ui::bars::BarAction>,
     /// A floating block just made, and where it was dropped.
     floating_placed: Option<(String, Pos2)>,
+    /// The shortcut window, while open.
+    shortcut_editor: Option<shortcuts::Editor>,
 }
 
 impl ToolbarUi {
@@ -821,6 +830,7 @@ impl ToolbarUi {
         self.drawer_editor = None;
         self.drawer_action = None;
         self.floating_placed = None;
+        self.shortcut_editor = None;
         self.appearance_editor = Default::default();
         self.drawer_appearance_editor = Default::default();
         self.context_icon_picker = Default::default();
@@ -1014,6 +1024,7 @@ impl ToolbarUi {
                     self.pending = Some(Edit::Unfold(bar, button.command.clone()));
                 }
                 self.float_item(ui, p, &settings, response.rect, bar, &button.command, locked);
+                self.shortcut_item(ui, p, &settings, &button.command);
                 native_context::start_group(ui, p);
                 if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-drawer-settings"), !locked) {
                     self.drawer_editor = Some(button.command.clone());
@@ -1023,6 +1034,9 @@ impl ToolbarUi {
             }
             if !self.open {
                 self.action_options(ui, p, button);
+                if let Some(button) = button.filter(|button| shortcuts::takes(&button.command)) {
+                    self.shortcut_item(ui, p, &settings, &button.command);
+                }
                 native_context::start_group(ui, p);
                 self.button_appearance_option(ui, p, button, locked);
                 self.interface_edit_menu(ui, p, button.map(|button| button.command.as_str()));
@@ -1091,6 +1105,16 @@ impl ToolbarUi {
                         self.pending = Some(Edit::Fold(bar, button.command.clone()));
                     }
                     self.float_item(ui, p, &settings, response.rect, bar, &button.command, locked);
+                }
+                if shortcuts::takes(&button.command) {
+                    self.shortcut_item(ui, p, &settings, &button.command);
+                }
+                // a plain block's, for when it is a drawer or a floating block
+                if !drawers::is_drawer(&button.command)
+                    && settings.drawer_of(&button.command).is_none()
+                    && let Some(key) = shortcuts::block_of(&settings, &buttons, &button.command)
+                {
+                    self.shortcut_item(ui, p, &settings, &key);
                 }
                 menu::separator(ui, p);
             }
@@ -1281,6 +1305,7 @@ impl ToolbarUi {
         if changed {
             drawers::remove_emptied(settings, layout, &counts);
             blocks::normalize_styles(settings, layout, &moving);
+            shortcuts::forget_removed(settings);
         }
         changed
     }
@@ -1298,6 +1323,7 @@ impl ToolbarUi {
             Edit::FloatingShown(id, shown) => return drawers::show_floating(settings, id, *shown),
             Edit::FloatingOptions(id, options) => return drawers::update_floating(settings, layout, id, options),
             Edit::FloatingDelete(id) => return drawers::delete_floating(settings, layout, id),
+            Edit::Shortcut(key, binding) => return shortcuts::set(settings, key, binding.clone()),
             Edit::Float(bar, command, pos) => {
                 let Some(id) = drawers::float(settings, layout, *bar, command) else {
                     return false;
@@ -1428,9 +1454,10 @@ impl ToolbarUi {
                 let id = format!("{}{}", drawers::PREFIX, uuid::Uuid::new_v4());
                 let block_style = settings.block_styles.get(&command).copied().unwrap_or_default();
                 let mode = block_style.mode.or(settings.style(bar).mode).unwrap_or_default();
-                let contents = buttons
+                let contents: Vec<ToolButton> = buttons
                     .splice(range, [crate::ui::bars::top::button(&id, "folder-filled")])
                     .collect();
+                shortcuts::into_drawer(settings, &contents, &id);
                 settings.drawers.insert(
                     id.clone(),
                     drawers::Drawer {
@@ -1455,6 +1482,7 @@ impl ToolbarUi {
                 let Some(drawer) = settings.drawers.remove(&command) else {
                     return false;
                 };
+                shortcuts::out_of_drawer(settings, &command, &drawer.buttons);
                 let mut block_style = settings.block_styles.get(&command).copied().unwrap_or_default();
                 block_style.mode = Some(drawer.mode);
                 for child in &drawer.buttons {
@@ -1785,7 +1813,8 @@ impl ToolbarUi {
             | Edit::FloatingShown(..)
             | Edit::FloatingDelete(..)
             | Edit::Float(..)
-            | Edit::Dock(..) => unreachable!(),
+            | Edit::Dock(..)
+            | Edit::Shortcut(..) => unreachable!(),
         }
         if next == old && next_drawers == old_drawers {
             return false;
