@@ -11,7 +11,7 @@ use crate::weather::sea::{self, SeaSettings, SeaSource, SeaStyle};
 use egui::Vec2;
 
 /// The section's labels, for the window's label column.
-pub(super) fn labels() -> [&'static str; 13] {
+pub(super) fn labels() -> [&'static str; 14] {
     [
         aurora_i18n::tr!("ui-sea-source"),
         aurora_i18n::tr!("ui-sea-state"),
@@ -23,6 +23,7 @@ pub(super) fn labels() -> [&'static str; 13] {
         aurora_i18n::tr!("ui-sea-fetch"),
         aurora_i18n::tr!("ui-sea-sharpness"),
         aurora_i18n::tr!("ui-sea-foam"),
+        aurora_i18n::tr!("ui-sea-spray"),
         aurora_i18n::tr!("ui-sea-save"),
         aurora_i18n::tr!("ui-sea-limit"),
         aurora_i18n::tr!("ui-sea-extreme"),
@@ -200,6 +201,10 @@ pub(super) fn body(ui: &mut egui::Ui, p: &Palette, s: &mut SeaSettings, name: &m
             row_label(ui, p, aurora_i18n::tr!("ui-sea-foam"), aurora_i18n::tr!("ui-sea-foam-tip"));
             ui.add(egui::Slider::new(&mut s.shape.foam, scale.clone()).custom_formatter(percent));
         });
+        ui.horizontal(|ui| {
+            row_label(ui, p, aurora_i18n::tr!("ui-sea-spray"), aurora_i18n::tr!("ui-sea-spray-tip"));
+            ui.add(egui::Slider::new(&mut s.shape.spray, scale.clone()).custom_formatter(percent));
+        });
         // the safety catch for the seas no one would sail: turned off, what
         // went past nature's comes back within it
         ui.horizontal(|ui| {
@@ -209,6 +214,7 @@ pub(super) fn body(ui: &mut egui::Ui, p: &Palette, s: &mut SeaSettings, name: &m
                 s.shape.swell = s.shape.swell.min(top);
                 s.shape.chop = s.shape.chop.min(top);
                 s.shape.foam = s.shape.foam.min(top);
+                s.shape.spray = s.shape.spray.min(top);
                 s.shape.state = s.shape.state.min(1.0);
                 s.max_height = s.max_height.min(sea::NO_LIMIT);
             }

@@ -1554,10 +1554,10 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     let fine_dx=dpdx(in.world_pos.xy);
     let fine_dy=dpdy(in.world_pos.xy);
     let footprint=max(length(fine_dx),length(fine_dy));
-    // (the waves' detail fades by the pixel's mean size on the water, not
-    // its longest side: looking across the sea a pixel is long and thin,
-    // and fading by its length took the detail away well before it blurs,
-    // leaving a flat band out to the horizon)
+    // (the GPU's maps, mipmapped and read anisotropically, resolve the
+    // detail by the pixel's mean size on the water; the CPU's maps and the
+    // ripple waves, read point by point, must fade by its longest side, or
+    // they alias into bands across the sea: water_fx_ocean, water_micro)
     let detail_footprint=sqrt(max(length(fine_dx)*length(fine_dy),1e-10));
     // The terrain and the water's own level under this point, and the swell
     // at it: read once, for the wake, the normal and the foam below.
@@ -1577,7 +1577,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         shelter=at.shelter;
         swash_at=at;
         swash_theta=at.phase-(water_fx.sea.phase[0]+water_fx.sea.omega[0]*(frame.camera_pos.w-water_fx.sea.frame.z))+water_swash_shift(at);
-        swell=water_sea(flow,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(flow,detail_footprint,true),detail_footprint);
+        swell=water_sea(flow,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(flow,footprint,true),footprint);
     }
     let rest=flow;
     let wake=water_wake_at(in.world_pos.xy,in.level,bed.y);
@@ -1585,7 +1585,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     // the GPU's finer maps of the wind sea, when on (water_fx_fine)
     var fine=WaterFine(vec2<f32>(0.0),0.0,0.0);
     if(water_fx_on(1u)) {
-        let micro=water_micro(flow,frame.camera_pos.w,water_fx.counts.w,detail_footprint);
+        let micro=water_micro(flow,frame.camera_pos.w,water_fx.counts.w,footprint);
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
         // The wind's ripples: a shimmer in a calm, stronger as it blows, in
         // gust patches (cat's paws) drifting with it across a lake.
@@ -1731,7 +1731,10 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
             let core=smoothstep(cap_start,cap_start+0.35,swell.compression);
             let veil=max(smoothstep(cap_start-0.12,cap_start+0.1,swell.compression),smoothstep(cap_start+0.02,cap_start+0.3,swell.linger)*0.75);
             // (the Sea panel's foam: more or less of it)
-            foam+=(core*(0.5+0.35*rough)+veil*0.28)*gusty*water_fx.sea.look.x;
+            // (past 100 %, more of the dense core only: the veil and what
+            // lingers, turned up with it, spread the faint foam behind every
+            // crest into a grey haze)
+            foam+=(core*(0.5+0.35*rough)*water_fx.sea.look.x+veil*0.28*min(water_fx.sea.look.x,1.0))*gusty;
         }
         // Fine breaking filaments already have a narrow, resolved footprint.
         // Applying the coarse accumulation threshold twice erased slow swimmers.
@@ -1742,7 +1745,10 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         if(foam>=0.08 || wake_foam>0.0) {
             if(water_foam_textured()) {
                 // the foam texture's lace (water_foam_lace)
-                let lace=water_foam_lace(rest,footprint);
+                // (by a pixel's size between its mean and its longest side:
+                // by its longest, across the sea, the lace gave way to its
+                // smooth average close in)
+                let lace=water_foam_lace(rest,sqrt(footprint*detail_footprint));
                 foam=water_foam_lace_cover(foam,lace)+wake_foam*water_foam_lace_cover(0.7,lace)*0.7;
             } else {
                 let pattern=water_foam_pattern(p,footprint);
@@ -1881,8 +1887,8 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var broad_alpha = 0.0;
     if (water_fx_on(1u) && water_fx.sea.shore.w > 0.0) {
         let msq = (0.003 + 0.00512 * water_fx.sea.wind.z) * min(swell.chop, 1.5);
-        let long_kept = 1.0 - smoothstep(0.5, 2.0, 0.63 * detail_footprint);
-        let short_kept = select(1.0 - smoothstep(0.5, 2.0, 2.5 * detail_footprint), 1.0 - smoothstep(0.1, 0.5, detail_footprint), water_fine_on());
+        let long_kept = 1.0 - smoothstep(0.5, 2.0, 0.63 * footprint);
+        let short_kept = select(1.0 - smoothstep(0.5, 2.0, 2.5 * footprint), 1.0 - smoothstep(0.1, 0.5, detail_footprint), water_fine_on());
         let lost = msq * (0.11 * (1.0 - long_kept) + 0.51 * (1.0 - short_kept) + 0.38 * (1.0 - fine.kept));
         let a = rough * rough;
         broad_alpha = min(sqrt(a * a + 2.0 * lost), 0.5);
@@ -2425,34 +2431,164 @@ fn water_crash_particle(event: WaterFxEvent, index: u32, quad: vec2<f32>, segmen
 // Spindrift (scene/water_spindrift.rs): in a strong wind, spray torn off a
 // breaking crest and blown downwind as a thin mist. Each wisp of the event
 // leaves the crest a moment apart, a little to the side, barely lifted and
-// blown off at over half the wind's speed (`motion.xy`), drawn out along
-// it, thinning out within a second or so. `motion.w` how hard the crest
-// broke. (Round puffs lifted higher and slower read as small clouds.)
+// blown off at about a third of the wind's speed (`motion.xy` the wind),
+// drawn out along it, thinning out within a second or so. `motion.w` how
+// hard the crest broke. (Round puffs lifted higher and slower read as small
+// clouds; blown off at over half the wind's speed, large, it flew all over
+// the sea.)
+//
+// The crests' own spray (`params.x` 2: a breaking crest's lip; 1: crests
+// meeting, thrown up higher) follows GodotOceanWaves' sea spray (MIT, Ethan
+// Truong): a splash kept on the water, breaking up into drops as it fades
+// (water_crash_color, kind 13): a burst of white water blooming out at its
+// foot, and clusters of drops fanned out of it, each hopping off on a
+// flight of its own (`motion.z`) and falling back, streaked along the way
+// it flies. (One hop shared by all, popping up and flattening, read as a
+// sprite set on the crest.) It goes on with its crest, the way it folds
+// over at the speed its foam rides (`motion.xy`: scene/water_spindrift.rs
+// `squeeze`), its height the surface's there (water_surface_z) as the waves
+// lift and drop it. (Thrown as cards stretched along the wind, at up to
+// 0.9 m, they flew off the crests.)
 fn water_spindrift_particle(event: WaterFxEvent, index: u32, quad: vec2<f32>, age: f32) -> WaterParticleOut {
     let h=water_fx_hash(vec2<f32>(f32(index)*5.3+event.params.w*31.0,event.position.w*7.7));
     let g=water_fx_hash(vec2<f32>(f32(index)*2.9+event.params.w*13.0,event.position.w*3.1+0.7));
     let u=max(length(event.motion.xy),0.1);
     let toward=event.motion.xy/u;
     let side=vec2<f32>(-toward.y,toward.x);
-    let t=max(age-h.x*0.25,0.0);
-    let drift=u*0.6*(1.0-exp(-t*0.8))/0.8;
-    let lift=(0.08+0.3*g.x)*(1.0-exp(-t*4.0))-0.1*t*t;
-    let start=event.position.xy+side*(h.y-0.5)*1.4;
-    var pos=vec3<f32>(start+toward*drift+side*(g.y-0.5)*t*0.3,event.position.z+max(lift,-0.05));
-    let size=(0.2+0.3*h.y)*(1.0+t*0.7)*(0.6+0.5*min(event.motion.w,1.0));
-    var life=smoothstep(0.0,0.1,age-h.x*0.25)*(1.0-smoothstep(0.4,1.4,t));
+    var pos:vec3<f32>;
+    var life:f32;
+    var offset:vec2<f32>;
+    if(event.params.x>=0.9) {
+        let lip=event.params.x>=1.9;
+        let delay=h.x*select(0.12,0.1,lip);
+        let t=max(age-delay,0.0);
+        // carried on with the crest (`u`), each cluster has a flight of its
+        // own off it: the first two a burst of white water at its foot that
+        // blooms out and settles, the others drops fanned out from it
+        // (ahead, to the sides, up), which arc and fall back one by one
+        let bloom=index<2u;
+        let vz=select(event.motion.z*(0.45+0.55*g.x),0.0,bloom);
+        let ahead=select(0.15+0.8*g.y,0.1,bloom)*select(0.5,1.0,lip);
+        let aside=(h.y-0.5)*select(1.6,1.1,lip);
+        let hop=max(vz*t-4.905*t*t,0.0);
+        let span=select(vz/4.905+0.25,0.7+0.2*g.x,bloom);
+        let turn=t/span;
+        let origin=event.position.xy+side*(h.y-0.5)*select(0.3,1.2,lip);
+        let xy=origin+toward*(u+ahead)*t+side*aside*t;
+        let size=select(select(0.08+0.1*h.y,0.05+0.07*h.y,lip)*(1.0+0.8*t),(0.15+0.1*g.x)*(1.0+2.5*log(1.0+3.0*t)),bloom);
+        let surface=water_surface_z(xy,event.params.z);
+        pos=vec3<f32>(xy,surface+hop+select(0.6*size,0.3*size,bloom));
+        life=smoothstep(0.0,0.04,age-delay)*(1.0-smoothstep(select(0.6,0.35,bloom),1.0,turn));
+        // (no big splash in one's face)
+        life*=smoothstep(1.5,4.0,distance(pos,frame.camera_pos.xyz));
+        // drawn out along the way it flies off the crest as it is seen
+        // (a streak rising fast, a round drop at the top of its arc, a
+        // streak again falling), the bloom flattened on the water
+        let flight=vec3<f32>(toward*ahead+side*aside,vz-9.81*t);
+        let seen=vec2<f32>(dot(flight,frame.cam_right.xyz),dot(flight,frame.cam_up.xyz));
+        let speed=length(seen);
+        let dir=select(vec2<f32>(0.0,1.0),seen/max(speed,1e-4),speed>0.05);
+        let stretch=select(1.0+min(speed*0.35,2.0),1.0,bloom);
+        let squash=select(1.0,0.45,bloom);
+        offset=select(dir*quad.y*size*stretch+vec2<f32>(dir.y,-dir.x)*quad.x*size,vec2<f32>(quad.x*size,quad.y*size*squash),bloom);
+    } else {
+        let t=max(age-h.x*0.25,0.0);
+        let drift=u*0.35*(1.0-exp(-t*0.8))/0.8;
+        let lift=(0.05+0.2*g.x)*(1.0-exp(-t*4.0))-0.08*t*t;
+        let size=(0.12+0.18*h.y)*(1.0+t*0.7)*(0.6+0.5*min(event.motion.w,1.0));
+        life=smoothstep(0.0,0.1,age-h.x*0.25)*(1.0-smoothstep(0.4,1.2,t));
+        let start=event.position.xy+side*(h.y-0.5)*1.4;
+        pos=vec3<f32>(start+toward*drift+side*(g.y-0.5)*t*0.3,event.position.z+max(lift,-0.05));
+        // a wisp drawn out along the wind as it is seen (up to two and a
+        // half times as long as it is wide)
+        let along=vec3<f32>(toward,0.0);
+        let seen=vec2<f32>(dot(along,frame.cam_right.xyz),dot(along,frame.cam_up.xyz));
+        let dir=select(vec2<f32>(1.0,0.0),normalize(seen),length(seen)>0.05);
+        let stretch=1.0+1.5*min(length(seen),1.0);
+        offset=dir*quad.x*size*stretch+vec2<f32>(-dir.y,dir.x)*quad.y*size;
+    }
     if(age<0.0 || !water_fx_on(64u)){life=0.0;}
-    // a wisp drawn out along the wind as it is seen (three to four times
-    // as long as it is wide)
-    let along=vec3<f32>(toward,0.0);
-    let seen=vec2<f32>(dot(along,frame.cam_right.xyz),dot(along,frame.cam_up.xyz));
-    let dir=select(vec2<f32>(1.0,0.0),normalize(seen),length(seen)>0.05);
-    let stretch=1.0+2.5*min(length(seen),1.0);
-    let offset=vec2<f32>(dir.x,dir.y)*quad.x*size*stretch+vec2<f32>(-dir.y,dir.x)*quad.y*size;
     pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
     var o:WaterParticleOut;
-    o.clip=frame.view_proj*vec4<f32>(pos,1.0);o.world=pos;o.uv=quad;o.life=life;o.kind=12u;
+    // (the water thrown up, denser drops than the spindrift's mist: kind 13)
+    o.clip=frame.view_proj*vec4<f32>(pos,1.0);o.world=pos;o.uv=quad;o.life=life;o.kind=select(12u,13u,event.params.x>=0.9);
     o.level=-1e9;o.normal=vec3<f32>(0.0,0.0,1.0);o.seed=fract(event.params.w*7.0+f32(index)*0.29);
+    return o;
+}
+// The crests' fuzz (water_effects.rs `crest_mist`): from a fresh breeze
+// on, a fuzz of fine spray on every crest breaking white round the camera,
+// all the time, as the driving waves of a stylised game sea carry it. No
+// events, nothing from the CPU but how many: each puff is at a place on the
+// water round the camera (more of them near), a new one each time round
+// its second-long loop, and shows only while the surface drawn there is
+// breaking white now: the whitecaps' own test (the surface's fold past
+// `cap_start`, in the wind's gusty patches: vs_water's foam), on the swell
+// and the chop together. It sits on the water where the waves have moved
+// it, lifts a little off the cap and is blown on downwind as it thins, and
+// fades as the cap moves on or ebbs, so it stays on the breaking water.
+// GodotOceanWaves' sea spray (MIT, Ethan Truong) does the same over a
+// fixed grid. (One band along each swell crest ignored the chop the crests
+// are drawn with, and read as a wall of fog.) Drawn as the spindrift's
+// mist, water_crash_color kind 12.
+@vertex
+fn vs_water_crest_mist(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> WaterParticleOut {
+    var o:WaterParticleOut;
+    o.clip=vec4<f32>(0.0,0.0,-1.0,1.0);o.world=vec3<f32>(0.0);o.uv=vec2<f32>(0.0);o.life=0.0;o.kind=12u;
+    o.level=-1e9;o.normal=vec3<f32>(0.0,0.0,1.0);o.seed=0.0;
+    let sea=water_fx.sea;
+    let breeze=smoothstep(8.0,16.0,sea.wind.z);
+    if(breeze<=0.0 || !water_fx_on(1u) || !water_fx_on(8u) || !water_fx_on(64u) || camera_underwater()){return o;}
+    let corners=array<vec2<f32>,6>(vec2<f32>(-1.0,-1.0),vec2<f32>(1.0,-1.0),vec2<f32>(1.0,1.0),vec2<f32>(-1.0,-1.0),vec2<f32>(1.0,1.0),vec2<f32>(-1.0,1.0));
+    let quad=corners[vertex%6u];let puff=f32(vertex/6u);
+    let time=frame.camera_pos.w;
+    // (each puff's loop, and its place this time round: within 45 m,
+    // as many per metre of distance near as far)
+    let g=water_fx_hash(vec2<f32>(f32(instance)*3.1+puff*17.3,11.7));
+    let period=0.8+0.6*g.x;
+    let cycle=time/period+g.y;
+    let turn=fract(cycle);
+    let r=water_fx_hash(vec2<f32>(f32(instance)*5.7+puff*7.9,floor(cycle)*1.37+3.3));
+    let r2=water_fx_hash(r*vec2<f32>(91.7,37.3)+vec2<f32>(puff,1.9));
+    let cam=frame.camera_pos.xy;
+    let far=3.0+42.0*r.x;
+    let p=cam+vec2<f32>(cos(r.y*6.283185),sin(r.y*6.283185))*far;
+    let level=frame.cam_up.w;
+    let bed=water_fx_bed(p);
+    // (the region's water only, deep enough to break in open water)
+    let region=(1.0-smoothstep(0.25,0.5,abs(level-bed.y)))*smoothstep(1.0,3.0,level-bed.x);
+    if(region<=0.0){return o;}
+    let at=water_fx_sea_at(p);
+    let swell=water_sea(p,time,water_fx.counts.w,sea,at,water_fx_ocean(p,0.0,false),0.0);
+    let shown=vec3<f32>(p,level)+swell.offset*region;
+    // the whitecaps' test where it is drawn (vs_water's `core`, `gusty`)
+    let rough=sea.frame.w;
+    let cap_start=mix(0.25,0.04,sqrt(rough));
+    let toward=sea.wind.xy;
+    let along=vec2<f32>(dot(shown.xy,toward),dot(shown.xy,vec2<f32>(-toward.y,toward.x)));
+    let q=along-vec2<f32>(time*(0.3+0.04*sea.wind.z),0.0);
+    let warp=vec2<f32>(water_fx_noise(q*0.045),water_fx_noise(q*0.045+vec2<f32>(3.1,8.7)))-0.5;
+    let w=q+warp*vec2<f32>(10.0,6.0);
+    let windpatch=0.65*water_fx_noise(w*vec2<f32>(0.11,0.19))+0.35*water_fx_noise(w*vec2<f32>(0.27,0.4)+vec2<f32>(9.0,2.0));
+    let gusty=smoothstep(0.3-0.25*rough,0.75-0.25*rough,windpatch);
+    let cap=smoothstep(cap_start+0.05,cap_start+0.35,swell.compression)*gusty*at.shelter;
+    let fade=smoothstep(2.0,5.0,far)*(1.0-smoothstep(32.0,45.0,far));
+    let strength=cap*breeze*fade*region;
+    if(strength<=0.02){return o;}
+    let t=turn*period;
+    let size=(0.25+0.3*r2.x)*(1.0+1.2*turn)*(0.7+0.3*cap);
+    let xy=shown.xy+toward*(0.3+0.04*sea.wind.z)*t+vec2<f32>(-toward.y,toward.x)*(r2.y-0.5)*0.5;
+    var pos=vec3<f32>(xy,shown.z+0.05+(0.1+0.25*r2.x)*sqrt(turn)*cap+0.4*size);
+    // drawn out a little along the wind as it is seen
+    let wind=vec3<f32>(toward,0.0);
+    let seen=vec2<f32>(dot(wind,frame.cam_right.xyz),dot(wind,frame.cam_up.xyz));
+    let d=select(vec2<f32>(1.0,0.0),normalize(seen),length(seen)>0.05);
+    let stretch=1.0+0.6*min(length(seen),1.0);
+    let offset=d*quad.x*size*stretch+vec2<f32>(-d.y,d.x)*quad.y*size*0.8;
+    pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
+    o.clip=frame.view_proj*vec4<f32>(pos,1.0);o.world=pos;o.uv=quad;
+    // (twice the spindrift's mist, as thick as the cap)
+    o.life=smoothstep(0.0,0.15,turn)*(1.0-smoothstep(0.4,1.0,turn))*strength*2.0;
+    o.seed=fract(r2.x*7.0+puff*0.31);
     return o;
 }
 // The colour of a crash's particles (water_crash_particle): its sheets
@@ -2485,10 +2621,27 @@ fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
         }
         alpha=rim*(0.12+0.6*lace)*0.75;
         lit=0.75;up=1.0;
+    } else if(in.kind==13u) {
+        // water thrown up off a crest (water_spindrift_particle): a
+        // cluster of drops, denser than the mist, with a few loose drops
+        // round it; breaking up into drops as it fades (GodotOceanWaves'
+        // dissolve: fewer of its blobs clear the noise's rising cut)
+        // (its blobs drifting outward as it opens up; no edge to the quad)
+        let opened=in.uv*mix(0.75,1.0,in.life);
+        let n=water_fx_noise(opened*3.1+vec2<f32>(in.seed*17.0,0.0))*0.55+water_fx_noise(opened*7.3+vec2<f32>(2.0,in.seed*9.0))*0.45;
+        let cut=mix(0.78,0.42,in.life);
+        let edge=1.0-smoothstep(0.35,1.0,r);
+        alpha=edge*edge*smoothstep(cut,cut+0.2,n)*0.55;
+        let q=opened*6.0+vec2<f32>(in.seed*31.0,in.seed*17.0);
+        let cell=floor(q);
+        let at=water_fx_hash(cell);
+        let drop=1.0-smoothstep(0.07,0.13,length(fract(q)-0.5-(at-0.5)*0.6));
+        alpha=max(alpha,drop*step(0.55,water_fx_hash(cell+vec2<f32>(3.7,1.3)).x)*edge*0.55);
+        lit=0.85;up=0.9;
     } else if(in.kind==12u) {
         // spindrift: a soft, torn puff of mist (water_spindrift_particle)
         let n=water_fx_noise(in.uv*1.7+vec2<f32>(in.seed*13.0,frame.camera_pos.w*0.4))*0.6+water_fx_noise(in.uv*4.3+vec2<f32>(3.0,in.seed*7.0))*0.4;
-        alpha=exp(-r*r*2.2)*smoothstep(0.3,0.8,n)*0.16;
+        alpha=exp(-r*r*2.2)*smoothstep(0.3,0.8,n)*0.12;
         lit=0.85;up=0.9;
     } else if(in.kind==10u) {
         // white water streaming down the face in ropes

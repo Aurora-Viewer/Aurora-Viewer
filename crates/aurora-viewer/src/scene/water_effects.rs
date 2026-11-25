@@ -298,7 +298,13 @@ impl Effects {
                 9.0 => 4.0,       // A crash's spray falls back; its mist hangs on.
                 10.0 => 4.5,      // The foam it leaves spreads and fades.
                 11.0 => 2.0,      // Drops dripping off an avatar fall a metre or two.
-                12.0 => 3.0,      // Spindrift blown off a crest thins out.
+                // Spindrift blown off a crest thins out within some 1.5 s,
+                // the crests' own spray falls back within some 1.2 s. (Kept
+                // 3 s, the Spray slider's spray outgrew the particle budget,
+                // and splashes were cut off mid-flight: water_spindrift.rs
+                // `room`.)
+                12.0 if event.params[0] >= 0.9 => 1.3,
+                12.0 => 1.6,
                 0.0 | 7.0 => 0.8,
                 _ => 3.0,
             };
@@ -884,6 +890,7 @@ impl Scene {
             ..tune
         });
         self.lists.water_sea = effects.sea.advance(time, wind, eye.truncate());
+        self.lists.water_spray = if waves && settings.splashes { tune.spray } else { 0.0 };
         // (the CPU's samplers read the maps of this frame, as the GPU)
         effects.ground.ocean = effects.sea.maps();
         // waves crashing on walls and rocks throw up spray (water_crash.rs)
@@ -907,7 +914,15 @@ impl Scene {
             let budget = [64, 96, 160, 192][settings.quality.min(3) as usize] / 2;
             effects.crashes.update(&effects.ground, sea, time, &mut effects.events, budget);
             // and a strong wind tears spray off the breaking crests
-            effects.spindrift.update(&effects.ground, sea, eye, time, &mut effects.events);
+            effects.spindrift.update(
+                &effects.ground,
+                sea,
+                eye,
+                time,
+                tune.spray,
+                spray_room(settings),
+                &mut effects.events,
+            );
         } else {
             effects.crashes.clear();
         }
@@ -1015,6 +1030,19 @@ impl Scene {
             self.lists.water_contacts.clear();
         }
     }
+}
+
+/// How many spray events (water_spindrift.rs) may be alive at once at this
+/// quality: within the water particles' own share of the particle limit
+/// (`WATER_PARTICLE_FLOOR` quads, each event `particle_count` of them) and
+/// half the event history `retain_events` keeps, so that none is dropped
+/// mid-flight however high the Spray slider goes, leaving room for the
+/// splashes of what moves in the water.
+fn spray_room(settings: WaterEffects) -> usize {
+    let per = settings.particle_count().max(1);
+    let drawn = (aurora_render::water_effects::WATER_PARTICLE_FLOOR / per) as usize * 3 / 4;
+    let kept = [64, 96, 160, 192][settings.quality.min(3) as usize] / 2;
+    drawn.min(kept)
 }
 
 #[cfg(test)]

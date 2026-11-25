@@ -32,12 +32,13 @@ const SPLIT: f32 = 10.0;
 const G: f32 = 9.81;
 /// How long the foam a crest leaves lingers (s, its e-folding time).
 const FOAM_LINGER: f32 = 4.5;
-/// How fast lingering foam spreads along the wind (m²/s): into streaks a
-/// few metres long over its life.
-const FOAM_STREAK: f32 = 0.9;
+/// How fast lingering foam spreads along the wind (m²/s): a little, over
+/// its life (at 0.9, with a high chop, it drew long tails behind crests).
+const FOAM_STREAK: f32 = 0.3;
 /// How long the foam of a breaking crest rides on with it before it is
-/// left behind (s, its e-folding time).
-pub const FOAM_RIDE: f32 = 1.0;
+/// left behind (s, its e-folding time): a short cap at the crest's tip (at
+/// 1 s, carried at up to 10 m/s, it trailed some 10 m behind it).
+pub const FOAM_RIDE: f32 = 0.4;
 
 /// How fast a breaking crest of cascade `c` carries its foam downwind (m/s)
 /// in a wind of `speed` m/s: about its waves' phase speed (the long
@@ -131,12 +132,20 @@ pub struct FineSpectrum {
     pub generation: u64,
 }
 
-/// The angular frequency of wave number `len` (deep water), on the loop's
-/// lattice (`OCEAN_LOOP`). water_ocean.wgsl's `omega` is the same.
+/// The angular frequency of wave number `len` (deep water, with surface
+/// tension: ω² = g k (1 + k² L²), L² = σ / (ρ g); Tessendorf, "Simulating
+/// Ocean Water", 2004, eq. 33: centimetre ripples run some 8 % faster), on
+/// the loop's lattice (`OCEAN_LOOP`). water_ocean.wgsl's `omega` is the
+/// same.
 pub fn omega(len: f32) -> f64 {
     let step = std::f64::consts::TAU / OCEAN_LOOP;
-    ((G as f64 * len as f64).sqrt() / step).floor() * step
+    let k = len as f64;
+    ((G as f64 * k * (1.0 + k * k * TENSION_L2)).sqrt() / step).floor() * step
 }
+
+/// Water's capillary length squared (m²): its surface tension over its
+/// density and gravity (0.0728 N/m / (1000 kg/m³ · 9.81 m/s²)).
+const TENSION_L2: f64 = 7.42e-6;
 
 /// The ocean at a point (as `WaterOceanAt`): displacement (xyz), slope
 /// (∂h/∂x, ∂h/∂y) and the displacement's derivatives (∂Dx/∂x, ∂Dx/∂y,
@@ -528,14 +537,17 @@ fn field(h0: &[C], c: usize, f: usize, time: f64, chop: f32, scale: f32) -> Vec<
             if len < 1e-6 {
                 return C::default();
             }
-            // h(k, t) = h0(k) e^{iωt} + conj(h0(-k)) e^{-iωt}, the phase
+            // h(k, t) = h0(k) e^{-iωt} + conj(h0(-k)) e^{iωt}: with the
+            // field brought back as Σ h(k) e^{ik·x}, a wave of vector k then
+            // travels along k, downwind (with Tessendorf's e^{+iωt} it went
+            // upwind, against everything the wind drives), the phase
             // kept in f64 (hours of time)
             let phase = ((omega(len) * time.rem_euclid(OCEAN_LOOP)) % std::f64::consts::TAU) as f32;
             let (s, co) = phase.sin_cos();
             let mirror = ((n - x) % n, (n - y) % n);
             let a = h0[(c * n + y) * n + x];
             let b = h0[(c * n + mirror.1) * n + mirror.0];
-            let h = a.mul(C(co, s)).add(b.conj().mul(C(co, -s))).scale(scale);
+            let h = a.mul(C(co, -s)).add(b.conj().mul(C(co, s))).scale(scale);
             // displacement toward the crests, D = i k/|k| h (a train
             // cos(kx) moves by -sin(kx), as a Gerstner train): its
             // divergence folds the crests together, as the Gerstner
@@ -707,14 +719,34 @@ mod tests {
         ocean.linger(&mut texels, 0.0, Vec2::X, 16.0);
         texels[n * n + 40 * n + 40][2] = 0.0;
         let mut t = 0.0;
-        for _ in 0..15 {
+        for _ in 0..8 {
             t += 1.0 / 30.0;
             ocean.linger(&mut texels, t, Vec2::X, 16.0);
         }
-        // half a second on, at 7.2 m/s over 1.5 m texels: some 2.4 texels
-        // downwind there is more foam than as far upwind
+        // a quarter second on, at 7.2 m/s over 1.5 m texels: some 1.3
+        // texels downwind there is more foam than as far upwind
         let foam = |x: usize| texels[2 * n * n + 40 * n + x][0];
-        assert!(foam(42) > foam(38) * 1.5 && foam(42) > 0.05, "{} {}", foam(42), foam(38));
+        assert!(foam(41) > foam(39) * 1.5 && foam(41) > 0.05, "{} {}", foam(41), foam(39));
+    }
+
+    #[test]
+    fn the_waves_travel_downwind() {
+        // a quarter of a second on, the heights along the wind line up best
+        // shifted downwind (some 1 m at 12 m/s: the waves' phase speed)
+        for toward in [Vec2::X, Vec2::new(-0.6, 0.8)] {
+            let mut ocean = Ocean::new();
+            let side = Vec2::new(-toward.y, toward.x) * 7.0;
+            let line = |m: &OceanMaps| {
+                (0..384)
+                    .map(|i| m.sample(side + toward * (i as f32 * 0.5)).offset.z)
+                    .collect::<Vec<f32>>()
+            };
+            let a = line(&ocean.update(50.0, toward, 12.0, Spectrum::Jonswap, 0.0, FETCH, 1.0));
+            let b = line(&ocean.update(50.25, toward, 12.0, Spectrum::Jonswap, 0.0, FETCH, 1.0));
+            let fit = |s: i32| (40..344).map(|i| a[i as usize] * b[(i + s) as usize]).sum::<f32>();
+            let best = (-20i32..=20).max_by(|&x, &y| fit(x).total_cmp(&fit(y))).unwrap_or(0);
+            assert!(best > 0, "the waves went {} m against the wind", -best as f32 * 0.5);
+        }
     }
 
     #[test]

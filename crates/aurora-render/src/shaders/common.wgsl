@@ -3212,8 +3212,8 @@ fn water_fx_exposure(packed: f32) -> vec2<f32> {
 }
 struct WaterSeaCell { depth: f32, shelter: vec2<f32>, travel: f32, shadow: f32, chop: f32 };
 // The sea grid at `p`, bilinear; outside it, its nearest edge fading into
-// open sea over 30 m, the swell's travel going on as a plane wave
-// (`WaterGround::sea_cell`).
+// open sea over 120 m, the swell's travel going on as a plane wave from the
+// edge's (`WaterGround::sea_cell`, EDGE_FADE).
 fn water_fx_sea_cell(p: vec2<f32>) -> WaterSeaCell {
     let lo=water_fx.sea_area.xy;let extent=max(water_fx.sea_area.z,1.0);
     let inside=clamp(p,lo,lo+vec2<f32>(extent));
@@ -3224,13 +3224,15 @@ fn water_fx_sea_cell(p: vec2<f32>) -> WaterSeaCell {
     let a=mix(mix(t00[0],t10[0],f.x),mix(t01[0],t11[0],f.x),f.y);
     let b=mix(mix(t00[1],t10[1],f.x),mix(t01[1],t11[1],f.x),f.y);
     let clear=b.x;
-    let out=smoothstep(0.0,30.0,distance(p,inside));
+    let out=smoothstep(0.0,120.0,distance(p,inside));
     var cell:WaterSeaCell;
     cell.depth=mix(a.x,20.0,out);
     cell.shelter=mix(vec2<f32>(a.y,clear),vec2<f32>(1.0,6.0),out);
-    // the plane wave along the swell now, and the grid's refraction offset
-    // (fading out past the grid)
-    cell.travel=dot(p-lo,water_fx.sea.trains[0].xy)+a.z*(1.0-out);
+    // the plane wave along the swell now, and the grid's refraction offset,
+    // its edge's going on past the grid (faded out there, tens of metres of
+    // the swell's delay were squeezed into the fade: a line of short waves
+    // all round the grid, some 256 m out)
+    cell.travel=dot(p-lo,water_fx.sea.trains[0].xy)+a.z;
     cell.shadow=mix(a.w,1.0,out);
     cell.chop=mix(b.y,1.0,out);
     return cell;
@@ -3635,6 +3637,9 @@ fn water_foam_lace_cover(amount:f32,lace:vec3<f32>)->f32 {
     // drew paper cut-outs, a fuller average greyed a gale's whole sea)
     let edge=1.0-clamp(amount,0.0,1.0)*0.85;
     let body=smoothstep(edge-0.1,edge+0.24,lace.y*0.7+lace.x*0.4);
-    let near=body*mix(0.55,1.0,lace.x)*smoothstep(0.04,0.45,amount);
+    // (faint foam shows as fewer strands, not a fainter sheet: drawn half
+    // see-through, the thin foam a turned-up Foam slider brings out behind
+    // the crests read as a grey fog)
+    let near=body*mix(0.55,1.0,lace.x)*smoothstep(0.04,0.15,amount);
     return max(mix(clamp(amount,0.0,1.0)*0.45,near,lace.z),veil);
 }

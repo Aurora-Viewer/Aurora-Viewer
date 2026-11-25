@@ -38,6 +38,18 @@ const WATER_OCEAN_NONE=WaterOceanAt(vec3<f32>(0.0),vec2<f32>(0.0),vec3<f32>(0.0)
 // `chop`: the scale the spectrum's maps take here (its chop, the Sea
 // panel's), for the GPU's finer maps read beside them.
 struct WaterSwell { offset: vec3<f32>, gradient: vec2<f32>, compression: f32, breaking: f32, crest: f32, surf: f32, swash: f32, linger: f32, chop: f32 };
+// How much of the wind sea's sway (its horizontal displacement) is kept
+// where its derivatives, scaled as the surface takes them, are `j` (xx,
+// xy, yy): all of it, but where the surface would fold over itself (the
+// Jacobian's smaller eigenvalue under 0.2: Tessendorf, "Simulating Ocean
+// Water", 2004), just enough to keep it from folding. A chop and crests
+// turned far up looped the surface behind every crest, its triangles
+// stretched into smeared streaks. Water_sea.rs `chop_sway` is the same.
+fn water_chop_sway(j:vec3<f32>)->f32 {
+    let a=1.0+j.x;let c=1.0+j.z;
+    let low=0.5*(a+c)-sqrt(0.25*(a-c)*(a-c)+j.y*j.y);
+    return min(1.0,0.8/max(1.0-low,1e-3));
+}
 // The beach's surf similarity (Sea::surf): its slope over the square root
 // of the deep-water steepness of the waves reaching it. Under ~0.5 they
 // spill, up to ~3 they plunge, past it they crash on what stands steep.
@@ -205,7 +217,7 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     if(sea.shore.w>0.0){
         scaled=chop*sea.look.y;
         linger=ocean.foam*scaled;
-        offset+=ocean.offset*scaled;
+        offset+=vec3<f32>(ocean.offset.xy*scaled*water_chop_sway(ocean.jacobian*scaled),ocean.offset.z*scaled);
         gradient+=ocean.slope*scaled;
         jacobian+=ocean.jacobian*scaled;
     }

@@ -1057,8 +1057,8 @@ fn avatar_weather(rec: DrawRecord) -> mat4x4<f32> {
     return m;
 }
 
-// Enhanced water's wet look (scene/avatar_wet.rs; after Radiance's,
-// rdWetLookF.glsl and rdwetlook.cpp, originally LGPL 2.1): how wet joint
+// Enhanced water's wet look (scene/avatar_wet.rs; after PyKat Resident's
+// Radiance Viewer, rdWetLookF.glsl and rdwetlook.cpp, originally LGPL 2.1): how wet joint
 // `joint` of wet block `block` keeps a point `offset` from it (in the
 // skeleton's frame, `linear` the joint's). Its eight cells lie along the
 // up the water had in the joint's frame when it got wet, either way from

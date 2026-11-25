@@ -1132,6 +1132,7 @@ struct Pipelines {
     particles: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
+    water_crest_mist: wgpu::RenderPipeline,
     /// Rain prototype (`vs_rain` in env.wgsl, `AURORA_RAIN`).
     rain: wgpu::RenderPipeline,
     /// Rain prototype's splashes (`vs_rain_splash`).
@@ -5569,6 +5570,16 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Greater,
             ..base("water droplets and bubbles", "vs_water_particle", "fs_water_particle")
         });
+        // the crests' fuzz (env.wgsl vs_water_crest_mist), as the droplets
+        let water_crest_mist = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("crest fuzz", "vs_water_crest_mist", "fs_water_particle")
+        });
         let water_particles_under = pipe(PipeDesc {
             vb: Vb::None,
             cull: None,
@@ -6347,6 +6358,7 @@ impl Backend {
             particles: particles.resolve(&mut done),
             water_particles: water_particles.resolve(&mut done),
             water_particles_under: water_particles_under.resolve(&mut done),
+            water_crest_mist: water_crest_mist.resolve(&mut done),
             rain: rain.resolve(&mut done),
             rain_wet: rain_wet.resolve(&mut done),
             rain_wet_g: rain_wet_g.resolve(&mut done),
@@ -10673,6 +10685,7 @@ impl Backend {
             f.camera_pos.truncate(),
             &lists.water_ground,
             &lists.water_sea,
+            lists.water_spray,
             &lists.water_events,
             &lists.water_contacts,
         ) {
@@ -12084,6 +12097,7 @@ impl Backend {
                 .encode(&self.device, &mut encoder, color, depth, HDR_FORMAT, samples);
         }
         let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
+        let crest_mist = if f.cutout { 0 } else { self.water_effects.crest_mist };
         let rain_drops = if f.cutout { 0 } else { rain_drops(f.rain, f.rain_look.quality) };
         // rain prototype: the wetness memory, from the last one and the
         // shelter map, then copied where it is read
@@ -12538,6 +12552,10 @@ impl Backend {
             if water_particles > 0 {
                 pass.set_pipeline(&self.pipelines.water_particles);
                 pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..water_particles);
+            }
+            if crest_mist > 0 {
+                pass.set_pipeline(&self.pipelines.water_crest_mist);
+                pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..crest_mist);
             }
             pass_mark(pass, MARK_RAIN_BEGIN);
             if rain_drops > 0 {

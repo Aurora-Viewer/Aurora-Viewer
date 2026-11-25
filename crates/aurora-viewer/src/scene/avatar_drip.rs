@@ -1,6 +1,6 @@
 //! Enhanced water's wet avatars: water dripping off them as they come out
-//! of it. After Radiance's drips (rdwetdrip.cpp, Radiance Viewer
-//! contributors, originally LGPL 2.1): water gathers where the body hangs
+//! of it. After the drips of PyKat Resident's Radiance Viewer
+//! (rdwetdrip.cpp, originally LGPL 2.1; NOTICE.md): water gathers where the body hangs
 //! lowest, most at the hands, then the elbows and the chin, a little at the
 //! knees and the head; drops fall from there as fast as the place is wet
 //! (avatar_wet.rs keeps how wet), a soaked hand pours a short stream, and

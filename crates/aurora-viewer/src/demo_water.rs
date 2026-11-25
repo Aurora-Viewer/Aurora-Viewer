@@ -19,10 +19,28 @@ pub fn mode() -> Option<&'static str> {
 }
 
 /// The `sea` modes' `AURORA_DEMO_SEA_PRESET=<calm|breeze|swell|storm|stylized>`:
-/// the Sea panel's preset, set there.
+/// the Sea panel's preset, set there; and `AURORA_DEMO_SEA_SHAPE=<wind m/s>,
+/// <swell>,<chop>,<crests>,<foam>,<spray>` (scales: 1 is 100 %), its
+/// sliders set to those (on the preset, or on the default shape), to
+/// reproduce a sea someone tuned on the grid.
 fn sea_preset() -> Option<crate::weather::sea::SeaShape> {
     mode().filter(|m| m.contains("sea"))?;
-    crate::weather::sea::preset(std::env::var("AURORA_DEMO_SEA_PRESET").ok()?.trim())
+    let preset = std::env::var("AURORA_DEMO_SEA_PRESET")
+        .ok()
+        .and_then(|p| crate::weather::sea::preset(p.trim()));
+    let shape = std::env::var("AURORA_DEMO_SEA_SHAPE").ok().map(|v| {
+        let n: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        let mut shape = preset.clone().unwrap_or_default();
+        let at = |i: usize, or: f32| n.get(i).copied().filter(|x| x.is_finite()).unwrap_or(or);
+        shape.state = at(0, shape.state * crate::weather::sea::MAX_WIND) / crate::weather::sea::MAX_WIND;
+        shape.swell = at(1, shape.swell);
+        shape.chop = at(2, shape.chop);
+        shape.choppiness = at(3, shape.choppiness);
+        shape.foam = at(4, shape.foam);
+        shape.spray = at(5, shape.spray);
+        shape
+    });
+    shape.or(preset)
 }
 
 /// Once: `AURORA_DEMO_SEA_PRESET` sets the sea (set here, that preset),

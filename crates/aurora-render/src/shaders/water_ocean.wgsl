@@ -24,9 +24,9 @@ const TAU: f32 = 6.283185307;
 const LOOP: f32 = 1024.0;
 // water_fft.rs FOAM_LINGER, FOAM_STREAK
 const LINGER: f32 = 4.5;
-const STREAK: f32 = 0.9;
+const STREAK: f32 = 0.3;
 // water_fft.rs FOAM_RIDE
-const RIDE: f32 = 1.0;
+const RIDE: f32 = 0.4;
 
 @group(0) @binding(0) var<uniform> params: OceanParams;
 @group(0) @binding(1) var h0: texture_2d_array<f32>;
@@ -52,10 +52,11 @@ fn times_i(a: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(-a.y, a.x);
 }
 
-// water_fft.rs `omega`: on the loop's lattice
+// water_fft.rs `omega`: with surface tension (TENSION_L2), on the loop's
+// lattice
 fn omega(len: f32) -> f32 {
     let step = TAU / LOOP;
-    return floor(sqrt(G * len) / step) * step;
+    return floor(sqrt(G * len * (1.0 + len * len * 7.42e-6)) / step) * step;
 }
 
 // The four packed fields of each cascade at the frame's time:
@@ -75,7 +76,9 @@ fn cs_spectrum(@builtin(global_invocation_id) id: vec3<u32>) {
         let e = vec2<f32>(cos(phase), sin(phase));
         let scale = params.time.z;
         let chop = params.time.y;
-        let h = (cmul(pair.xy, e) + cmul(pair.zw, vec2<f32>(e.x, -e.y))) * scale;
+        // (h0(k) e^{-iωt} + conj(h0(-k)) e^{iωt}: the waves travel along
+        // k, downwind, as water_fft.rs `field`)
+        let h = (cmul(pair.xy, vec2<f32>(e.x, -e.y)) + cmul(pair.zw, e)) * scale;
         let ih = times_i(h) * (chop / len);
         out[0] = ih * k.x + times_i(ih * k.y);
         out[1] = h + times_i(h * (-k.x * k.y * chop / len));

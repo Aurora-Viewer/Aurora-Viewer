@@ -54,6 +54,9 @@ pub struct SeaShape {
     pub choppiness: f32,
     /// How much foam the whitecaps make (1: the wind's own).
     pub foam: f32,
+    /// How much water the waves throw into the air (1: as a real sea
+    /// does; more, and from calmer seas, the higher).
+    pub spray: f32,
     pub style: SeaStyle,
 }
 
@@ -66,6 +69,7 @@ impl Default for SeaShape {
             fetch: 15.0,
             choppiness: 1.0,
             foam: 1.0,
+            spray: 1.0,
             style: SeaStyle::Natural,
         }
     }
@@ -129,23 +133,25 @@ pub const PRESETS: [&str; 5] = ["calm", "breeze", "swell", "storm", "stylized"];
 
 /// The shape of built-in preset `key` (`PRESETS`).
 pub fn preset(key: &str) -> Option<SeaShape> {
-    let shape = |state, swell, chop, fetch, choppiness, foam, style| SeaShape {
+    let shape = |state, swell, chop, fetch, choppiness, foam, spray, style| SeaShape {
         state,
         swell,
         chop,
         fetch,
         choppiness,
         foam,
+        spray,
         style,
     };
     Some(match key {
         // a mirror with a ripple: no swell, a short fetch
-        "calm" => shape(0.06, 0.0, 0.7, 1.0, 0.6, 0.4, SeaStyle::Natural),
-        "breeze" => shape(0.25, 0.7, 1.0, 15.0, 1.0, 1.0, SeaStyle::Natural),
+        "calm" => shape(0.06, 0.0, 0.7, 1.0, 0.6, 0.4, 1.0, SeaStyle::Natural),
+        "breeze" => shape(0.25, 0.7, 1.0, 15.0, 1.0, 1.0, 1.0, SeaStyle::Natural),
         // long rollers from far away under a light wind
-        "swell" => shape(0.3, 1.8, 0.4, 50.0, 0.8, 0.6, SeaStyle::Ocean),
-        "storm" => shape(0.9, 1.3, 1.3, 50.0, 1.3, 1.5, SeaStyle::Natural),
-        "stylized" => shape(0.35, 1.0, 1.0, 15.0, 1.0, 0.8, SeaStyle::Stylized),
+        "swell" => shape(0.3, 1.8, 0.4, 50.0, 0.8, 0.6, 1.0, SeaStyle::Ocean),
+        "storm" => shape(0.9, 1.3, 1.3, 50.0, 1.3, 1.5, 1.3, SeaStyle::Natural),
+        // (a lively sea, throwing water at a moderate wind)
+        "stylized" => shape(0.35, 1.0, 1.0, 15.0, 1.0, 0.8, 1.8, SeaStyle::Stylized),
         _ => return None,
     })
 }
@@ -192,6 +198,7 @@ impl SeaSettings {
             fetch: s.fetch.clamp(*FETCH_RANGE.start(), *FETCH_RANGE.end()) * 1000.0,
             choppiness: s.choppiness.clamp(*SHARP_RANGE.start(), *SHARP_RANGE.end()),
             foam: s.foam.clamp(0.0, top),
+            spray: s.spray.clamp(0.0, top),
             spectrum: match s.style {
                 SeaStyle::Natural => Some(Spectrum::Jonswap),
                 SeaStyle::Ocean => Some(Spectrum::Phillips),
@@ -251,6 +258,7 @@ fn same(a: &SeaShape, b: &SeaShape) -> bool {
         && (a.fetch - b.fetch).abs() < 0.05
         && close(a.choppiness, b.choppiness)
         && close(a.foam, b.foam)
+        && close(a.spray, b.spray)
 }
 
 #[cfg(test)]

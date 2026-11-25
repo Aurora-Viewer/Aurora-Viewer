@@ -24,6 +24,27 @@ const MAX_WATER_IMPULSES: usize = 192;
 // quad and collapse the others. Counts remain within the shared particle cap.
 pub(crate) const WATER_PARTICLE_VERTICES: u32 = 18;
 
+/// The crests' fuzz (env.wgsl `vs_water_crest_mist`): puffs scattered on
+/// the water round the camera, three per instance, shown where the surface
+/// breaks white; this many instances at the Sea panel's Spray of 1 and the
+/// highest quality. (Most land on water that is not breaking: the shader
+/// drops them before drawing anything.)
+pub(crate) const CREST_MIST: u32 = 320;
+/// The wind (m/s) it starts in: a fresh breeze (Beaufort 5).
+pub(crate) const CREST_MIST_START: f32 = 8.0;
+
+/// How many instances of the crests' fuzz to draw: as many as the Spray
+/// asks (`spray`, 1 by default, 0 none), fewer at lower `quality`; none in
+/// a lighter wind or with the splashes off (`on`).
+pub(crate) fn crest_mist(sea: &Sea, spray: f32, quality: u8, on: bool) -> u32 {
+    let spray = if spray.is_finite() { spray.clamp(0.0, 3.0) } else { 0.0 };
+    if !on || sea.wind[2] < CREST_MIST_START {
+        return 0;
+    }
+    let share = [0.4, 0.6, 0.8, 1.0][quality.min(3) as usize];
+    (CREST_MIST as f32 * spray * share).round() as u32
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WaterEffects {
     pub enabled: bool,
@@ -256,7 +277,7 @@ pub const OPEN_CLEARANCE: f32 = 6.0;
 pub const OPEN_DEPTH: f32 = 20.0;
 pub const LAND_DEPTH: f32 = 3.0;
 /// Outside the grid, its edge fades into open sea over this (m).
-const EDGE_FADE: f32 = 30.0;
+const EDGE_FADE: f32 = 120.0;
 
 /// One cell of the sea grid as the bathymetry texture's w holds it (the
 /// calm in 1/255, the clearance in centimetres): exact in an f32, decoded
@@ -367,8 +388,10 @@ impl WaterGround {
         let open = [OPEN_DEPTH, 1.0, OPEN_CLEARANCE, 0.0, 1.0, 1.0];
         let mut cell: [f32; 6] = std::array::from_fn(|i| v[i] + (open[i] - v[i]) * t);
         // the travel: the plane wave along the swell now, and the grid's
-        // refraction offset (fading out past the grid)
-        cell[3] = (xy - lo).dot(d0) + v[3] * (1.0 - t);
+        // refraction offset, its edge's going on past the grid (faded out
+        // there, the swell's delay was squeezed into the fade: a line of
+        // short waves round the grid)
+        cell[3] = (xy - lo).dot(d0) + v[3];
         Some(cell)
     }
 
@@ -492,6 +515,8 @@ pub(crate) struct WaterGpu {
     flags: u32,
     quality: u8,
     pub particles: u32,
+    /// Instances of the crests' fuzz this frame (`crest_mist`).
+    pub crest_mist: u32,
 }
 
 impl WaterGpu {
@@ -794,6 +819,7 @@ impl WaterGpu {
             flags: 0,
             quality: 0,
             particles: 0,
+            crest_mist: 0,
         }
     }
 
@@ -807,6 +833,7 @@ impl WaterGpu {
         eye: Vec2,
         ground: &WaterGround,
         sea: &Sea,
+        spray: f32,
         events: &[WaterEvent],
         contacts: &[WaterEvent],
     ) -> bool {
@@ -1047,6 +1074,7 @@ impl WaterGpu {
         } else {
             0
         };
+        self.crest_mist = crest_mist(sea, spray, settings.quality, valid_ground && flags & 0xc0 != 0);
         self.flags = if valid_ground { flags } else { 0 };
         self.quality = settings.quality.min(3);
         self.region = ground.region;
@@ -1117,6 +1145,20 @@ impl WaterGpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_crests_fuzz_needs_a_breeze_and_the_spray() {
+        let mut sea = Sea::default();
+        sea.wind[2] = 14.0;
+        assert_eq!(crest_mist(&sea, 1.0, 3, true), CREST_MIST);
+        assert_eq!(crest_mist(&sea, 2.0, 3, true), 2 * CREST_MIST);
+        assert!(crest_mist(&sea, 1.0, 0, true) < CREST_MIST);
+        assert_eq!(crest_mist(&sea, 0.0, 3, true), 0);
+        assert_eq!(crest_mist(&sea, f32::NAN, 3, true), 0);
+        assert_eq!(crest_mist(&sea, 1.0, 3, false), 0);
+        sea.wind[2] = 6.0;
+        assert_eq!(crest_mist(&sea, 1.0, 3, true), 0);
+    }
 
     #[test]
     fn camera_waterline_follows_crests_and_troughs_and_respects_flat_modes() {
@@ -1267,7 +1309,18 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
             };
             settings.interactions = enabled;
             settings.shore_foam = !enabled; // Keep the same atlas allocation while disabling interactions.
-            gpu.prepare(&device, &queue, settings, 10.0, Vec2::ZERO, &ground, &Sea::default(), &events, &[]);
+            gpu.prepare(
+                &device,
+                &queue,
+                settings,
+                10.0,
+                Vec2::ZERO,
+                &ground,
+                &Sea::default(),
+                1.0,
+                &events,
+                &[],
+            );
             assert_eq!(gpu.particles, 0);
             let mut encoder = device.create_command_encoder(&Default::default());
             gpu.encode(&mut encoder);

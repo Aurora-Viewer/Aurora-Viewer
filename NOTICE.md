@@ -111,17 +111,20 @@ GPL-3.0-or-later as described above.
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
 | Minimap world map overlay (Catznip, `[SL:KB] - Patch: World-MinimapOverlay`): the region's map tiles, `LLViewerRegion::getWorldMapTiles` in `newview/llviewerregion.cpp` and the tile overlay of `LLNetMap` in `newview/llnetmap.cpp` — by Kitty Barnett | `aurora-viewer/src/ui/map_tiles.rs`, `ui/minimap.rs` | Originally LGPL 2.1 |
-| Wet look and drips, `newview/rdwetlook.cpp`, `newview/rdwetdrip.cpp`, `app_settings/shaders/class1/deferred/rdWetLookF.glsl` (Radiance Viewer) — Copyright © 2026 Radiance Viewer contributors | `aurora-viewer/src/scene/avatar_wet.rs`, `scene/avatar_drip.rs`; `aurora-render/src/shaders/object.wgsl`, `shaders/env.wgsl` | Originally LGPL 2.1 |
+| Wet look and drips, `newview/rdwetlook.cpp`, `newview/rdwetdrip.cpp`, `app_settings/shaders/class1/deferred/rdWetLookF.glsl` (PyKat Resident's Radiance Viewer, ported with the author's permission) — Copyright © 2026 PyKat Resident | `aurora-viewer/src/scene/avatar_wet.rs`, `scene/avatar_drip.rs`; `aurora-render/src/shaders/object.wgsl`, `shaders/env.wgsl` | Originally LGPL 2.1 |
 | Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
 
-## Ideas from other viewers
+## Ideas from other viewers and projects
 
-Some features of Aurora Viewer follow an idea first shown by another viewer,
-written anew for Aurora, without its code. Their authors are thanked here.
+Some features of Aurora Viewer follow an idea first shown by another viewer
+or project, written anew for Aurora, without its code. Their authors are
+thanked here.
 
 | The idea and its author | In Aurora (`crates/`) |
 |---|---|
 | Second camera, a small window that keeps one's own avatar in view (face or whole body) while the main camera looks elsewhere: SnowPastel's [multi-view-viewer](https://github.com/snowpastel/multi-view-viewer) | `aurora-viewer/src/camera/second.rs`, `ui/second_camera.rs`, `app/second_camera.rs`; `aurora-render/src/second_view.rs` |
+| Sea spray kept on the water, hopping off it, widening and flattening, and breaking up into drops as it fades: Ethan Truong's [GodotOceanWaves](https://github.com/2Retr0/GodotOceanWaves) (MIT) | `aurora-render/src/shaders/env.wgsl` (`water_spindrift_particle`, `vs_water_crest_mist`, kind 13 of `water_crash_color`) |
+| Spray thrown the way a crest folds over, the eigenvector of the surface's Jacobian's smaller eigenvalue: the spray map of [Blender](https://www.blender.org)'s ocean modifier (`blenkernel/intern/ocean.cc`, from the Houdini Ocean Toolkit; GPL-2.0-or-later) | `aurora-viewer/src/scene/water_spindrift.rs` (`squeeze`) |
 
 ## Bundled assets
 

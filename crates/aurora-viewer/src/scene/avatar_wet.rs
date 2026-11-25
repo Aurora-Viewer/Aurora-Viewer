@@ -2,8 +2,8 @@
 //! wet a while, by the body part, not by the height (a dipped arm, a
 //! sitting avatar wet up to where the water reached on its pose).
 //!
-//! After Radiance's wet look (rdwetlook.cpp, rdWetLookF.glsl, Radiance
-//! Viewer contributors, originally LGPL 2.1). Each joint of a skeleton,
+//! After the wet look of PyKat Resident's Radiance Viewer (rdwetlook.cpp,
+//! rdWetLookF.glsl, originally LGPL 2.1; NOTICE.md). Each joint of a skeleton,
 //! and each attachment point, keeps eight cells of wetness along the up
 //! the water had in the joint's frame when it got wet, either way from
 //! the joint (0.5 m; 1 m for the points, whose prims reach further); they

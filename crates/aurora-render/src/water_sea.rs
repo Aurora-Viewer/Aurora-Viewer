@@ -289,7 +289,12 @@ impl Sea {
         offset += (main.truncate() * (1.0 - local.swash) * local.slide).extend(main.z + (run - main.z).max(0.0) * local.swash);
         if self.shore[3] > 0.0 {
             // the spectrum's wind sea (water_fft.rs); none without its maps
-            return offset + ocean.map_or(glam::Vec3::ZERO, |o| o.sample(p).offset) * local.chop * self.look[1];
+            let Some(at) = ocean.map(|o| o.sample(p)) else {
+                return offset;
+            };
+            let scale = local.chop * self.look[1];
+            let sway = chop_sway(at.jacobian * scale);
+            return offset + (at.offset.truncate() * scale * sway).extend(at.offset.z * scale);
         }
         for i in 1..trains.min(SEA_TRAINS) {
             let [dx, dy, k, a] = self.trains[i];
@@ -325,6 +330,19 @@ impl Sea {
         }
         level + self.open(source, xy, time, trains, &swell, &local, at.ocean.as_deref()).z
     }
+}
+
+/// How much of the wind sea's sway (its horizontal displacement) is kept
+/// where its derivatives, scaled as the surface takes them, are `j` (xx,
+/// xy, yy): all of it, but where the surface would fold over itself (the
+/// Jacobian's smaller eigenvalue under 0.2; Tessendorf, "Simulating Ocean
+/// Water", 2004), just enough to keep it from folding (a chop and crests
+/// turned far up looped the surface behind every crest). Same as
+/// water_spectrum.wgsl's `water_chop_sway`.
+pub fn chop_sway(j: glam::Vec3) -> f32 {
+    let (a, c) = (1.0 + j.x, 1.0 + j.z);
+    let low = 0.5 * (a + c) - (0.25 * (a - c) * (a - c) + j.y * j.y).sqrt();
+    (0.8 / (1.0 - low).max(1e-3)).min(1.0)
 }
 
 /// The swash's rise (0..1) at the swell's phase `theta`: the broken wave
@@ -435,6 +453,10 @@ pub struct SeaTune {
     pub choppiness: f32,
     /// How much foam the whitecaps make.
     pub foam: f32,
+    /// How much water the waves throw into the air (1: as a real sea
+    /// does; the viewer's scene/water_spindrift.rs: more of it, and from
+    /// calmer seas, the higher).
+    pub spray: f32,
     /// The wind chop as a spectrum, or (none) as the stylised crossing
     /// trains.
     pub spectrum: Option<Spectrum>,
@@ -452,6 +474,7 @@ impl Default for SeaTune {
             fetch: crate::water_fft::FETCH,
             choppiness: 1.0,
             foam: 1.0,
+            spray: 1.0,
             spectrum: Some(Spectrum::Jonswap),
             max_height: f32::INFINITY,
         }
@@ -680,6 +703,22 @@ impl SeaDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chop_turned_far_up_does_not_fold_the_surface_over() {
+        let low = |j: glam::Vec3| {
+            let (a, c) = (1.0 + j.x, 1.0 + j.z);
+            0.5 * (a + c) - (0.25 * (a - c) * (a - c) + j.y * j.y).sqrt()
+        };
+        // a sea that does not fold keeps all its sway
+        assert_eq!(chop_sway(glam::Vec3::new(-0.3, 0.1, -0.2)), 1.0);
+        // one folding over keeps just enough not to: its fold held at 0.2
+        for j in [glam::Vec3::new(-1.5, 0.0, 0.0), glam::Vec3::new(-0.9, 0.6, -1.1)] {
+            let k = chop_sway(j);
+            assert!(k < 1.0 && low(j) < 0.0);
+            assert!((low(j * k) - 0.2).abs() < 0.03, "{}", low(j * k));
+        }
+    }
 
     #[test]
     fn caustics_focus_and_drift_with_the_sea() {
