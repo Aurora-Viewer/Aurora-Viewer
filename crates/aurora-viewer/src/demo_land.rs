@@ -617,6 +617,20 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                 result: Ok(environment()),
             })]
         }
+        LandCommand::InventoryEnvironment {
+            request,
+            parcel,
+            asset,
+            name,
+            ..
+        } => {
+            apply_environment(None, *asset, name);
+            vec![NetEvent::InventoryParcelEnvironment {
+                request: *request,
+                parcel: parcel.clone(),
+                result: Ok(environment()),
+            }]
+        }
         LandCommand::EnvironmentApply {
             local_id,
             track,

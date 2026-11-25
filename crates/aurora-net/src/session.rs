@@ -387,6 +387,7 @@ struct Session<'a> {
     inventory_previews: inventory_preview::Previews,
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
+    explorer_creations: HashMap<u32, Uuid>,
     inventory_copies: inventory_copies::Pending,
     attach_queue: attach_queue::AttachQueue,
     inventory_merchant_pending: bool,
@@ -600,6 +601,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_previews: Default::default(),
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
+        explorer_creations: HashMap::new(),
         inventory_copies: inventory_copies::Pending::default(),
         attach_queue: Default::default(),
         notecard_copy_tx,
@@ -1475,6 +1477,18 @@ impl Session<'_> {
                     editor,
                     notecard,
                     open,
+                    result: Err(aurora_i18n::tr!("session-a-creation-or-copy-was-not-confirmed-reload-the").into()),
+                },
+            );
+        }
+        for (_, request) in self
+            .explorer_creations
+            .extract_if(|callback, _| !self.inventory_callbacks.contains_key(callback))
+        {
+            emit(
+                self.sh,
+                NetEvent::ExplorerItemCreated {
+                    request,
                     result: Err(aurora_i18n::tr!("session-a-creation-or-copy-was-not-confirmed-reload-the").into()),
                 },
             );
@@ -2844,12 +2858,13 @@ impl Session<'_> {
                 copy_name,
             } => self.save_wearable(request, *item, data, copy_name),
             NetCommand::CreateInventoryWearable {
+                explorer,
                 parent,
                 kind,
                 name,
                 data,
                 permissions,
-            } => self.create_wearable(parent, kind, name, data, permissions),
+            } => self.create_wearable(parent, kind, name, data, permissions, explorer),
             NetCommand::CreateSettingsItem {
                 request,
                 parent,
@@ -2983,6 +2998,7 @@ impl Session<'_> {
                 source,
             } => self.create_script_item(request, parent, name, description, source),
             NetCommand::CreateInventoryItem {
+                explorer,
                 parent,
                 kind,
                 name,
@@ -2993,7 +3009,7 @@ impl Session<'_> {
                 m.agent_data.agent_id = self.agent_id();
                 m.agent_data.session_id = self.session_id();
                 m.inventory_block.folder_id = parent;
-                m.inventory_block.callback_id = self.inventory_callback(true);
+                m.inventory_block.callback_id = self.creation_callback(explorer);
                 m.inventory_block.next_owner_mask = permissions.map_or(0x7fff_ffff, |rights| rights.next_owner);
                 if let Some(rights) = permissions {
                     self.remember_creation_permissions(m.inventory_block.callback_id, parent, i32::from(asset), rights);
@@ -5458,7 +5474,7 @@ impl Session<'_> {
                             );
                         }
                         if self.inventory_callbacks.remove(&it.callback_id).is_some_and(|(_, new)| new) {
-                            created.push(item.clone());
+                            created.push(self.created_item_event(it.callback_id, item.clone()));
                         }
                         item
                     })
@@ -5471,8 +5487,8 @@ impl Session<'_> {
                         items,
                     },
                 );
-                for item in created {
-                    emit(self.sh, NetEvent::InventoryCreated(item));
+                for event in created {
+                    emit(self.sh, event);
                 }
             }
         } else if id == BulkUpdateInventory::ID {
@@ -5510,7 +5526,7 @@ impl Session<'_> {
                         };
                         self.accept_inventory_copy(it.callback_id, &item);
                         if new {
-                            created.push(item.clone());
+                            created.push(self.created_item_event(it.callback_id, item.clone()));
                         }
                         self.asset_created(it.callback_id, &item);
                         if let Some((editor, notecard, open)) = self.notecard_copies.remove(&it.callback_id) {
@@ -5558,8 +5574,8 @@ impl Session<'_> {
                         },
                     );
                 }
-                for item in created {
-                    emit(self.sh, NetEvent::InventoryCreated(item));
+                for event in created {
+                    emit(self.sh, event);
                 }
             }
         } else if id == AvatarAnimation::ID {
@@ -6415,6 +6431,27 @@ impl Session<'_> {
             .filter(|_| self.main_cap("InventoryAPIv3").is_none())
     }
 
+    fn creation_callback(&mut self, explorer: Option<Uuid>) -> u32 {
+        let callback = self.inventory_callback(true);
+        if let Some(request) = explorer {
+            self.explorer_creations.insert(callback, request);
+        }
+        callback
+    }
+
+    fn created_item_event(&mut self, callback: u32, item: crate::inventory::InvItem) -> NetEvent {
+        if let Some(request) = self.explorer_creations.remove(&callback) {
+            let result = if item.id.is_nil() {
+                Err(aurora_i18n::tr!("inventory-copy-unconfirmed").to_owned())
+            } else {
+                Ok(item)
+            };
+            NetEvent::ExplorerItemCreated { request, result }
+        } else {
+            NetEvent::InventoryCreated(item)
+        }
+    }
+
     fn inventory_callback(&mut self, created: bool) -> u32 {
         loop {
             self.next_inventory_callback = self.next_inventory_callback.wrapping_add(1).max(1);
@@ -7144,6 +7181,7 @@ mod event_queue_tests {
             inventory_previews: Default::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
+            explorer_creations: HashMap::new(),
             inventory_copies: inventory_copies::Pending::default(),
             attach_queue: Default::default(),
             inventory_merchant_pending: false,
@@ -7525,6 +7563,7 @@ mod script_dialog_tests {
             inventory_previews: Default::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
+            explorer_creations: HashMap::new(),
             inventory_copies: super::inventory_copies::Pending::default(),
             attach_queue: Default::default(),
             inventory_merchant_pending: false,

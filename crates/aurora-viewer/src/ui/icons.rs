@@ -1056,6 +1056,24 @@ impl Icons {
         }
     }
 
+    /// Embedded Tabler mask cached in the owning egui context for Explorer fallbacks.
+    pub(in crate::ui) fn tabler(ctx: &egui::Context, name: &str) -> egui::TextureHandle {
+        let id = egui::Id::unique(("explorer-tabler", name));
+        if let Some(texture) = ctx.data_mut(|data| data.get_temp::<egui::TextureHandle>(id)) {
+            return texture;
+        }
+        let bytes = OUTLINE
+            .iter()
+            .chain(FILLED)
+            .find(|(n, _)| *n == name)
+            .map(|(_, bytes)| *bytes)
+            .unwrap_or(include_bytes!("../../assets/icons/tabler/filled/help-circle.svg"));
+        let image = rasterize_svg(bytes, RASTER_PX).expect("embedded Tabler SVG");
+        let texture = ctx.load_texture(name, image, egui::TextureOptions::LINEAR);
+        ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
+        texture
+    }
+
     pub fn get(&self, name: &str) -> Option<&egui::TextureHandle> {
         self.map.get(name)
     }

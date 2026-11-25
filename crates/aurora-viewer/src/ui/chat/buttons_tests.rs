@@ -2494,6 +2494,49 @@ fn an_inventory_drag_says_where_to_drop_it() {
     }
 }
 
+#[test]
+fn dropping_on_an_inactive_im_targets_that_resident_and_keeps_the_open_chat() {
+    let items = vec![Uuid::from_u128(0x711), Uuid::from_u128(0x712)];
+    let press = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for style in ALL {
+        let mut h = H::new(style);
+        let group = h.world.groups.sessions.entry(GROUP).or_default();
+        group.group = true;
+        group.name = "Builders".into();
+        h.open(Some(JANE));
+        for (title, recipient) in [("Bob Doe", Some(BOB)), ("Builders", None)] {
+            let over = h.text_rect(title).center();
+            let later = h.text_rect("hello from Jane").center();
+            let away = egui::pos2(4.0, 4.0);
+            h.frame(vec![egui::Event::PointerMoved(away), press(away, true)]);
+            crate::ui::inventory::drag::demo_carry(&h.frames.ctx, items.clone());
+            h.frame(vec![egui::Event::PointerMoved(over)]);
+            assert!(!has(&h.take(), |a| matches!(a, ConvAction::GiveItems { .. })));
+            h.frame(vec![press(over, false), egui::Event::PointerMoved(later)]);
+            h.settle();
+            let offers: Vec<_> = h
+                .take()
+                .into_iter()
+                .filter_map(|a| match a {
+                    ConvAction::GiveItems { to, items } => Some((to, items)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                offers,
+                recipient.map(|id| (id, items.clone())).into_iter().collect::<Vec<_>>(),
+                "{style:?}: {title}"
+            );
+            assert_eq!(h.st.selected, Some(JANE));
+        }
+    }
+}
+
 /// Exercise the actual pane in every style, including its detached version:
 /// the resident drop handler must preserve all three inventory cargo types.
 #[test]

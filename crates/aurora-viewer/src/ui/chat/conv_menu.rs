@@ -19,8 +19,20 @@ use crate::ui::menu;
 use crate::world::World;
 use uuid::Uuid;
 
-/// The menu of the entry `resp` of a conversation (None: the nearby chat).
-pub(super) fn attach(resp: &egui::Response, p: &Palette, world: &World, actions: &mut Vec<ConvAction>, conversation: Option<Uuid>) {
+/// An entry's menu and, for a private IM, its inventory drop target.
+/// The recipient is this entry, independent of the displayed conversation.
+pub(super) fn conversation_row(
+    resp: &egui::Response,
+    p: &Palette,
+    world: &World,
+    actions: &mut Vec<ConvAction>,
+    conversation: Option<Uuid>,
+) {
+    if let Some(to) = conversation.filter(|id| sidebar::kind(world, id) == Kind::Private)
+        && let Some(items) = crate::ui::give_drop::row(resp, p, world.agent_id, to)
+    {
+        actions.push(ConvAction::GiveItems { to, items });
+    }
     menu::context_menu(resp, p, |ui| items(ui, p, world, actions, conversation));
 }
 

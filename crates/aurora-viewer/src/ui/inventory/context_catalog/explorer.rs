@@ -81,8 +81,9 @@ pub(super) fn build(
     facts: &Facts,
     all: bool,
     background: bool,
+    ids: &[Uuid],
 ) {
-    let single = st.selected_ids(id).len() == 1;
+    let single = ids.len() == 1;
     if all || !background {
         c.add(
             "copy-path",
@@ -141,12 +142,11 @@ pub(super) fn build(
         // the split view: the other pane's folder, as a drop there would
         let other = st.other_pane.filter(|folder| inv.folders.contains_key(folder));
         if all || other.is_some() {
-            let ids = st.selected_ids(id);
             let to = other.unwrap_or_default();
             let allowed = other.is_some() && !ids.contains(&to) && ids.iter().all(|id| rules::parent(inv, *id) != Some(to));
             // greyed when the drop's own plan refuses (a no-copy item's
             // copy, a protected or worn entry's move), as the drag shows
-            let would = |mode| allowed && !all && super::super::drag::would_drop(inv, &ids, to, mode, prefs, facts);
+            let would = |mode| allowed && !all && super::super::drag::would_drop(inv, ids, to, mode, prefs, facts);
             let (copy, moves) = (would(super::super::drag::DropMode::Copy), would(super::super::drag::DropMode::Move));
             c.add(
                 "copy-to-pane",
@@ -154,7 +154,7 @@ pub(super) fn build(
                 "copy-filled",
                 aurora_i18n::tr!("inventory-copy-to-other-pane"),
                 copy,
-                Command::Explorer(ExplorerCommand::ToOtherPane(ids.clone(), true)),
+                Command::Explorer(ExplorerCommand::ToOtherPane(ids.to_vec(), true)),
             );
             c.add(
                 "move-to-pane",
@@ -162,7 +162,7 @@ pub(super) fn build(
                 "arrow-right",
                 aurora_i18n::tr!("inventory-move-to-other-pane"),
                 moves,
-                Command::Explorer(ExplorerCommand::ToOtherPane(ids, false)),
+                Command::Explorer(ExplorerCommand::ToOtherPane(ids.to_vec(), false)),
             );
         }
     }

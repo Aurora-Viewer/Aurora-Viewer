@@ -118,6 +118,18 @@ fn listed_prompt(list: &[(Id, u64, u64)], id: Id, frame: u64) -> bool {
     list.iter().any(|(other, at, _)| *other == id && at + 1 >= frame)
 }
 
+/// The frontmost registered window in the current or preceding frame. Viewer
+/// toolbars, HUDs and tooltips have layers but do not register as windows.
+pub(crate) fn frontmost_window(ctx: &egui::Context) -> Option<egui::LayerId> {
+    let frame = ctx.cumulative_frame_nr();
+    let shown = ctx.data(|data| data.get_temp::<State>(state_id()))?.shown;
+    ctx.memory(|m| {
+        m.layer_ids()
+            .filter(|layer| layer.order != Order::Background && listed(&shown, layer.id, frame))
+            .last()
+    })
+}
+
 /// At the start of the interface's frame: Ctrl+Shift+W closes every window
 /// drawn on the last frame, and Ctrl+W alone goes to the frontmost. The key
 /// is taken. Nothing with a dialog open (the menu entry is disabled while

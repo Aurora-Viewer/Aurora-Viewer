@@ -7,6 +7,25 @@
 
 use crate::theme::Palette;
 
+/// A single resident's visible row can receive the same inventory as their IM.
+/// Keep the target on the row under the pointer, even in a multi-selection.
+pub(crate) fn row(resp: &egui::Response, p: &Palette, me: uuid::Uuid, resident: uuid::Uuid) -> Option<Vec<uuid::Uuid>> {
+    if resident.is_nil() || resident == me {
+        return None;
+    }
+    let (items, released) = super::inventory::drag::give_target_on(&resp.ctx, resp.layer_id, resp.interact_rect)?;
+    resp.ctx
+        .layer_painter(resp.layer_id)
+        .with_clip_rect(resp.interact_rect)
+        .rect_stroke(
+            resp.rect.shrink(1.0),
+            resp.ctx.global_style().visuals.widgets.inactive.corner_radius,
+            egui::Stroke::new(1.5, p.violet),
+            egui::StrokeKind::Inside,
+        );
+    (released && !items.is_empty()).then_some(items)
+}
+
 /// How much the content fades behind the hint, at most.
 pub(crate) const DIM: f32 = 0.85;
 /// The time the content takes to fade, and to come back.
@@ -51,6 +70,13 @@ pub(crate) fn hint(painter: &egui::Painter, p: &Palette, id: egui::Id, area: egu
         )
     });
     let height = ICON + 8.0 + title.size().y + sub.as_ref().map_or(0.0, |s| 3.0 + s.size().y);
+    if over {
+        let width = title.size().x.max(ICON).max(sub.as_ref().map_or(0.0, |s| s.size().x));
+        super::inventory::drag::note_hint_rect(
+            ctx,
+            egui::Rect::from_center_size(area.center(), egui::vec2(width, height)).intersect(area),
+        );
+    }
     let x = area.center().x;
     let mut y = area.center().y - height / 2.0;
     if let Some(icon) = crate::ui::icons::global("gift-filled") {

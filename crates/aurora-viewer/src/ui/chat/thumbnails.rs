@@ -306,7 +306,7 @@ fn row(
         let wash = if st.thumbnails.flash { wash } else { 0.0 };
         moving |= flashing && st.thumbnails.flash;
         let resp = thumbnail(ui, p, world, st, pics, images, id, unread, on_screen, wash, rect);
-        super::conv_menu::attach(&resp, p, world, &mut st.thumbnails.actions, Some(id));
+        super::conv_menu::conversation_row(&resp, p, world, &mut st.thumbnails.actions, Some(id));
         if resp.clicked() {
             toggle(&ctx, world, st, panels, id, on_screen);
         }

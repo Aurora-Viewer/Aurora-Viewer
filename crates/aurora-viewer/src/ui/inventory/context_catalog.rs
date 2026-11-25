@@ -132,27 +132,18 @@ fn creation(c: &mut Catalog, zone: &str, parent: Uuid, enabled: bool) {
         enabled,
         Command::Folder(parent),
     );
-    for (key, kind, icon, label) in [
-        ("new-script", NewItem::Script, "code", aurora_i18n::tr!("common-new-script")),
-        (
-            "new-note",
-            NewItem::Note,
-            "file-text-filled",
-            aurora_i18n::tr!("common-new-notecard"),
-        ),
-        (
-            "new-gesture",
-            NewItem::Gesture,
-            "hand-move",
-            aurora_i18n::tr!("ui-inventory-context-new-gesture"),
-        ),
+    for (key, kind, icon, label_key) in [
+        ("new-script", NewItem::Script, "code", "common-new-script"),
+        ("new-note", NewItem::Note, "file-text-filled", "common-new-notecard"),
+        ("new-gesture", NewItem::Gesture, "hand-move", "ui-inventory-context-new-gesture"),
         (
             "new-material",
             NewItem::Material,
             "droplet-filled",
-            aurora_i18n::tr!("ui-inventory-context-new-material"),
+            "ui-inventory-context-new-material",
         ),
     ] {
+        let label = aurora_i18n::text_in(aurora_i18n::language(), label_key);
         c.invoke(
             key,
             zone,
@@ -162,7 +153,7 @@ fn creation(c: &mut Catalog, zone: &str, parent: Uuid, enabled: bool) {
             InvAction::Create {
                 parent,
                 kind,
-                name: label.into(),
+                name: crate::text_validation::default_name(label_key).into(),
             },
         );
     }
@@ -175,21 +166,22 @@ fn creation(c: &mut Catalog, zone: &str, parent: Uuid, enabled: bool) {
         Direction::Horizontal,
         false,
     );
-    for (kind, label) in [
-        (4, aurora_i18n::tr!("common-new-shirt")),
-        (5, aurora_i18n::tr!("ui-inventory-context-new-pants")),
-        (6, aurora_i18n::tr!("common-new-shoes")),
-        (7, aurora_i18n::tr!("common-new-socks")),
-        (8, aurora_i18n::tr!("common-new-jacket")),
-        (12, aurora_i18n::tr!("common-new-skirt")),
-        (9, aurora_i18n::tr!("common-new-gloves")),
-        (10, aurora_i18n::tr!("ui-inventory-context-new-tank-top")),
-        (11, aurora_i18n::tr!("ui-inventory-context-new-underpants")),
-        (13, aurora_i18n::tr!("ui-inventory-context-new-alpha-mask")),
-        (14, aurora_i18n::tr!("common-new-tattoo")),
-        (16, aurora_i18n::tr!("ui-inventory-context-new-universal")),
-        (15, aurora_i18n::tr!("ui-inventory-context-new-physics-properties")),
+    for (kind, label_key) in [
+        (4, "common-new-shirt"),
+        (5, "ui-inventory-context-new-pants"),
+        (6, "common-new-shoes"),
+        (7, "common-new-socks"),
+        (8, "common-new-jacket"),
+        (12, "common-new-skirt"),
+        (9, "common-new-gloves"),
+        (10, "ui-inventory-context-new-tank-top"),
+        (11, "ui-inventory-context-new-underpants"),
+        (13, "ui-inventory-context-new-alpha-mask"),
+        (14, "common-new-tattoo"),
+        (16, "ui-inventory-context-new-universal"),
+        (15, "ui-inventory-context-new-physics-properties"),
     ] {
+        let label = aurora_i18n::text_in(aurora_i18n::language(), label_key);
         c.add(
             format!("create-wearable:{kind}"),
             &clothes,
@@ -199,7 +191,7 @@ fn creation(c: &mut Catalog, zone: &str, parent: Uuid, enabled: bool) {
             Command::Invoke(InvAction::Create {
                 parent,
                 kind: NewItem::Wearable(kind),
-                name: label.into(),
+                name: crate::text_validation::default_name(label_key).into(),
             }),
         );
     }
@@ -212,12 +204,13 @@ fn creation(c: &mut Catalog, zone: &str, parent: Uuid, enabled: bool) {
         Direction::Horizontal,
         false,
     );
-    for (kind, label) in [
-        (0, aurora_i18n::tr!("common-new-shape")),
-        (1, aurora_i18n::tr!("common-new-skin")),
-        (2, aurora_i18n::tr!("common-new-hair")),
-        (3, aurora_i18n::tr!("common-new-eyes")),
+    for (kind, label_key) in [
+        (0, "common-new-shape"),
+        (1, "common-new-skin"),
+        (2, "common-new-hair"),
+        (3, "common-new-eyes"),
     ] {
+        let label = aurora_i18n::text_in(aurora_i18n::language(), label_key);
         c.add(
             format!("create-wearable:{kind}"),
             &body,
@@ -227,7 +220,7 @@ fn creation(c: &mut Catalog, zone: &str, parent: Uuid, enabled: bool) {
             Command::Invoke(InvAction::Create {
                 parent,
                 kind: NewItem::Wearable(kind),
-                name: label.into(),
+                name: crate::text_validation::default_name(label_key).into(),
             }),
         );
     }
@@ -240,11 +233,12 @@ fn creation(c: &mut Catalog, zone: &str, parent: Uuid, enabled: bool) {
         Direction::Horizontal,
         false,
     );
-    for (kind, label) in [
-        (0, aurora_i18n::tr!("ui-inventory-context-new-sky")),
-        (1, aurora_i18n::tr!("ui-inventory-context-new-water")),
-        (2, aurora_i18n::tr!("ui-inventory-context-new-day-cycle")),
+    for (kind, label_key) in [
+        (0, "ui-inventory-context-new-sky"),
+        (1, "ui-inventory-context-new-water"),
+        (2, "ui-inventory-context-new-day-cycle"),
     ] {
+        let label = aurora_i18n::text_in(aurora_i18n::language(), label_key);
         c.add(
             format!("create-settings:{kind}"),
             &settings,
@@ -254,7 +248,7 @@ fn creation(c: &mut Catalog, zone: &str, parent: Uuid, enabled: bool) {
             Command::Invoke(InvAction::Create {
                 parent,
                 kind: NewItem::Settings(kind),
-                name: label.into(),
+                name: crate::text_validation::default_name(label_key).into(),
             }),
         );
     }
@@ -365,6 +359,20 @@ fn build_mode(
     all: bool,
     background: bool,
 ) -> Catalog {
+    build_for_selection(inv, id, st, prefs, facts, st.selected_ids(id), all, background)
+}
+
+/// The invoking window supplies its own selection, including Explorer's independent tabs.
+pub(super) fn build_for_selection(
+    inv: &Inventory,
+    id: Uuid,
+    st: &InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    ids: Vec<Uuid>,
+    all: bool,
+    background: bool,
+) -> Catalog {
     let mut c = Catalog {
         editing: all,
         ..Default::default()
@@ -375,7 +383,6 @@ fn build_mode(
     let target = rules::original(inv, id);
     let original = target.and_then(|id| inv.items.get(&id));
     let kind = original.or(item).map_or(-1, |it| it.asset_type);
-    let ids = st.selected_ids(id);
     let single = ids.len() == 1;
     let ready = st.pending.is_none();
     let writable = rules::mutable(inv, id);
@@ -429,7 +436,7 @@ fn build_mode(
         );
         c.divider("folder-navigation", TEXT);
         navigation(&mut c, inv, id, single);
-        extra::build(&mut c, inv, id, st, prefs, facts, all);
+        extra::build(&mut c, inv, id, st, prefs, facts, all, &ids);
         return c;
     }
     let copyable = clipboard::copy_allowed(inv, &ids);
@@ -655,14 +662,22 @@ fn build_mode(
                         InvAction::TriggerSound(it.asset_id),
                     );
                 }
-                if kind == 56 || all {
+                if (single && crate::world::env_select::inventory_settings_kind(it).is_some()) || all {
                     c.invoke(
                         "apply-environment",
                         TEXT,
                         "sun-filled",
                         aurora_i18n::tr!("common-apply-to-myself-only"),
                         single && !it.asset_id.is_nil(),
-                        InvAction::Environment(it.asset_id, it.flags),
+                        InvAction::Environment(it.asset_id, it.flags, it.id),
+                    );
+                    c.invoke(
+                        "apply-parcel",
+                        TEXT,
+                        "map-filled",
+                        aurora_i18n::tr!("explorer-set-parcel-environment"),
+                        facts.parcel_environment,
+                        InvAction::EnvironmentParcel(it.id),
                     );
                     c.invoke(
                         "apply-save-parcel",
@@ -1062,12 +1077,12 @@ fn build_mode(
             "trash-filled",
             aurora_i18n::tr!("common-delete"),
             ready && (super::delete::allowed(inv, &ids, prefs, facts) || detach),
-            Command::Delete(ids, false),
+            Command::Delete(ids.clone(), false),
         );
         c.slot("delete", 7);
     }
-    extra::build(&mut c, inv, id, st, prefs, facts, all);
-    explorer::build(&mut c, inv, id, st, prefs, facts, all, background);
+    extra::build(&mut c, inv, id, st, prefs, facts, all, &ids);
+    explorer::build(&mut c, inv, id, st, prefs, facts, all, background, &ids);
     if !all {
         super::listings::restrict(&mut c, inv, id);
     }

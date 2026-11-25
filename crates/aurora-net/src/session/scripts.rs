@@ -378,6 +378,7 @@ mod tests {
             inventory_previews: Default::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
+            explorer_creations: Default::default(),
             inventory_copies: super::inventory_copies::Pending::default(),
             attach_queue: Default::default(),
             inventory_merchant_pending: false,

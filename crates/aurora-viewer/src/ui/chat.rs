@@ -4279,7 +4279,7 @@ pub fn show(
                     )
                     .resp;
                     conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
-                    conv_menu::attach(&local, p, world, &mut actions, None);
+                    conv_menu::conversation_row(&local, p, world, &mut actions, None);
                     st.reorder.local_row(&local);
                     if st.reorder.dragging(None)
                         && let Some(g) = st.reorder.ghost(ui.ctx())
@@ -4347,7 +4347,7 @@ pub fn show(
                             st.reveal = None;
                         }
                         conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
-                        conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
+                        conv_menu::conversation_row(&entry.resp, p, world, &mut actions, Some(other));
                         st.reorder.row(world, other, &entry.resp);
                         if st.reorder.dragging(Some(other))
                             && let Some(g) = st.reorder.ghost(ui.ctx())

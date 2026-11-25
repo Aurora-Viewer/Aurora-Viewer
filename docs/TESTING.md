@@ -6863,6 +6863,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
+| `AURORA_DEBUG_EXPLORER_KEYS=1` | Bounded shortcut-routing diagnostics for Inventory Explorer (see Details) |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, system folder icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open\|delete` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
@@ -7787,6 +7788,7 @@ failure. Grid validation and any paid upload are performed by the human.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEBUG_EXPLORER_KEYS=1`**: opt-in `explorer-key` info-log lines for the first 32 recognized shortcut presses, tracing native input, focus and Explorer tab routing for up to two following frames. Records shortcut keys, modifier bits and opaque layer IDs, never typed text or inventory names. Use a separately named test log and unset after diagnosis; it changes no permission or mutation rule.
 - **`AURORA_DEMO_INVENTORY=offer-unsent|offer-sent|offer-uncertain`**: opens
   the real give confirmation for the synthetic no-copy object. Click **Give**.
   With `offer-unsent`, the item remains and the viewer reports that no offer

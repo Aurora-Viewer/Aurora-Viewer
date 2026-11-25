@@ -291,7 +291,7 @@ impl Along {
 /// `c` moved in lightness, as little as it takes, until it reads `min`:1
 /// against `ground`: away from the ground on its own side, or the other
 /// side if that one cannot reach it.
-fn readable(c: Color32, ground: Color32, min: f32) -> Color32 {
+pub(crate) fn readable(c: Color32, ground: Color32, min: f32) -> Color32 {
     if contrast(c, ground) >= min {
         return c;
     }

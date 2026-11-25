@@ -61,7 +61,7 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
                     &Default::default(),
                     &Default::default(),
                     &Default::default(),
-                    true,
+                    crate::settings::InventoryStyle::Classic,
                 );
                 for action in &pass {
                     if let InvAction::Preview(item, _) = action {
@@ -78,7 +78,7 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
                     &mut library_prefs,
                     &mut false,
                 );
-                if let Some(drag) = world_drag(host.ctx())
+                if let Some(drag) = world_drag(host)
                     && drag.released
                 {
                     dropped = Some(drag.item);

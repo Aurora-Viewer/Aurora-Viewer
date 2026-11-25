@@ -30,6 +30,23 @@ pub(super) fn opacity(inv: &Inventory, st: &InventoryUi, id: Uuid) -> f32 {
 }
 
 impl InventoryUi {
+    /// A clipboard holds inventory-record UUIDs belonging to one account. A Library UUID can be shared across accounts.
+    pub(super) fn enter_clipboard_account(&mut self, root: Uuid) {
+        if self.clipboard_root.is_some_and(|previous| previous != root) {
+            self.clipboard.clear();
+            self.cut = false;
+            self.consume_clipboard = false;
+            self.clipboard_loaded = None;
+            self.move_to = None;
+            for window in &mut self.windows {
+                window.state.clipboard.clear();
+                window.state.cut = false;
+                window.state.consume_clipboard = false;
+            }
+        }
+        self.clipboard_root = Some(root);
+    }
+
     /// Cancel the shared cut in every inventory window. Copy remains reusable.
     pub fn cancel_cut(&mut self) {
         if self.cut {
@@ -1140,7 +1157,11 @@ mod tests {
                         &Default::default(),
                         &Default::default(),
                         &Default::default(),
-                        self.classic,
+                        if self.classic {
+                            crate::settings::InventoryStyle::Classic
+                        } else {
+                            crate::settings::InventoryStyle::Aurora
+                        },
                     );
                 },
             ));

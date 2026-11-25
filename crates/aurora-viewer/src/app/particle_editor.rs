@@ -235,6 +235,7 @@ impl App {
             p.step = Step::Item { folder };
         }
         self.send(NetCommand::CreateInventoryItem {
+            explorer: None,
             parent: folder,
             kind: NewItem::Script,
             name: script_name().into(),

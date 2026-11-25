@@ -17,6 +17,73 @@ use glam::Vec3;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Identity and ownership state that were shown when confirming an inventory EEP preset.
+/// Parcel IDs repeat in different regions. Never retarget a confirmed write on a crossing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmedEnvParcel {
+    pub region: RegionHandle,
+    pub local_id: i32,
+    pub owner: Uuid,
+    pub group_owned: bool,
+    pub status: u8,
+    pub allow_override: bool,
+    pub name: String,
+}
+
+impl ConfirmedEnvParcel {
+    pub fn new(region: RegionHandle, p: &ParcelInfo) -> Self {
+        Self {
+            region,
+            local_id: p.local_id,
+            owner: p.owner_id,
+            group_owned: p.is_group_owned,
+            status: p.status,
+            allow_override: p.region_allow_env_override,
+            name: p.name.clone(),
+        }
+    }
+
+    pub fn matches(&self, region: Option<RegionHandle>, parcel: Option<&ParcelInfo>) -> bool {
+        self.local_id > 0
+            && region == Some(self.region)
+            && parcel.is_some_and(|p| {
+                self.local_id == p.local_id
+                    && self.owner == p.owner_id
+                    && self.group_owned == p.is_group_owned
+                    && self.status == p.status
+                    && self.allow_override == p.region_allow_env_override
+                    && p.area >= 128
+                    && self.name == p.name
+            })
+    }
+}
+
+#[cfg(test)]
+mod confirmed_environment_tests {
+    use super::*;
+
+    #[test]
+    fn confirmed_inventory_environment_never_redirects_to_a_second_region_or_parcel() {
+        let mut parcel = ParcelInfo {
+            local_id: 6,
+            owner_id: Uuid::from_u128(77),
+            area: 512,
+            ..Default::default()
+        };
+        let target = ConfirmedEnvParcel::new(9, &parcel);
+        assert!(target.matches(Some(9), Some(&parcel)));
+        assert!(!target.matches(Some(10), Some(&parcel)), "same parcel ID in another region");
+        assert!(!target.matches(Some(9), None));
+        parcel.local_id = 5;
+        assert!(!target.matches(Some(9), Some(&parcel)));
+        parcel.local_id = 6;
+        parcel.owner_id = Uuid::from_u128(88);
+        assert!(!target.matches(Some(9), Some(&parcel)), "ownership changed after confirmation");
+        parcel.local_id = REGION_PARCEL_ID;
+        assert!(!ConfirmedEnvParcel::new(9, &parcel).matches(Some(9), Some(&parcel)));
+    }
+}
+
 /// ParcelPropertiesRequest sequence id of the selection (SELECTED_PARCEL_SEQ_ID).
 pub const SELECTED_PARCEL_SEQ_ID: i32 = -10000;
 /// ParcelPropertiesRequest sequence id of the parcel under the pointer
@@ -320,6 +387,14 @@ pub enum LandCommand {
         day_length: i32,
         day_offset: i32,
         altitudes: [f32; 3],
+    },
+    /// A confirmed inventory command scoped to the parcel occupied by the agent.
+    InventoryEnvironment {
+        request: Uuid,
+        parcel: ConfirmedEnvParcel,
+        asset: Uuid,
+        name: String,
+        flags: u32,
     },
     /// LLPanelEnvironmentInfo::onPickerCommitted: updateParcel with the
     /// settings asset of an inventory item, for the whole day (`track`

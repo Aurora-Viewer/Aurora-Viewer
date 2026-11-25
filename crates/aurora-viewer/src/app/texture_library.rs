@@ -867,12 +867,13 @@ impl App {
         own.then_some((shown.idx, u8::try_from(shown.face?).ok()?))
     }
 
-    pub(super) fn texture_library_drag_input(&mut self, ctx: &egui::Context, renderer: &mut Renderer) -> Option<Drop> {
+    pub(super) fn texture_library_drag_input(&mut self, root: &egui::Ui, renderer: &mut Renderer) -> Option<Drop> {
+        let ctx = root.ctx();
         self.library_drag.highlighted.clear();
         if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
             return None;
         }
-        let Some(drag) = ui::inventory::world_drag(ctx) else {
+        let Some(drag) = ui::inventory::world_drag(root) else {
             self.library_drag.end_worn_search(renderer);
             return None;
         };
@@ -1058,7 +1059,7 @@ impl App {
             // a refusal says why first; over what we wear, the keys come next
             if reason.is_some() || worn && !ctrl {
                 let p = &self.palette;
-                egui::Tooltip::always_open(
+                let hint = egui::Tooltip::always_open(
                     ctx.clone(),
                     egui::LayerId::background(),
                     egui::Id::unique("texture-world-drop-refused"),
@@ -1071,6 +1072,9 @@ impl App {
                     }
                     None => worn_drop_keys(ui, p, drag.shift, linkset),
                 });
+                if let Some(hint) = hint {
+                    crate::ui::inventory::drag::note_hint_rect(ctx, hint.response.rect);
+                }
             }
         } else {
             egui::DragAndDrop::clear_payload(ctx);

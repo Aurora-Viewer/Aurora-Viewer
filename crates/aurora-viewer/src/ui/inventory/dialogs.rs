@@ -37,9 +37,9 @@ pub(super) fn show(
     let mut done = false;
     let title = match &dialog {
         EditDialog::Properties(..) => aurora_i18n::tr!("ui-inventory-dialogs-object-properties"),
-        EditDialog::Delete(_, true) => aurora_i18n::tr!("ui-inventory-dialogs-purge-selection"),
-        EditDialog::Delete(_, false) => aurora_i18n::tr!("ui-inventory-dialogs-delete-selection"),
-        EditDialog::DetachDelete(_) => aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
+        EditDialog::Delete(_, true) | EditDialog::ExplorerDelete(_, true) => aurora_i18n::tr!("ui-inventory-dialogs-purge-selection"),
+        EditDialog::Delete(_, false) | EditDialog::ExplorerDelete(_, false) => aurora_i18n::tr!("ui-inventory-dialogs-delete-selection"),
+        EditDialog::DetachDelete(_) | EditDialog::ExplorerDetachDelete(_) => aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
         EditDialog::Empty(_) => aurora_i18n::tr!("common-empty-trash"),
         EditDialog::Ungroup(_) => aurora_i18n::tr!("ui-inventory-dialogs-ungroup-folder"),
         EditDialog::Discard(..) | EditDialog::SaveEmbedded(..) => aurora_i18n::tr!("ui-inventory-dialogs-save-changes"),
@@ -52,7 +52,8 @@ pub(super) fn show(
         dialog,
         EditDialog::Discard(_) | EditDialog::CopyEmbedded(..) | EditDialog::SaveEmbedded(_)
     );
-    let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::DetachDelete(_) | EditDialog::Empty(_));
+    let explorer_delete = matches!(dialog, EditDialog::ExplorerDelete(..) | EditDialog::ExplorerDetachDelete(_));
+    let confirmation = explorer_delete || matches!(dialog, EditDialog::Delete(..) | EditDialog::DetachDelete(_) | EditDialog::Empty(_));
     let window_id = format!(
         "inventory_{}_{}",
         if properties {
@@ -167,7 +168,7 @@ pub(super) fn show(
             }
             // windows of their own (`share`, `replace_links::show`)
             EditDialog::Share(..) | EditDialog::ReplaceLinks(..) => done = true,
-            EditDialog::Delete(ids, purge) => {
+            EditDialog::Delete(ids, purge) | EditDialog::ExplorerDelete(ids, purge) => {
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(if ids.len() == 1 {
@@ -214,7 +215,12 @@ pub(super) fn show(
                     st.ui_id,
                 ) {
                     let silence = !*purge && st.delete_dont_ask;
-                    match super::delete::plan(inv, ids, *purge, prefs, facts) {
+                    let plan = if explorer_delete {
+                        super::delete::explorer_plan(inv, ids, *purge, prefs, facts)
+                    } else {
+                        super::delete::plan(inv, ids, *purge, prefs, facts)
+                    };
+                    match plan {
                         Ok(change) => {
                             if silence {
                                 actions.push(InvAction::StopConfirmingDelete);
@@ -227,7 +233,7 @@ pub(super) fn show(
                 }
             }
             // "DeleteWornItems" (notifications.xml): no ignore box.
-            EditDialog::DetachDelete(ids) => {
+            EditDialog::DetachDelete(ids) | EditDialog::ExplorerDetachDelete(ids) => {
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(if ids.len() == 1 {
@@ -248,7 +254,7 @@ pub(super) fn show(
                     &mut done,
                     st.ui_id,
                 ) {
-                    super::delete::start_detach(inv, st, prefs, facts, actions, std::mem::take(ids));
+                    super::delete::start_detach_from(inv, st, prefs, facts, actions, std::mem::take(ids), explorer_delete);
                     done = true;
                 }
             }
@@ -363,7 +369,7 @@ pub(super) fn show(
     }
     if open && !done {
         st.dialog = Some(dialog);
-    } else if matches!(dialog, EditDialog::Delete(..)) {
+    } else if matches!(dialog, EditDialog::Delete(..) | EditDialog::ExplorerDelete(..)) {
         st.delete_dont_ask = false;
     }
 }
@@ -796,7 +802,7 @@ pub(super) fn preview(
             }
             if it.asset_type == 56 && !it.asset_id.is_nil() && flat_button(ui, p, aurora_i18n::tr!("common-apply-to-myself-only")).clicked()
             {
-                actions.push(InvAction::Environment(it.asset_id, it.flags));
+                actions.push(InvAction::Environment(it.asset_id, it.flags, it.id));
             }
             let mut edited = super::embedded::EditorResult::default();
             let mut find_changed = false;
@@ -2561,6 +2567,33 @@ mod tests {
             actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
             assert!(actions.is_empty() && st.dialog.is_none(), "the accented Cancel answers Enter alone");
         }
+    }
+
+    #[test]
+    fn explorer_confirmation_rechecks_the_selection_after_switching_to_classic() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let item = Uuid::from_u128(8100);
+        let other = Uuid::from_u128(8109);
+        let ctx = egui::Context::default();
+        let mut st = InventoryUi {
+            drawn_style: Some(InventoryStyle::Classic),
+            dialog: Some(EditDialog::ExplorerDelete(vec![item, other], false)),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+        }
+        // Another client moved one item while the original Trash move was awaiting consent.
+        let trash = rules::system(&inv, 14).unwrap();
+        let old = inv.items[&item].parent;
+        inv.folders.get_mut(&old).unwrap().items.retain(|id| *id != item);
+        inv.folders.get_mut(&trash).unwrap().items.push(item);
+        inv.items.get_mut(&item).unwrap().parent = trash;
+        let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+        actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+        assert!(actions.is_empty() && !st.message.is_empty());
+        assert!(matches!(st.dialog, Some(EditDialog::ExplorerDelete(_, false))));
     }
 
     /// The Legacy Viewer's DeleteItems and ConfirmEmptyTrash alerts answer

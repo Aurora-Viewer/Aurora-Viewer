@@ -7,7 +7,7 @@ use crate::world::inventory::{FetchState, Inventory};
 use crate::world::{World, inventory::actions as rules};
 use aurora_net::inventory::operations::{Mutation, NewItem};
 use egui::{RichText, Vec2};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use uuid::Uuid;
 
 pub struct WearCopyGroup {
@@ -20,6 +20,15 @@ pub struct WearCopyGroup {
 mod aurora;
 mod bulk_permissions;
 pub(crate) mod category;
+mod organized;
+mod organized_permissions;
+pub use organized::folder::ExplorerFolderRequest;
+pub(crate) mod explorer_key_debug;
+mod organized_host;
+mod organized_materials;
+pub(crate) use organized_host::{explorer_file_focus, explorer_owns_keys};
+mod organized_model;
+mod organized_store;
 pub use bulk_permissions::demo_menu as bulk_permissions_demo;
 mod clipboard;
 pub use clipboard::demo_events as clipboard_demo_events;
@@ -74,16 +83,16 @@ pub(crate) mod tree;
 pub(crate) mod view;
 pub use aurora::{DEMO_FOLDER_WINDOW as AURORA_DEMO_FOLDER_WINDOW, demo_place as aurora_demo};
 
-/// A demo scenario written for the Legacy Viewer's window (its tabs, its
-/// footer): every `AURORA_DEMO_INVENTORY` mode but Aurora's own.
-pub fn legacy_demo() -> bool {
-    (delete::demo_enabled() && !aurora::demo_active())
-        || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| !mode.starts_with("aurora"))
-}
+use crate::settings::InventoryStyle;
 
-/// Aurora's own demo scenarios show its window whatever the preference.
-pub fn aurora_demo_active() -> bool {
-    aurora::demo_active()
+/// Inventory demo scenarios open in the style they exercise. The preference
+/// can still be changed normally after the demo starts.
+pub(crate) fn demo_style(mode: &str) -> InventoryStyle {
+    match mode {
+        "aurora-organized" => InventoryStyle::Explorer,
+        mode if mode.starts_with("aurora") => InventoryStyle::Aurora,
+        _ => InventoryStyle::Classic,
+    }
 }
 pub use clipboard::appearance_request as appearance_clipboard;
 pub use view::InventoryPreferences;
@@ -197,6 +206,7 @@ pub enum InvAction {
     CopyLandmarkSlurl(Uuid),
     ShowLandmarkOnMap(Uuid),
     Edit(Mutation),
+    CreateExplorerFolder(ExplorerFolderRequest),
     /// A deletion's selection advances only on this request's success.
     Delete(Box<DeleteRequest>),
     /// The same change from a drag dropped on a folder: the listings ask
@@ -254,7 +264,7 @@ pub enum InvAction {
         text: String,
         close: bool,
     },
-    Environment(Uuid, u32),
+    Environment(Uuid, u32, Uuid),
     EnvironmentParcel(Uuid),
     /// Apply to myself and keep it for the parcel under the agent.
     EnvironmentSaveParcel(Uuid, u32),
@@ -402,22 +412,7 @@ impl Facts {
                 .map(|friend| friend.id)
                 .collect(),
             environment_locked: world.eep.rlva_locked,
-            parcel_environment: world
-                .land
-                .sel
-                .as_ref()
-                .and_then(|selection| selection.parcel.as_deref())
-                .or(world.parcel.as_deref())
-                .is_some_and(|parcel| {
-                    crate::world::env_apply::can_update_parcel(
-                        parcel,
-                        &world.agent_rights(),
-                        world
-                            .main_region
-                            .and_then(|handle| world.regions.get(&handle))
-                            .is_some_and(|region| region.caps.contains_key("ExtEnvironment")),
-                    )
-                }),
+            parcel_environment: crate::world::env_apply::inventory_parcel(world).is_some(),
             rlva: world.rlva_wear_locks(),
             // (LLLandmarksPanel::isActionEnabled: @tplm only)
             landmark_blocked: !world.rlva_landmark_button_enabled(),
@@ -464,9 +459,12 @@ pub enum EditDialog {
     /// Items to give, then one or more residents (LLAvatarActions::shareWithAvatars).
     Share(Vec<Uuid>, Vec<Uuid>),
     Delete(Vec<Uuid>, bool),
+    /// Explorer keeps the requested Trash or purge operation across a style change.
+    ExplorerDelete(Vec<Uuid>, bool),
     /// Delete of a selection holding worn clothing or attachments: take them
     /// off first, then move the selection to the Trash.
     DetachDelete(Vec<Uuid>),
+    ExplorerDetachDelete(Vec<Uuid>),
     Empty(Uuid),
     Ungroup(Uuid),
     ReplaceLinks(Box<replace_links::ReplaceLinks>),
@@ -567,7 +565,12 @@ impl InventoryWindow {
     /// window, the Marketplace Listings panel) lets the main window
     /// answer. A new kind of list window is added here.
     fn lists_inventory(&self) -> bool {
-        self.id != listings::PANEL && (!self.root.is_nil() || self.additional || self.state.torn_off || self.state.single_folder.is_some())
+        self.id != listings::PANEL
+            && (!self.root.is_nil()
+                || self.additional
+                || self.state.native_result_window
+                || self.state.torn_off
+                || self.state.single_folder.is_some())
     }
 }
 
@@ -682,21 +685,18 @@ pub(crate) struct WorldDrag {
 
 /// Read before egui's end-pass clears released cargo. A dragging widget keeps
 /// wants-pointer set even over the world; only the destination area counts.
-pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
+pub(crate) fn world_drag(root: &egui::Ui) -> Option<WorldDrag> {
+    let ctx = root.ctx();
     let item = egui::DragAndDrop::payload::<InvDrag>(ctx)
         .map(|cargo| cargo.0)
         .or_else(|| egui::DragAndDrop::payload::<super::places::drag::PlaceDrag>(ctx).and_then(|cargo| cargo.target.item()))?;
-    if !drag::over_world(ctx) {
-        return None;
-    }
-    ctx.input(|i| {
-        Some(WorldDrag {
-            item,
-            position: i.pointer.interact_pos()?,
-            released: i.pointer.button_released(egui::PointerButton::Primary),
-            ctrl: i.modifiers.ctrl,
-            shift: i.modifiers.shift,
-        })
+    let pointer = drag::pointer::world(root)?;
+    Some(WorldDrag {
+        item,
+        position: pointer.position,
+        released: pointer.released,
+        ctrl: pointer.modifiers.ctrl,
+        shift: pointer.modifiers.shift,
     })
 }
 
@@ -717,6 +717,10 @@ struct TabFilters {
 
 #[derive(Default)]
 pub struct InventoryUi {
+    organized_host: organized_host::Host,
+    drawn_style: Option<InventoryStyle>,
+    /// Exact native search results remain visible without changing the style preference.
+    native_result_window: bool,
     pub default_permissions_open: bool,
     context_folders: std::cell::RefCell<context_catalog::FolderCache>,
     pub marketplace_commands: std::collections::HashMap<Uuid, Vec<crate::ui::marketplace_listings::OptionState>>,
@@ -741,6 +745,7 @@ pub struct InventoryUi {
     /// for every pane (`Facts::pane_texts`).
     pub pane_texts: std::sync::Arc<std::collections::HashMap<PaneKey, PaneText>>,
     bulk_permissions: bulk_permissions::State,
+    pub(crate) next_owner: organized_permissions::State,
     menu_editor: context_customize::State,
     menu_notecards: context_notecards::State,
     /// Library wearables being copied to be worn: copy request → replace.
@@ -842,6 +847,7 @@ pub struct InventoryUi {
     document_owner: Option<egui::Id>,
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
+    clipboard_root: Option<Uuid>,
     pub cut: bool,
     /// This frame's Esc cancelled a cut (`clipboard_input`).
     cut_cancelled: bool,
@@ -858,6 +864,9 @@ pub struct InventoryUi {
     pub new_folder_in_all: Option<Uuid>,
     /// The pending change's folder is shown that way (`show_created`).
     pub created_in_all: bool,
+    pub(crate) explorer_creation: Option<ExplorerFolderRequest>,
+    pub(crate) explorer_items: HashMap<Uuid, ExplorerFolderRequest>,
+    pub(crate) explorer_home_queue: VecDeque<ExplorerFolderRequest>,
     pub merchant_requested: bool,
     pub merchant: bool,
     pub pending: Option<Uuid>,
@@ -904,6 +913,9 @@ pub struct InventoryUi {
     pub close_after_save: bool,
     pub wanted_images: HashSet<Uuid>,
     pub wanted_hover_images: HashSet<Uuid>,
+    /// Visible Explorer tiles in paint order, with their requested thumbnail side.
+    pub wanted_explorer_images: Vec<(Uuid, u32)>,
+    pub(crate) explorer_materials: organized_materials::MaterialTiles,
     /// Residents whose profile picture the give confirmation wants.
     pub wanted_pics: HashSet<Uuid>,
     /// The animations the previews' Play buttons started (the main state's
@@ -1001,6 +1013,10 @@ impl InventoryUi {
         self.bulk_permissions.open(roots);
     }
 
+    pub(crate) fn set_explorer_account(&mut self, path: std::path::PathBuf) {
+        self.organized_host.store.set_account(path);
+    }
+
     pub(crate) fn load_received(&mut self, path: std::path::PathBuf, root: Uuid) {
         self.received_badge = received::Badge::load(path, root);
     }
@@ -1083,7 +1099,17 @@ impl InventoryUi {
 
     /// A dialog of this pane that stays on screen with the window closed.
     fn has_dialog(&self) -> bool {
-        self.dialog.is_some() || self.move_to.is_some() || self.thumbnail.item.is_some() || self.bulk_permissions.active()
+        self.dialog.is_some()
+            || self.move_to.is_some()
+            || self.thumbnail.item.is_some()
+            || self.bulk_permissions.active()
+            || self.preview.is_some()
+            || self.share_picker.open
+            || self.detach_delete.is_some()
+            || self.folder_color.is_some()
+            || self.filters_open
+            || self.preferences_open
+            || self.default_permissions_open
     }
 
     pub(crate) fn additional_open(&self) -> bool {
@@ -1119,7 +1145,11 @@ impl InventoryUi {
     /// Me › New Inventory Window (Inventory.NewWindow): the additional
     /// window opens, or comes to the front when it is already open (Aurora
     /// keeps one, where the Legacy Viewer adds another).
-    pub fn open_additional_window(&mut self, ctx: &egui::Context) {
+    pub fn open_additional_window(&mut self, ctx: &egui::Context, style: InventoryStyle, root: Uuid) {
+        if style == InventoryStyle::Explorer {
+            self.organized_host.open_window(ctx, root);
+            return;
+        }
         if self.additional_open() {
             super::widgets::expand_floater(ctx, &floater_id(ADDITIONAL_WINDOW));
         } else {
@@ -1135,10 +1165,11 @@ impl InventoryUi {
     /// of "Show in a new window" (fs_partial_inventory) are left alone.
     /// The windows made from tabs show the whole inventory: they close too.
     pub fn close_showinv_windows(&mut self) {
+        self.organized_host.close_detached();
         for w in self
             .windows
             .iter_mut()
-            .filter(|w| w.additional || w.state.torn_off || w.state.single_folder.is_some())
+            .filter(|w| w.additional || w.state.native_result_window || w.state.torn_off || w.state.single_folder.is_some())
         {
             w.open = false;
         }
@@ -1449,6 +1480,24 @@ impl InventoryUi {
         };
         ids.sort();
         ids
+    }
+
+    /// Keep the native exact-link predicate visible while Explorer remains selected.
+    pub(crate) fn open_links_results(&mut self, target: Uuid) {
+        let id = Uuid::new_v4();
+        let mut state = Self {
+            ui_id: id,
+            native_result_window: true,
+            ..Default::default()
+        };
+        state.find_links(target);
+        self.windows.push(InventoryWindow {
+            id,
+            root: Uuid::nil(),
+            additional: false,
+            state: Box::new(state),
+            open: true,
+        });
     }
 
     pub(crate) fn find_links(&mut self, id: Uuid) {
@@ -2052,8 +2101,8 @@ fn folder_row(
             }
             resp.rect
         };
-        let tint = folder_colors::tint(prefs, id);
-        tree::icon(ui, icons, folder_icon(folder.info.type_default, *open && !flat), p, tint);
+        let (glyph, tint) = tree::folder_art(prefs, id, folder.info.type_default, *open && !flat, p);
+        tree::icon(ui, icons, glyph, p, Some(tint));
         let label = match fetch_state {
             FetchState::Fetching => aurora_i18n::tr!("status-name-loading", name = name.to_string()),
             FetchState::Failed => aurora_i18n::tr!("ui-inventory-failed-2", name = name.to_string()),
@@ -3090,25 +3139,58 @@ pub fn show(
     hover_images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     pics: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     script_settings: &super::scripts::settings::ScriptSettings,
-    classic: bool,
+    style: InventoryStyle,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
     let mut dual_actions = Vec::new();
-    st.dual_layout = dual.is_some();
+    st.dual_layout = dual.is_some() && style != InventoryStyle::Explorer;
     if std::mem::take(&mut st.dual_clicked) {
         actions.push(InvAction::DualPanel);
     }
     // The right pane costs nothing while the window is closed, unless one
     // of its own dialogs is still open.
     let mut dual = match dual {
+        Some(pane) if style == InventoryStyle::Explorer && !pane.has_dialog() => None,
         Some(pane) if !*open && !pane.has_dialog() => {
             pane.pending_delete = None;
             None
         }
         pane => pane,
     };
+    let grouped = style == InventoryStyle::Explorer;
+    let classic = style == InventoryStyle::Classic;
+    if let Some(previous) = st.drawn_style.replace(style)
+        && previous != style
+    {
+        if previous == InventoryStyle::Explorer {
+            if st.organized_host.has_detached() && !st.windows.iter().any(|w| w.open && w.id != listings::PANEL) {
+                *open = true;
+            }
+            st.organized_host.suspend(ctx, &world.inventory, st.pending.is_some(), &mut actions);
+        } else if grouped && st.windows.iter().any(|w| w.open && w.id != listings::PANEL) && !st.organized_host.has_detached() {
+            *open = true;
+        }
+    }
+    if grouped {
+        // A native auxiliary panel (e.g. Marketplace listings) can ask to open
+        // a folder. Route newly requested windows to Explorer; previously
+        // drawn native windows are parked until their style is selected again.
+        for w in &mut st.windows {
+            if w.open && w.id != listings::PANEL && !w.state.native_result_window && w.state.drawn_style.is_none() {
+                let place = if w.additional {
+                    organized_model::Location::Home
+                } else if w.state.single_folder.is_some() || w.state.torn_off {
+                    organized_model::Location::Folder(w.state.browse)
+                } else {
+                    organized_model::Location::Folder(w.root)
+                };
+                st.organized_host.open_at(ctx, world.inventory.root, place);
+                w.open = false;
+            }
+        }
+    }
     clipboard::prepare(st);
-    if !*open {
+    if !(*open || grouped && st.organized_host.has_detached()) {
         st.pending_delete = None;
     }
     st.focus_search = *open && (st.focus_search || !st.was_open);
@@ -3116,6 +3198,7 @@ pub fn show(
     // windows and dialogs that show them, not every frame while closed.
     let shown = *open
         || dual.is_some()
+        || (grouped && st.organized_host.has_detached())
         || st.dialog.is_some()
         || st.detach_delete.is_some()
         || st.move_to.is_some()
@@ -3184,7 +3267,7 @@ pub fn show(
     }
     st.wanted_pics.extend(wanted);
     // Aurora's details of the selection name its creator and owner.
-    if !classic && *open {
+    if style == InventoryStyle::Aurora && *open {
         for state in std::iter::once(&*st).chain(dual.as_deref()) {
             let original = state
                 .selected
@@ -3238,7 +3321,10 @@ pub fn show(
     // (resident_scopes), and the worn items.
     let sorts_by = |column| (0..=4).any(|tab| prefs.sort_for(tab).column == Some(column));
     let by_creator = prefs.explorer.group_by == groups::GroupBy::Creator;
-    if shown && !classic && (prefs.explorer.columns.shown(view::ColumnId::Creator) || sorts_by(view::SortColumn::Creator) || by_creator) {
+    if shown
+        && style == InventoryStyle::Aurora
+        && (prefs.explorer.columns.shown(view::ColumnId::Creator) || sorts_by(view::SortColumn::Creator) || by_creator)
+    {
         st.creator_keys.update(&world.inventory.items);
         let version = st.creator_keys.version;
         let now = std::time::Instant::now();
@@ -3283,18 +3369,21 @@ pub fn show(
             }
         }
     }
+    let avatar = if grouped && shown { world.own_name() } else { String::new() };
     let inv = &mut world.inventory;
+    st.enter_clipboard_account(inv.root);
     // the split view: each pane knows the other's folder (`other_pane`)
     // (None while it lists Recent, Worn, Favorites or results: no folder
     // to copy into there)
     let shows_folder = |pane: &InventoryUi| pane.tab == 0 && !pane.result_view();
     st.other_pane = dual
         .as_deref()
-        .filter(|dual| !classic && shows_folder(dual))
+        .filter(|dual| style == InventoryStyle::Aurora && shows_folder(dual))
         .map(|dual| dual.browse);
     if let Some(dual) = dual.as_deref_mut() {
-        dual.other_pane = (!classic && shows_folder(st)).then_some(st.browse);
-        if !classic {
+        dual.enter_clipboard_account(inv.root);
+        dual.other_pane = (style == InventoryStyle::Aurora && shows_folder(st)).then_some(st.browse);
+        if style == InventoryStyle::Aurora {
             clipboard::split_tab(ctx, st, dual);
         }
         if !*open {
@@ -3326,6 +3415,7 @@ pub fn show(
     context_catalog::process_deferred(inv, st, prefs, &facts, &mut actions);
     delete::finish_detach(inv, st, prefs, &facts, &mut actions);
     bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
+    organized_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
     // Copied folders load their whole tree for the paste; once loaded, they
@@ -3363,8 +3453,8 @@ pub fn show(
         }
     }
     let screen = ctx.content_rect();
-    let default_size = if dual.is_some() { DUAL_SIZE } else { DEFAULT_SIZE };
-    let default_position = if dual.is_some() {
+    let default_size = if st.dual_layout { DUAL_SIZE } else { DEFAULT_SIZE };
+    let default_position = if st.dual_layout {
         egui::pos2(screen.center().x - default_size.x * 0.5, 56.0)
     } else {
         egui::pos2(screen.right() - DEFAULT_SIZE.x - 20.0, 56.0)
@@ -3373,7 +3463,7 @@ pub fn show(
         .compact_header()
         .help(aurora_i18n::tr!("ui-inventory-right-click-item-actions-ctrl-shift-multi-select"));
     let (mut widen, mut narrow) = (false, false);
-    if !classic {
+    if style == InventoryStyle::Aurora {
         // The title bar follows the width the window had last frame.
         let layout = aurora::Layout::of_window(ctx, "inventory");
         floater = floater
@@ -3388,7 +3478,7 @@ pub fn show(
     // Ctrl+W closes the focused pane's tab while it has others, the window
     // with its last (Explorer's; `close_key` gives the key to the frontmost
     // window before the lists read their keys)
-    if !classic && !super::close_key::closes_every_window(ctx) {
+    if style == InventoryStyle::Aurora && !super::close_key::closes_every_window(ctx) {
         let right = dual
             .as_deref()
             .is_some_and(|dual| ctx.memory(|m| m.has_focus(clipboard::focus_id(dual))));
@@ -3400,61 +3490,69 @@ pub fn show(
             aurora::tabs::close_shown(pane, prefs);
         }
     }
-    floater.show(ctx, p, open, |ui| {
-        if let Some(dual) = dual.as_deref_mut() {
-            let available = ui.available_size();
-            let separator_width = 8.0;
-            let usable_width = (available.x - separator_width).max(1.0);
-            let minimum_ratio = (220.0 / usable_width).min(0.45);
-            let ratio = st.dual_split.unwrap_or(0.5).clamp(minimum_ratio, 1.0 - minimum_ratio);
-            let left_width = usable_width * ratio;
-            let mut next_ratio = ratio;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                ui.allocate_ui_with_layout(Vec2::new(left_width, available.y), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.push_id(("inventory_pane", st.ui_id), |ui| {
-                        if classic {
-                            st.aurora = None;
-                            inventory_contents(ui, p, icons, inv, st, prefs, &facts, &mut actions);
-                        } else {
-                            aurora::contents(ui, p, icons, inv, st, prefs, &facts, images, &mut actions);
-                        }
-                    });
-                });
-                let (handle, response) = ui.allocate_exact_size(Vec2::new(separator_width, available.y), egui::Sense::drag());
-                let response = response.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-                if response.dragged() {
-                    next_ratio =
-                        (ratio + ui.input(|input| input.pointer.delta().x) / usable_width).clamp(minimum_ratio, 1.0 - minimum_ratio);
-                }
-                if ui.is_rect_visible(handle) {
-                    ui.painter()
-                        .vline(handle.center().x, handle.y_range(), super::widgets::divider_stroke(p));
-                }
-                let right_width = (usable_width - left_width).max(1.0);
-                ui.allocate_ui_with_layout(
-                    Vec2::new(right_width, available.y),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.push_id(("inventory_pane", dual.ui_id), |ui| {
+    if grouped {
+        st.aurora = None;
+        delete::reconcile_selection(inv, st);
+        let mut host = std::mem::take(&mut st.organized_host);
+        host.show(ctx, p, icons, inv, &avatar, prefs, &facts, st, open, hover_images, &mut actions);
+        st.organized_host = host;
+    } else {
+        floater.show(ctx, p, open, |ui| {
+            if let Some(dual) = dual.as_deref_mut() {
+                let available = ui.available_size();
+                let separator_width = 8.0;
+                let usable_width = (available.x - separator_width).max(1.0);
+                let minimum_ratio = (220.0 / usable_width).min(0.45);
+                let ratio = st.dual_split.unwrap_or(0.5).clamp(minimum_ratio, 1.0 - minimum_ratio);
+                let left_width = usable_width * ratio;
+                let mut next_ratio = ratio;
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.allocate_ui_with_layout(Vec2::new(left_width, available.y), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.push_id(("inventory_pane", st.ui_id), |ui| {
                             if classic {
-                                dual.aurora = None;
-                                inventory_contents(ui, p, icons, inv, dual, prefs, &facts, &mut dual_actions);
+                                st.aurora = None;
+                                inventory_contents(ui, p, icons, inv, st, prefs, &facts, &mut actions);
                             } else {
-                                aurora::contents(ui, p, icons, inv, dual, prefs, &facts, images, &mut dual_actions);
+                                aurora::contents(ui, p, icons, inv, st, prefs, &facts, images, &mut actions);
                             }
                         });
-                    },
-                );
-            });
-            st.dual_split = Some(next_ratio);
-        } else if classic {
-            st.aurora = None;
-            inventory_contents(ui, p, icons, inv, st, prefs, &facts, &mut actions);
-        } else {
-            aurora::contents(ui, p, icons, inv, st, prefs, &facts, images, &mut actions);
-        }
-    });
+                    });
+                    let (handle, response) = ui.allocate_exact_size(Vec2::new(separator_width, available.y), egui::Sense::drag());
+                    let response = response.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                    if response.dragged() {
+                        next_ratio =
+                            (ratio + ui.input(|input| input.pointer.delta().x) / usable_width).clamp(minimum_ratio, 1.0 - minimum_ratio);
+                    }
+                    if ui.is_rect_visible(handle) {
+                        ui.painter()
+                            .vline(handle.center().x, handle.y_range(), super::widgets::divider_stroke(p));
+                    }
+                    let right_width = (usable_width - left_width).max(1.0);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(right_width, available.y),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.push_id(("inventory_pane", dual.ui_id), |ui| {
+                                if classic {
+                                    dual.aurora = None;
+                                    inventory_contents(ui, p, icons, inv, dual, prefs, &facts, &mut dual_actions);
+                                } else {
+                                    aurora::contents(ui, p, icons, inv, dual, prefs, &facts, images, &mut dual_actions);
+                                }
+                            });
+                        },
+                    );
+                });
+                st.dual_split = Some(next_ratio);
+            } else if classic {
+                st.aurora = None;
+                inventory_contents(ui, p, icons, inv, st, prefs, &facts, &mut actions);
+            } else {
+                aurora::contents(ui, p, icons, inv, st, prefs, &facts, images, &mut actions);
+            }
+        });
+    }
     if widen {
         aurora::widen(ctx, "inventory");
     }
@@ -3596,7 +3694,7 @@ pub fn show(
         w.state.plays.clone_from(&st.plays);
         let before = (w.state.clipboard.clone(), w.state.cut);
         let window_id = floater_id(w.id);
-        let floater = if w.additional {
+        let floater = if w.additional || w.state.native_result_window {
             fetch_whole_inventory(&mut world.inventory, &mut w.state);
             super::widgets::Floater::new(
                 &window_id,
@@ -3632,10 +3730,13 @@ pub fn show(
             )
         }
         .compact_header();
-        if classic {
+        if !grouped && w.open {
+            w.state.drawn_style = Some(style);
+        }
+        if style == InventoryStyle::Classic || (grouped && w.state.native_result_window) {
             w.state.aurora = None;
             floater.show(ctx, p, &mut w.open, |ui| {
-                if w.additional || w.state.torn_off {
+                if w.additional || w.state.torn_off || w.state.native_result_window {
                     inventory_contents(ui, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
                 } else if w.state.single_folder.is_some() {
                     single_folder::contents(ui, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
@@ -3653,7 +3754,7 @@ pub fn show(
                     );
                 }
             });
-        } else {
+        } else if style == InventoryStyle::Aurora {
             // Aurora's window, kept under its folder (the whole inventory
             // for the additional window).
             w.state.scope = w.root;
@@ -3701,7 +3802,7 @@ pub fn show(
         w.state
             .hover
             .show(p, &world.inventory, prefs, hover_images, &mut w.state.wanted_hover_images);
-        w.state.was_open = w.open && !super::widgets::floater_minimized(ctx, &window_id);
+        w.state.was_open = (!grouped || w.state.native_result_window) && w.open && !super::widgets::floater_minimized(ctx, &window_id);
         bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, world.agent_id, &mut actions);
         if w.id != listings::PANEL {
             finish_hidden_rename(&world.inventory, &mut w.state, &mut actions);
@@ -3744,6 +3845,7 @@ pub fn show(
         }
         st.wanted_images.extend(w.state.wanted_images.drain());
         st.wanted_hover_images.extend(w.state.wanted_hover_images.drain());
+        st.wanted_explorer_images.append(&mut w.state.wanted_explorer_images);
         if before != (w.state.clipboard.clone(), w.state.cut) {
             st.clipboard.clone_from(&w.state.clipboard);
             st.cut = w.state.cut;
@@ -3765,7 +3867,7 @@ pub fn show(
     // A tab let go this frame: along its strip, to another window, or out
     // to a window of its own (`aurora::tabs::settle`); a window whose last
     // tab left closes.
-    if !classic {
+    if style == InventoryStyle::Aurora {
         let mut panes: Vec<&mut InventoryUi> = std::iter::once(&mut *st)
             .chain(dual)
             .chain(windows.iter_mut().filter(|w| w.open).map(|w| &mut *w.state))
@@ -4687,6 +4789,94 @@ mod tests {
     }
 
     #[test]
+    fn inventory_style_switches_live_and_routes_additional_windows_and_reveals() {
+        use crate::ui::widgets::elide_tests::Frames;
+        use InventoryStyle::{Aurora, Classic, Explorer};
+
+        let mut frames = Frames::new();
+        let ctx = frames.ctx.clone();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let palette = theme.palette();
+        let icons = Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        // In the viewer the login skeleton supplies the inventory root before
+        // demo items arrive. A nil root deliberately renders a loading spinner.
+        world.inventory.root = Uuid::from_u128(1);
+        world.inventory.add_folders(
+            vec![aurora_net::inventory::InvFolder {
+                id: world.inventory.root,
+                name: "My Inventory".into(),
+                type_default: 8,
+                ..Default::default()
+            }],
+            false,
+        );
+        crate::world::inventory::demo::seed(&mut world.inventory, crate::demo::DEMO_AGENT);
+        let root = world.inventory.root;
+        let item = Uuid::from_u128(8100);
+        let mut prefs = InventoryPreferences::default();
+        let mut st = InventoryUi::default();
+        let mut open = true;
+        let mut dual = InventoryUi::dual_pane();
+        dual.tab = 1;
+        let mut paint = |style, world: &mut World, st: &mut InventoryUi, open: &mut bool| {
+            let mut home_sections = 0;
+            for _ in 0..3 {
+                let text = frames.run(vec![], |ui| {
+                    show(
+                        ui.ctx(),
+                        &palette,
+                        &icons,
+                        world,
+                        st,
+                        Some(&mut dual),
+                        &mut prefs,
+                        open,
+                        false,
+                        &Default::default(),
+                        &Default::default(),
+                        &Default::default(),
+                        &Default::default(),
+                        style,
+                    );
+                });
+                home_sections = text
+                    .iter()
+                    .filter(|t| t.source == aurora_i18n::tr!("explorer-home-categories"))
+                    .count();
+            }
+            home_sections
+        };
+
+        assert_eq!(paint(Aurora, &mut world, &mut st, &mut open), 0);
+        assert!(st.aurora.is_some() && st.dual_layout);
+        assert!(aurora::tabs::open(&mut st, &InventoryPreferences::default(), root, false));
+        st.open_additional_window(&ctx, Aurora, root);
+        paint(Aurora, &mut world, &mut st, &mut open);
+        assert!(st.additional_open() && st.windows[0].state.was_open);
+        assert_eq!(paint(Explorer, &mut world, &mut st, &mut open), 1);
+        assert!(st.aurora.is_none() && !st.windows[0].state.was_open && !st.dual_layout);
+        st.open_additional_window(&ctx, Explorer, root);
+        assert_eq!(paint(Explorer, &mut world, &mut st, &mut open), 2);
+        assert!(st.organized_host.has_detached());
+        st.show_notified(&world.inventory, item);
+        assert_eq!(
+            paint(Explorer, &mut world, &mut st, &mut open),
+            1,
+            "only detached tab still at Home"
+        );
+        assert!(st.reveal.is_none());
+        assert_eq!(paint(Classic, &mut world, &mut st, &mut open), 0);
+        assert!(st.aurora.is_none() && st.windows[0].state.was_open && st.dual_layout);
+        assert!(!explorer_owns_keys(&ctx));
+        assert_eq!(st.tabs.len(), 2, "the native tab strip survives the style switch");
+        assert_eq!(paint(Explorer, &mut world, &mut st, &mut open), 1, "return to the original tabs");
+        st.close_showinv_windows();
+        assert!(!st.organized_host.has_detached() && !st.additional_open());
+    }
+
+    #[test]
     fn opening_inventory_focuses_search_without_taking_it_back() {
         use crate::ui::widgets::elide_tests::Frames;
         for classic in [false, true] {
@@ -4721,7 +4911,7 @@ mod tests {
                         &Default::default(),
                         &Default::default(),
                         &scripts,
-                        classic,
+                        if classic { InventoryStyle::Classic } else { InventoryStyle::Aurora },
                     );
                 });
             };
@@ -4753,6 +4943,186 @@ mod tests {
             assert!(ctx.memory(|m| m.has_focus(search)), "expanding restores search focus");
             assert_eq!(other, "elsewhere");
         }
+    }
+
+    #[test]
+    fn explorer_style_keeps_dual_preview_and_recipient_picker_owned_by_dual_pane() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let mut frames = Frames::new();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&frames.ctx, 1.0);
+        let palette = theme.palette();
+        let icons = Icons::default();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = view_inventory(false);
+        let item = Uuid::from_u128(9901);
+        world.inventory.add_items(vec![aurora_net::inventory::InvItem {
+            id: item,
+            parent: world.inventory.root,
+            name: "Dual preview".into(),
+            asset_type: 7,
+            inv_type: 7,
+            ..Default::default()
+        }]);
+        let mut primary = InventoryUi::default();
+        let mut dual = InventoryUi::dual_pane();
+        dual.preview = Some(item);
+        dual.preview_text = Some(Ok("dual-preview-body".into()));
+        dual.share_picker.open("dual-picker-regression", true);
+        let mut prefs = InventoryPreferences::default();
+        for style in [InventoryStyle::Classic, InventoryStyle::Explorer, InventoryStyle::Aurora] {
+            let mut text = Vec::new();
+            for _ in 0..3 {
+                text = frames.run(vec![], |ui| {
+                    show(
+                        ui.ctx(),
+                        &palette,
+                        &icons,
+                        &mut world,
+                        &mut primary,
+                        Some(&mut dual),
+                        &mut prefs,
+                        &mut true,
+                        false,
+                        &Default::default(),
+                        &Default::default(),
+                        &Default::default(),
+                        &Default::default(),
+                        style,
+                    );
+                });
+            }
+            assert!(text.iter().any(|t| t.source.contains("dual-preview-body")), "style={style:?}");
+            assert!(
+                text.iter()
+                    .any(|t| t.source == aurora_i18n::tr!("ui-avatar-picker-choose-a-resident")),
+                "style={style:?}"
+            );
+            assert_eq!(dual.ui_id, DUAL_PANE);
+            assert_eq!(dual.preview, Some(item));
+            assert!(dual.share_picker.open && primary.preview.is_none());
+            let id = document::preview_window_id(DUAL_PANE, item, 7);
+            assert!(egui::AreaState::load(&frames.ctx, egui::Id::unique(id)).is_some());
+            assert_eq!(primary.dual_layout, style != InventoryStyle::Explorer);
+        }
+    }
+
+    #[test]
+    fn explorer_find_links_keeps_exact_native_results_visible_without_changing_style() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let mut frames = Frames::new();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&frames.ctx, 1.0);
+        let palette = theme.palette();
+        let icons = Icons::default();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = view_inventory(false);
+        let target = Uuid::from_u128(9910);
+        let matching = Uuid::from_u128(9911);
+        let other = Uuid::from_u128(9912);
+        world.inventory.add_items(vec![
+            aurora_net::inventory::InvItem {
+                id: target,
+                parent: world.inventory.root,
+                name: "Original".into(),
+                asset_type: 7,
+                inv_type: 7,
+                ..Default::default()
+            },
+            aurora_net::inventory::InvItem {
+                id: matching,
+                parent: world.inventory.root,
+                name: "Matching link".into(),
+                asset_type: 24,
+                asset_id: target,
+                inv_type: 7,
+                ..Default::default()
+            },
+            aurora_net::inventory::InvItem {
+                id: other,
+                parent: world.inventory.root,
+                name: "Other link".into(),
+                asset_type: 24,
+                asset_id: Uuid::from_u128(9920),
+                inv_type: 7,
+                ..Default::default()
+            },
+        ]);
+        let mut primary = InventoryUi::default();
+        primary.open_links_results(target);
+        let mut prefs = InventoryPreferences::default();
+        for _ in 0..3 {
+            frames.run(vec![], |ui| {
+                show(
+                    ui.ctx(),
+                    &palette,
+                    &icons,
+                    &mut world,
+                    &mut primary,
+                    None,
+                    &mut prefs,
+                    &mut true,
+                    false,
+                    &Default::default(),
+                    &Default::default(),
+                    &Default::default(),
+                    &Default::default(),
+                    InventoryStyle::Explorer,
+                );
+            });
+        }
+        assert_eq!(primary.drawn_style, Some(InventoryStyle::Explorer));
+        let result = &primary.windows[0];
+        assert!(result.open && result.state.was_open && result.state.native_result_window);
+        assert_eq!(result.state.links_filter, Some(target));
+        assert!(result.state.visible.contains(&matching));
+        assert!(!result.state.visible.contains(&other) && !result.state.visible.contains(&target));
+        assert_eq!(result.state.filters.links, view::Links::Only);
+        assert!(result.lists_inventory(), "edits in these results belong to this window");
+        primary.close_showinv_windows();
+        assert!(!primary.windows[0].open, "@showinv also closes the full-inventory link results");
+    }
+
+    #[test]
+    fn dual_inventory_clipboard_account_change_precedes_pane_sync() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let mut frames = Frames::new();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&frames.ctx, 1.0);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = view_inventory(false);
+        let old_root = Uuid::from_u128(9981);
+        let mut primary = InventoryUi {
+            clipboard_root: Some(old_root),
+            clipboard: vec![Uuid::from_u128(20)],
+            cut: true,
+            ..Default::default()
+        };
+        let mut dual = InventoryUi::dual_pane();
+        dual.enter_clipboard_account(old_root);
+        dual.clipboard = primary.clipboard.clone();
+        dual.cut = true;
+        frames.run(vec![], |ui| {
+            show(
+                ui.ctx(),
+                &theme.palette(),
+                &Icons::default(),
+                &mut world,
+                &mut primary,
+                Some(&mut dual),
+                &mut InventoryPreferences::default(),
+                &mut true,
+                false,
+                &Default::default(),
+                &Default::default(),
+                &Default::default(),
+                &Default::default(),
+                InventoryStyle::Aurora,
+            );
+        });
+        assert!(primary.clipboard.is_empty() && dual.clipboard.is_empty());
+        assert!(!primary.cut && !dual.cut);
+        assert_eq!(dual.clipboard_root, Some(world.inventory.root));
     }
 
     #[test]
@@ -4788,7 +5158,7 @@ mod tests {
                     &Default::default(),
                     &Default::default(),
                     &scripts,
-                    true,
+                    InventoryStyle::Classic,
                 );
             });
             (texts, primary.tab, dual.tab)
@@ -4875,7 +5245,7 @@ mod tests {
                         &Default::default(),
                         &Default::default(),
                         &scripts,
-                        classic,
+                        if classic { InventoryStyle::Classic } else { InventoryStyle::Aurora },
                     );
                 });
                 actions
@@ -4951,7 +5321,7 @@ mod tests {
                         &Default::default(),
                         &Default::default(),
                         &scripts,
-                        classic,
+                        if classic { InventoryStyle::Classic } else { InventoryStyle::Aurora },
                     );
                 })
             };
@@ -5029,7 +5399,7 @@ mod tests {
                         &Default::default(),
                         &Default::default(),
                         &scripts,
-                        classic,
+                        if classic { InventoryStyle::Classic } else { InventoryStyle::Aurora },
                     );
                 })
             };
@@ -7558,7 +7928,7 @@ mod tests {
                         .show(ui.ctx(), |ui| {
                             ui.set_min_size(egui::vec2(200.0, 200.0));
                         });
-                    read = world_drag(ui.ctx());
+                    read = world_drag(ui);
                     if read.as_ref().is_some_and(|drag| drag.released) {
                         egui::DragAndDrop::clear_payload(ui.ctx());
                     }
@@ -7572,16 +7942,22 @@ mod tests {
         egui::DragAndDrop::set_payload(&ctx, InvDrag(id));
         assert!(frame(egui::pos2(100.0, 100.0), vec![]).is_none(), "window is not a world target");
         let pos = egui::pos2(600.0, 400.0);
-        let released = frame(
+        let inside = egui::pos2(100.0, 100.0);
+        let mouse_up = |pos| egui::Event::PointerButton {
             pos,
-            vec![egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: Default::default(),
-            }],
-        )
-        .expect("release seen inside pass");
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        };
+        assert!(
+            frame(inside, vec![mouse_up(inside), egui::Event::PointerMoved(pos)]).is_none(),
+            "release over a floater cannot fall through to the world after later motion",
+        );
+        egui::DragAndDrop::set_payload(&ctx, InvDrag(id));
+        let released = frame(pos, vec![mouse_up(pos), egui::Event::PointerMoved(inside)])
+            .expect("release over the world is retained after the pointer moves onto a floater");
+        assert_eq!(released.position, pos);
+        assert!(released.ctrl && released.shift);
         assert_eq!(released.item, id);
         assert!(released.released);
         assert!(egui::DragAndDrop::payload::<InvDrag>(&ctx).is_none());

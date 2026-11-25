@@ -312,6 +312,7 @@ fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release
     world.refresh_rlva_privacy();
     assert!(crate::ui::people::nearby(&world).is_empty());
     let landmark = NetCommand::CreateInventoryItem {
+        explorer: None,
         parent: world.inventory.root,
         kind: aurora_net::inventory::operations::NewItem::Landmark,
         name: "private".into(),

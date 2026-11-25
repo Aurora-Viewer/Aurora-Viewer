@@ -52,6 +52,15 @@ impl SettingsKind {
     }
 }
 
+/// An EEP inventory record that can be applied by asset UUID. Links must be resolved first.
+pub fn inventory_settings_kind(item: &InvItem) -> Option<SettingsKind> {
+    const IT_SETTINGS: i32 = 25;
+    if item.asset_type != AT_SETTINGS || item.inv_type != IT_SETTINGS || item.asset_id.is_nil() {
+        return None;
+    }
+    SettingsKind::from_flags(item.flags)
+}
+
 /// One entry of a list: the item name and the settings asset it applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsChoice {
@@ -361,6 +370,26 @@ mod tests {
             sale_type: 0,
             sale_price: 0,
         }
+    }
+
+    #[test]
+    fn inventory_settings_require_a_resolved_eep_asset_and_known_subtype() {
+        let mut env = item("Local preset", 0, 99, Uuid::new_v4());
+        for (flags, kind) in [(0x100, SettingsKind::Sky), (1, SettingsKind::Water), (2, SettingsKind::Day)] {
+            env.flags = flags;
+            assert_eq!(inventory_settings_kind(&env), Some(kind));
+        }
+        env.flags = 3;
+        assert_eq!(inventory_settings_kind(&env), None);
+        env.flags = 0;
+        env.asset_type = 24;
+        assert_eq!(inventory_settings_kind(&env), None);
+        env.asset_type = AT_SETTINGS;
+        env.inv_type = 6;
+        assert_eq!(inventory_settings_kind(&env), None);
+        env.inv_type = 25;
+        env.asset_id = Uuid::nil();
+        assert_eq!(inventory_settings_kind(&env), None);
     }
 
     #[test]

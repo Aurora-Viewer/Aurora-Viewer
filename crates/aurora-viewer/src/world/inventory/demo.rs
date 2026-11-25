@@ -105,6 +105,60 @@ pub fn lost_reply(agent: Uuid) -> aurora_net::inventory::orphans::Contents {
     }
 }
 
+/// Representative data for the offline Explorer, including similarly named personal folders.
+pub fn seed_explorer(inv: &mut Inventory, agent: Uuid) {
+    seed_view(inv, agent, false);
+    let root = inv.root;
+    let library = inv.lib_root;
+    for (n, parent, kind, name) in [
+        (95_000, root, -1, "#Aurora"),
+        (95_001, root, -1, "#Firestorm"),
+        (95_002, root, -1, "#RLV"),
+        (95_003, root, -1, "###### Juno Assets ######"),
+        (95_004, root, 57, "Materials"),
+        (95_005, root, 56, "Settings"),
+        (95_006, root, 15, "Photo Album"),
+        (95_007, root, 3, "Landmarks"),
+        (95_008, root, 5, "Clothing"),
+        (95_009, root, 13, "Body Parts"),
+        (95_010, root, 20, "Animations"),
+        (95_011, root, 1, "Sounds"),
+        (95_012, root, 10, "Scripts"),
+        (95_013, root, 7, "Notecards"),
+        (95_014, root, 6, "Objects"),
+        (95_015, library, -1, "Starter Collection"),
+    ] {
+        if parent.is_nil() || (kind >= 0 && actions::system(inv, kind).is_some()) {
+            continue;
+        }
+        let id = Uuid::from_u128(n);
+        if inv.folders.contains_key(&id) {
+            continue;
+        }
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name: name.to_owned(),
+                    type_default: kind,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: parent == library,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&parent) {
+            folder.children.push(id);
+        }
+    }
+    inv.generation += 1;
+}
+
 pub fn seed(inv: &mut Inventory, agent: Uuid) {
     super::super::appearance::seed_demo(inv, agent);
     if inv.lib_root.is_nil() {

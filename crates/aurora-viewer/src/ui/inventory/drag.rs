@@ -5,31 +5,35 @@
 use super::*;
 use std::sync::Arc;
 
+#[path = "drag_pointer.rs"]
+pub(crate) mod pointer;
+
 /// A batch is deliberately distinct from single-item world/attachment cargo:
 /// a destination which accepts one item must never silently take its first ID.
 #[derive(Clone)]
-struct SelectionDrag(Vec<Uuid>);
+pub(super) struct SelectionDrag(Vec<Uuid>);
 
-enum Cargo {
+#[derive(Clone)]
+pub(super) enum Cargo {
     Item(Arc<InvDrag>),
     Folder(Arc<FolderDrag>),
     Selection(Arc<SelectionDrag>),
 }
 impl Cargo {
     fn hover(ui: &egui::Ui, r: &egui::Response) -> Option<Self> {
-        if !ui.rect_contains_pointer(r.rect) {
+        if !pointer::over(ui.ctx(), ui.layer_id(), ui.clip_rect().intersect(r.rect)) {
             return None;
         }
         Self::carried(ui.ctx())
     }
     /// The inventory a drag in progress carries, wherever the pointer is.
-    fn carried(ctx: &egui::Context) -> Option<Self> {
+    pub(super) fn carried(ctx: &egui::Context) -> Option<Self> {
         egui::DragAndDrop::payload::<SelectionDrag>(ctx)
             .map(Self::Selection)
             .or_else(|| egui::DragAndDrop::payload::<InvDrag>(ctx).map(Self::Item))
             .or_else(|| egui::DragAndDrop::payload::<FolderDrag>(ctx).map(Self::Folder))
     }
-    fn ids(&self) -> &[Uuid] {
+    pub(super) fn ids(&self) -> &[Uuid] {
         match self {
             Self::Item(d) => std::slice::from_ref(&d.0),
             Self::Folder(d) => std::slice::from_ref(&d.0),
@@ -118,6 +122,17 @@ pub(super) fn dragged_this_press(ctx: &egui::Context) -> bool {
     latch(ctx).lock().dragged
 }
 
+/// Both inventory layouts publish exactly one payload, in the format understood
+/// by world placement, Share, object contents and single-asset input controls.
+pub(super) fn carry(ctx: &egui::Context, ids: Vec<Uuid>, folder: bool) {
+    match ids.as_slice() {
+        [] => {}
+        [id] if folder => egui::DragAndDrop::set_payload(ctx, FolderDrag(*id)),
+        [id] => egui::DragAndDrop::set_payload(ctx, InvDrag(*id)),
+        _ => egui::DragAndDrop::set_payload(ctx, SelectionDrag(ids)),
+    }
+}
+
 pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, st: &mut InventoryUi) {
     record_row(ui.ctx(), st.ui_id, id, r.rect);
     let right = if begins(ui, r) {
@@ -137,14 +152,7 @@ pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, 
     st.selected = Some(id);
     super::clipboard::request_focus(ui, st);
     ui.ctx().data_mut(|d| d.insert_temp(right_drag_id(), right));
-    let ids = st.selected_ids(id);
-    if ids.len() > 1 {
-        egui::DragAndDrop::set_payload(ui.ctx(), SelectionDrag(ids));
-    } else if folder {
-        egui::DragAndDrop::set_payload(ui.ctx(), FolderDrag(id));
-    } else {
-        egui::DragAndDrop::set_payload(ui.ctx(), InvDrag(id));
-    }
+    carry(ui.ctx(), st.selected_ids(id), folder);
 }
 
 #[derive(Clone)]
@@ -245,7 +253,10 @@ fn current_mode(ctx: &egui::Context) -> DropMode {
     if right_drag(ctx) {
         DropMode::Move
     } else {
-        mode_for(ctx.input(|i| i.modifiers), cfg!(target_os = "macos"))
+        mode_for(
+            ctx.input(|i| pointer::read(i).map_or(i.modifiers, |p| p.modifiers)),
+            cfg!(target_os = "macos"),
+        )
     }
 }
 
@@ -368,6 +379,7 @@ struct Feedback {
     /// What an inventory folder would do with the drop (None: a
     /// conversation, an object or no place that takes it).
     folder: Option<DropMode>,
+    draws_label: bool,
 }
 fn feedback_id() -> egui::Id {
     egui::Id::unique("inventory_move_drag_feedback")
@@ -424,6 +436,10 @@ pub(crate) fn carried_ids(ctx: &egui::Context) -> Option<Vec<Uuid>> {
 /// The cursor a destination outside the inventory windows gives the cargo
 /// held over it this pass (an object's Contents tab).
 pub(crate) fn feedback(ctx: &egui::Context, cursor: egui::CursorIcon) {
+    set_feedback(ctx, cursor, false);
+}
+
+pub(super) fn set_feedback(ctx: &egui::Context, cursor: egui::CursorIcon, draws_label: bool) {
     let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         d.insert_temp(
@@ -432,6 +448,7 @@ pub(crate) fn feedback(ctx: &egui::Context, cursor: egui::CursorIcon) {
                 pass,
                 cursor,
                 folder: None,
+                draws_label,
             },
         )
     });
@@ -439,11 +456,7 @@ pub(crate) fn feedback(ctx: &egui::Context, cursor: egui::CursorIcon) {
 
 /// The cargo of `AURORA_DEMO_CONV_GIVE`: one item, or a selection of several.
 pub(crate) fn demo_carry(ctx: &egui::Context, ids: Vec<Uuid>) {
-    match ids[..] {
-        [] => {}
-        [id] => egui::DragAndDrop::set_payload(ctx, InvDrag(id)),
-        _ => egui::DragAndDrop::set_payload(ctx, SelectionDrag(ids)),
-    }
+    carry(ctx, ids, false);
 }
 
 /// Inventory dragged over a conversation with a resident, which gives it
@@ -457,21 +470,11 @@ pub(crate) fn give_target(ui: &egui::Ui, zone: egui::Rect) -> Option<(Vec<Uuid>,
 /// `give_target` for a zone of the layer `layer`, from outside its `Ui`: a
 /// whole window, frame included (the profiles, #991).
 pub(crate) fn give_target_on(ctx: &egui::Context, layer: egui::LayerId, zone: egui::Rect) -> Option<(Vec<Uuid>, bool)> {
-    if !ctx.rect_contains_pointer(layer, zone) {
+    if !pointer::over(ctx, layer, zone) {
         return None;
     }
     let ids = give_ids(ctx)?;
-    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
-    ctx.data_mut(|d| {
-        d.insert_temp(
-            feedback_id(),
-            Feedback {
-                pass,
-                cursor: egui::CursorIcon::Copy,
-                folder: None,
-            },
-        )
-    });
+    feedback(ctx, egui::CursorIcon::Copy);
     let released = ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
     if released {
         egui::DragAndDrop::clear_payload(ctx);
@@ -527,6 +530,7 @@ pub(super) fn target(
                     (true, DropMode::Link) => egui::CursorIcon::Alias,
                 },
                 folder: allowed.then_some(mode),
+                draws_label: false,
             },
         );
     });
@@ -646,10 +650,35 @@ pub(crate) fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
         .or_else(|| egui::DragAndDrop::has_payload_of_type::<SelectionDrag>(ctx).then_some(egui::CursorIcon::NotAllowed))
 }
 
-pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
-    let Some(cargo) = Cargo::carried(ctx) else {
+/// Destination-specific hints and cursor images share screen space while a
+/// drag is held. Their rectangles are meaningful only in the current pass.
+pub(crate) fn note_hint_rect(ctx: &egui::Context, rect: egui::Rect) {
+    let pass = ctx.cumulative_pass_nr();
+    let viewport = ctx.viewport_id();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("inventory-drag-hint-rect", viewport)), (pass, rect)));
+}
+
+pub(super) fn hint_rect(ctx: &egui::Context) -> Option<egui::Rect> {
+    let pass = ctx.cumulative_pass_nr();
+    let viewport = ctx.viewport_id();
+    ctx.data(|d| d.get_temp::<(u64, egui::Rect)>(egui::Id::unique(("inventory-drag-hint-rect", viewport))))
+        .filter(|(at, _)| *at == pass)
+        .map(|(_, rect)| rect)
+}
+
+pub(crate) fn badge_with_inventory(ctx: &egui::Context, p: &Palette, inv: &Inventory) {
+    if super::organized::drag_preview::show(ctx, p, inv) {
         return;
-    };
+    }
+    badge(ctx, p);
+}
+
+pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
+    let cargo = Cargo::carried(ctx);
+    let local_count = super::organized::drag_count(ctx);
+    if cargo.is_none() && local_count.is_none() {
+        return;
+    }
     // (Esc ends a drag without dropping: egui's DragAndDrop does it)
     // (read outside `input`, which holds egui's context lock)
     let right = right_drag(ctx);
@@ -657,22 +686,27 @@ pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
     let Some(pointer) = ctx.input(|i| i.pointer.interact_pos().filter(|_| held)) else {
         return;
     };
-    let count = cargo.ids().len();
     // what the drop will do, as Explorer's "+ Copy" / "Create link" badge;
     // a single entry moved says nothing, as before
     // over an inventory folder that takes it, what that folder would do;
     // elsewhere (the world, a conversation) the keys mean what that place says
     let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
-    let mode = ctx
-        .data(|d| d.get_temp::<Feedback>(feedback_id()))
-        .filter(|f| f.pass == pass)
-        .and_then(|f| f.folder)
-        .unwrap_or(DropMode::Move);
-    let label = match mode {
-        DropMode::Move if count > 1 => aurora_i18n::tr!("inventory-move-selection-count", count = count),
-        DropMode::Move => return,
-        DropMode::Copy => aurora_i18n::tr!("inventory-copy-selection-count", count = count),
-        DropMode::Link => aurora_i18n::tr!("inventory-link-selection-count", count = count),
+    let feedback = ctx.data(|d| d.get_temp::<Feedback>(feedback_id())).filter(|f| f.pass == pass);
+    if feedback.as_ref().is_some_and(|f| f.draws_label) {
+        return;
+    }
+    let label = if let Some(count) = local_count {
+        aurora_i18n::tr!("explorer-input-moving", count = count)
+    } else if let Some(cargo) = cargo {
+        let count = cargo.ids().len();
+        match feedback.and_then(|f| f.folder).unwrap_or(DropMode::Move) {
+            DropMode::Move if count > 1 => aurora_i18n::tr!("inventory-move-selection-count", count = count),
+            DropMode::Move => return,
+            DropMode::Copy => aurora_i18n::tr!("inventory-copy-selection-count", count = count),
+            DropMode::Link => aurora_i18n::tr!("inventory-link-selection-count", count = count),
+        }
+    } else {
+        return;
     };
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("inventory_drag_count")));
     let text = painter.layout_no_wrap(label, tree::font(), p.ink);

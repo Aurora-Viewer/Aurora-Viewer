@@ -21,6 +21,29 @@ pub(super) fn allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreference
         .all(|id| rules::removable(inv, *id, &prefs.protected) && !holds_worn.contains(id) && facts.rlva.removable(inv, *id))
 }
 
+/// Explorer only moves entries outside Trash, and only purges entries inside
+/// it. Check the original selection before reducing folders and children to roots.
+pub(super) fn explorer_scope(inv: &Inventory, ids: &[Uuid], purge: bool, guarded: bool) -> bool {
+    !guarded && !ids.is_empty() && ids.iter().all(|id| rules::in_type(inv, *id, TRASH) == purge)
+}
+
+fn explorer_still_in_scope(inv: &Inventory, ids: &[Uuid], purge: bool) -> bool {
+    explorer_scope(inv, ids, purge, ids.iter().any(|id| organized_model::client_managed(inv, *id)))
+}
+
+pub(super) fn explorer_plan(
+    inv: &Inventory,
+    ids: &[Uuid],
+    purge: bool,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+) -> Result<Mutation, String> {
+    if !explorer_still_in_scope(inv, ids, purge) || !allowed(inv, ids, prefs, facts) {
+        return Err(aurora_i18n::tr!("explorer-real-unavailable").into());
+    }
+    plan(inv, ids, purge, prefs, facts)
+}
+
 /// Asset and folder types the Delete rules name (llassettype.h).
 const CLOTHING: i32 = 5;
 const OBJECT: i32 = 6;
@@ -89,6 +112,7 @@ pub(crate) struct DetachDelete {
     /// Started from the worn object's menu: say failures in chat, since the
     /// Inventory window may be closed.
     from_world: bool,
+    explorer: bool,
     /// The outfit update was seen running, or the app detached the objects
     /// itself (`InventoryUi::take_off_sent`); until then a refused take-off
     /// leaves the items worn with nothing under way.
@@ -133,8 +157,20 @@ pub(super) fn start_detach(
     actions: &mut Vec<InvAction>,
     ids: Vec<Uuid>,
 ) {
+    start_detach_from(inv, st, prefs, facts, actions, ids, false);
+}
+
+pub(super) fn start_detach_from(
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+    ids: Vec<Uuid>,
+    explorer: bool,
+) {
     let from_world = std::mem::take(&mut st.detach_from_world);
-    if !detach_allowed(inv, &ids, prefs, facts) {
+    if (explorer && !explorer_still_in_scope(inv, &ids, false)) || !detach_allowed(inv, &ids, prefs, facts) {
         detach_failed(
             st,
             actions,
@@ -180,6 +216,7 @@ pub(super) fn start_detach(
         started: std::time::Instant::now(),
         selection,
         from_world,
+        explorer,
         seen_busy: false,
         idle_frames: 0,
         refusal: None,
@@ -231,15 +268,20 @@ pub(super) fn finish_detach(
         return;
     }
     let Some(pending) = st.detach_delete.take() else { return };
-    let ids: Vec<_> = pending
-        .ids
-        .into_iter()
-        .filter(|id| inv.items.contains_key(id) || inv.folders.contains_key(id))
-        .collect();
-    if ids.is_empty() {
-        return;
-    }
-    match plan(inv, &ids, false, prefs, facts) {
+    let outcome = if pending.explorer {
+        explorer_plan(inv, &pending.ids, false, prefs, facts)
+    } else {
+        let ids: Vec<_> = pending
+            .ids
+            .into_iter()
+            .filter(|id| inv.items.contains_key(id) || inv.folders.contains_key(id))
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        plan(inv, &ids, false, prefs, facts)
+    };
+    match outcome {
         Ok(change) => actions.push(InvAction::Delete(Box::new(DeleteRequest::with_selection(
             inv,
             pending.selection,
@@ -292,7 +334,19 @@ pub(super) fn confirm_or_run(
     prefs: &InventoryPreferences,
     facts: &Facts,
     actions: &mut Vec<InvAction>,
+    ids: Vec<Uuid>,
+) {
+    confirm_or_run_from(inv, st, prefs, facts, actions, ids, None);
+}
+
+pub(super) fn confirm_or_run_from(
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
     mut ids: Vec<Uuid>,
+    explorer_purge: Option<bool>,
 ) {
     if st.pending.is_some() || st.pending_delete.is_some() || st.detach_delete.is_some() || st.dialog.is_some() {
         return;
@@ -302,15 +356,23 @@ pub(super) fn confirm_or_run(
         // "DeleteWornItems" asks every time; it has no ignore box.
         if detach_allowed(inv, &ids, prefs, facts) {
             st.detach_from_world = false;
-            st.dialog = Some(EditDialog::DetachDelete(ids));
+            st.dialog = Some(if explorer_purge.is_some() {
+                EditDialog::ExplorerDetachDelete(ids)
+            } else {
+                EditDialog::DetachDelete(ids)
+            });
         }
         return;
     }
     // A selection spanning trash and another folder first moves to trash.
     // Permanent deletion is offered only when every selected entry is there.
-    let purge = ids.iter().all(|id| rules::in_type(inv, *id, TRASH));
+    let purge = explorer_purge.unwrap_or_else(|| ids.iter().all(|id| rules::in_type(inv, *id, TRASH)));
     if purge || prefs.confirm_delete {
-        st.dialog = Some(EditDialog::Delete(ids, purge));
+        st.dialog = Some(if explorer_purge.is_some() {
+            EditDialog::ExplorerDelete(ids, purge)
+        } else {
+            EditDialog::Delete(ids, purge)
+        });
         return;
     }
     match plan(inv, &ids, false, prefs, facts) {
@@ -832,7 +894,7 @@ mod tests {
         let [InvAction::Delete(request)] = actions.as_slice() else {
             panic!("the Trash move follows the take-off");
         };
-        assert_eq!(request.selection.selected, Some(id(10)));
+        assert_eq!(request.selection.native_rows.as_ref().unwrap().selected, Some(id(10)));
         assert!(request.selection.advance);
         st.begin_delete(id(90), request.selection.clone());
         assert!(st.pending_delete.is_some());
@@ -1225,17 +1287,22 @@ pub struct DeleteRequest {
 pub(crate) struct DeleteSelection {
     window: Uuid,
     root: Uuid,
+    moves: Vec<(Uuid, Uuid)>,
+    // Explorer tabs have their own selection and refresh it from their visible rows.
+    native_rows: Option<DeleteRows>,
+    /// False for the in-world command and the first part of a split Detach and Delete.
+    advance: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeleteRows {
     selected: Option<Uuid>,
     selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     view: DeleteView,
-    moves: Vec<(Uuid, Uuid)>,
     deleted: HashSet<Uuid>,
     candidates: Vec<Uuid>,
     next: Option<Uuid>,
-    /// False when the Delete did not come from this window's selection (the
-    /// in-world Detach and Delete): the window's selection is left alone.
-    advance: bool,
 }
 
 impl DeleteSelection {
@@ -1315,6 +1382,18 @@ impl DeleteRequest {
 
 impl DeleteSelection {
     fn of(inv: &Inventory, st: &InventoryUi, ids: &[Uuid]) -> Self {
+        Self {
+            window: st.ui_id,
+            root: inv.root,
+            moves: Vec::new(),
+            native_rows: (st.drawn_style != Some(InventoryStyle::Explorer)).then(|| DeleteRows::of(inv, st, ids)),
+            advance: true,
+        }
+    }
+}
+
+impl DeleteRows {
+    fn of(inv: &Inventory, st: &InventoryUi, ids: &[Uuid]) -> Self {
         let gone: HashSet<_> = ids.iter().copied().collect();
         let order = keyboard::shown_order(st);
         let last = st
@@ -1331,18 +1410,18 @@ impl DeleteSelection {
                 order[index + 1..].iter().chain(order[..index].iter().rev()).copied().collect()
             });
         Self {
-            window: st.ui_id,
-            root: inv.root,
             selected: st.selected,
             selection: st.selection.clone(),
             anchor: st.anchor,
             view: DeleteView::of(st),
-            moves: Vec::new(),
             deleted: gone,
             candidates,
             next,
-            advance: true,
         }
+    }
+
+    fn matches(&self, st: &InventoryUi) -> bool {
+        self.selected == st.selected && self.selection == st.selection && self.anchor == st.anchor && self.view.matches(st)
     }
 }
 
@@ -1388,17 +1467,13 @@ impl InventoryUi {
     }
 }
 
-/// Run after rebuilding the actual displayed order, before laying out rows.
-/// Returning true uses the existing arrow-key scrolling path to show the row.
+/// Settle the submitted operation in either inventory style. Native lists call
+/// after rebuilding their order and use the return value to scroll to the next row.
 pub(super) fn reconcile_selection(inv: &Inventory, st: &mut InventoryUi) -> bool {
     let Some(pending) = st.pending_delete.as_ref() else { return false };
     let saved = &pending.selection;
-    if saved.root != inv.root
-        || saved.selected != st.selected
-        || saved.selection != st.selection
-        || saved.anchor != st.anchor
-        || !saved.view.matches(st)
-    {
+    let native = st.drawn_style != Some(InventoryStyle::Explorer);
+    if saved.root != inv.root || (native && saved.native_rows.as_ref().is_some_and(|rows| !rows.matches(st))) {
         st.pending_delete = None;
         return false;
     }
@@ -1419,13 +1494,15 @@ pub(super) fn reconcile_selection(inv: &Inventory, st: &mut InventoryUi) -> bool
         return false;
     }
     let pending = st.pending_delete.take().expect("checked pending deletion");
+    let Some(rows) = pending.selection.native_rows.filter(|_| native) else {
+        return false;
+    };
     let shown: HashSet<_> = keyboard::shown_order(st).iter().copied().collect();
-    let next = pending
-        .selection
+    let next = rows
         .next
         .into_iter()
-        .chain(pending.selection.candidates.iter().copied())
-        .find(|id| shown.contains(id) && !rules::ancestors(inv, *id).any(|ancestor| pending.selection.deleted.contains(&ancestor)));
+        .chain(rows.candidates.iter().copied())
+        .find(|id| shown.contains(id) && !rules::ancestors(inv, *id).any(|ancestor| rows.deleted.contains(&ancestor)));
     st.selection.clear();
     st.selection.extend(next);
     st.selected = next;
@@ -1504,6 +1581,24 @@ mod selection_tests {
         assert_eq!(st.anchor, Some(id(20)));
         assert_eq!(st.selected, Some(id(20)));
         assert!(st.keyboard_selection);
+    }
+
+    #[test]
+    fn a_delete_finishing_in_another_inventory_style_leaves_the_native_selection_alone() {
+        use InventoryStyle::{Classic, Explorer};
+        for (submitted, current) in [(Explorer, Classic), (Classic, Explorer)] {
+            let (inv, mut st, _) = fixture();
+            st.drawn_style = Some(submitted);
+            let deletion = DeleteRequest::new(&inv, &st, &[id(10)], trash_move(&[id(10)]));
+            st.begin_delete(id(90), deletion.selection);
+            st.drawn_style = Some(current);
+            assert!(!reconcile_selection(&inv, &mut st));
+            assert!(st.pending_delete.is_some(), "the request is still outstanding");
+            st.finish_delete(id(90), true, false);
+            assert!(!reconcile_selection(&inv, &mut st), "the parked list must not advance");
+            assert!(st.pending_delete.is_none());
+            assert_eq!(st.selected, Some(id(10)));
+        }
     }
 
     /// #4748 review: in the Legacy-style single folder window ("Open in a

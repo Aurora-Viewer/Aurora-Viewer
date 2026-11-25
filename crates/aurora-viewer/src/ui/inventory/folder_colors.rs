@@ -27,6 +27,11 @@ pub const PRESETS: [[u8; 3]; 12] = [
 const SWATCH: f32 = 22.0;
 const PER_ROW: usize = 6;
 
+/// Shared folder color used for idle and selected rows in the inventory views.
+pub(crate) fn row_tint(prefs: &InventoryPreferences, id: Uuid, selected: bool, palette: &crate::theme::Palette) -> Color32 {
+    tint(prefs, id).unwrap_or(if selected { palette.violet_pale } else { palette.muted })
+}
+
 /// The tint of a folder's icon, when the user colored it (and the colors are
 /// turned on).
 pub fn tint(prefs: &InventoryPreferences, id: Uuid) -> Option<Color32> {

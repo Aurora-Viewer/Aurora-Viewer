@@ -1,0 +1,700 @@
+//! Native inventory operations from an Explorer selection. A local category has no SL parent UUID.
+use super::super::{clipboard, context_catalog as native_menu, delete, inventory_path, move_to::MoveTo};
+use super::*;
+use aurora_i18n::tr;
+
+pub(super) struct Menu<'a> {
+    pub native: &'a InventoryUi,
+    pub prefs: &'a InventoryPreferences,
+    pub facts: &'a Facts,
+}
+
+impl Menu<'_> {
+    pub(super) fn delete_busy(&self) -> bool {
+        self.native.pending_delete.is_some() || self.native.detach_delete.is_some() || self.native.dialog.is_some()
+    }
+}
+
+pub(super) enum Request {
+    Native(native_menu::Command),
+    NextOwner(Vec<Uuid>),
+    Move(Vec<Uuid>),
+    Reveal(Uuid),
+    Paste(Location, bool),
+    Create(Location, String),
+}
+
+pub(super) struct Destination {
+    origin: Location,
+    root: Uuid,
+    clipboard: Vec<Uuid>,
+    cut: bool,
+    links: bool,
+    selected: Option<Uuid>,
+}
+
+pub(super) fn ids(state: &ExplorerState) -> Option<Vec<Uuid>> {
+    let mut ids: Vec<_> = state.here.selected.iter().map(|r| r.id()).collect::<Option<_>>()?;
+    ids.sort_unstable();
+    (!ids.is_empty()).then_some(ids)
+}
+
+// Restore changes every selected real parent. Mixed search results must not relocate
+// items outside Trash, and restoring a selected folder carries its children with it.
+fn restore_roots(inv: &Inventory, selected: &[Uuid]) -> Option<Vec<Uuid>> {
+    (!selected.is_empty() && selected.iter().all(|id| rules::in_type(inv, *id, 14))).then(|| rules::roots(inv, selected))
+}
+
+fn target(state: &ExplorerState, row: Option<Row>) -> Location {
+    match row {
+        Some(Row::Place(place)) => place,
+        _ => state.here.location,
+    }
+}
+
+fn may_paste(menu: &Menu<'_>, inv: &Inventory, to: Uuid, links: bool) -> bool {
+    !menu.native.clipboard.is_empty()
+        && menu.native.pending.is_none()
+        && model::personal_contents(inv, to)
+        && !(menu.native.cut && menu.native.clipboard.iter().any(|id| model::client_managed(inv, *id)))
+        && if links {
+            !menu.native.cut
+                && rules::paste_allowed(
+                    inv,
+                    &menu.native.clipboard,
+                    to,
+                    false,
+                    true,
+                    &menu.prefs.protected,
+                    &menu.facts.worn,
+                )
+        } else {
+            clipboard::paste_allowed(inv, menu.native, to, menu.prefs, menu.facts)
+        }
+}
+
+pub(super) fn paste_enabled(menu: &Menu<'_>, inv: &Inventory, layout: &Preferences, place: Location, links: bool) -> bool {
+    if menu.native.clipboard.is_empty() || matches!(place, Location::Home | Location::Library | Location::Group(Group::System)) {
+        return false;
+    }
+    if let Some(id) = folder::fixed_parent(place, inv) {
+        return may_paste(menu, inv, id, links);
+    }
+    folder::choices(inv, layout, place)
+        .into_iter()
+        .any(|to| may_paste(menu, inv, to, links))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Edit {
+    Cut,
+    Copy,
+    Rename,
+    Delete,
+}
+
+/// A Trash move and a permanent purge have distinct commands. Check every
+/// real row so a stale or mixed selection cannot change the requested effect.
+pub(super) fn delete_enabled(inv: &Inventory, ids: &[Uuid], menu: &Menu<'_>, guarded: bool, purge: bool) -> bool {
+    menu.native.pending.is_none()
+        && !menu.delete_busy()
+        && delete::explorer_scope(inv, ids, purge, guarded)
+        && (delete::allowed(inv, ids, menu.prefs, menu.facts) || (!purge && delete::detach_allowed(inv, ids, menu.prefs, menu.facts)))
+}
+
+impl Edit {
+    pub(super) fn allowed(self, inv: &Inventory, ids: &[Uuid], menu: &Menu<'_>, guarded: bool) -> bool {
+        if ids.is_empty() || menu.native.pending.is_some() {
+            return false;
+        }
+        match self {
+            Self::Cut => {
+                !guarded
+                    && ids
+                        .iter()
+                        .all(|id| rules::relocatable(inv, *id, &menu.prefs.protected) && menu.facts.rlva.removable(inv, *id))
+            }
+            Self::Copy => clipboard::copy_allowed(inv, ids),
+            Self::Rename => !guarded && ids.len() == 1 && rules::renameable(inv, ids[0]),
+            // Permanent deletion remains an explicit Trash command.
+            Self::Delete => delete_enabled(inv, ids, menu, guarded, false),
+        }
+    }
+
+    pub(super) fn request(self, ids: Vec<Uuid>) -> Request {
+        Request::Native(match self {
+            Self::Cut | Self::Copy => native_menu::Command::Copy(ids, self == Self::Cut),
+            Self::Rename => native_menu::Command::Rename(ids[0]),
+            Self::Delete => native_menu::Command::Delete(ids, false),
+        })
+    }
+}
+
+// Inventory rename and Trash use a single, unmodified physical press.
+fn plain_edit_key(event: &egui::Event) -> Option<Key> {
+    match event {
+        egui::Event::Key {
+            key,
+            pressed: true,
+            repeat: false,
+            modifiers,
+            ..
+        } if modifiers.is_none() => match key {
+            Key::F2 => Some(Key::F2),
+            key if delete::deletes(*key, cfg!(target_os = "macos")) => Some(Key::Delete),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+pub(super) fn keyboard(ui: &Ui, inv: &Inventory, layout: &Preferences, state: &mut ExplorerState, menu: &Menu<'_>) {
+    if state.file_request.is_some()
+        || menu.native.pending.is_some()
+        || menu.native.dialog.is_some()
+        || menu.native.move_to.is_some()
+        || menu.native.rename.is_some()
+        || state.folder_draft.is_some()
+        || state.paste_destination.is_some()
+        || !state.list_focus.is_some_and(|id| ui.memory(|m| m.has_focus(id)))
+        || !super::super::explorer_owns_keys(ui.ctx())
+    {
+        return;
+    }
+    // egui-winit delivers clipboard chords as clipboard events, not Key::C/X/V.
+    let event = ui.input_mut(|i| {
+        i.events
+            .iter()
+            .position(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)) || plain_edit_key(e).is_some())
+            .map(|index| i.events.remove(index))
+    });
+    if state.dashboard_shortcuts(inv, layout) {
+        return;
+    }
+    if let Some(egui::Event::Paste(text)) = &event {
+        if clipboard::holds_marker(menu.native, text) {
+            let selected = (state.here.selected.len() == 1)
+                .then(|| state.here.selected.iter().next().copied())
+                .flatten();
+            let to = target(state, selected);
+            if paste_enabled(menu, inv, layout, to, false) {
+                state.file_request = Some(Request::Paste(to, false));
+            } else {
+                state.status = tr!("explorer-real-unavailable").into();
+            }
+        }
+        return;
+    }
+    if event.is_none() {
+        return;
+    }
+    let Some(selected) = ids(state) else { return };
+    let guarded = selected.iter().any(|id| model::client_managed(inv, *id));
+    let edit = match event {
+        Some(egui::Event::Copy) => Edit::Copy,
+        Some(egui::Event::Cut) => Edit::Cut,
+        Some(ref event) if plain_edit_key(event) == Some(Key::F2) => Edit::Rename,
+        Some(ref event) if plain_edit_key(event) == Some(Key::Delete) => Edit::Delete,
+        _ => return,
+    };
+    if edit.allowed(inv, &selected, menu, guarded) {
+        state.file_request = Some(edit.request(selected));
+    } else {
+        state.status = tr!("explorer-real-unavailable").into();
+    }
+}
+
+pub(super) fn execute(
+    ui: &Ui,
+    inv: &Inventory,
+    layout: &Preferences,
+    state: &mut ExplorerState,
+    native: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let Some(request) = state.file_request.take() else { return };
+    state.native_feedback = true;
+    native.message.clear();
+    match request {
+        Request::Create(place, key) => {
+            let files = Menu { native, prefs, facts };
+            menus::create(inv, layout, state, &files, place, &key, actions);
+        }
+        Request::NextOwner(ids) => native.next_owner.open(inv.root, ids),
+        Request::Native(native_menu::Command::Rename(id)) => {
+            native.begin_rename(inv, id);
+            native.reveal = None;
+            native.visible.push(id);
+            state.action_rename = Some(id);
+            let row = if inv.folders.contains_key(&id) {
+                Row::Place(Location::Folder(id))
+            } else {
+                Row::Item(id)
+            };
+            state.select_and_reveal(row);
+        }
+        Request::Native(native_menu::Command::Restore(selected)) => {
+            if let Some(roots) = restore_roots(inv, &selected) {
+                native_menu::execute(native_menu::Command::Restore(roots), ui, inv, native, prefs, facts, actions);
+            } else {
+                state.status = tr!("explorer-real-unavailable").into();
+            }
+        }
+        Request::Native(native_menu::Command::Links(id)) => actions.push(InvAction::FindLinks(id)),
+        Request::Native(native_menu::Command::Delete(ids, purge)) => {
+            let guarded = ids.iter().any(|id| model::client_managed(inv, *id));
+            if delete_enabled(inv, &ids, &Menu { native, prefs, facts }, guarded, purge) {
+                delete::confirm_or_run_from(inv, native, prefs, facts, actions, ids, Some(purge));
+            } else {
+                state.status = tr!("explorer-real-unavailable").into();
+            }
+        }
+        Request::Native(native_menu::Command::Copy(ids, cut)) => {
+            let guarded = ids.iter().any(|id| model::client_managed(inv, *id));
+            let edit = if cut { Edit::Cut } else { Edit::Copy };
+            if !edit.allowed(inv, &ids, &Menu { native, prefs, facts }, guarded)
+                || !clipboard::offer(ui.ctx(), inv, native, ids, cut, &prefs.protected, &facts.rlva)
+            {
+                state.status = tr!("explorer-real-unavailable").into();
+            }
+        }
+        Request::Native(command) => native_menu::execute(command, ui, inv, native, prefs, facts, actions),
+        Request::Move(ids) => native.move_to = Some(MoveTo::explorer(inv.root, ids)),
+        Request::Reveal(id) => {
+            if let Some(parent) = rules::parent(inv, id) {
+                let row = if inv.folders.contains_key(&id) {
+                    Row::Place(Location::Folder(id))
+                } else {
+                    Row::Item(id)
+                };
+                show_parent(inv, state, row, parent);
+            }
+        }
+        Request::Paste(place, links) => {
+            let menu = Menu { native, prefs, facts };
+            if !paste_enabled(&menu, inv, layout, place, links) {
+                state.status = tr!("explorer-real-unavailable").into();
+                return;
+            }
+            if let Some(to) = folder::fixed_parent(place, inv) {
+                clipboard::paste(inv, to, links, native, prefs, facts, actions);
+            } else {
+                state.paste_destination = Some(Destination {
+                    origin: place,
+                    root: inv.root,
+                    clipboard: native.clipboard.clone(),
+                    cut: native.cut,
+                    links,
+                    selected: None,
+                });
+            }
+        }
+    }
+}
+
+pub(super) fn destination(
+    ui: &mut Ui,
+    inv: &Inventory,
+    layout: &Preferences,
+    state: &mut ExplorerState,
+    native: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let Some(mut picker) = state.paste_destination.take() else { return };
+    if picker.root != inv.root || picker.clipboard != native.clipboard || picker.cut != native.cut {
+        return;
+    }
+    let menu = Menu { native, prefs, facts };
+    let choices: Vec<_> = folder::choices(inv, layout, picker.origin)
+        .into_iter()
+        .filter(|id| may_paste(&menu, inv, *id, picker.links))
+        .collect();
+    if picker.selected.is_some_and(|id| !choices.contains(&id)) {
+        picker.selected = None;
+    }
+    ui.label(tr!("explorer-real-paste-in"));
+    egui::ComboBox::from_id_salt("explorer-native-paste-target")
+        .selected_text(
+            picker
+                .selected
+                .map_or_else(|| tr!("explorer-create-choose-parent").to_string(), |id| inventory_path(inv, id)),
+        )
+        .show_ui(ui, |ui| {
+            for id in choices {
+                ui.selectable_value(&mut picker.selected, Some(id), inventory_path(inv, id));
+            }
+        });
+    let mut close = false;
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(picker.selected.is_some(), egui::Button::new(tr!("common-paste")))
+            .clicked()
+            && let Some(to) = picker.selected
+        {
+            clipboard::paste(inv, to, picker.links, native, prefs, facts, actions);
+            close = true;
+        }
+        close |= ui.button(tr!("common-cancel")).clicked();
+    });
+    if !close {
+        state.paste_destination = Some(picker);
+    }
+}
+
+pub(super) fn show_parent(inv: &Inventory, state: &mut ExplorerState, row: Row, parent: Uuid) {
+    state.visit(
+        if parent == inv.root {
+            Location::FullTree
+        } else {
+            Location::Folder(parent)
+        },
+        true,
+    );
+    state.clear_filter();
+    state.select_and_reveal(row);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_net::inventory::operations::Operation;
+
+    #[test]
+    fn explorer_cut_revalidates_folder_locks_before_touching_clipboard() {
+        let inv = super::super::tests::fixture();
+        let item = id(20);
+        let mut state = ExplorerState::at(Location::Folder(id(3)));
+        let mut native = InventoryUi {
+            clipboard: vec![id(21)],
+            ..Default::default()
+        };
+        let mut prefs = InventoryPreferences::default();
+        let mut facts = Facts::default();
+        assert!(Edit::Cut.allowed(
+            &inv,
+            &[item],
+            &Menu {
+                native: &native,
+                prefs: &prefs,
+                facts: &facts
+            },
+            false
+        ));
+        state.file_request = Some(Edit::Cut.request(vec![item]));
+        facts.rlva = std::sync::Arc::new(crate::world::rlva::WearLocks::holding_folders([inv.items[&item].parent]));
+        assert!(!Edit::Cut.allowed(
+            &inv,
+            &[item],
+            &Menu {
+                native: &native,
+                prefs: &prefs,
+                facts: &facts
+            },
+            false
+        ));
+        let mut actions = vec![];
+        let mut frame = egui::Context::default().run_ui(Default::default(), |ui| {
+            execute(
+                ui,
+                &inv,
+                &Preferences::default(),
+                &mut state,
+                &mut native,
+                &mut prefs,
+                &facts,
+                &mut actions,
+            );
+        });
+        frame.textures_delta.clear();
+        assert_eq!(native.clipboard, vec![id(21)]);
+        assert!(!native.cut && actions.is_empty());
+        facts.rlva = std::sync::Arc::default();
+        state.file_request = Some(Edit::Cut.request(vec![item]));
+        let mut frame = egui::Context::default().run_ui(Default::default(), |ui| {
+            execute(
+                ui,
+                &inv,
+                &Preferences::default(),
+                &mut state,
+                &mut native,
+                &mut prefs,
+                &facts,
+                &mut actions,
+            );
+        });
+        frame.textures_delta.clear();
+        assert_eq!(native.clipboard, vec![item]);
+        assert!(native.cut);
+    }
+
+    fn id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn explorer_rename_and_trash_require_an_exact_unrepeated_press() {
+        use egui::Modifiers;
+        for (key, action) in [
+            (Key::F2, Some(Key::F2)),
+            (Key::Delete, Some(Key::Delete)),
+            (Key::Backspace, cfg!(target_os = "macos").then_some(Key::Delete)),
+        ] {
+            let event = |pressed, repeat, modifiers| egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed,
+                repeat,
+                modifiers,
+            };
+            assert_eq!(plain_edit_key(&event(true, false, Modifiers::NONE)), action);
+            for modifiers in [Modifiers::SHIFT, Modifiers::ALT, Modifiers::CTRL, Modifiers::COMMAND] {
+                assert_eq!(plain_edit_key(&event(true, false, modifiers)), None);
+            }
+            assert_eq!(plain_edit_key(&event(true, true, Modifiers::NONE)), None);
+            assert_eq!(plain_edit_key(&event(false, false, Modifiers::NONE)), None);
+        }
+    }
+
+    #[test]
+    fn explorer_delete_rechecks_the_command_and_uses_native_confirmations() {
+        use super::super::super::EditDialog;
+        let mut inv = super::super::tests::fixture();
+        let (item, workshop, trash) = (id(20), id(3), id(4));
+        inv.folders.get_mut(&trash).unwrap().info.type_default = 14;
+        let run = |inv: &Inventory, selected: &[Uuid], purge: bool, facts: &Facts| {
+            let mut state = ExplorerState::at(Location::Folder(workshop));
+            let mut native = InventoryUi::default();
+            let mut prefs = InventoryPreferences {
+                confirm_delete: false,
+                ..Default::default()
+            };
+            let mut actions = Vec::new();
+            state.file_request = Some(Request::Native(native_menu::Command::Delete(selected.to_vec(), purge)));
+            let mut frame = egui::Context::default().run_ui(Default::default(), |ui| {
+                execute(
+                    ui,
+                    inv,
+                    &Preferences::default(),
+                    &mut state,
+                    &mut native,
+                    &mut prefs,
+                    facts,
+                    &mut actions,
+                );
+            });
+            frame.textures_delta.clear();
+            (native.dialog, actions)
+        };
+        let mut facts = Facts::default();
+        let (dialog, actions) = run(&inv, &[item], false, &facts);
+        assert!(dialog.is_none());
+        let [InvAction::Delete(request)] = actions.as_slice() else {
+            panic!("ordinary Delete should move one item to Trash");
+        };
+        assert!(matches!(request.change.operations.as_slice(),
+            [Operation::Patch { id, body, .. }] if *id == item && body["parent_id"].as_uuid() == trash));
+
+        inv.items.get_mut(&item).unwrap().asset_type = 6;
+        facts.worn.insert(item);
+        let (dialog, actions) = run(&inv, &[workshop], false, &facts);
+        assert!(matches!(dialog, Some(EditDialog::ExplorerDetachDelete(ids)) if ids == [workshop]));
+        assert!(actions.is_empty());
+        inv.items.get_mut(&item).unwrap().asset_type = 13;
+        let (dialog, actions) = run(&inv, &[item], false, &facts);
+        assert!(dialog.is_none() && actions.is_empty(), "a worn body part is protected");
+        facts.worn.clear();
+
+        inv.folders.get_mut(&workshop).unwrap().items.clear();
+        inv.folders.get_mut(&trash).unwrap().items.push(item);
+        inv.items.get_mut(&item).unwrap().parent = trash;
+        let (dialog, actions) = run(&inv, &[item], true, &facts);
+        assert!(matches!(dialog, Some(EditDialog::ExplorerDelete(ids, true)) if ids == [item]));
+        assert!(actions.is_empty(), "purge always asks even with Trash confirmation disabled");
+        for (ids, purge) in [
+            (vec![item], false),
+            (vec![workshop], true),
+            (vec![item, workshop], false),
+            (vec![item, workshop], true),
+            (vec![trash], true),
+            (vec![id(6)], false),
+        ] {
+            let (dialog, actions) = run(&inv, &ids, purge, &facts);
+            assert!(
+                dialog.is_none() && actions.is_empty(),
+                "stale, mixed or protected Delete: {ids:?}, purge={purge}"
+            );
+        }
+    }
+
+    #[test]
+    fn explorer_restore_requires_all_entries_in_trash_and_keeps_children_with_their_selected_parent() {
+        let mut inv = super::super::tests::fixture();
+        inv.folders.get_mut(&id(4)).unwrap().info.type_default = 14;
+        // Workshop is in Trash, and Bench notes is inside Workshop. Settings is outside Trash.
+        inv.folders.get_mut(&id(3)).unwrap().info.parent = id(4);
+        assert_eq!(restore_roots(&inv, &[id(20), id(3)]), Some(vec![id(3)]));
+        assert_eq!(restore_roots(&inv, &[id(20)]), Some(vec![id(20)]));
+        assert_eq!(restore_roots(&inv, &[id(5), id(20)]), None);
+        assert_eq!(restore_roots(&inv, &[]), None);
+    }
+
+    #[test]
+    fn explorer_confirm_checks_newly_active_gestures_and_explicitly_selected_protected_children() {
+        let mut inv = super::super::tests::fixture();
+        let (item, folder, trash) = (id(20), id(3), id(4));
+        inv.folders.get_mut(&trash).unwrap().info.type_default = 14;
+        inv.items.get_mut(&item).unwrap().asset_type = 21;
+        let mut prefs = InventoryPreferences::default();
+        let mut facts = Facts::default();
+        assert!(delete::explorer_plan(&inv, &[item], false, &prefs, &facts).is_ok());
+        facts.active_gestures.insert(item);
+        assert!(delete::explorer_plan(&inv, &[item], false, &prefs, &facts).is_err());
+        facts.active_gestures.clear();
+
+        inv.folders.get_mut(&folder).unwrap().info.parent = trash;
+        assert!(delete::explorer_plan(&inv, &[folder, item], true, &prefs, &facts).is_ok());
+        prefs.protected.insert(item);
+        assert!(delete::explorer_plan(&inv, &[folder, item], true, &prefs, &facts).is_err());
+        assert!(delete::explorer_plan(&inv, &[folder], true, &prefs, &facts).is_ok());
+    }
+
+    #[test]
+    fn explorer_trash_restore_returns_to_the_remembered_inventory_folder() {
+        let mut inv = super::super::tests::fixture();
+        let (item, workshop, trash) = (id(20), id(3), id(4));
+        inv.folders.get_mut(&trash).unwrap().info.type_default = 14;
+        let mut origins = std::mem::take(&mut inv.trash_origins);
+        let request = id(100);
+        let change = rules::move_selection(&inv, &[item], trash, &Default::default(), &Default::default()).unwrap();
+        origins.begin(request, crate::world::inventory::trash_origins::TrashOrigins::moves(&inv, &change));
+        origins.finish(request, &inv, true);
+        inv.trash_origins = origins;
+        inv.folders.get_mut(&workshop).unwrap().items.retain(|id| *id != item);
+        inv.folders.get_mut(&trash).unwrap().items.push(item);
+        inv.items.get_mut(&item).unwrap().parent = trash;
+
+        let mut state = ExplorerState::at(Location::Folder(trash));
+        let mut native = InventoryUi::default();
+        let mut prefs = InventoryPreferences::default();
+        let facts = Facts::default();
+        let mut catalog = native_menu::build_for_selection(&inv, item, &native, &prefs, &facts, vec![item], false, false);
+        let entry = catalog.entries.iter().find(|entry| entry.id == "restore").unwrap();
+        assert!(entry.enabled);
+        let super::super::super::menu_layout::Kind::Action(index) = entry.kind else {
+            panic!("Restore must execute an inventory command");
+        };
+        state.file_request = Some(Request::Native(catalog.commands[index].take().unwrap()));
+        let mut actions = Vec::new();
+        let mut frame = egui::Context::default().run_ui(Default::default(), |ui| {
+            execute(
+                ui,
+                &inv,
+                &Preferences::default(),
+                &mut state,
+                &mut native,
+                &mut prefs,
+                &facts,
+                &mut actions,
+            );
+        });
+        frame.textures_delta.clear();
+        let [InvAction::Edit(change)] = actions.as_slice() else {
+            panic!("expected one restore mutation")
+        };
+        assert!(
+            matches!(change.operations.as_slice(), [Operation::Patch { id, body, .. }] if *id == item && body["parent_id"].as_uuid() == workshop)
+        );
+    }
+
+    #[test]
+    fn explorer_clipboard_uses_permissions_real_parents_and_account_identity() {
+        let mut inv = super::super::tests::fixture();
+        let mut native = InventoryUi::default();
+        let mut prefs = InventoryPreferences::default();
+        let facts = Facts::default();
+        let layout = Preferences::default();
+        let mut state = ExplorerState::at(Location::Folder(id(4)));
+        let to = Location::Folder(id(4));
+        let mut actions = vec![];
+        native.enter_clipboard_account(inv.root);
+        native.clipboard = vec![id(20)]; // A no-copy note in Workshop.
+        let menu = Menu {
+            native: &native,
+            prefs: &prefs,
+            facts: &facts,
+        };
+        assert!(!paste_enabled(&menu, &inv, &layout, to, false));
+        assert!(paste_enabled(&menu, &inv, &layout, to, true));
+        assert!(!paste_enabled(&menu, &inv, &layout, Location::Library, true));
+        assert!(!paste_enabled(&menu, &inv, &layout, Location::Home, true));
+        assert!(!paste_enabled(&menu, &inv, &layout, Location::Group(Group::System), true));
+
+        let mut frame = egui::Context::default().run_ui(Default::default(), |ui| {
+            state.file_request = Some(Request::Paste(to, true));
+            execute(ui, &inv, &layout, &mut state, &mut native, &mut prefs, &facts, &mut actions);
+        });
+        frame.textures_delta.clear();
+        assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
+            [Operation::Links{parent,links}] if *parent==id(4) && links[0].target==id(20))));
+        assert_eq!(inv.items[&id(20)].parent, id(3));
+
+        native.cut = true;
+        let menu = Menu {
+            native: &native,
+            prefs: &prefs,
+            facts: &facts,
+        };
+        assert!(paste_enabled(&menu, &inv, &layout, to, false));
+        assert!(!paste_enabled(&menu, &inv, &layout, to, true));
+        inv.folders.get_mut(&id(3)).unwrap().info.name = "#RLV".into();
+        assert!(!may_paste(&menu, &inv, id(4), false));
+        native.enter_clipboard_account(id(999));
+        assert!(native.clipboard.is_empty() && !native.cut);
+    }
+
+    #[test]
+    fn explorer_group_paste_waits_for_an_explicit_real_folder_and_cancels_stale_clipboard() {
+        let inv = super::super::tests::fixture();
+        let mut native = InventoryUi {
+            clipboard: vec![id(20)],
+            ..Default::default()
+        };
+        let mut prefs = InventoryPreferences::default();
+        let facts = Facts::default();
+        let layout = Preferences::default();
+        let group = Location::Group(Group::Appearance);
+        let mut state = ExplorerState::at(group);
+        let mut actions = vec![];
+        let mut frame = egui::Context::default().run_ui(Default::default(), |ui| {
+            state.file_request = Some(Request::Paste(group, true));
+            execute(ui, &inv, &layout, &mut state, &mut native, &mut prefs, &facts, &mut actions);
+            let draft = state.paste_destination.as_ref().unwrap();
+            assert_eq!(draft.root, inv.root);
+            assert!(draft.selected.is_none());
+            native.clipboard.clear();
+            destination(ui, &inv, &layout, &mut state, &mut native, &prefs, &facts, &mut actions);
+        });
+        frame.textures_delta.clear();
+        assert!(actions.is_empty() && state.paste_destination.is_none());
+    }
+
+    #[test]
+    fn explorer_real_actions_keep_virtual_rows_out_of_bulk_and_reveal_exact_record() {
+        let inv = super::super::tests::fixture();
+        let mut state = ExplorerState::at(Location::Home);
+        state
+            .here
+            .selected
+            .extend([Row::Item(id(20)), Row::Place(Location::Group(Group::Appearance))]);
+        assert!(ids(&state).is_none());
+        show_parent(&inv, &mut state, Row::Item(id(20)), id(3));
+        assert!(state.here.raw);
+        assert_eq!(state.here.location, Location::Folder(id(3)));
+        assert_eq!(ids(&state), Some(vec![id(20)]));
+        assert_eq!(state.reveal_row, Some(Row::Item(id(20))));
+    }
+}

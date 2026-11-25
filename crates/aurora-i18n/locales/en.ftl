@@ -2,6 +2,179 @@ language-name = English
 avatar-studio-title = Avatar Studio
 avatar-studio-pose = Pose
 avatar-studio-pose-animated = AO / In-world
+
+## Inventory Explorer window
+organized-version = This layout requires a newer version of Inventory Explorer.
+organized-conflict = The original layout is protected. This session saves edits to { $path }.
+explorer-input-moving = { $count ->
+    [one] Move one entry in Explorer
+   *[other] Move { $count } entries in Explorer
+    }
+explorer-input-protected = This selection contains a protected location.
+organized-new-tab = New tab
+organized-close-tab = Close tab
+organized-detach = Move tab to new window
+organized-dock = Return tab to main window
+organized-save-error = Local inventory layout: { $error }
+
+# Personal inventory Explorer panel
+explorer-change-folder-icon = Change folder icon…
+explorer-restore-folder-icon = Restore default icon
+explorer-set-parcel-environment = Set as parcel environment…
+explorer-set-parcel-unavailable = The current parcel must allow environment changes, and you need permission to change them.
+explorer-parcel-env-title = Set parcel environment?
+explorer-parcel-env-warning = Apply “{ $preset }” to “{ $parcel }” in { $region }? This replaces the shared environment for everyone on this parcel.
+explorer-parcel-env-confirm = Set parcel environment
+explorer-parcel-env-changed = The parcel, your permissions, or the preset changed. Open the menu again to apply it.
+explorer-parcel-env-success = Updated the environment on “{ $parcel }”.
+explorer-parcel-env-failed = Couldn’t update the environment on “{ $parcel }”. { $reason }
+explorer-menu-copy-path = Copy folder path
+explorer-menu-copy-containing-path = Copy containing folder path
+explorer-address-edit = Edit address (Ctrl+L)
+explorer-address-missing = No folder named “{ $name }” was found in this location.
+explorer-address-ambiguous = More than one folder is named “{ $name }”. Choose a folder, then press Enter.
+explorer-address-choose = Choose folder
+explorer-address-loading = Loading folders…
+explorer-address-fetch-failed = Could not load the folder. Press Enter to retry.
+explorer-address-open-containing = Open containing folder
+
+explorer-file-actions = Actions
+explorer-real-move-hint = Changes the original Second Life folder. Existing Explorer placements stay where you organized them.
+explorer-real-move = Move in Second Life…
+explorer-real-trash = Move to Trash
+explorer-real-unavailable = This selection or destination does not allow that inventory action.
+explorer-real-paste-in = Paste into this Second Life inventory folder
+explorer-local-drop = Organize in Explorer → { $destination }
+explorer-denied-drop = Cannot organize here → { $destination }
+
+explorer-home-my-folders = My Folders
+explorer-home-pinned = Quick access
+explorer-home-other-locations = Other locations
+explorer-panel-stock = Second Life Library
+explorer-panel-unavailable-folder = Unavailable folder
+explorer-panel-unpin = Unpin
+explorer-panel-pin-to-sidebar = Pin to sidebar
+explorer-panel-updated = Explorer organization updated
+explorer-panel-open-tab = Open in new tab
+explorer-panel-pin-up = Move pin up
+explorer-panel-pin-down = Move pin down
+explorer-panel-places = All locations
+explorer-panel-pin = Pin
+explorer-panel-original-tree = Original folder tree
+explorer-panel-original-short = Original tree
+explorer-panel-back = Back (Alt+Left)
+explorer-panel-forward = Forward (Alt+Right)
+explorer-panel-up = Up (Alt+Up)
+explorer-panel-search = Search inventory
+explorer-search-in-folder = Search { $name }
+explorer-panel-clear = Clear search
+explorer-panel-remove-virtual = Remove virtual folder
+explorer-panel-restore = Restore original location
+explorer-panel-show-original = Show in original folder
+explorer-panel-new-folder = New virtual folder
+explorer-panel-folder-name = Folder name
+explorer-panel-create = Create
+explorer-panel-choose-name = Choose a name for this virtual folder
+explorer-panel-folder = Folder
+explorer-panel-virtual-folder = Virtual folder
+explorer-panel-location = Location
+explorer-panel-empty = Empty folder
+explorer-panel-no-matches = No matches
+explorer-panel-loading = Loading inventory
+explorer-panel-unavailable = This location is unavailable.
+explorer-panel-home = Return home
+explorer-panel-retry = Retry loading folder
+explorer-resize-pins = Resize navigation pane
+explorer-resize-columns = Resize column
+explorer-status-folders = { $count ->
+    [one] 1 folder
+   *[other] { $count } folders
+    }
+explorer-status-loading = Inventory still loading or incomplete
+explorer-panel-incomplete-count = { $count ->
+    [one] { $count } result · Inventory still loading or incomplete
+   *[other] { $count } results · Inventory still loading or incomplete
+    }
+explorer-panel-entry-count = { $count ->
+    [one] { $count } entry
+   *[other] { $count } entries
+    }
+explorer-panel-selection-count = { $count ->
+    [one] { $selected } selected · { $count } entry
+   *[other] { $selected } selected · { $count } entries
+    }
+
+# Display names in the organized inventory explorer.
+explorer-model-appearance = Appearance
+explorer-model-textures-materials = Textures & Materials
+explorer-model-motion-sound = Motion & Sound
+explorer-model-objects-scripts = Objects & Scripts
+explorer-model-places-people = Places & People
+explorer-model-system = System
+explorer-model-current-outfit = Current Outfit
+explorer-model-saved-outfits = Saved Outfits
+explorer-model-clothing = Clothing
+explorer-model-body-parts = Body Parts
+explorer-model-textures = Textures
+explorer-model-materials = Materials
+explorer-model-animations = Animations
+explorer-model-gestures = Gestures
+explorer-model-sounds = Sounds
+explorer-model-objects = Objects
+explorer-model-scripts = Scripts
+explorer-model-saved-places = Saved Places
+explorer-model-favorite-places = Favorite Places
+explorer-model-contact-cards = Contact Cards
+explorer-model-photos = Photos
+explorer-model-notecards = Notecards
+explorer-model-environments = Environments
+explorer-model-marketplace-deliveries = Marketplace Deliveries
+explorer-model-marketplace-listings = Marketplace Listings
+explorer-model-lost-found = Lost & Found
+explorer-model-trash = Trash
+explorer-model-all-inventory = All Inventory
+explorer-model-second-life-library = Second Life Library
+
+# Inventory Explorer folder views
+explorer-mode-view = View
+explorer-mode-details = Details
+explorer-mode-list = List
+explorer-mode-small = Small icons
+explorer-mode-medium = Medium icons
+explorer-mode-large = Large icons
+explorer-mode-extra-large = Extra large icons
+explorer-mode-date = Date created
+explorer-mode-sort = Sort by
+explorer-mode-group = Group by
+explorer-collapse-all-groups = Collapse all groups
+explorer-expand-all-groups = Expand all groups
+explorer-mode-ascending = Ascending
+explorer-mode-descending = Descending
+explorer-mode-pins = Pinned folders
+explorer-pins-new-group = New pin group
+explorer-pins-name = Group name
+explorer-pins-rename-group = Rename group
+explorer-pins-remove-group = Remove group
+explorer-pins-remove-hint = Move its pins to Ungrouped
+explorer-pins-move-group = Move to group
+explorer-pins-up = Move group up
+explorer-pins-down = Move group down
+explorer-pins-ungrouped = Ungrouped
+
+# Explorer inventory folder creation
+explorer-create-unavailable = This location cannot receive a new inventory folder.
+explorer-create-length = Use up to 63 characters for the folder name.
+explorer-create-choose-parent = Choose an inventory folder
+explorer-create-shortcut = Create a folder in your Second Life inventory (Ctrl+Shift+N)
+explorer-create-pending = Creating inventory folder…
+explorer-create-location = Create in this Second Life inventory folder
+explorer-create-legacy = Explorer will also show the new folder here.
+explorer-create-in = Create in { $path }
+explorer-create-demo-done = Created “{ $name }” in the offline demo.
+explorer-create-done = Created “{ $name }”.
+explorer-create-offline = Sign in to create a folder in your inventory.
+explorer-create-disconnected = Disconnected before confirmation. Check the destination after reconnecting before trying again.
+
 avatar-studio-pose-t = T-Pose
 avatar-studio-pose-a = A-Pose
 avatar-studio-lighting = Lighting
@@ -11149,7 +11322,8 @@ ui-options-aurora-about-land-classic = Classic window (Legacy)
 ui-options-aurora-search-help = One field, type chips and the details beside the results; or the Legacy Viewer's 7 tabs.
 ui-options-aurora-search-classic = Tabs (Legacy)
 ui-options-aurora-region-estate-help = An overview, settings grouped by what you want to do and the interventions together, or the Legacy Viewer's 8 tabs.
-ui-options-aurora-inventory-help = One window that widens from the tree into an explorer with its details, or the Legacy Viewer's single tree.
+ui-options-aurora-inventory-explorer = Explorer
+ui-options-aurora-inventory-help = Classic shows a folder tree. Aurora adds a details pane as the window widens. Explorer has tabs, pinned folders, and grouped views.
 ui-options-aurora-outfit-gallery = Outfit gallery
 ui-options-aurora-outfit-gallery-help = Appearance's gallery as a showcase, with your folders, large pictures and a preview of the outfit you pick, or the Legacy Viewer's grid of small tiles.
 ui-options-aurora-outfit-gallery-aurora = Showcase
@@ -16381,3 +16555,41 @@ phototools-director-lens = The Director's lens is shown while its window is open
 phototools-view-angle-viewfinder = The viewfinder owns the view angle: yours comes back when it closes.
 ui-options-dof-show-focus-point = Show focus point
 ui-options-dof-show-focus-point-help = A small crosshair on the point the lens focuses on: yellow when it is free, red when it is locked.
+explorer-permissions-title = Edit next-owner permissions…
+explorer-permissions-keep = Keep current
+explorer-permissions-allow = Allow
+explorer-permissions-deny = Deny
+explorer-permissions-modify = Modify
+explorer-permissions-copy = Copy
+explorer-permissions-transfer = Transfer
+explorer-permissions-scope = Includes the real contents of selected inventory folders and their subfolders. Inventory links and the contents inside objects are excluded.
+explorer-permissions-rule = Each item must retain Copy or Transfer. If next-owner Transfer is off, choose Allow for Transfer when denying Copy.
+explorer-permissions-review = Review selection
+explorer-permissions-counts = { $ready } to change · { $same } already set · { $skipped } items skipped · { $folders } folders excluded or unread
+explorer-permissions-results = { $verified } confirmed · { $unconfirmed } unconfirmed · { $pending } pending
+explorer-permissions-stop = Stop remaining changes
+explorer-permissions-edit = Edit choices
+explorer-permissions-selection = Selection ({ $count }) · { $first }
+
+## Explorer 0.8 – home
+explorer-general-inventory = General Inventory
+explorer-home-categories = Inventory categories
+explorer-home-utilities = Library & system
+explorer-home-pinned-folders = Pinned folders
+explorer-home-no-dates = Second Life folders do not have a creation date.
+explorer-home-folders = Home folders
+
+## Explorer 0.8 – creation
+explorer-new-home-container = Home Folders
+explorer-new-home-loading = The inventory root is still loading. Try again after it finishes.
+explorer-new-unconfirmed-item = The simulator did not confirm the expected item in this folder. Check the folder before trying again.
+
+explorer-group-symbols = Symbols
+explorer-group-older = Older
+explorer-group-last-year = Last year
+explorer-group-this-year = Earlier this year
+explorer-group-last-month = Last month
+explorer-group-this-month = Earlier this month
+explorer-group-last-week = Last week
+explorer-group-this-week = Earlier this week
+explorer-group-future = Future

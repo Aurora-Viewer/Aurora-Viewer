@@ -556,6 +556,9 @@ pub(super) fn person_menu(resp: &egui::Response, p: &Palette, world: &World, sco
 /// Also called for clipped rows: an open popup stays at its original click
 /// while its resident moves out of the visible part of the list.
 pub(super) fn list_menu(resp: &egui::Response, p: &Palette, world: &World, scope: NameScope, sel: &[Uuid], id: Uuid, kind: AvatarList) {
+    if let Some(items) = crate::ui::give_drop::row(resp, p, world.agent_id, id) {
+        context::request(&resp.ctx, context::CtxAction::ShareInventory { to: id, items });
+    }
     let several = sel.len() > 1 && sel.contains(&id);
     menu::context_menu(resp, p, |ui| {
         if several {
@@ -668,6 +671,32 @@ mod tests {
         fn text_rect(&self, text: &str) -> Rect {
             self.texts.iter().find(|t| t.source == text).expect("menu text is visible").rect
         }
+    }
+
+    #[test]
+    fn dropping_inventory_on_a_resident_row_requests_one_share_with_that_resident() {
+        let mut h = MenuHarness::new();
+        let first = Uuid::from_u128(1);
+        let next = Uuid::from_u128(2);
+        let rows = [first, next];
+        let items = vec![Uuid::from_u128(10), Uuid::from_u128(11)];
+        h.frame(&rows, vec![]);
+        let point = h.rects[&first].center();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let outside = egui::pos2(700.0, 200.0);
+        h.frame(&rows, vec![egui::Event::PointerMoved(outside), button(outside, true)]);
+        crate::ui::inventory::drag::demo_carry(&h.frames.ctx, items.clone());
+        h.frame(&rows, vec![egui::Event::PointerMoved(point)]);
+        assert!(context::take_requests(&h.frames.ctx).is_empty());
+        h.frame(&rows, vec![button(point, false), egui::Event::PointerMoved(outside)]);
+        h.frame(&rows, vec![]);
+        assert!(matches!(&context::take_requests(&h.frames.ctx)[..],
+            [context::CtxAction::ShareInventory { to, items: carried }] if *to == first && *carried == items));
     }
 
     #[test]
