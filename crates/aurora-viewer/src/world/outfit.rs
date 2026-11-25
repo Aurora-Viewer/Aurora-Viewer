@@ -440,6 +440,7 @@ impl OutfitRestore {
     pub fn update(&mut self, mut w: OutfitInputs, now: Instant) {
         self.next_pending_poll = Some(now + Duration::from_secs(1));
         self.wear_known(&mut w, now);
+        self.retry_unavailable_originals(&mut w);
         self.retry_late_attachments(&mut w, now);
         let restore_deadline = match self.stage {
             Stage::Settle => Some(self.ready_at.unwrap_or(now) + MAX_SETTLE),
@@ -538,7 +539,7 @@ impl OutfitRestore {
                 if all || now.duration_since(since) > FETCH_TIMEOUT {
                     // LLAppearanceMgr::updateAppearanceFromCOF observes links
                     // whose originals are still loading. Let known objects
-                    // restore now, retaining late originals without more GETs.
+                    // restore now and let late originals follow the item retry schedule.
                     let before = self.objects.len();
                     self.objects.retain(|id| !w.inventory.broken(id));
                     if self.objects.len() < before {
@@ -773,6 +774,34 @@ impl OutfitRestore {
         self.objects.retain(|id| !obsolete.contains(id));
         self.late_attachments.extend(late.into_iter().map(|id| (id, (now, false))));
         self.send_attach(w.inventory, list, now, "looked-up ");
+    }
+
+    /// The login path owns its original reads even with Appearance closed.
+    /// Only the confirmed Current Outfit can authorize another attempt.
+    fn retry_unavailable_originals(&mut self, w: &mut OutfitInputs) {
+        if !w.ready
+            || w.inventory.item_retries.is_empty()
+            || (self.pending_wear.is_empty() && !matches!(self.stage, Stage::FetchItems { .. }))
+        {
+            return;
+        }
+        let Some(linked) = current_outfit_objects(w.inventory) else {
+            return;
+        };
+        let items: Vec<_> = linked
+            .into_iter()
+            .filter(|id| {
+                !self.user_removed.contains(id)
+                    && !w.worn.contains(id)
+                    && !w.inventory.broken(id)
+                    && !w.inventory.items.contains_key(id)
+                    && (self.pending_wear.contains_key(id) || matches!(self.stage, Stage::FetchItems { .. }) && self.objects.contains(id))
+                    && w.inventory.take_item_retry(id)
+            })
+            .collect();
+        if !items.is_empty() {
+            self.commands.push(NetCommand::FetchItems { items, owner: w.agent });
+        }
     }
 
     fn retry_late_attachments(&mut self, w: &mut OutfitInputs, now: Instant) {
@@ -1044,6 +1073,38 @@ mod tests {
             ..Default::default()
         };
         (inv, restore)
+    }
+
+    #[test]
+    fn exhausted_login_original_reads_resume_without_the_appearance_window() {
+        let (mut inv, mut restore) = deferred_login_original();
+        let now = Instant::now();
+        let original = Uuid::from_u128(201);
+        let unrelated = Uuid::from_u128(900);
+        inv.items_failed(&[unrelated]);
+
+        for attempt in 1..=crate::world::inventory::ITEM_FETCH_ATTEMPTS {
+            inv.items_failed(&[original]);
+            restore.update(inputs(&mut inv, &[]), now + Duration::from_secs(u64::from(attempt)));
+            if attempt < crate::world::inventory::ITEM_FETCH_ATTEMPTS {
+                assert!(matches!(restore.commands.as_slice(), [NetCommand::FetchItems { items, .. }] if items == &[original]));
+            } else {
+                assert!(restore.commands.is_empty());
+                assert!(restore.keeps_cof_link(original));
+                assert!(!inv.broken(&original));
+            }
+            restore.commands.clear();
+        }
+        assert!(inv.take_item_retry(&unrelated), "unrelated work belongs to its own caller");
+
+        let due = now + crate::world::inventory::ITEM_GIVE_UP + Duration::from_secs(5);
+        inv.expire_given_up(due);
+        restore.update(inputs(&mut inv, &[]), due);
+        assert!(matches!(restore.commands.as_slice(), [NetCommand::FetchItems { items, .. }] if items == &[original]));
+        restore.commands.clear();
+        inv.add_items(vec![item(201, Uuid::from_u128(10), ASSET_OBJECT, INV_OBJECT, 0)]);
+        restore.update(inputs(&mut inv, &[]), due + Duration::from_secs(1));
+        assert_eq!(requested(&restore.commands), vec![201]);
     }
 
     #[test]

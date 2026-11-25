@@ -37,6 +37,7 @@ struct Queue {
     waiting: VecDeque<Key>,
     failures: HashMap<Key, (u8, Instant, Arc<str>)>,
     next_generation: u64,
+    suspended: bool,
 }
 
 impl Queue {
@@ -87,7 +88,32 @@ impl Queue {
         }
     }
 
+    fn retarget(&mut self, cap: Option<Arc<str>>) {
+        if self.suspended && cap.is_none() {
+            return;
+        }
+        let now = Instant::now();
+        for entry in self.entries.values_mut() {
+            if cap.as_ref().is_some_and(|new| *new == entry.cap) && !self.suspended {
+                continue;
+            }
+            if let Some(new) = &cap {
+                entry.cap = new.clone();
+            }
+            entry.generation = self.next_generation;
+            self.next_generation = self.next_generation.wrapping_add(1);
+            entry.due = now;
+            if let Some(abort) = entry.abort.take() {
+                abort.abort();
+            }
+        }
+        self.suspended = cap.is_none();
+    }
+
     fn start(&mut self) -> Option<Read> {
+        if self.suspended {
+            return None;
+        }
         let now = Instant::now();
         let index = self.waiting.iter().position(|key| {
             self.entries
@@ -138,6 +164,9 @@ impl Queue {
     }
 
     fn delay(&self) -> Duration {
+        if self.suspended {
+            return Duration::from_secs(86400);
+        }
         self.waiting
             .iter()
             .filter_map(|key| self.entries.get(key))
@@ -151,9 +180,34 @@ pub(super) struct Reader {
     queue: Arc<Mutex<Queue>>,
     wake: Arc<Notify>,
     task: tokio::task::JoinHandle<()>,
+    events: crate::EventSender,
 }
 
 impl Reader {
+    /// Keep in-flight consumers across a crossing, but prevent the old
+    /// capability's response from classifying an original on the new seed.
+    pub(super) fn retarget(&self, cap: Option<String>, seed_resolved: bool) {
+        let mut queue = self.queue.lock();
+        let unavailable = cap.is_none() && seed_resolved;
+        queue.retarget(cap.map(Arc::from));
+        if unavailable {
+            queue.waiting.clear();
+            for ((_, id), entry) in queue.entries.drain() {
+                super::send_item_reads(
+                    &self.events,
+                    ItemReads {
+                        failed: vec![id],
+                        ..Default::default()
+                    },
+                    entry.attachment && !entry.ordinary,
+                    entry.attachment && entry.ordinary,
+                );
+            }
+        }
+        drop(queue);
+        self.wake.notify_one();
+    }
+
     /// Only the model acknowledges accepted records, after checking folder
     /// versions. Cancel ordinary duplicate GETs, preserving the attachment
     /// metadata reads' special parent-repair semantics.
@@ -204,6 +258,7 @@ impl Reader {
         let wake = Arc::new(Notify::new());
         let worker_queue = queue.clone();
         let worker_wake = wake.clone();
+        let worker_events = events.clone();
         let task = tokio::spawn(async move {
             let mut tasks = tokio::task::JoinSet::new();
             let mut active = HashMap::new();
@@ -216,7 +271,7 @@ impl Reader {
                         .lock()
                         .entries
                         .get_mut(&read.key)
-                        .filter(|entry| entry.reading_generation == Some(read.generation))
+                        .filter(|entry| entry.generation == read.generation && entry.reading_generation == Some(read.generation))
                     {
                         entry.abort = Some(handle.clone());
                     } else {
@@ -240,18 +295,16 @@ impl Reader {
                         };
                         let Some(read) = active.remove(&task_id) else { continue };
                         let reads = result.unwrap_or_else(|| ItemReads { failed: vec![read.key.1], ..Default::default() });
-                        let destinations = worker_queue.lock().finish(&read, !reads.failed.is_empty());
-                        if let Some((ordinary, attachment)) = destinations {
-                            if ordinary && attachment && !reads.items.is_empty() {
-                                events.send(crate::types::NetEvent::AttachmentInventoryItems(reads.items.clone()));
-                            }
-                            super::send_item_reads(&events, reads, attachment && !ordinary, attachment && ordinary);
+                        // Serialize delivery with a capability switch.
+                        let mut queue = worker_queue.lock();
+                        if let Some((ordinary, attachment)) = queue.finish(&read, !reads.failed.is_empty()) {
+                            super::send_item_reads(&worker_events, reads, attachment && !ordinary, attachment && ordinary);
                         }
                     },
                 }
             }
         });
-        Self { queue, wake, task }
+        Self { queue, wake, task, events }
     }
 
     pub(super) fn enqueue(&self, owner: Uuid, items: Vec<Uuid>, cap: String, attachment: bool) {
@@ -303,6 +356,64 @@ mod tests {
         let new = queue.start().unwrap();
         assert_eq!(&*new.cap, "new");
         assert_eq!(queue.finish(&new, false), Some((true, true)));
+    }
+
+    #[test]
+    fn a_region_switch_invalidates_an_active_read_without_a_second_consumer_command() {
+        let mut queue = Queue::default();
+        let owner = Uuid::nil();
+        let item = Uuid::from_u128(2);
+        queue.enqueue(owner, vec![item], Arc::from("old"), false);
+        queue.enqueue(owner, vec![item], Arc::from("old"), true);
+        let old = queue.start().unwrap();
+        queue.retarget(None);
+        assert!(queue.finish(&old, false).is_none(), "an old 404 must not reach consumers");
+        assert!(queue.start().is_none(), "wait for the new seed");
+        queue.retarget(Some(Arc::from("new")));
+        let new = queue.start().unwrap();
+        assert_eq!(&*new.cap, "new");
+        assert_eq!(queue.finish(&new, false), Some((true, true)));
+    }
+
+    #[tokio::test]
+    async fn a_shared_success_is_delivered_once_with_attachment_parent_context() {
+        let (events, received) = crossbeam_channel::unbounded();
+        let reader = Reader::with_fetch(crate::EventSender(events), |_, id, _| async move {
+            ItemReads {
+                items: vec![crate::inventory::InvItem { id, ..Default::default() }],
+                ..Default::default()
+            }
+        });
+        let item = Uuid::from_u128(2);
+        reader.enqueue(Uuid::nil(), vec![item], "synthetic-cap".into(), false);
+        reader.enqueue(Uuid::nil(), vec![item], "synthetic-cap".into(), true);
+        let mut response = None;
+        for _ in 0..100 {
+            if let Ok((_, event)) = received.try_recv() {
+                response = Some(event);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(
+            matches!(response, Some(crate::NetEvent::AttachmentInventoryItems { items, coalesced: true })
+            if items.len() == 1 && items[0].id == item)
+        );
+        assert!(received.is_empty());
+    }
+
+    #[tokio::test]
+    async fn region_without_ais_releases_a_shared_read_as_temporary_failure() {
+        let (events, received) = crossbeam_channel::unbounded();
+        let reader = Reader::with_fetch(crate::EventSender(events), |_, _, _| std::future::pending::<ItemReads>());
+        let item = Uuid::from_u128(2);
+        reader.enqueue(Uuid::nil(), vec![item], "synthetic-cap".into(), false);
+        reader.enqueue(Uuid::nil(), vec![item], "synthetic-cap".into(), true);
+        reader.retarget(None, true);
+        assert!(matches!(received.try_recv(),
+            Ok((_, crate::NetEvent::InventoryItemsFailed { items, attachment: false, coalesced: true }))
+            if items == [item]));
+        assert!(received.is_empty());
     }
 
     #[test]

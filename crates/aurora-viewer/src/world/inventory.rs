@@ -80,7 +80,9 @@ pub struct Inventory {
     pub item_failures: HashMap<Uuid, u8>,
     pub(crate) background_idle: bool,
     pub(crate) accepted_snapshot_items: Vec<Uuid>,
-    /// Failed item reads to ask for again (`take_item_retries`).
+    /// Folders whose older contents were rejected and are being read again.
+    pub(crate) stale_snapshot_refetches: HashSet<Uuid>,
+    /// Failed item reads to ask for again (`take_item_retry`).
     pub item_retries: HashSet<Uuid>,
     /// Items not in the inventory with a read on its way, and until when
     /// (`claim_item_reads`): one read such an item at a time, so a failure
@@ -120,7 +122,7 @@ pub const ITEM_READ_DEADLINE: std::time::Duration = std::time::Duration::from_se
 /// again after this pause.
 pub const ITEM_GIVE_UP: std::time::Duration = std::time::Duration::from_secs(600);
 /// How many times a session an unreadable item is given up and then read
-/// again; after the last, it stays a broken link for the session.
+/// again; after the last, it stays unreadable until valid data arrives.
 pub const ITEM_GIVE_UP_ROUNDS: u32 = 6;
 
 /// The pause before a folder shown open whose read failed is asked for
@@ -393,14 +395,14 @@ impl Inventory {
             // Inventory versions advance as copies arrive (Firestorm's
             // LLInventoryModel::accountForUpdate). A delayed pre-copy HTTP
             // snapshot must not replace the newer, populated folder.
-            if self
-                .folders
-                .get(&c.folder_id)
-                .is_some_and(|f| f.state == FetchState::Fetched && c.version < f.info.version)
-            {
+            if self.folders.get(&c.folder_id).is_some_and(|f| {
+                c.version < f.info.version && (f.state == FetchState::Fetched || self.stale_snapshot_refetches.contains(&c.folder_id))
+            }) {
+                self.stale_snapshot_refetches.insert(c.folder_id);
                 stale.push(c.folder_id);
                 continue;
             }
+            self.stale_snapshot_refetches.remove(&c.folder_id);
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
             let child_ids: Vec<Uuid> = c.folders.iter().map(|f| f.id).collect();
             for mut f in c.folders {
@@ -691,8 +693,8 @@ impl Inventory {
         items.retain(|id| !self.broken(id) && !self.read_exhausted(id));
     }
 
-    /// The items given up past [`ITEM_GIVE_UP`] are no longer broken links:
-    /// the outfits and attachments that need them ask again (the
+    /// Temporarily unavailable items can start another read round after
+    /// [`ITEM_GIVE_UP`]. The outfits and attachments that need them ask again (the
     /// generation changes, so their views look again). Called every frame
     /// by the inventory's pump; nothing to do most of the time.
     pub fn expire_given_up(&mut self, now: std::time::Instant) {
@@ -777,10 +779,10 @@ impl Inventory {
     /// Only a wear may skip an exhausted original. Other consumers still
     /// distinguish unknown metadata from a confirmed missing record.
     pub(crate) fn can_skip_wear_original(&self, id: &Uuid) -> bool {
-        self.background_idle && self.read_exhausted(id)
+        self.background_idle && !self.items.contains_key(id) && (self.read_exhausted(id) || self.give_up_rounds.contains_key(id))
     }
 
-    pub(super) fn read_exhausted(&self, id: &Uuid) -> bool {
+    pub(crate) fn read_exhausted(&self, id: &Uuid) -> bool {
         !self.items.contains_key(id) && self.item_failures.get(id).is_some_and(|attempts| *attempts >= ITEM_FETCH_ATTEMPTS)
     }
 
@@ -826,7 +828,13 @@ impl Inventory {
         }
     }
 
+    /// Claims a retry for an original still needed by the caller.
+    pub(crate) fn take_item_retry(&mut self, id: &Uuid) -> bool {
+        self.item_retries.remove(id)
+    }
+
     /// The failed item reads to send again, once each.
+    #[cfg(test)]
     pub fn take_item_retries(&mut self) -> HashSet<Uuid> {
         std::mem::take(&mut self.item_retries)
     }
@@ -897,6 +905,7 @@ impl Inventory {
         self.pending_folder_repairs
             .retain(|id| self.repaired_folder_parents.contains_key(id));
         self.folders.retain(|id, _| !removed.contains(id));
+        self.stale_snapshot_refetches.retain(|id| !removed.contains(id));
         self.sort_all();
         self.generation += 1;
     }

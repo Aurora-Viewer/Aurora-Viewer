@@ -1443,7 +1443,11 @@ pub enum NetEvent {
     InventoryItems(Vec<crate::inventory::InvItem>),
     /// Original records requested to recover simulator-arrived attachments.
     /// Keep the creation context even if the object detaches before readback.
-    AttachmentInventoryItems(Vec<crate::inventory::InvItem>),
+    AttachmentInventoryItems {
+        items: Vec<crate::inventory::InvItem>,
+        /// The same read also satisfied ordinary inventory demand.
+        coalesced: bool,
+    },
     InventoryOrphansFetched {
         request: u64,
         owner: Uuid,

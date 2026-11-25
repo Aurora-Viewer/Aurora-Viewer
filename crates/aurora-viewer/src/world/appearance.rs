@@ -411,7 +411,7 @@ pub fn missing_targets(inv: &Inventory, folder: Uuid) -> impl Iterator<Item = Uu
         .filter_map(|id| inv.items.get(id))
         .filter(move |it| it.parent == folder && it.asset_type == 24 && !it.asset_id.is_nil())
         .map(|it| it.asset_id)
-        .filter(|target| !inv.items.contains_key(target) && !inv.broken(target) && !inv.read_exhausted(target))
+        .filter(|target| !inv.items.contains_key(target) && !inv.broken(target))
 }
 
 /// One FetchInventory2 request for these items, none when there are none.
@@ -468,16 +468,18 @@ pub fn wearable_contents(inv: &Inventory, folder: Uuid) -> Result<Vec<OutfitLink
     let mut pending = vec![folder];
     let mut seen = HashSet::new();
     let mut links = Vec::new();
+    let mut skipped = false;
     while let Some(id) = pending.pop() {
         if !seen.insert(id) {
             return Err(aurora_i18n::tr!("world-appearance-cycle-in-outfit-folders").into());
         }
         let f = inv.folders.get(&id).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
         require_wear_complete(inv, id)?;
-        for link in usable_links(inv, id)
-            .into_iter()
-            .filter(|l| !l.folder && !inv.can_skip_wear_original(&l.target))
-        {
+        for link in usable_links(inv, id).into_iter().filter(|l| !l.folder) {
+            if inv.can_skip_wear_original(&link.target) {
+                skipped = true;
+                continue;
+            }
             let item = inv
                 .items
                 .get(&link.target)
@@ -487,6 +489,9 @@ pub fn wearable_contents(inv: &Inventory, folder: Uuid) -> Result<Vec<OutfitLink
             }
         }
         pending.extend(f.children.iter().copied());
+    }
+    if skipped && links.is_empty() {
+        return Err(aurora_i18n::tr!("world-appearance-this-outfit-s-inventory-is-still-loading").into());
     }
     let mut targets = HashSet::new();
     links.retain(|l| targets.insert(l.target));
@@ -904,12 +909,16 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                     usable_links(inv, *id)
                 });
             }
+            let skipped = links.iter().any(|link| !link.folder && inv.can_skip_wear_original(&link.target));
             let mut next: Vec<_> = links
                 .into_iter()
                 .filter(|l| {
                     !l.folder && !inv.can_skip_wear_original(&l.target) && inv.items.get(&l.target).is_none_or(|it| it.asset_type != 0)
                 })
                 .collect();
+            if skipped && next.is_empty() {
+                return Err(aurora_i18n::tr!("world-appearance-this-outfit-s-inventory-is-still-loading").into());
+            }
             if next
                 .iter()
                 .any(|l| inv.items.get(&l.target).is_none_or(|it| !matches!(it.asset_type, 5 | 6 | 13 | 21)))
@@ -2539,6 +2548,31 @@ mod tests {
         inv.add_items(vec![original]);
         let (change, _) = plan(&inv, Action::Wear(outfit, false), &HashMap::new()).expect("wear the recovered original");
         assert!(change.links.iter().any(|link| link.target == id));
+    }
+
+    #[test]
+    fn entirely_unreadable_outfit_cannot_replace_the_current_outfit() {
+        let mut inv = fixture();
+        let outfit = Uuid::from_u128(704);
+        let targets: Vec<_> = folder_links(&inv, outfit)
+            .into_iter()
+            .filter(|link| !link.folder)
+            .map(|link| link.target)
+            .collect();
+        assert!(!targets.is_empty());
+        for id in &targets {
+            inv.items.remove(id);
+        }
+        for _ in 0..crate::world::inventory::ITEM_FETCH_ATTEMPTS {
+            inv.items_failed(&targets);
+        }
+        inv.set_background_idle(true);
+        assert!(plan(&inv, Action::Wear(outfit, false), &HashMap::new()).is_err());
+        assert!(wearable_contents(&inv, outfit).is_err());
+
+        inv.expire_given_up(std::time::Instant::now() + crate::world::inventory::ITEM_GIVE_UP);
+        assert!(targets.iter().all(|id| inv.can_skip_wear_original(id) && !inv.broken(id)));
+        assert!(plan(&inv, Action::Wear(outfit, false), &HashMap::new()).is_err());
     }
 
     #[test]

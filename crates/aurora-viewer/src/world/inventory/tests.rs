@@ -125,6 +125,12 @@ fn stale_folder_reply_cannot_acknowledge_an_already_known_item() {
     assert_eq!(inv.apply_snapshots(vec![snapshot(version - 1)], true), vec![root]);
     assert!(inv.take_accepted_snapshot_items().is_empty());
     assert!(inv.items.contains_key(&known));
+    assert_eq!(inv.folders[&root].state, FetchState::Fetching);
+    assert_eq!(inv.apply_snapshots(vec![snapshot(version - 1)], true), vec![root]);
+    assert!(
+        inv.take_accepted_snapshot_items().is_empty(),
+        "a refresh does not make an older reply current"
+    );
     assert!(inv.apply_snapshots(vec![snapshot(version)], true).is_empty());
     assert_eq!(inv.take_accepted_snapshot_items(), vec![known]);
 }

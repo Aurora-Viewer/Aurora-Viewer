@@ -397,10 +397,15 @@ impl AppearanceUi {
         }
         let mut items = HashSet::new();
         let mut ready = !ids.is_empty();
+        let mut skipped = false;
         for id in &ids {
             ready &= model::loaded(inv, *id);
             for link in model::folder_links(inv, *id).into_iter().filter(|link| !link.folder) {
-                if inv.broken(&link.target) || inv.can_skip_wear_original(&link.target) {
+                if inv.broken(&link.target) {
+                    continue;
+                }
+                if inv.can_skip_wear_original(&link.target) {
+                    skipped = true;
                     continue;
                 }
                 ready &= inv.items.contains_key(&link.target);
@@ -408,6 +413,7 @@ impl AppearanceUi {
             }
         }
         let count = items.len();
+        ready &= !skipped || count > 0;
         self.selection_info = Some(SelectionInfo {
             generation: inv.generation,
             ids,
@@ -470,10 +476,6 @@ impl AppearanceUi {
         agent: Uuid,
         worn: &HashSet<Uuid>,
     ) -> Vec<aurora_net::NetCommand> {
-        // a failed read is asked again (`Inventory::items_failed` counts them)
-        for id in inv.take_item_retries() {
-            self.requested_items.remove(&id);
-        }
         let filtering_contents = self.tab < 2 && !self.search.trim().is_empty();
         let scope_changed = self.prepared.as_ref().is_none_or(|p| p.filtering_contents != filtering_contents);
         let changed = scope_changed || self.prepared.as_ref().is_none_or(|p| p.generation != inv.generation);
@@ -541,8 +543,14 @@ impl AppearanceUi {
                     .missing
                     .values()
                     .flat_map(|(_, targets)| targets)
-                    .filter(|id| !inv.items.contains_key(id) && !inv.missing_items.contains(id)),
+                    .filter(|id| !inv.items.contains_key(id)),
             );
+        }
+        missing.retain(|id| !inv.broken(id) && !inv.read_exhausted(id));
+        for id in &missing {
+            if inv.take_item_retry(id) {
+                self.requested_items.remove(id);
+            }
         }
         self.filter_requests(model::fetch_items(missing, agent))
     }
@@ -4418,6 +4426,26 @@ mod tests {
         inv.folders.get_mut(&outfit).expect("outfit").state = crate::world::inventory::FetchState::Unknown;
         st.prepare(inv, agent, &HashSet::new());
         assert!(inv.queue.contains(&(outfit, false)));
+    }
+
+    #[test]
+    fn a_view_opened_during_cooldown_can_retry_without_a_new_folder_version() {
+        let mut world = wardrobe(0);
+        let agent = world.agent_id;
+        let inv = &mut world.inventory;
+        let target = Uuid::from_u128(723);
+        let unrelated = Uuid::from_u128(900);
+        assert!(inv.items.remove(&target).is_some());
+        inv.items_failed(&[unrelated]);
+        for _ in 0..crate::world::inventory::ITEM_FETCH_ATTEMPTS {
+            inv.items_failed(&[target]);
+        }
+
+        let mut st = AppearanceUi::default();
+        assert!(!fetched(&st.prepare(inv, agent, &HashSet::new())).contains(&target));
+        inv.expire_given_up(std::time::Instant::now() + crate::world::inventory::ITEM_GIVE_UP);
+        assert!(fetched(&st.prepare(inv, agent, &HashSet::new())).contains(&target));
+        assert!(inv.take_item_retry(&unrelated));
     }
 
     #[test]

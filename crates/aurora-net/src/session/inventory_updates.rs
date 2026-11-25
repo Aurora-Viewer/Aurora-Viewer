@@ -621,7 +621,7 @@ mod tests {
                     }
                     while let Ok((_, event)) = received.try_recv() {
                         match event {
-                            NetEvent::AttachmentInventoryItems(items) => {
+                            NetEvent::AttachmentInventoryItems { items, .. } => {
                                 assert!(!private, "offer check leaked into attachment events");
                                 return (true, items);
                             }
@@ -648,7 +648,7 @@ mod tests {
                     !received.try_iter().any(|(_, event)| matches!(
                         event,
                         NetEvent::InventoryItems(_)
-                            | NetEvent::AttachmentInventoryItems(_)
+                            | NetEvent::AttachmentInventoryItems { .. }
                             | NetEvent::InventoryItemsMissing { .. }
                             | NetEvent::InventoryItemsFailed { .. }
                     )),

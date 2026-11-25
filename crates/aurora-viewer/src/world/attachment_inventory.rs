@@ -1222,7 +1222,10 @@ mod tests {
         let objects = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems {
+            items: vec![item.clone()],
+            coalesced: false,
+        });
         assert_eq!(world.inventory.items[&item.id].parent, objects);
         assert!(world.inventory.folders[&objects].items.contains(&item.id));
         assert!(!world.inventory.folders[&lost].items.contains(&item.id));
@@ -1250,7 +1253,10 @@ mod tests {
         let old = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems {
+            items: vec![item.clone()],
+            coalesced: false,
+        });
         assert_eq!(world.inventory.items[&item.id].parent, old);
         assert!(world.inventory.folders[&lost].items.is_empty());
         let locked = Uuid::from_u128(90_083);
@@ -1324,7 +1330,10 @@ mod tests {
                 folders: Vec::new(),
                 items: vec![item.clone()],
             };
-            let readback = NetEvent::AttachmentInventoryItems(vec![item.clone()]);
+            let readback = NetEvent::AttachmentInventoryItems {
+                items: vec![item.clone()],
+                coalesced: false,
+            };
             for event in if notification_first {
                 [notification, readback]
             } else {
@@ -1375,7 +1384,10 @@ mod tests {
             }
             assert!(world.worn_attachment(&item.id).is_none());
             item.parent = Uuid::nil();
-            world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+            world.apply(NetEvent::AttachmentInventoryItems {
+                items: vec![item.clone()],
+                coalesced: false,
+            });
             assert_eq!(world.inventory.items[&item.id].parent, objects);
             assert!(!world.inventory.folders[&lost].items.contains(&item.id));
             assert!(

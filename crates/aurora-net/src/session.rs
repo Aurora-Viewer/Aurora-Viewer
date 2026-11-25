@@ -426,8 +426,11 @@ const LEGACY_ITEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// Items read, items the server says do not exist, and failed reads.
 fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool, coalesced: bool) {
     if !reads.items.is_empty() {
-        let _ = events.send(if attachment {
-            NetEvent::AttachmentInventoryItems(reads.items)
+        let _ = events.send(if attachment || coalesced {
+            NetEvent::AttachmentInventoryItems {
+                items: reads.items,
+                coalesced,
+            }
         } else {
             NetEvent::InventoryItems(reads.items)
         });
@@ -826,6 +829,7 @@ impl Session<'_> {
         self.main = Some(addr);
         self.set_seed(addr, seed);
         if changed {
+            self.sync_inventory_reader(false);
             self.agent_parcel = None;
             if let Some(sim) = self.sims.get_mut(&addr) {
                 sim.pending_voice = None;
@@ -869,6 +873,9 @@ impl Session<'_> {
         sim.caps = Arc::default();
         if let Some(old) = sim.caps_again_task.take() {
             old.abort();
+        }
+        if self.main == Some(addr) {
+            self.sync_inventory_reader(false);
         }
         self.request_caps(addr);
     }
@@ -1021,8 +1028,12 @@ impl Session<'_> {
                     let modify_new = !sim.caps.contains_key("ModifyRegion") && caps.contains_key("ModifyRegion");
                     let caps = Arc::new(caps);
                     sim.caps = caps.clone();
-                    emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
-                    let terrain_handle = (sim.handshake_seen && modify_new).then_some(sim.handle);
+                    let handle = sim.handle;
+                    let terrain_handle = (sim.handshake_seen && modify_new).then_some(handle);
+                    if self.main == Some(addr) {
+                        self.sync_inventory_reader(true);
+                    }
+                    emit(self.sh, NetEvent::Capabilities { handle, caps });
                     if let Some(handle) = terrain_handle {
                         self.request_terrain_transforms(handle);
                     }
@@ -1043,6 +1054,7 @@ impl Session<'_> {
                     sim.caps_requested = false;
                 }
                 if self.main == Some(addr) {
+                    self.sync_inventory_reader(true);
                     emit(
                         self.sh,
                         NetEvent::Alert {
@@ -1083,11 +1095,15 @@ impl Session<'_> {
         }
         let caps = Arc::new(caps);
         sim.caps = caps.clone();
-        emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
+        let handle = sim.handle;
+        let features = caps.get("SimulatorFeatures").cloned().map(|u| (handle, u));
+        let terrain_handle = sim.handshake_seen.then_some(handle);
+        if self.main == Some(addr) {
+            self.sync_inventory_reader(true);
+        }
+        emit(self.sh, NetEvent::Capabilities { handle, caps });
         // LLAvatarRenderInfoAccountant::scanNewRegion (setCapabilitiesReceived)
-        self.render_info.new_region(sim.handle, Instant::now());
-        let features = sim.caps.get("SimulatorFeatures").cloned().map(|u| (sim.handle, u));
-        let terrain_handle = sim.handshake_seen.then_some(sim.handle);
+        self.render_info.new_region(handle, Instant::now());
         if let Some(handle) = terrain_handle {
             self.request_terrain_transforms(handle);
         }
@@ -1418,6 +1434,7 @@ impl Session<'_> {
         }
         if self.main == Some(addr) {
             self.main = None;
+            self.sync_inventory_reader(false);
         }
         self.sh.stats.sim_count.store(self.sims.len() as u32, Ordering::Relaxed);
     }
@@ -3764,6 +3781,17 @@ impl Session<'_> {
     /// The capability of the agent's region (cloned for a request task).
     fn main_cap(&self, name: &str) -> Option<String> {
         self.main.and_then(|a| self.sims.get(&a)).and_then(|s| s.caps.get(name).cloned())
+    }
+
+    fn sync_inventory_reader(&self, seed_resolved: bool) {
+        if let Some(reader) = &self.inventory_reads {
+            let seed_resolved = seed_resolved
+                || self
+                    .main
+                    .and_then(|addr| self.sims.get(&addr))
+                    .is_some_and(|sim| !sim.caps.is_empty());
+            reader.retarget(self.main_cap("InventoryAPIv3"), seed_resolved);
+        }
     }
 
     /// LLAgent::sendMaturityPreferenceToServer: always answered, a missing

@@ -71,7 +71,9 @@ from background folder reads. An attachment consumer promotes a queued
 ordinary read. A logical item read has a 180-second total deadline, including
 paced attempts, and repeated failures use per-key 2/10/60-second cooldowns.
 Only records accepted from a version-checked folder snapshot acknowledge
-redundant ordinary reads. Attachment metadata repair has its own delivery event.
+redundant ordinary reads. Shared successes use attachment parent repair
+once and release both claims. Pending AIS reads pause during seed changes
+and resume on the new capability; stale replies cannot classify originals.
 `CheckInventoryOffer` uses a separate fresh server read and private reply.
 
 Outfit restoration keeps still-linked originals pending past the initial
@@ -82,6 +84,9 @@ initial restore, passive pending checks run at most once per second. A
 deliberate wear may omit an exhausted original when the background walk is
 idle. #4094's bounded ten-minute reread rounds still run; exhausted reads
 never mark an original as missing or unlink it from the saved outfit.
+The restorer requests due rereads for still-linked originals even when
+Appearance is closed. An entirely unreadable outfit cannot replace the
+worn outfit through the partial-wear fallback.
 
 `ui/chat/select/document.rs` scopes the transcript's rich-text selection to
 group notice bodies, in group profiles and notification cards. It retains

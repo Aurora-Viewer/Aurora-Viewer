@@ -5045,9 +5045,12 @@ impl World {
                 self.inventory.add_items(items);
                 None
             }
-            NetEvent::AttachmentInventoryItems(items) => {
+            NetEvent::AttachmentInventoryItems { items, coalesced } => {
                 let ids: Vec<_> = items.iter().map(|item| item.id).collect();
                 self.inventory.items_answered(&ids, true);
+                if coalesced {
+                    self.inventory.items_answered(&ids, false);
+                }
                 self.inventory.add_attachment_items(items);
                 None
             }
