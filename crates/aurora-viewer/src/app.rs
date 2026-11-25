@@ -13697,6 +13697,9 @@ impl App {
             self.sound_cues.pass_start(ui.ctx());
             // before any field reads its keys: Ctrl+W is the frontmost window's
             ui::close_key::begin(ui.ctx());
+            // before any window scrolls: a web page holding the pointer keeps
+            // the wheel from what is drawn before it (review of #3599)
+            ui::web_view::hold_wheel(ui.ctx());
             // the chat fields' shortcuts, as Preferences › Shortcuts set them
             ui::chat::shortcuts::publish(ui.ctx(), &self.settings.keybinds);
             ui::inventory::publish_shortcuts(ui.ctx(), &self.settings.keybinds);
