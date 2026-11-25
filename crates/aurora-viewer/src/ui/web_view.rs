@@ -643,6 +643,28 @@ struct CaptureOwner {
     held: bool,
 }
 
+/// The key of the `CaptureOwner` in the context's data.
+fn owner_id() -> egui::Id {
+    egui::Id::unique("web-view-capture-owner")
+}
+
+/// While a page holds the pointer, nothing behind it scrolls: the captor
+/// gets the wheel and no other view does (LLViewerWindow::handleScrollWheel).
+/// Called at the start of the pass, before any window is drawn: a window
+/// drawn before the page would take the wheel first, and egui spreads a
+/// notch over the frames after it (`smooth_scroll_delta`), so the page's
+/// own frame does not see all of it. The page reads the wheel's events,
+/// which this leaves alone.
+pub(crate) fn hold_wheel(ctx: &egui::Context) {
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    let held = ctx
+        .data(|d| d.get_temp::<CaptureOwner>(owner_id()))
+        .is_some_and(|o| o.held && o.frame + 1 >= frame);
+    if held {
+        ctx.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+    }
+}
+
 /// A token for a web view's capture, never 0.
 fn next_token() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -659,12 +681,15 @@ fn next_token() -> u64 {
 /// (`gFocusMgr.setMouseCapture`, indra/newview/llmediactrl.cpp): the page
 /// gets the moves, the wheel and the release wherever the pointer goes, and
 /// no other view gets them, until `handleMouseUp` gives it back. A capture
-/// whose release never comes (the focus lost mid-drag, the button let go
-/// outside the window or while the view was not drawn) ends at the first
-/// frame that sees the button up, with a release for the page, as
-/// `LLViewerWindow::handleFocusLost` drops the capture.
+/// whose release never comes ends: when the window loses the focus (as
+/// `LLViewerWindow::handleFocusLost` drops the capture), when the page was
+/// not drawn the frame before or another page took the pointer since (as
+/// `LLFloater::setVisible` drops it), or at the first frame that sees the
+/// button up. The page then gets a release where it last saw the pointer:
+/// that mouseup is Aurora's own, the Legacy Viewer only drops the capture
+/// and the page never hears the button go up.
 fn read_web_pointer(ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, enabled: bool, captured: bool, token: u64) -> WebPointer {
-    let owner_id = egui::Id::unique("web-view-capture-owner");
+    let owner_id = owner_id();
     // (the main viewport's count: a page in a window drawn outside the
     // viewer counts the same frames, outside.rs)
     let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
@@ -703,9 +728,10 @@ fn read_web_pointer(ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, enab
     // (a press and its release in the same frame: a click)
     let held = captured || press;
     // the holder was not drawn last frame (closed, hidden, scrolled out of
-    // view): it held nothing meanwhile, as LLFloater::setVisible drops the
-    // capture, and the press now down is not its own
-    let gone = captured && owner.is_some_and(|o| o.token == token && o.frame + 1 < frame);
+    // view), or another page took the pointer since: it held nothing
+    // meanwhile, as LLFloater::setVisible drops the capture, and the press
+    // now down is not its own
+    let gone = captured && !owner.is_some_and(|o| o.token == token && o.frame + 1 >= frame);
     // a capture whose release never came: the button is up, the window lost
     // the focus (the release of a button held then never arrives), or the
     // page was not drawn
@@ -718,12 +744,11 @@ fn read_web_pointer(ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, enab
     // the holder takes the wheel for the whole hold, and the scroll area
     // under it does not scroll too (LLViewerWindow::handleScrollWheel gives
     // it to the captor only)
+    // (on every held frame, for what is drawn after the page; what is drawn
+    // before it was kept still by `hold_wheel`)
     let wheel = if still {
-        let clicks = wheel_clicks(ui);
-        if clicks.is_some() {
-            ui.ctx().input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
-        }
-        clicks
+        ui.ctx().input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+        wheel_clicks(ui)
     } else {
         hover.and_then(|_| wheel_clicks(ui))
     };
@@ -1322,6 +1347,130 @@ mod tests {
         assert!(back.a_pointer.release && back.a_pointer.missed_release, "the old capture ends");
         assert_eq!(back.a_pointer.moved, None, "no move before the missed release");
         assert!(!back.a_pointer.captured);
+    }
+
+    /// Review of PR #3599, round 3: page A held, then hidden; the button goes
+    /// up meanwhile and page B is clicked. A drawn again while the button is
+    /// down for something else does not take back its old capture.
+    #[test]
+    fn a_hidden_page_does_not_take_back_its_capture_after_another_page_was_clicked() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+        two_pages(&mut frames, Vec::new(), None);
+        let laid = two_pages(&mut frames, Vec::new(), None);
+        let (on_a, on_b) = (laid.a.center(), laid.b.center());
+        let away = egui::pos2(laid.a.left() + 10.0, laid.a.bottom() + 150.0);
+        two_pages(&mut frames, vec![egui::Event::PointerMoved(on_a)], None);
+        let press = two_pages(&mut frames, vec![egui::Event::PointerMoved(on_a), pointer_button(on_a, true)], None);
+        assert!(press.a_pointer.captured);
+        // A hidden: the button goes up, then a click on B alone
+        let only_b = |frames: &mut crate::ui::widgets::elide_tests::Frames, events: Vec<egui::Event>| {
+            let mut got = WebPointer::default();
+            frames.run(events, |ui| {
+                egui::Window::new("Page B")
+                    .id(egui::Id::unique("Page B"))
+                    .fixed_pos(egui::pos2(460.0, 24.0))
+                    .collapsible(false)
+                    .show(ui.ctx(), |ui| {
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(360.0, 220.0), egui::Sense::click_and_drag());
+                        let key = egui::Id::unique(("two-pages-capture", 12u64));
+                        let captured = ui.data(|d| d.get_temp::<bool>(key).unwrap_or(false));
+                        got = read_web_pointer(ui, &resp, rect, true, captured, 12);
+                        ui.data_mut(|d| d.insert_temp(key, got.captured));
+                    });
+            });
+            got
+        };
+        only_b(&mut frames, vec![pointer_button(on_a, false)]);
+        only_b(&mut frames, vec![egui::Event::PointerMoved(on_b)]);
+        let click = only_b(&mut frames, vec![egui::Event::PointerMoved(on_b), pointer_button(on_b, true)]);
+        assert!(click.press);
+        only_b(&mut frames, vec![pointer_button(on_b, false)]);
+        // a press in the world, held while A is drawn again
+        let back = two_pages(&mut frames, vec![egui::Event::PointerMoved(away), pointer_button(away, true)], None);
+        assert!(back.a_pointer.release && back.a_pointer.missed_release, "the old capture ends");
+        assert_eq!(back.a_pointer.moved, None, "no move toward the world press");
+        assert!(!back.a_pointer.captured);
+        let after = two_pages(&mut frames, vec![egui::Event::PointerMoved(away + egui::vec2(30.0, 0.0))], None);
+        assert_eq!(after.a_pointer, WebPointer::default(), "nothing of that press reaches A");
+    }
+
+    /// Review of PR #3599, round 3: during a hold, a list drawn before the
+    /// page does not scroll under the wheel, even with egui spreading each
+    /// notch over the next frames; without a hold it does.
+    #[test]
+    fn a_held_page_keeps_the_wheel_from_a_list_drawn_before_it() {
+        let scrolled = |hold: bool| {
+            let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+            crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+            let mut offset = 0.0;
+            let mut page = egui::Rect::NOTHING;
+            let mut pointer = WebPointer::default();
+            // the list first, then the page, in one frame, as Inventory is
+            // drawn before the Web browser
+            let mut run = |frames: &mut crate::ui::widgets::elide_tests::Frames, events: Vec<egui::Event>| {
+                frames.run(events, |ui| {
+                    hold_wheel(ui.ctx());
+                    egui::Window::new("List")
+                        .id(egui::Id::unique("List"))
+                        .fixed_pos(egui::pos2(24.0, 320.0))
+                        .fixed_size(egui::vec2(200.0, 120.0))
+                        .collapsible(false)
+                        .show(ui.ctx(), |ui| {
+                            let out = egui::ScrollArea::vertical().show(ui, |ui| {
+                                for n in 0..200 {
+                                    ui.label(format!("Row {n}"));
+                                }
+                            });
+                            offset = out.state.clamped_offset().y;
+                        });
+                    egui::Window::new("Page A")
+                        .id(egui::Id::unique("Page A"))
+                        .fixed_pos(egui::pos2(24.0, 24.0))
+                        .collapsible(false)
+                        .show(ui.ctx(), |ui| {
+                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(360.0, 220.0), egui::Sense::click_and_drag());
+                            let key = egui::Id::unique(("wheel-page", 11u64));
+                            let captured = ui.data(|d| d.get_temp::<bool>(key).unwrap_or(false));
+                            pointer = read_web_pointer(ui, &resp, rect, true, captured, 11);
+                            ui.data_mut(|d| d.insert_temp(key, pointer.captured));
+                            page = rect;
+                        });
+                });
+                (page, pointer.captured)
+            };
+            run(&mut frames, Vec::new());
+            let (laid, _) = run(&mut frames, Vec::new());
+            let over_list = egui::pos2(84.0, 400.0);
+            if hold {
+                let on_page = laid.center();
+                run(&mut frames, vec![egui::Event::PointerMoved(on_page)]);
+                let (_, held) = run(&mut frames, vec![egui::Event::PointerMoved(on_page), pointer_button(on_page, true)]);
+                assert!(held, "the page holds the pointer");
+            }
+            run(&mut frames, vec![egui::Event::PointerMoved(over_list)]);
+            // (a notch down: the list starts at its top)
+            let down = egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, -1.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: egui::Modifiers::default(),
+            };
+            for _ in 0..4 {
+                run(&mut frames, vec![egui::Event::PointerMoved(over_list), down.clone()]);
+            }
+            for _ in 0..30 {
+                run(&mut frames, vec![egui::Event::PointerMoved(over_list)]);
+            }
+            if hold {
+                let (_, held) = run(&mut frames, Vec::new());
+                assert!(held, "still held at the end");
+            }
+            offset
+        };
+        assert!(scrolled(false) > 1.0, "the wheel scrolls the list when no page is held");
+        assert_eq!(scrolled(true), 0.0, "and not while a page holds the pointer");
     }
 
     /// While one page holds the pointer, another page gets none of it: no

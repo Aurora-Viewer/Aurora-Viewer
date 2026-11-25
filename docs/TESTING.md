@@ -9094,7 +9094,12 @@ failure. Grid validation and any paid upload are performed by the human.
   not start or stop the video or give the page the keyboard (#3436): move
   Inventory over the embed and click it. A click on the uncovered page still
   reaches the video. The web browser and a profile page under another window
-  follow the same rule.
+  follow the same rule. A press on a page holds the pointer until its release
+  (#3599): drag from a page of the web browser out over Inventory and the
+  world, and the page follows to the release while nothing else reacts; the
+  wheel during the hold scrolls neither Inventory nor a chat list; minimise
+  the browser mid-drag, let go, click another page, then press in the world:
+  the minimised page gets nothing more.
 - **`AURORA_DEMO_VIDEO_VOLUME=<0-100>`**: demo only, the level YouTube's
   player is set to when a video starts (what Preferences › Chat › Video
   volume keeps). With `AURORA_DEMO_PREVIEW_PLAY=window` and `0`, the
