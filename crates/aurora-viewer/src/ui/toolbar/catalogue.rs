@@ -29,6 +29,8 @@ macro_rules! commands {
 pub const COMMANDS: &[Command] = commands![
     "toolbar_separator", "arrows-horizontal", "toolbar-spacer", true;
     "toolbar_divider", "separator-vertical", "toolbar-separator", true;
+    // a new floating block (human request, 2026-11-25; ui/toolbar/floating.rs)
+    "toolbar_floating", "app-window-filled", "toolbar-floating-new", true;
     "edit_interface", "layout-grid-filled", "toolbar-interface-edit", true;
     "bar_navigation", "map-pin-filled", "toolbar-block-navigation", true;
     "bar_account", "user-filled", "toolbar-block-account", true;

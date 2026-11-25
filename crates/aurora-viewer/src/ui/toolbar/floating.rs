@@ -1,0 +1,248 @@
+//! Floating blocks (Aurora's own, human request, 2026-11-25): a group of
+//! toolbar buttons of its own on the screen, moved by its glass like the
+//! quick import bar it generalises (`drawers::IMPORT_BAR`). Its buttons are
+//! a drawer's (`Drawer::floating`, the same rules and edits); its place is a
+//! window's (`ui_layout.ron`). Editing the bars shows every block, hidden or
+//! not, and takes the buttons dropped on it.
+
+use super::drawers::{self, IMPORT_BAR};
+use super::{Bar, Drag, Edit, ToolbarUi, structure};
+use crate::theme::Palette;
+use crate::ui::{Panels, bars, icons::Icons, menu, widgets};
+use egui::{Id, Vec2};
+
+const SQUARE: f32 = 32.0;
+
+/// The window that keeps the block `id`'s place; the import bar keeps the
+/// one its strip had.
+pub(crate) fn window_id(id: &str) -> String {
+    if id == IMPORT_BAR {
+        crate::imports::LAUNCHER_WINDOW.to_owned()
+    } else {
+        format!("toolbar_floating_{}", id.trim_start_matches(drawers::PREFIX))
+    }
+}
+
+/// The right click of a floating block, on its glass or its button. The
+/// import bar's display is the import preference's: the state asked for it
+/// is returned instead.
+pub(super) fn context(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &str, locked: bool) -> Option<bool> {
+    let shown = drawers::is_open(ui.ctx(), id);
+    let mut import = None;
+    let (icon, label) = if shown {
+        ("eye-off", aurora_i18n::tr!("toolbar-floating-hide"))
+    } else {
+        ("eye-filled", aurora_i18n::tr!("toolbar-floating-show"))
+    };
+    if menu::item(ui, p, icon, label) {
+        if id == IMPORT_BAR {
+            import = Some(!shown);
+        } else {
+            toolbar.pending = Some(Edit::FloatingShown(id.into(), !shown));
+        }
+    }
+    if menu::item_if(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-floating-settings"), !locked) {
+        toolbar.drawer_editor = Some(id.into());
+    }
+    if id != IMPORT_BAR && menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-floating-delete"), !locked) {
+        toolbar.pending = Some(Edit::FloatingDelete(id.into()));
+    }
+    import
+}
+
+/// Every floating block shown, or all of them while the bars are edited;
+/// `import_shown` is the quick import bar's display.
+#[allow(clippy::too_many_arguments)]
+pub fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    icons: &Icons,
+    toolbar: &mut ToolbarUi,
+    panels: &mut Panels,
+    mic: &mut bars::MicButton,
+    row: &bars::Row<'_>,
+    import_shown: &mut bool,
+) -> bars::BarAction {
+    let settings = ToolbarUi::layout_configuration(ctx).unwrap_or_else(|| super::appearance::settings(ctx));
+    let editing = ToolbarUi::editing(ctx);
+    let hidden = widgets::interface_hidden(ctx);
+    let mut action = bars::BarAction::None;
+    for (id, drawer) in &settings.drawers {
+        let Some(floating) = &drawer.floating else { continue };
+        let import = id == IMPORT_BAR;
+        let shown = if import { *import_shown } else { floating.shown };
+        drawers::set_open(ctx, id, shown && !hidden);
+        if hidden || !(shown || editing) {
+            continue;
+        }
+        let window = window_id(id);
+        if let Some((placed, pos)) = toolbar.floating_placed.clone()
+            && placed == *id
+        {
+            toolbar.floating_placed = None;
+            widgets::move_floater(ctx, &window, pos);
+        }
+        let vertical = floating.vertical;
+        let bar = if vertical { Bar::Left } else { Bar::Top };
+        let display = structure::Display::for_drawer(ctx, bar, &drawer.buttons, editing);
+        let buttons = display.buttons();
+        let spacing = ctx.global_style().spacing.item_spacing;
+        let widths: Vec<_> = buttons
+            .iter()
+            .map(|button| bars::natural_width(ctx, button, drawer.mode, SQUARE, 16.0, SQUARE + 8.0))
+            .collect();
+        let heights: Vec<_> = buttons
+            .iter()
+            .map(|button| {
+                if !vertical {
+                    SQUARE
+                } else if structure::is_divider(&button.command) {
+                    structure::DIVIDER_SIZE
+                } else if structure::is_separator(&button.command) {
+                    structure::style(ctx, &button.command).size
+                } else {
+                    SQUARE
+                }
+            })
+            .collect();
+        // the column of a vertical block is as wide as its widest button
+        let column = buttons
+            .iter()
+            .zip(&widths)
+            .filter(|(button, _)| !structure::is_separator(&button.command) && !structure::is_divider(&button.command))
+            .map(|(_, width)| *width)
+            .fold(SQUARE, f32::max);
+        let looks: Vec<_> = buttons
+            .iter()
+            .zip(widths.iter().zip(&heights))
+            .map(|(button, (width, height))| {
+                let width = if vertical && !structure::is_separator(&button.command) && !structure::is_divider(&button.command) {
+                    column
+                } else {
+                    *width
+                };
+                (
+                    button.command.clone(),
+                    bars::ButtonLook {
+                        size: Vec2::new(width, *height),
+                        icon: 16.0,
+                        dock: true,
+                        mode: drawer.mode,
+                        left: vertical,
+                        opens: if vertical {
+                            egui::RectAlign::RIGHT
+                        } else {
+                            egui::RectAlign::BOTTOM_START
+                        },
+                        editing,
+                    },
+                )
+            })
+            .collect();
+        let work = crate::ui::layout::work_area(ctx);
+        let (point, start) = if import {
+            let room = crate::ui::layout::move_area(ctx);
+            (
+                egui::Align2::CENTER_TOP,
+                egui::pos2(room.center().x, work.top() + crate::ui::layout::GAP),
+            )
+        } else {
+            (egui::Align2::CENTER_CENTER, work.center())
+        };
+        let inset = egui::Margin::same(6);
+        let glass = ctx.memory(|memory| memory.area_rect(Id::unique(&window)));
+        let mut wanted = None;
+        let mut close = false;
+        widgets::toolstrip(ctx, &window, point, start, |ui| {
+            // its right click, under its buttons: theirs stay theirs, and a
+            // drag still moves the block
+            if let Some(rect) = glass {
+                let background = ui.interact(rect, Id::unique(("floating_glass", id)), egui::Sense::click());
+                menu::context_menu_of_button(&background, p, |ui| {
+                    wanted = context(ui, p, toolbar, id, settings.locked);
+                });
+            }
+            widgets::overlay(ui, p, inset, |ui| {
+                let mut rects = Vec::new();
+                let layout = if vertical {
+                    egui::Layout::top_down(egui::Align::Min)
+                } else {
+                    egui::Layout::left_to_right(egui::Align::Center)
+                };
+                ui.with_layout(layout, |ui| {
+                    ui.spacing_mut().item_spacing = if vertical {
+                        Vec2::new(spacing.x, 4.0)
+                    } else {
+                        Vec2::new(4.0, spacing.y)
+                    };
+                    if buttons.is_empty() {
+                        ui.add_sized(
+                            Vec2::new(180.0, SQUARE),
+                            egui::Label::new(egui::RichText::new(aurora_i18n::tr!("toolbar-floating-empty")).color(p.muted)),
+                        );
+                    }
+                    let nested = bars::Row {
+                        bar,
+                        style: super::Style {
+                            mode: drawer.mode,
+                            align: super::Align::Start,
+                            sizing: super::Sizing::Auto,
+                        },
+                        editing,
+                        ..*row
+                    };
+                    rects = bars::toolbar_row(
+                        ui,
+                        p,
+                        icons,
+                        buttons,
+                        |b| {
+                            looks
+                                .iter()
+                                .find(|(command, _)| command == &b.command)
+                                .map(|(_, look)| *look)
+                                .unwrap_or_else(|| bars::ButtonLook::bar(SQUARE))
+                        },
+                        toolbar,
+                        panels,
+                        mic,
+                        &nested,
+                        &mut action,
+                    );
+                    if !editing {
+                        if !buttons.is_empty() {
+                            ui.add_space(2.0);
+                        }
+                        let response = widgets::action_button(ui, p, "x", "", widgets::ActionKind::FlatDanger, Vec2::splat(SQUARE));
+                        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, aurora_i18n::tr!("common-close")));
+                        close = response.on_hover_text(aurora_i18n::tr!("common-close")).clicked();
+                    }
+                });
+                let zone = ui.min_rect();
+                let target = ui.interact(zone, Id::unique(("floating_drop", id)), egui::Sense::hover());
+                super::drop_preview::protect(ctx, zone, ui.layer_id());
+                if !settings.locked
+                    && target.dnd_hover_payload::<Drag>().is_some()
+                    && let Some(drag) = target.dnd_release_payload::<Drag>()
+                {
+                    ctx.data_mut(|data| data.insert_temp(Id::unique("toolbar_drop_handled"), true));
+                    let rank = ctx.pointer_interact_pos().map_or(drawer.buttons.len(), |pos| {
+                        super::insertion(&display.full_rects(&rects), pos, vertical)
+                    });
+                    if let Some(edit) = drawers::insertion_edit(id, rank, &drag) {
+                        toolbar.pending = Some(edit);
+                    }
+                }
+            });
+        });
+        if close {
+            wanted = Some(false);
+        }
+        match wanted {
+            Some(next) if import => *import_shown = next,
+            Some(next) => toolbar.pending = Some(Edit::FloatingShown(id.clone(), next)),
+            None => {}
+        }
+    }
+    action
+}

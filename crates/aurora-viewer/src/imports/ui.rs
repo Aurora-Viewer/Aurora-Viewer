@@ -343,7 +343,7 @@ pub fn show(
         world.login.as_ref().map(|login| Prices::from_login(&login.raw)).unwrap_or_default()
     };
     let prices = prices.with_fallback(world.upload_cost);
-    launcher::show(ctx, p, imports, &mut actions);
+    launcher::show(ctx, imports);
     inspector::show(ctx, p, imports, prefs, world, inventory_prefs, &prices, &mut actions);
     for choice in windows::TYPES {
         if imports.window_open(choice) {

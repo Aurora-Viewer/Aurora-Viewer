@@ -146,7 +146,7 @@ impl ToolbarUi {
     ) {
         if let Some(request) = super::native_context::take(ctx) {
             self.open = true;
-            self.selected = request.command.filter(|command| settings.location(command, layout).is_some());
+            self.selected = request.command.filter(|command| settings.placed(command, layout));
         }
         self.preset_view.refresh(settings, layout, self.islands);
         let source = self.preset_view.source(selected_preset);
@@ -420,7 +420,7 @@ impl ToolbarUi {
                             let placed = settings.location(&button.command, layout);
                             let state = if !ready(&button.command) {
                                 Tile::Missing
-                            } else if placed.is_some() {
+                            } else if placed.is_some() || settings.placed(&button.command, layout) {
                                 Tile::Placed
                             } else if dragged
                                 .as_ref()
@@ -505,6 +505,15 @@ impl ToolbarUi {
             } else {
                 Edit::RemoveBlock(drag.members.iter().map(|button| button.command.clone()).collect())
             });
+            egui::DragAndDrop::clear_payload(ctx);
+        }
+        // "Floating block" let go over the world: a new one there
+        if self.pending.is_none()
+            && ctx.input(|input| input.pointer.button_released(egui::PointerButton::Primary))
+            && let Some(drag) = &dragged
+            && let Some(pos) = super::drop_preview::floating_spot(ctx, drag, settings)
+        {
+            self.pending = Some(Edit::FloatingNew(pos - Vec2::splat(22.0)));
             egui::DragAndDrop::clear_payload(ctx);
         }
         // ConfirmRestoreToolbarDefaults / ConfirmClearAllToolbars

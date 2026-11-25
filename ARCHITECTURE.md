@@ -129,6 +129,8 @@ the viewport. Catalogue/menu copies and releases outside the viewport cancel.
 separate editing/focus state. It shares navigation parsing, suggestions and
 privacy guards without changing integrated navigation placement or visibility.
 `ui/toolbar/drawers.rs` anchors collapsible glass panels to toolbar buttons.
+`ui/toolbar/floating.rs` draws the floating blocks, drawers of their own on
+the screen that the quick import bar is one of.
 One-level drawer contents persist in the toolbar settings, reuse the same native
 handlers and drag payload, and can move between drawers and all four bars.
 `ui/toolbar/surface_drop.rs` freezes idle button-face geometry throughout a drag,
@@ -715,7 +717,8 @@ with `ui/fonts.rs::TextEmphasis` carried through emoji runs, links and search
 highlights. `ChatKind::volume` includes object messages. `ui/chat/volume_tests.rs`
 checks the painted text across all renderers.
 
-`imports/ui/launcher.rs` supplies the optional movable quick import bar.
+`imports/ui/launcher.rs` keeps the quick import bar's window id and Esc;
+the bar itself is a floating block of the toolbars.
 One shared Aurora glass overlay groups flat native action buttons and a drag
 grip; the visible inspector or Permissions receives the accent state.
 Preferences > Inventory persists `imports.icon_bar` (off by default) for

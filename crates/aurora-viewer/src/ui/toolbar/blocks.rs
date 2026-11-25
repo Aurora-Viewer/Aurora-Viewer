@@ -120,7 +120,11 @@ pub(super) fn move_to(
     }) else {
         return false;
     };
-    if matches!(destination, Destination::Drawer(..)) && members.iter().any(|button| drawers::is_drawer(&button.command)) {
+    if let Destination::Drawer(id, _) = destination
+        && members.iter().any(|button| {
+            drawers::is_drawer(&button.command) || (drawers::is_floating(settings, id) && structure::is_block(&button.command))
+        })
+    {
         return false;
     }
     let mut next = settings.clone();

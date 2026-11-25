@@ -19475,6 +19475,7 @@ impl App {
                 };
                 if !synthetic_toolbar {
                     toolbar_migrated |= toolbar_settings.compose_chat(bar_layout);
+                    toolbar_migrated |= toolbar_settings.ensure_import_bar(bar_layout);
                 }
                 let chat_edge = toolbar_settings.location("bar_chat", bar_layout);
                 if self.chat_ui.in_use() && chat_edge == Some(ui::toolbar::Bar::Top) {
@@ -19517,7 +19518,7 @@ impl App {
                 }
                 // the feed is polled while its button stands on a toolbar
                 // (LLFloaterGridStatus::checkGridStatusRSS, hasCommand)
-                self.grid_status_listed = toolbar_settings.location("gridstatus", bar_layout).is_some();
+                self.grid_status_listed = toolbar_settings.placed("gridstatus", bar_layout);
                 self.toolbar_ui.islands = !classic_bars;
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
                 self.chat_ui.hide_latest = !self.settings.chat_latest_button;
@@ -19696,6 +19697,20 @@ impl App {
                         area.min.y = area.top().max(bottom + ui::bars::islands::MARGIN);
                     }
                 }
+                // the floating blocks, the quick import bar's included
+                let floating_action = ui::toolbar::floating::show(
+                    &ctx,
+                    &p,
+                    icons,
+                    &mut self.toolbar_ui,
+                    &mut self.panels,
+                    &mut mic,
+                    &side_row,
+                    &mut self.imports.launcher_open,
+                );
+                if !matches!(floating_action, BarAction::None) {
+                    a.bar = floating_action;
+                }
                 if ui::toolbar::ToolbarUi::intercepting(&ctx) {
                     self.audio_ui.media_button = None;
                     self.audio_ui.media_button_hovered = false;
@@ -19775,7 +19790,7 @@ impl App {
                 }
                 if toolbar_changed || chat_width_set || toolbar_migrated {
                     if toolbar_settings.composed {
-                        self.settings.show_bug_report = toolbar_settings.location("report_bug", bar_layout).is_some();
+                        self.settings.show_bug_report = toolbar_settings.placed("report_bug", bar_layout);
                     }
                     self.settings.save();
                 }

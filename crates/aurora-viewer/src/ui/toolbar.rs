@@ -19,6 +19,7 @@ pub(crate) mod drawers;
 mod drop_preview;
 pub(crate) mod edit_mode;
 mod editor;
+pub(crate) mod floating;
 pub(crate) mod native_context;
 pub(crate) mod notecards;
 pub(crate) mod presets;
@@ -34,7 +35,7 @@ use super::{
     skin::{Layout, ToolButton},
 };
 use crate::theme::Palette;
-use egui::{Rect, Response};
+use egui::{Pos2, Rect, Response};
 use serde::{Deserialize, Serialize};
 
 /// A menu's Add / Remove: commands carry their stable identifier, never a
@@ -57,7 +58,7 @@ pub(crate) fn menu_membership_item(ui: &mut egui::Ui, p: &Palette, row: &str, se
     else {
         return false;
     };
-    let remove = settings.location(command.id, &Layout::default()).is_some();
+    let remove = settings.placed(command.id, &Layout::default());
     let label = if remove {
         aurora_i18n::tr!("toolbar-remove-from-menu")
     } else {
@@ -348,7 +349,7 @@ impl ToolbarSettings {
     }
 
     pub fn set_bug_visible(&mut self, layout: &Layout, shown: bool) -> bool {
-        if self.location("report_bug", layout).is_some() == shown {
+        if self.placed("report_bug", layout) == shown {
             return false;
         }
         if shown {
@@ -537,18 +538,35 @@ impl ToolbarSettings {
         None
     }
 
+    /// Whether `command` stands anywhere: a toolbar, a drawer of one, or a
+    /// floating block.
+    pub fn placed(&self, command: &str, layout: &Layout) -> bool {
+        self.location(command, layout).is_some()
+            || self
+                .drawers
+                .values()
+                .any(|drawer| drawer.floating.is_some() && drawer.buttons.iter().any(|b| b.command == command))
+    }
+
+    /// The quick import bar's floating block, once (`drawers::IMPORT_BAR`).
+    pub fn ensure_import_bar(&mut self, layout: &Layout) -> bool {
+        drawers::ensure_import_bar(self, layout)
+    }
+
+    /// The drawer, placed, or the floating block `command` stands in.
     pub fn drawer_of(&self, command: &str) -> Option<&str> {
         self.drawers
             .iter()
             .find(|(id, drawer)| {
                 drawer.buttons.iter().any(|b| b.command == command)
-                    && self
-                        .top
-                        .iter()
-                        .chain(&self.left)
-                        .chain(&self.right)
-                        .chain(self.buttons.iter().flatten())
-                        .any(|b| &b.command == *id)
+                    && (drawer.floating.is_some()
+                        || self
+                            .top
+                            .iter()
+                            .chain(&self.left)
+                            .chain(&self.right)
+                            .chain(self.buttons.iter().flatten())
+                            .any(|b| &b.command == *id))
             })
             .map(|(id, _)| id.as_str())
     }
@@ -576,7 +594,7 @@ impl ToolbarSettings {
                     *button = structure::instantiate(button.clone());
                 }
             }
-            buttons.retain(|b| !b.command.is_empty() && !catalogue::retired(&b.command) && seen.insert(b.command.clone()));
+            buttons.retain(|b| kept_on_bar(&b.command) && seen.insert(b.command.clone()));
         }
         for side in [&mut self.left, &mut self.right, &mut self.top] {
             for button in side.iter_mut() {
@@ -584,12 +602,15 @@ impl ToolbarSettings {
                     *button = structure::instantiate(button.clone());
                 }
             }
-            side.retain(|b| !b.command.is_empty() && !catalogue::retired(&b.command) && seen.insert(b.command.clone()));
+            side.retain(|b| kept_on_bar(&b.command) && seen.insert(b.command.clone()));
         }
+        // a floating block stays without its button; it holds neither a
+        // drawer, nor a block of the bars, nor another floating block
         self.drawers.retain(|id, drawer| {
-            if !drawers::is_drawer(id) || !seen.contains(id) {
+            if !drawers::is_drawer(id) || (!seen.contains(id) && drawer.floating.is_none()) {
                 return false;
             }
+            let floating = drawer.floating.is_some();
             for button in &mut drawer.buttons {
                 if matches!(button.command.as_str(), structure::SEPARATOR | structure::DIVIDER) {
                     *button = structure::instantiate(button.clone());
@@ -599,6 +620,8 @@ impl ToolbarSettings {
                 !b.command.is_empty()
                     && !catalogue::retired(&b.command)
                     && !drawers::is_drawer(&b.command)
+                    && b.command != drawers::FLOATING
+                    && !(floating && structure::is_block(&b.command))
                     && seen.insert(b.command.clone())
             });
             true
@@ -606,6 +629,12 @@ impl ToolbarSettings {
         // Block membership is reconciled on edits with the actual skin layout;
         // the default skin cannot validate an inherited custom bottom toolbar.
     }
+}
+
+/// A bar keeps no empty or retired command, no "Floating block" (it becomes
+/// one) and no button of the import bar's block (the `import` command is it).
+fn kept_on_bar(command: &str) -> bool {
+    !command.is_empty() && !catalogue::retired(command) && command != drawers::FLOATING && command != drawers::IMPORT_BAR
 }
 
 #[derive(Clone)]
@@ -642,6 +671,13 @@ enum Edit {
     /// A drawer's "Close after a click".
     DrawerCloses(String, bool),
     MenuInsert(String, String, usize),
+    /// A new floating block, dropped there on the screen.
+    FloatingNew(Pos2),
+    FloatingOptions(String, drawers::FloatingOptions),
+    /// A floating block shown or hidden, locked bars included.
+    FloatingShown(String, bool),
+    /// A floating block of the user's deleted, its button with it.
+    FloatingDelete(String),
 }
 
 /// Windows whose toolbar button lights while they are open
@@ -764,6 +800,8 @@ pub struct ToolbarUi {
     pub(crate) selected: Option<String>,
     drawer_editor: Option<String>,
     pub(crate) drawer_action: Option<crate::ui::bars::BarAction>,
+    /// A floating block just made, and where it was dropped.
+    floating_placed: Option<(String, Pos2)>,
 }
 
 impl ToolbarUi {
@@ -776,6 +814,7 @@ impl ToolbarUi {
         self.selected = None;
         self.drawer_editor = None;
         self.drawer_action = None;
+        self.floating_placed = None;
         self.appearance_editor = Default::default();
         self.drawer_appearance_editor = Default::default();
         self.context_icon_picker = Default::default();
@@ -874,7 +913,7 @@ impl ToolbarUi {
             self.open = true;
             let settings = appearance::settings(ui.ctx());
             self.selected = command
-                .filter(|command| settings.location(command, &Layout::default()).is_some())
+                .filter(|command| settings.placed(command, &Layout::default()))
                 .map(str::to_owned);
         }
     }
@@ -957,6 +996,13 @@ impl ToolbarUi {
             .unwrap_or(bar);
         // Buttons such as Favorites also own a left-click dropdown.
         menu::context_menu_of_button(response, p, |ui| {
+            if !self.open
+                && let Some(button) = button.filter(|button| drawers::is_floating(&settings, &button.command))
+            {
+                let _ = floating::context(ui, p, self, &button.command, locked);
+                self.interface_edit_menu(ui, p, Some(&button.command));
+                return;
+            }
             if let Some(button) = button.filter(|button| drawers::is_drawer(&button.command)) {
                 if menu::item_if(ui, p, "folder-open-filled", aurora_i18n::tr!("toolbar-drawer-unfold"), !locked) {
                     self.pending = Some(Edit::Unfold(bar, button.command.clone()));
@@ -1014,7 +1060,11 @@ impl ToolbarUi {
                         self.pending = Some(Edit::Merge(bar, button.command.clone(), before));
                     }
                 }
-                if drawers::is_drawer(&button.command) {
+                if drawers::is_floating(&settings, &button.command) {
+                    if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-floating-settings")) {
+                        self.drawer_editor = Some(button.command.clone());
+                    }
+                } else if drawers::is_drawer(&button.command) {
                     if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-drawer-settings")) {
                         self.drawer_editor = Some(button.command.clone());
                     }
@@ -1129,7 +1179,7 @@ impl ToolbarUi {
             let Some(command) = catalogue::find(edit.command).filter(|c| c.ready) else {
                 continue;
             };
-            let present = settings.location(command.id, layout).is_some();
+            let present = settings.placed(command.id, layout);
             if present != edit.remove {
                 continue;
             }
@@ -1211,6 +1261,38 @@ impl ToolbarUi {
                 return drawers::update_options(settings, layout, id, name, *mode, value);
             }
             Edit::DrawerCloses(id, closes) => return drawers::update_closes(settings, id, *closes),
+            Edit::FloatingShown(id, shown) => return drawers::show_floating(settings, id, *shown),
+            Edit::FloatingOptions(id, options) => return drawers::update_floating(settings, layout, id, options),
+            Edit::FloatingDelete(id) => return drawers::delete_floating(settings, layout, id),
+            Edit::FloatingNew(pos) => {
+                if settings.locked || provisional {
+                    return false;
+                }
+                let id = drawers::create_floating(settings, aurora_i18n::tr!("toolbar-floating-new"));
+                self.floating_placed = Some((id, *pos));
+                return true;
+            }
+            // "Floating block" dropped on a bar: a new block, and its button
+            // there (a stand-in while it is only previewed)
+            Edit::Insert(bar, button, rank) | Edit::InsertGroup(bar, button, rank) if button.command == drawers::FLOATING => {
+                if settings.locked {
+                    return false;
+                }
+                let name = aurora_i18n::tr!("toolbar-floating-new");
+                let id = if provisional {
+                    drawers::FLOATING_PREVIEW.to_owned()
+                } else {
+                    drawers::create_floating(settings, name)
+                };
+                let toggle = drawers::floating_toggle(&id, name);
+                self.pending = Some(if matches!(edit, Edit::InsertGroup(..)) {
+                    Edit::InsertGroup(*bar, toggle, *rank)
+                } else {
+                    Edit::Insert(*bar, toggle, *rank)
+                });
+                self.apply_edit(layout, settings, provisional);
+                return true;
+            }
             Edit::MoveBlock(bar, members, rank, separate) => {
                 return blocks::move_to(
                     settings,
@@ -1312,7 +1394,7 @@ impl ToolbarUi {
                 return true;
             }
             Edit::Unfold(bar, command) => {
-                if settings.locked {
+                if settings.locked || drawers::is_floating(settings, &command) {
                     return false;
                 }
                 let mut buttons = settings.bar(bar, layout).to_vec();
@@ -1342,7 +1424,7 @@ impl ToolbarUi {
                 return true;
             }
             Edit::Separator(command, style) => {
-                if settings.locked || !command.starts_with(structure::PREFIX) || settings.location(&command, layout).is_none() {
+                if settings.locked || !command.starts_with(structure::PREFIX) || !settings.placed(&command, layout) {
                     return false;
                 }
                 let style = style.sanitized();
@@ -1459,7 +1541,13 @@ impl ToolbarUi {
         let separate = matches!(&edit, Edit::InsertGroup(..));
         match edit {
             Edit::DrawerInsert(id, button, rank) => {
-                if !next_drawers.contains_key(&id) || settings.location(&id, layout).is_none() || drawers::is_drawer(&button.command) {
+                let floating = drawers::is_floating(settings, &id);
+                if !next_drawers.contains_key(&id)
+                    || (settings.location(&id, layout).is_none() && !floating)
+                    || drawers::is_drawer(&button.command)
+                    || button.command == drawers::FLOATING
+                    || (floating && structure::is_block(&button.command))
+                {
                     return false;
                 }
                 let button = structure::instantiate(button);
@@ -1611,11 +1699,16 @@ impl ToolbarUi {
                 for drawer in next_drawers.values_mut() {
                     drawer.buttons.retain(|b| b.command != command);
                 }
-                next_drawers.remove(&command);
+                // a floating block outlives its button
+                if next_drawers.get(&command).is_some_and(|drawer| drawer.floating.is_none()) {
+                    next_drawers.remove(&command);
+                }
             }
             Edit::Clear => {
                 next.iter_mut().for_each(Vec::clear);
-                next_drawers.clear();
+                // the import bar stays, empty
+                next_drawers.retain(|id, _| id == drawers::IMPORT_BAR);
+                next_drawers.values_mut().for_each(|drawer| drawer.buttons.clear());
             }
             Edit::Restore
             | Edit::Lock
@@ -1635,7 +1728,11 @@ impl ToolbarUi {
             | Edit::DividerAfter(..)
             | Edit::DrawerFromDrop(..)
             | Edit::DrawerOptions(..)
-            | Edit::DrawerCloses(..) => unreachable!(),
+            | Edit::DrawerCloses(..)
+            | Edit::FloatingNew(..)
+            | Edit::FloatingOptions(..)
+            | Edit::FloatingShown(..)
+            | Edit::FloatingDelete(..) => unreachable!(),
         }
         if next == old && next_drawers == old_drawers {
             return false;

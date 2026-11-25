@@ -82,6 +82,8 @@ fn display_command(command: &str) -> &str {
         "separator:drop-preview-entry"
     } else if command == structure::DIVIDER {
         "divider:drop-preview-entry"
+    } else if command == super::drawers::FLOATING {
+        super::drawers::FLOATING_PREVIEW
     } else {
         command
     }
@@ -135,12 +137,29 @@ pub(super) fn protect(ctx: &egui::Context, rect: Rect, layer: LayerId) {
 }
 
 pub(super) fn removal(ctx: &egui::Context, drag: &Drag, settings: &ToolbarSettings) -> bool {
-    if settings.locked || drag.from.is_none() {
-        return false;
+    drag.from.is_some() && free_spot(ctx, settings).is_some()
+}
+
+/// The catalogue's "Floating block" let go over the world, out of every bar,
+/// window and block: where the new block goes.
+pub(super) fn floating_spot(ctx: &egui::Context, drag: &Drag, settings: &ToolbarSettings) -> Option<egui::Pos2> {
+    if drag.from.is_some() || drag.button.command != super::drawers::FLOATING {
+        return None;
     }
-    let Some(pos) = ctx.pointer_interact_pos().filter(|pos| ctx.content_rect().contains(*pos)) else {
-        return false;
-    };
+    free_spot(ctx, settings).filter(|pos| ctx.layer_id_at(*pos).is_none_or(|layer| layer.order == egui::Order::Background))
+}
+
+/// The pointer, when a drag let go now would land on no bar, drawer or
+/// floating block.
+fn free_spot(ctx: &egui::Context, settings: &ToolbarSettings) -> Option<egui::Pos2> {
+    if settings.locked {
+        return None;
+    }
+    let pos = ctx.pointer_interact_pos().filter(|pos| ctx.content_rect().contains(*pos))?;
+    free_at(ctx, pos).then_some(pos)
+}
+
+fn free_at(ctx: &egui::Context, pos: egui::Pos2) -> bool {
     if ctx
         .data(|data| data.get_temp::<bool>(Id::unique("toolbar_drop_handled")))
         .unwrap_or(false)

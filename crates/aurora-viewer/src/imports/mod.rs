@@ -561,6 +561,9 @@ struct Step {
     permissions: Permissions,
 }
 
+/// The window id that keeps the quick import bar's place on the screen.
+pub const LAUNCHER_WINDOW: &str = "import_launcher";
+
 pub struct Imports {
     pub open: bool,
     pub launcher_open: bool,

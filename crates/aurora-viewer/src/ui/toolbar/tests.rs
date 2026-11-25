@@ -1856,12 +1856,12 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
     // every command but bar_account and bar_system, which stay out of the catalogue
-    assert_eq!(all.len(), 128);
+    assert_eq!(all.len(), 129);
     assert!(
         !all.iter()
             .any(|button| matches!(button.command.as_str(), "bar_account" | "bar_system"))
     );
-    assert_eq!(COMMANDS.len(), 130);
+    assert_eq!(COMMANDS.len(), 131);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -1882,8 +1882,9 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
         for (language, _) in aurora_i18n::available_languages() {
             assert_ne!(command.label_in(language), command.key, "{}: no label in {language}", command.id);
         }
-        // Speak, Favorites and the AO's toggle have buttons of their own
-        if matches!(command.id, "speak" | "favorites" | "aurora_menu" | "vr_view")
+        // Speak, Favorites and the AO's toggle have buttons of their own;
+        // "Floating block" becomes a block where it is dropped
+        if matches!(command.id, "speak" | "favorites" | "aurora_menu" | "vr_view" | drawers::FLOATING)
             || structure::is_separator(command.id)
             || structure::is_divider(command.id)
             || structure::is_block(command.id)
@@ -2316,4 +2317,135 @@ fn director_button_is_added_next_to_the_photo_button_once() {
     placed.migrate_director_button();
     assert_eq!(commands(placed.buttons.as_ref().expect("custom toolbar")), ["snapshot"]);
     assert_eq!(commands(&placed.left), ["director"]);
+}
+
+/// Floating blocks (human request, 2026-11-25): the catalogue's entry makes
+/// one with its button, its buttons follow the one-place rule, it outlives
+/// its button, and only the user's own can be deleted.
+#[test]
+fn floating_blocks_keep_one_place_per_command_and_only_the_users_are_deleted() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(vec![button("inventory"), button("import_texture")]),
+        top: Vec::new(),
+        ..Default::default()
+    };
+    assert!(settings.ensure_import_bar(&layout()));
+    assert!(!settings.ensure_import_bar(&layout()), "once");
+    let import = &settings.drawers[drawers::IMPORT_BAR];
+    let import_commands: Vec<_> = import.buttons.iter().map(|b| b.command.as_str()).collect();
+    assert!(!import_commands.contains(&"import_texture"), "a placed button stays where it is");
+    assert!(import_commands.contains(&"import_mesh") && import_commands.contains(&"import_settings"));
+    assert_eq!(import.mode, ButtonMode::IconsOnly);
+    assert!(settings.placed("import_mesh", &layout()) && settings.location("import_mesh", &layout()).is_none());
+
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Insert(Bar::Left, button(drawers::FLOATING), 0)),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout(), &mut settings));
+    let id = settings.left[0].command.clone();
+    assert!(drawers::is_floating(&settings, &id) && id != drawers::IMPORT_BAR);
+    assert_eq!(settings.left[0].tooltip, aurora_i18n::tr!("toolbar-floating-new"));
+    assert!(settings.drawers[&id].floating.as_ref().is_some_and(|floating| floating.shown));
+
+    state.pending = Some(Edit::DrawerInsert(id.clone(), button("inventory"), 0));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(!settings.buttons(&layout()).iter().any(|b| b.command == "inventory"));
+    assert_eq!(settings.drawer_of("inventory"), Some(id.as_str()));
+    assert!(settings.placed("inventory", &layout()));
+    for refused in [drawers::FLOATING, "bar_clock", drawers::IMPORT_BAR] {
+        state.pending = Some(Edit::DrawerInsert(id.clone(), button(refused), 0));
+        assert!(!state.commit(&layout(), &mut settings), "{refused}");
+    }
+
+    // its button removed, the block stays, and so do its buttons
+    state.pending = Some(Edit::Remove(id.clone()));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(settings.left.is_empty());
+    settings.sanitize();
+    assert_eq!(settings.drawer_of("inventory"), Some(id.as_str()));
+
+    // shown or hidden even locked, as a window
+    settings.locked = true;
+    state.pending = Some(Edit::FloatingShown(id.clone(), false));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(settings.drawers[&id].floating.as_ref().is_some_and(|floating| !floating.shown));
+    state.pending = Some(Edit::FloatingDelete(id.clone()));
+    assert!(!state.commit(&layout(), &mut settings));
+    settings.locked = false;
+
+    // a button taken out goes where it is dropped
+    state.pending = Some(Edit::Insert(Bar::Bottom, button("import_mesh"), 0));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(settings.location("import_mesh", &layout()), Some(Bar::Bottom));
+    assert!(
+        !settings.drawers[drawers::IMPORT_BAR]
+            .buttons
+            .iter()
+            .any(|b| b.command == "import_mesh")
+    );
+
+    state.pending = Some(Edit::FloatingDelete(drawers::IMPORT_BAR.into()));
+    assert!(!state.commit(&layout(), &mut settings), "the import bar stays");
+    state.pending = Some(Edit::FloatingDelete(id.clone()));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(!settings.drawers.contains_key(&id));
+    assert!(!settings.placed("inventory", &layout()), "its buttons go back to the catalogue");
+
+    state.pending = Some(Edit::Clear);
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(settings.drawers[drawers::IMPORT_BAR].buttons.is_empty(), "cleared, not deleted");
+}
+
+#[test]
+fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(vec![button("inventory")]),
+        top: Vec::new(),
+        ..Default::default()
+    };
+    let mut state = ToolbarUi {
+        pending: Some(Edit::FloatingNew(egui::pos2(300.0, 200.0))),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout(), &mut settings));
+    let (id, pos) = state.floating_placed.clone().expect("where it was dropped");
+    assert_eq!(pos, egui::pos2(300.0, 200.0));
+    assert!(drawers::is_floating(&settings, &id));
+    assert!(settings.location(&id, &layout()).is_none(), "its button is placed nowhere yet");
+    let tiles = catalogue_view::entries(&layout(), &settings, &Default::default());
+    assert!(
+        tiles.iter().any(|tile| tile.button.command == id),
+        "the catalogue offers its button"
+    );
+    assert!(tiles.iter().any(|tile| tile.button.command == drawers::FLOATING));
+    assert!(!tiles.iter().any(|tile| tile.button.command == drawers::IMPORT_BAR));
+
+    state.pending = Some(Edit::Insert(Bar::Top, drawers::floating_toggle(&id, "x"), 0));
+    assert!(state.commit(&layout(), &mut settings));
+    let options = drawers::FloatingOptions {
+        name: "Tools".into(),
+        mode: ButtonMode::TextOnly,
+        vertical: true,
+        look: appearance::Appearance {
+            mode: None,
+            icon: Some("star-filled".into()),
+        },
+    };
+    state.pending = Some(Edit::FloatingOptions(id.clone(), options.clone()));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(settings.top[0].tooltip, "Tools", "its placed button takes the name");
+    let floating = settings.drawers[&id].floating.clone().expect("floating");
+    assert!(floating.vertical && floating.name == "Tools");
+    assert_eq!(settings.drawers[&id].mode, ButtonMode::TextOnly);
+    assert_eq!(settings.appearance[&id], options.look);
+    state.pending = Some(Edit::FloatingOptions(id.clone(), options));
+    assert!(!state.commit(&layout(), &mut settings), "no change, no save");
+
+    // a stale button of the import bar's or the catalogue's entry never stays on a bar
+    settings.left = vec![button(drawers::FLOATING), button(drawers::IMPORT_BAR)];
+    settings.sanitize();
+    assert!(settings.left.is_empty());
 }

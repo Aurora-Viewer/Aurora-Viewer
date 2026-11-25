@@ -57,6 +57,9 @@ impl Category {
 
 pub(super) fn category(command: &str) -> Category {
     use Category::*;
+    if super::drawers::is_drawer(command) {
+        return Interface;
+    }
     if super::presets::import_choice(command).is_some() {
         return Creation;
     }
@@ -148,6 +151,7 @@ pub(super) fn category(command: &str) -> Category {
         | "gaming_mode"
         | "toolbar_separator"
         | "toolbar_divider"
+        | "toolbar_floating"
         | "bar_navigation"
         | "bar_account"
         | "bar_system"
@@ -272,6 +276,7 @@ fn primary(command: &str) -> bool {
             | "group_titles"
             | "landmark_here"
             | "toolbar_divider"
+            | "toolbar_floating"
             | "bar_navigation"
             | "bar_status"
             | "bar_balance"
@@ -325,9 +330,7 @@ pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &comman
         {
             // A saved menu copy remains the editor's drag source when it is
             // the placed variant. Opening this window never migrates settings.
-            if settings.location(&tiles[*index].button.command, layout).is_none()
-                && settings.location(&entry.button.command, layout).is_some()
-            {
+            if !settings.placed(&tiles[*index].button.command, layout) && settings.placed(&entry.button.command, layout) {
                 tiles[*index].button = entry.button.clone();
             }
             continue;
@@ -338,6 +341,24 @@ pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &comman
             group: entry.group,
         });
     }
+    // the user's floating blocks: their buttons, placed or not
+    tiles.extend(
+        settings
+            .drawers
+            .iter()
+            .filter_map(|(id, drawer)| {
+                drawer
+                    .floating
+                    .as_ref()
+                    .filter(|_| id != super::drawers::IMPORT_BAR)
+                    .map(|floating| (id, floating))
+            })
+            .map(|(id, floating)| Tile {
+                button: super::drawers::floating_toggle(id, &floating.name),
+                category: Category::Interface,
+                group: false,
+            }),
+    );
     tiles.sort_by_cached_key(|tile| (tile.category, sort_key(&tile.label())));
     tiles
 }
@@ -351,7 +372,7 @@ mod tests {
         let tiles = entries(&Layout::default(), &ToolbarSettings::default(), &Default::default());
         let main: Vec<_> = tiles.iter().filter(|tile| tile.in_view(false, "")).collect();
         assert!(
-            (20..=50).contains(&main.len()),
+            (20..=52).contains(&main.len()),
             "the first view should stay manageable: {}",
             main.len()
         );

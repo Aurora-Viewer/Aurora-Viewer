@@ -120,8 +120,13 @@ fn fields(value: &serde_json::Value) -> bool {
     }
     if let Some(value) = value.get("drawers")
         && !value.as_object().is_some_and(|map| {
-            map.values()
-                .all(|drawer| known_fields(drawer, &["buttons", "mode", "closes"]) && drawer.get("buttons").is_none_or(buttons))
+            map.values().all(|drawer| {
+                known_fields(drawer, &["buttons", "mode", "closes", "floating"])
+                    && drawer.get("buttons").is_none_or(buttons)
+                    && drawer
+                        .get("floating")
+                        .is_none_or(|floating| known_fields(floating, &["name", "vertical", "shown"]))
+            })
         })
     {
         return false;
@@ -161,11 +166,22 @@ fn valid(toolbar: &ToolbarSettings) -> bool {
     }
     let roots = placed.clone();
     for (key, drawer) in &toolbar.drawers {
-        if !id(key) || !drawers::is_drawer(key) || !roots.contains(key.as_str()) {
+        // a floating block needs no button placed
+        let floating = drawer.floating.as_ref();
+        if !id(key)
+            || !drawers::is_drawer(key)
+            || (floating.is_none() && !roots.contains(key.as_str()))
+            || floating.is_some_and(|floating| !caption(&floating.name))
+        {
             return false;
         }
         for entry in &drawer.buttons {
-            if !button(entry) || drawers::is_drawer(&entry.command) || !placed.insert(entry.command.as_str()) {
+            if !button(entry)
+                || drawers::is_drawer(&entry.command)
+                || entry.command == drawers::FLOATING
+                || (floating.is_some() && structure::is_block(&entry.command))
+                || !placed.insert(entry.command.as_str())
+            {
                 return false;
             }
         }
@@ -291,7 +307,7 @@ pub(crate) fn read(text: &str) -> Result<Profile, String> {
 /// Restore the bars' base without changing unrelated window or graphics styles.
 pub(crate) fn apply(profile: Profile, settings: &mut crate::settings::Settings) {
     settings.classic_bars = profile.base == Base::Legacy;
-    settings.show_bug_report = profile.toolbar.location("report_bug", &Layout::default()).is_some();
+    settings.show_bug_report = profile.toolbar.placed("report_bug", &Layout::default());
     let mut toolbar = profile.toolbar;
     toolbar.migrate_build_icons();
     settings.toolbar = Some(toolbar);
@@ -325,6 +341,22 @@ mod tests {
                 },
             );
             let drawer = super::super::drawers::create(&mut toolbar, Bar::Right, &layout);
+            // the import bar and a floating block of the user's, its button
+            // placed nowhere, keep their buttons and their options
+            assert!(toolbar.ensure_import_bar(&layout));
+            let floating = super::super::drawers::create_floating(&mut toolbar, "Tools");
+            toolbar
+                .buttons
+                .as_mut()
+                .expect("explicit bottom")
+                .retain(|button| button.command != "soundexplorer");
+            let block = toolbar.drawers.get_mut(&floating).expect("floating block");
+            block.buttons = vec![ToolButton {
+                command: "soundexplorer".into(),
+                icon: "volume".into(),
+                tooltip: String::new(),
+            }];
+            block.floating.as_mut().expect("floating").vertical = true;
             toolbar
                 .buttons
                 .as_mut()
