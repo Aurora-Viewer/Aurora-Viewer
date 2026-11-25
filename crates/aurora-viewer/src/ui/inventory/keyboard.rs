@@ -16,8 +16,10 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
     let explorer = st.lists_flat();
     st.shown_order = order_kind(st, filtered);
     let selected_after_delete = delete::reconcile_selection(inv, st);
-    // LLFolderView::handleMouseDown starts a new prefix on a click, even when
-    // the click gives the keyboard to another field.
+    // A click starts a new prefix, as LLFolderView::handleMouseDown does for a
+    // press on the folder view. Aurora also clears it when the click gives the
+    // keyboard to another field (harmless: the prefix only counts while the
+    // list has the keyboard).
     if ui.input(|i| i.pointer.any_pressed()) {
         st.type_ahead.clear();
     }

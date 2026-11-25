@@ -7,8 +7,9 @@
 //! LLFolderView::search (indra/llui/llfolderview.cpp, originally LGPL 2.1):
 //! the letters typed within `TypeAheadTimeout` (1.5 s) select the next row
 //! whose name starts with them, from the selected row, wrapping at the end.
-//! Aurora differences: any character (the Legacy Viewer stops at
-//! non-ASCII), and the same letter typed again goes on to the next row
+//! Aurora differences: any character (the Legacy Viewer stops at non-ASCII),
+//! the text an IME commits is accepted (the folder view never enables
+//! composition), and the same letter typed again goes on to the next row
 //! that starts with it, as in Windows Explorer and Dolphin. Home, End,
 //! Page Up and Page Down only scroll the Legacy Viewer's list
 //! (LLFolderView::handleKeyHere); here they select, as in a file manager.
@@ -78,6 +79,25 @@ pub(super) fn type_ahead_target(names: &[(Uuid, String)], current: Option<Uuid>,
         .map(|n| (start + skip + n) % names.len())
         .find(|&i| names[i].1.to_lowercase().starts_with(&typed))
         .map(|i| names[i].0)
+}
+
+/// The row a typed prefix leads to: the whole prefix first, then — only when
+/// it is one repeated character, so no name starts with it — Explorer's
+/// cycling to the next row starting with that character. The residents' list
+/// orders it the same way (`ui/people/type_ahead.rs`), so a composed name made
+/// of one repeated character ("ママ") still finds its row instead of cycling
+/// through the rows starting with just "マ".
+fn next_target(names: &[(Uuid, String)], current: Option<Uuid>, typed: &str) -> Option<Uuid> {
+    if let Some(id) = type_ahead_target(names, current, typed, false) {
+        return Some(id);
+    }
+    let mut chars = typed.chars();
+    let first = chars.next()?;
+    if chars.all(|c| c == first) {
+        type_ahead_target(names, current, &first.to_string(), true)
+    } else {
+        None
+    }
 }
 
 /// The rows Home, End and the page keys lead to: `index` among `len`
@@ -273,18 +293,9 @@ pub(super) fn handle(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, explo
             if st.type_ahead.text.chars().count() < TYPE_AHEAD_MAX {
                 st.type_ahead.text.push_str(&typed);
             }
-            // "a" then "a": Explorer's next row starting with "a"
-            let mut letters = st.type_ahead.text.chars();
-            let first = letters.next();
-            let repeated = st.type_ahead.text.chars().count() > 1 && letters.all(|c| Some(c) == first);
-            let (wanted, again) = if repeated {
-                (first.map(String::from).unwrap_or_default(), true)
-            } else {
-                (st.type_ahead.text.clone(), false)
-            };
             let names: Vec<(Uuid, String)> = order.iter().map(|id| (*id, row_name(inv, *id))).collect();
             let current = st.selected.filter(|id| st.selection.contains(id));
-            if let Some(found) = type_ahead_target(&names, current, &wanted, again) {
+            if let Some(found) = next_target(&names, current, &st.type_ahead.text) {
                 st.selection.clear();
                 st.selection.insert(found);
                 st.selected = Some(found);
@@ -331,6 +342,22 @@ mod tests {
         assert_eq!(type_ahead_target(&rows, id(1), "b", true), id(2));
         assert_eq!(type_ahead_target(&rows, id(2), "b", true), id(4));
         assert_eq!(type_ahead_target(&rows, id(4), "b", true), id(1));
+    }
+
+    #[test]
+    fn a_composed_name_of_one_repeated_character_tries_the_whole_prefix_first() {
+        let rows = names(&["マスク", "ママ服", "ミント"]);
+        let id = |n: u128| Some(Uuid::from_u128(n));
+        assert_eq!(
+            next_target(&rows, None, "ママ"),
+            id(2),
+            "the whole commit, not cycling through the rows starting with マ"
+        );
+        // Latin typed one key at a time still cycles when "bb" starts no name.
+        let rows = names(&["Bag", "Belt", "Boots"]);
+        assert_eq!(next_target(&rows, id(1), "b"), id(1));
+        assert_eq!(next_target(&rows, id(1), "bb"), id(2));
+        assert_eq!(next_target(&rows, id(2), "bb"), id(3));
     }
 
     #[test]

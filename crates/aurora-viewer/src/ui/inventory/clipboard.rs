@@ -299,7 +299,16 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
             .list_focus_frame
             .is_some_and(|frame| ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) <= frame + 1)
         && ui.memory(|m| m.focused().is_none() && m.allows_interaction(ui.layer_id()));
-    if response.clicked() || response.has_focus() || restore {
+    // The list already holds the keyboard: keep its focus-lock filter and the
+    // restore deadline up to date without requesting focus again. A request on
+    // every frame makes egui interrupt the input method each time, so a name
+    // could never be composed (#3889, `controls::ShotNaming`).
+    let focused = response.has_focus();
+    if focused {
+        st.list_focus_frame = Some(now);
+        ui.memory_mut(|m| m.set_focus_lock_filter(focus_id(st), list_filter(st)));
+    }
+    if (response.clicked() && !focused) || restore {
         request_focus(ui, st);
     }
     if response.has_focus()
@@ -765,7 +774,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     }
     if mode == "type-ahead-ime" {
         // Click Materials in the root, then commit "tex" as a Japanese IME
-        // does: Textures is before it in the root, so the nearest match wraps.
+        // does: Textures is the next match below it.
         if matches!(frame, 650 | 651)
             && let Some(pos) =
                 ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, crate::demo::u(19)))))
@@ -1769,13 +1778,29 @@ mod tests {
         h.select(id(8100), false);
         h.frame(Vec::new());
         assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st))), "the click focused the list");
+        // #3889 again: a focus request on every frame interrupted the IME.
+        for _ in 0..5 {
+            h.frame(Vec::new());
+            let ime = h.output.platform_output.ime.expect("the focused list offers composition");
+            assert!(!ime.should_interrupt_composition, "the list must leave the IME composing");
+        }
 
+        h.frame(vec![Event::Ime(egui::ImeEvent::Preedit {
+            text: "でも".into(),
+            active_range_chars: Some(0..2),
+        })]);
+        assert_eq!(h.st.selected, Some(id(8100)), "a preedit does not jump");
         h.frame(vec![Event::Ime(egui::ImeEvent::Commit("demo t".into()))]);
         assert_eq!(h.st.selected, Some(id(8104)), "Demo texture");
         assert_eq!(h.st.type_ahead.text(), "demo t");
         assert!(h.st.search.is_empty(), "the filter field is untouched");
 
-        // A click starts a new prefix, as LLFolderView::handleMouseDown.
+        // A click on another row starts a new prefix, as LLFolderView::handleMouseDown.
+        h.select(id(8100), false);
+        assert_eq!(h.st.selected, Some(id(8100)));
+        assert!(h.st.type_ahead.text().is_empty());
+
+        // A click on the filter field clears the prefix too (Aurora's choice).
         let field = h.text("Filter inventory");
         h.click(field.center(), Default::default());
         assert!(h.st.type_ahead.text().is_empty());

@@ -7848,8 +7848,8 @@ failure. Grid validation and any paid upload are performed by the human.
   rubber band works in those lists too, from a row's Type or Date columns.
 - **`AURORA_DEMO_INVENTORY=type-ahead-ime|aurora-type-ahead-ime`**: clicks the
   demo "Materials" folder at frames 650–651, then commits `tex` as a Japanese
-  IME does at frame 665 (`egui::ImeEvent::Commit`). The nearest match from that
-  row wraps around the root to "Textures"; capture at 720 with
+  IME does at frame 665 (`egui::ImeEvent::Commit`). The next match below that
+  row is "Textures"; capture at 720 with
   `AURORA_CAPTURE_FRAMES=720` (or later) shows it selected with the rest of the
   inventory visible and the filter field empty. At frame 700 the log reports
   the selection, the prefix and the list focus. `aurora-…` opens the wide
