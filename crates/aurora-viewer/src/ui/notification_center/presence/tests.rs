@@ -381,6 +381,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
                 images: &std::collections::HashMap::new(),
                 emoji: &mut emoji,
                 hidden: false,
+                scripts_in_view: false,
                 message_seconds: 30.0,
                 tip_seconds: 10.0,
                 restart: None,
@@ -461,6 +462,10 @@ struct Clicks {
     emoji: crate::ui::emoji::Emoji,
     world: crate::world::World,
     time: f64,
+    /// The bell the bars report each frame (None: not drawn yet).
+    bell: Option<Rect>,
+    /// The view kept clear but for the script floaters (mouselook).
+    mouselook: bool,
 }
 
 impl Clicks {
@@ -473,6 +478,8 @@ impl Clicks {
             emoji: crate::ui::emoji::Emoji::load(),
             world: crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load())),
             time: 0.0,
+            bell: Some(Rect::from_min_size(Pos2::new(1236.0, 8.0), Vec2::splat(36.0))),
+            mouselook: false,
         }
     }
 
@@ -492,12 +499,13 @@ impl Clicks {
         let mut out = self.ctx.run_ui(input, |ui| {
             crate::ui::layout::set_work_area(ui.ctx(), Rect::from_min_max(Pos2::new(8.0, 52.0), Pos2::new(1272.0, 664.0)));
             // the bell island at the top right, as the bars report it
-            self.notif.bell = Some(Rect::from_min_size(Pos2::new(1236.0, 8.0), Vec2::splat(36.0)));
+            self.notif.bell = self.bell;
             let mut env = ToastEnv {
                 pics: &pics,
                 images: &std::collections::HashMap::new(),
                 emoji: &mut self.emoji,
-                hidden: false,
+                hidden: self.mouselook,
+                scripts_in_view: self.mouselook,
                 message_seconds: 30.0,
                 tip_seconds: 10.0,
                 restart: None,
@@ -607,4 +615,33 @@ fn the_center_lines_up_with_the_system_and_bell_islands() {
         let toasts = f.toasts.expect("toasts at the top left");
         assert!(toasts.width() < system.width() + bell.width(), "{size:?}: {toasts:?}");
     }
+}
+
+/// #4363: a session that starts in mouselook has no bell drawn (the bars
+/// are hidden): a script menu's card still unrolls, at the top right.
+#[test]
+fn a_script_menu_unrolls_in_mouselook_before_any_bell() {
+    let mut f = Clicks::new();
+    f.bell = None;
+    f.mouselook = true;
+    let menu = f.list.push(
+        crate::world::notifications::Kind::Script,
+        "Fountain",
+        "Pick a colour",
+        crate::world::notifications::Data::Dialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
+            object: Uuid::from_u128(9),
+            object_name: "Fountain".into(),
+            own_object: false,
+            channel: -5,
+            buttons: vec!["Violet".into()],
+        },
+    );
+    for _ in 0..30 {
+        f.frame(PresencePosition::TopRight, Vec::new());
+    }
+    assert_eq!(f.notif.center.peek.iter().map(|p| p.id).collect::<Vec<_>>(), vec![menu]);
+    let panel = f.notif.center.panel.expect("the card is drawn");
+    assert!(panel.right() <= 1280.0 && panel.top() < 80.0, "{panel:?}");
+    assert!(panel.right() > 1000.0, "at the top right: {panel:?}");
 }

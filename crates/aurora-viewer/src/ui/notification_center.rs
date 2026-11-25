@@ -25,6 +25,9 @@ pub const WIDTH: f32 = 360.0;
 /// What the panel's overlay adds around its content: 6 px of margin and the
 /// 1 px border on each side.
 const PANEL_FRAME: f32 = 14.0;
+/// Points from the window's top right corner to the stand-in for a bell
+/// not drawn yet (`bell_anchor`).
+const BELL_INSET: f32 = 8.0;
 /// Seconds a card stays rolled out: information / waiting for an answer.
 pub const SHOW_INFO: f64 = 6.0;
 pub const SHOW_ANSWER: f64 = 12.0;
@@ -97,8 +100,11 @@ pub struct Moment {
     pub hovered: bool,
     /// Do not disturb: the bell is paused.
     pub dnd: bool,
-    /// Mouselook or the photo's full frame: nothing over the view.
+    /// Mouselook or the photo's full frame: nothing over the view...
     pub hidden: bool,
+    /// ...but what awaits an answer, in mouselook
+    /// (`notifications::clear_view_shows`, #4363).
+    pub scripts_in_view: bool,
     /// The full list is open.
     pub open: bool,
     /// The friends' toasts stand at the top right, where the cards unroll:
@@ -126,10 +132,10 @@ pub fn dnd_shows(n: &Notification) -> bool {
     matches!(n.data, Data::Dialog { .. } | Data::TextBox { .. })
 }
 
-/// A scripted object's window out of the way of the list, the clear view or
-/// do not disturb, which can be shown now.
+/// A scripted object's window out of the way of the list, the clear view
+/// (mouselook lets it out) or do not disturb, which can be shown now.
 fn may_show(n: &Notification, m: &Moment) -> bool {
-    !m.open && !m.hidden && (!m.dnd || dnd_shows(n))
+    !m.open && super::notifications::clear_view_shows(n, m.hidden, m.scripts_in_view) && (!m.dnd || dnd_shows(n))
 }
 
 /// Rolls out as a card: what is listed, and a message kept out of the bell
@@ -183,13 +189,19 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
     if let Some(last) = list.list.iter().map(|n| n.id).max() {
         c.last_seen = c.last_seen.max(last);
     }
-    if m.open || m.hidden {
+    if m.open || (m.hidden && !m.scripts_in_view) {
         // the list shows everything / the view stays clear: no card stays out
         c.peek.clear();
-    } else if m.dnd {
-        // the bell is paused: only the script menus stay out (#491)
-        c.peek
-            .retain(|p| p.pinned && list.list.iter().find(|n| n.id == p.id).is_none_or(dnd_shows));
+    } else {
+        if m.hidden {
+            // mouselook: only what awaits an answer stays out (#4363)
+            c.peek.retain(|p| p.pinned);
+        }
+        if m.dnd {
+            // the bell is paused: only the script menus stay out (#491)
+            c.peek
+                .retain(|p| p.pinned && list.list.iter().find(|n| n.id == p.id).is_none_or(dnd_shows));
+        }
     }
     // a scripted object's window stays out until answered: when it arrives,
     // and again once the list closes, the view clears or do not disturb
@@ -239,6 +251,20 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
     c.shown_count = count;
     let bell_moves = c.bump_at.is_some_and(|t| m.now - t < RING.max(BUMP));
     !c.peek.is_empty() || !c.presence.is_empty() || bell_moves
+}
+
+/// Where the cards unroll: under the bell the bars drew last, or, while
+/// they have drawn none this session (one that starts in mouselook, where
+/// the bars are hidden: #4363), under the top right corner, where the bell
+/// island stands.
+pub fn bell_anchor(bell: Option<Rect>, screen: Rect) -> Rect {
+    bell.unwrap_or_else(|| {
+        let slot = super::bars::islands::SLOT;
+        Rect::from_min_size(
+            egui::pos2(screen.right() - BELL_INSET - slot, screen.top() + BELL_INSET),
+            Vec2::splat(slot),
+        )
+    })
 }
 
 /// The cards shown rolled out (the newest three) and how many wait behind.
@@ -377,6 +403,7 @@ pub fn show(
             hovered,
             dnd,
             hidden: env.hidden,
+            scripts_in_view: env.scripts_in_view,
             open: nui.open,
             under_bell: env.presence_at == PresencePosition::TopRight,
         },
@@ -387,11 +414,9 @@ pub fn show(
     let (presence, peek) = (&nui.center.presence, &nui.center.peek);
     list.list
         .retain(|n| !n.transient || presence.iter().any(|t| t.id == n.id) || peek.iter().any(|p| p.id == n.id));
-    let Some(bell) = nui.bell else {
-        return (answers, asks);
-    };
     presence_toasts(ctx, p, list, nui, env, column, now, &mut answers);
     let screen = ctx.content_rect();
+    let bell = bell_anchor(nui.bell, screen);
     // with the islands, exactly under the system and bell islands, the
     // overlay's margins and border within that width; with Firestorm's bars
     // its own width, ending under the bell
@@ -539,7 +564,7 @@ fn rolled_out(
             answers.push((peek.id, r));
         }
     }
-    if behind > 0 {
+    if cards::more_link_shows(behind, env.hidden) {
         let more = ui
             .add(
                 egui::Label::new(

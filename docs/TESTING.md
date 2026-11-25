@@ -3297,8 +3297,12 @@ llRequestPermissions question, an llLoadURL link and an object's
 llGiveInventory), then four pieces of information. The windows stay out
 until answered, in both notification styles: the newest three shown, the
 others behind "+ N more", the information folding away after its time;
-open and close the list, or go into mouselook and back, and they come out
-again. `repeat`: a fountain's menu sent three times on one channel, once on
+open and close the list and they come out again. In mouselook the windows
+stay drawn and the information does not (#4363): with
+`AURORA_DEMO_CAMERA=ml` and a capture at frame 650, the newest three at
+the top right, without the "+ N more" link;
+with `AURORA_DEMO_CAMERA=ml-alt` Alt frees the cursor from frame 620 to
+click them (`alt free=true` in the log). `repeat`: a fountain's menu sent three times on one channel, once on
 another, and a game table's menu on the first channel, as a HUD or vendor
 clicked several times. With Preferences › Chat › Notifications › "Script
 dialogs per object" on its default (one per channel) three stay: the

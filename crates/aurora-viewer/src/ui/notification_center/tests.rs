@@ -456,7 +456,7 @@ fn every_scripted_window_stays_out_until_answered() {
     list.read_all();
     update(&list, &mut c, at(100.1), 30.0);
     assert_eq!(pinned(&c), windows);
-    // mouselook, then back
+    // the photo's full frame, then back
     update(&list, &mut c, Moment { hidden: true, ..at(101.0) }, 30.0);
     assert!(c.peek.is_empty());
     update(&list, &mut c, at(101.1), 30.0);
@@ -473,8 +473,8 @@ fn every_scripted_window_stays_out_until_answered() {
     assert_eq!(pinned(&c), vec![windows[0], windows[2], windows[3]]);
 }
 
-/// A scripted window that arrives while the list is open or in mouselook
-/// comes out once they end.
+/// A scripted window that arrives while the list is open or in the photo's
+/// full frame comes out once they end.
 #[test]
 fn a_scripted_window_kept_in_comes_out_afterwards() {
     for kept in [Moment { open: true, ..at(0.0) }, Moment { hidden: true, ..at(0.0) }] {
@@ -486,4 +486,73 @@ fn a_scripted_window_kept_in_comes_out_afterwards() {
         update(&list, &mut c, at(0.1), 30.0);
         assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), windows);
     }
+}
+
+/// #4363: in mouselook what a scripted object waits an answer to stays
+/// rolled out, the permission question included, and one arriving then
+/// unrolls there and then (Alt frees the mouse to answer it); the
+/// information cards go, new ones wait under the bell.
+#[test]
+fn mouselook_keeps_only_the_scripted_windows_out() {
+    let mouselook = |now| Moment {
+        hidden: true,
+        scripts_in_view: true,
+        ..at(now)
+    };
+    let mut list = Notifications::default();
+    let mut c = CenterUi::default();
+    let early = info(&mut list, "Lune paid you L$50");
+    update(&list, &mut c, at(0.0), 30.0);
+    assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), vec![early]);
+    // entering mouselook: the information goes, the windows arriving come
+    // out
+    let windows = scripted_windows(&mut list);
+    let later = info(&mut list, "Orion paid you L$10");
+    update(&list, &mut c, mouselook(1.0), 30.0);
+    assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), windows);
+    assert!(c.peek.iter().all(|p| p.pinned));
+    // long after: still out, the information never unrolled
+    update(&list, &mut c, mouselook(SHOW_ANSWER * 5.0), 30.0);
+    assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), windows);
+    assert!(!c.peek.iter().any(|p| p.id == later));
+    // do not disturb on top: only the script menu (the text box) stays
+    update(
+        &list,
+        &mut c,
+        Moment {
+            dnd: true,
+            ..mouselook(SHOW_ANSWER * 5.0 + 1.0)
+        },
+        30.0,
+    );
+    assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), vec![windows[0]]);
+    // the photo's full frame: nothing
+    update(
+        &list,
+        &mut c,
+        Moment {
+            hidden: true,
+            ..at(SHOW_ANSWER * 6.0)
+        },
+        30.0,
+    );
+    assert!(c.peek.is_empty());
+    // back in mouselook: all of them out again
+    update(&list, &mut c, mouselook(SHOW_ANSWER * 6.0 + 0.1), 30.0);
+    assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), windows);
+}
+
+/// #4363: the cards unroll under the bell the bars drew, or under the top
+/// right corner while none was drawn (a session started in mouselook).
+#[test]
+fn the_cards_have_an_anchor_before_the_bell_is_drawn() {
+    use egui::{Pos2, Rect, Vec2};
+    let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 720.0));
+    let bell = Rect::from_min_size(Pos2::new(900.0, 10.0), Vec2::splat(28.0));
+    assert_eq!(bell_anchor(Some(bell), screen), bell);
+    let corner = bell_anchor(None, screen);
+    assert!(screen.contains_rect(corner));
+    assert_eq!(corner.right(), 1272.0);
+    assert_eq!(corner.top(), 8.0);
+    assert!(corner.bottom() < 60.0, "{corner:?}");
 }

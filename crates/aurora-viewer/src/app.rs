@@ -20837,12 +20837,14 @@ impl App {
                         n.read = true;
                     }
                 }
-                // nothing over the view in mouselook or the photo's full frame;
-                // in do not disturb only the script menus come out, in both
+                // nothing over the view in mouselook or the photo's full frame,
+                // but the scripted objects' windows in mouselook (#4363); in
+                // do not disturb only the script menus come out, in both
                 // styles (#491)
                 let aurora = self.notifications_aurora();
                 let dnd = self.world.status.dnd;
-                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame();
+                let full_frame = self.photo_full_frame();
+                let toasts_hidden = self.camera.mouselook() || full_frame;
                 self.world.notifications.aurora = aurora;
                 // #465: a friendship offer in the middle of the screen, before
                 // the toasts it replaces (AURORA_DEMO_FRIEND_PROMPT: on for the run)
@@ -20905,6 +20907,7 @@ impl App {
                     images: &self.ui_images,
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
+                    scripts_in_view: self.camera.mouselook() && !full_frame,
                     message_seconds: f64::from(self.settings.im_toast_seconds),
                     tip_seconds: f64::from(self.settings.tip_toast_seconds),
                     restart,
