@@ -498,22 +498,52 @@ impl Drop for PluginProcess {
 /// then closes `stream`, kills it and waits for it to end. Nothing here runs
 /// on the caller's thread, which is the UI thread. Returns the thread, for
 /// the tests.
-fn end_in_background(mut child: Child, stream: Option<TcpStream>, grace: Duration) -> Option<std::thread::JoinHandle<()>> {
+fn end_in_background(child: Child, stream: Option<TcpStream>, grace: Duration) -> Option<std::thread::JoinHandle<()>> {
+    let mut child = Reap(child);
     let spawned = std::thread::Builder::new().name("media plugin exit".into()).spawn(move || {
         let deadline = Instant::now() + grace;
         while Instant::now() < deadline {
-            if let Ok(Some(_)) = child.try_wait() {
+            if let Ok(Some(_)) = child.0.try_wait() {
                 return;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
         drop(stream);
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = child.0.kill();
+        #[cfg(test)]
+        held_exit(child.0.id());
+        let _ = child.0.wait();
     });
     spawned
         .map_err(|e| log::warn!("media: no thread to end the plugin process: {e}"))
         .ok()
+}
+
+/// A plugin process handed to the exit thread. If that thread cannot start,
+/// the closure, and this with it, is dropped on the caller's thread: it then
+/// reaps the process only if it has already ended (`try_wait`), never waits,
+/// so the UI thread cannot block; a process still stuck in a driver stays
+/// until the viewer exits. Once the exit thread's `wait` has returned, std
+/// keeps the status and `try_wait` sends nothing.
+struct Reap(Child);
+
+impl Drop for Reap {
+    fn drop(&mut self) {
+        let _ = self.0.try_wait();
+    }
+}
+
+/// Tests only: the exit threads of these pids wait here before their
+/// `wait`, so a test can see that the caller did not wait (10 s at most).
+#[cfg(test)]
+static HELD_EXITS: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn held_exit(pid: u32) {
+    let until = Instant::now() + Duration::from_secs(10);
+    while HELD_EXITS.lock().is_ok_and(|held| held.contains(&pid)) && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// `LD_LIBRARY_PATH` of the plugin process on Linux: SLPlugin's folder
@@ -990,9 +1020,16 @@ mod tests {
         let child = Command::new("sleep").arg("30").spawn().expect("sleep");
         let pid = child.id();
         process.child = Some(child);
+        // the exit thread's wait is held, as a process stuck in a driver
+        // holds it: `fail` must not be the one waiting
+        HELD_EXITS.lock().expect("held").push(pid);
+        let started = Instant::now();
         process.fail("test".into());
+        assert!(started.elapsed() < Duration::from_secs(1), "fail returned at once");
+        assert!(exists(pid), "killed but not reaped by the caller");
         assert!(process.child.is_none(), "the process is handed off");
         assert!(process.error().is_some());
+        HELD_EXITS.lock().expect("held").retain(|p| *p != pid);
         let deadline = Instant::now() + Duration::from_secs(10);
         while exists(pid) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
@@ -1016,10 +1053,12 @@ mod tests {
 
         let stuck = Command::new("sleep").arg("30").spawn().expect("sleep");
         let pid = stuck.id();
-        end_in_background(stuck, None, Duration::from_millis(200))
-            .expect("thread")
-            .join()
-            .expect("join");
+        let started = Instant::now();
+        let exit = end_in_background(stuck, None, Duration::from_millis(200)).expect("thread");
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(exists(pid), "left alone during the grace");
+        exit.join().expect("join");
+        assert!(started.elapsed() >= Duration::from_millis(200), "the whole grace was given");
         assert!(!exists(pid), "killed once the grace is over");
     }
 }
