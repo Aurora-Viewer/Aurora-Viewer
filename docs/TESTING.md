@@ -2971,7 +2971,7 @@ indication. The profile and terrain pickers keep their usual validation.
 `faces-picker-material,object:99620,menu`, with `AURORA_DEMO_BUILD_STYLE`
 `aurora` or `legacy`) right-clicks the picker's selected row once its list
 has been shown for 40 frames: the Inventory window's own menu for that item
-opens on the row (#4896), at about 680; capture at 720 (`--language en`).
+opens on the row (#4896), open by frame 685; capture at 720 (`--language en`).
 The capture keeps the window's focus, which the inventory's menus need.
 Compare it with `AURORA_DEMO_INVENTORY=aurora-menu-texture`: the same
 entries and look, but "Find similar" (Aurora's search, in the list it was
@@ -2982,8 +2982,10 @@ materials, particles, imported maps) has it on its Inventory and Aurora
 Library rows: a right-click on another texture selects it and applies it as
 a click does, on the selected row or a folder it changes nothing, Rename
 edits the name in the row, Copy then Paste in the Inventory window pastes
-it, Properties opens the inventory's window, a refusal shows in the
-picker's status line. The Local tab and the greyed-out rows have no menu.
+it, Properties opens the inventory's window, Delete asks the inventory's
+confirmation and leaves the Inventory window's selection alone, a refusal
+shows in the picker's status line. The Local tab and the greyed-out rows
+have no menu.
 
 `AURORA_DEMO_FLEXIBLE` replaces the objects of the plaza with six prims with
 four levels of softness, square / circular profiles, hollow, twist and
