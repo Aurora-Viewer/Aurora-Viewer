@@ -469,6 +469,9 @@ impl PlayingAnimation {
 struct LocalPreview {
     signal: PlayingAnimation,
     server: Option<PlayingAnimation>,
+    /// Played to its end: kept until the simulator no longer lists it, so
+    /// that a list already on its way does not start it again.
+    finished: bool,
 }
 
 /// The Local tab of the texture picker (LLFloaterTexturePicker::onBtnAdd,
@@ -4503,6 +4506,9 @@ impl World {
                 if avatar == self.agent_id {
                     for preview in &mut self.local_previews {
                         preview.server = list.iter().find(|a| a.id == preview.signal.id).copied();
+                    }
+                    self.local_previews.retain(|p| !p.finished || p.server.is_some());
+                    for preview in &self.local_previews {
                         list.retain(|a| a.id != preview.signal.id);
                         list.push(preview.signal);
                     }
@@ -6951,6 +6957,11 @@ impl World {
     /// Several play at once, blended like any other motions; a start of one
     /// already playing starts it over.
     pub fn preview_animation(&mut self, id: Uuid, start: bool) {
+        // The importer's timeline drives the whole avatar: it ends, or a
+        // preview started over it would wait on a timeline that has stopped.
+        if start && let Some((clock, _, _)) = self.animation_preview_clock.filter(|(clock, _, _)| *clock != id) {
+            self.preview_animation(clock, false);
+        }
         let server = self.end_preview(id);
         let motions = self.animations.entry(self.agent_id).or_default();
         if start {
@@ -6958,7 +6969,11 @@ impl World {
             let signal = PlayingAnimation::from_signal(id, 0, Instant::now(), None);
             motions.retain(|a| a.id != id);
             motions.push(signal);
-            self.local_previews.push(LocalPreview { signal, server });
+            self.local_previews.push(LocalPreview {
+                signal,
+                server,
+                finished: false,
+            });
         } else {
             motions.extend(server);
         }
@@ -6967,7 +6982,13 @@ impl World {
     /// A local preview that played to its end: the simulator's motion of the
     /// same id ends with it (LLVOAvatarSelf::requestStopMotion).
     pub fn preview_finished(&mut self, id: Uuid) {
-        self.end_preview(id);
+        let Some(preview) = self.local_previews.iter_mut().find(|p| p.signal.id == id) else {
+            return;
+        };
+        preview.finished = true;
+        if preview.server.is_none() {
+            self.end_preview(id);
+        }
     }
 
     /// Take a local preview out, returning the simulator's motion it covered.
@@ -9978,31 +9999,45 @@ mod motion_tests {
         world.preview_animation(second, false);
         assert_eq!(ids(&world), [server, second]);
         assert!(world.animations_of(&me).iter().any(|a| a.id == second && a.sequence == 7));
-        // played to its end, it does not
+        // played to its end, it does not: a list on its way changes nothing,
+        // the one without it ends it
         world.preview_animation(second, true);
+        let played = world.animations_of(&me).iter().find(|a| a.id == second).copied();
         world.preview_finished(second);
+        signal(&mut world);
+        assert_eq!(world.animations_of(&me).iter().find(|a| a.id == second).copied(), played);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: me,
+            anims: vec![(server, 1)],
+            sources: Vec::new(),
+        });
         assert_eq!(ids(&world), [server]);
+        world.preview_animation(first, true);
+        world.preview_finished(first);
+        assert_eq!(ids(&world), [server], "local alone, it ends at once");
         world.preview_animation(first, false);
         assert_eq!(ids(&world), [server], "a stop of one not playing");
     }
 
     #[test]
-    fn the_import_clock_survives_another_preview() {
+    fn a_preview_ends_the_importers_timeline() {
         let (mut world, _, _) = fixture();
         let [imported, other] = [1, 2].map(Uuid::from_u128);
         let now = Instant::now();
+        let plays = |world: &World, id| world.animations_of(&world.agent_id).iter().any(|a| a.id == id);
         world.preview_animation(imported, true);
         world.set_animation_preview_clock(imported, now, now);
         world.preview_animation(other, true);
-        world.preview_animation(other, false);
-        assert!(world.animation_preview_clock.is_some());
-        world.set_animation_preview_clock(other, now, now);
-        assert!(
-            world.animation_preview_clock.is_some_and(|(id, _, _)| id == imported),
-            "not previewed"
-        );
-        world.preview_animation(imported, false);
         assert!(world.animation_preview_clock.is_none());
+        assert!(!plays(&world, imported) && plays(&world, other));
+        world.set_animation_preview_clock(imported, now, now);
+        assert!(world.animation_preview_clock.is_none(), "no longer previewed");
+        // and the timeline started after it leaves it playing
+        world.preview_animation(imported, true);
+        world.set_animation_preview_clock(imported, now, now);
+        assert!(plays(&world, imported) && plays(&world, other));
+        world.preview_animation(imported, false);
+        assert!(world.animation_preview_clock.is_none() && plays(&world, other));
     }
 
     #[test]

@@ -1136,7 +1136,7 @@ fn animation(
             }
         });
         ui.horizontal(|ui| {
-            let playing = st.playing.iter().find(|play| play.asset == it.asset_id).copied();
+            let playing = super::plays::playing(&st.plays, it.asset_id);
             for (local, label) in [
                 (false, aurora_i18n::tr!("ui-inventory-dialogs-play-for-everyone")),
                 (true, aurora_i18n::tr!("common-play-locally")),
@@ -1227,7 +1227,7 @@ fn animation(
 /// those of the other windows playing.
 fn stop_shown_animation(st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
     let asset = st.animation_asset.take();
-    if let Some(play) = st.playing.iter().find(|play| Some(play.asset) == asset) {
+    if let Some(play) = st.plays.iter().find(|play| Some(play.asset) == asset) {
         actions.push(InvAction::Animation {
             asset: play.asset,
             local: play.local,

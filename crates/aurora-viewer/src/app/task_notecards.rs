@@ -238,7 +238,7 @@ impl App {
             if d.state.preview_source.is_some() {
                 d.state.preview_can_edit = allowed;
             }
-            d.state.playing.clone_from(&self.inventory_ui.playing);
+            d.state.plays.clone_from(&self.inventory_ui.plays);
             // RLVa's @viewtexture refuses the textures it embeds as well
             d.inventory.rlva_preview_mask = self.world.inventory.rlva_preview_mask;
             if metadata.is_none() {
