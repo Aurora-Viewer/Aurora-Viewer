@@ -2978,7 +2978,7 @@ pub(crate) mod tests {
             /// side 30 cm from it.
             Edge,
         }
-        for (deg, x, depth, far, selected) in [
+        for row in [
             // 100 m away, seen at 45°: a texel 28 cm short is the face's; a
             // point off the face, or a surface in front on the ray, is not.
             (45.0, 100.0, Depth::Face(0.28), 256.0, true),
@@ -2998,7 +2998,18 @@ pub(crate) mod tests {
             (45.0, 5.0, Depth::Face(0.28), 256.0, true),
             (45.0, 5.0, Depth::Ray(0.28), 256.0, false),
             (45.0, 5.0, Depth::Ray(0.05), 256.0, true),
-        ] {
+        ]
+        .into_iter()
+        // and again with the cube's bounds kept, which `drawn_at` tests
+        // before casting its faces (without bounds, the draw distance row
+        // has no counterpart: the sphere would reach it)
+        .flat_map(|row| [(row, false), (row, true)])
+        .filter(|&((.., far, _), bounded)| !(bounded && far < 100.0))
+        {
+            let ((deg, x, depth, far, selected), bounded) = row;
+            scene.gpu[front].center = Vec3::new(x, 0.0, 50.0);
+            scene.gpu[front].radius = if bounded { 0.75f32.sqrt() } else { 0.0 };
+            scene.pick.set(front, super::super::hover::PickEntry::of(&scene.gpu[front]));
             let o = world.objects.get_mut(front).unwrap();
             o.position = Vec3::new(x, 0.0, 50.0);
             o.rotation = Quat::from_rotation_z(f32::to_radians(deg));
@@ -3019,7 +3030,11 @@ pub(crate) mod tests {
                 scene.left_selection_pick(&world, Some(ray), Some(point), true, false, far),
                 scene.selection_pick(&world, Some(ray), Some(point), false, false, far),
             );
-            assert_eq!((left.1, menu.1), (want, want), "{deg}°, {x} m, {depth:?}, far {far}");
+            assert_eq!(
+                (left.1, menu.1),
+                (want, want),
+                "{deg}°, {x} m, {depth:?}, far {far}, bounds {bounded}"
+            );
             // taken where it is drawn: the point is the depth's, not the
             // ray's hit behind it
             if selected && matches!(depth, Depth::Face(_) | Depth::Edge) {
