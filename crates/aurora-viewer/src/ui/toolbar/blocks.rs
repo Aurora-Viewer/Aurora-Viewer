@@ -289,10 +289,10 @@ pub(super) fn kind(settings: &ToolbarSettings, command: &str) -> Kind {
     }
 }
 
-/// The block's type, one of three rows under a heading. `command` is a
+/// The block's type, one of three rows. `command` is a
 /// fixed block's button, a drawer's or a floating block's id; `from` is the
 /// bar and the button it stands at, where a new floating block appears
-/// (none for a floating block). The quick import bar stays floating.
+/// (none for a floating block).
 pub(super) fn kind_menu(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -303,8 +303,7 @@ pub(super) fn kind_menu(
 ) {
     let layout = Layout::default();
     let current = kind(settings, command);
-    let unlocked = !settings.locked && command != drawers::IMPORT_BAR;
-    menu::heading(ui, p, aurora_i18n::tr!("toolbar-block-kind"));
+    let unlocked = !settings.locked;
     for (choice, icon, key) in [
         (Kind::Fixed, "layout-navbar-filled", "toolbar-block-kind-fixed"),
         (Kind::Drawer, "folder-filled", "toolbar-block-kind-drawer"),

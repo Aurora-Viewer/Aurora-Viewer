@@ -106,10 +106,10 @@ pub fn is_floating(settings: &ToolbarSettings, id: &str) -> bool {
     settings.drawers.get(id).is_some_and(|drawer| drawer.floating.is_some())
 }
 
-/// The quick import bar's block, and once its buttons (human request,
-/// 2026-11-25): taken from wherever they stand, a drawer left with nothing
-/// but gaps going with its button. Made again later (a restored or loaded
-/// layout without it), it takes those placed nowhere.
+/// The import block, once, with its buttons (human request, 2026-11-25):
+/// taken from wherever they stand, a drawer left with nothing but gaps going
+/// with its button. Made a fixed block later, it is not made again (a loaded
+/// layout without it gets one: `restore_import_bar`).
 pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout) -> bool {
     // its first fill had a separator where a block's divider belongs
     let mut changed = false;
@@ -145,12 +145,26 @@ pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout)
         }
         changed = true;
     }
-    let fill = !settings.import_bar_filled;
-    if !fill && settings.drawers.contains_key(IMPORT_BAR) {
+    if settings.import_bar_filled {
         return changed;
     }
     settings.import_bar_filled = true;
-    if fill {
+    fill_import_bar(settings, layout, true);
+    true
+}
+
+/// A loaded layout (a shared notecard, a bundled one) without the import
+/// block gets one, of the import buttons it places nowhere.
+pub(super) fn restore_import_bar(settings: &mut ToolbarSettings, layout: &Layout) {
+    if !settings.drawers.contains_key(IMPORT_BAR) {
+        fill_import_bar(settings, layout, false);
+    }
+}
+
+/// The import block's buttons: every import button, `take` taking them out
+/// of the bars and the drawers, else only those placed nowhere.
+fn fill_import_bar(settings: &mut ToolbarSettings, layout: &Layout, take: bool) {
+    if take {
         let counts = settings
             .drawers
             .iter()
@@ -178,7 +192,7 @@ pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout)
                 return Some(structure::divider(command.trim_start_matches(structure::DIVIDER_PREFIX)));
             }
             let found = super::catalogue::find(command)?;
-            (fill || !settings.placed(command, layout)).then(|| ToolButton {
+            (take || !settings.placed(command, layout)).then(|| ToolButton {
                 command: (*command).into(),
                 icon: found.icon.into(),
                 tooltip: String::new(),
@@ -194,8 +208,6 @@ pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout)
         ..Drawer::default()
     });
     drawer.buttons = buttons;
-    drawer.floating.get_or_insert_default();
-    true
 }
 
 /// The import block as it first came (human request, 2026-11-25: it cannot
@@ -208,9 +220,8 @@ pub(super) fn reset_import_bar(settings: &mut ToolbarSettings, layout: &Layout) 
     let before = settings.clone();
     settings.drawers.remove(IMPORT_BAR);
     settings.appearance.remove(IMPORT_BAR);
-    settings.import_bar_filled = false;
     settings.import_shortcut_given = true;
-    ensure_import_bar(settings, layout);
+    fill_import_bar(settings, layout, true);
     super::shortcuts::set(
         settings,
         IMPORT_BAR,
@@ -304,9 +315,9 @@ pub(super) fn floatable(settings: &ToolbarSettings, layout: &Layout, bar: Bar, c
 
 /// A floating block made a drawer again, its button where it stands (at the
 /// bottom bar's end when it stands nowhere): the bar it stands in. The
-/// import bar stays a floating block.
+/// import block too (human request, 2026-11-25).
 pub(super) fn dock(settings: &mut ToolbarSettings, layout: &Layout, id: &str) -> Option<Bar> {
-    if settings.locked || id == IMPORT_BAR {
+    if settings.locked {
         return None;
     }
     let floating = settings.drawers.get_mut(id)?.floating.take()?;

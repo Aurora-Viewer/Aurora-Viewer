@@ -412,8 +412,10 @@ pub(super) fn menu_options(
         if toolbar.open && menu::check(ui, p, "bug-filled", aurora_i18n::tr!("bug-toolbar"), st.show_bug_report, true) {
             *action = BarAction::ShowBugButton(!st.show_bug_report);
         }
-        crate::ui::toolbar::native_context::start_group(ui, p);
+        // its own island, no block of a bar: no block settings
+        crate::ui::toolbar::section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
         toolbar.button_appearance_option(ui, p, Some(&button), locked);
+        crate::ui::toolbar::native_context::start_group(ui, p);
         toolbar.interface_edit_menu(ui, p, Some("aurora_menu"));
     });
 }

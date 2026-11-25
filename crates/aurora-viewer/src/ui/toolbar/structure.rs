@@ -122,6 +122,23 @@ pub fn is_divider(command: &str) -> bool {
     command == DIVIDER || command.starts_with(DIVIDER_PREFIX)
 }
 
+/// Gaps that follow one another between two blocks are one (human request,
+/// 2026-11-25): the first stays, with its look. The others' ids are returned.
+pub fn single_gaps(buttons: &mut Vec<ToolButton>) -> Vec<String> {
+    let mut removed = Vec::new();
+    let mut after_gap = false;
+    buttons.retain(|button| {
+        let gap = is_separator(&button.command);
+        if gap && after_gap {
+            removed.push(button.command.clone());
+            return false;
+        }
+        after_gap = gap;
+        true
+    });
+    removed
+}
+
 pub fn divider(id: &str) -> ToolButton {
     ToolButton {
         command: format!("{DIVIDER_PREFIX}{id}"),

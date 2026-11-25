@@ -269,6 +269,24 @@ impl ToolbarSettings {
             self.top.push(crate::ui::bars::top::button("bar_navigation", "map-pin-filled"));
         }
     }
+    /// Every bar's and block's gaps that follow one another made one
+    /// (`structure::single_gaps`); a bottom bar still the skin's is left.
+    pub fn single_gaps(&mut self) -> bool {
+        let mut removed = Vec::new();
+        for list in self
+            .buttons
+            .iter_mut()
+            .chain([&mut self.top, &mut self.left, &mut self.right])
+            .chain(self.drawers.values_mut().map(|drawer| &mut drawer.buttons))
+        {
+            removed.extend(structure::single_gaps(list));
+        }
+        for command in &removed {
+            self.separators.remove(command);
+        }
+        !removed.is_empty()
+    }
+
     pub fn compose_top(&mut self) -> bool {
         if self.composed {
             return self.split_chrome_blocks();
@@ -638,6 +656,12 @@ impl ToolbarSettings {
         // Block membership is reconciled on edits with the actual skin layout;
         // the default skin cannot validate an inherited custom bottom toolbar.
     }
+}
+
+/// A titled part of a right click, under a line when something is above it.
+pub(crate) fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
+    native_context::start_group(ui, p);
+    menu::heading(ui, p, title);
 }
 
 /// A bar keeps no empty or retired command, nor "Floating block" (it becomes
@@ -1024,28 +1048,55 @@ impl ToolbarUi {
             if !self.open
                 && let Some(button) = button.filter(|button| drawers::is_floating(&settings, &button.command))
             {
-                let _ = floating::context(ui, p, self, &button.command, locked);
+                floating::context(ui, p, self, &button.command, locked);
                 self.interface_edit_menu(ui, p, Some(&button.command));
                 return;
             }
+            // a drawer's button (a floating block's while the bars are
+            // edited) is its block: its type, its shortcut, its settings
             if let Some(button) = button.filter(|button| drawers::is_drawer(&button.command)) {
-                self.shortcut_item(ui, p, &settings, &button.command);
-                menu::separator(ui, p);
+                section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
                 blocks::kind_menu(ui, p, self, &settings, &button.command, Some((bar, response.rect)));
-                native_context::start_group(ui, p);
-                if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-drawer-settings"), !locked) {
+                self.block_shortcut_item(ui, p, &settings, &button.command);
+                let key = if drawers::is_floating(&settings, &button.command) {
+                    "toolbar-floating-settings"
+                } else {
+                    "toolbar-drawer-settings"
+                };
+                if menu::item_if(ui, p, "pencil-filled", aurora_i18n::text(key), !locked) {
                     self.drawer_editor = Some(button.command.clone());
                 }
+                native_context::start_group(ui, p);
                 self.interface_edit_menu(ui, p, Some(&button.command));
                 return;
             }
+            // a button's own settings, then its block's (human request,
+            // 2026-11-25: "Button settings" and "Block settings")
             if !self.open {
                 self.action_options(ui, p, button);
-                if let Some(button) = button.filter(|button| shortcuts::takes(&button.command)) {
-                    self.shortcut_item(ui, p, &settings, &button.command);
+                let own = button.filter(|button| {
+                    !structure::is_separator(&button.command)
+                        && !structure::is_divider(&button.command)
+                        && !structure::is_block(&button.command)
+                });
+                if let Some(button) = own {
+                    section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
+                    if shortcuts::takes(&button.command) {
+                        self.shortcut_item(ui, p, &settings, &button.command);
+                    }
+                } else {
+                    native_context::start_group(ui, p);
+                }
+                self.button_appearance_option(ui, p, button, locked);
+                if let Some(button) = button.filter(|button| {
+                    !structure::is_separator(&button.command)
+                        && !structure::is_divider(&button.command)
+                        && settings.drawer_of(&button.command).is_none()
+                }) {
+                    section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
+                    blocks::kind_menu(ui, p, self, &settings, &button.command, Some((bar, response.rect)));
                 }
                 native_context::start_group(ui, p);
-                self.button_appearance_option(ui, p, button, locked);
                 self.interface_edit_menu(ui, p, button.map(|button| button.command.as_str()));
                 return;
             }
@@ -1085,20 +1136,9 @@ impl ToolbarUi {
                         self.pending = Some(Edit::Merge(bar, button.command.clone(), before));
                     }
                 }
-                // a drawer's or a floating block's button opens its settings;
-                // its type, its merges and its shortcut are in its block's menu
+                // the block's type, merges and shortcut are in its block's menu
                 // (human request, 2026-11-25)
-                if drawers::is_drawer(&button.command) {
-                    let key = if drawers::is_floating(&settings, &button.command) {
-                        "toolbar-floating-settings"
-                    } else {
-                        "toolbar-drawer-settings"
-                    };
-                    if menu::item(ui, p, "settings-filled", aurora_i18n::text(key)) {
-                        self.drawer_editor = Some(button.command.clone());
-                    }
-                }
-                if shortcuts::takes(&button.command) && !drawers::is_drawer(&button.command) {
+                if shortcuts::takes(&button.command) {
                     self.shortcut_item(ui, p, &settings, &button.command);
                 }
                 menu::separator(ui, p);
@@ -1287,6 +1327,7 @@ impl ToolbarUi {
         let changed = self.apply_edit(layout, settings, provisional);
         if changed {
             drawers::remove_emptied(settings, layout, &counts);
+            settings.single_gaps();
             blocks::normalize_styles(settings, layout, &moving);
             shortcuts::forget_removed(settings);
         }
@@ -1745,8 +1786,16 @@ impl ToolbarUi {
                 for drawer in next_drawers.values_mut() {
                     drawer.buttons.retain(|b| b.command != command);
                 }
-                // a floating block outlives its button
-                if next_drawers.get(&command).is_some_and(|drawer| drawer.floating.is_none()) {
+                // a floating block outlives its button; the import block, a
+                // drawer, becomes a floating one again: it cannot be deleted
+                if command == drawers::IMPORT_BAR {
+                    if let Some(drawer) = next_drawers.get_mut(&command) {
+                        drawer.floating.get_or_insert_with(|| drawers::Floating {
+                            icon: drawers::IMPORT_ICON.into(),
+                            ..Default::default()
+                        });
+                    }
+                } else if next_drawers.get(&command).is_some_and(|drawer| drawer.floating.is_none()) {
                     next_drawers.remove(&command);
                 }
             }

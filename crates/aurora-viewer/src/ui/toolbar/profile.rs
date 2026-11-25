@@ -268,6 +268,7 @@ pub(crate) fn snapshot(settings: &ToolbarSettings, layout: &Layout, islands: boo
     toolbar.vr_button_migrated = true;
     toolbar.director_button_migrated = true;
     toolbar.import_bar_filled = true;
+    super::drawers::restore_import_bar(&mut toolbar, &Layout::default());
     toolbar.import_shortcut_given = true;
     for (bar, style) in [
         (Bar::Bottom, &mut toolbar.bottom_style),
@@ -319,6 +320,7 @@ pub(crate) fn read(text: &str) -> Result<Profile, String> {
     document.toolbar.vr_button_migrated = true;
     document.toolbar.director_button_migrated = true;
     document.toolbar.import_bar_filled = true;
+    super::drawers::restore_import_bar(&mut document.toolbar, &Layout::default());
     document.toolbar.import_shortcut_given = true;
     Ok(Profile {
         base: document.base,

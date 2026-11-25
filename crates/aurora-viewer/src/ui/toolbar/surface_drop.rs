@@ -66,7 +66,8 @@ fn drag_id() -> Id {
 }
 
 /// Keep broad insertion corridors on both ends, even for label-only controls.
-/// Existing drawers retain their entire face as an immediate destination.
+/// A drawer's or a floating block's button is a button there too (human
+/// request, 2026-11-25): its centre, after the same wait, takes a drop.
 fn group_hit(rect: Rect, bar: Bar) -> Rect {
     let mut hit = rect.shrink(3.0);
     if bar.vertical() {
@@ -83,9 +84,12 @@ fn over(ctx: &egui::Context, target: &Target, drag: &Drag, centre: bool) -> bool
     if structure::is_separator(&target.command) || structure::is_divider(&target.command) {
         return false;
     }
-    if !drawers::is_drawer(&target.command)
-        && (target.command == drag.button.command || drag.members.iter().any(|button| button.command == target.command))
-    {
+    if target.command == drag.button.command || drag.members.iter().any(|button| button.command == target.command) {
+        return false;
+    }
+    // a drawer goes into no drawer, and makes none with a button: it only
+    // moves, between the others
+    if centre && (drawers::is_drawer(&drag.button.command) || drag.members.iter().any(|button| drawers::is_drawer(&button.command))) {
         return false;
     }
     let hit = if !centre {
@@ -94,8 +98,6 @@ fn over(ctx: &egui::Context, target: &Target, drag: &Drag, centre: bool) -> bool
         } else {
             egui::vec2(4.0, 0.0)
         })
-    } else if drawers::is_drawer(&target.command) {
-        target.hit
     } else {
         target.hit.intersect(group_hit(target.rect, target.bar))
     };
@@ -113,10 +115,9 @@ fn target_at<'a>(ctx: &egui::Context, drag: &Drag, idle: &'a [Target], current: 
     idle.iter().find(|target| over(ctx, target, drag, centre)).or_else(|| {
         // Reordering moves the rendered neighbours under the pointer. Their
         // provisional centres must not steal the original insertion corridor.
-        current.iter().find(|target| {
-            over(ctx, target, drag, centre)
-                && (drawers::is_drawer(&target.command) || !idle.iter().any(|old| old.command == target.command))
-        })
+        current
+            .iter()
+            .find(|target| over(ctx, target, drag, centre) && !idle.iter().any(|old| old.command == target.command))
     })
 }
 
@@ -125,10 +126,6 @@ fn ready(ctx: &egui::Context, target: Option<&Target>, drag: Option<&Drag>) -> b
         ctx.data_mut(|data| data.remove::<Option<Hover>>(hover_id()));
         return false;
     };
-    if drawers::is_drawer(&target.command) {
-        ctx.data_mut(|data| data.remove::<Option<Hover>>(hover_id()));
-        return true;
-    }
     let (now, released) = ctx.input(|input| (input.time, input.pointer.button_released(egui::PointerButton::Primary)));
     let (armed, remaining) = ctx.data_mut(|data| {
         let hover = data.get_temp_mut_or_default::<Option<Hover>>(hover_id());
@@ -232,7 +229,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, toolbar: &mut ToolbarUi, se
     let idle = ctx.data(|data| data.get_temp::<Vec<Target>>(idle_id())).unwrap_or_default();
     let current = ctx.data(|data| data.get_temp::<Vec<Target>>(targets_id())).unwrap_or_default();
     if drag.members.is_empty()
-        && let Some(target) = target_at(ctx, &drag, &idle, &current, false).filter(|target| !drawers::is_drawer(&target.command))
+        && let Some(target) = target_at(ctx, &drag, &idle, &current, false)
         && let Some(index) = settings
             .bar(target.bar, layout)
             .iter()

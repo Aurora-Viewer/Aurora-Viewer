@@ -748,7 +748,8 @@ fn repeated_separators_move_remove_and_round_trip_independently() {
     let layout = layout();
     let mut settings = ToolbarSettings::default();
     let mut state = ToolbarUi::default();
-    for rank in [1, 2] {
+    // apart: gaps next to each other are one (`single_gaps`)
+    for rank in [1, 3] {
         state.pending = Some(Edit::Insert(Bar::Bottom, button(structure::SEPARATOR), rank));
         assert!(state.commit(&layout, &mut settings));
     }
@@ -1439,8 +1440,11 @@ fn favorites_left_grid_and_normal_customization_menu_stay_separate_on_every_bar(
                 appearance.y < customize.y,
                 "appearance precedes customization: {bar:?}, islands={islands}"
             );
+            // the block's settings between (human request, 2026-11-25)
+            let floating = bench.text(aurora_i18n::tr!("toolbar-block-kind-floating"));
+            assert!(appearance.y < floating.y && floating.y < customize.y);
             assert!(
-                customize.y - appearance.y < 65.0,
+                customize.y - floating.y < 40.0,
                 "shared customization group has no internal separator"
             );
             bench.pointer(customize, true, false);
@@ -2503,9 +2507,13 @@ fn the_import_bar_takes_its_buttons_once() {
             .any(|b| b.command == "import_texture")
     );
 
+    // made a fixed block, it is not made again; a loaded layout without it
+    // gets one of the buttons it places nowhere
     settings.drawers.remove(drawers::IMPORT_BAR);
+    assert!(!settings.ensure_import_bar(&layout()));
+    assert!(!settings.drawers.contains_key(drawers::IMPORT_BAR));
     settings.top.push(button("import_sound"));
-    assert!(settings.ensure_import_bar(&layout()));
+    drawers::restore_import_bar(&mut settings, &layout());
     assert_eq!(settings.location("import_sound", &layout()), Some(Bar::Top), "placed, it stays");
     assert!(
         settings.drawers[drawers::IMPORT_BAR]
@@ -2570,13 +2578,24 @@ fn blocks_drawers_and_floating_blocks_switch_into_one_another() {
     assert!(!settings.drawers.contains_key(&id));
     assert_eq!(commands(settings.buttons.as_ref().expect("bottom")), ["inventory", "people"]);
 
-    // a bar's block cannot float, nor can the import bar dock
+    // a bar's block cannot float; the import block docks like the others,
+    // and its button removed makes it floating again: it is never deleted
+    // (human request, 2026-11-25)
     settings.top.insert(0, button("bar_clock"));
     state.pending = Some(Edit::Float(Bar::Top, "bar_clock".into(), pos));
     assert!(!state.commit(&layout(), &mut settings));
     assert!(settings.ensure_import_bar(&layout()));
     state.pending = Some(Edit::Dock(drawers::IMPORT_BAR.into(), true));
-    assert!(!state.commit(&layout(), &mut settings));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(!drawers::is_floating(&settings, drawers::IMPORT_BAR));
+    assert!(
+        settings.location(drawers::IMPORT_BAR, &layout()).is_some(),
+        "a drawer, its button in a bar"
+    );
+    state.pending = Some(Edit::Remove(drawers::IMPORT_BAR.into()));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(drawers::is_floating(&settings, drawers::IMPORT_BAR));
+    assert!(!settings.drawers[drawers::IMPORT_BAR].buttons.is_empty());
 }
 
 /// A plain block's shortcut follows it into a drawer, a floating block and
@@ -2718,4 +2737,52 @@ fn the_import_block_resets_to_its_buttons_look_and_ctrl_u() {
         .buttons
         .clear();
     assert!(!drawers::reset_import_bar(&mut settings, &layout()), "locked bars stay");
+}
+
+/// Gaps that follow one another between two blocks are one, on the bars and
+/// in the drawers, the first keeping its look (human request, 2026-11-25).
+#[test]
+fn gaps_that_follow_one_another_are_one() {
+    let mut settings = ToolbarSettings {
+        buttons: Some(vec![
+            button("inventory"),
+            structure::separator("a"),
+            structure::separator("b"),
+            structure::separator("c"),
+            button("people"),
+        ]),
+        top: vec![structure::separator("d"), button("worldmap")],
+        ..Default::default()
+    };
+    settings.separators.insert(
+        "separator:b".into(),
+        structure::SeparatorStyle {
+            size: 30.0,
+            ..Default::default()
+        },
+    );
+    settings.drawers.insert(
+        "drawer:shelf".into(),
+        drawers::Drawer {
+            buttons: vec![
+                button("search"),
+                structure::separator("e"),
+                structure::separator("f"),
+                button("map"),
+            ],
+            ..Default::default()
+        },
+    );
+    assert!(settings.single_gaps());
+    assert_eq!(
+        commands(settings.buttons.as_deref().unwrap_or_default()),
+        ["inventory", "separator:a", "people"]
+    );
+    assert!(!settings.separators.contains_key("separator:b"));
+    assert_eq!(commands(&settings.top), ["separator:d", "worldmap"], "a lone gap stays");
+    assert_eq!(
+        commands(&settings.drawers["drawer:shelf"].buttons),
+        ["search", "separator:e", "map"]
+    );
+    assert!(!settings.single_gaps(), "nothing left to merge");
 }

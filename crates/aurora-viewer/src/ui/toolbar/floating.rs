@@ -11,9 +11,8 @@ use crate::theme::Palette;
 use crate::ui::{Panels, bars, icons::Icons, menu, widgets};
 use egui::{Id, Vec2};
 
-/// A button's square and icon, as in the dock (`bars/dock.rs`).
-const SQUARE: f32 = bars::islands::SLOT;
-const ICON: f32 = 18.0;
+/// A button's icon, as in the dock (`bars/dock.rs`).
+const ICON: f32 = bars::dock::BUTTON_ICON;
 
 fn drag_id() -> Id {
     Id::unique("toolbar_floating_drag")
@@ -34,32 +33,17 @@ pub(crate) fn window_id(id: &str) -> String {
     }
 }
 
-/// The right click of a floating block, on its glass or its button. The
-/// import bar's display is the import preference's: the state asked for it
-/// is returned instead.
-pub(super) fn context(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &str, locked: bool) -> Option<bool> {
-    let shown = drawers::is_open(ui.ctx(), id);
-    let mut import = None;
-    let (icon, label) = if shown {
-        ("eye-off", aurora_i18n::tr!("toolbar-floating-hide"))
-    } else {
-        ("eye-filled", aurora_i18n::tr!("toolbar-floating-show"))
-    };
-    if menu::item(ui, p, icon, label) {
-        if id == IMPORT_BAR {
-            import = Some(!shown);
-        } else {
-            toolbar.pending = Some(Edit::FloatingShown(id.into(), !shown));
-        }
-    }
-    if menu::item_if(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-floating-settings"), !locked) {
+/// The right click of a floating block, on its glass or its button (its
+/// button and its shortcut show and hide it: no Show/Hide here, human
+/// request, 2026-11-25).
+pub(super) fn context(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &str, locked: bool) {
+    let settings = super::appearance::settings(ui.ctx());
+    super::section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
+    super::blocks::kind_menu(ui, p, toolbar, &settings, id, None);
+    toolbar.block_shortcut_item(ui, p, &settings, id);
+    if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-floating-settings"), !locked) {
         toolbar.drawer_editor = Some(id.into());
     }
-    let settings = super::appearance::settings(ui.ctx());
-    toolbar.shortcut_item(ui, p, &settings, id);
-    menu::separator(ui, p);
-    super::blocks::kind_menu(ui, p, toolbar, &settings, id, None);
-    menu::separator(ui, p);
     if id == IMPORT_BAR {
         // it cannot be deleted, but can be reset (human request, 2026-11-25)
         if menu::item_if(ui, p, "refresh", aurora_i18n::tr!("toolbar-import-bar-reset"), !locked) {
@@ -68,7 +52,6 @@ pub(super) fn context(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, i
     } else if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-floating-delete"), !locked) {
         toolbar.pending = Some(Edit::FloatingDelete(id.into()));
     }
-    import
 }
 
 /// Every floating block shown, or all of them while the bars are edited;
@@ -106,23 +89,26 @@ pub fn show(
         let vertical = floating.vertical;
         let bar = if vertical { Bar::Left } else { Bar::Top };
         let display = structure::Display::for_drawer(ctx, bar, &drawer.buttons, editing);
+        // a bar block's buttons, as tall as the dock's (human request,
+        // 2026-11-25), like an unfolded drawer's
+        let square = bars::dock::button_size(ctx.content_rect());
         let buttons = display.buttons();
         let spacing = ctx.global_style().spacing.item_spacing;
         let widths: Vec<_> = buttons
             .iter()
-            .map(|button| bars::natural_width(ctx, button, drawer.mode, SQUARE, ICON, SQUARE + 8.0))
+            .map(|button| bars::natural_width(ctx, button, drawer.mode, square, ICON, square + 8.0))
             .collect();
         let heights: Vec<_> = buttons
             .iter()
             .map(|button| {
                 if !vertical {
-                    SQUARE
+                    square
                 } else if structure::is_divider(&button.command) {
                     structure::DIVIDER_SIZE
                 } else if structure::is_separator(&button.command) {
                     structure::style(ctx, &button.command).size
                 } else {
-                    SQUARE
+                    square
                 }
             })
             .collect();
@@ -132,7 +118,7 @@ pub fn show(
             .zip(&widths)
             .filter(|(button, _)| !structure::is_separator(&button.command) && !structure::is_divider(&button.command))
             .map(|(_, width)| *width)
-            .fold(SQUARE, f32::max);
+            .fold(square, f32::max);
         let looks: Vec<_> = buttons
             .iter()
             .zip(widths.iter().zip(&heights))
@@ -171,14 +157,13 @@ pub fn show(
             (egui::Align2::CENTER_CENTER, work.center())
         };
         let glass = ctx.memory(|memory| memory.area_rect(Id::unique(&window)));
-        let mut wanted = None;
         widgets::toolstrip(ctx, &window, point, start, |ui| {
             // its right click, under its buttons: theirs stay theirs, and a
             // drag still moves the block
             if let Some(rect) = glass {
                 let background = ui.interact(rect, Id::unique(("floating_glass", id)), egui::Sense::click());
                 menu::context_menu_of_button(&background, p, |ui| {
-                    wanted = context(ui, p, toolbar, id, settings.locked);
+                    context(ui, p, toolbar, id, settings.locked);
                 });
             }
             // the glass is a bar block's, drawn by the row around its
@@ -201,7 +186,7 @@ pub fn show(
                         if buttons.is_empty() {
                             widgets::island(ui, p, |ui| {
                                 ui.add_sized(
-                                    Vec2::new(160.0, SQUARE),
+                                    Vec2::new(160.0, square),
                                     egui::Label::new(egui::RichText::new(aurora_i18n::tr!("toolbar-floating-empty")).color(p.muted)),
                                 );
                             });
@@ -227,7 +212,7 @@ pub fn show(
                                     .iter()
                                     .find(|(command, _)| command == &b.command)
                                     .map(|(_, look)| *look)
-                                    .unwrap_or_else(|| bars::ButtonLook::bar(SQUARE))
+                                    .unwrap_or_else(|| bars::ButtonLook::bar(square))
                             },
                             toolbar,
                             panels,
@@ -264,11 +249,6 @@ pub fn show(
             {
                 widgets::move_floater(ctx, &window, rect.min + delta);
             }
-        }
-        match wanted {
-            Some(next) if import => *import_shown = next,
-            Some(next) => toolbar.pending = Some(Edit::FloatingShown(id.clone(), next)),
-            None => {}
         }
     }
     action

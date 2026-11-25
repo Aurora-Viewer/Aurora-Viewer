@@ -426,7 +426,22 @@ fn normal_native_contexts_share_one_customization_entry_and_select_the_clicked_c
                             .any(|shape| divider_between(&shape.shape, choices[3], icon.center())),
                         "a separator follows the four presentation choices: {command}"
                     );
-                    assert!(entries[0].1.top() >= icon.bottom() && entries[0].1.top() - icon.bottom() < 10.0);
+                    // the button's settings, then its block's, then the
+                    // shared entry (human request, 2026-11-25); the main
+                    // menu's and the bug report's buttons have menus of
+                    // their own, blocks of no bar in the Aurora style
+                    if command == "inventory" {
+                        let floating = bench
+                            .text
+                            .iter()
+                            .rev()
+                            .find(|(text, _)| text == aurora_i18n::tr!("toolbar-block-kind-floating"))
+                            .unwrap_or_else(|| panic!("block type row: {command}, classic={classic}, locked={locked}"))
+                            .1
+                            .center();
+                        assert!(floating.y > icon.bottom() && entries[0].1.top() > floating.y);
+                        assert!(entries[0].1.top() - floating.y < 30.0);
+                    }
                     if command == "report_bug" {
                         let copy = menu_point(&bench, aurora_i18n::tr!("bug-copy-version"));
                         assert!(
@@ -1561,7 +1576,7 @@ fn drawer_faces_and_grouping_accept_menu_sources_and_last_children() {
             bench.pointer(start + Vec2::new(12.0, 0.0), None);
             assert!(ToolbarUi::dragging(&bench.ctx));
             move_gradually(&mut bench, target);
-            for _ in 0..if group { 4 } else { 3 } {
+            for _ in 0..6 {
                 bench.pointer(target, None);
             }
             bench.pointer(target, Some(false));
@@ -1714,7 +1729,9 @@ fn drawer_icons_accept_drops_on_every_edge_open_or_closed_in_both_styles_and_edi
                     let before = bench.settings.clone();
                     start_toolbar_drag(&mut bench, "inventory");
                     move_gradually(&mut bench, point);
-                    for _ in 0..4 {
+                    // its centre takes the drop after the wait a button's
+                    // takes to group (human request, 2026-11-25)
+                    for _ in 0..6 {
                         bench.pointer(point, None);
                     }
                     assert_eq!(bench.settings, before, "hover must not save");
@@ -1787,7 +1804,7 @@ fn drawer_icon_drops_accept_catalogue_commands_native_controls_and_independent_d
         bench.pointer(source + Vec2::new(12.0, 0.0), None);
         assert!(ToolbarUi::dragging(&bench.ctx), "{command}");
         let before = bench.settings.clone();
-        for _ in 0..3 {
+        for _ in 0..6 {
             bench.pointer(target, None);
         }
         assert_eq!(bench.settings, before);
@@ -1829,7 +1846,7 @@ fn drawer_icon_drops_move_children_and_whole_blocks_without_losing_order_or_over
         .rect
         .center();
     start_toolbar_drag(&mut bench, "inventory");
-    for _ in 0..3 {
+    for _ in 0..6 {
         bench.pointer(point, None);
     }
     bench.pointer(point, Some(false));
@@ -1851,7 +1868,7 @@ fn drawer_icon_drops_move_children_and_whole_blocks_without_losing_order_or_over
     }
     assert!(drop_preview::current(&bench.ctx).is_some());
     let target = bench.ctx.read_response(bars::tool_button_id(&id)).expect("toggle").rect.center();
-    for _ in 0..4 {
+    for _ in 0..6 {
         bench.pointer(target, None);
     }
     bench.pointer(target, Some(false));
@@ -1881,7 +1898,7 @@ fn drawer_icon_drops_move_children_and_whole_blocks_without_losing_order_or_over
     bench.pointer(handle, Some(true));
     bench.pointer(handle + Vec2::new(12.0, 0.0), None);
     assert_eq!(egui::DragAndDrop::payload::<Drag>(&bench.ctx).expect("block drag").members, members);
-    for _ in 0..3 {
+    for _ in 0..6 {
         bench.pointer(target, None);
     }
     bench.pointer(target, Some(false));
@@ -1918,7 +1935,16 @@ fn drawer_icon_drops_reject_locks_self_and_nested_drawers_without_reordering_or_
             bench.pointer(point, None);
         }
         bench.pointer(point, Some(false));
-        assert_eq!(bench.settings, before, "{case}");
+        if case == "nested" {
+            // a drawer goes into no drawer: on its centre it moves beside
+            // it, as a button does (human request, 2026-11-25)
+            assert_eq!(bench.settings.drawer_of(&source), None);
+            assert_eq!(bench.settings.drawers[&target].buttons, before.drawers[&target].buttons);
+            assert!(bench.settings.drawers.contains_key(&source));
+            assert_eq!(bench.settings.location(&source, &Layout::default()), Some(Bar::Right));
+        } else {
+            assert_eq!(bench.settings, before, "{case}");
+        }
         assert!(!drawers::is_open(&bench.ctx, &target));
     }
 }
@@ -3714,6 +3740,8 @@ fn native_blocks_and_repeatable_separators_drag_to_every_edge_in_both_layouts() 
                         .filter(|b| structure::is_separator(&b.command))
                         .count();
                     assert_eq!(count, separators_before + 1, "separator on {bar:?}, classic={classic}");
+                    // dropped beside it again, it is one with it (human
+                    // request, 2026-11-25)
                     bench.palette_drag(command, bar);
                     let next = bench
                         .settings
@@ -3721,7 +3749,7 @@ fn native_blocks_and_repeatable_separators_drag_to_every_edge_in_both_layouts() 
                         .iter()
                         .filter(|b| structure::is_separator(&b.command))
                         .count();
-                    assert_eq!(next, count + 1);
+                    assert_eq!(next, count);
                 } else {
                     assert_eq!(
                         bench.settings.location(command, &Layout::default()),

@@ -19498,6 +19498,7 @@ impl App {
                 if !synthetic_toolbar {
                     toolbar_migrated |= toolbar_settings.compose_chat(bar_layout);
                     toolbar_migrated |= toolbar_settings.ensure_import_bar(bar_layout);
+                    toolbar_migrated |= toolbar_settings.single_gaps();
                 }
                 let chat_edge = toolbar_settings.location("bar_chat", bar_layout);
                 if self.chat_ui.in_use() && chat_edge == Some(ui::toolbar::Bar::Top) {

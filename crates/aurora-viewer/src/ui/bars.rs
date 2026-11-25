@@ -614,9 +614,11 @@ pub(super) fn bug_menu(
         if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("bug-copy-version")) {
             *action = BarAction::CopyVersion;
         }
+        // the menu island's: no block of a bar, no block settings
         let button = top::button("report_bug", "bug-filled");
-        super::toolbar::native_context::start_group(ui, p);
+        super::toolbar::section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
         toolbar.button_appearance_option(ui, p, Some(&button), locked);
+        super::toolbar::native_context::start_group(ui, p);
         toolbar.interface_edit_menu(ui, p, Some("report_bug"));
     });
 }
@@ -4194,7 +4196,11 @@ pub(crate) fn toolbar_row(
         if super::toolbar::drawers::is_drawer(&b.command) {
             super::toolbar::drawers::show(&response, p, icons, toolbar, panels, mic, row, b);
             // the import block's button shows and hides it like Ctrl+U
-            if b.command == super::toolbar::drawers::IMPORT_BAR && response.clicked() && !super::toolbar::ToolbarUi::editing(ui.ctx()) {
+            if b.command == super::toolbar::drawers::IMPORT_BAR
+                && response.clicked()
+                && !super::toolbar::ToolbarUi::editing(ui.ctx())
+                && super::toolbar::drawers::is_floating(&super::toolbar::appearance::settings(ui.ctx()), &b.command)
+            {
                 *action = BarAction::ImportBar;
             }
             continue;

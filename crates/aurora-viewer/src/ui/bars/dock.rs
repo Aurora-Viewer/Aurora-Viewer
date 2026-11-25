@@ -20,7 +20,7 @@ use egui::{Id, Pos2, Rect, RichText, Sense, Vec2};
 /// Room between an island's edge and its buttons, above and below.
 const V_PAD: f32 = 4.0;
 /// Icons of the dock's buttons (smaller in the reduced buttons).
-pub(super) const BUTTON_ICON: f32 = 18.0;
+pub(crate) const BUTTON_ICON: f32 = 18.0;
 /// The reduced buttons, when the others do not fit in the screen's width.
 pub(super) const MIN_BUTTON: f32 = 24.0;
 /// Room between the chat island and the dock, at the least.
@@ -30,6 +30,11 @@ const MIN_CHAT: f32 = 200.0;
 /// Room in the chat field before the text and after the emoji.
 const FIELD_PAD: f32 = 9.0;
 const EMOJI_ICON: f32 = 15.0;
+
+/// The dock's buttons, smaller on a narrow screen (a floating block's too).
+pub(crate) fn button_size(screen: Rect) -> f32 {
+    if narrow(screen) { 32.0 } else { 34.0 }
+}
 
 /// A screen under 1408 px wide (the mockup's 1280) takes the narrower
 /// chat island and buttons.
@@ -168,7 +173,7 @@ fn geometry_fixed(
             sizing::fit_blocks(&natural, fixed, scopes, stretch, room - PAD * 2.0, GAP, MIN_BUTTON)
         }
     };
-    let mut button = if narrow(screen) { 32.0 } else { 34.0 };
+    let mut button = button_size(screen);
     let mut widths = row(button);
     if row_width(&widths, button) > room {
         button = MIN_BUTTON;

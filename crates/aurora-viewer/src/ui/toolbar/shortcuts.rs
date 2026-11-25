@@ -372,7 +372,7 @@ pub fn fallback(ctx: &egui::Context, settings: &mut ToolbarSettings) -> Fallback
     let Some(key) = ctx.data_mut(|data| data.remove_temp::<String>(press_id())) else {
         return Fallback::None;
     };
-    if key == drawers::IMPORT_BAR {
+    if key == drawers::IMPORT_BAR && drawers::is_floating(settings, &key) {
         return Fallback::ImportBar;
     }
     if let Some(shown) = settings
@@ -814,6 +814,8 @@ mod tests {
         press(&ctx, "drawer:shelf".into());
         let _ = fallback(&ctx, &mut settings);
         assert!(drawers::is_open(&ctx, "drawer:shelf"));
+        // the import block's display is the import windows' while it floats
+        assert!(settings.ensure_import_bar(&Layout::default()));
         press(&ctx, drawers::IMPORT_BAR.into());
         assert_eq!(fallback(&ctx, &mut settings), Fallback::ImportBar);
         let id = drawers::create_floating(&mut settings, "Tools");
