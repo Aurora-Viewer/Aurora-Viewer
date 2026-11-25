@@ -161,6 +161,7 @@ impl App {
     /// Before the lost renderer goes: what the scene and the app hold on it.
     fn forget_gpu_scene(&mut self, old: &mut Renderer) {
         self.scene.forget_gpu(old);
+        self.blender_live.forget_gpu();
         self.probes.reset();
         self.forget_gpu_requests();
     }
@@ -192,7 +193,7 @@ impl App {
         // the local images of the imports, the wearable editor and Blender Live
         self.republish_local_imports();
         self.wearable_ui.preview.gpu_reset();
-        self.blender_live.gpu_reset(self.scene.textures.staging.as_deref());
+        self.blender_live.gpu_reset(self.scene.textures.staging.clone());
         // AURORA_DEMO_STREAM's textures arrive decoded, with no data the
         // streamer could load them again from
         if let Some(demo) = &mut self.stream_demo {

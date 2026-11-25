@@ -12,6 +12,7 @@ mod links;
 pub mod objects;
 pub mod protocol;
 pub(crate) mod shape;
+pub(crate) mod staging;
 #[cfg(test)]
 mod tests;
 mod thumbnail;
@@ -69,7 +70,10 @@ pub struct Status {
 pub(crate) struct Shared {
     pub stop: AtomicBool,
     pub status: Mutex<Status>,
+    /// Replaced under the `staging` lock: it holds images staged for that
+    /// device only.
     pub latest: Mutex<Option<protocol::Prepared>>,
+    pub staging: Mutex<staging::Staging>,
     pub shape: Mutex<Option<shape::Outgoing>>,
     pub shape_ack: Mutex<Option<(Uuid, Option<String>)>>,
     pub shape_cancel: Mutex<Option<Uuid>>,
@@ -274,22 +278,41 @@ impl Live {
         self.snapshot.replace(snapshot)
     }
 
-    /// After a GPU recovery (app/gpu_recovery.rs): the images of the snapshot
-    /// shown were staged in the lost device's pool. They are staged again
-    /// from the pixels kept with them into `pool`, and the snapshot is
-    /// installed again at the next frame; nothing is asked of Blender.
-    pub fn gpu_reset(&mut self, pool: Option<&aurora_render::StagingPool>) {
+    /// The GPU device is lost (app/gpu_recovery.rs): what was staged for it
+    /// is given up, so that nothing here keeps it. A snapshot Blender sends
+    /// meanwhile, or whose images were being staged, is asked again
+    /// (`STAGING_BUSY`).
+    pub fn forget_gpu(&mut self) {
         self.revision = None;
-        let Some(snapshot) = self.snapshot.as_mut() else {
-            return;
-        };
-        for image in &mut snapshot.images {
-            let pixels = &image.pixels;
-            let levels = aurora_render::build_mips(pixels.width, pixels.height, pixels.data.clone(), 12);
-            let refs: Vec<_> = levels.iter().map(|(w, h, bytes)| (*w, *h, bytes.as_slice())).collect();
-            image.staged = pool
-                .and_then(|pool| aurora_render::StagedTexture::new(pool, &refs))
-                .map(std::sync::Arc::new);
+        for image in self.snapshot.iter_mut().flat_map(|snapshot| &mut snapshot.images) {
+            image.staged = None;
+        }
+        if let Some(server) = &self.server {
+            let mut staging = server.shared.staging.lock();
+            staging.forget_gpu();
+            for image in server.shared.latest.lock().iter_mut().flat_map(|snapshot| &mut snapshot.images) {
+                image.staged = None;
+            }
+        }
+    }
+
+    /// On the new device of a GPU recovery: the images of the snapshot shown,
+    /// and of one received and not shown yet, are staged again from the
+    /// pixels kept with them into `pool`, and the snapshot is installed again
+    /// at the next frame; nothing is asked of Blender. The listener then
+    /// stages the next snapshots in `pool` too.
+    pub fn gpu_reset(&mut self, pool: Option<Arc<aurora_render::StagingPool>>) {
+        self.revision = None;
+        let mut done = HashMap::new();
+        if let Some(snapshot) = self.snapshot.as_mut() {
+            staging::restage(&mut snapshot.images, pool.as_deref(), &mut done);
+        }
+        if let Some(server) = &self.server {
+            // (none comes in the meantime: the listener has no pool yet)
+            if let Some(snapshot) = server.shared.latest.lock().as_mut() {
+                staging::restage(&mut snapshot.images, pool.as_deref(), &mut done);
+            }
+            server.shared.staging.lock().gpu_reset(pool);
         }
     }
 
@@ -403,7 +426,7 @@ impl Live {
     /// The viewer quits, its renderer not dropped yet: stops the preview and
     /// waits up to `timeout` for its listener thread, false if it still runs.
     ///
-    /// The thread holds the staging pool, whose buffers keep the GPU device.
+    /// The thread shares the staging pool, whose buffers keep the GPU device.
     /// Told to stop and not waited for, it dropped the pool while the main
     /// thread was in `exit`: last owner of the device, it destroyed the
     /// buffers and the device under the finalizers of NVIDIA's driver on
