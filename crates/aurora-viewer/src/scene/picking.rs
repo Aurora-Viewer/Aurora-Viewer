@@ -1809,6 +1809,16 @@ impl Scene {
         })
     }
 
+    /// Only a press near an ignored volume needs to see behind occluders.
+    pub fn may_pick_ignored(&self, ray: (Vec3, Vec3)) -> bool {
+        self.ignored_draws.iter().any(|&idx| {
+            let object = &self.gpu[idx];
+            // A deforming or anchored volume can move beyond its static
+            // bounds. A bent planet is outside the straight-ray test too.
+            self.planet_radius.is_some() || object.anchor.is_some() || self.flexibles.contains_key(&idx) || ray_may_hit(object, ray)
+        })
+    }
+
     pub fn action_point(&self, world: &World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, build: bool, far: f32) -> Option<Vec3> {
         if build {
             return depth;
@@ -1844,7 +1854,26 @@ impl Scene {
         } else {
             depth
         };
-        let point = self.transparent_action_point_mode(world, ray, point, true, far, among, FacePick::Left);
+        self.left_action_surfaces(world, ray, point, far, among)
+    }
+
+    /// The pick pass already went through ignored volumes, including opaque
+    /// ones. Keep the usual priority of scripted and transparent surfaces.
+    pub fn drawn_action_point(&self, world: &World, ray: (Vec3, Vec3), depth: Option<Vec3>, far: f32) -> Option<Vec3> {
+        let mut candidates = Vec::new();
+        self.pick.point_candidates(ray, depth, &mut candidates);
+        self.left_action_surfaces(world, ray, depth, far, Some(&candidates))
+    }
+
+    fn left_action_surfaces(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        depth: Option<Vec3>,
+        far: f32,
+        among: Option<&[usize]>,
+    ) -> Option<Vec3> {
+        let point = self.transparent_action_point_mode(world, ray, depth, true, far, among, FacePick::Left);
         // Unlike HUDs and worn clickers, world Blend faces let alpha-zero
         // texels through (#1574). Hover keeps its existing geometric policy.
         let blend = self.blend_hit_mode(world, ray, point, far, among, FacePick::LeftBlend);

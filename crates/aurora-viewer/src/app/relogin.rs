@@ -155,6 +155,7 @@ impl App {
             bad_credentials: false,
             previous_session: true,
             next_server: None,
+            unencrypted_server: None,
         });
         true
     }
