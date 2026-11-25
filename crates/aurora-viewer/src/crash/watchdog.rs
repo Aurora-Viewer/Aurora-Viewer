@@ -133,6 +133,7 @@ pub const EFFECT_WORDS: &[&str] = &[
     "aa-dlss",
     "aa-dlaa",
     "aa-dlss-rr",
+    "dlss-fg",
     "blend-exact",
     "bloom",
     "glow",

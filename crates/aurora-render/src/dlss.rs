@@ -167,6 +167,9 @@ mod sl {
     /// `sl::Feature`
     pub const FEATURE_DLSS: u32 = 0;
     pub const FEATURE_DLSS_RR: u32 = 1001;
+    /// `kFeatureDLSS_G`: frame generation, which sl-ngx has the caller
+    /// evaluate (prototype, `RenderSettings::dlss_fg`)
+    pub const FEATURE_DLSS_G: u32 = 1000;
 
     /// `sl::Result`: `eOk` and the values the viewer tells apart.
     pub const OK: i32 = 0;
@@ -246,6 +249,7 @@ mod sl {
     pub mod buffer {
         pub const DEPTH: u32 = 0;
         pub const MOTION_VECTORS: u32 = 1;
+        pub const HUDLESS_COLOR: u32 = 2;
         pub const SCALING_INPUT_COLOR: u32 = 3;
         pub const SCALING_OUTPUT_COLOR: u32 = 4;
         pub const ALBEDO: u32 = 7;
@@ -599,6 +603,12 @@ mod sl {
         pub motion_vectors_jittered: u8,
         pub min_relative_linear_depth_object_separation: f32,
     }
+
+    // SAFETY: `base.next` is always null: nothing is chained to the
+    // constants, so the struct is plain data
+    unsafe impl Send for Constants {}
+    // SAFETY: as above
+    unsafe impl Sync for Constants {}
 
     /// `sl::INVALID_FLOAT`: a value the viewer has no answer for.
     pub const INVALID_FLOAT: f32 = f32::MAX;
@@ -1433,6 +1443,35 @@ mod imp {
         forced().unwrap_or(setting)
     }
 
+    /// DLSS frame generation is asked for: the setting
+    /// (`RenderSettings::dlss_fg`), unless `AURORA_DLSS_FG` says otherwise.
+    /// Linux's sl-ngx only (a prototype).
+    pub(crate) fn fg_wanted(setting: bool) -> bool {
+        cfg!(target_os = "linux") && fg_forced().unwrap_or(setting)
+    }
+
+    /// `AURORA_DLSS_FG` for a test: `1` turns frame generation on whatever
+    /// the setting, `0` or `off` keeps it out; unset or empty, None.
+    fn fg_forced() -> Option<bool> {
+        static ON: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| {
+            let v = std::env::var("AURORA_DLSS_FG").ok()?;
+            let v = v.trim();
+            (!v.is_empty()).then_some(!matches!(v, "0" | "off"))
+        })
+    }
+
+    /// Streamline, started on this device, said frame generation is
+    /// supported there (`slIsFeatureSupported`; an sl-ngx without it says
+    /// no). Asked at each start, forgotten with the device.
+    static FG_SUPPORTED: AtomicBool = AtomicBool::new(false);
+
+    /// DLSS frame generation can draw on the device DLSS started on: what
+    /// Preferences shows, and what the renderer waits for.
+    pub(crate) fn fg_ready() -> bool {
+        FG_SUPPORTED.load(Ordering::Relaxed)
+    }
+
     /// `AURORA_DLSS_RR` for a test: `1` turns Ray Reconstruction on
     /// whatever the setting, `0` or `off` keeps it out, the device's
     /// extensions too; unset or empty, None.
@@ -1969,6 +2008,7 @@ mod imp {
         RR_KNOWN.store(false, Ordering::Relaxed);
         RR_UNAVAILABLE.store(false, Ordering::Relaxed);
         RR_REFUSED.store(false, Ordering::Relaxed);
+        FG_SUPPORTED.store(false, Ordering::Relaxed);
         SNAPSHOT_RR_REFUSED.store(false, Ordering::Relaxed);
         FAILED.store(false, Ordering::Relaxed);
         REFUSAL.store(false, Ordering::Relaxed);
@@ -2522,6 +2562,18 @@ mod imp {
         // SAFETY: as sl.h declares it; `adapter` lives through the call
         let r = unsafe { (lib.is_feature_supported)(sl::FEATURE_DLSS, &adapter) };
         if r == sl::OK {
+            // frame generation: Linux's sl-ngx only (Windows' Streamline
+            // would want its own present hooks)
+            if cfg!(target_os = "linux") {
+                // SAFETY: as above
+                let fg = unsafe { (lib.is_feature_supported)(sl::FEATURE_DLSS_G, &adapter) };
+                FG_SUPPORTED.store(fg == sl::OK, Ordering::Relaxed);
+                if fg == sl::OK {
+                    log::info!("DLSS: frame generation supported here");
+                } else {
+                    log::info!("DLSS: no frame generation here ({})", sl::result_name(fg));
+                }
+            }
             if RR_DEVICE.load(Ordering::Relaxed) {
                 // (Streamline's answer alone: a refusal of the feature on
                 // this device, RR_REFUSED, stays through a new start)
@@ -2759,6 +2811,15 @@ mod imp {
         };
         let (_, feature) = st.viewports.swap_remove(at);
         let handle = sl::ViewportHandle::new(viewport);
+        // frame generation's feature on the viewport, if it made one (none
+        // is freed as it should: sl-ngx frees what it has): the frames
+        // that used it are done (`retire`)
+        if fg_ready() {
+            // SAFETY: as below
+            if let Err(e) = sl::check(unsafe { (lib.free)(sl::FEATURE_DLSS_G, &handle) }) {
+                log::error!("DLSS: freeing frame generation: {e}");
+            }
+        }
         // SAFETY: a viewport the running start made and has not freed (it
         // was still in its list), under the lock
         if let Err(e) = sl::check(unsafe { (lib.free)(feature, &handle) }) {
@@ -3221,6 +3282,9 @@ mod imp {
         lost: DeviceLost,
         /// the feature is Ray Reconstruction's, with its guides
         rr: Option<Rr>,
+        /// this frame's token and constants, taken by frame generation
+        /// ([`Dlss::generate`])
+        fg_frame: Option<(usize, sl::Constants)>,
     }
 
     /// `view` as the library takes it, in the layout wgpu-hal leaves it
@@ -3738,6 +3802,7 @@ mod imp {
                 snapshot,
                 lost: lost.clone(),
                 rr,
+                fg_frame: None,
             })
         }
 
@@ -3950,9 +4015,11 @@ mod imp {
                 pass.set_bind_group(0, &rr.group, &[]);
                 pass.draw(0..3, 0..1);
             }
+            self.fg_frame = None;
             let commands = self.evaluate(encoder, f);
             match commands {
-                Ok(commands) => {
+                Ok((commands, token, constants)) => {
+                    self.fg_frame = Some((token, constants));
                     // drawing: what Preferences shows is no failure (one of
                     // a DLSS before this, or of a snapshot's, is over)
                     working(self.report);
@@ -4041,7 +4108,7 @@ mod imp {
             self.shape.render
         }
 
-        fn evaluate(&self, encoder: &mut wgpu::CommandEncoder, f: &Frame) -> Result<wgpu::CommandBuffer, String> {
+        fn evaluate(&self, encoder: &mut wgpu::CommandEncoder, f: &Frame) -> Result<(wgpu::CommandBuffer, usize, sl::Constants), String> {
             if fails(EVALUATES.fetch_add(1, Ordering::Relaxed) + 1) {
                 return Err(String::from("AURORA_DLSS_FAIL"));
             }
@@ -4127,6 +4194,7 @@ mod imp {
             });
             let handle = sl::ViewportHandle::new(self.viewport);
             let lib = self.lib;
+            let mut frame: sl::FrameToken = std::ptr::null_mut();
             // SAFETY: under the lock, only when the start running is the
             // one that made this feature (so its viewport is live); every
             // struct and the resources the tags point at are locals that
@@ -4141,6 +4209,7 @@ mod imp {
                     let cmd = e.ok_or("not a Vulkan encoder")?.raw_handle();
                     let mut token: sl::FrameToken = std::ptr::null_mut();
                     sl::check((lib.new_frame_token)(&mut token, std::ptr::null())).map_err(|e| format!("slGetNewFrameToken: {e}"))?;
+                    frame = token;
                     sl::check((lib.set_constants)(&constants, token, &handle)).map_err(|e| format!("slSetConstants: {e}"))?;
                     if let Some(options) = &rr_options {
                         let dlssd = lib.dlssd()?;
@@ -4169,7 +4238,106 @@ mod imp {
             .flatten()
             .ok_or("DLSS is no longer started for this feature")?;
             r?;
-            Ok(own.finish())
+            Ok((own.finish(), frame as usize, constants))
+        }
+
+        /// Frame generation (prototype, `RenderSettings::dlss_fg`, Linux's sl-ngx
+        /// only): the frame halfway between the last frame and this one,
+        /// written to `out`. `back` is this frame as shown, with the
+        /// interface; `hudless` the same before the interface was drawn
+        /// (NGX takes the interface from where the two differ); depth and
+        /// motion are the ones this frame's DLSS evaluate tagged. All three
+        /// at the display size, in one format. `reset` starts the history
+        /// afresh (a frame went by without generation). The commands go
+        /// after the encoder's; the flag says whether `out` holds a
+        /// generated frame (not after a reset: there is no frame before).
+        pub fn generate(
+            &mut self,
+            encoder: &mut wgpu::CommandEncoder,
+            back: &wgpu::TextureView,
+            hudless: &wgpu::TextureView,
+            out: &wgpu::TextureView,
+            reset: bool,
+        ) -> Result<(wgpu::CommandBuffer, bool), String> {
+            let (token, mut constants) = self.fg_frame.take().ok_or("no DLSS evaluate this frame")?;
+            if !self.on() || self.lost.get() {
+                return Err(String::from("DLSS is off"));
+            }
+            let lost = "a texture is not Vulkan's";
+            let mut back_r = resource(back, &self.adapter, false).ok_or(lost)?;
+            let mut hudless_r = resource(hudless, &self.adapter, false).ok_or(lost)?;
+            let mut out_r = resource(out, &self.adapter, true).ok_or(lost)?;
+            let read = |view: &wgpu::TextureView| -> wgpu::TextureTransition<wgpu::Texture> {
+                wgpu::TextureTransition {
+                    texture: view.texture().clone(),
+                    selector: None,
+                    state: wgpu::TextureUses::RESOURCE,
+                }
+            };
+            let transitions = [
+                read(back),
+                read(hudless),
+                read(&self.depth),
+                read(&self.motion),
+                wgpu::TextureTransition {
+                    texture: out.texture().clone(),
+                    selector: None,
+                    state: wgpu::TextureUses::STORAGE_READ_WRITE,
+                },
+            ];
+            encoder.transition_resources(
+                std::iter::empty(),
+                transitions.iter().map(|t| wgpu::TextureTransition {
+                    texture: &t.texture,
+                    selector: None,
+                    state: t.state,
+                }),
+            );
+            let mut own = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("DLSS frame generation"),
+            });
+            let reset = reset || constants.reset == sl::TRUE;
+            constants.reset = sl::boolean(reset);
+            let size = back.texture().size();
+            let extent = sl::Extent {
+                top: 0,
+                left: 0,
+                width: size.width,
+                height: size.height,
+            };
+            let handle = sl::ViewportHandle::new(self.viewport);
+            let lib = self.lib;
+            // SAFETY: as in `evaluate`: under the lock, for the start that
+            // made the viewport; the token is this frame's, from
+            // `evaluate`, whose frame record the library keeps for some
+            // frames; the structs are locals that outlive the calls
+            let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
+                if st.start != self.start {
+                    return None;
+                }
+                Some(own.as_hal_mut::<Vulkan, _, _>(|e| {
+                    let cmd = e.ok_or("not a Vulkan encoder")?.raw_handle();
+                    let token = token as sl::FrameToken;
+                    sl::check((lib.set_constants)(&constants, token, &handle)).map_err(|e| format!("slSetConstants: {e}"))?;
+                    let tags = [
+                        sl::ResourceTag::new(&mut hudless_r, sl::buffer::HUDLESS_COLOR, extent),
+                        sl::ResourceTag::new(&mut back_r, sl::buffer::SCALING_INPUT_COLOR, extent),
+                        sl::ResourceTag::new(&mut out_r, sl::buffer::SCALING_OUTPUT_COLOR, extent),
+                    ];
+                    let inputs = [
+                        (&raw const handle).cast::<sl::Base>(),
+                        (&raw const tags[0]).cast::<sl::Base>(),
+                        (&raw const tags[1]).cast::<sl::Base>(),
+                        (&raw const tags[2]).cast::<sl::Base>(),
+                    ];
+                    sl::check((lib.evaluate)(sl::FEATURE_DLSS_G, token, inputs.as_ptr(), inputs.len() as u32, cmd))
+                        .map_err(|e| format!("slEvaluateFeature (frame generation): {e}"))
+                }))
+            })
+            .flatten()
+            .ok_or("DLSS is no longer started for this feature")?;
+            r?;
+            Ok((own.finish(), !reset))
         }
 
         /// Gives the feature back to Streamline once the frames submitted with it
@@ -4252,6 +4420,14 @@ mod imp {
 #[cfg(not(all(feature = "dlss", any(target_os = "linux", all(windows, target_arch = "x86_64")))))]
 mod imp {
     use super::{Frame, Inputs};
+
+    pub(crate) fn fg_wanted(_: bool) -> bool {
+        false
+    }
+
+    pub(crate) fn fg_ready() -> bool {
+        false
+    }
 
     pub(crate) fn wanted(_: bool) -> bool {
         false
@@ -4432,13 +4608,24 @@ mod imp {
         pub fn encode_alpha(&self, _: &mut wgpu::CommandEncoder) {
             match self.0 {}
         }
+
+        pub fn generate(
+            &mut self,
+            _: &mut wgpu::CommandEncoder,
+            _: &wgpu::TextureView,
+            _: &wgpu::TextureView,
+            _: &wgpu::TextureView,
+            _: bool,
+        ) -> Result<(wgpu::CommandBuffer, bool), String> {
+            match self.0 {}
+        }
     }
 }
 
 pub(crate) use imp::{
-    Dlss, closing, folder_named, instance, left_behind, optimal_size, refused_here, refused_memory, request_device, resizing, retry,
-    retry_asked, rr_device, rr_probe, rr_ready, rr_ready_on, rr_refused_here, rr_retry, rr_targets_refused, rr_wanted, snapshot_rr_refused,
-    snapshot_rr_refused_here, snapshot_rr_targets_refused, support, support_on, wanted,
+    Dlss, closing, fg_ready, fg_wanted, folder_named, instance, left_behind, optimal_size, refused_here, refused_memory, request_device,
+    resizing, retry, retry_asked, rr_device, rr_probe, rr_ready, rr_ready_on, rr_refused_here, rr_retry, rr_targets_refused, rr_wanted,
+    snapshot_rr_refused, snapshot_rr_refused_here, snapshot_rr_targets_refused, support, support_on, wanted,
 };
 #[cfg(windows)]
 pub(crate) use imp::{forget_instance, xr_entry};

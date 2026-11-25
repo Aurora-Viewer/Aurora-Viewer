@@ -12,6 +12,7 @@
 # ~/.local/share/aurora-dlss: the folder the viewer looks in at start.
 #   libnvidia-ngx-dlss.so.<version>   copied from the SDK (lib/Linux_x86_64/rel)
 #   libnvidia-ngx-dlssd.so.<version>  the same, for Ray Reconstruction
+#   libnvidia-ngx-dlssg.so.<version>  the same, for frame generation
 #   libsl_ngx.so                      sl-ngx, built here against the SDK
 set -euo pipefail
 
@@ -19,7 +20,7 @@ REPO=https://github.com/NVIDIA/DLSS.git
 # sl-ngx (MIT): NVIDIA Streamline's interface for Vulkan on NVIDIA NGX, the
 # library the viewer speaks to. Fetched at this commit, never a branch.
 SL_NGX_REPO=https://github.com/Aurora-Viewer/sl-ngx.git
-SL_NGX_COMMIT=4016e7cbd5d05dd07b5c0d7743d76b1a3d248380
+SL_NGX_COMMIT=58cef3a222b7f248e7c639a5a196fcdba2abebf7
 
 die() { printf 'dlss-setup: %s\n' "$*" >&2; exit 1; }
 
@@ -69,12 +70,13 @@ case ${1:-} in
     --remove)
         ! in_sdk "$dest" \
             || die "AURORA_DLSS_DIR is inside NVIDIA's DLSS SDK ($dest): nothing removed, choose another"
-        rm -f "$dest"/libnvidia-ngx-dlss.so.* "$dest"/libnvidia-ngx-dlssd.so.* "$dest"/libsl_ngx.so "$dest/$LICENCE_NAME"
+        rm -f "$dest"/libnvidia-ngx-dlss.so.* "$dest"/libnvidia-ngx-dlssd.so.* "$dest"/libnvidia-ngx-dlssg.so.* \
+            "$dest"/libsl_ngx.so "$dest/$LICENCE_NAME"
         old_files
         rmdir "$dest" 2>/dev/null || true
         echo "Removed NVIDIA DLSS from $dest. The viewer offers FSR alone from its next start."
         exit 0 ;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
 esac
 
@@ -93,7 +95,7 @@ if [[ -z $sdk ]]; then
     git clone --quiet --depth 1 --filter=blob:none --no-checkout "$REPO" "$sdk"
     git -C "$sdk" sparse-checkout set --no-cone \
         /LICENSE.txt /include/ /lib/Linux_x86_64/libnvsdk_ngx.a '/lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.*' \
-        '/lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.*'
+        '/lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.*' '/lib/Linux_x86_64/rel/libnvidia-ngx-dlssg.so.*'
     git -C "$sdk" checkout --quiet
 fi
 
@@ -109,6 +111,10 @@ snippet=$(printf '%s\n' "${snippets[@]}" | sort -V | tail -n 1)
 rr_snippets=("$sdk"/lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.*)
 rr_snippet=
 [[ -f ${rr_snippets[0]} ]] && rr_snippet=$(printf '%s\n' "${rr_snippets[@]}" | sort -V | tail -n 1)
+# frame generation's library: optional too
+fg_snippets=("$sdk"/lib/Linux_x86_64/rel/libnvidia-ngx-dlssg.so.*)
+fg_snippet=
+[[ -f ${fg_snippets[0]} ]] && fg_snippet=$(printf '%s\n' "${fg_snippets[@]}" | sort -V | tail -n 1)
 # AURORA_DLSS_DIR inside an SDK (in_sdk), or the selected SDK's own folder
 # whatever its shape
 dest_real=$(realpath -m "$dest")
@@ -144,6 +150,8 @@ mkdir -p "$dest"
 new_snippet=$(basename "$snippet")
 new_rr=
 [[ -z $rr_snippet ]] || new_rr=$(basename "$rr_snippet")
+new_fg=
+[[ -z $fg_snippet ]] || new_fg=$(basename "$fg_snippet")
 staged=()
 trap 'rm -rf "$work"; rm -f "${staged[@]}"' EXIT
 stage() { # <source> <name> <mode>
@@ -160,6 +168,10 @@ if [[ -n $new_rr ]]; then
     stage "$rr_snippet" "$new_rr" 755
     names+=("$new_rr")
 fi
+if [[ -n $new_fg ]]; then
+    stage "$fg_snippet" "$new_fg" 755
+    names+=("$new_fg")
+fi
 for name in "${names[@]}"; do
     mv -f "$dest/.$name.aurora-new" "$dest/$name"
 done
@@ -172,11 +184,16 @@ done
 for old in "$dest"/libnvidia-ngx-dlssd.so.*; do
     [[ $(basename "$old") == "$new_rr" ]] || rm -f "$old"
 done
+# (frame generation's the same way)
+for old in "$dest"/libnvidia-ngx-dlssg.so.*; do
+    [[ $(basename "$old") == "$new_fg" ]] || rm -f "$old"
+done
 shopt -u nullglob
 old_files
 
 echo
-echo "Installed $(basename "$snippet")${rr_snippet:+, $(basename "$rr_snippet")} and libsl_ngx.so in $dest."
+echo "Installed $(basename "$snippet")${rr_snippet:+, $(basename "$rr_snippet")}${fg_snippet:+, $(basename "$fg_snippet")} and libsl_ngx.so in $dest."
 [[ -n $rr_snippet ]] || echo "This SDK has no Ray Reconstruction library (libnvidia-ngx-dlssd.so.*): Ray Reconstruction uses the driver's own, if it has one."
+[[ -n $fg_snippet ]] || echo "This SDK has no frame generation library (libnvidia-ngx-dlssg.so.*): frame generation stays off."
 echo "Restart the viewer, then choose NVIDIA DLSS under Preferences > Graphics > Anti-aliasing."
 echo "NVIDIA graphics cards only."

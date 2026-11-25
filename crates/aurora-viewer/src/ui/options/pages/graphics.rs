@@ -1405,6 +1405,31 @@ fn image(cx: &mut Cx) {
                 ],
             );
         });
+        // Frame generation (dlss_fg.rs), experimental, off by default,
+        // Linux's sl-ngx only. Greyed while off and not supported (an
+        // sl-ngx without it, or DLSS not started yet); on, it can always
+        // be turned off, and why it does not run is said below it
+        cx.conditional(dlss && cfg!(target_os = "linux"), |cx| {
+            let p = cx.p;
+            let on = cx.s.dlss_fg;
+            let blocked = (!aurora_render::dlss_fg_ready()).then(|| tr!("ui-options-dlss-fg-unavailable"));
+            let greyed = blocked.filter(|_| !on);
+            cx.experimental().row(
+                tr!("ui-options-dlss-fg"),
+                tr!("ui-options-dlss-fg-help"),
+                &field!(dlss_fg),
+                |ui, s| {
+                    let r = ui.add_enabled_ui(greyed.is_none(), |ui| toggle(ui, &p, &mut s.dlss_fg));
+                    if let Some(why) = &greyed {
+                        r.response.on_disabled_hover_text(*why);
+                    }
+                    r.inner
+                },
+            );
+            if let Some(why) = blocked.filter(|_| on) {
+                cx.note(why);
+            }
+        });
         // FSR's sharpening, hidden under DLSS, which the CAS below
         // sharpens instead
         cx.conditional(!dlss, |cx| {

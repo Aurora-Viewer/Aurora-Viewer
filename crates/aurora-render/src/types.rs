@@ -1533,6 +1533,9 @@ pub struct RenderSettings {
     /// the renderer's place, from guides the scene pass draws
     /// ([`Self::rr_guides`]).
     pub dlss_rr: bool,
+    /// With DLSS: its frame generation shows a frame made between each two
+    /// drawn, paced by the screen ([`Self::frame_generation`]).
+    pub dlss_fg: bool,
     /// The model DLSS draws with.
     pub dlss_model: DlssModel,
     /// The model Ray Reconstruction draws with, when it draws.
@@ -1620,6 +1623,17 @@ impl RenderSettings {
             && crate::dlss::rr_wanted(self.dlss_rr)
             && crate::dlss::rr_device()
     }
+
+    /// DLSS frame generation runs (`dlss_fg`, unless `AURORA_DLSS_FG` says
+    /// otherwise): DLSS draws the FSR frames and Streamline, started on the
+    /// device, supports it (Linux's sl-ngx, a prototype). The renderer
+    /// draws the frame aside and presents two, under Fifo (dlss_fg.rs).
+    pub fn frame_generation(&self) -> bool {
+        matches!(self.aa, AntiAliasing::Fsr(_))
+            && crate::dlss::wanted(self.dlss)
+            && crate::dlss::fg_wanted(self.dlss_fg)
+            && crate::dlss::fg_ready()
+    }
 }
 
 impl Default for RenderSettings {
@@ -1636,6 +1650,7 @@ impl Default for RenderSettings {
             fsr_sharpness: Some(0.8),
             dlss: false,
             dlss_rr: false,
+            dlss_fg: false,
             dlss_model: DlssModel::Default,
             dlss_rr_model: DlssRrModel::Default,
             tonemapper: Tonemapper::KhronosNeutral,

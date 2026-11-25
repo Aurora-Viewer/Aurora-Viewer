@@ -1808,6 +1808,11 @@ pub struct Settings {
     /// top of Aurora's own filters (experimental, off by default; `AURORA_DLSS_RR`
     /// overrides it for a run). Like `dlss`, this computer's.
     pub dlss_rr: bool,
+    /// With DLSS, its frame generation shows a frame made between each two
+    /// drawn, the screen pacing them (experimental, off by default, Linux;
+    /// `AURORA_DLSS_FG` overrides it for a run). Like `dlss`, this
+    /// computer's.
+    pub dlss_fg: bool,
     /// The model Ray Reconstruction draws with: 0 NVIDIA's choice, 1 D,
     /// 2 E, 3 F (`aurora_render::DlssRrModel`). Like `dlss`, this
     /// computer's.
@@ -2987,6 +2992,7 @@ impl Default for Settings {
             dlss: false,
             dlss_model: 0,
             dlss_rr: false,
+            dlss_fg: false,
             dlss_rr_model: 0,
             render_scale_percent: 100,
             render_scale_auto: cfg!(target_os = "macos"),
@@ -4377,6 +4383,7 @@ impl Settings {
             fsr_sharpness: (self.fsr_sharpness > 0).then(|| self.fsr_sharpness.min(100) as f32 / 100.0),
             dlss: self.dlss,
             dlss_rr: self.dlss_rr,
+            dlss_fg: self.dlss_fg,
             dlss_model: match self.dlss_model {
                 1 => aurora_render::DlssModel::K,
                 2 => aurora_render::DlssModel::L,

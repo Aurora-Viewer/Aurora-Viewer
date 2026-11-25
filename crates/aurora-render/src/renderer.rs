@@ -2466,6 +2466,9 @@ pub(crate) struct Backend {
     rain_wet: RainWet,
     snow_trail: SnowTrail,
     vsync: bool,
+    /// The surface presents under Fifo for DLSS frame generation, whatever
+    /// the vsync (`set_presentation`).
+    fg_paced: bool,
     /// Presentation modes of the surface, read when it was created.
     present_modes: Vec<wgpu::PresentMode>,
     settings: RenderSettings,
@@ -2498,6 +2501,8 @@ pub(crate) struct Backend {
     /// unused goes after `DLSS_ASIDE`, and any goes when the targets are
     /// refused.
     dlss_aside: Option<(crate::dlss::Dlss, Instant)>,
+    /// DLSS frame generation's images while it runs (`fg_on`, dlss_fg.rs)
+    fg: Option<crate::dlss_fg::FrameGen>,
     /// This frame's TAA jitter in pixels, y down: where it moved the image.
     taa_jitter: glam::Vec2,
     prev_view_proj: Option<Mat4>,
@@ -5438,6 +5443,7 @@ impl Backend {
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
             vsync,
+            fg_paced: false,
             present_modes,
             settings,
             taa: None,
@@ -5452,6 +5458,7 @@ impl Backend {
             dlss_due: std::cell::Cell::new(None),
             dlss_drew: None,
             dlss_aside: None,
+            fg: None,
             taa_jitter: glam::Vec2::ZERO,
             prev_view_proj: None,
             prev_motion_view: None,
@@ -9226,17 +9233,34 @@ impl Backend {
     }
 
     fn set_vsync(&mut self, vsync: bool) {
-        if vsync == self.vsync {
+        self.set_presentation(vsync, self.fg_paced);
+    }
+
+    /// DLSS frame generation runs on this frame's window image
+    /// (`RenderSettings::frame_generation`, and a DLSS to draw it with).
+    fn fg_on(&self) -> bool {
+        self.settings.frame_generation() && self.taa.as_ref().is_some_and(|t| t.dlss.is_some())
+    }
+
+    /// The presentation mode for the vsync setting, or Fifo while frame
+    /// generation runs (`fg`): its two presents a frame are paced by the
+    /// screen, the drawn frames at half its rate (dlss_fg.rs).
+    /// `AURORA_PRESENT_MODE` wins over both.
+    fn set_presentation(&mut self, vsync: bool, fg: bool) {
+        if (vsync, fg) == (self.vsync, self.fg_paced) {
             return;
         }
         self.vsync = vsync;
+        self.fg_paced = fg;
         // The rule of the creation (present.rs): switching the setting in a
         // session ends on the mode a launch with that setting presents with.
-        let mode = crate::present::choose(&self.present_modes, vsync, crate::present::forced());
+        let forced = crate::present::forced().or(fg.then_some(wgpu::PresentMode::Fifo));
+        let mode = crate::present::choose(&self.present_modes, vsync, forced);
         log::info!(
-            "presentation: {} (vsync {})",
+            "presentation: {} (vsync {}{})",
             crate::present::name(mode),
-            if vsync { "on" } else { "off" }
+            if vsync { "on" } else { "off" },
+            if fg { ", DLSS frame generation" } else { "" }
         );
         if mode == self.config.present_mode {
             return;
@@ -10516,6 +10540,11 @@ impl Backend {
                 writes_ms - replay_ms
             );
         }
+        // DLSS frame generation paces the window under Fifo: set before the
+        // window image is acquired
+        if output.is_none() && snapshot.is_none() {
+            self.set_presentation(self.vsync, self.fg_on());
+        }
         let t_acquire = Instant::now();
         let surface_tex = if self.lost.get() {
             // a lost device: nothing is drawn or presented until the app
@@ -10603,6 +10632,27 @@ impl Backend {
             result.captured = captured;
             return result;
         }
+        // ---- DLSS frame generation (`fg_on`, dlss_fg.rs): the frame is
+        // drawn aside, and the window image waits for its end; its images
+        // go when it stops
+        let fg_on = self.fg_on();
+        if !fg_on && self.fg.take().is_some() {
+            log::info!("DLSS frame generation: stopped, images let go");
+        }
+        crate::dlss_fg::set_running(fg_on);
+        let (surface_tex, fg_held) = match surface_tex {
+            FrameTarget::Surface(t) if fg_on => {
+                let (size, format) = ((self.config.width, self.config.height), self.config.format);
+                if self.fg.as_ref().is_none_or(|fg| !fg.fits(size, format)) {
+                    self.fg = Some(crate::dlss_fg::FrameGen::new(&self.device, &self.queue, size, format));
+                }
+                match &self.fg {
+                    Some(fg) => (FrameTarget::Offscreen(fg.real.clone()), Some(t)),
+                    None => (FrameTarget::Surface(t), None),
+                }
+            }
+            other => (other, None),
+        };
         // CPU encode time excludes waiting for the swapchain (vsync).
         let t0 = Instant::now();
         let mut prof = Marks::start("acquire", t0);
@@ -15202,6 +15252,19 @@ impl Backend {
         let mut capture = None;
 
         prof.mark("post");
+        // ---- DLSS frame generation (dlss_fg.rs): the window's image
+        // before the interface. Only for a frame DLSS drew,
+        // and not under a modal's blur (the image before the interface is
+        // not blurred: all of it would differ, as if interface)
+        let fg_frame = fg_held.is_some() && dlss_cmds.is_some() && self.ui_blur.is_none();
+        if fg_frame {
+            if let Some(fg) = &self.fg {
+                fg.copy_hudless(&self.device, &mut encoder, &surface_view);
+            }
+            prof.mark("fg hudless");
+        } else if let Some(fg) = &mut self.fg {
+            fg.broken();
+        }
         // ---- egui: its meshes, and what it painted for the world (name
         // tags, floating texts), which the HUD attachments cover
         let mut extra_cmds = Vec::new();
@@ -15578,6 +15641,52 @@ impl Backend {
         // for that helper to wake up, for the few commands of the last
         // encoder (finish 0.56 -> 0.51 ms, 1.9 -> 1.6 ms in the longest
         // frame of a second)
+        // ---- DLSS frame generation: the image as shown, then the frame
+        // between the last and this one, last in the frame (its commands
+        // follow the encoder's, which leaves its inputs in their layouts)
+        let mut fg_cmds = Vec::new();
+        let mut fg_generated = false;
+        if fg_frame
+            && let Some(fg) = &mut self.fg
+            && let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut())
+        {
+            fg.copy_back(&self.device, &mut encoder, &present_view);
+            let reset = !fg.chained(index);
+            match dlss.generate(&mut encoder, &fg.back, &fg.hudless, &fg.out, reset) {
+                Ok((commands, generated)) => {
+                    fg.runs += 1;
+                    fg.generated += u64::from(generated);
+                    fg_generated = generated;
+                    if fg.runs == 1 || fg.runs.is_multiple_of(600) {
+                        log::info!(
+                            "DLSS frame generation: {} runs, {} frames generated; presented {} generated, {} real",
+                            fg.runs,
+                            fg.generated,
+                            fg.presented_generated,
+                            fg.presented_real
+                        );
+                    }
+                    fg_cmds.push(commands);
+                    fg_cmds.extend(fg.encode_dump(&self.device));
+                }
+                Err(e) => {
+                    fg.broken();
+                    if fg.runs == 0 || fg.runs.is_multiple_of(600) {
+                        log::error!("DLSS frame generation failed after {} runs: {e}", fg.runs);
+                    }
+                }
+            }
+            prof.mark("fg");
+        }
+        // the window image of the frame's start takes the generated frame,
+        // or the real one when none was made
+        if let (Some(held), Some(fg)) = (&fg_held, &self.fg) {
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("DLSS FG present"),
+            });
+            fg.present_into(&self.device, &mut encoder, &held.texture, fg_generated);
+            fg_cmds.push(encoder.finish());
+        }
         let (pre, post, scene) = self.finishers.pair(enc_pre, encoder, move || enc_scene.finish());
         match (pre, post) {
             (Some(pre), Some(post)) => {
@@ -15586,6 +15695,7 @@ impl Backend {
                     extra_cmds.extend([inputs.finish(), commands]);
                 }
                 extra_cmds.push(post);
+                extra_cmds.extend(fg_cmds);
             }
             _ => {
                 log::error!("render: a command encoder thread panicked");
@@ -15627,6 +15737,9 @@ impl Backend {
         self.motion_kept = self.motion_now;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
+        if let Some(fg) = &mut self.fg {
+            fg.write_dump(&self.device);
+        }
         // (a face of a 360° capture is on the GPU, with nothing to read)
         let captured = capture.and_then(|capture| self.read_capture(capture, f.cutout));
         // a film frame's copy is submitted: its mapping can begin
@@ -15657,7 +15770,38 @@ impl Backend {
         self.part_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
-        if let FrameTarget::Surface(t) = surface_tex {
+        if let Some(held) = fg_held {
+            // DLSS frame generation: the generated frame, then the real one
+            // in a second window image (under Fifo, a refresh later)
+            self.queue.present(held);
+            if fg_generated {
+                prof.mark("fg present");
+                let second = self.surface.get_current_texture();
+                prof.mark("fg acquire");
+                match second {
+                    wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => {
+                        if let Some(fg) = &mut self.fg {
+                            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("DLSS FG present real"),
+                            });
+                            fg.present_into(&self.device, &mut encoder, &t.texture, false);
+                            crate::device_lost::submit_tracked(&self.lost, &self.queue, index, std::iter::once(encoder.finish()));
+                            fg.presented_generated += 1;
+                            fg.presented_real += 1;
+                        }
+                        self.queue.present(t);
+                    }
+                    wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost if !self.external => {
+                        crate::present::configure(&self.surface, &self.device, &self.config);
+                    }
+                    _ => {}
+                }
+            } else if let Some(fg) = &mut self.fg {
+                fg.presented_real += 1;
+            }
+            stats.presented = true;
+            stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
+        } else if let FrameTarget::Surface(t) = surface_tex {
             self.queue.present(t);
             stats.presented = true;
             stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);

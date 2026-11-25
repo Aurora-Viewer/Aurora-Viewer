@@ -317,6 +317,8 @@ pub(super) fn effects_drawn(
         },
         _ => {}
     }
+    // DLSS frame generation presenting two frames for each drawn
+    word(aurora_render::dlss_fg_running(), format_args!("dlss-fg"));
     word(settings.blend_order > 0, format_args!("blend-exact{}", settings.blend_order));
     word(settings.bloom, format_args!("bloom"));
     word(settings.planet_curvature, format_args!("curvature"));

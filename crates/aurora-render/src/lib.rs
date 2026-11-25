@@ -26,6 +26,7 @@ mod cutout;
 mod dedicated;
 mod device_lost;
 mod dlss;
+mod dlss_fg;
 /// What the user runs to install NVIDIA's DLSS files (docs/DLSS.md).
 pub const DLSS_SETUP: &str = if cfg!(windows) { "dlss-setup.ps1" } else { "dlss-setup.sh" };
 /// Whether DLSS draws now: Preferences reads it each frame, since Streamline can
@@ -186,6 +187,14 @@ pub use outside::{OutsideEvent, OutsideFrame, same_picture};
 pub use renderer::rr_untraced as dlss_rr_untraced;
 pub use renderer::{CASCADES, RenderError};
 
+/// DLSS frame generation can be chosen: Streamline, started on the
+/// device, supports it (Linux's sl-ngx with frame generation; dlss.rs).
+pub fn dlss_fg_ready() -> bool {
+    dlss::fg_ready()
+}
+/// DLSS frame generation runs in the window, under Fifo: the frame cap
+/// stands aside (dlss_fg.rs).
+pub use dlss_fg::running as dlss_fg_running;
 /// DLSS Ray Reconstruction can be chosen: the device was opened with its
 /// extensions and Streamline did not refuse it (dlss.rs).
 pub fn dlss_rr_ready() -> bool {

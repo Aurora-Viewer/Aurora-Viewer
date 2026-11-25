@@ -95,8 +95,9 @@ On Linux the folder is `$AURORA_DLSS_DIR`, else
 `$XDG_DATA_HOME/aurora-dlss`, else `~/.local/share/aurora-dlss`:
 
 - `libnvidia-ngx-dlss.so.<version>`, copied from the SDK's
-  `lib/Linux_x86_64/rel`, and `libnvidia-ngx-dlssd.so.<version>`
-  beside it for Ray Reconstruction (optional: the driver ships its own);
+  `lib/Linux_x86_64/rel`, `libnvidia-ngx-dlssd.so.<version>`
+  beside it for Ray Reconstruction (optional: the driver ships its own),
+  and `libnvidia-ngx-dlssg.so.<version>` for frame generation (optional);
 - `libsl_ngx.so`, sl-ngx built against the SDK
   (`make DLSS_SDK=<the SDK>`). It holds NVIDIA's NGX core from the SDK's
   `libnvsdk_ngx.a`: keep it for your own use;
@@ -173,6 +174,31 @@ frames each keep theirs). A Vulkan instance or device that lacks Ray
 Reconstruction's extensions, or refuses them, is made with super
 resolution's alone (the log says which are missing), and DLSS draws super
 resolution there.
+
+## Frame generation (prototype, Linux)
+
+With DLSS on, Preferences › Graphics › Anti-aliasing › **Frame generation**
+(experimental, off by default, Linux only) has DLSS make a frame between
+each two the viewer draws, shown before the drawn one. The frame is drawn
+aside, into a texture in the window's format; at its end the generated
+frame is presented in the window image acquired at the frame's start, then
+the drawn one in a second. While it runs the window presents under Fifo,
+whatever the vsync setting, and the frame rate limit stands aside (the
+background limit does not): the screen paces the pairs, so the viewer draws
+at half the refresh rate and shows a frame at every refresh. A frame
+generation did not run on (a reset, a gap, a modal's blur, a photo) shows
+the drawn frame alone. Turned off, its images are let go and the vsync
+setting's mode comes back; NGX's own frame generation stays loaded until
+DLSS frees its resources (DLSS turned off, or the viewer closed).
+
+It needs sl-ngx with frame generation (NGX's `FrameGeneration` feature,
+in sl-ngx since `58cef3a`, the commit `scripts/dlss-setup.sh` builds; run
+the script again after updating the viewer), the SDK's
+`libnvidia-ngx-dlssg.so.*` beside it, and a card and driver NGX offers it on:
+Streamline is asked when DLSS starts, and the choice is greyed while it is
+off and not offered (on, it can always be turned off, with a note under it).
+The viewer's GPU timers do not see NGX's pass; the log's
+`DLSS frame generation:` lines count the runs and the frames presented.
 
 ## Windows
 
@@ -258,4 +284,9 @@ more than K does.
   variables (`AURORA_DLSS_RR_SHOW`, `AURORA_DLSS_RR_TRANSPOSED`,
   `AURORA_DLSS_RR_BEHIND`) and the traced passes' denoisers
   (`AURORA_RT_RAW`, `AURORA_RT_GI_RAW`) are in docs/TESTING.md.
+- `AURORA_DLSS_FG=1` or `0` turns frame generation (*Frame generation*,
+  above) on or off for one launch, whatever the setting;
+  `AURORA_PRESENT_MODE` still wins over its Fifo.
+  `AURORA_DLSS_FG_DUMP=<folder>` writes three frames' images as PPM
+  (docs/TESTING.md).
 - The log's `DLSS:` lines say what was found and why DLSS did not start.

@@ -26960,12 +26960,44 @@ fn frame_cap(
     timed: bool,
     fps_limit: Option<u32>,
 ) -> f32 {
+    frame_cap_paced(
+        s,
+        aurora_render::dlss_fg_running(),
+        focused,
+        headset_engaged,
+        in_world,
+        monitor_hz,
+        timed,
+        fps_limit,
+    )
+}
+
+/// [`frame_cap`] with DLSS frame generation running or not (`fg_paced`).
+#[allow(clippy::too_many_arguments)]
+fn frame_cap_paced(
+    s: &Settings,
+    fg_paced: bool,
+    focused: bool,
+    headset_engaged: bool,
+    in_world: bool,
+    monitor_hz: f32,
+    timed: bool,
+    fps_limit: Option<u32>,
+) -> f32 {
     // The OpenXR frame waiter paces VR. Desktop foreground/background limits
     // must not throttle simulation while the headset is presenting.
     if headset_engaged {
         return fps_limit.map_or(0.0, |limit| limit as f32);
     }
-    let mut cap = if s.fps_cap { s.fps_limit as f32 } else { f32::INFINITY };
+    // DLSS frame generation presents two frames for each drawn, under
+    // Fifo: the screen paces them, and the user's limit would only break
+    // the pairs (aurora-render dlss_fg.rs). The background, test and
+    // out-of-world limits still apply.
+    let mut cap = if s.fps_cap && !fg_paced {
+        s.fps_limit as f32
+    } else {
+        f32::INFINITY
+    };
     if let Some(limit) = fps_limit {
         cap = cap.min(limit as f32);
     }
@@ -27172,7 +27204,8 @@ pub fn restart_with_vr(mode: crate::camera::VrView) {
 #[cfg(test)]
 mod tests {
     use super::{
-        RightGesture, UiActions, WindowedGeometry, capture_files, exit_prompt_key, exit_prompt_modifiers, frame_cap, fullscreen_shortcut,
+        RightGesture, UiActions, WindowedGeometry, capture_files, exit_prompt_key, exit_prompt_modifiers, frame_cap, frame_cap_paced,
+        fullscreen_shortcut,
     };
     use crate::keybinds::Mods;
     use crate::settings::Settings;
@@ -27736,6 +27769,24 @@ mod tests {
         assert_eq!(frame_cap(&settings, false, true, true, 60.0, false, None), 0.0);
         assert_eq!(frame_cap(&settings, false, false, true, 60.0, false, None), 15.0);
         assert_eq!(frame_cap(&settings, false, true, true, 60.0, false, Some(120)), 120.0);
+    }
+
+    #[test]
+    fn frame_generation_sets_the_user_cap_aside() {
+        let capped = Settings {
+            fps_cap: true,
+            fps_limit: 90,
+            background_fps_cap: true,
+            background_fps_limit: 15,
+            ..Settings::default()
+        };
+        // in front, in world: the screen paces the pairs, no cap
+        assert_eq!(frame_cap_paced(&capped, true, true, false, true, 144.0, false, None), 0.0);
+        assert_eq!(frame_cap_paced(&capped, false, true, false, true, 144.0, false, None), 90.0);
+        // the background, out-of-world and process caps stay
+        assert_eq!(frame_cap_paced(&capped, true, false, false, true, 144.0, false, None), 15.0);
+        assert_eq!(frame_cap_paced(&capped, true, true, false, false, 144.0, false, None), 144.0);
+        assert_eq!(frame_cap_paced(&capped, true, true, false, true, 144.0, false, Some(60)), 60.0);
     }
 
     #[test]
