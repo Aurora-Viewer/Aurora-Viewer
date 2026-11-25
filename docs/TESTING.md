@@ -6756,6 +6756,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_DRIVER=old\|old-linux\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
+| `AURORA_DEMO_GPU_RESTART_FAIL=1` | After a GPU loss, the first start of the new renderer fails as on a card lost again while it starts |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
 | `AURORA_GPU_RECOVERY=1` / `=0` | Recover from a GPU device loss on a new window and device, or close, whatever Preferences › Graphics says (on by default) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
@@ -9447,6 +9448,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   With `AURORA_FPS_LIMIT=60`, frame 600 comes about 10 s after the start.
   The window's close button during the stall closes at once (the exit
   prompt cannot be drawn).
+- **`AURORA_DEMO_GPU_RESTART_FAIL=1`**, with `AURORA_DEMO=1` and
+  `AURORA_DEMO_GPU_LOST` (#4508): after the simulated loss, the first start
+  of the new renderer fails with the panic wgpu gives on a device lost
+  while it starts ("Buffer with '' label is invalid"), as when the card is
+  still resetting. The recovery takes it as a failed start: the log says
+  `GPU recovery: the new renderer failed to start` and
+  `GPU recovery: the new device failed while the renderer started (attempt
+  1)`, the viewer waits 2 s, starts the renderer again, and the session
+  goes on with the "The graphics card was reset" notice. No crash report and no
+  "Rust panic". Without it, that panic ended the process.
 - **`AURORA_DEMO_GPU_LOST=<frame>`**, with `AURORA_DEMO=1`: the GPU device is
   taken as lost at that frame, as the device-lost callback does after a
   driver reset (the log says `GPU device lost (Unknown): AURORA_DEMO_GPU_LOST

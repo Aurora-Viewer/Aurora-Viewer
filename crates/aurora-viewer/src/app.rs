@@ -15006,6 +15006,12 @@ impl App {
                 .is_some_and(|g| g.renderer.vr_runtime_lost() && !g.renderer.vr_engaged())
         {
             if !self.reopen_without_vr(event_loop) {
+                // its new device lost while it started (#4508): reported as
+                // the loss it is, as after a recovery from a loss; another
+                // failure (no window, no adapter) is not a loss
+                if aurora_render::loss_details().is_some() {
+                    crate::crash::gpu_lost();
+                }
                 self.close_while_gpu_stalled(event_loop);
             }
             return;
