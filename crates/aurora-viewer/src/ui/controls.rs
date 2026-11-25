@@ -48,6 +48,9 @@ const ZOOM_BUTTON: f32 = 18.0;
 // zoom's column and the pan joystick under it, 50 px tall, the roll
 // buttons in the orbit joystick's bottom corners.
 const SMALL_WIDTH: f32 = 165.0;
+/// The window's least size, as it opens: floater_fs_camera_small.xml's
+/// min_width and min_height.
+const SMALL_MIN: Vec2 = Vec2::new(SMALL_WIDTH, 77.0);
 /// Its body: the window less its margins and its border.
 const SMALL_BODY: f32 = SMALL_WIDTH - 2.0 * SMALL_INSET;
 const SMALL_PAD: f32 = 2.0;
@@ -358,7 +361,9 @@ impl ControlsUi {
                 .without_close()
                 .margin(SMALL_MARGIN)
                 .steady_size();
-                small.min_size = size;
+                // the outline's least size, its margins and border included:
+                // the body's size let it go 5 px shorter than it opens
+                small.min_size = SMALL_MIN;
                 small.show(ctx, p, camera, |ui| small_camera(ui, p, view, &mut out));
             } else if *camera {
                 let size = Vec2::new(controls_width(ctx, view, true), 210.0);
@@ -1612,14 +1617,17 @@ impl SmallCamera {
         SmallCamera::sized(min, Vec2::new(SMALL_BODY, SMALL_ROW + SMALL_STICK))
     }
 
-    /// In a body of `size`, the window enlarged (#4840): the buttons keep
-    /// their place on top, as their panel follows the top left, and the
-    /// joysticks and the zoom grow into the room under them as
+    /// In a body of `size`, the window enlarged (#4840): the joysticks and
+    /// the zoom grow into the room under the buttons as
     /// floater_fs_camera_small.xml's layout panels do (follows="all"),
-    /// still round, `SMALL_STICK` at the least.
+    /// still round, `SMALL_STICK` at the least; the buttons stay on top,
+    /// their row kept centred over them as the window widens (the Legacy
+    /// Viewer leaves it at the left edge, away from the joysticks: the
+    /// human's check of 2026-11-25).
     pub fn sized(min: Pos2, size: Vec2) -> SmallCamera {
         let size = size.max(Vec2::new(SMALL_BODY, SMALL_ROW + SMALL_STICK));
-        let button = |left: f32| Rect::from_min_size(egui::pos2(left, min.y), Vec2::splat(SMALL_BUTTON));
+        let shift = ((size.x - SMALL_BODY) / 2.0).floor();
+        let button = |left: f32| Rect::from_min_size(egui::pos2(left + shift, min.y), Vec2::splat(SMALL_BUTTON));
         let step = SMALL_BUTTON + SMALL_BUTTON_GAP;
         // floater_fs_camera_small.xml, from the window's left edge: the
         // views at 5 (buttons_view, 76 wide), the tools 4 px after them, at
@@ -3018,6 +3026,62 @@ mod tests {
         assert!(!h.camera, "Close All closes it");
     }
 
+    /// #4840: the small window is enlarged by its edges, and never made
+    /// smaller than it opens (165 × 77, the Legacy Viewer's min_width and
+    /// min_height): the human's check of 2026-11-25 took it 5 px shorter.
+    #[test]
+    fn the_small_camera_window_is_resized_down_to_its_opening_size_only() {
+        let mut h = Harness::new(Compact {
+            camera: true,
+            movement: false,
+        });
+        h.classic = true;
+        h.press(false);
+        h.settle();
+        let opened = shown_rect(&h.ctx, CLASSIC_CAMERA_SMALL).expect("the small window shown");
+        // drag the edge at `from` by `by`, a few pixels a frame
+        let drag = |h: &mut Harness, from: Pos2, by: Vec2| {
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            h.frame(vec![egui::Event::PointerMoved(from)]);
+            h.frame(vec![button(from, true)]);
+            for step in 1..=10 {
+                h.frame(vec![egui::Event::PointerMoved(from + by * step as f32 / 10.0)]);
+            }
+            h.frame(vec![button(from + by, false)]);
+            h.settle();
+        };
+        drag(&mut h, Pos2::new(opened.center().x, opened.bottom() - 1.0), Vec2::new(0.0, -40.0));
+        drag(&mut h, Pos2::new(opened.right() - 1.0, opened.center().y), Vec2::new(-60.0, 0.0));
+        let squeezed = shown_rect(&h.ctx, CLASSIC_CAMERA_SMALL).expect("still shown");
+        assert!(
+            squeezed.width() >= 165.0 - 0.5 && squeezed.height() >= 77.0 - 0.5,
+            "no smaller than 165 × 77, got {:?}",
+            squeezed.size()
+        );
+        drag(
+            &mut h,
+            Pos2::new(squeezed.center().x, squeezed.bottom() - 1.0),
+            Vec2::new(0.0, 80.0),
+        );
+        drag(
+            &mut h,
+            Pos2::new(squeezed.right() - 1.0, squeezed.center().y),
+            Vec2::new(120.0, 0.0),
+        );
+        let enlarged = shown_rect(&h.ctx, CLASSIC_CAMERA_SMALL).expect("still shown");
+        assert!(
+            enlarged.width() > squeezed.width() + 100.0 && enlarged.height() > squeezed.height() + 60.0,
+            "enlarged by its edges: {:?} from {:?}",
+            enlarged.size(),
+            squeezed.size()
+        );
+    }
+
     /// The small window's parts, as floater_fs_camera_small.xml places them:
     /// all in its body, none over another, the roll buttons in the orbit
     /// joystick's bottom corners.
@@ -3060,7 +3124,21 @@ mod tests {
         for size in [Vec2::new(400.0, 160.0), Vec2::new(200.0, 300.0), Vec2::new(600.0, 90.0)] {
             let at = SmallCamera::sized(Pos2::ZERO, size);
             let body = Rect::from_min_size(Pos2::ZERO, size);
-            assert_eq!((at.views, at.tools), (default.views, default.tools), "the buttons stay on top");
+            // the buttons stay on top, their row as far from the body's
+            // middle as at the default size: centred over the joysticks
+            let shift = ((size.x - SMALL_BODY) / 2.0).floor();
+            for (a, d) in at
+                .views
+                .iter()
+                .chain(at.tools.iter())
+                .zip(default.views.iter().chain(default.tools.iter()))
+            {
+                assert_eq!(
+                    *a,
+                    d.translate(Vec2::new(shift, 0.0)),
+                    "the buttons move with the joysticks at {size:?}"
+                );
+            }
             let s = at.sticks;
             for r in [s.orbit, s.zoom, s.pan] {
                 assert!(body.contains_rect(r), "{r:?} in the body {size:?}");
