@@ -362,7 +362,6 @@ toolbar-command-web-browser = Przeglądarka internetowa
 toolbar-command-chat-bar = Pasek czatu
 toolbar-command-area-search = Przeszukiwanie obszaru
 area-search-refresh = Odśwież
-area-search-parcel = Tylko bieżąca działka
 area-search-mine = Moje obiekty
 area-search-filters = Filtry
 area-search-sale = Na sprzedaż

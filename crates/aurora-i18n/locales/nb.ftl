@@ -360,7 +360,6 @@ toolbar-command-web-browser = Nettleser
 toolbar-command-chat-bar = Chatlinje
 toolbar-command-area-search = Områdesøk
 area-search-refresh = Oppdater
-area-search-parcel = Bare nåværende parsell
 area-search-mine = Mine objekter
 area-search-filters = Filtre
 area-search-sale = Til salgs

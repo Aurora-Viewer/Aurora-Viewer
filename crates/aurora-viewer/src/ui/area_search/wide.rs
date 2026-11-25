@@ -1,8 +1,8 @@
-//! The wide Area Search: a board of tiles (the selected objects in 3D, the
+//! The Area Search window: a board of tiles (the selected objects in 3D, the
 //! list, the distance, owners, what is for sale, the filters). Any tile grows,
 //! the others staying beside it.
 
-use super::list::{self, Style};
+use super::list;
 use super::model::{self, Digest};
 use super::{Action, AreaSearchUi, Env, chart, sheet};
 use crate::theme::Palette;
@@ -275,7 +275,7 @@ fn objects(
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
         child.set_clip_rect(card.intersect(ui.clip_rect()));
-        action = list::details(state, &mut child, p, env, d, row, false);
+        action = list::details(state, &mut child, p, env, d, row);
     }
     // the order: nearest or heaviest first
     if form == Form::Usual {
@@ -311,7 +311,7 @@ fn objects(
             board::figure(ui, p, &n, aurora_i18n::tr!("area-search-in-reach"));
             None
         }
-        Form::Usual => list::objects(state, ui, p, env, d, Style::Faces, false),
+        Form::Usual => list::objects(state, ui, p, env, d),
         Form::Grown => {
             state.column_pills(ui, p);
             list::table(state, ui, p, env)

@@ -1282,8 +1282,8 @@ window and cache its filtered, sorted, virtualized object rows.
 filters that are on. `chart.rs` is the distance chart with its two handles,
 `sheet.rs` the filters (three-state kinds, click action, permissions, price,
 scope, the six fields), `list.rs` the lists (bands, owners, for sale, the whole
-table with the name kept in view, the card of the selected object), `small.rs`
-and `wide.rs` the two views. All edits apply immediately. Save as default
+table with the name kept in view, the card of the selected object), `wide.rs`
+the window's board of tiles (its only view). All edits apply immediately. Save as default
 persists filter options without search text. Compiled regex filters survive
 live snapshots; one matching-limit failure cancels the rest of that batch,
 with diagnostics in the footer.

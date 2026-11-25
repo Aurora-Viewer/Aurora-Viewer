@@ -359,7 +359,6 @@ toolbar-command-web-browser = 网页浏览器
 toolbar-command-chat-bar = 聊天栏
 toolbar-command-area-search = 区域搜索
 area-search-refresh = 刷新
-area-search-parcel = 仅当前地块
 area-search-mine = 我的物件
 area-search-filters = 过滤
 area-search-sale = 出售中

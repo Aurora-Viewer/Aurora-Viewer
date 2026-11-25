@@ -377,15 +377,7 @@ impl App {
         let neighbours = self.world.regions.len() > 1;
         let parcel_known = self.world.parcel.as_ref().is_some_and(|p| !p.bitmap.is_empty());
         let draw_distance = self.settings.draw_distance;
-        // (a demo's view is never kept in the settings)
-        let forced = self.area_search_ui.forced_wide;
-        let mut wide = forced.unwrap_or(self.settings.area_search_wide);
-        let board = self.area_search_ui.is_wide(ctx, wide);
-        if board {
-            self.area_search_stage(ctx, now);
-        } else {
-            self.area_search_ui.stage.stage.clear(&self.scene);
-        }
+        self.area_search_stage(ctx, now);
         let facts = self.area_search_facts();
         let world = &self.world;
         let env = Env {
@@ -397,17 +389,13 @@ impl App {
             pics: &self.avatar_pics,
             facts,
         };
-        let action = self.area_search_ui.show(ctx, p, &mut self.panels.area_search, &mut wide, &env);
+        let action = self.area_search_ui.show(ctx, p, &mut self.panels.area_search, &env);
         if let Some(action) = action {
             self.area_search_action(action, now);
         }
         let light = self.area_search_ui.stage.light;
-        let ground = board && light != self.settings.stage_light;
-        if forced.is_none() && (ground || wide != self.settings.area_search_wide) {
-            self.settings.area_search_wide = wide;
-            if ground {
-                self.settings.stage_light = light;
-            }
+        if light != self.settings.stage_light {
+            self.settings.stage_light = light;
             self.settings.save();
         }
         let columns = self.area_search_ui.saved_columns();

@@ -359,7 +359,6 @@ toolbar-command-web-browser = 網頁瀏覽器
 toolbar-command-chat-bar = 聊天欄
 toolbar-command-area-search = 區域搜尋
 area-search-refresh = 重新整理
-area-search-parcel = 僅目前地塊
 area-search-mine = 我的物件
 area-search-filters = 過濾
 area-search-sale = 出售中

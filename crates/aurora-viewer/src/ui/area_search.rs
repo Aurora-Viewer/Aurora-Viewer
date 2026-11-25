@@ -9,7 +9,6 @@ mod list;
 pub(crate) mod model;
 mod selection;
 mod sheet;
-mod small;
 mod table;
 #[cfg(test)]
 mod tests;
@@ -17,7 +16,6 @@ mod wide;
 pub(crate) use selection::Selection;
 pub(crate) use table::{Column, Filters, Row, Table};
 
-use super::board;
 use super::menu;
 use super::widgets::{self, Floater};
 use crate::settings::area_search::{AreaSearch, DEFAULT_COLUMNS};
@@ -30,13 +28,10 @@ use uuid::Uuid;
 
 pub const WINDOW: &str = "area_search";
 
-/// The small window and the wide one.
-const VIEWS: board::Views = board::Views {
-    window: WINDOW,
-    small: Vec2::new(430.0, 760.0),
-    wide: Vec2::new(800.0, 760.0),
-    from: 680.0,
-};
+/// The window's size as it first opens, and the least its board of tiles
+/// takes (it had a small view too: gone, human request, 2026-11-25).
+const SIZE: Vec2 = Vec2::new(800.0, 760.0);
+const MIN_SIZE: Vec2 = Vec2::new(680.0, 520.0);
 
 #[derive(Default)]
 pub struct AreaSearchUi {
@@ -49,17 +44,13 @@ pub struct AreaSearchUi {
     several: bool,
     /// The details card shows every figure.
     card_open: bool,
-    /// Objects, Owners, Details: the small window's tabs.
-    tab: usize,
-    /// The small window shows its filters.
-    sheet: bool,
-    /// The wide window's grown tile.
+    /// The grown tile.
     grown: Option<wide::Tile>,
-    /// The places to look in that differ here, and whether the wide window's
-    /// header has room for them.
+    /// The places to look in that differ here, and whether the header has
+    /// room for them.
     scopes: Vec<model::Scope>,
     scope_shown: bool,
-    /// The 3D view of the wide window.
+    /// The 3D view.
     pub(crate) stage: super::object_stage::StageUi,
     /// The prim outlined in the 3D view.
     prim: Option<Uuid>,
@@ -67,10 +58,6 @@ pub struct AreaSearchUi {
     pub(crate) wanted_pics: std::cell::RefCell<HashSet<Uuid>>,
     /// What the results come to, and the list it was made from.
     digest: Option<(u64, Arc<Digest>)>,
-    /// The window was open last frame.
-    was_open: bool,
-    /// AURORA_DEMO_AREA_SEARCH's view; None: the one chosen last.
-    pub(crate) forced_wide: Option<bool>,
     /// Where the right-click menu opened.
     menu_at: Option<egui::Pos2>,
     /// What RLVa hides of that menu, asked once as it opens: the selection
@@ -178,14 +165,8 @@ impl MenuLocks {
 }
 
 impl AreaSearchUi {
-    /// Whether the window shows its board of tiles this frame.
-    pub(crate) fn is_wide(&self, ctx: &egui::Context, saved: bool) -> bool {
-        board::is_wide(ctx, &VIEWS, saved, !self.was_open)
-    }
-
     /// The window is closed: what it keeps only while shown goes.
     pub(crate) fn closed(&mut self) {
-        self.was_open = false;
         self.digest = None;
         self.several = false;
         self.asked = None;
@@ -197,45 +178,24 @@ impl AreaSearchUi {
         &self.selection.ids[..self.selection.ids.len().min(MOST)]
     }
 
-    pub(crate) fn show(
-        &mut self,
-        ctx: &egui::Context,
-        p: &Palette,
-        open: &mut bool,
-        saved_wide: &mut bool,
-        env: &Env<'_>,
-    ) -> Option<Action> {
+    pub(crate) fn show(&mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, env: &Env<'_>) -> Option<Action> {
         let mut action = None;
-        let wide = self.is_wide(ctx, *saved_wide);
-        self.was_open = true;
         self.scopes = model::Scope::here(env.parcel_part, env.neighbours);
         let mut window = Floater::new(
             WINDOW,
             aurora_i18n::tr!("toolbar-command-area-search"),
             egui::pos2(250.0, 60.0),
-            VIEWS.size(ctx, *saved_wide),
+            SIZE.min(super::layout::work_area(ctx).size() - Vec2::splat(2.0 * super::layout::GAP)),
         );
-        window.min_size = Vec2::new(380.0, 420.0);
-        let (mut resize, mut refresh) = (false, false);
-        let (icon, tip) = board::size_button(wide);
-        let mut window = window.action(icon, tip, &mut resize);
-        if !wide {
-            window = window
-                .action("refresh", aurora_i18n::tr!("area-search-refresh"), &mut refresh)
-                .title_state(p.success, aurora_i18n::tr!("area-search-live"));
-        }
+        window.min_size = MIN_SIZE;
         window.show(ctx, p, open, |ui| {
             let pointer = ui.ctx().pointer_latest_pos();
             self.pointed = pointer.and_then(|at| ui.ctx().layer_id_at(at)) == Some(ui.layer_id());
             let d = self.digest();
             let (mut body, footer) = widgets::above_footer(ui);
-            action = if wide {
-                wide::show(self, &mut body, p, env, &d)
-            } else {
-                small::show(self, &mut body, p, env, &d)
-            };
+            action = wide::show(self, &mut body, p, env, &d);
             footer.show(ui, |ui| {
-                if let Some(asked) = self.footer(ui, p, env, &d, wide) {
+                if let Some(asked) = self.footer(ui, p, env) {
                     action = Some(asked);
                 }
             });
@@ -251,8 +211,6 @@ impl AreaSearchUi {
                 }
             }
         });
-        self.refresh |= refresh;
-        board::after(ctx, &VIEWS, resize, wide, saved_wide);
         action
     }
 
@@ -285,7 +243,7 @@ impl AreaSearchUi {
     }
 
     /// The count, the notices and the buttons of what is selected.
-    fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, env: &Env<'_>, _d: &Digest, wide: bool) -> Option<Action> {
+    fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, env: &Env<'_>) -> Option<Action> {
         let mut action = None;
         let count = aurora_i18n::tr!(
             "area-search-count",
@@ -325,15 +283,12 @@ impl AreaSearchUi {
                         self.open_menu(ui, env, at);
                     }
                 }
-                // (the small window has the keyboard's and the menu's ways)
-                if wide || !any {
-                    let label = aurora_i18n::tr!("area-search-several");
-                    if widgets::action_button(ui, p, "", label, kind(self.several), size)
-                        .on_hover_text(aurora_i18n::tr!("area-search-several-tip"))
-                        .clicked()
-                    {
-                        self.several = !self.several;
-                    }
+                let label = aurora_i18n::tr!("area-search-several");
+                if widgets::action_button(ui, p, "", label, kind(self.several), size)
+                    .on_hover_text(aurora_i18n::tr!("area-search-several-tip"))
+                    .clicked()
+                {
+                    self.several = !self.several;
                 }
                 if any {
                     if widgets::action_button(ui, p, "", aurora_i18n::tr!("area-search-copy"), kind(false), size).clicked() {
@@ -354,10 +309,6 @@ impl AreaSearchUi {
                     widgets::status_dot(ui, p.violet);
                     let text = match &notice {
                         Some((short, _)) => RichText::new(short).size(11.5).color(p.warn),
-                        None if any && !wide => {
-                            let n = aurora_i18n::tr!("inspect-selected-count", count = self.selection.ids.len());
-                            RichText::new(n).size(11.5).color(p.muted)
-                        }
                         None => RichText::new(&count).size(11.5).color(p.muted),
                     };
                     let tip = match &notice {
@@ -377,30 +328,18 @@ impl AreaSearchUi {
     pub(crate) fn demo_controls(&mut self, mode: &str) {
         for option in mode.split(',') {
             match option {
-                "wide" => self.forced_wide = Some(true),
-                "small" => self.forced_wide = Some(false),
-                "filters" | "scope" | "ranges" | "fields" => {
-                    self.sheet = true;
-                    self.grown = Some(wide::Tile::Filters);
-                }
+                "filters" | "scope" | "ranges" | "fields" => self.grown = Some(wide::Tile::Filters),
                 "regex" => {
                     self.table.filters.regex = true;
                     self.table.filters.name = "(".into();
                 }
-                "owners" => {
-                    self.tab = 1;
-                    self.grown = Some(wide::Tile::Owners);
-                }
-                "table" | "columns" => {
-                    self.tab = 2;
-                    self.grown = Some(wide::Tile::Objects);
-                }
+                "owners" => self.grown = Some(wide::Tile::Owners),
+                "table" | "columns" => self.grown = Some(wide::Tile::Objects),
                 "distance" => self.grown = Some(wide::Tile::Distance),
                 "sale-list" => self.grown = Some(wide::Tile::Sale),
                 "3d" => self.grown = Some(wide::Tile::Stage),
                 "card" => self.card_open = true,
                 "all-columns" => {
-                    self.tab = 2;
                     self.grown = Some(wide::Tile::Objects);
                     self.visible_columns = Some([true; 10]);
                 }
@@ -438,9 +377,8 @@ impl AreaSearchUi {
         self.refresh = true;
     }
 
-    /// "Filter my objects" fills a field: the sheet shows it.
+    /// "Filter my objects" fills a field: the filters show it.
     pub(crate) fn reveal_search(&mut self) {
-        self.sheet = true;
         self.grown = Some(wide::Tile::Filters);
     }
 
@@ -643,10 +581,6 @@ impl AreaSearchUi {
             action = Some(Action::FilterMine);
         }
         menu::separator(ui, p);
-        // (the small window's footer has no room for its button)
-        if menu::check(ui, p, "list-check", aurora_i18n::tr!("area-search-several"), self.several, true) {
-            self.several = !self.several;
-        }
         if menu::item(ui, p, "select-all", aurora_i18n::tr!("common-select-all")) {
             let all = self.table.visible.iter().map(|i| self.table.rows[*i].id).collect();
             self.selection.select_all(all);

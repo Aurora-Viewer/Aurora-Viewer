@@ -363,7 +363,6 @@ toolbar-command-web-browser = Веб-браузер
 toolbar-command-chat-bar = Строка чата
 toolbar-command-area-search = Поиск объектов поблизости
 area-search-refresh = Обновить
-area-search-parcel = Только текущий участок
 area-search-mine = Мои объекты
 area-search-filters = Фильтры
 area-search-sale = Продаётся

@@ -6451,7 +6451,7 @@ both open states and the selection count. Capture at frame 620.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
-| `AURORA_DEMO_AREA_SEARCH=1\|market,wide\|small,select\|card\|filters\|table\|owners\|…` | Open Area Search, small or wide, on the plaza or a market of 360 pieces; options separated by commas |
+| `AURORA_DEMO_AREA_SEARCH=1\|market,select\|card\|filters\|table\|owners\|…` | Open Area Search on the plaza or a market of 360 pieces; options separated by commas |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 | `AURORA_DEMO_UNINSTALL=confirm\|running\|result\|left` | "Remove Aurora from this computer" as a dry run: its confirmation, or the result window. |
 
@@ -6470,14 +6470,14 @@ frame 700 in English, French and Japanese.
 
 `AURORA_DEMO_AREA_SEARCH`: options separated by commas. `1` opens the window;
 `market` adds 360 pieces of furniture of several owners, creators, land impacts
-and kinds; `wide` and `small` force a view (never kept in the settings); `select`
+and kinds; `select`
 takes the third row, `card` too with its card open; `parcel` restricts to the
 agent's parcel, `sale` to what is for sale, `search` searches the localized
 fountain name, `menu` right-clicks the second row, `filters` opens the filters,
 `regex` a wrong expression, `owners`, `table`, `all-columns`, `distance`,
 `sale-list` and `3d` grow that tile (or show that tab), and `link` round-trips a
 fountain search through the SLapp parser. Capture after frame 740 in English,
-French and Japanese, at `AURORA_TEXT_SIZE=1`, `1.5` and `2`, in both views. Check
+French and Japanese, at `AURORA_TEXT_SIZE=1`, `1.5` and `2`, at its first and its least size. Check
 the chart's handles (drag, arrows, Shift + arrows), a drag over the bars, the
 kinds' three states and the chips, the sort of every column, the sideways scroll
 with the name in view, the folded and open card, Reset, Save as default, Copy as

@@ -360,7 +360,6 @@ toolbar-command-web-browser = Browser web
 toolbar-command-chat-bar = Barra della chat
 toolbar-command-area-search = Ricerca nell'area
 area-search-refresh = Aggiorna
-area-search-parcel = Solo il lotto attuale
 area-search-mine = I miei oggetti
 area-search-filters = Filtri
 area-search-sale = In vendita

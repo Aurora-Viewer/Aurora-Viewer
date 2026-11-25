@@ -17,7 +17,6 @@ struct Harness {
     draw_distance: f32,
     /// What RLVa hides of the right-click menu (none by default).
     locks: MenuLocks,
-    wide: bool,
 }
 impl Harness {
     fn frame(&mut self, events: Vec<egui::Event>) -> (egui::FullOutput, Option<Action>) {
@@ -41,7 +40,7 @@ impl Harness {
                     pics: &HashMap::new(),
                     facts: None,
                 };
-                action = self.ui.show(&self.ctx, &self.p, &mut true, &mut self.wide, &env);
+                action = self.ui.show(&self.ctx, &self.p, &mut true, &env);
             },
         );
         (crate::ui::login::test_output(output), action)
@@ -94,9 +93,6 @@ impl Harness {
         self.click(entry).1
     }
     fn new(scale: f32, size: Vec2, count: usize) -> Self {
-        Self::view(scale, size, count, true)
-    }
-    fn view(scale: f32, size: Vec2, count: usize, wide: bool) -> Self {
         let ctx = egui::Context::default();
         let theme = crate::theme::Theme::default();
         theme.apply(&ctx, scale);
@@ -125,7 +121,6 @@ impl Harness {
             size,
             draw_distance: 64.0,
             locks: MenuLocks::default(),
-            wide,
         };
         for _ in 0..6 {
             h.frame(Vec::new());
@@ -134,11 +129,9 @@ impl Harness {
     }
 }
 
-/// Every check of the rows and the menu holds in both windows.
+/// The window as the checks of the rows and the menu want it.
 fn both(check: impl Fn(Harness)) {
-    for wide in [true, false] {
-        check(Harness::view(1.0, Vec2::new(1280.0, 900.0), 40, wide));
-    }
+    check(Harness::new(1.0, Vec2::new(1280.0, 900.0), 40));
 }
 
 #[test]
@@ -171,21 +164,15 @@ fn area_search_rows_select_and_dispatch_inspect_zoom_and_copy() {
 #[test]
 fn area_search_select_several_makes_clicks_add() {
     both(|mut h| {
-        if h.wide {
-            // the row picked for the user is no part of what they choose
-            assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
-            h.click(aurora_i18n::tr!("area-search-several"));
-            h.click("Object 2");
-            assert_eq!(h.ui.selection.ids, [Uuid::from_u128(2)]);
-            h.click("Object 2");
-            h.settle();
-            assert!(h.ui.selection.is_empty(), "taken out by hand, none is picked");
-            h.click("Object 1");
-        } else {
-            // the footer has no room for the button: the menu has it
-            assert!(!h.shown(aurora_i18n::tr!("area-search-several")));
-            h.menu("Object 1", aurora_i18n::tr!("area-search-several"));
-        }
+        // the row picked for the user is no part of what they choose
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
+        h.click(aurora_i18n::tr!("area-search-several"));
+        h.click("Object 2");
+        assert_eq!(h.ui.selection.ids, [Uuid::from_u128(2)]);
+        h.click("Object 2");
+        h.settle();
+        assert!(h.ui.selection.is_empty(), "taken out by hand, none is picked");
+        h.click("Object 1");
         h.click("Object 3");
         assert_eq!(h.ui.selection.ids, [Uuid::from_u128(1), Uuid::from_u128(3)]);
         h.click("Object 1");
@@ -235,8 +222,8 @@ fn area_search_keyboard_moves_in_the_list_and_selects() {
 #[test]
 fn area_search_menu_acts_on_the_selected_rows_like_the_legacy_viewer() {
     let id = |n| Uuid::from_u128(n);
-    for wide in [true, false] {
-        let mut h = Harness::view(1.0, Vec2::new(1280.0, 900.0), 40, wide);
+    {
+        let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
         h.ui.card_open = false;
         h.click("Object 1");
         h.settle();
@@ -347,29 +334,12 @@ fn area_search_menu_zoom_needs_the_object_within_draw_distance() {
 
 #[test]
 fn area_search_filter_crosses_clear_only_their_field() {
-    for wide in [true, false] {
-        let mut h = Harness::view(1.0, Vec2::new(1280.0, 1100.0), 40, wide);
+    {
+        let mut h = Harness::new(1.0, Vec2::new(1280.0, 1100.0), 40);
         h.ui.demo_controls("filters");
-        // (the small sheet scrolls: the fields are at its foot)
         h.ui.table.filters.name = "no match".into();
         h.ui.table.filters.creator = "no match".into();
         h.settle();
-        if !wide {
-            let at = h.find(aurora_i18n::tr!("area-search-permissions")).center();
-            for _ in 0..12 {
-                h.frame(vec![
-                    egui::Event::PointerMoved(at),
-                    egui::Event::MouseWheel {
-                        source: egui::MouseWheelSource::Unknown,
-                        unit: egui::MouseWheelUnit::Point,
-                        delta: Vec2::new(0.0, -200.0),
-                        phase: egui::TouchPhase::Move,
-                        modifiers: Default::default(),
-                    },
-                ]);
-            }
-            h.settle();
-        }
         for i in [0usize, 4] {
             let id = egui::Id::unique(("area_search_field", i));
             let clear = h.ctx.read_response(id.with("clear")).expect("filled filter's clear button");
@@ -385,17 +355,14 @@ fn area_search_filter_crosses_clear_only_their_field() {
 #[test]
 fn area_search_long_results_draw_only_what_shows_and_keep_the_footer_in_the_window() {
     for (scale, size) in [(1.0, Vec2::new(1280.0, 900.0)), (1.5, Vec2::new(1280.0, 900.0))] {
-        for wide in [true, false] {
-            let mut h = Harness::view(scale, size, 2000, wide);
+        {
+            let mut h = Harness::new(scale, size, 2000);
             h.settle();
             let (out, _) = h.frame(Vec::new());
             let painted = (1..=2000)
                 .filter(|i| out.shapes.iter().any(|s| text_rect(&s.shape, &format!("Object {i}")).is_some()))
                 .count();
-            assert!(
-                (1..60).contains(&painted),
-                "only the viewport's rows: {painted} (wide {wide}, {scale})"
-            );
+            assert!((1..60).contains(&painted), "only the viewport's rows: {painted} ({scale})");
             // (a row is picked for the user: the footer has its buttons)
             let rect = h.find(aurora_i18n::tr!("area-search-actions"));
             assert!(
@@ -427,8 +394,8 @@ fn area_search_kind_tiles_go_from_only_to_hidden_to_any() {
 
 #[test]
 fn area_search_sheet_saves_resets_and_copies_the_link() {
-    for wide in [true, false] {
-        let mut h = Harness::view(1.0, Vec2::new(1280.0, 1000.0), 40, wide);
+    {
+        let mut h = Harness::new(1.0, Vec2::new(1280.0, 1000.0), 40);
         h.ui.table.filters.query = "Object".into();
         h.ui.table.filters.sale = true;
         h.ui.demo_controls("filters");
@@ -489,8 +456,8 @@ fn area_search_separate_resets_preserve_the_other_sections() {
 
 #[test]
 fn area_search_columns_are_chosen_kept_and_the_name_stays_first() {
-    for wide in [true, false] {
-        let mut h = Harness::view(1.0, Vec2::new(1280.0, 900.0), 40, wide);
+    {
+        let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
         assert_eq!(
             h.ui.shown_columns(),
             [Column::Name, Column::Distance, Column::LandImpact, Column::Owner]
@@ -610,7 +577,7 @@ fn area_search_card_opens_profiles_but_not_under_shownames() {
 
 #[test]
 fn area_search_windows_keep_their_size() {
-    for wide in [true, false] {
+    {
         let rows: Vec<Row> = (1..=60u128)
             .map(|i| {
                 let mut r = Row::default();
@@ -621,25 +588,18 @@ fn area_search_windows_keep_their_size() {
                 r
             })
             .collect();
-        let sizes: &[Vec2] = if wide {
-            &[Vec2::new(800.0, 760.0), Vec2::new(760.0, 560.0)]
-        } else {
-            &[Vec2::new(430.0, 760.0), Vec2::new(380.0, 480.0)]
-        };
+        // as it opens, and the least it can be
+        let sizes = &[SIZE, MIN_SIZE];
         crate::ui::widgets::steady_tests::assert_window_steady(
             WINDOW,
             sizes,
             aurora_i18n::tr!("area-search-actions"),
             || {
-                let mut ui = AreaSearchUi {
-                    was_open: true,
-                    ..Default::default()
-                };
+                let mut ui = AreaSearchUi::default();
                 ui.table.replace(rows.clone());
                 ui
             },
             |ui, ctx, p| {
-                let mut saved = wide;
                 let env = Env {
                     parcel_known: true,
                     parcel_part: true,
@@ -649,7 +609,7 @@ fn area_search_windows_keep_their_size() {
                     pics: &HashMap::new(),
                     facts: None,
                 };
-                ui.show(ctx, p, &mut true, &mut saved, &env);
+                ui.show(ctx, p, &mut true, &env);
             },
         );
     }

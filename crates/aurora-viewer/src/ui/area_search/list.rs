@@ -18,17 +18,6 @@ fn bold(ui: &egui::Ui, size: f32) -> egui::FontId {
     egui::FontId::new(size, crate::ui::fonts::semibold(ui.ctx()))
 }
 
-/// The heading text of a distance band.
-fn band_note(band: usize, count: usize) -> String {
-    let from = model::BANDS[band];
-    let range = match (from, model::BANDS.get(band + 1)) {
-        (0.0, Some(to)) => aurora_i18n::tr!("area-search-under", distance = metres(*to)),
-        (_, Some(to)) => aurora_i18n::tr!("area-search-between", from = aurora_i18n::integer(from as i64), to = metres(*to)),
-        (_, None) => aurora_i18n::tr!("area-search-beyond", distance = metres(from)),
-    };
-    format!("{range} · {}", aurora_i18n::integer(count as i64))
-}
-
 /// What a click on a row does, shared by every list.
 impl AreaSearchUi {
     /// The face of an owner: a group's is square; hidden by RLVa, initials.
@@ -98,44 +87,6 @@ fn spoken(row: &Row) -> String {
     )
 }
 
-/// How the rows of the list are laid out.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Style {
-    /// Owner's face, name, distance, land impact.
-    Faces,
-    /// Distance, name, land impact, owner: the small window's columns.
-    Columns,
-}
-
-/// Where the columns of the small window are: distance, name, land impact,
-/// owner.
-pub(super) fn small_columns(line: Rect) -> [Rect; 4] {
-    let owner = (line.width() * 0.32).clamp(80.0, 170.0);
-    let x = [
-        line.left(),
-        line.left() + 58.0,
-        line.right() - owner - 44.0,
-        line.right() - owner,
-        line.right(),
-    ];
-    [0, 1, 2, 3].map(|i| Rect::from_min_max(egui::pos2(x[i], line.top()), egui::pos2(x[i + 1], line.bottom())))
-}
-
-/// The headings of the small window's list.
-pub(super) fn small_header(ui_state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette) {
-    let (line, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
-    let cols = [
-        (Column::Distance, aurora_i18n::tr!("area-search-col-distance"), 6.0),
-        (Column::Name, Column::Name.label(), 4.0),
-        (Column::LandImpact, aurora_i18n::tr!("area-search-col-li"), 6.0),
-        (Column::Owner, Column::Owner.label(), 2.0),
-    ];
-    for ((column, title, pad), cell) in cols.into_iter().zip(small_columns(line)) {
-        heading(ui_state, ui, p, column, title, cell, pad, false);
-    }
-    ui.painter().hline(line.x_range(), line.bottom(), widgets::divider_stroke(p));
-}
-
 /// One heading that sorts.
 #[allow(clippy::too_many_arguments)]
 fn heading(state: &mut AreaSearchUi, ui: &egui::Ui, p: &Palette, column: Column, title: &str, cell: Rect, pad: f32, right: bool) {
@@ -168,80 +119,36 @@ fn heading(state: &mut AreaSearchUi, ui: &egui::Ui, p: &Palette, column: Column,
     }
 }
 
-/// The objects, under their distance bands while the nearest come first. The
-/// single selected object's card opens under its row with `card`.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn objects(
-    state: &mut AreaSearchUi,
-    ui: &mut egui::Ui,
-    p: &Palette,
-    env: &Env<'_>,
-    d: &Digest,
-    style: Style,
-    card: bool,
-) -> Option<Action> {
+/// The objects, under their distance bands while the nearest come first.
+pub(super) fn objects(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, env: &Env<'_>, d: &Digest) -> Option<Action> {
     let mut action = None;
     if state.table.visible.is_empty() {
         empty(state, ui, p);
         return None;
     }
     let scale = crate::ui::fonts::scale(ui.ctx()).max(1.0);
-    let height = if style == Style::Faces { ROW } else { 27.0 } * scale;
+    let height = ROW * scale;
     let nav = board::Nav::begin(ui, "area_search_objects", d.lines.len(), 12);
     state.select_all_key(ui, &nav);
-    // where the open card goes, as tall as it was drawn last
-    let open = state.selection.single().filter(|_| card).and_then(|id| {
-        d.lines
-            .iter()
-            .position(|l| matches!(l, Line::Row(at) if state.table.rows[state.table.visible[*at]].id == id))
-    });
-    let card_id = egui::Id::unique("area_search_card_height");
-    let tall = ui.data(|data| data.get_temp::<f32>(card_id)).unwrap_or(150.0);
-    board::virtual_rows(
-        ui,
-        "area_search_objects",
-        d.lines.len(),
-        height,
-        open.map(|i| (i, tall)),
-        &nav,
-        |ui, i, line, under| {
-            match d.lines[i] {
-                Line::Band(band) => {
-                    // (a stop for the keyboard that does nothing)
-                    nav.row(ui, line, i);
-                    band_line(ui, p, line, band, &d.bands[band], style);
-                }
-                Line::Row(at) => {
-                    let row = &state.table.rows[state.table.visible[at]];
-                    let on = state.selection.contains(&row.id);
-                    let lit = if on { Lit::Outlined } else { Lit::Off };
-                    let resp = board::row_at(ui, p, &nav, i, line, lit);
-                    match style {
-                        Style::Faces => face_row(state, ui, p, env, line, row, on),
-                        Style::Columns => column_row(state, ui, p, env, line, row, on),
-                    }
-                    let label = spoken(row);
-                    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &label));
-                    action = state.respond(ui, env, resp, at).or(action.take());
-                    if let Some(under) = under {
-                        let row = state.table.rows[state.table.visible[at]].clone();
-                        let mut child = ui.new_child(
-                            egui::UiBuilder::new()
-                                .id_salt("area_search_card")
-                                .max_rect(under.shrink2(Vec2::new(2.0, 3.0)))
-                                .layout(egui::Layout::top_down(egui::Align::Min)),
-                        );
-                        action = details(state, &mut child, p, env, d, &row, true).or(action.take());
-                        let used = child.min_rect().height() + 8.0;
-                        if (used - tall).abs() > 0.5 {
-                            ui.data_mut(|data| data.insert_temp(card_id, used));
-                            ui.ctx().request_repaint();
-                        }
-                    }
-                }
+    board::virtual_rows(ui, "area_search_objects", d.lines.len(), height, None, &nav, |ui, i, line, _| {
+        match d.lines[i] {
+            Line::Band(band) => {
+                // (a stop for the keyboard that does nothing)
+                nav.row(ui, line, i);
+                band_line(ui, p, line, band, &d.bands[band]);
             }
-        },
-    );
+            Line::Row(at) => {
+                let row = &state.table.rows[state.table.visible[at]];
+                let on = state.selection.contains(&row.id);
+                let lit = if on { Lit::Outlined } else { Lit::Off };
+                let resp = board::row_at(ui, p, &nav, i, line, lit);
+                face_row(state, ui, p, env, line, row, on);
+                let label = spoken(row);
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &label));
+                action = state.respond(ui, env, resp, at).or(action.take());
+            }
+        }
+    });
     action
 }
 
@@ -255,7 +162,7 @@ pub(super) fn empty(state: &AreaSearchUi, ui: &mut egui::Ui, p: &Palette) {
     ui.label(RichText::new(text).size(12.0).color(p.muted));
 }
 
-fn band_line(ui: &egui::Ui, p: &Palette, line: Rect, band: usize, value: &model::Band, style: Style) {
+fn band_line(ui: &egui::Ui, p: &Palette, line: Rect, band: usize, value: &model::Band) {
     let y = line.center().y;
     let left = line.left() + 5.0;
     let title = model::band_name(band);
@@ -264,10 +171,7 @@ fn band_line(ui: &egui::Ui, p: &Palette, line: Rect, band: usize, value: &model:
     widgets::paint_ink_left(ui.painter(), galley, egui::pos2(left, y), p.ink);
     let li = aurora_i18n::tr!("area-search-li", value = aurora_i18n::integer(value.land_impact.round() as i64));
     let right = board::text_ending(ui, line.right() - 6.0, y, &li, 11.5, p.muted);
-    let note = match style {
-        Style::Faces => aurora_i18n::integer(value.count as i64),
-        Style::Columns => band_note(band, value.count),
-    };
+    let note = aurora_i18n::integer(value.count as i64);
     let at = egui::pos2(left + width + 8.0, y);
     widgets::paint_elided(
         ui,
@@ -300,47 +204,13 @@ fn face_row(state: &AreaSearchUi, ui: &egui::Ui, p: &Palette, env: &Env<'_>, lin
     widgets::paint_elided(ui, name.trim(), egui::pos2(left, y), (right - left).max(16.0), font, ink);
 }
 
-/// Distance, name, land impact, owner.
-fn column_row(state: &AreaSearchUi, ui: &egui::Ui, p: &Palette, env: &Env<'_>, line: Rect, row: &Row, on: bool) {
-    let y = line.center().y;
-    let cells = small_columns(line);
-    let small = egui::FontId::proportional(11.5);
-    let at = cells[0].left() + 6.0;
-    widgets::paint_elided(ui, &metres(row.distance), egui::pos2(at, y), cells[0].width() - 8.0, small, p.muted);
-    let mut right = cells[1].right() - 4.0;
-    if on {
-        right = board::check(ui, p, right, y);
-    }
-    let left = cells[1].left() + 4.0;
-    let font = if on { bold(ui, 12.5) } else { egui::FontId::proportional(12.5) };
-    let ink = if row.loaded { p.ink } else { p.muted };
-    let name = row.cell(Column::Name);
-    widgets::paint_elided(ui, name.trim(), egui::pos2(left, y), (right - left).max(16.0), font, ink);
-    let weight = land_weight(row.land_impact.unwrap_or(0.0));
-    board::badge(ui, p, cells[2].right() - 8.0, y, row.land_impact_text(), weight);
-    let face = Rect::from_center_size(egui::pos2(cells[3].left() + 9.0, y), Vec2::splat(18.0));
-    state.owner_face(ui, p, env, face, row.owner_id, &row.owner, row.group_owned(), row.names_hidden);
-    let left = face.right() + 6.0;
-    let width = (cells[3].right() - left - 4.0).max(10.0);
-    widgets::paint_elided(ui, &row.owner, egui::pos2(left, y), width, egui::FontId::proportional(12.0), p.ink);
-}
-
 /// The card of the selected object: who owns it and its land impact; opened,
 /// who made it and its other figures too.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn details(
-    state: &mut AreaSearchUi,
-    ui: &mut egui::Ui,
-    p: &Palette,
-    env: &Env<'_>,
-    d: &Digest,
-    row: &Row,
-    frame: bool,
-) -> Option<Action> {
+pub(super) fn details(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, env: &Env<'_>, d: &Digest, row: &Row) -> Option<Action> {
     let mut action = None;
     let radius = ui.visuals().window_corner_radius;
     let face = egui::Frame::new().corner_radius(radius).inner_margin(8);
-    let face = if frame { face.fill(p.bar) } else { face };
     face.show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = 6.0;
@@ -401,13 +271,6 @@ pub(super) fn details(
                 ("chevron-down", aurora_i18n::tr!("area-search-card-less"))
             } else {
                 ("chevron-up", aurora_i18n::tr!("area-search-card-more"))
-            };
-            let icon = if frame && !open {
-                "chevron-down"
-            } else if frame {
-                "chevron-up"
-            } else {
-                icon
             };
             if widgets::icon_toggle_sized(ui, p, icon, tip, false, arrow) {
                 state.card_open = !open;

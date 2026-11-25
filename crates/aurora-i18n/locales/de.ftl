@@ -361,7 +361,6 @@ toolbar-command-web-browser = Webbrowser
 toolbar-command-chat-bar = Chat-Leiste
 toolbar-command-area-search = Gebietssuche
 area-search-refresh = Aktualisieren
-area-search-parcel = Nur aktuelle Parzelle
 area-search-mine = Meine Objekte
 area-search-filters = Filter
 area-search-sale = Zum Verkauf

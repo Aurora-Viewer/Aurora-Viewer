@@ -382,7 +382,7 @@ pub(super) fn band_name(band: usize) -> &'static str {
     }
 }
 
-/// A filter that is on, as a chip that takes it away.
+/// A filter that is on (the filters tile counts them).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum On {
     Kind(Kind),
@@ -428,70 +428,6 @@ pub(super) fn filters_on(f: &Filters) -> Vec<On> {
     ];
     out.extend(flags.into_iter().filter(|(_, on)| *on).map(|(what, _)| what));
     out
-}
-
-impl On {
-    /// Back to any.
-    pub fn clear(self, f: &mut Filters) {
-        match self {
-            On::Kind(kind) => kind.set(f, KindState::Any),
-            On::Click => f.click_action = 0,
-            On::Copy => f.copy = false,
-            On::Modify => f.modify = false,
-            On::Transfer => f.transfer = false,
-            On::Parcel => f.parcel_only = false,
-            On::Mine => f.mine = false,
-            On::Linked => f.children = false,
-            On::Neighbors => f.neighbors = false,
-            On::Name => f.name.clear(),
-            On::Description => f.description.clear(),
-            On::Owner => f.owner.clear(),
-            On::Group => f.group.clear(),
-            On::Creator => f.creator.clear(),
-            On::LastOwner => f.last_owner.clear(),
-        }
-    }
-
-    /// Hidden rather than required.
-    pub fn hides(self, f: &Filters) -> bool {
-        matches!(self, On::Kind(kind) if kind.state(f) == KindState::Hidden)
-    }
-
-    pub fn icon(self, f: &Filters) -> &'static str {
-        match self {
-            On::Kind(kind) => kind.icon(),
-            On::Click => CLICK_ICONS[usize::from(f.click_action.min(9))],
-            On::Copy => "copy-filled",
-            On::Modify => "pencil-filled",
-            On::Transfer => "arrows-exchange",
-            On::Parcel => "map-pin-filled",
-            On::Mine => "user-filled",
-            On::Linked => "link",
-            On::Neighbors => "map",
-            _ => "search-filled",
-        }
-    }
-
-    pub fn label(self, f: &Filters) -> String {
-        let field = |name: &str, text: &str| aurora_i18n::tr!("area-search-chip-field", name = name, text = text);
-        match self {
-            On::Kind(kind) => kind.label().to_owned(),
-            On::Click => aurora_i18n::tr!("area-search-chip-click", action = click_label(f.click_action)),
-            On::Copy => aurora_i18n::tr!("area-search-copy-perm").to_owned(),
-            On::Modify => aurora_i18n::tr!("area-search-modify-perm").to_owned(),
-            On::Transfer => aurora_i18n::tr!("area-search-transfer-perm").to_owned(),
-            On::Parcel => aurora_i18n::tr!("area-search-parcel").to_owned(),
-            On::Mine => aurora_i18n::tr!("area-search-mine").to_owned(),
-            On::Linked => aurora_i18n::tr!("area-search-linked").to_owned(),
-            On::Neighbors => aurora_i18n::tr!("area-search-neighbouring").to_owned(),
-            On::Name => field(aurora_i18n::tr!("inspect-col-item"), &f.name),
-            On::Description => field(aurora_i18n::tr!("inspect-col-description"), &f.description),
-            On::Owner => field(aurora_i18n::tr!("inspect-col-owner"), &f.owner),
-            On::Group => field(aurora_i18n::tr!("area-search-group"), &f.group),
-            On::Creator => field(aurora_i18n::tr!("inspect-col-creator"), &f.creator),
-            On::LastOwner => field(aurora_i18n::tr!("area-search-last-owner"), &f.last_owner),
-        }
-    }
 }
 
 /// The mouse click actions, in the order of the Legacy combo.
@@ -689,24 +625,19 @@ mod tests {
     }
 
     #[test]
-    fn area_search_chips_name_what_is_on_and_take_it_away() {
-        let mut f = Filters {
+    fn area_search_counts_the_filters_that_are_on() {
+        let f = Filters {
             children: true,
             click_action: 3,
             name: "Lamp".into(),
             physical: true,
             ..Default::default()
         };
-        let on = filters_on(&f);
         assert_eq!(
-            on,
+            filters_on(&f),
             [On::Kind(Kind::Physical), On::Kind(Kind::Attached), On::Click, On::Linked, On::Name]
         );
-        assert!(On::Kind(Kind::Attached).hides(&f) && !On::Kind(Kind::Physical).hides(&f));
-        for what in on {
-            what.clear(&mut f);
-        }
-        assert!(filters_on(&f).is_empty());
-        assert!(f.include_attachments, "any: attachments are listed too");
+        // attachments are left out at first: one filter on
+        assert_eq!(filters_on(&Filters::default()), [On::Kind(Kind::Attached)]);
     }
 }

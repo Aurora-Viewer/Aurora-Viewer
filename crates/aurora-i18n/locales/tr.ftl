@@ -360,7 +360,6 @@ toolbar-command-web-browser = Web tarayıcı
 toolbar-command-chat-bar = Sohbet çubuğu
 toolbar-command-area-search = Alan araması
 area-search-refresh = Yenile
-area-search-parcel = Yalnızca geçerli parsel
 area-search-mine = Nesnelerim
 area-search-filters = Filtreler
 area-search-sale = Satılık
