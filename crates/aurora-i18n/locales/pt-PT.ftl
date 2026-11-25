@@ -5523,7 +5523,6 @@ ui-appearance-show-current-outfit = Mostrar o visual atual na lista
 ui-appearance-current-outfit-not-in-my-outfits = O visual atual não está guardado em «Os meus visuais»
 build-ui-tools-edit-parcel = Editar a parcela
 ui-context-edit-shape = Editar a forma
-ui-context-export-shape-xml = Exportar a forma em XML
 ui-context-edit-outfit = Editar o visual
 ui-context-edit-pbr-material = Editar o material PBR
 ui-context-edit-land = Editar o terreno

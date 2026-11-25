@@ -5494,7 +5494,6 @@ ui-appearance-show-current-outfit = Mostra l'abito attuale nell'elenco
 ui-appearance-current-outfit-not-in-my-outfits = L'abito attuale non è salvato in “I miei abiti”
 build-ui-tools-edit-parcel = Modifica il lotto
 ui-context-edit-shape = Modifica il corpo
-ui-context-export-shape-xml = Esporta il corpo in XML
 ui-context-edit-outfit = Modifica l'abito
 ui-context-edit-pbr-material = Modifica il materiale PBR
 ui-context-edit-land = Modifica il terreno

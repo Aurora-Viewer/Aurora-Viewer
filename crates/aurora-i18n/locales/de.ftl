@@ -5542,7 +5542,6 @@ ui-appearance-show-current-outfit = Aktuelles Outfit in der Liste anzeigen
 ui-appearance-current-outfit-not-in-my-outfits = Das aktuelle Outfit ist nicht in „Meine Outfits“ gespeichert
 build-ui-tools-edit-parcel = Parzelle bearbeiten
 ui-context-edit-shape = Form bearbeiten
-ui-context-export-shape-xml = Form-XML exportieren
 ui-context-edit-outfit = Outfit bearbeiten
 ui-context-edit-pbr-material = PBR-Material bearbeiten
 ui-context-edit-land = Land bearbeiten
