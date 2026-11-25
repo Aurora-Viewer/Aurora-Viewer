@@ -201,7 +201,7 @@ fn objects_undo_left(undo: &super::objects::Undo, now: std::time::Instant) -> st
 }
 
 /// A short muted paragraph under the status line.
-fn note(ui: &mut egui::Ui, p: &Palette, text: &str) {
+pub(super) fn note(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add(egui::Label::new(RichText::new(text).size(11.5).color(p.muted)).wrap());
 }
 
@@ -1047,6 +1047,9 @@ fn avatar(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
             note(ui, p, aurora_i18n::tr!("blender-live-bend-note"));
         },
     );
+    widgets::collapsing(ui, p, "blender_live_fit_lab", aurora_i18n::tr!("fit-lab-section"), true, |ui| {
+        super::fit_lab::section(&mut live.fit, ui, p);
+    });
     widgets::collapsing(
         ui,
         p,

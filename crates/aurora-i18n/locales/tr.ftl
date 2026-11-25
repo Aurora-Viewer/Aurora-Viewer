@@ -2609,7 +2609,6 @@ app-gpu-lost =
     • grafik kartını yoğun kullanan diğer programları kapatın;
     • bir sonraki başlatmada Aurora'nın önereceği güvenli grafikleri seçin.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora'nın henüz bir animasyon geçersiz kılıcısı (AO) yok.
-cmdline-mod-use-hover-height-in-appearance = Avatarınızın konum yüksekliğini Görünüm → Konum Yüksekliği ile ayarlayın.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora bu bağlantıyı açmamanızı önerir. Sizden oturum açmanızı veya ödeme yapmanızı isterse büyük olasılıkla bir dolandırıcılıktır: parolanızı veya ödeme bilgilerinizi asla vermeyin.
 demo-auto-blend = Otomatik: harmanla
 demo-auto-mask = Otomatik: maske

@@ -2634,7 +2634,6 @@ app-gpu-lost =
     • feche outros programas que utilizem muito a placa gráfica;
     • na próxima inicialização, escolha o modo gráfico seguro que o Aurora oferecerá.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora ainda não possui um overrider de animação (AO).
-cmdline-mod-use-hover-height-in-appearance = Ajuste a altura de flutuação do avatar em Aparência → Altura de flutuação.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora não recomenda abrir este link. Se ele solicitar que você faça login ou pague, é muito provável que seja uma fraude: nunca forneça sua senha ou informações de pagamento.
 demo-auto-blend = Auto: mistura
 demo-auto-mask = Automático: máscara
