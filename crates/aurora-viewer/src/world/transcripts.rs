@@ -609,9 +609,13 @@ impl World {
     /// of the one before. `keep_all`: one line per entry, the empty ones
     /// too (the History window counts them). `peer`: the other resident of
     /// a private conversation, the sender of its lines whose name is not
-    /// cached (a group's or the nearby chat's stay unknown then); its lines
-    /// are `ChatLine::private_history`, whose names are looked up when they
-    /// are drawn. Every line keeps the name the file gives in `from`.
+    /// cached, for their picture and their profile (a group's or the nearby
+    /// chat's stay unknown then); its lines are `ChatLine::private_history`,
+    /// whose names are looked up when they are drawn, a line's only when
+    /// the name it was written with is its sender's
+    /// (`ui::chat::cached_line_sender`): one we wrote under an earlier
+    /// account name falls to `peer` here and keeps that name. Every line
+    /// keeps the name the file gives in `from`.
     pub fn history_lines(&self, entries: Vec<Entry>, nearby: bool, keep_all: bool, peer: Option<Uuid>) -> Vec<ChatLine> {
         let own = self.own_log_names();
         let names = &self.social.avatar_names;
@@ -1604,6 +1608,58 @@ mod tests {
         let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
         assert_eq!(sources, [bob, jane, Uuid::nil()]);
         assert!(lines.iter().all(|l| l.private_history));
+        clean(&w, &root);
+    }
+
+    /// A private conversation's line whose name is not recognised takes the
+    /// other resident for its picture and its profile, never for its name:
+    /// one we wrote under an earlier account name keeps it, whether the
+    /// other resident's name was cached when the history loaded or later.
+    #[test]
+    fn a_private_history_line_under_another_name_keeps_it() {
+        let root = temp();
+        let (me, near) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut w = world(&root, me);
+        let entry = |from: &str| Entry {
+            stamp: String::new(),
+            time: None,
+            from: from.into(),
+            text: "hello".into(),
+        };
+        // theirs, then one of ours from before an account rename
+        let entries = || vec![entry("Near Tester"), entry("Myold Name")];
+        let senders =
+            |w: &World, lines: &[ChatLine]| -> Vec<String> { lines.iter().map(|l| crate::ui::chat::sender_name(w, "Me", l)).collect() };
+        let nova = aurora_net::AvatarNameData {
+            id: near,
+            username: "near.tester".into(),
+            display_name: "Nova".into(),
+            legacy_first: "Near".into(),
+            legacy_last: "Tester".into(),
+            ..Default::default()
+        };
+        // their name not cached yet when the history loads: both lines fall
+        // to them, and show the file's names
+        let late = w.history_lines(entries(), false, false, Some(near));
+        let sources: Vec<Uuid> = late.iter().map(|l| l.source).collect();
+        assert_eq!(sources, [near, near]);
+        assert_eq!(senders(&w, &late), ["Near Tester", "Myold Name"]);
+        // their name arrives: their line resolves, ours keeps its name
+        w.social.avatar_names.on_display_names(std::slice::from_ref(&nova), &[], Some(3600));
+        assert_eq!(senders(&w, &late), ["Nova", "Myold Name"]);
+        // cached when it loads: the same
+        let lines = w.history_lines(entries(), false, false, Some(near));
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
+        assert_eq!(sources, [near, near]);
+        assert_eq!(senders(&w, &lines), ["Nova", "Myold Name"]);
+        // their name written in another form is still theirs, and follows
+        // the name options as the live lines do
+        let forms = || vec![entry("Nova (near.tester)"), entry("near tester")];
+        let lines = w.history_lines(forms(), false, false, Some(near));
+        assert_eq!(senders(&w, &lines), ["Nova", "Nova"]);
+        w.social.avatar_names.options.use_display_names = false;
+        assert_eq!(senders(&w, &lines), ["Near Tester", "Near Tester"]);
+        assert_eq!(senders(&w, &late), ["Near Tester", "Myold Name"]);
         clean(&w, &root);
     }
 

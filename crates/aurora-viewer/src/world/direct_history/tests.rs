@@ -129,6 +129,45 @@ fn the_archive_comes_back_as_history_without_touching_unread() {
     clean(&w, &root);
 }
 
+/// A history row without a sender id whose name is not recognised takes
+/// the other resident for its picture and its profile, never for its name:
+/// one we wrote under an earlier account name keeps it.
+#[test]
+fn a_service_row_under_another_name_keeps_it() {
+    let mut w = World::new(Arc::new(AvatarLibrary::load()));
+    w.agent_id = ME;
+    w.social.avatar_names.on_display_names(
+        &[aurora_net::AvatarNameData {
+            id: JANE,
+            username: "jane.doe".into(),
+            display_name: "Janie".into(),
+            legacy_first: "Jane".into(),
+            legacy_last: "Doe".into(),
+            ..Default::default()
+        }],
+        &[],
+        Some(3600),
+    );
+    let message = |from: &str, from_id: Option<Uuid>| HistoryMessage {
+        from: from.into(),
+        from_id,
+        message: "hello".into(),
+        timestamp: Some(BASE as i32),
+        is_history: true,
+        ..Default::default()
+    };
+    let rows = [
+        message("Jane Doe", None),
+        message("Myold Name", None),
+        message("Jane Doe", Some(JANE)),
+    ];
+    let lines = w.service_lines(rows.iter(), Some(JANE));
+    let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
+    assert_eq!(sources, [JANE, JANE, JANE]);
+    let senders: Vec<String> = lines.iter().map(|l| crate::ui::chat::sender_name(&w, "Me", l)).collect();
+    assert_eq!(senders, ["Janie", "Myold Name", "Janie"]);
+}
+
 #[test]
 fn history_off_shows_no_rows_and_the_manager_still_runs() {
     let root = temp();

@@ -2990,13 +2990,25 @@ pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::Ch
 /// object, a speaker `@shownames` hid and every other history line: they
 /// keep the name they came with. A name not cached yet is queued by
 /// `get_in`, and the line shows the name it came with until it arrives.
+///
+/// The other resident's history line takes the cached name only when the
+/// name the file gives is theirs (`AvatarName::has_user_name` of its legacy
+/// form, the test that finds a transcript's sender by name): a line whose
+/// name was not recognised took the conversation's other resident as its
+/// source, for its picture and its profile (`World::history_lines`,
+/// `World::service_lines`), and one we wrote under an earlier account name
+/// would show theirs. Ours were told by their name when they loaded
+/// (`World::is_own_log_name`, which also knows "You" and our display name).
 fn cached_line_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
     let live = line.origin == Origin::Live;
     if (!live && !log_names_resolve(line)) || line.anonymous() || matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
         return None;
     }
-    let id = if line.kind.is_own() { &world.agent_id } else { &line.source };
-    world.social.avatar_names.get_in(NameScope::Roster, id)
+    let own = line.kind.is_own();
+    let names = &world.social.avatar_names;
+    let cached = names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })?;
+    let written = || cached.has_user_name(&crate::world::names::build_legacy_name(&line.from, names.options.trim_resident));
+    (live || own || written()).then_some(cached)
 }
 
 /// `cached_line_sender` for a live line only: the username a header adds
@@ -3666,8 +3678,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     ui.spacing_mut().item_spacing.y = 2.0;
     let w = ui.available_width();
     // history lines: greyed, their name as written (message_from_log) but
-    // in a private conversation (`log_names_resolve`); their sender, when
-    // its name was cached, gives the picture and the profile
+    // in a private conversation, where it is the resident's
+    // (`cached_line_sender`); their sender, when its name was cached or as
+    // that conversation's other resident, gives the picture and the profile
     let logged = line.origin != Origin::Live;
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     if let Some((year, month, day)) = look.marker {
