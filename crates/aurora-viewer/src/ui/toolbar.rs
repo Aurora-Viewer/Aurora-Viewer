@@ -190,6 +190,8 @@ pub struct ToolbarSettings {
     pub vr_button_migrated: bool,
     /// The same for the Director, placed next to the photo button.
     pub director_button_migrated: bool,
+    /// The quick import bar's block got its buttons, once (`drawers::ensure_import_bar`).
+    pub import_bar_filled: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub left: Vec<ToolButton>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -678,6 +680,10 @@ enum Edit {
     FloatingShown(String, bool),
     /// A floating block of the user's deleted, its button with it.
     FloatingDelete(String),
+    /// A drawer, or the block of the button, made a floating block there.
+    Float(Bar, String, Pos2),
+    /// A floating block made a drawer (true) or a block of its bar again.
+    Dock(String, bool),
 }
 
 /// Windows whose toolbar button lights while they are open
@@ -1007,6 +1013,7 @@ impl ToolbarUi {
                 if menu::item_if(ui, p, "folder-open-filled", aurora_i18n::tr!("toolbar-drawer-unfold"), !locked) {
                     self.pending = Some(Edit::Unfold(bar, button.command.clone()));
                 }
+                self.float_item(ui, p, &settings, response.rect, bar, &button.command, locked);
                 native_context::start_group(ui, p);
                 if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-drawer-settings"), !locked) {
                     self.drawer_editor = Some(button.command.clone());
@@ -1064,6 +1071,7 @@ impl ToolbarUi {
                     if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-floating-settings")) {
                         self.drawer_editor = Some(button.command.clone());
                     }
+                    floating::dock_items(ui, p, self, &button.command, locked);
                 } else if drawers::is_drawer(&button.command) {
                     if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-drawer-settings")) {
                         self.drawer_editor = Some(button.command.clone());
@@ -1071,17 +1079,18 @@ impl ToolbarUi {
                     if menu::item_if(ui, p, "folder-open-filled", aurora_i18n::tr!("toolbar-drawer-unfold"), !locked) {
                         self.pending = Some(Edit::Unfold(bar, button.command.clone()));
                     }
-                } else if !structure::is_separator(&button.command)
-                    && settings.drawer_of(&button.command).is_none()
-                    && menu::item_if(
+                    self.float_item(ui, p, &settings, response.rect, bar, &button.command, locked);
+                } else if !structure::is_separator(&button.command) && settings.drawer_of(&button.command).is_none() {
+                    if menu::item_if(
                         ui,
                         p,
                         "folder-filled",
                         aurora_i18n::tr!("toolbar-drawer-fold"),
                         !locked && edit_mode::fold_allowed(&buttons, &button.command),
-                    )
-                {
-                    self.pending = Some(Edit::Fold(bar, button.command.clone()));
+                    ) {
+                        self.pending = Some(Edit::Fold(bar, button.command.clone()));
+                    }
+                    self.float_item(ui, p, &settings, response.rect, bar, &button.command, locked);
                 }
                 menu::separator(ui, p);
             }
@@ -1125,6 +1134,31 @@ impl ToolbarUi {
             self.button_appearance_option(ui, p, button, locked);
             self.interface_edit_menu(ui, p, button.map(|button| button.command.as_str()));
         });
+    }
+
+    /// "Make it a floating block", for a drawer's button or one of a block's;
+    /// the block stands by the bar it leaves.
+    #[allow(clippy::too_many_arguments)]
+    fn float_item(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        settings: &ToolbarSettings,
+        rect: Rect,
+        bar: Bar,
+        command: &str,
+        locked: bool,
+    ) {
+        let allowed = !locked && drawers::floatable(settings, &Layout::default(), bar, command);
+        if menu::item_if(ui, p, drawers::FLOATING_ICON, aurora_i18n::tr!("toolbar-floating-make"), allowed) {
+            let pos = match bar {
+                Bar::Top => rect.left_bottom() + egui::vec2(0.0, 12.0),
+                Bar::Bottom => rect.left_top() - egui::vec2(0.0, 60.0),
+                Bar::Left => rect.right_top() + egui::vec2(12.0, 0.0),
+                Bar::Right => rect.left_top() - egui::vec2(240.0, 0.0),
+            };
+            self.pending = Some(Edit::Float(bar, command.into(), pos));
+        }
     }
 
     pub fn button(&mut self, response: &Response, bar: Bar, style: Style, button: &ToolButton, p: &Palette, locked: bool) {
@@ -1264,6 +1298,23 @@ impl ToolbarUi {
             Edit::FloatingShown(id, shown) => return drawers::show_floating(settings, id, *shown),
             Edit::FloatingOptions(id, options) => return drawers::update_floating(settings, layout, id, options),
             Edit::FloatingDelete(id) => return drawers::delete_floating(settings, layout, id),
+            Edit::Float(bar, command, pos) => {
+                let Some(id) = drawers::float(settings, layout, *bar, command) else {
+                    return false;
+                };
+                self.floating_placed = Some((id, *pos));
+                return true;
+            }
+            Edit::Dock(id, drawer) => {
+                let Some(bar) = drawers::dock(settings, layout, id) else {
+                    return false;
+                };
+                if !*drawer {
+                    self.pending = Some(Edit::Unfold(bar, id.clone()));
+                    self.apply_edit(layout, settings, provisional);
+                }
+                return true;
+            }
             Edit::FloatingNew(pos) => {
                 if settings.locked || provisional {
                     return false;
@@ -1732,7 +1783,9 @@ impl ToolbarUi {
             | Edit::FloatingNew(..)
             | Edit::FloatingOptions(..)
             | Edit::FloatingShown(..)
-            | Edit::FloatingDelete(..) => unreachable!(),
+            | Edit::FloatingDelete(..)
+            | Edit::Float(..)
+            | Edit::Dock(..) => unreachable!(),
         }
         if next == old && next_drawers == old_drawers {
             return false;

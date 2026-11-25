@@ -276,7 +276,6 @@ fn primary(command: &str) -> bool {
             | "group_titles"
             | "landmark_here"
             | "toolbar_divider"
-            | "toolbar_floating"
             | "bar_navigation"
             | "bar_status"
             | "bar_balance"
@@ -313,7 +312,7 @@ impl Tile {
 pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &commands::Catalogue) -> Vec<Tile> {
     let mut tiles: Vec<_> = catalogue(layout)
         .into_iter()
-        .filter(|button| button.command != super::structure::DIVIDER)
+        .filter(|button| button.command != super::structure::DIVIDER && button.command != super::drawers::FLOATING)
         .map(|button| Tile {
             category: category(&button.command),
             button,
@@ -354,7 +353,7 @@ pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &comman
                     .map(|floating| (id, floating))
             })
             .map(|(id, floating)| Tile {
-                button: super::drawers::floating_toggle(id, &floating.name),
+                button: floating.button(id),
                 category: Category::Interface,
                 group: false,
             }),
@@ -372,7 +371,7 @@ mod tests {
         let tiles = entries(&Layout::default(), &ToolbarSettings::default(), &Default::default());
         let main: Vec<_> = tiles.iter().filter(|tile| tile.in_view(false, "")).collect();
         assert!(
-            (20..=52).contains(&main.len()),
+            (20..=50).contains(&main.len()),
             "the first view should stay manageable: {}",
             main.len()
         );

@@ -44,10 +44,25 @@ pub(super) fn context(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, i
     if menu::item_if(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-floating-settings"), !locked) {
         toolbar.drawer_editor = Some(id.into());
     }
+    dock_items(ui, p, toolbar, id, locked);
     if id != IMPORT_BAR && menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-floating-delete"), !locked) {
         toolbar.pending = Some(Edit::FloatingDelete(id.into()));
     }
     import
+}
+
+/// "Make it a drawer" and "Make it a block" (human request, 2026-11-25): its
+/// button where it stands, else at the bottom bar's end. The import bar stays.
+pub(super) fn dock_items(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &str, locked: bool) {
+    if id == IMPORT_BAR {
+        return;
+    }
+    if menu::item_if(ui, p, "folder-filled", aurora_i18n::tr!("toolbar-floating-to-drawer"), !locked) {
+        toolbar.pending = Some(Edit::Dock(id.into(), true));
+    }
+    if menu::item_if(ui, p, "folder-open-filled", aurora_i18n::tr!("toolbar-floating-to-block"), !locked) {
+        toolbar.pending = Some(Edit::Dock(id.into(), false));
+    }
 }
 
 /// Every floating block shown, or all of them while the bars are edited;

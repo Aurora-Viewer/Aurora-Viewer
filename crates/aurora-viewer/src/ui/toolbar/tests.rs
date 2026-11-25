@@ -2334,8 +2334,22 @@ fn floating_blocks_keep_one_place_per_command_and_only_the_users_are_deleted() {
     assert!(!settings.ensure_import_bar(&layout()), "once");
     let import = &settings.drawers[drawers::IMPORT_BAR];
     let import_commands: Vec<_> = import.buttons.iter().map(|b| b.command.as_str()).collect();
-    assert!(!import_commands.contains(&"import_texture"), "a placed button stays where it is");
-    assert!(import_commands.contains(&"import_mesh") && import_commands.contains(&"import_settings"));
+    assert_eq!(
+        import_commands,
+        [
+            "import_texture",
+            "import_animation",
+            "import_sound",
+            "import_material",
+            "import_mesh",
+            "separator:import-bar-files",
+            "import_advanced",
+            "import_local",
+            "import_settings"
+        ],
+        "every import button, taken from where it stood"
+    );
+    assert_eq!(commands(settings.buttons.as_ref().expect("bottom")), ["inventory"]);
     assert_eq!(import.mode, ButtonMode::IconsOnly);
     assert!(settings.placed("import_mesh", &layout()) && settings.location("import_mesh", &layout()).is_none());
 
@@ -2420,7 +2434,10 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
         tiles.iter().any(|tile| tile.button.command == id),
         "the catalogue offers its button"
     );
-    assert!(tiles.iter().any(|tile| tile.button.command == drawers::FLOATING));
+    assert!(
+        !tiles.iter().any(|tile| tile.button.command == drawers::FLOATING),
+        "it stands beside the separator, out of the grid"
+    );
     assert!(!tiles.iter().any(|tile| tile.button.command == drawers::IMPORT_BAR));
 
     state.pending = Some(Edit::Insert(Bar::Top, drawers::floating_toggle(&id, "x"), 0));
@@ -2448,4 +2465,108 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
     settings.left = vec![button(drawers::FLOATING), button(drawers::IMPORT_BAR)];
     settings.sanitize();
     assert!(settings.left.is_empty());
+}
+
+/// The import bar takes its buttons once, out of a drawer included (the
+/// human's had them all, 2026-11-25), and a drawer left with gaps only goes;
+/// made again later it takes only those placed nowhere.
+#[test]
+fn the_import_bar_takes_its_buttons_once() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(vec![button("inventory")]),
+        top: vec![button("drawer:imports"), button("people")],
+        ..Default::default()
+    };
+    settings.drawers.insert(
+        "drawer:imports".into(),
+        drawers::Drawer {
+            buttons: vec![button("import_texture"), structure::divider("d"), button("import_mesh")],
+            ..Default::default()
+        },
+    );
+    assert!(settings.ensure_import_bar(&layout()));
+    assert!(!settings.drawers.contains_key("drawer:imports"), "emptied, it goes with its button");
+    assert_eq!(commands(&settings.top), ["people"]);
+    assert!(
+        settings.drawers[drawers::IMPORT_BAR]
+            .buttons
+            .iter()
+            .any(|b| b.command == "import_texture")
+    );
+
+    settings.drawers.remove(drawers::IMPORT_BAR);
+    settings.top.push(button("import_sound"));
+    assert!(settings.ensure_import_bar(&layout()));
+    assert_eq!(settings.location("import_sound", &layout()), Some(Bar::Top), "placed, it stays");
+    assert!(
+        settings.drawers[drawers::IMPORT_BAR]
+            .buttons
+            .iter()
+            .any(|b| b.command == "import_mesh")
+    );
+}
+
+/// A block, a drawer and a floating block become one another (human
+/// request, 2026-11-25).
+#[test]
+fn blocks_drawers_and_floating_blocks_switch_into_one_another() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(Vec::new()),
+        top: vec![button("inventory"), button("people"), structure::separator("gap"), button("search")],
+        ..Default::default()
+    };
+    settings.appearance.insert(
+        "inventory".into(),
+        appearance::Appearance {
+            mode: None,
+            icon: Some("star-filled".into()),
+        },
+    );
+    let pos = egui::pos2(10.0, 60.0);
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Float(Bar::Top, "people".into(), pos)),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout(), &mut settings));
+    let id = settings.top[0].command.clone();
+    assert_eq!(state.floating_placed, Some((id.clone(), pos)));
+    assert_eq!(
+        (settings.top[0].icon.as_str(), settings.top[0].tooltip.as_str()),
+        ("star-filled", "inventory")
+    );
+    let floating = settings.drawers[&id].floating.clone().expect("floating");
+    assert_eq!((floating.name.as_str(), floating.icon.as_str()), ("inventory", "star-filled"));
+    assert_eq!(commands(&settings.drawers[&id].buttons), ["inventory", "people"]);
+    assert_eq!(commands(&settings.top[1..]), ["separator:gap", "search"]);
+
+    // a drawer again, its button kept
+    state.pending = Some(Edit::Dock(id.clone(), true));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(settings.drawers[&id].floating.is_none());
+    assert_eq!(settings.top[0].command, id);
+    // floating again, its name and icon kept
+    state.pending = Some(Edit::Float(Bar::Top, id.clone(), pos));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(drawers::is_floating(&settings, &id));
+    assert_eq!(
+        settings.drawers[&id].floating.as_ref().map(|f| f.icon.as_str()),
+        Some("star-filled")
+    );
+    // a block of its bar again, its button removed first: back at the bottom
+    state.pending = Some(Edit::Remove(id.clone()));
+    assert!(state.commit(&layout(), &mut settings));
+    state.pending = Some(Edit::Dock(id.clone(), false));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(!settings.drawers.contains_key(&id));
+    assert_eq!(commands(settings.buttons.as_ref().expect("bottom")), ["inventory", "people"]);
+
+    // a bar's block cannot float, nor can the import bar dock
+    settings.top.insert(0, button("bar_clock"));
+    state.pending = Some(Edit::Float(Bar::Top, "bar_clock".into(), pos));
+    assert!(!state.commit(&layout(), &mut settings));
+    assert!(settings.ensure_import_bar(&layout()));
+    state.pending = Some(Edit::Dock(drawers::IMPORT_BAR.into(), true));
+    assert!(!state.commit(&layout(), &mut settings));
 }

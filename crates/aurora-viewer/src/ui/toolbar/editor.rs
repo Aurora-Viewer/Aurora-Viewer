@@ -309,34 +309,37 @@ impl ToolbarUi {
                     }
                 });
                 ui.add_space(16.0);
-                // Structural tools stay outside the searchable command catalogue.
-                let command = catalogue::find(super::structure::DIVIDER).expect("built-in divider");
-                let divider = ToolButton {
-                    command: command.id.into(),
-                    icon: command.icon.into(),
-                    tooltip: String::new(),
-                };
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(180.0, TILE_H), egui::Sense::hover());
-                let response = tile(
-                    ui,
-                    p,
-                    rect,
-                    &divider,
-                    label(&divider),
-                    if settings.locked { Tile::Placed } else { Tile::Free },
-                    false,
-                );
-                ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("toolbar_catalogue", &divider.command)), rect));
-                if !settings.locked {
-                    if response.drag_started_by(egui::PointerButton::Primary) {
-                        response.dnd_set_drag_payload(Drag {
-                            button: divider.clone(),
-                            from: None,
-                            members: Vec::new(),
-                        });
-                    }
-                    if response.clicked() {
-                        self.pending = Some(Edit::Insert(Bar::Bottom, divider, settings.buttons(layout).len()));
+                // Structural tools stay outside the searchable command catalogue:
+                // the separator, and a new floating block beside it
+                for id in [super::structure::DIVIDER, super::drawers::FLOATING] {
+                    let command = catalogue::find(id).expect("built-in structural tool");
+                    let tool = ToolButton {
+                        command: command.id.into(),
+                        icon: command.icon.into(),
+                        tooltip: String::new(),
+                    };
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(180.0, TILE_H), egui::Sense::hover());
+                    let response = tile(
+                        ui,
+                        p,
+                        rect,
+                        &tool,
+                        label(&tool),
+                        if settings.locked { Tile::Placed } else { Tile::Free },
+                        false,
+                    );
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("toolbar_catalogue", &tool.command)), rect));
+                    if !settings.locked {
+                        if response.drag_started_by(egui::PointerButton::Primary) {
+                            response.dnd_set_drag_payload(Drag {
+                                button: tool.clone(),
+                                from: None,
+                                members: Vec::new(),
+                            });
+                        }
+                        if response.clicked() {
+                            self.pending = Some(Edit::Insert(Bar::Bottom, tool, settings.buttons(layout).len()));
+                        }
                     }
                 }
             });

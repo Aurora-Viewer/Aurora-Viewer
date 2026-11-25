@@ -10,11 +10,12 @@ use crate::ui::skin::{Layout, ToolButton};
 const FORMAT: &str = "aurora-toolbar-interface";
 const MAX_BUTTONS: usize = 512;
 const MAX_MAP: usize = 1024;
-const FIELDS: [&str; 19] = [
+const FIELDS: [&str; 20] = [
     "buttons",
     "locked",
     "vr_button_migrated",
     "director_button_migrated",
+    "import_bar_filled",
     "left",
     "right",
     "bottom_style",
@@ -125,7 +126,7 @@ fn fields(value: &serde_json::Value) -> bool {
                     && drawer.get("buttons").is_none_or(buttons)
                     && drawer
                         .get("floating")
-                        .is_none_or(|floating| known_fields(floating, &["name", "vertical", "shown"]))
+                        .is_none_or(|floating| known_fields(floating, &["name", "icon", "vertical", "shown"]))
             })
         })
     {
@@ -171,7 +172,7 @@ fn valid(toolbar: &ToolbarSettings) -> bool {
         if !id(key)
             || !drawers::is_drawer(key)
             || (floating.is_none() && !roots.contains(key.as_str()))
-            || floating.is_some_and(|floating| !caption(&floating.name))
+            || floating.is_some_and(|floating| !caption(&floating.name) || !(floating.icon.is_empty() || icon(&floating.icon)))
         {
             return false;
         }
@@ -249,6 +250,7 @@ pub(crate) fn snapshot(settings: &ToolbarSettings, layout: &Layout, islands: boo
     // This is a complete snapshot: discovery must not append a removed control.
     toolbar.vr_button_migrated = true;
     toolbar.director_button_migrated = true;
+    toolbar.import_bar_filled = true;
     for (bar, style) in [
         (Bar::Bottom, &mut toolbar.bottom_style),
         (Bar::Left, &mut toolbar.left_style),
@@ -298,6 +300,7 @@ pub(crate) fn read(text: &str) -> Result<Profile, String> {
     }
     document.toolbar.vr_button_migrated = true;
     document.toolbar.director_button_migrated = true;
+    document.toolbar.import_bar_filled = true;
     Ok(Profile {
         base: document.base,
         toolbar: document.toolbar,

@@ -27,17 +27,17 @@ pub const FLOATING: &str = "toolbar_floating";
 pub const FLOATING_ICON: &str = "app-window-filled";
 /// Its button while the drop is only previewed on a bar.
 pub(super) const FLOATING_PREVIEW: &str = "drawer:drop-preview-floating";
-/// The quick import bar's buttons, in its order, gaps included.
-const IMPORT_COMMANDS: [&str; 10] = [
+/// The quick import bar's buttons, in its order, its gap included (human
+/// request, 2026-11-25).
+const IMPORT_COMMANDS: [&str; 9] = [
     "import_texture",
-    "import_sound",
     "import_animation",
+    "import_sound",
     "import_material",
     "import_mesh",
     "separator:import-bar-files",
     "import_advanced",
     "import_local",
-    "separator:import-bar-settings",
     "import_settings",
 ];
 
@@ -72,9 +72,23 @@ impl Default for Drawer {
 pub struct Floating {
     /// Its button's name, placed or not.
     pub name: String,
+    /// Its button's icon, `FLOATING_ICON` when empty.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub icon: String,
     pub vertical: bool,
     /// Shown (the import bar's is the import preference's instead).
     pub shown: bool,
+}
+
+impl Floating {
+    /// The button that shows and hides the block `id`.
+    pub fn button(&self, id: &str) -> ToolButton {
+        ToolButton {
+            command: id.into(),
+            icon: if self.icon.is_empty() { FLOATING_ICON } else { &self.icon }.into(),
+            tooltip: self.name.clone(),
+        }
+    }
 }
 
 /// The button that shows and hides the floating block `id`.
@@ -90,40 +104,156 @@ pub fn is_floating(settings: &ToolbarSettings, id: &str) -> bool {
     settings.drawers.get(id).is_some_and(|drawer| drawer.floating.is_some())
 }
 
-/// The quick import bar's block, once: the import buttons placed nowhere
-/// else, so that a button kept in a toolbar stays there.
+/// The quick import bar's block, and once its buttons (human request,
+/// 2026-11-25): taken from wherever they stand, a drawer left with nothing
+/// but gaps going with its button. Made again later (a restored or loaded
+/// layout without it), it takes those placed nowhere.
 pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout) -> bool {
-    if settings.drawers.contains_key(IMPORT_BAR) {
+    let fill = !settings.import_bar_filled;
+    if !fill && settings.drawers.contains_key(IMPORT_BAR) {
         return false;
+    }
+    settings.import_bar_filled = true;
+    if fill {
+        let counts = settings
+            .drawers
+            .iter()
+            .map(|(id, drawer)| (id.clone(), drawer.buttons.len()))
+            .collect();
+        let taken = |button: &ToolButton| IMPORT_COMMANDS.contains(&button.command.as_str());
+        for bar in Bar::ALL {
+            let mut buttons = settings.bar(bar, layout).to_vec();
+            if buttons.iter().any(taken) {
+                buttons.retain(|button| !taken(button));
+                settings.set_bar(bar, buttons);
+            }
+        }
+        for (id, drawer) in &mut settings.drawers {
+            if id != IMPORT_BAR {
+                drawer.buttons.retain(|button| !taken(button));
+            }
+        }
+        remove_emptied(settings, layout, &counts);
     }
     let buttons = IMPORT_COMMANDS
         .iter()
         .filter_map(|command| {
             if structure::is_separator(command) {
-                return Some(ToolButton {
-                    command: (*command).into(),
-                    icon: String::new(),
-                    tooltip: String::new(),
-                });
+                return Some(structure::separator(command.trim_start_matches(structure::PREFIX)));
             }
             let found = super::catalogue::find(command)?;
-            (!settings.placed(command, layout)).then(|| ToolButton {
+            (fill || !settings.placed(command, layout)).then(|| ToolButton {
                 command: (*command).into(),
                 icon: found.icon.into(),
                 tooltip: String::new(),
             })
         })
         .collect();
+    let drawer = settings.drawers.entry(IMPORT_BAR.into()).or_insert_with(|| Drawer {
+        mode: ButtonMode::IconsOnly,
+        floating: Some(Floating::default()),
+        ..Drawer::default()
+    });
+    drawer.buttons = buttons;
+    drawer.floating.get_or_insert_default();
+    true
+}
+
+/// A drawer or a bar's block made a floating block (human request,
+/// 2026-11-25): a drawer keeps its button, its name and its icon; a block
+/// gets a button where it stood, with its first button's icon and name. None
+/// when it holds what a floating block cannot (a bar's block, a drawer).
+pub(super) fn float(settings: &mut ToolbarSettings, layout: &Layout, bar: Bar, command: &str) -> Option<String> {
+    if settings.locked {
+        return None;
+    }
+    if is_drawer(command) {
+        let toggle = settings.bar(bar, layout).iter().find(|button| button.command == command)?.clone();
+        let drawer = settings.drawers.get_mut(command)?;
+        if drawer.floating.is_some() || drawer.buttons.iter().any(|button| structure::is_block(&button.command)) {
+            return None;
+        }
+        drawer.floating = Some(Floating {
+            name: toggle.tooltip,
+            icon: toggle.icon,
+            vertical: false,
+            shown: true,
+        });
+        return Some(command.into());
+    }
+    if settings.drawer_of(command).is_some() {
+        return None;
+    }
+    let mut buttons = settings.bar(bar, layout).to_vec();
+    let range = super::edit_mode::group(&buttons, command)?;
+    if buttons[range.clone()]
+        .iter()
+        .any(|button| is_drawer(&button.command) || structure::is_block(&button.command))
+    {
+        return None;
+    }
+    let first = buttons[range.clone()]
+        .iter()
+        .find(|button| !structure::is_separator(&button.command) && !structure::is_divider(&button.command))?
+        .clone();
+    let icon = settings
+        .appearance
+        .get(&first.command)
+        .and_then(|look| look.icon.clone())
+        .unwrap_or_else(|| first.icon.clone());
+    let name = super::label(&first).to_owned();
+    let id = format!("{PREFIX}{}", uuid::Uuid::new_v4());
+    let block_style = settings.block_styles.get(command).copied().unwrap_or_default();
+    let mode = block_style.mode.or(settings.style(bar).mode).unwrap_or_default();
+    let toggle = ToolButton {
+        command: id.clone(),
+        icon: icon.clone(),
+        tooltip: name.clone(),
+    };
+    let contents = buttons.splice(range, [toggle]).collect();
+    settings.set_bar(bar, buttons);
+    settings.block_styles.insert(id.clone(), block_style);
     settings.drawers.insert(
-        IMPORT_BAR.into(),
+        id.clone(),
         Drawer {
-            buttons,
-            mode: ButtonMode::IconsOnly,
-            floating: Some(Floating::default()),
+            buttons: contents,
+            mode,
+            floating: Some(Floating {
+                name,
+                icon,
+                vertical: bar.vertical(),
+                shown: true,
+            }),
             ..Drawer::default()
         },
     );
-    true
+    Some(id)
+}
+
+/// Whether `command` (a drawer's button, or one of a block's) can become a
+/// floating block.
+pub(super) fn floatable(settings: &ToolbarSettings, layout: &Layout, bar: Bar, command: &str) -> bool {
+    float(&mut settings.clone(), layout, bar, command).is_some()
+}
+
+/// A floating block made a drawer again, its button where it stands (at the
+/// bottom bar's end when it stands nowhere): the bar it stands in. The
+/// import bar stays a floating block.
+pub(super) fn dock(settings: &mut ToolbarSettings, layout: &Layout, id: &str) -> Option<Bar> {
+    if settings.locked || id == IMPORT_BAR {
+        return None;
+    }
+    let floating = settings.drawers.get_mut(id)?.floating.take()?;
+    if let Some(bar) = settings.location(id, layout) {
+        return Some(bar);
+    }
+    let mut buttons = settings.bar(Bar::Bottom, layout).to_vec();
+    if buttons.last().is_some_and(|button| !structure::is_separator(&button.command)) {
+        buttons.push(structure::separator(&uuid::Uuid::new_v4().to_string()));
+    }
+    buttons.push(floating.button(id));
+    settings.set_bar(Bar::Bottom, buttons);
+    Some(Bar::Bottom)
 }
 
 /// A new floating block, shown, under the name `name`.
@@ -135,8 +265,8 @@ pub(super) fn create_floating(settings: &mut ToolbarSettings, name: &str) -> Str
             mode: ButtonMode::IconsOnly,
             floating: Some(Floating {
                 name: name.into(),
-                vertical: false,
                 shown: true,
+                ..Floating::default()
             }),
             ..Drawer::default()
         },
@@ -312,7 +442,7 @@ fn floating_settings(
     floating: &Floating,
 ) {
     let own = id != IMPORT_BAR;
-    let button = floating_toggle(id, &floating.name);
+    let button = floating.button(id);
     let mut open = true;
     let mut delete = false;
     let mut options = FloatingOptions {
