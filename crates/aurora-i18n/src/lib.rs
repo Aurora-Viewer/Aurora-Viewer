@@ -232,6 +232,25 @@ fn language_index<'a>(code: &str, available: impl Iterator<Item = &'a str> + Clo
         if let Some(index) = find(candidate) {
             return Some(index);
         }
+        if candidate
+            .split('-')
+            .next()
+            .is_some_and(|language| language.eq_ignore_ascii_case("en"))
+        {
+            let region = candidate
+                .split('-')
+                .skip(1)
+                .find(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_alphabetic()))
+                .unwrap_or_default();
+            let regional = match region.to_ascii_lowercase().as_str() {
+                "au" => Some("en-AU"),
+                "gb" | "nz" | "ie" | "za" | "in" | "sg" => Some("en-GB"),
+                _ => None,
+            };
+            if let Some(index) = regional.and_then(find) {
+                return Some(index);
+            }
+        }
         if parent.eq_ignore_ascii_case("zh") {
             let region = candidate.split_once('-')?.1;
             let script = match region.to_ascii_lowercase().as_str() {
@@ -402,7 +421,7 @@ pub fn available_languages() -> impl Iterator<Item = (&'static str, &'static str
 /// languages and the remaining entries in language-code order.
 pub fn language_menu_order(items: &mut [(&str, &str)], system: &str) {
     const COMMON: &[&str] = &[
-        "en", "zh-Hans", "zh-Hant", "es", "pt-BR", "pt", "ja", "fr", "de", "ko", "ru", "hi", "ar",
+        "en", "en-GB", "en-AU", "zh-Hans", "zh-Hant", "es", "pt-BR", "pt", "ja", "fr", "de", "ko", "ru", "hi", "ar",
     ];
     let system_code = language_index(system, items.iter().map(|(code, _)| *code)).map(|index| items[index].0);
     items.sort_unstable_by_key(|&(code, _)| {
@@ -471,10 +490,19 @@ fn wrap_owned(text: String) -> String {
     }
 }
 
+fn regional_parent(catalog: &Catalog) -> Option<&'static Catalog> {
+    if catalog.code == "en-AU" && USER.get().is_none_or(|user| !std::ptr::eq(catalog, user)) {
+        index("en-GB").map(bundled)
+    } else {
+        None
+    }
+}
+
 fn plain(catalog: &'static Catalog, key: &'static str) -> &'static str {
     catalog
         .plain
         .get(key)
+        .or_else(|| regional_parent(catalog).and_then(|parent| parent.plain.get(key)))
         .or_else(|| bundled(english()).plain.get(key))
         .map_or(key, String::as_str)
 }
@@ -500,7 +528,13 @@ pub fn format_in(language: &str, key: &'static str, args: &FluentArgs<'_>) -> St
 }
 
 fn format_catalog(catalog: &Catalog, key: &'static str, args: &FluentArgs<'_>) -> String {
-    render_with_fallback(catalog, bundled(english()), key, args).unwrap_or_else(|| {
+    let fallback = bundled(english());
+    let result = if let Some(parent) = regional_parent(catalog) {
+        render(catalog, key, args).or_else(|| render_with_fallback(parent, fallback, key, args))
+    } else {
+        render_with_fallback(catalog, fallback, key, args)
+    };
+    result.unwrap_or_else(|| {
         log::warn!("Missing localization message or arguments: {key}");
         key.to_owned()
     })
@@ -651,6 +685,12 @@ mod tests {
     fn the_grid_gets_the_legacy_viewer_s_language_codes() {
         for (code, grid) in [
             ("en", "en"),
+            ("en-US", "en"),
+            ("en-AU", "en"),
+            ("en-GB", "en"),
+            ("en_US", "en"),
+            ("en_AU", "en"),
+            ("en_GB", "en"),
             ("fr", "fr"),
             ("ja", "ja"),
             ("de", "de"),

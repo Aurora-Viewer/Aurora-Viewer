@@ -418,7 +418,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
   or borders, at once and without a restart, and gives the window back
   exactly as it was (Preferences › Graphics).
-- **In fifteen languages** (English, French, Japanese, German, Spanish,
+- **In fifteen languages with seventeen regional catalogues** (American, British and Australian English, French, Japanese, German, Spanish,
   Italian, Brazilian and European Portuguese, Polish, Russian, Ukrainian,
   Turkish, Norwegian Bokmål, Simplified and Traditional Chinese): the interface follows
   your system language or your choice, applied at once. Japanese uses Second
@@ -795,14 +795,17 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
-The viewer ships English, French, Japanese (日本語), Simplified Chinese
+The viewer ships American, British and Australian English, French, Japanese (日本語), Simplified Chinese
 (简体中文), Traditional Chinese (繁體中文), Russian (Русский), German (Deutsch),
 Brazilian Portuguese (Português (Brasil)), Spanish (Español), Italian
 (Italiano), Polish (Polski), Turkish (Türkçe), European Portuguese (Português
 (Portugal)), Norwegian Bokmål (Norsk bokmål) and Ukrainian (Українська). It
 detects the system language
-by default. A choice saved in Preferences applies at once. The
-Japanese translation covers every message, with the official Second Life
+by default. A choice saved in Preferences applies at once. English (US),
+English (UK) and English (AU) are available independently. New Zealand,
+Ireland, South Africa, India and Singapore use British English by default;
+Canada uses American English. Existing explicit language choices are retained.
+The Japanese translation covers every message, with the official Second Life
 Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic
 UI or MS UI Gothic) and writes dates the Japanese way. The other languages
 use the Second Life terms of the Legacy Viewer's interface in that language,

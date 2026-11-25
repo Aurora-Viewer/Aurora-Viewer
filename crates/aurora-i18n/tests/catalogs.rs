@@ -396,3 +396,270 @@ fn the_demo_block_list_keeps_the_server_file_format() {
         assert_eq!(lines[3], "0 D Group:G|", "{code}");
     }
 }
+
+#[test]
+fn english_regional_locales_respect_system_and_saved_preferences() {
+    let codes: Vec<_> = aurora_i18n::available_languages().map(|(code, _)| code).collect();
+
+    for (locale, expected) in [
+        ("en-US", "en"),
+        ("en_US", "en"),
+        ("en-AU", "en-AU"),
+        ("en_AU", "en-AU"),
+        ("EN-au", "en-AU"),
+        ("en-GB", "en-GB"),
+        ("en_GB", "en-GB"),
+        ("EN-gb", "en-GB"),
+        ("en-CA", "en"),
+        ("en-NZ", "en-GB"),
+        ("en_IE", "en-GB"),
+        ("en-ZA", "en-GB"),
+        ("en-IN", "en-GB"),
+        ("en-SG", "en-GB"),
+        ("en-Latn-AU", "en-AU"),
+        ("en", "en"),
+    ] {
+        assert_eq!(resolve_language("default", locale, &codes), expected, "{locale}");
+    }
+
+    assert_eq!(resolve_language("en", "en-AU", &codes), "en");
+    assert_eq!(resolve_language("en-AU", "en-US", &codes), "en-AU");
+    assert_eq!(resolve_language("en-GB", "en-AU", &codes), "en-GB");
+    assert_eq!(resolve_language("en-AU", "en-GB", &codes), "en-AU");
+}
+
+#[test]
+fn english_regional_locales_use_consistent_spelling() {
+    for (key, american, regional) in [
+        ("inventory-tab-favorites", "Favorites", "Favourites"),
+        ("common-add-to-favorites", "Add to favorites", "Add to favourites"),
+        ("director-title-color", "Color", "Colour"),
+        ("director-title-centre", "Center", "Centre"),
+        ("import-decompose", "Analyze convex hulls", "Analyse convex hulls"),
+        ("import-cancelled", "Canceled", "Cancelled"),
+        ("shape-meters", "Meters", "Metres"),
+        ("about-tab-licences", "Licenses", "Licences"),
+        ("photo-looks-catalogue", "Effects catalog", "Effects catalogue"),
+        ("joystick-zoom", "Zoom (analog axis)", "Zoom (analogue axis)"),
+        ("toolbar-command-wearable-favorites", "Favorite wearables", "Favourite wearables"),
+        (
+            "wearable-favorites-new-folder-tip",
+            "Create new favorites folder",
+            "Create new favourites folder",
+        ),
+        (
+            "wearable-favorites-rename-folder-tip",
+            "Rename selected favorites folder",
+            "Rename selected favourites folder",
+        ),
+        (
+            "wearable-favorites-delete-folder-tip",
+            "Delete selected favorites folder",
+            "Delete selected favourites folder",
+        ),
+    ] {
+        assert_eq!(aurora_i18n::text_in("en", key), american, "{key}");
+
+        for locale in ["en-AU", "en-GB"] {
+            assert_eq!(aurora_i18n::text_in(locale, key), regional, "{locale}/{key}");
+        }
+    }
+}
+
+#[test]
+fn english_regional_locales_preserve_technical_terms() {
+    for locale in ["en", "en-AU", "en-GB"] {
+        assert_eq!(aurora_i18n::text_in(locale, "ui-options-commands-cmd-meters"), "cmd meters");
+        assert_eq!(aurora_i18n::text_in(locale, "omnifilter-source-dialog"), "Dialog");
+        assert_eq!(aurora_i18n::text_in(locale, "common-apply"), "Apply");
+        assert_eq!(aurora_i18n::text_in(locale, "wearable-param-167"), "Moustache");
+        assert!(aurora_i18n::text_in(locale, "wearable-favorites-new-folder-prompt").contains("Favorite Wearables"));
+        assert!(aurora_i18n::text_in(locale, "favorites-empty-text").contains("Favorites folder"));
+    }
+}
+
+#[test]
+fn english_regional_catalogs_inherit_messages() {
+    for (locale, name) in [("en", "English (US)"), ("en-GB", "English (UK)"), ("en-AU", "English (AU)")] {
+        assert_eq!(aurora_i18n::text_in(locale, "language-name"), name);
+        assert_eq!(aurora_i18n::text_in(locale, "common-apply"), "Apply");
+    }
+
+    assert_eq!(aurora_i18n::text_in("en-AU", "inventory-tab-favorites"), "Favourites");
+
+    let mut args = aurora_i18n::Args::new();
+    args.set("name", "Home");
+
+    for locale in ["en-GB", "en-AU"] {
+        assert_eq!(
+            aurora_i18n::format_in(locale, "landmark-star-in-favorites", &args),
+            "In Favourites: Home\nClick to edit it"
+        );
+    }
+
+    assert_eq!(
+        aurora_i18n::format_in("en", "landmark-star-in-favorites", &args),
+        "In Favorites: Home\nClick to edit it"
+    );
+
+    assert_eq!(aurora_i18n::resolve_language("default", "en-NZ", &["en", "fr"]), "en");
+}
+
+fn normalize_regional_spelling(value: &str) -> String {
+    const SPELLINGS: &[(&str, &str)] = &[
+        ("acknowledgements", "acknowledgments"),
+        ("ambience", "ambiance"),
+        ("analogue", "analog"),
+        ("analyse", "analyze"),
+        ("analysing", "analyzing"),
+        ("authorisation", "authorization"),
+        ("authorised", "authorized"),
+        ("behaviour", "behavior"),
+        ("cancelled", "canceled"),
+        ("catalogue", "catalog"),
+        ("catalogues", "catalogs"),
+        ("centre", "center"),
+        ("centred", "centered"),
+        ("centring", "centering"),
+        ("centimetres", "centimeters"),
+        ("colour", "color"),
+        ("coloured", "colored"),
+        ("colours", "colors"),
+        ("customise", "customize"),
+        ("enrolment", "enrollment"),
+        ("favourite", "favorite"),
+        ("favourited", "favorited"),
+        ("favourites", "favorites"),
+        ("grey", "gray"),
+        ("greyed", "grayed"),
+        ("initialise", "initialize"),
+        ("initialising", "initializing"),
+        ("kilometres", "kilometers"),
+        ("licence", "license"),
+        ("licences", "licenses"),
+        ("linearise", "linearize"),
+        ("metre", "meter"),
+        ("metres", "meters"),
+        ("minimise", "minimize"),
+        ("minimised", "minimized"),
+        ("minimising", "minimizing"),
+        ("neighbour", "neighbor"),
+        ("neighbouring", "neighboring"),
+        ("neighbours", "neighbors"),
+        ("optimiser", "optimizer"),
+        ("organise", "organize"),
+        ("organising", "organizing"),
+        ("posterise", "posterize"),
+        ("recognise", "recognize"),
+        ("recognised", "recognized"),
+        ("synchronisation", "synchronization"),
+        ("synchronise", "synchronize"),
+        ("synchronised", "synchronized"),
+        ("synchronises", "synchronizes"),
+        ("synchronising", "synchronizing"),
+        ("unrecognised", "unrecognized"),
+        ("visualiser", "visualizer"),
+        ("visualisers", "visualizers"),
+    ];
+
+    fn append_word(result: &mut String, word: &str, spellings: &[(&str, &str)]) {
+        let lower = word.to_ascii_lowercase();
+        if let Some((_, american)) = spellings.iter().find(|(regional, _)| *regional == lower) {
+            if word.bytes().all(|byte| byte.is_ascii_uppercase()) {
+                result.push_str(&american.to_ascii_uppercase());
+            } else if word.as_bytes().first().is_some_and(u8::is_ascii_uppercase) {
+                result.push_str(&american[..1].to_ascii_uppercase());
+                result.push_str(&american[1..]);
+            } else {
+                result.push_str(american);
+            }
+        } else {
+            result.push_str(word);
+        }
+    }
+
+    let mut result = String::new();
+    let mut word = String::new();
+
+    let mut characters = value.chars().peekable();
+
+    while let Some(character) = characters.next() {
+        if character == '\\' {
+            append_word(&mut result, &word, SPELLINGS);
+            word.clear();
+            result.push(character);
+
+            if let Some(escaped) = characters.next() {
+                result.push(escaped);
+                let digits = match escaped {
+                    'u' => 4,
+                    'U' => 6,
+                    _ => 0,
+                };
+                for _ in 0..digits {
+                    if let Some(digit) = characters.next() {
+                        result.push(digit);
+                    }
+                }
+            }
+            continue;
+        }
+
+        if character.is_ascii_alphabetic() {
+            word.push(character);
+        } else {
+            append_word(&mut result, &word, SPELLINGS);
+            word.clear();
+            result.push(character);
+        }
+    }
+
+    append_word(&mut result, &word, SPELLINGS);
+    result
+}
+
+#[test]
+fn english_regional_overrides_remain_consistent_with_canonical_messages() {
+    fn messages(source: &str) -> BTreeMap<&str, String> {
+        let resource = fluent_syntax::parser::parse(source).expect("valid Fluent catalogue");
+        resource
+            .body
+            .into_iter()
+            .filter_map(|entry| {
+                if let ast::Entry::Message(mut message) = entry {
+                    let key = message.id.name;
+                    message.comment = None;
+                    let resource = ast::Resource {
+                        body: vec![ast::Entry::Message(message)],
+                    };
+                    Some((key, fluent_syntax::serializer::serialize(&resource)))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    let canonical = SOURCES.iter().find(|(code, _)| *code == "en").unwrap();
+    let canonical = messages(canonical.1);
+
+    for &(locale, source) in SOURCES {
+        if !matches!(locale, "en-GB" | "en-AU") {
+            continue;
+        }
+
+        for (key, regional) in messages(source) {
+            if key == "language-name" {
+                continue;
+            }
+
+            let american = canonical.get(key).expect("regional message has a canonical key");
+
+            assert_eq!(
+                normalize_regional_spelling(&regional),
+                normalize_regional_spelling(american),
+                "{locale}/{key}: regional override differs beyond approved spelling variations"
+            );
+        }
+    }
+}
