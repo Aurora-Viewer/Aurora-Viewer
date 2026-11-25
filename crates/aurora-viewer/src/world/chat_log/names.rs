@@ -5,7 +5,9 @@
 //!
 //! - nearby chat: `chat.txt`;
 //! - a resident: the legacy name without " Resident" (UseLegacyIMLogNames,
-//!   on by default in Firestorm): `Jane Doe.txt`, `janedoe.txt`;
+//!   on by default in the Legacy Viewer): `Jane Doe.txt`; with it off, the
+//!   username form `jane_doe.txt` (LLCacheName::buildUsername's `jane.doe`,
+//!   then LLLogChat::cleanFileName);
 //! - a group: `<group name> (group).txt`;
 //! - a conference we were invited to: `<name> <date> <time> <4 first hex
 //!   digits of the session>` (Firestorm names one it started `<name>
