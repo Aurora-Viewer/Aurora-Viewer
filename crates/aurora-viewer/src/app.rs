@@ -3973,14 +3973,13 @@ impl App {
             // sets by default: process_script_teleport_request sets the
             // floater's auto-focus from it before openFloater
             // (indra/newview/llviewermessage.cpp).
-            // An already open map's search takes it again only with the flag
-            // (LLFloaterWorldMap::onOpen runs on every show).
+            // An already open map comes to the front either way
+            // (setVisibleAndFrontmost); its search takes the keyboard again
+            // only with the flag (LLFloaterWorldMap::onOpen runs on every show).
             if flags & aurora_net::beacon::FOCUS_MAP == 0 {
                 self.worldmap_ui.open_for_script();
-            } else {
-                self.worldmap_ui.focus_search_on_show();
             }
-            ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+            self.show_world_map();
             return;
         }
         if let NetEvent::AvatarRenderInfo { handle, visibility } = ev {
@@ -21067,7 +21066,7 @@ impl App {
                 self.panels.region_estate = open;
                 match self.region_ui.action.take() {
                     Some(ui::region::RegionAction::AboutLand) => self.open_about_land(),
-                    Some(ui::region::RegionAction::WorldMap) => ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map),
+                    Some(ui::region::RegionAction::WorldMap) => self.show_world_map(),
                     Some(ui::region::RegionAction::CustomizeEnvironment) => self.open_region_day_editor(),
                     Some(ui::region::RegionAction::Deselect) => self.build.deselect_all(&self.world),
                     None => {}
@@ -21183,7 +21182,7 @@ impl App {
                 }
                 ui::beacons::show(&ctx, &p, &mut self.panels.beacons, &mut self.settings);
                 if ui::owned_land::show(&ctx, &p, &mut self.world, &mut self.panels.owned_land) {
-                    ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map);
+                    self.show_world_map();
                 }
                 self.poll_grid_helper();
                 self.notice_region_helper();
@@ -21552,8 +21551,13 @@ impl App {
                         ui::minimap::MiniMapAction::Teleport { x, y, z } => self.world.map.track_location(x, y, z, true),
                         ui::minimap::MiniMapAction::Track { x, y, z } => self.world.map.track_location(x, y, z, false),
                         ui::minimap::MiniMapAction::StopTracking => self.world.map.clear_track(),
-                        // LLNetMap::handleRightMouseDown (llnetmap.cpp): no World Map under @showworldmap
-                        ui::minimap::MiniMapAction::OpenWorldMap => self.panels.world_map |= !self.world.rlva.has("showworldmap"),
+                        // LLNetMap::handleRightMouseDown (llnetmap.cpp): no World Map under
+                        // @showworldmap; LLFloaterReg::showInstance("world_map")
+                        ui::minimap::MiniMapAction::OpenWorldMap => {
+                            if !self.world.rlva.has("showworldmap") {
+                                self.show_world_map();
+                            }
+                        }
                         ui::minimap::MiniMapAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::minimap::MiniMapAction::AboutLand(gx, gy) => {
                             ui::land::LandUi::select_at_global(&mut self.world, gx, gy);

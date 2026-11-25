@@ -493,16 +493,20 @@ impl App {
     }
 
     /// Show on map, from any button or link: the map tracks the place and
-    /// opens, or expands when it is minimized (LLFloaterReg::showInstance
-    /// "world_map" → LLFloater::openFloater → setMinimized(false)).
-    /// The search takes the keyboard again when the map is already open:
-    /// LLFloaterWorldMap::onOpen runs on every show.
+    /// opens, or comes to the front, expanded when it is minimized
+    /// (LLFloaterReg::showInstance "world_map" → LLFloater::openFloater).
+    /// Its search takes the keyboard (LLFloaterWorldMap::onOpen, on every
+    /// show).
     pub(super) fn show_on_map(&mut self, x: f64, y: f64, z: f32) {
         self.world.map.show_location(x, y, z);
-        if self.panels.world_map {
-            self.worldmap_ui.focus_search_on_show();
-        }
-        ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+        self.show_world_map();
+    }
+
+    /// The world map from a button or a link (LLFloaterReg::showInstance
+    /// "world_map"): opened, or brought to the front, expanded when it is
+    /// minimized; its search takes the keyboard (`WorldMapUi::show`).
+    pub(super) fn show_world_map(&mut self) {
+        ui::widgets::show_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
     }
 
     /// About Land of the selected parcel (LLFloaterReg::showInstance
@@ -1129,7 +1133,7 @@ impl App {
             CtxAction::TeleportToAvatar(id) | CtxAction::ShowOnMap(id) => {
                 let teleport = matches!(act, CtxAction::TeleportToAvatar(_));
                 if self.world.locate_avatar(id, teleport) && !teleport {
-                    ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+                    self.show_world_map();
                 }
             }
             CtxAction::ShowPlaceInfo(region, pos) => {
@@ -1144,8 +1148,7 @@ impl App {
                 // LLWorldMapHandler::handle: trackURL, then the map opens
                 // centred on the place ("center")
                 self.world.map.show_region(&region, pos);
-                self.worldmap_ui.focus_search_on_show();
-                ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+                self.show_world_map();
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
             CtxAction::TeleportToPlace(region, pos) => {

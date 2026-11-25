@@ -2867,6 +2867,28 @@ pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
     }
 }
 
+/// Show the floater `id` from a button or a link, as
+/// LLFloaterReg::showInstance → LLFloater::openFloater does: a closed one
+/// opens, an open one comes to the front, expanded when it is minimized
+/// (setMinimized(false), setVisibleAndFrontmost). Its own code learns that
+/// it was shown ([`take_floater_shown`]): LLFloater::onOpen runs on every
+/// show, the floater open or not.
+pub fn show_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    let was_open = *open;
+    open_floater(ctx, id, open);
+    if was_open {
+        bring_floater_front(ctx, id);
+    }
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(SHOWN), true));
+}
+
+/// The floater `id` was shown by [`show_floater`] since the last call: true
+/// once.
+pub fn take_floater_shown(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(SHOWN)))
+        .unwrap_or(false)
+}
+
 /// Forget that a floater not on screen was minimized: it opens expanded, at
 /// its expanded size, without the sound of the title button.
 fn unminimize_quietly(ctx: &egui::Context, id: &str) {
@@ -2884,6 +2906,9 @@ pub(crate) const EXPAND: &str = "expand";
 
 /// Temporary frame of a floater asked to close (`close_floater`).
 const CLOSE: &str = "close";
+
+/// Temporary flag of a floater shown by a button or a link (`show_floater`).
+const SHOWN: &str = "shown";
 
 /// Title-bar minimize / expand icon (#3084). Ordinary floaters: minus while
 /// expanded, square while minimized. Compact bodies (Performance) keep the

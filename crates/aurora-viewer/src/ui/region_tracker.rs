@@ -76,14 +76,15 @@ impl RegionTrackerUi {
     }
 
     /// ALFloaterRegionTracker::openMap: the world map on the region, or
-    /// simply opened without one; a minimized map expands
-    /// (LLFloaterReg::showInstance → LLFloater::openFloater).
+    /// simply shown without one: opened, or brought to the front, expanded
+    /// when it is minimized (LLFloaterReg::showInstance →
+    /// LLFloater::openFloater).
     fn open_map(ctx: &egui::Context, world: &mut World, region: Option<&str>, map_open: &mut bool) {
         if let Some(name) = region {
             world.map.track_region(name, glam::Vec3::new(128.0, 128.0, 0.0));
             world.map.focus_track = true;
         }
-        widgets::open_floater(ctx, "worldmap", map_open);
+        widgets::show_floater(ctx, "worldmap", map_open);
     }
 
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool, map_open: &mut bool) {
@@ -285,6 +286,10 @@ mod tests {
         RegionTrackerUi::open_map(&ctx, &mut world, Some("Region 3"), &mut map_open);
         assert!(map_open);
         assert!(crate::ui::widgets::floater_expand_pending(&ctx, "worldmap"));
+        assert!(
+            crate::ui::widgets::take_floater_shown(&ctx, "worldmap"),
+            "its search takes the keyboard"
+        );
         assert!(world.map.focus_track);
     }
 

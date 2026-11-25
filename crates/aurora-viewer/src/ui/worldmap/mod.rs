@@ -153,31 +153,32 @@ struct MapInput {
 impl WorldMapUi {
     /// The map is about to be shown for a script (llMapDestination) without
     /// BEACON_FOCUS_MAP, this frame: its search does not take the keyboard,
-    /// whether the map opens or expands.
+    /// whether the map opens, comes to the front or expands.
     pub fn open_for_script(&mut self) {
         self.opened_by_script = true;
     }
 
-    /// The map, already open (minimized or not), is shown again by a show
-    /// that takes the keyboard: LLFloater::openFloater runs
-    /// LLFloaterWorldMap::onOpen on every showInstance, and its location
-    /// editor takes the keyboard again. A closed map does it when it opens.
-    pub fn focus_search_on_show(&mut self) {
-        if self.was_open {
-            self.focus_search = true;
-        }
-    }
-
-    /// A minimized map shown again by its toolbar button, Ctrl+M or a link
-    /// puts the keyboard in its search, unless a script without
-    /// BEACON_FOCUS_MAP showed it: LLFloaterReg::toggleInstance and
-    /// showInstance open a floater that is not shown, so
-    /// LLFloaterWorldMap::onOpen runs again. Its title button only
-    /// unminimizes (LLFloater::setMinimized) and takes nothing.
-    fn expand_takes_keyboard(&mut self, ctx: &egui::Context, by_script: bool) {
-        if self.was_open && widgets::floater_expand_asked(ctx, "worldmap") && widgets::floater_minimized(ctx, "worldmap") {
+    /// How the map open last frame is shown again, read once per frame
+    /// drawn: true when a script without BEACON_FOCUS_MAP showed it.
+    /// A show by a button or a link (`widgets::show_floater`) puts the
+    /// keyboard in its search again, LLFloater::openFloater running
+    /// LLFloaterWorldMap::onOpen on every showInstance; so does an expand of
+    /// the minimized map by its toolbar button or Ctrl+M
+    /// (LLFloaterReg::toggleInstance opens a floater that is not shown).
+    /// Its title button only unminimizes (LLFloater::setMinimized) and takes
+    /// nothing. A minimized map hidden with the interface expands when the
+    /// interface comes back: a script's show waits with it.
+    fn take_show(&mut self, ctx: &egui::Context) -> bool {
+        let by_script = std::mem::take(&mut self.opened_by_script);
+        let shown = widgets::take_floater_shown(ctx, "worldmap");
+        let expanding = widgets::floater_expand_asked(ctx, "worldmap") && widgets::floater_minimized(ctx, "worldmap");
+        if self.was_open && (shown || expanding) {
             self.focus_search |= !by_script;
         }
+        if expanding {
+            self.opened_by_script = by_script;
+        }
+        by_script
     }
 
     /// AURORA_DEMO_MAP=search:<text>: the region search, as if typed.
@@ -235,10 +236,10 @@ impl WorldMapUi {
             self.was_open = false;
             self.focus_search = false;
             self.opened_by_script = false;
+            widgets::take_floater_shown(ctx, "worldmap");
             return actions;
         }
-        let by_script = std::mem::take(&mut self.opened_by_script);
-        self.expand_takes_keyboard(ctx, by_script);
+        let by_script = self.take_show(ctx);
         if !self.was_open {
             // LLFloaterWorldMap::onOpen: back on our position, items reloaded,
             // and the location editor takes the keyboard when the floater
@@ -2187,22 +2188,46 @@ mod privacy_tests {
 mod reshow_tests {
     use super::*;
 
-    /// A show of the map already open puts the keyboard in its search again
-    /// (LLFloaterWorldMap::onOpen on every show); a closed map leaves it to
-    /// its opening, which a script without BEACON_FOCUS_MAP skips.
+    /// A show of the map already open, by a button or a link, puts the
+    /// keyboard in its search again (LLFloaterWorldMap::onOpen on every
+    /// show), once; a closed map leaves it to its opening.
     #[test]
     fn a_show_of_the_open_map_takes_the_keyboard_again() {
+        let ctx = egui::Context::default();
         let mut map = WorldMapUi::default();
-        map.focus_search_on_show();
+        let mut open = false;
+        widgets::show_floater(&ctx, "worldmap", &mut open);
+        assert!(open);
+        assert!(!map.take_show(&ctx));
         assert!(!map.focus_search, "a closed map takes it when it opens");
         map.was_open = true;
-        map.focus_search_on_show();
+        widgets::show_floater(&ctx, "worldmap", &mut open);
+        assert!(!map.take_show(&ctx));
         assert!(map.focus_search);
+        map.focus_search = false;
+        map.take_show(&ctx);
+        assert!(!map.focus_search, "one show, one focus");
+    }
+
+    /// A script without BEACON_FOCUS_MAP shows the open map without moving
+    /// the keyboard.
+    #[test]
+    fn a_script_show_of_the_open_map_leaves_the_keyboard() {
+        let ctx = egui::Context::default();
+        let mut map = WorldMapUi {
+            was_open: true,
+            ..WorldMapUi::default()
+        };
+        let mut open = true;
+        map.open_for_script();
+        widgets::show_floater(&ctx, "worldmap", &mut open);
+        assert!(map.take_show(&ctx));
+        assert!(!map.focus_search);
+        assert!(!map.opened_by_script, "nothing waits: the map was not minimized");
     }
 
     /// A minimized map expanded by its toolbar button takes the keyboard;
-    /// not for a script without BEACON_FOCUS_MAP, and not by its title
-    /// button, which asks no expand.
+    /// not by its title button, which asks no expand.
     #[test]
     fn a_minimized_map_expanded_by_its_button_takes_the_keyboard() {
         let ctx = egui::Context::default();
@@ -2211,14 +2236,36 @@ mod reshow_tests {
             ..WorldMapUi::default()
         };
         widgets::minimize_floater(&ctx, "worldmap");
-        map.expand_takes_keyboard(&ctx, false);
+        map.take_show(&ctx);
         assert!(!map.focus_search, "no expand asked: the title button");
         let mut open = true;
         widgets::toggle_floater(&ctx, "worldmap", &mut open);
         assert!(open);
-        map.expand_takes_keyboard(&ctx, true);
-        assert!(!map.focus_search, "a script without BEACON_FOCUS_MAP");
-        map.expand_takes_keyboard(&ctx, false);
+        map.take_show(&ctx);
         assert!(map.focus_search);
+    }
+
+    /// A script without BEACON_FOCUS_MAP shows the minimized map while the
+    /// interface is hidden: the expand waits for the interface, and the
+    /// keyboard stays out of the search on every frame until it is drawn.
+    #[test]
+    fn a_script_expand_waiting_for_the_interface_leaves_the_keyboard() {
+        let ctx = egui::Context::default();
+        let mut map = WorldMapUi {
+            was_open: true,
+            ..WorldMapUi::default()
+        };
+        widgets::minimize_floater(&ctx, "worldmap");
+        let mut open = true;
+        map.open_for_script();
+        widgets::show_floater(&ctx, "worldmap", &mut open);
+        assert!(map.take_show(&ctx));
+        assert!(map.take_show(&ctx), "the expand still waits");
+        assert!(!map.focus_search);
+        // the floater, drawn again, applies the expand
+        widgets::cancel_expand(&ctx, "worldmap");
+        map.take_show(&ctx);
+        assert!(!map.opened_by_script, "nothing waits any more");
+        assert!(!map.focus_search);
     }
 }
