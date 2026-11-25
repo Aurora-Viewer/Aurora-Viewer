@@ -417,7 +417,9 @@ pub fn select_on_focus(ui: &egui::Ui, response: &egui::Response, text: &str) {
         return;
     }
     let key = response.id.with("select_on_focus");
-    let frame = ui.ctx().cumulative_frame_nr();
+    // The viewer's own window's frame, also in a window drawn outside it,
+    // whose pass runs inside the viewer's and shares its numbers (outside.rs).
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let focused = response.has_focus();
     let held = focused || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
     let last = ui.ctx().data(|d| d.get_temp::<Hold>(key)).filter(|last| last.frame + 1 >= frame);
