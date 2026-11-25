@@ -64,6 +64,14 @@ pub(super) enum Click {
     Gun { at_cursor: bool },
 }
 
+/// State of the pointer at button-up, before a pending GPU pick can delay it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct MouseRelease {
+    pub(super) cursor: (f32, f32),
+    pub(super) mods: crate::build::Mods,
+    pub(super) command: bool,
+}
+
 /// What follows a click that waits for its depth, kept in order.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Held {
@@ -75,9 +83,9 @@ pub(super) enum Held {
     /// Mouse motion (camera drags), summed while nothing comes between.
     Motion(f32, f32),
     Click(Click),
-    LeftRelease,
+    LeftRelease(MouseRelease),
     /// The build tools' own release (demo script).
-    BuildRelease,
+    BuildRelease(MouseRelease),
     /// A demo script's log line about the click before it.
     Note(DemoNote),
     /// A world press made while a text field had the keyboard: what follows
@@ -339,7 +347,10 @@ impl App {
         if self.studio_mouse(button, pressed, over_ui) {
             return;
         }
-        if self.clicks.waiting() {
+        // Capture the end of a drag even when its press is waiting for the GPU.
+        if button == MouseButton::Left && !pressed {
+            self.with_mouse_mods(Self::on_left_release);
+        } else if self.clicks.waiting() {
             self.clicks.hold(Held::Button { button, pressed, over_ui });
         } else {
             self.with_mouse_mods(|app| app.mouse_button(button, pressed, over_ui));
@@ -705,8 +716,8 @@ impl App {
             }
             Held::Motion(dx, dy) => self.camera_mouse_delta(dx, dy),
             Held::Click(click) => self.run_click(click),
-            Held::LeftRelease => self.on_left_release(),
-            Held::BuildRelease => self.build_release(),
+            Held::LeftRelease(release) => self.apply_left_release(release),
+            Held::BuildRelease(release) => self.finish_build_release(release),
             Held::Note(note) => self.demo_note(note),
             Held::UiTurn { .. } => {}
         }
@@ -806,12 +817,12 @@ impl App {
 
     /// The build tools' release of a demo script, behind its press.
     pub(super) fn build_release(&mut self) {
+        let release = self.mouse_release();
         if self.clicks.waiting() {
-            self.clicks.hold(Held::BuildRelease);
-            return;
+            self.clicks.hold(Held::BuildRelease(release));
+        } else {
+            self.finish_build_release(release);
         }
-        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene));
-        self.flush_build();
     }
 
     /// A demo script's log line about the click it just made: written once
@@ -1232,6 +1243,17 @@ mod tests {
         }
     }
 
+    fn release() -> Held {
+        Held::LeftRelease(MouseRelease {
+            cursor: (30.0, 45.0),
+            mods: crate::build::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+            command: false,
+        })
+    }
+
     fn ui_turn() -> Held {
         Held::UiTurn {
             pass: 7,
@@ -1281,20 +1303,17 @@ mod tests {
     fn an_older_release_finishes_before_a_later_ui_turn() {
         for pass in [7, 8] {
             let mut h = ReplayHarness::default();
-            h.clicks.hold(Held::LeftRelease);
+            h.clicks.hold(release());
             h.clicks.hold(ui_turn());
             h.clicks.hold(press());
             h.drain(pass);
-            assert_eq!(h.seen.first(), Some(&(Held::LeftRelease, None)));
+            assert_eq!(h.seen.first(), Some(&(release(), None)));
             if pass == 7 {
                 assert_eq!(h.seen.len(), 1, "only the newer press waits for the UI");
                 assert!(h.clicks.waiting(), "new arrivals still wait behind the turn");
                 h.drain(8);
             }
-            assert_eq!(
-                h.seen,
-                [(Held::LeftRelease, None), (press(), Some(((10.0, 20.0), [false, false, true])))]
-            );
+            assert_eq!(h.seen, [(release(), None), (press(), Some(((10.0, 20.0), [false, false, true])))]);
             assert!(!h.clicks.waiting());
         }
     }
@@ -1303,7 +1322,7 @@ mod tests {
     fn older_motion_and_release_stay_before_the_new_press() {
         let mut h = ReplayHarness::default();
         h.clicks.hold(Held::Motion(5.0, -2.0));
-        h.clicks.hold(Held::LeftRelease);
+        h.clicks.hold(release());
         h.clicks.hold(ui_turn());
         h.clicks.hold(press());
         h.drain(8);
@@ -1311,7 +1330,7 @@ mod tests {
             h.seen,
             [
                 (Held::Motion(5.0, -2.0), None),
-                (Held::LeftRelease, None),
+                (release(), None),
                 (press(), Some(((10.0, 20.0), [false, false, true])))
             ]
         );
@@ -1405,12 +1424,12 @@ mod tests {
         let restore = Some(((10.0, 20.0), [false, false, true]));
         let mut w = ClickWait::default();
         // left behind by a GPU recovery (forget_pending keeps `held`)
-        w.hold(Held::LeftRelease);
+        w.hold(release());
         w.hold(turn(7));
         w.hold(button(true));
         w.hold(button(false));
         assert!(w.waiting(), "the press and what follows are held");
-        assert_eq!(w.next_held(7), Some((Held::LeftRelease, None)), "held before the turn: as it was");
+        assert_eq!(w.next_held(7), Some((release(), None)), "held before the turn: as it was");
         assert_eq!(w.next_held(7), None, "no pass has ended since the press");
         assert!(w.waiting());
         assert_eq!(w.next_held(8), Some((button(true), restore)));
@@ -1452,19 +1471,14 @@ mod tests {
         assert!(!w.waiting());
         w.hold(Held::Motion(1.0, 2.0));
         w.hold(Held::Motion(3.0, -1.0));
-        w.hold(Held::LeftRelease);
+        w.hold(release());
         w.hold(Held::Motion(1.0, 1.0));
         w.hold(Held::Click(Click::Menu));
         // motion is summed only while nothing comes between: a drag held
         // before the release must not move the camera after it
         assert_eq!(
             w.held,
-            [
-                Held::Motion(4.0, 1.0),
-                Held::LeftRelease,
-                Held::Motion(1.0, 1.0),
-                Held::Click(Click::Menu)
-            ]
+            [Held::Motion(4.0, 1.0), release(), Held::Motion(1.0, 1.0), Held::Click(Click::Menu)]
         );
     }
 
