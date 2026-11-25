@@ -505,7 +505,7 @@ mod tests {
             ..Default::default()
         };
         tool.mouse_down(world, s, None, Some(idx), Some(surface), (0.0, 0.0), mods);
-        tool.mouse_up(world, s, None, Mods::default());
+        tool.mouse_up(world, s, None, (0.0, 0.0), Mods::default());
     }
 
     const SHIFT: Mods = Mods {

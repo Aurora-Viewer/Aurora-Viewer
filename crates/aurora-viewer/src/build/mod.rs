@@ -905,7 +905,7 @@ pub enum GrabMode {
     Spin,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct Mods {
     pub shift: bool,
@@ -1057,9 +1057,9 @@ pub struct BuildTool {
     /// outside "Select face": Ctrl+Shift, or Shift / Ctrl set to select a
     /// face (face_buttons.rs).
     press_face: Option<(u8, face_buttons::FaceClick)>,
-    /// The rectangle being dragged started in HUD space, which it keeps
-    /// after the drag has cleared the selection that said so.
-    rect_hud: bool,
+    /// Space of the object under the press. A press on empty space can
+    /// extend the current selection in its own space.
+    rect_space: Option<SelectType>,
     /// The press has left the click's slop (`rect_dragged`): a rectangle
     /// until its release, even if the cursor comes back.
     rect_walked: bool,
@@ -1125,7 +1125,7 @@ impl Default for BuildTool {
             rect: None,
             press: None,
             press_face: None,
-            rect_hud: false,
+            rect_space: None,
             rect_walked: false,
             tab: 6,
             status: String::new(),
@@ -1721,7 +1721,14 @@ impl BuildTool {
         for (handle, ids) in self.wire_ids(world, keys, self.selection_linked) {
             self.send(BuildCmd::Deselect { handle, local_ids: ids });
         }
-        self.selection.retain(|k| !keys.contains(k));
+        match keys {
+            [] => {}
+            [key] => self.selection.retain(|k| k != key),
+            _ => {
+                let removed: HashSet<_> = keys.iter().copied().collect();
+                self.selection.retain(|k| !removed.contains(k));
+            }
+        }
     }
 
     /// A restriction takes these out of the selection: a drag of them stops
@@ -1792,8 +1799,10 @@ impl BuildTool {
     }
 
     pub fn hud_selected(&self, world: &World) -> bool {
-        if self.rect.is_some() && self.rect_hud {
-            return true;
+        if self.rect.is_some()
+            && let Some(space) = self.rect_space
+        {
+            return space == SelectType::Hud;
         }
         self.selection
             .first()
@@ -1802,10 +1811,20 @@ impl BuildTool {
             .is_some_and(|(_, _, hud)| hud)
     }
 
+    /// A rectangle started on an object in a different selection space.
+    fn rect_crosses_spaces(&self, world: &World) -> bool {
+        !self.selection.is_empty() && self.rect_space.is_some_and(|space| space != self.select_type(world))
+    }
+
     /// LLSelectMgr::updateSelectionCenter / resetAgentHUDZoom
     /// (indra/newview/llselectmgr.cpp): leaving HUD editing restores 100%.
     /// Track the transition so World > HUDs zoom still works outside editing.
     pub fn sync_hud_zoom(&mut self, world: &mut World) {
+        // A rectangle can be drawn in the other space while Ctrl keeps
+        // the original selection. Only its release can end that HUD edit.
+        if self.rect.is_some() && self.rect_crosses_spaces(world) {
+            return;
+        }
         let editing = self.open && self.hud_selected(world);
         if self.hud_editing && !editing {
             world.hud_zoom = 1.0;
@@ -2305,28 +2324,34 @@ impl BuildTool {
         if world.rlva_drops_picks() {
             return;
         }
+        if self.rect_crosses_spaces(world) {
+            // Ctrl kept the selection in its original space when the drag
+            // started. If released before the button, start adding in the
+            // rectangle's space. A subtraction there has nothing to remove.
+            if deselect {
+                return;
+            }
+            self.deselect_all(world);
+        }
         // …and under @fartouch its distance stands for MaxSelectDistance,
         // whether "Limit select distance" is on or not, farther or nearer
         let limit = world.rlva_select_limit().or(s.select_limit());
         let rect = egui::Rect::from_two_pos(egui::pos2(a.0, a.1), egui::pos2(b.0, b.1));
         let now = Instant::now();
         self.selection_linked = s.edit_linked;
-        let mut units = Vec::new();
-        let mut seen = HashSet::new();
-        for (idx, o) in world.objects.iter() {
+        let covered_unit = |idx| -> Option<ObjKey> {
+            let o = world.objects.get(idx)?;
             if o.is_avatar() || (!s.select_probes && o.extra.reflection_probe.is_some()) {
-                continue;
+                return None;
             }
-            let Some((p, rot, hud)) = Scene::object_transform(world, idx, now, 0) else {
-                continue;
-            };
+            let (p, rot, hud) = Scene::object_transform(world, idx, now, 0)?;
             if hud != self.cam.hud.is_some() || (!hud && limit.is_some_and(|max| p.distance(world.agent.position) > max)) {
-                continue;
+                return None;
             }
             // what avatars wear is left out of a rectangle drawn in the
             // world (LLToolSelectRect::handleRectangleSelection skips isAttachment)
             if !hud && select_type(world, idx) != SelectType::World {
-                continue;
+                return None;
             }
             let drawn = scene
                 .and_then(|scene| scene.drawn_geometry(world, idx, now))
@@ -2354,21 +2379,38 @@ impl BuildTool {
                 }),
             };
             if !taken || !passes_rect_filters(world, s, idx) {
-                continue;
+                return None;
             }
-            let Some(u) = Self::unit_of(world, idx, s.edit_linked) else {
-                continue;
-            };
-            // LLToolSelectRect::handleRectangleSelection: (deselect &&
-            // !vobjp->isSelected()) skips what is not selected
-            if (!deselect || self.is_selected(&u)) && seen.insert(u) {
-                units.push(u);
-            }
-        }
+            Self::unit_of(world, idx, s.edit_linked)
+        };
         if deselect {
+            // LLToolSelectRect::handleRectangleSelection skips unselected
+            // prims. A single covered part removes its selected linkset.
+            let units: Vec<_> = self
+                .selection
+                .iter()
+                .copied()
+                .filter(|unit| {
+                    let Some(idx) = world.objects.index_of(unit) else { return false };
+                    if covered_unit(idx) == Some(*unit) {
+                        return true;
+                    }
+                    !s.edit_linked
+                        && !world.objects.children_of(unit).is_empty()
+                        && family(world, idx).into_iter().skip(1).any(|part| covered_unit(part) == Some(*unit))
+                })
+                .collect();
             self.deselect(world, &units);
         } else {
-            for u in units.into_iter().take(1024) {
+            let mut seen = HashSet::new();
+            let units: Vec<_> = world
+                .objects
+                .iter()
+                .filter_map(|(idx, _)| covered_unit(idx))
+                .filter(|unit| seen.insert(*unit))
+                .take(1024)
+                .collect();
+            for u in units {
                 self.add(world, u);
             }
         }
@@ -2479,7 +2521,7 @@ impl BuildTool {
                         self.send_stretch_materials(world, scene, idx, s.scale_stretch_textures);
                     }
                 }
-                self.drag_rect(world, cursor);
+                self.drag_rect(world, cursor, mods);
             }
             Tool::Grab => self.grab_hover(world, cursor, mods),
             Tool::Land => {
@@ -2489,39 +2531,33 @@ impl BuildTool {
                     self.send(c);
                 }
             }
-            Tool::Create | Tool::Focus => self.drag_rect(world, cursor),
+            Tool::Create | Tool::Focus => self.drag_rect(world, cursor, mods),
         }
     }
 
-    /// LLToolSelectRect::handleHover: a press that leaves the slop is a
-    /// rectangle and not a click; without Shift or Ctrl it starts from an
-    /// empty selection. With them it keeps the selection, unless the press
-    /// is in another space: a selection never mixes them, as
-    /// LLToolSelect::handleObjectSelection's click would have decided.
-    fn drag_rect(&mut self, world: &World, cursor: (f32, f32)) {
+    /// LLToolSelectRect::handleHover reads Shift and Ctrl when the cursor
+    /// first leaves the slop. Only an additive rectangle changes spaces.
+    fn drag_rect(&mut self, world: &World, cursor: (f32, f32), mods: Mods) {
         let ppp = self.cam.ppp;
         let Some(r) = self.rect.as_mut() else { return };
         r.1 = cursor;
         self.rect_walked |= rect_dragged(r.0, r.1, ppp);
-        let (dragged, extend) = (self.rect_walked, r.2);
-        if dragged && let Some(pick) = self.press.take() {
+        if self.rect_walked && self.press.take().is_some() {
             self.press_face = None;
-            let other_space = pick
-                .and_then(|key| world.objects.index_of(&key))
-                .is_some_and(|idx| select_type(world, idx) != self.select_type(world));
-            if !extend || other_space {
+            if (!mods.shift && !mods.ctrl) || (!rect_deselect(mods) && self.rect_crosses_spaces(world)) {
                 self.deselect_all(world);
             }
         }
     }
 
-    /// The press is abandoned without its release, as the focus going ends
-    /// the mouse capture (LLToolSelect::onMouseCaptureLost): it selects
-    /// nothing. A rectangle already dragged is left to its release.
+    /// LLToolSelect::onMouseCaptureLost: the real button release will not
+    /// arrive. Discard both a pending click and a rectangle in progress.
     pub fn drop_press(&mut self) {
-        if self.press.take().is_some() {
-            self.rect = None;
-        }
+        self.press = None;
+        self.press_face = None;
+        self.rect = None;
+        self.rect_space = None;
+        self.rect_walked = false;
     }
 
     /// Left press in the world while building. `hit` is the picked surface
@@ -2606,7 +2642,7 @@ impl BuildTool {
                         self.press_face = face_buttons::FaceClick::of(s, mods)
                             .zip(surface.and_then(|s| u8::try_from(s.face).ok()))
                             .map(|(click, face)| (face, click));
-                        self.rect_hud = pick.is_some_and(|idx| select_type(world, idx) == SelectType::Hud);
+                        self.rect_space = pick.map(|idx| select_type(world, idx));
                         self.rect = Some((cursor, cursor, extend));
                         self.rect_walked = false;
                         true
@@ -2760,7 +2796,10 @@ impl BuildTool {
     /// `scene` gives the selection rectangle the drawn vertices of the prims.
     /// The modifiers of the release decide, as LLToolSelectRect::handleMouseUp:
     /// `mods` is the mask of the mouse-up event.
-    pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, mods: Mods) {
+    pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, cursor: (f32, f32), mods: Mods) {
+        // A fast drag can finish before a frame updates the rectangle or
+        // even before the GPU resolves the original press.
+        self.drag_rect(world, cursor, mods);
         if let Some((a, b, extend)) = self.rect.take() {
             match self.press.take() {
                 Some(pick) => {
@@ -2772,6 +2811,7 @@ impl BuildTool {
                 }
                 None => self.rect_select(world, s, scene, a, b, rect_deselect(mods)),
             }
+            self.rect_space = None;
         }
         let mut cmds = Vec::new();
         self.manip.release(world, s, self.selection_linked, &mut cmds);

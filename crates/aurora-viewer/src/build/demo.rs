@@ -156,7 +156,6 @@ fn part_of(s: &str) -> Option<Part> {
     })
 }
 
-/// Screen position (physical pixels) of a handle of the current selection.
 /// The screen rectangle around prim `idx` (its box), for a rectangle that
 /// must surround it; none when it is behind the camera.
 fn footprint_px(tool: &BuildTool, world: &World, idx: usize) -> Option<egui::Rect> {
@@ -172,6 +171,7 @@ fn footprint_px(tool: &BuildTool, world: &World, idx: usize) -> Option<egui::Rec
     Some(rect)
 }
 
+/// Screen position (physical pixels) of a handle of the current selection.
 fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> Option<(f32, f32)> {
     let now = Instant::now();
     let f = super::manip::frame(world, s, &tool.selection, tool.selection_linked, now, None)?;
@@ -374,6 +374,19 @@ pub fn texture_inventory(world: &mut World) {
     }
 }
 
+/// The overlapping sample prims used by the selection-cycle and rectangle demos.
+pub fn uses_cycle_objects(spec: &str) -> bool {
+    let mut parts = spec.split(',').map(str::trim);
+    match parts.next() {
+        Some("cycle" | "cycle-linked") => true,
+        Some(mode) if mode.starts_with("rect") => parts
+            .filter_map(|part| part.strip_prefix("object:").or_else(|| part.strip_prefix("keep:")))
+            .filter_map(|id| id.parse::<u32>().ok())
+            .any(|id| (99610..=99614).contains(&id)),
+        _ => false,
+    }
+}
+
 /// Optional direct object selection, used for animated-shape captures.
 pub fn target_index(spec: &str, world: &World) -> Option<usize> {
     let target = spec.split(',').nth(1)?.trim().strip_prefix("object:")?;
@@ -457,12 +470,6 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         };
     }
     if parts[0].starts_with("rect") {
-        let keep: Vec<usize> = parts
-            .iter()
-            .filter_map(|p| p.strip_prefix("keep:"))
-            .filter_map(|id| id.parse::<u32>().ok())
-            .filter_map(|id| world.objects.iter().find_map(|(i, o)| (o.key.local_id == id).then_some(i)))
-            .collect();
         let start = match object {
             Some(idx) => crate::scene::Scene::object_transform(world, idx, Instant::now(), 0).and_then(|(p, _, _)| tool.cam.project_px(p)),
             None => Some((x, y)),
@@ -491,6 +498,12 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         return match frame {
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
             225 => {
+                let keep: Vec<_> = parts
+                    .iter()
+                    .filter_map(|p| p.strip_prefix("keep:"))
+                    .filter_map(|id| id.parse::<u32>().ok())
+                    .filter_map(|id| world.objects.iter().find_map(|(i, o)| (o.key.local_id == id).then_some(i)))
+                    .collect();
                 if keep.is_empty() {
                     Vec::new()
                 } else {
@@ -939,6 +952,16 @@ pub fn link_setup(world: &mut World, tool: &mut BuildTool, settings: &BuildSetti
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cycle_objects_only_join_demos_that_use_them() {
+        use super::uses_cycle_objects;
+        assert!(uses_cycle_objects("cycle-linked,1,2"));
+        assert!(uses_cycle_objects("rect-ctrl,object:99614"));
+        assert!(uses_cycle_objects("rect,1,2, keep:99610"));
+        assert!(!uses_cycle_objects("rect-ctrl,object:996140"));
+        assert!(!uses_cycle_objects("create,object:99614"));
+    }
+
     #[test]
     fn bp_alpha_needs_the_texture_tab() {
         assert!(super::is_bp_alpha_tab("texture:bp-alpha"));
