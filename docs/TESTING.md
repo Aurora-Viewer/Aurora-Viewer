@@ -1147,6 +1147,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_TEXT_MENU=1` | Right-click menu of a text field (Cut, Copy, Paste…) |
 | `AURORA_DEMO_MENU_SEARCH=<query>` | Wolf menu filtered by its search field |
+| `AURORA_DEMO_MENU_TEAROFF=<menus>` | Wolf menu sub-menus torn off into windows |
 | `AURORA_DEMO_POINTER=<points>` | Moves, clicks or holds the pointer over the interface |
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
@@ -1879,6 +1880,17 @@ when unfocused") is ignored during a screenshot.
   entry matches" line. A broad query (`e`) scrolls under the field, and a
   path met again (Me after Me › Avatar health) gets a divider, not its
   heading a second time.
+- **`AURORA_DEMO_MENU_TEAROFF=<menus>`**: sub-menus of the wolf menu torn
+  off into windows of their own at frame 400, side by side from the left,
+  as a click on their tear-off row does. Each menu is its path of labels in
+  the interface's language joined with `/`, the menus separated by `;`
+  (`World;Me/Avatar health;Help`). Capture frame 620: each window has the
+  menu's label as its title, no minimize button, the double line of its
+  tear-off row, then the entries of that sub-menu only, as wide as its
+  widest entry (a tall one, World, scrolls). Clicking an entry leaves the
+  window open; its tear-off row or its cross closes it. In the wolf menu, a
+  torn-off sub-menu no longer opens on hover: a click on its row brings its
+  window to the front. A path that is not in the menu opens nothing.
 - **`AURORA_DEMO_DOUBLECLICK=walk|run|tp[,x,y]`**: the double-click action
   of the session (the saved one is left alone), and a double click of the
   left button at pixel (x, y) at frames 700 to 703 (ground ahead and to the

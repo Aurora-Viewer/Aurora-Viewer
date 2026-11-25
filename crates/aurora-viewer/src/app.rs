@@ -693,6 +693,8 @@ pub struct App {
     stand_fidget: stand_fidget::Fidget,
     follow_ui: ui::follow::FollowUi,
     portal_ui: ui::portals::PortalUi,
+    /// The wolf menu's sub-menus torn off this session (`ui/bars/torn.rs`).
+    torn_menus: ui::bars::torn::TornMenus,
     /// Build › Edit particles (ParticleEditor).
     object_export: crate::build::ui::export::ExportWindow,
     object_export_job: object_export::Job,
@@ -2245,6 +2247,7 @@ impl App {
             first_arrival_done: false,
             follow_ui: Default::default(),
             portal_ui: Default::default(),
+            torn_menus: Default::default(),
             object_export: Default::default(),
             object_export_job: Default::default(),
             particle_editor: Default::default(),
@@ -3749,6 +3752,8 @@ impl App {
         self.avatar_mark_last = None;
         self.follow_ui = Default::default();
         self.portal_ui = Default::default();
+        // torn-off menus last for the session (LLTearOffMenu)
+        self.torn_menus.clear();
         self.object_export = Default::default();
         self.object_export_job = Default::default();
         self.particle_editor = Default::default();
@@ -19383,6 +19388,15 @@ impl App {
                     );
                 } else {
                     ui::bars::islands::set_favorites_row_bottom(&ctx, None);
+                }
+                // the torn-off menus: windows, shown and hidden with the
+                // others, also while the top bar is not drawn
+                if self.demo {
+                    ui::bars::torn::demo(&ctx, &mut self.torn_menus, self.frame_count);
+                }
+                let torn = ui::bars::torn::show(&ctx, &p, &mut self.torn_menus, &mut self.panels, &status);
+                if !matches!(torn, ui::bars::BarAction::None) {
+                    a.bar = torn;
                 }
                 // AURORA_DEMO_BARS: the mockup's voice (connected; talking
                 // with `voice`) and chat island width, for this run only and
