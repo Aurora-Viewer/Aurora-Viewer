@@ -1534,8 +1534,11 @@ impl Scene {
     /// ray meets the object. A far face taken at the depth beside the ray
     /// (#4869) can lie nearer along it than the object does on the ray,
     /// where an attachment drawn in front of the object would be cut off.
-    pub fn found_bound(&self, world: &World, idx: usize, ray: (Vec3, Vec3), point: Vec3) -> Vec3 {
-        let Some(hit) = self.face_hit_mode(world, idx, ray, Instant::now(), true, FacePick::Surface) else {
+    /// `left`: the search was the left button's (`left_selection_pick`),
+    /// whose faces let a fully transparent texel through.
+    pub fn found_bound(&self, world: &World, idx: usize, ray: (Vec3, Vec3), point: Vec3, left: bool) -> Vec3 {
+        let mode = if left { FacePick::Left } else { FacePick::Surface };
+        let Some(hit) = self.face_hit_mode(world, idx, ray, Instant::now(), true, mode) else {
             return point;
         };
         if hit.t > (point - ray.0).dot(ray.1) {
@@ -3116,12 +3119,23 @@ pub(crate) mod tests {
         let point = at + Vec3::new(-s, c, 0.0) * (0.28 / s);
         let ray = (Vec3::new(0.0, at.y, 50.0), Vec3::X);
         let near = |a: Vec3, b: Vec3| a.distance(b) < 1e-3;
-        assert!(near(scene.found_bound(&world, front, ray, point), at), "where the ray meets it");
-        assert!(near(scene.found_bound(&world, front, ray, at), at), "a point on the ray");
+        assert!(
+            near(scene.found_bound(&world, front, ray, point, false), at),
+            "where the ray meets it"
+        );
+        assert!(near(scene.found_bound(&world, front, ray, at, false), at), "a point on the ray");
         let past = at + Vec3::X * 0.5;
-        assert_eq!(scene.found_bound(&world, front, ray, past), past, "never nearer than the point");
+        assert_eq!(
+            scene.found_bound(&world, front, ray, past, false),
+            past,
+            "never nearer than the point"
+        );
         let beside = (Vec3::new(0.0, 20.0, 50.0), Vec3::X);
-        assert_eq!(scene.found_bound(&world, front, beside, point), point, "a ray that misses it");
+        assert_eq!(
+            scene.found_bound(&world, front, beside, point, false),
+            point,
+            "a ray that misses it"
+        );
     }
 
     #[test]

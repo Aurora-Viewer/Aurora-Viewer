@@ -727,7 +727,12 @@ impl App {
         on_face: Option<usize>,
     ) -> Option<crate::scene::drawn::DrawnObject> {
         let bound = match (on_face, picked.ray, found) {
-            (Some(idx), Some(ray), Some(p)) => Some(self.scene.found_bound(&self.world, idx, ray, p)),
+            (Some(idx), Some(ray), Some(p)) => {
+                Some(
+                    self.scene
+                        .found_bound(&self.world, idx, ray, p, gesture == crate::scene::drawn::Gesture::Build),
+                )
+            }
             _ => found,
         };
         let shown = self.scene.designated(
