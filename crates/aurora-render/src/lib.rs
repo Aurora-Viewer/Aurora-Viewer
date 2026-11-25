@@ -41,6 +41,12 @@ pub fn dlss_support() -> DlssSupport {
 pub fn dlss_retry() {
     dlss::retry();
 }
+/// DLSS draws in FSR's place: the setting (`RenderSettings::dlss`), unless
+/// `AURORA_DLSS` overrides it for this launch (dlss.rs). Preferences asks
+/// it too, so that its page names what draws.
+pub fn dlss_wanted(setting: bool) -> bool {
+    dlss::wanted(setting)
+}
 pub use device_lost::{
     GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_drop, in_guarded_poll, in_guarded_start, in_guarded_ui_upload, is_drop_loss_panic,
     is_loss_panic, is_start_loss_panic, loss_details, start_guarded,

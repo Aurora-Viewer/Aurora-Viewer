@@ -388,16 +388,24 @@ fn anti_aliasing(cx: &mut Cx) {
     let words: Vec<&str> = choices.iter().map(|(_, l, _)| *l).collect();
     cx.keywords(&words.join(" "));
     cx.row(label, hint, &fields!(antialiasing, dlss), |ui, s| {
-        let mut v = if s.antialiasing == 7 && s.dlss { DLSS } else { s.antialiasing };
+        // (`AURORA_DLSS` for a test overrides the setting: the list shows
+        // what draws, aurora_render::dlss_wanted)
+        let mut v = if s.antialiasing == 7 && aurora_render::dlss_wanted(s.dlss) {
+            DLSS
+        } else {
+            s.antialiasing
+        };
         let changed = crate::ui::options::combo_blocked(ui, &mut v, &choices);
         if changed {
             (s.antialiasing, s.dlss) = if v == DLSS { (7, true) } else { (v, false) };
         }
         changed
     });
+    // (DLSS saved but kept out by `AURORA_DLSS=0`: the list shows FSR, which
+    // draws, and the note still says why)
     if let Some(why) = &blocked
         && cx.s.antialiasing == 7
-        && cx.s.dlss
+        && (cx.s.dlss || aurora_render::dlss_wanted(cx.s.dlss))
     {
         cx.note(&tr!("ui-options-dlss-fallback", why = why.as_str()));
         // NVIDIA's library refused it while the viewer runs: asked again
@@ -1257,7 +1265,7 @@ fn image(cx: &mut Cx) {
     // (chosen and choosable: also while NVIDIA's library refuses it, so
     // that its model can still be picked and the retry finds it; only the
     // CAS below asks whether DLSS really draws)
-    let dlss = cx.s.antialiasing == 7 && cx.s.dlss && dlss_choosable(cx);
+    let dlss = cx.s.antialiasing == 7 && aurora_render::dlss_wanted(cx.s.dlss) && dlss_choosable(cx);
     let dlss_draws = dlss && matches!(dlss_blocked(cx), Some(None));
     let title = if dlss { tr!("ui-options-dlss") } else { tr!("ui-options-fsr") };
     cx.group(title, |cx| {
