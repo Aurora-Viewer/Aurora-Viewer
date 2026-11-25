@@ -368,9 +368,10 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-aurora-classic"),
                     &field!(classic_name_tags),
                 );
-                // the plates' own look, meaningless to the classic tags
+                // the plates' own look, right under the choice of plates (not
+                // behind a cog), hidden under the classic tags it means nothing to
                 let classic_tags = cx.s.classic_name_tags;
-                cx.subs(classic_tags, |cx| {
+                cx.conditional(!classic_tags, |cx| {
                     cx.wide().choice(
                         tr!("ui-options-aurora-plate-style"),
                         tr!("ui-options-aurora-plate-style-help"),
