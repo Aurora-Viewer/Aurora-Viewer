@@ -2405,16 +2405,28 @@ fn floating_blocks_keep_one_place_per_command_and_only_the_users_are_deleted() {
             .any(|b| b.command == "import_mesh")
     );
 
-    state.pending = Some(Edit::FloatingDelete(drawers::IMPORT_BAR.into()));
-    assert!(!state.commit(&layout(), &mut settings), "the import bar stays");
     state.pending = Some(Edit::FloatingDelete(id.clone()));
     assert!(state.commit(&layout(), &mut settings));
     assert!(!settings.drawers.contains_key(&id));
     assert!(!settings.placed("inventory", &layout()), "its buttons go back to the catalogue");
 
+    // the import block is deleted like the others, and not made again
+    // (human request, 2026-11-25)
+    state.pending = Some(Edit::FloatingDelete(drawers::IMPORT_BAR.into()));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(!settings.drawers.contains_key(drawers::IMPORT_BAR));
+    assert!(!settings.ensure_import_bar(&layout()));
+    assert!(!settings.drawers.contains_key(drawers::IMPORT_BAR));
+
+    state.pending = Some(Edit::Insert(
+        Bar::Top,
+        drawers::floating_toggle(&drawers::create_floating(&mut settings, "Tools"), "Tools"),
+        0,
+    ));
+    assert!(state.commit(&layout(), &mut settings));
     state.pending = Some(Edit::Clear);
     assert!(state.commit(&layout(), &mut settings));
-    assert!(settings.drawers[drawers::IMPORT_BAR].buttons.is_empty(), "cleared, not deleted");
+    assert!(settings.drawers.is_empty(), "every block goes");
 }
 
 #[test]
@@ -2454,6 +2466,7 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
         name: "Tools".into(),
         mode: ButtonMode::TextOnly,
         vertical: true,
+        closes: true,
         look: appearance::Appearance {
             mode: None,
             icon: Some("star-filled".into()),
@@ -2463,7 +2476,7 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
     assert!(state.commit(&layout(), &mut settings));
     assert_eq!(settings.top[0].tooltip, "Tools", "its placed button takes the name");
     let floating = settings.drawers[&id].floating.clone().expect("floating");
-    assert!(floating.vertical && floating.name == "Tools");
+    assert!(floating.vertical && floating.closes && floating.name == "Tools");
     assert_eq!(settings.drawers[&id].mode, ButtonMode::TextOnly);
     assert_eq!(settings.appearance[&id], options.look);
     state.pending = Some(Edit::FloatingOptions(id.clone(), options));
@@ -2507,20 +2520,11 @@ fn the_import_bar_takes_its_buttons_once() {
             .any(|b| b.command == "import_texture")
     );
 
-    // made a fixed block, it is not made again; a loaded layout without it
-    // gets one of the buttons it places nowhere
+    // made a fixed block or deleted, it is not made again (human request,
+    // 2026-11-25: a preset that has it brings it back)
     settings.drawers.remove(drawers::IMPORT_BAR);
     assert!(!settings.ensure_import_bar(&layout()));
     assert!(!settings.drawers.contains_key(drawers::IMPORT_BAR));
-    settings.top.push(button("import_sound"));
-    drawers::restore_import_bar(&mut settings, &layout());
-    assert_eq!(settings.location("import_sound", &layout()), Some(Bar::Top), "placed, it stays");
-    assert!(
-        settings.drawers[drawers::IMPORT_BAR]
-            .buttons
-            .iter()
-            .any(|b| b.command == "import_mesh")
-    );
 }
 
 /// A block, a drawer and a floating block become one another (human
@@ -2578,8 +2582,7 @@ fn blocks_drawers_and_floating_blocks_switch_into_one_another() {
     assert!(!settings.drawers.contains_key(&id));
     assert_eq!(commands(settings.buttons.as_ref().expect("bottom")), ["inventory", "people"]);
 
-    // a bar's block cannot float; the import block docks like the others,
-    // and its button removed makes it floating again: it is never deleted
+    // a bar's block cannot float; the import block docks like the others
     // (human request, 2026-11-25)
     settings.top.insert(0, button("bar_clock"));
     state.pending = Some(Edit::Float(Bar::Top, "bar_clock".into(), pos));
@@ -2592,10 +2595,10 @@ fn blocks_drawers_and_floating_blocks_switch_into_one_another() {
         settings.location(drawers::IMPORT_BAR, &layout()).is_some(),
         "a drawer, its button in a bar"
     );
+    // a drawer like the others: its button removed, it goes
     state.pending = Some(Edit::Remove(drawers::IMPORT_BAR.into()));
     assert!(state.commit(&layout(), &mut settings));
-    assert!(drawers::is_floating(&settings, drawers::IMPORT_BAR));
-    assert!(!settings.drawers[drawers::IMPORT_BAR].buttons.is_empty());
+    assert!(!settings.drawers.contains_key(drawers::IMPORT_BAR));
 }
 
 /// A plain block's shortcut follows it into a drawer, a floating block and
@@ -2694,49 +2697,6 @@ fn the_import_bar_gets_its_divider_and_ctrl_u_once() {
     settings.shortcuts.clear();
     assert!(!settings.ensure_import_bar(&layout()), "once: a removed shortcut stays removed");
     assert!(settings.shortcuts.is_empty());
-}
-
-/// The import block cannot be deleted but can be reset: its buttons back,
-/// taken from where they went, its look, and Ctrl+U taken back from another
-/// target (human request, 2026-11-25).
-#[test]
-fn the_import_block_resets_to_its_buttons_look_and_ctrl_u() {
-    let mut settings = ToolbarSettings {
-        composed: true,
-        buttons: Some(Vec::new()),
-        ..Default::default()
-    };
-    assert!(settings.ensure_import_bar(&layout()));
-    let fresh = settings.drawers[drawers::IMPORT_BAR].clone();
-    assert_eq!(
-        fresh.floating.as_ref().map(|floating| floating.icon.as_str()),
-        Some(drawers::IMPORT_ICON)
-    );
-    let ctrl_u = settings.shortcuts[drawers::IMPORT_BAR].clone();
-    let drawer = settings.drawers.get_mut(drawers::IMPORT_BAR).expect("the import block");
-    let moved = drawer.buttons.remove(0);
-    drawer.mode = ButtonMode::IconsWithText;
-    settings.buttons = Some(vec![button("inventory"), moved.clone()]);
-    settings.shortcuts.clear();
-    settings.shortcuts.insert("inventory".into(), ctrl_u.clone());
-    assert!(drawers::reset_import_bar(&mut settings, &layout()));
-    assert_eq!(settings.drawers[drawers::IMPORT_BAR], fresh);
-    assert_eq!(
-        commands(settings.buttons.as_deref().unwrap_or_default()),
-        ["inventory"],
-        "its button taken back"
-    );
-    assert_eq!(settings.shortcuts.get(drawers::IMPORT_BAR), Some(&ctrl_u));
-    assert!(!settings.shortcuts.contains_key("inventory"), "Ctrl+U taken back");
-    assert!(!drawers::reset_import_bar(&mut settings, &layout()), "nothing left to reset");
-    settings.locked = true;
-    settings
-        .drawers
-        .get_mut(drawers::IMPORT_BAR)
-        .expect("the import block")
-        .buttons
-        .clear();
-    assert!(!drawers::reset_import_bar(&mut settings, &layout()), "locked bars stay");
 }
 
 /// Gaps that follow one another between two blocks are one, on the bars and

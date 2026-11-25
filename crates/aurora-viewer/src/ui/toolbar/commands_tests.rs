@@ -440,6 +440,9 @@ fn normal_native_contexts_share_one_customization_entry_and_select_the_clicked_c
                             .1
                             .center();
                         assert!(floating.y > icon.bottom() && entries[0].1.top() > floating.y);
+                        // its shortcut after its icon (human request, 2026-11-25)
+                        let shortcut = menu_point(&bench, aurora_i18n::tr!("toolbar-shortcut"));
+                        assert!(shortcut.y > icon.bottom() && shortcut.y < floating.y, "{shortcut:?} {icon:?}");
                         assert!(entries[0].1.top() - floating.y < 30.0);
                     }
                     if command == "report_bug" {
@@ -4376,6 +4379,9 @@ fn a_drag_on_a_floating_blocks_button_moves_the_block() {
             .expect("floating block drawn")
     };
     let before = area(&bench);
+    // a row is as tall as its buttons, so that it goes to the screen's top
+    // and bottom (human report, 2026-11-25)
+    assert!(before.height() < 80.0, "a row's height: {before:?}");
     let start = bench
         .ctx
         .read_response(bars::tool_button_id("inventory"))
@@ -4394,4 +4400,144 @@ fn a_drag_on_a_floating_blocks_button_moves_the_block() {
     assert!(moved.x > 80.0 && moved.y > 40.0, "moved by {moved:?}");
     assert_eq!(bench.panels.inventory, inventory, "a drag is no click");
     assert_eq!(bench.settings.drawers[&id].buttons.len(), 1);
+}
+
+/// While the bars are edited, a floating block's separator and divider move
+/// like its buttons, never the block (human request, 2026-11-25).
+#[test]
+fn an_edited_floating_blocks_separators_move_like_its_buttons() {
+    for gap in ["separator", "divider"] {
+        let mut bench = Bench {
+            native_top: true,
+            screen: Vec2::new(1920.0, 1080.0),
+            ..Default::default()
+        };
+        bench.settings.compose_top();
+        let id = drawers::create_floating(&mut bench.settings, "Tools");
+        let middle = if gap == "separator" {
+            structure::separator("gap")
+        } else {
+            structure::divider("gap")
+        };
+        bench.settings.drawers.get_mut(&id).expect("floating block").buttons =
+            vec![tests::button("inventory"), middle.clone(), tests::button("people")];
+        bench.state.open = true;
+        // beside the editor's window, which stands in the middle
+        bench.state.floating_placed = Some((id.clone(), egui::pos2(80.0, 200.0)));
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let before = bench
+            .ctx
+            .memory(|memory| memory.area_rect(Id::unique(floating::window_id(&id))))
+            .expect("floating block drawn");
+        start_toolbar_drag(&mut bench, &middle.command);
+        let payload = egui::DragAndDrop::payload::<Drag>(&bench.ctx).expect("its drag");
+        assert_eq!(payload.button.command, middle.command, "{gap}");
+        for step in 1..=4 {
+            bench.pointer(before.center() + Vec2::new(0.0, 20.0) * step as f32, None);
+        }
+        let after = bench
+            .ctx
+            .memory(|memory| memory.area_rect(Id::unique(floating::window_id(&id))))
+            .expect("floating block drawn");
+        assert_eq!(after.min, before.min, "the block stays: {gap}");
+    }
+}
+
+/// A floating block that closes hides once one of its buttons is used, as a
+/// drawer folds; one that does not stays (human request, 2026-11-25).
+#[test]
+fn a_floating_block_that_closes_hides_after_a_click_on_its_button() {
+    for closes in [false, true] {
+        let mut bench = Bench {
+            native_top: true,
+            screen: Vec2::new(1920.0, 1080.0),
+            ..Default::default()
+        };
+        bench.settings.compose_top();
+        let id = drawers::create_floating(&mut bench.settings, "Tools");
+        let drawer = bench.settings.drawers.get_mut(&id).expect("floating block");
+        drawer.buttons = vec![tests::button("inventory")];
+        drawer.floating.as_mut().expect("floating").closes = closes;
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let point = bench
+            .ctx
+            .read_response(bars::tool_button_id("inventory"))
+            .expect("its button")
+            .rect
+            .center();
+        bench.pointer(point, Some(true));
+        bench.pointer(point, Some(false));
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        assert_eq!(
+            bench.settings.drawers[&id].floating.as_ref().map(|floating| floating.shown),
+            Some(!closes),
+            "closes={closes}"
+        );
+    }
+}
+
+/// A floating block reaches the top and the bottom of the room the windows
+/// move in, in a row as in a column (human report, 2026-11-25).
+#[test]
+fn a_floating_block_reaches_the_rooms_top_and_bottom_in_both_orientations() {
+    for vertical in [true, false, true] {
+        let mut bench = Bench {
+            native_top: true,
+            screen: Vec2::new(1920.0, 1080.0),
+            ..Default::default()
+        };
+        bench.settings.compose_top();
+        let id = drawers::create_floating(&mut bench.settings, "Tools");
+        let drawer = bench.settings.drawers.get_mut(&id).expect("floating block");
+        drawer.buttons = vec![tests::button("inventory"), tests::button("people"), tests::button("preferences")];
+        drawer.floating.as_mut().expect("floating").vertical = vertical;
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        // turned the other way, as in its settings
+        bench
+            .settings
+            .drawers
+            .get_mut(&id)
+            .expect("floating block")
+            .floating
+            .as_mut()
+            .expect("floating")
+            .vertical = !vertical;
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let vertical = !vertical;
+        let window = floating::window_id(&id);
+        let rect = |bench: &Bench| {
+            bench
+                .ctx
+                .memory(|memory| memory.area_rect(Id::unique(&window)))
+                .expect("floating block drawn")
+        };
+        let room = crate::ui::layout::move_area(&bench.ctx);
+        for y in [-500.0, 3000.0] {
+            crate::ui::widgets::move_floater(&bench.ctx, &window, egui::pos2(600.0, y));
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            let at = rect(&bench);
+            if vertical {
+                assert!(at.height() > at.width(), "a column: {at:?}");
+            } else {
+                assert!(at.height() < 80.0, "a row as tall as its buttons: {at:?}");
+            }
+            if y < 0.0 {
+                assert_eq!(at.top(), room.top(), "vertical={vertical}");
+            } else {
+                assert_eq!(at.bottom(), room.bottom(), "vertical={vertical}");
+            }
+        }
+    }
 }

@@ -80,6 +80,11 @@ pub struct Floating {
     pub vertical: bool,
     /// Shown (the import bar's is the import preference's instead).
     pub shown: bool,
+    /// Hidden once one of its buttons is used or after a click elsewhere, as
+    /// a drawer that closes (human request, 2026-11-25; off by default: a
+    /// floating block stays where it is put).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub closes: bool,
 }
 
 impl Floating {
@@ -108,8 +113,9 @@ pub fn is_floating(settings: &ToolbarSettings, id: &str) -> bool {
 
 /// The import block, once, with its buttons (human request, 2026-11-25):
 /// taken from wherever they stand, a drawer left with nothing but gaps going
-/// with its button. Made a fixed block later, it is not made again (a loaded
-/// layout without it gets one: `restore_import_bar`).
+/// with its button. Then it is a block like the others: changed, made a
+/// fixed block or deleted, it is not made again (a preset that has it, as
+/// the Aurora one, brings it back).
 pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout) -> bool {
     // its first fill had a separator where a block's divider belongs
     let mut changed = false;
@@ -149,42 +155,25 @@ pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout)
         return changed;
     }
     settings.import_bar_filled = true;
-    fill_import_bar(settings, layout, true);
-    true
-}
-
-/// A loaded layout (a shared notecard, a bundled one) without the import
-/// block gets one, of the import buttons it places nowhere.
-pub(super) fn restore_import_bar(settings: &mut ToolbarSettings, layout: &Layout) {
-    if !settings.drawers.contains_key(IMPORT_BAR) {
-        fill_import_bar(settings, layout, false);
-    }
-}
-
-/// The import block's buttons: every import button, `take` taking them out
-/// of the bars and the drawers, else only those placed nowhere.
-fn fill_import_bar(settings: &mut ToolbarSettings, layout: &Layout, take: bool) {
-    if take {
-        let counts = settings
-            .drawers
-            .iter()
-            .map(|(id, drawer)| (id.clone(), drawer.buttons.len()))
-            .collect();
-        let taken = |button: &ToolButton| IMPORT_COMMANDS.contains(&button.command.as_str());
-        for bar in Bar::ALL {
-            let mut buttons = settings.bar(bar, layout).to_vec();
-            if buttons.iter().any(taken) {
-                buttons.retain(|button| !taken(button));
-                settings.set_bar(bar, buttons);
-            }
+    let counts = settings
+        .drawers
+        .iter()
+        .map(|(id, drawer)| (id.clone(), drawer.buttons.len()))
+        .collect();
+    let taken = |button: &ToolButton| IMPORT_COMMANDS.contains(&button.command.as_str());
+    for bar in Bar::ALL {
+        let mut buttons = settings.bar(bar, layout).to_vec();
+        if buttons.iter().any(taken) {
+            buttons.retain(|button| !taken(button));
+            settings.set_bar(bar, buttons);
         }
-        for (id, drawer) in &mut settings.drawers {
-            if id != IMPORT_BAR {
-                drawer.buttons.retain(|button| !taken(button));
-            }
-        }
-        remove_emptied(settings, layout, &counts);
     }
+    for (id, drawer) in &mut settings.drawers {
+        if id != IMPORT_BAR {
+            drawer.buttons.retain(|button| !taken(button));
+        }
+    }
+    remove_emptied(settings, layout, &counts);
     let buttons = IMPORT_COMMANDS
         .iter()
         .filter_map(|command| {
@@ -192,7 +181,7 @@ fn fill_import_bar(settings: &mut ToolbarSettings, layout: &Layout, take: bool) 
                 return Some(structure::divider(command.trim_start_matches(structure::DIVIDER_PREFIX)));
             }
             let found = super::catalogue::find(command)?;
-            (take || !settings.placed(command, layout)).then(|| ToolButton {
+            Some(ToolButton {
                 command: (*command).into(),
                 icon: found.icon.into(),
                 tooltip: String::new(),
@@ -208,31 +197,7 @@ fn fill_import_bar(settings: &mut ToolbarSettings, layout: &Layout, take: bool) 
         ..Drawer::default()
     });
     drawer.buttons = buttons;
-}
-
-/// The import block as it first came (human request, 2026-11-25: it cannot
-/// be deleted, but can be reset): its buttons, taken back from wherever they
-/// stand, its look, and Ctrl+U, taken from another target if one has it.
-pub(super) fn reset_import_bar(settings: &mut ToolbarSettings, layout: &Layout) -> bool {
-    if settings.locked {
-        return false;
-    }
-    let before = settings.clone();
-    settings.drawers.remove(IMPORT_BAR);
-    settings.appearance.remove(IMPORT_BAR);
-    settings.import_shortcut_given = true;
-    fill_import_bar(settings, layout, true);
-    super::shortcuts::set(
-        settings,
-        IMPORT_BAR,
-        Some(crate::keybinds::Binding {
-            input: crate::keybinds::Input::Key("KeyU".into()),
-            ctrl: true,
-            shift: false,
-            alt: false,
-        }),
-    );
-    *settings != before
+    true
 }
 
 /// A drawer or a bar's block made a floating block (human request,
@@ -254,6 +219,7 @@ pub(super) fn float(settings: &mut ToolbarSettings, layout: &Layout, bar: Bar, c
             icon: toggle.icon,
             vertical: false,
             shown: true,
+            closes: false,
         });
         return Some(command.into());
     }
@@ -300,6 +266,7 @@ pub(super) fn float(settings: &mut ToolbarSettings, layout: &Layout, bar: Bar, c
                 icon,
                 vertical: bar.vertical(),
                 shown: true,
+                closes: false,
             }),
             ..Drawer::default()
         },
@@ -351,7 +318,7 @@ pub(super) fn create_floating(settings: &mut ToolbarSettings, name: &str) -> Str
     id
 }
 
-/// A floating block's name, orientation, display and button look.
+/// A floating block's name, orientation, display, closing and button look.
 pub(super) fn update_floating(settings: &mut ToolbarSettings, layout: &Layout, id: &str, options: &FloatingOptions) -> bool {
     let name: String = options.name.chars().take(80).collect();
     let own = settings.appearance.get(id).cloned().unwrap_or_default();
@@ -360,11 +327,17 @@ pub(super) fn update_floating(settings: &mut ToolbarSettings, layout: &Layout, i
     }
     let Some(drawer) = settings.drawers.get_mut(id) else { return false };
     let Some(floating) = &mut drawer.floating else { return false };
-    if floating.name == name && floating.vertical == options.vertical && drawer.mode == options.mode && own == options.look {
+    if floating.name == name
+        && floating.vertical == options.vertical
+        && floating.closes == options.closes
+        && drawer.mode == options.mode
+        && own == options.look
+    {
         return false;
     }
     floating.name = name.clone();
     floating.vertical = options.vertical;
+    floating.closes = options.closes;
     drawer.mode = options.mode;
     if options.look == Default::default() {
         settings.appearance.remove(id);
@@ -387,6 +360,7 @@ pub(super) struct FloatingOptions {
     pub name: String,
     pub mode: ButtonMode,
     pub vertical: bool,
+    pub closes: bool,
     pub look: super::appearance::Appearance,
 }
 
@@ -402,10 +376,10 @@ pub(super) fn show_floating(settings: &mut ToolbarSettings, id: &str, shown: boo
     }
 }
 
-/// Deletes a floating block of the user's, its button with it; its buttons
-/// go back to the catalogue. The import bar stays.
+/// Deletes a floating block, its button with it; its buttons go back to
+/// the catalogue. The import block too (human request, 2026-11-25).
 pub(super) fn delete_floating(settings: &mut ToolbarSettings, layout: &Layout, id: &str) -> bool {
-    if settings.locked || id == IMPORT_BAR || !is_floating(settings, id) {
+    if settings.locked || !is_floating(settings, id) {
         return false;
     }
     settings.drawers.remove(id);
@@ -506,9 +480,9 @@ pub(super) fn show_settings(ctx: &egui::Context, p: &Palette, toolbar: &mut Tool
     }
 }
 
-/// A floating block's settings: its button's name, look and icon (not for
-/// the import bar, whose button is the toolbar's "Import bar"), its buttons'
-/// default mode, its orientation, and Delete for the user's own.
+/// A floating block's settings, as a drawer's (human request, 2026-11-25):
+/// its button's name, look and icon, its buttons' default mode, whether it
+/// closes after a click, then its orientation, and Delete.
 fn floating_settings(
     ctx: &egui::Context,
     p: &Palette,
@@ -526,6 +500,7 @@ fn floating_settings(
         name: floating.name.clone(),
         mode: drawer.mode,
         vertical: floating.vertical,
+        closes: floating.closes,
         look: settings.appearance.get(id).cloned().unwrap_or_default(),
     };
     let before = options.clone();
@@ -544,31 +519,39 @@ fn floating_settings(
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 ui.add_enabled_ui(!settings.locked, |ui| {
-                    if own {
-                        ui.label(aurora_i18n::tr!("toolbar-drawer-name"));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut options.name)
-                                .id(Id::unique(("floating_name", id)))
-                                .hint_text(aurora_i18n::tr!("toolbar-floating-new"))
-                                .char_limit(80)
-                                .desired_width(f32::INFINITY),
-                        );
-                        ui.add_space(8.0);
-                        ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-button-mode")).strong());
-                        super::appearance::Editor::modes(ui, p, &mut options.look);
-                        ui.add_space(8.0);
-                        toolbar.drawer_appearance_editor.icon_button(ui, p, &button, &options.look);
-                        ui.add_space(12.0);
-                    }
+                    ui.label(aurora_i18n::tr!("toolbar-floating-name"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut options.name)
+                            .id(Id::unique(("floating_name", id)))
+                            .hint_text(if own {
+                                aurora_i18n::tr!("toolbar-floating-new")
+                            } else {
+                                aurora_i18n::tr!("toolbar-import-bar")
+                            })
+                            .char_limit(80)
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-button-mode")).strong());
+                    super::appearance::Editor::modes(ui, p, &mut options.look);
+                    ui.add_space(8.0);
+                    toolbar.drawer_appearance_editor.icon_button(ui, p, &button, &options.look);
+                    ui.add_space(12.0);
                     ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-default-mode")).strong());
                     for (value, _, label) in super::mode_rows() {
                         widgets::radio_value(ui, p, &mut options.mode, value, label);
                     }
                     ui.add_space(12.0);
+                    let check = widgets::checkbox(ui, p, &mut options.closes, aurora_i18n::tr!("toolbar-drawer-closes"));
+                    #[cfg(test)]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(Id::unique(("drawer_closes_check", id)), check.rect));
+                    let _ = check;
+                    ui.add_space(12.0);
                     ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-floating-orientation")).strong());
                     widgets::radio_value(ui, p, &mut options.vertical, false, aurora_i18n::tr!("toolbar-floating-horizontal"));
                     widgets::radio_value(ui, p, &mut options.vertical, true, aurora_i18n::tr!("toolbar-floating-vertical"));
-                    if own {
+                    {
                         ui.add_space(12.0);
                         delete = widgets::action_button(
                             ui,
@@ -583,10 +566,7 @@ fn floating_settings(
                 });
             });
     });
-    if open
-        && own
-        && let Some(rect) = ctx.memory(|memory| memory.area_rect(Id::unique("toolbar_drawer_settings")))
-    {
+    if open && let Some(rect) = ctx.memory(|memory| memory.area_rect(Id::unique("toolbar_drawer_settings"))) {
         toolbar
             .drawer_appearance_editor
             .side_picker(ctx, p, &button, &mut options.look, rect, settings.locked);
@@ -817,7 +797,7 @@ pub(super) fn update_closes(settings: &mut ToolbarSettings, id: &str, closes: bo
 /// once the menu or the window the click opened leaves no popup. Only a click
 /// that reached the drawer counts: one on a window laid over it, or on a
 /// button scrolled out of its `visible` area, does not.
-fn close_after_click(
+pub(super) fn close_after_click(
     ctx: &egui::Context,
     command: &str,
     buttons: &[ToolButton],
@@ -847,7 +827,7 @@ fn close_after_click(
 /// another button, a window, even one laid over the drawer) folds a drawer
 /// that closes after a click too, as a lost focus: once no popup is left. A
 /// drag is not a click: a button dragged into the drawer leaves it open.
-fn close_on_click_outside(ctx: &egui::Context, command: &str, toggle: egui::Rect, layer: egui::LayerId) {
+pub(super) fn close_on_click_outside(ctx: &egui::Context, command: &str, toggle: egui::Rect, layer: egui::LayerId) {
     let Some(pos) = ctx.input(|input| input.pointer.any_click().then(|| input.pointer.interact_pos()).flatten()) else {
         return;
     };

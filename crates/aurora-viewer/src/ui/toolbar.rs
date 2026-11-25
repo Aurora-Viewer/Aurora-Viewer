@@ -716,8 +716,6 @@ enum Edit {
     Dock(String, bool),
     /// A shortcut set or removed, locked bars included.
     Shortcut(String, Option<crate::keybinds::Binding>),
-    /// The import block as it first came (`drawers::reset_import_bar`).
-    ResetImportBar,
 }
 
 /// Windows whose toolbar button lights while they are open
@@ -1079,15 +1077,17 @@ impl ToolbarUi {
                         && !structure::is_divider(&button.command)
                         && !structure::is_block(&button.command)
                 });
-                if let Some(button) = own {
+                if own.is_some() {
                     section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
-                    if shortcuts::takes(&button.command) {
-                        self.shortcut_item(ui, p, &settings, &button.command);
-                    }
                 } else {
                     native_context::start_group(ui, p);
                 }
                 self.button_appearance_option(ui, p, button, locked);
+                // its shortcut after its look and its icon (human request,
+                // 2026-11-25)
+                if let Some(button) = own.filter(|button| shortcuts::takes(&button.command)) {
+                    self.shortcut_item(ui, p, &settings, &button.command);
+                }
                 if let Some(button) = button.filter(|button| {
                     !structure::is_separator(&button.command)
                         && !structure::is_divider(&button.command)
@@ -1193,6 +1193,8 @@ impl ToolbarUi {
 
     /// `button`, or a floating block's button (`floating`): there a drag
     /// moves the whole block, never the button (human request, 2026-11-25).
+    /// While the bars are edited its gaps and separators move like its
+    /// buttons (human request, 2026-11-25): only its glass moves the block.
     #[allow(clippy::too_many_arguments)]
     pub fn button_in(
         &mut self,
@@ -1204,7 +1206,7 @@ impl ToolbarUi {
         locked: bool,
         floating: bool,
     ) {
-        if !floating {
+        if !floating || Self::intercepting(&response.ctx) {
             return self.button(response, bar, style, button, p, locked);
         }
         let style = blocks::style(&response.ctx, &button.command, style);
@@ -1348,7 +1350,6 @@ impl ToolbarUi {
             Edit::FloatingOptions(id, options) => return drawers::update_floating(settings, layout, id, options),
             Edit::FloatingDelete(id) => return drawers::delete_floating(settings, layout, id),
             Edit::Shortcut(key, binding) => return shortcuts::set(settings, key, binding.clone()),
-            Edit::ResetImportBar => return drawers::reset_import_bar(settings, layout),
             Edit::Float(bar, command, pos) => {
                 let Some(id) = drawers::float(settings, layout, *bar, command) else {
                     return false;
@@ -1786,24 +1787,14 @@ impl ToolbarUi {
                 for drawer in next_drawers.values_mut() {
                     drawer.buttons.retain(|b| b.command != command);
                 }
-                // a floating block outlives its button; the import block, a
-                // drawer, becomes a floating one again: it cannot be deleted
-                if command == drawers::IMPORT_BAR {
-                    if let Some(drawer) = next_drawers.get_mut(&command) {
-                        drawer.floating.get_or_insert_with(|| drawers::Floating {
-                            icon: drawers::IMPORT_ICON.into(),
-                            ..Default::default()
-                        });
-                    }
-                } else if next_drawers.get(&command).is_some_and(|drawer| drawer.floating.is_none()) {
+                // a floating block outlives its button
+                if next_drawers.get(&command).is_some_and(|drawer| drawer.floating.is_none()) {
                     next_drawers.remove(&command);
                 }
             }
             Edit::Clear => {
                 next.iter_mut().for_each(Vec::clear);
-                // the import bar stays, empty
-                next_drawers.retain(|id, _| id == drawers::IMPORT_BAR);
-                next_drawers.values_mut().for_each(|drawer| drawer.buttons.clear());
+                next_drawers.clear();
             }
             Edit::Restore
             | Edit::Lock
@@ -1829,8 +1820,7 @@ impl ToolbarUi {
             | Edit::FloatingDelete(..)
             | Edit::Float(..)
             | Edit::Dock(..)
-            | Edit::Shortcut(..)
-            | Edit::ResetImportBar => unreachable!(),
+            | Edit::Shortcut(..) => unreachable!(),
         }
         if next == old && next_drawers == old_drawers {
             return false;

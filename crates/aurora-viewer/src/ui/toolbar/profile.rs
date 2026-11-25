@@ -268,7 +268,6 @@ pub(crate) fn snapshot(settings: &ToolbarSettings, layout: &Layout, islands: boo
     toolbar.vr_button_migrated = true;
     toolbar.director_button_migrated = true;
     toolbar.import_bar_filled = true;
-    super::drawers::restore_import_bar(&mut toolbar, &Layout::default());
     toolbar.import_shortcut_given = true;
     for (bar, style) in [
         (Bar::Bottom, &mut toolbar.bottom_style),
@@ -320,7 +319,6 @@ pub(crate) fn read(text: &str) -> Result<Profile, String> {
     document.toolbar.vr_button_migrated = true;
     document.toolbar.director_button_migrated = true;
     document.toolbar.import_bar_filled = true;
-    super::drawers::restore_import_bar(&mut document.toolbar, &Layout::default());
     document.toolbar.import_shortcut_given = true;
     Ok(Profile {
         base: document.base,
@@ -366,10 +364,16 @@ mod tests {
             );
             let drawer = super::super::drawers::create(&mut toolbar, Bar::Right, &layout);
             // the import bar and a floating block of the user's, its button
-            // placed nowhere, keep their buttons and their options
-            // the Aurora layouts bring it (`assets/toolbar/aurora.json`)
+            // placed nowhere, keep their buttons and their options; the
+            // layouts of `assets/toolbar/aurora.json` bring the import bar
+            // (human request, 2026-11-25)
             toolbar.ensure_import_bar(&layout);
-            assert!(!toolbar.drawers[super::super::drawers::IMPORT_BAR].buttons.is_empty());
+            let import = toolbar.drawers.get(super::super::drawers::IMPORT_BAR);
+            assert!(import.is_none_or(|drawer| !drawer.buttons.is_empty()), "{preset:?}");
+            assert!(
+                import.is_some() || !matches!(preset, Preset::Light | Preset::Photographer),
+                "{preset:?}"
+            );
             let floating = super::super::drawers::create_floating(&mut toolbar, "Tools");
             toolbar
                 .buttons

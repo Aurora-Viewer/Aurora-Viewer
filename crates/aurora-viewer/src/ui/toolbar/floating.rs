@@ -44,12 +44,8 @@ pub(super) fn context(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, i
     if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-floating-settings"), !locked) {
         toolbar.drawer_editor = Some(id.into());
     }
-    if id == IMPORT_BAR {
-        // it cannot be deleted, but can be reset (human request, 2026-11-25)
-        if menu::item_if(ui, p, "refresh", aurora_i18n::tr!("toolbar-import-bar-reset"), !locked) {
-            toolbar.pending = Some(Edit::ResetImportBar);
-        }
-    } else if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-floating-delete"), !locked) {
+    // the import block is one like the others (human request, 2026-11-25)
+    if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-floating-delete"), !locked) {
         toolbar.pending = Some(Edit::FloatingDelete(id.into()));
     }
 }
@@ -80,6 +76,21 @@ pub fn show(
             continue;
         }
         let window = window_id(id);
+        // a block that closes hides once the click that asked for it has
+        // left no popup, as a drawer folds (`drawers::close_after_click`)
+        let kept = editing || toolbar.drawer_editor.as_deref() == Some(id.as_str());
+        let close = drawers::area_id(id).with("close");
+        if ctx.data(|data| data.get_temp::<bool>(close)).unwrap_or(false) && (kept || !egui::Popup::is_any_open(ctx)) {
+            ctx.data_mut(|data| data.remove::<bool>(close));
+            if floating.closes && !kept {
+                if import {
+                    *import_shown = false;
+                } else {
+                    toolbar.pending = Some(Edit::FloatingShown(id.clone(), false));
+                }
+                continue;
+            }
+        }
         if let Some((placed, pos)) = toolbar.floating_placed.clone()
             && placed == *id
         {
@@ -172,10 +183,13 @@ pub fn show(
                 .inner_margin(egui::Margin::same(bars::islands::PAD as i8))
                 .show(ui, |ui| {
                     let mut rects = Vec::new();
+                    // a row's buttons are as tall as one another: centred, the
+                    // row took the screen's height and the block could not
+                    // reach its top or its bottom (human report, 2026-11-25)
                     let layout = if vertical {
                         egui::Layout::top_down(egui::Align::Min)
                     } else {
-                        egui::Layout::left_to_right(egui::Align::Center)
+                        egui::Layout::left_to_right(egui::Align::Min)
                     };
                     ui.with_layout(layout, |ui| {
                         ui.spacing_mut().item_spacing = if vertical {
@@ -235,6 +249,13 @@ pub fn show(
                         if let Some(edit) = drawers::insertion_edit(id, rank, &drag) {
                             toolbar.pending = Some(edit);
                         }
+                    }
+                    if floating.closes && !kept {
+                        let toggle = ctx
+                            .read_response(bars::tool_button_id(id))
+                            .map_or(egui::Rect::NOTHING, |response| response.rect);
+                        drawers::close_on_click_outside(ctx, id, toggle, ui.layer_id());
+                        drawers::close_after_click(ctx, id, buttons, &rects, zone, ui.layer_id(), editing);
                     }
                 });
         });
