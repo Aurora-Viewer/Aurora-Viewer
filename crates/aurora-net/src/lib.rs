@@ -11,6 +11,7 @@ mod chat_reply;
 pub mod chat_service;
 pub mod circuit;
 mod circuit_socket;
+mod curl_url;
 pub mod currency;
 pub mod estate;
 pub mod experience;

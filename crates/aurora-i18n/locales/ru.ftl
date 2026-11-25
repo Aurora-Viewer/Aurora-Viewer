@@ -2694,7 +2694,6 @@ app-gpu-lost =
     • закройте другие программы, которые сильно нагружают видеокарту;
     • при следующем запуске выберите безопасную графику, которую предложит Aurora.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = В Aurora пока нет набора замены анимаций (AO).
-cmdline-mod-use-hover-height-in-appearance = Настройте высоту аватара в меню «Внешность → Высота над землёй».
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora рекомендует не открывать эту ссылку. Если сайт просит войти в аккаунт или заплатить, скорее всего, это мошенничество. Никогда не передавайте ему пароль или платёжные данные.
 demo-auto-blend = Авто: смешивание
 demo-auto-mask = Авто: маска
@@ -7865,7 +7864,6 @@ ui-inventory-thumbnail-image-uuid = UUID изображения
 ui-inventory-thumbnail-invalid-image-uuid = Некорректный UUID изображения.
 ui-texture-picker-invalid-uuid = Некорректный UUID
 ui-texture-picker-confirm-no-copy = Текстуру нельзя копировать. Подтвердите кнопкой «ОК».
-ui-texture-picker-no-live-preview = Предпросмотр недоступен для текстур без права копирования или передачи. Подтвердите кнопкой «ОК».
 ui-texture-picker-owner-only = Текстуру без права передачи можно применить только к своему объекту, который не продаётся.
 ui-texture-picker-preview = Предпросмотр
 ui-texture-picker-adjust-list-width = Изменить ширину списка
@@ -13590,7 +13588,6 @@ texture-library-no-copy-drop-question = Переместить предмет?
 texture-library-no-copy-drop-move = Переместить
 texture-library-worn-drop-all-faces = Все грани
 texture-library-worn-drop-linked = Все связанные части
-texture-library-applied = Текстура или материал применены.
 texture-library-no-results = Подходящих ресурсов нет.
 texture-library-demo-wood = Дерево
 texture-library-demo-stone = Камень
