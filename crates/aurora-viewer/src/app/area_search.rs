@@ -684,7 +684,7 @@ impl App {
                 Some((row, o.key))
             })
             .collect();
-        let candidates: Vec<_> = rows.iter().map(|(r, key)| (r.id, *key)).collect();
+        let candidates = nearest_first(&rows);
         let packets = self.area_search_feed.requests(&candidates, now);
         self.area_search_ui.table.pending = rows.iter().filter(|(r, _)| !r.loaded).count();
         // Name services are requested once per distinct identity per snapshot,
@@ -771,6 +771,20 @@ impl App {
     }
 }
 
+/// What still waits for its name or its land impact, the nearest first. The
+/// Legacy Viewer asks in the order of its object list (FSAreaSearch::
+/// findObjects); with everything around on its way, what is close is read
+/// before the far end of the region.
+fn nearest_first(rows: &[(Row, ObjKey)]) -> Vec<(Uuid, ObjKey)> {
+    let mut waiting: Vec<_> = rows
+        .iter()
+        .filter(|(r, _)| !r.loaded || r.land_impact.is_none())
+        .map(|(r, key)| (r.distance, r.id, *key))
+        .collect();
+    waiting.par_sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    waiting.into_iter().map(|(_, id, key)| (id, key)).collect()
+}
+
 fn property_commands(packets: HashMap<aurora_net::RegionHandle, Vec<u32>>, kept: &HashSet<ObjKey>) -> Vec<NetCommand> {
     let mut out = Vec::new();
     for (handle, local_ids) in packets {
@@ -813,6 +827,35 @@ fn for_build(
 mod tests {
     use super::*;
     use glam::Quat;
+
+    #[test]
+    fn area_search_asks_for_the_nearest_first_and_only_for_what_is_missing() {
+        let row = |id: u128, distance: f32, loaded: bool, land_impact: Option<f32>| {
+            let mut r = Row::default();
+            r.id = Uuid::from_u128(id);
+            r.distance = distance;
+            r.loaded = loaded;
+            r.land_impact = land_impact;
+            (
+                r,
+                ObjKey {
+                    region: 1,
+                    local_id: id as u32,
+                },
+            )
+        };
+        let mut rows: Vec<_> = (1..=600).map(|i| row(i, 700.0 - i as f32, false, None)).collect();
+        rows.push(row(601, 1.0, true, Some(2.0)));
+        rows.push(row(602, 2.0, true, None));
+        let order = nearest_first(&rows);
+        assert_eq!(order[0].0, Uuid::from_u128(602), "its land impact is missing");
+        assert_eq!(order[1].0, Uuid::from_u128(600));
+        assert!(order.iter().all(|(id, _)| *id != Uuid::from_u128(601)), "nothing left to ask");
+        let mut feed = Feed::default();
+        let asked = feed.requests(&order[1..], Instant::now());
+        assert_eq!(asked[&1].len(), PACKET);
+        assert!(asked[&1].iter().all(|id| *id > 600 - PACKET as u32), "the nearest fill the packet");
+    }
 
     #[test]
     fn area_search_cost_requests_are_bounded_and_late_invalid_or_partial_replies_stay_unknown() {

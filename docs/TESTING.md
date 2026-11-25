@@ -13263,6 +13263,7 @@ What the inventory must show with these scenarios:
 | `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, not their avatar's, as before |
 | `AURORA_FETCH_SLOTS=<n>` | Asset requests under way at once fixed for this launch (1 to 256), whatever Preferences › Network and cache › Download connections says |
 | `AURORA_DEMO_NET_ADAPTER=<description>` | This network adapter instead of the computer's, for the download connections (e.g. `Marvell AQtion 10Gbit Network Adapter`: always limited, "Follow the connection" greyed) |
+| `AURORA_AREA_SEARCH_360=0` | Area Search leaves the regions' interest list to the camera's view, as before, to compare the objects listed and the load |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_PENDING_PARK=0` | Every object waiting for its geometry asked about by the sync's round, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |

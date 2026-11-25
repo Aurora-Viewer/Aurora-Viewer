@@ -1595,7 +1595,7 @@ pub struct AttachRequest {
 
 /// What the simulator sends of its region (LLViewerRegion::setInterestListMode,
 /// indra/newview/llviewerregion.cpp, originally LGPL 2.1): the camera's
-/// view by default, everything while the 360° snapshot window is open.
+/// view by default, everything while the 360° photo or Area Search is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InterestListMode {
     #[default]
@@ -1863,7 +1863,7 @@ pub enum NetCommand {
     /// The interest list mode (LLAgent::changeInterestListMode): posted to
     /// the InterestList capability of every region that has it, and again
     /// to the agent's region when its capabilities arrive while the mode is
-    /// not the default (the 360° snapshot window).
+    /// not the default (the 360° photo, Area Search).
     SetInterestListMode(InterestListMode),
     /// Controls that changed enough to be sent now (`NetClient::set_controls`).
     /// Every change of the control flags comes through here, in order: a
