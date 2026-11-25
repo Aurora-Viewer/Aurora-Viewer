@@ -142,10 +142,15 @@ fn run_with(fetch: BackgroundFetch, inv: &mut Inventory, server: &Server) -> Vec
     run_keeping_fetch(fetch, inv, server).0
 }
 
-fn run_keeping_fetch(mut fetch: BackgroundFetch, inv: &mut Inventory, server: &Server) -> (Vec<Read>, BackgroundFetch) {
+fn run_keeping_fetch(fetch: BackgroundFetch, inv: &mut Inventory, server: &Server) -> (Vec<Read>, BackgroundFetch) {
+    run_from(fetch, inv, server, Instant::now())
+}
+
+/// [`run_keeping_fetch`] with its clock starting at `start`.
+fn run_from(mut fetch: BackgroundFetch, inv: &mut Inventory, server: &Server, start: Instant) -> (Vec<Read>, BackgroundFetch) {
     fetch.start(inv);
     let mut reads = Vec::new();
-    let mut now = Instant::now();
+    let mut now = start;
     for _ in 0..1000 {
         now += std::time::Duration::from_secs(60);
         let commands = fetch.pump_at(inv, AGENT, now);
@@ -624,7 +629,10 @@ fn failed_and_unread_folders_are_asked_again_later() {
     let (_, mut fetch) = run_keeping_fetch(BackgroundFetch::default(), &mut inv, &server);
     assert_eq!(inv.folders[&id(11)].state, FetchState::Failed);
     // the idle walk's next look asks for it again, then waits its round
+    // (the first look starts the round's clock, the round comes after it)
     let later = Instant::now() + std::time::Duration::from_secs(100_000);
+    assert!(fetch.pump_at(&mut inv, AGENT, later).is_empty(), "not at the first look");
+    let later = later + FAILED_AGAIN;
     let again = fetch.pump_at(&mut inv, AGENT, later);
     assert!(
         again.iter().any(|c| matches!(c, NetCommand::FetchInventoryTree { .. })),
@@ -650,9 +658,7 @@ fn failed_and_unread_folders_are_asked_again_later() {
     }
     // the server gives it now: the next round reads it
     failing.set(false);
-    fetch.failed_round = None;
-    fetch.swept = None;
-    run_keeping_fetch(fetch, &mut inv, &server);
+    run_from(fetch, &mut inv, &server, later + FAILED_AGAIN);
     assert_eq!(inv.folders[&id(11)].state, FetchState::Fetched);
     // an idle walk with a folder left unread (a reply lost) reads it
     let mut inv = skeleton(&tree);
@@ -661,6 +667,7 @@ fn failed_and_unread_folders_are_asked_again_later() {
         f.state = FetchState::Unknown;
     }
     fetch.swept = None;
+    fetch.swept_clean = None;
     let reads = run_with(fetch, &mut inv, &server);
     assert!(!reads.is_empty(), "the watchdog asked again");
     assert_eq!(inv.folders[&id(10)].state, FetchState::Fetched);
@@ -755,7 +762,7 @@ fn a_timed_out_subtree_read_falls_back_at_once_and_lost_folders_are_read_again()
             };
             if depth > 0 && !timed_out {
                 timed_out = true;
-                fetch.on_reply_at(&mut inv, request, &[], Err(FetchError::new(FetchFailure::Transient, None)), now);
+                fetch.on_reply_at(&mut inv, request, &[], Err(FetchError::timeout()), now);
                 assert!(fetch.retries.is_empty(), "never repeated as is");
                 assert!(
                     fetch.queue.iter().any(|(_, k)| *k == Kind::FolderAndContent),
@@ -781,9 +788,11 @@ fn a_timed_out_subtree_read_falls_back_at_once_and_lost_folders_are_read_again()
     // a folder some other read left fetching is read again after the deadline
     inv.folders.get_mut(&id(11)).expect("folder").state = FetchState::Fetching;
     fetch.swept = None;
+    fetch.swept_clean = None;
     fetch.pump_at(&mut inv, AGENT, now);
     assert_eq!(inv.folders[&id(11)].state, FetchState::Fetching, "not yet");
     fetch.swept = None;
+    fetch.swept_clean = None;
     let later = now + READ_DEADLINE;
     let commands = fetch.pump_at(&mut inv, AGENT, later);
     assert!(
@@ -953,5 +962,155 @@ fn a_users_read_never_answered_is_asked_again() {
     assert!(
         fetch.pending.contains(&id(10)) || fetch.in_flight.values().any(|r| r.folder == id(10) || r.children.contains(&id(10))),
         "asked again by the walk"
+    );
+}
+
+/// A transport error after the HTTP layer's tries (a connection refused or
+/// reset, no status) is no timeout: the subtree read keeps the walk's
+/// backoff, never split into its folders at once; a real timeout is.
+#[test]
+fn a_transport_error_keeps_the_backoff_and_only_a_timeout_splits() {
+    for (error, splits) in [
+        (FetchError::new(FetchFailure::Transient, None), false),
+        (FetchError::timeout(), true),
+    ] {
+        let mut inv = skeleton(&[(10, 1, -1), (11, 1, -1)]);
+        inv.folders.get_mut(&id(1)).expect("root").state = FetchState::Fetched;
+        let mut fetch = BackgroundFetch::default();
+        fetch.start(&inv);
+        let now = Instant::now();
+        fetch.pump_at(&mut inv, AGENT, now);
+        let (&request, read) = fetch
+            .in_flight
+            .iter()
+            .find(|(_, r)| r.depth > 0 && r.folder == id(1))
+            .expect("the root's subtree batch");
+        let targets = read.children.clone();
+        fetch.on_reply_at(&mut inv, request, &[], Err(error), now);
+        assert_eq!(fetch.retries.is_empty(), splits, "{error}");
+        assert_eq!(
+            targets.iter().all(|t| fetch.queue.contains(&(*t, Kind::FolderAndContent))),
+            splits,
+            "{error}"
+        );
+    }
+}
+
+/// A timed-out batch's folders are read in parts first: the parent's batch
+/// still queued never sends them deep again before their own reads ran.
+#[test]
+fn a_split_batch_is_never_batched_again_before_its_parts() {
+    let tree: Vec<(u128, u128, i32)> = (10..35).map(|n| (n, 1, -1)).collect();
+    let mut inv = skeleton(&tree);
+    inv.folders.get_mut(&id(1)).expect("root").state = FetchState::Fetched;
+    let mut fetch = BackgroundFetch::default();
+    fetch.start(&inv);
+    let now = Instant::now();
+    fetch.pump_at(&mut inv, AGENT, now);
+    let (&request, read) = fetch
+        .in_flight
+        .iter()
+        .find(|(_, r)| r.depth > 0 && r.folder == id(1) && r.children.len() == BATCH)
+        .expect("a full batch of the root's folders");
+    let split: Vec<Uuid> = read.children.clone();
+    fetch.on_reply_at(&mut inv, request, &[], Err(FetchError::timeout()), now);
+    let mut sent = Vec::new();
+    for _ in 0..5 {
+        sent.extend(fetch.pump_at(&mut inv, AGENT, now));
+    }
+    for command in &sent {
+        if let NetCommand::FetchInventoryTree { children, depth, .. } = command
+            && *depth > 0
+        {
+            assert!(
+                children.iter().all(|c| !split.contains(c)),
+                "a split folder was batched deep again: {children:?}"
+            );
+        }
+    }
+    assert!(
+        split
+            .iter()
+            .all(|f| sent.iter().any(
+                |c| matches!(c, NetCommand::FetchInventoryTree { parent, children, depth: 0, .. } if parent == f && children.is_empty())
+            ) || fetch.queue.contains(&(*f, Kind::FolderAndContent))),
+        "each split folder is read alone"
+    );
+}
+
+/// The first round for failed folders comes a round's time after the walk
+/// left them, not at the first idle look.
+#[test]
+fn failed_folders_wait_a_round_before_they_are_asked_again() {
+    let tree = [(10, 1, -1), (11, 1, -1)];
+    let mut inv = skeleton(&tree);
+    let failure = |read: &Read| (read.parent == id(11) || read.children.contains(&id(11))).then_some(FetchFailure::Fatal);
+    let server = Server {
+        tree: &tree,
+        cap: 50,
+        items: 1,
+        failure: &failure,
+    };
+    let (_, mut fetch) = run_keeping_fetch(BackgroundFetch::default(), &mut inv, &server);
+    assert_eq!(inv.folders[&id(11)].state, FetchState::Failed);
+    // (the run's own clock: its last pump)
+    let start = fetch.clock.expect("pumped");
+    let first = fetch.pump_at(&mut inv, AGENT, start + WATCHDOG);
+    assert!(first.is_empty(), "not at the first idle look");
+    assert!(fetch.swept.is_some());
+    assert!(fetch.pump_at(&mut inv, AGENT, start + WATCHDOG * 3).is_empty(), "nor 30 s later");
+    assert_eq!(fetch.failed_rounds, 0);
+    let due = fetch.pump_at(&mut inv, AGENT, start + WATCHDOG + FAILED_AGAIN);
+    assert!(due.iter().any(|c| matches!(c, NetCommand::FetchInventoryTree { .. })));
+    assert_eq!(fetch.failed_rounds, 1);
+}
+
+/// Once everything is read, the idle walk no longer walks the whole tree
+/// every 30 s: it looks again only when the inventory changed.
+#[test]
+fn a_loaded_walk_sweeps_again_only_after_a_change() {
+    let tree = wide_tree();
+    let mut inv = skeleton(&tree);
+    let server = Server {
+        tree: &tree,
+        cap: 50,
+        items: 1,
+        failure: &|_| None,
+    };
+    let (_, mut fetch) = run_keeping_fetch(BackgroundFetch::default(), &mut inv, &server);
+    assert!(unfetched(&inv).is_empty());
+    let start = fetch.clock.expect("pumped") + WATCHDOG;
+    fetch.pump_at(&mut inv, AGENT, start);
+    assert!(fetch.swept_clean.is_some(), "nothing left");
+    let swept = fetch.swept;
+    fetch.pump_at(&mut inv, AGENT, start + WATCHDOG);
+    assert_eq!(fetch.swept, swept, "no new sweep while nothing changed");
+    inv.generation += 1;
+    fetch.pump_at(&mut inv, AGENT, start + WATCHDOG * 2);
+    assert_ne!(fetch.swept, swept, "a change brings the sweep back");
+}
+
+/// The lost-items request is sent once a session, as findLostItems is; one
+/// never answered is given up, shown in N4, and sent again only at the next
+/// region's capabilities.
+#[test]
+fn an_unanswered_lost_items_request_is_given_up_until_the_next_region() {
+    let mut inv = skeleton(&[]);
+    inv.folders.values_mut().for_each(|f| f.state = FetchState::Fetched);
+    let mut fetch = BackgroundFetch::default();
+    fetch.start(&inv);
+    let start = Instant::now();
+    let first = fetch.pump_at(&mut inv, AGENT, start);
+    assert!(matches!(first[..], [NetCommand::FetchInventoryOrphans { .. }]));
+    assert!(fetch.report(&inv, start).contains("lost items: asked, waiting"));
+    let later = start + READ_DEADLINE;
+    assert!(fetch.pump_at(&mut inv, AGENT, later).is_empty(), "given up, not asked again");
+    assert!(fetch.report(&inv, later).contains("asked again at the next region change"));
+    fetch.resume(&inv);
+    assert!(
+        fetch
+            .pump_at(&mut inv, AGENT, later)
+            .iter()
+            .any(|c| matches!(c, NetCommand::FetchInventoryOrphans { .. }))
     );
 }

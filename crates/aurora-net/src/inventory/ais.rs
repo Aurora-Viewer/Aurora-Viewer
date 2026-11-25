@@ -137,7 +137,14 @@ const RETRY_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(5)
 /// The Legacy Viewer's default request timeout is 30 s; a large inventory
 /// reply can be slower, so this stays generous.
 pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-/// AISAPI::HTTP_TIMEOUT (indra/newview/llaisapi.cpp): a subtree read.
+/// AISAPI::HTTP_TIMEOUT (indra/newview/llaisapi.cpp), which the Legacy
+/// Viewer applies to every AIS command. Here a subtree read and an item
+/// read; a single folder keeps [`REQUEST_TIMEOUT`].
+///
+/// Deliberate difference: llcorehttp retries a timed-out or 5xx command up
+/// to 5 times (`HttpPolicy::stageAfterCompletion`, `isRetryable`); a subtree
+/// read that times out here is tried once, then read in smaller parts by the
+/// walk (background.rs), which answers sooner than five more 180 s waits.
 pub const TREE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 /// A subtree read's whole time, its retries and their waits included:
 /// under the walk's own deadline (background.rs TREE_DEADLINE, 240 s).
@@ -162,11 +169,29 @@ pub enum FetchFailure {
 pub struct FetchError {
     pub kind: FetchFailure,
     pub status: Option<u16>,
+    /// The server did not answer in time (a [`FetchFailure::Transient`]
+    /// with no status): the walk reads such a subtree in smaller parts at
+    /// once. A transport error (connection refused or reset, DNS) is not a
+    /// timeout and keeps the walk's backoff.
+    pub timed_out: bool,
 }
 
 impl FetchError {
     pub const fn new(kind: FetchFailure, status: Option<u16>) -> Self {
-        FetchError { kind, status }
+        FetchError {
+            kind,
+            status,
+            timed_out: false,
+        }
+    }
+
+    /// No answer in time.
+    pub const fn timeout() -> Self {
+        FetchError {
+            kind: FetchFailure::Transient,
+            status: None,
+            timed_out: true,
+        }
     }
 
     fn status_of(status: u16) -> Self {
@@ -178,6 +203,7 @@ impl FetchError {
         FetchError {
             kind,
             status: Some(status),
+            timed_out: false,
         }
     }
 }
@@ -186,6 +212,7 @@ impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.status {
             Some(status) => write!(f, "AIS inventory read failed (status {status}, {:?})", self.kind),
+            None if self.timed_out => write!(f, "AIS inventory read timed out"),
             None => write!(f, "AIS inventory read failed ({:?})", self.kind),
         }
     }
@@ -264,22 +291,19 @@ pub async fn fetch_tree(
         url.push_str("&children=");
         url.push_str(&ids.join(","));
     }
-    // (a subtree read waits AISAPI::HTTP_TIMEOUT (180 s), as the Legacy
-    // Viewer's does: a large subtree's reply takes longer than a folder's;
-    // one that times out, or that a gateway gives up on, is never asked
-    // again as is: the walk reads it in smaller parts)
+    // (a subtree read waits AISAPI::HTTP_TIMEOUT (180 s), the Legacy
+    // Viewer's timeout for an AIS command, but only once, where llcorehttp
+    // would try it again up to 5 times (TREE_TIMEOUT): a large subtree's
+    // reply takes longer than a folder's; one that times out, or that a
+    // gateway gives up on, is never asked again as is: the walk reads it in
+    // smaller parts)
     let doc = if depth > 0 {
         // (one answer within TREE_TOTAL, retries and waits included: the
         // walk's deadline never frees a slot while its request still runs)
-        let overloaded = std::sync::atomic::AtomicBool::new(false);
-        tokio::time::timeout(TREE_TOTAL, get_with(http, url, TREE_TIMEOUT, 0, Some(&overloaded)))
+        let state = TryState::default();
+        tokio::time::timeout(TREE_TOTAL, get_with(http, url, TREE_TIMEOUT, 0, Some(&state)))
             .await
-            // (out of time after a throttle or an overload, 429 or 503: an
-            // overload, the walk waits; else a slow subtree, read in parts)
-            .unwrap_or_else(|_| {
-                let status = overloaded.load(std::sync::atomic::Ordering::Relaxed).then_some(503);
-                Err(FetchError::new(FetchFailure::Transient, status))
-            })?
+            .unwrap_or_else(|_| Err(state.out_of_time()))?
     } else {
         get(http, url).await?
     };
@@ -306,6 +330,40 @@ fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], de
     Ok(out)
 }
 
+/// What a subtree read went through, for the reason given when its whole
+/// time ([`TREE_TOTAL`]) runs out.
+#[derive(Default)]
+struct TryState {
+    /// A throttle or an overload (429 or 503) was answered.
+    overloaded: std::sync::atomic::AtomicBool,
+    /// When the attempt in progress was sent; `None` between attempts.
+    sending: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl TryState {
+    fn sending(&self, since: Option<std::time::Instant>) {
+        if let Ok(mut sending) = self.sending.lock() {
+            *sending = since;
+        }
+    }
+
+    /// Why the whole time ran out: an overload waits (503); a server still
+    /// on its answer for at least a folder's timeout is a timeout (read in
+    /// parts); anything else (transport errors and their backoff) is a
+    /// plain transient failure, which keeps the walk's backoff.
+    fn out_of_time(&self) -> FetchError {
+        if self.overloaded.load(std::sync::atomic::Ordering::Relaxed) {
+            return FetchError::new(FetchFailure::Transient, Some(503));
+        }
+        let waited = self.sending.lock().ok().and_then(|s| *s).map(|at| at.elapsed());
+        if waited.is_some_and(|w| w >= REQUEST_TIMEOUT) {
+            FetchError::timeout()
+        } else {
+            FetchError::new(FetchFailure::Transient, None)
+        }
+    }
+}
+
 /// One AIS read, retried on the conditions the Legacy Viewer's HTTP layer retries
 /// (timeout, 408/425/429 and 5xx), with its backoff and `Retry-After`.
 async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
@@ -319,29 +377,38 @@ async fn get_with(
     url: String,
     timeout: std::time::Duration,
     timeout_retries: u32,
-    overloaded: Option<&std::sync::atomic::AtomicBool>,
+    state: Option<&TryState>,
 ) -> Result<Llsd, FetchError> {
     let mut attempt = 0;
     let mut timeouts = 0;
     loop {
         attempt += 1;
         let timed = crate::probe::HttpRequest::start(crate::probe::HttpKind::Inventory);
+        if let Some(state) = state {
+            state.sending(Some(std::time::Instant::now()));
+        }
         let sent = tokio::time::timeout(timeout, http.get(&url).header("Accept", "application/llsd+xml").send()).await;
         let response = match sent {
             Err(_) => {
                 if let Some(t) = timed {
                     t.finish(0, 0, false);
                 }
+                if let Some(state) = state {
+                    state.sending(None);
+                }
                 timeouts += 1;
                 if attempt <= RETRY_ATTEMPTS && timeouts <= timeout_retries {
                     tokio::time::sleep(retry_backoff(attempt, None)).await;
                     continue;
                 }
-                return Err(FetchError::new(FetchFailure::Transient, None));
+                return Err(FetchError::timeout());
             }
             Ok(Err(error)) => {
                 if let Some(t) = timed {
                     t.finish(0, 0, false);
+                }
+                if let Some(state) = state {
+                    state.sending(None);
                 }
                 if attempt <= RETRY_ATTEMPTS {
                     log::debug!("AIS inventory read failed ({error}); retry {attempt}");
@@ -365,10 +432,11 @@ async fn get_with(
             let gateway = matches!(status, 502 | 504) && timeout_retries < RETRY_ATTEMPTS;
             if failure.kind == FetchFailure::Transient && attempt <= RETRY_ATTEMPTS && !gateway {
                 log::debug!("AIS inventory read failed (status {status}); retry {attempt}");
-                if matches!(status, 429 | 503)
-                    && let Some(flag) = overloaded
-                {
-                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Some(state) = state {
+                    state.sending(None);
+                    if matches!(status, 429 | 503) {
+                        state.overloaded.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
                 tokio::time::sleep(retry_backoff(attempt, retry_after(&response))).await;
                 continue;
@@ -386,12 +454,15 @@ async fn get_with(
                     tokio::time::sleep(retry_backoff(attempt, wait)).await;
                     continue;
                 }
-                // (a timeout: no status, the walk reads it in parts)
-                return Err(FetchError::new(FetchFailure::Transient, None));
+                // (a timeout: the walk reads it in parts)
+                return Err(FetchError::timeout());
             }
             Ok(Err(error)) => {
                 if let Some(t) = timed {
                     t.finish(status, 0, false);
+                }
+                if let Some(state) = state {
+                    state.sending(None);
                 }
                 if attempt <= RETRY_ATTEMPTS {
                     log::debug!("AIS inventory reply failed ({error}); retry {attempt}");
@@ -472,17 +543,28 @@ pub struct ItemReads {
     pub failed: Vec<Uuid>,
 }
 
+/// Item reads sent side by side; the chunks of a larger read go one after
+/// the other.
+pub const ITEM_CHUNK: usize = 16;
+
 /// Bounded parallel reads of single items (AISAPI::FetchItem).
 pub async fn read_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> ItemReads {
     let mut reads = ItemReads::default();
-    for chunk in ids.chunks(16) {
+    for chunk in ids.chunks(ITEM_CHUNK) {
         let mut tasks = tokio::task::JoinSet::new();
         for id in chunk.iter().copied() {
             let http = http.clone();
             let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
             tasks.spawn(async move {
-                let read = crate::caps::get_llsd_as(&http, &url, crate::probe::HttpKind::Inventory).await;
-                (id, read.map(|doc| parse_item_reply(&doc, id, owner).ok()))
+                // (AISAPI::HTTP_TIMEOUT, as every AIS command: an item read
+                // always answers, so the viewer's one-read-at-a-time claim
+                // (world/inventory.rs ITEM_READ_DEADLINE) outlasts it)
+                let read = tokio::time::timeout(
+                    TREE_TIMEOUT,
+                    crate::caps::get_llsd_as(&http, &url, crate::probe::HttpKind::Inventory),
+                )
+                .await;
+                (id, read.map(|read| read.map(|doc| parse_item_reply(&doc, id, owner).ok())))
             });
         }
         let mut answered = HashSet::new();
@@ -490,9 +572,9 @@ pub async fn read_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[U
             let Ok((id, read)) = result else { continue };
             answered.insert(id);
             match read {
-                Ok(Some(item)) => reads.items.push(item),
-                Err(crate::caps::CapsError::Status(404 | 410)) => reads.missing.push(id),
-                Ok(None) | Err(_) => reads.failed.push(id),
+                Ok(Ok(Some(item))) => reads.items.push(item),
+                Ok(Err(crate::caps::CapsError::Status(404 | 410))) => reads.missing.push(id),
+                Ok(Ok(None) | Err(_)) | Err(_) => reads.failed.push(id),
             }
         }
         // a panicked read task answers nothing: failed, asked again

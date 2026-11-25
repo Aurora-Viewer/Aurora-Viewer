@@ -153,10 +153,18 @@ impl World {
         for id in &worn {
             // (nor while its read is on its way: a slow answer on a huge
             // inventory never uses up the attempts)
-            if self.inventory.items.contains_key(id) || self.inventory.item_reading(*id, true, now) {
+            // (nor a given-up original: `send_from` would drop its read, and
+            // an attempt never sent must not be spent)
+            if self.inventory.items.contains_key(id) || self.inventory.item_reading(*id, true, now) || self.inventory.broken(id) {
                 continue;
             }
             let attempt = self.attachment_inventory.fetched.entry(*id).or_insert((now, 0));
+            // (attempts spent, but the inventory no longer counts it broken:
+            // its give-up pause ended (`Inventory::expire_given_up`), so it
+            // is read again like a new one)
+            if attempt.1 >= FETCH_ATTEMPTS && self.inventory.item_failures.get(id).is_none_or(|n| *n == 0) {
+                *attempt = (now, 0);
+            }
             if attempt.1 < FETCH_ATTEMPTS && (attempt.1 == 0 || now.saturating_duration_since(attempt.0) >= RETRY_GAP) {
                 *attempt = (now, attempt.1 + 1);
                 missing.push(*id);
@@ -452,6 +460,28 @@ mod tests {
         );
     }
 
+    /// A given-up original spends no attempt on reads that would never be
+    /// sent, and is read again once its pause ends.
+    #[test]
+    fn a_given_up_attachment_is_read_again_after_its_pause() {
+        let (mut world, _, item) = fixture();
+        let now = Instant::now();
+        for attempt in 0..u32::from(FETCH_ATTEMPTS) {
+            world.update_attachment_inventory(now + RETRY_GAP * attempt, true);
+            world.apply(NetEvent::InventoryItemsFailed {
+                items: vec![item.id],
+                attachment: true,
+            });
+        }
+        assert!(world.inventory.broken(&item.id));
+        assert!(world.update_attachment_inventory(now + RETRY_GAP * 10, true).is_empty());
+        let at = world.inventory.gave_up_at.get_mut(&item.id).expect("given up");
+        *at -= crate::world::inventory::ITEM_GIVE_UP;
+        world.inventory.expire_given_up(Instant::now());
+        assert!(matches!(&world.update_attachment_inventory(now + RETRY_GAP * 11, true)[..],
+            [NetCommand::FetchAttachmentItems { items }] if items == &[item.id]));
+    }
+
     #[test]
     fn attachment_inventory_retries_a_delayed_item_without_requesting_each_tick() {
         let (mut world, _, item) = fixture();
@@ -459,7 +489,10 @@ mod tests {
         for attempt in 0..u32::from(FETCH_ATTEMPTS) {
             assert!(matches!(&world.update_attachment_inventory(now + RETRY_GAP * attempt, true)[..],
                 [NetCommand::FetchAttachmentItems { items }] if items == &[item.id]));
-            world.apply(NetEvent::InventoryItemsFailed { items: vec![item.id] });
+            world.apply(NetEvent::InventoryItemsFailed {
+                items: vec![item.id],
+                attachment: true,
+            });
             assert!(
                 world
                     .update_attachment_inventory(now + RETRY_GAP * attempt + Duration::from_millis(500), true)
@@ -896,7 +929,10 @@ mod tests {
         let now = Instant::now();
         for attempt in 0..u32::from(FETCH_ATTEMPTS) {
             world.update_attachment_inventory(now + RETRY_GAP * attempt, false);
-            world.apply(NetEvent::InventoryItemsFailed { items: vec![item.id] });
+            world.apply(NetEvent::InventoryItemsFailed {
+                items: vec![item.id],
+                attachment: true,
+            });
         }
         assert!(
             appearance::plan(

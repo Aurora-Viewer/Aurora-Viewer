@@ -162,7 +162,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | O9 | Follow sculpts | toggle | Logs the attachment and sculpt-map changes of the target avatar (`sculpt watch:`) |
 | N1 | Network graph | window | Performance › Network |
 | N2 | Region summary | copy | Simulator version, time dilation, frame rates, counts, connected simulators, ping, losses |
-| N4 | Inventory loading | copy | Folders known, read, reading, failed, not read yet and over the server's limit; items and unreadable link originals; the background walk's reads in flight (and the oldest's age), queue, retries and their next time, the last answer, the freed unanswered reads, watchdog restarts and failed rounds. No names: for an inventory that stops loading |
+| N4 | Inventory loading | copy | Folders known, read, reading, failed, not read yet and over the server's limit; items, link originals unreadable and confirmed gone; the lost-items request's state; the background walk's reads in flight (and the oldest's age), queue, retries and their next time, the last answer, the freed unanswered reads, watchdog restarts and failed rounds. No names: for an inventory that stops loading |
 | P1 | Performance | window | The compact Performance window |
 | P2 | Resource monitor | window | Performance's full view |
 | P3 | Slow frames | toggle | `slow sync:` lines for the frames whose scene sync takes over 30 ms |

@@ -423,11 +423,17 @@ fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::It
         });
     }
     if !reads.missing.is_empty() {
-        let _ = events.send(NetEvent::InventoryItemsMissing { items: reads.missing });
+        let _ = events.send(NetEvent::InventoryItemsMissing {
+            items: reads.missing,
+            attachment,
+        });
     }
     if !reads.failed.is_empty() {
         log::warn!("{} inventory item reads failed", reads.failed.len());
-        let _ = events.send(NetEvent::InventoryItemsFailed { items: reads.failed });
+        let _ = events.send(NetEvent::InventoryItemsFailed {
+            items: reads.failed,
+            attachment,
+        });
     }
 }
 
@@ -3901,13 +3907,18 @@ impl Session<'_> {
                 }
             };
             if let Some(cap) = ais {
-                for chunk in items.chunks(16) {
+                for chunk in items.chunks(crate::inventory::ais::ITEM_CHUNK) {
                     receive(crate::inventory::ais::read_items(&http, &cap, owner, chunk).await);
                 }
             } else if let Some(url) = legacy {
                 for chunk in items.chunks(50) {
                     let body = crate::inventory::fetch_items_body(chunk, owner);
-                    let reads = match caps::post_llsd(&http, &url, &body).await {
+                    // (each chunk answers within the AIS timeout, so the
+                    // viewer's one-read-at-a-time claim outlasts it)
+                    let posted = tokio::time::timeout(crate::inventory::ais::TREE_TIMEOUT, caps::post_llsd(&http, &url, &body))
+                        .await
+                        .unwrap_or_else(|_| Err(caps::CapsError::Http("timed out".to_owned())));
+                    let reads = match posted {
                         Ok(doc) => crate::inventory::item_reads(&doc, chunk),
                         Err(e) => {
                             log::warn!("item fetch failed: {e}");

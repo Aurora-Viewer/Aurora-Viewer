@@ -1750,8 +1750,7 @@ impl World {
 
     /// The background inventory walk's state (Dev Toolbox N4).
     pub fn inventory_loading_report(&self) -> String {
-        self.inventory_background
-            .report(&self.inventory, self.inventory.missing_items.len(), std::time::Instant::now())
+        self.inventory_background.report(&self.inventory, std::time::Instant::now())
     }
 
     /// Persist the fetched inventory (next login skips unchanged folders).
@@ -4758,16 +4757,14 @@ impl World {
                 None
             }
             NetEvent::InventoryItems(items) => {
-                for item in &items {
-                    self.inventory.items_reading.remove(&(item.id, false));
-                }
+                let ids: Vec<_> = items.iter().map(|item| item.id).collect();
+                self.inventory.items_answered(&ids, false);
                 self.inventory.add_items(items);
                 None
             }
             NetEvent::AttachmentInventoryItems(items) => {
-                for item in &items {
-                    self.inventory.items_reading.remove(&(item.id, true));
-                }
+                let ids: Vec<_> = items.iter().map(|item| item.id).collect();
+                self.inventory.items_answered(&ids, true);
                 self.inventory.add_attachment_items(items);
                 None
             }
@@ -4821,13 +4818,17 @@ impl World {
                 }
                 None
             }
-            NetEvent::InventoryItemsFailed { items } => {
+            NetEvent::InventoryItemsFailed { items, attachment } => {
                 log::warn!("{} inventory items could not be fetched", items.len());
+                // (only this kind's claim: the other kind's read of the same
+                // item may still be on its way)
+                self.inventory.items_answered(&items, attachment);
                 self.inventory.items_failed(&items);
                 None
             }
-            NetEvent::InventoryItemsMissing { items } => {
+            NetEvent::InventoryItemsMissing { items, attachment } => {
                 log::warn!("{} inventory items do not exist (broken links)", items.len());
+                self.inventory.items_answered(&items, attachment);
                 self.inventory.items_missing(items);
                 None
             }

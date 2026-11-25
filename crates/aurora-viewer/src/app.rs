@@ -2363,10 +2363,13 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
-        // a link's original already found unreadable is never read again
-        // this session (LLViewerInventoryItem::isBrokenLink): on a huge
-        // inventory, hundreds of dead links each read over and over took
-        // requests from the folder walk
+        // a link's original confirmed gone is not read again this session,
+        // one given up after its attempts only after its pause
+        // (`Inventory::drop_broken`): on a huge inventory, hundreds of dead
+        // links each read over and over took requests from the folder walk.
+        // Aurora's own rule: the Legacy Viewer's
+        // LLViewerInventoryItem::getIsBrokenLink (llviewerinventory.cpp) is
+        // only a state check and suppresses no read.
         if let NetCommand::FetchItems { items, .. } = &mut cmd {
             self.world.inventory.drop_broken(items);
             if items.is_empty() {

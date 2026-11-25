@@ -1729,6 +1729,7 @@ fn an_item_on_its_way_is_never_read_twice() {
     assert_eq!(worn, vec![a]);
     assert!(inv.item_reading(a, true, now));
     // a failure counts once, then the item may be asked again
+    inv.items_answered(&[a], false);
     inv.items_failed(&[a]);
     assert_eq!(inv.item_failures[&a], 1);
     let mut retry = vec![a, b];
@@ -1748,6 +1749,91 @@ fn an_item_on_its_way_is_never_read_twice() {
     let mut dead = vec![a];
     inv.claim_item_reads(&mut dead, false, now + ITEM_READ_DEADLINE);
     assert!(dead.is_empty(), "a broken link is never read again");
+}
+
+/// A refresh of an item already in the inventory (a script saved twice, a
+/// gesture or an AO item changed) is always sent, as on the Legacy Viewer:
+/// the newest read writes last.
+#[test]
+fn a_refresh_of_a_known_item_is_never_swallowed() {
+    let mut inv = Inventory::default();
+    let script = Uuid::from_u128(77);
+    inv.items.insert(
+        script,
+        InvItem {
+            id: script,
+            ..Default::default()
+        },
+    );
+    let now = std::time::Instant::now();
+    for _ in 0..2 {
+        let mut refresh = vec![script];
+        inv.claim_item_reads(&mut refresh, false, now);
+        assert_eq!(refresh, vec![script], "each save's refresh is sent");
+    }
+    assert!(!inv.item_reading(script, false, now), "no claim on a known item");
+}
+
+/// An answer releases only its own kind's claim: an ordinary read's
+/// failure never lets a second attachment read of the same item go while
+/// the first is still on its way.
+#[test]
+fn an_answer_frees_only_its_own_kind_of_read() {
+    let mut inv = Inventory::default();
+    let a = Uuid::from_u128(77);
+    let now = std::time::Instant::now();
+    let (mut plain, mut worn) = (vec![a], vec![a]);
+    inv.claim_item_reads(&mut plain, false, now);
+    inv.claim_item_reads(&mut worn, true, now);
+    inv.items_answered(&[a], false);
+    inv.items_failed(&[a]);
+    assert!(inv.item_reading(a, true, now), "the attachment read is still on its way");
+    let mut again = vec![a];
+    inv.claim_item_reads(&mut again, true, now);
+    assert!(again.is_empty());
+}
+
+/// The later chunks of a large item read are claimed for as long as the
+/// chunks before them can take: never asked again while still queued.
+#[test]
+fn a_large_item_reads_later_chunks_keep_their_claim() {
+    let mut inv = Inventory::default();
+    let chunk = aurora_net::inventory::ais::ITEM_CHUNK;
+    let ids: Vec<Uuid> = (0..chunk as u128 * 3).map(|n| Uuid::from_u128(1000 + n)).collect();
+    let now = std::time::Instant::now();
+    let mut read = ids.clone();
+    inv.claim_item_reads(&mut read, false, now);
+    let after_one = now + ITEM_READ_DEADLINE;
+    assert!(!inv.item_reading(ids[0], false, after_one), "the first chunk's deadline passed");
+    assert!(
+        inv.item_reading(ids[chunk * 2], false, after_one),
+        "the third chunk may still be queued"
+    );
+    assert!(!inv.item_reading(ids[chunk * 2], false, now + ITEM_READ_DEADLINE * 3));
+}
+
+/// An unreadable item is given up and read again a few rounds a session,
+/// then stays a broken link.
+#[test]
+fn an_unreadable_item_is_read_again_only_a_few_rounds() {
+    let mut inv = Inventory::default();
+    let busy = Uuid::from_u128(77);
+    for round in 0..=ITEM_GIVE_UP_ROUNDS {
+        for _ in 0..ITEM_FETCH_ATTEMPTS {
+            inv.items_failed(&[busy]);
+        }
+        assert!(inv.broken(&busy));
+        if round == ITEM_GIVE_UP_ROUNDS {
+            assert!(!inv.gave_up_at.contains_key(&busy), "the last round keeps it broken");
+            break;
+        }
+        *inv.gave_up_at.get_mut(&busy).expect("given up") -= ITEM_GIVE_UP;
+        inv.expire_given_up(std::time::Instant::now());
+        assert!(!inv.broken(&busy), "round {round}: read again");
+    }
+    inv.expire_given_up(std::time::Instant::now() + ITEM_GIVE_UP * 2);
+    assert!(inv.broken(&busy));
+    assert_eq!(inv.unreadable_items(), 1);
 }
 
 /// A server busy for a while never marks a real item broken for the
