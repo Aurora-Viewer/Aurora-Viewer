@@ -363,6 +363,11 @@ toolbar-command-area-search = Recherche d’objets
 
 # Area Search (issue #930).
 area-search-refresh = Actualiser
+area-search-scope-heading = Où
+area-search-scope-parcel = Parcelle
+area-search-scope-region = Région
+area-search-scope-neighbours = Voisines
+area-search-objects-heading = Quels objets
 area-search-parcel = Parcelle actuelle uniquement
 area-search-mine = Mes objets
 area-search-filters = Filtres
@@ -15859,7 +15864,6 @@ area-search-permissions = Permissions
 area-search-price-heading = Prix, pour les objets à vendre
 area-search-price-to = à
 area-search-price-tip = Choisissez d’abord « À vendre »
-area-search-where = Où et à qui
 area-search-linked = Prims liés
 area-search-neighbouring = Régions voisines
 area-search-one-field = Chercher dans un champ

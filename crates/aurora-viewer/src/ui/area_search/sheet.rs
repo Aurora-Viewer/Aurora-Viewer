@@ -3,7 +3,7 @@
 //! one field (the Filter, Advanced and Find tabs of floater_fs_area_search.xml).
 
 use super::AreaSearchUi;
-use super::model::{self, CLICK_ICONS, Kind, KindState};
+use super::model::{self, CLICK_ICONS, Kind, KindState, Scope};
 use super::table::Filters;
 use crate::theme::Palette;
 use crate::ui::{board, widgets};
@@ -114,9 +114,28 @@ fn heading(ui: &mut egui::Ui, p: &Palette, text: &str, note: &str) {
     ui.add_space(3.0);
 }
 
-/// Everything but the buttons.
-pub(super) fn body(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
+/// Where to look: the parcel, the region, or its neighbours too.
+pub(super) fn scope_choice(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
+    let labels = Scope::ALL.map(|s| (s.label(), true));
+    let mut at = Scope::of(f) as usize;
+    if widgets::segmented(ui, p, &mut at, &labels) {
+        Scope::ALL[at].set(f);
+    }
+}
+
+/// Everything but the buttons; `scope`: where to look too.
+pub(super) fn body(ui: &mut egui::Ui, p: &Palette, f: &mut Filters, scope: bool) {
     ui.spacing_mut().item_spacing.y = 0.0;
+    if scope {
+        let reach = super::table::metres(model::REACH);
+        heading(
+            ui,
+            p,
+            aurora_i18n::tr!("area-search-scope-heading"),
+            &aurora_i18n::tr!("area-search-within", distance = reach),
+        );
+        ui.horizontal(|ui| scope_choice(ui, p, f));
+    }
     heading(
         ui,
         p,
@@ -141,12 +160,10 @@ pub(super) fn body(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
         permissions(ui, p, f);
         price(ui, p, f);
     }
-    heading(ui, p, aurora_i18n::tr!("area-search-where"), "");
+    heading(ui, p, aurora_i18n::tr!("area-search-objects-heading"), "");
     let mut switches = [
-        (aurora_i18n::tr!("area-search-parcel"), &mut f.parcel_only),
         (aurora_i18n::tr!("area-search-mine"), &mut f.mine),
         (aurora_i18n::tr!("area-search-linked"), &mut f.children),
-        (aurora_i18n::tr!("area-search-neighbouring"), &mut f.neighbors),
     ];
     let columns = if wide { 2 } else { 1 };
     for line in switches.chunks_mut(columns) {

@@ -363,6 +363,11 @@ toolbar-command-area-search = エリアサーチ
 
 # Area Search (issue #930).
 area-search-refresh = リフレッシュ
+area-search-scope-heading = 場所
+area-search-scope-parcel = 区画
+area-search-scope-region = リージョン
+area-search-scope-neighbours = 隣接も
+area-search-objects-heading = 対象のオブジェクト
 area-search-parcel = 今いる区画のみ
 area-search-mine = 自分のオブジェクト
 area-search-filters = フィルター
@@ -15676,7 +15681,6 @@ area-search-permissions = 権限
 area-search-price-heading = 価格（販売中のオブジェクト）
 area-search-price-to = ～
 area-search-price-tip = 先に「販売中」を選んでください
-area-search-where = 場所と所有者
 area-search-linked = リンクされたプリム
 area-search-neighbouring = 隣接リージョン
 area-search-one-field = 項目ごとに検索

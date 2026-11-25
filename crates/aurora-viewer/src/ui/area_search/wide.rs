@@ -74,7 +74,7 @@ pub(super) fn show(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, env
     action
 }
 
-/// Refresh and the "…" menu, and the search as wide as the tiles under it.
+/// Where to look, refresh and the "…" menu, and the search as wide as the tiles under it.
 fn header(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette) {
     let scale = crate::ui::fonts::scale(ui.ctx()).max(1.0);
     let (line, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0 * scale), Sense::hover());
@@ -111,6 +111,19 @@ fn header(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette) {
     refresh.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     if refresh.on_hover_text(tip).clicked() {
         state.refresh = true;
+    }
+    // where to look, on the left (in the filters when there is no room)
+    let labels = model::Scope::ALL.map(|s| (s.label(), true));
+    state.scope_shown = widgets::segmented_size(ui, &labels).x <= ui.available_width();
+    if state.scope_shown {
+        let area = line.with_max_x(ui.min_rect().left());
+        let mut left = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("area_search_scope")
+                .max_rect(area)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        sheet::scope_choice(&mut left, p, &mut state.table.filters);
     }
 }
 
@@ -515,7 +528,7 @@ fn filters(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, d: &Digest,
                 .id_salt("area_search_sheet")
                 .max_height(height)
                 .auto_shrink([false, false])
-                .show(ui, |ui| sheet::body(ui, p, &mut state.table.filters));
+                .show(ui, |ui| sheet::body(ui, p, &mut state.table.filters, !state.scope_shown));
             ui.add_space(6.0);
             state.sheet_buttons(ui, p);
         }

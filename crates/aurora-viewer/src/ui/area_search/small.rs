@@ -191,7 +191,7 @@ fn filters(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette) {
         .id_salt("area_search_sheet")
         .max_height(height)
         .auto_shrink([false, false])
-        .show(&mut child, |ui| sheet::body(ui, p, &mut state.table.filters));
+        .show(&mut child, |ui| sheet::body(ui, p, &mut state.table.filters, true));
     child.add_space(6.0);
     state.sheet_buttons(&mut child, p);
     child.add_space(6.0);

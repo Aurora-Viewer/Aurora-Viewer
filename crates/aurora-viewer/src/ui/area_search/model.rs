@@ -84,6 +84,45 @@ impl Kind {
     }
 }
 
+/// How far an object can be and still be listed, in metres: as far as the draw
+/// distance goes (human request, 2026-11-25; the Legacy Viewer has no limit).
+pub const REACH: f32 = crate::settings::DRAW_DISTANCE_MAX;
+
+/// Where the objects are looked for: one choice for the Legacy Viewer's
+/// "current parcel" and "neighbour regions".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Scope {
+    Parcel,
+    Region,
+    Neighbours,
+}
+
+impl Scope {
+    pub const ALL: [Scope; 3] = [Scope::Parcel, Scope::Region, Scope::Neighbours];
+
+    /// (a parcel lies in the region: with both, the neighbours add nothing)
+    pub fn of(f: &Filters) -> Scope {
+        match (f.parcel_only, f.neighbors) {
+            (true, _) => Scope::Parcel,
+            (false, true) => Scope::Neighbours,
+            (false, false) => Scope::Region,
+        }
+    }
+
+    pub fn set(self, f: &mut Filters) {
+        f.parcel_only = self == Scope::Parcel;
+        f.neighbors = self == Scope::Neighbours;
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Scope::Parcel => aurora_i18n::tr!("area-search-scope-parcel"),
+            Scope::Region => aurora_i18n::tr!("area-search-scope-region"),
+            Scope::Neighbours => aurora_i18n::tr!("area-search-scope-neighbours"),
+        }
+    }
+}
+
 /// Bars of the distance chart.
 pub(super) const BARS: usize = 32;
 
@@ -104,12 +143,11 @@ impl Default for Chart {
 impl Chart {
     /// `distances` of the rows every filter but the distance keeps. One
     /// region's side at least; as far as the furthest object otherwise, by
-    /// whole sides (neighbouring regions, var regions), up to `MAX_REACH`.
+    /// whole sides (neighbouring regions, var regions), up to `REACH`.
     pub fn new(distances: impl Iterator<Item = f32> + Clone) -> Self {
         const SIDE: f32 = 256.0;
-        const MAX_REACH: f32 = 4096.0;
         let far = distances.clone().filter(|d| d.is_finite()).fold(0.0, f32::max);
-        let reach = ((far / SIDE).ceil() * SIDE).clamp(SIDE, MAX_REACH);
+        let reach = ((far / SIDE).ceil() * SIDE).clamp(SIDE, REACH);
         let mut bars = [0; BARS];
         for d in distances.filter(|d| d.is_finite()) {
             let bar = (d.max(0.0) / reach * BARS as f32) as usize;
@@ -551,8 +589,21 @@ mod tests {
         assert!(chart.bar_in(0, 0.0, 64.0) && chart.bar_in(7, 0.0, 64.0) && !chart.bar_in(8, 0.0, 64.0));
         assert_eq!(Chart::new([300.0].into_iter()).reach, 512.0);
         let odd = Chart::new([f32::NAN, f32::INFINITY, -1.0, 1e9].into_iter());
-        assert_eq!((odd.reach, odd.bars[0], odd.bars[31]), (4096.0, 1, 1), "bad distances are left out");
+        assert_eq!((odd.reach, odd.bars[0], odd.bars[31]), (1024.0, 1, 1), "bad distances are left out");
         assert_eq!(Chart::new(std::iter::empty()).tallest(), 0);
+    }
+
+    #[test]
+    fn area_search_scope_is_one_choice_of_two_switches() {
+        let mut f = Filters::default();
+        assert_eq!(Scope::of(&f), Scope::Region);
+        for scope in Scope::ALL {
+            scope.set(&mut f);
+            assert_eq!(Scope::of(&f), scope);
+        }
+        // a Legacy link may ask for both
+        (f.parcel_only, f.neighbors) = (true, true);
+        assert_eq!(Scope::of(&f), Scope::Parcel);
     }
 
     #[test]

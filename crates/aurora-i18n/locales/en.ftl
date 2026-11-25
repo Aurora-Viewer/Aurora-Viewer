@@ -363,6 +363,11 @@ toolbar-command-area-search = Area search
 
 # Area Search (issue #930).
 area-search-refresh = Refresh
+area-search-scope-heading = Where
+area-search-scope-parcel = Parcel
+area-search-scope-region = Region
+area-search-scope-neighbours = Neighbours
+area-search-objects-heading = Which objects
 area-search-parcel = Current parcel only
 area-search-mine = My objects
 area-search-filters = Filters
@@ -15851,7 +15856,6 @@ area-search-permissions = Permissions
 area-search-price-heading = Sale price, for objects for sale
 area-search-price-to = to
 area-search-price-tip = Pick “For sale” first
-area-search-where = Where and whose
 area-search-linked = Linked prims
 area-search-neighbouring = Neighbouring regions
 area-search-one-field = Search in one field

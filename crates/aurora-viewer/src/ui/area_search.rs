@@ -6,7 +6,7 @@
 
 mod chart;
 mod list;
-mod model;
+pub(crate) mod model;
 mod selection;
 mod sheet;
 mod small;
@@ -55,6 +55,8 @@ pub struct AreaSearchUi {
     sheet: bool,
     /// The wide window's grown tile.
     grown: Option<wide::Tile>,
+    /// The wide window's header has room for where to look.
+    scope_shown: bool,
     /// The 3D view of the wide window.
     pub(crate) stage: super::object_stage::StageUi,
     /// The prim outlined in the 3D view.

@@ -644,6 +644,9 @@ impl App {
                 let mut row = Row::default();
                 row.id = o.full_id;
                 row.distance = global.distance(agent) as f32;
+                if row.distance > crate::ui::area_search::model::REACH {
+                    return None;
+                }
                 row.on_parcel = on_parcel;
                 row.child = place.child;
                 row.attachment = place.attachment;
