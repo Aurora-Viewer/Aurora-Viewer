@@ -130,6 +130,7 @@ mod object_menu_demo;
 mod outfit_batch;
 mod outfit_hd;
 mod outfit_portrait;
+mod outside;
 mod own_motion;
 mod pay;
 mod photo_isolate;
@@ -583,6 +584,19 @@ pub struct App {
     /// The interface's shapes leave for the render thread, which
     /// tessellates them (aurora-render, ui_frame.rs).
     egui_hand_over: EguiHandOver,
+    /// The interface's windows outside the viewer's (outside.rs).
+    outside: crate::outside::Outside,
+    /// An item dragged out of one window, in hand until a click drops it
+    /// in another (outside/carry.rs).
+    carry: crate::outside::carry::Carry,
+    /// What the viewer's own window reads of a drag held in another window
+    /// over it, at the next pass (`carry_pointer`).
+    carry_own: Vec<egui::Event>,
+    /// The window such a drag is or was last over, and the keys held it
+    /// was given (`carry_keys`).
+    carry_keyed: Option<(WindowId, egui::Modifiers)>,
+    /// AURORA_DEMO_OUTSIDE: the test window outside, until it is closed.
+    outside_demo: Option<crate::outside::demo::Demo>,
     /// egui's textures kept on the CPU, for the renderer of a GPU recovery
     /// (egui_shadow.rs), and whether the next frame hands them all over.
     egui_shadow: egui_shadow::EguiShadow,
@@ -638,6 +652,8 @@ pub struct App {
     cursor_shown: crate::cursors::Shown,
     /// Demo mode: answers to the build tools' commands.
     build_demo: crate::build::demo_sim::DemoSim,
+    /// AURORA_DEMO_RT_WALK (app/double_click.rs).
+    rt_walk_demo: double_click::RtWalkDemo,
     /// Cursor position in physical pixels.
     cursor_pos: (f32, f32),
     /// Last walk-key press (for double-tap running) and the active temporary run.
@@ -1186,12 +1202,16 @@ pub struct App {
     texture_res_demo: Option<crate::demo::texture_res::TextureResDemo>,
     /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changes still to come.
     aa_switch_demo: Vec<(u64, u8)>,
+    /// AURORA_DEMO_RT_SWITCH: ray tracing turned on at given frames.
+    rt_switch_demo: Option<crate::demo::rt_switch::RtSwitch>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_TEXTURE_MISSING: boxes whose texture is missing.
     texture_missing_demo: Option<crate::demo::missing_texture::MissingTextureDemo>,
     /// AURORA_DEMO_SLIDESHOW: a panel whose texture changes every few seconds.
     slideshow_demo: Option<crate::demo::slideshow::SlideshowDemo>,
+    /// The lamp of `AURORA_DEMO_LAMP_BLINK` and `AURORA_DEMO_LAMP_MOVE`.
+    lamp_demo: Option<crate::demo::lamp::LampDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_TP_AWAY: the demo region's coarse locations while away.
@@ -1383,6 +1403,15 @@ fn exit_prompt_modifiers(mods: Mods, super_held: bool) -> egui::Modifiers {
 
 /// A press winit made up from the keyboard state when the window gained the
 /// focus. Its synthetic releases stay: they only ever clear a held key.
+/// A key press brought the interface's windows back, which were not drawn
+/// before it (`App::windows_drawn`): Escape out of the full-frame photo
+/// view or of the Director's playback. The press is used: egui's copy of it
+/// is not a shortcut of the windows too at their next pass (the build
+/// tools' Escape would close them).
+fn key_brought_windows_back(drawn_before: bool, drawn_after: bool) -> bool {
+    !drawn_before && drawn_after
+}
+
 fn synthetic_press(is_synthetic: bool, state: ElementState) -> bool {
     is_synthetic && state == ElementState::Pressed
 }
@@ -1454,6 +1483,11 @@ fn shortcut_claims_focus(
         return false;
     }
     if mods.ctrl && !shift && !alt && letter("s") && ui::inventory::document_save_focused(ctx) {
+        return false;
+    }
+    // a focused inventory list keeps its file manager's chords (Ctrl+Shift+A
+    // inverts there, not People; Ctrl+Shift+N makes a folder, not the sunset)
+    if ui::inventory::list_keeps_chord(ctx, &Input::key(code), mods.ctrl, shift, alt) {
         return false;
     }
     true
@@ -1666,6 +1700,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_HDR") {
         settings.hdr_emissive = v != "0";
     }
+    if let Ok(v) = std::env::var("AURORA_SSR") {
+        settings.ssr = v != "0";
+    }
     if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
         settings.occlusion_culling = v != "0";
     }
@@ -1833,6 +1870,7 @@ impl App {
         let cache_root = cache.clone();
         let geometry_needs = crate::scene::geometry_need::GeometryNeeds::load(&cache);
         let egui_ctx = egui::Context::default();
+        let outside = crate::outside::Outside::new(&egui_ctx);
         // Restore window state before the theme and fonts: loading egui's
         // memory drops pending font definitions and the transient text scale.
         if std::env::var_os("AURORA_CAPTURE").is_none() || std::env::var_os("AURORA_CAPTURE_LAYOUT").is_some() {
@@ -2003,6 +2041,11 @@ impl App {
             demo_people_states: false,
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
+            outside,
+            carry: Default::default(),
+            carry_own: Vec::new(),
+            carry_keyed: None,
+            outside_demo: None,
             egui_shadow: Default::default(),
             egui_replay: false,
             last_frame: Instant::now(),
@@ -2038,6 +2081,7 @@ impl App {
             cursors: crate::cursors::Cursors::with_palette(&palette),
             cursor_shown: Default::default(),
             build_demo: Default::default(),
+            rt_walk_demo: Default::default(),
             cursor_pos: (0.0, 0.0),
             last_tap: None,
             temp_run: None,
@@ -2358,9 +2402,11 @@ impl App {
             } else {
                 Vec::new()
             },
+            rt_switch_demo: std::env::var_os("AURORA_DEMO").and_then(|_| crate::demo::rt_switch::from_env()),
             sculpt_missing_demo: None,
             texture_missing_demo: None,
             slideshow_demo: None,
+            lamp_demo: None,
             experience_demo: None,
             away_coarse: Vec::new(),
             geometry_demo: None,
@@ -3385,6 +3431,13 @@ impl App {
         matches!(self.screen, Screen::World | Screen::Loading { .. })
     }
 
+    /// The interface's windows are drawn at this frame of the world
+    /// (`draw_ui`): not where it shows the world alone, with "UI off", the
+    /// Director's playback or the full-frame photo view.
+    fn windows_drawn(&self) -> bool {
+        !(self.interface.ui_off || self.director_playing() || self.photo_full_frame())
+    }
+
     /// Nearby chat in bubbles above the heads (#673); AURORA_DEMO_CHAT_BUBBLES
     /// turns them on for the run, without saving it.
     fn chat_bubbles(&self) -> bool {
@@ -3496,6 +3549,7 @@ impl App {
                 || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
                 || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
                 || (mode == "next-server" && self.login_form.accepted_next_servers.is_empty())
+                || (mode == "unencrypted" && self.login_form.accepted_unencrypted.is_empty())
                 || mode == "server-error"
             {
                 if mode == "terms" {
@@ -3589,7 +3643,21 @@ impl App {
             last_exec: self.last_exec(),
             platform: crate::system_info::login_platform(),
             accepted_next_servers: self.login_form.accepted_next_servers.clone(),
+            accepted_unencrypted: self
+                .settings
+                .unencrypted_logins
+                .iter()
+                .chain(&self.login_form.accepted_unencrypted)
+                .cloned()
+                .collect(),
         };
+        // a plain http server agreed to is asked once (saved just below)
+        for server in std::mem::take(&mut self.login_form.accepted_unencrypted) {
+            if !self.settings.unencrypted_logins.contains(&server) {
+                log::info!("login: the user agreed to log in to {server} without encryption");
+                self.settings.unencrypted_logins.push(server);
+            }
+        }
         self.login_form.busy = true;
         self.login_form.error = None;
         self.login_progress = Some((aurora_i18n::tr!("app-connecting").into(), 0.05));
@@ -3773,6 +3841,7 @@ impl App {
         if let Some(g) = &mut self.gfx {
             self.scene.clear(&mut g.renderer);
         }
+        self.scene.forget_login();
         self.world.reset();
         // the next session's network starts with the neighbours allowed
         self.neighbours_refused = false;
@@ -4409,6 +4478,7 @@ impl App {
                 bad_credentials,
                 previous_session,
                 next_server,
+                unencrypted_server,
             } => {
                 // A refused login spends its code, whatever the reason: the next
                 // attempt sends none, so the server can ask for a new one
@@ -4445,6 +4515,9 @@ impl App {
                 } else if let Some(server) = next_server {
                     self.login_form.next_server = Some(server);
                     self.login_form.accept_next_server = false;
+                } else if let Some(server) = unencrypted_server {
+                    self.login_form.unencrypted_server = Some(server);
+                    self.login_form.accept_unencrypted = false;
                 } else if tos_required {
                     self.login_form.tos_message = Some(error);
                 } else if critical_required {
@@ -4508,6 +4581,13 @@ impl App {
                 } else {
                     crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
                 };
+                // where the Trash's entries came from (Restore to their
+                // folder); the demo keeps them in memory
+                if !self.demo {
+                    self.world.inventory.trash_origins = crate::world::inventory::trash_origins::TrashOrigins::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::inventory::trash_origins::FILE),
+                    );
+                }
                 // the environments saved for parcels, on the grid of the
                 // login; the demo keeps them in memory
                 self.world.parcel_env.saves = if self.demo {
@@ -5697,7 +5777,7 @@ impl App {
             Action::StopAnimations => self.stop_animations(false),
             Action::ResyncAnimations => self.scene.resync_animations(Instant::now()),
             Action::RefreshAttachments => self.refresh_attachments(),
-            Action::PhotoWindow => ui::widgets::toggle_floater(&self.egui_ctx, ui::snapshot::WINDOW, &mut self.panels.snapshot),
+            Action::PhotoWindow => self.photo_window_shortcut(),
             Action::PhotoToDisk => self.photo_to_disk(),
             Action::Phototools => ui::widgets::toggle_floater(&self.egui_ctx, ui::phototools::WINDOW, &mut self.panels.phototools),
             Action::EnvSunrise | Action::EnvMidday | Action::EnvSunset | Action::EnvMidnight | Action::EnvShared => {
@@ -5855,6 +5935,8 @@ impl App {
         };
         let hit = if alt {
             picked.visible_point()
+        } else if picked.through_ignored && !self.build.open {
+            ray.and_then(|r| self.scene.drawn_action_point(&self.world, r, depth, self.settings.draw_distance))
         } else {
             self.scene
                 .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance)
@@ -6349,6 +6431,12 @@ impl App {
         if Scene::skeleton_owner(&self.world, idx).is_some_and(|(owner, _)| owner == me) {
             return None;
         }
+        // our copies (the mirror, the Fit lab's mannequins): their made-up
+        // ids are not sent; the eyes go to the point alone
+        if self.world.on_local_copy(idx) {
+            let (mx, my) = self.world.main_origin()?;
+            return Some((None, glam::DVec3::new(mx as f64, my as f64, 0.0) + point.as_dvec3()));
+        }
         let (at, rot, hud) = Scene::object_transform(&self.world, idx, now, 0)?;
         if hud {
             return None;
@@ -6541,6 +6629,9 @@ impl App {
     fn update_sounds(&mut self) {
         self.flush_object_sounds();
         let ui = &self.settings.audio.ui;
+        // (in front in any of the viewer's windows: Conversations may be
+        // in one outside)
+        let in_front = self.in_front();
         let w = &mut self.world;
         // conversations by their IM mode (LLIMMgr::addMessage), never in
         // do not disturb; "in front" = shown in the focused window
@@ -6590,8 +6681,7 @@ impl App {
         }
         let now = self.egui_ctx.input(|i| i.time);
         for m in std::mem::take(&mut w.im_messages) {
-            let front =
-                self.focused && ((self.panels.chat && self.chat_ui.selected == Some(m.session)) || in_sight.contains(&Some(m.session)));
+            let front = in_front && ((self.panels.chat && self.chat_ui.selected == Some(m.session)) || in_sight.contains(&Some(m.session)));
             if !dnd && let Some(s) = ui.im_sound(m, front) {
                 w.ui_sounds.push(s);
             }
@@ -7309,7 +7399,7 @@ impl App {
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
             // (more per frame in gaming mode's slow loop, app/gaming_mode.rs)
-            if now.duration_since(t_ev) > gaming_mode::event_budget(self.gaming_mode.on) {
+            if now.duration_since(t_ev) > gaming_mode::event_budget(self.gaming_mode.on, self.outside.focused()) {
                 break;
             }
         }
@@ -8049,6 +8139,17 @@ impl App {
                 );
                 return;
             }
+            // the inventory lists' keys: one the list could never see, or
+            // keeps fixed, is refused the same way (`inventory_accepts`)
+            if crate::keybinds::is_inventory(action) && !crate::keybinds::inventory_accepts(action, &b) {
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    aurora_i18n::tr!("common-inventory").to_owned(),
+                    aurora_i18n::tr!("keybinds-inventory-refused", keys = b.label()),
+                    crate::world::notifications::Data::None,
+                );
+                return;
+            }
             self.settings.keybinds.set(action, slot, Some(b));
             if action == Action::HudDrag {
                 self.down.clear();
@@ -8247,6 +8348,18 @@ impl App {
                 crate::demo::action_overlay(if id == 980 { 980 } else { 981 }, pos + direction * 1.0, rotation)
             });
         }
+        // Exercise action-only changes after the panel already has GPU records.
+        if ((self.frame_count == 270 && mode.starts_with("ignore-alt-switch"))
+            || (self.frame_count == 275 && mode == "ignore-alt-switch-on"))
+            && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(981))
+            && let Some(panel) = self.world.objects.get_mut(idx)
+        {
+            panel.set_click_action(if self.frame_count == 270 {
+                crate::interaction::code::DISABLED
+            } else {
+                crate::interaction::code::IGNORE
+            });
+        }
         if self.frame_count == 275 && (mode == "pause" || mode == "open-media-playing") {
             self.media.play_parcel(&self.world, &self.settings.media);
         }
@@ -8279,6 +8392,17 @@ impl App {
             } else if mode.starts_with("buy-touch-menu") {
                 self.on_ctx_action(ui::context::CtxAction::Buy(crate::demo::action_id(id)));
                 log::info!("demo menu purchase: prim={id}, dialog={}", self.interactions.dialog.is_some());
+            } else if mode.starts_with("ignore-alt") || mode == "ignore-object-view" {
+                if mode.ends_with("-build") {
+                    self.build.open_build(crate::build::Tool::Edit);
+                }
+                self.alt = mode.starts_with("ignore-alt");
+                if mode == "ignore-object-view" {
+                    self.panels.camera_controls = true;
+                    self.object_view = true;
+                }
+                self.on_left_press();
+                self.alt = false;
             } else if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
                 self.click(click_pick::Click::Build);
@@ -10004,6 +10128,9 @@ impl App {
         if !self.ui_image_cache.look(self.frame_count, shapes, now) {
             return;
         }
+        // (a picture shown in a window outside only is in use as well)
+        let cache = &mut self.ui_image_cache;
+        self.outside.passes(|shapes| cache.drawn_in(shapes, now));
         if let Some(own) = self.world.profiles.get(&self.world.agent_id) {
             self.ui_image_cache.used(&own.sl_image, now);
         }
@@ -10608,7 +10735,7 @@ impl App {
         // a window behind gives its textures back (texture_budget::Background)
         let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized()).unwrap_or(false);
         let presenting = self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged());
-        let (focused, minimized) = effective_window_state(self.focused, minimized, presenting);
+        let (focused, minimized) = effective_window_state(self.in_front(), minimized, presenting);
         self.scene.textures.set_window_state(focused, minimized);
         // (gaming mode gives the textures back too, app/gaming_mode.rs)
         self.scene.textures.set_stepped_back(self.gaming_mode_pauses());
@@ -10624,7 +10751,7 @@ impl App {
             !self.demo && !timed,
             crate::instances::Own {
                 usage: self.scene.textures.video_usage(),
-                active: self.focused && !minimized,
+                active: self.in_front() && !minimized,
                 luid: self.scene.textures.card_luid(),
             },
             switch,
@@ -10957,6 +11084,7 @@ impl App {
             self.pump_network_events(t_ev);
         }
         self.poll_inventory_offers();
+        self.world.inventory.trash_origins.poll();
         self.net_profile.events_left(self.net.events.len());
         let corrections = self.world.agent.take_corrections();
         if corrections.count > 0 {
@@ -11007,6 +11135,10 @@ impl App {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
             crate::demo::snow_spin::tick(&mut self.world, self.frame_count);
+            crate::demo::footprints::tick(&mut self.scene, self.frame_count);
+            if let Some((eye, at)) = crate::demo::footprints::view(self.frame_count) {
+                self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
+            }
             if let Some((eye, at)) = crate::demo::snow_spin::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
@@ -11290,6 +11422,7 @@ impl App {
         }
         self.local_bakes.apply(&mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
+        self.update_fit_clip();
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
@@ -11349,6 +11482,7 @@ impl App {
         self.update_weather_now();
         if self.demo {
             crate::demo::snow_spin::weather(self.frame_count, &mut self.weather_now);
+            crate::demo::footprints::weather(self.frame_count, &mut self.weather_now);
         }
         self.update_audio();
         self.update_wind_sound(dt);
@@ -11627,6 +11761,20 @@ impl App {
         if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
             log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
             self.settings.antialiasing = mode;
+            gfx.renderer.apply_settings(self.photo_render_settings());
+        }
+        let tracing = gfx.renderer.rt_tracing();
+        if let Some(step) = self
+            .rt_switch_demo
+            .as_mut()
+            .and_then(|d| d.tick(self.frame_count, Instant::now(), tracing))
+        {
+            use crate::demo::rt_switch::Step;
+            let rt = &mut self.settings.ray_tracing;
+            match step {
+                Step::Shadows => rt.enabled = true,
+                Step::Effects => (rt.lights, rt.indirect, rt.reflections) = (true, true, true),
+            }
             gfx.renderer.apply_settings(self.photo_render_settings());
         }
         if !gfx.renderer.vr_engaged()
@@ -11988,7 +12136,16 @@ impl App {
             // (nor while the Director's track plays or it films: the world alone)
             // (nor with the UI not drawn, Ctrl+Alt+F1: render_ui_3d's
             // renderSelections goes with it in the Legacy Viewer)
+            // What the build tools draw in the world goes with it, all of
+            // it: the outlines here, the faces' halo and pattern, and below
+            // the Create tool's preview, the holograms and the physics
+            // shapes. The tools may be open behind the photo view, or in a
+            // window outside.
             let bare = self.photo_full_frame() || self.director_playing() || self.director_filming() || self.interface.ui_off;
+            // (and LiveMesh's Fit lab clipping map)
+            if bare {
+                self.scene.fit_clip = None;
+            }
             let mut selection_wire = if bare {
                 Default::default()
             } else {
@@ -12013,10 +12170,10 @@ impl App {
             // Use face coverage while highlighting local appearances. Actual
             // build selection, wire outlines and edits stay untouched; its
             // ordinary face overlay returns when the mode is switched off.
-            let revealing = self.imports.local_status.revealing();
+            let revealing = !bare && self.imports.local_status.revealing();
             // (TE mode's faces show the face-select pattern, and the halo
             // with "Show highlight": the picks are gathered once)
-            let pattern = if revealing {
+            let pattern = if revealing || bare {
                 Default::default()
             } else {
                 self.build.face_picks(&self.world)
@@ -12152,7 +12309,7 @@ impl App {
                     autoplay: a.media_autoplay,
                     channel_volume: self.media_volume(),
                     agent_speed: self.world.agent.velocity.length(),
-                    window_focused: effective_window_state(self.focused, false, self.vr_camera.is_some()).0,
+                    window_focused: effective_window_state(self.in_front(), false, self.vr_camera.is_some()).0,
                     gaming_mode: self.gaming_mode.on,
                     net: (!self.demo).then(|| (self.net.runtime(), self.net.caps_http())),
                     cache_dir: &cache_dir,
@@ -12271,7 +12428,9 @@ impl App {
             // jelly doll, first person): its part falls back to the bones
             self.ik_editor
                 .set_poser_meshes_drawn(self.scene.poser_part.map(|_| self.scene.poser_part_skinned));
-            let preview = if (self.focused || self.demo && self.capture.is_some())
+            // (the keyboard in any of the viewer's windows: the Create tool is
+            // chosen in the build tools' window, which may be outside)
+            let preview = if (self.in_front() || self.demo && self.capture.is_some())
                 && !covered
                 && !self.camera.mouselook()
                 && !self.exit_prompt.open
@@ -12279,6 +12438,7 @@ impl App {
                 && self.cursor_pos.1 >= 0.0
                 && self.cursor_pos.0 < w as f32
                 && self.cursor_pos.1 < h as f32
+                && !bare
                 && self.build.creation_preview_enabled(&self.settings.build, over_ui, mods)
             {
                 let mut candidates = std::mem::take(&mut self.scene.creation_preview.candidates);
@@ -12299,8 +12459,8 @@ impl App {
             {
                 use crate::build::MoveHologram;
                 use crate::scene::build_hologram::Ghost;
-                let landing = self.build.place.active.then_some(self.build.place.preview).flatten();
-                let moving = self.build.move_hologram(&self.world, &self.settings.build);
+                let landing = (!bare && self.build.place.active).then_some(self.build.place.preview).flatten();
+                let moving = self.build.move_hologram(&self.world, &self.settings.build).filter(|_| !bare);
                 let now = moving.as_ref().map(|(_, m)| crate::build::Bounds {
                     center: m.start.center + m.delta,
                     ..m.start
@@ -12314,10 +12474,16 @@ impl App {
                 self.scene.update_build_hologram(&mut gfx.renderer, copies, in_place);
             }
             self.scene.build_hologram.append(&mut self.scene.lists);
-            let physics = crate::scene::physics_shapes::selection(&self.build, &self.world, &self.settings.build);
+            let physics = if bare {
+                Vec::new()
+            } else {
+                crate::scene::physics_shapes::selection(&self.build, &self.world, &self.settings.build)
+            };
             self.scene
                 .physics_shapes
                 .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
+            // after the display, which may release a mesh the Features tab still needs
+            self.build.mesh_physics.apply(&mut self.scene.meshes);
             self.scene.physics_shapes.append(&mut self.scene.lists);
             let huds_shown = self.huds_shown();
             self.scene
@@ -12847,6 +13013,23 @@ impl App {
                 let [r, g, b, _] = egui::Rgba::from(self.palette.violet_light).to_array();
                 [r, g, b, 0.65]
             },
+            // LiveMesh's Fit lab: red where the body comes through the
+            // garment, amber where they meet; never in a photo
+            fit_clip: self
+                .scene
+                .fit_clip
+                .as_ref()
+                .filter(|_| self.snapshots.capturing.is_none())
+                .map(|_| {
+                    let [r, g, b, _] = egui::Rgba::from(self.palette.danger).to_array();
+                    let [tr, tg, tb, _] = egui::Rgba::from(self.palette.warn).to_array();
+                    aurora_render::FitClipParams {
+                        clip_color: [r, g, b, 0.75],
+                        touch_color: [tr, tg, tb, 0.6],
+                        reach: crate::blender_live::fit_lab::CLIP_REACH,
+                        touch: crate::blender_live::fit_lab::CLIP_TOUCH,
+                    }
+                }),
             selection_color: egui::Rgba::from(if self.imports.local_status.revealing() {
                 self.palette.warn
             } else {
@@ -13046,8 +13229,10 @@ impl App {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
         }
         ui::fonts::preview::release_unused(&self.egui_ctx);
+        self.outside_frame_start(event_loop, &gfx.window, &mut gfx.renderer);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
+        self.carry_own_input(&mut raw);
         self.demo_script_input(&mut raw);
         // Synthetic preedit uses the ordinary focused Conversations editor.
         if self.demo && self.frame_count == 710 && std::env::var("AURORA_DEMO_CHAT_INPUT").is_ok_and(|mode| mode == "ime") {
@@ -13377,6 +13562,8 @@ impl App {
             .prepare_scale_input(&raw, ctx.pixels_per_point(), self.numeric_drag.active());
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let egui_state = &mut gfx.egui_state;
+        // (and what the windows outside read at their last pass)
+        self.inventory_ui.clipboard_input(&self.outside.take_heard());
         self.inventory_ui.clipboard_input(&raw.events);
         if self.inventory_ui.cut
             && (self.inventory_ui.native_clipboard_changed()
@@ -13400,6 +13587,7 @@ impl App {
             ui::close_key::begin(ui.ctx());
             // the chat fields' shortcuts, as Preferences › Shortcuts set them
             ui::chat::shortcuts::publish(ui.ctx(), &self.settings.keybinds);
+            ui::inventory::publish_shortcuts(ui.ctx(), &self.settings.keybinds);
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             // A discarded pass (`request_discard`) is followed by one that
@@ -13408,6 +13596,7 @@ impl App {
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
             self.studio_overlay(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
+            crate::outside::carry::hint(ui.ctx(), &self.palette);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
@@ -13429,6 +13618,9 @@ impl App {
         if self.capture.is_none() {
             self.layout_autosave.after_pass(&ctx, Instant::now());
         }
+        // what the windows outside copy or open leaves with the viewer's
+        // own output: the same rules, and one clipboard
+        full.platform_output.commands.splice(0..0, self.outside.take_commands());
         ui::chat::previews::clipboard_update(&ctx, &mut full.platform_output);
         self.inventory_ui.clipboard_output(&full.platform_output.commands);
         // interface sounds of the widgets; the sounds are SL assets, loaded
@@ -13669,10 +13861,14 @@ impl App {
             (crate::cursors::Change::System, _) => crate::cursors::set_system(&gfx.window, icon),
             _ => {}
         }
+        self.outside.platform(event_loop);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Hover);
         self.evict_ui_images(&full.shapes);
-        let mut textures = std::mem::take(&mut full.textures_delta);
+        // (the passes of the windows outside ended before the viewer's own)
+        let mut textures = self.outside.take_textures();
+        textures.append(std::mem::take(&mut full.textures_delta));
+        let textures_changed = !textures.set.is_empty();
         if gpu_recovery::shadow_kept() {
             self.egui_shadow.note(&textures);
         }
@@ -13684,6 +13880,13 @@ impl App {
         let egui_frame = self
             .egui_hand_over
             .frame(&ctx, std::mem::take(&mut full.shapes), textures, full.pixels_per_point);
+        self.outside.hand(
+            &ctx,
+            &mut self.egui_hand_over,
+            &mut gfx.renderer,
+            self.palette.panel,
+            textures_changed,
+        );
 
         // apply UI actions
         if actions.font_changed {
@@ -13977,7 +14180,7 @@ impl App {
         let timed = self.capture.is_some() || self.frame_profile.enabled();
         let cap = frame_cap(
             &self.settings,
-            self.focused,
+            self.in_front(),
             gfx.renderer.vr_engaged(),
             self.in_world(),
             monitor_hz,
@@ -13988,14 +14191,14 @@ impl App {
         // (instances.rs)
         let cap = crate::instances::throttle(
             cap,
-            self.focused,
+            self.in_front(),
             self.instances.peers().in_front(),
             timed || !self.settings.background_fps_cap,
         );
         // gaming mode: the loop crawls, slower still out of sight; not
         // while a photo is drawn (app/gaming_mode.rs)
         let hidden = self.occluded || gfx.window.is_minimized().unwrap_or(false);
-        let cap = gaming_mode::cap(cap, self.gaming_mode_pauses() && !timed, hidden);
+        let cap = gaming_mode::cap(cap, self.gaming_mode_pauses() && !timed, hidden, self.outside.focused());
         let paced_by_vsync = gfx.renderer.vsync() && cap >= monitor_hz - 0.5;
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
         // (while Windows holds the window, this thread is left to its loop:
@@ -14766,6 +14969,7 @@ impl App {
         }
         if self.demo {
             self.demo_double_click_steps();
+            self.demo_rt_walk_steps();
             self.demo_avatar_travel_steps();
         }
         self.demo_hud_drag_steps();
@@ -15197,6 +15401,10 @@ impl App {
                 self.camera.position,
                 self.camera.forward(),
             );
+        }
+        // AURORA_DEMO_LAMP_BLINK: a lamp switched off and on
+        if let Some(demo) = &mut self.lamp_demo {
+            demo.tick(self.frame_count, &mut self.world, self.camera.position, self.camera.forward());
         }
         // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
         // without a click (walking into the pad, arriving)
@@ -15760,6 +15968,12 @@ impl App {
                     crate::build::demo::Step::CloseEditor => self.build.close(&mut self.world, &mut self.settings.build),
                     crate::build::demo::Step::Select(idx) => {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::TransparentDiffuse => {
+                        self.build.edit_faces(&mut self.world, |face, _, _| {
+                            face.texture = aurora_prim::te::TRANSPARENT_TEXTURE;
+                        });
                         self.flush_build();
                     }
                     crate::build::demo::Step::LinkSetup(denied) => {
@@ -16742,6 +16956,8 @@ impl App {
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
+            BarAction::PhotoWindow => self.photo_window_shortcut(),
+            BarAction::PhotoToggle => self.photo_window_toggle(),
             BarAction::PhotoRoll => self.photo_reel_show_newest(),
             BarAction::Photo360 => {
                 if self.pano_open() {
@@ -18371,6 +18587,24 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: Some("login.other-grid.example".into()),
+                        unencrypted_server: None,
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("unencrypted")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the grid's login address is a plain http one
+                    // (LoginError::Unencrypted): nothing was sent
+                    log::info!("demo login: the login address is not encrypted");
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: String::new(),
+                        mfa_required: false,
+                        tos_required: false,
+                        critical_required: false,
+                        bad_credentials: false,
+                        previous_session: false,
+                        next_server: None,
+                        unencrypted_server: Some("grid.example:8002".into()),
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("server-error")
@@ -18387,6 +18621,7 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: None,
+                        unencrypted_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
@@ -18408,6 +18643,7 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: None,
+                        unencrypted_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
                     self.demo_mfa_challenge = None;
@@ -18428,6 +18664,7 @@ impl App {
                         bad_credentials: refused,
                         previous_session: false,
                         next_server: None,
+                        unencrypted_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some() {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -18579,6 +18816,8 @@ impl App {
                     // the exit's question still shows: closing the window
                     // must not wait behind an interface nobody sees
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+                    // (the windows outside the viewer's stay as they are)
+                    crate::outside::keep(&ctx, &p, crate::outside::Kept::InterfaceOff);
                     return a;
                 }
                 // the Director's track plays: the world alone, and the
@@ -18591,6 +18830,8 @@ impl App {
                     self.director_playing_ui(&ctx, &p);
                     // the exit's question still shows over it
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+                    // (the windows outside the viewer's stay as they are)
+                    crate::outside::keep(&ctx, &p, crate::outside::Kept::Director);
                     return a;
                 }
                 // the full-frame photo view: the world and its own strip only
@@ -18634,6 +18875,8 @@ impl App {
                     }
                     // the exit's question still shows over the photo mode
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+                    // (the windows outside the viewer's stay as they are)
+                    crate::outside::keep(&ctx, &p, crate::outside::Kept::Photo);
                     return a;
                 }
                 // a held photo (freeze frame) instead of the world, under the windows
@@ -19094,7 +19337,7 @@ impl App {
                 let demo_chat_bar = if self.demo { ui::bars::demo::get() } else { Default::default() };
                 self.chat_ui.bar_mode = demo_chat_bar.chat_bar.unwrap_or(self.settings.chat_bar);
                 let autohide_chat_bar = self.chat_ui.bar_mode.hides();
-                if demo_chat_bar.chat_start && ctx.cumulative_frame_nr() == 300 {
+                if demo_chat_bar.chat_start && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 {
                     self.chat_ui.input = "Hello!".into();
                     self.chat_ui.focus_request = true;
                 }
@@ -19133,6 +19376,8 @@ impl App {
                 self.toolbar_ui.favorites_access = self.favorites_access();
                 self.toolbar_ui.flash_nearby = self.flash_nearby();
                 self.chat_ui.flash_nearby = self.flash_nearby();
+                self.chat_ui.has_open_ims = !self.world.social.ims.is_empty();
+                self.toolbar_ui.has_open_ims = self.chat_ui.has_open_ims;
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
                 let mut demo_toolbar = None;
                 // AURORA_DEMO_TOOLBAR=custom|side|labels|right: the mockup's
@@ -19397,6 +19642,9 @@ impl App {
                     match choice {
                         ui::chat::ButtonMenu::Open => {
                             ui::widgets::open_floater(ui.ctx(), "conversations", &mut self.panels.chat);
+                        }
+                        ui::chat::ButtonMenu::CloseAll => {
+                            self.chat_ui.request_close_all(&mut self.world, self.settings.confirm_close_all_ims)
                         }
                         ui::chat::ButtonMenu::NearbyFlash(on) => {
                             self.settings.flash_conversations_nearby = on;
@@ -19696,11 +19944,11 @@ impl App {
                 // opened at frame 300, immersive mode at 600 (`immersivetags`:
                 // the name tags shown, `immersivehuds`: the HUDs hidden, not
                 // saved)
-                if demo_hidden.is_some() && ctx.cumulative_frame_nr() == 600 && !self.interface.hidden {
+                if demo_hidden.is_some() && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 600 && !self.interface.hidden {
                     a.bar = BarAction::ToggleInterface;
                 }
                 if self.demo && ui::bars::demo::get().immersive {
-                    match ctx.cumulative_frame_nr() {
+                    match ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) {
                         300 => ui::widgets::open_floater(&ctx, "conversations", &mut self.panels.chat),
                         600 if !self.interface.hidden => {
                             self.settings.immersive_name_tags = ui::bars::demo::get().immersive_tags;
@@ -19996,15 +20244,9 @@ impl App {
                         ui::chat::ConvAction::SendSysinfo(to) => a.sysinfo.push(to),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
-                        ui::chat::ConvAction::Close(id) => {
-                            self.world.conversation_closed(&id);
-                            self.world.leave_session(id);
-                            self.chat_ui.forget(id);
-                            // closed from the list, another conversation may be shown
-                            if self.chat_ui.selected == Some(id) {
-                                self.chat_ui.selected = None;
-                                self.chat_ui.show_profile = false;
-                            }
+                        ui::chat::ConvAction::Close(id) => self.chat_ui.close_im(&mut self.world, id),
+                        ui::chat::ConvAction::CloseAll => {
+                            self.chat_ui.request_close_all(&mut self.world, self.settings.confirm_close_all_ims)
                         }
                         ui::chat::ConvAction::Call(id) => a.ctx_action = Some(ui::context::CtxAction::Call(id)),
                         ui::chat::ConvAction::HangUp => self.world.end_call(),
@@ -20461,6 +20703,12 @@ impl App {
                 }
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);
+                if self.chat_ui.close_all_dialog(&ctx, &p, &mut self.world) {
+                    self.settings.confirm_close_all_ims = false;
+                    if !self.demo {
+                        self.settings.save();
+                    }
+                }
                 self.group_chat_moderation_ui(&ctx, &p);
                 self.unblock_link_question(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()
@@ -21368,6 +21616,7 @@ impl App {
                 self.panels.perf = open;
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
+                self.outside_windows(&ctx, &p);
                 self.rlva_selftest_window(&ctx, &p);
                 self.about_window(&ctx, &p, renderer);
                 self.sysinfo_window(&ctx, &p, renderer);
@@ -21857,6 +22106,28 @@ impl ApplicationHandler for App {
                 // The update preview stays offline on a synthetic login screen.
                 return;
             }
+            // AURORA_DEMO_OUTSIDE=still|busy[,sync][,click]: a test window outside
+            // the viewer's (outside/demo.rs); conversations, build: that
+            // window sent outside, as its title bar's button sends it (the
+            // build window is opened by AURORA_DEMO_BUILD)
+            if let Ok(v) = std::env::var("AURORA_DEMO_OUTSIDE") {
+                let window = match v.as_str() {
+                    "conversations" => {
+                        self.panels.chat = true;
+                        Some("conversations")
+                    }
+                    "build" => Some(crate::build::ui::INSPECTOR_ID),
+                    _ => None,
+                };
+                if let Some(window) = window {
+                    crate::outside::want(&self.egui_ctx, egui::Id::unique(window), true);
+                } else {
+                    self.outside_demo = crate::outside::demo::parse(&v).map(crate::outside::demo::Demo::new);
+                }
+                if self.outside_demo.is_none() && window.is_none() {
+                    log::warn!("AURORA_DEMO_OUTSIDE={v}: conversations, build, or still or busy then \",sync\" and \",click\"");
+                }
+            }
             // AURORA_DEMO_TOOLBOX=1, or "target:tool" (target 0 nearest, 1
             // selection, 2 under the cursor, 3 my avatar; tool: the one "Send a diagnostic"
             // shows, e.g. "0:J4"), or "edit" (Customize): the Dev Toolbox
@@ -21955,6 +22226,7 @@ impl ApplicationHandler for App {
                         | "mfa-refused"
                         | "terms"
                         | "next-server"
+                        | "unencrypted"
                         | "server-error"
                         | "add"
                         | "password"
@@ -21965,7 +22237,8 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "unencrypted" | "server-error"
+                        | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -22012,7 +22285,16 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "add" | "add-mfa" | "password"
+                        "first"
+                            | "first-mfa"
+                            | "mfa-refused"
+                            | "terms"
+                            | "next-server"
+                            | "unencrypted"
+                            | "server-error"
+                            | "add"
+                            | "add-mfa"
+                            | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -22022,7 +22304,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server" | "server-error") {
+                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server" | "unencrypted" | "server-error") {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
@@ -23815,7 +24097,17 @@ impl ApplicationHandler for App {
                         | "aurora-wide"
                         | "aurora-columns"
                         | "aurora-columns-hidden"
+                        | "aurora-columns-all"
+                        | "aurora-explorer-filter"
+                        | "aurora-explorer-preview"
+                        | "aurora-compact"
+                        | "aurora-groups"
+                        | "aurora-folder-previews"
+                        | "aurora-tiles"
                         | "aurora-gallery"
+                        | "aurora-gallery-system-folders"
+                        | "aurora-system-folders"
+                        | "aurora-filtered"
                         | "aurora-gallery-medium"
                         | "aurora-gallery-large"
                         | "aurora-combination"
@@ -23838,6 +24130,7 @@ impl ApplicationHandler for App {
                         | "aurora-favorites-parents"
                         | "aurora-folder-window"
                         | "aurora-folder-window-wide"
+                        | "aurora-single-folder-window"
                         | "additional"
                         | "aurora-additional"
                         | "show-original"
@@ -23849,8 +24142,18 @@ impl ApplicationHandler for App {
                         | "aurora-folder-colors"
                         | "aurora-folder-colors-behind"
                         | "aurora-folder-colors-follow"
+                        | "aurora-explorer"
+                        | "aurora-explorer-path"
+                        | "aurora-explorer-menu"
+                        | "aurora-explorer-medium"
+                        | "aurora-explorer-undo"
+                        | "aurora-explorer-tabs"
+                        | "aurora-explorer-split"
                 );
                 if configured_view {
+                    // the demo's settings outlive a run: each scenario
+                    // states the dual-panel layout (the split view's) itself
+                    self.panels.inventory_dual = view == "aurora-explorer-split";
                     crate::world::inventory::demo::seed_view(
                         &mut self.world.inventory,
                         self.world.agent_id,
@@ -23924,13 +24227,26 @@ impl ApplicationHandler for App {
                             self.settings.inventory.rights = ui::inventory::permissions::Rights::Both;
                         }
                         if view.starts_with("aurora-columns") {
-                            let columns = &mut self.settings.inventory.explorer;
-                            columns.sidebar_width = 280;
-                            columns.kind_width = 176;
-                            columns.rights_width = 80;
-                            columns.date_width = 110;
-                            columns.show_kind = view != "aurora-columns-hidden";
-                            columns.show_date = view != "aurora-columns-hidden";
+                            use ui::inventory::view::{ColumnId, SortColumn};
+                            let explorer = &mut self.settings.inventory.explorer;
+                            explorer.sidebar_width = 280;
+                            let columns = &mut explorer.columns;
+                            columns.slot_mut(ColumnId::Kind).width = 176;
+                            columns.slot_mut(ColumnId::Rights).width = 80;
+                            columns.slot_mut(ColumnId::Date).width = 110;
+                            columns.slot_mut(ColumnId::Kind).show = view != "aurora-columns-hidden";
+                            columns.slot_mut(ColumnId::Date).show = view != "aurora-columns-hidden";
+                            // every column, the creator first, sorted by type
+                            // in reverse: the details' columns and their order
+                            if view == "aurora-columns-all" {
+                                for id in ColumnId::ALL {
+                                    columns.slot_mut(id).show = true;
+                                }
+                                columns.move_to(ColumnId::Creator, 0);
+                                let sort = &mut self.settings.inventory.sort;
+                                sort.column = Some(SortColumn::Kind);
+                                sort.descending = true;
+                            }
                         }
                         if view.ends_with("-no-details") {
                             self.settings.inventory.show_details = false;
@@ -23945,9 +24261,78 @@ impl ApplicationHandler for App {
                                 ui::inventory::view::ExplorerView::Gallery
                             };
                         }
+                        // the Compact and Tiles views of the right-click
+                        // tests, with the gallery's pictures
+                        if view == "aurora-groups" {
+                            self.settings.inventory.explorer.group_by = ui::inventory::groups::GroupBy::Kind;
+                        }
+                        if view == "aurora-compact" || view == "aurora-tiles" {
+                            crate::world::inventory::demo::seed_gallery(&mut self.world.inventory);
+                            self.settings.inventory.explorer.view = if view == "aurora-tiles" {
+                                ui::inventory::view::ExplorerView::Tiles
+                            } else {
+                                ui::inventory::view::ExplorerView::Compact
+                            };
+                        }
+                        if view.ends_with("system-folders") {
+                            // every system folder's icon, at the root, and
+                            // the open icon of the sidebar's selected one
+                            crate::world::inventory::demo::seed_system_folders(&mut self.world.inventory);
+                            self.inventory_ui.demo_browse_root(&self.world.inventory);
+                            self.panels.camera_controls = false;
+                        }
+                        // the preview pane on the demo's notecard
+                        if view == "aurora-explorer-preview" {
+                            self.settings.inventory.preview_pane = true;
+                            self.settings.inventory.show_details = true;
+                        }
+                        // the folders' borrowed pictures: the top in the
+                        // large gallery
+                        if view == "aurora-folder-previews" {
+                            crate::world::inventory::demo::seed_gallery(&mut self.world.inventory);
+                            self.inventory_ui.demo_browse_root(&self.world.inventory);
+                            self.settings.inventory.explorer.view = ui::inventory::view::ExplorerView::Gallery;
+                            self.settings.inventory.explorer.tile_size = 192;
+                            // the right-click tests, which hold pictures
+                            self.inventory_ui.demo_reveal(uuid::Uuid::from_u128(8000));
+                            self.panels.camera_controls = false;
+                        }
+                        // the Ctrl+I bar open on the right-click tests' folder
+                        if view == "aurora-explorer-filter" {
+                            self.inventory_ui.demo_folder_filter("demo o");
+                        }
+                        if view == "aurora-filtered" {
+                            // the type filters' symbols in the list and on
+                            // the chip naming them
+                            self.inventory_ui.demo_type_filters((1 << 0) | (1 << 6) | (1 << 19));
+                            self.panels.camera_controls = false;
+                        }
+                        if view.starts_with("aurora-explorer") {
+                            // Back, Up, the breadcrumb's chevrons and two
+                            // folders pinned to Quick access
+                            self.inventory_ui.demo_explorer(&view);
+                            if view == "aurora-explorer-undo" {
+                                // a Delete to undo, a rename to redo
+                                self.world.inventory.demo_history(self.world.agent_id);
+                            }
+                            if view == "aurora-explorer-split" {
+                                // the split view: two explorers side by side
+                                self.dual_inventory_ui.demo_explorer("aurora-explorer-split-right");
+                            }
+                            // the column lists a pin once its folder is there
+                            self.settings.inventory.pinned = vec![uuid::Uuid::from_u128(8000), uuid::Uuid::from_u128(8001)];
+                            self.panels.camera_controls = false;
+                        }
                         if view.starts_with("aurora-folder-window") {
                             // the right-click tests in a window of their own
                             self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                            if let Some(window) = self.inventory_ui.windows.last_mut() {
+                                window.id = ui::inventory::AURORA_DEMO_FOLDER_WINDOW;
+                            }
+                        }
+                        if view == "aurora-single-folder-window" {
+                            // "Open in a new window" on the right-click tests
+                            self.inventory_ui.open_single_folder_window(uuid::Uuid::from_u128(8000));
                             if let Some(window) = self.inventory_ui.windows.last_mut() {
                                 window.id = ui::inventory::AURORA_DEMO_FOLDER_WINDOW;
                             }
@@ -24235,6 +24620,8 @@ impl ApplicationHandler for App {
                             }
                             .into(),
                         });
+                    } else if view == "single-folder-window" {
+                        self.inventory_ui.open_single_folder_window(id);
                     } else if matches!(view.as_str(), "folder-window" | "folder-window-search") {
                         self.inventory_ui.open_folder_window(id);
                         if view == "folder-window-search"
@@ -24380,6 +24767,19 @@ impl ApplicationHandler for App {
                 for ev in crate::demo::animesh_events() {
                     self.world.apply(ev);
                 }
+                // AURORA_DEMO_RT_WALK: our avatar heavy and hatted
+                if crate::demo::rt_walk()
+                    && let Some(wearer) = self
+                        .world
+                        .objects
+                        .index_of_uuid(&self.world.agent_id)
+                        .and_then(|i| self.world.objects.get(i))
+                        .map(|o| o.key.local_id)
+                {
+                    for ev in crate::demo::rt_walk_events(wearer) {
+                        self.world.apply(ev);
+                    }
+                }
                 if crate::demo::animation_edit_demo()
                     && let Some(wearer) = self
                         .world
@@ -24425,6 +24825,7 @@ impl ApplicationHandler for App {
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
             self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();
             self.slideshow_demo = crate::demo::slideshow::SlideshowDemo::from_env();
+            self.lamp_demo = crate::demo::lamp::LampDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             self.turn_demo = crate::demo::turn::TurnDemo::from_env();
@@ -24904,6 +25305,8 @@ impl ApplicationHandler for App {
         self.gfx = None;
         #[cfg(target_os = "linux")]
         crate::crash::renderer_dropped();
+        // (their surfaces went with the renderer)
+        self.outside.exit();
         // The voice threads end before the process does, the current
         // session's and those of the sessions left moments ago: still
         // running at the exit, an HTTPS logout found the TLS library's
@@ -24926,6 +25329,19 @@ impl ApplicationHandler for App {
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
             return;
         }
+        // an item in hand between two windows: the press of the click that
+        // drops it, and what lets go of it, are no window's (outside/carry.rs)
+        if self.carry_window_event(id, &event) {
+            return;
+        }
+        // a window of the interface outside the viewer's reads its own
+        // events; a key it does not read, the modifiers and its focus that
+        // goes come on here, without the viewer's interface (app/outside.rs)
+        let from_outside = match self.outside_window_event(id, &event) {
+            outside::Went::Own => false,
+            outside::Went::Outside => return,
+            outside::Went::On => true,
+        };
         self.typing_pointer.window_event(&event);
         // The system's view of the keys when the focus comes back is no key
         // press: a key it wrongly reports as down (#2287) would stay held
@@ -24985,8 +25401,9 @@ impl ApplicationHandler for App {
 
         // the digits of a Windows Alt code typed in a text field are kept
         // from it (alt_codes.rs); the character comes at Alt's release
+        // (typed in a window outside: `outside_alt_code_key` read it there)
         let pending_alt_chars = self.alt_text.len();
-        if self.alt_code_key(&event) {
+        if !from_outside && self.alt_code_key(&event) {
             return;
         }
         // the key a press counts as for the shortcuts: the keypad with
@@ -25089,16 +25506,23 @@ impl ApplicationHandler for App {
             return;
         };
         let first_event = g.egui_state.egui_input().events.len();
-        let resp =
-            if chat_pass || web_tab || lens_shortcut || held_pointer || stationary_hidden_pointer || altgr_shortcut || claim_over_focus {
-                egui_winit::EventResponse {
-                    consumed: false,
-                    repaint: true,
-                }
-            } else {
-                self.cursor_shown.event(&event);
-                g.egui_state.on_window_event(&g.window, &event)
-            };
+        let resp = if from_outside
+            || chat_pass
+            || web_tab
+            || lens_shortcut
+            || held_pointer
+            || stationary_hidden_pointer
+            || altgr_shortcut
+            || claim_over_focus
+        {
+            egui_winit::EventResponse {
+                consumed: false,
+                repaint: true,
+            }
+        } else {
+            self.cursor_shown.event(&event);
+            g.egui_state.on_window_event(&g.window, &event)
+        };
         let events = &mut g.egui_state.egui_input_mut().events;
         if (self.alt_text.len() != pending_alt_chars || events[first_event..].iter().any(typing_pointer::inserts_text))
             && !self.cursor_hold.held()
@@ -25350,7 +25774,13 @@ impl ApplicationHandler for App {
                         && !altgr_text
                         && !self.egui_ctx.egui_wants_keyboard_input()
                         && !egui::Popup::is_any_open(&self.egui_ctx);
-                    let build_shortcut = pressed
+                    // The build tools run their shortcuts with the
+                    // interface's windows (`build::ui::shortcuts`, in
+                    // `draw_ui`): where none is drawn, a key kept for them
+                    // would do nothing at all, and Escape would not leave
+                    // the full-frame photo view while they are open.
+                    let windows_drawn = self.windows_drawn();
+                    let build_shortcut = (pressed && windows_drawn)
                         .then(|| {
                             crate::build::ui::Shortcut::take_native_key(
                                 &ke.logical_key,
@@ -25499,15 +25929,25 @@ impl ApplicationHandler for App {
                         && !self.alt
                         && matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s"))
                         && ui::inventory::document_save_focused(&self.egui_ctx);
+                    // the focused inventory list's chord is the list's only
+                    // (shortcut_claims_focus gave it to egui)
+                    let inventory_chord =
+                        pressed && ui::inventory::list_keeps_chord(&self.egui_ctx, &Input::key(code), mods.ctrl, self.shift, self.alt);
                     if pressed
                         && ((!resp.consumed && !typing) || shortcut || chat_pass)
                         && !ke.repeat
                         && !find_taken
                         && !script_command
                         && !document_save
+                        && !inventory_chord
                         && !ui_shortcut
                     {
                         self.on_input(Input::key(code), pressed);
+                        if key_brought_windows_back(windows_drawn, self.windows_drawn())
+                            && let Some(g) = self.gfx.as_mut()
+                        {
+                            g.egui_state.egui_input_mut().events.truncate(first_event);
+                        }
                     }
                 }
             }
@@ -25594,6 +26034,11 @@ impl ApplicationHandler for App {
             let Some(delta) = crate::raw_mouse::motion(delta) else {
                 return;
             };
+            // the warp to the centre that preceded a macOS lock
+            // (cursor_hold.rs): dropped whatever would have taken it
+            if !self.cursor_hold.take_motion() {
+                return;
+            }
             if self.numeric_drag.active() {
                 if let Some(g) = &mut self.gfx {
                     g.egui_state.on_mouse_motion(delta);
@@ -25945,6 +26390,17 @@ mod tests {
         assert!(clouds_choice(Some("aurora"), false, false));
         assert!(!clouds_choice(Some("legacy"), true, true), "before / after on the same sky");
         assert!(clouds_choice(Some("other"), true, false), "an unknown value changes nothing");
+    }
+
+    #[test]
+    fn the_key_that_brings_the_windows_back_is_not_theirs_too() {
+        use super::key_brought_windows_back;
+        // Escape out of the full-frame photo view, of the Director's playback
+        assert!(key_brought_windows_back(false, true));
+        // a key of the photo view that leaves it up, a key among the windows
+        assert!(!key_brought_windows_back(false, false));
+        assert!(!key_brought_windows_back(true, true));
+        assert!(!key_brought_windows_back(true, false));
     }
 
     #[test]

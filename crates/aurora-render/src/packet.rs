@@ -120,6 +120,9 @@ pub(crate) struct FramePacket {
     pub params: FrameParams,
     pub lists: DrawLists,
     pub ui: Option<EguiFrame>,
+    /// The windows of the interface outside the viewer's (outside.rs):
+    /// opened, closed, and those to draw after this frame.
+    pub outside: crate::outside::Packet,
     pub surface: SurfaceState,
     pub settings: RenderSettings,
     /// Pixel whose depth to read back (hover; answered a few frames later).
@@ -151,6 +154,9 @@ pub(crate) struct FramePacket {
     /// border crossing made them relative to another region
     /// (`Renderer::shift_world`). The weather's memories move with them.
     pub world_shift: [f32; 2],
+    /// The faces the ray-traced shadows trace this frame (rt_shadows.rs;
+    /// None when the device does not trace).
+    pub rt: Option<std::sync::Arc<crate::rt_shadows::Faces>>,
     /// When the frame began reading its input (`Renderer::mark_input`):
     /// the time to its presentation is the latency the frame pacing cuts.
     pub input_at: Option<Instant>,
@@ -184,8 +190,13 @@ pub(crate) struct FrameResult {
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
     /// The small pictures made since the last result (`FramePacket::thumbnail`).
     pub thumbnails: Vec<crate::Thumbnail>,
+    /// What became of the windows outside since the last result.
+    pub outside: Vec<crate::OutsideEvent>,
     /// The film frames read back since the last result, in their order.
     pub films: Vec<crate::film_readback::FilmFrame>,
+    /// The ray tracer that drew this frame (`RtShadows::made`), 0 without
+    /// one: turned off, or still being made.
+    pub rt: u32,
     pub spent: Spent,
 }
 

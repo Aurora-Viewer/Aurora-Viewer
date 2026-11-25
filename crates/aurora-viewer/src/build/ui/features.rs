@@ -46,12 +46,23 @@ fn physics_shapes() -> [(&'static str, u8); 3] {
 /// simulator refuses it on a root prim and the choice snaps back. Aurora lists
 /// None only when a child prim of a linkset is selected (stricter, the same
 /// final state), and keeps it while a prim already shows None.
-fn physics_shape_choices(child_selected: bool, current: Option<u8>) -> Vec<(&'static str, u8)> {
+///
+/// Prim is listed for a prim, and for a mesh only when it has a physics shape
+/// of its own (LLPanelVolume::refresh: `gMeshRepo.hasPhysicsShape`); like
+/// None, it stays while the prim already shows it.
+fn physics_shape_choices(child_selected: bool, prim_allowed: bool, current: Option<u8>) -> Vec<(&'static str, u8)> {
     physics_shapes()
         .into_iter()
-        .filter(|&(_, v)| v != PHYSICS_SHAPE_NONE || child_selected || current == Some(PHYSICS_SHAPE_NONE))
+        .filter(|&(_, v)| match v {
+            PHYSICS_SHAPE_NONE => child_selected || current == Some(v),
+            PHYSICS_SHAPE_PRIM => prim_allowed || current == Some(v),
+            _ => true,
+        })
         .collect()
 }
+
+/// PHYSICS_SHAPE_PRIM (LLViewerObject::PHYSICS_SHAPE_*).
+const PHYSICS_SHAPE_PRIM: u8 = 0;
 
 /// Reflection probe flags (LLReflectionProbeParams).
 const PROBE_BOX: u8 = 0x01;
@@ -262,7 +273,17 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 .map(|i| crate::build::root_of(world, i) == i)
                 .collect();
             let (child_selected, root_selected) = (roots.contains(&false), roots.contains(&true));
-            let shapes = physics_shape_choices(child_selected, shape);
+            let mesh_id = volume.sculpt.filter(|sc| sc.is_mesh()).map(|sc| sc.texture);
+            let prim_allowed = mesh_id.is_none_or(|id| {
+                let meshes = &env.scene.meshes;
+                let lookup = || {
+                    let view = meshes.view(&id)?;
+                    let convex = view.header.physics_convex.and_then(|r| view.bytes.section(r));
+                    aurora_assets::mesh_physics::has_physics_shape(&view.header, convex)
+                };
+                tool.mesh_physics.ask(id, lookup) == Some(true)
+            });
+            let shapes = physics_shape_choices(child_selected, prim_allowed, shape);
             ui.horizontal(|ui| {
                 if let Some(t) = combo(ui, "physics_shape", shape, &shapes, 110.0, editable) {
                     tool.set_physics(world, |x| x.shape_type = t);
@@ -718,16 +739,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn prim_is_offered_only_for_a_mesh_with_its_own_physics_shape() {
+        let values = |v: Vec<(&str, u8)>| v.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
+        // a mesh without one (or not known yet): None and Convex hull
+        assert_eq!(values(physics_shape_choices(true, false, Some(2))), [PHYSICS_SHAPE_NONE, 2]);
+        assert_eq!(values(physics_shape_choices(false, false, Some(2))), [2]);
+        // a mesh already showing Prim keeps it in the list
+        assert_eq!(values(physics_shape_choices(false, false, Some(0))), [0, 2]);
+    }
+
+    #[test]
     fn none_is_offered_only_for_a_child_prim() {
         let values = |v: Vec<(&str, u8)>| v.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
         // root or lone prim: Prim and Convex hull only
-        assert_eq!(values(physics_shape_choices(false, Some(0))), [0, 2]);
-        assert_eq!(values(physics_shape_choices(false, None)), [0, 2]);
+        assert_eq!(values(physics_shape_choices(false, true, Some(0))), [0, 2]);
+        assert_eq!(values(physics_shape_choices(false, true, None)), [0, 2]);
         // a child prim in the selection: None too, in the Legacy Viewer's order
-        assert_eq!(values(physics_shape_choices(true, Some(0))), [PHYSICS_SHAPE_NONE, 0, 2]);
+        assert_eq!(values(physics_shape_choices(true, true, Some(0))), [PHYSICS_SHAPE_NONE, 0, 2]);
         // a root already showing None keeps it in the list, so the combo can name it
         assert_eq!(
-            values(physics_shape_choices(false, Some(PHYSICS_SHAPE_NONE))),
+            values(physics_shape_choices(false, true, Some(PHYSICS_SHAPE_NONE))),
             [PHYSICS_SHAPE_NONE, 0, 2]
         );
     }
