@@ -1153,6 +1153,16 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
             f.worn_shape.is_some() && f.shape_xml_export,
             CtxAction::ExportShapeXml(f.worn_shape.unwrap_or_default()),
         );
+        // Aurora's own entry, next to the shape's, so that the whole-avatar
+        // export is found where the shape-only one is: the Legacy Viewer's
+        // dump (LLVOAvatar::dumpArchetypeXML) is only in Advanced >
+        // Character > Character Tests > Appearance To XML.
+        ui.item_if(
+            "file-export",
+            aurora_i18n::tr!("appearance-xml-export-mine"),
+            f.appearance_xml_export,
+            CtxAction::ExportAppearanceXml,
+        );
         ui.item_if(
             "pencil-filled",
             aurora_i18n::tr!("ui-context-edit-outfit"),
@@ -1882,6 +1892,42 @@ mod tests {
         };
         assert!(!find(&refused).enabled, "no modify rights");
         assert!(!find(&Facts::default()).enabled, "no worn shape");
+    }
+
+    #[test]
+    fn our_whole_appearance_exports_to_xml_next_to_the_shape_and_only_from_our_menu() {
+        let shape = aurora_i18n::tr!("ui-context-export-shape-xml");
+        let mine = aurora_i18n::tr!("appearance-xml-export-mine");
+        let submenu = |own: bool, facts: &Facts| {
+            let target = Target::Avatar {
+                id: Uuid::nil(),
+                own,
+                attachment: None,
+            };
+            world_menu(&target, facts, Vec3::ZERO)
+                .into_iter()
+                .filter_map(|entry| match entry.kind {
+                    Kind::Submenu(entries) => Some(entries),
+                    _ => None,
+                })
+                .find(|entries| entries.iter().any(|entry| entry.label == shape || entry.label == mine))
+        };
+        let ready = Facts {
+            appearance_xml_export: true,
+            ..Default::default()
+        };
+        let entries = submenu(true, &ready).expect("our Appearance submenu");
+        let at = entries
+            .iter()
+            .position(|entry| entry.label == mine)
+            .expect("whole appearance export");
+        assert_eq!(entries[at - 1].label, shape, "right after the shape-only export");
+        assert!(entries[at].enabled);
+        assert!(matches!(entries[at].kind, Kind::Action(CtxAction::ExportAppearanceXml)));
+        let entries = submenu(true, &Facts::default()).expect("our Appearance submenu");
+        let entry = entries.iter().find(|entry| entry.label == mine).expect("whole appearance export");
+        assert!(!entry.enabled, "appearance not ready, or an export or outfit change runs");
+        assert!(submenu(false, &ready).is_none(), "never on another avatar");
     }
 
     #[test]
