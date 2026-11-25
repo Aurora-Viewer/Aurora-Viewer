@@ -2090,6 +2090,16 @@ thread_local! {
 
 /// A text cut into plain text and links.
 fn segments(text: &str) -> Vec<Seg<'_>> {
+    // A texture shared by dragging a full-permission inventory item is
+    // sent as its ordinary, canonical asset UUID. Keep that exact chat text
+    // and make it open the viewer's existing texture preview on click.
+    if text.len() == 36
+        && let Ok(id) = uuid::Uuid::parse_str(text)
+        && !id.is_nil()
+        && id.to_string().eq_ignore_ascii_case(text)
+    {
+        return vec![Seg::App(text, crate::slapp::AppLink::Texture(id))];
+    }
     let links = if text.len() < CACHED_TEXT {
         link_spans(text)
     } else {
@@ -4473,7 +4483,7 @@ fn classic_pane(
 ) {
     let pane = ui.available_rect_before_wrap();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
-    workspace::drops(ui, p, pane, st, kind, actions);
+    workspace::drops(ui, p, world, pane, st, kind, actions);
     // who the conversation is with, and its actions
     header::show(ui, p, icons, pics, world, st, actions);
     ui.add_space(4.0);

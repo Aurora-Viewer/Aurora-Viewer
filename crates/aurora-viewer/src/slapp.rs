@@ -138,6 +138,9 @@ pub enum AppLink {
     },
     /// `inventory/show`.
     InventoryShow,
+    /// A plain texture asset UUID in chat. This is an internal rendering
+    /// target only: chat sends the standard UUID text, never an Aurora URI.
+    Texture(Uuid),
     /// `experience/<id>/profile`.
     Experience(Uuid),
     /// `classified/<id>/about`.

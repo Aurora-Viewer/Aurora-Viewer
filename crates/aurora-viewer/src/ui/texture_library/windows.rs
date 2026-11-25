@@ -17,6 +17,15 @@ pub(super) struct PreviewWindow {
     pano_view: Option<crate::ui::panorama::PanoView>,
 }
 
+/// A texture opened from a shared chat UUID. It uses the same ImageView and
+/// picture renderer as the inventory preview, without inventing an inventory
+/// item or exposing the preview's copy/export controls.
+pub(super) struct SharedPreviewWindow {
+    pub asset: Uuid,
+    texture: texture_view::ImageView,
+    first_show: bool,
+}
+
 /// Whether a texture can be looked into as a panorama, and whether it is:
 /// 2:1 and wide enough (`capture_360::is_equirect`); on when the user chose it,
 /// or, with no choice made, when the item's name is an Aurora 360° upload's.
@@ -36,7 +45,34 @@ pub(crate) fn window_id(item: Uuid) -> String {
     format!("resource_preview_{item}")
 }
 
+fn shared_window_id(asset: Uuid) -> String {
+    format!("shared_texture_preview_{asset}")
+}
+
 impl LibraryUi {
+    /// Open a full-resolution texture window for a plain UUID shared in chat.
+    /// The preview obeys RLVa's @viewtexture restriction like inventory Open.
+    pub(crate) fn open_shared_texture(&mut self, ctx: &egui::Context, world: &World, asset: Uuid) {
+        if asset.is_nil() || !world.inventory.can_preview(0) {
+            return;
+        }
+        if self.agent != world.agent_id {
+            self.reset();
+            self.agent = world.agent_id;
+        }
+        let mut existing = self.shared_windows.iter().any(|window| window.asset == asset);
+        if !existing {
+            self.shared_windows.push(SharedPreviewWindow {
+                asset,
+                texture: Default::default(),
+                first_show: true,
+            });
+        }
+        let id = shared_window_id(asset);
+        widgets::open_floater(ctx, &id, &mut existing);
+        self.focus_shared_preview = Some(asset);
+    }
+
     /// LLTextureBridge::save_as / LLInventoryAction::saveMultipleTextures.
     /// Every image still passes the ordinary full-resolution export path.
     pub(crate) fn begin_exports(&mut self, ctx: &egui::Context, world: &World, items: Vec<Uuid>, png: bool) {
@@ -344,9 +380,68 @@ impl LibraryUi {
         windows.retain_mut(|window| self.preview_window(ctx, p, world, scene, images, prefs, window, actions));
         self.windows = windows;
         self.map_uploads.retain(|_, (item, _)| self.windows.iter().any(|w| w.id == *item));
+        let mut shared = std::mem::take(&mut self.shared_windows);
+        shared.retain_mut(|window| self.shared_preview_window(ctx, p, scene, images, prefs, window));
+        self.shared_windows = shared;
         if let Some(id) = self.focus_preview.take() {
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(window_id(id))));
         }
+        if let Some(asset) = self.focus_shared_preview.take() {
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(shared_window_id(asset))));
+        }
+    }
+
+    fn shared_preview_window(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        scene: &mut Scene,
+        images: &HashMap<Uuid, egui::TextureHandle>,
+        prefs: &mut Preferences,
+        window: &mut SharedPreviewWindow,
+    ) -> bool {
+        let asset = window.asset;
+        let id = shared_window_id(asset);
+        if window.first_show {
+            window.texture.display = prefs.texture_display;
+            if let Some(size) = prefs.preview_size(false) {
+                widgets::size_floater(ctx, &id, size);
+            }
+            window.first_show = false;
+        }
+        let size = prefs.preview_size(false).unwrap_or(Vec2::new(460.0, 520.0));
+        let mut open = true;
+        let title = format!("{} · {asset}", aurora_i18n::tr!("texture-library-preview"));
+        let mut floater = Floater::new(&id, title, ctx.content_rect().center() - size * 0.5, size)
+            .cascade(widgets::CascadeGroup::inventory(0));
+        floater.min_size = Vec2::new(220.0, 260.0);
+        floater.show(ctx, p, &mut open, |ui| {
+            self.wanted_images.insert(asset);
+            window.texture.prepare(ctx, asset, scene);
+            let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
+            let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
+            let before = window.texture.display;
+            let room = ui.available_size();
+            let _ = texture_view::picture(ui, p, image, dimensions, &window.texture.display, None);
+            if window.texture.display != before {
+                prefs.texture_display = window.texture.display;
+            }
+            if window.texture.display.actual_size {
+                scene.textures.note_usage_fixed(&asset, 16384.0);
+            }
+            scene.textures.note_usage_boosted(
+                &asset,
+                if window.texture.display.actual_size {
+                    16384.0
+                } else {
+                    room.x.max(room.y) * ctx.pixels_per_point()
+                },
+            );
+        });
+        if let Some(size) = widgets::take_floater_resize(ctx, &id) {
+            prefs.record_preview_size(false, size);
+        }
+        open
     }
 
     fn preview_window(
