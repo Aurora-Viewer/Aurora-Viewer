@@ -129,11 +129,12 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
-        // the animation editor's mirror of us is no one: no menu on it nor
+        // the copies of us (the animation editor's mirror, the Fit lab's
+        // mannequins) are no one: no menu on them nor
         // on what it wears
         if picked
             .and_then(|idx| ui::context::wearer(&self.world, idx).or_else(|| self.world.objects.get(idx).map(|o| o.full_id)))
-            .is_some_and(|id| self.world.is_mirror(&id))
+            .is_some_and(|id| self.world.is_local_copy(&id))
         {
             return;
         }

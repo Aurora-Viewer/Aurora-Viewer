@@ -31,8 +31,11 @@ mod drawn_pick;
 mod equirect;
 mod exposure;
 mod film_readback;
+mod fit_clip;
+pub use fit_clip::FitClipParams;
 pub mod frame_priority;
 mod fsr;
+pub mod gi;
 pub mod gpu_alloc;
 pub mod gpu_cull;
 mod gtao;
@@ -48,6 +51,7 @@ mod motion_debug;
 mod motion_history;
 mod occlusion;
 pub mod oit_stochastic;
+mod outside;
 pub mod pacing;
 mod packet;
 pub mod panorama;
@@ -65,6 +69,12 @@ mod readback;
 mod render_thread;
 mod renderer;
 mod rlva;
+#[cfg(test)]
+mod rt_flags_tests;
+mod rt_gi_counts;
+mod rt_gi_probes;
+mod rt_light_changes;
+mod rt_shadows;
 pub mod second_view;
 mod selection;
 pub mod shadow_cull;
@@ -97,6 +107,7 @@ pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
+pub use rt_shadows::LampQuality;
 pub use thumbnail::{THUMBNAIL_MAX, Thumbnail};
 pub use vr_control::{HeadPose, VrState};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
@@ -136,6 +147,7 @@ pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
 pub use label_depth::{WORLD_OVERLAY_NEAR_W, clip_world_line, world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
+pub use outside::{OutsideEvent, OutsideFrame, same_picture};
 pub use renderer::{CASCADES, RenderError};
 // What a tile of a photo draws around what it keeps for the soft shadows.
 pub use soft_shadows::tile_reach as soft_shadow_tile_reach;
@@ -1178,6 +1190,11 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     #[test]
     fn exposure_shader_is_valid() {
         validate(include_str!("shaders/exposure.wgsl"));
+    }
+
+    #[test]
+    fn fit_clip_shader_is_valid() {
+        validate(include_str!("shaders/fit_clip.wgsl"));
     }
 
     #[test]

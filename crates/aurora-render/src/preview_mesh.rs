@@ -15,6 +15,13 @@ struct Region {
     mesh: Arc<egui::Mesh>,
 }
 
+/// Whether two callbacks of one place show the same thumbnail: the same
+/// mesh. `None`: not both thumbnails.
+pub(crate) fn same(a: &egui::PaintCallback, b: &egui::PaintCallback) -> Option<bool> {
+    let (a, b) = (a.callback.downcast_ref::<Region>()?, b.callback.downcast_ref::<Region>()?);
+    Some(a.id == b.id && Arc::ptr_eq(&a.mesh, &b.mesh))
+}
+
 /// Paint an untextured, prelit mesh with the same gamma/premultiplied colors
 /// as egui. The caller retains its response; this adds no input handling.
 pub fn paint(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, mesh: Arc<egui::Mesh>) {
@@ -307,11 +314,14 @@ impl Target {
 pub(crate) struct Cache {
     pipeline: Option<Pipelines>,
     targets: HashMap<egui::Id, Target>,
+    /// What each window showed in its last pass (`preview::Shown`).
+    shown: crate::preview::Shown<egui::Id>,
 }
 
 impl Cache {
     pub fn render(
         &mut self,
+        shower: crate::preview::Shower,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         egui: &mut egui_wgpu::Renderer,
@@ -364,8 +374,20 @@ impl Cache {
                 primitive.primitive = egui::epaint::Primitive::Mesh(mesh);
             }
         }
+        self.shown.set(shower, seen);
+        self.prune(egui);
+    }
+
+    pub fn keep_outside(&mut self, alive: impl Fn(u64) -> bool, egui: &mut egui_wgpu::Renderer) {
+        if self.shown.keep_outside(alive) {
+            self.prune(egui);
+        }
+    }
+
+    fn prune(&mut self, egui: &mut egui_wgpu::Renderer) {
+        let shown = &self.shown;
         self.targets.retain(|id, target| {
-            if seen.contains(id) {
+            if shown.has(id) {
                 true
             } else {
                 egui.free_texture(&target.texture);
@@ -437,7 +459,14 @@ mod tests {
                 ]
             };
             let mut encoder = device.create_command_encoder(&Default::default());
-            cache.render(&device, &mut encoder, &mut egui, &mut primitives(), scale);
+            cache.render(
+                crate::preview::Shower::Viewer,
+                &device,
+                &mut encoder,
+                &mut egui,
+                &mut primitives(),
+                scale,
+            );
             let target = &cache.targets[&id];
             let texture = target.texture;
             let [width, height] = target.size;
@@ -495,11 +524,18 @@ mod tests {
             drop(bytes);
             pixels.unmap();
             let mut encoder = device.create_command_encoder(&Default::default());
-            cache.render(&device, &mut encoder, &mut egui, &mut primitives(), scale);
+            cache.render(
+                crate::preview::Shower::Viewer,
+                &device,
+                &mut encoder,
+                &mut egui,
+                &mut primitives(),
+                scale,
+            );
             assert_eq!(cache.targets[&id].texture, texture, "unchanged thumbnail reuses its GPU image");
         }
         let mut encoder = device.create_command_encoder(&Default::default());
-        cache.render(&device, &mut encoder, &mut egui, &mut [], 1.0);
+        cache.render(crate::preview::Shower::Viewer, &device, &mut encoder, &mut egui, &mut [], 1.0);
         assert!(cache.targets.is_empty(), "closing the palette frees its GPU images");
     }
 }

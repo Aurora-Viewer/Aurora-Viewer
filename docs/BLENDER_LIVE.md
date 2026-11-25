@@ -150,6 +150,11 @@ The other valid objects continue to update. Fix the reported problem and use
 **Update now**, or wait for the next automatic capture, to retry. The entry stays
 in Blender's list; failed sources are omitted from that preview snapshot. Import
 and LOD preparation still require the complete requested source to be valid.
+With plug-in 0.16.0 or later, Aurora's **Objects** tab shows the same warnings:
+an object whose textures Blender could not read keeps its card, with an amber
+"Textures skipped, plain color shown" line and Blender's reason; an object
+Blender could not send has a card of its own, "Not in the preview", with the
+reason (an export error, or over the transfer limit).
 
 The four navigation buttons keep the sidebar focused on one task:
 
@@ -262,8 +267,46 @@ line (link, revision, time since the last snapshot, **Enable preview** or
   **Hold this pose instead of my animations**, to see how a rigged mesh in
   progress deforms. The bend is drawn for you only, while the preview runs:
   nothing is sent, and your animations, other residents' view and the import
-  are unchanged. The axes are those of the mesh importer's test bend. Then
-  the shape transfer (below).
+  are unchanged. The axes are those of the mesh importer's test bend.
+  **Fit lab** stands mannequins 2.2 m in front of you, facing you: each is a
+  copy of your avatar with everything you wear (mesh body, head, hands,
+  Bake on Mesh skin, the body's current alpha cuts, the LiveMesh preview) in
+  another shape: **Me** (yours), **Slim**, **Curvy**, **Full figure**,
+  **Athletic**, **Tall** or **Petite**, your shape with its body, torso and
+  leg sliders changed. Fitted mesh follows each shape as it would on a
+  resident with it. They **Stand**, **Walk** in place, **Sit**, or play what
+  you play (**Like me**: your AO, a pose, a dance), and the elbow and knee
+  bend shows on them too (and on you, while they stand, even with the
+  preview stopped). **Range of motion** takes them to the ends of
+  what a body does, where a garment stretches or lets the body through:
+  **Arms up**, **Reach forward**, **Arms crossed**, **Squat**, **Kneel**,
+  **Knee raised**, **Twist** and **Bend forward**, held, or **All, in
+  turn** (each reached in 0.8 s and held 1.4 s). These poses are made by
+  Aurora for the mannequins alone and are never sent. What you wear or change, a new revision from
+  Blender, an alpha cut from your body's HUD, a shape edit, reaches them on
+  the next frame. **Bring them here** places the row in front of you again.
+  **Show where the body comes through** paints, on your avatar and the
+  mannequins, the skin or body mesh that pokes out of the LiveMesh garment:
+  red where the body stands out of it by up to 3 cm, amber where body and
+  garment meet (within 3 mm). It is worked out on the graphics card every
+  frame, as the camera sees it, so it follows the animations, the bend and
+  each shape; turn the camera to check the back. Only the garment's outer
+  surface counts (both sides of a double-sided material): an arm before the
+  chest, farther than 3 cm, is not marked. Everything else rigged you wear
+  counts as body, hair and a jacket over the garment included: take them
+  off for the check. At an opening (neckline, cuff, hem) of a double-sided
+  garment, thin marks can show along the edge of the skin: its far side
+  lies close behind there. The map is drawn in the window only: not in photos,
+  while the Director plays or films, with the interface hidden, nor in VR.
+  A texture or a mesh tried on a worn item locally shows on you, not on
+  the mannequins.
+  After a teleport or a region crossing they stand in front of you again,
+  once you have arrived. They are drawn as you are: the complexity limit
+  and Render Friends Only leave them alone. The maximum number of avatars
+  drawn in full counts them: past it, some are impostors.
+  Only you see them: nothing is sent or saved, and they go when you remove
+  them or log out. To test another mesh body, wear it.
+  Then the shape transfer (below).
 - **Import**: the selected object frozen into the mesh importer, with the
   triangles of its four levels of detail once Blender has prepared them.
 - **Plugins**: the plug-in in each Blender found, and the manual ZIP.
@@ -321,7 +364,10 @@ triangle counts are approximate and may require adjusting the target.
 
 Preparation waits for Blender's Object Mode, with an actionable error after
 30 seconds; Aurora abandons an unanswered request after 180 seconds or a
-disconnect. Each bundle is bounded to 600,000 exported corners and 64 MiB.
+disconnect. Each bundle is bounded to 600,000 exported corners and 64 MiB
+on the wire; with a viewer that offers `compressed-lods`, the plug-in deflates
+it first, so prepared LODs of up to 256 MiB fit when they deflate under 64 MiB
+(#3519).
 Older plug-ins can still synchronize live, but must be updated for this import
 workflow. A paused source can be imported without enabling its live preview.
 
@@ -829,6 +875,13 @@ with `packed: {"vertices": "<base64>", "indices": "<base64>"}`. Each vertex is a
 joint indices and four f32 weights. Indices are little-endian u32. Values are
 identical to the ordinary JSON-to-f32 conversion; bounds, skinning, normals and
 index validation still apply. Mixing nonempty arrays and packed data is invalid.
+With `object-warnings`, a snapshot may carry `warnings`: at most 64 entries of
+`{"source_id": "<uuid>", "name": "…", "kind": "textures" | "not-sent",
+"reason": "…"}` (`source_id` optional; name and reason at most 512 characters,
+untranslated). `textures` names a sent object shown in its plain colour;
+`not-sent` an object left out of the revision. The viewer drops unknown kinds
+and entries without a name instead of refusing the snapshot; an older viewer
+never receives the field.
 Length zero is a heartbeat. The reply is newline-terminated JSON
 with `ok`, `revision` on success, or `error` on rejection. A success acknowledges
 CPU preparation, not a displayed GPU frame. Revisions strictly increase within
@@ -853,7 +906,10 @@ Clients negotiating `import-lods` can receive
 `prepare_import: {"id":"<request UUID>","source":"<source UUID>"}` in a reply.
 Blender's main thread prepares the source's configured levels; its socket worker
 sends a length-prefixed body beginning with four ASCII bytes `LODS`, followed
-by UTF-8 JSON containing `id`, `source`, `levels` and shared `images`. `levels`
+by UTF-8 JSON containing `id`, `source`, `levels` and shared `images`. When
+the viewer advertises `compressed-lods`, the JSON after `LODS` may instead be
+`ZLIB` and a complete zlib stream of it, bounded like `compressed-snapshots`
+(64 MiB on the wire, 256 MiB decoded); plain bodies stay accepted. `levels`
 is ordered Lowest, Low, Medium, High. Each level contains the regular wire
 `mesh`, `slots` mapping its nonempty surfaces to High, and a bounded `origin`
 label. Errors send `id`, `source`, `error` instead. The viewer validates the

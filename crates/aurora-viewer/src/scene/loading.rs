@@ -521,10 +521,11 @@ impl Scene {
             let id = o.full_id;
             seen.push(id);
             let s = loading.states.entry(id).or_insert_with(|| State::new(now));
-            // the animation editor's mirror of us is made of what is already
+            // the animation editor's mirror of us (or a Fit lab mannequin) is
+            // made of what is already
             // loaded: it shows as soon as its copies are built, with no
             // settling delay
-            s.copy = world.is_mirror(&id);
+            s.copy = world.is_local_copy(&id);
             // shown once, an avatar is never a cloud again: nothing below
             // would be used, and what it wears was looked up here every
             // frame (a club crowd wears hundreds of prims each)
@@ -544,8 +545,8 @@ impl Scene {
                 .count()
                 + world.avatar_cache.standing_in(&id);
             // (ours is not compared with the simulator's list: `!isSelf()`,
-            // nor the animation editor's mirror of us, which has no HUDs)
-            let announced = if own || world.is_mirror(&id) {
+            // nor the copies of us, mirror and mannequins, which have no HUDs)
+            let announced = if own || world.is_local_copy(&id) {
                 0
             } else {
                 world.announced_attachments(&id)
