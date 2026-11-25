@@ -2126,6 +2126,10 @@ pub(crate) struct Backend {
     queue: wgpu::Queue,
     /// Destroyed by hand in `Drop`, unless the device is lost.
     surface: std::mem::ManuallyDrop<Arc<wgpu::Surface<'static>>>,
+    /// What the window's surface is made again from, for DLSS frame
+    /// generation (`renew_surface`); None off Wayland and for an external
+    /// renderer.
+    window: Option<crate::present::WindowHandles>,
     config: wgpu::SurfaceConfiguration,
     external: bool,
     /// Whether this renderer's drop shuts Streamline down on its device (DLSS,
@@ -2608,7 +2612,11 @@ struct XrWorld {
 pub(crate) struct BackendInit {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub surface: Arc<wgpu::Surface<'static>>,
+    /// None in a kept seed (`Backend::seed_of`): the window's surface of
+    /// the moment is put in when a renderer is made from it, since
+    /// `renew_surface` can replace it.
+    pub surface: Option<Arc<wgpu::Surface<'static>>>,
+    pub window: Option<crate::present::WindowHandles>,
     pub external: bool,
     pub vr: Arc<crate::vr_control::Control>,
     pub output_format: Option<wgpu::TextureFormat>,
@@ -4442,7 +4450,7 @@ impl Backend {
     /// `egui_later`: made without egui's renderer, which the backend this
     /// one replaces hands over once it has come through whole.
     fn new_with(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
-        let seed = Box::new(init.clone());
+        let seed = Self::seed_of(&init);
         let device = init.device.clone();
         let lost = init.lost.clone();
         let (made, oom, invalid) = crate::gpu_alloc::scoped_apart(&device, || Self::make(init, egui_later));
@@ -4455,6 +4463,15 @@ impl Backend {
             backend.refused_at_start();
         }
         Ok(backend)
+    }
+
+    /// What a later renderer is made from: `init` without the window's
+    /// surface, which would otherwise outlive a renewed one
+    /// (`renew_surface`); each use puts in the surface of the moment.
+    fn seed_of(init: &BackendInit) -> Box<BackendInit> {
+        let mut seed = init.clone();
+        seed.surface = None;
+        Box::new(seed)
     }
 
     /// The interface alone, with the notice, until `remake_refused` makes
@@ -4484,12 +4501,13 @@ impl Backend {
 
     fn make(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-        let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
-        let second_seed = (!init.external).then(|| Box::new(init.clone()));
+        let xr_seed = init.xr.as_ref().map(|_| Self::seed_of(&init));
+        let second_seed = (!init.external).then(|| Self::seed_of(&init));
         let BackendInit {
             device,
             queue,
             surface,
+            window,
             external,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             vr,
@@ -4513,6 +4531,7 @@ impl Backend {
             lost,
             gpu_frames,
         } = init;
+        let surface = surface.ok_or_else(|| RenderError::Surface("no window surface given".into()))?;
         let caps = surface.get_capabilities(&adapter);
         let format = output_format
             .or_else(|| {
@@ -5278,6 +5297,7 @@ impl Backend {
             device,
             queue,
             surface: std::mem::ManuallyDrop::new(surface),
+            window: window.filter(|_| !external),
             config,
             external,
             closes_ngx: !external,
@@ -9265,10 +9285,62 @@ impl Backend {
         if mode == self.config.present_mode {
             return;
         }
+        let renew = crate::present::renews_surface(self.config.present_mode, mode, fg);
         self.config.present_mode = mode;
-        if !self.external {
-            crate::present::configure(&self.surface, &self.device, &self.config);
+        if self.external {
+            return;
         }
+        if renew && self.renew_surface() {
+            return;
+        }
+        crate::present::configure(&self.surface, &self.device, &self.config);
+    }
+
+    /// The window's surface made again and configured, before DLSS frame
+    /// generation presents under Fifo (`present::renews_surface`: the
+    /// driver's commit timer, stale since the last Fifo, held the swapchain
+    /// for as long as frame generation had been off). False, with nothing
+    /// changed, when the surface cannot be let go: off Wayland, a lost
+    /// device, or the renderers of a VR session or of the second camera
+    /// holding it (its picture may be in this frame's interface).
+    fn renew_surface(&mut self) -> bool {
+        let Some(window) = self.window.clone() else {
+            return false;
+        };
+        if self.lost.get() {
+            return false;
+        }
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if self.xr_world.is_some() {
+            return false;
+        }
+        if Arc::strong_count(&self.surface) != 1 {
+            log::info!("presentation: the window's surface is shared (second camera), not made again for DLSS frame generation");
+            return false;
+        }
+        // SAFETY: the surface is taken out once and `self.surface` is
+        // written again below, on every path that does not abort, before
+        // anything reads it or `Drop` lets it go.
+        let old = unsafe { std::mem::ManuallyDrop::take(&mut self.surface) };
+        // (the only holder, checked above: the old Vulkan surface, with the
+        // driver's fifo and commit timer of the wl_surface, is gone before
+        // the new one asks for its own)
+        drop(old);
+        // SAFETY: this is the window's renderer (`window` is None for any
+        // other), and the host keeps the window until it is dropped.
+        match unsafe { window.surface() } {
+            Ok(surface) => self.surface = std::mem::ManuallyDrop::new(Arc::new(surface)),
+            Err(e) => {
+                // A Vulkan surface on a live window fails only for want of
+                // memory; with the old one gone there is nothing to present
+                // to, and nothing safe to leave in the field.
+                log::error!("presentation: the window's surface could not be made again: {e}");
+                std::process::abort();
+            }
+        }
+        crate::present::configure(&self.surface, &self.device, &self.config);
+        log::info!("presentation: the window's surface made again for DLSS frame generation");
+        true
     }
 
     // ---------------------------------------------------------------- frame
@@ -9820,6 +9892,7 @@ impl Backend {
                 )?;
                 self.vr.set_default_resolution(Some(session.default_resolution));
                 let mut init = (**seed).clone();
+                init.surface = Some(Arc::clone(&self.surface));
                 init.external = true;
                 init.xr = None;
                 init.width = session.width;
@@ -10178,6 +10251,7 @@ impl Backend {
                 return;
             };
             let mut init = (**seed).clone();
+            init.surface = Some(Arc::clone(&self.surface));
             init.external = true;
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             {
@@ -10256,6 +10330,7 @@ impl Backend {
             return;
         };
         let mut init = (**seed).clone();
+        init.surface = Some(Arc::clone(&self.surface));
         init.width = self.config.width;
         init.height = self.config.height;
         init.output_format = Some(self.config.format);

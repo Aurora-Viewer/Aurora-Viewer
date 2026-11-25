@@ -756,7 +756,8 @@ impl Renderer {
             gpu_frames: gpu_frames.clone(),
             device: device.clone(),
             queue,
-            surface: Arc::new(surface),
+            surface: Some(Arc::new(surface)),
+            window: crate::present::WindowHandles::wayland(&instance, &*window),
             external: false,
             output_format: None,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
