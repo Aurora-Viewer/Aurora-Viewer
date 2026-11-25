@@ -5010,12 +5010,9 @@ impl World {
                 None
             }
             NetEvent::InventoryTreeFetched { request, result } => {
-                let (stale, outcome) = match result {
-                    Ok(contents) => (self.inventory.apply_snapshots(contents, true), Ok(())),
-                    Err(error) => (Vec::new(), Err(error)),
-                };
-                self.inventory_background.on_reply(&mut self.inventory, request, &stale, outcome);
-                self.announce_inventory_limit();
+                if self.inventory_background.on_reply(&mut self.inventory, request, result) {
+                    self.announce_inventory_limit();
+                }
                 None
             }
             NetEvent::InventoryFetchFailed { folders, too_big, status } => {

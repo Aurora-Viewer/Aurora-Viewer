@@ -52,6 +52,50 @@ fn recovery_a_recovered_folder_is_not_reissued_by_a_delayed_retry() {
 }
 
 #[test]
+fn a_reply_after_the_deadline_cannot_complete_its_replacement() {
+    let mut inv = skeleton(&[(10, 1, -1)]);
+    let now = Instant::now();
+    let folder = id(10);
+    let mut fetch = BackgroundFetch {
+        clock: Some(now),
+        ..Default::default()
+    };
+    fetch.send(
+        &mut inv,
+        AGENT,
+        Kind::Recursive,
+        folder,
+        Vec::new(),
+        MAX_FOLDER_DEPTH,
+        &mut Vec::new(),
+        0,
+    );
+    let reads = fetch.pump_at(&mut inv, AGENT, now + TREE_DEADLINE);
+    let [NetCommand::FetchInventoryTree { request, .. }] = reads.as_slice() else {
+        panic!("expected the timed-out read to be split: {reads:?}");
+    };
+    assert_ne!(*request, 0);
+    let snapshot = |item| FolderContents {
+        folder_id: folder,
+        owner_id: AGENT,
+        version: 3,
+        folders: Vec::new(),
+        items: vec![InvItem {
+            id: item,
+            parent: folder,
+            ..Default::default()
+        }],
+    };
+    assert!(!fetch.on_reply(&mut inv, 0, Ok(vec![snapshot(id(100))])));
+    assert_eq!(inv.folders[&folder].state, FetchState::Fetching);
+    assert!(!inv.items.contains_key(&id(100)));
+    assert!(inv.take_accepted_snapshot_items().is_empty());
+    assert!(fetch.on_reply(&mut inv, *request, Ok(vec![snapshot(id(101))])));
+    assert_eq!(inv.folders[&folder].state, FetchState::Fetched);
+    assert_eq!(inv.take_accepted_snapshot_items(), vec![id(101)]);
+}
+
+#[test]
 fn recovery_a_subset_retry_only_reads_children_that_still_need_it() {
     let mut inv = skeleton(&[(10, 1, -1), (11, 10, -1), (12, 10, -1)]);
     let now = Instant::now();

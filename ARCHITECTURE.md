@@ -70,9 +70,10 @@ owner and item within a session and admits up to 16 at once, separately
 from background folder reads. An attachment consumer promotes a queued
 ordinary read. A logical item read has a 180-second total deadline, including
 paced attempts, and repeated failures use per-key 2/10/60-second cooldowns.
-Only records accepted from a version-checked folder snapshot acknowledge
-redundant ordinary reads. Shared successes use attachment parent repair
-once and release both claims. Pending AIS reads pause during seed changes
+Only newly discovered records in a version-checked folder snapshot acknowledge
+redundant ordinary reads. A background reply that arrives after its read has
+been retired cannot apply snapshots or cancel item reads. Shared successes
+use attachment parent repair once and release both claims. Pending AIS reads pause during seed changes
 and resume on the new capability; stale replies cannot classify originals.
 `CheckInventoryOffer` uses a separate fresh server read and private reply.
 

@@ -453,8 +453,12 @@ impl Inventory {
             self.too_big.remove(&c.folder_id);
             self.repair_item_parents(&mut c.items, parents::ItemSource::Snapshot);
             if acknowledge && !library {
-                self.accepted_snapshot_items.extend(c.items.iter().map(|item| item.id));
                 for item in &c.items {
+                    // A request for an item already in the model may be an
+                    // explicit refresh. Folder versions don't order those reads.
+                    if !self.items.contains_key(&item.id) {
+                        self.accepted_snapshot_items.push(item.id);
+                    }
                     self.items_reading.remove(&(item.id, false));
                 }
             }

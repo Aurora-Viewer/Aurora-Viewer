@@ -16,8 +16,8 @@
 //! parent, at most [`LEGACY_IN_FLIGHT`] reads at once.
 
 use super::{FetchState, Inventory};
-use aurora_net::NetCommand;
 use aurora_net::inventory::ais::{FetchError, FetchFailure, MAX_FOLDER_DEPTH};
+use aurora_net::{NetCommand, inventory::FolderContents};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use uuid::Uuid;
@@ -770,11 +770,18 @@ impl BackgroundFetch {
         self.busy.get_or_insert_with(|| (Instant::now(), 0)).1 += 1;
     }
 
-    /// onAISFolderCalback / onAISContentCalback, once the reply's snapshots
-    /// are applied. `stale` are the folders `Inventory::apply` queued again;
-    /// `outcome` is why the read failed, when it did.
-    pub fn on_reply(&mut self, inv: &mut Inventory, request: u64, stale: &[Uuid], outcome: Result<(), FetchError>) {
-        self.on_reply_at(inv, request, stale, outcome, Instant::now())
+    /// Apply results only while this request still owns the read. A reply
+    /// that missed the deadline cannot complete or acknowledge its replacement.
+    pub fn on_reply(&mut self, inv: &mut Inventory, request: u64, result: Result<Vec<FolderContents>, FetchError>) -> bool {
+        if !self.in_flight.contains_key(&request) {
+            return false;
+        }
+        let (stale, outcome) = match result {
+            Ok(contents) => (inv.apply_snapshots(contents, true), Ok(())),
+            Err(error) => (Vec::new(), Err(error)),
+        };
+        self.on_reply_at(inv, request, &stale, outcome, Instant::now());
+        true
     }
 
     /// [`on_reply`] with the clock given (the tests drive the retries).

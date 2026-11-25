@@ -101,10 +101,11 @@ fn explicit_folder_open_retries_without_waiting_for_the_view_poll() {
 }
 
 #[test]
-fn stale_folder_reply_cannot_acknowledge_an_already_known_item() {
+fn only_an_accepted_snapshot_can_acknowledge_a_previously_unknown_item() {
     let mut inv = fixture();
     let root = inv.root;
     let known = id(987_654);
+    let unknown = id(987_655);
     inv.add_items(vec![InvItem {
         id: known,
         parent: root,
@@ -116,11 +117,14 @@ fn stale_folder_reply_cannot_acknowledge_an_already_known_item() {
         owner_id: Uuid::nil(),
         version,
         folders: vec![],
-        items: vec![InvItem {
-            id: known,
-            parent: root,
-            ..Default::default()
-        }],
+        items: [known, unknown]
+            .into_iter()
+            .map(|id| InvItem {
+                id,
+                parent: root,
+                ..Default::default()
+            })
+            .collect(),
     };
     assert_eq!(inv.apply_snapshots(vec![snapshot(version - 1)], true), vec![root]);
     assert!(inv.take_accepted_snapshot_items().is_empty());
@@ -132,7 +136,11 @@ fn stale_folder_reply_cannot_acknowledge_an_already_known_item() {
         "a refresh does not make an older reply current"
     );
     assert!(inv.apply_snapshots(vec![snapshot(version)], true).is_empty());
-    assert_eq!(inv.take_accepted_snapshot_items(), vec![known]);
+    assert_eq!(
+        inv.take_accepted_snapshot_items(),
+        vec![unknown],
+        "an accepted snapshot cannot cancel an explicit refresh"
+    );
 }
 
 #[test]
