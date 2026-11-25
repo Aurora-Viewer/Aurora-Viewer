@@ -20969,6 +20969,7 @@ impl App {
                     Some(ui::region_message_prompt::PromptAction::Profile(id)) => self.profile_ui.open(&mut self.world, id),
                     None => {}
                 }
+                let had_notifications = self.world.notifications.listed().next().is_some();
                 for (id, r) in answers {
                     if self.region_restart_bell_answer(id, &r) {
                         continue;
@@ -21015,6 +21016,11 @@ impl App {
                     if u.starts_with("https://") || u.starts_with("http://") {
                         self.open_web_link(u, None);
                     }
+                }
+                let listed_now = self.world.notifications.listed().next().is_some();
+                if self.notif_ui.open && ui::notifications::list_emptied(had_notifications, listed_now, self.notif_ui.center.tab) {
+                    self.notif_ui.open = false;
+                    ctx.request_repaint();
                 }
                 self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
