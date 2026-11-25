@@ -2834,13 +2834,30 @@ fn drawers_open_toggle_and_run_the_original_commands_on_each_edge_in_both_styles
             }
             let open = bench.ctx.read_response(egui::Id::unique(("drawer_drop", &id))).is_some();
             assert_eq!(open, !closes, "after a click on {bar:?}, classic={classic}");
+            let shown = |bench: &Bench| bench.ctx.read_response(egui::Id::unique(("drawer_drop", &id))).is_some();
+            if closes {
+                // open again: a click outside it (here the world) folds it
+                bench.pointer(point, Some(true));
+                bench.pointer(point, Some(false));
+                for _ in 0..3 {
+                    bench.frame(Vec::new());
+                }
+                assert!(shown(&bench), "reopened on {bar:?}, classic={classic}");
+            }
+            let world = bench.screen / 2.0;
+            bench.pointer(world.to_pos2(), Some(true));
+            bench.pointer(world.to_pos2(), Some(false));
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            assert_eq!(shown(&bench), !closes, "after a click outside on {bar:?}, classic={classic}");
             if !closes {
                 bench.pointer(point, Some(true));
                 bench.pointer(point, Some(false));
                 for _ in 0..3 {
                     bench.frame(Vec::new());
                 }
-                assert!(bench.ctx.read_response(egui::Id::unique(("drawer_drop", &id))).is_none());
+                assert!(!shown(&bench));
             }
         }
     }

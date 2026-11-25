@@ -352,6 +352,19 @@ fn close_after_click(
     }
 }
 
+/// A click anywhere but on the drawer or its own button (the world, a HUD,
+/// another button, a window, even one laid over the drawer) folds a drawer
+/// that closes after a click too, as a lost focus: once no popup is left. A
+/// drag is not a click: a button dragged into the drawer leaves it open.
+fn close_on_click_outside(ctx: &egui::Context, command: &str, toggle: egui::Rect, layer: egui::LayerId) {
+    let Some(pos) = ctx.input(|input| input.pointer.any_click().then(|| input.pointer.interact_pos()).flatten()) else {
+        return;
+    };
+    if !toggle.contains(pos) && ctx.layer_id_at(pos) != Some(layer) && !egui::DragAndDrop::has_any_payload(ctx) {
+        ctx.data_mut(|data| data.insert_temp(area_id(command).with("close"), true));
+    }
+}
+
 pub(super) fn replace(settings: &mut ToolbarSettings, bar: Bar, drawer: Option<String>, buttons: Vec<ToolButton>) {
     if let Some(id) = drawer {
         if let Some(drawer) = settings.drawers.get_mut(&id) {
@@ -407,17 +420,20 @@ pub fn show(
     if open && ctx.input(|input| input.key_pressed(egui::Key::Escape)) && !egui::Popup::is_any_open(ctx) {
         open = false;
     }
+    let editing = ToolbarUi::editing(ctx);
+    // its own settings window keeps it open, and so does editing the bars
+    let kept = editing || toolbar.drawer_editor.as_deref() == Some(button.command.as_str());
     let close = area_id(&button.command).with("close");
-    if ctx.data(|data| data.get_temp::<bool>(close)).unwrap_or(false) && !egui::Popup::is_any_open(ctx) {
+    if ctx.data(|data| data.get_temp::<bool>(close)).unwrap_or(false) && (kept || !egui::Popup::is_any_open(ctx)) {
         ctx.data_mut(|data| data.remove::<bool>(close));
-        open &= !drawer.closes;
+        open &= !(drawer.closes && !kept);
     }
     if !open {
+        ctx.data_mut(|data| data.remove::<bool>(close));
         set_open(ctx, &button.command, false);
         return;
     }
     let screen = ctx.content_rect();
-    let editing = ToolbarUi::editing(ctx);
     let display = structure::Display::for_drawer(ctx, row.bar, &drawer.buttons, editing);
     let buttons = display.buttons();
     let vertical = buttons.is_empty() || vertical(row.bar, buttons, drawer.mode, &settings);
@@ -615,7 +631,8 @@ pub fn show(
                         toolbar.pending = Some(edit);
                     }
                 }
-                if drawer.closes {
+                if drawer.closes && !kept {
+                    close_on_click_outside(ctx, &button.command, response.rect, ui.layer_id());
                     close_after_click(ctx, &button.command, buttons, &rects, scroll.inner_rect, ui.layer_id(), editing);
                 }
                 if !matches!(action, bars::BarAction::None) {
