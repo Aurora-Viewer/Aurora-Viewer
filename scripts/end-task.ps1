@@ -44,9 +44,14 @@ if ($isWorktree) {
 
 if (-not $Force -and $isWorktree) {
     if (git -C $dir status --porcelain) { throw "Uncommitted changes in $dir (use -Force to discard them)." }
-    # squash merges are not ancestors of main: ask GitHub whether the PR is merged
-    $state = gh pr view $branch --json state --jq .state 2>$null
-    if ($state -ne 'MERGED') { throw "The PR of $branch is not merged (state: '$state'). Use -Force to delete anyway." }
+    # squash merges are not ancestors of main: ask GitHub whether the PR is
+    # merged, its head on origin or on a fork, with every commit of the
+    # local branch (Get-BranchPr, common.ps1)
+    $state = (Get-BranchPr $dir $branch -AllCommits).state
+    if ($state -ne 'MERGED') {
+        $why = if ($state) { "state: '$state'" } else { 'no PR found whose head holds every commit of the branch' }
+        throw "The PR of $branch is not merged ($why). Use -Force to delete anyway."
+    }
 }
 
 if ($isWorktree) {

@@ -1506,6 +1506,27 @@ mod selection_tests {
         assert!(st.keyboard_selection);
     }
 
+    /// #4748 review: in the Legacy-style single folder window ("Open in a
+    /// new window"), a delete selects the next row, as in every other list.
+    #[test]
+    fn a_delete_in_the_legacy_single_folder_window_selects_the_next_row() {
+        let (inv, mut st, _) = fixture();
+        st.single_folder = Some(super::super::single_folder::Nav::at(id(1)));
+        st.browse = id(1);
+        assert!(st.lists_flat(), "the window lists its folder flat");
+        st.plain.order = vec![id(10), id(20), id(30)];
+        st.shown_order = keyboard::order_kind(&st, false);
+        assert_eq!(st.shown_order, keyboard::ShownOrder::Plain);
+        assert_eq!(keyboard::shown_order(&st), [id(10), id(20), id(30)]);
+        let deletion = DeleteRequest::new(&inv, &st, &[id(10)], trash_move(&[id(10)]));
+        st.begin_delete(id(90), deletion.selection);
+        st.finish_delete(id(90), true, false);
+        st.plain.order = vec![id(20), id(30)];
+        assert!(reconcile_selection(&inv, &mut st));
+        assert_eq!(st.selected, Some(id(20)));
+        assert_eq!(st.selection, HashSet::from([id(20)]));
+    }
+
     #[test]
     fn failed_delete_retains_the_original_selection() {
         let (inv, mut st, deletion) = fixture();
