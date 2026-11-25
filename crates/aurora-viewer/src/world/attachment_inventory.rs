@@ -18,7 +18,9 @@ const FETCH_ATTEMPTS: u8 = 3;
 
 #[derive(Default)]
 pub struct AttachmentInventory {
-    fetched: HashMap<Uuid, (Instant, u8)>,
+    /// Each worn item's last read, its attempts, and the inventory's
+    /// give-up round (`Inventory::give_up_rounds`) they count in.
+    fetched: HashMap<Uuid, (Instant, u8, u32)>,
     registered: HashSet<Uuid>,
     detached: HashSet<Uuid>,
     pending: Option<(Uuid, Vec<Uuid>)>,
@@ -158,15 +160,17 @@ impl World {
             if self.inventory.items.contains_key(id) || self.inventory.item_reading(*id, true, now) || self.inventory.broken(id) {
                 continue;
             }
-            let attempt = self.attachment_inventory.fetched.entry(*id).or_insert((now, 0));
-            // (attempts spent, but the inventory no longer counts it broken:
-            // its give-up pause ended (`Inventory::expire_given_up`), so it
-            // is read again like a new one)
-            if attempt.1 >= FETCH_ATTEMPTS && self.inventory.item_failures.get(id).is_none_or(|n| *n == 0) {
-                *attempt = (now, 0);
+            let round = self.inventory.give_up_rounds.get(id).copied().unwrap_or(0);
+            let attempt = self.attachment_inventory.fetched.entry(*id).or_insert((now, 0, round));
+            // (attempts spent, and the inventory's give-up pause for it has
+            // ended since (`Inventory::expire_given_up` counts a round): it
+            // is read again like a new one. Reads that never got any answer
+            // start no round, so they stop at FETCH_ATTEMPTS)
+            if attempt.1 >= FETCH_ATTEMPTS && round > attempt.2 {
+                *attempt = (now, 0, round);
             }
             if attempt.1 < FETCH_ATTEMPTS && (attempt.1 == 0 || now.saturating_duration_since(attempt.0) >= RETRY_GAP) {
-                *attempt = (now, attempt.1 + 1);
+                *attempt = (now, attempt.1 + 1, attempt.2);
                 missing.push(*id);
             }
         }
@@ -458,6 +462,25 @@ mod tests {
             world.update_attachment_inventory(now + RETRY_GAP * 3, true).is_empty(),
             "a requested detach must not be undone"
         );
+    }
+
+    /// Reads that never get any answer (lost replies) stop after their
+    /// attempts: no give-up round ends, so they never start again.
+    #[test]
+    fn unanswered_attachment_reads_stop_after_their_attempts() {
+        let (mut world, _, item) = fixture();
+        let now = Instant::now();
+        let mut sent = 0;
+        for step in 0..100u32 {
+            // (each read's claim long expired: nothing holds the next back)
+            let at = now + crate::world::inventory::ITEM_READ_DEADLINE * (step + 1);
+            sent += world
+                .update_attachment_inventory(at, true)
+                .iter()
+                .filter(|c| matches!(c, NetCommand::FetchAttachmentItems { items } if items == &[item.id]))
+                .count();
+        }
+        assert_eq!(sent, usize::from(FETCH_ATTEMPTS));
     }
 
     /// A given-up original spends no attempt on reads that would never be

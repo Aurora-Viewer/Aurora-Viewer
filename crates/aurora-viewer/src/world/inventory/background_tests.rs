@@ -1000,41 +1000,100 @@ fn a_transport_error_keeps_the_backoff_and_only_a_timeout_splits() {
 /// still queued never sends them deep again before their own reads ran.
 #[test]
 fn a_split_batch_is_never_batched_again_before_its_parts() {
-    let tree: Vec<(u128, u128, i32)> = (10..35).map(|n| (n, 1, -1)).collect();
+    // (more folders than the slots' batches: the root's batch read stays
+    // queued after the first pump)
+    let tree: Vec<(u128, u128, i32)> = (10..510).map(|n| (n, 1, -1)).collect();
     let mut inv = skeleton(&tree);
     inv.folders.get_mut(&id(1)).expect("root").state = FetchState::Fetched;
+    let server = Server {
+        tree: &tree,
+        cap: 50,
+        items: 0,
+        failure: &|_| None,
+    };
     let mut fetch = BackgroundFetch::default();
     fetch.start(&inv);
-    let now = Instant::now();
-    fetch.pump_at(&mut inv, AGENT, now);
+    let mut now = Instant::now();
+    let mut commands = fetch.pump_at(&mut inv, AGENT, now);
+    assert!(
+        fetch.queue.contains(&(id(1), Kind::ContentRecursive)),
+        "the root's next batch is still queued when the split happens"
+    );
     let (&request, read) = fetch
         .in_flight
         .iter()
         .find(|(_, r)| r.depth > 0 && r.folder == id(1) && r.children.len() == BATCH)
         .expect("a full batch of the root's folders");
     let split: Vec<Uuid> = read.children.clone();
+    commands.retain(|c| !matches!(c, NetCommand::FetchInventoryTree { request: r, .. } if *r == request));
     fetch.on_reply_at(&mut inv, request, &[], Err(FetchError::timeout()), now);
-    let mut sent = Vec::new();
-    for _ in 0..5 {
-        sent.extend(fetch.pump_at(&mut inv, AGENT, now));
-    }
-    for command in &sent {
-        if let NetCommand::FetchInventoryTree { children, depth, .. } = command
-            && *depth > 0
-        {
-            assert!(
-                children.iter().all(|c| !split.contains(c)),
-                "a split folder was batched deep again: {children:?}"
-            );
+    // the walk goes on, every other read answered
+    for _ in 0..200 {
+        for command in std::mem::take(&mut commands) {
+            match command {
+                NetCommand::FetchInventoryOrphans { request } => {
+                    fetch.on_orphans_reply(request, true);
+                }
+                NetCommand::FetchInventoryTree {
+                    request,
+                    parent,
+                    children,
+                    depth,
+                    ..
+                } => {
+                    assert!(
+                        depth == 0
+                            || children
+                                .iter()
+                                .all(|c| !split.contains(c) || inv.folders[c].state == FetchState::Fetched),
+                        "a split folder was batched deep again before its own read: {children:?}"
+                    );
+                    let read = Read { parent, children, depth };
+                    let outcome = server.answer(&read).map(|contents| {
+                        inv.apply(contents);
+                    });
+                    fetch.on_reply_at(&mut inv, request, &[], outcome, now);
+                }
+                _ => {}
+            }
         }
+        if fetch.is_idle() {
+            break;
+        }
+        now += std::time::Duration::from_secs(1);
+        commands = fetch.pump_at(&mut inv, AGENT, now);
     }
+    assert!(unfetched(&inv).is_empty(), "{:?}", unfetched(&inv));
+    assert!(fetch.split.is_empty(), "no split mark left behind");
+}
+
+/// A folder the user's own read takes after the walk swept clean is still
+/// timed: never answered, it is read again after the deadline.
+#[test]
+fn a_users_read_after_a_clean_sweep_is_still_timed() {
+    let tree = [(10, 1, -1), (11, 10, -1)];
+    let mut inv = skeleton(&tree);
+    let server = Server {
+        tree: &tree,
+        cap: 50,
+        items: 1,
+        failure: &|_| None,
+    };
+    let (_, mut fetch) = run_keeping_fetch(BackgroundFetch::default(), &mut inv, &server);
+    let start = fetch.clock.expect("pumped") + WATCHDOG;
+    fetch.pump_at(&mut inv, AGENT, start);
+    assert!(fetch.swept_clean.is_some(), "swept clean");
+    // the user's read: queued, taken by the app after the pump, never answered
+    inv.folders.get_mut(&id(11)).expect("folder").state = FetchState::Unknown;
+    inv.request(id(11));
+    fetch.pump_at(&mut inv, AGENT, start + WATCHDOG);
+    inv.queue.clear();
+    fetch.pump_at(&mut inv, AGENT, start + WATCHDOG * 2);
+    assert!(fetch.pump_at(&mut inv, AGENT, start + WATCHDOG * 3).is_empty(), "not yet");
+    fetch.pump_at(&mut inv, AGENT, start + WATCHDOG * 3 + READ_DEADLINE);
     assert!(
-        split
-            .iter()
-            .all(|f| sent.iter().any(
-                |c| matches!(c, NetCommand::FetchInventoryTree { parent, children, depth: 0, .. } if parent == f && children.is_empty())
-            ) || fetch.queue.contains(&(*f, Kind::FolderAndContent))),
-        "each split folder is read alone"
+        fetch.pending.contains(&id(11)) || fetch.queue.iter().any(|(f, _)| *f == id(11)),
+        "asked again by the walk past the deadline"
     );
 }
 

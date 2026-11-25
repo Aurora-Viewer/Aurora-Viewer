@@ -244,8 +244,11 @@ impl BackgroundFetch {
     pub fn pump_at(&mut self, inv: &mut Inventory, agent: Uuid, now: Instant) -> Vec<NetCommand> {
         let mut out = Vec::new();
         self.clock = Some(now);
-        // (a busy walk changes folders: its next idle sweep looks again)
-        if !self.is_idle() {
+        // (a busy walk changes folders, and a folder the user's read takes
+        // (`Inventory::request`, queued until the app sends it after this
+        // pump) changes none's generation: either way the next idle sweep
+        // looks again, so the user's read is timed like any other)
+        if !self.is_idle() || !inv.queue.is_empty() {
             self.swept_clean = None;
         }
         // a read unanswered past its deadline frees its slot and is tried
@@ -387,6 +390,9 @@ impl BackgroundFetch {
         let user_queued: HashSet<Uuid> = inv.queue.iter().map(|(q, _)| *q).collect();
         let mut failed: Vec<Uuid> = Vec::new();
         let mut lost: Vec<Uuid> = Vec::new();
+        // (a folder still on its way, the user's read included: the sweep
+        // is not clean until it has arrived or been timed out)
+        let mut reading = false;
         let mut stack = vec![inv.root, inv.lib_root];
         let mut seen = HashSet::new();
         while let Some(id) = stack.pop() {
@@ -407,12 +413,13 @@ impl BackgroundFetch {
                 // its answer may be lost; once past the deadline it is read
                 // again)
                 FetchState::Fetching if !self.pending.contains(&id) && !user_queued.contains(&id) => {
+                    reading = true;
                     let since = *self.orphaned.entry(id).or_insert(now);
                     if now.saturating_duration_since(since) >= READ_DEADLINE {
                         lost.push(id);
                     }
                 }
-                FetchState::Fetching => {}
+                FetchState::Fetching => reading = true,
             }
         }
         self.orphaned
@@ -464,8 +471,8 @@ impl BackgroundFetch {
             self.failed_rounds < FAILED_ROUNDS && now.saturating_duration_since(since) >= FAILED_AGAIN
         };
         // (nothing left this sweep or later: no round to come, no read
-        // waiting for its deadline, nothing asked again)
-        if (failed.is_empty() || self.failed_rounds >= FAILED_ROUNDS) && self.orphaned.is_empty() && self.queue.is_empty() {
+        // waiting for its deadline or on its way, nothing asked again)
+        if (failed.is_empty() || self.failed_rounds >= FAILED_ROUNDS) && !reading && self.orphaned.is_empty() && self.queue.is_empty() {
             self.swept_clean = Some(inv.generation);
         }
         if failed_due {

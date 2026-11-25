@@ -413,6 +413,11 @@ fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFol
     });
 }
 
+/// A `FetchInventory2` item read's timeout: the Legacy Viewer's
+/// `initHttpRequest` (llinventorymodel.cpp, `setTransferTimeout(300)`).
+/// Deliberate difference: one try, where llcorehttp retries on top.
+const LEGACY_ITEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Items read, items the server says do not exist, and failed reads.
 fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool) {
     if !reads.items.is_empty() {
@@ -3913,9 +3918,9 @@ impl Session<'_> {
             } else if let Some(url) = legacy {
                 for chunk in items.chunks(50) {
                     let body = crate::inventory::fetch_items_body(chunk, owner);
-                    // (each chunk answers within the AIS timeout, so the
+                    // (each chunk answers within LEGACY_ITEM_TIMEOUT, so the
                     // viewer's one-read-at-a-time claim outlasts it)
-                    let posted = tokio::time::timeout(crate::inventory::ais::TREE_TIMEOUT, caps::post_llsd(&http, &url, &body))
+                    let posted = tokio::time::timeout(LEGACY_ITEM_TIMEOUT, caps::post_llsd(&http, &url, &body))
                         .await
                         .unwrap_or_else(|_| Err(caps::CapsError::Http("timed out".to_owned())));
                     let reads = match posted {

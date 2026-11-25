@@ -102,10 +102,10 @@ pub struct Inventory {
 pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
 /// An item read unanswered this long no longer stops another read of it,
 /// for each chunk of the read before the item's own: the chunks go one
-/// after the other (session.rs `fetch_items`), each answered within
-/// AISAPI::HTTP_TIMEOUT (ais.rs `TREE_TIMEOUT`, 180 s), so a claim outlasts
-/// its read and a failure counts once.
-pub const ITEM_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(200);
+/// after the other (session.rs `fetch_items`), each answered within its
+/// timeout (AIS: AISAPI::HTTP_TIMEOUT, 180 s; FetchInventory2: 300 s), so
+/// a claim outlasts its read and a failure counts once.
+pub const ITEM_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(320);
 /// An item unreadable after its attempts (never answered missing) is read
 /// again after this pause.
 pub const ITEM_GIVE_UP: std::time::Duration = std::time::Duration::from_secs(600);
@@ -593,9 +593,10 @@ impl Inventory {
     /// huge inventory the same dead link was read twenty times at once, each
     /// failure counted as an attempt), and marks those as on their way. An
     /// item already in the inventory is a refresh (a script saved, a gesture
-    /// or an AO item changed): it is always sent, as on the Legacy Viewer,
-    /// so that the newest read writes last. A read never answered frees its
-    /// item after [`ITEM_READ_DEADLINE`] for each chunk up to its own.
+    /// or an AO item changed): it is always sent, as on main (two such reads
+    /// are sent apart, so their replies may land in either order, as there).
+    /// A read never answered frees its item after [`ITEM_READ_DEADLINE`]
+    /// for each chunk up to its own.
     pub fn claim_item_reads(&mut self, items: &mut Vec<Uuid>, attachment: bool, now: std::time::Instant) {
         self.drop_broken(items);
         let mut seen = HashSet::new();

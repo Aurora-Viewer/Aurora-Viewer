@@ -1014,6 +1014,76 @@ mod tests {
         assert_eq!(server.await.expect("server"), 3, "two failures and the successful read");
     }
 
+    /// When a subtree read's whole time runs out, the reason decides the
+    /// walk's answer: an overload waits (503), a server still on its answer
+    /// for a folder's timeout is a timeout (read in parts), anything else
+    /// (between attempts, a transport error's backoff) keeps the backoff.
+    #[test]
+    fn a_subtree_read_out_of_time_gives_its_reason() {
+        let state = TryState::default();
+        assert_eq!(
+            state.out_of_time(),
+            FetchError::new(FetchFailure::Transient, None),
+            "between attempts"
+        );
+        state.sending(Some(std::time::Instant::now()));
+        assert!(!state.out_of_time().timed_out, "an attempt just sent is no timeout");
+        if let Some(long_ago) = std::time::Instant::now().checked_sub(REQUEST_TIMEOUT) {
+            state.sending(Some(long_ago));
+            assert_eq!(state.out_of_time(), FetchError::timeout(), "the server kept the attempt waiting");
+        }
+        state.overloaded.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            state.out_of_time(),
+            FetchError::new(FetchFailure::Transient, Some(503)),
+            "an overload waits"
+        );
+    }
+
+    /// A server that takes the request and never answers gives a timeout,
+    /// and the attempt is no longer marked in progress.
+    #[tokio::test]
+    async fn an_unanswered_attempt_is_a_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("request");
+            let mut buffer = [0u8; 2048];
+            let _ = socket.read(&mut buffer).await;
+            // (holds the connection, never answers)
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        });
+        let state = TryState::default();
+        let error = get_with(
+            &crate::test_http_client(),
+            url,
+            std::time::Duration::from_millis(300),
+            0,
+            Some(&state),
+        )
+        .await
+        .expect_err("never answered");
+        assert_eq!(error, FetchError::timeout());
+        assert!(state.sending.lock().expect("state").is_none(), "no attempt left in progress");
+        server.abort();
+    }
+
+    /// A refused connection is a transport error, never a timeout: the walk
+    /// keeps its backoff.
+    #[tokio::test]
+    async fn a_refused_connection_is_no_timeout() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("local port");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        drop(listener);
+        let state = TryState::default();
+        let error = get_with(&crate::test_http_client(), url, std::time::Duration::from_secs(5), 0, Some(&state))
+            .await
+            .expect_err("refused");
+        assert_eq!(error.kind, FetchFailure::Transient);
+        assert!(!error.timed_out);
+        assert!(state.sending.lock().expect("state").is_none());
+    }
+
     #[tokio::test]
     async fn a_forbidden_reply_is_reported_as_too_big_and_not_retried() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
