@@ -755,3 +755,58 @@ fn a_window_of_a_kept_shape_draws_its_picture_at_its_ratio_outside() {
     assert_eq!(square[0].x, wide[0].x);
     assert!((square[0].y - wide[0].y - wide[0].x / 2.0).abs() < 0.01, "{wide:?} {square:?}");
 }
+
+/// llMapDestination without BEACON_FOCUS_MAP leaves the map's window
+/// outside where it is (raising it gives it the system's focus), and only
+/// expands it when minimized; a show by the user raises it.
+#[test]
+fn a_quiet_show_never_raises_a_window_outside() {
+    let ctx = egui::Context::default();
+    let id = egui::Id::unique("worldmap");
+    crate::outside::set_native(&ctx, id, true);
+    let mut open = true;
+    show_floater_quietly(&ctx, "worldmap", &mut open);
+    assert!(crate::outside::raises(&ctx).is_empty());
+    assert!(!floater_expand_asked(&ctx, "worldmap"));
+    minimize_floater(&ctx, "worldmap");
+    show_floater_quietly(&ctx, "worldmap", &mut open);
+    assert!(crate::outside::raises(&ctx).is_empty());
+    assert!(floater_expand_asked(&ctx, "worldmap"), "a minimized one expands");
+    show_floater(&ctx, "worldmap", &mut open);
+    assert_eq!(crate::outside::raises(&ctx), [id]);
+}
+
+/// A button in a window outside brings a window inside to the front: its
+/// `move_to_top` orders the outside window's layers, not the viewer's
+/// (emulated: asked after the window drew, the other window going up in
+/// the same pass, which egui then keeps above), so the window goes up when
+/// it draws next.
+#[test]
+fn a_window_asked_to_the_front_from_outside_goes_up_when_drawn() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let ctx = frames.ctx.clone();
+    let mut open = [true, true];
+    let mut draw = |frames: &mut elide_tests::Frames, after: &dyn Fn(&egui::Context)| {
+        frames.run(Vec::new(), |ui| {
+            for (n, name) in ["test front a", "test front b"].into_iter().enumerate() {
+                Floater::new(name, "Window", egui::pos2(20.0 + 40.0 * n as f32, 20.0), Vec2::new(300.0, 200.0))
+                    .silent()
+                    .show(ui.ctx(), &p, &mut open[n], |ui| {
+                        ui.label("body");
+                    });
+            }
+            after(ui.ctx());
+        });
+    };
+    draw(&mut frames, &|_| {});
+    draw(&mut frames, &|_| {});
+    assert!(floater_above(&ctx, "test front b", "test front a"));
+    draw(&mut frames, &|ctx| {
+        bring_floater_front(ctx, "test front a");
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("test front b")));
+    });
+    assert!(floater_above(&ctx, "test front b", "test front a"), "not in the viewer's pass");
+    draw(&mut frames, &|_| {});
+    assert!(floater_above(&ctx, "test front a", "test front b"));
+}

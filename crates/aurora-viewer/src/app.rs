@@ -3976,10 +3976,13 @@ impl App {
             // An already open map comes to the front either way
             // (setVisibleAndFrontmost); its search takes the keyboard again
             // only with the flag (LLFloaterWorldMap::onOpen runs on every show).
+            // Without the flag, a map in its window outside is not raised
+            // either: the system would give it the focus.
             if flags & aurora_net::beacon::FOCUS_MAP == 0 {
-                self.worldmap_ui.open_for_script();
+                ui::widgets::show_floater_quietly(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+            } else {
+                self.show_world_map();
             }
-            self.show_world_map();
             return;
         }
         if let NetEvent::AvatarRenderInfo { handle, visibility } = ev {
@@ -17080,7 +17083,7 @@ impl App {
             BarAction::ReleaseKeys => self.release_keys(),
             BarAction::ToggleWaterWalk => self.toggle_water_walk(),
             BarAction::ToggleSwimming => self.toggle_swimming(),
-            BarAction::MoveLockOptions => self.movelock_ui.open = true,
+            BarAction::MoveLockOptions => ui::widgets::open_floater(&self.egui_ctx, ui::movelock::WINDOW, &mut self.movelock_ui.open),
             BarAction::MovementEnhancer => self.open_movement(),
             BarAction::NetworkGraph => {
                 ui::widgets::open_floater(&self.egui_ctx, "perf", &mut self.panels.perf);
@@ -17088,7 +17091,7 @@ impl App {
                 self.egui_ctx
                     .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("perf")));
             }
-            BarAction::CustomizeBars => self.toolbar_ui.open = true,
+            BarAction::CustomizeBars => ui::widgets::open_floater(&self.egui_ctx, ui::toolbar::EDITOR_WINDOW, &mut self.toolbar_ui.open),
             BarAction::StopAnimations => self.stop_current_animations(),
             BarAction::ResyncAnimations => self.scene.resync_animations(Instant::now()),
         }

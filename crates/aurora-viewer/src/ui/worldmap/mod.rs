@@ -72,9 +72,6 @@ pub struct WorldMapUi {
     zoom_pivot: Option<Vec2>,
     was_open: bool,
     focus_search: bool,
-    /// The next opening comes from a script (llMapDestination) without
-    /// BEACON_FOCUS_MAP: it must not take the keyboard.
-    opened_by_script: bool,
     tiles_complete: bool,
     search: String,
     selected: Option<(u32, u32)>,
@@ -106,7 +103,6 @@ impl Default for WorldMapUi {
             zoom_pivot: None,
             was_open: false,
             focus_search: false,
-            opened_by_script: false,
             tiles_complete: false,
             search: String::new(),
             selected: None,
@@ -151,15 +147,9 @@ struct MapInput {
 }
 
 impl WorldMapUi {
-    /// The map is about to be shown for a script (llMapDestination) without
-    /// BEACON_FOCUS_MAP, this frame: its search does not take the keyboard,
-    /// whether the map opens, comes to the front or expands.
-    pub fn open_for_script(&mut self) {
-        self.opened_by_script = true;
-    }
-
     /// How the map open last frame is shown again, read once per frame
-    /// drawn: true when a script without BEACON_FOCUS_MAP showed it.
+    /// drawn: true when a script without BEACON_FOCUS_MAP showed it last
+    /// (`widgets::show_floater_quietly`).
     /// A show by a button or a link (`widgets::show_floater`) puts the
     /// keyboard in its search again, LLFloater::openFloater running
     /// LLFloaterWorldMap::onOpen on every showInstance; so does an expand of
@@ -167,16 +157,18 @@ impl WorldMapUi {
     /// (LLFloaterReg::toggleInstance opens a floater that is not shown).
     /// Its title button only unminimizes (LLFloater::setMinimized) and takes
     /// nothing. A minimized map hidden with the interface expands when the
-    /// interface comes back: a script's show waits with it.
+    /// interface comes back: a script's show waits with it, until a show by
+    /// the user replaces it.
     fn take_show(&mut self, ctx: &egui::Context) -> bool {
-        let by_script = std::mem::take(&mut self.opened_by_script);
         let shown = widgets::take_floater_shown(ctx, "worldmap");
         let expanding = widgets::floater_expand_asked(ctx, "worldmap") && widgets::floater_minimized(ctx, "worldmap");
+        let by_script = if expanding {
+            widgets::floater_shown_quietly(ctx, "worldmap")
+        } else {
+            widgets::take_floater_quiet(ctx, "worldmap")
+        };
         if self.was_open && (shown || expanding) {
             self.focus_search |= !by_script;
-        }
-        if expanding {
-            self.opened_by_script = by_script;
         }
         by_script
     }
@@ -235,7 +227,7 @@ impl WorldMapUi {
         if !*open {
             self.was_open = false;
             self.focus_search = false;
-            self.opened_by_script = false;
+            widgets::take_floater_quiet(ctx, "worldmap");
             widgets::take_floater_shown(ctx, "worldmap");
             return actions;
         }
@@ -2071,7 +2063,7 @@ mod focus_tests {
         for style in [WorldMapStyle::Legacy, WorldMapStyle::Aurora] {
             let mut bench = Bench::new(style);
             // llMapDestination without BEACON_FOCUS_MAP
-            bench.map.open_for_script();
+            widgets::show_floater_quietly(&bench.ctx, "worldmap", &mut false);
             bench.frame(true, vec![]);
             assert!(
                 bench.ctx.memory(|memory| memory.focused().is_none()),
@@ -2085,7 +2077,7 @@ mod focus_tests {
     #[test]
     fn a_later_user_opening_takes_the_keyboard_again() {
         let mut bench = Bench::new(WorldMapStyle::Aurora);
-        bench.map.open_for_script();
+        widgets::show_floater_quietly(&bench.ctx, "worldmap", &mut false);
         bench.frame(true, vec![]);
         bench.frame(false, vec![]);
         bench.frame(true, vec![]);
@@ -2219,11 +2211,10 @@ mod reshow_tests {
             ..WorldMapUi::default()
         };
         let mut open = true;
-        map.open_for_script();
-        widgets::show_floater(&ctx, "worldmap", &mut open);
+        widgets::show_floater_quietly(&ctx, "worldmap", &mut open);
         assert!(map.take_show(&ctx));
         assert!(!map.focus_search);
-        assert!(!map.opened_by_script, "nothing waits: the map was not minimized");
+        assert!(!map.take_show(&ctx), "nothing waits: the map was not minimized");
     }
 
     /// A minimized map expanded by its toolbar button takes the keyboard;
@@ -2257,15 +2248,57 @@ mod reshow_tests {
         };
         widgets::minimize_floater(&ctx, "worldmap");
         let mut open = true;
-        map.open_for_script();
-        widgets::show_floater(&ctx, "worldmap", &mut open);
+        widgets::show_floater_quietly(&ctx, "worldmap", &mut open);
         assert!(map.take_show(&ctx));
         assert!(map.take_show(&ctx), "the expand still waits");
         assert!(!map.focus_search);
         // the floater, drawn again, applies the expand
         widgets::cancel_expand(&ctx, "worldmap");
         map.take_show(&ctx);
-        assert!(!map.opened_by_script, "nothing waits any more");
+        assert!(!map.take_show(&ctx), "nothing waits any more");
         assert!(!map.focus_search);
+    }
+
+    /// A show that may take the keyboard after a script's quiet one, while
+    /// the minimized map waits for the hidden interface: the newer one wins
+    /// (Ctrl+M, Show on map, llMapDestination with BEACON_FOCUS_MAP).
+    #[test]
+    fn a_later_show_replaces_a_waiting_script_show() {
+        type Show = fn(&egui::Context, &str, &mut bool);
+        let shows: [(&str, Show); 2] = [("toggle", widgets::toggle_floater), ("show", widgets::show_floater)];
+        for (name, show) in shows {
+            let ctx = egui::Context::default();
+            let mut map = WorldMapUi {
+                was_open: true,
+                ..WorldMapUi::default()
+            };
+            widgets::minimize_floater(&ctx, "worldmap");
+            let mut open = true;
+            widgets::show_floater_quietly(&ctx, "worldmap", &mut open);
+            show(&ctx, "worldmap", &mut open);
+            assert!(open, "{name}");
+            assert!(!map.take_show(&ctx), "{name}");
+            assert!(map.focus_search, "{name}: its search takes the keyboard");
+        }
+    }
+
+    /// A script's quiet show of the open map leaves nothing behind for the
+    /// next show by the user, the map minimized or not.
+    #[test]
+    fn a_show_after_a_script_expand_takes_the_keyboard() {
+        let ctx = egui::Context::default();
+        let mut map = WorldMapUi {
+            was_open: true,
+            ..WorldMapUi::default()
+        };
+        widgets::minimize_floater(&ctx, "worldmap");
+        let mut open = true;
+        widgets::show_floater_quietly(&ctx, "worldmap", &mut open);
+        assert!(map.take_show(&ctx));
+        // the floater, drawn, applies the expand
+        widgets::cancel_expand(&ctx, "worldmap");
+        widgets::show_floater(&ctx, "worldmap", &mut open);
+        assert!(!map.take_show(&ctx));
+        assert!(map.focus_search);
     }
 }

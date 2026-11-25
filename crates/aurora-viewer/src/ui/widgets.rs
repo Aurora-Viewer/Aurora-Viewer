@@ -1124,6 +1124,14 @@ impl<'a> Floater<'a> {
         }
         // the toolbar button, a menu entry or a shortcut asked to expand it
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
+        // asked to the front from the body of a window outside, whose
+        // `move_to_top` orders that window's own layers (`bring_floater_front`)
+        if ctx
+            .data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(FRONT)))
+            .unwrap_or(false)
+        {
+            ctx.move_to_top(egui::LayerId::new(self.order, egui::Id::unique(self.id)));
+        }
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut go_outside = false;
         let mut out = None;
@@ -2728,8 +2736,16 @@ pub fn bring_floater_front(ctx: &egui::Context, id: &str) {
     } else if floater_minimized(ctx, id) {
         expand_floater(ctx, id);
     } else {
-        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+        to_front(ctx, id);
     }
+}
+
+/// The floater `id` inside comes to the front: now, and again when it is
+/// drawn. A button in a window outside the viewer's runs in that window's
+/// pass, where `move_to_top` orders that window's layers, not the viewer's.
+fn to_front(ctx: &egui::Context, id: &str) {
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(FRONT), true));
 }
 
 /// Is the floater `id` reduced to its title bar?
@@ -2742,8 +2758,11 @@ pub fn floater_minimized(ctx: &egui::Context, id: &str) -> bool {
 /// front, as its title button does (LLFloater::openFloater on a minimized
 /// floater: setMinimized(false), setVisibleAndFrontmost).
 pub fn expand_floater(ctx: &egui::Context, id: &str) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(EXPAND), true));
-    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::unique(id).with(EXPAND), true);
+        d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET));
+    });
+    to_front(ctx, id);
 }
 
 /// Will the floater `id` change its minimized state at its next frame for a
@@ -2787,6 +2806,7 @@ fn outside_behind(ctx: &egui::Context, id: &str) -> bool {
 /// come back as a bar. In its window outside and behind, it comes in front
 /// ([`outside_behind`]).
 pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    forget_quiet(ctx, id);
     if *open && outside_behind(ctx, id) {
         bring_floater_front(ctx, id);
         return;
@@ -2805,6 +2825,7 @@ pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
 /// true asks the caller to open a closed one.
 #[must_use]
 pub fn toggle_floater_closing(ctx: &egui::Context, id: &str, open: bool) -> bool {
+    forget_quiet(ctx, id);
     if open && outside_behind(ctx, id) {
         bring_floater_front(ctx, id);
     } else if open && floater_minimized(ctx, id) {
@@ -2856,6 +2877,7 @@ fn close_asked(ctx: &egui::Context, id: &str) -> bool {
 /// Open the floater `id` (LLFloaterReg::showInstance): expanded, whether it
 /// was closed or minimized.
 pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    forget_quiet(ctx, id);
     if *open {
         if floater_minimized(ctx, id) {
             expand_floater(ctx, id);
@@ -2880,6 +2902,48 @@ pub fn show_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
         bring_floater_front(ctx, id);
     }
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(SHOWN), true));
+}
+
+/// Show the floater `id` for something that must not take the keyboard
+/// (llMapDestination without BEACON_FOCUS_MAP: process_script_teleport_request
+/// sets the floater's auto-focus off before LLFloater::openFloater, whose
+/// setVisibleAndFrontmost then leaves the focus where it is): as
+/// [`show_floater`], but a window outside the viewer's is not raised, the
+/// system giving the focus to the window it raises; it only expands when
+/// minimized. Its own code learns it ([`take_floater_quiet`]) until a show,
+/// open, toggle or expand that is not quiet replaces it.
+pub fn show_floater_quietly(ctx: &egui::Context, id: &str, open: &mut bool) {
+    let was_open = *open;
+    open_floater(ctx, id, open);
+    if was_open {
+        if !crate::outside::native(ctx, egui::Id::unique(id)) {
+            bring_floater_front(ctx, id);
+        } else if floater_minimized(ctx, id) {
+            expand_floater(ctx, id);
+        }
+    }
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::unique(id).with(SHOWN), true);
+        d.insert_temp(egui::Id::unique(id).with(QUIET), true);
+    });
+}
+
+/// The last show of the floater `id` was quiet ([`show_floater_quietly`]):
+/// true once.
+pub fn take_floater_quiet(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET)))
+        .unwrap_or(false)
+}
+
+/// The last show of the floater `id` was quiet, and it stays known: for an
+/// expand that waits.
+pub fn floater_shown_quietly(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(id).with(QUIET))).unwrap_or(false)
+}
+
+/// A show, open or toggle that may take the keyboard replaces a quiet one.
+fn forget_quiet(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET)));
 }
 
 /// The floater `id` was shown by [`show_floater`] since the last call: true
@@ -2909,6 +2973,13 @@ const CLOSE: &str = "close";
 
 /// Temporary flag of a floater shown by a button or a link (`show_floater`).
 const SHOWN: &str = "shown";
+
+/// Temporary flag of a floater shown without the keyboard
+/// (`show_floater_quietly`).
+const QUIET: &str = "quiet";
+
+/// Temporary flag of a floater asked to the front (`bring_floater_front`).
+const FRONT: &str = "front";
 
 /// Title-bar minimize / expand icon (#3084). Ordinary floaters: minus while
 /// expanded, square while minimized. Compact bodies (Performance) keep the
