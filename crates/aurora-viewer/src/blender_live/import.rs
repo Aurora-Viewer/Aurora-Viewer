@@ -244,6 +244,7 @@ mod tests {
         let mut live = Live {
             server: Some(super::super::Server {
                 shared: shared.clone(),
+                thread: None,
                 _token: None,
             }),
             ..Default::default()

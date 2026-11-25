@@ -80,6 +80,7 @@ pub(crate) struct Shared {
 
 struct Server {
     shared: Arc<Shared>,
+    thread: Option<std::thread::JoinHandle<()>>,
     // Dropped with the server: the add-on can no longer connect once
     // stopped. Only the transport tests run without one.
     _token: Option<token::File>,
@@ -95,6 +96,9 @@ pub struct Live {
     pub(super) tab: Tab,
     pub port: u16,
     server: Option<Server>,
+    /// The listener threads of the previews stopped, until they end: a quit
+    /// waits for them too (`close_for_exit`).
+    closing: Vec<std::thread::JoinHandle<()>>,
     pub error: Option<String>,
     pub revision: Option<u64>,
     pub triangles: usize,
@@ -155,6 +159,7 @@ impl Default for Live {
             tab: Tab::Objects,
             port: DEFAULT_PORT,
             server: None,
+            closing: Vec::new(),
             error: None,
             revision: None,
             triangles: 0,
@@ -347,9 +352,10 @@ impl Live {
             .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
             .and_then(|folder| token::File::write(&folder, self.port));
         let started = token.and_then(|token| {
-            let shared = transport::start(self.port, token.secret().to_owned(), supported, rest_axes, ctx.clone(), Some(pool))?;
+            let (shared, thread) = transport::start(self.port, token.secret().to_owned(), supported, rest_axes, ctx.clone(), Some(pool))?;
             Ok(Server {
                 shared,
+                thread: Some(thread),
                 _token: Some(token),
             })
         });
@@ -371,8 +377,54 @@ impl Live {
         self.undo = None;
         self.undo_requested = false;
         self.start_requested = false;
-        self.server = None;
+        self.stop_server();
         self.clear = true;
+    }
+
+    /// Tells the listener thread to stop, and keeps it until it has.
+    fn stop_server(&mut self) {
+        self.closing.retain(|thread| !thread.is_finished());
+        if let Some(mut server) = self.server.take() {
+            self.closing.extend(server.thread.take());
+        }
+    }
+
+    /// The session ended: stopped and empty again, ready for the next login.
+    /// The listener thread told to stop is still waited for at exit: a quit
+    /// on the grid comes through here first (the region's LogoutReply).
+    pub fn reset(&mut self) {
+        self.stop_server();
+        *self = Live {
+            closing: std::mem::take(&mut self.closing),
+            ..Default::default()
+        };
+    }
+
+    /// The viewer quits, its renderer not dropped yet: stops the preview and
+    /// waits up to `timeout` for its listener thread, false if it still runs.
+    ///
+    /// The thread holds the staging pool, whose buffers keep the GPU device.
+    /// Told to stop and not waited for, it dropped the pool while the main
+    /// thread was in `exit`: last owner of the device, it destroyed the
+    /// buffers and the device under the finalizers of NVIDIA's driver on
+    /// Linux, a crash there (SIGSEGV or a corrupted heap, in
+    /// `vkDestroyBuffer` or `vkDestroyDevice`). With the thread gone first,
+    /// what it shared is freed by the main thread.
+    pub fn close_for_exit(&mut self, timeout: std::time::Duration) -> bool {
+        self.stop_server();
+        let deadline = std::time::Instant::now() + timeout;
+        while let Some(thread) = self.closing.pop() {
+            while !thread.is_finished() {
+                if std::time::Instant::now() >= deadline {
+                    self.closing.push(thread);
+                    return false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            // (a panic in it is logged by the panic hook)
+            let _ = thread.join();
+        }
+        true
     }
 
     /// Builds the thumbnails of the objects that changed, on the job pool;

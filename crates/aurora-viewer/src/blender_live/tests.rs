@@ -1269,9 +1269,11 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     let ctx = egui::Context::default();
     let probe = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("free port");
     let port = probe.local_addr().expect("address").port();
-    let shared = transport::start_listener(probe, TEST_KEY.to_owned(), supported(), Default::default(), ctx, None).expect("start");
+    let (shared, thread) =
+        transport::start_listener(probe, TEST_KEY.to_owned(), supported(), Default::default(), ctx, None).expect("start");
     let owner = Server {
         shared: shared.clone(),
+        thread: Some(thread),
         _token: None,
     };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
@@ -1308,11 +1310,86 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     drop(owner);
 }
 
+/// The listener thread shares the GPU's staging memory: the viewer's exit
+/// waits for it, an add-on connected or not, and whatever the thread held is
+/// released when the wait is over.
+#[test]
+fn blender_live_exit_waits_for_the_listener_thread() {
+    for connected in [false, true] {
+        // running, stopped by hand, or stopped by the end of the session (a
+        // quit on the grid: `App::back_to_login`)
+        for before in ["running", "stopped", "logged out"] {
+            let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
+            let port = listener.local_addr().expect("address").port();
+            let (shared, thread) = transport::start_listener(
+                listener,
+                TEST_KEY.to_owned(),
+                supported(),
+                Default::default(),
+                egui::Context::default(),
+                None,
+            )
+            .expect("server");
+            let mut live = Live {
+                server: Some(Server {
+                    shared: shared.clone(),
+                    thread: Some(thread),
+                    _token: None,
+                }),
+                ..Default::default()
+            };
+            // an add-on that stays silent: the thread waits for its next message
+            let _stream = connected.then(|| {
+                let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+                stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+                stream.write_all(&greeting()).expect("magic");
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("reader"))
+                    .read_line(&mut line)
+                    .expect("hello");
+                stream
+            });
+            if before != "running" {
+                live.stop();
+                assert!(!live.running());
+            }
+            if before == "logged out" {
+                live.reset();
+                assert!(!live.closing.is_empty(), "the thread is still waited for");
+            }
+            assert!(
+                live.close_for_exit(Duration::from_secs(10)),
+                "connected: {connected}, before: {before}"
+            );
+            assert!(!live.running());
+            assert_eq!(Arc::strong_count(&shared), 1, "the thread let go of what it held");
+            assert!(live.close_for_exit(Duration::ZERO), "nothing left to wait for");
+        }
+    }
+}
+
+/// A listener that does not end (a large snapshot, a blocked reply) holds
+/// the exit for the time given only.
+#[test]
+fn blender_live_exit_wait_is_bounded() {
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let mut live = Live {
+        closing: vec![std::thread::spawn(move || {
+            let _ = held.recv();
+        })],
+        ..Default::default()
+    };
+    assert!(!live.close_for_exit(Duration::from_millis(20)));
+    assert!(!live.close_for_exit(Duration::ZERO), "it still runs");
+    drop(release);
+    assert!(live.close_for_exit(Duration::from_secs(10)));
+}
+
 #[test]
 fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separately() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
     let port = listener.local_addr().expect("address").port();
-    let shared = transport::start_listener(
+    let (shared, thread) = transport::start_listener(
         listener,
         TEST_KEY.to_owned(),
         supported(),
@@ -1323,6 +1400,7 @@ fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separat
     .expect("server");
     let owner = Server {
         shared: shared.clone(),
+        thread: Some(thread),
         _token: None,
     };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
@@ -1385,7 +1463,7 @@ fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separat
 fn blender_lods_transport_accepts_compressed_lods() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
     let port = listener.local_addr().expect("address").port();
-    let shared = transport::start_listener(
+    let (shared, thread) = transport::start_listener(
         listener,
         TEST_KEY.to_owned(),
         supported(),
@@ -1396,6 +1474,7 @@ fn blender_lods_transport_accepts_compressed_lods() {
     .expect("server");
     let owner = Server {
         shared: shared.clone(),
+        thread: Some(thread),
         _token: None,
     };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
@@ -1432,7 +1511,7 @@ fn blender_lods_transport_accepts_compressed_lods() {
 fn blender_lods_transport_fails_the_import_on_a_body_that_does_not_inflate() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
     let port = listener.local_addr().expect("address").port();
-    let shared = transport::start_listener(
+    let (shared, thread) = transport::start_listener(
         listener,
         TEST_KEY.to_owned(),
         supported(),
@@ -1443,6 +1522,7 @@ fn blender_lods_transport_fails_the_import_on_a_body_that_does_not_inflate() {
     .expect("server");
     let owner = Server {
         shared: shared.clone(),
+        thread: Some(thread),
         _token: None,
     };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
@@ -1500,7 +1580,7 @@ fn blender_lods_decode_takes_a_body_larger_than_a_frame() {
 fn blender_lods_transport_negotiates_ignores_stale_results_and_keeps_live_revision() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
     let port = listener.local_addr().expect("address").port();
-    let shared = transport::start_listener(
+    let (shared, thread) = transport::start_listener(
         listener,
         TEST_KEY.to_owned(),
         supported(),
@@ -1511,6 +1591,7 @@ fn blender_lods_transport_negotiates_ignores_stale_results_and_keeps_live_revisi
     .expect("server");
     let owner = Server {
         shared: shared.clone(),
+        thread: Some(thread),
         _token: None,
     };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
