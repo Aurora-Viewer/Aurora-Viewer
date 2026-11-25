@@ -20,7 +20,6 @@ pub(crate) mod wide;
 
 use super::board;
 use super::widgets::{self, Floater};
-use crate::object_stage::Stance;
 use crate::theme::Palette;
 use egui::{RichText, Sense, TextureHandle, Vec2};
 use model::Sort;
@@ -328,7 +327,7 @@ pub struct InspectUi {
     wide: wide::Wide,
     /// AURORA_DEMO_INSPECT's `hover`.
     demo_hover: bool,
-    demo_stance: Option<Stance>,
+    demo_paused: bool,
     demo_light: bool,
     /// AURORA_DEMO_INSPECT's view; None: the one chosen last.
     pub forced_wide: Option<bool>,
@@ -386,7 +385,7 @@ impl InspectUi {
     /// the third object's card, `creators` or `details` that tab, `view` the
     /// View panel; wide, `item` the third object, `grow-…` a tile grown,
     /// `hover` its 3D view with the fourth pointed at,
-    /// `tpose`, `apose` and `light` how it stands and its ground.
+    /// `paused` and `light` its animation and its ground.
     pub fn demo(&mut self, option: &str) {
         match option {
             "open" => {
@@ -411,8 +410,7 @@ impl InspectUi {
             "grow-prims" => self.wide.grown = Some(wide::Tile::Prims),
             "grow-3d" => self.wide.grown = Some(wide::Tile::Stage),
             "hover" => self.demo_hover = true,
-            "tpose" => self.demo_stance = Some(Stance::Wide),
-            "apose" => self.demo_stance = Some(Stance::Relaxed),
+            "paused" => self.demo_paused = true,
             "light" => self.demo_light = true,
             _ => {}
         }
@@ -431,10 +429,10 @@ impl InspectUi {
         self.forced_wide.is_some()
     }
 
-    /// AURORA_DEMO_INSPECT's stance and ground.
+    /// AURORA_DEMO_INSPECT's pause and ground.
     pub fn demo_stage(&mut self) {
-        if let Some(stance) = self.demo_stance {
-            self.stage.stance = stance;
+        if self.demo_paused {
+            self.stage.pause();
         }
         self.stage.light |= self.demo_light;
     }

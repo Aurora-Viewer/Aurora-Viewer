@@ -23,22 +23,6 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-/// How what an avatar wears stands in the view.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum Stance {
-    /// As the avatar stands in the world: its AO, its animations.
-    #[default]
-    Live,
-    /// Still, the arms down.
-    Relaxed,
-    /// Still, the arms wide.
-    Wide,
-}
-
-impl Stance {
-    pub const ALL: [Stance; 3] = [Stance::Live, Stance::Relaxed, Stance::Wide];
-}
-
 /// The joints of an avatar as it was last drawn, in its own space; None while
 /// it has no pose (out of range, not loaded).
 pub fn live_joints(world: &World, avatar: &Uuid) -> Option<Vec<glam::Mat4>> {

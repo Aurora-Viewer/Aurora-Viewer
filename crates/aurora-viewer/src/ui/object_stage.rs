@@ -2,7 +2,7 @@
 //! in a photo studio, turned and moved by dragging or with the buttons. What
 //! the pointer is on is outlined and named. It never moves by itself.
 
-use crate::object_stage::{Absent, Frame, Stage, StageModel, Stance, Standing, mixed};
+use crate::object_stage::{Absent, Frame, Stage, StageModel, Standing, mixed};
 use crate::theme::Palette;
 use crate::ui::widgets;
 use aurora_render::preview::{Highlight, Pose, Studio, View};
@@ -61,14 +61,23 @@ pub struct Hit {
 /// The view of one window.
 pub struct StageUi {
     pub stage: Stage,
-    /// How what is worn stands, when there is a choice.
-    pub stance: Stance,
     /// On a light ground.
     pub light: bool,
-    /// What is shown is worn: there is a choice.
+    /// What is shown is worn: it stands as its wearer does.
     pub worn: bool,
-    /// The avatar's joints, while it is shown as it stands in the world.
+    /// One item is inspected: it does not move.
+    pub single: bool,
+    /// The animation plays; None: it was not chosen (it does, unless motion is
+    /// reduced).
+    playing: Option<bool>,
+    /// The wearer's joints, as last seen and as shown.
     live: Option<Vec<Mat4>>,
+    joints: Option<Vec<Mat4>>,
+    /// How fast the shown ones follow (0 paused, 1 playing).
+    speed: f32,
+    body: Body,
+    /// When the animation was last paused or played.
+    toggled: Option<f64>,
     /// The bones drawn last, and what they frame.
     bones: Arc<[Mat4]>,
     steady: Option<Frame>,
@@ -102,10 +111,15 @@ impl Default for StageUi {
     fn default() -> Self {
         StageUi {
             stage: Stage::default(),
-            stance: Stance::default(),
             light: false,
             worn: false,
+            single: false,
+            playing: None,
             live: None,
+            joints: None,
+            speed: 0.0,
+            body: Body::default(),
+            toggled: None,
             bones: Arc::from([]),
             steady: None,
             near: 0.0,
@@ -132,18 +146,30 @@ impl StageUi {
         self.posed = None;
         self.classes = None;
         self.live = None;
+        self.joints = None;
         self.steady = None;
+        self.playing = None;
+        self.toggled = None;
+        self.body = Body::default();
     }
 
-    /// The avatar's joints are wanted: it shows as it stands in the world, all
-    /// of it.
+    /// Hold the animation.
+    pub fn pause(&mut self) {
+        self.playing = Some(false);
+    }
+
+    /// The wearer's joints are wanted this frame: while they move in the view,
+    /// and once for what does not move.
     pub fn wants_joints(&self) -> bool {
-        self.worn && self.stance == Stance::Live && (self.framed.is_none() || self.near < 1.0)
+        self.worn && (self.live.is_none() || (!self.single && (self.speed > 0.0 || self.framed.is_none())))
     }
 
-    /// The avatar's joints this frame; None: it has no pose.
-    pub fn set_joints(&mut self, joints: Option<Vec<Mat4>>) {
-        self.live = joints;
+    /// The wearer's joints; None: not asked for, or they have no pose.
+    pub fn set_joints(&mut self, joints: Option<Vec<Mat4>>, rig: &crate::scene::anim::Rig) {
+        if let Some(joints) = joints {
+            self.body.know(rig);
+            self.live = Some(joints);
+        }
     }
 
     /// What the pointer is on in the view.
@@ -208,7 +234,7 @@ impl StageUi {
         let standing = Standing {
             focus: group.filter(|_| near > 0.0).map(|g| (g, near)),
         };
-        let frame = self.stand(ui, id, &model, standing, near);
+        let frame = self.stand(ui, id, &model, standing);
         let view = self.view(p, &frame, view_rect, free, middle);
         self.look(ui, &resp, &model, &frame, &view, view_rect, standing);
         let pose = self.pose(&model, standing, frame);
@@ -229,6 +255,9 @@ impl StageUi {
             if let Some(text) = name(over) {
                 tag(ui, p, view_rect, at, text.trim());
             }
+        }
+        if controls && self.animated() {
+            self.badge(ui, p, free);
         }
         if controls {
             let bar = Rect::from_min_max(
@@ -341,39 +370,67 @@ impl StageUi {
         }
     }
 
-    /// The bones of this frame, and what they frame. As the avatar stands in
-    /// the world while all of it is shown; still while one item is alone.
-    fn stand(&mut self, ui: &egui::Ui, id: egui::Id, model: &StageModel, standing: Standing, near: f32) -> Frame {
-        let still = model.still(self.stance == Stance::Relaxed);
+    /// The bones of this frame, and what they frame. What is worn stands as its
+    /// wearer does, easing to a stop when paused or when an item is alone, and
+    /// off again.
+    fn stand(&mut self, ui: &egui::Ui, id: egui::Id, model: &StageModel, standing: Standing) -> Frame {
         let quick = ui.style().animation_time > 0.0;
-        let live = self.worn && self.stance == Stance::Live && self.live.is_some();
-        let time = if quick { 0.25 } else { 0.0 };
-        let mix = ui.ctx().animate_bool_with_time(id.with("live"), live, time) * (1.0 - near);
-        let bones = match &self.live {
-            Some(joints) if mix > 0.0 => mixed(still, &model.bones(joints), mix),
-            _ => still.clone(),
+        let playing = self.plays(quick) && self.framed.is_none() && !self.single;
+        let dt = ui.input(|i| i.stable_dt).clamp(0.001, 0.1);
+        let time = match (quick, playing) {
+            (false, _) => 0.0,
+            (true, true) => 0.5,
+            (true, false) => 0.32,
+        };
+        self.speed = ui.ctx().animate_bool_with_time(id.with("speed"), playing, time);
+        if let Some(live) = &self.live {
+            let shown = match &self.joints {
+                Some(joints) if self.speed < 1.0 => {
+                    // the same at any frame rate
+                    let follow = 1.0 - (1.0 - self.speed * self.speed).powf(dt * 60.0);
+                    if follow > 0.0 {
+                        mixed(joints, live, follow)
+                    } else {
+                        joints.clone()
+                    }
+                }
+                _ => live.clone(),
+            };
+            self.body.moved(self.joints.as_deref(), &shown, dt);
+            self.joints = Some(shown);
+        }
+        let bones = match &self.joints {
+            Some(joints) if self.worn => model.bones(joints),
+            _ => model.still().clone(),
         };
         if *self.bones != *bones {
             self.bones = bones;
         }
-        let Some(joints) = self.live.as_ref().filter(|_| mix > 0.0) else {
-            self.steady = None;
-            return model.frame(standing.focus, still);
-        };
-        let asked = model.live_frame(joints);
-        let dt = ui.input(|i| i.stable_dt).min(0.1);
-        // (a body that leaves its place is followed without a jolt)
-        let steady = match self.steady {
-            Some(steady) => steady.mix(asked, 1.0 - (-dt * 2.5).exp()),
-            None => asked,
-        };
-        self.steady = Some(steady);
-        ui.ctx().request_repaint();
-        // the still frame, or the item's, as far as it comes to it
-        match standing.focus {
-            Some((group, near)) => steady.mix(model.frame(Some((group, 1.0)), still), near),
-            None => model.frame(None, still).mix(steady, mix),
+        if self.speed > 0.0 || !self.body.still() {
+            ui.ctx().request_repaint();
         }
+        let all = model.frame(None, &self.bones);
+        let anchored = match self.steady {
+            // a body that leaves its place is followed without a jolt
+            Some(steady) if self.worn => steady.mix(steady.follow(all), 1.0 - (-dt * 2.5).exp()),
+            _ => all,
+        };
+        self.steady = Some(anchored);
+        match standing.focus {
+            Some((group, near)) => anchored.mix(model.frame(Some((group, 1.0)), &self.bones), near),
+            None => anchored,
+        }
+    }
+
+    /// The animation plays, as far as the user says.
+    fn plays(&self, quick: bool) -> bool {
+        self.playing.unwrap_or(quick)
+    }
+
+    fn toggle(&mut self, ui: &egui::Ui) {
+        let quick = ui.style().animation_time > 0.0;
+        self.playing = Some(!self.plays(quick));
+        self.toggled = Some(ui.input(|i| i.time));
     }
 
     fn pose(&mut self, model: &Arc<StageModel>, standing: Standing, frame: Frame) -> Pose {
@@ -520,8 +577,8 @@ impl StageUi {
         if tool_lit(ui, p, "bulb-filled", tip, self.light) {
             self.light = !self.light;
         }
-        if self.worn {
-            self.stances(ui, p, rect);
+        if self.animated() {
+            self.player(ui, p, rect);
             return;
         }
         let hint = aurora_i18n::tr!("stage-hint");
@@ -534,128 +591,229 @@ impl StageUi {
         }
     }
 
-    /// How what is worn stands: a switch of three little figures at the right
-    /// of the bar, the chosen one named.
-    fn stances(&mut self, ui: &mut egui::Ui, p: &Palette, rect: Rect) {
-        const ICON: f32 = 30.0;
-        const HEIGHT: f32 = 26.0;
-        const INSET: f32 = 2.0;
+    /// There is an animation to pause.
+    fn animated(&self) -> bool {
+        self.worn && !self.single && self.live.is_some()
+    }
+
+    /// The play / pause pill at the right of the bar: the button, five bars
+    /// that move as the body does, and what it does now.
+    fn player(&mut self, ui: &mut egui::Ui, p: &Palette, rect: Rect) {
+        const HEIGHT: f32 = 28.0;
+        const FACE: f32 = 32.0;
+        const BARS: f32 = 34.0;
         let font = egui::FontId::new(12.0, super::fonts::semibold(ui.ctx()));
-        let names = Stance::ALL.map(stance_name);
-        let wide = |name: &str| ui.painter().layout_no_wrap(name.to_owned(), font.clone(), p.ink).size().x + 8.0;
-        let longest = names.iter().map(|n| wide(n)).fold(0.0, f32::max);
-        let room = ui.available_width() - 4.0;
-        let small = ICON * 3.0 + 2.0 * INSET;
-        // the name where there is room for it, the figures alone otherwise
-        let named = if small + longest <= room { longest } else { 0.0 };
-        let track = Rect::from_min_size(
-            egui::pos2(rect.right() - 4.0 - small - named, rect.center().y - HEIGHT / 2.0 - INSET),
-            Vec2::new(small + named, HEIGHT + 2.0 * INSET),
-        );
+        let (on, off) = (aurora_i18n::tr!("stage-playing"), aurora_i18n::tr!("stage-paused"));
+        let wide = |text: &str| ui.painter().layout_no_wrap(text.to_owned(), font.clone(), p.ink).size().x;
+        let label = wide(on).max(wide(off)) + 10.0;
+        let room = ui.available_width() - 2.0;
+        // the button always, then what there is room for
+        let bars = if FACE + BARS <= room { BARS } else { 0.0 };
+        let label = if FACE + bars + label <= room { label } else { 0.0 };
+        let size = Vec2::new(FACE + bars + label, HEIGHT);
+        let pill = Rect::from_min_size(egui::pos2(rect.right() - 3.0 - size.x, rect.center().y - HEIGHT / 2.0), size);
+        let quick = ui.style().animation_time > 0.0;
+        let playing = self.plays(quick);
+        let id = ui.scope_id().with("object_stage_player");
+        let resp = ui.interact(pill, id, Sense::click());
+        if resp.clicked() {
+            self.toggle(ui);
+        }
+        let playing_now = self.plays(quick);
+        let since = self
+            .toggled
+            .map(|at| (ui.input(|i| i.time) - at) as f32)
+            .filter(|t| quick && *t < 0.7);
+        if since.is_some() {
+            ui.ctx().request_repaint();
+        }
         let radius = ui.visuals().widgets.inactive.corner_radius;
-        let edge = egui::Stroke::new(1.0, p.muted.gamma_multiply(0.55));
+        let time = |t: f32| if quick { t } else { 0.0 };
+        let hover = ui.ctx().animate_bool_with_time(id.with("hover"), resp.hovered(), time(0.12));
+        let down = ui
+            .ctx()
+            .animate_bool_with_time(id.with("down"), resp.is_pointer_button_down_on(), time(0.07));
+        let lit = ui.ctx().animate_bool_with_time(id.with("lit"), playing_now, time(0.25));
+        // the pill: its face warms up while it plays
+        let ground = p.field.to_opaque().lerp_to_gamma(p.violet, 0.10 * lit + 0.06 * hover);
+        let edge = p.muted.gamma_multiply(0.5).lerp_to_gamma(p.violet_light, 0.35 * lit + 0.45 * hover);
         ui.painter()
-            .rect(track, radius, p.field.to_opaque(), edge, egui::StrokeKind::Inside);
-        let id = ui.scope_id().with("object_stage_stance");
-        let at = Stance::ALL.iter().position(|s| *s == self.stance).unwrap_or(0);
-        let time = if ui.style().animation_time > 0.0 { 0.16 } else { 0.0 };
-        // how open each segment is, and where the lit face stands
-        let open: [f32; 3] = std::array::from_fn(|i| ui.ctx().animate_bool_with_time(id.with(("open", i)), i == at, time));
-        let total: f32 = open.iter().sum::<f32>().max(0.001);
-        let mut x = track.left() + INSET;
-        let segments: [Rect; 3] = std::array::from_fn(|i| {
-            let width = ICON + named * open[i] / total;
-            let r = Rect::from_min_size(egui::pos2(x, track.top() + INSET), Vec2::new(width, HEIGHT));
-            x += width;
-            r
-        });
-        let left = ui
-            .ctx()
-            .animate_value_with_time(id.with("left"), segments[at].left() - track.left(), time);
-        let right = ui
-            .ctx()
-            .animate_value_with_time(id.with("right"), segments[at].right() - track.left(), time);
-        let lit = Rect::from_x_y_ranges(track.left() + left..=track.left() + right, segments[at].y_range());
-        ui.painter().rect_filled(lit, radius, p.violet);
-        for (i, stance) in Stance::ALL.into_iter().enumerate() {
-            let r = segments[i];
-            let resp = ui.interact(r, id.with(i), Sense::click());
-            let chosen = i == at;
-            if !chosen && resp.hovered() {
-                ui.painter().rect_filled(r, radius, p.raised);
+            .rect(pill, radius, ground, egui::Stroke::new(1.0, edge), egui::StrokeKind::Inside);
+        // a ring that leaves the button when it was pressed
+        let face = Rect::from_min_size(pill.min, Vec2::new(FACE, HEIGHT)).shrink(2.0);
+        if let Some(t) = since {
+            let gone = (t / 0.5).min(1.0);
+            let out = 1.0 - (1.0 - gone).powi(3);
+            let ring = face.expand(out * 9.0);
+            let stroke = egui::Stroke::new(2.0 * (1.0 - gone) + 0.3, p.violet_light.gamma_multiply((1.0 - gone) * 0.8));
+            ui.painter().rect_stroke(ring, radius, stroke, egui::StrokeKind::Outside);
+        }
+        // pressed in, then back past its size and to rest
+        let spring = since.map_or(0.0, |t| (-8.0 * t).exp() * (20.0 * t).sin() * 0.14);
+        let scale = 1.0 - 0.10 * down + spring;
+        let body = Rect::from_center_size(face.center(), face.size() * scale);
+        let fill = p.raised.to_opaque().lerp_to_gamma(p.violet, lit);
+        ui.painter()
+            .rect_filled(body, radius, fill.lerp_to_gamma(p.violet_light, 0.18 * hover));
+        let ink = p.ink.lerp_to_gamma(p.on_accent, lit);
+        play_pause(ui, body.center(), 11.0 * scale, lit, ink);
+        if bars > 0.0 {
+            let area = Rect::from_min_size(
+                egui::pos2(face.right() + 6.0, pill.top() + 6.0),
+                Vec2::new(BARS - 8.0, HEIGHT - 12.0),
+            );
+            self.body.paint(ui, area, p.muted.lerp_to_gamma(p.violet_light, lit));
+        }
+        if label > 0.0 {
+            let left = face.right() + 2.0 + bars;
+            let y = pill.center().y;
+            // one word rises as the other leaves
+            for (text, shown, ink) in [(on, lit, p.ink), (off, 1.0 - lit, p.muted)] {
+                if shown > 0.02 {
+                    let at = egui::pos2(left, y + (1.0 - shown) * if playing { 6.0 } else { -6.0 });
+                    let painter = ui.painter().with_clip_rect(pill.intersect(ui.clip_rect()));
+                    let galley = painter.layout_no_wrap(text.to_owned(), font.clone(), ink);
+                    widgets::paint_ink_left(&painter, galley, at, ink.gamma_multiply(shown));
+                }
             }
-            if i > 0 && i != at && i != at + 1 {
-                let y = r.center().y;
-                ui.painter()
-                    .vline(r.left(), y - 6.0..=y + 6.0, egui::Stroke::new(1.0, p.muted.gamma_multiply(0.35)));
-            }
-            let ink = match (chosen, resp.hovered()) {
-                (true, _) => p.on_accent,
-                (false, true) => p.ink,
-                (false, false) => p.muted,
+        }
+        let tip = if playing_now {
+            aurora_i18n::tr!("stage-pause-tip")
+        } else {
+            aurora_i18n::tr!("stage-play-tip")
+        };
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, playing_now, tip));
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        resp.on_hover_text(tip);
+    }
+
+    /// The badge that shows over the view as the animation is paused or played.
+    fn badge(&self, ui: &egui::Ui, p: &Palette, rect: Rect) {
+        let quick = ui.style().animation_time > 0.0;
+        let Some(t) = self
+            .toggled
+            .map(|at| (ui.input(|i| i.time) - at) as f32)
+            .filter(|t| quick && *t < 0.55)
+        else {
+            return;
+        };
+        ui.ctx().request_repaint();
+        let gone = t / 0.55;
+        let rise = 1.0 - (1.0 - (gone * 2.2).min(1.0)).powi(3);
+        let fade = if gone < 0.25 { gone / 0.25 } else { 1.0 - (gone - 0.25) / 0.75 };
+        let side = 52.0 * (0.78 + 0.26 * rise);
+        let r = Rect::from_center_size(rect.center(), Vec2::splat(side));
+        let radius = ui.visuals().window_corner_radius;
+        ui.painter().rect_filled(r, radius, p.panel.to_opaque().gamma_multiply(0.72 * fade));
+        // what it does now: the sign of what was asked
+        let playing = if self.plays(quick) { 0.0 } else { 1.0 };
+        play_pause(ui, r.center(), side * 0.42, playing, p.ink.gamma_multiply(fade));
+    }
+}
+
+/// The sign of the button: `t` 1 the two bars of pause, 0 the triangle of
+/// play, one becoming the other in between.
+fn play_pause(ui: &egui::Ui, center: egui::Pos2, size: f32, t: f32, ink: Color32) {
+    if t <= 0.0 {
+        let points = [(-0.38, -0.5), (0.5, 0.0), (-0.38, 0.5)].map(|(x, y)| center + Vec2::new(x, y) * size);
+        ui.painter()
+            .add(egui::Shape::convex_polygon(points.to_vec(), ink, egui::Stroke::NONE));
+        return;
+    }
+    // each half of the triangle becomes a bar
+    let play = [
+        [(-0.38, -0.5), (0.06, -0.25), (0.06, 0.25), (-0.38, 0.5)],
+        [(0.06, -0.25), (0.5, 0.0), (0.5, 0.0), (0.06, 0.25)],
+    ];
+    let pause = [
+        [(-0.42, -0.48), (-0.12, -0.48), (-0.12, 0.48), (-0.42, 0.48)],
+        [(0.12, -0.48), (0.42, -0.48), (0.42, 0.48), (0.12, 0.48)],
+    ];
+    // eased at both ends
+    let t = t * t * (3.0 - 2.0 * t);
+    for (a, b) in play.into_iter().zip(pause) {
+        let points: Vec<egui::Pos2> = a
+            .into_iter()
+            .zip(b)
+            .map(|((ax, ay), (bx, by))| center + Vec2::new(ax + (bx - ax) * t, ay + (by - ay) * t) * size)
+            .collect();
+        ui.painter().add(egui::Shape::convex_polygon(points, ink, egui::Stroke::NONE));
+    }
+}
+
+/// How much each part of the body moves, for the pill's bars: the left arm, the
+/// torso (with a tail or wings), the head, the legs, the right arm.
+#[derive(Default)]
+struct Body {
+    joints: [Vec<usize>; 5],
+    pelvis: usize,
+    /// 0 still, 1 as fast as it shows.
+    moves: [f32; 5],
+}
+
+impl Body {
+    fn know(&mut self, rig: &crate::scene::anim::Rig) {
+        if !self.joints[0].is_empty() {
+            return;
+        }
+        self.pelvis = rig.pelvis;
+        for (name, joint) in &rig.names {
+            let part = if name.contains("Elbow") || name.contains("Wrist") {
+                if name.ends_with("Left") { 0 } else { 4 }
+            } else if name == "mHead" || name == "mSkull" {
+                2
+            } else if name.contains("Knee") || name.contains("Ankle") {
+                3
+            } else if name == "mChest" || name == "mTorso" || name.starts_with("mTail") || name.starts_with("mWing") {
+                1
+            } else {
+                continue;
             };
-            // the figure of AO moves while it is the one chosen
-            let moving = chosen && stance == Stance::Live && time > 0.0 && self.live.is_some();
-            let sway = if moving { (ui.input(|s| s.time) * 2.6).sin() as f32 } else { 0.0 };
-            let center = egui::pos2(r.left() + ICON / 2.0, r.center().y);
-            figure(ui, center, stance, sway, ink);
-            if chosen && named > 0.0 && open[i] > 0.6 {
-                // in the middle of the room the longest name takes
-                let text = (wide(names[i]) - 8.0).min(named);
-                let left = r.left() + ICON - 2.0 + (named - 8.0 - text).max(0.0) / 2.0;
-                let width = (r.right() - left).max(1.0);
-                let ink = ink.gamma_multiply((open[i] - 0.6) / 0.4);
-                widgets::paint_elided(ui, names[i], egui::pos2(left, r.center().y), width, font.clone(), ink);
-            }
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, chosen, names[i]));
-            if resp.on_hover_text(stance_tip(stance)).clicked() {
-                self.stance = stance;
-            }
+            self.joints[part].push(*joint);
         }
     }
-}
 
-/// A little person standing as `stance`, in a square of sixteen points.
-fn figure(ui: &egui::Ui, center: egui::Pos2, stance: Stance, sway: f32, ink: Color32) {
-    let at = |x: f32, y: f32| center + Vec2::new(x, y);
-    let stroke = egui::Stroke::new(1.7, ink);
-    let painter = ui.painter();
-    let limb = |points: &[egui::Pos2]| {
-        for pair in points.windows(2) {
-            painter.line_segment([pair[0], pair[1]], stroke);
-        }
-        for p in points {
-            painter.circle_filled(*p, stroke.width / 2.0, ink);
-        }
-    };
-    let lean = if stance == Stance::Live { sway * 0.7 } else { 0.0 };
-    painter.circle_filled(at(lean, -6.2), 2.2, ink);
-    let (neck, hip) = (at(lean * 0.6, -3.0), at(0.0, 1.8));
-    limb(&[neck, hip]);
-    match stance {
-        Stance::Wide => {
-            limb(&[at(-6.6, -2.4), at(6.6, -2.4)]);
-            limb(&[at(-2.2, 7.6), hip, at(2.2, 7.6)]);
-        }
-        Stance::Relaxed => {
-            limb(&[at(-4.6, 3.0), neck, at(4.6, 3.0)]);
-            limb(&[at(-2.6, 7.6), hip, at(2.6, 7.6)]);
-        }
-        Stance::Live => {
-            // one arm up, a step
-            limb(&[neck, at(3.6, -1.4 - sway * 0.6), at(5.6, -5.0 - sway)]);
-            limb(&[neck, at(-3.4, -0.2 + sway * 0.4), at(-4.6, 3.0 + sway * 0.6)]);
-            limb(&[hip, at(2.6, 4.2), at(1.6, 7.6)]);
-            limb(&[hip, at(-1.8, 4.8), at(-4.0, 7.2)]);
+    /// The shown joints moved from `before` to `now` in `dt` seconds.
+    fn moved(&mut self, before: Option<&[Mat4]>, now: &[Mat4], dt: f32) {
+        // a movement of this many metres a second fills its bar
+        const FULL: f32 = 0.22;
+        let place = |joints: &[Mat4], joint: usize| {
+            let at = |j: usize| joints.get(j).map(|m| m.w_axis.truncate()).unwrap_or_default();
+            at(joint) - at(self.pelvis) * 0.5
+        };
+        for part in 0..5 {
+            let most = before.map_or(0.0, |before| {
+                self.joints[part]
+                    .iter()
+                    .map(|j| (place(now, *j) - place(before, *j)).length())
+                    .fold(0.0, f32::max)
+            });
+            // small movements show too
+            let to = (most / dt / FULL).min(1.0).sqrt();
+            // up at once, down slowly
+            let rate = if to > self.moves[part] { 14.0 } else { 4.5 };
+            self.moves[part] += (to - self.moves[part]) * (1.0 - (-dt * rate).exp());
         }
     }
-}
 
-fn stance_name(stance: Stance) -> &'static str {
-    match stance {
-        Stance::Live => aurora_i18n::tr!("stage-stance-live"),
-        Stance::Relaxed => aurora_i18n::tr!("stage-stance-relaxed"),
-        Stance::Wide => aurora_i18n::tr!("stage-stance-wide"),
+    fn still(&self) -> bool {
+        self.moves.iter().all(|m| *m < 0.01)
+    }
+
+    fn paint(&self, ui: &egui::Ui, area: Rect, ink: Color32) {
+        let pitch = area.width() / 5.0;
+        for (i, moves) in self.moves.iter().enumerate() {
+            let height = 3.0 + (area.height() - 3.0) * moves;
+            let x = area.left() + (i as f32 + 0.5) * pitch;
+            let bar = Rect::from_center_size(egui::pos2(x, area.center().y), Vec2::new(3.0, height));
+            ui.painter().rect_filled(
+                bar,
+                egui::CornerRadius::same(ui.visuals().widgets.inactive.corner_radius.nw.min(1)),
+                ink.gamma_multiply(0.45 + 0.55 * moves),
+            );
+        }
     }
 }
 
@@ -671,14 +829,6 @@ impl Camera {
             let from = at - middle;
             *pan = from - (from - *pan) * ratio;
         }
-    }
-}
-
-fn stance_tip(stance: Stance) -> &'static str {
-    match stance {
-        Stance::Live => aurora_i18n::tr!("stage-stance-live-tip"),
-        Stance::Relaxed => aurora_i18n::tr!("stage-stance-relaxed-tip"),
-        Stance::Wide => aurora_i18n::tr!("stage-stance-wide-tip"),
     }
 }
 

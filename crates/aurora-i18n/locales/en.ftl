@@ -77,7 +77,7 @@ anim-timeline-keys-selected = { $count ->
     [one] { $count } key picked: drag it to move it, Delete removes it, right-click or Esc drops it
    *[other] { $count } keys picked: drag one to move them all, Ctrl+C copies them, Delete removes them, right-click or Esc drops them
     }
-anim-edit-shortcut-play = Play or pause (Space)
+anim-edit-shortcut-play = Play or pause
 anim-edit-shortcut-rewind = Rewind to the start (Home)
 anim-edit-shortcut-undo = Undo (Ctrl+Z)
 anim-edit-shortcut-redo = Redo (Ctrl+Y or Ctrl+Shift+Z)
@@ -5130,12 +5130,10 @@ stage-reset = Back to the start
 stage-hint = Drag to turn, right-drag to move
 stage-light = Light background
 stage-dark = Dark background
-stage-stance-live = AO
-stage-stance-relaxed = A-Pose
-stage-stance-wide = T-Pose
-stage-stance-live-tip = AO: the outfit moves as they do in the world now. One item alone does not move.
-stage-stance-relaxed-tip = A-Pose: still, arms down
-stage-stance-wide-tip = T-Pose: still, arms wide
+stage-playing = AO
+stage-paused = Paused
+stage-pause-tip = Pause their animation
+stage-play-tip = Play their animation
 stage-loading = Preparing the 3D view…
 stage-nothing = Nothing to show in 3D yet.
 stage-refused = The 3D view is off while RLVa limits what you may see.

@@ -53,25 +53,6 @@ fn a_ray_finds_a_box_in_front_of_it_only() {
     assert!(Bounds::default().empty());
 }
 
-/// Arms down along the body, the two sides alike, feet on the same ground.
-#[test]
-fn the_stance_is_relaxed_and_symmetrical() {
-    let lib = crate::scene::avatar::AvatarLibrary::load();
-    let joints = super::build::stance(&lib, &[], None, true);
-    let at = |name: &str| joints[lib.rig.names[name]].w_axis.truncate();
-    for side in ["Left", "Right"] {
-        let (shoulder, wrist) = (at(&format!("mShoulder{side}")), at(&format!("mWrist{side}")));
-        assert!(shoulder.z - wrist.z > 0.35, "{side}: the hand hangs, {shoulder:?} {wrist:?}");
-        let out = (wrist.y - shoulder.y).abs();
-        assert!(out < 0.3 && wrist.y.abs() > 0.15, "{side}: beside the body, {wrist:?}");
-        assert!(wrist.x > shoulder.x - 0.02, "{side}: a little forward");
-    }
-    for name in ["mWrist", "mElbow", "mKnee", "mAnkle"] {
-        let (l, r) = (at(&format!("{name}Left")), at(&format!("{name}Right")));
-        assert!((l - Vec3::new(r.x, -r.y, r.z)).length() < 0.01, "{name}: {l:?} {r:?}");
-    }
-}
-
 /// What an avatar of the demo wears, as a model.
 fn worn_model() -> (crate::world::World, super::StageModel) {
     let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -100,23 +81,26 @@ fn worn_model() -> (crate::world::World, super::StageModel) {
     (world, model)
 }
 
-/// The picture is anchored where the avatar stands: limbs and small sways
-/// never move it, a body that leaves its place does.
+/// Limbs, tails and small sways never move the picture; a body that leaves its
+/// place does.
 #[test]
 fn a_moving_avatar_does_not_glide_in_the_view() {
     let (world, model) = worn_model();
-    let rig = &world.avatar_lib.rig;
-    let rest = super::build::stance(&world.avatar_lib, &[], None, true);
-    let still = model.live_frame(&rest);
-    let mut moved = rest.clone();
-    for (joint, m) in moved.iter_mut().enumerate().filter(|(j, _)| *j != rig.pelvis) {
-        *m = Mat4::from_translation(Vec3::Y * (0.3 * (joint as f32).sin())) * *m;
+    let rest = super::build::rest(&world.avatar_lib, &[], None);
+    let frame = |joints: &[Mat4]| model.frame(None, &model.bones(joints));
+    let start = frame(&rest);
+    let moved = |by: Vec3, sway: f32| -> Vec<Mat4> {
+        rest.iter()
+            .enumerate()
+            .map(|(joint, m)| Mat4::from_translation(by + Vec3::Y * (sway * (joint as f32).sin())) * *m)
+            .collect()
+    };
+    for sway in [0.05, 0.15] {
+        let followed = start.follow(frame(&moved(Vec3::ZERO, sway)));
+        assert_eq!(followed.center, start.center, "swaying by {sway}");
     }
-    assert_eq!(model.live_frame(&moved), still, "limbs and tails move, the view stays");
-    moved[rig.pelvis] = Mat4::from_translation(Vec3::new(0.0, 0.05, 0.0)) * rest[rig.pelvis];
-    assert_eq!(model.live_frame(&moved), still, "a swaying hip too");
-    moved[rig.pelvis] = Mat4::from_translation(Vec3::new(0.0, 5.0, 0.0)) * rest[rig.pelvis];
-    let away = model.live_frame(&moved).center.y - still.center.y;
+    let followed = start.follow(frame(&moved(Vec3::Y * 5.0, 0.0)));
+    let away = followed.center.y - start.center.y;
     assert!(away > 3.0 && away < 5.0, "a body elsewhere is followed: {away}");
 }
 
@@ -126,7 +110,7 @@ fn picking_follows_the_bones() {
     let (world, model) = worn_model();
     let standing = Standing::default();
     for shift in [Vec3::ZERO, Vec3::new(0.4, -0.7, 0.2)] {
-        let joints: Vec<Mat4> = super::build::stance(&world.avatar_lib, &[], None, true)
+        let joints: Vec<Mat4> = super::build::rest(&world.avatar_lib, &[], None)
             .into_iter()
             .map(|m| Mat4::from_translation(shift) * m)
             .collect();

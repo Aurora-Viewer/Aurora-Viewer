@@ -77,7 +77,7 @@ anim-timeline-keys-selected = { $count ->
     [one] { $count } clé choisie : faites-la glisser pour la déplacer, Suppr la supprime, clic droit ou Échap la désélectionne
    *[other] { $count } clés choisies : faites-en glisser une pour toutes les déplacer, Ctrl+C les copie, Suppr les supprime, clic droit ou Échap les désélectionne
     }
-anim-edit-shortcut-play = Lire ou mettre en pause (Espace)
+anim-edit-shortcut-play = Lire ou mettre en pause
 anim-edit-shortcut-rewind = Revenir au début (Début)
 anim-edit-shortcut-undo = Annuler (Ctrl+Z)
 anim-edit-shortcut-redo = Rétablir (Ctrl+Y ou Ctrl+Maj+Z)
@@ -5136,12 +5136,10 @@ stage-reset = Revenir au début
 stage-hint = Glisser pour tourner, clic droit pour déplacer
 stage-light = Fond clair
 stage-dark = Fond sombre
-stage-stance-live = AO
-stage-stance-relaxed = Pose en A
-stage-stance-wide = Pose en T
-stage-stance-live-tip = AO : la tenue bouge comme la personne dans le monde. Un objet seul ne bouge pas.
-stage-stance-relaxed-tip = Pose en A : immobile, bras baissés
-stage-stance-wide-tip = Pose en T : immobile, bras écartés
+stage-playing = AO
+stage-paused = En pause
+stage-pause-tip = Mettre leur animation en pause
+stage-play-tip = Reprendre leur animation
 stage-loading = Préparation de la vue 3D…
 stage-nothing = Rien à montrer en 3D pour l’instant.
 stage-refused = La vue 3D est coupée tant que RLVa limite ce que vous pouvez voir.

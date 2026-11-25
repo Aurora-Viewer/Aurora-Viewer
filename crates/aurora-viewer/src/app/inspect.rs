@@ -292,11 +292,9 @@ impl App {
             },
             &mut wide,
         );
-        let (stance, light) = (self.inspect_ui.stage.stance, self.inspect_ui.stage.light);
-        let stage = board && !self.inspect_ui.demo_forced();
-        let stage = stage && (stance, light) != (self.settings.stage_stance, self.settings.stage_light);
+        let light = self.inspect_ui.stage.light;
+        let stage = board && !self.inspect_ui.demo_forced() && light != self.settings.stage_light;
         if stage {
-            self.settings.stage_stance = stance;
             self.settings.stage_light = light;
         }
         let kept = if objects {
@@ -345,9 +343,9 @@ impl App {
         let now = std::time::Instant::now();
         let ui = &mut self.inspect_ui;
         ui.stage.stage.update(w, &self.scene, &ui.roots, group, place, ctx, now);
+        ui.stage.worn = matches!(place, Place::Worn(_));
         // (one item does not move)
-        ui.stage.worn = matches!(place, Place::Worn(_)) && ui.roots.len() > 1;
-        ui.stage.stance = self.settings.stage_stance;
+        ui.stage.single = ui.roots.len() == 1;
         ui.stage.light = self.settings.stage_light;
         ui.demo_stage();
         let joints = match place {
@@ -356,7 +354,7 @@ impl App {
             }
             _ => None,
         };
-        ui.stage.set_joints(joints);
+        ui.stage.set_joints(joints, &w.avatar_lib.rig);
     }
 
     /// The people here and their complexity, as the world names them.

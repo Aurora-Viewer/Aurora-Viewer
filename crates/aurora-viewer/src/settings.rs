@@ -873,9 +873,7 @@ pub struct Settings {
     /// Inspect and Area Search open on their wide view (a board of tiles).
     pub inspect_wide: bool,
     pub area_search_wide: bool,
-    /// How what is worn stands in Inspect's 3D view, and whether the 3D views
-    /// have a light ground.
-    pub stage_stance: crate::object_stage::Stance,
+    /// The 3D views have a light ground.
     pub stage_light: bool,
     /// The Inspect window's View panel: order, creator on the rows, what
     /// else the rows show (Aurora's own).
@@ -2598,7 +2596,6 @@ impl Default for Settings {
             inspect_avatar_columns: crate::ui::inspect::AVATAR_COLUMNS,
             inspect_wide: false,
             area_search_wide: true,
-            stage_stance: Default::default(),
             stage_light: false,
             inspect_view: Default::default(),
             landmarks_by_date: true,

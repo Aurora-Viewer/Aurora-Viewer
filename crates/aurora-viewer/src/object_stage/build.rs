@@ -268,10 +268,8 @@ pub struct StageModel {
     bind: Vec<Mat4>,
     clusters: Vec<Cluster>,
     pelvis: usize,
-    /// Where the pelvis is in the still stances.
-    pelvis_rest: Vec3,
-    /// The bones standing: arms wide, arms down.
-    still: [Arc<[Mat4]>; 2],
+    /// The bones at rest.
+    still: Arc<[Mat4]>,
     images: HashMap<Uuid, (PreviewRevision, Arc<Image>)>,
     meshes: HashMap<(Uuid, usize), Arc<Vec<aurora_assets::MeshFace>>>,
 }
@@ -329,7 +327,7 @@ impl Input {
             .map(|(asset, len, faces)| ((*asset, *len), faces.clone()))
             .collect();
         let rig = &lib.rig;
-        let skeletons = [false, true].map(|relaxed| self.worn.then(|| stance(lib, &self.prims, self.body.as_deref(), relaxed)));
+        let skeleton = self.worn.then(|| rest(lib, &self.prims, self.body.as_deref()));
         let mut out = Building::default();
         for (prim, decoded) in self.prims.iter().zip(&decoded) {
             let drawn = match (&prim.shape, decoded) {
@@ -351,55 +349,17 @@ impl Input {
             };
             out.prim(prim, drawn, skin, self.worn, rig, &images);
         }
-        out.finish(self.roots, skeletons, rig.pelvis, images, meshes)
+        out.finish(self.roots, skeleton, rig.pelvis, images, meshes)
     }
 }
 
-/// A relaxed stance: the arms down, the elbows and the fingers a little bent,
-/// the feet a little apart. (At rest the skeleton stands arms wide, its axes
-/// the avatar's: forward, left, up.)
-fn relaxed() -> Vec<(String, Quat)> {
-    let turn = |x: f32, y: f32, z: f32| {
-        let r = f32::to_radians;
-        Quat::from_rotation_x(r(x)) * Quat::from_rotation_y(r(y)) * Quat::from_rotation_z(r(z))
-    };
-    let mut out = vec![
-        ("mNeck".to_owned(), turn(0.0, 3.0, 0.0)),
-        ("mChest".to_owned(), turn(0.0, -2.0, 0.0)),
-    ];
-    // the right side mirrors the left one
-    for (side, m) in [("Left", 1.0), ("Right", -1.0)] {
-        let mut add = |name: &str, x: f32, y: f32, z: f32| out.push((format!("{name}{side}"), turn(m * x, y, m * z)));
-        add("mCollar", -5.0, 0.0, 0.0);
-        add("mShoulder", -66.0, 0.0, -4.0);
-        add("mElbow", 0.0, 0.0, -16.0);
-        add("mWrist", -4.0, 0.0, -2.0);
-        add("mHip", 3.5, 0.0, 4.0);
-        add("mAnkle", -3.5, 0.0, 0.0);
-        for (finger, curl) in [("Index", 10.0), ("Middle", 14.0), ("Ring", 18.0), ("Pinky", 22.0)] {
-            for (joint, part) in [(1, 0.8), (2, 1.2), (3, 0.8)] {
-                add(&format!("mHand{finger}{joint}"), -curl * part, 0.0, 0.0);
-            }
-        }
-        add("mHandThumb1", -8.0, 0.0, 6.0);
-    }
-    out
-}
-
-/// The joints of a stance: arms wide, or relaxed.
-pub(super) fn stance(lib: &AvatarLibrary, prims: &[RawPrim], body: Option<&SkeletonBase>, arms_down: bool) -> Vec<Mat4> {
+/// The joints at rest, in the wearer's own shape: only for an avatar whose
+/// pose is not known (the view never poses anyone).
+pub(super) fn rest(lib: &AvatarLibrary, prims: &[RawPrim], body: Option<&SkeletonBase>) -> Vec<Mat4> {
     let rig = &lib.rig;
-    let mut rotations = rig.local_rot.clone();
-    if arms_down {
-        for (name, rotation) in relaxed() {
-            if let Some(joint) = rig.names.get(name.as_str()).and_then(|j| rotations.get_mut(*j)) {
-                *joint *= rotation;
-            }
-        }
-    }
-    // in the wearer's own shape, with the joints their meshes move
+    // with the joints their meshes move
     if let Some(body) = body {
-        return rig.world_with(&rotations, Vec3::ZERO, &body.local_pos, &body.scale);
+        return rig.world_with(&rig.local_rot, Vec3::ZERO, &body.local_pos, &body.scale);
     }
     let mut overrides = crate::scene::joint_overrides::JointOverrides::new(rig);
     for prim in prims {
@@ -412,7 +372,7 @@ pub(super) fn stance(lib: &AvatarLibrary, prims: &[RawPrim], body: Option<&Skele
     }
     let (mut positions, mut scales) = (rig.local_pos.clone(), rig.scale.clone());
     overrides.apply(rig, &mut positions, &mut scales);
-    rig.world_with(&rotations, Vec3::ZERO, &positions, &scales)
+    rig.world_with(&rig.local_rot, Vec3::ZERO, &positions, &scales)
 }
 
 fn mesh_faces(faces: &[aurora_assets::MeshFace]) -> Vec<Drawn> {
@@ -598,7 +558,7 @@ impl Building {
     fn finish(
         self,
         roots: Vec<Uuid>,
-        skeletons: [Option<Vec<Mat4>>; 2],
+        skeleton: Option<Vec<Mat4>>,
         pelvis: usize,
         images: HashMap<Uuid, (PreviewRevision, Arc<Image>)>,
         meshes: HashMap<(Uuid, usize), Arc<Vec<aurora_assets::MeshFace>>>,
@@ -631,22 +591,16 @@ impl Building {
             bind: self.bind,
             clusters: self.clusters,
             pelvis,
-            pelvis_rest: skeletons[1]
-                .as_ref()
-                .and_then(|s| s.get(pelvis))
-                .map_or(Vec3::ZERO, |m| m.w_axis.truncate()),
-            still: [Arc::from([]), Arc::from([])],
+            still: Arc::from([]),
             images,
             meshes,
         };
         let empty = Vec::new();
-        model.still = skeletons
-            .each_ref()
-            .map(|skeleton| model.bones(skeleton.as_ref().unwrap_or(&empty)));
-        if skeletons[0].is_none() {
+        model.still = model.bones(skeleton.as_ref().unwrap_or(&empty));
+        if skeleton.is_none() {
             // objects of the world, side by side
             let shown: Vec<usize> = (0..model.groups.len()).filter(|g| !model.groups[*g].units.is_empty()).collect();
-            let boxes: Vec<Bounds> = shown.iter().map(|g| model.group_bounds(*g, &model.still[0])).collect();
+            let boxes: Vec<Bounds> = shown.iter().map(|g| model.group_bounds(*g, &model.still)).collect();
             for (g, by) in shown.into_iter().zip(layout::side_by_side(&boxes)) {
                 for unit in model.groups[g].units.clone() {
                     for bone in model.units[unit].bones.clone() {
@@ -656,8 +610,7 @@ impl Building {
                     }
                 }
             }
-            let bones = model.bones(&empty);
-            model.still = [bones.clone(), bones];
+            model.still = model.bones(&empty);
         }
         Some(model)
     }
@@ -700,15 +653,12 @@ fn clusters(vertices: &[Vertex], indices: &[u32], first_bone: usize, bones: usiz
     out
 }
 
-/// Two sets of bones mixed: `t` 0 the first, 1 the second.
-pub fn mixed(a: &Arc<[Mat4]>, b: &Arc<[Mat4]>, t: f32) -> Arc<[Mat4]> {
-    if t <= 0.0 || a.len() != b.len() {
-        return a.clone();
+/// Two sets of joints mixed: `t` 0 the first, 1 the second.
+pub fn mixed(a: &[Mat4], b: &[Mat4], t: f32) -> Vec<Mat4> {
+    if a.len() != b.len() {
+        return b.to_vec();
     }
-    if t >= 1.0 {
-        return b.clone();
-    }
-    a.iter().zip(b.iter()).map(|(a, b)| *a * (1.0 - t) + *b * t).collect()
+    a.iter().zip(b).map(|(a, b)| *a * (1.0 - t) + *b * t).collect()
 }
 
 /// What the view frames.
@@ -744,6 +694,22 @@ impl Frame {
         }
     }
 
+    /// This frame, moved as little as it takes for `now` to stay in it: what
+    /// moves inside (a tail, an arm, a swaying hip) never moves the picture,
+    /// a body that leaves its place or changes its size is followed.
+    pub fn follow(self, now: Frame) -> Frame {
+        let mut out = self;
+        let away = now.center - self.center;
+        let past = away.length() - self.radius * 0.22;
+        if past > 0.0 {
+            out.center += away.normalize() * past;
+        }
+        out.radius = self.radius.clamp(now.radius / 1.25, now.radius / 0.7);
+        let slack = self.radius * 0.12;
+        out.low = self.low.clamp(now.low - slack, now.low + slack);
+        out
+    }
+
     /// The floor, in the view.
     pub fn floor(&self) -> f32 {
         (self.low - self.center.z) / self.radius
@@ -772,9 +738,9 @@ impl StageModel {
             .collect()
     }
 
-    /// The bones of a still stance.
-    pub fn still(&self, arms_down: bool) -> &Arc<[Mat4]> {
-        &self.still[usize::from(arms_down)]
+    /// The bones at rest.
+    pub fn still(&self) -> &Arc<[Mat4]> {
+        &self.still
     }
 
     /// The box of a unit, as its bones are.
@@ -802,22 +768,6 @@ impl StageModel {
             Some((group, f)) if !group.units.is_empty() => all.mix(Frame::of(layout::whole(&boxes[group.units.clone()])), f),
             _ => all,
         }
-    }
-
-    /// What the view frames while the avatar moves. Anchored where it stands:
-    /// a tail, an arm or a swaying hip never moves the picture; only a body
-    /// that leaves its place (a dance, a sit pose set aside) is followed, by
-    /// what it is past `SLACK` of the frame.
-    pub fn live_frame(&self, joints: &[Mat4]) -> Frame {
-        const SLACK: f32 = 0.3;
-        let mut frame = self.frame(None, &self.still[1]);
-        let at = joints.get(self.pelvis).map_or(self.pelvis_rest, |m| m.w_axis.truncate());
-        let away = at - self.pelvis_rest;
-        let past = away.length() - frame.radius * SLACK;
-        if past > 0.0 {
-            frame.center += away.normalize() * past;
-        }
-        frame
     }
 
     /// How large a group shows: the others shrink away from one alone.
