@@ -2601,7 +2601,6 @@ app-gpu-lost =
     • 关闭其他大量使用显卡的程序；
     • 下次启动时，选择 Aurora 将提供的安全图形模式。
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora 尚无动画覆盖器（AO）。
-cmdline-mod-use-hover-height-in-appearance = 通过“外观 → 悬浮高度”调整化身的悬浮高度。
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora 建议不要打开此链接。若它要求您登录或付款，很可能是骗局：切勿提供密码或支付信息。
 demo-auto-blend = 自动：混合
 demo-auto-mask = 自动：遮罩

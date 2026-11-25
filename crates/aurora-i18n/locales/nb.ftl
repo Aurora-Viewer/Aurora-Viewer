@@ -2608,7 +2608,6 @@ app-gpu-lost =
     • lukk de andre programmene som bruker grafikkortet mye;
     • ved neste oppstart: velg den sikre grafikken som Aurora tilbyr.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora har ikke animasjonsoverstyring (AO) ennå.
-cmdline-mod-use-hover-height-in-appearance = Juster svevehøyden til avataren din under Utseende → Svevehøyde.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora fraråder å åpne denne lenken. Hvis den ber deg om å logge inn eller betale, er det svært sannsynlig svindel: gi den aldri passordet ditt eller betalingsinformasjon.
 demo-auto-blend = Auto: blanding
 demo-auto-mask = Auto: maske
