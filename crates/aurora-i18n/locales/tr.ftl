@@ -5496,7 +5496,6 @@ ui-appearance-show-current-outfit = Geçerli dış görünümü listede göster
 ui-appearance-current-outfit-not-in-my-outfits = Geçerli dış görünüm Dış Görünümlerim'e kaydedilmemiş
 build-ui-tools-edit-parcel = Parseli düzenle
 ui-context-edit-shape = Şekli Düzenle
-ui-context-export-shape-xml = Şekil XML'ini Dışa Aktar
 ui-context-edit-outfit = Dış Görünümü Düzenle
 ui-context-edit-pbr-material = PBR Malzemesini Düzenle
 ui-context-edit-land = Araziyi Düzenle

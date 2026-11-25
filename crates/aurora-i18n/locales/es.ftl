@@ -5521,7 +5521,6 @@ ui-appearance-show-current-outfit = Mostrar el vestuario actual en la lista
 ui-appearance-current-outfit-not-in-my-outfits = El vestuario actual no está guardado en Mis vestuarios
 build-ui-tools-edit-parcel = Editar parcela
 ui-context-edit-shape = Editar la anatomía
-ui-context-export-shape-xml = Exportar la anatomía en XML
 ui-context-edit-outfit = Editar el vestuario
 ui-context-edit-pbr-material = Editar el material PBR
 ui-context-edit-land = Editar el terreno
