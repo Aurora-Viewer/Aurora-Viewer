@@ -2820,7 +2820,7 @@ fn outside_behind(ctx: &egui::Context, id: &str) -> bool {
 /// come back as a bar. In its window outside and behind, it comes in front
 /// ([`outside_behind`]).
 pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
-    forget_quiet(ctx, id);
+    shown_with_keyboard(ctx, id);
     if *open && outside_behind(ctx, id) {
         bring_floater_front(ctx, id);
         return;
@@ -2839,7 +2839,7 @@ pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
 /// true asks the caller to open a closed one.
 #[must_use]
 pub fn toggle_floater_closing(ctx: &egui::Context, id: &str, open: bool) -> bool {
-    forget_quiet(ctx, id);
+    shown_with_keyboard(ctx, id);
     if open && outside_behind(ctx, id) {
         bring_floater_front(ctx, id);
     } else if open && floater_minimized(ctx, id) {
@@ -2891,7 +2891,12 @@ fn close_asked(ctx: &egui::Context, id: &str) -> bool {
 /// Open the floater `id` (LLFloaterReg::showInstance): expanded, whether it
 /// was closed or minimized.
 pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
-    forget_quiet(ctx, id);
+    shown_with_keyboard(ctx, id);
+    open_expanded(ctx, id, open);
+}
+
+/// [`open_floater`] without a word on the keyboard.
+fn open_expanded(ctx: &egui::Context, id: &str, open: &mut bool) {
     if *open {
         if floater_minimized(ctx, id) {
             expand_floater(ctx, id);
@@ -2928,8 +2933,8 @@ pub fn show_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
 /// open, toggle or expand that is not quiet replaces it.
 pub fn show_floater_quietly(ctx: &egui::Context, id: &str, open: &mut bool) {
     let was_open = *open;
-    open_floater(ctx, id, open);
-    // (`open_floater` has expanded it when minimized)
+    open_expanded(ctx, id, open);
+    // (`open_expanded` has expanded it when minimized)
     if was_open && !crate::outside::native(ctx, egui::Id::unique(id)) {
         bring_floater_front(ctx, id);
     }
@@ -2952,9 +2957,22 @@ pub fn floater_shown_quietly(ctx: &egui::Context, id: &str) -> bool {
     ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(id).with(QUIET))).unwrap_or(false)
 }
 
-/// A show, open or toggle that may take the keyboard replaces a quiet one.
-fn forget_quiet(ctx: &egui::Context, id: &str) {
-    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET)));
+/// A show, open or toggle that may take the keyboard replaces a quiet one,
+/// and its own code learns of it ([`take_floater_keyboard`]).
+fn shown_with_keyboard(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| {
+        d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET));
+        d.insert_temp(egui::Id::unique(id).with(KEYBOARD), true);
+    });
+}
+
+/// A show, open or toggle of the floater `id` that may take the keyboard
+/// came since the last call, a quiet show after it or not: true once. Its
+/// keyboard is given at once (LLFloater::openFloater, onOpen), and a quiet
+/// show after it takes nothing back.
+pub fn take_floater_keyboard(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(KEYBOARD)))
+        .unwrap_or(false)
 }
 
 /// The floater `id` was shown by [`show_floater`] since the last call: true
@@ -2988,6 +3006,10 @@ const SHOWN: &str = "shown";
 /// Temporary flag of a floater shown without the keyboard
 /// (`show_floater_quietly`).
 const QUIET: &str = "quiet";
+
+/// Temporary flag of a floater shown, opened or toggled by the user
+/// (`shown_with_keyboard`).
+const KEYBOARD: &str = "keyboard";
 
 /// Temporary flag of a floater asked to the front (`bring_floater_front`).
 const FRONT: &str = "front";
