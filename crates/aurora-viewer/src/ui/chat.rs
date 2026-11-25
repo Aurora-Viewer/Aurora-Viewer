@@ -2944,14 +2944,15 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
 }
 
 /// A line read back whose sender's name is looked up each time it is drawn,
-/// as a live line's: one of a private conversation's history
+/// as a live line's (`cached_line_sender`): one of a private conversation's
+/// history, in the conversation or in its History window
 /// (`ChatLine::private_history`, decided when the history loads, where the
-/// other resident is known), the other resident's or ours. Both sides
-/// resolve when drawn, so a name option changed while the conversation is
-/// open renames them together. Every other history line keeps the file's
-/// name: the nearby chat's, a group's or a conference's (whose members'
-/// names may be cached too, so the line alone cannot tell) and the History
-/// window's.
+/// other resident is known: `World::private_peer`), the other resident's or
+/// ours. Both sides resolve when drawn, so a name option changed while the
+/// conversation is open renames them together. Every other history line
+/// keeps the file's name: the nearby chat's, a group's or a conference's
+/// (whose members' names may be cached too, so the line alone cannot
+/// tell), in the conversation and in the History window.
 pub(crate) fn log_names_resolve(line: &crate::world::ChatLine) -> bool {
     line.origin == Origin::Log && line.private_history
 }
