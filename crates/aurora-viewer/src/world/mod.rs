@@ -3337,6 +3337,7 @@ impl World {
                 self.anti_spam.reset();
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
+                self.agent.rotate_grabbed = false;
                 // the account is known: its transcripts open
                 self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
                 // LLChatServiceHistory::start, in the account's own folder
@@ -4112,6 +4113,8 @@ impl World {
                 for (take, controls, pass_on) in blocks {
                     self.script_controls.apply(take, controls, pass_on);
                 }
+                // LLAgent::rotateGrabbed, read by AgentState::yaw_by
+                self.agent.rotate_grabbed = self.script_controls.rotate_grabbed();
                 None
             }
             NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
