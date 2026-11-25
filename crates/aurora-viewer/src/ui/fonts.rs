@@ -1153,9 +1153,10 @@ mod tests {
         let system = fallback::wait();
         let complete = system_fonts_complete(system);
         let text = demo_text().join(" ");
+        let default = builtin(DEFAULT).expect("embedded font");
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             let missing = unexpected(&squares(definitions_for(DEFAULT, system), family.clone(), &text));
-            let unexplained = covered_but_square(&missing, system);
+            let unexplained = covered_but_square(&missing, default, &family, system);
             assert!(
                 unexplained.is_empty(),
                 "{family}: a loaded face draws these, and they are squares: {unexplained}"
@@ -1174,7 +1175,27 @@ mod tests {
     /// chosen in Preferences, nor on the weight.
     #[test]
     fn every_script_is_drawn_whatever_the_builtin_font_and_weight() {
-        let system = fallback::wait();
+        check_every_script(fallback::wait());
+    }
+
+    /// The same check with none of the system's fonts (a bare Linux): the
+    /// squares are those no face of the chosen font's family draws. Noto
+    /// Sans, Roboto and OpenDyslexic have no `Ⓝ`; Inter has it, and is
+    /// nobody's fallback.
+    #[test]
+    fn without_system_fonts_only_what_the_family_lacks_is_a_square() {
+        check_every_script(&[]);
+        const CIRCLED: &str = "Ⓝ";
+        for b in &BUILTINS {
+            for family in [egui::FontFamily::Proportional, semibold_family()] {
+                let missing = squares(definitions_for(b.name, &[]), family.clone(), CIRCLED);
+                let expected = if b.name == INTER { "" } else { CIRCLED };
+                assert_eq!(missing, expected, "{} ({family})", b.name);
+            }
+        }
+    }
+
+    fn check_every_script(system: &[fallback::SystemFace]) {
         let complete = system_fonts_complete(system);
         let text = demo_text()
             .into_iter()
@@ -1184,7 +1205,7 @@ mod tests {
         for b in &BUILTINS {
             for family in [egui::FontFamily::Proportional, semibold_family()] {
                 let missing = unexpected(&squares(definitions_for(b.name, system), family.clone(), &text));
-                let unexplained = covered_but_square(&missing, system);
+                let unexplained = covered_but_square(&missing, b, &family, system);
                 assert!(
                     unexplained.is_empty(),
                     "{} ({family}): a loaded face draws these, and they are squares: {unexplained}",
@@ -1214,12 +1235,28 @@ mod tests {
         missing.chars().filter(|c| fallback::expected_here(*c)).collect()
     }
 
-    /// Characters of `missing` that some loaded face, or an embedded font,
-    /// can draw. A square for one of those is a fallback that was not used.
-    fn covered_but_square(missing: &str, system: &[fallback::SystemFace]) -> String {
+    /// Characters of `missing` that a face loaded for `family` with the
+    /// chosen font `b` can draw: a system face, `b` itself, the embedded Noto
+    /// Sans, or egui's own fallbacks. A square for one of those is a fallback
+    /// that was not used. The other embedded fonts do not count: they are
+    /// choices of Preferences, not fallbacks of each other. The faces are
+    /// named here, not read from the definitions under test, which would
+    /// miss a fallback left out of them.
+    fn covered_but_square(missing: &str, b: &Builtin, family: &egui::FontFamily, system: &[fallback::SystemFace]) -> String {
+        let defaults = egui::FontDefinitions::default();
+        let own = defaults.families.get(&egui::FontFamily::Proportional).into_iter().flatten();
+        let mut embedded: Vec<&[u8]> = own.filter_map(|name| defaults.font_data.get(name)).map(|d| d.bytes()).collect();
+        embedded.extend([b.regular, NOTO_TTF]);
+        if *family == semibold_family() {
+            embedded.extend([b.semibold, NOTO_SEMIBOLD_TTF]);
+        }
+        let faces: Vec<_> = embedded
+            .into_iter()
+            .map(|ttf| ttf_parser::Face::parse(ttf, 0).expect("embedded font"))
+            .collect();
         missing
             .chars()
-            .filter(|c| system.iter().any(|face| face.has(*c)) || embedded_has(*c))
+            .filter(|c| system.iter().any(|face| face.has(*c)) || faces.iter().any(|face| face.glyph_index(*c).is_some()))
             .collect()
     }
 
