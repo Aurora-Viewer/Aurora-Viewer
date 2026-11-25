@@ -193,6 +193,8 @@ pub struct ToolbarSettings {
     pub director_button_migrated: bool,
     /// The quick import bar's block got its buttons, once (`drawers::ensure_import_bar`).
     pub import_bar_filled: bool,
+    /// The same for its Ctrl+U.
+    pub import_shortcut_given: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub left: Vec<ToolButton>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -817,6 +819,9 @@ pub struct ToolbarUi {
     floating_placed: Option<(String, Pos2)>,
     /// The shortcut window, while open.
     shortcut_editor: Option<shortcuts::Editor>,
+    /// The Preferences shortcuts (given by the app while the shortcut window
+    /// is open), for its warnings.
+    pub keybinds: Option<crate::keybinds::KeyBindings>,
 }
 
 impl ToolbarUi {
@@ -1189,6 +1194,33 @@ impl ToolbarUi {
         let style = blocks::style(&response.ctx, &button.command, style);
         self.context(response, p, bar, style, Some(button), locked);
         self.button_source(response, bar, style, button, locked);
+        if self.open && structure::is_separator(&button.command) && response.clicked() {
+            self.selected = Some(button.command.clone());
+            self.appearance_editor.select(button);
+        }
+    }
+
+    /// `button`, or a floating block's button (`floating`): there a drag
+    /// moves the whole block, never the button (human request, 2026-11-25).
+    #[allow(clippy::too_many_arguments)]
+    pub fn button_in(
+        &mut self,
+        response: &Response,
+        bar: Bar,
+        style: Style,
+        button: &ToolButton,
+        p: &Palette,
+        locked: bool,
+        floating: bool,
+    ) {
+        if !floating {
+            return self.button(response, bar, style, button, p, locked);
+        }
+        let style = blocks::style(&response.ctx, &button.command, style);
+        self.context(response, p, bar, style, Some(button), locked);
+        if response.dragged_by(egui::PointerButton::Primary) {
+            floating::dragged(&response.ctx, &button.command);
+        }
         if self.open && structure::is_separator(&button.command) && response.clicked() {
             self.selected = Some(button.command.clone());
             self.appearance_editor.select(button);

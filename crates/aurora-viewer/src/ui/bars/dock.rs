@@ -929,6 +929,7 @@ mod tests {
                 bar: crate::ui::toolbar::Bar::Bottom,
                 style: Style::default(),
                 editing: false,
+                floating: false,
             };
             let mut result = (None, 0.0, false);
             let mut output = self.ctx.run_ui(

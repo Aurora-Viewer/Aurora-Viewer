@@ -297,6 +297,7 @@ fn top_toolbar_keeps_a_labelled_override_wide_beside_icon_only_buttons() {
                 bar: Bar::Top,
                 style: Default::default(),
                 editing: false,
+                floating: false,
             };
             top::show(
                 ui,

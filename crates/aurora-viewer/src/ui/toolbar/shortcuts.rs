@@ -11,7 +11,8 @@
 //! one not drawn (in a closed drawer, a hidden block, the interface hidden)
 //! runs like its Aurora menu entry (`fallback`). The keys text fields, the
 //! chat and the system keep, and those of Preferences › Shortcuts, are
-//! refused at capture (`refusal`, `taken_by`).
+//! refused (`refusal`); one a Preferences action has is taken over, the
+//! window saying so (`conflict`).
 
 use super::{Bar, Edit, ToolbarSettings, ToolbarUi, drawers, structure};
 use crate::keybinds::{Binding, Input, KeyBindings};
@@ -118,7 +119,7 @@ fn letter(key: &str) -> Option<char> {
 }
 
 /// The rule of the keys a toolbar shortcut may not take, whatever uses
-/// them now (`taken_by` adds those of Preferences › Shortcuts).
+/// them now (`conflict` says what a free one takes over).
 pub fn refusal(b: &Binding) -> Option<Refusal> {
     let Input::Key(key) = &b.input else {
         return Some(Refusal::Keyboard);
@@ -218,17 +219,33 @@ pub fn refusal(b: &Binding) -> Option<Refusal> {
     None
 }
 
-/// What already uses `b`: an action of Preferences › Shortcuts, or another
-/// toolbar shortcut than `own`'s.
-pub fn taken_by(b: &Binding, keybinds: &KeyBindings, settings: &ToolbarSettings, layout: &Layout, own: &str) -> Option<String> {
-    if let Some(action) = keybinds.users(b).first() {
-        return Some(crate::keybinds::label(*action).to_owned());
+/// What a shortcut takes over: a Preferences › Shortcuts action, which the
+/// toolbar's shortcut then goes before (human request, 2026-11-25: Ctrl+U
+/// may be used, and says so), or another toolbar target, which loses it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Conflict {
+    Overrides(String),
+    Moves(String),
+}
+
+impl Conflict {
+    pub fn message(&self) -> String {
+        match self {
+            Conflict::Overrides(name) => aurora_i18n::tr!("toolbar-shortcut-overrides", name = name.clone()),
+            Conflict::Moves(name) => aurora_i18n::tr!("toolbar-shortcut-moves", name = name.clone()),
+        }
+    }
+}
+
+pub fn conflict(b: &Binding, keybinds: Option<&KeyBindings>, settings: &ToolbarSettings, layout: &Layout, own: &str) -> Option<Conflict> {
+    if let Some(action) = keybinds.and_then(|keybinds| keybinds.users(b).first().copied()) {
+        return Some(Conflict::Overrides(crate::keybinds::label(action).to_owned()));
     }
     settings
         .shortcuts
         .iter()
         .find(|(key, bound)| *bound == b && key.as_str() != own)
-        .map(|(key, _)| name(settings, layout, key))
+        .map(|(key, _)| Conflict::Moves(name(settings, layout, key)))
 }
 
 /// The button saved under `command`, wherever it stands.
@@ -380,12 +397,43 @@ pub fn fallback(ctx: &egui::Context, settings: &mut ToolbarSettings) -> Fallback
     Fallback::None
 }
 
-/// The shortcut window's state.
+/// The shortcut window's state: the modifiers turned on, the key chosen,
+/// and whether the next key press is the key.
 #[derive(Debug, Clone, Default)]
 pub struct Editor {
     pub key: String,
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub input: Option<String>,
     pub capturing: bool,
-    pub message: Option<String>,
+}
+
+impl Editor {
+    fn new(key: &str, current: Option<&Binding>) -> Editor {
+        let input = current.and_then(|b| match &b.input {
+            Input::Key(code) => Some(code.clone()),
+            Input::Mouse(_) => None,
+        });
+        Editor {
+            key: key.into(),
+            ctrl: current.is_none_or(|b| b.ctrl),
+            shift: current.is_some_and(|b| b.shift),
+            alt: current.is_some_and(|b| b.alt),
+            capturing: input.is_none(),
+            input,
+        }
+    }
+
+    /// The shortcut the window shows, once it has a key.
+    pub fn binding(&self) -> Option<Binding> {
+        self.input.as_ref().map(|code| Binding {
+            input: Input::Key(code.clone()),
+            ctrl: self.ctrl,
+            shift: self.shift,
+            alt: self.alt,
+        })
+    }
 }
 
 const WINDOW: &str = "toolbar_shortcut";
@@ -398,86 +446,131 @@ impl ToolbarUi {
         } else {
             aurora_i18n::tr!("toolbar-shortcut")
         };
-        let keys = settings.shortcuts.get(key).map(Binding::label).unwrap_or_default();
+        let current = settings.shortcuts.get(key);
+        let keys = current.map(Binding::label).unwrap_or_default();
         if menu::item_keys(ui, p, "keyboard", label, &keys) {
-            self.shortcut_editor = Some(Editor {
-                key: key.into(),
-                capturing: true,
-                message: None,
-            });
+            self.shortcut_editor = Some(Editor::new(key, current));
         }
     }
 
-    /// Whether the shortcut window waits for keys: the app gives them to
-    /// `shortcut_captured` instead of their actions.
+    /// Whether the shortcut window is open: the app then gives it the
+    /// Preferences shortcuts (`keybinds`), for its warnings.
+    pub fn shortcut_editing(&self) -> bool {
+        self.shortcut_editor.is_some()
+    }
+
+    /// Whether the shortcut window waits for a key: the app gives the next
+    /// press to `shortcut_captured` instead of its action.
     pub fn shortcut_capturing(&self) -> bool {
         self.shortcut_editor.as_ref().is_some_and(|editor| editor.capturing)
     }
 
-    /// Keys pressed in the shortcut window: kept unless refused or taken
-    /// (the reason is shown); Escape stops waiting.
-    pub fn shortcut_captured(&mut self, b: Binding, escape: bool, keybinds: &KeyBindings, settings: &ToolbarSettings, layout: &Layout) {
+    /// The key pressed for the shortcut window, with the modifiers held, if
+    /// any, in place of those turned on; Escape alone stops waiting.
+    pub fn shortcut_captured(&mut self, b: Binding, escape: bool) {
         let Some(editor) = self.shortcut_editor.as_mut() else { return };
+        editor.capturing = false;
         if escape && !b.ctrl && !b.shift && !b.alt {
-            editor.capturing = false;
-            editor.message = None;
             return;
         }
-        let refused = refusal(&b).map(|refusal| refusal.message().to_owned()).or_else(|| {
-            taken_by(&b, keybinds, settings, layout, &editor.key)
-                .map(|name| aurora_i18n::tr!("toolbar-shortcut-taken", keys = b.label(), name = name))
-        });
-        match refused {
-            Some(message) => editor.message = Some(format!("{} — {message}", b.label())),
-            None => {
-                editor.capturing = false;
-                editor.message = None;
-                self.pending = Some(Edit::Shortcut(editor.key.clone(), Some(b)));
-            }
+        if let Input::Key(code) = b.input {
+            editor.input = Some(code);
+        }
+        if b.ctrl || b.shift || b.alt {
+            (editor.ctrl, editor.shift, editor.alt) = (b.ctrl, b.shift, b.alt);
         }
     }
 
     pub(super) fn show_shortcut_editor(&mut self, ctx: &egui::Context, p: &Palette, settings: &ToolbarSettings, layout: &Layout) {
         let Some(mut editor) = self.shortcut_editor.clone() else { return };
         let current = settings.shortcuts.get(&editor.key).cloned();
+        let draft = editor.binding();
+        let refused = draft.as_ref().and_then(refusal);
+        let conflict = draft
+            .as_ref()
+            .filter(|_| refused.is_none())
+            .and_then(|b| conflict(b, self.keybinds.as_ref(), settings, layout, &editor.key));
         let mut open = true;
+        let mut save = false;
         let mut clear = false;
         let mut window = widgets::Floater::new(
             WINDOW,
             aurora_i18n::tr!("toolbar-shortcut-title"),
-            ctx.content_rect().center() - Vec2::new(180.0, 110.0),
-            Vec2::new(360.0, 220.0),
+            ctx.content_rect().center() - Vec2::new(200.0, 130.0),
+            Vec2::new(400.0, 260.0),
         );
         window.order = egui::Order::Foreground;
         window.show(ctx, p, &mut open, |ui| {
             ui.label(egui::RichText::new(name(settings, layout, &editor.key)).strong());
             ui.add_space(8.0);
-            let fill = if editor.capturing { p.violet } else { p.raised };
-            let caps = match &current {
-                Some(b) if !editor.capturing => widgets::keycap::caps(ui, b, fill),
-                _ => Vec::new(),
-            };
-            let (text, color) = if editor.capturing {
-                (aurora_i18n::tr!("toolbar-shortcut-press"), p.on_accent)
-            } else if current.is_some() {
-                ("", p.ink)
-            } else {
-                (aurora_i18n::tr!("toolbar-shortcut-none"), p.muted)
-            };
-            let width = widgets::keycap::row_width(&caps);
             ui.horizontal(|ui| {
+                // the modifiers, turned on and off by a click
+                for (on, label) in [
+                    (&mut editor.ctrl, Input::Key("ControlLeft".into()).label()),
+                    (&mut editor.alt, Input::Key("AltLeft".into()).label()),
+                    (&mut editor.shift, Input::Key("ShiftLeft".into()).label()),
+                ] {
+                    let kind = if *on {
+                        widgets::ActionKind::Primary
+                    } else {
+                        widgets::ActionKind::Flat
+                    };
+                    if widgets::action_button(ui, p, "", &label, kind, Vec2::new(56.0, 28.0)).clicked() {
+                        *on = !*on;
+                    }
+                }
+                ui.label("+");
+                // the key: a click waits for the next one
+                let fill = if editor.capturing { p.violet } else { p.raised };
+                let key = editor.input.clone().map(|code| Binding {
+                    input: Input::Key(code),
+                    ctrl: false,
+                    shift: false,
+                    alt: false,
+                });
+                let caps = match &key {
+                    Some(b) if !editor.capturing => widgets::keycap::caps(ui, b, fill),
+                    _ => Vec::new(),
+                };
+                let (text, color) = if editor.capturing {
+                    (aurora_i18n::tr!("toolbar-shortcut-press"), p.on_accent)
+                } else if key.is_some() {
+                    ("", p.ink)
+                } else {
+                    (aurora_i18n::tr!("toolbar-shortcut-choose-key"), p.muted)
+                };
+                let width = widgets::keycap::row_width(&caps);
                 let response = ui.add(
                     egui::Button::new(egui::RichText::new(text).color(color))
                         .fill(fill)
-                        .min_size(Vec2::new((width + 16.0).max(200.0), 28.0)),
+                        .min_size(Vec2::new((width + 16.0).max(150.0), 28.0)),
                 );
                 let left = egui::pos2(response.rect.center().x - width / 2.0, response.rect.center().y);
                 widgets::keycap::paint_row(ui, p, &caps, left, fill);
                 if response.clicked() {
                     editor.capturing = !editor.capturing;
-                    editor.message = None;
                 }
-                if current.is_some()
+            });
+            ui.add_space(6.0);
+            if let Some(refusal) = refused {
+                ui.label(egui::RichText::new(refusal.message()).color(p.danger));
+            } else if let Some(conflict) = &conflict {
+                ui.label(egui::RichText::new(conflict.message()).color(p.amber));
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let ready = draft.is_some() && refused.is_none() && draft != current;
+                save = widgets::action_button_if(
+                    ui,
+                    p,
+                    "device-floppy",
+                    aurora_i18n::tr!("toolbar-shortcut-save"),
+                    widgets::ActionKind::Primary,
+                    Vec2::new(0.0, 28.0),
+                    ready,
+                )
+                .clicked();
+                clear = current.is_some()
                     && widgets::action_button(
                         ui,
                         p,
@@ -486,39 +579,27 @@ impl ToolbarUi {
                         widgets::ActionKind::Flat,
                         Vec2::new(0.0, 28.0),
                     )
-                    .clicked()
-                {
-                    clear = true;
-                }
+                    .clicked();
             });
-            if let Some(message) = &editor.message {
-                ui.add_space(6.0);
-                ui.label(egui::RichText::new(message).color(p.danger));
-            }
             ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(aurora_i18n::tr!("toolbar-shortcut-help"))
-                    .small()
-                    .color(p.muted),
-            );
+            let note = |ui: &mut egui::Ui, text: &str| {
+                ui.label(egui::RichText::new(text).small().color(p.muted));
+            };
+            note(ui, aurora_i18n::tr!("toolbar-shortcut-help"));
             if editor.key.starts_with(BLOCK) {
-                ui.label(
-                    egui::RichText::new(aurora_i18n::tr!("toolbar-shortcut-block-help"))
-                        .small()
-                        .color(p.muted),
-                );
+                note(ui, aurora_i18n::tr!("toolbar-shortcut-block-help"));
             } else if !active(settings, layout, &editor.key) {
-                ui.label(
-                    egui::RichText::new(aurora_i18n::tr!("toolbar-shortcut-inactive"))
-                        .small()
-                        .color(p.muted),
-                );
+                note(ui, aurora_i18n::tr!("toolbar-shortcut-inactive"));
             }
         });
-        if clear {
+        if save && let Some(b) = draft {
+            self.pending = Some(Edit::Shortcut(editor.key.clone(), Some(b)));
+        } else if clear {
             self.pending = Some(Edit::Shortcut(editor.key.clone(), None));
+            editor.input = None;
+        }
+        if save || clear {
             editor.capturing = false;
-            editor.message = None;
         }
         self.shortcut_editor = open.then_some(editor);
     }
@@ -629,13 +710,19 @@ mod tests {
             .clone()
             .expect("Preferences has a key");
         let mut settings = ToolbarSettings::default();
-        assert!(taken_by(&preferences, &keybinds, &settings, &layout, "inventory").is_some());
+        assert!(matches!(
+            conflict(&preferences, Some(&keybinds), &settings, &layout, "inventory"),
+            Some(Conflict::Overrides(_))
+        ));
         let k = keys("KeyK", true, true, false);
-        assert!(taken_by(&k, &keybinds, &settings, &layout, "inventory").is_none());
+        assert!(conflict(&k, Some(&keybinds), &settings, &layout, "inventory").is_none());
         assert!(set(&mut settings, "inventory", Some(k.clone())));
         assert!(!set(&mut settings, "inventory", Some(k.clone())), "no change");
-        assert!(taken_by(&k, &keybinds, &settings, &layout, "inventory").is_none(), "its own");
-        assert!(taken_by(&k, &keybinds, &settings, &layout, "people").is_some());
+        assert!(conflict(&k, Some(&keybinds), &settings, &layout, "inventory").is_none(), "its own");
+        assert!(matches!(
+            conflict(&k, Some(&keybinds), &settings, &layout, "people"),
+            Some(Conflict::Moves(_))
+        ));
         assert!(set(&mut settings, "people", Some(k.clone())));
         assert_eq!(settings.shortcuts.keys().collect::<Vec<_>>(), ["people"], "moved, not doubled");
         assert!(!set(&mut settings, "people", Some(keys("KeyC", true, false, false))), "refused");
@@ -670,6 +757,33 @@ mod tests {
         forget_removed(&mut settings);
         assert!(!settings.shortcuts.contains_key(&id));
         assert!(settings.shortcuts.contains_key(&block_key("inventory")), "kept for its block");
+    }
+
+    /// The window's key: the next press, Escape alone giving up; modifiers
+    /// held replace those turned on.
+    #[test]
+    fn the_window_takes_a_key_and_its_modifiers() {
+        let mut ui = ToolbarUi {
+            shortcut_editor: Some(Editor::new("inventory", None)),
+            ..Default::default()
+        };
+        assert!(ui.shortcut_capturing(), "no key yet: it waits");
+        ui.shortcut_captured(keys("Escape", false, false, false), true);
+        assert!(!ui.shortcut_capturing());
+        assert_eq!(ui.shortcut_editor.as_ref().and_then(Editor::binding), None);
+        ui.shortcut_captured(keys("KeyU", false, false, false), false);
+        assert_eq!(
+            ui.shortcut_editor.as_ref().and_then(Editor::binding),
+            Some(keys("KeyU", true, false, false)),
+            "Ctrl is on by default"
+        );
+        ui.shortcut_captured(keys("KeyJ", false, true, true), false);
+        assert_eq!(
+            ui.shortcut_editor.as_ref().and_then(Editor::binding),
+            Some(keys("KeyJ", false, true, true))
+        );
+        let editor = Editor::new("people", Some(&keys("F6", false, true, false)));
+        assert!(!editor.capturing && !editor.ctrl && editor.shift);
     }
 
     /// A press is claimed once, by its button; unclaimed, a drawer opens and

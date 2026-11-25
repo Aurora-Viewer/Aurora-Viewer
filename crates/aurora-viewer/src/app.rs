@@ -19542,6 +19542,7 @@ impl App {
                 // (LLFloaterGridStatus::checkGridStatusRSS, hasCommand)
                 self.grid_status_listed = toolbar_settings.placed("gridstatus", bar_layout);
                 self.toolbar_ui.islands = !classic_bars;
+                self.toolbar_ui.keybinds = self.toolbar_ui.shortcut_editing().then(|| self.settings.keybinds.clone());
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
                 self.chat_ui.hide_latest = !self.settings.chat_latest_button;
                 self.chat_ui.enter_toggles = self.settings.chat_enter_toggles;
@@ -19631,6 +19632,7 @@ impl App {
                     bar: ui::toolbar::Bar::Left,
                     style: Default::default(),
                     editing: self.toolbar_ui.open,
+                    floating: false,
                 };
                 if chrome.top {
                     let top_action = ui::bars::top::show(
@@ -25914,14 +25916,7 @@ impl ApplicationHandler for App {
                     if self.toolbar_ui.shortcut_capturing() {
                         if pressed && !ke.repeat && !Input::is_modifier(code) {
                             let binding = crate::keybinds::Binding::captured(Input::key(code), mods);
-                            let toolbar = self.settings.toolbar.clone().unwrap_or_default();
-                            self.toolbar_ui.shortcut_captured(
-                                binding,
-                                code == KeyCode::Escape,
-                                &self.settings.keybinds,
-                                &toolbar,
-                                &ui::skin::Layout::default(),
-                            );
+                            self.toolbar_ui.shortcut_captured(binding, code == KeyCode::Escape);
                             self.egui_ctx.request_repaint();
                         }
                         return;

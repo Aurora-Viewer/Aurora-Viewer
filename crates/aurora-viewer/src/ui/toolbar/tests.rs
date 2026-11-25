@@ -1274,6 +1274,7 @@ impl Bench {
                     bar: Bar::Bottom,
                     style: Style::default(),
                     editing: self.state.open,
+                    floating: false,
                 };
                 bars::top::show(
                     ui,
@@ -2342,7 +2343,7 @@ fn floating_blocks_keep_one_place_per_command_and_only_the_users_are_deleted() {
             "import_sound",
             "import_material",
             "import_mesh",
-            "separator:import-bar-files",
+            "divider:import-bar-files",
             "import_advanced",
             "import_local",
             "import_settings"
@@ -2624,4 +2625,47 @@ fn a_blocks_shortcut_follows_it_through_drawers_and_floating_blocks() {
     state.pending = Some(Edit::Shortcut("search".into(), Some(binding.clone())));
     assert!(state.commit(&layout(), &mut settings));
     assert_eq!(settings.shortcuts.get("search"), Some(&binding));
+}
+
+/// The import bar's first fill had a separator: it becomes a block's
+/// divider; Ctrl+U shows the bar, given once (human requests, 2026-11-25).
+#[test]
+fn the_import_bar_gets_its_divider_and_ctrl_u_once() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(Vec::new()),
+        import_bar_filled: true,
+        ..Default::default()
+    };
+    settings.drawers.insert(
+        drawers::IMPORT_BAR.into(),
+        drawers::Drawer {
+            buttons: vec![
+                button("import_mesh"),
+                structure::separator("import-bar-files"),
+                button("import_local"),
+            ],
+            floating: Some(Default::default()),
+            ..Default::default()
+        },
+    );
+    assert!(settings.ensure_import_bar(&layout()));
+    assert_eq!(
+        commands(&settings.drawers[drawers::IMPORT_BAR].buttons),
+        ["import_mesh", "divider:import-bar-files", "import_local"]
+    );
+    let ctrl_u = crate::keybinds::Binding {
+        input: crate::keybinds::Input::Key("KeyU".into()),
+        ctrl: true,
+        shift: false,
+        alt: false,
+    };
+    assert_eq!(settings.shortcuts.get(drawers::IMPORT_BAR), Some(&ctrl_u));
+    assert_eq!(
+        shortcuts::target(&settings, &layout(), &ctrl_u).as_deref(),
+        Some(drawers::IMPORT_BAR)
+    );
+    settings.shortcuts.clear();
+    assert!(!settings.ensure_import_bar(&layout()), "once: a removed shortcut stays removed");
+    assert!(settings.shortcuts.is_empty());
 }

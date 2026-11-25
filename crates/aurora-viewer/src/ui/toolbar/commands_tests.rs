@@ -2169,6 +2169,7 @@ impl Bench {
                     bar: Bar::Bottom,
                     style: Style::default(),
                     editing: self.state.open,
+                    floating: false,
                 };
                 let mut mic = bars::MicButton::default();
                 bars::top::show(
@@ -2218,6 +2219,17 @@ impl Bench {
                     Rect::from_min_max(egui::pos2(0.0, 52.0), egui::pos2(self.screen.x, self.screen.y - 56.0)),
                     !self.classic,
                     [true, true],
+                );
+                let mut import_shown = false;
+                let _ = floating::show(
+                    &ctx,
+                    &p,
+                    &icons,
+                    &mut self.state,
+                    &mut self.panels,
+                    &mut mic,
+                    &row,
+                    &mut import_shown,
                 );
                 if self.settings.composed {
                     (self.action, self.audio_action) = bars::chrome::show(
@@ -4312,4 +4324,47 @@ fn a_toolbar_shortcut_clicks_its_button_or_runs_its_menu_entry() {
     assert_ne!(bench.panels.inventory, before, "drawn: clicked");
     assert_eq!(shortcuts::fallback(&bench.ctx, &mut bench.settings), shortcuts::Fallback::None);
     assert_eq!(commands::take_request(&bench.ctx), None);
+}
+
+/// A drag on a floating block's button moves the whole block, never the
+/// button (human request, 2026-11-25).
+#[test]
+fn a_drag_on_a_floating_blocks_button_moves_the_block() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1920.0, 1080.0),
+        ..Default::default()
+    };
+    bench.settings.compose_top();
+    let id = drawers::create_floating(&mut bench.settings, "Tools");
+    bench.state.pending = Some(Edit::DrawerInsert(id.clone(), bars::top::button("inventory", "folder-filled"), 0));
+    assert!(bench.state.commit(&Layout::default(), &mut bench.settings));
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let area = |bench: &Bench| {
+        bench
+            .ctx
+            .memory(|memory| memory.area_rect(Id::unique(floating::window_id(&id))))
+            .expect("floating block drawn")
+    };
+    let before = area(&bench);
+    let start = bench
+        .ctx
+        .read_response(bars::tool_button_id("inventory"))
+        .expect("its button")
+        .rect
+        .center();
+    let inventory = bench.panels.inventory;
+    bench.pointer(start, Some(true));
+    for step in 1..=6 {
+        bench.pointer(start + Vec2::new(20.0, 10.0) * step as f32, None);
+        assert!(!ToolbarUi::dragging(&bench.ctx), "the button is not taken");
+    }
+    bench.pointer(start + Vec2::new(120.0, 60.0), Some(false));
+    bench.frame(Vec::new());
+    let moved = area(&bench).min - before.min;
+    assert!(moved.x > 80.0 && moved.y > 40.0, "moved by {moved:?}");
+    assert_eq!(bench.panels.inventory, inventory, "a drag is no click");
+    assert_eq!(bench.settings.drawers[&id].buttons.len(), 1);
 }

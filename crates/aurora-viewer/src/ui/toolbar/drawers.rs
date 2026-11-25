@@ -35,7 +35,7 @@ const IMPORT_COMMANDS: [&str; 9] = [
     "import_sound",
     "import_material",
     "import_mesh",
-    "separator:import-bar-files",
+    "divider:import-bar-files",
     "import_advanced",
     "import_local",
     "import_settings",
@@ -109,9 +109,37 @@ pub fn is_floating(settings: &ToolbarSettings, id: &str) -> bool {
 /// but gaps going with its button. Made again later (a restored or loaded
 /// layout without it), it takes those placed nowhere.
 pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout) -> bool {
+    // its first fill had a separator where a block's divider belongs
+    let mut changed = false;
+    if let Some(drawer) = settings.drawers.get_mut(IMPORT_BAR) {
+        for button in &mut drawer.buttons {
+            if button.command == "separator:import-bar-files" {
+                *button = structure::divider("import-bar-files");
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        settings.separators.remove("separator:import-bar-files");
+    }
+    // Ctrl+U shows and hides it, once (human request, 2026-11-25), unless
+    // the key went to another target meanwhile
+    if !settings.import_shortcut_given {
+        settings.import_shortcut_given = true;
+        let ctrl_u = crate::keybinds::Binding {
+            input: crate::keybinds::Input::Key("KeyU".into()),
+            ctrl: true,
+            shift: false,
+            alt: false,
+        };
+        if !settings.shortcuts.values().any(|bound| *bound == ctrl_u) {
+            settings.shortcuts.entry(IMPORT_BAR.into()).or_insert(ctrl_u);
+        }
+        changed = true;
+    }
     let fill = !settings.import_bar_filled;
     if !fill && settings.drawers.contains_key(IMPORT_BAR) {
-        return false;
+        return changed;
     }
     settings.import_bar_filled = true;
     if fill {
@@ -138,8 +166,8 @@ pub(super) fn ensure_import_bar(settings: &mut ToolbarSettings, layout: &Layout)
     let buttons = IMPORT_COMMANDS
         .iter()
         .filter_map(|command| {
-            if structure::is_separator(command) {
-                return Some(structure::separator(command.trim_start_matches(structure::PREFIX)));
+            if structure::is_divider(command) {
+                return Some(structure::divider(command.trim_start_matches(structure::DIVIDER_PREFIX)));
             }
             let found = super::catalogue::find(command)?;
             (fill || !settings.placed(command, layout)).then(|| ToolButton {

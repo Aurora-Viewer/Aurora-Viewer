@@ -3893,6 +3893,9 @@ pub(crate) struct Row<'a> {
     pub style: super::toolbar::Style,
     /// The "Toolbar buttons" window is open (and the toolbars unlocked).
     pub editing: bool,
+    /// A floating block's row: drawn as a bar's block, and a drag on its
+    /// buttons moves the block (`toolbar/floating.rs`).
+    pub floating: bool,
 }
 
 /// The toolbar's buttons one after the other in `ui` (Firestorm's bar or
@@ -3926,6 +3929,7 @@ pub(crate) fn toolbar_row(
     };
     let mut rects = Vec::with_capacity(buttons.len());
     let split = row.editing
+        || row.floating
         || (toolbar.islands
             && (buttons
                 .iter()
@@ -3971,7 +3975,7 @@ pub(crate) fn toolbar_row(
                 [rect.center_top() + Vec2::new(0.0, 5.0), rect.center_bottom() - Vec2::new(0.0, 5.0)]
             };
             ui.painter().line_segment(ends, egui::Stroke::new(1.0, color));
-            toolbar.button(&response, row.bar, row.style, b, p, row.locked);
+            toolbar.button_in(&response, row.bar, row.style, b, p, row.locked, row.floating);
             if response.clicked() || response.secondary_clicked() {
                 toolbar.selected = Some(b.command.clone());
             }
@@ -3996,7 +4000,7 @@ pub(crate) fn toolbar_row(
                     p.muted,
                 );
             }
-            toolbar.button(&response, row.bar, row.style, b, p, row.locked);
+            toolbar.button_in(&response, row.bar, row.style, b, p, row.locked, row.floating);
             if !super::toolbar::ToolbarUi::dragging(ui.ctx()) {
                 response.on_hover_text(super::toolbar::label(b));
             }
@@ -4024,7 +4028,7 @@ pub(crate) fn toolbar_row(
             let open_voice = std::mem::take(&mut toolbar.voice_options);
             let response = mic_button(ui, p, icons, look(b), super::toolbar::label(b), mic, true, open_voice);
             rects.push(response.rect);
-            toolbar.button(&response, row.bar, row.style, b, p, row.locked);
+            toolbar.button_in(&response, row.bar, row.style, b, p, row.locked, row.floating);
             if !row.locked && response.dragged() {
                 mic.held = false;
             }
@@ -4183,7 +4187,7 @@ pub(crate) fn toolbar_row(
             response.flags.insert(egui::response::Flags::FAKE_PRIMARY_CLICKED);
         }
         rects.push(response.rect);
-        toolbar.button(&response, row.bar, row.style, b, p, row.locked);
+        toolbar.button_in(&response, row.bar, row.style, b, p, row.locked, row.floating);
         if b.command == "location_bar" {
             let settings = super::toolbar::appearance::settings(ui.ctx());
             let bar = settings.location(&b.command, &super::skin::Layout::default()).unwrap_or(row.bar);
@@ -4328,6 +4332,7 @@ pub fn bottom_bar(
             bar,
             style,
             editing,
+            floating: false,
         };
         return dock::bottom(
             ui,
@@ -4503,6 +4508,7 @@ pub fn bottom_bar(
                                 bar,
                                 style,
                                 editing,
+                                floating: false,
                             };
                             let look = |b: &crate::ui::skin::ToolButton| {
                                 let at = buttons.iter().position(|x| x.command == b.command).unwrap_or(0);

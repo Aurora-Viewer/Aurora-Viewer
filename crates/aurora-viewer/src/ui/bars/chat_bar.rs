@@ -102,6 +102,7 @@ mod tests {
                         bar,
                         style: Default::default(),
                         editing,
+                        floating: false,
                     };
                     let rect = Rect::from_min_size(egui::pos2(30.0, 30.0), egui::vec2(width, chrome::height(ui.ctx(), "bar_chat")));
                     chrome::register_at(ui, &button, &row, rect);

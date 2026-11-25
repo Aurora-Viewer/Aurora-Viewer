@@ -10,12 +10,13 @@ use crate::ui::skin::{Layout, ToolButton};
 const FORMAT: &str = "aurora-toolbar-interface";
 const MAX_BUTTONS: usize = 512;
 const MAX_MAP: usize = 1024;
-const FIELDS: [&str; 21] = [
+const FIELDS: [&str; 22] = [
     "buttons",
     "locked",
     "vr_button_migrated",
     "director_button_migrated",
     "import_bar_filled",
+    "import_shortcut_given",
     "left",
     "right",
     "bottom_style",
@@ -267,6 +268,7 @@ pub(crate) fn snapshot(settings: &ToolbarSettings, layout: &Layout, islands: boo
     toolbar.vr_button_migrated = true;
     toolbar.director_button_migrated = true;
     toolbar.import_bar_filled = true;
+    toolbar.import_shortcut_given = true;
     for (bar, style) in [
         (Bar::Bottom, &mut toolbar.bottom_style),
         (Bar::Left, &mut toolbar.left_style),
@@ -317,6 +319,7 @@ pub(crate) fn read(text: &str) -> Result<Profile, String> {
     document.toolbar.vr_button_migrated = true;
     document.toolbar.director_button_migrated = true;
     document.toolbar.import_bar_filled = true;
+    document.toolbar.import_shortcut_given = true;
     Ok(Profile {
         base: document.base,
         toolbar: document.toolbar,
