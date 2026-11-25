@@ -2025,18 +2025,22 @@ impl Session<'_> {
             NetCommand::ExperienceAdmin(experience) => self.experience_admin(experience),
             NetCommand::UpdateExperience { experience, body } => self.update_experience(experience, body),
             NetCommand::Touch { local_id } => {
-                // a click is a grab immediately followed by a release (LLToolGrab)
+                // a click is a grab immediately followed by a release
+                // (LLToolGrab), each sent once, unreliable, as the Legacy
+                // Viewer's send_ObjectGrab_message / send_ObjectDeGrab_message
+                // (lltoolgrab.cpp): a resend reaching the simulator after it
+                // forgot the original is taken for a second click (#4948)
                 let mut g = ObjectGrab::default();
                 g.agent_data.agent_id = self.agent_id();
                 g.agent_data.session_id = self.session_id();
                 g.object_data.local_id = local_id;
                 g.object_data.grab_offset = Vec3::ZERO;
-                self.send_main(&g, true);
+                self.send_main(&g, false);
                 let mut d = ObjectDeGrab::default();
                 d.agent_data.agent_id = self.agent_id();
                 d.agent_data.session_id = self.session_id();
                 d.object_data.local_id = local_id;
-                self.send_main(&d, true);
+                self.send_main(&d, false);
             }
             NetCommand::RequestSit { handle, target, offset } => {
                 // handle_object_sit (Firestorm llviewermenu.cpp) sends to the
@@ -8046,6 +8050,77 @@ mod script_dialog_tests {
             }
         }
         out
+    }
+    /// #4948: a click (grab, release) and a spin go out once and
+    /// unreliable, as the Legacy Viewer's lltoolgrab.cpp sends them
+    /// (`sendMessage`): never kept for a resend, which a simulator that
+    /// forgot the original takes for a second touch.
+    #[tokio::test]
+    async fn clicks_and_spins_go_out_once_unreliable_like_the_legacy_viewer() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let sim = UdpSocket::bind("127.0.0.1:0").await.expect("simulator");
+        let sim_addr = sim.local_addr().expect("simulator address");
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let sims = [(sim_addr, Sim::new(sim_addr, 10))].into();
+        let mut session = test_session(&sh, sock.clone(), sims, sim_addr);
+        sock.writable().await.expect("socket ready");
+        let object = Uuid::from_u128(7);
+        let commands = [
+            NetCommand::Touch { local_id: 42 },
+            NetCommand::ObjectGrab {
+                handle: 10,
+                local_id: 42,
+                offset: Vec3::ZERO,
+                surface: TouchSurface::default(),
+            },
+            NetCommand::ObjectRelease {
+                handle: 10,
+                local_id: 42,
+                surface: TouchSurface::default(),
+            },
+            NetCommand::Build(crate::build::BuildCmd::SpinStart {
+                handle: 10,
+                object_id: object,
+            }),
+            NetCommand::Build(crate::build::BuildCmd::SpinStop {
+                handle: 10,
+                object_id: object,
+            }),
+        ];
+        // (Touch is a grab and a release: two packets)
+        let expected = [
+            "ObjectGrab",
+            "ObjectDeGrab",
+            "ObjectGrab",
+            "ObjectDeGrab",
+            "ObjectSpinStart",
+            "ObjectSpinStop",
+        ];
+        for command in commands {
+            session.on_command(command);
+        }
+        for name in expected {
+            let mut datagram = [0; 1200];
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("the packet reaches the simulator")
+                .expect("packet");
+            let packet = parse_packet(&datagram[..size]).expect("datagram");
+            let got = match name {
+                "ObjectGrab" => packet.decode::<ObjectGrab>().map(|m| m.object_data.local_id == 42),
+                "ObjectDeGrab" => packet.decode::<ObjectDeGrab>().map(|m| m.object_data.local_id == 42),
+                "ObjectSpinStart" => packet.decode::<ObjectSpinStart>().map(|m| m.object_data.object_id == object),
+                _ => packet.decode::<ObjectSpinStop>().map(|m| m.object_data.object_id == object),
+            };
+            assert!(got.is_ok_and(|ok| ok), "{name} in order");
+            assert!(!packet.reliable(), "{name} is not reliable");
+            assert!(
+                !session.sims[&sim_addr].circuit.is_unacked(packet.sequence),
+                "{name} is not kept for a resend"
+            );
+        }
+        assert!(sim.try_recv_from(&mut [0; 1200]).is_err(), "nothing else, no resend");
     }
 }
 
