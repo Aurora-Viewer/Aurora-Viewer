@@ -146,9 +146,9 @@ pub(super) fn show(
                 ui.add_space(12.0);
                 granted(ui, p, f, &name, actions);
                 ui.add_space(10.0);
-                alerts(ui, p, world, f.id);
-                ui.add_space(10.0);
                 received(ui, p, f, &name);
+                ui.add_space(10.0);
+                alerts(ui, p, world, f.id);
             }
             if id != world.agent_id {
                 ui.add_space(10.0);
