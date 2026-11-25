@@ -670,53 +670,80 @@ fn read_web_pointer(ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, enab
     let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let owner = ui.data(|d| d.get_temp::<CaptureOwner>(owner_id));
     let held_elsewhere = owner.is_some_and(|o| o.token != token && if o.held { o.frame + 1 >= frame } else { o.frame == frame });
-    let (latest, interact, pressed, released, down, focused) = ui.input(|i| {
+    let (latest, interact, pressed, released, down, focus_lost) = ui.input(|i| {
         (
             i.pointer.latest_pos(),
             i.pointer.interact_pos(),
             i.pointer.primary_pressed(),
             i.pointer.primary_released(),
             i.pointer.primary_down(),
-            i.focused,
+            // lost now, not merely absent: a press can reach a window that
+            // has not got the system focus yet (LLViewerWindow::handleFocusLost)
+            i.events.iter().any(|e| matches!(e, egui::Event::WindowFocused(false))),
         )
     });
+    let hit = |pos: egui::Pos2| enabled && pointer_hits_web_view(ui, resp, rect, pos);
+    let on_view = interact.is_some_and(hit);
+    // a press anywhere decides the focus, even one another page takes: a
+    // page drawn after it that had the keyboard loses it, as there is one
+    // keyboard focus (LLMediaCtrl::handleMouseDown's setFocus takes it)
+    let focus = (enabled && pressed).then_some(on_view);
     // another page holds the pointer: this one gets none of it (a capture
     // of this one left from before ends with it)
     if held_elsewhere {
         return WebPointer {
             release: captured,
             missed_release: captured,
+            focus,
             ..WebPointer::default()
         };
     }
-    let hit = |pos: egui::Pos2| enabled && pointer_hits_web_view(ui, resp, rect, pos);
     let hover = latest.filter(|&pos| hit(pos));
-    let on_view = interact.is_some_and(hit);
     let press = pressed && on_view;
     // (a press and its release in the same frame: a click)
     let held = captured || press;
-    // a capture whose release never came: the button is up, or the window
-    // lost the focus (the release of a button held then never arrives)
-    let lost = captured && !released && !press && (!down || !focused);
+    // the holder was not drawn last frame (closed, hidden, scrolled out of
+    // view): it held nothing meanwhile, as LLFloater::setVisible drops the
+    // capture, and the press now down is not its own
+    let gone = captured && owner.is_some_and(|o| o.token == token && o.frame + 1 < frame);
+    // a capture whose release never came: the button is up, the window lost
+    // the focus (the release of a button held then never arrives), or the
+    // page was not drawn
+    let lost = captured && !released && !press && (!down || focus_lost || gone);
     let release = (released && (held || on_view)) || lost;
     let still = held && !released && !lost;
     if held {
         ui.data_mut(|d| d.insert_temp(owner_id, CaptureOwner { token, frame, held: still }));
     }
+    // the holder takes the wheel for the whole hold, and the scroll area
+    // under it does not scroll too (LLViewerWindow::handleScrollWheel gives
+    // it to the captor only)
+    let wheel = if still {
+        let clicks = wheel_clicks(ui);
+        if clicks.is_some() {
+            ui.ctx().input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+        }
+        clicks
+    } else {
+        hover.and_then(|_| wheel_clicks(ui))
+    };
     WebPointer {
-        moved: if still || (held && released) { latest.or(interact) } else { hover },
+        // (a missed release goes where the page last saw the pointer, with
+        // no move to the live pointer before it)
+        moved: if lost {
+            None
+        } else if still || (held && released) {
+            latest.or(interact)
+        } else {
+            hover
+        },
         hover: hover.is_some(),
         press,
         release,
         missed_release: lost,
         double_click: resp.double_clicked() && on_view,
-        focus: (enabled && pressed).then_some(on_view),
-        // the holder takes the wheel for the whole hold
-        wheel: if still {
-            wheel_clicks(ui)
-        } else {
-            hover.and_then(|_| wheel_clicks(ui))
-        },
+        focus,
+        wheel,
         captured: still,
     }
 }
@@ -1224,6 +1251,77 @@ mod tests {
             None,
         );
         assert_eq!(after.a_pointer.moved, None, "the pointer is no longer the page's");
+    }
+
+    /// Review of PR #3599: a press on one page takes the keyboard from a page
+    /// drawn after it, which the held-elsewhere return used to skip, so both
+    /// kept the focus outline and the keys could go to the wrong page.
+    #[test]
+    fn a_press_on_one_page_takes_the_focus_from_the_other() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+        two_pages(&mut frames, Vec::new(), None);
+        let laid = two_pages(&mut frames, Vec::new(), None);
+        let (on_a, on_b) = (laid.a.center(), laid.b.center());
+        two_pages(&mut frames, vec![egui::Event::PointerMoved(on_b)], None);
+        let on_page_b = two_pages(&mut frames, vec![egui::Event::PointerMoved(on_b), pointer_button(on_b, true)], None);
+        assert_eq!(on_page_b.b_pointer.focus, Some(true));
+        two_pages(
+            &mut frames,
+            vec![egui::Event::PointerMoved(on_b), pointer_button(on_b, false)],
+            None,
+        );
+        two_pages(&mut frames, vec![egui::Event::PointerMoved(on_a)], None);
+        // page A is drawn first and takes the press; page B, drawn after it,
+        // is told it lost the focus
+        let on_page_a = two_pages(&mut frames, vec![egui::Event::PointerMoved(on_a), pointer_button(on_a, true)], None);
+        assert_eq!(on_page_a.a_pointer.focus, Some(true));
+        assert_eq!(on_page_a.b_pointer.focus, Some(false), "the other page lets the keyboard go");
+    }
+
+    /// Review of PR #3599: a press that reaches a window without the system
+    /// focus keeps its capture; only losing the focus ends it.
+    #[test]
+    fn a_capture_lasts_in_a_window_without_the_focus_until_the_focus_is_lost() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+        frames.focused = false;
+        two_pages(&mut frames, Vec::new(), None);
+        let laid = two_pages(&mut frames, Vec::new(), None);
+        let on_a = laid.a.center();
+        two_pages(&mut frames, vec![egui::Event::PointerMoved(on_a)], None);
+        let press = two_pages(&mut frames, vec![egui::Event::PointerMoved(on_a), pointer_button(on_a, true)], None);
+        assert!(press.a_pointer.captured);
+        let held = two_pages(&mut frames, vec![egui::Event::PointerMoved(on_a + egui::vec2(10.0, 0.0))], None);
+        assert!(held.a_pointer.captured && !held.a_pointer.release, "still held, no early mouseup");
+        let release = two_pages(&mut frames, vec![pointer_button(on_a + egui::vec2(10.0, 0.0), false)], None);
+        assert!(
+            release.a_pointer.release && !release.a_pointer.missed_release,
+            "one release, the real one"
+        );
+    }
+
+    /// Review of PR #3599: a capture whose page stops being drawn (closed,
+    /// hidden, scrolled away) holds nothing meanwhile: drawn again with the
+    /// button down for something else, it ends as a missed release, with no
+    /// move to the live pointer before it.
+    #[test]
+    fn a_capture_ends_when_its_page_was_not_drawn() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+        two_pages(&mut frames, Vec::new(), None);
+        let laid = two_pages(&mut frames, Vec::new(), None);
+        let on_a = laid.a.center();
+        two_pages(&mut frames, vec![egui::Event::PointerMoved(on_a)], None);
+        let press = two_pages(&mut frames, vec![egui::Event::PointerMoved(on_a), pointer_button(on_a, true)], None);
+        assert!(press.a_pointer.captured);
+        // two frames where the pages are not drawn, the button still down
+        frames.run(Vec::new(), |_| {});
+        frames.run(Vec::new(), |_| {});
+        let back = two_pages(&mut frames, vec![egui::Event::PointerMoved(on_a + egui::vec2(5.0, 5.0))], None);
+        assert!(back.a_pointer.release && back.a_pointer.missed_release, "the old capture ends");
+        assert_eq!(back.a_pointer.moved, None, "no move before the missed release");
+        assert!(!back.a_pointer.captured);
     }
 
     /// While one page holds the pointer, another page gets none of it: no
