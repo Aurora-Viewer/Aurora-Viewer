@@ -2262,6 +2262,10 @@ Coarse updates refine the followed friend's position at their 4 m height
 resolution. Both map layouts identify unavailable altitude and allow an
 explicit teleport height; a height-only edit in the full-frame map survives
 tracking replies but is cleared for another friend or a direct Teleport To.
+`world/friend_rights.rs` keeps one GrantUserRights in flight per friend:
+the app's send path holds a newer choice until the server's ChangeUserRights
+answers the one sent, an answer that is not the latest no longer overwrites
+the choice shown, and a timeout covers a lost answer.
 `world/friend_join.rs` scopes a two-stage join to accepted map/contact
 teleports with unknown height. After the expected region arrival, new target
 object/terse or usable coarse reports drive one ordinary local teleport;

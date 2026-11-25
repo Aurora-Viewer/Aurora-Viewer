@@ -417,10 +417,30 @@ impl World {
 
     /// Commands queued by groups, sessions and the block list.
     pub fn take_social_commands(&mut self) -> Vec<NetCommand> {
+        self.expire_rights_grants(std::time::Instant::now());
         let mut cmds = self.groups.take_commands();
         cmds.extend(self.group_data.take_commands());
         cmds.extend(self.group_money.take_commands());
         cmds
+    }
+}
+
+impl World {
+    /// Grants of rights whose answer never came (friend_rights): the
+    /// friend's newest choice leaves, or what the server said is shown.
+    pub(super) fn expire_rights_grants(&mut self, now: std::time::Instant) {
+        use super::friend_rights::Answer;
+        for (friend, answer) in self.social.rights_sync.expired(now) {
+            match answer {
+                Answer::Send(rights) => self.groups.out.push(NetCommand::GrantUserRights { friend, rights }),
+                Answer::Show(rights) => {
+                    if let Some(f) = self.social.friends.iter_mut().find(|f| f.id == friend) {
+                        f.rights_given = rights;
+                    }
+                }
+                Answer::Keep => {}
+            }
+        }
     }
 }
 

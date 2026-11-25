@@ -6815,6 +6815,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_APPLINKS=1\|actions\|preview\|<command>[:restore]` | URI examples, visible action markers, their previews or a minimize/reopen scenario |
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive\|edit\|scenes` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; `scenes`: an experience's environment pushes, then its clear; also fills Me › Experiences; `edit` opens the club experience's Edit tab |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations (`lost`: the dead end a restart used to leave) |
+| `AURORA_DEMO_RIGHTS_DELAY_MS=<ms>\|lost` | How late the demo server answers a friend rights change (800 by default) |
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
 | `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs, the Chat Service's direct history (`service`) and saved private/group conversation restoration |
@@ -10316,6 +10317,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_DEMO_GROUP_PROFILE=officer`, a plain member may not invite), at frame 600;
   add `AURORA_DEMO_PEOPLE=legacy` to see the classic buttons. The saved preference defaults to off
   (Preferences > Chat > Show the Contacts tab).
+- **`AURORA_DEMO_RIGHTS_DELAY_MS=<ms>|lost`**: how late the demo server
+  answers a change of the rights given to a friend (ChangeUserRights), 800
+  ms by default as a grid round trip. With a long delay (3000), click
+  several right boxes of one friend in Contacts › Friends quickly: every
+  box keeps the last click, and the log's `demo rights:` lines show one
+  grant per friend at a time, the newest choice leaving after each answer.
+  `lost` never answers: the newest choice leaves after the viewer's 15 s
+  timeout.
 - **`AURORA_DEMO_SET_NOTICES=config|config-responses|config-bottom|chat`**: at frame 60 the
   set Family (the demo friend Nova in it, in memory only) gets "Show
   notifications" and its own Do Not Disturb response, and the friends'

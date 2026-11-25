@@ -83,6 +83,8 @@ pub struct Social {
     /// since their last start: FSFloaterIM::processIMTyping, cleared by
     /// IM_TYPING_STOP, their message or OTHER_TYPING_TIMEOUT.
     typing: HashMap<Uuid, std::time::Instant>,
+    /// Grants of rights to friends waiting for the server's answer.
+    pub rights_sync: super::friend_rights::RightsSync,
 }
 
 /// How long a resident's "is typing" lasts without a new start
@@ -219,6 +221,7 @@ impl Social {
     pub fn end_friendship(&mut self, id: &Uuid) -> bool {
         let before = self.friends.len();
         self.friends.retain(|f| f.id != *id);
+        self.rights_sync.forget(id);
         self.friends.len() != before
     }
 
