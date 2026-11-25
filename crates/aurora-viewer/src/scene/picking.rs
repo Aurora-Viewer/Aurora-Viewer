@@ -474,17 +474,17 @@ impl Scene {
             // (indra/newview/llviewerwindow.cpp) casts 512 m, whatever the
             // draw distance. A hit farther than `DEPTH_NEAR` behind the depth
             // is taken only when it is the surface drawn there (`drawn_at`),
-            // at the depth's point. What is not drawn is not picked: a hidden
+            // at the depth's point (read its surface on `surface_ray`). What
+            // is not drawn is not clicked where a depth is drawn: a hidden
             // rendering type, or what the photo or RLVa leaves out, as
-            // `pick_objects` skips them.
+            // `pick_objects` skips them. The photo camera's probe still
+            // meets them: a wall left out of the picture stops it as before.
             let eye = self.last_cull.map_or(ray.0, |view| view.eye);
             let hits = ray_hits(&candidates, |&idx| {
                 let g = self.gpu.get(idx)?;
                 let o = world.objects.get(idx)?;
                 if g.hud
-                    || g.hidden
-                    || g.unseen
-                    || g.rlva_hidden
+                    || (point.is_some() && (g.hidden || g.unseen || g.rlva_hidden))
                     || g.is_avatar
                     || g.rigged
                     || (g.owner_avatar.is_some() && o.visual_volume().is_mesh() && !worn_unrigged_mesh(o, g))
@@ -505,9 +505,12 @@ impl Scene {
                 match point {
                     Some(p) if hit.t > (p - ray.0).dot(ray.1) + DEPTH_NEAR => {
                         // (the ray may have gone on beside the part drawn
-                        // there, through a gap of the same object)
-                        self.drawn_at(world, idx, ray.0, p, now, mode)
-                            .then_some(((p - ray.0).dot(ray.1), idx, p))
+                        // there, through a gap of the same object); ranked
+                        // where it meets the texel's ray, so that a surface
+                        // a few centimetres behind the one drawn there (a
+                        // wall behind a poster) does not come before it
+                        let past = self.drawn_at(world, idx, ray.0, p, now, mode)?;
+                        Some(((p - ray.0).dot(ray.1) + past, idx, p))
                     }
                     _ => Some((hit.t, idx, ray.0 + ray.1 * hit.t)),
                 }
@@ -980,7 +983,7 @@ impl Scene {
 
     /// Whether `idx` is the surface drawn at `depth`, a point read from the
     /// depth under the cursor: met within `DEPTH_NEAR` of it on the way from
-    /// `origin`. The depth is that of a render texel, up to a texel beside
+    /// `origin`, and then how far past the depth (negative: in front). The depth is that of a render texel, up to a texel beside
     /// the click's ray: on a face seen at an angle far away, that puts it
     /// well short of where the ray meets the same face (with FSR, 9 to 28 cm
     /// 70 to 120 m away, one click in ten, #4869), and on a surface drawn in
@@ -988,12 +991,10 @@ impl Scene {
     /// the face behind does not meet there. Only that stretch is cast: a
     /// face of the same object farther in front writes no depth there (an
     /// invisible, blended or cut-out face), or the depth would be its own.
-    fn drawn_at(&self, world: &World, idx: usize, origin: Vec3, depth: Vec3, now: Instant, mode: FacePick) -> bool {
-        let Some(dir) = (depth - origin).try_normalize() else {
-            return false;
-        };
-        self.face_hit_mode(world, idx, (depth - dir * DEPTH_NEAR, dir), now, true, mode)
-            .is_some_and(|hit| hit.t <= 2.0 * DEPTH_NEAR)
+    fn drawn_at(&self, world: &World, idx: usize, origin: Vec3, depth: Vec3, now: Instant, mode: FacePick) -> Option<f32> {
+        let dir = (depth - origin).try_normalize()?;
+        let hit = self.face_hit_mode(world, idx, (depth - dir * DEPTH_NEAR, dir), now, true, mode)?;
+        (hit.t <= 2.0 * DEPTH_NEAR).then_some(hit.t - DEPTH_NEAR)
     }
 
     /// `face_hit` against the full-detail geometry held for foot placement
@@ -1499,6 +1500,21 @@ impl Scene {
         } else {
             pick::te_transform(st, [tf.scale_s, tf.scale_t], [tf.offset_s, tf.offset_t], tf.rotation)
         }
+    }
+
+    /// The ray on which to read the surface of an object a selection pick
+    /// on `ray` took at `point`: `ray` itself when the point lies on it;
+    /// else the ray to the point from just before it, as `drawn_at` cast
+    /// it. A far face is taken at the depth drawn under the cursor, beside
+    /// the ray (#4869), where the ray may meet another face of the object
+    /// behind: the face, its coordinates and the position a touch or a grab
+    /// sends are then the drawn one's.
+    pub fn surface_ray(ray: (Vec3, Vec3), point: Vec3) -> (Vec3, Vec3) {
+        let off = point - ray.0;
+        if (off - ray.1 * off.dot(ray.1)).length() <= 1e-3 {
+            return ray;
+        }
+        off.try_normalize().map_or(ray, |dir| (point - dir * DEPTH_NEAR, dir))
     }
 
     pub fn touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
@@ -2965,8 +2981,53 @@ pub(crate) mod tests {
             // ray's hit behind it
             if selected && matches!(depth, Depth::Face(_) | Depth::Edge) {
                 assert_eq!((left.0, menu.0), (Some(point), Some(point)), "{deg}°, {x} m, {depth:?}");
+                // and its surface (a touch, a grab) is read there, not where
+                // the click's ray meets the object behind it
+                let offset = world.region_offset(world.objects.get(front).unwrap().key.region).unwrap();
+                let read = Scene::surface_ray(ray, point);
+                for surface in [
+                    scene.left_touch_surface(&world, front, read),
+                    scene.touch_surface(&world, front, read),
+                ] {
+                    let at = surface.expect("surface").position + offset;
+                    assert!(at.distance(point) < 1e-3, "{deg}°, {x} m, {depth:?}: {at} for {point}");
+                }
+                let behind = scene.left_touch_surface(&world, front, ray).expect("surface").position + offset;
+                assert!(behind.distance(point) > 0.1, "{deg}°, {x} m, {depth:?}");
             }
         }
+        // a point on the ray reads its surface on the ray itself
+        let ray = (Vec3::new(0.0, 0.3, 50.0), Vec3::new(1.0, 0.1, 0.0).normalize());
+        assert_eq!(Scene::surface_ray(ray, ray.0 + ray.1 * 150.0), ray);
+    }
+
+    #[test]
+    fn a_surface_just_behind_the_one_drawn_at_the_depth_does_not_come_before_it() {
+        // A poster drawn 10 m away, slightly turned: the click's ray meets it
+        // 2 cm behind the depth. A wall 5 cm behind the depth, turned more,
+        // which that ray meets 15 cm behind it: drawn there only if nothing
+        // is in front, and then it is taken.
+        let (mut world, mut scene, poster, wall) = indexed_scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let point = Vec3::new(10.0, 0.1, 50.0);
+        // each quad (the -X side of a unit cube) through `at`, turned by
+        // atan(slope): the click's ray, 10 cm beside the depth, meets it
+        // `slope` × 10 cm behind `at`
+        for (idx, at, slope) in [(poster, point, 0.2f32), (wall, point + Vec3::X * 0.05, 1.0)] {
+            let turn = slope.atan();
+            let o = world.objects.get_mut(idx).unwrap();
+            o.rotation = Quat::from_rotation_z(turn);
+            o.position = at + Vec3::new(turn.cos(), turn.sin(), 0.0) * 0.5;
+        }
+        let pick = |scene: &Scene| {
+            (
+                scene.left_selection_pick(&world, Some(ray), Some(point), true, false, 256.0).1,
+                scene.selection_pick(&world, Some(ray), Some(point), false, false, 256.0).1,
+            )
+        };
+        assert_eq!(pick(&scene), (Some(poster), Some(poster)));
+        scene.gpu[poster].hidden = true;
+        assert_eq!(pick(&scene), (Some(wall), Some(wall)));
     }
 
     #[test]
@@ -3046,6 +3107,12 @@ pub(crate) mod tests {
             for far in [2.4, 256.0] {
                 assert_eq!(pick(&scene, far), (Some(back), Some(back)), "flag {n}, far {far}");
             }
+            // the photo camera's probe (no depth) still meets it
+            assert_eq!(
+                scene.selection_pick(&world, Some(ray), None, true, false, 256.0).1,
+                Some(front),
+                "flag {n}, probe"
+            );
             hide(&mut scene.gpu[front], false);
         }
         // The front cube's bounds start at 2.134 m from the ray's origin on

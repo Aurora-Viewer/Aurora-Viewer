@@ -90,6 +90,9 @@ impl App {
             self.settings.build.select_probes,
             self.settings.draw_distance,
         );
+        // the ray its touch is read on: to a far face taken where it is
+        // drawn, beside the cursor's (`Scene::surface_ray`)
+        let mut menu_ray = ray;
         let surface = match self.pick_name_tag(hit, ray) {
             Some((idx, p)) => Some((
                 Some(idx),
@@ -101,7 +104,14 @@ impl App {
             // transparent faces)
             None => match self.designate(crate::scene::drawn::Gesture::Menu, &picked, hit) {
                 Some(d) => Some((Some(d.idx), d.hit.point)),
-                None => hit.map(|p| (target, p)),
+                None => {
+                    if let (Some(p), Some(idx)) = (hit, target)
+                        && self.scene.gpu.get(idx).is_some_and(|g| !g.is_avatar)
+                    {
+                        menu_ray = ray.map(|r| Scene::surface_ray(r, p));
+                    }
+                    hit.map(|p| (target, p))
+                }
             },
         };
         let particles: Vec<_> = picked
@@ -114,7 +124,7 @@ impl App {
             .collect();
         let particle_only = surface.is_none();
         let (object, point) = surface.or_else(|| particles.first().map(|p| (None, p.point)))?;
-        self.object_menu_pick(object, ray, particles, particle_only);
+        self.object_menu_pick(object, menu_ray, particles, particle_only);
         self.object_menu.near = object
             .filter(|_| point.is_finite() && point.distance(self.world.agent.position) <= 1.5)
             .and_then(|idx| self.world.objects.get(linkset_root(&self.world, idx)))

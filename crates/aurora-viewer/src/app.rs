@@ -8557,6 +8557,7 @@ impl App {
             .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
             .flatten();
         let mut face_drawn: Option<crate::scene::drawn::DrawnObject> = None;
+        let mut surface_ray = None;
         let (hit, target, ray) = if let Some((idx, point, ray)) = hud {
             (Some(point), Some(idx), ray)
         } else if self.build.tool == crate::build::Tool::Create && !self.settings.build.copy_selection && !(self.shift || self.ctrl) {
@@ -8615,13 +8616,18 @@ impl App {
                     picked.depth.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())),
                 )
             };
+            let ray = picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y));
             // a rigged mesh is selected where it is shown (Legacy Viewer: with
             // the move tool only, LLToolCompTranslate)
             let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
                 Some(d) => (Some(d.hit.point), Some(d.idx)),
-                None => (hit, target),
+                None => {
+                    // a far face taken where it is drawn, beside the ray
+                    surface_ray = hit.filter(|_| target.is_some()).map(|p| crate::scene::Scene::surface_ray(ray, p));
+                    (hit, target)
+                }
             };
-            (hit, target, picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y)))
+            (hit, target, ray)
         };
         let mods = crate::build::Mods {
             shift: self.shift,
@@ -8632,6 +8638,7 @@ impl App {
         let surface = if let Some(d) = face_drawn {
             self.scene.drawn_surface(&self.world, &d)
         } else {
+            let ray = surface_ray.unwrap_or(ray);
             match (self.build.tool, self.build.edit_mode, target) {
                 (crate::build::Tool::Edit, crate::build::EditMode::Face, Some(i)) => self.scene.edit_touch_surface(&self.world, i, ray),
                 (crate::build::Tool::Edit | crate::build::Tool::Grab, _, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
