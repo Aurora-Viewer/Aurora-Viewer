@@ -20762,11 +20762,8 @@ impl App {
                         self.open_web_link(u, None);
                     }
                 }
-                if self.notif_ui.open
-                    && self.notif_ui.center.tab == ui::notification_center::Tab::ToDo
-                    && had_notifications
-                    && self.world.notifications.listed().next().is_none()
-                {
+                let listed_now = self.world.notifications.listed().next().is_some();
+                if self.notif_ui.open && ui::notifications::list_emptied(had_notifications, listed_now, self.notif_ui.center.tab) {
                     self.notif_ui.open = false;
                     ctx.request_repaint();
                 }

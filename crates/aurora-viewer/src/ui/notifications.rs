@@ -32,6 +32,7 @@ pub(crate) const CARD_ROW_SPACING: f32 = 6.0;
 pub struct NotifUi {
     pub privacy: crate::world::rlva::privacy::TextFilter,
     pub open: bool,
+    /// To Do listed something at the last frame.
     pub was_listed: bool,
     /// Bottom-left of the bell (where the list opens).
     pub anchor: Option<egui::Pos2>,
@@ -1027,8 +1028,9 @@ fn shown_toasts(list: &Notifications, nui: &NotifUi, dnd: bool) -> (Vec<u64>, us
     (keep, behind)
 }
 
-/// Port of LLSysWellWindow::removeItemByID: close when the To Do list becomes empty.
-pub(super) fn list_emptied(was_listed: bool, listed_now: bool, tab: super::notification_center::Tab) -> bool {
+/// Port of LLSysWellWindow::removeItemByID (indra/newview/llsyswellwindow.cpp):
+/// close when the To Do list becomes empty.
+pub(crate) fn list_emptied(was_listed: bool, listed_now: bool, tab: super::notification_center::Tab) -> bool {
     tab == super::notification_center::Tab::ToDo && was_listed && !listed_now
 }
 
