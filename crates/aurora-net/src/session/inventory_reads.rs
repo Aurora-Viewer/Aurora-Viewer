@@ -48,6 +48,13 @@ impl Queue {
             self.next_generation = self.next_generation.wrapping_add(1);
             if let Some(entry) = self.entries.get_mut(&key) {
                 entry.ordinary |= !attachment;
+                if attachment
+                    && !entry.attachment
+                    && let Some(index) = self.waiting.iter().position(|waiting| *waiting == key)
+                {
+                    self.waiting.remove(index);
+                    self.waiting.push_front(key);
+                }
                 entry.attachment |= attachment;
                 if entry.cap != cap {
                     entry.cap = cap.clone();
@@ -271,6 +278,19 @@ mod tests {
         assert!(queue.start().is_none());
         assert_eq!(queue.finish(&read, false), Some((true, true)));
         assert!(queue.entries.is_empty());
+    }
+
+    #[test]
+    fn queued_ordinary_read_is_promoted_by_an_attachment_consumer() {
+        let mut queue = Queue::default();
+        let owner = Uuid::new_v4();
+        let first = Uuid::new_v4();
+        let attachment = Uuid::new_v4();
+        queue.enqueue(owner, vec![first, attachment], Arc::from("synthetic-cap"), false);
+        queue.enqueue(owner, vec![attachment], Arc::from("synthetic-cap"), true);
+        assert_eq!(queue.start().unwrap().key, (owner, attachment));
+        assert_eq!(queue.start().unwrap().key, (owner, first));
+        assert!(queue.start().is_none());
     }
 
     #[test]

@@ -73,6 +73,8 @@ pub struct Inventory {
     pub(crate) failed_at: HashMap<Uuid, std::time::Instant>,
     /// Failed item reads (network, server error), by attempt.
     pub item_failures: HashMap<Uuid, u8>,
+    pub(crate) background_idle: bool,
+    pub(crate) accepted_snapshot_items: Vec<Uuid>,
     /// Failed item reads to ask for again (`take_item_retries`).
     pub item_retries: HashSet<Uuid>,
     /// The listing folders the Marketplace data holds in place, set by the
@@ -286,6 +288,21 @@ impl Inventory {
         self.request(id);
     }
 
+    /// A deliberate open can take over a failed background read. Leave the
+    /// retry owner in place so it can reconcile the interactive result.
+    pub fn open_folder(&mut self, id: Uuid) {
+        if self.too_big.contains(&id) || self.requests_held() {
+            self.request(id);
+            return;
+        }
+        if let Some(folder) = self.folders.get_mut(&id)
+            && matches!(folder.state, FetchState::Unknown | FetchState::Failed)
+        {
+            folder.state = FetchState::Fetching;
+            self.queue.push((id, folder.library));
+        }
+    }
+
     /// A shown folder keeps main's paced retry without bypassing background
     /// ownership. Other automatic producers still only request unknown folders.
     pub fn request_shown(&mut self, id: Uuid, now: std::time::Instant) {
@@ -315,6 +332,13 @@ impl Inventory {
     /// AISUpdate::parseCategory's stale-folder refetch (llaisapi.cpp).
     /// Returns the folders that were stale and queued.
     pub fn apply(&mut self, contents: Vec<FolderContents>) -> Vec<Uuid> {
+        self.apply_snapshots(contents, false)
+    }
+
+    pub(super) fn apply_snapshots(&mut self, contents: Vec<FolderContents>, acknowledge: bool) -> Vec<Uuid> {
+        if acknowledge {
+            self.accepted_snapshot_items.clear();
+        }
         self.generation += 1;
         let mut refreshed: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
         let mut stale = Vec::new();
@@ -379,6 +403,9 @@ impl Inventory {
             // succeeded) is no longer over the limit.
             self.too_big.remove(&c.folder_id);
             self.repair_item_parents(&mut c.items, parents::ItemSource::Snapshot);
+            if acknowledge && !library {
+                self.accepted_snapshot_items.extend(c.items.iter().map(|item| item.id));
+            }
             self.add_items_inner(c.items);
             self.sort_children(c.folder_id);
         }
@@ -600,9 +627,28 @@ impl Inventory {
         }
     }
 
+    pub fn take_accepted_snapshot_items(&mut self) -> Vec<Uuid> {
+        std::mem::take(&mut self.accepted_snapshot_items)
+    }
+
     /// A broken link's original: confirmed gone, and not received since.
     pub fn broken(&self, id: &Uuid) -> bool {
         self.missing_items.contains(id) && !self.items.contains_key(id)
+    }
+
+    pub(crate) fn set_background_idle(&mut self, idle: bool) {
+        if self.background_idle != idle {
+            self.background_idle = idle;
+            self.generation += 1;
+        }
+    }
+
+    /// Only a wear may skip an exhausted original. Other consumers still
+    /// distinguish unknown metadata from a confirmed missing record.
+    pub(crate) fn can_skip_wear_original(&self, id: &Uuid) -> bool {
+        self.background_idle
+            && !self.items.contains_key(id)
+            && self.item_failures.get(id).is_some_and(|attempts| *attempts >= ITEM_FETCH_ATTEMPTS)
     }
 
     /// The server answered that these items do not exist.
@@ -630,7 +676,7 @@ impl Inventory {
             *attempts = attempts.saturating_add(1).min(ITEM_FETCH_ATTEMPTS);
             if *attempts >= ITEM_FETCH_ATTEMPTS {
                 if previous < ITEM_FETCH_ATTEMPTS {
-                    log::warn!("inventory item {id} remains unavailable after {attempts} failed reads; existence is unconfirmed");
+                    log::debug!("inventory item {id} remains unavailable after {attempts} failed reads; existence is unconfirmed");
                 }
                 self.item_retries.remove(id);
             } else {

@@ -59,18 +59,26 @@ explicit collision sources and convex decomposition retain their existing path.
 `Inventory::retrying_folders` owns background cooldowns. The walker checks each
 target before retrying it. Open views retry after ten seconds through
 `Inventory::request_shown`, honoring cooldown ownership and folder limits.
-Explicit retries use `Inventory::retry`.
+An explicit folder open can issue an interactive read during cooldown;
+the walker reconciles that result before resuming. Bulk demand requests only
+unknown folders.
 
 `session/inventory_reads.rs` coalesces ordinary and attachment AIS reads by
-owner and item within a session and admits up to 16 at once. After applying
-folder data, `pump_network_events` acknowledges known originals to cancel
+owner and item within a session and admits up to 16 at once, separately
+from background folder reads. An attachment consumer promotes a queued
+ordinary read. A logical item read has a 180-second total deadline, including
+paced attempts, and repeated failures use per-key 2/10/60-second cooldowns.
+Only records accepted from a version-checked folder snapshot acknowledge
 redundant ordinary reads. Attachment metadata repair has its own delivery event.
 `CheckInventoryOffer` uses a separate fresh server read and private reply.
 
 Outfit restoration keeps still-linked originals pending past the initial
 metadata grace period. Accepted late metadata resumes attachment restoration.
 Explicit detaches, confirmed absence and authoritative outfit changes cancel
-pending intent. Temporary read failures leave existence unconfirmed.
+pending intent. Late attachments have independent retry windows; after the
+initial restore, passive pending checks run at most once per second. A
+deliberate wear may omit an exhausted original when the background walk is
+idle. The saved source and the item's existence are unchanged.
 
 `ui/chat/select/document.rs` scopes the transcript's rich-text selection to
 group notice bodies, in group profiles and notification cards. It retains

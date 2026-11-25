@@ -133,6 +133,9 @@ pub struct OutfitRestore {
     /// deadline is not proof of deletion; keep the intent without issuing
     /// more reads, until metadata arrives or an authoritative change cancels it.
     pending_wear: HashMap<Uuid, PendingWear>,
+    /// Late originals have their own attach confirmation and retry window.
+    late_attachments: HashMap<Uuid, (Instant, bool)>,
+    next_pending_poll: Option<Instant>,
     bake_requested: Option<i32>,
     bake_retries: u32,
     /// Rebake: the COF version the server answered last, taken as received
@@ -187,6 +190,8 @@ impl Default for OutfitRestore {
             rewears: 0,
             user_removed: HashSet::new(),
             pending_wear: HashMap::new(),
+            late_attachments: HashMap::new(),
+            next_pending_poll: None,
             bake_requested: None,
             bake_retries: 0,
             stepped_cof_version: -1,
@@ -282,6 +287,16 @@ pub(super) fn names(inv: &Inventory, ids: &[Uuid]) -> String {
         .join(", ")
 }
 
+fn missing_originals(inv: &Inventory, ids: &[Uuid]) -> String {
+    let known: Vec<_> = ids.iter().copied().filter(|id| inv.items.contains_key(id)).collect();
+    let unresolved = ids.len() - known.len();
+    match (known.is_empty(), unresolved) {
+        (_, 0) => names(inv, &known),
+        (true, _) => format!("{unresolved} with metadata still unavailable"),
+        (false, _) => format!("{}, {unresolved} with metadata still unavailable", names(inv, &known)),
+    }
+}
+
 impl OutfitRestore {
     pub fn is_done(&self) -> bool {
         self.stage == Stage::Done
@@ -295,7 +310,7 @@ impl OutfitRestore {
     /// The restore is putting the missing objects on (or waiting to ask
     /// again).
     pub fn is_attaching(&self) -> bool {
-        matches!(self.stage, Stage::Attaching { .. })
+        matches!(self.stage, Stage::Attaching { .. }) || !self.late_attachments.is_empty()
     }
 
     /// Every object the restore puts on (but those taken off on purpose)
@@ -313,8 +328,17 @@ impl OutfitRestore {
 
     /// Nothing left to do: the login restore is over and no worn object
     /// waits for its item.
+    /// Login-only work that can still affect automatic hover height.
+    pub fn has_pending_login_restore(&self) -> bool {
+        !self.late_attachments.is_empty() || self.pending_wear.values().any(|source| *source == PendingWear::LoginRestore)
+    }
+
     pub fn is_idle(&self) -> bool {
-        self.is_done() && self.pending_wear.is_empty()
+        self.is_done() && self.pending_wear.is_empty() && self.late_attachments.is_empty()
+    }
+
+    pub fn needs_update(&self, now: Instant) -> bool {
+        !self.is_done() || !self.is_idle() && self.next_pending_poll.is_none_or(|due| now >= due)
     }
 
     /// The server answered the bake request.
@@ -364,7 +388,9 @@ impl OutfitRestore {
         self.user_removed.extend(items.iter().copied());
         for item in items {
             self.pending_wear.remove(item);
+            self.late_attachments.remove(item);
         }
+        self.knocked_off.retain(|id| !self.user_removed.contains(id));
     }
 
     /// Whether the COF link of `item` stays when the region takes it off
@@ -388,7 +414,7 @@ impl OutfitRestore {
         match self.stage {
             Stage::Waiting | Stage::FetchCof { .. } | Stage::FetchItems { .. } => true,
             Stage::Settle | Stage::Attaching { .. } => self.objects.contains(&item),
-            Stage::Done => self.pending_wear.get(&item) == Some(&PendingWear::LoginRestore),
+            Stage::Done => self.pending_wear.get(&item) == Some(&PendingWear::LoginRestore) || self.late_attachments.contains_key(&item),
         }
     }
 
@@ -412,7 +438,9 @@ impl OutfitRestore {
     }
 
     pub fn update(&mut self, mut w: OutfitInputs, now: Instant) {
+        self.next_pending_poll = Some(now + Duration::from_secs(1));
         self.wear_known(&mut w, now);
+        self.retry_late_attachments(&mut w, now);
         let restore_deadline = match self.stage {
             Stage::Settle => Some(self.ready_at.unwrap_or(now) + MAX_SETTLE),
             Stage::Attaching { since, .. } => Some(since + RETRY_AFTER),
@@ -433,7 +461,11 @@ impl OutfitRestore {
             self.knocked_off.retain(|id| self.objects.contains(id));
         }
         match self.stage {
-            Stage::Done => {}
+            Stage::Done => {
+                if !self.late_attachments.is_empty() && w.ready && current_outfit_objects(w.inventory).is_some() {
+                    self.rewear_knocked_off(&w, now, true);
+                }
+            }
             Stage::Waiting => {
                 if !w.ready || w.inventory.folders.is_empty() {
                     return;
@@ -549,22 +581,7 @@ impl OutfitRestore {
                 };
             }
             Stage::Attaching { since, retried } => {
-                let lost = self.watch_worn(&w, now);
-                self.knocked_off.extend(
-                    lost.into_iter()
-                        .filter(|id| self.requested.contains_key(id) && !self.user_removed.contains(id)),
-                );
-                let quiet = self.last_arrival.is_none_or(|at| now.saturating_duration_since(at) >= QUIET);
-                if !self.knocked_off.is_empty() && quiet && self.rewears < REWEAR_ROUNDS {
-                    self.rewears += 1;
-                    let list: Vec<AttachRequest> = std::mem::take(&mut self.knocked_off)
-                        .iter()
-                        .filter(|id| !w.worn.contains(id))
-                        .filter_map(|id| w.inventory.items.get(id))
-                        .map(|it| attach_request(it, w.agent))
-                        .collect();
-                    self.send_attach(w.inventory, list, now, "taken-off ");
-                }
+                self.rewear_knocked_off(&w, now, false);
                 if now.duration_since(since) < RETRY_AFTER {
                     return;
                 }
@@ -572,25 +589,35 @@ impl OutfitRestore {
                     .objects
                     .iter()
                     .filter(|id| !w.worn.contains(id) && !self.user_removed.contains(id))
+                    .filter(|id| !self.pending_wear.contains_key(id) && !self.late_attachments.contains_key(id))
                     .copied()
                     .collect();
                 if missing.is_empty() || retried {
                     let detail = if missing.is_empty() {
                         String::new()
                     } else {
-                        format!(", missing {}", names(w.inventory, &missing))
+                        format!(", missing {}", missing_originals(w.inventory, &missing))
                     };
-                    log::info!(
-                        "outfit: {} of {} attachments worn{detail}",
-                        self.objects.len() - missing.len(),
-                        self.objects.len()
-                    );
+                    let deferred = self
+                        .objects
+                        .iter()
+                        .filter(|id| !w.worn.contains(id) && (self.pending_wear.contains_key(id) || self.late_attachments.contains_key(id)))
+                        .count();
+                    if deferred == 0 {
+                        log::info!(
+                            "outfit: {} of {} attachments worn{detail}",
+                            self.objects.len() - missing.len(),
+                            self.objects.len()
+                        );
+                    } else {
+                        log::info!("outfit: initial attach round finished with {deferred} deferred attachments{detail}");
+                    }
                     self.stage = Stage::Done;
                 } else {
                     log::info!(
                         "outfit: {} attachments still missing, asking again: {}",
                         missing.len(),
-                        names(w.inventory, &missing)
+                        missing_originals(w.inventory, &missing)
                     );
                     self.attach_missing(&mut w, now);
                     self.stage = Stage::Attaching { since: now, retried: true };
@@ -643,6 +670,32 @@ impl OutfitRestore {
         lost
     }
 
+    fn rewear_knocked_off(&mut self, w: &OutfitInputs, now: Instant, late_only: bool) {
+        let lost = self.watch_worn(w, now);
+        self.knocked_off.retain(|id| !late_only || self.late_attachments.contains_key(id));
+        self.knocked_off.extend(lost.into_iter().filter(|id| {
+            self.requested.contains_key(id) && !self.user_removed.contains(id) && (!late_only || self.late_attachments.contains_key(id))
+        }));
+        let quiet = self.last_arrival.is_none_or(|at| now.saturating_duration_since(at) >= QUIET);
+        if !self.knocked_off.is_empty() && quiet && self.rewears < REWEAR_ROUNDS {
+            self.rewears += 1;
+            let list: Vec<AttachRequest> = std::mem::take(&mut self.knocked_off)
+                .iter()
+                .filter(|id| !w.worn.contains(id))
+                .filter(|id| {
+                    !late_only
+                        || !self
+                            .requested
+                            .get(id)
+                            .is_some_and(|at| now.saturating_duration_since(*at) < MIN_RETRY)
+                })
+                .filter_map(|id| w.inventory.items.get(id))
+                .map(|it| attach_request(it, w.agent))
+                .collect();
+            self.send_attach(w.inventory, list, now, "taken-off ");
+        }
+    }
+
     fn refetch_cof(&self, inv: &mut Inventory) {
         if let Some(f) = inv.folders.get_mut(&self.cof) {
             f.state = FetchState::Unknown;
@@ -656,7 +709,7 @@ impl OutfitRestore {
         let list: Vec<AttachRequest> = self
             .objects
             .iter()
-            .filter(|id| !w.worn.contains(id) && !self.user_removed.contains(id))
+            .filter(|id| !w.worn.contains(id) && !self.user_removed.contains(id) && !self.late_attachments.contains_key(id))
             .filter(|id| {
                 !self
                     .requested
@@ -683,7 +736,7 @@ impl OutfitRestore {
             .collect();
         let mut list = Vec::new();
         let mut obsolete = Vec::new();
-        let mut resumed_login = false;
+        let mut late = Vec::new();
         self.pending_wear.retain(|id, source| {
             // taken out of the outfit, or worn meanwhile
             if w.worn.contains(id) {
@@ -710,7 +763,7 @@ impl OutfitRestore {
                     if !matches!(self.stage, Stage::Attaching { .. } | Stage::Done) {
                         return true;
                     }
-                    resumed_login = true;
+                    late.push(*id);
                 }
                 list.push(attach_request(item, w.agent));
                 return false;
@@ -718,15 +771,43 @@ impl OutfitRestore {
             true
         });
         self.objects.retain(|id| !obsolete.contains(id));
-        if resumed_login {
-            // Give newly available originals the usual bounded attach/retry
-            // window, even if the known part of the login restore has ended.
-            self.stage = Stage::Attaching {
-                since: now,
-                retried: false,
-            };
-        }
+        self.late_attachments.extend(late.into_iter().map(|id| (id, (now, false))));
         self.send_attach(w.inventory, list, now, "looked-up ");
+    }
+
+    fn retry_late_attachments(&mut self, w: &mut OutfitInputs, now: Instant) {
+        if self.late_attachments.is_empty() {
+            return;
+        }
+        let linked = current_outfit_objects(w.inventory);
+        let mut retry = Vec::new();
+        let mut unlinked = Vec::new();
+        self.late_attachments.retain(|id, (since, retried)| {
+            if linked.as_ref().is_some_and(|items| !items.contains(id)) {
+                unlinked.push(*id);
+                return false;
+            }
+            if now.saturating_duration_since(*since) < RETRY_AFTER {
+                return true;
+            }
+            if w.worn.contains(id)
+                || *retried
+                || now.saturating_duration_since(*since) >= RETRY_AFTER + FETCH_TIMEOUT && (!w.ready || linked.is_none())
+            {
+                return false;
+            }
+            if w.ready && linked.is_some() {
+                let Some(item) = w.inventory.items.get(id) else {
+                    return false;
+                };
+                retry.push(attach_request(item, w.agent));
+                *since = now;
+                *retried = true;
+            }
+            true
+        });
+        self.objects.retain(|id| !unlinked.contains(id));
+        self.send_attach(w.inventory, retry, now, "late retry ");
     }
 
     fn send_attach(&mut self, inv: &Inventory, list: Vec<AttachRequest>, now: Instant, kind: &str) {
@@ -963,6 +1044,27 @@ mod tests {
             ..Default::default()
         };
         (inv, restore)
+    }
+
+    #[test]
+    fn recovery_late_original_retries_only_its_own_attachment() {
+        let (mut inv, mut restore) = deferred_login_original();
+        let now = Instant::now();
+        fetch_cof(&mut inv, &[201, 202]);
+        restore.objects.push(Uuid::from_u128(202));
+        restore.requested.insert(Uuid::from_u128(202), now - RETRY_AFTER);
+        inv.add_items(vec![item(201, Uuid::from_u128(10), ASSET_OBJECT, INV_OBJECT, 0)]);
+        restore.update(inputs(&mut inv, &[]), now);
+        assert_eq!(requested(&restore.commands), vec![201]);
+        assert!(!restore.needs_update(now + Duration::from_millis(100)));
+        assert!(restore.needs_update(now + Duration::from_secs(1)));
+        restore.commands.clear();
+        restore.update(inputs(&mut inv, &[]), now + RETRY_AFTER);
+        assert_eq!(requested(&restore.commands), vec![201]);
+        restore.commands.clear();
+        restore.update(inputs(&mut inv, &[]), now + RETRY_AFTER * 2);
+        assert!(restore.commands.is_empty());
+        assert!(restore.is_idle());
     }
 
     #[test]

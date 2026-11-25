@@ -53,18 +53,21 @@ pub(super) fn menu_rules(inv: &Inventory, worn: &HashSet<Uuid>, busy: bool, id: 
     let owned = !folder.library && folder.info.type_default == model::FT_OUTFIT;
     let idle = !busy && owned;
     let current = model::base(inv) == Some(id);
-    let ready = idle && model::complete(inv, id) && model::cof(inv).is_some_and(|cof| model::complete(inv, cof));
+    let cof = model::cof(inv);
+    let ready = idle && model::complete(inv, id) && cof.is_some_and(|cof| model::complete(inv, cof));
+    let wear_ready = idle && model::complete_for_wear(inv, id) && cof.is_some_and(|cof| model::complete_for_wear(inv, cof));
     let links = model::folder_links(inv, id);
-    let nonempty = links.iter().any(|l| !l.folder);
+    let wearable = |l: &aurora_net::outfits::OutfitLink| !l.folder && !inv.can_skip_wear_original(&l.target);
+    let nonempty = links.iter().any(wearable);
     // LLFindWearablesEx skips body parts: they are swapped, never taken off
-    let can_add = links.iter().any(|l| !l.folder && !worn.contains(&l.target));
+    let can_add = links.iter().any(|l| wearable(l) && !worn.contains(&l.target));
     let can_remove = links
         .iter()
         .any(|l| worn.contains(&l.target) && inv.items.get(&l.target).is_some_and(|it| it.asset_type != 13));
     let removable = owned && !current && model::system_folder(inv, 14).is_some();
     Some(MenuRules {
-        replace: ready && nonempty && (!current || model::dirty(inv)),
-        add: ready && can_add,
+        replace: wear_ready && nonempty && (!current || model::dirty(inv)),
+        add: wear_ready && can_add,
         remove: ready && can_remove,
         folder: idle,
         favorite: folder.info.favorite,
@@ -226,11 +229,12 @@ fn menu_body(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
         .iter()
         .map(|id| menu_rules(inv, &worn, st.pending.is_some(), *id).map(|rules| locked(*id, rules)))
         .collect();
-    let ready = all_rules.as_ref().is_some_and(|rules| rules.iter().all(|rule| rule.folder))
-        && selection.iter().all(|id| model::complete(inv, *id));
-    let enabled = |single, test: fn(&MenuRules) -> bool| {
+    let selectable = all_rules.as_ref().is_some_and(|rules| rules.iter().all(|rule| rule.folder));
+    let ready = selectable && selection.iter().all(|id| model::complete(inv, *id));
+    let wear_ready = selectable && selection.iter().all(|id| model::complete_for_wear(inv, *id));
+    let enabled = |single, selection_ready, test: fn(&MenuRules) -> bool| {
         if multiple {
-            ready && all_rules.as_ref().is_some_and(|rules| rules.iter().any(test))
+            selection_ready && all_rules.as_ref().is_some_and(|rules| rules.iter().any(test))
         } else {
             single
         }
@@ -240,7 +244,7 @@ fn menu_body(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
         p,
         "shirt-filled",
         aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
-        enabled(rules.replace, |rule| rule.replace),
+        enabled(rules.replace, wear_ready, |rule| rule.replace),
     ) {
         actions.push(st.wear_selection(&outfits, false));
     }
@@ -249,7 +253,7 @@ fn menu_body(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
         p,
         "plus",
         aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit"),
-        enabled(rules.add, |rule| rule.add),
+        enabled(rules.add, wear_ready, |rule| rule.add),
     ) {
         actions.push(st.wear_selection(&outfits, true));
     }
@@ -258,7 +262,7 @@ fn menu_body(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
         p,
         "minus",
         aurora_i18n::tr!("ui-appearance-gallery-take-off"),
-        enabled(rules.remove, |rule| rule.remove),
+        enabled(rules.remove, ready, |rule| rule.remove),
     ) {
         actions.push(if multiple {
             Action::RemoveOutfits(selection.clone())
@@ -922,6 +926,22 @@ mod tests {
         assert!(!library.folder && !library.replace && !library.save);
         assert_eq!(library.delete, None);
         assert!(menu_rules(&inv, &worn, false, Uuid::from_u128(9999)).is_none());
+    }
+
+    #[test]
+    fn exhausted_original_enables_wear_but_not_save_when_background_is_idle() {
+        let (mut inv, worn) = demo_inventory();
+        let outfit = Uuid::from_u128(704);
+        let target = Uuid::from_u128(723);
+        inv.items.remove(&target);
+        for _ in 0..crate::world::inventory::ITEM_FETCH_ATTEMPTS {
+            inv.items_failed(&[target]);
+        }
+        assert!(!menu_rules(&inv, &worn, false, outfit).unwrap().replace);
+        inv.set_background_idle(true);
+        let rules = menu_rules(&inv, &worn, false, outfit).unwrap();
+        assert!(rules.replace);
+        assert!(!rules.save);
     }
 
     #[test]

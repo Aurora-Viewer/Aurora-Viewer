@@ -400,7 +400,7 @@ impl AppearanceUi {
         for id in &ids {
             ready &= model::loaded(inv, *id);
             for link in model::folder_links(inv, *id).into_iter().filter(|link| !link.folder) {
-                if inv.broken(&link.target) {
+                if inv.broken(&link.target) || inv.can_skip_wear_original(&link.target) {
                     continue;
                 }
                 ready &= inv.items.contains_key(&link.target);
@@ -2198,7 +2198,9 @@ pub fn show(
                 // add lock on its folder.
                 let locks = world.rlva_wear_locks();
                 let unlocked = selection.iter().all(|id| locks.folder_allows(*id, true));
-                let ready = available && unlocked && st.selection_info(&world.inventory, selection).1;
+                let wear_ready =
+                    st.pending.is_none() && model::cof(&world.inventory).is_some_and(|cof| model::complete_for_wear(&world.inventory, cof));
+                let ready = wear_ready && unlocked && st.selection_info(&world.inventory, selection).1;
                 for (icon, label, kind, append) in [
                     ("plus", aurora_i18n::tr!("common-add"), ActionKind::Flat, true),
                     ("shirt-filled", aurora_i18n::tr!("common-wear"), ActionKind::Primary, false),

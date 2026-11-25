@@ -576,6 +576,7 @@ pub(super) fn show(
                 }
             }
             if response.clicked() {
+                inv.open_folder(row.id);
                 browse(st, prefs, row.id);
             }
             if response.double_clicked() && row.branches {
@@ -590,7 +591,7 @@ pub(super) fn show(
                         .get(&row.id)
                         .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed))
                 {
-                    inv.retry(row.id);
+                    inv.open_folder(row.id);
                 }
             }
         }

@@ -93,8 +93,40 @@ fn explicit_folder_open_retries_without_waiting_for_the_view_poll() {
     assert_eq!(inv.folders[&root].state, FetchState::Failed);
     inv.request(root);
     assert!(inv.queue.is_empty(), "ordinary automatic demand does not restart failures");
-    inv.retry(root);
+    inv.retrying_folders.insert(root);
+    inv.open_folder(root);
+    inv.open_folder(root);
     assert_eq!(inv.queue, [(root, false)], "an explicit open keeps main's immediate retry");
+    assert!(inv.retrying_folders.contains(&root), "the walker reconciles the interactive read");
+}
+
+#[test]
+fn stale_folder_reply_cannot_acknowledge_an_already_known_item() {
+    let mut inv = fixture();
+    let root = inv.root;
+    let known = id(987_654);
+    inv.add_items(vec![InvItem {
+        id: known,
+        parent: root,
+        ..Default::default()
+    }]);
+    let version = inv.folders[&root].info.version;
+    let snapshot = |version| FolderContents {
+        folder_id: root,
+        owner_id: Uuid::nil(),
+        version,
+        folders: vec![],
+        items: vec![InvItem {
+            id: known,
+            parent: root,
+            ..Default::default()
+        }],
+    };
+    assert_eq!(inv.apply_snapshots(vec![snapshot(version - 1)], true), vec![root]);
+    assert!(inv.take_accepted_snapshot_items().is_empty());
+    assert!(inv.items.contains_key(&known));
+    assert!(inv.apply_snapshots(vec![snapshot(version)], true).is_empty());
+    assert_eq!(inv.take_accepted_snapshot_items(), vec![known]);
 }
 
 #[test]

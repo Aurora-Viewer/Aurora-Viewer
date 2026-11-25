@@ -1903,7 +1903,9 @@ impl World {
         // OpenSim has no AIS: FetchInventoryDescendents2 reads one level
         self.inventory_background
             .set_legacy(!self.main_has_cap("InventoryAPIv3"), !self.main_has_cap("LibraryAPIv3"));
-        self.inventory_background.pump(&mut self.inventory, self.agent_id)
+        let commands = self.inventory_background.pump(&mut self.inventory, self.agent_id);
+        self.inventory.set_background_idle(self.inventory_background.is_idle());
+        commands
     }
 
     /// Persist the fetched inventory (next login skips unchanged folders).
@@ -3119,7 +3121,7 @@ impl World {
     /// on and only waits out its retry window.
     pub fn outfit_restoring(&self) -> bool {
         self.login.is_some()
-            && !self.outfit.is_done()
+            && (!self.outfit.is_done() || self.outfit.has_pending_login_restore())
             && !self.outfit_attachments_worn()
             && (self.outfit.started()
                 || !self.movement_complete
@@ -3137,7 +3139,7 @@ impl World {
     /// Run the outfit restore and the wears waiting for their items; its
     /// network commands are left in `self.outfit.commands`.
     pub fn update_outfit(&mut self, second_life: bool, now: Instant) {
-        if self.outfit.is_idle() {
+        if !self.outfit.needs_update(now) {
             return;
         }
         let ready = self.demo_outfit_region
@@ -4996,12 +4998,12 @@ impl World {
                 None
             }
             NetEvent::InventoryContents(c) => {
-                self.inventory.apply(c);
+                self.inventory.apply_snapshots(c, true);
                 None
             }
             NetEvent::InventoryTreeFetched { request, result } => {
                 let (stale, outcome) = match result {
-                    Ok(contents) => (self.inventory.apply(contents), Ok(())),
+                    Ok(contents) => (self.inventory.apply_snapshots(contents, true), Ok(())),
                     Err(error) => (Vec::new(), Err(error)),
                 };
                 self.inventory_background.on_reply(&mut self.inventory, request, &stale, outcome);

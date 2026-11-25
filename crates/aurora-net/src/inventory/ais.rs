@@ -259,7 +259,7 @@ pub async fn fetch_tree(
         url.push_str("&children=");
         url.push_str(&ids.join(","));
     }
-    let doc = get(http, url).await?;
+    let doc = get(http, url, log::Level::Warn).await?;
     parse_tree_reply(&doc, owner, parent, children, depth).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(200)))
 }
 
@@ -285,7 +285,7 @@ fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], de
 
 /// One AIS read, retried on the conditions the Legacy Viewer's HTTP layer retries
 /// (timeout, 408/425/429 and 5xx), with its backoff and `Retry-After`.
-async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
+async fn get(http: &reqwest::Client, url: String, failure_level: log::Level) -> Result<Llsd, FetchError> {
     let mut attempt = 0;
     loop {
         attempt += 1;
@@ -300,7 +300,7 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
                     tokio::time::sleep(retry_backoff(attempt, None)).await;
                     continue;
                 }
-                log::warn!("AIS read exhausted {attempt} attempts waiting for response headers");
+                log::log!(failure_level, "AIS read exhausted {attempt} attempts waiting for response headers");
                 return Err(FetchError::new(FetchFailure::Transient, None));
             }
             Ok(Err(error)) => {
@@ -312,7 +312,11 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
                     tokio::time::sleep(retry_backoff(attempt, None)).await;
                     continue;
                 }
-                log::warn!("AIS read exhausted {attempt} attempts during transport: {}", error.without_url());
+                log::log!(
+                    failure_level,
+                    "AIS read exhausted {attempt} attempts during transport: {}",
+                    error.without_url()
+                );
                 return Err(FetchError::new(FetchFailure::Transient, None));
             }
             Ok(Ok(response)) => response,
@@ -340,7 +344,10 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
                     tokio::time::sleep(retry_backoff(attempt, wait)).await;
                     continue;
                 }
-                log::warn!("AIS read exhausted {attempt} attempts waiting for a response body (status {status})");
+                log::log!(
+                    failure_level,
+                    "AIS read exhausted {attempt} attempts waiting for a response body (status {status})"
+                );
                 return Err(FetchError::new(FetchFailure::Transient, Some(status)));
             }
             Ok(Err(error)) => {
@@ -352,7 +359,8 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
                     tokio::time::sleep(retry_backoff(attempt, wait)).await;
                     continue;
                 }
-                log::warn!(
+                log::log!(
+                    failure_level,
                     "AIS read exhausted {attempt} attempts reading a response body (status {status}): {}",
                     error.without_url()
                 );
@@ -365,7 +373,10 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
             Ok(Llsd::Undef)
         } else {
             aurora_llsd::from_xml(&body).map_err(|_| {
-                log::warn!("AIS response contains malformed LLSD (status {status}, {bytes} bytes)");
+                log::log!(
+                    failure_level,
+                    "AIS response contains malformed LLSD (status {status}, {bytes} bytes)"
+                );
                 FetchError::new(FetchFailure::Fatal, Some(status))
             })
         };
@@ -386,7 +397,7 @@ pub async fn fetch_folders(http: &reqwest::Client, cap: &str, owner: Uuid, ids: 
             let http = http.clone();
             let url = format!("{}/category/{id}/children?depth=0", cap.trim_end_matches('/'));
             tasks.spawn(async move {
-                let doc = get(&http, url).await?;
+                let doc = get(&http, url, log::Level::Warn).await?;
                 parse_folder(&doc, id, owner).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(200)))
             });
         }
@@ -436,13 +447,15 @@ pub struct ItemReads {
 }
 
 async fn read_item(http: &reqwest::Client, url: String, owner: Uuid, id: Uuid) -> Result<Option<InvItem>, FetchError> {
-    get(http, url).await.map(|doc| match parse_item_reply(&doc, id, owner) {
-        Ok(item) => Some(item),
-        Err(reason) => {
-            log::warn!("AIS item {id} response could not be parsed: {reason}");
-            None
-        }
-    })
+    get(http, url, log::Level::Debug)
+        .await
+        .map(|doc| match parse_item_reply(&doc, id, owner) {
+            Ok(item) => Some(item),
+            Err(reason) => {
+                log::debug!("AIS item {id} response could not be parsed: {reason}");
+                None
+            }
+        })
 }
 
 impl ItemReads {
@@ -454,7 +467,7 @@ impl ItemReads {
             }) => self.missing.push(id),
             Ok(None) => self.failed.push(id),
             Err(error) => {
-                log::warn!("AIS item {id} read failed: {error}");
+                log::debug!("AIS item {id} read failed: {error}");
                 self.failed.push(id);
             }
         }
@@ -466,7 +479,15 @@ impl ItemReads {
 pub(crate) async fn read_one_item(http: &reqwest::Client, cap: &str, owner: Uuid, id: Uuid) -> ItemReads {
     let mut reads = ItemReads::default();
     let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
-    reads.record(id, read_item(http, url, owner, id).await);
+    // Bound the whole logical read, including the existing HTTP retries.
+    // AISAPI::HTTP_TIMEOUT gives one read 180 seconds in the Legacy Viewer.
+    match tokio::time::timeout(std::time::Duration::from_secs(180), read_item(http, url, owner, id)).await {
+        Ok(result) => reads.record(id, result),
+        Err(_) => {
+            log::debug!("AIS item {id} exceeded its 180-second read budget");
+            reads.failed.push(id);
+        }
+    }
     reads
 }
 

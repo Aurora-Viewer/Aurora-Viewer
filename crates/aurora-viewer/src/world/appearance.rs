@@ -345,6 +345,23 @@ pub fn complete(inv: &Inventory, folder: Uuid) -> bool {
             .all(|l| l.folder || inv.items.contains_key(&l.target) || inv.broken(&l.target))
 }
 
+/// Readiness for an explicit wear only. Saving and exporting still use
+/// `complete` so they do not treat unavailable metadata as absent.
+pub fn complete_for_wear(inv: &Inventory, folder: Uuid) -> bool {
+    loaded(inv, folder)
+        && folder_links(inv, folder).iter().all(|link| {
+            link.folder || inv.items.contains_key(&link.target) || inv.broken(&link.target) || inv.can_skip_wear_original(&link.target)
+        })
+}
+
+fn require_wear_complete(inv: &Inventory, folder: Uuid) -> Result<(), String> {
+    if complete_for_wear(inv, folder) {
+        Ok(())
+    } else {
+        Err(aurora_i18n::tr!("world-appearance-this-outfit-s-inventory-is-still-loading").into())
+    }
+}
+
 /// `folder_links` without the links to a broken original, which are skipped
 /// and dropped from the rewritten folder (LLAppearanceMgr::
 /// wearInventoryCategoryOnAvatar: "Attempt to wear a broken link").
@@ -456,8 +473,11 @@ pub fn wearable_contents(inv: &Inventory, folder: Uuid) -> Result<Vec<OutfitLink
             return Err(aurora_i18n::tr!("world-appearance-cycle-in-outfit-folders").into());
         }
         let f = inv.folders.get(&id).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
-        require_complete(inv, id)?;
-        for link in usable_links(inv, id).into_iter().filter(|l| !l.folder) {
+        require_wear_complete(inv, id)?;
+        for link in usable_links(inv, id)
+            .into_iter()
+            .filter(|l| !l.folder && !inv.can_skip_wear_original(&l.target))
+        {
             let item = inv
                 .items
                 .get(&link.target)
@@ -667,7 +687,14 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         ));
     }
     let cof = cof(inv).ok_or(aurora_i18n::tr!("world-appearance-the-current-outfit-folder-is-unavailable"))?;
-    require_complete(inv, cof)?;
+    if matches!(
+        action,
+        Action::Wear(..) | Action::WearOutfits { .. } | Action::WearContents { .. } | Action::Revert
+    ) {
+        require_wear_complete(inv, cof)?;
+    } else {
+        require_complete(inv, cof)?;
+    }
     // the rewritten COF drops its broken links
     warn_broken(inv, cof);
     let mut current = usable_links(inv, cof);
@@ -869,7 +896,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 if !seen.insert(*id) {
                     continue;
                 }
-                require_complete(inv, *id)?;
+                require_wear_complete(inv, *id)?;
                 warn_broken(inv, *id);
                 links.extend(if contents {
                     wearable_contents(inv, *id)?
@@ -879,7 +906,9 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             let mut next: Vec<_> = links
                 .into_iter()
-                .filter(|l| !l.folder && inv.items.get(&l.target).is_none_or(|it| it.asset_type != 0))
+                .filter(|l| {
+                    !l.folder && !inv.can_skip_wear_original(&l.target) && inv.items.get(&l.target).is_none_or(|it| it.asset_type != 0)
+                })
                 .collect();
             if next
                 .iter()
@@ -914,6 +943,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                                         .is_some_and(|n| n.asset_type == 5 && n.flags & 0xff == it.flags & 0xff)
                                 })
                         })))
+                    || inv.can_skip_wear_original(&old.target) && old.inv_type == 18
                     || inv.items.get(&old.target).is_some_and(|it| {
                         it.asset_type == 13
                             && !next.iter().any(|l| {
@@ -2482,6 +2512,7 @@ mod tests {
     fn failed_item_reads_exhaust_their_budget_without_declaring_a_broken_link() {
         let mut inv = fixture();
         let id = Uuid::from_u128(723);
+        let original = inv.items.get(&id).expect("fixture original").clone();
         inv.items.remove(&id);
         for _ in 1..super::super::inventory::ITEM_FETCH_ATTEMPTS {
             inv.items_failed(&[id]);
@@ -2496,6 +2527,18 @@ mod tests {
             !complete(&inv, Uuid::from_u128(704)),
             "temporary unavailability must not silently remove an outfit original"
         );
+        let outfit = Uuid::from_u128(704);
+        assert!(plan(&inv, Action::Wear(outfit, false), &HashMap::new()).is_err());
+        inv.set_background_idle(true);
+        let (change, _) = plan(&inv, Action::Wear(outfit, false), &HashMap::new()).expect("wear the available items");
+        assert!(!change.links.iter().any(|link| link.target == id));
+        assert!(change.links.iter().any(|link| !link.folder));
+        assert!(folder_links(&inv, outfit).iter().any(|link| link.target == id));
+        assert!(!inv.broken(&id));
+
+        inv.add_items(vec![original]);
+        let (change, _) = plan(&inv, Action::Wear(outfit, false), &HashMap::new()).expect("wear the recovered original");
+        assert!(change.links.iter().any(|link| link.target == id));
     }
 
     #[test]

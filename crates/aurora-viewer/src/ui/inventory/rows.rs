@@ -667,6 +667,9 @@ fn rows(
                 Kind::Folder { open, branches } => {
                     let mut now = open;
                     folder_row(ui, p, icons, inv, row.id, &mut now, branches, st, prefs, facts, actions);
+                    if now && !open {
+                        inv.open_folder(row.id);
+                    }
                     if now != open && st.aurora.is_none() && st.lists_flat() {
                         // the Legacy-style single folder window goes in
                         // (Aurora's explorer goes in from its own row),
