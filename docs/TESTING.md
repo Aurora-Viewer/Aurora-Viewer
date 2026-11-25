@@ -12015,7 +12015,7 @@ In `showcase-hd`, the selected outfit has a 1024 px striped portrait loaded from
 texture disk cache, as after login. Reopen the showcase or select the outfit again:
 the card keeps its thumbnail and the large pane shows the striped portrait.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|showcase-hd|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|portrait-hd|portrait-hd-poor|photo-mode-hd|batch|batch-run|batch-hd|batch-hd-poor|batch-folder|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial|xml|xml-unavailable`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|showcase-hd|portrait|portrait-not-worn|portrait-shot|portrait-three-quarter|portrait-bust|portrait-face|portrait-profile|photo-mode|portrait-hd|portrait-hd-poor|photo-mode-hd|batch|batch-run|batch-hd|batch-hd-poor|batch-folder|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial|xml|xml-unavailable`**
 — opens Appearance with four synthetic outfits:
 
 - `xml`: opens Appearance’s gear menu at frame 650, showing Export my
@@ -12074,7 +12074,7 @@ gallery's double-click continues to open the outfit's contents.
   and a hover Wear, and Copy outfit list. Make the window narrower: under
   820 points the rail becomes a menu over the grid, under 600 the preview
   gives way to the selection card under the grid.
-- `portrait`, `portrait-not-worn`, `portrait-shot`, `portrait-bust`,
+- `portrait`, `portrait-not-worn`, `portrait-shot`, `portrait-three-quarter`, `portrait-bust`,
   `portrait-face`, `portrait-profile`, `photo-mode`: the showcase, then at
   frame 600 the outfit's auto portrait (Fider #447) of the outfit worn (in
   that framing or angle), of one not worn, or the square photo mode;
@@ -12082,8 +12082,10 @@ gallery's double-click continues to open the outfit's contents.
   the avatar (thirds, corners, "Framed automatically"), Framing / Pose /
   Angle / Backdrop / Light, Hide the other avatars, Keep these settings,
   Cancel / Take the photo, then Retake / Use this photo, and the link to the
-  photo mode. Check that the whole body, the bust or the face fills the
-  square with a small margin, from the front, three-quarter or profile; the
+  photo mode. Check that the whole body, three-quarter framing, the bust or the face fills the
+  square with a small margin, from the front, three-quarter or profile.
+  Three-quarter framing crops just above the knees and preserves the crop
+  with outstretched arms. The
   A pose lowers the arms to about 45°, Arms by the sides to the body; the
   backdrops flatten the cut-out avatar over dark, grey or light, The scene
   keeps the region; Studio lights the avatar from behind the camera. Cancel

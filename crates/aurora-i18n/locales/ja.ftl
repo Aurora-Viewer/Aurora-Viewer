@@ -4650,6 +4650,7 @@ ui-appearance-portrait-current = 現在の画像
 ui-appearance-portrait-current-replaced = 新しい写真を使うと置き換えられます。
 ui-appearance-portrait-framing = フレーミング
 ui-appearance-portrait-body = 全身
+ui-appearance-portrait-framing-three-quarter = 七分身
 ui-appearance-portrait-bust = バスト
 ui-appearance-portrait-face = 顔
 ui-appearance-portrait-pose = ポーズ

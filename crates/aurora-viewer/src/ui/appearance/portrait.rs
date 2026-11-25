@@ -82,7 +82,7 @@ pub struct View<'a> {
     pub hd: HdView,
 }
 
-const FRAMINGS: [Framing; 3] = [Framing::Body, Framing::Bust, Framing::Face];
+const FRAMINGS: [Framing; 4] = [Framing::Body, Framing::ThreeQuarter, Framing::Bust, Framing::Face];
 const POSES: [Pose; 3] = [Pose::A, Pose::ArmsDown, Pose::Current];
 const ANGLES: [Angle; 3] = [Angle::Front, Angle::ThreeQuarter, Angle::Profile];
 const BACKDROPS: [Backdrop; 4] = [Backdrop::Dark, Backdrop::Grey, Backdrop::Light, Backdrop::Scene];
@@ -163,6 +163,7 @@ pub(super) fn choices_ui(ui: &mut egui::Ui, p: &Palette, s: &mut PortraitSetting
         &FRAMINGS,
         &[
             aurora_i18n::tr!("ui-appearance-portrait-body"),
+            aurora_i18n::tr!("ui-appearance-portrait-framing-three-quarter"),
             aurora_i18n::tr!("ui-appearance-portrait-bust"),
             aurora_i18n::tr!("ui-appearance-portrait-face"),
         ],
@@ -351,7 +352,7 @@ fn choice<T: Copy + PartialEq>(ui: &mut egui::Ui, p: &Palette, title: &str, valu
     let mut selected = all.iter().position(|v| v == value).unwrap_or(0);
     let options: Vec<(&str, bool)> = labels.iter().map(|l| (*l, false)).collect();
     let changed = if widgets::segmented_size(ui, &options).x <= ui.available_width() {
-        widgets::segmented(ui, p, &mut selected, &options)
+        ui.push_id(title, |ui| widgets::segmented(ui, p, &mut selected, &options)).inner
     } else {
         let mut changed = false;
         for (i, label) in labels.iter().enumerate() {

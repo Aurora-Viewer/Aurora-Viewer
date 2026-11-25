@@ -4723,6 +4723,7 @@ ui-appearance-portrait-current = Current picture
 ui-appearance-portrait-current-replaced = It is replaced when you use the new photo.
 ui-appearance-portrait-framing = Framing
 ui-appearance-portrait-body = Full body
+ui-appearance-portrait-framing-three-quarter = Three-quarter
 ui-appearance-portrait-bust = Bust
 ui-appearance-portrait-face = Face
 ui-appearance-portrait-pose = Pose

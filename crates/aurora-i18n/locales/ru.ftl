@@ -4611,6 +4611,7 @@ ui-appearance-portrait-current = Текущее изображение
 ui-appearance-portrait-current-replaced = Новый снимок заменит текущее изображение.
 ui-appearance-portrait-framing = Кадрирование
 ui-appearance-portrait-body = В полный рост
+ui-appearance-portrait-framing-three-quarter = Выше колен
 ui-appearance-portrait-bust = По грудь
 ui-appearance-portrait-face = Лицо
 ui-appearance-portrait-pose = Поза

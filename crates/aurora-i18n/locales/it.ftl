@@ -4478,6 +4478,7 @@ ui-appearance-portrait-current = Immagine attuale
 ui-appearance-portrait-current-replaced = Viene sostituita quando si usa la nuova foto.
 ui-appearance-portrait-framing = Inquadratura
 ui-appearance-portrait-body = Figura intera
+ui-appearance-portrait-framing-three-quarter = Tre quarti
 ui-appearance-portrait-bust = Busto
 ui-appearance-portrait-face = Viso
 ui-appearance-portrait-pose = Posa

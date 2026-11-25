@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 pub enum Framing {
     #[default]
     Body,
+    ThreeQuarter,
     Bust,
     Face,
 }
@@ -241,6 +242,8 @@ pub struct Joints {
     pub neck: Vec3,
     pub chest: Vec3,
     pub pelvis: Vec3,
+    /// Corresponding hip and knee joints, when available.
+    pub thighs: [Option<(Vec3, Vec3)>; 2],
     /// The feet and toes: the lowest is the sole's height.
     pub feet: Vec<Vec3>,
     /// The shoulders, elbows and wrists: how wide the arms reach.
@@ -251,6 +254,7 @@ pub struct Joints {
 
 /// The joint names `Joints` is read from (the Legacy Viewer's skeleton,
 /// avatar_skeleton.xml).
+pub const THIGHS: [(&str, &str); 2] = [("mHipLeft", "mKneeLeft"), ("mHipRight", "mKneeRight")];
 pub const FEET: [&str; 4] = ["mFootLeft", "mFootRight", "mToeLeft", "mToeRight"];
 pub const ARMS: [&str; 6] = [
     "mShoulderLeft",
@@ -291,6 +295,21 @@ pub fn frame(j: &Joints, framing: Framing, angle: Angle, fov: f32) -> (Vec3, Vec
             sides.push(j.skull);
             (crown, sole, sides)
         }
+        Framing::ThreeQuarter => {
+            let mut crop_heights = j
+                .thighs
+                .iter()
+                .flatten()
+                .map(|(hip, knee)| hip.z + (knee.z - hip.z) * 0.85)
+                .filter(|z| z.is_finite());
+            let bottom = match (crop_heights.next(), crop_heights.next()) {
+                (Some(left), Some(right)) => (left + right) * 0.5,
+                (Some(one), None) => one,
+                _ => j.pelvis.z - (j.pelvis.z - sole) * 0.425,
+            };
+            let shoulders = j.arms.iter().take(2).copied().chain([j.pelvis, j.skull]).collect();
+            (crown, bottom, shoulders)
+        }
         Framing::Bust => {
             // the head and the chest down to its middle
             let bottom = j.chest.z - (crown - j.chest.z) * 0.45;
@@ -307,7 +326,7 @@ pub fn frame(j: &Joints, framing: Framing, angle: Angle, fov: f32) -> (Vec3, Vec
     // across the frame: the sides measured from the middle line of the
     // part framed (a head leant forward stays in the middle)
     let middle = match framing {
-        Framing::Body => j.pelvis,
+        Framing::Body | Framing::ThreeQuarter => j.pelvis,
         Framing::Bust => j.chest,
         Framing::Face => j.head,
     }
@@ -325,6 +344,15 @@ pub fn frame(j: &Joints, framing: Framing, angle: Angle, fov: f32) -> (Vec3, Vec
     let across = (low + high) * 0.5;
     let half = ((top - bottom) * 0.5).max((high - low) * 0.5).max(0.05) * (1.0 + MARGIN);
     let target = Vec3::new(middle.x, middle.y, (top + bottom) * 0.5) + right * across;
+    // Three-quarter framing keeps the lower edge just above the knees,
+    // even when the pose extends beyond the sides of the square.
+    let (half, target) = if framing == Framing::ThreeQuarter {
+        let height = (top - bottom).max(0.1);
+        let half = height * (1.0 + MARGIN * 0.5) * 0.5;
+        (half, target.with_z(bottom + half))
+    } else {
+        (half, target)
+    };
     let distance = half / (fov * 0.5).tan().max(0.05);
     (target + toward * distance, target)
 }
@@ -340,6 +368,10 @@ mod tests {
             neck: Vec3::new(0.0, 0.0, 1.50),
             chest: Vec3::new(0.0, 0.0, 1.30),
             pelvis: Vec3::new(0.0, 0.0, 1.0),
+            thighs: [
+                Some((Vec3::new(0.0, 0.1, 0.96), Vec3::new(0.0, 0.1, 0.50))),
+                Some((Vec3::new(0.0, -0.1, 0.96), Vec3::new(0.0, -0.1, 0.50))),
+            ],
             feet: vec![Vec3::new(0.05, 0.1, 0.08), Vec3::new(0.05, -0.1, 0.08)],
             arms: vec![
                 Vec3::new(0.0, 0.18, 1.42),
@@ -378,6 +410,79 @@ mod tests {
             let (x, _) = project(eye, target, fov, hand);
             assert!(x.abs() < 1.0, "the hands inside: {x}");
         }
+    }
+
+    #[test]
+    fn three_quarter_frames_from_above_knees_to_crown() {
+        let j = standing();
+        let fov = 1.0;
+        let bottom = 0.96 + (0.50 - 0.96) * 0.85;
+
+        for angle in [Angle::Front, Angle::ThreeQuarter, Angle::Profile] {
+            let (eye, target) = frame(&j, Framing::ThreeQuarter, angle, fov);
+            let (_, lower) = project(eye, target, fov, Vec3::new(0.0, 0.0, bottom));
+            let (_, upper) = project(eye, target, fov, Vec3::new(0.0, 0.0, j.skull.z + CROWN));
+
+            assert!((lower + 1.0).abs() < 1e-4, "above-knee crop: {lower}");
+            assert!(upper > 0.85 && upper < 1.0, "crown clearance: {upper}");
+            assert!((eye.z - target.z).abs() < 1e-5, "level camera");
+        }
+    }
+
+    #[test]
+    fn three_quarter_sits_between_body_and_bust() {
+        let j = standing();
+        let body = frame(&j, Framing::Body, Angle::Front, 1.0);
+        let three_quarter = frame(&j, Framing::ThreeQuarter, Angle::Front, 1.0);
+        let bust = frame(&j, Framing::Bust, Angle::Front, 1.0);
+        let distance = |(eye, target): (Vec3, Vec3)| eye.distance(target);
+
+        assert!(distance(body) > distance(three_quarter));
+        assert!(distance(three_quarter) > distance(bust));
+        assert!(body.1.z < three_quarter.1.z);
+        assert!(three_quarter.1.z < bust.1.z);
+    }
+
+    #[test]
+    fn three_quarter_keeps_its_crop_with_outstretched_arms() {
+        let mut j = standing();
+        let original = frame(&j, Framing::ThreeQuarter, Angle::Front, 1.0);
+
+        j.arms[2].y = 1.0;
+        j.arms[3].y = -1.0;
+        j.arms[4].y = 1.5;
+        j.arms[5].y = -1.5;
+
+        assert_eq!(frame(&j, Framing::ThreeQuarter, Angle::Front, 1.0), original);
+    }
+
+    #[test]
+    fn three_quarter_handles_missing_thigh_joints() {
+        let mut j = standing();
+        let original = frame(&j, Framing::ThreeQuarter, Angle::Front, 1.0);
+
+        j.thighs[0] = None;
+        assert_eq!(frame(&j, Framing::ThreeQuarter, Angle::Front, 1.0), original);
+
+        j.thighs[1] = None;
+        let (eye, target) = frame(&j, Framing::ThreeQuarter, Angle::Front, 1.0);
+        assert!(eye.is_finite() && target.is_finite());
+        assert!(eye.distance(target) > 0.0);
+    }
+
+    #[test]
+    fn three_quarter_survives_saved_settings() {
+        let settings = PortraitSettings {
+            framing: Framing::ThreeQuarter,
+            ..Default::default()
+        };
+
+        let encoded = serde_json::to_string(&settings).expect("serialize settings");
+        let decoded: PortraitSettings = serde_json::from_str(&encoded).expect("deserialize settings");
+
+        assert_eq!(decoded, settings);
+        assert_eq!(PortraitSettings::opening(&decoded).framing, Framing::ThreeQuarter);
+        assert_eq!(PortraitSettings::default().framing, Framing::Body);
     }
 
     #[test]

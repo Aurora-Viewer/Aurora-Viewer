@@ -4568,6 +4568,7 @@ ui-appearance-portrait-current = Поточне зображення
 ui-appearance-portrait-current-replaced = Його буде замінено, коли ви використаєте нове фото.
 ui-appearance-portrait-framing = Кадрування
 ui-appearance-portrait-body = На весь зріст
+ui-appearance-portrait-framing-three-quarter = Вище колін
 ui-appearance-portrait-bust = Погрудно
 ui-appearance-portrait-face = Обличчя
 ui-appearance-portrait-pose = Поза
