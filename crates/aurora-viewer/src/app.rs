@@ -825,6 +825,9 @@ pub struct App {
     /// External web link waiting for the warning's answer, with the state of
     /// its "Do not warn me again" box and, for a dangerous link, the reason.
     url_confirm: Option<(String, bool, Option<&'static str>, crate::link_trust::BrowserEntryPoint)>,
+    /// The open CouldNotTeleportReason popup: the reason as worded and its
+    /// Hypergrid explanation, both settled when the failure arrived.
+    tp_failure_popup: Option<(String, Option<&'static str>)>,
     /// The media filter's question on screen.
     media_filter_prompt: ui::media_filter::PromptUi,
     script_dialogs_were: usize,
@@ -2158,6 +2161,7 @@ impl App {
             suitcase_ask: None,
             suitcase_passed: false,
             url_confirm: None,
+            tp_failure_popup: None,
             media_filter_prompt: Default::default(),
             script_dialogs_were: 0,
             beacon_sound_at: None,
@@ -2629,6 +2633,22 @@ impl App {
         if self.demo && (self.rlva_selftest_demo_command(&cmd) || self.bridge_demo_command(&cmd)) {
             return;
         }
+        // AURORA_DEMO_TELEPORT_FAILED: the region refuses every teleport, an
+        // accepted lure included (a link to another region is refused in
+        // teleport_to_location_looking)
+        if self.demo
+            && matches!(
+                cmd,
+                NetCommand::TeleportTo { .. }
+                    | NetCommand::TeleportLandmark(_)
+                    | NetCommand::TeleportToRegion { .. }
+                    | NetCommand::TeleportHome
+                    | NetCommand::AcceptLure { .. }
+            )
+            && self.demo_teleport_refused()
+        {
+            return;
+        }
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
         // preference is not in sync with the server (TELEPORT_PENDING)
         self.named_teleport.observe(&cmd, actor);
@@ -2716,9 +2736,14 @@ impl App {
             };
             if away && let Some(blocked) = crate::demo::teleport_access_refusal(self.world.agent_access().preferred) {
                 log::info!("demo teleport refused for its rating: {}", blocked.code);
+                let code = blocked.code.clone();
                 self.world.apply(NetEvent::TeleportAccessBlocked(blocked));
-                // the prompt replaces the simulator's reason
-                self.world.apply(NetEvent::TeleportFailed { reason: String::new() });
+                // the prompt replaces the simulator's reason and its popup
+                self.world.apply(NetEvent::TeleportFailed {
+                    reason: String::new(),
+                    code: Some(code),
+                    region: String::new(),
+                });
                 return;
             }
         }
@@ -3894,7 +3919,7 @@ impl App {
                 match result {
                     Ok(command) => self.send_deferred_teleport(command, actor),
                     Err(reason) => {
-                        self.world.apply(NetEvent::TeleportFailed { reason });
+                        self.world.apply(NetEvent::viewer_teleport_failed(reason));
                     }
                 }
             }
@@ -7705,6 +7730,22 @@ impl App {
         self.suitcase_ask_for(&grid, go)
     }
 
+    /// Where the agent is, for the Hypergrid line of a teleport failure:
+    /// Second Life, its OpenSim login grid, or another grid by Hypergrid
+    /// (LFSimFeatureHandler::hyperGridURL against the login grid).
+    fn teleport_failure_grid(&self) -> crate::world::teleport_failure::Grid {
+        use crate::world::teleport_failure::Grid;
+        if self.demo && crate::demo::teleport_failure().is_some_and(|(_, hypergrid)| hypergrid) {
+            return Grid::OpenSimAway;
+        }
+        let Some(home) = crate::grids::home(&self.settings) else {
+            return Grid::SecondLife;
+        };
+        let away = crate::grids::current(&self.settings, self.world.opensim_extras())
+            .is_some_and(|here| !crate::grids::same_grid(&self.settings, &here, &home));
+        if away { Grid::OpenSimAway } else { Grid::OpenSimHome }
+    }
+
     /// The question for a teleport to `grid`, when it leaves worn items
     /// behind; true when the teleport is held for it.
     fn suitcase_ask_for(&mut self, grid: &str, go: SuitcaseGo) -> bool {
@@ -7805,6 +7846,22 @@ impl App {
         self.teleport_to_location_looking(region, pos, Vec3::X)
     }
 
+    /// AURORA_DEMO_TELEPORT_FAILED: the teleport just asked for starts, then
+    /// the region refuses it with a TeleportFailed without AlertInfo (the
+    /// reason is the code). False when the variable is not set.
+    fn demo_teleport_refused(&mut self) -> bool {
+        let Some((reason, _)) = crate::demo::teleport_failure() else {
+            return false;
+        };
+        self.world.apply(NetEvent::TeleportStarted { flags: 0 });
+        self.world.apply(NetEvent::TeleportFailed {
+            code: Some(reason.clone()),
+            reason,
+            region: String::new(),
+        });
+        true
+    }
+
     fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3) -> bool {
         let asked = region.clone();
         let Some(region) = self.grid_region(&region) else {
@@ -7840,6 +7897,9 @@ impl App {
         if local {
             self.send(command);
         } else if self.demo {
+            if self.demo_teleport_refused() {
+                return true;
+            }
             // Only inter-region demo teleports simulate a connection delay.
             aurora_net::transition::begin(
                 aurora_net::transition::Kind::Teleport,
@@ -8954,9 +9014,7 @@ impl App {
     /// path when that delayed action is refused; scripts retain their actor.
     fn send_deferred_teleport(&mut self, command: NetCommand, actor: uuid::Uuid) {
         if actor.is_nil() && !self.user_teleport_allowed(&command) {
-            self.world.apply(NetEvent::TeleportFailed {
-                reason: aurora_i18n::tr!("rlva-blocked").into(),
-            });
+            self.world.apply(NetEvent::viewer_teleport_failed(aurora_i18n::tr!("rlva-blocked")));
         } else if !actor.is_nil() && !self.world.rlva_allows_command(&command, actor) {
             // an @tpto by region name, refused once the map answered
             // (RlvHandler::onTeleportCallback, LLAgent::teleportViaLocation:
@@ -20779,6 +20837,18 @@ impl App {
                     && let Some(ask) = self.suitcase_ask.take()
                 {
                     self.answer_suitcase(ask, yes);
+                }
+                // CouldNotTeleportReason: worded once, when the failure arrives
+                if let Some(failure) = self.world.tp_failure.take() {
+                    let hint = crate::world::teleport_failure::hint(&failure.reason, self.teleport_failure_grid());
+                    self.tp_failure_popup = Some((failure.text, hint));
+                }
+                let closed = self
+                    .tp_failure_popup
+                    .as_ref()
+                    .is_some_and(|(said, hint)| ui::context::teleport_failed(&ctx, &p, &self.world, said, *hint));
+                if closed {
+                    self.tp_failure_popup = None;
                 }
                 if let Some((url, dont_warn, danger, entry)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)

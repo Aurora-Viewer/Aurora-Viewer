@@ -117,6 +117,7 @@ pub mod suitcase;
 pub mod system_messages;
 pub mod teleport_access;
 pub mod teleport_cancel;
+pub mod teleport_failure;
 pub mod teleport_invites;
 pub mod temp_attachments;
 pub mod terrain;
@@ -657,6 +658,8 @@ pub struct World {
     pub tp_progress: f32,
     pub tp_status: String,
     pub tp_failed: bool,
+    /// The simulator's last teleport failure, for its popup (`teleport_failure`).
+    pub tp_failure: Option<teleport_failure::Failure>,
     /// Whether the teleport screen offers Cancel, and a cancel sent.
     pub tp_cancel: teleport_cancel::TeleportCancel,
     /// Outfit restore at login (Current Outfit folder).
@@ -1161,6 +1164,7 @@ impl World {
             tp_progress: 0.0,
             tp_status: String::new(),
             tp_failed: false,
+            tp_failure: None,
             tp_cancel: Default::default(),
             own_animations_awaited: None,
             outfit: Default::default(),
@@ -4075,7 +4079,7 @@ impl World {
                 );
                 None
             }
-            NetEvent::TeleportFailed { reason } => {
+            NetEvent::TeleportFailed { reason, code, region } => {
                 self.cancel_friend_join_flight();
                 self.cancel_friend_join();
                 self.tp_history.failed();
@@ -4084,13 +4088,23 @@ impl World {
                 self.teleporting = false;
                 self.tp_failed = true;
                 self.teleport_access_ended(false);
-                // handle_teleport_access_blocked: a refusal for the rating
-                // gets its prompt instead of the reason
-                if !self.teleport_access_failed() {
+                // handle_teleport_access_blocked: a refusal for the rating gets
+                // its prompt instead of the reason, and process_teleport_failed
+                // returns before CouldNotTeleportReason (the call takes the
+                // refusal: once only)
+                let prompted = self.teleport_access_failed();
+                if !prompted {
+                    let said = teleport_failure::text(code.as_deref().unwrap_or_default(), &reason, &region);
                     self.system_notice(
-                        aurora_i18n::tr!("world-mod-teleport-failed", reason = reason.to_string()),
+                        aurora_i18n::tr!("world-mod-teleport-failed", reason = said.clone()),
                         crate::world::notice_topics::Topic::Teleport,
                     );
+                    // CouldNotTeleportReason: the simulator's failures only,
+                    // the viewer's own ones stay a notice
+                    if let Some(code) = code {
+                        log::warn!("teleport failed: '{reason}' (code '{code}')");
+                        self.tp_failure = Some(teleport_failure::Failure { text: said, reason });
+                    }
                 }
                 None
             }
@@ -8579,6 +8593,45 @@ mod motion_tests {
         assert!(!world.arrived_by_local_teleport, "another region: the camera comes back");
     }
 
+    /// CouldNotTeleportReason: a simulator's refusal keeps its popup, worded
+    /// as the Legacy Viewer words its code; the viewer's own failures stay a
+    /// notice.
+    #[test]
+    fn a_simulator_teleport_failure_gets_the_popup() {
+        let (mut world, _) = teleport_fixture();
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
+        world.apply(NetEvent::TeleportFailed {
+            reason: "You cannot go there".into(),
+            code: Some("noaccess_tport".into()),
+            region: String::new(),
+        });
+        let failure = world.tp_failure.clone().expect("popup kept");
+        assert_eq!(failure.text, aurora_i18n::tr!("teleport-error-noaccess-tport"));
+        assert_eq!(failure.reason, "You cannot go there");
+        let said = aurora_i18n::tr!(
+            "world-mod-teleport-failed",
+            reason = aurora_i18n::tr!("teleport-error-noaccess-tport").to_owned()
+        );
+        assert!(world.chat.iter().any(|line| line.text == said), "the notice uses the same wording");
+
+        world.tp_failure = None;
+        world.begin_teleport(true);
+        world.apply(NetEvent::viewer_teleport_failed(aurora_i18n::tr!("rlva-blocked")));
+        assert!(world.tp_failure.is_none());
+
+        // OpenSim's EntityTransferModule: an empty reason and no AlertInfo is
+        // still the simulator's failure (the Legacy Viewer's popup, empty)
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportFailed {
+            reason: String::new(),
+            code: Some(String::new()),
+            region: String::new(),
+        });
+        let failure = world.tp_failure.clone().expect("popup kept for an empty reason");
+        assert!(failure.text.is_empty() && failure.reason.is_empty());
+    }
+
     #[test]
     fn known_remote_destination_shows_progress_and_failure_ends_the_teleport() {
         let (mut world, handle) = teleport_fixture();
@@ -8590,9 +8643,9 @@ mod motion_tests {
             flying: false,
         });
         assert_eq!(world.ui_sounds.iter().filter(|s| **s == UiSound::TeleportOut).count(), 1);
-        world.apply(NetEvent::TeleportFailed {
-            reason: aurora_i18n::tr!("world-mod-destination-unavailable").into(),
-        });
+        world.apply(NetEvent::viewer_teleport_failed(aurora_i18n::tr!(
+            "world-mod-destination-unavailable"
+        )));
         assert!(!world.teleporting && world.tp_failed);
         // The screen remains eligible for its failure fade-out.
         assert!(world.tp_show_progress);
@@ -8632,7 +8685,7 @@ mod motion_tests {
             world.apply(NetEvent::TeleportStarted { flags: 0 });
             world.apply(NetEvent::TeleportFinished { handle: to, flying: false });
             if fail {
-                world.apply(NetEvent::TeleportFailed { reason: "no".into() });
+                world.apply(NetEvent::viewer_teleport_failed("no"));
                 return from;
             }
             world.apply(NetEvent::MainRegionChanged { handle: to });
