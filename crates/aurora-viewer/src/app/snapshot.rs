@@ -3590,7 +3590,7 @@ fn just_opened(was: &mut bool, open: bool) -> bool {
 }
 
 /// The floater of a photo window style: the Legacy one has its own.
-pub(super) fn photo_window_id(style: crate::settings::PhotoWindowStyle) -> &'static str {
+fn photo_window_id(style: crate::settings::PhotoWindowStyle) -> &'static str {
     if style == crate::settings::PhotoWindowStyle::Legacy {
         crate::ui::snapshot::CLASSIC_WINDOW
     } else {
