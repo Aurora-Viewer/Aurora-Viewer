@@ -1426,6 +1426,7 @@ fn explorer_file_accelerator(key: &winit::keyboard::Key, code: KeyCode, mods: Mo
     match key {
         Key::Named(NamedKey::F2) if !mods.ctrl => Some(E::F2),
         Key::Named(NamedKey::Delete) if !mods.ctrl => Some(E::Delete),
+        Key::Named(NamedKey::Backspace) if !mods.ctrl && cfg!(target_os = "macos") => Some(E::Backspace),
         Key::Character(letter) if mods.ctrl => E::from_name(letter)
             .or(match code {
                 KeyCode::KeyC => Some(E::C),
@@ -26445,6 +26446,12 @@ mod tests {
             (Key::Character("v".into()), KeyCode::KeyV, Mods { alt: true, ..ctrl }, None),
             (Key::Character("a".into()), KeyCode::KeyC, ctrl, None),
             (Key::Named(NamedKey::F2), KeyCode::F2, Default::default(), Some(egui::Key::F2)),
+            (
+                Key::Named(NamedKey::Backspace),
+                KeyCode::Backspace,
+                Default::default(),
+                cfg!(target_os = "macos").then_some(egui::Key::Backspace),
+            ),
             (
                 Key::Named(NamedKey::Delete),
                 KeyCode::Delete,

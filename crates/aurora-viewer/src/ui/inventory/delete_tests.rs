@@ -70,6 +70,94 @@ fn received() -> Inventory {
 }
 
 #[test]
+fn explorer_finishes_one_trash_move_and_accepts_the_next_while_its_main_or_detached_window_is_open() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let mut frames = Frames::new();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&frames.ctx, 1.0);
+    let palette = theme.palette();
+    let icons = Icons::default();
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut prefs = InventoryPreferences {
+        confirm_delete: false,
+        ..Default::default()
+    };
+    let facts = Facts::default();
+    let request = |inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, item: Uuid| {
+        let mut actions = Vec::new();
+        delete::confirm_or_run(inv, st, prefs, &facts, &mut actions, vec![item]);
+        actions
+    };
+    for detached in [false, true] {
+        world.inventory = received();
+        for item_id in [40, 41] {
+            item(&mut world.inventory, id(item_id), id(ROOT));
+        }
+        let mut st = InventoryUi {
+            selected: Some(id(30)),
+            selection: HashSet::from([id(30)]),
+            anchor: Some(id(30)),
+            ..Default::default()
+        };
+        let mut open = !detached;
+        if detached {
+            st.open_additional_window(&frames.ctx, InventoryStyle::Explorer, id(ROOT));
+        }
+        let mut draw = |world: &mut World, st: &mut InventoryUi, prefs: &mut InventoryPreferences| {
+            frames.run(vec![], |ui| {
+                show(
+                    ui.ctx(),
+                    &palette,
+                    &icons,
+                    world,
+                    st,
+                    None,
+                    prefs,
+                    &mut open,
+                    false,
+                    &Default::default(),
+                    &Default::default(),
+                    &Default::default(),
+                    &Default::default(),
+                    InventoryStyle::Explorer,
+                );
+            });
+        };
+        draw(&mut world, &mut st, &mut prefs);
+        let [InvAction::Delete(first)] = &mut request(&world.inventory, &mut st, &prefs, id(40))[..] else {
+            panic!("first item did not generate a Trash move");
+        };
+        st.begin_delete(id(90), first.selection.clone());
+        st.finish_delete(id(91), true, false);
+        draw(&mut world, &mut st, &mut prefs);
+        assert!(request(&world.inventory, &mut st, &prefs, id(41)).is_empty(), "unrelated reply");
+        st.finish_delete(id(90), true, true);
+        draw(&mut world, &mut st, &mut prefs);
+        assert!(
+            request(&world.inventory, &mut st, &prefs, id(41)).is_empty(),
+            "UDP move still pending"
+        );
+        rules::demo_mutate(&mut world.inventory, id(99), std::mem::take(&mut first.change)).unwrap();
+        draw(&mut world, &mut st, &mut prefs);
+        let [InvAction::Delete(second)] = &mut request(&world.inventory, &mut st, &prefs, id(41))[..] else {
+            panic!("completed first move blocked the next deletion");
+        };
+        st.begin_delete(id(91), second.selection.clone());
+        rules::demo_mutate(&mut world.inventory, id(99), std::mem::take(&mut second.change)).unwrap();
+        st.finish_delete(id(91), true, false);
+        draw(&mut world, &mut st, &mut prefs);
+        assert!(st.pending_delete.is_none());
+        assert!(
+            [40, 41]
+                .into_iter()
+                .all(|item_id| rules::parent(&world.inventory, id(item_id)) == Some(id(TRASH)))
+        );
+        assert_eq!((st.selected, st.anchor), (Some(id(30)), Some(id(30))));
+        assert_eq!(st.selection, HashSet::from([id(30)]));
+    }
+}
+
+#[test]
 fn received_deliveries_can_be_deleted_without_unlocking_other_edits() {
     let mut inv = received();
     let prefs = InventoryPreferences::default();

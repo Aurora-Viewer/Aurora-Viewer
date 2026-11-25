@@ -1740,6 +1740,44 @@ mod tests {
     }
 
     #[test]
+    fn organized_item_menu_routes_delete_and_purge_to_their_own_confirmations() {
+        use super::super::EditDialog;
+        use aurora_i18n::tr;
+        use egui::PointerButton::{Primary, Secondary};
+
+        let item = id(20);
+        let mut p = Panel::new();
+        p.inv.folders.get_mut(&id(4)).unwrap().info.type_default = 14;
+        let place = p.layout.create_custom(&p.inv, Location::MyFolders, "Project notes").unwrap();
+        assert!(p.layout.place(&p.inv, item, place));
+        p.tab.visit(place, false);
+        p.idle(3);
+        p.click_text("Bench notes", Secondary);
+        p.click_text(tr!("common-delete"), Primary);
+        assert!(matches!(&p.native.dialog, Some(EditDialog::ExplorerDelete(ids, false)) if ids == &[item]));
+
+        let trash = id(3);
+        for protected in [false, true] {
+            let mut p = Panel::new();
+            p.inv.folders.get_mut(&trash).unwrap().info.type_default = 14;
+            p.prefs.confirm_delete = false;
+            if protected {
+                p.prefs.protected.insert(item);
+            }
+            p.tab.visit(Location::Folder(trash), false);
+            p.idle(3);
+            p.click_text("Bench notes", Secondary);
+            p.click_text(tr!("ui-inventory-context-purge-object"), Primary);
+            if protected {
+                assert!(p.native.dialog.is_none());
+            } else {
+                assert!(matches!(&p.native.dialog, Some(EditDialog::ExplorerDelete(ids, true)) if ids == &[item]));
+            }
+            assert!(!p.actions.iter().any(|a| matches!(a, InvAction::Delete(_))));
+        }
+    }
+
+    #[test]
     fn organized_environment_menu_dispatches_to_self_and_requests_parcel_confirmation() {
         use aurora_i18n::tr;
         use egui::PointerButton::{Primary, Secondary};

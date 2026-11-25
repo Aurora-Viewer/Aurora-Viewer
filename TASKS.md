@@ -3218,6 +3218,7 @@ What sets the frame rate at KB once the ray tracing is kept to Deluxe (RT) ([PR 
   - Human grid validation on Windows, 2026-11-21 (`3f4225d85`): style switching, local organization versus real moves, restore and relog persistence, transfers, permissions, and window routing passed. Restore returned the test notecard to Notecards, matching the existing inventory action.
   - The icon revision (`d548fa97c`) passed the Windows repository check: 11,616 tests passed and 63 were ignored.
   - Current Aurora records the source of accepted moves to Trash and can restore an entry to that folder. Explorer’s local placement reset only changes the layout on this computer.
+  - 🟡 Explorer releases each completed Delete in the main and detached windows. Eligible worn items use the native take-off confirmation. Permanent deletion requires the explicit Trash command. Windows and in-world checks of consecutive deletions are pending.
   - ⬜ Repeat the in-world checks on the integrated build, including native tabs and split panes, real moves, Trash restoration and account-local placements.
 
 - ✅ Menu commands on toolbars ([#2341](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2341); [PR #2623](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/2623); validated by the human on the grid on 2026-11-06): add or remove 15 Build and Me commands from the menu row’s context menu; append new buttons to the bottom toolbar using the shared saved layout and live translated labels.

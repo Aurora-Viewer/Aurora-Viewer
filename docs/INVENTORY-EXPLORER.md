@@ -44,6 +44,8 @@ Open a new tab with **+** or **Ctrl+T**. Each tab shows its location’s icon an
 | Create a real folder | Choose **New → Folder** or press **Ctrl+Shift+N**, enter the name and press **Enter**. In **General Inventory**, the folder lives at your personal SL root. From **Home**, it lives under a real **Home Folders** container. In a combined category, choose the destination when prompted. |
 | Edit real inventory | With the file pane focused, **F2** renames, **Delete** moves eligible entries to Trash, and **Ctrl+X**, **Ctrl+C**, **Ctrl+V** operate the inventory clipboard across tabs. The context menu also offers type-specific actions. **Paste as link** creates another SL reference to an eligible item. |
 
+For worn clothing, removable attachments and active gestures, **Delete** asks for confirmation before taking them off or deactivating them. To permanently remove an entry already in Trash, right-click it, choose **Purge object** and confirm.
+
 When an item is in the real **Trash**, its Restore command uses the original Second Life folder if the viewer remembers it and the folder still exists. Otherwise it uses the usual destination for that inventory type. **Restore original location** in a locally arranged view clears only the Explorer placement.
 
 ## Share items and use them in-world

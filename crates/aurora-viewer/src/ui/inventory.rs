@@ -458,9 +458,12 @@ pub enum EditDialog {
     /// Items to give, then one or more residents (LLAvatarActions::shareWithAvatars).
     Share(Vec<Uuid>, Vec<Uuid>),
     Delete(Vec<Uuid>, bool),
+    /// Explorer keeps the requested Trash or purge operation across a style change.
+    ExplorerDelete(Vec<Uuid>, bool),
     /// Delete of a selection holding worn clothing or attachments: take them
     /// off first, then move the selection to the Trash.
     DetachDelete(Vec<Uuid>),
+    ExplorerDetachDelete(Vec<Uuid>),
     Empty(Uuid),
     Ungroup(Uuid),
     ReplaceLinks(Box<replace_links::ReplaceLinks>),
@@ -3181,7 +3184,7 @@ pub fn show(
         }
     }
     clipboard::prepare(st);
-    if !*open {
+    if !(*open || grouped && st.organized_host.has_detached()) {
         st.pending_delete = None;
     }
     st.focus_search = *open && (st.focus_search || !st.was_open);
@@ -3483,6 +3486,7 @@ pub fn show(
     }
     if grouped {
         st.aurora = None;
+        delete::reconcile_selection(inv, st);
         let mut host = std::mem::take(&mut st.organized_host);
         host.show(ctx, p, icons, inv, &avatar, prefs, &facts, st, open, hover_images, &mut actions);
         st.organized_host = host;

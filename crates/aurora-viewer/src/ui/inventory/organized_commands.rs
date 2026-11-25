@@ -66,6 +66,8 @@ pub(super) struct EditAvailability {
     protected: HashSet<Uuid>,
     worn: HashSet<Uuid>,
     active_gestures: std::collections::BTreeSet<Uuid>,
+    appearance_busy: bool,
+    delete_busy: bool,
     // Immutable world snapshots are shared until lock inputs change.
     rlva: std::sync::Arc<crate::world::rlva::WearLocks>,
     allowed: [bool; 4],
@@ -83,6 +85,8 @@ fn enabled_edits(inv: &Inventory, layout: &Preferences, state: &mut ExplorerStat
         && c.protected == files.prefs.protected
         && c.worn == files.facts.worn
         && c.active_gestures == files.facts.active_gestures
+        && c.appearance_busy == files.facts.appearance_busy
+        && c.delete_busy == files.delete_busy()
         && std::sync::Arc::ptr_eq(&c.rlva, &files.facts.rlva)
     {
         return c.allowed;
@@ -102,6 +106,8 @@ fn enabled_edits(inv: &Inventory, layout: &Preferences, state: &mut ExplorerStat
         protected: files.prefs.protected.clone(),
         worn: files.facts.worn.clone(),
         active_gestures: files.facts.active_gestures.clone(),
+        appearance_busy: files.facts.appearance_busy,
+        delete_busy: files.delete_busy(),
         rlva: files.facts.rlva.clone(),
         allowed,
     });
@@ -370,10 +376,12 @@ mod tests {
 
     #[test]
     fn explorer_edit_cache_tracks_gestures_and_locks_without_inventory_changes() {
-        let inv = super::super::tests::fixture();
+        let mut inv = super::super::tests::fixture();
         let layout = Preferences::default();
         let mut state = ExplorerState::at(Location::Folder(Uuid::from_u128(3)));
         let item = Uuid::from_u128(20);
+        inv.items.get_mut(&item).unwrap().asset_type = 21;
+        inv.folders.get_mut(&Uuid::from_u128(4)).unwrap().info.type_default = 14;
         state.here.selected.insert(Row::Item(item));
         let native = InventoryUi::default();
         let prefs = InventoryPreferences::default();
@@ -397,7 +405,11 @@ mod tests {
         enabled(&mut state, &facts);
         assert!(Arc::ptr_eq(&snapshot, &state.here.edit_availability.as_ref().unwrap().rlva));
         facts.active_gestures.insert(item);
+        assert!(enabled(&mut state, &facts)[3], "an active gesture can be deactivated and deleted");
+        facts.appearance_busy = true;
         assert!(!enabled(&mut state, &facts)[3]);
+        facts.appearance_busy = false;
+        assert!(enabled(&mut state, &facts)[3]);
         facts.active_gestures.clear();
         assert!(enabled(&mut state, &facts)[3]);
         facts.rlva = Arc::new(crate::world::rlva::WearLocks::holding_folders([inv.items[&item].parent]));

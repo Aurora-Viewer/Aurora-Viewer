@@ -1,5 +1,5 @@
 //! Native inventory operations from an Explorer selection. A local category has no SL parent UUID.
-use super::super::{clipboard, context_catalog as native_menu, inventory_path, move_to::MoveTo};
+use super::super::{clipboard, context_catalog as native_menu, delete, inventory_path, move_to::MoveTo};
 use super::*;
 use aurora_i18n::tr;
 
@@ -7,6 +7,12 @@ pub(super) struct Menu<'a> {
     pub native: &'a InventoryUi,
     pub prefs: &'a InventoryPreferences,
     pub facts: &'a Facts,
+}
+
+impl Menu<'_> {
+    pub(super) fn delete_busy(&self) -> bool {
+        self.native.pending_delete.is_some() || self.native.detach_delete.is_some() || self.native.dialog.is_some()
+    }
 }
 
 pub(super) enum Request {
@@ -87,6 +93,15 @@ pub(super) enum Edit {
     Delete,
 }
 
+/// A Trash move and a permanent purge have distinct commands. Check every
+/// real row so a stale or mixed selection cannot change the requested effect.
+pub(super) fn delete_enabled(inv: &Inventory, ids: &[Uuid], menu: &Menu<'_>, guarded: bool, purge: bool) -> bool {
+    menu.native.pending.is_none()
+        && !menu.delete_busy()
+        && delete::explorer_scope(inv, ids, purge, guarded)
+        && (delete::allowed(inv, ids, menu.prefs, menu.facts) || (!purge && delete::detach_allowed(inv, ids, menu.prefs, menu.facts)))
+}
+
 impl Edit {
     pub(super) fn allowed(self, inv: &Inventory, ids: &[Uuid], menu: &Menu<'_>, guarded: bool) -> bool {
         if ids.is_empty() || menu.native.pending.is_some() {
@@ -102,11 +117,7 @@ impl Edit {
             Self::Copy => clipboard::copy_allowed(inv, ids),
             Self::Rename => !guarded && ids.len() == 1 && rules::renameable(inv, ids[0]),
             // Permanent deletion remains an explicit Trash command.
-            Self::Delete => {
-                !guarded
-                    && ids.iter().all(|id| !rules::in_type(inv, *id, 14))
-                    && super::super::delete::allowed(inv, ids, menu.prefs, menu.facts)
-            }
+            Self::Delete => delete_enabled(inv, ids, menu, guarded, false),
         }
     }
 
@@ -128,7 +139,11 @@ fn plain_edit_key(event: &egui::Event) -> Option<Key> {
             repeat: false,
             modifiers,
             ..
-        } if modifiers.is_none() && matches!(key, Key::F2 | Key::Delete) => Some(*key),
+        } if modifiers.is_none() => match key {
+            Key::F2 => Some(Key::F2),
+            key if delete::deletes(*key, cfg!(target_os = "macos")) => Some(Key::Delete),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -228,6 +243,14 @@ pub(super) fn execute(
             }
         }
         Request::Native(native_menu::Command::Links(id)) => actions.push(InvAction::FindLinks(id)),
+        Request::Native(native_menu::Command::Delete(ids, purge)) => {
+            let guarded = ids.iter().any(|id| model::client_managed(inv, *id));
+            if delete_enabled(inv, &ids, &Menu { native, prefs, facts }, guarded, purge) {
+                delete::confirm_or_run_from(inv, native, prefs, facts, actions, ids, Some(purge));
+            } else {
+                state.status = tr!("explorer-real-unavailable").into();
+            }
+        }
         Request::Native(native_menu::Command::Copy(ids, cut)) => {
             let guarded = ids.iter().any(|id| model::client_managed(inv, *id));
             let edit = if cut { Edit::Cut } else { Edit::Copy };
@@ -415,7 +438,11 @@ mod tests {
     #[test]
     fn explorer_rename_and_trash_require_an_exact_unrepeated_press() {
         use egui::Modifiers;
-        for key in [Key::F2, Key::Delete] {
+        for (key, action) in [
+            (Key::F2, Some(Key::F2)),
+            (Key::Delete, Some(Key::Delete)),
+            (Key::Backspace, cfg!(target_os = "macos").then_some(Key::Delete)),
+        ] {
             let event = |pressed, repeat, modifiers| egui::Event::Key {
                 key,
                 physical_key: Some(key),
@@ -423,12 +450,83 @@ mod tests {
                 repeat,
                 modifiers,
             };
-            assert_eq!(plain_edit_key(&event(true, false, Modifiers::NONE)), Some(key));
+            assert_eq!(plain_edit_key(&event(true, false, Modifiers::NONE)), action);
             for modifiers in [Modifiers::SHIFT, Modifiers::ALT, Modifiers::CTRL, Modifiers::COMMAND] {
                 assert_eq!(plain_edit_key(&event(true, false, modifiers)), None);
             }
             assert_eq!(plain_edit_key(&event(true, true, Modifiers::NONE)), None);
             assert_eq!(plain_edit_key(&event(false, false, Modifiers::NONE)), None);
+        }
+    }
+
+    #[test]
+    fn explorer_delete_rechecks_the_command_and_uses_native_confirmations() {
+        use super::super::super::EditDialog;
+        let mut inv = super::super::tests::fixture();
+        let (item, workshop, trash) = (id(20), id(3), id(4));
+        inv.folders.get_mut(&trash).unwrap().info.type_default = 14;
+        let run = |inv: &Inventory, selected: &[Uuid], purge: bool, facts: &Facts| {
+            let mut state = ExplorerState::at(Location::Folder(workshop));
+            let mut native = InventoryUi::default();
+            let mut prefs = InventoryPreferences {
+                confirm_delete: false,
+                ..Default::default()
+            };
+            let mut actions = Vec::new();
+            state.file_request = Some(Request::Native(native_menu::Command::Delete(selected.to_vec(), purge)));
+            let mut frame = egui::Context::default().run_ui(Default::default(), |ui| {
+                execute(
+                    ui,
+                    inv,
+                    &Preferences::default(),
+                    &mut state,
+                    &mut native,
+                    &mut prefs,
+                    facts,
+                    &mut actions,
+                );
+            });
+            frame.textures_delta.clear();
+            (native.dialog, actions)
+        };
+        let mut facts = Facts::default();
+        let (dialog, actions) = run(&inv, &[item], false, &facts);
+        assert!(dialog.is_none());
+        let [InvAction::Delete(request)] = actions.as_slice() else {
+            panic!("ordinary Delete should move one item to Trash");
+        };
+        assert!(matches!(request.change.operations.as_slice(),
+            [Operation::Patch { id, body, .. }] if *id == item && body["parent_id"].as_uuid() == trash));
+
+        inv.items.get_mut(&item).unwrap().asset_type = 6;
+        facts.worn.insert(item);
+        let (dialog, actions) = run(&inv, &[workshop], false, &facts);
+        assert!(matches!(dialog, Some(EditDialog::ExplorerDetachDelete(ids)) if ids == [workshop]));
+        assert!(actions.is_empty());
+        inv.items.get_mut(&item).unwrap().asset_type = 13;
+        let (dialog, actions) = run(&inv, &[item], false, &facts);
+        assert!(dialog.is_none() && actions.is_empty(), "a worn body part is protected");
+        facts.worn.clear();
+
+        inv.folders.get_mut(&workshop).unwrap().items.clear();
+        inv.folders.get_mut(&trash).unwrap().items.push(item);
+        inv.items.get_mut(&item).unwrap().parent = trash;
+        let (dialog, actions) = run(&inv, &[item], true, &facts);
+        assert!(matches!(dialog, Some(EditDialog::ExplorerDelete(ids, true)) if ids == [item]));
+        assert!(actions.is_empty(), "purge always asks even with Trash confirmation disabled");
+        for (ids, purge) in [
+            (vec![item], false),
+            (vec![workshop], true),
+            (vec![item, workshop], false),
+            (vec![item, workshop], true),
+            (vec![trash], true),
+            (vec![id(6)], false),
+        ] {
+            let (dialog, actions) = run(&inv, &ids, purge, &facts);
+            assert!(
+                dialog.is_none() && actions.is_empty(),
+                "stale, mixed or protected Delete: {ids:?}, purge={purge}"
+            );
         }
     }
 
@@ -442,6 +540,26 @@ mod tests {
         assert_eq!(restore_roots(&inv, &[id(20)]), Some(vec![id(20)]));
         assert_eq!(restore_roots(&inv, &[id(5), id(20)]), None);
         assert_eq!(restore_roots(&inv, &[]), None);
+    }
+
+    #[test]
+    fn explorer_confirm_checks_newly_active_gestures_and_explicitly_selected_protected_children() {
+        let mut inv = super::super::tests::fixture();
+        let (item, folder, trash) = (id(20), id(3), id(4));
+        inv.folders.get_mut(&trash).unwrap().info.type_default = 14;
+        inv.items.get_mut(&item).unwrap().asset_type = 21;
+        let mut prefs = InventoryPreferences::default();
+        let mut facts = Facts::default();
+        assert!(delete::explorer_plan(&inv, &[item], false, &prefs, &facts).is_ok());
+        facts.active_gestures.insert(item);
+        assert!(delete::explorer_plan(&inv, &[item], false, &prefs, &facts).is_err());
+        facts.active_gestures.clear();
+
+        inv.folders.get_mut(&folder).unwrap().info.parent = trash;
+        assert!(delete::explorer_plan(&inv, &[folder, item], true, &prefs, &facts).is_ok());
+        prefs.protected.insert(item);
+        assert!(delete::explorer_plan(&inv, &[folder, item], true, &prefs, &facts).is_err());
+        assert!(delete::explorer_plan(&inv, &[folder], true, &prefs, &facts).is_ok());
     }
 
     #[test]

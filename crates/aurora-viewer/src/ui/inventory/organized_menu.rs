@@ -68,6 +68,7 @@ fn action(ui: &mut Ui, p: &Palette, state: &mut ExplorerState, c: &mut native::C
     let Some(e) = c.entries.iter().find(|e| e.id == key) else { return };
     let (label, tip) = match key {
         "move" => (tr!("explorer-real-move"), tr!("explorer-real-move-hint")),
+        "purge" => (e.label.as_str(), tr!("ui-inventory-dialogs-this-deletion-is-permanent")),
         "apply-parcel" if !e.enabled => (e.label.as_str(), tr!("explorer-set-parcel-unavailable")),
         _ => (e.label.as_str(), ""),
     };
@@ -116,7 +117,7 @@ fn quick_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool, tip: &str) 
     false
 }
 
-fn quick_actions(ui: &mut Ui, c: &mut native::Catalog, state: &mut ExplorerState, inv: &Inventory, selected: &[Uuid], guarded: bool) {
+fn quick_actions(ui: &mut Ui, c: &mut native::Catalog, state: &mut ExplorerState, selected: &[Uuid], guarded: bool, can_delete: bool) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         for (key, label) in [
@@ -129,8 +130,7 @@ fn quick_actions(ui: &mut Ui, c: &mut native::Catalog, state: &mut ExplorerState
             let Some(e) = c.entries.iter().find(|e| e.id == key) else {
                 continue;
             };
-            let permitted = (!guarded || !matches!(key, "cut" | "rename" | "share" | "delete"))
-                && (key != "delete" || selected.iter().all(|id| !rules::in_type(inv, *id, 14)));
+            let permitted = (!guarded || !matches!(key, "cut" | "rename" | "share")) && (key != "delete" || can_delete);
             if quick_button(
                 ui,
                 &e.icon,
@@ -202,7 +202,8 @@ pub(super) fn selected(
         .filter(|_| !dashboard && ids.len() == state.here.selected.len() && !ids.is_empty())
         .map(|id| catalog(files, inv, id, ids.clone()));
     if context && let Some(c) = &mut c {
-        quick_actions(ui, c, state, inv, &ids, guarded);
+        let can_delete = file_actions::delete_enabled(inv, &ids, files, guarded, false);
+        quick_actions(ui, c, state, &ids, guarded, can_delete);
         ui.add_space(4.0);
     }
     if single && menu::item_keys(ui, p, "folder-open-filled", tr!("common-open"), "Enter") {
@@ -323,6 +324,10 @@ pub(super) fn selected(
         paste(ui, p, inv, layout, state, destination, files);
     }
     if let Some(c) = &mut c {
+        if ids.iter().all(|id| rules::in_type(inv, *id, 14)) {
+            let can_purge = file_actions::delete_enabled(inv, &ids, files, guarded, true);
+            action(ui, p, state, c, "purge", &ids, can_purge);
+        }
         action(ui, p, state, c, "properties", &ids, true);
     }
 }
