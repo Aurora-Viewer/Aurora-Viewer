@@ -252,6 +252,7 @@ impl App {
 impl App {
     /// The Inspect window this frame, and what it asks for.
     pub(super) fn inspect_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        self.scene.watched.clear();
         if !self.inspect_ui.open {
             return;
         }
@@ -443,6 +444,16 @@ impl App {
             }
             _ => None,
         };
+        // (an avatar far away is posed every now and then for the world)
+        if let Place::Worn(avatar) = place
+            && ui.stage.moves()
+            && let Some(wearer) = w.objects.get(avatar)
+        {
+            self.scene.watched.insert(wearer.full_id);
+            let model = ui.stage.stage.model().ok();
+            let own = model.into_iter().flat_map(|m| m.own());
+            self.scene.watched.extend(own.map(|(root, _)| *root));
+        }
         ui.stage.set_joints(joints);
     }
 

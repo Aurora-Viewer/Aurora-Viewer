@@ -159,6 +159,11 @@ impl StageUi {
         self.playing = Some(false);
     }
 
+    /// What is worn moves in the view.
+    pub fn moves(&self) -> bool {
+        self.worn && !self.single && self.speed > 0.0
+    }
+
     /// The wearer's joints are wanted this frame: while they move in the view,
     /// and once for what does not move.
     pub fn wants_joints(&self) -> bool {
