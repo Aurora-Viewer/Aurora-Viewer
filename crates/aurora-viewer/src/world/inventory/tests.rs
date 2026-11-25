@@ -1856,3 +1856,33 @@ fn an_unreadable_item_is_read_again_after_a_pause() {
     inv.drop_broken(&mut asked);
     assert_eq!(asked, vec![busy], "only the unreadable one is read again");
 }
+
+/// A folder read the user starts changes the generation: the background
+/// walk's idle sweep looks again and times it, even when the walk's pump
+/// did not run before the app took the queue (no capabilities yet).
+#[test]
+fn a_users_folder_read_changes_the_generation() {
+    let mut inv = fixture();
+    let folder = Uuid::from_u128(500);
+    inv.folders.insert(
+        folder,
+        Folder {
+            info: InvFolder {
+                id: folder,
+                parent: inv.root,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Unknown,
+            library: false,
+        },
+    );
+    let before = inv.generation;
+    inv.request(folder);
+    assert_eq!(inv.folders[&folder].state, FetchState::Fetching);
+    assert!(inv.generation > before);
+    let after = inv.generation;
+    inv.request(folder);
+    assert_eq!(inv.generation, after, "already on its way: nothing changes");
+}

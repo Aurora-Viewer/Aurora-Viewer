@@ -26,19 +26,6 @@ use uuid::Uuid;
 const MAX_IN_FLIGHT: usize = 19;
 /// BatchSizeAIS3: folders per subset read.
 const BATCH: usize = 20;
-/// How deep a read goes while the walk is narrow (its queued and sent
-/// reads fill fewer than half the slots): a huge inventory's first folders read 50
-/// levels deep each held all the rest in one reply, near the timeout, one
-/// slot of 19 in use. A few levels at a time, the next folders are known at
-/// once and read side by side; once the slots are busy, reads go
-/// `MAX_FOLDER_DEPTH` deep again, as the Legacy Viewer's always do.
-///
-/// A deliberate difference from the Legacy Viewer (MAX_FOLDER_DEPTH_REQUEST,
-/// llaisapi.cpp), and it changes the number of reads both ways: in the demo
-/// (`big:<n>,fetch`) a 3,400-item inventory takes 43 reads against 3, a
-/// 30,000-item one 173 against 23, a 480,000-item one 250 against 633.
-/// An ordinary inventory sends more, smaller requests on the same pool.
-const NARROW_DEPTH: i32 = 3;
 /// bulkFetch's max_batch_size: folders per `FetchInventoryDescendents2` read.
 const LEGACY_BATCH: usize = 10;
 /// bulkFetch's max_concurrent_fetches.
@@ -563,15 +550,6 @@ impl BackgroundFetch {
         )
     }
 
-    /// A subtree read's depth: [`NARROW_DEPTH`] while the walk is narrow.
-    fn depth(&self) -> i32 {
-        if self.queue.len() + self.in_flight.len() < MAX_IN_FLIGHT / 2 {
-            NARROW_DEPTH
-        } else {
-            MAX_FOLDER_DEPTH
-        }
-    }
-
     pub fn on_orphans_reply(&mut self, request: u64, success: bool) -> bool {
         if self.orphans_pending != Some(request) {
             return false;
@@ -600,7 +578,7 @@ impl BackgroundFetch {
         match kind {
             Kind::Recursive | Kind::FolderAndContent => match folder.state {
                 FetchState::Unknown | FetchState::Failed => {
-                    let depth = if kind == Kind::Recursive { self.depth() } else { 0 };
+                    let depth = if kind == Kind::Recursive { MAX_FOLDER_DEPTH } else { 0 };
                     self.send(inv, agent, kind, id, Vec::new(), depth, out, 0);
                 }
                 FetchState::Fetching if self.pending.contains(&id) => {}
@@ -635,8 +613,7 @@ impl BackgroundFetch {
                     }
                 }
                 if !batch.is_empty() {
-                    let depth = self.depth();
-                    self.send(inv, agent, kind, id, batch, depth, out, 0);
+                    self.send(inv, agent, kind, id, batch, MAX_FOLDER_DEPTH, out, 0);
                 }
                 if done {
                     self.queue.extend(later.into_iter().map(|child| (child, Kind::Recursive)));

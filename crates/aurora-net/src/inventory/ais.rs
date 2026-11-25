@@ -301,7 +301,7 @@ pub async fn fetch_tree(
         // (one answer within TREE_TOTAL, retries and waits included: the
         // walk's deadline never frees a slot while its request still runs)
         let state = TryState::default();
-        tokio::time::timeout(TREE_TOTAL, get_with(http, url, TREE_TIMEOUT, 0, Some(&state)))
+        tokio::time::timeout(TREE_TOTAL, get_with(http, url, TREE_TIMEOUT, RETRY_ATTEMPTS, 0, Some(&state)))
             .await
             .unwrap_or_else(|_| Err(state.out_of_time()))?
     } else {
@@ -352,10 +352,20 @@ impl TryState {
     /// parts); anything else (transport errors and their backoff) is a
     /// plain transient failure, which keeps the walk's backoff.
     fn out_of_time(&self) -> FetchError {
+        self.out_of_time_at(std::time::Instant::now())
+    }
+
+    /// [`out_of_time`] at `now` (the tests set the clock).
+    fn out_of_time_at(&self, now: std::time::Instant) -> FetchError {
         if self.overloaded.load(std::sync::atomic::Ordering::Relaxed) {
             return FetchError::new(FetchFailure::Transient, Some(503));
         }
-        let waited = self.sending.lock().ok().and_then(|s| *s).map(|at| at.elapsed());
+        let waited = self
+            .sending
+            .lock()
+            .ok()
+            .and_then(|s| *s)
+            .map(|at| now.saturating_duration_since(at));
         if waited.is_some_and(|w| w >= REQUEST_TIMEOUT) {
             FetchError::timeout()
         } else {
@@ -367,15 +377,16 @@ impl TryState {
 /// One AIS read, retried on the conditions the Legacy Viewer's HTTP layer retries
 /// (timeout, 408/425/429 and 5xx), with its backoff and `Retry-After`.
 async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
-    get_with(http, url, REQUEST_TIMEOUT, RETRY_ATTEMPTS, None).await
+    get_with(http, url, REQUEST_TIMEOUT, RETRY_ATTEMPTS, RETRY_ATTEMPTS, None).await
 }
 
-/// [`get`] with its own timeout, and how many times a timeout is tried
-/// again (a refusal keeps the usual retries).
+/// [`get`] with its own timeout, how many times a failed attempt is tried
+/// again, and how many of those may follow a timeout.
 async fn get_with(
     http: &reqwest::Client,
     url: String,
     timeout: std::time::Duration,
+    retries: u32,
     timeout_retries: u32,
     state: Option<&TryState>,
 ) -> Result<Llsd, FetchError> {
@@ -397,7 +408,7 @@ async fn get_with(
                     state.sending(None);
                 }
                 timeouts += 1;
-                if attempt <= RETRY_ATTEMPTS && timeouts <= timeout_retries {
+                if attempt <= retries && timeouts <= timeout_retries {
                     tokio::time::sleep(retry_backoff(attempt, None)).await;
                     continue;
                 }
@@ -410,7 +421,7 @@ async fn get_with(
                 if let Some(state) = state {
                     state.sending(None);
                 }
-                if attempt <= RETRY_ATTEMPTS {
+                if attempt <= retries {
                     log::debug!("AIS inventory read failed ({error}); retry {attempt}");
                     tokio::time::sleep(retry_backoff(attempt, None)).await;
                     continue;
@@ -430,7 +441,7 @@ async fn get_with(
             // waits as always)
             // (a 503 waits for its Retry-After: an overload, never split)
             let gateway = matches!(status, 502 | 504) && timeout_retries < RETRY_ATTEMPTS;
-            if failure.kind == FetchFailure::Transient && attempt <= RETRY_ATTEMPTS && !gateway {
+            if failure.kind == FetchFailure::Transient && attempt <= retries && !gateway {
                 log::debug!("AIS inventory read failed (status {status}); retry {attempt}");
                 if let Some(state) = state {
                     state.sending(None);
@@ -450,7 +461,7 @@ async fn get_with(
                     t.finish(status, 0, false);
                 }
                 timeouts += 1;
-                if attempt <= RETRY_ATTEMPTS && timeouts <= timeout_retries {
+                if attempt <= retries && timeouts <= timeout_retries {
                     tokio::time::sleep(retry_backoff(attempt, wait)).await;
                     continue;
                 }
@@ -464,7 +475,7 @@ async fn get_with(
                 if let Some(state) = state {
                     state.sending(None);
                 }
-                if attempt <= RETRY_ATTEMPTS {
+                if attempt <= retries {
                     log::debug!("AIS inventory reply failed ({error}); retry {attempt}");
                     tokio::time::sleep(retry_backoff(attempt, wait)).await;
                     continue;
@@ -1026,12 +1037,14 @@ mod tests {
             FetchError::new(FetchFailure::Transient, None),
             "between attempts"
         );
-        state.sending(Some(std::time::Instant::now()));
-        assert!(!state.out_of_time().timed_out, "an attempt just sent is no timeout");
-        if let Some(long_ago) = std::time::Instant::now().checked_sub(REQUEST_TIMEOUT) {
-            state.sending(Some(long_ago));
-            assert_eq!(state.out_of_time(), FetchError::timeout(), "the server kept the attempt waiting");
-        }
+        let sent = std::time::Instant::now();
+        state.sending(Some(sent));
+        assert!(!state.out_of_time_at(sent).timed_out, "an attempt just sent is no timeout");
+        assert_eq!(
+            state.out_of_time_at(sent + REQUEST_TIMEOUT),
+            FetchError::timeout(),
+            "the server kept the attempt waiting"
+        );
         state.overloaded.store(true, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(
             state.out_of_time(),
@@ -1059,6 +1072,7 @@ mod tests {
             url,
             std::time::Duration::from_millis(300),
             0,
+            0,
             Some(&state),
         )
         .await
@@ -1076,9 +1090,17 @@ mod tests {
         let url = format!("http://{}", listener.local_addr().expect("address"));
         drop(listener);
         let state = TryState::default();
-        let error = get_with(&crate::test_http_client(), url, std::time::Duration::from_secs(5), 0, Some(&state))
-            .await
-            .expect_err("refused");
+        // (no retry: the backoff's waits would only slow the test)
+        let error = get_with(
+            &crate::test_http_client(),
+            url,
+            std::time::Duration::from_secs(5),
+            0,
+            0,
+            Some(&state),
+        )
+        .await
+        .expect_err("refused");
         assert_eq!(error.kind, FetchFailure::Transient);
         assert!(!error.timed_out);
         assert!(state.sending.lock().expect("state").is_none());

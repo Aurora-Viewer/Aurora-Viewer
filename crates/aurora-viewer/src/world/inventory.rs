@@ -276,6 +276,11 @@ impl Inventory {
         {
             f.state = FetchState::Fetching;
             self.queue.push((id, f.library));
+            // (a folder changed state: the background walk's idle sweep
+            // looks again and times this read, even when its pump did not
+            // run before the app took the queue, e.g. while the region has
+            // no capabilities yet)
+            self.generation += 1;
         }
     }
 
