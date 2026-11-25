@@ -167,8 +167,8 @@ impl App {
             state.error = error.is_some();
             state.message = error.map_or_else(
                 || match state.action {
-                    Action::Create => aurora_i18n::tr!("blender-shape-success").to_owned(),
-                    Action::Apply => aurora_i18n::tr!("blender-shape-applied").to_owned(),
+                    Action::Create => aurora_i18n::tr!("livemesh-shape-success").to_owned(),
+                    Action::Apply => aurora_i18n::tr!("livemesh-shape-applied").to_owned(),
                 },
                 |error| aurora_i18n::tr!("blender-shape-failed", error = error),
             );

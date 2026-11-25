@@ -209,9 +209,9 @@ impl Live {
             .as_ref()
             .map(|server| &server.shared)
             .filter(|shared| shared.status.lock().connected)
-            .ok_or_else(|| aurora_i18n::tr!("blender-shape-connect").to_owned())?;
+            .ok_or_else(|| aurora_i18n::tr!("livemesh-shape-connect").to_owned())?;
         if !shared.status.lock().shape_capable {
-            return Err(aurora_i18n::tr!("blender-shape-update-plugin").into());
+            return Err(aurora_i18n::tr!("livemesh-shape-update-plugin").into());
         }
         Ok(shared.clone())
     }
@@ -219,7 +219,7 @@ impl Live {
     pub(crate) fn shape_apply_connection(&self) -> Result<Arc<Shared>, String> {
         let shared = self.shape_connection()?;
         if !shared.status.lock().shape_apply_capable {
-            return Err(aurora_i18n::tr!("blender-shape-update-apply").into());
+            return Err(aurora_i18n::tr!("livemesh-shape-update-apply").into());
         }
         Ok(shared)
     }

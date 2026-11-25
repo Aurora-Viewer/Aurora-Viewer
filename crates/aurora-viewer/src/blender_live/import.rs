@@ -182,7 +182,7 @@ impl Live {
             status.connected && status.import_capable
         });
         if !capable {
-            self.import.message = aurora_i18n::tr!("blender-import-connect").into();
+            self.import.message = aurora_i18n::tr!("livemesh-import-connect").into();
             self.import.error = true;
             return;
         }
@@ -195,7 +195,7 @@ impl Live {
             *shared.import_request.lock() = Some(request);
             self.import.active = Some((request, Instant::now()));
             self.import.error = false;
-            self.import.message = aurora_i18n::tr!("blender-import-preparing").into();
+            self.import.message = aurora_i18n::tr!("livemesh-import-preparing").into();
         }
     }
     pub fn poll_import(&mut self) {

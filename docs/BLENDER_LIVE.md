@@ -794,8 +794,9 @@ Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.5.0). It
 connection, port (17655) and key as the Blender plug-in, so the viewer side is
 the same: start the preview in Aurora's **LiveMesh** window first.
 
-**Install.** In Aurora's LiveMesh window, open **Plugins › Maya 2022 and
-later** and click **Save Maya plug-in…**. Extract the ZIP anywhere, then drag
+**Install.** In Aurora's LiveMesh window, open the **Plugins** tab: under
+the Blender plug-ins, the **Aurora LiveMesh for Maya** row has **Save Maya
+plug-in…**. Extract the ZIP anywhere, then drag
 `install.mel` into a Maya viewport. It copies the `aurora_live_maya` folder to
 your Maya scripts folder, adds a **LiveMesh** button to an **Aurora** shelf
 and opens the window. Dragging a newer `install.mel` replaces the old copy.
