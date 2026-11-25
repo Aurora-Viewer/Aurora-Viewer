@@ -13,7 +13,7 @@ use crate::ui::{menu, sheet, widgets};
 use egui::{Color32, Pos2, Rect, Sense, Vec2};
 
 /// The height of the toolbars' buttons and fields.
-const BAR: f32 = 30.0;
+pub(super) const BAR: f32 = 30.0;
 /// The height of the line of messages, when there is one.
 pub const MESSAGE: f32 = 22.0;
 /// The height of the wide width's status bar.
@@ -58,7 +58,8 @@ fn details_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferenc
 /// The explorer's views, the Legacy Viewer's "List view", "Gallery view"
 /// and "Combination view" of its single folder mode
 /// (menu_inventory_view_default.xml), and the tiles' sizes.
-fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences) {
+fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences, folder: Uuid) {
+    use super::super::groups::GroupBy;
     use super::super::view::ExplorerView;
     let views = [
         (ExplorerView::List, "list-filled", aurora_i18n::tr!("inventory-view-list")),
@@ -72,8 +73,14 @@ fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences)
             "layout-board-split-filled",
             aurora_i18n::tr!("inventory-view-combination"),
         ),
+        (
+            ExplorerView::Compact,
+            "columns-3-filled",
+            aurora_i18n::tr!("inventory-view-compact"),
+        ),
+        (ExplorerView::Tiles, "layout-cards-filled", aurora_i18n::tr!("inventory-view-tiles")),
     ];
-    let current = prefs.explorer.view;
+    let current = prefs.view_in(folder);
     let icon = views
         .iter()
         .find(|(view, ..)| *view == current)
@@ -82,13 +89,36 @@ fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences)
     menu::dropdown(&button, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         for (view, icon, label) in views {
             if menu::check(ui, p, icon, label, current == view, true) {
-                prefs.explorer.view = view;
+                prefs.set_view_in(folder, view);
+            }
+        }
+        // Dolphin's "Remember display style for each folder"
+        menu::toggle(
+            ui,
+            p,
+            "folder-filled",
+            aurora_i18n::tr!("inventory-view-per-folder"),
+            &mut prefs.view_per_folder,
+        );
+        menu::separator(ui, p);
+        // the Details list's groups (Explorer's Group by)
+        menu::section(ui, p, aurora_i18n::tr!("inventory-group-by"));
+        let details = current == ExplorerView::List;
+        for (by, label) in [
+            (GroupBy::None, aurora_i18n::tr!("inventory-group-none")),
+            (GroupBy::Kind, aurora_i18n::tr!("common-type")),
+            (GroupBy::Date, aurora_i18n::tr!("inventory-column-modified")),
+            (GroupBy::Creator, aurora_i18n::tr!("inventory-column-creator")),
+        ] {
+            if menu::check_keys(ui, p, "", label, details && prefs.explorer.group_by == by, details, "") {
+                prefs.explorer.group_by = by;
             }
         }
         menu::separator(ui, p);
         menu::section(ui, p, aurora_i18n::tr!("inventory-tile-size"));
         let side = super::gallery::side(&prefs.explorer) as u16;
-        let tiles = current != ExplorerView::List;
+        // the pictures' side: the gallery's and the combination view's
+        let tiles = matches!(current, ExplorerView::Gallery | ExplorerView::Combination);
         for (size, label) in [
             (96, aurora_i18n::tr!("inventory-tile-small")),
             (128, aurora_i18n::tr!("inventory-tile-medium")),
@@ -238,18 +268,6 @@ fn quick_search(
     controls::after_search(inv, st, searching);
 }
 
-/// The folder "New" creates in: the explorer's, else the selected folder or
-/// the selected item's.
-fn new_target(inv: &Inventory, st: &InventoryUi, layout: Layout) -> Uuid {
-    if layout != Layout::Compact && st.tab == 0 {
-        return st.browse;
-    }
-    st.selected
-        .filter(|id| inv.folders.contains_key(id))
-        .or_else(|| st.selected.and_then(|id| rules::parent(inv, id)))
-        .unwrap_or_else(|| super::base(inv, st))
-}
-
 fn new_menu(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -259,9 +277,10 @@ fn new_menu(
     layout: Layout,
     actions: &mut Vec<InvAction>,
 ) {
-    let to = new_target(inv, st, layout);
+    let (to, in_all) = st.new_folder_target(inv, super::base(inv, st), Some(layout));
     let enabled = st.pending.is_none() && rules::destination(inv, to);
-    context::new_menu(ui, p, to, enabled, st, prefs, actions);
+    // outside the explorer, its new folder on the All tab, as doCreate
+    context::new_menu(ui, p, to, enabled, in_all, st, prefs, actions);
 }
 
 /// The "Sort" menu: the order, Collapse / Expand for the tree, what the
@@ -274,20 +293,20 @@ fn sort_menu(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut I
         p,
         "clock-filled",
         aurora_i18n::tr!("ui-inventory-controls-newest-first"),
-        sort.by_date,
+        sort.by_date && sort.column.is_none(),
         true,
     ) {
-        sort.by_date = true;
+        sort.set_by_date(true);
     }
     if menu::check(
         ui,
         p,
         "sort-ascending-letters",
         aurora_i18n::tr!("common-by-name"),
-        !sort.by_date,
+        !sort.by_date && sort.column.is_none(),
         true,
     ) {
-        sort.by_date = false;
+        sort.set_by_date(false);
     }
     menu::toggle(
         ui,
@@ -495,16 +514,28 @@ pub(super) fn explorer_row(
     inv: &Inventory,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
+    facts: &Facts,
     layout: Layout,
     actions: &mut Vec<InvAction>,
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            super::history::buttons(ui, p, inv, st, prefs);
+        });
+        // the tools' width as last drawn: the address bar takes the rest
+        let tools_id = ui.scope_id().with("aurora_explorer_tools_width");
+        let mut tools_from = None;
         if layout == Layout::Wide {
-            let crumbs = (ui.available_width() * 0.32).clamp(140.0, 380.0);
+            // the address bar, all the room the tools leave, as Explorer's
+            // and Dolphin's
+            let tools_w = ui.ctx().data(|d| d.get_temp::<f32>(tools_id)).unwrap_or(560.0);
+            let crumbs = (ui.available_width() - tools_w - 8.0).max(180.0);
             ui.allocate_ui_with_layout(Vec2::new(crumbs, BAR), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                breadcrumb(ui, p, inv, st)
+                super::breadcrumb::show(ui, p, inv, st, prefs, facts, actions)
             });
+            tools_from = Some(ui.cursor().left());
             let new_label = aurora_i18n::tr!("inventory-new");
             let new_w = widgets::action_button_fit(ui, "plus", new_label);
             let count = chip_list(st).len();
@@ -524,10 +555,10 @@ pub(super) fn explorer_row(
             }
             details_button(ui, p, prefs, layout);
             rights::button(ui, p, &mut prefs.rights, BAR);
-            view_button(ui, p, prefs);
+            view_button(ui, p, prefs, st.browse);
             let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
+                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights, &st.column_fit, layout);
             });
             additional_button(ui, p, st);
             let new = widgets::action_button(ui, p, "plus", new_label, widgets::ActionKind::Primary, Vec2::new(new_w, BAR));
@@ -552,10 +583,10 @@ pub(super) fn explorer_row(
             }
             details_button(ui, p, prefs, layout);
             rights::button(ui, p, &mut prefs.rights, BAR);
-            view_button(ui, p, prefs);
+            view_button(ui, p, prefs, st.browse);
             let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
+                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights, &st.column_fit, layout);
             });
             additional_button(ui, p, st);
             let sort = tool_button(ui, p, "arrows-sort", aurora_i18n::tr!("inventory-sort-menu"), false);
@@ -569,12 +600,16 @@ pub(super) fn explorer_row(
             });
         }
         tree_buttons(ui, p, st);
+        if let Some(from) = tools_from {
+            let width = ui.cursor().left() - from;
+            ui.ctx().data_mut(|d| d.insert_temp(tools_id, width));
+        }
     });
     search_line(ui, p, inv, st, prefs, layout);
 }
 
 /// The name of the shortcut (tab) shown, for where the list is.
-fn tab_name(tab: usize) -> &'static str {
+pub(super) fn tab_name(tab: usize) -> &'static str {
     match tab {
         2 => aurora_i18n::tr!("inventory-tab-recent"),
         3 => aurora_i18n::tr!("inventory-tab-worn"),
@@ -584,55 +619,16 @@ fn tab_name(tab: usize) -> &'static str {
     }
 }
 
-/// The folders from the root to the explorer's, each a link back to it
-/// (the last one, where the list is, in semi-bold); a shortcut's name
-/// instead while one is shown.
-fn breadcrumb(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi) {
-    ui.spacing_mut().item_spacing.x = 4.0;
-    if st.tab != 0 {
-        ui.add(egui::Label::new(sheet::semibold(ui, tab_name(st.tab), 13.0, p.ink)).truncate());
-        return;
-    }
-    let base = super::base(inv, st);
-    let mut path = Vec::new();
-    let mut id = st.browse;
-    let mut seen = HashSet::new();
-    while seen.insert(id) && inv.folders.contains_key(&id) {
-        path.push(id);
-        if id == inv.root || id == base {
-            break;
-        }
-        id = rules::parent(inv, id).unwrap_or(Uuid::nil());
-    }
-    path.reverse();
-    // A deep folder keeps its last levels in sight.
-    let shown = path.len().min(4);
-    if path.len() > shown {
-        ui.label(egui::RichText::new("…").size(13.0).color(p.muted));
-        widgets::glyph(ui, "chevron-right", p.muted_dim, 12.0);
-    }
-    let start = path.len() - shown;
-    for (n, folder) in path[start..].iter().enumerate() {
-        let last = start + n + 1 == path.len();
-        let name = folder_name(inv, *folder);
-        if last {
-            ui.add(egui::Label::new(sheet::semibold(ui, &name, 13.0, p.ink)).truncate());
-        } else {
-            let link = ui
-                .add(egui::Label::new(egui::RichText::new(&name).size(13.0).color(p.muted)).sense(Sense::click()))
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            if link.clicked() {
-                st.browse = *folder;
-                st.selection.clear();
-                st.selected = None;
-            }
-            widgets::glyph(ui, "chevron-right", p.muted_dim, 12.0);
-        }
-    }
-}
-
 /// The medium width's line over the list: where it is, how much it holds.
-pub(super) fn breadcrumb_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi) {
+pub(super) fn breadcrumb_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
     ui.allocate_ui_with_layout(
         Vec2::new(ui.available_width(), 26.0),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -646,7 +642,7 @@ pub(super) fn breadcrumb_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st
             ui.allocate_ui_with_layout(
                 Vec2::new((ui.available_width() - count_w).max(40.0), 26.0),
                 egui::Layout::left_to_right(egui::Align::Center),
-                |ui| breadcrumb(ui, p, inv, st),
+                |ui| super::breadcrumb::show(ui, p, inv, st, prefs, facts, actions),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(count) = count {
@@ -837,11 +833,24 @@ fn chip(ui: &mut egui::Ui, p: &Palette, text: &str, types: &[i32]) -> bool {
 
 /// The text of the sort order, at the right end of the chips.
 fn sort_text(prefs: &InventoryPreferences, tab: usize) -> String {
+    use super::super::view::SortColumn;
     let sort = prefs.sort_for(tab);
-    let order = if sort.by_date {
-        aurora_i18n::tr!("inventory-sort-date")
+    let order = match sort.column {
+        Some(SortColumn::Kind) => aurora_i18n::tr!("common-type"),
+        Some(SortColumn::Rights) => super::rights::heading(prefs.rights),
+        Some(SortColumn::Description) => aurora_i18n::tr!("inventory-sort-description"),
+        Some(SortColumn::Creator) => aurora_i18n::tr!("inventory-column-creator"),
+        Some(SortColumn::Worn) => aurora_i18n::tr!("common-worn"),
+        Some(SortColumn::Count) => aurora_i18n::tr!("inventory-column-count"),
+        None if sort.by_date => aurora_i18n::tr!("inventory-sort-date"),
+        None => aurora_i18n::tr!("inventory-sort-name"),
+    };
+    let reversed;
+    let order = if sort.descending {
+        reversed = aurora_i18n::tr!("inventory-sort-reversed", order = order);
+        reversed.as_str()
     } else {
-        aurora_i18n::tr!("inventory-sort-name")
+        order
     };
     if sort.system_first {
         aurora_i18n::tr!("inventory-sort-folders-first", order = order)
@@ -1206,9 +1215,17 @@ mod tests {
             selected: Some(Uuid::from_u128(3)),
             ..Default::default()
         };
-        assert_eq!(new_target(&inv, &st, Layout::Wide), Uuid::from_u128(2));
-        assert_eq!(new_target(&inv, &st, Layout::Compact), Uuid::from_u128(3));
+        assert_eq!(st.new_folder_target(&inv, inv.root, Some(Layout::Wide)), (st.browse, false));
+        assert_eq!(
+            st.new_folder_target(&inv, inv.root, Some(Layout::Compact)),
+            (Uuid::from_u128(3), true)
+        );
         st.selected = None;
-        assert_eq!(new_target(&inv, &st, Layout::Compact), inv.root);
+        assert_eq!(st.new_folder_target(&inv, inv.root, Some(Layout::Compact)), (inv.root, true));
+        st.single_folder = Some(single_folder::Nav::at(st.browse));
+        st.selected = Some(Uuid::from_u128(3));
+        for layout in [None, Some(Layout::Compact), Some(Layout::Wide)] {
+            assert_eq!(st.new_folder_target(&inv, inv.root, layout), (st.browse, false));
+        }
     }
 }

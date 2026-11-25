@@ -654,6 +654,49 @@ fn inventory_double_click_attaches_an_object_then_detaches_it_once_worn() {
     assert!(f.actions.is_empty());
 }
 
+#[test]
+fn inventory_drag_with_ctrl_copies_an_item_whose_copy_has_no_operations() {
+    // an item's copy is in `copies` alone: the drop must still take it
+    let (inv, ids) = crate::world::inventory::undo::tests_support::fixture();
+    let none = HashSet::new();
+    let copy = rules::paste(&inv, &[ids.hat], ids.objects, false, false, &none, &none).expect("copy");
+    assert!(copy.operations.is_empty() && !copy.copies.is_empty());
+    assert!(drag::changes(&copy));
+    assert!(!drag::changes(&Mutation::default()));
+}
+
+#[test]
+fn copy_to_the_other_pane_is_refused_for_a_no_copy_item() {
+    let (inv, ids) = crate::world::inventory::undo::tests_support::fixture();
+    let prefs = InventoryPreferences::default();
+    let facts = Facts::default();
+    // the sword lacks Copy in the fixture; the hat has it
+    assert!(!drag::would_drop(
+        &inv,
+        &[ids.sword],
+        ids.clothes,
+        drag::DropMode::Copy,
+        &prefs,
+        &facts
+    ));
+    assert!(drag::would_drop(
+        &inv,
+        &[ids.sword],
+        ids.clothes,
+        drag::DropMode::Move,
+        &prefs,
+        &facts
+    ));
+    assert!(drag::would_drop(
+        &inv,
+        &[ids.hat],
+        ids.objects,
+        drag::DropMode::Copy,
+        &prefs,
+        &facts
+    ));
+}
+
 /// A held drag tells where the pointer is beyond the window's edges.
 #[test]
 fn beyond_the_viewers_window_the_pointer_is_not_over_the_world() {
@@ -663,4 +706,38 @@ fn beyond_the_viewers_window_the_pointer_is_not_over_the_world() {
     assert!(!drag::in_world(false, Some(egui::pos2(400.0, -20.0)), window));
     // over a window of the interface, as before
     assert!(!drag::in_world(true, Some(egui::pos2(400.0, 300.0)), window));
+}
+
+/// A right-button drag passes the same threshold as a left one, and is kept
+/// as a right drag, whose drop in the explorer asks what to do (Windows
+/// Explorer, Dolphin).
+#[test]
+fn inventory_right_drag_starts_past_the_threshold() {
+    let mut f = Fixture::new();
+    let right = |f: &mut Fixture, pos: egui::Pos2, pressed: bool| {
+        f.frame(
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: modifiers(false),
+                },
+            ],
+            false,
+        );
+    };
+    let from = f.row(100);
+    right(&mut f, from, true);
+    f.hover(from + Vec2::new(2.0, 0.0));
+    assert!(!egui::DragAndDrop::has_any_payload(&f.ctx), "within the threshold");
+    f.hover(from + Vec2::new(50.0, 0.0));
+    assert!(egui::DragAndDrop::has_any_payload(&f.ctx), "past the threshold");
+    assert!(drag::right_drag(&f.ctx), "held as a right drag");
+    let to = f.row(20);
+    f.hover(to);
+    right(&mut f, to, false);
+    f.settle();
+    assert!(f.moved().is_empty(), "a right drop never moves on its own");
 }

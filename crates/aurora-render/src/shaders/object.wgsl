@@ -1658,8 +1658,8 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 // Lighting, haze and fog of an evaluated material. Nothing here takes a
 // screen-space derivative (explicit levels and comparisons only): a fragment
 // may be discarded between `eval_material` and this (fs_blend).
-// The material key is a local 64-bit UUID prefix held in unused DrawRecord
-// identity slots. Exact UUID selection is the default; the optional broad
+// The material key is a local 64-bit UUID prefix in DrawRecord.identity.yz.
+// Exact UUID selection is the default; the optional broad
 // PBR double-sided/alpha-mask preview must be explicitly chosen.
 fn pbr_thin_matches(rec: DrawRecord) -> bool {
     if ((rec.flags.x & FLAG_PBR) == 0u || hud_pass) { return false; }
@@ -1693,7 +1693,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     legacy_glare = 0.0;
     legacy_nan = false;
     surface_occlusion = m.occlusion;
-    avatar_shadow_receiver = (rec.flags.w & FLAG_AVATAR_SHADOW_RECEIVER) != 0u;
+    avatar_shadow_receiver = rec.identity.w != 0u;
     // A blended face opaque to the eye (fs_depth_occlusion, from an
     // opacity of 0.88) is in the occlusion's depth when BLEND_SCREEN_DEPTH,
     // and takes the screen-space occlusion terms by its opacity from
@@ -3470,6 +3470,24 @@ fn fs_part_mask(in: PoserPartOut, @builtin(front_facing) front: bool) -> @locati
     return vec4<f32>(smoothstep(0.15, 0.85, in.part), 1.0, 0.0, 1.0);
 }
 
+// LiveMesh's Fit lab (fit_clip.rs), on vs_part_mask's posed vertices: the
+// garment's outer surface (the front faces of a single-sided material, both
+// sides of a double-sided one) as a depth of its own, and the
+// body's visible pixels as a mask.
+@fragment
+fn fs_fit_garment(in: PoserPartOut, @builtin(front_facing) front: bool) {
+    portal_clip(records[in.record], in.world_pos);
+    // (a double-sided garment keeps both sides: its normals may face in)
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+}
+
+@fragment
+fn fs_fit_body(in: PoserPartOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+}
+
 // The pick interpolates each part's summed skinning weights, as the mask
 // interpolates its share. A flat joint ID makes the first vertex decide
 // for the entire triangle and changes when a mesh reorders its indices.
@@ -3578,12 +3596,20 @@ fn vs_pick(in: VsIn) -> PickOut {
     return out;
 }
 
+// Only fragments covering the 2 x 2 pick target need this test.
+fn pick_clip(rec: DrawRecord, world_pos: vec3<f32>) {
+    if (frame.soft.w != 0.0 && (rec.flags.w & FLAG_IGNORE_OBJECT_PICK) != 0u) {
+        discard;
+    }
+    portal_clip(rec, world_pos);
+}
+
 // The transparency overlay shows full triangles, independent of alpha.
 // LLViewerWindow::pickAsync / pickImmediate include them while debug alpha
 // is shown, so camera focus must stop at that displayed surface too.
 @fragment
 fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
-    portal_clip(records[in.record], in.world_pos);
+    pick_clip(records[in.record], in.world_pos);
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
@@ -3596,7 +3622,7 @@ fn fs_pick_mask(in: PickOut) -> @location(0) vec4<u32> {
     if ((rec.flags.w & FLAG_OBJECT_MASK_PICK) == 0u) {
         discard;
     }
-    portal_clip(rec, in.world_pos);
+    pick_clip(rec, in.world_pos);
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
@@ -3608,7 +3634,7 @@ const PICK_ALPHA_CUTOFF: f32 = 32.0 / 255.0;
 @fragment
 fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
-    portal_clip(rec, in.world_pos);
+    pick_clip(rec, in.world_pos);
     let world_left = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
     if (world_left && sample_tex(rec.tex.x, in.uv).a <= PICK_ALPHA_CUTOFF) {
         discard;
@@ -3631,7 +3657,7 @@ fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
 @fragment
 fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
-    portal_clip(rec, in.world_pos);
+    pick_clip(rec, in.world_pos);
     // A legacy material in emissive mask mode stays a camera target on its
     // clear texels, whatever the face's alpha: LLVOVolume::
     // lineSegmentIntersect ignores texture alpha there, even on a

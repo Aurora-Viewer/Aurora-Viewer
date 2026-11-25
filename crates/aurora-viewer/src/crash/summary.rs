@@ -183,6 +183,10 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
                 rows.push(("GPU work at the later losses", later));
             }
         }
+        // an open-file limit reached looks like video memory out (#2970)
+        if let Some(open) = open_files_in(&tail) {
+            rows.push(("Open files at the loss", open));
+        }
     }
     let has_gpu_trouble = dir.join("gpu-lost.txt").exists()
         || dir.join("gpu-stall.txt").exists()
@@ -1253,6 +1257,68 @@ fn gpu_work_row(text: &str) -> Option<String> {
     ))
 }
 
+/// The "Open files at the loss" row, from the line open_files.rs logged
+/// at the loss that began the end of the session (the
+/// oldest of the last lines less than [`LOSS_CHAIN_S`] apart, as
+/// [`gpu_work_in`]); rebuilt by [`open_files_row`].
+fn open_files_in(tail: &str) -> Option<String> {
+    let lines: Vec<(Option<i64>, String)> = tail
+        .lines()
+        .filter_map(|line| {
+            let (head, text) = line.split_once(&format!("] {}", super::open_files::LINE_PREFIX))?;
+            if !head.ends_with(" ERROR aurora_viewer::crash::open_files") {
+                return None;
+            }
+            let at = head
+                .strip_prefix('[')
+                .and_then(|head| head.split_whitespace().next())
+                .and_then(|stamp| chrono::DateTime::parse_from_rfc3339(stamp).ok())
+                .map(|at| at.timestamp());
+            Some((at, open_files_row(text)?))
+        })
+        .collect();
+    let mut start = lines.len().checked_sub(1)?;
+    while start > 0 {
+        let apart = match (lines[start - 1].0, lines[start].0) {
+            (Some(before), Some(after)) => after - before,
+            _ => 0,
+        };
+        if apart > LOSS_CHAIN_S {
+            break;
+        }
+        start -= 1;
+    }
+    Some(lines[start].1.clone())
+}
+
+/// `<count> of <limit> (<kind> <n>, …)`, rebuilt from its numbers and the
+/// kinds open_files.rs names (`OPEN_FILE_KINDS`); a line that does not
+/// parse whole gives nothing.
+fn open_files_row(text: &str) -> Option<String> {
+    let number = |s: &str| {
+        (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| s.parse::<u64>().ok())
+            .flatten()
+    };
+    let (total, rest) = text.trim().split_once(" of ")?;
+    let total = number(total)?;
+    let (limit, rest) = rest.split_once(" (")?;
+    let limit = match limit {
+        "unknown" => "unknown".to_owned(),
+        l => number(l)?.to_string(),
+    };
+    let kinds = rest.strip_suffix(')')?;
+    let mut parts = Vec::new();
+    if !kinds.is_empty() {
+        for part in kinds.split(", ") {
+            let (kind, n) = part.rsplit_once(' ')?;
+            let kind = super::open_files::OPEN_FILE_KINDS.iter().find(|k| **k == kind)?;
+            parts.push(format!("{kind} {}", number(n)?));
+        }
+    }
+    Some(format!("{total} of {limit} ({})", parts.join(", ")))
+}
+
 /// An age as the line writes it: digits, a point, three digits.
 fn seconds(text: &str) -> Option<&str> {
     let (whole, frac) = text.split_once('.')?;
@@ -1286,6 +1352,32 @@ fn log(path: &Path) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_open_files_row_is_rebuilt_from_the_census_s_own_line() {
+        const OPEN: &str = "1024 of 1024 (sockets 812, sync files 3, files 209)";
+        let at =
+            |stamp: &str, level: &str, module: &str, text: &str| format!("[{stamp} {level} {module}] open files at the loss: {text}\n");
+        let own = |stamp: &str, text: &str| at(stamp, "ERROR", "aurora_viewer::crash::open_files", text);
+        assert_eq!(super::open_files_in(&own("t", OPEN)).as_deref(), Some(OPEN));
+        // another module or level carrying the marker: nothing
+        assert_eq!(super::open_files_in(&at("t", "WARN ", "aurora_viewer::chat", OPEN)), None);
+        assert_eq!(
+            super::open_files_in(&at("t", "INFO ", "aurora_viewer::crash::open_files", OPEN)),
+            None
+        );
+        // a kind not named by open_files.rs, a word for a number: nothing
+        assert_eq!(super::open_files_in(&own("t", "5 of 1024 (Alice Resident 5)")), None);
+        assert_eq!(super::open_files_in(&own("t", "five of 1024 (sockets 5)")), None);
+        assert_eq!(super::open_files_in(&own("t", "5 of 1024 (sockets 5) secret")), None);
+        assert_eq!(
+            super::open_files_in(&own("t", "7 of unknown (pipes 7)")).as_deref(),
+            Some("7 of unknown (pipes 7)")
+        );
+        // the loss that began the end, not a recovery's a second later
+        let chain = own("2026-11-19T10:00:00Z", OPEN) + &own("2026-11-19T10:00:01Z", "300 of 1024 (files 300)");
+        assert_eq!(super::open_files_in(&chain).as_deref(), Some(OPEN));
+    }
+
     use super::*;
 
     #[test]

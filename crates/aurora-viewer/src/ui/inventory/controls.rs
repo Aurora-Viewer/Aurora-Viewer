@@ -33,12 +33,18 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
     let sort = prefs.sort_for_mut(tab);
     ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-display-order")).color(p.muted));
     ui.horizontal(|ui| {
-        changed |= ui
-            .selectable_value(&mut sort.by_date, true, aurora_i18n::tr!("ui-inventory-controls-newest-first"))
-            .changed();
-        changed |= ui
-            .selectable_value(&mut sort.by_date, false, aurora_i18n::tr!("common-by-name"))
-            .changed();
+        for (by_date, label) in [
+            (true, aurora_i18n::tr!("ui-inventory-controls-newest-first")),
+            (false, aurora_i18n::tr!("common-by-name")),
+        ] {
+            if ui
+                .selectable_label(sort.by_date == by_date && sort.column.is_none(), label)
+                .clicked()
+            {
+                sort.set_by_date(by_date);
+                changed = true;
+            }
+        }
     });
     changed |= check(
         ui,
@@ -205,7 +211,11 @@ fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     if underlined_button(ui, p, aurora_i18n::tr!("common-preferences"), st.preferences_open).clicked() {
         st.preferences_open = !st.preferences_open;
     }
-    tree_actions(ui, p, st);
+    // LLPanelMainInventory::toggleViewMode hides `collapse_expand_buttons`
+    // in single folder mode: its list opens no folder in place.
+    if st.single_folder.is_none() {
+        tree_actions(ui, p, st);
+    }
 }
 
 fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {

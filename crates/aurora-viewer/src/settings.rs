@@ -730,6 +730,10 @@ pub struct Settings {
     pub custom_login_uri: String,
     /// Saved grid metadata, independent of the account catalogue.
     pub grids: Vec<crate::grids::Grid>,
+    /// The login servers (`aurora_net::login::unencrypted_server`) the user
+    /// agreed to log in to over plain http, asked once each. "Reset
+    /// everything" forgets them: the question comes back.
+    pub unencrypted_logins: Vec<String>,
     pub start_location: String,
     pub start_region: String,
     pub draw_distance: f32,
@@ -2600,6 +2604,7 @@ impl Default for Settings {
             grid: GridChoice::SecondLife,
             custom_login_uri: "http://127.0.0.1:9000/".into(),
             grids: Vec::new(),
+            unencrypted_logins: Vec::new(),
             start_location: "last".into(),
             start_region: String::new(),
             draw_distance: 96.0,
@@ -3842,6 +3847,7 @@ impl Settings {
                 by_date: true,
                 folders_by_name: false,
                 system_first: true,
+                ..Default::default()
             };
             if self.inventory.recent_sort == former {
                 self.inventory.recent_sort.system_first = false;
@@ -6078,6 +6084,7 @@ mod tests {
             by_date: true,
             folders_by_name: false,
             system_first: true,
+            ..Default::default()
         };
         for version in [39, 40] {
             for by_date in [false, true] {
@@ -6087,6 +6094,7 @@ mod tests {
                             by_date,
                             folders_by_name,
                             system_first,
+                            ..Default::default()
                         };
                         let mut saved = Settings {
                             settings_version: version,

@@ -983,6 +983,10 @@ pub struct Scene {
     /// and what it wears go to `part_faces`, the part kept on its skinned
     /// faces by the frame's `part_joints`.
     pub poser_part: Option<usize>,
+    /// LiveMesh's Fit lab clipping map: the avatars it is drawn on (object
+    /// indices) and the garments' objects; their faces go to `fit_garment`
+    /// and the other skinned faces of those avatars to `fit_body`.
+    pub fit_clip: Option<(HashSet<usize>, HashSet<usize>)>,
     /// Whether the last lists drew any of that avatar's skinned faces (its
     /// body or a rigged mesh): without, the poser keeps the bone outline.
     pub poser_part_skinned: bool,
@@ -1029,6 +1033,8 @@ pub struct Scene {
     /// Bounds of the objects for the hover search, and its kept answer
     /// (hover.rs).
     pick: hover::PickIndex,
+    /// Drawn world volumes with the Ignore Object click action.
+    ignored_draws: FastSet<usize>,
     pub hover: hover::HoverCache,
     /// Our own HUD objects with a geometry, in index order, as
     /// `build_huds` found them for the HUD view of the frame: what a HUD
@@ -1802,6 +1808,7 @@ impl Scene {
             held_at: None,
             photo_marks: Default::default(),
             poser_part: None,
+            fit_clip: None,
             poser_part_skinned: false,
             give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
@@ -1824,6 +1831,7 @@ impl Scene {
             sync_budget: std::time::Duration::from_millis(1),
             geom_trash: Default::default(),
             pick: Default::default(),
+            ignored_draws: Default::default(),
             hover: Default::default(),
             hud_own: Vec::new(),
             exact_tests: Default::default(),
@@ -2391,8 +2399,31 @@ impl Scene {
 
     // ------------------------------------------------------------ objects
 
+    /// Changing a click action leaves geometry, textures and draw lists intact.
+    fn update_click_records(&mut self, records: &mut aurora_render::arena::RecordStore, idx: usize, action: u8) {
+        let g = &self.gpu[idx];
+        if g.hud || g.is_avatar || g.faces.is_empty() {
+            return;
+        }
+        let ignored = action == crate::interaction::code::IGNORE;
+        let changed = if ignored {
+            self.ignored_draws.insert(idx)
+        } else {
+            self.ignored_draws.remove(&idx)
+        };
+        if changed {
+            for face in &g.faces {
+                if let Some(mut rec) = records.get(face.record).copied() {
+                    rec.set_ignore_object_pick(ignored);
+                    records.set(face.record, rec);
+                }
+            }
+        }
+    }
+
     /// Free the draw records of an object's faces.
     fn drop_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+        self.ignored_draws.remove(&idx);
         for f in g.faces.drain(..) {
             renderer.records.free(f.record);
             self.slot_users.remove(&(f.base_slot, idx as u32));
@@ -3242,6 +3273,11 @@ impl Scene {
             }
             let rigged = self.gpu.get(idx).is_some_and(|g| g.moves_with_skeleton());
             self.sets.touched(&world.objects, agent, idx, rigged);
+            if let Some(object) = world.objects.get_mut_untracked(idx)
+                && std::mem::take(&mut object.render.click_pick_dirty)
+            {
+                self.update_click_records(&mut renderer.records, idx, object.click_action);
+            }
             // (its click action or flags may have changed)
             self.pick.changed(idx);
         }
@@ -4296,6 +4332,7 @@ impl Scene {
         let old_tex: Vec<Uuid> = std::mem::take(&mut g.tex_ids);
         g.material_ids.clear();
         let wearer = Self::wearer_avatar(world, idx);
+        let ignored = !g.hud && o.click_action == crate::interaction::code::IGNORE;
         let bake_wearer = Self::bake_wearer(world, idx, g.hud);
         let rigged_owner = match g.geom {
             Some(GeomKey::Mesh { id, .. }) => match self.meshes.meta(&id).and_then(|m| m.skin).filter(|s| !s.joint_names.is_empty()) {
@@ -4585,12 +4622,11 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            rec.set_ignore_object_pick(ignored);
             if !g.hud {
                 rec.flags[3] |= flags::OBJECT_MASK_PICK;
             }
-            if g.avatar_shadow_receiver() {
-                rec.flags[3] |= flags::AVATAR_SHADOW_RECEIVER;
-            }
+            rec.set_avatar_shadow_receiver(g.avatar_shadow_receiver());
             // Alt-focus keeps an emissive mask's clear texels whatever the
             // face's alpha, also where EMISSIVE_MASK is dropped above
             // (LLVOVolume::lineSegmentIntersect's `ignore_alpha`).
@@ -4646,6 +4682,9 @@ impl Scene {
         // just bound so the first classify already skips auto-Mask.
         let object_auto_mask = rigged_owner.is_none() && !g.hud;
         self.finish_faces(renderer, idx, &mut g, object_auto_mask);
+        if ignored && !g.faces.is_empty() {
+            self.ignored_draws.insert(idx);
+        }
         self.gpu[idx] = g;
     }
 
@@ -4986,12 +5025,13 @@ impl Scene {
                 let mut rec = DrawRecord {
                     model: record_model,
                     params: [0.0, 0.0, 0.8, minimum_alpha],
-                    flags: [flags::SKINNED, palette, system_binds, flags::AVATAR_SHADOW_RECEIVER],
+                    flags: [flags::SKINNED, palette, system_binds, 0],
                     // the OIT tie-break: the avatar's id and the part, in a
                     // range of its own above the faces of an object
                     identity: [aurora_render::oit_tie(*o.full_id.as_bytes(), 0x8000 | pi as u32), 0, 0, 0],
                     ..Default::default()
                 };
+                rec.set_avatar_shadow_receiver(true);
                 if let Some((base, count, moving)) = self.live_morphs.parts.get(pi).copied().flatten() {
                     rec.flags[0] |= flags::LIP_SYNC;
                     rec.anim = [alloc.vertex_offset, base, count, moving];
@@ -5350,7 +5390,13 @@ impl Scene {
             let selection = &self.selection_wire;
             let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
             // the poser's hovered part: its avatar and what it wears
-            let posed = |g: &ObjGpu, i: usize| self.poser_part.is_some() && g.avatar(i) == self.poser_part;
+            let posed = |g: &ObjGpu, i: usize| {
+                (self.poser_part.is_some() && g.avatar(i) == self.poser_part)
+                    || self
+                        .fit_clip
+                        .as_ref()
+                        .is_some_and(|(avatars, _)| g.avatar(i).is_some_and(|a| avatars.contains(&a)))
+            };
             if by_index {
                 // (the pictured avatars and what they wear: read in the
                 // objects, on the frames a picture is taken)
@@ -5418,6 +5464,7 @@ impl Scene {
         let pattern_faces = &self.pattern_faces;
         let photo_marks = &self.photo_marks;
         let poser_part = self.poser_part;
+        let fit_clip = self.fit_clip.as_ref();
         let give_marks = &self.give_marks.1;
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
@@ -5448,6 +5495,8 @@ impl Scene {
             select_faces: Vec<DrawCmd>,
             select_pattern: Vec<DrawCmd>,
             part_faces: Vec<DrawCmd>,
+            fit_garment: Vec<DrawCmd>,
+            fit_body: Vec<DrawCmd>,
             part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
             debug_green: Vec<DrawCmd>,
@@ -5477,6 +5526,8 @@ impl Scene {
             select_faces: Vec::new(),
             select_pattern: Vec::new(),
             part_faces: Vec::new(),
+            fit_garment: Vec::new(),
+            fit_body: Vec::new(),
             part_skinned: 0,
             debug_blue: Vec::new(),
             debug_green: Vec::new(),
@@ -5663,6 +5714,18 @@ impl Scene {
                         l.part_faces.push(cmd);
                         l.part_skinned += usize::from(g.rigged || g.is_avatar);
                     }
+                    // the Fit lab's map: the garment, and the bodies that
+                    // wear it (the system body and the rigged meshes worn)
+                    if let Some((avatars, garments)) = fit_clip
+                        && pass != Pass::Hidden
+                        && avatar.is_some_and(|a| avatars.contains(&a))
+                    {
+                        if garments.contains(&idx) {
+                            l.fit_garment.push(cmd);
+                        } else if g.rigged || g.is_avatar {
+                            l.fit_body.push(cmd);
+                        }
+                    }
                 }
                 if pass == Pass::Hidden {
                     // LLVolumeGeometryManager excludes attachments and rigged
@@ -5797,6 +5860,8 @@ impl Scene {
             a.select_faces.append(&mut b.select_faces);
             a.select_pattern.append(&mut b.select_pattern);
             a.part_faces.append(&mut b.part_faces);
+            a.fit_garment.append(&mut b.fit_garment);
+            a.fit_body.append(&mut b.fit_body);
             a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
             a.shelter.append(&mut b.shelter);
@@ -5879,6 +5944,8 @@ impl Scene {
         self.lists.select_faces = result.select_faces;
         self.lists.select_pattern = result.select_pattern;
         self.lists.part_faces = result.part_faces;
+        self.lists.fit_garment = result.fit_garment;
+        self.lists.fit_body = result.fit_body;
         self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
@@ -6214,7 +6281,8 @@ impl Scene {
             motions.aurora_feet = self.ground_avatar_feet;
             motions.look_over_animations = photo_look;
             motions.look_glance = if photo_look { world.look_at.photo.glance } else { 0.0 };
-            motions.preview_bend = if owner == world.agent_id {
+            // (LiveMesh's bend shows on the Fit lab's mannequins too)
+            motions.preview_bend = if owner == world.agent_id || world.is_mannequin(&owner) {
                 self.preview_bend
             } else {
                 anim::PreviewBend::default()

@@ -563,6 +563,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "folder-window"
         | "move-folder"
         | "folder-window-search"
+        | "single-folder-window"
         | "image-layout-folder"
         | "image-layout-folder-wide" => 8000,
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,

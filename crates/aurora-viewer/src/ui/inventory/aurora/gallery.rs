@@ -61,17 +61,56 @@ pub struct Grid {
     pub columns: usize,
     pub side: f32,
     pub tile: Vec2,
+    gap: f32,
 }
+
+/// How the explorer's tiles look: the gallery's pictures over their names,
+/// the Compact view's names in columns, the Tiles view's cards.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Style {
+    Picture,
+    Compact,
+    Card,
+}
+
+impl Style {
+    pub fn of(view: view::ExplorerView) -> Self {
+        match view {
+            view::ExplorerView::Compact => Self::Compact,
+            view::ExplorerView::Tiles => Self::Card,
+            _ => Self::Picture,
+        }
+    }
+}
+
+/// A Compact view's cell: an icon and a name on a row's height.
+const COMPACT: Vec2 = Vec2::new(232.0, 24.0);
+/// A Tiles view's card: a 48 px picture beside three lines.
+const CARD: Vec2 = Vec2::new(288.0, 60.0);
+const CARD_PICTURE: f32 = 48.0;
 
 impl Grid {
     pub fn new(width: f32, side: f32, name_h: f32) -> Self {
         let tile = Vec2::new(side + 2.0 * PAD, PAD + side + PAD + name_h + PAD);
-        let columns = (((width + GAP) / (tile.x + GAP)).floor() as usize).max(1);
-        Self { columns, side, tile }
+        Self::cells(width, tile, side, GAP)
+    }
+
+    fn cells(width: f32, tile: Vec2, side: f32, gap: f32) -> Self {
+        let columns = (((width + gap) / (tile.x + gap)).floor() as usize).max(1);
+        Self { columns, side, tile, gap }
+    }
+
+    /// The grid of a view's tiles in `width`.
+    pub fn for_style(style: Style, width: f32, side: f32, name_h: f32) -> Self {
+        match style {
+            Style::Picture => Self::new(width, side, name_h),
+            Style::Compact => Self::cells(width, COMPACT, 16.0, 4.0),
+            Style::Card => Self::cells(width, CARD, CARD_PICTURE, 8.0),
+        }
     }
 
     fn pitch(&self) -> Vec2 {
-        self.tile + Vec2::splat(GAP)
+        self.tile + Vec2::splat(self.gap)
     }
 
     pub fn rows(&self, count: usize) -> usize {
@@ -80,7 +119,7 @@ impl Grid {
 
     /// The height of `count` tiles.
     pub fn height(&self, count: usize) -> f32 {
-        (self.rows(count) as f32 * self.pitch().y - GAP).max(0.0)
+        (self.rows(count) as f32 * self.pitch().y - self.gap).max(0.0)
     }
 
     /// The tiles a band from `top` to `bottom` of the content crosses.
@@ -135,6 +174,7 @@ pub fn tiles(view: view::ExplorerView) -> Tiles {
         view::ExplorerView::List => Tiles::None,
         view::ExplorerView::Gallery => Tiles::All,
         view::ExplorerView::Combination => Tiles::Pictured,
+        view::ExplorerView::Compact | view::ExplorerView::Tiles => Tiles::Listed,
     }
 }
 
@@ -153,6 +193,7 @@ pub(super) fn gallery(
     actions: &mut Vec<InvAction>,
     height: f32,
     root: Uuid,
+    style: Style,
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
     // As `list`: the place kept while the inventory changes, the keyboard.
     let key = ListKey {
@@ -165,7 +206,9 @@ pub(super) fn gallery(
     clipboard::list_focus(ui, st, height);
     let restore = st.scroll_restore.take();
     let offset = st.plain_scroll_restore.take().or(restore);
-    let out = pane(ui, p, icons, inv, st, prefs, facts, images, actions, height, root, offset, true);
+    let out = pane(
+        ui, p, icons, inv, st, prefs, facts, images, actions, height, root, offset, true, style,
+    );
     st.plain_scroll = out.state.unclamped_offset().y;
     st.list_viewport = Some((out.state.unclamped_offset().y, out.inner_rect.height()));
     record_list_shown(ui, st, &out);
@@ -223,12 +266,42 @@ pub(super) fn combination(
         // the whole room is the tiles': the list's keyboard and focus too
         return in_rect(ui, top_rect, "aurora_inventory_gallery_room", |ui| {
             clipboard::list_focus(ui, st, top);
-            pane(ui, p, icons, inv, st, prefs, facts, images, actions, top, root, None, true)
+            pane(
+                ui,
+                p,
+                icons,
+                inv,
+                st,
+                prefs,
+                facts,
+                images,
+                actions,
+                top,
+                root,
+                None,
+                true,
+                Style::Picture,
+            )
         });
     }
     if tiles > 0 {
         in_rect(ui, top_rect, "aurora_inventory_gallery_room", |ui| {
-            pane(ui, p, icons, inv, st, prefs, facts, images, actions, top, root, None, false)
+            pane(
+                ui,
+                p,
+                icons,
+                inv,
+                st,
+                prefs,
+                facts,
+                images,
+                actions,
+                top,
+                root,
+                None,
+                false,
+                Style::Picture,
+            )
         });
     }
     let mut below = rect;
@@ -258,7 +331,7 @@ pub(super) fn combination(
     let header = Rect::from_min_size(below.min, Vec2::new(below.width(), HEADER));
     in_rect(ui, header, "aurora_inventory_gallery_header", |ui| {
         if let Some(frame) = st.aurora {
-            row::header(ui, p, frame, list_id, &mut prefs.explorer);
+            row::header(ui, p, frame, list_id, prefs, st.tab, &mut st.column_fit);
             if let Some(frame) = &mut st.aurora {
                 frame.columns = prefs.explorer;
             }
@@ -311,12 +384,13 @@ fn pane(
     root: Uuid,
     mut offset: Option<f32>,
     own: bool,
+    style: Style,
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
     prepare(inv, st, prefs, root);
     let count = st.plain.tiles;
     let more = st.plain.rows.len() > count && !own;
     let width = (ui.available_width() - ui.spacing().scroll.allocated_width()).max(1.0);
-    let grid = Grid::new(width, side(&prefs.explorer), name_height(ui));
+    let grid = Grid::for_style(style, width, side(&prefs.explorer), name_height(ui));
     let navigated = keys(ui, st, grid, count, more);
     if own {
         // the deletion's reconciling and the shown order, as a list's
@@ -336,10 +410,13 @@ fn pane(
         }
     }
     if let Some(index) = index(st, st.reveal) {
-        let top = (index / grid.columns) as f32 * (grid.tile.y + GAP);
+        let top = (index / grid.columns) as f32 * grid.pitch().y;
         offset = Some((top - (height - grid.tile.y) / 2.0).max(0.0));
     }
-    zoom(ui, &mut prefs.explorer, height);
+    // Ctrl and the wheel size the gallery's pictures
+    if style == Style::Picture {
+        zoom(ui, &mut prefs.explorer, height);
+    }
     // a drag between the tiles is no scroll: the tiles are dragged themselves
     let mut area = egui::ScrollArea::vertical()
         .id_salt("aurora_inventory_tiles")
@@ -356,10 +433,20 @@ fn pane(
         let content = grid.height(count);
         ui.set_height(content.max(viewport.height()));
         let origin = ui.max_rect().min;
-        // a click between the tiles takes the keyboard to the list
+        // a click between the tiles takes the keyboard to the list and, like
+        // the list's empty space, selects nothing
         let blank = ui.interact(ui.max_rect(), ui.scope_id().with("tiles_blank"), Sense::click());
         if blank.clicked() {
             clipboard::request_focus(ui, st);
+            clipboard::blank_click(ui, st, &blank);
+        }
+        // its right-click: the menu of the folder shown
+        if blank.secondary_clicked()
+            && st.tab == 0
+            && let Some(pos) = blank.interact_pointer_pos()
+        {
+            st.row_menu = Some((root, pos));
+            st.background_menu = true;
         }
         if count == 0 {
             if own {
@@ -391,7 +478,11 @@ fn pane(
             let rect = grid.rect(origin, index);
             let mut cell = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt(("inventory_tile", entry.id)));
             cell.set_clip_rect(rect.intersect(ui.clip_rect()));
-            tile(&mut cell, p, icons, inv, st, prefs, facts, images, actions, entry, grid.side);
+            if style == Style::Picture {
+                tile(&mut cell, p, icons, inv, st, prefs, facts, images, actions, entry, grid.side);
+            } else {
+                small_tile(&mut cell, p, icons, inv, st, prefs, facts, images, actions, entry, style);
+            }
         }
     });
     let shown = (out.state.unclamped_offset().y, out.inner_rect.height());
@@ -581,6 +672,19 @@ fn tile(
     let draw_picture = |ui: &egui::Ui, st: &mut InventoryUi| {
         ui.painter().rect_filled(picture, radius, p.field);
         let shown = thumbnail::tile_picture(inv, id);
+        // a folder without a picture of its own: those of its items
+        if shown.is_none() && folder.is_some() {
+            let previews = st.folder_previews.get(inv, id, thumbnail::preview_count(side));
+            if paint_previews(ui, p, &previews, picture, images, &mut st.wanted_images) {
+                let corner = Rect::from_min_size(
+                    Pos2::new(picture.left() + 4.0, picture.bottom() - 4.0 - ICON - 4.0),
+                    Vec2::splat(ICON + 4.0),
+                );
+                ui.painter().rect_filled(corner, radius, p.panel.gamma_multiply(0.85));
+                paint_icon(ui, icons, icon, corner.center(), ICON, tint);
+                return;
+            }
+        }
         let texture = shown.and_then(|asset| {
             st.wanted_images.insert(asset);
             images.get(&asset)
@@ -633,6 +737,10 @@ fn tile(
     };
     let key = if item.is_some() { "inv_item" } else { "inv_folder" };
     let r = ui.interact(rect, ui.make_persistent_id((key, id)), sense);
+    super::marquee::record(st, id, rect);
+    if st.selected == Some(id) {
+        st.selected_rect = Some(rect);
+    }
     #[cfg(test)]
     row::tests::record(ui, id, rect);
     fill(ui);
@@ -744,10 +852,250 @@ fn tile(
                 st.browse = id;
                 st.selection.clear();
                 st.selected = None;
+            } else if r.middle_clicked() {
+                super::tabs::open(st, prefs, id, false);
             }
         }
         _ => {}
     }
+}
+
+/// A tile of the Compact view (an icon and the name on one line) or of the
+/// Tiles view (a picture beside the name, the type and the date). What it
+/// does is a row's: selection, drag, menus, renaming, double-click.
+#[allow(clippy::too_many_arguments)]
+fn small_tile(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    actions: &mut Vec<InvAction>,
+    entry: rows::Row,
+    style: Style,
+) {
+    let id = entry.id;
+    let item = inv.items.get(&id);
+    let folder = inv.folders.get(&id);
+    if item.is_none() && folder.is_none() {
+        return;
+    }
+    let rect = ui.max_rect();
+    let opacity = ui.opacity();
+    ui.multiply_opacity(clipboard::opacity(inv, st, id));
+    st.visible.push(id);
+    let selected = st.selection.contains(&id);
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let card = style == Style::Card;
+    let picture_side = if card { CARD_PICTURE } else { ICON };
+    let picture = Rect::from_min_size(
+        Pos2::new(rect.left() + PAD, rect.center().y - picture_side / 2.0),
+        Vec2::splat(picture_side),
+    );
+    let text_left = picture.right() + if card { 10.0 } else { 6.0 };
+    let name_rect = Rect::from_min_max(Pos2::new(text_left, rect.top()), Pos2::new(rect.right() - PAD, rect.bottom()));
+    let (icon, tint) = match (item, folder) {
+        (Some(it), _) => inventory_item_icon(inv, it, p),
+        (_, Some(f)) => (
+            folder_icon(f.info.type_default, false),
+            folder_colors::tint(prefs, id).unwrap_or(if selected { p.violet_pale } else { p.muted }),
+        ),
+        _ => return,
+    };
+    let fill = |ui: &egui::Ui| {
+        if selected {
+            ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
+        } else if ui.rect_contains_pointer(rect) && ui.ctx().dragged_id().is_none() {
+            ui.painter().rect_filled(rect, radius, p.raised);
+        }
+    };
+    let draw_picture = |ui: &egui::Ui, st: &mut InventoryUi| {
+        // the card's picture, the type's icon until it has one
+        // a folder without a picture borrows one of its items' (a card's
+        // picture is smaller than a medium tile's)
+        if card && folder.is_some() && thumbnail::tile_picture(inv, id).is_none() {
+            let previews = st.folder_previews.get(inv, id, 1);
+            if images_ready(&previews, images) {
+                ui.painter().rect_filled(picture, radius, p.field);
+            }
+            if paint_previews(ui, p, &previews, picture, images, &mut st.wanted_images) {
+                return;
+            }
+        }
+        let texture = card.then(|| thumbnail::tile_picture(inv, id)).flatten().and_then(|asset| {
+            st.wanted_images.insert(asset);
+            images.get(&asset)
+        });
+        match texture {
+            Some(texture) => {
+                ui.painter().rect_filled(picture, radius, p.field);
+                let size = texture.size_vec2();
+                let scale = (picture_side / size.x.max(1.0)).min(picture_side / size.y.max(1.0));
+                ui.painter().image(
+                    texture.id(),
+                    Rect::from_center_size(picture.center(), size * scale),
+                    Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    widgets::PICTURE_TINT,
+                );
+            }
+            None => {
+                if card {
+                    ui.painter().rect_filled(picture, radius, p.field);
+                }
+                paint_icon(ui, icons, icon, picture.center(), if card { 24.0 } else { ICON }, tint);
+            }
+        }
+    };
+    let mut field = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(Rect::from_min_size(
+                Pos2::new(name_rect.left(), rect.center().y - 11.0),
+                Vec2::new(name_rect.width(), 22.0),
+            ))
+            .id_salt(("inventory_rename_tile", id)),
+    );
+    if rename_row(&mut field, p, inv, id, st, actions) {
+        fill(ui);
+        draw_picture(ui, st);
+        ui.set_opacity(opacity);
+        return;
+    }
+    let sense = if item.is_some() || folder_draggable(inv, id, prefs) {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    };
+    let key = if item.is_some() { "inv_item" } else { "inv_folder" };
+    let r = ui.interact(rect, ui.make_persistent_id((key, id)), sense);
+    super::marquee::record(st, id, rect);
+    if st.selected == Some(id) {
+        st.selected_rect = Some(rect);
+    }
+    #[cfg(test)]
+    row::tests::record(ui, id, rect);
+    fill(ui);
+    draw_picture(ui, st);
+    // the name, a worn item's in the tag's face, a link's leaning
+    let pill = item.and_then(|it| pill(inv, it, facts));
+    let (label, worn, link) = match (item, folder) {
+        (Some(it), _) => (
+            it.name.clone(),
+            pill.is_some_and(|(_, worn)| worn),
+            matches!(it.asset_type, 24 | 25),
+        ),
+        (_, Some(_)) => (folder_name(inv, id), false, false),
+        _ => return,
+    };
+    let ink = if worn { widgets::row_tag_ink(p, true) } else { p.ink };
+    let mut job = if selected || worn || card {
+        sheet::semibold(ui, &label, NAME, ink)
+    } else {
+        egui::text::LayoutJob::single_section(label, egui::TextFormat::simple(egui::FontId::proportional(NAME), ink))
+    };
+    for section in &mut job.sections {
+        section.format.italics = link;
+    }
+    job.wrap = egui::text::TextWrapping::truncate_at_width(name_rect.width().max(1.0));
+    let galley = ui.painter().layout_job(job);
+    let muted = if selected { p.violet_pale } else { p.muted };
+    if card {
+        // the name, then the type, then the date (Explorer's tile)
+        let line = |text: String| {
+            let mut job = egui::text::LayoutJob::single_section(text, egui::TextFormat::simple(egui::FontId::proportional(11.5), muted));
+            job.wrap = egui::text::TextWrapping::truncate_at_width(name_rect.width().max(1.0));
+            ui.painter().layout_job(job)
+        };
+        let kind = line(row::kind_name(inv, id));
+        let seconds = item.map_or_else(|| st.view.folder_date(id), |it| it.created_at);
+        let date = line(pill.map_or_else(|| row::short_date(seconds, super::super::view::now()), |(text, _)| text.to_owned()));
+        let top = rect.center().y - (galley.size().y + kind.size().y + date.size().y) / 2.0;
+        let (name_h, kind_h) = (galley.size().y, kind.size().y);
+        ui.painter().galley(Pos2::new(text_left, top), galley, ink);
+        ui.painter().galley(Pos2::new(text_left, top + name_h), kind, muted);
+        ui.painter().galley(Pos2::new(text_left, top + name_h + kind_h), date, muted);
+    } else {
+        widgets::paint_row_text(ui.painter(), galley, text_left, rect.center().y, ink);
+    }
+    if rules::is_favorite(inv, id) {
+        widgets::paint_glyph(
+            ui.painter(),
+            "star-filled",
+            Pos2::new(rect.right() - PAD - 7.0, rect.center().y),
+            12.0,
+            p.amber,
+        );
+    }
+    ui.set_opacity(opacity);
+    match (item, folder) {
+        (Some(it), _) => {
+            let permissions = Permissions::inventory(inv, id);
+            item_response(ui, p, inv, it, r, permissions, st, prefs, facts, actions);
+        }
+        (_, Some(_)) => {
+            let mut open = false;
+            let r = folder_response(ui, p, inv, id, r, None, &mut open, st, prefs, facts, actions);
+            if r.double_clicked() || open {
+                st.browse = id;
+                st.selection.clear();
+                st.selected = None;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether any of `previews` is loaded.
+fn images_ready(previews: &[Uuid], images: &HashMap<Uuid, egui::TextureHandle>) -> bool {
+    previews.iter().any(|asset| images.contains_key(asset))
+}
+
+/// A folder's borrowed pictures in `rect`: one whole, or two to four in a
+/// two by two grid (Dolphin's folder previews), each with its proportions
+/// kept. Asks for them; false while none of them is loaded, the folder's
+/// icon showing meanwhile.
+fn paint_previews(
+    ui: &egui::Ui,
+    p: &Palette,
+    previews: &[Uuid],
+    rect: Rect,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    wanted: &mut HashSet<Uuid>,
+) -> bool {
+    wanted.extend(previews.iter().copied());
+    if !images_ready(previews, images) {
+        return false;
+    }
+    let cells: Vec<Rect> = if previews.len() == 1 {
+        vec![rect]
+    } else {
+        let half = (rect.size() - Vec2::splat(2.0)) / 2.0;
+        (0..4)
+            .map(|n| {
+                let offset = Vec2::new((n % 2) as f32 * (half.x + 2.0), (n / 2) as f32 * (half.y + 2.0));
+                Rect::from_min_size(rect.min + offset, half)
+            })
+            .collect()
+    };
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    for (asset, cell) in previews.iter().zip(cells) {
+        if previews.len() > 1 {
+            ui.painter().rect_filled(cell, radius, p.panel);
+        }
+        if let Some(texture) = images.get(asset) {
+            let size = texture.size_vec2();
+            let scale = (cell.width() / size.x.max(1.0)).min(cell.height() / size.y.max(1.0));
+            ui.painter().image(
+                texture.id(),
+                Rect::from_center_size(cell.center(), size * scale),
+                Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                widgets::PICTURE_TINT,
+            );
+        }
+    }
+    true
 }
 
 fn paint_icon(ui: &egui::Ui, icons: &Icons, name: &str, center: Pos2, size: f32, tint: Color32) {
