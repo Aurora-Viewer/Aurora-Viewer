@@ -68,6 +68,9 @@ pub(crate) struct SurfaceState {
     pub width: u32,
     pub height: u32,
     pub vsync: bool,
+    /// DLSS frame generation may run: the window is in front, or a timed
+    /// run (`MainThread::set_frame_generation_allowed`).
+    pub fg_allowed: bool,
 }
 
 /// The scene's data on the GPU for one frame: handles (reference counted)

@@ -2473,6 +2473,8 @@ pub(crate) struct Backend {
     /// The surface presents under Fifo for DLSS frame generation, whatever
     /// the vsync (`set_presentation`).
     fg_paced: bool,
+    /// The main thread lets frame generation run (`SurfaceState::fg_allowed`).
+    fg_allowed: bool,
     /// Presentation modes of the surface, read when it was created.
     present_modes: Vec<wgpu::PresentMode>,
     settings: RenderSettings,
@@ -5464,6 +5466,7 @@ impl Backend {
             snow_trail: SnowTrail::default(),
             vsync,
             fg_paced: false,
+            fg_allowed: true,
             present_modes,
             settings,
             taa: None,
@@ -8478,6 +8481,7 @@ impl Backend {
     }
     /// Follow the window: size and vsync wanted for the frame being drawn.
     fn apply_surface(&mut self, s: SurfaceState) {
+        self.fg_allowed = s.fg_allowed;
         self.set_vsync(s.vsync);
         if (s.width, s.height) != (self.config.width, self.config.height) {
             self.resize(s.width, s.height);
@@ -9257,9 +9261,12 @@ impl Backend {
     }
 
     /// DLSS frame generation runs on this frame's window image
-    /// (`RenderSettings::frame_generation`, and a DLSS to draw it with).
+    /// (`RenderSettings::frame_generation`, and a DLSS to draw it with),
+    /// while the main thread allows it (`fg_allowed`: the window in front).
+    /// Left running behind another workspace, the window's first images
+    /// once it was in front again waited up to 1 s each, for up to 11 s.
     fn fg_on(&self) -> bool {
-        self.settings.frame_generation() && self.taa.as_ref().is_some_and(|t| t.dlss.is_some())
+        self.fg_allowed && self.settings.frame_generation() && self.taa.as_ref().is_some_and(|t| t.dlss.is_some())
     }
 
     /// The presentation mode for the vsync setting, or Fifo while frame

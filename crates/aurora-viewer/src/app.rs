@@ -14599,6 +14599,8 @@ impl App {
         self.screen_rate.poll(&gfx.window, Instant::now());
         let monitor_hz = self.screen_rate.hz();
         let timed = self.capture.is_some() || self.frame_profile.enabled();
+        gfx.renderer
+            .set_frame_generation_allowed(frame_generation_allowed(self.in_front(), timed));
         let cap = frame_cap(
             &self.settings,
             self.in_front(),
@@ -26972,6 +26974,16 @@ fn frame_cap(
     )
 }
 
+/// DLSS frame generation runs only while the viewer is in front (its window
+/// or one of its windows outside has the focus), or for a timed run (a
+/// capture, `AURORA_PROFILE`), which may stand behind. Left running behind
+/// another workspace, under Fifo, the window's first images once it was in
+/// front again waited up to 1 s each: the window froze for up to 11 s on
+/// 4 of 10 returns, against 0 of 13 with it stopped behind.
+fn frame_generation_allowed(in_front: bool, timed: bool) -> bool {
+    in_front || timed
+}
+
 /// [`frame_cap`] with DLSS frame generation running or not (`fg_paced`).
 #[allow(clippy::too_many_arguments)]
 fn frame_cap_paced(
@@ -27205,7 +27217,7 @@ pub fn restart_with_vr(mode: crate::camera::VrView) {
 mod tests {
     use super::{
         RightGesture, UiActions, WindowedGeometry, capture_files, exit_prompt_key, exit_prompt_modifiers, frame_cap, frame_cap_paced,
-        fullscreen_shortcut,
+        frame_generation_allowed, fullscreen_shortcut,
     };
     use crate::keybinds::Mods;
     use crate::settings::Settings;
@@ -27769,6 +27781,13 @@ mod tests {
         assert_eq!(frame_cap(&settings, false, true, true, 60.0, false, None), 0.0);
         assert_eq!(frame_cap(&settings, false, false, true, 60.0, false, None), 15.0);
         assert_eq!(frame_cap(&settings, false, true, true, 60.0, false, Some(120)), 120.0);
+    }
+
+    #[test]
+    fn frame_generation_waits_for_the_window_in_front() {
+        assert!(frame_generation_allowed(true, false));
+        assert!(!frame_generation_allowed(false, false), "behind: stopped");
+        assert!(frame_generation_allowed(false, true), "a timed run behind keeps it");
     }
 
     #[test]

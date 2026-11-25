@@ -176,6 +176,7 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
             width,
             height,
             vsync: main.surface.vsync,
+            fg_allowed: main.surface.fg_allowed,
         },
         settings: main.settings,
         hover: None,

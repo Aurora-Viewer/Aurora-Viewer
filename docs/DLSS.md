@@ -187,7 +187,12 @@ the interface; the interface on the generated frame is the drawn frame's,
 laid over it wherever the interface drew. While it runs the window presents under Fifo,
 whatever the vsync setting, and the frame rate limit stands aside (the
 background limit does not): the screen paces the pairs, so the viewer draws
-at half the refresh rate and shows a frame at every refresh. A frame
+at half the refresh rate and shows a frame at every refresh. It stops
+while the viewer is not in front (neither its window nor one of its windows
+outside has the focus), so the window presents in the vsync setting's mode
+behind another workspace, and starts again with the focus; a capture or an
+`AURORA_PROFILE` run keeps it behind. Left running there, the window's first
+images once in front again waited up to a second each, for up to 11 s. A frame
 generation did not run on (a reset, a gap, a modal's blur, a photo) shows
 the drawn frame alone. Turned off, its images are let go and the vsync
 setting's mode comes back; NGX's own frame generation stays loaded until

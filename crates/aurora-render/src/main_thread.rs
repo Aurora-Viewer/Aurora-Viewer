@@ -251,6 +251,8 @@ pub struct Renderer {
     gpu_cull: bool,
     size: (u32, u32),
     vsync: bool,
+    /// `SurfaceState::fg_allowed`.
+    fg_allowed: bool,
     settings: RenderSettings,
     msaa_supported: Vec<u32>,
     blend_exact_supported: bool,
@@ -839,6 +841,7 @@ impl Renderer {
             gpu_cull,
             size: (width.max(1), height.max(1)),
             vsync,
+            fg_allowed: true,
             settings: RenderSettings::default(),
             msaa_supported,
             blend_exact_supported,
@@ -1314,6 +1317,14 @@ impl Renderer {
 
     pub fn set_vsync(&mut self, vsync: bool) {
         self.vsync = vsync;
+    }
+
+    /// DLSS frame generation may run on the next frames: only while the
+    /// window is in front, or for a timed run. Behind another workspace it
+    /// stops, and the window presents in the vsync setting's mode until it
+    /// is in front again (`Renderer::fg_on` on the render thread).
+    pub fn set_frame_generation_allowed(&mut self, allowed: bool) {
+        self.fg_allowed = allowed;
     }
 
     pub fn vsync(&self) -> bool {
@@ -1807,6 +1818,7 @@ impl Renderer {
                 width: self.size.0,
                 height: self.size.1,
                 vsync: self.vsync,
+                fg_allowed: self.fg_allowed,
             },
             settings: self.settings,
             hover: self.hover_request.take(),
