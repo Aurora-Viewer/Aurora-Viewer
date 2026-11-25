@@ -190,10 +190,12 @@ impl App {
             region.terrain_surface.gpu_reset();
         }
         self.media.gpu_reset();
-        // the local images of the imports, the wearable editor and Blender Live
+        // Blender Live's images first, while the new pool is empty: they are
+        // staged here, and no chunk comes back before the next frame
+        self.blender_live.gpu_reset(self.scene.textures.staging.clone());
+        // the local images of the imports and the wearable editor
         self.republish_local_imports();
         self.wearable_ui.preview.gpu_reset();
-        self.blender_live.gpu_reset(self.scene.textures.staging.clone());
         // AURORA_DEMO_STREAM's textures arrive decoded, with no data the
         // streamer could load them again from
         if let Some(demo) = &mut self.stream_demo {

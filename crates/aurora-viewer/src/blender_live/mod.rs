@@ -279,7 +279,8 @@ impl Live {
     }
 
     /// The GPU device is lost (app/gpu_recovery.rs): what was staged for it
-    /// is given up, so that nothing here keeps it. A snapshot Blender sends
+    /// is given up, so that nothing here keeps it (the listener at most until
+    /// the snapshot it prepares is done). A snapshot Blender sends
     /// meanwhile, or whose images were being staged, is asked again
     /// (`STAGING_BUSY`).
     pub fn forget_gpu(&mut self) {
@@ -308,7 +309,8 @@ impl Live {
             staging::restage(&mut snapshot.images, pool.as_deref(), &mut done);
         }
         if let Some(server) = &self.server {
-            // (none comes in the meantime: the listener has no pool yet)
+            // (none comes in the meantime: the listener refuses them until
+            // it has the new pool)
             if let Some(snapshot) = server.shared.latest.lock().as_mut() {
                 staging::restage(&mut snapshot.images, pool.as_deref(), &mut done);
             }

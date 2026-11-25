@@ -10,7 +10,8 @@ use uuid::Uuid;
 
 #[derive(Default)]
 pub(crate) struct Staging {
-    /// None in the tests, which have no GPU: the images are left unstaged.
+    /// None while the device is lost (`begin` then gives nothing), and in the
+    /// tests, which have no GPU: the images are left unstaged there.
     pool: Option<Arc<StagingPool>>,
     /// The device is gone and the new one not made yet.
     lost: bool,
@@ -78,15 +79,30 @@ impl Staging {
 /// Stages `images` in `pool`, from the pixels kept with them. `done` holds
 /// those already staged, which several snapshots can share.
 pub(super) fn restage(images: &mut [PreparedImage], pool: Option<&StagingPool>, done: &mut HashMap<Uuid, Arc<StagedTexture>>) {
-    for image in images {
-        image.staged = done.get(&image.id).cloned().or_else(|| {
+    use rayon::prelude::*;
+    let Some(pool) = pool else {
+        return;
+    };
+    let levels: Vec<_> = images
+        .par_iter()
+        .map(|image| {
             let pixels = &image.pixels;
-            let levels = aurora_render::build_mips(pixels.width, pixels.height, pixels.data.clone(), 12);
+            (!done.contains_key(&image.id)).then(|| aurora_render::build_mips(pixels.width, pixels.height, pixels.data.clone(), 12))
+        })
+        .collect();
+    for (image, levels) in images.iter_mut().zip(levels) {
+        image.staged = done.get(&image.id).cloned().or_else(|| {
+            let levels = levels?;
             let refs: Vec<_> = levels.iter().map(|(w, h, bytes)| (*w, *h, bytes.as_slice())).collect();
-            let staged = Arc::new(StagedTexture::new(pool?, &refs)?);
+            let staged = Arc::new(StagedTexture::new(pool, &refs)?);
             done.insert(image.id, staged.clone());
             Some(staged)
         });
+        if image.staged.is_none() {
+            log::warn!(
+                "Blender live: an image could not be staged again after the GPU recovery; the preview waits for Blender's next snapshot"
+            );
+        }
     }
 }
 
