@@ -461,6 +461,8 @@ impl App {
         }
     }
 
+    /// The flycam's camera, flown by the device, and by the keys too in VR;
+    /// on a screen the caller leaves the keys to the avatar (#4613).
     pub(super) fn joystick_flycam_step(&mut self, keys: &MoveInput, dt: f32) {
         if self.joystick_input_focused()
             && !self.options_ui.joystick_capturing()
@@ -496,13 +498,6 @@ impl App {
             } else {
                 cam.step(axes, profile, dt);
             }
-        }
-        self.input = MoveInput::default();
-        self.fb_since = None;
-        self.lr_since = None;
-        self.up_since = None;
-        if self.vr_camera.is_none() {
-            self.turn_since = None;
         }
     }
 
@@ -1018,6 +1013,15 @@ impl App {
             )
         {
             self.toggle_joystick_flycam();
+        }
+        // with AURORA_DEMO_KEY=up, the avatar walks on under the flycam (#4613)
+        if mode == "flycam" && matches!(self.frame_count, 640 | 900) {
+            log::info!(
+                "demo flycam: frame={} flycam={} avatar={:?}",
+                self.frame_count,
+                self.joystick.active,
+                self.world.agent.position
+            );
         }
     }
 }

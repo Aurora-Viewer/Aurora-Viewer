@@ -9501,14 +9501,16 @@ impl App {
         // Route only the keyboard. Controls, the joystick and mouse steering
         // still send their own movement, even when they share a held direction.
         let temp_run = (self.temp_run.is_some() || self.joystick.running || self.game_control.running) && !self.world.rlva.has("temprun");
-        let seated_camera = self.world.agent.is_sitting()
-            && self.in_world()
-            && !self.avatar_studio.active
-            && self.vr_camera.is_none()
-            && !self.joystick.active
-            && self.camera.free().is_none()
-            && !self.camera.mouselook()
-            && !self.camera.sit_camera_active();
+        let seated_camera = SeatedView {
+            sitting: self.world.agent.is_sitting(),
+            in_world: self.in_world(),
+            avatar_studio: self.avatar_studio.active,
+            vr: self.vr_camera.is_some(),
+            free_camera: self.camera.free().is_some(),
+            mouselook: self.camera.mouselook(),
+            sit_camera: self.camera.sit_camera_active(),
+        }
+        .camera_keys();
         let seated = SeatedCameraKeys::take(&mut i, &self.world.script_controls, seated_camera, self.always_run, temp_run);
         // the Controls window's buttons, held like their keys
         let held = |a: Action| self.controls_held.contains(&a);
@@ -9544,13 +9546,27 @@ impl App {
             self.game_control_flycam_step(&i, dt);
             return;
         }
-        if self.joystick.active {
+        let flycam = self.joystick.active;
+        if flycam {
             i.turn_held = turn_held(&mut self.turn_since, &i);
             self.joystick_flycam_step(&i, dt);
-            return;
+            // In VR the keys fly the rig. On a screen the device flies the
+            // flycam alone and the keys still move the avatar below (#4613):
+            // LLViewerJoystick::toggleFlycam only overrides the camera, and
+            // agent_push_forward & co (indra/newview/llviewerinput.cpp) move
+            // the agent whatever the flycam.
+            if self.vr_camera.is_some() {
+                self.input = MoveInput::default();
+                self.fb_since = None;
+                self.lr_since = None;
+                self.up_since = None;
+                return;
+            }
         }
-        let joystick_up =
-            self.camera.free().is_none() && (self.joystick.motion.axes[2] > 0.0 || self.joystick.motion.jump || self.joystick.motion.rise);
+        // Under the flycam the device flies the camera and the keyboard still
+        // walks the avatar below (#4613); the flycam keeps the camera.
+        let motion = self.joystick.motion.for_avatar(flycam);
+        let joystick_up = self.camera.free().is_none() && (motion.axes[2] > 0.0 || motion.jump || motion.rise);
         let player_movement_input = i.forward
             || i.back
             || i.strafe_left
@@ -9559,9 +9575,9 @@ impl App {
             || i.turn_right
             || i.up
             || i.down
-            || self.joystick.motion.player_movement_input()
+            || motion.player_movement_input()
             || (self.mouse_mode == MouseMode::Steer && self.right_drag);
-        i.down |= self.joystick.motion.crouch;
+        i.down |= motion.crouch;
         i.down = self.crouch_toggle.apply(
             self.settings.crouch_toggle,
             // A swimmer descends with the key, as in flight (crouch_toggle.rs).
@@ -9576,7 +9592,7 @@ impl App {
         if self.avatar_studio.active && self.camera.free().is_none() {
             i = MoveInput::default();
         }
-        let gamepad = self.joystick.motion.gamepad && self.joystick.motion.moving();
+        let gamepad = motion.gamepad && motion.moving();
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
             // stays where it is (no walk, turn, jump or flight start).
@@ -9631,8 +9647,8 @@ impl App {
         i.nudge_lr = since(&mut self.lr_since, i.strafe_left || i.strafe_right);
         // Native joystick translation uses moveAt/moveLeft, without the
         // keyboard's initial nudge (LLViewerJoystick::agentPush/Slide).
-        i.nudge_fb &= self.joystick.motion.axes[0] == 0.0;
-        i.nudge_lr &= self.joystick.motion.axes[1] == 0.0;
+        i.nudge_fb &= motion.axes[0] == 0.0;
+        i.nudge_lr &= motion.axes[1] == 0.0;
         if i.up {
             self.world.agent.record_jump_input(now);
         }
@@ -9670,8 +9686,9 @@ impl App {
         } else {
             i.resets_camera(self.crouch_toggle.latched())
         };
-        let gamepad_movement = gamepad && self.joystick.motion.player_movement_input();
+        let gamepad_movement = gamepad && motion.player_movement_input();
         if self.vr_mode.is_none()
+            && !flycam
             && moving
             && !self.input.resets_camera(self.crouch_toggle.latched())
             && let Some(yaw) = self.camera.gamepad_pan_movement_yaw()
@@ -9680,7 +9697,9 @@ impl App {
         }
         // "Keep the camera still while posing" keeps the camera where the
         // user put it: moving still walks, only the camera reset is skipped.
-        let movement_resets_camera = moving && !self.settings.camera.keeps_still(self.ik_editor.posing());
+        // (not under the flycam: resetting the view would end it, where
+        // LLAgent::moveAt's resetView leaves the joystick's camera on)
+        let movement_resets_camera = moving && !flycam && !self.settings.camera.keeps_still(self.ik_editor.posing());
         if movement_resets_camera && self.mouse_mode != MouseMode::FocusOrbit && self.vr_mode != Some(crate::camera::VrView::Avatar) {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
@@ -9701,6 +9720,10 @@ impl App {
             }
         }
         self.input = i;
+        if flycam {
+            // the avatar's camera controls wait for the flycam's end
+            return;
+        }
         self.joystick_avatar_camera(moving, player_movement_input, dt);
         // camera keys (Alt + arrows...), ramping up like get_orbit_rate
         use crate::keybinds::Action as A;
@@ -26174,6 +26197,31 @@ fn automatic_fly_held(since: &mut Option<Instant>, up: bool, enabled: bool, now:
     now.duration_since(*since.get_or_insert(now)).as_secs_f32() > FLY_TIME
 }
 
+/// What decides whether a seated avatar's movement keys go to its seated
+/// camera (`SeatedCameraKeys`).
+#[derive(Debug, Default, Clone, Copy)]
+struct SeatedView {
+    sitting: bool,
+    in_world: bool,
+    avatar_studio: bool,
+    vr: bool,
+    free_camera: bool,
+    mouselook: bool,
+    sit_camera: bool,
+}
+
+impl SeatedView {
+    /// The seated third-person camera takes the keys. The joystick flycam
+    /// does not change that: the Legacy sitting handlers
+    /// (camera_move_forward_sitting & co, indra/newview/llviewerinput.cpp)
+    /// never look at it, and its camera override discards that orbit, so a
+    /// seated avatar's keys reach neither the avatar nor a pass-on script
+    /// under the flycam (#4613).
+    fn camera_keys(self) -> bool {
+        self.sitting && self.in_world && !self.avatar_studio && !self.vr && !self.free_camera && !self.mouselook && !self.sit_camera
+    }
+}
+
 /// The movement keys a seated avatar hands to the camera: W / S zoom, A / D
 /// orbit around the avatar, E / C tilt it (camera_move_forward_sitting,
 /// camera_move_backward_sitting, camera_spin_around_cw_sitting,
@@ -26527,7 +26575,7 @@ mod tests {
     /// Seated keys against the script controls and the run state, as the
     /// Legacy Viewer's camera_*_sitting functions decide them.
     mod seated_camera_keys {
-        use super::super::SeatedCameraKeys;
+        use super::super::{SeatedCameraKeys, SeatedView};
         use crate::agent::MoveInput;
         use aurora_net::control;
         use aurora_net::script_controls::ScriptControls;
@@ -26563,6 +26611,37 @@ mod tests {
         #[test]
         fn free_seat_gives_every_key_to_the_camera() {
             assert_eq!(of(&ScriptControls::default(), false, false, false), all_to_the_camera());
+        }
+
+        /// #4613: seated under the joystick flycam (third person, no VR),
+        /// W/S/A/D/E/C go to the seated camera, which the flycam's override
+        /// discards: the avatar sends no movement for a pass-on script, and
+        /// the flycam's device adds none either.
+        #[test]
+        fn seated_under_the_flycam_the_keys_move_nothing() {
+            let view = SeatedView {
+                sitting: true,
+                in_world: true,
+                ..Default::default()
+            };
+            assert!(view.camera_keys());
+            let mut keys = all_held();
+            let seated = SeatedCameraKeys::take(&mut keys, &ScriptControls::default(), view.camera_keys(), false, false);
+            assert_eq!(seated, all_to_the_camera());
+            let mut device = crate::joystick::Motion::default();
+            device.axes[0] = 0.8;
+            device.for_avatar(true).apply_avatar(&mut keys);
+            let agent = crate::agent::AgentState::default();
+            let movement = control::AT_POS | control::AT_NEG | control::UP_POS | control::UP_NEG | control::YAW_POS | control::YAW_NEG;
+            assert_eq!(agent.control_flags(&keys, false) & movement, 0);
+            for other in [
+                SeatedView { vr: true, ..view },
+                SeatedView { mouselook: true, ..view },
+                SeatedView { sit_camera: true, ..view },
+                SeatedView { sitting: false, ..view },
+            ] {
+                assert!(!other.camera_keys(), "{other:?}");
+            }
         }
 
         #[test]
