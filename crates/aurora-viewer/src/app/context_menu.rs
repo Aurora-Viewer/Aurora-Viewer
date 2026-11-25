@@ -129,11 +129,12 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
-        // the animation editor's mirror of us is no one: no menu on it nor
+        // the copies of us (the animation editor's mirror, the Fit lab's
+        // mannequins) are no one: no menu on them nor
         // on what it wears
         if picked
             .and_then(|idx| ui::context::wearer(&self.world, idx).or_else(|| self.world.objects.get(idx).map(|o| o.full_id)))
-            .is_some_and(|id| self.world.is_mirror(&id))
+            .is_some_and(|id| self.world.is_local_copy(&id))
         {
             return;
         }
@@ -486,9 +487,52 @@ impl App {
             self.place_ui.raise(serial);
         } else {
             w.place_details.open_panel(source, &w.map, &mut w.landmarks, now);
-            self.panels.places = true;
+            crate::ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
             self.places_ui.show_profile();
         }
+    }
+
+    /// Show on map, from any button or link: the map tracks the place and
+    /// opens, or comes to the front, expanded when it is minimized
+    /// (LLFloaterReg::showInstance "world_map" → LLFloater::openFloater).
+    /// Its search takes the keyboard (LLFloaterWorldMap::onOpen, on every
+    /// show).
+    pub(super) fn show_on_map(&mut self, x: f64, y: f64, z: f32) {
+        self.world.map.show_location(x, y, z);
+        self.show_world_map();
+    }
+
+    /// The world map from a button or a link (LLFloaterReg::showInstance
+    /// "world_map"): opened, or brought to the front, expanded when it is
+    /// minimized; its search takes the keyboard (`WorldMapUi::show`).
+    pub(super) fn show_world_map(&mut self) {
+        ui::widgets::show_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+    }
+
+    /// About Land of the selected parcel (LLFloaterReg::showInstance
+    /// "about_land"): opened, or expanded when it is minimized.
+    pub(super) fn open_about_land(&mut self) {
+        let id = ui::land::window_id(self.classic_land());
+        ui::widgets::open_floater(&self.egui_ctx, id, &mut self.panels.about_land);
+    }
+
+    /// About Land shows the Legacy Viewer's tabs
+    /// (AURORA_DEMO_LAND=…:classic shows them without saving it).
+    pub(super) fn classic_land(&self) -> bool {
+        self.settings.classic_about_land || (self.demo && crate::demo::land::scenario().is_some_and(|s| s.classic))
+    }
+
+    /// Region / Estate shows the Legacy Viewer's tabs
+    /// (AURORA_DEMO_REGION=…:classic shows them without saving it).
+    pub(super) fn classic_region(&self) -> bool {
+        self.settings.classic_region_estate || self.region_ui.forced_classic()
+    }
+
+    /// The layouts About Land and Region / Estate draw, for the bars'
+    /// buttons that expand them by window id.
+    pub(super) fn sync_layout_mirrors(&mut self) {
+        self.panels.about_land_classic = self.classic_land();
+        self.panels.region_estate_classic = self.classic_region();
     }
 
     /// "Show in inventory" of a rezzed object the agent owns. The Legacy
@@ -814,7 +858,7 @@ impl App {
             CtxAction::AboutLand(point) => {
                 let (gx, gy) = ui::minimap::to_global(&self.world, point);
                 ui::land::LandUi::select_at_global(&mut self.world, gx, gy);
-                self.panels.about_land = true;
+                self.open_about_land();
             }
             // handle_buy_land on the parcel LLToolPie selected
             CtxAction::BuyLand(point) => {
@@ -830,12 +874,12 @@ impl App {
                 self.settings.world_overlays.property_lines = on;
                 self.settings.save();
             }
-            CtxAction::DisplayName => self.display_name_ui.open(),
-            CtxAction::HoverHeight => self.hover_height_ui.open = true,
+            CtxAction::DisplayName => self.display_name_ui.open(&self.egui_ctx),
+            CtxAction::HoverHeight => ui::widgets::open_floater(&self.egui_ctx, ui::hover_height::WINDOW, &mut self.hover_height_ui.open),
             CtxAction::ReportAbuse(target) => self.open_report_abuse(target),
             CtxAction::CreateLandmark => self.open_create_landmark(None),
             CtxAction::OpenAppearance { tab, editing } => {
-                self.panels.appearance = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance);
                 // "Change outfit" (tab 0) opens the outfit view in use,
                 // the gallery or the list, rather than always the gallery
                 if tab == 0 && !editing {
@@ -1071,7 +1115,7 @@ impl App {
                 }
             }
             CtxAction::OpenPeople(tab) => {
-                self.panels.people = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, crate::ui::people::WINDOW, &mut self.panels.people);
                 self.panels.people_tab = tab;
             }
             CtxAction::ZoomAvatar(id) => {
@@ -1089,7 +1133,7 @@ impl App {
             CtxAction::TeleportToAvatar(id) | CtxAction::ShowOnMap(id) => {
                 let teleport = matches!(act, CtxAction::TeleportToAvatar(_));
                 if self.world.locate_avatar(id, teleport) && !teleport {
-                    ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+                    self.show_world_map();
                 }
             }
             CtxAction::ShowPlaceInfo(region, pos) => {
@@ -1104,7 +1148,7 @@ impl App {
                 // LLWorldMapHandler::handle: trackURL, then the map opens
                 // centred on the place ("center")
                 self.world.map.show_region(&region, pos);
-                ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+                self.show_world_map();
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
             CtxAction::TeleportToPlace(region, pos) => {

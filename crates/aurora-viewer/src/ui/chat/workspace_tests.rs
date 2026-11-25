@@ -545,6 +545,42 @@ fn the_keyboard_goes_round_the_conversations_and_closes_them() {
     }
 }
 
+/// Ctrl+W with the emoji or GIF picker open: the next conversation shows
+/// with the pickers closed from the pass of the key on, not one pass with
+/// the other conversation's picker (#4867), in both styles of the list.
+#[test]
+fn closing_a_conversation_with_ctrl_w_closes_its_picker() {
+    for style in [ChatStyle::Legacy, ChatStyle::Aurora] {
+        for gif in [false, true] {
+            let mut h = Harness::new(style);
+            h.st.gifs.demo = true;
+            h.settle();
+            let order = if style.workspace() {
+                super::super::sidebar::tab_order(&h.world, &h.st)
+            } else {
+                super::super::keys::legacy_order(&h.world, &h.st)
+            };
+            let last = order[2];
+            h.st.select_tab(last);
+            h.st.conv_focus_request = true;
+            h.settle();
+            if gif {
+                h.st.gif_open = true;
+            } else {
+                h.st.emoji_open = true;
+            }
+            h.settle();
+            assert!(h.st.emoji_open || h.st.gif_open, "{style:?} gif {gif}: open");
+            h.frame(key(egui::Key::W, egui::Modifiers::COMMAND));
+            assert_ne!(h.st.selected, last, "{style:?} gif {gif}: the next one shown");
+            assert!(
+                !h.st.emoji_open && !h.st.gif_open,
+                "{style:?} gif {gif}: closed on the pass of the key"
+            );
+        }
+    }
+}
+
 /// The kinds of the column's sections.
 #[test]
 fn sessions_fall_in_their_sections() {
