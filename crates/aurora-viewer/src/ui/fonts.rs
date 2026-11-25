@@ -1178,21 +1178,11 @@ mod tests {
         check_every_script(fallback::wait());
     }
 
-    /// The same check with none of the system's fonts (a bare Linux): the
-    /// squares are those no face of the chosen font's family draws. Noto
-    /// Sans, Roboto and OpenDyslexic have no `Ⓝ`; Inter has it, and is
-    /// nobody's fallback.
+    /// The same check with none of the system's fonts (a bare Linux), the
+    /// same on every machine: no square the faces of the family could draw.
     #[test]
-    fn without_system_fonts_only_what_the_family_lacks_is_a_square() {
+    fn without_system_fonts_every_loaded_face_is_used() {
         check_every_script(&[]);
-        const CIRCLED: &str = "Ⓝ";
-        for b in &BUILTINS {
-            for family in [egui::FontFamily::Proportional, semibold_family()] {
-                let missing = squares(definitions_for(b.name, &[]), family.clone(), CIRCLED);
-                let expected = if b.name == INTER { "" } else { CIRCLED };
-                assert_eq!(missing, expected, "{} ({family})", b.name);
-            }
-        }
     }
 
     fn check_every_script(system: &[fallback::SystemFace]) {
@@ -1203,7 +1193,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         for b in &BUILTINS {
-            for family in [egui::FontFamily::Proportional, semibold_family()] {
+            for family in [egui::FontFamily::Proportional, semibold_family(), egui::FontFamily::Monospace] {
                 let missing = unexpected(&squares(definitions_for(b.name, system), family.clone(), &text));
                 let unexplained = covered_but_square(&missing, b, &family, system);
                 assert!(
@@ -1237,14 +1227,19 @@ mod tests {
 
     /// Characters of `missing` that a face loaded for `family` with the
     /// chosen font `b` can draw: a system face, `b` itself, the embedded Noto
-    /// Sans, or egui's own fallbacks. A square for one of those is a fallback
+    /// Sans, or egui's own faces of the family. A square for one of those is a fallback
     /// that was not used. The other embedded fonts do not count: they are
     /// choices of Preferences, not fallbacks of each other. The faces are
     /// named here, not read from the definitions under test, which would
     /// miss a fallback left out of them.
     fn covered_but_square(missing: &str, b: &Builtin, family: &egui::FontFamily, system: &[fallback::SystemFace]) -> String {
         let defaults = egui::FontDefinitions::default();
-        let own = defaults.families.get(&egui::FontFamily::Proportional).into_iter().flatten();
+        // the semi-bold family is ours: it starts as the proportional one
+        let own = defaults
+            .families
+            .get(family)
+            .or_else(|| defaults.families.get(&egui::FontFamily::Proportional));
+        let own = own.into_iter().flatten();
         let mut embedded: Vec<&[u8]> = own.filter_map(|name| defaults.font_data.get(name)).map(|d| d.bytes()).collect();
         embedded.extend([b.regular, NOTO_TTF]);
         if *family == semibold_family() {
