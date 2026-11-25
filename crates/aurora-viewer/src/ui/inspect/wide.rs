@@ -657,7 +657,7 @@ fn items_tile(
     } else {
         aurora_i18n::tr!("inspect-tile-items")
     };
-    let (shown, all) = (view.shown.len(), view.items.len());
+    let (shown, all) = (model::objects(view.shown.iter().copied()), model::objects(view.items));
     let note = if shown != all {
         aurora_i18n::tr!("board-some-of", shown = shown, all = all)
     } else if objects {
@@ -1176,7 +1176,7 @@ struct Maker<'a> {
 
 fn makers_of<'a>(rows: &[Row], items: &[&'a Item]) -> Vec<Maker<'a>> {
     let mut out: Vec<Maker<'a>> = Vec::new();
-    for item in items {
+    for item in items.iter().filter(|i| !i.own()) {
         let row = &rows[item.first];
         match out.iter_mut().find(|m| m.id == row.creator && m.name == row.creator_name) {
             Some(m) => m.items.push(item),
@@ -1347,7 +1347,7 @@ fn makers(
 fn group_note(items: &[&Item]) -> String {
     let complexity: u32 = items.iter().map(|i| i.complexity).sum();
     [
-        aurora_i18n::tr!("inspect-summary-items", count = items.len()),
+        aurora_i18n::tr!("inspect-summary-items", count = model::objects(items.iter().copied())),
         aurora_i18n::tr!("inspect-section-complexity", value = aurora_i18n::integer(i64::from(complexity))),
     ]
     .join(" · ")
@@ -1743,7 +1743,7 @@ fn figures(
                     sum.vram,
                     sum.texture_memory,
                     sum.faces,
-                    view.shown.iter().map(|i| i.prims.len()).sum(),
+                    model::prims(view.shown.iter().copied()),
                 ),
             };
             let cells = [
@@ -1838,7 +1838,7 @@ fn prims(
     let title = aurora_i18n::tr!("inspect-tile-prims");
     let count: usize = match view.open {
         Some(item) => item.prims.len(),
-        None => view.shown.iter().map(|i| i.prims.len()).sum(),
+        None => model::prims(view.shown.iter().copied()),
     };
     let n = aurora_i18n::integer(count as i64);
     let note = if form == Form::Grown && state.sort.is_none() {
@@ -1855,7 +1855,7 @@ fn prims(
         Form::Small => {
             let word = match view.open {
                 Some(item) => view.row(item).name.trim().to_owned(),
-                None => aurora_i18n::tr!("inspect-summary-items", count = view.shown.len()),
+                None => aurora_i18n::tr!("inspect-summary-items", count = model::objects(view.shown.iter().copied())),
             };
             board::figure(ui, p, &n, &word);
         }
@@ -1964,7 +1964,7 @@ fn footer(state: &InspectUi, ui: &mut egui::Ui, p: &Palette, _frame: &Frame<'_>,
             None => {
                 let makers = makers_of(view.rows, &view.shown).len();
                 let items = if state.avatar() {
-                    aurora_i18n::tr!("inspect-summary-items", count = view.shown.len())
+                    aurora_i18n::tr!("inspect-summary-items", count = model::objects(view.shown.iter().copied()))
                 } else {
                     aurora_i18n::tr!("inspect-objects-title", count = view.shown.len())
                 };

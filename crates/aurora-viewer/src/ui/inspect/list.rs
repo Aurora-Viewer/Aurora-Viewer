@@ -107,7 +107,7 @@ fn creators(
     let rows = frame.rows;
     // by creator id, or by the shown name while the id is not known
     let mut groups: Vec<(Option<Uuid>, String, Vec<&Item>)> = Vec::new();
-    for item in list {
+    for item in list.iter().filter(|i| !i.own()) {
         let row = &rows[item.first];
         match groups.iter_mut().find(|g| g.0 == row.creator && g.1 == row.creator_name) {
             Some(g) => g.2.push(item),
@@ -205,6 +205,9 @@ fn spoken(row: &Row, item: &Item, point: Option<&str>) -> String {
 /// The attachment point's name (avatar_lad.xml), as the Appearance window
 /// names it.
 pub(super) fn point_label(frame: &Frame<'_>, point: u8) -> String {
+    if matches!(point, super::model::OWN_EYES | super::model::OWN_BODY) {
+        return aurora_i18n::tr!("inspect-own-place").to_owned();
+    }
     frame
         .point_names
         .get(&point)

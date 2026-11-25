@@ -13,9 +13,10 @@
 
 mod build;
 pub mod layout;
+pub mod own;
 #[cfg(test)]
 mod tests;
-pub use build::{Frame, Input, StageModel, Standing, mixed};
+pub use build::{Frame, Input, StageModel, Standing, Steady, mixed};
 
 use crate::scene::Scene;
 use crate::world::World;
@@ -35,6 +36,16 @@ pub fn live_joints(world: &World, avatar: &Uuid) -> Option<Vec<glam::Mat4>> {
         .map(|(m, rest)| *m * rest.inverse())
         .collect();
     (joints.len() == rig.len() && joints.iter().all(|m| m.is_finite())).then_some(joints)
+}
+
+/// The joints `StageModel::bones` takes: those of the wearer, then those of the
+/// animesh of `model`.
+pub fn shown_joints(world: &World, wearer: &Uuid, model: Option<&StageModel>) -> Option<Vec<glam::Mat4>> {
+    let mut joints = live_joints(world, wearer)?;
+    for (root, still) in model.into_iter().flat_map(StageModel::own) {
+        joints.extend(live_joints(world, root).unwrap_or_else(|| still.to_vec()));
+    }
+    Some(joints)
 }
 
 /// An object to show: its root prim, and its prims by index, the root first.
@@ -170,7 +181,12 @@ impl Stage {
         // (more than these would not be told apart)
         let roots = &roots[..roots.len().min(MOST_OBJECTS)];
         if self.groups != roots {
-            self.clear(scene);
+            // (what is put on or taken off leaves the rest in sight meanwhile)
+            if self.groups.iter().any(|root| roots.contains(root)) {
+                (self.key, self.asked, self.looked) = (0, None, None);
+            } else {
+                self.clear(scene);
+            }
             self.groups = roots.to_vec();
         }
         if roots.is_empty() {

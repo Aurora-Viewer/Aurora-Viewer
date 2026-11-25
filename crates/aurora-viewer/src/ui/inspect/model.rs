@@ -6,6 +6,11 @@
 use super::Row;
 use uuid::Uuid;
 
+/// The "points" of the avatar's own eyes and body: no attachment point has
+/// these numbers.
+pub const OWN_EYES: u8 = 254;
+pub const OWN_BODY: u8 = 255;
+
 /// Where an object is worn, by attachment point (the AttachmentPoint ids of
 /// avatar_lad.xml); objects in the world are `World`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -27,9 +32,9 @@ impl Area {
         match point {
             0 => Area::World,
             // skull, mouth, chin, ears, eyes, nose; jaw, alt ears and eyes, tongue
-            2 | 11..=17 | 47..=52 => Area::Head,
+            2 | 11..=17 | 47..=52 | OWN_EYES => Area::Head,
             // chest, spine, pelvis, stomach, pecs, neck, avatar center, tail, wings, groin
-            1 | 9 | 10 | 28..=30 | 39 | 40 | 43..=46 | 53 => Area::Body,
+            1 | 9 | 10 | 28..=30 | 39 | 40 | 43..=46 | 53 | OWN_BODY => Area::Body,
             // shoulders, hands, arms, ring fingers
             3..=6 | 18..=21 | 41 | 42 => Area::Arms,
             // feet, hips, legs, hind feet
@@ -67,6 +72,23 @@ pub struct Item {
     pub triangles: u32,
     pub texture_memory: u64,
     pub vram: u64,
+}
+
+impl Item {
+    /// The avatar's own body: listed, not counted among what is worn.
+    pub fn own(&self) -> bool {
+        matches!(self.point, OWN_EYES | OWN_BODY)
+    }
+}
+
+/// How many of `items` are objects.
+pub fn objects<'a>(items: impl IntoIterator<Item = &'a Item>) -> usize {
+    items.into_iter().filter(|i| !i.own()).count()
+}
+
+/// How many prims they have.
+pub fn prims<'a>(items: impl IntoIterator<Item = &'a Item>) -> usize {
+    items.into_iter().filter(|i| !i.own()).map(|i| i.prims.len()).sum()
 }
 
 /// The rows (each linkset root first, its prims after it, as
@@ -115,7 +137,7 @@ pub struct Whole {
 
 impl Whole {
     pub fn of(items: &[Item]) -> Whole {
-        items.iter().fold(Whole::default(), |w, i| Whole {
+        items.iter().filter(|i| !i.own()).fold(Whole::default(), |w, i| Whole {
             complexity: w.complexity + u64::from(i.complexity),
             faces: w.faces + u64::from(i.faces),
             vertices: w.vertices + u64::from(i.vertices),
@@ -251,6 +273,21 @@ mod tests {
         assert_eq!(list[1].prims, [2, 3]);
         assert_eq!((list[0].triangles, list[0].complexity, list[0].area), (200, 900, Area::Head));
         assert_eq!(list[1].area, Area::Legs);
+    }
+
+    #[test]
+    fn the_avatars_own_body_is_listed_but_not_counted() {
+        let rows = [
+            row(1, true, "Head", 2, 900),
+            row(2, false, "Teeth", 2, 0),
+            row(3, true, "System eyes", OWN_EYES, 0),
+        ];
+        let list = items(&rows);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[1].area, Area::Head);
+        assert_eq!((objects(&list), prims(&list)), (1, 2));
+        assert_eq!(Whole::of(&list).triangles, 200);
+        assert_eq!(shown(&rows, &list, "eyes", Sort::Area).len(), 1);
     }
 
     #[test]

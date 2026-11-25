@@ -86,8 +86,21 @@ impl App {
             .collect()
     }
 
-    /// ObjectSelect / ObjectDeselect of the inspected prims. What the build
-    /// tools have selected themselves stays selected.
+    /// What an avatar puts on, and the prims that arrive, while the window is
+    /// open join the list, and are asked for like the others.
+    fn inspect_arrivals(&mut self) {
+        if let Subject::Avatar(id) = self.inspect_ui.subject {
+            for root in worn_roots(&self.world, &id) {
+                if !self.inspect_ui.roots.contains(&root) {
+                    self.inspect_ui.roots.push(root);
+                }
+            }
+        }
+        self.inspect_wire(true);
+    }
+
+    /// ObjectSelect of the inspected prims, once each, or ObjectDeselect of
+    /// them all. What the build tools have selected themselves stays selected.
     fn inspect_wire(&mut self, select: bool) {
         let kept: HashSet<usize> = if select {
             HashSet::new()
@@ -96,9 +109,14 @@ impl App {
         };
         let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
         for (idx, _) in self.inspect_prims() {
-            if let Some(o) = self.world.objects.get(idx).filter(|_| !kept.contains(&idx)) {
+            if let Some(o) = self.world.objects.get(idx).filter(|_| !kept.contains(&idx))
+                && (!select || self.inspect_ui.asked.insert(o.full_id))
+            {
                 by_region.entry(o.key.region).or_default().push(o.key.local_id);
             }
+        }
+        if !select {
+            self.inspect_ui.asked.clear();
         }
         for (handle, local_ids) in by_region {
             self.send(NetCommand::Build(if select {
@@ -237,7 +255,9 @@ impl App {
         if !self.inspect_ui.open {
             return;
         }
-        let (rows, totals) = self.inspect_rows();
+        self.inspect_arrivals();
+        let (mut rows, totals) = self.inspect_rows();
+        rows.extend(self.inspect_own_body());
         // (a demo's view is never kept in the settings)
         let forced = self.inspect_ui.forced_wide;
         let mut wide = forced.unwrap_or(self.settings.inspect_wide);
@@ -331,6 +351,64 @@ impl App {
         }
     }
 
+    /// The row of the avatar's own body (often its eyes alone), when some of
+    /// it shows. Aurora's own: it is no object, and the totals leave it out.
+    fn inspect_own_body(&mut self) -> Option<Row> {
+        self.inspect_ui.own_body = false;
+        let Subject::Avatar(id) = self.inspect_ui.subject else {
+            return None;
+        };
+        let avatar = self.world.objects.index_of_uuid(&id)?;
+        // (walks all that is worn: looked at some times a second)
+        let now = std::time::Instant::now();
+        let ui = &mut self.inspect_ui;
+        if ui.own_parts_at.is_none_or(|at| now.duration_since(at).as_millis() > 500) {
+            ui.own_parts = crate::object_stage::own::body_parts(&self.world, &self.scene, avatar);
+            ui.own_parts_at = Some(now);
+        }
+        let parts = self.inspect_ui.own_parts.clone();
+        if parts.is_empty() {
+            return None;
+        }
+        self.inspect_ui.own_body = true;
+        let lib = &self.world.avatar_lib;
+        let eyes = parts.iter().all(|(i, _)| lib.parts[*i].name.starts_with("eye_"));
+        let (owner_name, owner) = owner_shown(&self.world, id);
+        let mut row = Row {
+            id,
+            root: true,
+            name: if eyes {
+                aurora_i18n::tr!("inspect-own-eyes").into()
+            } else {
+                aurora_i18n::tr!("inspect-own-body").into()
+            },
+            description: aurora_i18n::tr!("inspect-own-description").into(),
+            owner_name,
+            owner,
+            creator_name: aurora_i18n::tr!("inspect-own-maker").into(),
+            point: if eyes {
+                crate::ui::inspect::model::OWN_EYES
+            } else {
+                crate::ui::inspect::model::OWN_BODY
+            },
+            faces: parts.len() as u32,
+            ..Row::default()
+        };
+        let mut bakes = HashSet::new();
+        for (i, bake) in &parts {
+            row.vertices += lib.parts[*i].vertices.len() as u32;
+            row.triangles += lib.parts[*i].indices.len() as u32 / 3;
+            if let Some(bake) = bake
+                && bakes.insert(*bake)
+            {
+                let (memory, vram) = self.scene.texture_memory(bake);
+                row.texture_memory += memory;
+                row.vram += vram;
+            }
+        }
+        Some(row)
+    }
+
     /// Keep the 3D view of the wide window up to date with what is inspected.
     fn inspect_stage(&mut self, ctx: &egui::Context) {
         let w = &self.world;
@@ -342,7 +420,15 @@ impl App {
         let group = |root: &Uuid| stage_group(w, root);
         let now = std::time::Instant::now();
         let ui = &mut self.inspect_ui;
-        ui.stage.stage.update(w, &self.scene, &ui.roots, group, place, ctx, now);
+        // (first: never among those past the most the view shows)
+        let mut roots = Vec::with_capacity(ui.roots.len() + 1);
+        if let Subject::Avatar(id) = ui.subject
+            && ui.own_body
+        {
+            roots.push(id);
+        }
+        roots.extend(&ui.roots);
+        ui.stage.stage.update(w, &self.scene, &roots, group, place, ctx, now);
         ui.stage.worn = matches!(place, Place::Worn(_));
         // (one item does not move)
         ui.stage.single = ui.roots.len() == 1;
@@ -350,11 +436,14 @@ impl App {
         ui.demo_stage();
         let joints = match place {
             Place::Worn(avatar) if ui.stage.wants_joints() => {
-                w.objects.get(avatar).and_then(|o| crate::object_stage::live_joints(w, &o.full_id))
+                let model = ui.stage.stage.model().ok();
+                w.objects
+                    .get(avatar)
+                    .and_then(|o| crate::object_stage::shown_joints(w, &o.full_id, model.map(|m| &**m)))
             }
             _ => None,
         };
-        ui.stage.set_joints(joints, &w.avatar_lib.rig);
+        ui.stage.set_joints(joints);
     }
 
     /// The people here and their complexity, as the world names them.
@@ -543,7 +632,7 @@ pub(super) fn stage_group(world: &crate::world::World, root: &Uuid) -> Option<Gr
     let idx = world.objects.index_of_uuid(root)?;
     let prims = crate::build::family(world, idx)
         .into_iter()
-        .filter(|i| world.objects.get(*i).is_some_and(|o| !o.is_avatar()))
+        .filter(|i| *i == idx || world.objects.get(*i).is_some_and(|o| !o.is_avatar()))
         .collect();
     Some(Group { root: *root, prims })
 }

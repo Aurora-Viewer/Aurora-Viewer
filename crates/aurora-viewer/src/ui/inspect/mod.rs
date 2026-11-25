@@ -304,6 +304,13 @@ pub struct InspectUi {
     pub open: bool,
     /// Root prims of the inspected objects.
     pub roots: Vec<Uuid>,
+    /// The prims whose properties were asked for (ObjectSelect).
+    pub asked: HashSet<Uuid>,
+    /// The parts of the avatar's own body that show, with their bake, when
+    /// they were last looked at, and whether there are some.
+    pub own_parts: Vec<(usize, Option<Uuid>)>,
+    pub own_parts_at: Option<std::time::Instant>,
+    pub own_body: bool,
     /// The highlighted prim, outlined in the world (LLFloaterInspect::getSelectedUUID).
     pub selected: Option<Uuid>,
     pub subject: Subject,
@@ -379,6 +386,8 @@ impl InspectUi {
         self.stage.restart();
         self.subject = subject;
         self.roots = roots;
+        self.own_parts_at = None;
+        self.own_body = false;
     }
 
     /// AURORA_DEMO_INSPECT's options: `wide` or `small` the view; small, `open`
@@ -501,9 +510,9 @@ impl InspectUi {
                 aurora_i18n::tr!("inspect-tab-objects")
             };
             let tabs = [
-                (first, items.len()),
+                (first, model::objects(&items)),
                 (aurora_i18n::tr!("inspect-tab-creators"), creators),
-                (aurora_i18n::tr!("inspect-tab-details"), rows.len()),
+                (aurora_i18n::tr!("inspect-tab-details"), model::prims(&items)),
             ];
             widgets::count_tabs(ui, p, "inspect_tabs", &mut self.tab, &tabs);
             ui.add_space(6.0);
