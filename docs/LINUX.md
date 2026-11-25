@@ -67,10 +67,19 @@ The first start puts the viewer in your desktop's menu, with its icon in
 the panel, the dock and the task switcher: it writes its desktop entry
 (`~/.local/share/applications/aurora-viewer.desktop`, with the viewer's
 path) and its icon (`~/.local/share/icons/hicolor/scalable/apps/aurora-viewer.svg`).
-If you move the folder, the next start points the entry to the new place.
-An `aurora-viewer.desktop` you installed yourself, or one of a
-distribution's package, is left as it is; delete yours to let the viewer
-manage it. To take the viewer out of the menu, delete these two files.
+If you move the folder, the next start points the entry to the new place,
+and a deleted or outdated icon is put back. An `aurora-viewer.desktop` you
+installed yourself is left as it is (delete it to let the viewer manage
+it); when a distribution's package installed later brings its own entry,
+the viewer removes the one it wrote so the package's answers. Deleting the
+two files does not take the viewer out of the menu for good: the next start
+writes them again. To keep it out, put your own entry in place, which the
+viewer never touches:
+
+```bash
+printf '[Desktop Entry]\nType=Application\nName=Aurora Viewer\nHidden=true\n' > ~/.local/share/applications/aurora-viewer.desktop
+```
+
 Avoid a `%` in the folder's path: GNOME and other GLib desktops refuse such
 an entry. The archive still holds `aurora-viewer.desktop` and
 `aurora-viewer.svg` for packagers. The window identifies itself as `aurora-viewer` (Wayland app_id and X11

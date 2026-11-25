@@ -10,10 +10,12 @@
 //! and `icons/hicolor/scalable/apps/aurora-viewer.svg`, the colour logo.
 //!
 //! What the viewer did not write stays as it is: an entry the user installed
-//! by hand (docs/LINUX.md before this) or a distribution's package's, in a
-//! system folder. An entry it wrote carries `X-Aurora-Managed=true`, and it
-//! follows the viewer when the viewer moves; a development build never takes
-//! it from an installed viewer that is still there. Inside Flatpak or Snap
+//! by hand (docs/LINUX.md before this, or one with `Hidden=true` to keep the
+//! viewer out of the menu) or a distribution's package's, in a system
+//! folder. An entry it wrote carries `X-Aurora-Managed=true`; it follows the
+//! viewer when the viewer moves, its icon is put back when missing or old,
+//! and it goes when a package installed later brings its own. A development
+//! build never takes it from an installed viewer that is still there. Inside Flatpak or Snap
 //! the package brings its own. The Legacy Viewer writes its entry from an
 //! install script (`linux_tools/refresh_desktop_app_entry.sh`) instead.
 use std::path::{Path, PathBuf};
@@ -28,9 +30,16 @@ const MANAGED: &str = "X-Aurora-Managed=true";
 /// What to do with the user's entry.
 #[derive(Debug, PartialEq, Eq)]
 enum Plan {
-    /// Write (or rewrite) the entry.
+    /// Write (or rewrite) the entry, and the icon.
     Write,
-    /// Leave it: someone else's, a package's, or already right.
+    /// The entry is ours and right: only the icon is checked.
+    Keep,
+    /// Ours, but a package installed since has its own: ours goes, so the
+    /// package's answers for the app_id (the user's entry hides the
+    /// system one).
+    Remove,
+    /// Someone else's (installed by hand, hidden on purpose) or a
+    /// package's: nothing is touched.
     Leave,
 }
 
@@ -51,13 +60,15 @@ fn plan(seen: &Seen, wanted: &str) -> Plan {
         // a package's entry answers for the app_id: nothing to add
         None if seen.system => Plan::Leave,
         None => Plan::Write,
-        // installed by hand, or by another tool: not ours to change
+        // installed by hand (or `Hidden=true` to keep the viewer out of
+        // the menu): not ours to change
         Some(text) if !managed(text) => Plan::Leave,
-        Some(text) if text == wanted => Plan::Leave,
+        Some(_) if seen.system => Plan::Remove,
+        Some(text) if text == wanted => Plan::Keep,
         // another viewer of ours: a release takes the entry over, a
         // development build only from one that is gone
         Some(_) if seen.release || !seen.recorded_exists => Plan::Write,
-        Some(_) => Plan::Leave,
+        Some(_) => Plan::Keep,
     }
 }
 
@@ -89,9 +100,14 @@ fn recorded_program(text: &str) -> Option<String> {
 }
 
 /// The path the entry must start: an AppImage's own file, not the folder
-/// it is mounted on for this run (`$APPIMAGE`, set by its runtime).
-fn viewer_path(appimage: Option<PathBuf>, exe: PathBuf) -> PathBuf {
-    appimage.filter(|p| p.is_absolute()).unwrap_or(exe)
+/// it is mounted on for this run (`$APPIMAGE`, set by its runtime). Only
+/// when this viewer really runs from that mount (`$APPDIR`): a shell can
+/// keep the variables of another AppImage started from it.
+fn viewer_path(appimage: Option<PathBuf>, appdir: Option<PathBuf>, exe: PathBuf) -> PathBuf {
+    match (appimage, appdir) {
+        (Some(image), Some(dir)) if image.is_absolute() && dir.is_absolute() && exe.starts_with(&dir) && image.is_file() => image,
+        _ => exe,
+    }
 }
 
 /// Inside a sandbox the package brings its entry, and the user's folders
@@ -100,35 +116,53 @@ fn sandboxed() -> bool {
     std::env::var_os("FLATPAK_ID").is_some() || std::env::var_os("SNAP").is_some()
 }
 
-/// At start, on a thread of its own: a few small files, never the window's
-/// wait. Not in demo mode (the agents' and testers' runs leave the desktop
-/// as it is) nor in a sandbox.
-pub fn install() {
+/// At start, before the first window: a desktop that reads the icon when
+/// the window maps then finds it. A start with everything in place only
+/// reads two small files and looks for a package's entry; the first start,
+/// or one after the folder moved, writes them (a few milliseconds). Not in
+/// demo mode (the agents' and testers' runs leave the desktop as it is) nor
+/// in a sandbox.
+///
+/// Runs before the log is set up: what it did comes back as lines for
+/// [`report`].
+pub fn install() -> Result<Vec<String>, String> {
     if sandboxed() || std::env::var_os("AURORA_DEMO").is_some() {
-        return;
+        return Ok(Vec::new());
     }
-    let spawned = std::thread::Builder::new().name("aurora-desktop-entry".into()).spawn(|| {
-        if let Err(error) = install_now() {
-            log::warn!("desktop entry: not installed: {error}");
-        }
-    });
-    if let Err(error) = spawned {
-        log::warn!("desktop entry: not installed: {error}");
+    install_now()
+}
+
+/// Logs what [`install`] did, once the log is up.
+pub fn report(done: Result<Vec<String>, String>) {
+    match done {
+        Ok(lines) => lines.iter().for_each(|line| log::info!("desktop entry: {line}")),
+        Err(error) => log::warn!("desktop entry: not installed: {error}"),
     }
 }
 
-fn install_now() -> Result<(), String> {
+fn install_now() -> Result<Vec<String>, String> {
     let data = crate::url_scheme::data_home().ok_or("no home folder")?;
     let exe = crate::url_scheme::live_exe(std::env::current_exe().map_err(|e| e.to_string())?);
-    let exe = viewer_path(std::env::var_os("APPIMAGE").map(PathBuf::from), exe);
-    let wanted = entry_for(&exe.to_string_lossy());
+    let exe = viewer_path(
+        std::env::var_os("APPIMAGE").map(PathBuf::from),
+        std::env::var_os("APPDIR").map(PathBuf::from),
+        exe,
+    );
     let id = format!("{}.desktop", crate::cli::DESKTOP_ID);
-    let path = data.join("applications").join(&id);
-    let user = std::fs::read_to_string(&path).ok();
     let system = crate::url_scheme::application_dirs()
         .into_iter()
         .filter(|dir| !dir.starts_with(&data))
         .any(|dir| dir.join(&id).is_file());
+    apply(&data, &exe, system, env!("AURORA_BUILD_PROFILE") == "release")
+}
+
+/// The entry and the icon under `data` (`$XDG_DATA_HOME`) for the viewer at
+/// `exe`; `system`: a package's entry exists in a system folder.
+fn apply(data: &Path, exe: &Path, system: bool, release: bool) -> Result<Vec<String>, String> {
+    let mut done = Vec::new();
+    let wanted = entry_for(&exe.to_string_lossy());
+    let path = data.join("applications").join(format!("{}.desktop", crate::cli::DESKTOP_ID));
+    let user = std::fs::read_to_string(&path).ok();
     let recorded_exists = user
         .as_deref()
         .and_then(recorded_program)
@@ -137,21 +171,32 @@ fn install_now() -> Result<(), String> {
         user: user.as_deref(),
         system,
         recorded_exists,
-        release: env!("AURORA_BUILD_PROFILE") == "release",
+        release,
     };
-    if plan(&seen, &wanted) == Plan::Leave {
-        return Ok(());
+    let plan = plan(&seen, &wanted);
+    match plan {
+        Plan::Leave => return Ok(done),
+        Plan::Remove => {
+            std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            done.push(format!("{} removed, a package's entry answers now", path.display()));
+            return Ok(done);
+        }
+        Plan::Write | Plan::Keep => {}
     }
-    // the icon first: an entry is never shown without it
+    // the icon first, and while the entry is ours, at every start: an entry
+    // is never shown without it, and a deleted or updated one comes back
     let icon = data
         .join("icons/hicolor/scalable/apps")
         .join(format!("{}.svg", crate::cli::DESKTOP_ID));
     if std::fs::read(&icon).ok().as_deref() != Some(ICON) {
         write(&icon, ICON)?;
+        done.push(format!("icon {} written", icon.display()));
     }
-    write(&path, wanted.as_bytes())?;
-    log::info!("desktop entry: {} starts {}", path.display(), exe.display());
-    Ok(())
+    if plan == Plan::Write {
+        write(&path, wanted.as_bytes())?;
+        done.push(format!("{} starts {}", path.display(), exe.display()));
+    }
+    Ok(done)
 }
 
 fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -214,13 +259,17 @@ mod tests {
     fn a_managed_entry_follows_a_release_and_a_development_build_takes_only_a_dead_one() {
         let installed = entry_for("/opt/aurora/aurora-viewer");
         let wanted = entry_for("/home/me/git/target/debug/aurora-viewer");
-        assert_eq!(plan(&seen(Some(&installed)), &installed), Plan::Leave, "already right");
+        assert_eq!(
+            plan(&seen(Some(&installed)), &installed),
+            Plan::Keep,
+            "already right: the icon is checked"
+        );
         assert_eq!(plan(&seen(Some(&installed)), &wanted), Plan::Write, "a release moved");
         let dev = Seen {
             release: false,
             ..seen(Some(&installed))
         };
-        assert_eq!(plan(&dev, &wanted), Plan::Leave, "the installed viewer keeps it");
+        assert_eq!(plan(&dev, &wanted), Plan::Keep, "the installed viewer keeps it");
         let dev_gone = Seen {
             recorded_exists: false,
             ..dev
@@ -229,12 +278,87 @@ mod tests {
     }
 
     #[test]
-    fn an_appimage_records_its_own_file() {
-        let mounted = PathBuf::from("/tmp/.mount_Aurora/usr/bin/aurora-viewer");
-        let own = PathBuf::from("/home/me/Apps/Aurora.AppImage");
-        assert_eq!(viewer_path(Some(own.clone()), mounted.clone()), own);
-        assert_eq!(viewer_path(None, mounted.clone()), mounted);
-        assert_eq!(viewer_path(Some(PathBuf::from("relative")), mounted.clone()), mounted);
+    fn an_appimage_records_its_own_file_only_when_running_from_it() {
+        let dir = std::env::temp_dir().join(format!("aurora-appimage-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let own = dir.join("Aurora.AppImage");
+        std::fs::write(&own, b"").unwrap();
+        let mount = PathBuf::from("/tmp/.mount_Aurora");
+        let mounted = mount.join("usr/bin/aurora-viewer");
+        assert_eq!(viewer_path(Some(own.clone()), Some(mount.clone()), mounted.clone()), own);
+        assert_eq!(viewer_path(None, Some(mount.clone()), mounted.clone()), mounted);
+        assert_eq!(
+            viewer_path(Some(PathBuf::from("relative")), Some(mount.clone()), mounted.clone()),
+            mounted
+        );
+        // a shell that kept another AppImage's variables: this viewer is not in its mount
+        let extracted = PathBuf::from("/opt/aurora/aurora-viewer");
+        assert_eq!(viewer_path(Some(own.clone()), Some(mount.clone()), extracted.clone()), extracted);
+        assert_eq!(viewer_path(Some(own.clone()), None, mounted.clone()), mounted);
+        // the AppImage moved or deleted since
+        let gone = dir.join("Moved.AppImage");
+        assert_eq!(viewer_path(Some(gone), Some(mount), mounted.clone()), mounted);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_package_installed_later_takes_over_from_our_entry() {
+        let ours = entry_for("/opt/aurora/aurora-viewer");
+        let both = Seen {
+            system: true,
+            ..seen(Some(&ours))
+        };
+        assert_eq!(plan(&both, &ours), Plan::Remove);
+        // a hand-made entry (Hidden=true to stay out of the menu) is kept
+        let hidden = "[Desktop Entry]\nType=Application\nName=Aurora Viewer\nHidden=true\n";
+        assert_eq!(
+            plan(
+                &Seen {
+                    system: true,
+                    ..seen(Some(hidden))
+                },
+                &ours
+            ),
+            Plan::Leave
+        );
+        assert_eq!(plan(&seen(Some(hidden)), &ours), Plan::Leave);
+    }
+
+    /// On disk: the first start writes both; a start with the entry right
+    /// puts a deleted or different icon back; a package installed later
+    /// takes over; an entry of the user's own is never touched.
+    #[test]
+    fn the_files_are_kept_right_from_start_to_start() {
+        let data = std::env::temp_dir().join(format!("aurora-desktop-entry-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let exe = data.join("Aurora Viewer/aurora-viewer");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"").unwrap();
+        let entry = data.join("applications/aurora-viewer.desktop");
+        let icon = data.join("icons/hicolor/scalable/apps/aurora-viewer.svg");
+        // first start
+        assert_eq!(apply(&data, &exe, false, true).unwrap().len(), 2);
+        assert_eq!(std::fs::read_to_string(&entry).unwrap(), entry_for(&exe.to_string_lossy()));
+        assert_eq!(std::fs::read(&icon).unwrap(), ICON);
+        // nothing to do
+        assert!(apply(&data, &exe, false, true).unwrap().is_empty());
+        // the icon deleted, then an older one: put back, the entry untouched
+        std::fs::remove_file(&icon).unwrap();
+        assert_eq!(apply(&data, &exe, false, true).unwrap().len(), 1);
+        std::fs::write(&icon, b"<svg>old</svg>").unwrap();
+        assert_eq!(apply(&data, &exe, false, false).unwrap().len(), 1);
+        assert_eq!(std::fs::read(&icon).unwrap(), ICON);
+        // a package installed since: ours goes
+        apply(&data, &exe, true, true).unwrap();
+        assert!(!entry.exists());
+        // the user's own entry (hidden on purpose): left as it is
+        let own = "[Desktop Entry]\nType=Application\nName=Aurora Viewer\nHidden=true\n";
+        std::fs::write(&entry, own).unwrap();
+        std::fs::remove_file(&icon).unwrap();
+        assert!(apply(&data, &exe, false, true).unwrap().is_empty());
+        assert_eq!(std::fs::read_to_string(&entry).unwrap(), own);
+        assert!(!icon.exists());
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]
