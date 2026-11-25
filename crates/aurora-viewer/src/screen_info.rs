@@ -6,7 +6,8 @@
 //! screen was turned off, unplugged or put to sleep, or a remote session
 //! changing its displays. The viewer panicked there in `ScreenRate::poll`
 //! (#4851); the start's window placement, the windows drawn outside the
-//! viewer, the splash and the crash window read the size the same way. On
+//! viewer, the splash and the crash window read the size the same way, and
+//! winit sizes a borderless fullscreen window with it. On
 //! Windows both are read here from `GetMonitorInfoW`, and a screen that
 //! answers nothing has no name and no size; elsewhere winit's own calls do
 //! not panic and are used as they are.
@@ -40,6 +41,25 @@ pub fn size(monitor: &MonitorHandle) -> Option<PhysicalSize<u32>> {
     #[cfg(not(windows))]
     {
         Some(monitor.size())
+    }
+}
+
+/// Borderless fullscreen on `monitor`. On Windows, None when the system no
+/// longer describes that screen (or there is none): winit 0.30 sizes the
+/// window with the unwrapping `size()`, and resolves `Borderless(None)` to the
+/// current screen the same way (platform_impl/windows/window.rs), so the
+/// window stays as it is instead. Elsewhere as before: Wayland may know no
+/// current screen and fills the one the window is on.
+pub fn borderless(monitor: Option<MonitorHandle>) -> Option<winit::window::Fullscreen> {
+    #[cfg(windows)]
+    {
+        let monitor = monitor?;
+        size(&monitor)?;
+        Some(winit::window::Fullscreen::Borderless(Some(monitor)))
+    }
+    #[cfg(not(windows))]
+    {
+        Some(winit::window::Fullscreen::Borderless(monitor))
     }
 }
 
@@ -99,8 +119,9 @@ mod tests {
         assert_eq!(rect_size(0, 0, 2560, 1440), PhysicalSize::new(2560, 1440));
         // a screen left of and above the main one
         assert_eq!(rect_size(-1920, -1080, 0, 0), PhysicalSize::new(1920, 1080));
-        // inverted or extreme: empty, not 4 billion pixels
+        // inverted: empty, not 4 billion pixels
         assert_eq!(rect_size(10, 10, 0, 0), PhysicalSize::new(0, 0));
+        // the widest span there is: computed without overflowing i32
         assert_eq!(rect_size(i32::MIN, 0, i32::MAX, 1), PhysicalSize::new(u32::MAX, 1));
     }
 }

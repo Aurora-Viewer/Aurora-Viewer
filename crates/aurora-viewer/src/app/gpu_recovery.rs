@@ -271,7 +271,14 @@ impl App {
             size: old.window.inner_size().into(),
             position: old.window.outer_position().ok(),
             active: old.window.has_focus(),
-            fullscreen: old.window.fullscreen(),
+            // (borderless again only on a screen the system still
+            // describes, screen_info.rs: winit would panic sizing it)
+            fullscreen: match old.window.fullscreen() {
+                Some(winit::window::Fullscreen::Borderless(monitor)) => {
+                    crate::screen_info::borderless(monitor.or_else(|| old.window.current_monitor()))
+                }
+                other => other,
+            },
         };
         let maximized = old.window.is_maximized();
         let Gfx { mut renderer, window, .. } = old;
