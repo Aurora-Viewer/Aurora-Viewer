@@ -224,7 +224,14 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             super::Command::Extra(Command::ShowMain(id)),
         );
     }
-    if folder && folder_window || all {
+    // LLFolderBridge::addOpenFolderMenuOptions: "Open" only where the list
+    // is a single folder (`comb_single_folder_inv`), not in the folder's tree
+    // of "Show in a new window". Aurora's explorer (its medium and wide
+    // widths) is that mode, the menus of its rows' buttons included.
+    let explorer = st
+        .aurora
+        .is_some_and(|frame| frame.layout != super::super::aurora::Layout::Compact && !st.result_view());
+    if folder && (st.lists_flat() || explorer) || all {
         c.add(
             "open-current",
             TEXT,
@@ -771,11 +778,14 @@ pub(super) fn execute(
         Command::ShowMain(id) => {
             actions.push(InvAction::ShowMain(id));
         }
+        // LLInventorySingleFolderPanel::doToSelected("open_in_current_window"):
+        // the single folder list goes into the folder (changeFolderRoot).
         Command::OpenCurrent(id) => {
             if inv.folders.contains_key(&id) {
-                st.navigate_to = Some(id);
+                st.browse = id;
                 st.search.clear();
-                st.view = Default::default();
+                st.selection.clear();
+                st.selected = None;
             }
         }
         Command::NewOutfit(parent) => {

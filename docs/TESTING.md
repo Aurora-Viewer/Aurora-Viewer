@@ -2222,6 +2222,11 @@ cube as a hologram, `start` leaves a hologram of it where the move began.
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
 independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
 with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
+`texture:bp-alpha` is the same Blinn-Phong tab after the selection's diffuse
+map is the built-in Transparent texture: Alpha mode is enabled and shows
+Alpha blending. Repeat with `AURORA_DEMO_BUILD_STYLE=legacy` and without it.
+A transparency above 0 still shows Alpha blending and greys the combo; an
+opaque texture still greys it.
 On General, click the object in the world, then the blank stretch in the
 label column to the left of the Name field: the whole name is selected and
 the next letters replace it. Click into Description, click the world, then
@@ -2599,6 +2604,10 @@ Preferences › Camera › Behavior › “Click my avatar: keep camera” for t
 a plain body click must preserve position and lens (no snap behind) and aim
 the focus at the clicked body point (`LLToolCamera::pickCallback`).
 `avatar-return` disables the option and must return to avatar follow.
+`avatar-ignore-drag` and `avatar-ignore-mask-drag` put an opaque or Mask
+Ignore Object panel between the camera and the chest. Holding the press and
+dragging must turn the avatar through the panel as in `avatar-drag`.
+For a manual press, replace `-drag` with `-ready`.
 `avatar-gap-head` / `avatar-gap-legs` put a scripted panel behind our avatar
 and click beside its head / between its legs, inside the former body box.
 Both must log `demo touch_start: prim=975` and leave the camera unchanged;
@@ -3135,7 +3144,9 @@ No real L$ and no connection to a grid.
 - `none` / `touch` send press, move and release; `grab` simulates the
   physical move.
 - `ignore` goes through a visible screen and opens Buy behind it; `disabled`
-  stops the click without touching; `ignore-build` selects this screen in
+  stops the click without touching. `ignore-alt` and `ignore-object-view` focus the Buy cube (971),
+  while `ignore-alt-build` focuses the screen (981). After changing the click action on the existing panel,
+  `ignore-alt-switch-off` focuses 981 and `ignore-alt-switch-on` focuses 971. `ignore-build` selects this screen in
   build mode.
 - `open` shows three simulated content items.
 - `open-multi` (#1410): the Open window receives Ctrl+A at frame 420;
@@ -4143,7 +4154,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns; `far`: an animesh carried far by its animation and one worn far from its point |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-derez-closed\|warnings\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-derez-closed\|warnings\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|fit-lab\|fit-lab-walk\|fit-lab-sit\|fit-lab-sit-stand\|fit-lab-clip\|fit-lab-range\|fit-lab-pose-<name>\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_LIVE_TAB=place\|avatar\|import\|plugins\|quick-look\|sweep` | Opens the LiveMesh window of the Blender demo on that tab, Quick look, or a card's update sweep |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -4184,7 +4195,22 @@ object, under the Objects cards and their live thumbnails (with
 and the Avatar tab's bend set to 90° elbows and 60° knees, so the bend shows
 on the avatar and in Quick look); `sweep` has
 Blender send the selected object again every eight frames from frame 400, as
-during a drag, so its card's update sweep keeps running. `static-hud` attaches it at HUD Center;
+during a drag, so its card's update sweep keeps running.
+`AURORA_DEMO_BLENDER_LIVE=fit-lab` sends the same sleeves and opens the Avatar
+tab with the Fit lab on: three mannequins (Slim, Curvy, Full figure) stand
+2.2 m in front of the avatar, facing it, each dressed as it is, sleeves
+included, in its own shape; `fit-lab-walk` has them walk in place;
+`fit-lab-sit` sit on the ground (the demo's stand-in for the stock
+sit_ground_constrained, which the grid's asset server gives), and
+`fit-lab-sit-stand` stand up again at frame 520, back at their full height;
+`fit-lab-range` has them take the range of motion's poses in turn (arms
+up, reach, arms crossed, squat, kneel, knee raised, twist, bend forward);
+`fit-lab-pose-<name>` holds one of them (`arms-up`, `reach`, `hug`, `squat`,
+`kneel`, `knee-up`, `twist`, `bend`);
+`fit-lab-clip` turns on the clipping map: red where an arm comes out of a
+sleeve (the Full figure's thicker arms), amber where skin and sleeve meet. Look for
+the sleeves following each body, the shared skin, and no name tag, radar or
+minimap entry for the mannequins. `static-hud` attaches it at HUD Center;
 `static-attached` attaches it to the right hand; `static-detached` removes its
 draw object while retaining the source row; these three show the Undo
 toast under the status line for 8 s. Check numeric/gizmo transforms,
@@ -4913,6 +4939,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SNOW_ROOF=1` | Four canopies in the snow: plain, open at the top, glass, leaves |
 | `AURORA_DEMO_SNOW_SPIN=1\|settles-off` | Boxes turning slowly, fast and by a script's steps in the lying snow |
 | `AURORA_DEMO_SNOW_SPIN=timer` | The same, the script's box stepped every 10 s (a move's hold between steps) |
+| `AURORA_DEMO_FOOTPRINTS_OFF=<frame>` | A trail of footprints in the snow, then Footprints turned off at this frame, for the run only |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground (`=snow`: why the snow lies or not) |
 | `AURORA_THUNDER_AT=<s>[:<m>]` | A lightning strike this many seconds after the start, 1 km away or `<m>` metres |
@@ -4967,7 +4994,13 @@ both open states and the selection count. Capture at frame 620.
   off at frame 700 (that run only, never the settings): the snow lying
   goes at once instead of melting away in view. Capture both with the
   shadows on and off (the shelter map is redrawn once a second with them
-  off). `AURORA_RAIN_DEBUG=1` colours the
+  off). `AURORA_DEMO_FOOTPRINTS_OFF=<frame>` (with `AURORA_SNOW` and
+  `AURORA_SNOW_LYING`) presses a trail of sixteen steps in the snow north
+  of the arrival at frame 300 and looks at it from above, then turns
+  Footprints off at that frame, for that run only (never the settings):
+  the trail must go at once, none left frozen on the ground (#4019).
+  Capture before and after that frame (`=500`: frames 450 and 650).
+  `AURORA_RAIN_DEBUG=1` colours the
   ground by its wetness memory: yellow, outside the memory; red, only
   assumed open (seen beyond the shelter map); green, wet; blue, dry under
   cover; brighter, the wetter. `AURORA_RAIN_DEBUG=snow` colours it by why
@@ -5552,7 +5585,13 @@ both open states and the selection count. Capture at frame 620.
   the Precipitation or Wind switch greys its own card (Precipitation
   greys On the ground and Thunder too). Capture after frame 300 at `AURORA_TEXT_SIZE=1`
   and `1.5`, with `--language fr`, `en` and `ja`: no label runs under its
-  switch or value.
+  switch or value. Resize the window by its edges and corners: the summary
+  stays on top and Quality, Clean up and Fill with snow at the bottom, the
+  cards scrolling between them; narrowed, the right columns go under the
+  left ones down to one (360 × 320 at least), the summary compacts and the
+  foot's buttons take a row of their own when they no longer fit beside
+  Quality; widened, up to five columns. The window follows the pointer both
+  ways, at 127 % too, and never holds a width or a height of its own.
 - **`AURORA_DEMO_ENV_EDITOR=sky|clouds|clouds-picker|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame
@@ -6802,7 +6841,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, system folder icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open\|delete` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
@@ -7758,6 +7797,70 @@ failure. Grid validation and any paid upload are performed by the human.
   Regression filter `inventory_hover_cache` exercises 1,000 successive images,
   real egui handle release, active/recent retention, expiry, shared world/UI
   source references, bounded workers and replies arriving after cancellation.
+- **`AURORA_DEMO_INVENTORY=aurora-explorer|aurora-explorer-path|aurora-explorer-menu|aurora-explorer-medium|aurora-explorer-filter|aurora-explorer-preview`**:
+  the wide explorer (medium for `-medium`) in the right-click tests folder,
+  come from the top: Back and Up lit, the breadcrumb with its chevrons, the
+  folder and its subfolder pinned under Quick access. `-path` opens the
+  breadcrumb as a path with the top's subfolders as completions; `-menu`
+  opens the menu of the empty space (View, Sort, Select all, Invert
+  selection, each with its keys); `-filter` opens the folder filter's bar
+  (Ctrl+Alt+F, Cmd+Option+F on a Mac) holding `demo o`: only the names with
+  both words are listed, the status counts them, Esc or the bar's × at its
+  start closes it and lists everything again; `-preview` turns on the
+  details pane's preview (Alt+P, Cmd+Shift+P on a Mac) with the demo's
+  notecard selected: its text in place of its picture; select the texture
+  (shown whole) or the sound (Play locally); a notecard without copy says it
+  cannot be read. By hand: Alt+← / → / ↑ and the mouse's
+  side buttons, Backspace, a right-click
+  on Back; a chevron's subfolders; Ctrl+L (the path starts with `~/`), typing
+  `Cl`, Tab, Enter, then `~/` alone (the top); a path whose last name is that of
+  several folders side by side (make a second `Subfolder` in the right-click
+  tests) shows their parent with the folder filter holding the name; a drag
+  from the empty space or a row's Type / Rights / Date columns (the band, Ctrl
+  adds, near the bottom it scrolls; from a name the item is dragged);
+  Home / End / Page keys, Ctrl+A, Ctrl+Shift+A, Esc, letters typed; Ctrl+↑ /
+  ↓ then Ctrl+Space; F2 then Tab; Ctrl+Shift+N; Alt+Enter; Shift+F10; a
+  drag with Ctrl (Copy badge), with Alt (Link badge), with the right button
+  (its menu), Esc during a drag; a folder dragged onto Quick access, pins
+  reordered; Shift+Delete in and out of the Trash. The keys are rebindable
+  in Preferences › Shortcuts › Inventory (`AURORA_DEMO_OPTIONS=shortcuts/4`):
+  rebind one (Reload folder to F6), check the explorer follows and the
+  tooltip names F6; a key the list keeps (Enter, an arrow) is refused with a
+  notice; Ctrl+Shift+A still opens People when the list does not have the
+  keyboard, and unbinding Invert selection gives the chord back to People.
+- **`AURORA_DEMO_INVENTORY=aurora-explorer-undo`**: the wide explorer in
+  the right-click tests folder after a Delete of its notecard and an undone
+  rename of its animation, the menu of the empty space open: "Undo delete of
+  1 item" (Ctrl+Z) and "Redo rename" (Ctrl+Y). By hand: Ctrl+Z puts the
+  notecard back, Ctrl+Y renames the animation again, Ctrl+Shift+Z redoes too;
+  a drag, a Ctrl-drag copy, an Alt-drag link, a rename (F2), a new folder
+  (Ctrl+Shift+N), each undone (the copy, link and folder go to the Trash,
+  never purged) and redone; the Trash's entry menu offers "Restore to
+  Right-click tests" for an entry deleted from there, and the plain Restore
+  for one whose folder is gone; the Purge and Empty Trash confirmations say
+  Undo cannot bring them back. Wearing an item then undoing the change that
+  made it is refused with the reason, the step kept.
+- **`AURORA_DEMO_INVENTORY=aurora-explorer-tabs|aurora-explorer-split`**:
+  `-tabs` opens the explorer in the right-click tests folder with three
+  tabs behind it (its subfolder, the top, a personal folder), the strip
+  above the toolbar. By hand: a click on a tab, Ctrl+Tab / Ctrl+Shift+Tab,
+  Ctrl+T, Ctrl+W, a middle click on a tab or its cross; a middle click on a
+  folder (a tab at the end, behind) and its menu's Open in new tab; each tab
+  keeps its own Back / Forward and selection; an item dragged onto a tab
+  goes into its folder, held there the tab shows. A tab dragged along the
+  strip moves (a violet line marks where); dragged away from the strip it
+  opens as a window of its own there; that window's tab dragged onto the
+  main window's strip goes back, and the window closes. `-split` opens the
+  dual-panel layout with two explorers (the right one in the subfolder)
+  and an item's menu with Copy / Move to the other pane; check the Undo of
+  such a move, that the narrow panes keep their breadcrumb and columns, and
+  that Tab in one pane's list gives the keyboard to the other's. In any
+  explorer: Ctrl-drag of an item copies it (a log line `inventory drop:`
+  names the mode and the keys held); a right-click in the empty space of a
+  folder, Recent, Worn or Favorites opens New at the side (in Recent, Worn
+  or Favorites a new notecard lands in Notecards, a folder at the top), an
+  entry's menu has New too (into the row's folder), and the
+  rubber band works in those lists too, from a row's Type or Date columns.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
   "Locked" tag after the name; the folder itself refuses Delete, Cut and a
@@ -8553,8 +8656,14 @@ failure. Grid validation and any paid upload are performed by the human.
   order (the default chat window shows the last four).
   What to see: no square in the labels, the floating text,
   the chat and its list; all the characters of a line sitting on the same
-  baseline. Compare with `AURORA_FONT_FALLBACK=0` (squares everywhere
-  except Cyrillic, Greek, emojis and a few symbols). Visible limits: flags,
+  baseline. One name is small capitals (`ᴄᴅᴇꜰᴊᴋᴏᴘꜱᴜᴠᴡᴢ` and `ᴥ`); the
+  symbols line includes `♱ ♰ ✞`; the other-scripts line includes Kannada,
+  Oriya and the other Indic letters, plus `𓆩 ꕤ ᥫ 𐙚 𖤐 ꨄ`. Linear A (`𐙚`),
+  Bamum (`𖤐`) and Cham (`ꨄ`) have Linux Noto files only: they stay squares
+  on Windows. Compare with
+  `AURORA_FONT_FALLBACK=0` (squares for everything the embedded Noto Sans
+  also lacks: Georgian, CJK, Arabic, the rare scripts; the small capitals
+  stay, because that Noto face is now always in the family). Visible limits: flags,
   skin tones and ZWJ sequences not composed; emojis
   monochrome outside the chat. On a system without the expected fonts
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
@@ -9225,6 +9334,7 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_LOGIN=server-error`**: the first-account form, ready to submit. The offline login server answers the login with an HTTP 500, as a grid whose login server fails: Log in shows the translated "The login server could not complete the login (HTTP 500)…" text under the form, never the raw "network error: HTTP 500 Internal Server Error". With `AURORA_DEMO_LOGIN_SUBMIT=40` the log reads `demo login: the login server answers HTTP 500` (capture frame 200; `--language fr|ja` for the other texts).
 - **`AURORA_DEMO_LOGIN=terms`**: the first-account form with a synthetic identity typed in. The offline server asks first to accept the Terms of Service (reason "tos"), then to read a critical message (reason "critical"), then answers as the other demo forms do. The terms step shows the server's text, a "Read the Terms of Service" link (Linden Lab's page on their grids, else the address the message names) and its checkbox; the critical step shows its own title, text and checkbox. With `AURORA_DEMO_LOGIN_SUBMIT=40,300,560` (check each box by hand between the presses, or capture frames 200 and 460), the log reads `demo login: agree_to_tos false, read_critical false`, then `agree_to_tos true, read_critical false`: accepting the terms never acknowledges the message.
 - **`AURORA_DEMO_LOGIN=next-server`**: the first-account form with a synthetic identity typed in. The offline server sends the login on to another server, `login.other-grid.example` (`LoginError::NextServer`): the form shows the "Another login server" step with that name and its checkbox, and Log in stays disabled until the box is checked. With `AURORA_DEMO_LOGIN_SUBMIT=40,300` (check the box by hand between the presses, or capture frame 200), the log reads `demo login: the login server sends the login on to another server` once; the second press ends as the other demo forms do. The rule itself (same server followed, another one asked, encrypted to unencrypted refused) is in the unit tests of `aurora-net/src/login.rs`.
+- **`AURORA_DEMO_LOGIN=unencrypted`**: the same form, for a grid whose login address is a plain `http://` one, `grid.example:8002` (`LoginError::Unencrypted`): the form shows the "Unencrypted login" step with that name, what it exposes, and its checkbox; Log in stays disabled until the box is checked. With `AURORA_DEMO_LOGIN_SUBMIT=40,300` (check the box by hand between the presses, or capture frame 200), the log reads `demo login: the login address is not encrypted` once; the second press ends as the other demo forms do. In demo mode the agreement is not saved to the settings. The rule itself (`https` and this machine sent as before, any other `http` server asked first, on the first request and on every later hop) is in the unit tests of `aurora-net/src/login.rs`.
 
 - **`AURORA_DEMO_LOGIN=drag|drag2|drag-card|drag-card2`**: eight/two synthetic profiles with a left-button side-grip or portrait gesture injected into egui at frames 20–44. Capture frame 40 while held and frame 75 after release. With eight profiles, check continuous card motion, clipped neighbours, circular wrapping, final alignment and central selection without connecting. With two profiles, the same gesture must keep the cards fixed, without arrows or connecting. Input injection never moves the OS pointer. Manually drag in both directions from portraits, place images, names, card padding and Connect buttons; release over a card/outside the window and resize during motion. A simple click still connects, while grid/start menus and text-field drag selection remain usable. Also check Enter, dialogs and short-window vertical scrolling outside the browse row.
 
@@ -10015,6 +10125,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Button widths tighten when needed, with unchanged icon sizes and the
   avatar still available for row clicks. The
   details action before More opens the resident sheet.
+  Pax stands 153.4 m away (`AURORA_DEMO_PEOPLE_FILTER=Pax`), and the
+  `crowd`'s Lumens reach 125.4 m (`AURORA_DEMO_PEOPLE_FILTER=Lumen`): the
+  range column widens to the widest range of the list, so every range
+  keeps its gap from the badges, the age and the arrival time (#4594).
   `legacy`: the same
   residents in Firestorm's table, for this run only (the preference is
   not changed). Capture `crowd` at frame 900 or later: the profiles
@@ -10398,7 +10512,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `experiences`, `environment` (or their index); Aurora's window opens a
   tab's section of "Manage", scrolled to and unfolded (`options` on "What
   visitors can do", `general` on "Sale and ownership", `covenant` on the
-  overview); `people` asks for the object owners as Refresh does, `owners`
+  overview); `visibility` opens "Visibility and search" with its
+  advanced rows unfolded and a five-paragraph parcel description (the
+  description field taller than its label, #4647; with `:owner`, since a
+  member sees the field greyed); `people` asks for the
+  object owners as Refresh does, `owners`
   also scrolls down to them; `environment-picker` and `experience-picker`
   open the settings picker (the demo library's skies, waters and days, also
   listed without `AURORA_DEMO_ENV_SELECT`) and the experience picker with
@@ -11104,6 +11222,9 @@ at frame 700. `tattoo:local-reload` replaces the violet checker with a green
 one at frame 900 using the importer's reload generation; capture before and
 after frame 1100. `tattoo:local-cancel` cancels at frame 1000 and restores the
 server appearance. These modes also accept the other wearable types.
+`tattoo:local-shape` opens the worn shape at frame 900 with the checker still
+on the unsaved tattoo. Move a shape slider, then close Shape to resume the tattoo.
+`skin:local-save-shape` saves the layer at frame 650 before opening Shape.
 `tattoo:local-save` saves at frame 650 and acknowledges the saved wearable;
 `skin:local-save` and `universal:local-save` cover body parts and extra slots.
 Save, Save As and Save on closing accept confirmed local bitmap references,
@@ -11889,9 +12010,11 @@ only the gesture's requested motions.
 
 **Inventory menu customization:** saving/restoring a menu notecard reports success in theme green, clears older warning text and disappears after five seconds in both inventory window presentations. Failed callbacks remain warnings and do not inherit an older green notice. Restoration wording omits Shared/common. `aurora-menu-restored` simulates a native notecard callback: capture before five seconds after the loading overlay fades (for example 240 frames at 60 FPS) for the green confirmation, and after five seconds (420 frames) for its disappearance. Locked menus hide empty vertical, horizontal and icon groups after live commands and saved placements are resolved, including parents containing only empty groups, bars or separators. Disabled commands and the movable Lock remain valid content. This is presentation only: stored groups, placements and absolute cells survive and reappear in customization or when applicable commands return. Filter queries still show their no-results state on nonempty groups so users can clear them. Use `aurora-menu-empty|aurora-menu-empty-custom` for the same emptied Attachments group and unused custom group in locked/editor modes. While unlocked, every inventory command is available for arrangement regardless of the original right-click target. Inapplicable options are greyed but draggable; their native command bindings remain absent. This includes Trash commands, folder commands, animation/sound/environment actions, worn actions and body/HUD points. Locked menus still resolve only the applicable native commands. Use `aurora-menu-all-texture|aurora-menu-all-folder|aurora-menu-all-trash` to inspect the same complete editor from three different sources, and `aurora-menu-texture|aurora-menu-trash` for the corresponding locked menus. Move an animation action from the texture editor into an icon bar or hidden storage, save/reload, then verify its placement on an animation without adding it to the locked texture menu. Existing hidden options remain in the customization companion. Use `AURORA_DEMO_INVENTORY=aurora-menu-object|aurora-menu-folder|aurora-menu-animation|aurora-menu-script|aurora-menu-link` for the common locked arrangement resolved against the native commands of each type, `aurora-menu-organize` for the expanded Organize group, and `aurora-menu-custom|aurora-menu-locked` for a saved arrangement with empty icon cells, text Copy, a custom group and horizontal Organize. `aurora-menu-hidden` opens the editing companion with hidden Image and Organize entries. The movable Lock option opens/closes the adjacent settings panel (Hidden options, Create a group, Reset menu); the default bottom icon bar places Lock in cell 1 and native Delete in cell 8. Drag Lock into another icon bar or into text to display the localized Lock label (Verrouiller in French); it still toggles customization while ordinary commands stay blocked during editing. Lock and any containing group/bar cannot be placed in Hidden options, including by moving an ancestor or by right-click. Saved layouts that hide Lock recover it as a visible text option; old fixed Delete-footer placements migrate into the bottom bar. Unlocked menus use a grab cursor and suppress command execution, including deletion: only layout editing and group navigation work. Drag text, icons, groups and dividers into Hidden options and back; hidden descendants retain their permissions and are absent when locked. Right-click also offers Hide/Restore. Compare the customizer with Construction `general+organize`: shared typography, violet Hidden options heading with close action, inset storage, full-width actions and the pointer-following drag preview. Its width resets for each command so a short previous title cannot force the next title into a narrow column. Losing window focus, clicking outside the menu and its editing panels, or dismissing the owner automatically relocks, cancels an unfinished drag/name editor and preserves placements; another right click must open a usable locked menu. Moving between the menu, settings and child panels keeps editing active. Close or Finish organizing relocks without losing placements; the companion follows the menu on the free side with aligned bottoms. Every icon bar reserves eight absolute cells. While editing, its drag grip sits to the left and its removal trash to the right on the same row; no title row is shown. Add an icon bar in settings; its organizing-only left grip drags the whole bar and its right trash action (also offered on right click) removes it, restoring its members as text in visible icon order, including temporarily unavailable commands. The two default bars can also move, hide or be removed; reset restores them. Newly added unused bars remain available. Once populated, a bar disappears automatically when its last option is moved out (including into Hidden options or a new group); undo restores it. Temporarily unavailable commands retain their saved bar and cell across restart. This also applies to the default bars and bars inside groups; empty parent groups follow their usual cleanup rules. Use `aurora-menu-bars` for a filled added bar with gaps, an extra empty bar and the default bottom bar removed. `aurora-menu-drop` holds a synthetic layout drag, starting with Image and switching to Attach to HUD after 60 pointer frames. Set AURORA_DEMO_POINTER to the top edge, center or lower edge of a group header to capture the before/inside/after indicators: an upper line inserts before, an outline puts the option inside, and a lower line inserts after the entire expanded group. Edge insertion keeps closed groups closed; only the center expands them during dragging. This capture fixture keeps synthetic window focus while recording so the real focus-loss behavior does not dismiss its menus in the background. Icon groups (New, clothing categories or a group moved into a bar) open on click, never on hover; a second click closes them. Text submenus retain hover navigation, and editing still blocks native commands. Repeating a stationary right click dismisses the latest editing panel, then the root menu. Layout, hidden placements, enabled group filters, expansion and lock state live in global settings as one arrangement across all inventory types and accounts. Legacy per-type layouts migrate once, preferring an edited object layout, then edited folders or another edited type. Consecutive dividers render once; leading/trailing dividers disappear in every group after applicable commands and search results are resolved, without moving their stored identities. Right-click a group while organizing to add/remove its filter. The field works in locked vertical, horizontal and icon groups; matching descendants retain their parent path, clear restores the list, and Lock remains reachable. Queries are temporary and clear on dismissal. `aurora-menu-filter` shows a vertical Attach to group with synthetic French input `main`. The settings companion offers Save to a notecard and Reload from a notecard. Save captures the common arrangement, groups, dividers, absolute icon cells and enabled filters; load validates the entire bounded/versioned inventory-menu document before applying it and relocks the result. Construction profiles and malformed/incompatible files are rejected without changing the current menu. Native upload request IDs and downloaded item IDs correlate callbacks; live notecard type/copy permission, Trash ancestry and preview restrictions are rechecked. `aurora-menu-export` and `aurora-menu-load` show the native save/picker dialogs; `aurora-menu-load-search` shows a matching notecard with its parent folders. Reload closes its owner context menu and opens a texture-style picker with a search field and non-empty inventory folders. Later text-field menus remain usable. Browse nested folders or type a notecard name: results keep their real parent path, and clearing search restores normal browsing expansion. Other asset types and Trash contents are excluded; non-copyable notecards cannot be selected. Selection alone issues no download; Reload rechecks the live item and preview permissions. Reset restores the supplied default arrangement: Image and Move to lead Organize, asset UUID is at the root before Organize, and Attachments/Organize start expanded. Existing saved layouts are retained until explicitly reset. Human grid validation: save a named notecard, alter the common menu, reload that notecard, and confirm all item types recover the arrangement and group filters while native permissions still apply. Native offline input tests cover drops, visibility, editing isolation and the lock; the human validates real inventory operations and persistence across accounts online.
 
-**Expanded inventory layout (#1020):** `aurora-columns` opens the wide explorer with a resized folder sidebar and custom column widths; `aurora-columns-hidden` keeps only Name and Permissions. Compare `aurora-medium`, `aurora-wide`, `aurora-rights` and the compact `aurora` layout. Drag the sidebar gap or column-header boundaries, hold the pointer stationary, then resize/reopen the window: widths remain saved and rows stay aligned with their headers. Double-click a boundary to restore its default widths. The Columns toolbar menu toggles Type, Permissions and Modified independently; Name stays visible. Reset inventory layout restores all columns and responsive widths. Check folder windows, filtered results, ordinary row selection and drag/drop at 100% and 150% UI scale. Medium views now give permissions their own column instead of appending them to the name; compact trees keep their existing inline rights. These controls are local and need no grid connection.
+**Inventory icons:** `aurora-system-folders` adds one folder of every system folder type with a symbol (Textures, Sounds… Settings, Materials, Marketplace stock and version) to the root and shows the root in Aurora's explorer: each folder shows its category's symbol cut out of the folder, in the sidebar's tree and the list (expand one for its open icon); Trash and plain folders keep theirs. `aurora-gallery-system-folders` shows the same root as a gallery: the symbols must stay sharp at the largest tile size and at 200% UI scale (`AURORA_UI_SCALE=2`). `aurora-filtered` keeps only Animations, Objects and Textures: the filter list shows each type's symbol before its name, and the type chip the three symbols before their names. Settings items show sky, water or day cycle by their kind (Demo sky). The icons are generated by `scripts/generate-inventory-icons.py`.
 
-**Gallery and combination views (#2520):** `aurora-gallery` opens the wide explorer on the right-click tests' folder in the gallery view, with the demo's textures as the pictures of an object, a gesture, a sky, a material, the shirt, the link to the object and the subfolder; `aurora-gallery-medium` is the same at the medium width; `aurora-combination` shows the pictured entries as tiles above the list of the others; `aurora-gallery-large` adds the 1,500 pictured objects of the large folder, for scrolling and profiling (`AURORA_PROFILE=1`) against `aurora-wide` in the list view. The View button of the toolbar switches List view, Gallery view and Combination view, and sets the tiles' size (Small, Medium, the Legacy Viewer's 128 px, Large); Ctrl and the wheel over the tiles step it from 64 to 256 px. Look for: the folders first, then the items, the pictured ones first; the type's icon in a picture's corner, large where there is no picture; the Worn, Link and Locked tags, the star and the rights letters on the picture; two lines of name. A click selects, Ctrl and Shift as in the list, a double-click goes into a folder or opens an item; the arrows step a tile or a row, and down from the last tiles goes on into the combination view's list; drag a tile onto a folder tile, or into the space between the tiles. Drag the bar between the tiles and the list, double-click it to reset. A search shows its results as rows in every view.
+**Expanded inventory layout (#1020):** `aurora-columns` opens the wide explorer with a resized folder sidebar and custom column widths; `aurora-columns-hidden` keeps only Name and Permissions. Compare `aurora-medium`, `aurora-wide`, `aurora-rights` and the compact `aurora` layout. Drag the sidebar gap or column-header boundaries, hold the pointer stationary, then resize/reopen the window: widths remain saved and rows stay aligned with their headers. Double-click a boundary to fit the column on its left (the Name's boundary restores the column's default width). The Columns toolbar menu toggles Type, Permissions and Modified independently; Name stays visible. Reset inventory layout restores all columns and responsive widths. Check folder windows, filtered results, ordinary row selection and drag/drop at 100% and 150% UI scale. Medium views now give permissions their own column instead of appending them to the name; compact trees keep their existing inline rights. These controls are local and need no grid connection. `aurora-columns-all` (#2520) shows every column (Creator, Type, Rights, Modified, Description, Worn, Items), Creator moved first, sorted by type in reverse: click a title to sort (again to reverse, the arrow follows), drag a title sideways to move its column, right-click the titles for the columns' menu (Size all columns to fit, Reset column widths), double-click a divider to fit the column on its left. Creator names follow `@shownames`.
+
+**Gallery and combination views (#2520):** `aurora-gallery` opens the wide explorer on the right-click tests' folder in the gallery view, with the demo's textures as the pictures of an object, a gesture, a sky, a material, the shirt, the link to the object and the subfolder; `aurora-gallery-medium` is the same at the medium width; `aurora-combination` shows the pictured entries as tiles above the list of the others; `aurora-gallery-large` adds the 1,500 pictured objects of the large folder, for scrolling and profiling (`AURORA_PROFILE=1`) against `aurora-wide` in the list view. The View button of the toolbar switches List view, Gallery view and Combination view, and sets the tiles' size (Small, Medium, the Legacy Viewer's 128 px, Large); Ctrl and the wheel over the tiles step it from 64 to 256 px. Look for: the folders first, then the items, the pictured ones first; the type's icon in a picture's corner, large where there is no picture; the Worn, Link and Locked tags, the star and the rights letters on the picture; two lines of name. A click selects, Ctrl and Shift as in the list, a double-click goes into a folder or opens an item; the arrows step a tile or a row, and down from the last tiles goes on into the combination view's list; drag a tile onto a folder tile, or into the space between the tiles. Drag the bar between the tiles and the list, double-click it to reset. A search shows its results as rows in every view. `aurora-compact` and `aurora-tiles` (Aurora's) show the same folder in the Compact view (the names alone, side by side in as many columns as fit, left to right then down; Dolphin's runs down its columns and scrolls sideways) and the Tiles view (a 48 px picture beside the name, the type and the date, or the Worn / Link tag), both in the list's order; Ctrl+Shift+1…6 (Cmd+Option+1…6 on a Mac, rebindable) switch the large, medium and small gallery, the Compact view, the Details (the list) and the Tiles, Windows Explorer's order. `aurora-groups` groups the list by type (View › Group by: none, type, modified date, creator): a header per group with its count, Folders first, a click closes or opens it; the tiles keep their order. View › Remember each folder's view (off by default) keeps the view chosen in a folder for that folder only. `aurora-folder-previews` shows the top in the large gallery with the right-click tests selected: a folder without a picture of its own borrows its items' (their own pictures first, then its textures; one on medium tiles and on the Tiles view's cards, up to four in a 2×2 grid from 176 px, none on small ones), with the folder's icon in a corner; only a folder already loaded, never fetched for it, nothing under `@viewtexture`.
 
 **`AURORA_DEMO_INVENTORY`** — opens a synthetic inventory: personal
 folder, subfolder, outfits, objects, documents, texture, sound, gesture,
@@ -11994,6 +12117,10 @@ separate searches enabled and disabled; that preference controls only the text.
   column holds the folder itself and its subfolders only (no shortcuts, no
   Trash); the explorer and the breadcrumb stop at the folder; a search stays
   inside it.
+- `aurora-single-folder-window`: "Open in a new window" on the same folder,
+  beside the narrow main window: the whole inventory at the explorer's width
+  (800 px), on that folder and named after it; the column and the
+  breadcrumb go above it, and its folders' menu has "Open".
 - `aurora-additional`: the narrow main window, its "Additional inventory
   window" button (a second briefcase, right of CMT) lit, and the additional
   window on its left: the whole inventory with its tabs but no Received
@@ -12348,6 +12475,13 @@ separate searches enabled and disabled; that preference controls only the text.
   rights red and struck through (no-copy object, no-transfer object), detail
   of the current owner and of the next owner on hover. A link
   takes the permissions of its original.
+- `single-folder-window`: "Open in a new window" on the same folder: a
+  window named after the folder, with Back, Forward and Up above its search,
+  that lists the folder flat (no carets, no Collapse / Expand). A
+  double-click, Enter or "Open" on a subfolder goes into it; Up and Back
+  come back. Delete a row: the next one is selected. Choosing "Show in a
+  new window" or "Open in a new window" again on a folder that such a
+  window already shows brings that window forward instead of a second one.
 - `rename`, `new-script`, `new-note`, `new-folder`: renaming in the
   row, without a window (their screenshots simulate the focus of the field
   without activating the Windows window).
