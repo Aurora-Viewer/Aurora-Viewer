@@ -4243,18 +4243,20 @@ mod imp {
 
         /// Frame generation (prototype, `RenderSettings::dlss_fg`, Linux's sl-ngx
         /// only): the frame halfway between the last frame and this one,
-        /// written to `out`. `back` is this frame as shown, with the
-        /// interface; `hudless` the same before the interface was drawn
-        /// (NGX takes the interface from where the two differ); depth and
-        /// motion are the ones this frame's DLSS evaluate tagged. All three
-        /// at the display size, in one format. `reset` starts the history
+        /// without the interface, written to `out`. `hudless` is this frame
+        /// before the interface was drawn; depth and motion are the ones
+        /// this frame's DLSS evaluate tagged. Both images at the display
+        /// size, in one format. The frame as shown is not handed to NGX: its
+        /// interface, taken from where the two differ, smeared the dock
+        /// and chat bar at some window sizes (1226x2055, not 1226x2050), so
+        /// the caller lays the real frame's interface over `out`
+        /// (`dlss_fg::FrameGen::present_into`). `reset` starts the history
         /// afresh (a frame went by without generation). The commands go
         /// after the encoder's; the flag says whether `out` holds a
         /// generated frame (not after a reset: there is no frame before).
         pub fn generate(
             &mut self,
             encoder: &mut wgpu::CommandEncoder,
-            back: &wgpu::TextureView,
             hudless: &wgpu::TextureView,
             out: &wgpu::TextureView,
             reset: bool,
@@ -4264,7 +4266,6 @@ mod imp {
                 return Err(String::from("DLSS is off"));
             }
             let lost = "a texture is not Vulkan's";
-            let mut back_r = resource(back, &self.adapter, false).ok_or(lost)?;
             let mut hudless_r = resource(hudless, &self.adapter, false).ok_or(lost)?;
             let mut out_r = resource(out, &self.adapter, true).ok_or(lost)?;
             let read = |view: &wgpu::TextureView| -> wgpu::TextureTransition<wgpu::Texture> {
@@ -4275,7 +4276,6 @@ mod imp {
                 }
             };
             let transitions = [
-                read(back),
                 read(hudless),
                 read(&self.depth),
                 read(&self.motion),
@@ -4298,7 +4298,7 @@ mod imp {
             });
             let reset = reset || constants.reset == sl::TRUE;
             constants.reset = sl::boolean(reset);
-            let size = back.texture().size();
+            let size = hudless.texture().size();
             let extent = sl::Extent {
                 top: 0,
                 left: 0,
@@ -4321,14 +4321,12 @@ mod imp {
                     sl::check((lib.set_constants)(&constants, token, &handle)).map_err(|e| format!("slSetConstants: {e}"))?;
                     let tags = [
                         sl::ResourceTag::new(&mut hudless_r, sl::buffer::HUDLESS_COLOR, extent),
-                        sl::ResourceTag::new(&mut back_r, sl::buffer::SCALING_INPUT_COLOR, extent),
                         sl::ResourceTag::new(&mut out_r, sl::buffer::SCALING_OUTPUT_COLOR, extent),
                     ];
                     let inputs = [
                         (&raw const handle).cast::<sl::Base>(),
                         (&raw const tags[0]).cast::<sl::Base>(),
                         (&raw const tags[1]).cast::<sl::Base>(),
-                        (&raw const tags[2]).cast::<sl::Base>(),
                     ];
                     sl::check((lib.evaluate)(sl::FEATURE_DLSS_G, token, inputs.as_ptr(), inputs.len() as u32, cmd))
                         .map_err(|e| format!("slEvaluateFeature (frame generation): {e}"))
@@ -4612,7 +4610,6 @@ mod imp {
         pub fn generate(
             &mut self,
             _: &mut wgpu::CommandEncoder,
-            _: &wgpu::TextureView,
             _: &wgpu::TextureView,
             _: &wgpu::TextureView,
             _: bool,

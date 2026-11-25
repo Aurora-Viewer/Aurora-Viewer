@@ -182,7 +182,9 @@ With DLSS on, Preferences › Graphics › Anti-aliasing › **Frame generation*
 each two the viewer draws, shown before the drawn one. The frame is drawn
 aside, into a texture in the window's format; at its end the generated
 frame is presented in the window image acquired at the frame's start, then
-the drawn one in a second. While it runs the window presents under Fifo,
+the drawn one in a second. DLSS makes the frame from the drawn one before
+the interface; the interface on the generated frame is the drawn frame's,
+laid over it wherever the interface drew. While it runs the window presents under Fifo,
 whatever the vsync setting, and the frame rate limit stands aside (the
 background limit does not): the screen paces the pairs, so the viewer draws
 at half the refresh rate and shows a frame at every refresh. A frame

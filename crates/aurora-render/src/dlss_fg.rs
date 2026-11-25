@@ -3,10 +3,14 @@
 //! `AURORA_DLSS_FG=1` or `0` overrides for a run.
 //!
 //! Each frame DLSS draws, the window's image is copied twice: before the
-//! interface (`hudless`) and as shown (`back`). NGX makes from them, with
-//! the frame's depth and motion, the frame halfway between the last frame
-//! and this one (`out`), with the interface taken from where the two
-//! differ. One format for all three, which NGX writes as storage: the
+//! interface (`hudless`) and as shown (`back`). NGX makes from the first,
+//! with the frame's depth and motion, the frame halfway between the last
+//! frame and this one, without the interface (`out`); the shown frame
+//! (`mixed`) is `out` with the real frame's pixels wherever the two copies
+//! differ, which is where the interface drew (shaders/dlss_fg_mix.wgsl).
+//! NGX can take the interface from that difference itself, but smeared the
+//! dock and chat bar at some window sizes (1226x2055, not 1226x2050 or
+//! 1836x995). One format for the images NGX reads and writes, as storage: the
 //! window's (BGRA) is not storage without a device feature that changes
 //! every shader (spirv_fix.rs), so they are RGBA, drawn by a blit.
 //!
@@ -21,6 +25,7 @@
 //! in a row as PPM, from the `AURORA_DLSS_FG_DUMP_AT`-th generation (300
 //! by default): the test of what generation makes, before it is shown.
 
+use crate::pipeline_cache::CachedPipelines;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -51,6 +56,10 @@ pub(crate) struct FrameGen {
     pub back: wgpu::TextureView,
     pub hudless: wgpu::TextureView,
     pub out: wgpu::TextureView,
+    /// the generated frame as shown: `out` under the real frame's interface
+    mixed: wgpu::TextureView,
+    mix_pipeline: wgpu::RenderPipeline,
+    mix_group: wgpu::BindGroup,
     blit: wgpu::util::TextureBlitter,
     /// into a window image (its format)
     present_blit: wgpu::util::TextureBlitter,
@@ -132,6 +141,10 @@ impl FrameGen {
             view_formats: &[],
         });
         let real_view = real.create_view(&wgpu::TextureViewDescriptor::default());
+        let back = make("DLSS FG shown", wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let hudless = make("DLSS FG hudless", wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let mixed = make("DLSS FG generated as shown", wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let (mix_pipeline, mix_group) = mix(device, [&back, &hudless, &out]);
         log::info!("DLSS frame generation: images made at {}x{}", size.0, size.1);
         Self {
             size,
@@ -139,9 +152,12 @@ impl FrameGen {
             real,
             real_view,
             present_blit: wgpu::util::TextureBlitter::new(device, format),
-            back: make("DLSS FG shown", wgpu::TextureUsages::RENDER_ATTACHMENT),
-            hudless: make("DLSS FG hudless", wgpu::TextureUsages::RENDER_ATTACHMENT),
+            back,
+            hudless,
             out,
+            mixed,
+            mix_pipeline,
+            mix_group,
             blit: wgpu::util::TextureBlitter::new(device, FORMAT),
             last: None,
             runs: 0,
@@ -156,10 +172,36 @@ impl FrameGen {
         self.size == size && self.format == format
     }
 
-    /// The generated frame (`generated`) or the real one into a window image.
+    /// The generated frame (`generated`), under the real frame's
+    /// interface, or the real one into a window image. After generation's
+    /// commands.
     pub fn present_into(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, window: &wgpu::Texture, generated: bool) {
         let target = window.create_view(&wgpu::TextureViewDescriptor::default());
-        let source = if generated { &self.out } else { &self.real_view };
+        let source = if generated {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("DLSS FG interface"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.mixed,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.mix_pipeline);
+            pass.set_bind_group(0, &self.mix_group, &[]);
+            pass.draw(0..3, 0..1);
+            drop(pass);
+            &self.mixed
+        } else {
+            &self.real_view
+        };
         self.present_blit.copy(device, encoder, source, &target);
     }
 
@@ -186,7 +228,8 @@ impl FrameGen {
         self.last = None;
     }
 
-    /// The readbacks of a dumped frame, submitted after generation's commands.
+    /// The readbacks of a dumped frame, submitted after `present_into`'s
+    /// commands: `generated` is the frame as shown, `between` NGX's.
     pub fn encode_dump(&mut self, device: &wgpu::Device) -> Option<wgpu::CommandBuffer> {
         let n = self.runs;
         let dump = self.dump.as_mut().filter(|d| n >= d.at && n < d.at + DUMP_FRAMES)?;
@@ -195,7 +238,13 @@ impl FrameGen {
         });
         let (w, h) = self.size;
         let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        for (name, view) in [("shown", &self.back), ("hudless", &self.hudless), ("generated", &self.out)] {
+        let names = [
+            ("shown", &self.back),
+            ("hudless", &self.hudless),
+            ("between", &self.out),
+            ("generated", &self.mixed),
+        ];
+        for (name, view) in names {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("DLSS FG dump"),
                 size: crate::readback::readback_size(u64::from(row) * u64::from(h)),
@@ -262,4 +311,77 @@ impl FrameGen {
             }
         }
     }
+}
+
+/// The pass that lays the real frame's interface over the generated frame:
+/// its pipeline, and its images bound (shown, hudless, generated), which
+/// live as long as the `FrameGen`.
+fn mix(device: &wgpu::Device, views: [&wgpu::TextureView; 3]) -> (wgpu::RenderPipeline, wgpu::BindGroup) {
+    let entry = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("DLSS FG interface"),
+        entries: &[entry(0), entry(1), entry(2)],
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("DLSS FG interface"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(views[0]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(views[1]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(views[2]),
+            },
+        ],
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("DLSS FG interface"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/dlss_fg_mix.wgsl").into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("DLSS FG interface"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+        label: Some("DLSS FG interface"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    (pipeline, group)
 }

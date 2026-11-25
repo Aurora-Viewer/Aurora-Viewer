@@ -15646,14 +15646,16 @@ impl Backend {
         // follow the encoder's, which leaves its inputs in their layouts)
         let mut fg_cmds = Vec::new();
         let mut fg_generated = false;
+        let mut fg_ran = false;
         if fg_frame
             && let Some(fg) = &mut self.fg
             && let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut())
         {
             fg.copy_back(&self.device, &mut encoder, &present_view);
             let reset = !fg.chained(index);
-            match dlss.generate(&mut encoder, &fg.back, &fg.hudless, &fg.out, reset) {
+            match dlss.generate(&mut encoder, &fg.hudless, &fg.out, reset) {
                 Ok((commands, generated)) => {
+                    fg_ran = true;
                     fg.runs += 1;
                     fg.generated += u64::from(generated);
                     fg_generated = generated;
@@ -15667,7 +15669,6 @@ impl Backend {
                         );
                     }
                     fg_cmds.push(commands);
-                    fg_cmds.extend(fg.encode_dump(&self.device));
                 }
                 Err(e) => {
                     fg.broken();
@@ -15679,13 +15680,16 @@ impl Backend {
             prof.mark("fg");
         }
         // the window image of the frame's start takes the generated frame,
-        // or the real one when none was made
-        if let (Some(held), Some(fg)) = (&fg_held, &self.fg) {
+        // under the real frame's interface, or the real one when none was made
+        if let (Some(held), Some(fg)) = (&fg_held, &mut self.fg) {
             let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("DLSS FG present"),
             });
             fg.present_into(&self.device, &mut encoder, &held.texture, fg_generated);
             fg_cmds.push(encoder.finish());
+            if fg_ran {
+                fg_cmds.extend(fg.encode_dump(&self.device));
+            }
         }
         let (pre, post, scene) = self.finishers.pair(enc_pre, encoder, move || enc_scene.finish());
         match (pre, post) {
