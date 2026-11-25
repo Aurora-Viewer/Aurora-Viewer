@@ -1,8 +1,11 @@
 //! Saved expanded-inventory splitters. Like LLScrollListCtrl::updateColumnWidths
 //! (indra/llui/llscrolllistctrl.cpp), the name absorbs remaining space. Adjacent
 //! columns share a dragged boundary; shrinking the window only fits the display.
+//! Aurora differences (Windows Explorer, Dolphin): the columns can be chosen
+//! and reordered, and a double-click on a divider fits the column on its
+//! left to what it shows.
 
-use super::super::view::ExplorerPreferences;
+use super::super::view::{COLUMNS, ColumnId, ExplorerPreferences};
 use super::{Frame, Layout, rights};
 use crate::theme::Palette;
 use crate::ui::{menu, widgets};
@@ -10,98 +13,234 @@ use egui::{Rangef, Rect, Sense};
 
 pub(super) const GAP: f32 = 12.0;
 pub(super) const PAD: f32 = 8.0;
-const NAME_MIN: f32 = 80.0;
+/// The room the name keeps however many columns are shown: they shrink
+/// first, down to their least widths (human request of 2026-11-19).
+const NAME_MIN: f32 = 160.0;
+const MAX: f32 = 1600.0;
 
+/// Where each shown column is drawn this frame, in their order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Columns {
     pub name_end: f32,
-    pub kind: Option<Rangef>,
-    pub rights: Option<Rangef>,
-    pub date: Option<Rangef>,
+    ranges: [Option<(ColumnId, Rangef)>; COLUMNS],
+}
+
+/// A column's width when none is saved, by the window's width.
+fn default_width(id: ColumnId, frame: Frame) -> f32 {
+    let wide = frame.layout == Layout::Wide;
+    match id {
+        ColumnId::Kind => {
+            if wide {
+                128.0
+            } else {
+                112.0
+            }
+        }
+        ColumnId::Rights => minimum(id, frame),
+        ColumnId::Date => {
+            if wide {
+                92.0
+            } else {
+                72.0
+            }
+        }
+        ColumnId::Creator => {
+            if wide {
+                140.0
+            } else {
+                120.0
+            }
+        }
+        ColumnId::Description => {
+            if wide {
+                180.0
+            } else {
+                140.0
+            }
+        }
+        ColumnId::Worn => {
+            if wide {
+                104.0
+            } else {
+                80.0
+            }
+        }
+        ColumnId::Count => 56.0,
+    }
+}
+
+fn minimum(id: ColumnId, frame: Frame) -> f32 {
+    match id {
+        // the rights' letters, whole
+        ColumnId::Rights => rights::width(frame.rights).max(24.0),
+        ColumnId::Count => 28.0,
+        ColumnId::Worn | ColumnId::Date => 40.0,
+        _ => 36.0,
+    }
+}
+
+/// Whether `id` is drawn: the explorer's widths, the column switched on,
+/// and for the rights a mode that shows them.
+fn visible(id: ColumnId, frame: Frame) -> bool {
+    frame.layout != Layout::Compact && frame.columns.columns.shown(id) && (id != ColumnId::Rights || frame.rights != super::Rights::Hidden)
 }
 
 impl Columns {
     pub fn new(frame: Frame, rect: Rect) -> Self {
-        let prefs = frame.columns;
-        let expanded = frame.layout != Layout::Compact;
-        let wide = frame.layout == Layout::Wide;
-        let visible = [
-            expanded && prefs.show_kind,
-            expanded && prefs.show_rights && frame.rights != super::Rights::Hidden,
-            expanded && prefs.show_date,
-        ];
-        let defaults = [
-            if wide { 128.0 } else { 112.0 },
-            rights::width(frame.rights).max(56.0),
-            if wide { 92.0 } else { 72.0 },
-        ];
-        let saved = [prefs.kind_width, prefs.rights_width, prefs.date_width];
-        let minima = [64.0, defaults[1], 64.0];
-        let mut widths = [0.0; 3];
-        let mut minimum = 0.0;
+        let slots = frame.columns.columns.0;
+        let mut widths = [0.0; COLUMNS];
+        let mut minimum_sum = 0.0;
         let mut extra = 0.0;
-        for (i, width) in widths.iter_mut().enumerate() {
-            if visible[i] {
-                *width = if saved[i] == 0 {
-                    defaults[i]
+        let mut shown = 0;
+        for (i, slot) in slots.iter().enumerate() {
+            if visible(slot.id, frame) {
+                let least = minimum(slot.id, frame);
+                widths[i] = if slot.width == 0 {
+                    default_width(slot.id, frame)
                 } else {
-                    f32::from(saved[i]).clamp(minima[i], 1600.0)
+                    f32::from(slot.width).clamp(least, MAX)
                 };
-                minimum += minima[i];
-                extra += *width - minima[i];
+                minimum_sum += least;
+                extra += widths[i] - least;
+                shown += 1;
             }
         }
-        let gaps = GAP * visible.iter().filter(|v| **v).count() as f32;
+        let gaps = GAP * shown as f32;
         let room = (rect.width() - 2.0 * PAD - NAME_MIN - gaps).max(0.0);
         let extra_scale = if extra > 0.0 {
-            ((room - minimum) / extra).clamp(0.0, 1.0)
+            ((room - minimum_sum) / extra).clamp(0.0, 1.0)
         } else {
             1.0
         };
-        let minimum_scale = if minimum > 0.0 { (room / minimum).min(1.0) } else { 1.0 };
+        let minimum_scale = if minimum_sum > 0.0 { (room / minimum_sum).min(1.0) } else { 1.0 };
         let mut end = rect.right() - PAD;
-        let mut ranges = [None; 3];
-        for (i, range) in ranges.iter_mut().enumerate().rev() {
-            if visible[i] {
-                let width = minima[i] * minimum_scale + (widths[i] - minima[i]) * extra_scale;
-                *range = Some(Rangef::new(end - width, end));
+        let mut ranges = [None; COLUMNS];
+        for (i, slot) in slots.iter().enumerate().rev() {
+            if visible(slot.id, frame) {
+                let least = minimum(slot.id, frame);
+                let width = least * minimum_scale + (widths[i] - least) * extra_scale;
+                ranges[i] = Some((slot.id, Rangef::new(end - width, end)));
                 end -= width + GAP;
             }
         }
-        Self {
-            name_end: end,
-            kind: ranges[0],
-            rights: ranges[1],
-            date: ranges[2],
+        Self { name_end: end, ranges }
+    }
+
+    /// Where `id` is drawn, if it is.
+    pub fn get(&self, id: ColumnId) -> Option<Rangef> {
+        self.iter().find(|(shown, _)| *shown == id).map(|(_, range)| range)
+    }
+
+    /// The shown columns, left to right.
+    pub fn iter(&self) -> impl Iterator<Item = (ColumnId, Rangef)> + '_ {
+        self.ranges.iter().flatten().copied()
+    }
+}
+
+/// The widest thing each column showed: the rows drawn and its title, the
+/// last frame's for the fit of a divider's double-click. Only the rows in
+/// sight are measured (Dolphin's fit).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ColumnFit {
+    last: [f32; COLUMNS],
+    now: [f32; COLUMNS],
+}
+
+impl ColumnFit {
+    /// A new frame of the list starts: what was measured becomes the fit.
+    pub fn start(&mut self) {
+        self.last = self.now;
+        self.now = [0.0; COLUMNS];
+    }
+
+    pub fn note(&mut self, id: ColumnId, width: f32) {
+        let slot = &mut self.now[id as usize];
+        *slot = slot.max(width);
+    }
+
+    /// The width that shows all of `id`, if it was drawn.
+    pub fn width(&self, id: ColumnId) -> Option<f32> {
+        let width = self.last[id as usize].max(self.now[id as usize]);
+        (width > 0.0).then(|| width.ceil() + 2.0)
+    }
+}
+
+/// Saves `id` at the width that shows all of it.
+fn fit(prefs: &mut ExplorerPreferences, fit: &ColumnFit, id: ColumnId, frame: Frame) {
+    if let Some(width) = fit.width(id) {
+        prefs.columns.slot_mut(id).width = width.clamp(minimum(id, frame), MAX).round() as u16;
+    }
+}
+
+/// Every shown column at the width that shows all of it.
+pub(super) fn fit_all(prefs: &mut ExplorerPreferences, measured: &ColumnFit, frame: Frame) {
+    for id in ColumnId::ALL {
+        if visible(id, Frame { columns: *prefs, ..frame }) {
+            fit(prefs, measured, id, frame);
         }
     }
-
-    fn ranges(self) -> [Option<Rangef>; 3] {
-        [self.kind, self.rights, self.date]
-    }
 }
 
-fn saved_width(prefs: &mut ExplorerPreferences, index: usize) -> &mut u16 {
-    match index {
-        0 => &mut prefs.kind_width,
-        1 => &mut prefs.rights_width,
-        _ => &mut prefs.date_width,
+/// A divider dragged by `delta`: the column on its right is `right` among
+/// the shown `widths` (the name on the left of the first). The column on
+/// the divider's side grows; the others give way one after the other down
+/// to their least widths, as Windows Explorer pushes its columns: going
+/// right, the columns from `right` on; going left, those before it, then the
+/// name down to its own least. Returns the widths, the name's last.
+fn push(widths: &[f32], minima: &[f32], name: f32, right: usize, delta: f32) -> (Vec<f32>, f32) {
+    let mut widths = widths.to_vec();
+    let mut name = name;
+    if delta > 0.0 {
+        let room: f32 = (right..widths.len()).map(|j| (widths[j] - minima[j]).max(0.0)).sum();
+        let mut left = delta.min(room);
+        match right.checked_sub(1) {
+            Some(grown) => widths[grown] += left,
+            None => name += left,
+        }
+        for j in right..widths.len() {
+            let give = left.min((widths[j] - minima[j]).max(0.0));
+            widths[j] -= give;
+            left -= give;
+        }
+    } else if delta < 0.0 {
+        let room: f32 = (0..right).map(|j| (widths[j] - minima[j]).max(0.0)).sum::<f32>() + (name - NAME_MIN).max(0.0);
+        let mut left = (-delta).min(room);
+        widths[right] += left;
+        for j in (0..right).rev() {
+            let give = left.min((widths[j] - minima[j]).max(0.0));
+            widths[j] -= give;
+            left -= give;
+        }
+        name -= left;
     }
+    (widths, name)
 }
 
-pub(super) fn resize(ui: &mut egui::Ui, p: &Palette, mut frame: Frame, rect: Rect, prefs: &mut ExplorerPreferences) -> Columns {
+pub(super) fn resize(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    mut frame: Frame,
+    rect: Rect,
+    prefs: &mut ExplorerPreferences,
+    measured: &ColumnFit,
+) -> Columns {
     frame.columns = *prefs;
     let cols = Columns::new(frame, rect);
-    let mut previous = None;
-    let mut left_width = cols.name_end - rect.left() - PAD;
-    for (index, range) in cols.ranges().into_iter().enumerate() {
-        let Some(range) = range else { continue };
+    let shown: Vec<(ColumnId, Rangef)> = cols.iter().collect();
+    let widths: Vec<f32> = shown.iter().map(|(_, range)| range.span()).collect();
+    let minima: Vec<f32> = shown.iter().map(|(id, _)| minimum(*id, frame)).collect();
+    let name = cols.name_end - rect.left() - PAD;
+    for (index, &(id, range)) in shown.iter().enumerate() {
         let x = range.min - GAP * 0.5;
         let hit = Rect::from_center_size(egui::pos2(x, rect.center().y), egui::vec2(8.0, rect.height()));
         let response = ui
-            .interact(hit, ui.scope_id().with(("inventory_column_resize", index)), Sense::click_and_drag())
+            .interact(hit, ui.scope_id().with(("inventory_column_resize", id)), Sense::click_and_drag())
             .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
-            .on_hover_text(aurora_i18n::tr!("inventory-resize-columns"));
+            .on_hover_text(if index == 0 {
+                aurora_i18n::tr!("inventory-resize-columns-first")
+            } else {
+                aurora_i18n::tr!("inventory-resize-columns")
+            });
         #[cfg(test)]
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_column_handle", index)), hit));
@@ -113,26 +252,20 @@ pub(super) fn resize(ui: &mut egui::Ui, p: &Palette, mut frame: Frame, rect: Rec
             );
         }
         if response.double_clicked() {
-            *saved_width(prefs, index) = 0;
-            if let Some(previous) = previous {
-                *saved_width(prefs, previous) = 0;
+            match index.checked_sub(1) {
+                // the column on the divider's left fits what it shows
+                Some(left) => fit(prefs, measured, shown[left].0, frame),
+                // the name takes what is left: its divider resets the column
+                None => prefs.columns.slot_mut(id).width = 0,
             }
-        } else if response.dragged() {
-            let left_min = previous.map_or(NAME_MIN, |i| if i == 1 { rights::width(frame.rights).max(56.0) } else { 64.0 });
-            let right_min = if index == 1 { rights::width(frame.rights).max(56.0) } else { 64.0 };
-            let delta = response
-                .drag_delta()
-                .x
-                .clamp(-(left_width - left_min).max(0.0), (range.span() - right_min).max(0.0));
-            if delta != 0.0 {
-                *saved_width(prefs, index) = (range.span() - delta).round() as u16;
-                if let Some(previous) = previous {
-                    *saved_width(prefs, previous) = (left_width + delta).round() as u16;
+        } else if response.dragged() && response.drag_delta().x != 0.0 {
+            let (pushed, _) = push(&widths, &minima, name, index, response.drag_delta().x);
+            for ((shown, _), (before, after)) in shown.iter().zip(widths.iter().zip(&pushed)) {
+                if (before - after).abs() > 0.01 {
+                    prefs.columns.slot_mut(*shown).width = after.round() as u16;
                 }
             }
         }
-        previous = Some(index);
-        left_width = range.span();
     }
     frame.columns = *prefs;
     Columns::new(frame, rect)
@@ -177,18 +310,66 @@ pub(super) fn sidebar(ui: &mut egui::Ui, p: &Palette, area: Rect, pane: f32, lay
     }
 }
 
-pub(super) fn options(ui: &mut egui::Ui, p: &Palette, prefs: &mut ExplorerPreferences, mode: &mut super::Rights) {
+/// The label of a column, as its title and its menu entry say it.
+pub(super) fn title(id: ColumnId, frame: Frame) -> &'static str {
+    match id {
+        ColumnId::Kind => aurora_i18n::tr!("common-type"),
+        ColumnId::Rights => rights::heading(frame.rights),
+        ColumnId::Date => aurora_i18n::tr!("inventory-column-modified"),
+        ColumnId::Creator => aurora_i18n::tr!("inventory-column-creator"),
+        ColumnId::Description => aurora_i18n::tr!("inventory-sort-description"),
+        ColumnId::Worn => aurora_i18n::tr!("common-worn"),
+        ColumnId::Count => aurora_i18n::tr!("inventory-column-count"),
+    }
+}
+
+/// The columns' menu, of the toolbar's Columns button and of the header's
+/// right-click: a switch per column in their order, the fit and the resets.
+pub(super) fn options(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    prefs: &mut ExplorerPreferences,
+    mode: &mut super::Rights,
+    measured: &ColumnFit,
+    layout: Layout,
+) {
     menu::check(ui, p, "", aurora_i18n::tr!("common-name"), true, false);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("common-type"), &mut prefs.show_kind);
-    let mut show_rights = prefs.show_rights && *mode != super::Rights::Hidden;
-    if menu::toggle(ui, p, "", aurora_i18n::tr!("inventory-column-permissions"), &mut show_rights) {
-        prefs.show_rights = show_rights;
-        if show_rights && *mode == super::Rights::Hidden {
-            *mode = super::Rights::Mine;
+    for slot in prefs.columns.0 {
+        let id = slot.id;
+        if id == ColumnId::Rights {
+            let mut show_rights = slot.show && *mode != super::Rights::Hidden;
+            if menu::toggle(ui, p, "", aurora_i18n::tr!("inventory-column-permissions"), &mut show_rights) {
+                prefs.columns.slot_mut(id).show = show_rights;
+                if show_rights && *mode == super::Rights::Hidden {
+                    *mode = super::Rights::Mine;
+                }
+            }
+        } else {
+            let frame = Frame {
+                layout,
+                rights: *mode,
+                columns: *prefs,
+                explorer: true,
+            };
+            let mut show = slot.show;
+            if menu::toggle(ui, p, "", title(id, frame), &mut show) {
+                prefs.columns.slot_mut(id).show = show;
+            }
         }
     }
-    menu::toggle(ui, p, "", aurora_i18n::tr!("inventory-column-modified"), &mut prefs.show_date);
     menu::separator(ui, p);
+    let frame = Frame {
+        layout,
+        rights: *mode,
+        columns: *prefs,
+        explorer: true,
+    };
+    if menu::item(ui, p, "arrows-horizontal", aurora_i18n::tr!("inventory-columns-fit")) {
+        fit_all(prefs, measured, frame);
+    }
+    if menu::item(ui, p, "restore", aurora_i18n::tr!("inventory-columns-reset-widths")) {
+        prefs.columns.reset_widths();
+    }
     if menu::item(ui, p, "restore", aurora_i18n::tr!("inventory-columns-reset")) {
         *prefs = ExplorerPreferences::default();
         if *mode == super::Rights::Hidden {
@@ -203,19 +384,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn saved_columns_fit_all_visibility_and_rights_choices_without_losing_preferences() {
+    fn saved_columns_fit_all_visibility_order_and_rights_choices_without_losing_preferences() {
         for layout in [Layout::Compact, Layout::Medium, Layout::Wide] {
             for rights in [Rights::Hidden, Rights::Mine, Rights::Next, Rights::Both] {
-                for mask in 0..8 {
-                    let prefs = ExplorerPreferences {
-                        kind_width: u16::MAX,
-                        rights_width: 1,
-                        date_width: 420,
-                        show_kind: mask & 1 != 0,
-                        show_rights: mask & 2 != 0,
-                        show_date: mask & 4 != 0,
-                        ..Default::default()
-                    };
+                for mask in 0..(1u32 << COLUMNS) {
+                    let mut prefs = ExplorerPreferences::default();
+                    for (i, id) in ColumnId::ALL.into_iter().enumerate() {
+                        let slot = prefs.columns.slot_mut(id);
+                        slot.show = mask & (1 << i) != 0;
+                        slot.width = [u16::MAX, 1, 420, 0, 90, 30, 2000][i];
+                    }
+                    // a reordered list draws in its own order
+                    if mask % 3 == 0 {
+                        prefs.columns.move_to(ColumnId::Date, 0);
+                    }
                     let frame = Frame {
                         layout,
                         rights,
@@ -226,14 +408,17 @@ mod tests {
                         let rect = Rect::from_min_size(egui::pos2(124.0, 70.0), egui::vec2(width, 24.0));
                         let cols = Columns::new(frame, rect);
                         assert!(cols.name_end >= rect.left() + PAD + NAME_MIN - 0.1);
-                        assert_eq!(cols.kind.is_some(), layout != Layout::Compact && prefs.show_kind);
-                        assert_eq!(
-                            cols.rights.is_some(),
-                            layout != Layout::Compact && prefs.show_rights && rights != Rights::Hidden
-                        );
-                        assert_eq!(cols.date.is_some(), layout != Layout::Compact && prefs.show_date);
+                        for id in ColumnId::ALL {
+                            let shown = layout != Layout::Compact
+                                && prefs.columns.shown(id)
+                                && (id != ColumnId::Rights || rights != Rights::Hidden);
+                            assert_eq!(cols.get(id).is_some(), shown, "{id:?}");
+                        }
+                        let order: Vec<_> = cols.iter().map(|(id, _)| id).collect();
+                        let expected: Vec<_> = prefs.columns.0.iter().map(|s| s.id).filter(|id| order.contains(id)).collect();
+                        assert_eq!(order, expected);
                         let mut end = cols.name_end;
-                        for range in cols.ranges().into_iter().flatten() {
+                        for (_, range) in cols.iter() {
                             assert!(range.min >= end + GAP - 0.1 && range.max > range.min);
                             assert!(range.max <= rect.right() - PAD + 0.1);
                             end = range.max;
@@ -251,21 +436,85 @@ mod tests {
         let old: InventoryPreferences = serde_json::from_str(r#"{"rights":"Next"}"#).expect("old preferences");
         assert_eq!(old.explorer, ExplorerPreferences::default());
         let mut changed = old.clone();
-        changed.explorer = ExplorerPreferences {
-            sidebar_width: 314,
-            kind_width: 230,
-            rights_width: 128,
-            date_width: 164,
-            show_date: false,
-            ..Default::default()
-        };
+        changed.explorer.sidebar_width = 314;
+        changed.explorer.columns.slot_mut(ColumnId::Kind).width = 230;
+        changed.explorer.columns.slot_mut(ColumnId::Date).show = false;
+        changed.explorer.columns.slot_mut(ColumnId::Creator).show = true;
+        changed.explorer.columns.move_to(ColumnId::Creator, 0);
         let saved = serde_json::to_string(&changed).unwrap();
         let reloaded: InventoryPreferences = serde_json::from_str(&saved).unwrap();
         assert_eq!(reloaded, changed);
         assert_eq!(reloaded.rights, old.rights);
-        let partial: InventoryPreferences = serde_json::from_str(r#"{"explorer":{"sidebar_width":280,"show_kind":false}}"#).unwrap();
-        assert!(!partial.explorer.show_kind);
-        assert!(partial.explorer.show_date && partial.explorer.show_rights);
+        // the three columns' settings of before the list
+        let partial: InventoryPreferences =
+            serde_json::from_str(r#"{"explorer":{"sidebar_width":280,"show_kind":false,"date_width":150}}"#).unwrap();
+        let columns = partial.explorer.columns;
+        assert_eq!(partial.explorer.sidebar_width, 280);
+        assert!(!columns.shown(ColumnId::Kind));
+        assert!(columns.shown(ColumnId::Date) && columns.shown(ColumnId::Rights));
+        assert!(!columns.shown(ColumnId::Creator));
+        assert_eq!(columns.slot(ColumnId::Date).width, 150);
+        // an unknown, repeated or missing column never loses the others
+        let odd: ExplorerPreferences = serde_json::from_str(
+            r#"{"columns":[{"id":"worn","show":true},{"id":"size","show":true},{"id":"worn","show":false},{"id":"kind","show":false,"width":99},{"show":true}]}"#,
+        )
+        .unwrap();
+        let ids: Vec<_> = odd.columns.0.iter().map(|s| s.id).collect();
+        assert_eq!(ids[..2], [ColumnId::Worn, ColumnId::Kind]);
+        assert_eq!(ids.len(), COLUMNS);
+        assert!(ColumnId::ALL.iter().all(|id| ids.contains(id)));
+        assert!(odd.columns.shown(ColumnId::Worn) && !odd.columns.shown(ColumnId::Kind));
+        assert_eq!(odd.columns.slot(ColumnId::Kind).width, 99);
+        assert!(!odd.columns.shown(ColumnId::Date), "a column the list lacks comes back hidden");
+    }
+
+    #[test]
+    fn a_dragged_divider_pushes_the_columns_that_give_way_in_turn() {
+        let minima = [40.0, 40.0, 40.0];
+        // right: the first column grows, the next ones give way in turn
+        let (widths, name) = push(&[100.0, 50.0, 80.0], &minima, 300.0, 1, 30.0);
+        assert_eq!((widths, name), (vec![130.0, 40.0, 60.0], 300.0));
+        // as far as they all can, then no further
+        let (widths, name) = push(&[100.0, 50.0, 80.0], &minima, 300.0, 1, 500.0);
+        assert_eq!((widths, name), (vec![150.0, 40.0, 40.0], 300.0));
+        // from the name's divider: the name grows
+        let (widths, name) = push(&[100.0, 50.0, 80.0], &minima, 300.0, 0, 20.0);
+        assert_eq!((widths, name), (vec![80.0, 50.0, 80.0], 320.0));
+        // left: the earlier columns give way, then the name down to its least
+        let (widths, name) = push(&[45.0, 50.0, 80.0], &minima, NAME_MIN + 40.0, 2, -60.0);
+        assert_eq!((widths, name), (vec![40.0, 40.0, 135.0], NAME_MIN), "and no further");
+        let (widths, name) = push(&[40.0, 40.0, 80.0], &minima, NAME_MIN + 10.0, 2, -100.0);
+        assert_eq!((widths, name), (vec![40.0, 40.0, 90.0], NAME_MIN));
+        let total = |w: &[f32], n: f32| w.iter().sum::<f32>() + n;
+        let (widths, name) = push(&[70.0, 90.0, 60.0], &minima, 260.0, 1, -75.0);
+        assert_eq!(total(&widths, name), 70.0 + 90.0 + 60.0 + 260.0, "the room is shared, never made");
+    }
+
+    #[test]
+    fn a_fit_takes_the_widest_text_the_last_frame_measured() {
+        let mut fit = ColumnFit::default();
+        assert_eq!(fit.width(ColumnId::Kind), None, "nothing drawn, nothing to fit");
+        fit.note(ColumnId::Kind, 40.0);
+        fit.note(ColumnId::Kind, 70.4);
+        fit.note(ColumnId::Kind, 20.0);
+        fit.start();
+        assert_eq!(fit.width(ColumnId::Kind), Some(73.0));
+        fit.start();
+        assert_eq!(fit.width(ColumnId::Kind), None, "a column hidden since is not fitted");
+        let frame = Frame {
+            layout: Layout::Wide,
+            rights: Rights::Mine,
+            columns: ExplorerPreferences::default(),
+            explorer: true,
+        };
+        let mut prefs = ExplorerPreferences::default();
+        fit.note(ColumnId::Kind, 30.0);
+        fit.note(ColumnId::Date, 9000.0);
+        fit.note(ColumnId::Creator, 200.0);
+        fit_all(&mut prefs, &fit, frame);
+        assert_eq!(prefs.columns.slot(ColumnId::Kind).width, 36, "never under the column's least width");
+        assert_eq!(prefs.columns.slot(ColumnId::Date).width, 1600, "nor over the most");
+        assert_eq!(prefs.columns.slot(ColumnId::Creator).width, 0, "a hidden column keeps its width");
     }
 
     #[test]
@@ -283,9 +532,9 @@ mod tests {
             let palette = crate::theme::Theme::default().palette();
             let mut prefs = ExplorerPreferences {
                 sidebar_width: 312,
-                kind_width: 240,
                 ..Default::default()
             };
+            prefs.columns.slot_mut(ColumnId::Kind).width = 240;
             let mut tick = 0;
             let mut mode = Rights::Next;
             let mut draw = |prefs: &mut ExplorerPreferences, events| {
@@ -297,7 +546,7 @@ mod tests {
                         events,
                         ..Default::default()
                     },
-                    |ui| options(ui, &palette, prefs, &mut mode),
+                    |ui| options(ui, &palette, prefs, &mut mode, &ColumnFit::default(), Layout::Wide),
                 ))
             };
             for label in [
@@ -327,13 +576,13 @@ mod tests {
                     ));
                 }
                 if label == aurora_i18n::tr!("common-type") {
-                    assert!(!prefs.show_kind);
+                    assert!(!prefs.columns.shown(ColumnId::Kind));
                 }
                 if label == aurora_i18n::tr!("inventory-column-permissions") {
-                    assert!(!prefs.show_rights);
+                    assert!(!prefs.columns.shown(ColumnId::Rights));
                 }
                 if label == aurora_i18n::tr!("inventory-column-modified") {
-                    assert!(!prefs.show_date);
+                    assert!(!prefs.columns.shown(ColumnId::Date));
                 }
             }
             assert_eq!(prefs, ExplorerPreferences::default());

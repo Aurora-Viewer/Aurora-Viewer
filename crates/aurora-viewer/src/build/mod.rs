@@ -306,6 +306,10 @@ pub struct BuildSettings {
     pub show_parcel_owners: bool,
     /// SyncMaterialSettings: normal / specular maps follow the diffuse UVs.
     pub sync_materials: bool,
+    /// The build picker warns when a click cannot preview the item chosen
+    /// (LivePreviewUnavailable / LivePreviewUnavailablePBR, their "ignore"
+    /// box turns it off; one setting here for the two).
+    pub warn_live_preview: bool,
     /// Texture tab: a new selection opens the PBR or Blinn-Phong tab that
     /// fits its faces, as LLPanelFace::updateUI does (`material_preview.rs`).
     /// On by default; off keeps the last tab chosen.
@@ -836,6 +840,7 @@ impl Default for BuildSettings {
             expanded: true,
             show_parcel_owners: false,
             sync_materials: false,
+            warn_live_preview: true,
             auto_material_tab: true,
             show_physics_shape: false,
             copy_key_separator: ",".into(),

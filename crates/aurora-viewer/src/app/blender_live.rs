@@ -110,12 +110,24 @@ impl App {
     }
 
     pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
-        // the Avatar tab's bend shows on our avatar while the preview runs
-        self.scene.preview_bend = if self.blender_live.running() {
+        // the Avatar tab's bend shows on our avatar (and the Fit lab's
+        // mannequins) while the preview runs or the mannequins stand
+        self.scene.preview_bend = if self.blender_live.running() || self.blender_live.fit.shown {
             self.blender_live.bend
         } else {
             Default::default()
         };
+        // the Fit lab's own clips (the range of motion, the pelvis anchor),
+        // built here, before a mannequin plays one
+        if self.blender_live.fit.shown && !std::mem::replace(&mut self.blender_live.fit.poses_registered, true) {
+            for (id, clip) in crate::world::fit_poses::animations() {
+                let bound = crate::scene::anim::BoundAnim::bind(clip, &self.world.avatar_lib.rig);
+                self.scene.anims.insert(id, Arc::new(bound));
+            }
+        }
+        let place = std::mem::take(&mut self.blender_live.fit.place);
+        self.world
+            .update_fit_lab(&self.blender_live.fit.wanted(), self.blender_live.fit.motion, place, Instant::now());
         self.blender_live.capture_placements(&mut self.world);
         self.blender_live.still = self.settings.reduce_motion;
         if std::mem::take(&mut self.blender_live.undo_requested) {
@@ -245,11 +257,43 @@ impl App {
             if mode.starts_with("shape") {
                 self.demo_blender_shape(mode == "shape-readonly");
             }
-            let fixture = if mode == "sleeves" {
-                // the Avatar tab's bend, set, so it shows on the avatar and in Quick look
-                self.blender_live.bend.elbows = 90.0;
-                self.blender_live.bend.knees = 60.0;
+            let fixture = if mode == "sleeves" || mode.starts_with("fit-lab") {
+                if mode == "sleeves" {
+                    // the Avatar tab's bend, set, so it shows on the avatar and in Quick look
+                    self.blender_live.bend.elbows = 90.0;
+                    self.blender_live.bend.knees = 60.0;
+                } else {
+                    // the Fit lab's mannequins, in the sleeves: the demo's
+                    // stand-ins for the stock stand, walk and sit on the
+                    // ground, which a grid's asset server gives
+                    let sit = (
+                        crate::world::body::ANIM_SIT_GROUND_CONSTRAINED,
+                        crate::demo::first_person_ground_animation(),
+                    );
+                    for (id, anim) in crate::demo::link::animations().into_iter().chain([sit]) {
+                        let bound = crate::scene::anim::BoundAnim::bind(anim, &self.world.avatar_lib.rig);
+                        self.scene.anims.insert(id, Arc::new(bound));
+                    }
+                    self.blender_live.tab = Tab::Avatar;
+                    self.blender_live.fit.shown = true;
+                    self.blender_live.fit.clip = mode == "fit-lab-clip";
+                    if mode == "fit-lab-sit" || mode == "fit-lab-sit-stand" {
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Sit;
+                    }
+                    if mode == "fit-lab-range" {
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Range(None);
+                    }
+                    if let Some(name) = mode.strip_prefix("fit-lab-pose-") {
+                        let pose = crate::world::fit_poses::Pose::ALL.into_iter().find(|p| p.key() == name);
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Range(pose);
+                    }
+                    if mode == "fit-lab-walk" {
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Walk;
+                    }
+                }
                 crate::blender_live::demo_sleeves_fixture(&self.world.avatar_lib.rig)
+            } else if mode == "warnings" {
+                crate::blender_live::demo_warnings_fixture(&self.world.avatar_lib.rig)
             } else if mode.starts_with("static") {
                 crate::blender_live::demo_static_fixture(&self.world.avatar_lib.rig, mode.starts_with("static-linked"))
             } else {
@@ -290,10 +334,15 @@ impl App {
             }
             self.blender_live.owner = Some(self.world.agent_id);
         }
-        // Quick look in front of the windows a demo opens over it
+        // `fit-lab-sit-stand`: the mannequins sat on the ground stand up
+        if self.demo && self.frame_count == 520 && std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "fit-lab-sit-stand") {
+            self.blender_live.fit.motion = crate::world::mannequins::Motion::Stand;
+        }
+        // Quick look and the warnings in front of the windows a demo opens over it
         if self.demo
             && (400..=440).contains(&self.frame_count)
-            && std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look")
+            && (std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look")
+                || std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "warnings" || mode.starts_with("fit-lab")))
         {
             crate::ui::widgets::bring_floater_front(&self.egui_ctx, "blender_live");
         }
@@ -478,6 +527,18 @@ impl App {
                 self.blender_live.objects.len()
             );
         }
+    }
+
+    /// The Fit lab's clipping map: on our avatar and the mannequins, over
+    /// the LiveMesh objects we wear and their copies, once this frame's
+    /// row is dressed and its snapshot installed (their object indices).
+    pub(super) fn update_fit_clip(&mut self) {
+        // (never in a photo)
+        let shown = self.blender_live.fit.clip && self.snapshots.capturing.is_none();
+        self.scene.fit_clip = shown.then(|| {
+            let (avatars, garments) = self.world.fit_clip_targets(&self.blender_live.objects);
+            (avatars.into_iter().collect(), garments.into_iter().collect())
+        });
     }
 
     fn install_blender_snapshot(&mut self, snapshot: Prepared, renderer: &mut aurora_render::Renderer) {

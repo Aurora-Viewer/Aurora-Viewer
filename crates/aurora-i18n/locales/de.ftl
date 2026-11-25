@@ -2634,7 +2634,6 @@ app-gpu-lost =
     • Schließen Sie die anderen Programme, die die Grafikkarte stark nutzen.
     • Wählen Sie beim nächsten Start die sichere Grafikeinstellung, die Aurora anbieten wird.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora verfügt noch nicht über einen Animations-Overrider (AO).
-cmdline-mod-use-hover-height-in-appearance = Passen Sie die Schwebehöhe Ihres Avatars unter „Aussehen › Schwebehöhe“ an.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora empfiehlt, diesen Link nicht zu öffnen. Wenn Sie aufgefordert werden, sich anzumelden oder zu bezahlen, handelt es sich höchstwahrscheinlich um einen Betrug: Geben Sie niemals Ihr Passwort oder Ihre Zahlungsinformationen weiter.
 demo-auto-blend = Auto: Blending
 demo-auto-mask = Auto: Maske
@@ -7724,7 +7723,6 @@ ui-inventory-thumbnail-image-uuid = Bild-UUID
 ui-inventory-thumbnail-invalid-image-uuid = Ungültige Bild-UUID.
 ui-texture-picker-invalid-uuid = Ungültige UUID
 ui-texture-picker-confirm-no-copy = Kopiergeschützte Textur: mit OK bestätigen.
-ui-texture-picker-no-live-preview = Keine Live-Vorschau für eine kopiergeschützte oder nicht transferierbare Textur: Bestätigen Sie mit OK.
 ui-texture-picker-owner-only = Eine nicht transferierbare Textur kann nur auf einem Objekt verwendet werden, das Ihnen gehört und nicht zum Verkauf steht.
 ui-texture-picker-preview = Vorschau
 ui-texture-picker-adjust-list-width = Listenbreite anpassen
@@ -13284,7 +13282,6 @@ texture-library-no-copy-drop-question = Das Objekt verschieben?
 texture-library-no-copy-drop-move = Verschieben
 texture-library-worn-drop-all-faces = Alle Flächen
 texture-library-worn-drop-linked = Alle verknüpften Objekte
-texture-library-applied = Textur oder Material angewendet.
 texture-library-no-results = Keine passenden Ressourcen.
 texture-library-demo-wood = Holz
 texture-library-demo-stone = Stein

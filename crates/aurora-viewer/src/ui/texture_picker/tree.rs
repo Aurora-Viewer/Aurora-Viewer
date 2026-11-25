@@ -37,8 +37,12 @@ impl Tree {
 
     pub fn prepare_root(&mut self, inv: &mut Inventory, agent: Uuid, materials: bool, query: &str, root: Uuid, sort: view::Sort) {
         self.fetch(inv);
+        // The Legacy Viewer's picker lists the Trash too (its inventory
+        // panel shows every folder, and LLFloaterTexturePicker::findInvItem
+        // looks there with INCLUDE_TRASH).
         let prefs = InventoryPreferences {
             sort,
+            search_trash: true,
             ..Default::default()
         };
         let filters = view::Filters {
@@ -221,6 +225,31 @@ mod tests {
         tree.state.expand_folder(id(91), 0);
         tree.prepare(&mut inv, id(99), false, "");
         assert!(rows(&tree).contains(&id(92)), "library textures keep their hierarchy");
+    }
+
+    #[test]
+    fn the_trash_is_listed_with_its_textures() {
+        let mut inv = fixture();
+        folder(&mut inv, 5, 1, "Trash");
+        inv.folders.get_mut(&id(5)).unwrap().info.type_default = 14;
+        inv.items.insert(
+            id(13),
+            InvItem {
+                id: id(13),
+                asset_id: id(113),
+                parent: id(5),
+                name: "Trashed texture".into(),
+                inv_type: INV_TEXTURE,
+                ..Default::default()
+            },
+        );
+        inv.generation += 1;
+        let mut tree = Tree::default();
+        tree.opened(id(113));
+        tree.prepare(&mut inv, id(99), false, "");
+        assert!(rows(&tree).contains(&id(5)) && rows(&tree).contains(&id(13)), "{:?}", rows(&tree));
+        tree.prepare(&mut inv, id(99), false, "trashed");
+        assert!(rows(&tree).contains(&id(13)), "the search finds it too");
     }
 
     #[test]
