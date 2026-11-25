@@ -3903,6 +3903,8 @@ impl App {
         self.avatar_reloads = Default::default();
         self.interactions = Default::default();
         self.screen = Screen::Login;
+        // (the next session starts in the default mode: asked again there)
+        self.interest_list = Default::default();
         self.login_form.busy = false;
         self.login_form.transition = None;
         self.login_form.pending_connect = None;
@@ -7442,6 +7444,7 @@ impl App {
     }
 
     fn pump_network_events(&mut self, t_ev: Instant) {
+        let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
         while let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
@@ -7452,7 +7455,7 @@ impl App {
             // less while everything around arrives, app/interest_list.rs)
             let usual = gaming_mode::event_budget(self.gaming_mode.on, self.outside.focused());
             let lag = now.saturating_duration_since(sent);
-            if now.duration_since(t_ev) > self.interest_list.event_budget(usual, lag, now) {
+            if now.duration_since(t_ev) > self.interest_list.event_budget(usual, lag, covered, now) {
                 break;
             }
         }

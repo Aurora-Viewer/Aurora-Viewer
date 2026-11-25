@@ -59,8 +59,10 @@ impl InterestList {
         self.searching.is_some_and(|t| now.saturating_duration_since(t) < RUSH)
     }
 
-    pub(super) fn event_budget(&self, usual: Duration, lag: Duration, now: Instant) -> Duration {
-        eased(usual, self.rush(now), lag)
+    /// `covered`: a login or teleport screen hides the world, whose frames
+    /// may be long and whose loading must not slow down.
+    pub(super) fn event_budget(&self, usual: Duration, lag: Duration, covered: bool, now: Instant) -> Duration {
+        eased(usual, !covered && self.rush(now), lag)
     }
 }
 
@@ -118,6 +120,9 @@ mod tests {
         };
         assert!(list.rush(t) && list.rush(t + RUSH - Duration::from_millis(1)));
         assert!(!list.rush(t + RUSH));
+        let ms = Duration::from_millis;
+        assert_eq!(list.event_budget(ms(8), ms(0), false, t), RUSH_BUDGET);
+        assert_eq!(list.event_budget(ms(8), ms(0), true, t), ms(8), "behind a loading screen");
         let photo = InterestList {
             mode: InterestListMode::Capture360,
             searching: None,
