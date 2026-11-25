@@ -1243,6 +1243,56 @@ mod tests {
         }
     }
 
+    /// Build › Land's Subdivide and Abandon land on group-owned land follow
+    /// "Divide and join parcels" (1 << 15) and "Release land" (1 << 13)
+    /// through the shared rule (LLPanelLandInfo::refresh with
+    /// isParcelOwnedByAgent), not Set Landing Point and Change Media.
+    #[test]
+    fn group_land_subdivide_and_abandon_follow_their_powers() {
+        assert_eq!(powers::LAND_DIVIDE_JOIN, 1 << 15);
+        assert_eq!(powers::LAND_RELEASE, 1 << 13);
+        let land = Uuid::from_u128(50);
+        let p = ParcelInfo {
+            owner_id: land,
+            group_id: land,
+            is_group_owned: true,
+            ..Default::default()
+        };
+        let check = |powers_held: u64, god: bool| {
+            let groups = [group(50, powers_held)];
+            let a = AgentRights {
+                id: me(),
+                groups: &groups,
+                god,
+            };
+            (
+                owned_by_agent(&p, &a, powers::LAND_DIVIDE_JOIN),
+                owned_by_agent(&p, &a, powers::LAND_RELEASE),
+            )
+        };
+        assert_eq!(check(powers::LAND_DIVIDE_JOIN, false), (true, false));
+        assert_eq!(check(powers::LAND_RELEASE, false), (false, true));
+        assert_eq!(check(powers::LAND_DIVIDE_JOIN | powers::LAND_RELEASE, false), (true, true));
+        // the powers the panel followed before do not count
+        assert_eq!(
+            check(powers::LAND_SET_LANDING_POINT | powers::LAND_CHANGE_MEDIA, false),
+            (false, false)
+        );
+        // a god has both
+        assert_eq!(check(powers::NONE, true), (true, true));
+        // our own land keeps both
+        let mine = ParcelInfo {
+            owner_id: me(),
+            ..Default::default()
+        };
+        let a = AgentRights {
+            id: me(),
+            groups: &[],
+            god: false,
+        };
+        assert!(owned_by_agent(&mine, &a, powers::LAND_DIVIDE_JOIN) && owned_by_agent(&mine, &a, powers::LAND_RELEASE));
+    }
+
     #[test]
     fn modify_rules_follow_ownership_and_powers() {
         let groups = [group(50, powers::LAND_OPTIONS)];
