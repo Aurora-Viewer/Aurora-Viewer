@@ -1,4 +1,4 @@
-//! AURORA_DEMO_SET_NOTICES=config|config-responses|config-bottom|chat: a contact set's own online notices
+//! AURORA_DEMO_SET_NOTICES=config|config-responses|config-bottom|chat|muted: a contact set's own online notices
 //! and automatic responses (world/contact_sets/notices.rs). At frame 60 the
 //! set Family (the demo friend in it, kept in memory) gets "Show
 //! notifications" and its own do not disturb response, and the friends'
@@ -8,6 +8,8 @@
 //! `chat` shows nearby chat, where the demo friend going offline and online
 //! (frames 300 and 360) gets a line and another friend none; at 420, in do
 //! not disturb, the demo friend's message gets the set's response (logged).
+//! `muted` is `chat` with the demo friend's alerts muted (#4955) and the
+//! global notices on: only the other friend gets a line and a toast.
 
 use super::{DEMO_FRIEND, u};
 use crate::world::World;
@@ -29,6 +31,11 @@ pub fn active() -> bool {
     mode().is_some()
 }
 
+/// The demo friend's alerts are muted, the global notices on (`muted`).
+pub fn muted() -> bool {
+    mode().as_deref() == Some("muted")
+}
+
 /// The set, its notices and its response.
 pub fn setup(world: &mut World) {
     let sets = &mut world.contact_sets;
@@ -43,6 +50,9 @@ pub fn setup(world: &mut World) {
         text: aurora_i18n::tr!("demo-set-notices-busy").into(),
     };
     sets.set_response(family, ResponseMode::Busy, response);
+    if muted() {
+        sets.set_notices_muted(DEMO_FRIEND, true);
+    }
 }
 
 /// The events of `frame`.

@@ -388,6 +388,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::TeleportToPlace(..) => "TeleportToPlace",
         CtxAction::TeleportToPlaceConfirmed(..) => "TeleportToPlaceConfirmed",
         CtxAction::GrantRights { .. } => "GrantRights",
+        CtxAction::MuteNotices { .. } => "MuteNotices",
         CtxAction::AddFriend(..) => "AddFriend",
         CtxAction::RemoveFriend(..) => "RemoveFriend",
         CtxAction::RemoveFriends(..) => "RemoveFriends",

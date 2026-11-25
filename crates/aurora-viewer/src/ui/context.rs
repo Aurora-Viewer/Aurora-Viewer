@@ -617,6 +617,11 @@ pub enum CtxAction {
         friend: Uuid,
         rights: i32,
     },
+    /// Mute / unmute a friend's online / offline alerts (#4955).
+    MuteNotices {
+        friend: Uuid,
+        muted: bool,
+    },
     /// Friendship: offer (with a message) / end, both confirmed first.
     AddFriend(Uuid),
     RemoveFriend(Uuid),
@@ -980,6 +985,26 @@ pub fn owns_rezzed(owner_id: Uuid, agent_id: Uuid) -> bool {
     !agent_id.is_nil() && owner_id == agent_id
 }
 
+/// "Mute online / offline alerts", a check of a friend's menus (#4955, an
+/// Aurora addition): the friends list's and the profile's. Nothing for a
+/// resident who is not a friend.
+pub fn notices_mute_check(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
+    if !world.social.is_friend(&id) {
+        return;
+    }
+    let muted = world.contact_sets.notices_muted(&id);
+    if menu::check(
+        ui,
+        p,
+        "bell-minus-filled",
+        aurora_i18n::tr!("ui-context-mute-online-alerts"),
+        muted,
+        true,
+    ) {
+        request(ui.ctx(), CtxAction::MuteNotices { friend: id, muted: !muted });
+    }
+}
+
 fn avatar_menu_reporting(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -1303,6 +1328,7 @@ fn avatar_menu_reporting(
                         rights: f.rights_given ^ 1,
                     });
                 }
+                notices_mute_check(ui, p, world, id);
             }
         }
         AvatarList::Name => {

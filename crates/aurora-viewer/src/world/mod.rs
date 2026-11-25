@@ -6497,16 +6497,24 @@ impl World {
     /// (LLAvatarNameCache::get with a callback).
     pub fn flush_online_notices(&mut self) {
         for (id, n, online) in self.social.take_online_notices() {
+            // a friend whose alerts are muted (#4955, an Aurora addition)
+            // brings only the line of an open conversation, below
+            let muted = self.contact_sets.notices_muted(&id);
             // a set with "Show notifications" brings them as a toast and in
             // nearby chat when the global choices are off
             // (LLNotificationTipHandler::processNotification,
             // on_avatar_name_cache_notify; FIRE-3522)
             let for_set = self.contact_sets.notify_for(&id);
-            let toast = self.notifications.toasts.presence || (self.contact_sets.notices_toast && for_set);
-            let in_chat = self.notifications.toasts.presence_in_chat || (self.contact_sets.notices_chat && for_set);
-            // FIRE-2731 (on_avatar_name_cache_notify)
-            self.ui_sounds
-                .push(if online { UiSound::FriendOnline } else { UiSound::FriendOffline });
+            let toast = !muted && (self.notifications.toasts.presence || (self.contact_sets.notices_toast && for_set));
+            let in_chat = !muted && (self.notifications.toasts.presence_in_chat || (self.contact_sets.notices_chat && for_set));
+            let blocked = self.mutes.is_muted_id(&id);
+            // FIRE-2731 (on_avatar_name_cache_notify). Visible difference:
+            // the Legacy Viewer plays it for a blocked resident too, whose
+            // toast and system notice it already skips (#4955)
+            if !muted && !blocked {
+                self.ui_sounds
+                    .push(if online { UiSound::FriendOnline } else { UiSound::FriendOffline });
+            }
             // the line of an open conversation with them, so a message is not
             // written to someone who just left
             // (LLIMModel::proccessOnlineOfflineNotification, llimview.cpp):
@@ -6516,7 +6524,7 @@ impl World {
             }
             // the toast of LLNotificationTipHandler (ChatOnlineNotification),
             // never during login, in do not disturb nor for a blocked resident
-            if toast && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
+            if toast && self.notifications.started && !self.status.dnd && !blocked {
                 let notification = self.notifications.push_presence(id, n.clone(), online);
                 self.notifications.link_name(
                     notification,
@@ -6525,7 +6533,7 @@ impl World {
                 );
             }
             // FriendOnlineOffline for the system (never during login)
-            if self.notifications.started && !self.mutes.is_muted_id(&id) {
+            if self.notifications.started && !muted && !blocked {
                 let notice = attention::Notice {
                     title: n.clone(),
                     body: String::new(),

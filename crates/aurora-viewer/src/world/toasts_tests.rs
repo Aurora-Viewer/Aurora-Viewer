@@ -421,6 +421,70 @@ fn a_contact_set_with_notifications_brings_its_members_notices() {
     assert_eq!(shown(&w, JANE), (false, false));
 }
 
+/// A friend whose alerts are muted (#4955): no toast, sound, system notice
+/// nor nearby chat line, even with every choice on and a set that asks for
+/// them; the line of an open conversation stays. The others are untouched.
+#[test]
+fn a_muted_friend_keeps_only_the_line_of_an_open_conversation() {
+    let mut w = world();
+    w.notifications.toasts.presence = true;
+    w.notifications.toasts.presence_in_chat = true;
+    w.social.form_friendship(JANE);
+    w.social.form_friendship(TOM);
+    w.contact_sets.add_set("Close");
+    w.contact_sets.add_to_set(&[JANE], "Close", |_| true);
+    w.contact_sets.set_notify("Close", true);
+    w.contact_sets.set_notices_toast(true);
+    w.contact_sets.set_notices_muted(JANE, true);
+    receive(&mut w, JANE, JANE, "hi", ImKind::Private, true);
+    w.social.session_mut(JANE).unread = 0;
+    for online in [true, false] {
+        w.social.set_online(&[JANE], online);
+        w.flush_online_notices();
+    }
+    assert!(!w.notifications.list.iter().any(|n| n.kind == Kind::Presence));
+    assert!(w.ui_sounds.is_empty(), "no sound");
+    assert!(!w.attention.iter().any(|a| matches!(a.cause, attention::Cause::Presence(_))));
+    assert!(!nearby_line_of(&w, JANE));
+    let lines = w
+        .social
+        .ims
+        .iter()
+        .filter(|s| s.other == JANE)
+        .flat_map(|s| s.lines.iter())
+        .filter(|l| l.kind == ChatKind::System)
+        .count();
+    assert_eq!(lines, 2, "the open conversation still says it");
+    // Tom, not muted, still gets everything
+    w.social.set_online(&[TOM], true);
+    w.flush_online_notices();
+    assert!(w.notifications.list.iter().any(|n| n.kind == Kind::Presence));
+    assert_eq!(w.ui_sounds, [UiSound::FriendOnline]);
+    assert!(nearby_line_of(&w, TOM));
+    // unmuted, Jane's alerts come back
+    w.contact_sets.set_notices_muted(JANE, false);
+    w.ui_sounds.clear();
+    w.social.set_online(&[JANE], true);
+    w.flush_online_notices();
+    assert_eq!(w.ui_sounds, [UiSound::FriendOnline]);
+    assert!(nearby_line_of(&w, JANE));
+}
+
+/// The online / offline sound of a blocked resident is not played, like
+/// their toast and system notice (#4955; the Legacy Viewer plays it).
+#[test]
+fn a_blocked_friend_plays_no_online_sound() {
+    let mut w = world();
+    w.social.form_friendship(JANE);
+    let _ = w.block(JANE, "Jane Doe", mutes::MuteType::Agent);
+    for online in [true, false] {
+        w.social.set_online(&[JANE], online);
+        w.flush_online_notices();
+    }
+    assert!(w.ui_sounds.is_empty());
+    assert!(!w.attention.iter().any(|a| matches!(a.cause, attention::Cause::Presence(_))));
+}
+
 #[test]
 fn a_friend_online_or_offline_is_told_to_the_system_as_presence() {
     let mut w = world();
