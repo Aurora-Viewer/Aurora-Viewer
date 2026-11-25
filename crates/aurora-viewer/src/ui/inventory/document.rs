@@ -3,6 +3,7 @@
 
 use super::*;
 use aurora_net::inventory::notecard::Notecard;
+use std::time::Instant;
 
 pub(super) struct Description {
     pub item: Uuid,
@@ -242,6 +243,45 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
     Vec::new()
 }
 
+/// An animation a preview's Play buttons started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreviewPlay {
+    pub asset: Uuid,
+    /// Played on this viewer only, not for everyone.
+    pub local: bool,
+    /// Asked at: an older motion of the same id is not this one.
+    since: Instant,
+    /// Seen among our avatar's motions (mDidStart).
+    started: bool,
+}
+
+impl PreviewPlay {
+    pub fn new(asset: Uuid, local: bool, since: Instant) -> Self {
+        Self {
+            asset,
+            local,
+            since,
+            started: false,
+        }
+    }
+}
+
+/// Take `asset` out of the animations playing, leaving the others.
+pub fn take_play(playing: &mut Vec<PreviewPlay>, asset: Uuid) -> Option<PreviewPlay> {
+    let at = playing.iter().position(|play| play.asset == asset)?;
+    Some(playing.remove(at))
+}
+
+/// LLPreviewAnim::draw: drop the animations that started, then stopped.
+/// `signal` is when our avatar's motion of an asset last started.
+pub fn drop_stopped(playing: &mut Vec<PreviewPlay>, signal: impl Fn(Uuid) -> Option<Instant>) {
+    playing.retain_mut(|play| {
+        let signal = signal(play.asset);
+        play.started |= signal.is_some_and(|at| at >= play.since);
+        signal.is_some() || !play.started
+    });
+}
+
 impl InventoryUi {
     /// LLAnimationBridge::performAction / LLPreviewAnim::play: playback uses
     /// the existing preview, or opens one for a context-menu action.
@@ -438,6 +478,33 @@ pub(super) fn preview_window_id(editor: Uuid, item: Uuid, kind: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn previews_play_side_by_side_and_one_stops_alone() {
+        let [first, second] = [Uuid::from_u128(10), Uuid::from_u128(11)];
+        let since = Instant::now();
+        let mut playing = vec![PreviewPlay::new(first, true, since), PreviewPlay::new(second, false, since)];
+        assert_eq!(take_play(&mut playing, Uuid::from_u128(12)), None);
+        assert_eq!(take_play(&mut playing, first).map(|play| play.asset), Some(first));
+        assert_eq!(playing.iter().map(|play| play.asset).collect::<Vec<_>>(), [second]);
+    }
+
+    #[test]
+    fn a_preview_is_dropped_once_its_own_motion_started_then_stopped() {
+        let asset = Uuid::from_u128(10);
+        let before = Instant::now();
+        let since = before + std::time::Duration::from_millis(10);
+        let mut playing = vec![PreviewPlay::new(asset, false, since)];
+        // not started yet; the motion of the run it replaces, then its stop
+        drop_stopped(&mut playing, |_| None);
+        drop_stopped(&mut playing, |_| Some(before));
+        drop_stopped(&mut playing, |_| None);
+        assert_eq!(playing.len(), 1);
+        drop_stopped(&mut playing, |_| Some(since));
+        assert_eq!(playing.len(), 1);
+        drop_stopped(&mut playing, |_| None);
+        assert!(playing.is_empty());
+    }
 
     #[test]
     fn animation_playback_reuses_its_window_and_preserves_another_document() {

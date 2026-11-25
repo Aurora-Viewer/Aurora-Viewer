@@ -428,31 +428,58 @@ impl App {
         }
     }
 
-    /// An animation preview's Play buttons (LLPreviewAnim::play): whatever
-    /// a preview played stops first, then `asset` plays for everyone or
-    /// locally. An object's contents use it without opening the inventory's
-    /// own animation window.
+    /// An animation preview's Play buttons (LLPreviewAnim::play): `asset`
+    /// plays for everyone or locally, or stops, whatever the other previews
+    /// play. An object's contents use it without opening the inventory's own
+    /// animation window.
     pub(super) fn play_preview_animation(&mut self, asset: Uuid, local: bool, start: bool) {
-        if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
-            if was_local || self.demo {
-                self.world.preview_animation(playing, false);
+        // (one that plays already starts over)
+        if let Some(play) = ui::inventory::take_play(&mut self.inventory_ui.playing, asset) {
+            if play.local || self.demo {
+                self.world.preview_animation(asset, false);
             }
-            if !was_local {
-                self.send(NetCommand::AgentAnimation {
-                    anim: playing,
-                    start: false,
-                });
+            if !play.local {
+                self.send(NetCommand::AgentAnimation { anim: asset, start: false });
             }
         }
         if start {
             self.record_library_asset(asset, 20);
+            let play = ui::inventory::PreviewPlay::new(asset, local, Instant::now());
             if local || self.demo {
                 self.world.preview_animation(asset, true);
             }
             if !local {
                 self.send(NetCommand::AgentAnimation { anim: asset, start: true });
             }
-            self.inventory_ui.playing = Some((asset, local));
+            self.inventory_ui.playing.push(play);
+        }
+    }
+
+    /// A motion of ours played to its end: its preview's Play buttons come
+    /// back (LLPreviewAnim::draw, cleanup).
+    pub(super) fn preview_animation_finished(&mut self, asset: Uuid) {
+        if ui::inventory::take_play(&mut self.inventory_ui.playing, asset).is_some() {
+            self.world.preview_finished(asset);
+        }
+    }
+
+    /// LLPreviewAnim::draw: the Play buttons of a preview come back once its
+    /// animation, seen playing, no longer does (a script or the simulator
+    /// stopped it).
+    pub(super) fn poll_preview_animations(&mut self) {
+        if self.inventory_ui.playing.is_empty() {
+            return;
+        }
+        let motions = self.world.animations.get(&self.world.agent_id).map_or(&[][..], Vec::as_slice);
+        ui::inventory::drop_stopped(&mut self.inventory_ui.playing, |asset| {
+            motions.iter().find(|m| m.id == asset).map(|m| m.sequence_start)
+        });
+    }
+
+    /// LLAgent::stopCurrentAnimations stops the local previews with the rest.
+    pub(super) fn stop_preview_animations(&mut self) {
+        for play in std::mem::take(&mut self.inventory_ui.playing) {
+            self.world.preview_animation(play.asset, false);
         }
     }
 

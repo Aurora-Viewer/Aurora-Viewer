@@ -12012,6 +12012,7 @@ impl App {
             );
             for anim in completed {
                 self.ao_runtime.finished(anim);
+                self.preview_animation_finished(anim);
                 // LLAgent::requestStopMotion: stop the finished non-looping
                 // animation and advance simulator-controlled transitions.
                 let flags = self.world.agent.animation_stop_flags(anim, self.input.up, now);
@@ -20510,6 +20511,7 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiPeople, t);
                 self.poll_inventory_animation_stats();
+                self.poll_preview_animations();
                 self.show_imports(&ctx, &p);
                 self.show_blender_live(&ctx, &p);
                 let inventory_preferences = self.settings.inventory.clone();
@@ -24691,6 +24693,24 @@ impl ApplicationHandler for App {
                             self.apply_inventory_action(ui::inventory::InvAction::Animation {
                                 asset,
                                 local: view == "animation-play-local",
+                                start: true,
+                            });
+                        }
+                    } else if view == "animation-play-two" {
+                        let rig = self.scene.avatar_lib.rig.clone();
+                        for ((asset, clip), n) in crate::demo::animation_layers::clips().into_iter().zip(1u128..) {
+                            let Some(mut item) = self.world.inventory.items.get(&id).cloned() else {
+                                break;
+                            };
+                            let bound = crate::scene::anim::BoundAnim::bind(clip, &rig);
+                            self.scene.anims.insert(asset, std::sync::Arc::new(bound));
+                            item.id = uuid::Uuid::from_u128(8190 + n);
+                            item.asset_id = asset;
+                            item.name = format!("{} {n}", item.name);
+                            self.world.inventory.add_items(vec![item]);
+                            self.apply_inventory_action(ui::inventory::InvAction::Animation {
+                                asset,
+                                local: true,
                                 start: true,
                             });
                         }

@@ -12329,6 +12329,9 @@ separate searches enabled and disabled; that preference controls only the text.
   other mode disabled. Stop and replay must keep that same window (#1445).
   `animation-open` uses the same opening path without starting playback, for
   checking both buttons manually. Capture around frame 700.
+- `animation-play-two`: two animations, one per arm, played locally from the
+  inventory. Both previews must show Stop and both arms be raised; stopping or
+  closing one lowers its arm alone (#4790).
 - `note-open`, `note-new`, `note-readonly`: editor of an existing note,
   empty note without an asset or note that cannot be modified. Edit the text
   then Save (or Ctrl+S); closing and reopening keeps the text during the
