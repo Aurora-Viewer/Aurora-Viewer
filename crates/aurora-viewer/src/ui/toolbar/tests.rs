@@ -1846,12 +1846,12 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
     // every command but bar_account and bar_system, which stay out of the catalogue
-    assert_eq!(all.len(), 126);
+    assert_eq!(all.len(), 128);
     assert!(
         !all.iter()
             .any(|button| matches!(button.command.as_str(), "bar_account" | "bar_system"))
     );
-    assert_eq!(COMMANDS.len(), 128);
+    assert_eq!(COMMANDS.len(), 130);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -2113,7 +2113,7 @@ fn menu_toolbar_added_import_button_runs_import_in_both_bar_layouts() {
         let pos = bench.pos("import");
         bench.pointer(pos, true, false);
         bench.pointer(pos, false, false);
-        assert!(matches!(bench.action, bars::BarAction::Import));
+        assert!(matches!(bench.action, bars::BarAction::ImportBar));
     }
 }
 

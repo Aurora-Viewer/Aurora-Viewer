@@ -16750,6 +16750,21 @@ impl App {
                 self.imports.open_type_window(&self.egui_ctx, choice);
                 self.egui_ctx.request_repaint();
             }
+            BarAction::ImportBar => {
+                self.imports.toggle_bar(&self.egui_ctx);
+                self.egui_ctx.request_repaint();
+            }
+            BarAction::ImportFolder => {
+                if self.imports.open_folder_import(&self.egui_ctx) {
+                    self.imports
+                        .choose_folder(&self.scene.jobs, &self.egui_ctx, self.settings.imports.texture());
+                }
+                self.egui_ctx.request_repaint();
+            }
+            BarAction::ImportSettings => {
+                self.imports.open_import_settings(&self.egui_ctx);
+                self.egui_ctx.request_repaint();
+            }
             BarAction::BlenderLive => {
                 ui::widgets::open_floater(&self.egui_ctx, "blender_live", &mut self.blender_live.open);
             }

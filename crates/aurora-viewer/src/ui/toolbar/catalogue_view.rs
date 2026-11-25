@@ -131,6 +131,8 @@ pub(super) fn category(command: &str) -> Category {
         | "edit_particles"
         | "ik_edit"
         | "import"
+        | "import_folder"
+        | "import_settings"
         | "blender_live" => Creation,
         "edit_interface"
         | "aurora_menu"

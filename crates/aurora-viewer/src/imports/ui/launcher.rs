@@ -93,11 +93,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
     imports.launcher_open = open;
     if let Some(choice) = picked {
         if choice == Choice::Bulk {
-            imports.select_type(Choice::Bulk);
-            imports.type_filters = [true; 5];
-            imports.tab = Tab::Batch;
-            imports.open_window(ctx);
-            actions.push(Action::Folder);
+            if imports.open_folder_import(ctx) {
+                actions.push(Action::Folder);
+            }
         } else {
             imports.open_type_window(ctx, choice);
             if !imports.busy()
@@ -110,8 +108,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
         }
     }
     if settings {
-        imports.tab = Tab::Permissions;
-        imports.open_window(ctx);
+        imports.open_import_settings(ctx);
     }
 }
 

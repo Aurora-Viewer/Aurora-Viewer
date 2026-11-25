@@ -713,6 +713,32 @@ impl Imports {
         }
     }
 
+    /// The quick import bar, shown or hidden (the toolbar's "Import bar").
+    pub fn toggle_bar(&mut self, ctx: &egui::Context) {
+        crate::ui::widgets::toggle_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
+    }
+
+    /// The quick import bar's Folder: the import window on its batch, for
+    /// files of every type. True when a folder may be chosen now (nothing
+    /// being read, sent or waiting for a confirmation).
+    pub fn open_folder_import(&mut self, ctx: &egui::Context) -> bool {
+        let free = !self.busy() && self.pending_files.is_none() && !self.confirm;
+        if free {
+            self.select_type(Choice::Bulk);
+            self.type_filters = [true; 5];
+            self.tab = ui::Tab::Batch;
+        }
+        self.open_window(ctx);
+        free
+    }
+
+    /// The quick import bar's Settings: the import window on its
+    /// permissions and options.
+    pub fn open_import_settings(&mut self, ctx: &egui::Context) {
+        self.tab = ui::Tab::Permissions;
+        self.open_window(ctx);
+    }
+
     /// Open the queue without requesting a native file picker.
     pub fn toggle_window(&mut self, ctx: &egui::Context) {
         if self.open {

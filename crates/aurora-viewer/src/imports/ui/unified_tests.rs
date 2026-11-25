@@ -886,3 +886,26 @@ fn shared_routing_header_retains_layout_and_edited_paths_in_both_views() {
     f.settle();
     assert_eq!(f.imports.entries[0].upload_path.as_ref(), Some(&edited));
 }
+
+/// The toolbar's "Import bar", "Import folder" and "Import settings" (human
+/// request, 2026-11-25): the bar whatever the Import entry opens, and the
+/// bar's own Folder and Settings.
+#[test]
+fn the_toolbar_import_buttons_do_what_the_bar_does() {
+    let mut f = Fixture::new();
+    assert!(!f.prefs.icon_bar, "the Import entry opens the window");
+    f.imports.open = false;
+    f.imports.toggle_bar(&f.ctx);
+    assert!(f.imports.launcher_open && !f.imports.open);
+    f.imports.toggle_bar(&f.ctx);
+    assert!(!f.imports.launcher_open);
+    assert!(f.imports.open_folder_import(&f.ctx));
+    assert!(f.imports.open);
+    assert_eq!(f.imports.tab, Tab::Batch);
+    f.imports.open_import_settings(&f.ctx);
+    assert_eq!(f.imports.tab, Tab::Permissions);
+    // waiting for a confirmation: the window, no folder chooser
+    f.imports.confirm = true;
+    assert!(!f.imports.open_folder_import(&f.ctx));
+    assert_eq!(f.imports.tab, Tab::Permissions, "left where it was");
+}

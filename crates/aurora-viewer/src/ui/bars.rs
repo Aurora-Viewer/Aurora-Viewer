@@ -70,6 +70,13 @@ pub enum BarAction {
     /// Same import chooser toggle as the configurable Import shortcut.
     Import,
     ImportType(crate::imports::Choice),
+    /// The toolbar's "Import bar": the quick import bar, shown or hidden,
+    /// whatever the Import menu entry opens.
+    ImportBar,
+    /// The toolbar's "Import folder" and "Import settings": the quick
+    /// import bar's Folder and Settings.
+    ImportFolder,
+    ImportSettings,
     /// Advanced › Media streams backup (Streamlist.xml_import / xml_export).
     ImportStreamList,
     ExportStreamList,
@@ -2040,7 +2047,10 @@ fn build_menu(
         build_options_menu(ui, p, action, options);
     });
     menu::separator(ui, p);
-    if menu::command(ui, p, "import-menu").toolbar_command("import") {
+    // the menu's own label: its command is the toolbar's "Import bar",
+    // where this entry opens the bar or the window as the Quick import bar
+    // preference says
+    if menu::command(ui, p, "import-menu").toolbar_command_keys_if("import", aurora_i18n::tr!("import-menu"), true, "") {
         *action = BarAction::Import;
     }
     if menu::command(ui, p, "blender-live-title").toolbar_command("blender_live") {
@@ -3067,7 +3077,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "build_focus" => return BarAction::BuildButton(4),
         "build_grab" => return BarAction::BuildButton(5),
         "edit_particles" => return BarAction::EditParticles,
-        "import" => return BarAction::Import,
+        "import" => return BarAction::ImportBar,
+        "import_folder" => return BarAction::ImportFolder,
+        "import_settings" => return BarAction::ImportSettings,
         "blender_live" => return BarAction::BlenderLive,
         "buy_currency" => return BarAction::BuyCurrency,
         "money_tracker" => super::money_tracker::toggle(ctx, &mut panels.money_tracker),

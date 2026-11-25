@@ -177,7 +177,7 @@ fn contents_menu_opens_the_legacy_content_pages_and_the_message_of_the_day() {
 }
 
 #[test]
-fn menu_toolbar_import_is_a_ready_command_that_opens_the_import_chooser() {
+fn menu_toolbar_import_is_a_ready_command_that_opens_the_import_bar() {
     let ctx = egui::Context::default();
     let mut panels = Panels::from_settings(&crate::settings::Settings::default());
     assert!(
@@ -185,7 +185,26 @@ fn menu_toolbar_import_is_a_ready_command_that_opens_the_import_chooser() {
             .iter()
             .any(|command| command.id == "import" && command.ready)
     );
-    assert!(matches!(run_command(&ctx, "import", &mut panels), BarAction::Import));
+    assert!(matches!(run_command(&ctx, "import", &mut panels), BarAction::ImportBar));
+}
+
+/// The quick import bar's Folder and Settings are toolbar buttons too, and
+/// "Import" is named for what it shows (human request, 2026-11-25).
+#[test]
+fn the_import_bar_folder_and_settings_are_toolbar_buttons() {
+    let ctx = egui::Context::default();
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+    for (id, label, expected) in [
+        ("import", "toolbar-import-bar", BarAction::ImportBar),
+        ("import_folder", "toolbar-import-folder", BarAction::ImportFolder),
+        ("import_settings", "toolbar-import-settings", BarAction::ImportSettings),
+    ] {
+        let command = crate::ui::toolbar::command(id).expect("in the catalogue");
+        assert!(command.ready, "{id}");
+        assert_eq!(command.key, label, "{id}");
+        let actual = run_command(&ctx, id, &mut panels);
+        assert_eq!(std::mem::discriminant(&actual), std::mem::discriminant(&expected), "{id}");
+    }
 }
 
 #[test]
@@ -200,7 +219,7 @@ fn menu_toolbar_first_batch_dispatches_the_existing_actions_and_windows() {
         ("build_focus", BarAction::BuildButton(4)),
         ("build_grab", BarAction::BuildButton(5)),
         ("edit_particles", BarAction::EditParticles),
-        ("import", BarAction::Import),
+        ("import", BarAction::ImportBar),
         ("blender_live", BarAction::BlenderLive),
         ("buy_currency", BarAction::BuyCurrency),
         ("stand_up", BarAction::StandUp),

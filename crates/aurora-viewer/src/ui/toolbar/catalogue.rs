@@ -52,6 +52,10 @@ pub const COMMANDS: &[Command] = commands![
     "import_material", "droplet-filled", "toolbar-import-materials", true;
     "import_mesh", "cube-3d-sphere", "toolbar-import-meshes", true;
     "import_local", "eye-filled", "toolbar-import-local", true;
+    // the quick import bar's Folder and Settings as buttons (human
+    // request, 2026-11-25), with the bar's icons (imports/ui/launcher.rs)
+    "import_folder", "folder-open-filled", "toolbar-import-folder", true;
+    "import_settings", "settings-filled", "toolbar-import-settings", true;
     "location_bar", "map-pin-filled", "toolbar-location-bar", true;
     "aurora_menu", "wolf", "ui-bars-aurora-menu", true;
     // Aurora's toolbar before PR 6
@@ -121,7 +125,8 @@ pub const COMMANDS: &[Command] = commands![
     "build_create", "wand", "toolbar-command-build-tool-create", true;
     "build_land", "mountain-filled", "toolbar-command-build-tool-land", true;
     "edit_particles", "sparkles-filled", "ui-bars-edit-particles", true;
-    "import", "file-upload-filled", "import-menu", true;
+    // the quick import bar (human request, 2026-11-25: "Import bar")
+    "import", "file-upload-filled", "toolbar-import-bar", true;
     "blender_live", "cube-3d-sphere", "blender-live-title", true;
     "buy_currency", "coin-filled", "currency-menu", true;
     "money_tracker", "receipt-filled", "money-tracker-title", true;
