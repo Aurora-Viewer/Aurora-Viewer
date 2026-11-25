@@ -319,7 +319,7 @@ fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release
     };
     assert!(!world.rlva_allows_command(&landmark, Uuid::nil()));
     let mut dialog = crate::ui::landmark_create::CreateLandmarkUi::default();
-    assert!(dialog.open(&world, None).is_none() && !dialog.open);
+    assert!(dialog.open(&egui::Context::default(), &world, None).is_none() && !dialog.open);
     let mut pick = PickInfo {
         id: TARGET,
         creator: world.agent_id,
