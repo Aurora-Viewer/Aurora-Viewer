@@ -47,7 +47,7 @@ fn cache_id(field: Id) -> Id {
 /// pass or this one (for the text menu).
 pub fn marked(ctx: &egui::Context, field: Id) -> Option<Marked> {
     let cache: Cache = ctx.data(|d| d.get_temp(cache_id(field)))?;
-    (ctx.cumulative_pass_nr() <= cache.pass + 1).then_some(cache.marked)
+    (ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT) <= cache.pass + 1).then_some(cache.marked)
 }
 
 /// After an editable field: `replace` asks for the auto-replace (the
@@ -75,7 +75,7 @@ pub fn field(ui: &egui::Ui, p: &Palette, output: &mut TextEditOutput, text: &mut
         cache.revision = revision;
         cache.marked = Arc::new(crate::spelling::misspelled(text));
     }
-    cache.pass = ctx.cumulative_pass_nr();
+    cache.pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let marked = cache.marked.clone();
     let edited = cache.edited;
     ctx.data_mut(|d| d.insert_temp(cache_id(id), cache));

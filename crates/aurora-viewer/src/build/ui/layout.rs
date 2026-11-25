@@ -1175,26 +1175,70 @@ pub(super) fn panel(
     tool.ui.layout.zones.push((panel, rect));
 }
 
-pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
-    if !tool.ui.layout.open || !tool.open || widgets::floater_minimized(ctx, super::INSPECTOR_ID) {
+/// The settings panel's width where it has the room.
+pub(super) const SETTINGS_WIDTH: f32 = 340.0;
+/// Its frame draws its border around that width.
+const SETTINGS_BORDER: f32 = 2.0;
+/// The room the panel takes at that width, in a window outside.
+pub(super) const SETTINGS_ROOM: f32 = SETTINGS_WIDTH + SETTINGS_BORDER;
+
+/// Where the settings panel is drawn.
+#[derive(Clone, Copy)]
+pub(super) enum Beside {
+    /// Beside the build window, in the viewer's window.
+    Window,
+    /// In the room the build window's own window keeps at its right,
+    /// outside the viewer's (`widgets::side_room_outside`): None until the
+    /// system has made it.
+    Outside(Option<egui::Rect>),
+}
+
+/// Whether the settings panel is up: the room its window outside keeps
+/// for it follows this.
+pub(super) fn settings_shown(ctx: &egui::Context, tool: &BuildTool) -> bool {
+    tool.ui.layout.open && tool.open && !widgets::floater_minimized(ctx, super::INSPECTOR_ID)
+}
+
+pub(super) fn settings(
+    ctx: &egui::Context,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    mods: Mods,
+    beside: Beside,
+) {
+    if !settings_shown(ctx, tool) {
         return;
     }
-    let Some(anchor) = ctx.memory(|m| m.area_rect(egui::Id::unique(super::INSPECTOR_ID))) else {
-        return;
+    let (work, x, width, bottom) = match beside {
+        Beside::Window => {
+            let Some(anchor) = ctx.memory(|m| m.area_rect(egui::Id::unique(super::INSPECTOR_ID))) else {
+                return;
+            };
+            // Follow the editor in the same movement room: floating bars leave space
+            // outside the smaller first-launch work area too.
+            let work = crate::ui::layout::move_area(ctx);
+            let right = anchor.center().x <= work.center().x + 1.0;
+            let available = if right {
+                work.right() - anchor.right()
+            } else {
+                anchor.left() - work.left()
+            } - 8.0;
+            let width = available.clamp(160.0, SETTINGS_WIDTH).min(work.width());
+            let x = if right { anchor.right() + 8.0 } else { anchor.left() - width - 8.0 }
+                .clamp(work.left(), (work.right() - width).max(work.left()));
+            (work, x, width, anchor.bottom().min(work.bottom()))
+        }
+        Beside::Outside(None) => return,
+        // the room is the panel's: as wide and as tall as it at most
+        Beside::Outside(Some(room)) => (
+            room,
+            room.left(),
+            (room.width() - SETTINGS_BORDER).min(SETTINGS_WIDTH),
+            room.bottom(),
+        ),
     };
-    // Follow the editor in the same movement room: floating bars leave space
-    // outside the smaller first-launch work area too.
-    let work = crate::ui::layout::move_area(ctx);
-    let right = anchor.center().x <= work.center().x + 1.0;
-    let available = if right {
-        work.right() - anchor.right()
-    } else {
-        anchor.left() - work.left()
-    } - 8.0;
-    let width = available.clamp(160.0, 340.0).min(work.width());
-    let x =
-        if right { anchor.right() + 8.0 } else { anchor.left() - width - 8.0 }.clamp(work.left(), (work.right() - width).max(work.left()));
-    let bottom = anchor.bottom().min(work.bottom());
     let area = egui::Area::new(egui::Id::unique("construction-settings"))
         .order(egui::Order::Middle)
         .pivot(egui::Align2::LEFT_BOTTOM)
@@ -1381,7 +1425,7 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
 
 pub(super) fn finish(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: &mut BuildSettings) {
     if let Some(item) = tool.ui.layout.drag {
-        let demo_hold = ctx.cumulative_frame_nr() >= 700
+        let demo_hold = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 700
             && ctx.data(|data| data.get_temp::<Item>(egui::Id::unique("build-demo-layout-drag"))) == Some(item);
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
         if let Some(pos) = ctx.pointer_interact_pos() {

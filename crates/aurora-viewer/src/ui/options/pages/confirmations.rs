@@ -78,6 +78,11 @@ pub fn page(cx: &mut Cx) {
             &field!(confirm_teleports),
         );
         cx.toggle(
+            tr!("ui-chat-confirm-close-all-ims"),
+            tr!("ui-chat-confirm-close-all-ims-help"),
+            &field!(confirm_close_all_ims),
+        );
+        cx.toggle(
             tr!("ui-options-confirm-inventory-delete"),
             tr!("ui-options-confirm-inventory-delete-help"),
             &field!(inventory.confirm_delete),
@@ -292,6 +297,11 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-skipped-update-help"),
             &field!(ignored_update),
             |ui, s| show_again(ui, &p, &mut s.ignored_update),
+        );
+        cx.toggle(
+            tr!("ui-options-warn-live-preview"),
+            tr!("ui-options-warn-live-preview-help"),
+            &field!(build.warn_live_preview),
         );
     });
     // the rest of these two, as the former Interface page reset them whole
