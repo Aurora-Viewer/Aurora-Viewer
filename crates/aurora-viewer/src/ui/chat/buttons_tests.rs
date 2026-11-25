@@ -20,6 +20,36 @@ const MEETING: Uuid = Uuid::from_u128(0xC0);
 const ALL: [ChatStyle; 4] = [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy];
 
 #[test]
+fn chat_header_username_follows_preferences_and_saved_names_stay_frozen() {
+    let mut h = H::new(ChatStyle::Aurora);
+    let names = &mut h.world.social.avatar_names;
+    names.options.legacy_format = false;
+    names.options.use_display_names = true;
+    names.options.show_usernames = true;
+    names.on_display_names(
+        &[aurora_net::AvatarNameData {
+            id: JANE,
+            username: "janedoe".into(),
+            display_name: "Jane".into(),
+            ..Default::default()
+        }],
+        &[],
+        None,
+    );
+    let mut message = line("Jane", JANE, ChatKind::Im, "/me waves");
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane (janedoe)");
+    assert_eq!(
+        super::line_body(&message, &super::sender_name(&h.world, "", &message)).0,
+        "Jane waves"
+    );
+    message.origin = Origin::Log;
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
+    message.origin = Origin::Live;
+    h.world.social.avatar_names.options.show_usernames = false;
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
+}
+
+#[test]
 fn teleport_invitation_paints_one_destination_in_every_style() {
     use crate::world::teleport_invites::{Answer, Invite, InviteKind, Place, Rating};
     for style in ALL {
@@ -1942,6 +1972,202 @@ fn the_message_menu_retains_copy_and_quote_after_eviction() {
                 !egui::Popup::is_any_open(&h.frames.ctx),
                 "{style:?}: the chosen action dismisses the menu"
             );
+        }
+    }
+}
+
+/// The field's emoji and GIF pickers (#4867), in every style: a click in a
+/// picker keeps it, the GIF button swaps the emoji picker for its own, and
+/// a click away from the picker closes it, as the chat bar's does.
+#[test]
+fn a_click_away_closes_the_pickers() {
+    let away = egui::pos2(1150.0, 750.0);
+    for style in ALL {
+        let mut h = H::new(style);
+        h.st.gifs.demo = true;
+        h.open(Some(JANE));
+        let (emoji_button, gif_button) = if style.workspace() {
+            (control_id("box-mood-smile-filled"), control_id("box-gif"))
+        } else {
+            (classic_id("mood-smile-filled"), classic_id("gif"))
+        };
+        let picker = |h: &H, name: &str| {
+            h.frames
+                .ctx
+                .memory(|m| m.area_rect(egui::Id::unique((name, Some(JANE)))))
+                .unwrap_or_else(|| panic!("{style:?}: {name} is not shown"))
+        };
+        h.press(emoji_button);
+        assert!(h.st.emoji_open, "{style:?}: the emoji picker opens");
+        // its margin: no emoji under the click
+        let inside = picker(&h, "emoji_picker").left_top() + egui::vec2(3.0, 3.0);
+        assert!(!h.shown(emoji_button).unwrap().contains(away), "{style:?}");
+        h.at(inside);
+        assert!(h.st.emoji_open, "{style:?}: a click in the picker keeps it");
+        h.at(away);
+        assert!(!h.st.emoji_open, "{style:?}: a click away closes the emoji picker");
+        h.press(emoji_button);
+        h.press(gif_button);
+        assert!(h.st.gif_open && !h.st.emoji_open, "{style:?}: the GIF button swaps the pickers");
+        let inside = picker(&h, "gif_picker").left_top() + egui::vec2(3.0, 3.0);
+        h.at(inside);
+        assert!(h.st.gif_open, "{style:?}: a click in the GIF picker keeps it");
+        h.at(away);
+        assert!(!h.st.gif_open, "{style:?}: a click away closes the GIF picker");
+    }
+}
+
+/// The field's pickers in every style (#4867): a press away closes one
+/// before its release, the press that starts a drag included; a click on
+/// its own button closes it, and does not open it again; another
+/// conversation shown, however it came, closes it.
+#[test]
+fn a_press_away_or_another_conversation_closes_the_pickers() {
+    let away = egui::pos2(1150.0, 750.0);
+    for style in ALL {
+        let mut h = H::new(style);
+        h.st.gifs.demo = true;
+        h.open(Some(JANE));
+        let (emoji_button, gif_button) = if style.workspace() {
+            (control_id("box-mood-smile-filled"), control_id("box-gif"))
+        } else {
+            (classic_id("mood-smile-filled"), classic_id("gif"))
+        };
+        h.press(emoji_button);
+        assert!(h.st.emoji_open, "{style:?}: the emoji picker opens");
+        h.press(emoji_button);
+        assert!(!h.st.emoji_open, "{style:?}: its button closes it");
+        h.press(emoji_button);
+        h.frame(vec![egui::Event::PointerMoved(away)]);
+        h.frame(vec![egui::Event::PointerButton {
+            pos: away,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        assert!(!h.st.emoji_open, "{style:?}: a press away closes it, before its release");
+        h.frame(vec![egui::Event::PointerMoved(away + egui::vec2(-40.0, 0.0))]);
+        h.frame(vec![egui::Event::PointerButton {
+            pos: away + egui::vec2(-40.0, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        h.settle();
+        for gif in [false, true] {
+            h.press(if gif { gif_button } else { emoji_button });
+            assert!(h.st.emoji_open != gif && h.st.gif_open == gif, "{style:?}: a picker opens");
+            // as a name's menu or a conversation asking for the front does
+            h.st.selected = Some(BOB);
+            h.settle();
+            assert!(!h.st.emoji_open && !h.st.gif_open, "{style:?}: Bob's conversation closes it");
+            h.open(Some(JANE));
+            assert!(!h.st.emoji_open && !h.st.gif_open, "{style:?}: back on Jane's, it stays closed");
+        }
+    }
+}
+
+/// A press on the world closes a picker without leaving it the keyboard
+/// (#4867): the world gives the keyboard up before the frame, the picker's
+/// search takes it back as it draws, and lets it go as the picker closes.
+#[test]
+fn a_press_on_the_world_leaves_the_closed_picker_no_keyboard() {
+    let away = egui::pos2(1150.0, 750.0);
+    for style in ALL {
+        for gif in [false, true] {
+            let mut h = H::new(style);
+            h.st.gifs.demo = true;
+            h.open(Some(JANE));
+            let button = match (style.workspace(), gif) {
+                (true, false) => control_id("box-mood-smile-filled"),
+                (true, true) => control_id("box-gif"),
+                (false, false) => classic_id("mood-smile-filled"),
+                (false, true) => classic_id("gif"),
+            };
+            h.press(button);
+            h.frame(Vec::new());
+            assert!(h.st.emoji_open || h.st.gif_open, "{style:?} gif {gif}: the picker opens");
+            assert!(
+                h.frames.ctx.memory(|m| m.focused()).is_some(),
+                "{style:?} gif {gif}: its search has the keyboard"
+            );
+            // what the world does with the press, before the frame
+            h.frames.ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+            h.frame(vec![
+                egui::Event::PointerMoved(away),
+                egui::Event::PointerButton {
+                    pos: away,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ]);
+            assert!(
+                !h.st.emoji_open && !h.st.gif_open,
+                "{style:?} gif {gif}: a press on the world closes it"
+            );
+            assert!(
+                h.frames.ctx.memory(|m| m.focused()).is_none(),
+                "{style:?} gif {gif}: the closed picker keeps no keyboard"
+            );
+        }
+    }
+}
+
+/// A quick right click (press and release in one frame, a touchpad tap) on
+/// the GIF button opens its menu in the frame the emoji picker checks the
+/// press: the picker still closes, as a menu egui opens takes no pointer in
+/// its first frame (`egui::Popup` lays it out first), so the press is the
+/// button's (#4867).
+#[test]
+fn a_quick_right_click_on_the_gif_button_closes_the_emoji_picker() {
+    for style in ALL {
+        let mut h = H::new(style);
+        h.st.gifs.demo = true;
+        h.open(Some(JANE));
+        let (emoji_button, gif_button) = if style.workspace() {
+            (control_id("box-mood-smile-filled"), control_id("box-gif"))
+        } else {
+            (classic_id("mood-smile-filled"), classic_id("gif"))
+        };
+        h.press(emoji_button);
+        assert!(h.st.emoji_open, "{style:?}: the emoji picker opens");
+        let pos = h.shown(gif_button).unwrap().center();
+        h.frame(vec![egui::Event::PointerMoved(pos)]);
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.frame(vec![button(true), button(false)]);
+        assert!(egui::Popup::is_any_open(&h.frames.ctx), "{style:?}: the GIF button's menu opens");
+        assert!(!h.st.emoji_open, "{style:?}: a quick right click on the GIF button closes it");
+    }
+}
+
+/// A picker open before the window first draws, as the startup demos open
+/// one (`AURORA_DEMO_EMOJI_PICKER`, `AURORA_DEMO_GIFS`), stays open: no
+/// conversation was shown before, so none changed (#4867).
+#[test]
+fn a_picker_open_before_the_first_frame_stays_open() {
+    for style in ALL {
+        for gif in [false, true] {
+            let mut h = H::new(style);
+            h.st.gifs.demo = true;
+            assert!(h.st.picker_view.is_none(), "{style:?}: not drawn yet");
+            h.st.selected = Some(JANE);
+            h.st.emoji_open = !gif;
+            h.st.gif_open = gif;
+            h.settle();
+            assert!(h.st.emoji_open != gif && h.st.gif_open == gif, "{style:?}: the picker stays open");
+            h.st.selected = Some(BOB);
+            h.settle();
+            assert!(!h.st.emoji_open && !h.st.gif_open, "{style:?}: another conversation closes it");
         }
     }
 }

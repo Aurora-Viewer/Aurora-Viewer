@@ -17,6 +17,8 @@ pub(crate) mod outgoing;
 mod parents;
 pub mod preview;
 mod system;
+pub mod trash_origins;
+pub mod undo;
 pub mod wearable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +87,12 @@ pub struct Inventory {
     pub(crate) hierarchy_repaired: bool,
     pub(crate) deferred_lost_folders: bool,
     pub(crate) lost_folder_retry_generation: u64,
+    /// Undo and redo of the session's inventory changes, shared by every
+    /// inventory window (`undo`); a new login starts it empty.
+    pub undo: undo::History,
+    /// The folder each entry of the Trash came from (`trash_origins`),
+    /// loaded for the account at login.
+    pub trash_origins: trash_origins::TrashOrigins,
 }
 
 /// Failed read results before the automatic producer's retry budget ends.

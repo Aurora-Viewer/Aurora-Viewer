@@ -362,7 +362,7 @@ fn digit_cell(painter: &egui::Painter, font: &egui::FontId) -> f32 {
                 .x
         })
         .fold(0.0, f32::max);
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(id, (frame, width)));
     width
 }

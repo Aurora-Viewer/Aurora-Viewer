@@ -2501,6 +2501,69 @@ fn empty_legacy_texture_channels_can_be_selected_and_their_scale_edited() {
 }
 
 #[test]
+fn sphere_dimple_drag_previews_then_sends_the_shape_once() {
+    use aurora_net::{NetCommand, build::BuildCmd};
+    use aurora_prim::params::{LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF};
+
+    for legacy in [false, true] {
+        let mut inspector = Inspector::new();
+        inspector.settings.legacy_window = legacy;
+        inspector.settings.transform_expanded = false;
+        inspector.tool.tab = 5;
+        inspector.screen = vec2(1600.0, 1400.0);
+        let key = inspector.tool.selection[0];
+        let idx = inspector.world.objects.index_of(&key).unwrap();
+        let v = &mut inspector.world.objects.get_mut(idx).unwrap().volume;
+        v.path.curve_type = LL_PCODE_PATH_CIRCLE;
+        v.profile.curve_type = LL_PCODE_PROFILE_CIRCLE_HALF;
+        v.profile.begin = 0.173;
+        let (_, texts) = resize_inspector(&mut inspector, vec2(700.0, 1190.0));
+        let point = texts
+            .iter()
+            .find(|(t, _)| aurora_i18n::parse_number(t) == Some(0.173))
+            .expect("dimple begin")
+            .1
+            .center();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: Default::default(),
+        };
+        inspector.tool.out.clear();
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        inspector.show(vec![button(point, true)]);
+        let end = point + vec2(32.0, 0.0);
+        inspector.show(vec![egui::Event::PointerMoved(point + vec2(14.0, 0.0))]);
+        inspector.show(vec![egui::Event::PointerMoved(end)]);
+        inspector.show(vec![]);
+        let preview = inspector.world.objects.get(idx).unwrap().volume;
+        assert!(preview.profile.begin > 0.173);
+        assert!(
+            inspector
+                .tool
+                .out
+                .iter()
+                .all(|cmd| !matches!(cmd, NetCommand::Build(BuildCmd::SetShape { .. })))
+        );
+        inspector.show(vec![button(end, false)]);
+        inspector.show(vec![]);
+        let sent: Vec<_> = inspector
+            .tool
+            .out
+            .iter()
+            .filter_map(|cmd| match cmd {
+                NetCommand::Build(BuildCmd::SetShape { local_ids, shape, .. }) => Some((local_ids, shape)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent.len(), 1, "legacy={legacy}");
+        assert_eq!(sent[0].0, &[key.local_id]);
+        assert_eq!(sent[0].1.profile_begin, preview.to_raw().profile_begin);
+    }
+}
+
+#[test]
 fn material_spinner_drags_commit_all_uv_channels_and_glow_only_on_release() {
     fn values(inspector: &Inspector, channel: usize) -> [f32; 5] {
         let object = inspector
@@ -4177,4 +4240,42 @@ fn compact_object_shape_fields_stay_inside_at_large_text_size() {
             );
         }
     }
+}
+
+#[test]
+fn one_selected_object_has_its_contents_listed_whatever_the_tab() {
+    // LLFloaterTools::refresh → LLPanelObjectInventory::refresh: a no-copy
+    // or no-transfer choice can then go into the contents at the first try.
+    use aurora_net::{NetCommand, build::BuildCmd};
+    let mut inspector = Inspector::new();
+    let idx = inspector.tool.contents_target(&inspector.world).unwrap();
+    let object = inspector.world.objects.get(idx).unwrap().full_id;
+    let asked = |tool: &BuildTool, id: uuid::Uuid| {
+        tool.out
+            .iter()
+            .filter(|c| matches!(c, NetCommand::Build(BuildCmd::RequestTaskInventory { object_id, .. }) if *object_id == id))
+            .count()
+    };
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "asked once the object is selected");
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "not again while it loads");
+    inspector.tool.on_task_inventory(&inspector.world, object, Some(1), Vec::new());
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "not again once listed");
+    // Two objects: nothing is listed until a choice needs it.
+    let other = (0..inspector.world.objects.len())
+        .find(|&i| {
+            i != idx && crate::build::root_of(&inspector.world, i) == i && inspector.world.objects.get(i).is_some_and(|o| o.pcode == 9)
+        })
+        .unwrap();
+    let other_id = inspector.world.objects.get(other).unwrap().full_id;
+    inspector
+        .tool
+        .click_select(&mut inspector.world, &inspector.settings, Some(other), true);
+    assert_eq!(inspector.tool.roots(&inspector.world).len(), 2);
+    inspector.tool.out.clear();
+    inspector.show(vec![]);
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object) + asked(&inspector.tool, other_id), 0);
 }

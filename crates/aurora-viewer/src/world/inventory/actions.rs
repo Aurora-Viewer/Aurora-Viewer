@@ -146,6 +146,16 @@ pub fn held(inv: &Inventory, item: &InvItem) -> u32 {
     agent_mask(item, inv.owner)
 }
 
+/// LLPreviewGesture::handleDragAndDrop (indra/newview/llpreviewgesture.cpp)
+/// requires unrestricted base permissions. Aurora's gesture editor also
+/// requires the agent to hold those rights and excludes the Trash.
+pub fn gesture_asset_allowed(inv: &Inventory, item: &InvItem) -> bool {
+    matches!(item.asset_type, 1 | 20)
+        && !item.asset_id.is_nil()
+        && item.base_mask & held(inv, item) & FULL == FULL
+        && !in_type(inv, item.id, 14)
+}
+
 /// GOD_MAINTENANCE (indra/llcommon/indra_constants.h): the god level from
 /// which LLAgent::allowOperation, at its default `god_minimum`, lets a god
 /// past an item's permissions.
@@ -193,6 +203,18 @@ pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid) -> bool {
     use aurora_prim::te::{BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE};
     [BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE].contains(&asset)
         || inv.items.values().any(|it| it.asset_id == asset && held(inv, it) & FULL == FULL)
+}
+
+/// Whether an environment item may be applied to the agent alone, and so
+/// kept for a parcel (`world/parcel_env.rs`), whatever its permissions: the
+/// Legacy Viewer's "Settings Apply Local" is never greyed for them
+/// (LLSettingsBridge::buildContextMenu and performAction
+/// "apply_settings_local", indra/newview/llinventorybridge.cpp), and its
+/// local environment keeps the asset id of a no-copy or no-modify item
+/// (LLEnvironment::saveToSettings, indra/newview/llenvironment.cpp). Only an
+/// environment with an asset to load.
+pub fn environment_applies_locally(item: &InvItem) -> bool {
+    item.asset_type == 56 && !item.asset_id.is_nil()
 }
 
 /// The Export permission bit (PERM_EXPORT, an OpenSim extension).
@@ -421,7 +443,10 @@ pub fn original(inv: &Inventory, mut id: Uuid) -> Option<Uuid> {
     None
 }
 pub fn default_folder(inv: &Inventory, id: Uuid) -> Option<Uuid> {
-    let kind = original(inv, id).and_then(|id| inv.items.get(&id)).map(|it| it.asset_type);
+    let item = original(inv, id).and_then(|id| inv.items.get(&id));
+    // a snapshot goes to the Photo Album, not to Textures
+    // (LLItemBridge::restoreItem: IT_SNAPSHOT → FT_SNAPSHOT_CATEGORY)
+    let kind = item.map(|it| if it.inv_type == 15 { 15 } else { it.asset_type });
     kind.and_then(|kind| system(inv, kind)).or(Some(inv.root).filter(|id| !id.is_nil()))
 }
 /// get_is_favorite / toggle_favorite (llinventoryfunctions.cpp): links show
@@ -1332,5 +1357,77 @@ mod animation_play_tests {
         );
         assert_eq!(animation_playable(&inv, link).map(|it| it.id), Some(Uuid::from_u128(100)));
         assert!(animation_playable(&inv, Uuid::from_u128(999)).is_none(), "missing");
+    }
+}
+
+#[cfg(test)]
+mod environment_local_tests {
+    use super::*;
+
+    fn environment(mask: u32) -> InvItem {
+        InvItem {
+            asset_type: 56,
+            asset_id: Uuid::from_u128(0x5E7),
+            base_mask: mask | MOVE,
+            owner_mask: mask | MOVE,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_environment_applies_to_myself_whatever_its_permissions_like_the_legacy_viewer() {
+        let cases = [
+            ("full", COPY | MODIFY | TRANSFER),
+            ("no copy", MODIFY | TRANSFER),
+            ("no modify", COPY | TRANSFER),
+            ("no transfer", COPY | MODIFY),
+            ("copy only", COPY),
+            ("modify only", MODIFY),
+            ("transfer only", TRANSFER),
+            ("none", 0),
+        ];
+        for (case, mask) in cases {
+            assert!(environment_applies_locally(&environment(mask)), "{case}");
+        }
+    }
+
+    #[test]
+    fn an_environment_applies_to_myself_whoever_owns_it_like_the_legacy_viewer() {
+        // AGENTS.md §2's owner cases: "apply_settings_local" asks nothing of
+        // the owner. A Library item is its folder's matter, owned by the
+        // Library's owner; the context menu's test covers the folder.
+        let me = Uuid::from_u128(1);
+        let group = Uuid::from_u128(2);
+        let cases = [
+            ("mine", me, Uuid::nil(), false),
+            ("group-owned", group, group, true),
+            ("someone else's", Uuid::from_u128(3), Uuid::nil(), false),
+            ("the Library's", Uuid::from_u128(4), Uuid::nil(), false),
+        ];
+        for (case, owner, group_id, group_owned) in cases {
+            for mask in [FULL, 0] {
+                let item = InvItem {
+                    owner,
+                    group_id,
+                    group_owned,
+                    ..environment(mask)
+                };
+                assert!(environment_applies_locally(&item), "{case}, mask {mask:#x}");
+            }
+        }
+    }
+
+    #[test]
+    fn only_an_environment_with_an_asset_applies() {
+        let no_asset = InvItem {
+            asset_id: Uuid::nil(),
+            ..environment(FULL)
+        };
+        assert!(!environment_applies_locally(&no_asset));
+        let texture = InvItem {
+            asset_type: 0,
+            ..environment(FULL)
+        };
+        assert!(!environment_applies_locally(&texture));
     }
 }

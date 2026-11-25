@@ -645,8 +645,9 @@ impl Document {
         let frame = 1.0 / self.fps as f32;
         self.meta.loop_in = self.meta.loop_in.clamp(0.0, (d - frame).max(0.0));
         self.meta.loop_out = self.meta.loop_out.clamp(self.meta.loop_in + frame, d);
-        self.meta.ease_in = self.meta.ease_in.clamp(0.0, d);
-        self.meta.ease_out = self.meta.ease_out.clamp(0.0, d);
+        let max_ease = if self.meta.looping { f32::MAX } else { d };
+        self.meta.ease_in = self.meta.ease_in.clamp(0.0, max_ease);
+        self.meta.ease_out = self.meta.ease_out.clamp(0.0, max_ease);
         if !self.meta.looping && self.meta.ease_in + self.meta.ease_out > d {
             let factor = d / (self.meta.ease_in + self.meta.ease_out);
             self.meta.ease_in *= factor;

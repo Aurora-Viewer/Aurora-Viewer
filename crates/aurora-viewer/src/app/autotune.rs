@@ -114,7 +114,7 @@ impl App {
         }
         let work = if self.demo { self.autotune_demo_work(work) } else { work };
         let paused = work.is_none()
-            || !self.focused
+            || !self.in_front()
             || self.vr_camera.is_some()
             || !self.in_world()
             || self.world.teleporting
