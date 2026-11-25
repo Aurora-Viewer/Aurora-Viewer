@@ -163,8 +163,10 @@ impl OutputThread {
 /// How long the engine waits for its output thread to end. The thread
 /// stops within a few milliseconds of its channel closing, but its last
 /// step, dropping the cpal stream, waits for the audio driver, which can
-/// hang (#3133: 71 s at exit, the window not answering). The microphone
-/// closes the same way (`capture.rs`, #2635).
+/// hang (#3133: 71 s at exit, the window not answering). The dropping
+/// thread waits at most this long, then leaves the thread behind; the
+/// microphone's closer (`capture.rs`, #2635) still joins its thread after
+/// its warning, so it is no model for this path.
 const STOP_WAIT: Duration = Duration::from_secs(2);
 
 impl Drop for OutputThread {
@@ -491,8 +493,17 @@ mod tests {
 
     #[test]
     fn a_thread_that_ends_is_joined() {
-        let h = thread::spawn(|| thread::sleep(Duration::from_millis(30)));
+        let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = ended.clone();
+        let h = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(30));
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let start = Instant::now();
         assert!(join_or_detach(h, Duration::from_secs(5)));
+        // joined: the thread had really ended, and well before the limit
+        assert!(ended.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(start.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
