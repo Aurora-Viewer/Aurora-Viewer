@@ -188,6 +188,11 @@ pub struct ChatLog {
     /// A move to another folder asked for, until its answer comes, with the
     /// folder, sharing and place to go back to if it fails.
     moving: Option<Moving>,
+    /// A change of folder the transcript thread never took (its placement
+    /// or its move dropped: queue full, thread gone): the files stayed in
+    /// the folder in use, and the settings that already name the new one
+    /// go back (`take_dropped_change`).
+    dropped_change: bool,
     open: Option<Open>,
     /// Counts the logins and logouts: what was read for another one is
     /// thrown away.
@@ -272,6 +277,7 @@ impl ChatLog {
         self.place_version += 1;
         self.open = None;
         self.placing = None;
+        self.dropped_change = false;
         self.waiting = Waiting::default();
         self.checking = None;
         self.locating = None;
@@ -310,13 +316,15 @@ impl ChatLog {
     }
 
     /// Ask the transcript thread where the files go; a placement asked
-    /// before is dropped.
-    fn ask_placement(&mut self, request: place::Request, change: Option<(Option<PathBuf>, bool)>) {
+    /// before is dropped. False when a change of folder could not be asked
+    /// (queue full, no thread): nothing is placed, the folder in use stays.
+    fn ask_placement(&mut self, request: place::Request, change: Option<(Option<PathBuf>, bool)>) -> bool {
         self.place_epoch += 1;
-        let answer = match self.worker() {
-            Some(w) => w.place(request),
-            // no thread: the answer channel closes at once, and the
-            // fallback of `poll_placement` applies
+        let answer = match self.worker().and_then(|w| w.place(request)) {
+            Some(answer) => answer,
+            None if change.is_some() => return false,
+            // the login's, refused or without a thread: the answer channel
+            // closes at once, and the fallback of `poll_placement` applies
             None => crossbeam_channel::bounded(1).1,
         };
         self.placing = Some(Placing {
@@ -324,6 +332,7 @@ impl ChatLog {
             answer,
             change,
         });
+        true
     }
 
     /// The placement's answer, when it came: applied (the login's folder,
@@ -370,7 +379,13 @@ impl ChatLog {
                 self.place_version += 1;
                 self.release_waiting();
             }
-            (Some(_), None) => log::warn!("conversation transcripts: the new folder could not be worked out; the current one is kept"),
+            // the placement's job dropped unanswered (the thread gone with
+            // it queued, or dead while working it out): nothing switched or
+            // moved, and the settings go back to the folder in use
+            (Some(_), None) => {
+                log::warn!("conversation transcripts: the new folder could not be worked out; the current one is kept");
+                self.dropped_change = true;
+            }
             (Some((accounts, share)), Some(to)) => self.change_place(accounts, share, to),
         }
     }
@@ -596,6 +611,8 @@ impl ChatLog {
         // below does not wait for it
         self.waiting = Waiting::default();
         self.placing = None;
+        // (the app put the settings back before: `changing`)
+        self.dropped_change = false;
         self.checking = None;
         self.locating = None;
         // LLConversationLog::cache at the session's end
@@ -912,8 +929,10 @@ impl ChatLog {
     /// With a shared folder on either side nothing moves and the new
     /// folder's conversation log is read; otherwise the account's files
     /// follow, after the lines already queued, and the next lines go to the
-    /// new folder (moveTranscriptsAndLog). True when the change is asked; a
-    /// move's answer comes through `take_relocated`.
+    /// new folder (moveTranscriptsAndLog). True when the change is asked
+    /// (false while busy or logged out, or when the transcript thread
+    /// refused it); a move's answer comes through `take_relocated`, a change
+    /// the thread dropped after taking it through `take_dropped_change`.
     pub fn change_folder(&mut self, accounts: Option<PathBuf>, share: bool) -> bool {
         if self.busy() {
             return false;
@@ -924,8 +943,7 @@ impl ChatLog {
             return false;
         };
         let request = self.request(accounts.clone(), share, &open.identity, open.account.as_ref());
-        self.ask_placement(request, Some((accounts, share)));
-        true
+        self.ask_placement(request, Some((accounts, share)))
     }
 
     /// The new place of a change of folder, come back from the transcript
@@ -945,7 +963,11 @@ impl ChatLog {
         }
         // the conversation log's last changes go with the transcripts
         self.save_conversations(true);
-        let Some(done) = self.worker().map(|w| w.relocate(from.dir.clone(), to.dir.clone())) else {
+        let Some(done) = self.worker().and_then(|w| w.relocate(from.dir.clone(), to.dir.clone())) else {
+            // the move refused (queue full, thread gone): nothing moves, the
+            // lines still go to the folder in use, the settings go back
+            log::warn!("conversation transcripts: the files could not be moved; the current folder is kept");
+            self.dropped_change = true;
             return;
         };
         let accounts = std::mem::replace(&mut self.accounts, accounts);
@@ -968,7 +990,13 @@ impl ChatLog {
     /// worked out again from the folder chosen before, which a refused
     /// folder would have sent elsewhere.
     pub fn take_relocated(&mut self) -> Option<std::io::Result<usize>> {
-        let done = self.moving.as_ref()?.done.try_recv().ok()?;
+        let done = match self.moving.as_ref()?.done.try_recv() {
+            Ok(done) => done,
+            Err(crossbeam_channel::TryRecvError::Empty) => return None,
+            // the move's job dropped unanswered (the thread gone with it
+            // queued): nothing moved, and the move fails like one that ran
+            Err(crossbeam_channel::TryRecvError::Disconnected) => Err(std::io::Error::other("the transcript thread dropped the move")),
+        };
         let moving = self.moving.take()?;
         if done.is_err() {
             self.append_epoch += 1;
@@ -980,6 +1008,20 @@ impl ChatLog {
             self.legacy_layout = moving.legacy_layout;
         }
         Some(done)
+    }
+
+    /// A change of folder the transcript thread never took, once: its
+    /// placement or its move was dropped, nothing switched or moved, and
+    /// the folder in use stays; the settings, which already name the new
+    /// folder, go back to it.
+    pub fn take_dropped_change(&mut self) -> bool {
+        std::mem::take(&mut self.dropped_change)
+    }
+
+    /// Another transcript thread than the one started on demand (tests).
+    #[cfg(test)]
+    pub fn set_worker(&mut self, worker: store::Worker) {
+        self.worker = Some(worker);
     }
 
     /// The Legacy Viewers' folders to look in.
@@ -2139,6 +2181,42 @@ mod tests {
         assert_eq!(texts(&x_dir.join("Bob Smith.txt")), ["x"]);
         assert!(!foreign.join(me.to_string()).exists());
         assert_eq!(std::fs::read_dir(&foreign).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_move_the_transcript_thread_drops_keeps_the_folder_used_before() {
+        let guard = TempGuard::new();
+        let mut log = ChatLog::in_folder(guard.path().join("a"));
+        log.set_grid("agni".into());
+        log.login_named(Uuid::from_u128(0xA11CE), JANE);
+        settled(&mut log);
+        let before = log.dir().unwrap().to_path_buf();
+        log.append("Bob Smith", now(), "Bob Smith", "before the pick");
+        // placed by a working thread, then the move taken by one that dies
+        // with it queued
+        assert!(log.change_folder(Some(guard.path().join("b")), false));
+        assert!(log.flush(WAIT));
+        let (worker, queue) = store::Worker::stalled();
+        log.set_worker(worker);
+        settled(&mut log);
+        assert!(log.busy());
+        assert!(log.take_relocated().is_none(), "no answer yet");
+        drop(queue);
+        // the closed answer reads as a failed move, not as "not yet": the
+        // rollback applies and the history is free again
+        assert!(log.take_relocated().unwrap().is_err());
+        assert!(!log.busy());
+        assert!(!log.take_dropped_change());
+        assert_eq!(log.dir(), Some(before.as_path()));
+        log.set_worker(store::Worker::start().unwrap());
+        log.append("Bob Smith", now(), "Bob Smith", "after the dropped move");
+        assert!(log.flush(WAIT));
+        assert_eq!(texts(&before.join("Bob Smith.txt")), ["before the pick", "after the dropped move"]);
+        // a folder can be changed again
+        assert!(log.change_folder(Some(guard.path().join("b")), false));
+        settled(&mut log);
+        assert!(log.flush(WAIT));
+        assert_eq!(log.take_relocated().unwrap().unwrap(), 1);
     }
 
     #[test]

@@ -11473,6 +11473,7 @@ ui-options-chat-logs-moved = { $count ->
    *[other] { $count } fichiers déplacés.
     }
 ui-options-chat-logs-move-failed = Impossible de déplacer les fichiers : l'ancien dossier est conservé.
+ui-options-chat-logs-change-failed = Impossible de changer de dossier : l'ancien dossier est conservé.
 ui-options-chat-logs-erase = Effacer les historiques de ce compte…
 ui-options-chat-logs-erase-title = Effacer les historiques de ce compte ?
 ui-options-chat-logs-erase-text = Tous les fichiers de conversations de ce compte sur cette grille sont supprimés du disque : messages privés, groupes, conférences et chat local. Cette action est définitive. Les autres comptes ne sont pas touchés. La copie des conversations privées conservée par la grille n'est pas effacée : Aurora n'en affiche plus les messages antérieurs à cet effacement.

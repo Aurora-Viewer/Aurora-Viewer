@@ -190,16 +190,26 @@ impl Worker {
         }
     }
 
-    fn send(&self, job: Job) {
+    /// Queue a job. False when the queue refused it (full, or the thread is
+    /// gone): the job is dropped with its answer channel, which closes
+    /// unanswered.
+    fn queue(&self, job: Job) -> bool {
         match self.jobs.try_send(job) {
-            Ok(()) => {}
+            Ok(()) => true,
             Err(TrySendError::Full(_)) => {
                 if !self.overflow.swap(true, Ordering::Relaxed) {
                     log::warn!("conversation transcripts: the disk does not keep up, some lines are not written");
                 }
+                false
             }
-            Err(TrySendError::Disconnected(_)) => {}
+            Err(TrySendError::Disconnected(_)) => false,
         }
+    }
+
+    /// Queue a job without saying whether it was queued: a refused line is
+    /// lost, and a refused job with an answer channel closes it unanswered.
+    fn send(&self, job: Job) {
+        self.queue(job);
     }
 
     /// Append text (whole lines, with their ends of line) to an exact path.
@@ -239,11 +249,11 @@ impl Worker {
     }
 
     /// Move the transcripts of a folder to another, after the lines already
-    /// queued; the answer is the number of files moved.
-    pub fn relocate(&self, from: PathBuf, to: PathBuf) -> Receiver<std::io::Result<usize>> {
+    /// queued; the answer is the number of files moved. None when the queue
+    /// refused the move (full, or the thread is gone): nothing moves.
+    pub fn relocate(&self, from: PathBuf, to: PathBuf) -> Option<Receiver<std::io::Result<usize>>> {
         let (done, rx) = crossbeam_channel::bounded(1);
-        self.send(Job::Move { from, to, done });
-        rx
+        self.queue(Job::Move { from, to, done }).then_some(rx)
     }
 
     /// Read a whole small file, after what is queued; the answer is None
@@ -261,11 +271,11 @@ impl Worker {
     }
 
     /// Where an account's files go, after what is queued: the answer of
-    /// `place::place`, which reads the folders off the frame.
-    pub fn place(&self, request: super::place::Request) -> Receiver<super::place::Placement> {
+    /// `place::place`, which reads the folders off the frame. None when the
+    /// queue refused the job (full, or the thread is gone): no answer comes.
+    pub fn place(&self, request: super::place::Request) -> Option<Receiver<super::place::Placement>> {
         let (done, rx) = crossbeam_channel::bounded(1);
-        self.send(Job::Place { request, done });
-        rx
+        self.queue(Job::Place { request, done }).then_some(rx)
     }
 
     /// The checks of a folder picked for an account (`place::check`).
@@ -478,7 +488,52 @@ fn resolve_append_target(target: &AppendTarget, shared_targets: &mut SharedTarge
     }
 }
 
+/// The queue's receiving end, emptied when it is dropped: the thread ended,
+/// by a panic too. The jobs left in it go with their answer channels, which
+/// close unanswered; a bounded queue would keep them while a sender lives,
+/// and a placement or a move would wait for ever.
+struct Drained(Receiver<Job>);
+
+impl std::ops::Deref for Drained {
+    type Target = Receiver<Job>;
+
+    fn deref(&self) -> &Receiver<Job> {
+        &self.0
+    }
+}
+
+impl Drop for Drained {
+    fn drop(&mut self) {
+        while self.0.try_recv().is_ok() {}
+    }
+}
+
+/// The queue of a worker that has no thread (tests): its jobs wait there,
+/// never run, and are dropped unanswered with it, as when the thread dies
+/// with jobs queued.
+#[cfg(test)]
+pub struct Stalled {
+    _queue: Drained,
+}
+
+#[cfg(test)]
+impl Worker {
+    /// A worker without a thread, and its queue (tests). Dropping the queue
+    /// first makes a worker whose thread is gone: every job is refused.
+    pub fn stalled() -> (Worker, Stalled) {
+        let (jobs, rx) = crossbeam_channel::bounded::<Job>(QUEUE);
+        let (_, loaded) = crossbeam_channel::unbounded();
+        let worker = Worker {
+            jobs,
+            loaded,
+            overflow: AtomicBool::new(false),
+        };
+        (worker, Stalled { _queue: Drained(rx) })
+    }
+}
+
 fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
+    let jobs = Drained(jobs);
     // a failure is said once per run, without the file name (it is the name
     // of a resident or a group, and the viewer's log may be shared)
     let mut failed = false;
@@ -1027,6 +1082,43 @@ mod tests {
         dir
     }
 
+    /// A move the queue refuses says so at once; one it took and the
+    /// thread never runs closes its answer instead of leaving it waiting.
+    #[test]
+    fn a_refused_or_dropped_move_never_leaves_its_answer_waiting() {
+        let (a, b) = (PathBuf::from("a"), PathBuf::from("b"));
+        // the thread gone
+        let (w, queue) = Worker::stalled();
+        drop(queue);
+        assert!(w.relocate(a.clone(), b.clone()).is_none());
+        // the queue full
+        let (w, _queue) = Worker::stalled();
+        for _ in 0..QUEUE {
+            w.append(PathBuf::from("Jane Doe.txt"), String::new());
+        }
+        assert!(w.relocate(a.clone(), b.clone()).is_none());
+        // taken, then the thread gone with it queued
+        let (w, queue) = Worker::stalled();
+        let answer = w.relocate(a.clone(), b.clone()).expect("queued");
+        assert!(matches!(answer.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)));
+        drop(queue);
+        assert!(matches!(answer.try_recv(), Err(crossbeam_channel::TryRecvError::Disconnected)));
+        // a thread that dies on a job: those queued behind it are dropped
+        // with it, their answers closed
+        let w = Worker::start().unwrap();
+        let (go, wait) = crossbeam_channel::bounded::<()>(0);
+        assert!(w.run(move || {
+            let _ = wait.recv();
+            panic!("a transcript thread that dies (test)");
+        }));
+        let answer = w.relocate(a, b).expect("queued");
+        go.send(()).unwrap();
+        assert!(matches!(
+            answer.recv_timeout(Duration::from_secs(10)),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected)
+        ));
+    }
+
     /// The session that published is gone (a logout reads no answer): the
     /// refused log is read back from memory by the next session and written
     /// by the exit's flush once the folder takes writes.
@@ -1213,14 +1305,22 @@ mod tests {
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join("keep.json"), b"c").unwrap();
         // the line queued before the move goes with it
-        let moved = w.relocate(old.clone(), new.clone()).recv_timeout(Duration::from_secs(10)).unwrap();
+        let moved = w
+            .relocate(old.clone(), new.clone())
+            .expect("queued")
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
         assert_eq!(moved.unwrap(), 1);
         assert_eq!(std::fs::read(new.join("Jane Doe.txt")).unwrap(), b"a\n");
         assert!(old.join("keep.json").exists(), "only transcripts move");
         // a transcript of the same name in the target: nothing moves
         std::fs::write(old.join("Jane Doe.txt"), b"b\n").unwrap();
         std::fs::write(old.join("Bob.txt"), b"d\n").unwrap();
-        let refused = w.relocate(old.clone(), new.clone()).recv_timeout(Duration::from_secs(10)).unwrap();
+        let refused = w
+            .relocate(old.clone(), new.clone())
+            .expect("queued")
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
         assert!(refused.is_err());
         assert_eq!(std::fs::read(old.join("Jane Doe.txt")).unwrap(), b"b\n");
         assert_eq!(std::fs::read(old.join("Bob.txt")).unwrap(), b"d\n");
@@ -1239,7 +1339,11 @@ mod tests {
         // a folder where the log should land: it cannot be replaced
         std::fs::create_dir_all(new.join(super::super::conversations::FILE)).unwrap();
         let w = Worker::start().unwrap();
-        let moved = w.relocate(old.clone(), new.clone()).recv_timeout(Duration::from_secs(10)).unwrap();
+        let moved = w
+            .relocate(old.clone(), new.clone())
+            .expect("queued")
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
         assert!(moved.is_err());
         assert_eq!(std::fs::read(old.join("Jane Doe.txt")).unwrap(), b"a\n");
         assert_eq!(std::fs::read(old.join(super::super::conversations::FILE)).unwrap(), b"log");

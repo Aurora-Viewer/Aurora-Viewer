@@ -154,6 +154,52 @@ impl App {
     pub(super) fn sync_chat_log_options_ui(&mut self) {
         sync_chat_log_options_ui(&mut self.options_ui, &self.settings, &self.world.chat_log);
     }
+
+    pub(super) fn poll_chat_log_change(&mut self) {
+        poll_chat_log_change(
+            &mut self.world.chat_log,
+            &mut self.settings,
+            &mut self.options_ui,
+            &mut self.folders,
+        );
+    }
+}
+
+/// The settings back to the folder in use, after a change of folder that
+/// did not happen. The demo's changes saved nothing to put back.
+pub(super) fn restore_chat_log_previous(settings: &mut crate::settings::Settings, folders: &mut Folders) {
+    if let Some((location, share)) = folders.chat_log_previous.take() {
+        settings.chat_log_location = location;
+        settings.log_legacy_layout = share;
+        folders.settings_changed = true;
+    }
+}
+
+/// The end of a change of folder, taken before a new folder is (so the
+/// folder to go back to is still the one in use): a move's answer (moved,
+/// or failed, the transcripts staying where they were), or a change the
+/// transcript thread dropped (nothing switched or moved). On a failure the
+/// settings, which already name the new folder, go back.
+fn poll_chat_log_change(
+    chat_log: &mut ChatLog,
+    settings: &mut crate::settings::Settings,
+    options_ui: &mut crate::ui::options::OptionsUi,
+    folders: &mut Folders,
+) {
+    if let Some(done) = chat_log.take_relocated() {
+        match done {
+            Ok(count) => options_ui.set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-moved", count = count), false),
+            Err(e) => {
+                log::warn!("conversation transcripts: moving failed ({e})");
+                restore_chat_log_previous(settings, folders);
+                options_ui.set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-move-failed"), true);
+            }
+        }
+    }
+    if chat_log.take_dropped_change() {
+        restore_chat_log_previous(settings, folders);
+        options_ui.set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-change-failed"), true);
+    }
 }
 
 pub(super) fn sync_chat_log_options_ui(
@@ -494,6 +540,117 @@ mod tests {
         // nothing of Aurora's was made in the Legacy Viewer's folders
         assert_eq!(std::fs::read_dir(&own_legacy).unwrap().count(), 1);
         assert_eq!(std::fs::read_dir(&legacy_root).unwrap().count(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_change_the_transcript_thread_never_takes_puts_the_settings_back() {
+        use crate::world::chat_log::store::Worker;
+        let dir = std::env::temp_dir().join(format!("aurora_folders_dropped_{}", uuid::Uuid::new_v4()));
+        let default_accounts = dir.join("aurora_default");
+        let custom = dir.join("custom_aurora_logs");
+        std::fs::create_dir_all(&default_accounts).unwrap();
+        std::fs::create_dir_all(&custom).unwrap();
+        let mut chat_log = ChatLog::default();
+        chat_log.set_default_folder(default_accounts.clone());
+        chat_log.set_grid("agni".into());
+        chat_log.login_named(uuid::Uuid::from_u128(0xA11CE), Some(("Jane", "Doe")));
+        assert!(chat_log.settle(WAIT));
+        let mut prefs = Prefs {
+            chat_log,
+            settings: crate::settings::Settings::default(),
+            options_ui: crate::ui::options::OptionsUi::default(),
+            folders: Folders::default(),
+        };
+        prefs.pick(&custom);
+        let custom_setting = custom.to_string_lossy().into_owned();
+        assert_eq!(prefs.settings.chat_log_location, custom_setting);
+        let in_use = prefs.chat_log.dir().unwrap().to_path_buf();
+        assert!(in_use.starts_with(&custom));
+        let default_folder = |prefs: &mut Prefs| {
+            set_chat_log_folder(
+                &mut prefs.chat_log,
+                &mut prefs.settings,
+                &mut prefs.options_ui,
+                &mut prefs.folders,
+                String::new(),
+            );
+        };
+        let poll = |prefs: &mut Prefs| {
+            poll_chat_log_change(&mut prefs.chat_log, &mut prefs.settings, &mut prefs.options_ui, &mut prefs.folders);
+        };
+        let kept = |prefs: &Prefs| {
+            assert_eq!(prefs.settings.chat_log_location, custom_setting);
+            assert!(!prefs.chat_log.busy());
+            assert_eq!(prefs.chat_log.dir(), Some(in_use.as_path()));
+            assert!(prefs.options_ui.chat_log_status_warn);
+        };
+
+        // the thread gone: the placement refused at once, the settings
+        // never name the default folder
+        let (worker, queue) = Worker::stalled();
+        drop(queue);
+        prefs.chat_log.set_worker(worker);
+        default_folder(&mut prefs);
+        kept(&prefs);
+        assert_eq!(prefs.options_ui.chat_log_status, aurora_i18n::tr!("ui-options-chat-logs-busy"));
+
+        // the placement taken, then dropped unanswered: the settings, which
+        // already name the default folder, go back once the frames see it
+        let (worker, queue) = Worker::stalled();
+        prefs.chat_log.set_worker(worker);
+        default_folder(&mut prefs);
+        assert!(prefs.settings.chat_log_location.is_empty());
+        assert!(prefs.chat_log.busy() && prefs.chat_log.changing());
+        drop(queue);
+        assert!(prefs.chat_log.settle(WAIT));
+        poll(&mut prefs);
+        kept(&prefs);
+        assert_eq!(
+            prefs.options_ui.chat_log_status,
+            aurora_i18n::tr!("ui-options-chat-logs-change-failed")
+        );
+
+        // placed, but the move refused (the thread gone after the answer)
+        prefs.chat_log.set_worker(Worker::start().unwrap());
+        default_folder(&mut prefs);
+        assert!(prefs.chat_log.flush(WAIT));
+        let (worker, queue) = Worker::stalled();
+        drop(queue);
+        prefs.chat_log.set_worker(worker);
+        assert!(prefs.chat_log.settle(WAIT));
+        poll(&mut prefs);
+        kept(&prefs);
+        assert_eq!(
+            prefs.options_ui.chat_log_status,
+            aurora_i18n::tr!("ui-options-chat-logs-change-failed")
+        );
+
+        // placed, the move taken, then dropped unanswered: it fails like a
+        // move that ran, and the next lines go to the folder in use again
+        prefs.chat_log.set_worker(Worker::start().unwrap());
+        default_folder(&mut prefs);
+        assert!(prefs.chat_log.flush(WAIT));
+        let (worker, queue) = Worker::stalled();
+        prefs.chat_log.set_worker(worker);
+        assert!(prefs.chat_log.settle(WAIT));
+        assert!(prefs.chat_log.busy());
+        poll(&mut prefs);
+        assert!(prefs.settings.chat_log_location.is_empty(), "the move has not answered yet");
+        drop(queue);
+        poll(&mut prefs);
+        kept(&prefs);
+        assert_eq!(
+            prefs.options_ui.chat_log_status,
+            aurora_i18n::tr!("ui-options-chat-logs-move-failed")
+        );
+
+        // a working thread again: the default folder taken, its files moved
+        prefs.chat_log.set_worker(Worker::start().unwrap());
+        prefs.default_folder();
+        assert!(prefs.settings.chat_log_location.is_empty());
+        assert!(prefs.chat_log.dir().unwrap().starts_with(&default_accounts));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

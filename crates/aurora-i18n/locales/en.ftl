@@ -11471,6 +11471,7 @@ ui-options-chat-logs-moved = { $count ->
    *[other] { $count } files moved.
     }
 ui-options-chat-logs-move-failed = Unable to move the files: the previous folder is kept.
+ui-options-chat-logs-change-failed = Unable to change the folder: the previous folder is kept.
 ui-options-chat-logs-erase = Erase this account's history…
 ui-options-chat-logs-erase-title = Erase this account's history?
 ui-options-chat-logs-erase-text = Every conversation file of this account on this grid is removed from the disk: instant messages, groups, conferences and nearby chat. This cannot be undone. Other accounts are not touched. The copy of the private conversations kept by the grid is not deleted: Aurora stops showing its messages older than this erase.

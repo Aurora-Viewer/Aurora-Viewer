@@ -3822,14 +3822,11 @@ impl App {
         self.photo_reel_end();
         if !self.demo {
             self.settings.release_hover_account();
-            // a folder change still being placed ends with the session: the
+            // a folder change still being placed ends with the session, and
+            // one the transcript thread dropped is not taken later: the
             // account keeps the folder its files are in
-            if self.world.chat_log.changing()
-                && let Some((location, share)) = self.folders.chat_log_previous.take()
-            {
-                self.settings.chat_log_location = location;
-                self.settings.log_legacy_layout = share;
-                self.folders.settings_changed = true;
+            if self.world.chat_log.changing() || self.world.chat_log.take_dropped_change() {
+                folders::restore_chat_log_previous(&mut self.settings, &mut self.folders);
             }
             self.settings.release_chat_log_account();
         }
@@ -18602,25 +18599,12 @@ impl App {
         self.options_ui.cache_usage = self.disk_cache.usage();
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.legacy_lists_ready = self.in_world() && self.world.login.is_some();
+        // before a folder picked is taken: a change that failed puts the
+        // settings back to the folder in use first
+        self.poll_chat_log_change();
         self.poll_folder_pick();
         self.sync_chat_log_options_ui();
         self.poll_settings_backup();
-        if let Some(done) = self.world.chat_log.take_relocated() {
-            match done {
-                Ok(count) => self
-                    .options_ui
-                    .set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-moved", count = count), false),
-                Err(e) => {
-                    log::warn!("conversation transcripts: moving failed ({e})");
-                    let (location, share) = self.folders.chat_log_previous.take().unwrap_or_default();
-                    self.settings.chat_log_location = location;
-                    self.settings.log_legacy_layout = share;
-                    self.folders.settings_changed = true;
-                    self.options_ui
-                        .set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-move-failed"), true);
-                }
-            }
-        }
         // the transcripts' erasing, or the Chat Service's delete (its
         // failure also shows ChatServiceHistoryDeleteFailed)
         let deleted = self.world.chat_service.take_deleted().map(|ok| {

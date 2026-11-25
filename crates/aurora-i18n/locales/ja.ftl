@@ -11339,6 +11339,7 @@ ui-options-chat-logs-moved = { $count ->
    *[other] { $count }個のファイルを移動しました。
     }
 ui-options-chat-logs-move-failed = ファイルを移動できません：以前のフォルダが維持されます。
+ui-options-chat-logs-change-failed = フォルダを変更できません：以前のフォルダが維持されます。
 ui-options-chat-logs-erase = このアカウントの履歴を消去…
 ui-options-chat-logs-erase-title = このアカウントの履歴を消去しますか？
 ui-options-chat-logs-erase-text = このグリッドでのこのアカウントのすべての会話ファイル（インスタントメッセージ、グループ、会話、近くのチャット）がディスクから削除されます。この操作は元に戻せません。他のアカウントには影響しません。グリッドが保存している個人の会話のコピーは削除されません。Aurora はこの削除より前のメッセージを表示しなくなります。
