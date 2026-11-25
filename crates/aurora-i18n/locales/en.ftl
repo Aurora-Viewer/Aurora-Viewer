@@ -5715,7 +5715,6 @@ ui-appearance-show-current-outfit = Show the current outfit in the list
 ui-appearance-current-outfit-not-in-my-outfits = The current outfit is not saved in My Outfits
 build-ui-tools-edit-parcel = Edit parcel
 ui-context-edit-shape = Edit shape
-ui-context-export-shape-xml = Export shape XML
 ui-context-edit-outfit = Edit outfit
 ui-context-edit-pbr-material = Edit PBR material
 ui-context-edit-land = Edit land

@@ -5596,7 +5596,6 @@ ui-appearance-show-current-outfit = Показати поточний компл
 ui-appearance-current-outfit-not-in-my-outfits = Поточний комплект не збережено в папці «Мої комплекти»
 build-ui-tools-edit-parcel = Редагувати ділянку
 ui-context-edit-shape = Редагувати фігуру
-ui-context-export-shape-xml = Експортувати фігуру в XML
 ui-context-edit-outfit = Редагувати комплект
 ui-context-edit-pbr-material = Редагувати матеріал PBR
 ui-context-edit-land = Редагувати землю

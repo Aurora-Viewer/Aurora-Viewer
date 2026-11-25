@@ -5602,7 +5602,6 @@ ui-appearance-show-current-outfit = Pokaż aktualny strój na liście
 ui-appearance-current-outfit-not-in-my-outfits = Bieżący strój nie jest zapisany w „Moich strojach”
 build-ui-tools-edit-parcel = Edytuj działkę
 ui-context-edit-shape = Edytuj kształt
-ui-context-export-shape-xml = Eksportuj kształt do XML
 ui-context-edit-outfit = Edytuj strój
 ui-context-edit-pbr-material = Edytuj materiał PBR
 ui-context-edit-land = Edytuj teren

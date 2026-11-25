@@ -5494,7 +5494,6 @@ ui-appearance-show-current-outfit = Vis det nåværende antrekket i listen
 ui-appearance-current-outfit-not-in-my-outfits = Det nåværende antrekket er ikke lagret i Mine antrekk
 build-ui-tools-edit-parcel = Rediger parsell
 ui-context-edit-shape = Rediger figur
-ui-context-export-shape-xml = Eksporter figur som XML
 ui-context-edit-outfit = Rediger antrekk
 ui-context-edit-pbr-material = Rediger PBR-materiale
 ui-context-edit-land = Rediger land

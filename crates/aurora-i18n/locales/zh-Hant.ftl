@@ -5477,7 +5477,6 @@ ui-appearance-show-current-outfit = 在清單中顯示目前裝扮
 ui-appearance-current-outfit-not-in-my-outfits = 目前裝扮未儲存在“我的裝扮”中
 build-ui-tools-edit-parcel = 編輯地塊
 ui-context-edit-shape = 編輯身形
-ui-context-export-shape-xml = 匯出身形 XML
 ui-context-edit-outfit = 編輯裝扮
 ui-context-edit-pbr-material = 編輯 PBR 材質
 ui-context-edit-land = 編輯土地
