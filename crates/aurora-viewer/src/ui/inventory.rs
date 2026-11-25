@@ -55,6 +55,7 @@ pub use markdown::View as NotecardView;
 mod move_to;
 pub use document::document_demo_events;
 pub(crate) mod permissions;
+pub(crate) mod picker_menu;
 pub mod plays;
 mod progress;
 pub(crate) mod properties;
@@ -526,7 +527,7 @@ pub struct InventoryWindow {
 /// a new window" (true) shows, as LLFloaterReg keys the first and
 /// LLPanelMainInventory::newFolderWindow looks for the second.
 fn shown_folder(w: &InventoryWindow) -> Option<(bool, Uuid)> {
-    if w.id == listings::PANEL || w.additional {
+    if w.hosted() || w.additional {
         None
     } else if w.state.single_folder.is_some() {
         Some((true, w.state.browse))
@@ -564,11 +565,27 @@ impl InventoryWindow {
     /// a single folder ("Open in a new window"), the additional window or
     /// an explorer tab dragged out to a window of its own (`torn_off`).
     /// Every other window (a document, a properties or confirmation
-    /// window, the Marketplace Listings panel) lets the main window
-    /// answer. A new kind of list window is added here.
+    /// window, a hosted panel) lets the main window answer. A new kind of
+    /// list window is added here.
     fn lists_inventory(&self) -> bool {
-        self.id != listings::PANEL && (!self.root.is_nil() || self.additional || self.state.torn_off || self.state.single_folder.is_some())
+        !self.hosted() && (!self.root.is_nil() || self.additional || self.state.torn_off || self.state.single_folder.is_some())
     }
+
+    /// The state of a list another window draws (`hosted_panel`): never a
+    /// window of its own, always kept, its rows and rename its host's.
+    fn hosted(&self) -> bool {
+        hosted_panel(self.id)
+    }
+}
+
+/// The inventory lists other windows draw with the inventory's menus: the
+/// Marketplace listings panel (`listings`) and the texture and material
+/// picker (`picker_menu`). Their host keeps their selection, shown rows and
+/// rename, and their menus offer "Show in Main Panel" (the Legacy Viewer's
+/// for a panel other than the inventory's own, LLInvFVBridge::
+/// getClipboardEntries).
+pub(super) fn hosted_panel(ui_id: Uuid) -> bool {
+    ui_id == listings::PANEL || ui_id == picker_menu::PICKER
 }
 
 /// The inventory changes a list window asked for (`range` of this frame's
@@ -592,11 +609,11 @@ fn tag_window_edits(w: &InventoryWindow, actions: &mut [InvAction], range: std::
     }
 }
 
-/// Whether an inventory window stays in the list this frame: open, the main
+/// Whether an inventory window stays in the list this frame: open, a hosted
 /// panel, or closed with a document, confirmation or pending Detach and
 /// Delete of its own still running.
 fn keeps_window(w: &InventoryWindow) -> bool {
-    w.id == listings::PANEL
+    w.hosted()
         || w.open
         || w.state.preview.is_some()
         || w.state.dialog.is_some()
@@ -3107,6 +3124,9 @@ pub fn show(
         }
         pane => pane,
     };
+    // the texture picker's menu since the last pass: its clipboard and
+    // actions, and its dialogs drawn below with the other windows'
+    picker_menu::receive(ctx, &world.inventory, st, prefs, &mut actions);
     clipboard::prepare(st);
     if !*open {
         st.pending_delete = None;
@@ -3121,7 +3141,7 @@ pub fn show(
         || st.move_to.is_some()
         || st.demo_menu.is_some()
         || st.windows.iter().any(|w| {
-            w.id != listings::PANEL
+            !w.hosted()
                 || w.state.dialog.is_some()
                 || w.state.detach_delete.is_some()
                 || w.state.move_to.is_some()
@@ -3575,11 +3595,11 @@ pub fn show(
             continue;
         }
         w.state.ui_id = w.id;
-        if w.id == listings::PANEL && w.state.fetch_all {
+        if w.hosted() && w.state.fetch_all {
             fetch_whole_inventory(&mut world.inventory, &mut w.state);
         }
         w.state.focus_search = w.open && (w.state.focus_search || !w.state.was_open);
-        if w.id != listings::PANEL {
+        if !w.hosted() {
             w.state.visible.clear();
         }
         w.state.clipboard.clone_from(&st.clipboard);
@@ -3703,7 +3723,7 @@ pub fn show(
             .show(p, &world.inventory, prefs, hover_images, &mut w.state.wanted_hover_images);
         w.state.was_open = w.open && !super::widgets::floater_minimized(ctx, &window_id);
         bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, world.agent_id, &mut actions);
-        if w.id != listings::PANEL {
+        if !w.hosted() {
             finish_hidden_rename(&world.inventory, &mut w.state, &mut actions);
         }
         controls::dialogs(ctx, p, &mut w.state, prefs);
@@ -3750,7 +3770,7 @@ pub fn show(
         }
         st.consume_clipboard |= w.state.consume_clipboard;
         w.state.consume_clipboard = false;
-        if w.id != listings::PANEL {
+        if !w.hosted() {
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
         }
         remember_recent_filters(&mut w.state, prefs);
@@ -3799,6 +3819,7 @@ pub fn show(
     st.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
     remember_recent_filters(st, prefs);
     context_notecards::show(ctx, p, &mut world.inventory, st, prefs, &mut actions);
+    picker_menu::lend(ctx, st, prefs, appearance_busy);
     actions
 }
 

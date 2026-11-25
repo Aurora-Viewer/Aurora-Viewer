@@ -13371,6 +13371,7 @@ impl App {
                 || std::env::var_os("AURORA_DEMO_CHAT_INPUT").is_some()
                 || std::env::var("AURORA_DEMO_OBJECT_MENU").is_ok_and(|mode| mode.starts_with("customize"))
                 || std::env::var("AURORA_DEMO_MARKETPLACE_LISTINGS").is_ok_and(|mode| mode.starts_with("menu-"))
+                || ui::texture_picker::demo_menu_input()
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
                         v.as_str(),
@@ -13497,6 +13498,7 @@ impl App {
             self.suggest_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::menu::search_demo_events(self.frame_count));
+            raw.events.extend(ui::texture_picker::demo_events(&ctx));
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::worn_events(&ctx, self.frame_count));
             raw.events

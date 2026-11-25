@@ -13,6 +13,8 @@ use aurora_net::inventory::InvItem;
 use egui::{RichText, Vec2};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+#[cfg(test)]
+mod menu_tests;
 pub(crate) mod pipette;
 mod tree;
 
@@ -836,6 +838,12 @@ impl TexturePicker {
             let mut toggle = None;
             let mut toggle_local = false;
             let radius = ui.visuals().window_corner_radius;
+            // The inventory's menu on the Inventory and Aurora Library rows
+            // (`inventory::picker_menu`); the Local list has none.
+            // (the session id is unique to this opening, whichever caller's)
+            let session = self.pipette_id.map_or(0, |id| id.value());
+            let mut menu = (self.source != 1).then(|| super::inventory::picker_menu::Rows::begin(ctx, session));
+            let demo_menu = demo_menu_input();
             let mut scroll = egui::ScrollArea::vertical();
             if self.reveal_selection {
                 let row = if self.source == 1 {
@@ -901,14 +909,21 @@ impl TexturePicker {
                                 .and_then(|id| inv.items.get(&id))
                                 .is_some_and(|item| lacks_rights(item, agent, self.required_permissions));
                         let enabled = folder || asset.is_some() && !locked;
-                        let (rect, response) = ui.allocate_exact_size(
-                            Vec2::new(ui.available_width(), 22.0),
+                        // Keyed on the row's item, not its place: its menu
+                        // stays open while the list scrolls or changes.
+                        let (_, rect) = ui.allocate_space(Vec2::new(ui.available_width(), 22.0));
+                        let response = ui.interact(
+                            rect,
+                            ui.scope_id().with(("picker_row", local, id)),
                             if enabled { egui::Sense::click() } else { egui::Sense::hover() },
                         );
                         #[cfg(test)]
                         if selected {
                             ui.ctx()
                                 .data_mut(|data| data.insert_temp(egui::Id::unique("picker_selected_row"), (rect, ui.clip_rect())));
+                        }
+                        if demo_menu && enabled && !local && !folder {
+                            demo_row(ui.ctx(), rect, selected);
                         }
                         if local && !folder && wearable_demo_input() {
                             ui.ctx()
@@ -955,25 +970,45 @@ impl TexturePicker {
                             );
                         }
                         x += 20.0;
-                        let cut = widgets::paint_elided(
-                            ui,
-                            &name,
-                            egui::pos2(x, rect.center().y),
-                            rect.right() - x - 4.0,
-                            egui::FontId::proportional(12.0),
-                            match (selected, enabled) {
-                                (true, _) => p.on_accent,
-                                (false, true) => p.ink,
-                                (false, false) => p.muted_dim,
-                            },
+                        // the menu's Rename edits the name in its row, as
+                        // in the inventory
+                        let label = egui::Rect::from_min_max(
+                            egui::pos2(x - 3.0, rect.top() + 1.0),
+                            egui::pos2(rect.right() - 4.0, rect.bottom() - 1.0),
                         );
+                        let renaming = !local && menu.as_mut().is_some_and(|menu| menu.row(ui, p, &world.inventory, id, label));
+                        let cut = !renaming
+                            && widgets::paint_elided(
+                                ui,
+                                &name,
+                                egui::pos2(x, rect.center().y),
+                                rect.right() - x - 4.0,
+                                egui::FontId::proportional(12.0),
+                                match (selected, enabled) {
+                                    (true, _) => p.on_accent,
+                                    (false, true) => p.ink,
+                                    (false, false) => p.muted_dim,
+                                },
+                            );
                         let response = if cut { response.on_hover_text(&name) } else { response };
                         let response = if locked {
                             response.on_hover_text(aurora_i18n::tr!("build-ui-texture-drop-restricted"))
                         } else {
                             response
                         };
-                        if response.clicked() {
+                        // LLFolderViewItem::handleRightMouseDown: a right-click
+                        // on a row not selected selects it first, with the
+                        // keyboard focus (LLFolderView::setSelection), so
+                        // onSelectionChange takes it as the user's choice
+                        // (user_action: setImageIDFromItem, then
+                        // commitIfImmediateSet) exactly as a click does; a
+                        // selected row stays as it is. A folder's menu leaves
+                        // the picker's choice alone (Aurora's picker selects
+                        // no folder), and the Local list has no menu
+                        // (l_name_list, MENU_NONE: LLScrollListCtrl::
+                        // handleRightMouseDown neither selects nor opens).
+                        let right_pick = response.secondary_clicked() && !local && !folder && !selected;
+                        if response.clicked() || right_pick {
                             if folder {
                                 if local {
                                     toggle_local = true;
@@ -1012,8 +1047,15 @@ impl TexturePicker {
                         {
                             chosen = self.selected;
                         }
+                        if !local && let Some(menu) = menu.as_mut() {
+                            menu.menu(&response, p, world, id);
+                        }
                     }
                 });
+            let menu_message = menu.as_ref().map(|menu| menu.message().to_owned()).filter(|text| !text.is_empty());
+            if let Some(menu) = menu {
+                menu.finish(ctx, &world.inventory);
+            }
             if let Some(id) = toggle {
                 self.tree.state.toggle(id, tab);
             }
@@ -1134,6 +1176,10 @@ impl TexturePicker {
                 }
             } else if self.uuid_error {
                 aurora_i18n::tr!("ui-texture-picker-invalid-uuid")
+            } else if let Some(text) = menu_message.as_deref() {
+                // what the inventory's menu answered, in the inventory's
+                // colour for it
+                text
             } else if self.confirm_blocked(&world.inventory, world.agent_id) {
                 aurora_i18n::tr!("ui-texture-picker-owner-only")
             } else if self
@@ -1155,7 +1201,13 @@ impl TexturePicker {
                 status.left_center(),
                 status.width(),
                 egui::FontId::proportional(11.0),
-                if self.uuid_error || self.pipette_error { p.danger } else { p.muted },
+                if self.uuid_error || self.pipette_error {
+                    p.danger
+                } else if menu_message.is_some() {
+                    p.warn
+                } else {
+                    p.muted
+                },
             );
             ui.interact(status, ui.scope_id().with("picker_status"), egui::Sense::hover())
                 .on_hover_text(message);
@@ -1235,6 +1287,75 @@ impl TexturePicker {
             self.live_preview_warning = None;
             self.stop_warning_live_preview |= std::mem::take(&mut self.live_preview_dont_show);
         }
+    }
+}
+
+/// `AURORA_DEMO_BUILD=faces-picker…,menu` (docs/TESTING.md): the build
+/// picker's row the demo right-clicks. Its capture keeps the window's
+/// focus, without which the inventory's menus close.
+pub(crate) fn demo_menu_input() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && std::env::var("AURORA_DEMO_BUILD")
+                .is_ok_and(|script| script.starts_with("faces-picker") && script.split(',').any(|part| part.trim() == "menu"))
+    })
+}
+
+/// The row the demo right-clicks: the selected one, else the first item
+/// shown; `frames` counts the passes that drew the list.
+#[derive(Clone, Copy)]
+struct DemoRow {
+    rect: egui::Rect,
+    selected: bool,
+    frame: u64,
+    frames: u32,
+}
+
+fn demo_row(ctx: &egui::Context, rect: egui::Rect, selected: bool) {
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    let id = egui::Id::unique("texture_picker_demo_row");
+    ctx.data_mut(|data| {
+        let mut row = data.get_temp::<DemoRow>(id).unwrap_or(DemoRow {
+            rect,
+            selected,
+            frame,
+            frames: 0,
+        });
+        if row.frame != frame {
+            row = DemoRow {
+                rect,
+                selected,
+                frame,
+                frames: row.frames + 1,
+            };
+        } else if selected && !row.selected {
+            row.rect = rect;
+            row.selected = true;
+        }
+        data.insert_temp(id, row);
+    });
+}
+
+/// The demo's right-click on the picker's row, once its list has been
+/// shown for 40 frames: the row's inventory menu opens there.
+pub(crate) fn demo_events(ctx: &egui::Context) -> Vec<egui::Event> {
+    if !demo_menu_input() {
+        return Vec::new();
+    }
+    let Some(row) = ctx.data(|data| data.get_temp::<DemoRow>(egui::Id::unique("texture_picker_demo_row"))) else {
+        return Vec::new();
+    };
+    let pos = row.rect.left_center() + egui::vec2(90.0, 0.0);
+    match row.frames {
+        40 => vec![egui::Event::PointerMoved(pos)],
+        41 | 43 => vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed: row.frames == 41,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        _ => Vec::new(),
     }
 }
 
@@ -1795,7 +1916,7 @@ pub(crate) mod tests {
             }
         }
 
-        fn frame(&mut self, events: Vec<egui::Event>, mut draw: impl FnMut(&egui::Context, &Palette)) {
+        pub(crate) fn frame(&mut self, events: Vec<egui::Event>, mut draw: impl FnMut(&egui::Context, &Palette)) {
             self.time += 1.0 / 60.0;
             let mut output = self.ctx.run_ui(
                 egui::RawInput {
@@ -1813,11 +1934,63 @@ pub(crate) mod tests {
             }
             output.textures_delta.clear();
             self.labels.clear();
+            let mut nested = Vec::new();
             for shape in output.shapes {
-                if let egui::Shape::Text(text) = shape.shape {
-                    self.labels
-                        .insert(text.galley.text().to_owned(), text.pos + text.galley.size() * 0.5);
+                match shape.shape {
+                    egui::Shape::Text(text) => {
+                        self.labels
+                            .insert(text.galley.text().to_owned(), text.pos + text.galley.size() * 0.5);
+                    }
+                    egui::Shape::Vec(shapes) => nested.extend(shapes),
+                    _ => {}
                 }
+            }
+            // texts grouped in a shape (a menu's rows), after the others
+            while let Some(shape) = nested.pop() {
+                match shape {
+                    egui::Shape::Text(text) => {
+                        self.labels
+                            .entry(text.galley.text().to_owned())
+                            .or_insert(text.pos + text.galley.size() * 0.5);
+                    }
+                    egui::Shape::Vec(shapes) => nested.extend(shapes),
+                    _ => {}
+                }
+            }
+        }
+
+        pub(crate) fn ctx(&self) -> &egui::Context {
+            &self.ctx
+        }
+
+        pub(crate) fn has(&self, label: &str) -> bool {
+            self.labels.contains_key(label)
+        }
+
+        pub(crate) fn copied(&self) -> &[String] {
+            &self.copied
+        }
+
+        /// A right-click on `label`, pressed and released.
+        pub(crate) fn right_click(&mut self, label: &str, mut draw: impl FnMut(&egui::Context, &Palette)) {
+            let pos = *self
+                .labels
+                .get(label)
+                .unwrap_or_else(|| panic!("missing picker label {label:?}: {:?}", self.labels.keys()));
+            self.time += 1.0;
+            for pressed in [true, false] {
+                self.frame(
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Secondary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    &mut draw,
+                );
             }
         }
 
@@ -1837,11 +2010,15 @@ pub(crate) mod tests {
             self.click("picker close", draw);
         }
 
-        pub(crate) fn click(&mut self, label: &str, mut draw: impl FnMut(&egui::Context, &Palette)) {
+        pub(crate) fn click(&mut self, label: &str, draw: impl FnMut(&egui::Context, &Palette)) {
             let pos = *self
                 .labels
                 .get(label)
                 .unwrap_or_else(|| panic!("missing picker label {label:?}: {:?}", self.labels.keys()));
+            self.click_at(pos, draw);
+        }
+
+        pub(crate) fn click_at(&mut self, pos: egui::Pos2, mut draw: impl FnMut(&egui::Context, &Palette)) {
             self.time += 1.0;
             for pressed in [true, false] {
                 self.frame(

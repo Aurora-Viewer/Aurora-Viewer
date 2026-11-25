@@ -932,7 +932,11 @@ fn build_mode(
             Command::Links(id),
         );
     }
-    extra::similar(&mut c, &organize, inv, id, single, all);
+    // Aurora's own advanced search runs in the list it was asked from: the
+    // texture picker's list has none (nor has the Legacy Viewer the entry)
+    if st.ui_id != super::picker_menu::PICKER || all {
+        extra::similar(&mut c, &organize, inv, id, single, all);
+    }
     if item.is_some() || all {
         c.add(
             "replace-links",
@@ -1397,8 +1401,12 @@ pub(super) fn execute(
         Command::Copy(ids, cut) => clipboard::store(ui.ctx(), st, ids, cut),
         Command::Move(id) => st.begin_move_to(id),
         Command::Paste(id, link) => clipboard::paste(inv, id, link, st, prefs, facts, actions),
+        // The picker's list shows no search: the original is shown in the
+        // main inventory, as show_item_original does for any panel
+        // (indra/newview/llinventoryfunctions.cpp).
+        Command::Original(id) if st.ui_id == super::picker_menu::PICKER => actions.push(InvAction::ShowMain(id)),
         Command::Original(id) => st.show_original(inv, id),
-        Command::Links(id) if st.ui_id == super::listings::PANEL => actions.push(InvAction::FindLinks(id)),
+        Command::Links(id) if super::hosted_panel(st.ui_id) => actions.push(InvAction::FindLinks(id)),
         Command::Links(id) => {
             st.find_links(id);
         }
