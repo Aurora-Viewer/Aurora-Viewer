@@ -1272,6 +1272,22 @@ import-confirm-price = これらのインポートにはL$ { $cost }かかりま
 import-confirm-shared-textures = 共有テクスチャは1回だけアップロードされます。
 import-price-unavailable = 価格を取得できません。アップロードの前にログインしてください。
 import-insufficient-balance = このインポートには残高が足りません。
+import-quick-textures = { $count ->
+   *[other] テクスチャ{ $count }件をL$ { $cost }でインポートしますか？
+}
+import-quick-materials = { $count ->
+   *[other] マテリアル{ $count }件をL$ { $cost }でインポートしますか？
+}
+import-quick-sounds = { $count ->
+   *[other] サウンド{ $count }件をL$ { $cost }でインポートしますか？
+}
+import-quick-textures-size = { $count ->
+   *[other] 2048 × 2048でインポートできるテクスチャがあります（{ $count }件）。サイズを選んでください：
+}
+import-quick-materials-size = { $count ->
+   *[other] 2048 × 2048でインポートできる画像を含むマテリアルがあります（{ $count }件）。サイズを選んでください：
+}
+import-quick-size-choice = { $size } px · L$ { $cost }
 import-invalid-request = ファイル名、フォルダ、設定を確認してください。
 import-service-unavailable = このリージョンは必要なアップロードサービスを提供していません。
 import-rejected = サーバーがインポートを拒否しました。下書きは保持されています。
@@ -15772,6 +15788,7 @@ toolbar-drawer-name = ドロワー名
 toolbar-drawer-settings = ドロワーを編集
 toolbar-drawer-default-mode = ボタンの既定の表示
 toolbar-drawer-default-help = 各ボタンの個別設定が優先されます。
+toolbar-drawer-closes = ボタンをクリックしたら閉じる
 toolbar-spacer = ブロック間の余白
 toolbar-add-spacer = ブロック間に余白を追加
 toolbar-block-settings = ブロックの設定

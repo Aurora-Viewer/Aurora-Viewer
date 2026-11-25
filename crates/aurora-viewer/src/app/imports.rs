@@ -8,6 +8,16 @@ use aurora_net::inventory::upload::{Prices, Receipt};
 const SOUND_PREVIEW: u64 = u64::MAX - 10;
 
 impl App {
+    /// The upload prices: the grid's, or the demo server's.
+    fn import_prices(&self) -> Prices {
+        let prices = if self.demo {
+            self.imports.demo_prices()
+        } else {
+            self.world.login.as_ref().map(|l| Prices::from_login(&l.raw)).unwrap_or_default()
+        };
+        prices.with_fallback(self.world.upload_cost)
+    }
+
     pub(super) fn show_imports(&mut self, ctx: &egui::Context, palette: &Palette) {
         if self.demo && !self.imports.demo_started {
             // keep a scenario's own balance (AURORA_DEMO_ACTIONS sets one)
@@ -91,6 +101,9 @@ impl App {
             self.send(NetCommand::DiscardMeshQuote(token));
         }
         let commands = self.imports.poll(ctx, &self.scene.jobs, &self.world, &self.settings.inventory);
+        let prices = self.import_prices();
+        self.imports
+            .advance_quick(ctx, &self.world, &self.settings.inventory, &self.settings.imports, &prices);
         self.save_import_animation_models();
         for command in commands {
             self.send(command);
@@ -432,17 +445,24 @@ impl App {
                     } else {
                         self.imports.choice
                     };
-                    let prices = if self.demo {
-                        self.imports.demo_prices()
-                    } else {
-                        self.world.login.as_ref().map(|l| Prices::from_login(&l.raw)).unwrap_or_default()
-                    };
-                    let prices = prices.with_fallback(self.world.upload_cost);
+                    let prices = self.import_prices();
                     self.imports.with_choice(choice, |imports| {
                         imports.start_confirmed(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
                     });
                 }
                 Action::Cancel => self.imports.cancel_remaining(),
+                Action::Quick(answer) => {
+                    let prices = self.import_prices();
+                    self.imports.answer_quick(
+                        answer,
+                        ctx,
+                        &self.scene.jobs,
+                        &self.world,
+                        &self.settings.inventory,
+                        &self.settings.imports,
+                        &prices,
+                    );
+                }
                 Action::Preview(id) => {
                     if self
                         .imports

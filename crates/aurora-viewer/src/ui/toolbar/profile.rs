@@ -121,7 +121,7 @@ fn fields(value: &serde_json::Value) -> bool {
     if let Some(value) = value.get("drawers")
         && !value.as_object().is_some_and(|map| {
             map.values()
-                .all(|drawer| known_fields(drawer, &["buttons", "mode"]) && drawer.get("buttons").is_none_or(buttons))
+                .all(|drawer| known_fields(drawer, &["buttons", "mode", "closes"]) && drawer.get("buttons").is_none_or(buttons))
         })
     {
         return false;

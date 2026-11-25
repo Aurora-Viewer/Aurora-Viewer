@@ -1013,6 +1013,7 @@ pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
                     super::drawers::Drawer {
                         buttons: vec![button("inventory"), button("people")],
                         mode: ButtonMode::IconsWithText,
+                        ..Default::default()
                     },
                 );
                 if mode == "blocks-unfold" {

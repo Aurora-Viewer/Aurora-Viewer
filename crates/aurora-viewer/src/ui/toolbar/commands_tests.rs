@@ -1055,6 +1055,7 @@ fn drawer_context_unfolds_a_separate_block_without_entering_edit_mode() {
                 drawers::Drawer {
                     buttons: vec![tests::button("people"), tests::button("worldmap")],
                     mode: ButtonMode::TextOnly,
+                    ..Default::default()
                 },
             );
             bench.settings.locked = locked;
@@ -2774,8 +2775,14 @@ fn opening_and_finishing_interface_editing_exposes_empty_targets_without_saving_
 
 #[test]
 fn drawers_open_toggle_and_run_the_original_commands_on_each_edge_in_both_styles() {
-    for classic in [false, true] {
-        for bar in Bar::ALL {
+    // "Close after a click on a button" (on by default) folds the drawer
+    // once its button ran; off, it stays open until its icon is pressed
+    for (classic, bar, closes) in [false, true].into_iter().flat_map(|classic| {
+        Bar::ALL
+            .into_iter()
+            .flat_map(move |bar| [(classic, bar, true), (classic, bar, false)])
+    }) {
+        {
             let mut bench = Bench {
                 native_top: true,
                 classic,
@@ -2784,8 +2791,11 @@ fn drawers_open_toggle_and_run_the_original_commands_on_each_edge_in_both_styles
             };
             bench.settings.compose_top();
             let id = drawers::create(&mut bench.settings, bar, &Layout::default());
+            assert!(bench.settings.drawers[&id].closes, "on by default");
             bench.state.pending = Some(Edit::DrawerInsert(id.clone(), bars::top::button("inventory", "folder-filled"), 0));
             assert!(bench.state.commit(&Layout::default(), &mut bench.settings));
+            bench.state.pending = Some(Edit::DrawerCloses(id.clone(), closes));
+            assert_eq!(bench.state.commit(&Layout::default(), &mut bench.settings), !closes);
             for _ in 0..4 {
                 bench.frame(Vec::new());
             }
@@ -2819,12 +2829,19 @@ fn drawers_open_toggle_and_run_the_original_commands_on_each_edge_in_both_styles
             bench.pointer(child, Some(true));
             bench.pointer(child, Some(false));
             assert_ne!(bench.panels.inventory, before, "native action on {bar:?}, classic={classic}");
-            bench.pointer(point, Some(true));
-            bench.pointer(point, Some(false));
             for _ in 0..3 {
                 bench.frame(Vec::new());
             }
-            assert!(bench.ctx.read_response(egui::Id::unique(("drawer_drop", &id))).is_none());
+            let open = bench.ctx.read_response(egui::Id::unique(("drawer_drop", &id))).is_some();
+            assert_eq!(open, !closes, "after a click on {bar:?}, classic={classic}");
+            if !closes {
+                bench.pointer(point, Some(true));
+                bench.pointer(point, Some(false));
+                for _ in 0..3 {
+                    bench.frame(Vec::new());
+                }
+                assert!(bench.ctx.read_response(egui::Id::unique(("drawer_drop", &id))).is_none());
+            }
         }
     }
 }

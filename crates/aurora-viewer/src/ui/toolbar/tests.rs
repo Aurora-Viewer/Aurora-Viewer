@@ -412,6 +412,9 @@ fn drawers_preserve_children_locations_and_support_move_insert_reorder_rename_an
 fn drawer_defaults_load_older_settings_and_mode_edits_respect_lock_and_identity() {
     let old: drawers::Drawer = serde_json::from_str(r#"{"buttons":[]}"#).expect("old drawer");
     assert_eq!(old.mode, ButtonMode::IconsWithText);
+    assert!(old.closes, "a drawer saved before closes after a click");
+    let kept: drawers::Drawer = serde_json::from_str(r#"{"buttons":[],"closes":false}"#).expect("drawer");
+    assert!(!kept.closes);
     let mut settings = ToolbarSettings {
         top: Vec::new(),
         buttons: Some(Vec::new()),
@@ -428,8 +431,15 @@ fn drawer_defaults_load_older_settings_and_mode_edits_respect_lock_and_identity(
         state.pending = Some(Edit::DrawerOptions(first.clone(), String::new(), mode, Default::default()));
         assert!(!state.commit(&layout(), &mut settings));
     }
+    state.pending = Some(Edit::DrawerCloses(first.clone(), false));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(!settings.drawers[&first].closes && settings.drawers[&second].closes);
+    state.pending = Some(Edit::DrawerCloses(first.clone(), false));
+    assert!(!state.commit(&layout(), &mut settings));
     settings.locked = true;
     let before = settings.clone();
+    state.pending = Some(Edit::DrawerCloses(first.clone(), true));
+    assert!(!state.commit(&layout(), &mut settings));
     state.pending = Some(Edit::DrawerOptions(
         first.clone(),
         String::new(),

@@ -719,7 +719,12 @@ checks the painted text across all renderers.
 One shared Aurora glass overlay groups flat native action buttons and a drag
 grip; the visible inspector or Permissions receives the accent state.
 Preferences > Inventory persists `imports.icon_bar` (off by default) for
-the shared Import shortcut/menu entry point. `imports/windows.rs` owns independent
+the shared Import shortcut/menu entry point. `imports/quick.rs` runs the
+toolbar's quick imports (textures, materials, sounds): the files picked go up
+without the list through `start_confirmed`, scoped to them alone
+(`Imports::with_only`), after one price or 1024 / 2048 question drawn by
+`imports/ui.rs`; anything that cannot go up as it is falls back to its type
+window. `imports/windows.rs` owns independent
 type windows (open state, selection, tab, filters and destination picker), over
 the shared drafts and asynchronous workers. Each type scopes its queue, prices,
 confirmation and delayed folder/mesh work; its geometry uses a separate Floater ID.

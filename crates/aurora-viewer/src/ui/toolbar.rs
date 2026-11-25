@@ -639,6 +639,8 @@ enum Edit {
     DrawerInsert(String, ToolButton, usize),
     DrawerFromDrop(Bar, String, Vec<ToolButton>, ButtonMode),
     DrawerOptions(String, String, ButtonMode, appearance::Appearance),
+    /// A drawer's "Close after a click".
+    DrawerCloses(String, bool),
     MenuInsert(String, String, usize),
 }
 
@@ -1208,6 +1210,7 @@ impl ToolbarUi {
             Edit::DrawerOptions(id, name, mode, value) => {
                 return drawers::update_options(settings, layout, id, name, *mode, value);
             }
+            Edit::DrawerCloses(id, closes) => return drawers::update_closes(settings, id, *closes),
             Edit::MoveBlock(bar, members, rank, separate) => {
                 return blocks::move_to(
                     settings,
@@ -1295,7 +1298,14 @@ impl ToolbarUi {
                 let contents = buttons
                     .splice(range, [crate::ui::bars::top::button(&id, "folder-filled")])
                     .collect();
-                settings.drawers.insert(id.clone(), drawers::Drawer { buttons: contents, mode });
+                settings.drawers.insert(
+                    id.clone(),
+                    drawers::Drawer {
+                        buttons: contents,
+                        mode,
+                        ..Default::default()
+                    },
+                );
                 settings.block_styles.insert(id.clone(), block_style);
                 settings.set_bar(bar, buttons);
                 self.selected = Some(id);
@@ -1624,7 +1634,8 @@ impl ToolbarUi {
             | Edit::RemoveBlock(..)
             | Edit::DividerAfter(..)
             | Edit::DrawerFromDrop(..)
-            | Edit::DrawerOptions(..) => unreachable!(),
+            | Edit::DrawerOptions(..)
+            | Edit::DrawerCloses(..) => unreachable!(),
         }
         if next == old && next_drawers == old_drawers {
             return false;

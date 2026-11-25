@@ -1293,6 +1293,27 @@ import-confirm-price = Ces imports coûteront { $cost } L$.
 import-confirm-shared-textures = Les textures partagées ne seront chargées qu’une fois.
 import-price-unavailable = Tarif indisponible ; connectez-vous avant l’import.
 import-insufficient-balance = Le solde ne permet pas cet import.
+import-quick-textures = { $count ->
+    [one] Importer 1 texture pour { $cost } L$ ?
+   *[other] Importer { $count } textures pour { $cost } L$ ?
+}
+import-quick-materials = { $count ->
+    [one] Importer 1 matériau pour { $cost } L$ ?
+   *[other] Importer { $count } matériaux pour { $cost } L$ ?
+}
+import-quick-sounds = { $count ->
+    [one] Importer 1 son pour { $cost } L$ ?
+   *[other] Importer { $count } sons pour { $cost } L$ ?
+}
+import-quick-textures-size = { $count ->
+    [one] Cette texture peut être importée en 2048 × 2048. Choisissez sa taille :
+   *[other] Certaines de ces { $count } textures peuvent être importées en 2048 × 2048. Choisissez leur taille :
+}
+import-quick-materials-size = { $count ->
+    [one] Ce matériau a des images qui peuvent être importées en 2048 × 2048. Choisissez leur taille :
+   *[other] Ces { $count } matériaux ont des images qui peuvent être importées en 2048 × 2048. Choisissez leur taille :
+}
+import-quick-size-choice = { $size } px · { $cost } L$
 import-invalid-request = Vérifiez le nom, le dossier et les paramètres du fichier.
 import-service-unavailable = Cette région ne propose pas le service d’import nécessaire.
 import-rejected = Le serveur a refusé l’import. Le brouillon est conservé.
@@ -15939,6 +15960,7 @@ toolbar-drawer-name = Nom du tiroir
 toolbar-drawer-settings = Modifier le tiroir
 toolbar-drawer-default-mode = Affichage par défaut des boutons
 toolbar-drawer-default-help = Les choix individuels des boutons restent prioritaires.
+toolbar-drawer-closes = Fermer après un clic sur un bouton
 toolbar-spacer = Espacement entre blocs
 toolbar-add-spacer = Ajouter un espacement entre blocs
 toolbar-block-settings = Réglages du bloc

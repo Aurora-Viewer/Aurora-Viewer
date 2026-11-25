@@ -16747,7 +16747,9 @@ impl App {
                 self.egui_ctx.request_repaint();
             }
             BarAction::ImportType(choice) => {
-                self.imports.open_type_window(&self.egui_ctx, choice);
+                // the file chooser at once (human request, 2026-11-25)
+                self.imports
+                    .import_type(&self.scene.jobs, &self.egui_ctx, self.settings.imports.texture(), choice);
                 self.egui_ctx.request_repaint();
             }
             BarAction::ImportBar => {

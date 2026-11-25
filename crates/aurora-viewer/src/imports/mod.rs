@@ -18,6 +18,7 @@ pub mod mesh;
 pub mod permissions;
 pub mod persistence;
 pub mod preview;
+pub mod quick;
 pub mod sound;
 mod stage;
 #[cfg(test)]
@@ -583,6 +584,11 @@ pub struct Imports {
     queue: VecDeque<Step>,
     current: Option<(Uuid, Step)>,
     pending_confirmed: Option<automatic::Confirmed>,
+    /// The toolbar's quick import under way (`quick`).
+    pub quick: Option<quick::Quick>,
+    /// The entries an upload is for, when not all the selected ones
+    /// (a quick import's).
+    only: Option<Vec<Uuid>>,
     uploaded: HashMap<Uuid, Receipt>,
     pub play_request: Option<Uuid>,
     pub sound_playing: Option<Uuid>,
@@ -645,6 +651,8 @@ impl Default for Imports {
             queue: VecDeque::new(),
             current: None,
             pending_confirmed: None,
+            quick: None,
+            only: None,
             uploaded: HashMap::new(),
             play_request: None,
             sound_playing: None,
@@ -1273,6 +1281,7 @@ impl Imports {
                     let failed = std::mem::take(&mut self.picker_files)
                         .then(|| entries.iter().find(|e| matches!(e.status, Status::Error(_))).map(|e| e.id))
                         .flatten();
+                    self.quick_loaded(request, &entries);
                     self.entries.extend(entries);
                     if let Some(choice) = loaded_choice {
                         self.reconcile_window(choice);

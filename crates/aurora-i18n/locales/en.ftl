@@ -1293,6 +1293,27 @@ import-confirm-price = These imports will cost L${ $cost }.
 import-confirm-shared-textures = Shared textures will only be uploaded once.
 import-price-unavailable = Price unavailable; log in before uploading.
 import-insufficient-balance = Your balance is insufficient for this import.
+import-quick-textures = { $count ->
+    [one] Import 1 texture for L${ $cost }?
+   *[other] Import { $count } textures for L${ $cost }?
+}
+import-quick-materials = { $count ->
+    [one] Import 1 material for L${ $cost }?
+   *[other] Import { $count } materials for L${ $cost }?
+}
+import-quick-sounds = { $count ->
+    [one] Import 1 sound for L${ $cost }?
+   *[other] Import { $count } sounds for L${ $cost }?
+}
+import-quick-textures-size = { $count ->
+    [one] This texture can be imported at 2048 × 2048. Choose its size:
+   *[other] Some of these { $count } textures can be imported at 2048 × 2048. Choose their size:
+}
+import-quick-materials-size = { $count ->
+    [one] This material has images that can be imported at 2048 × 2048. Choose their size:
+   *[other] These { $count } materials have images that can be imported at 2048 × 2048. Choose their size:
+}
+import-quick-size-choice = { $size } px · L${ $cost }
 import-invalid-request = Check the file name, folder and settings.
 import-service-unavailable = This region does not provide the required upload service.
 import-rejected = The server refused the import. Your draft is preserved.
@@ -15930,6 +15951,7 @@ toolbar-drawer-name = Drawer name
 toolbar-drawer-settings = Edit drawer
 toolbar-drawer-default-mode = Default display of buttons
 toolbar-drawer-default-help = Individual button choices override this default.
+toolbar-drawer-closes = Close after a click on a button
 toolbar-spacer = Block spacing
 toolbar-add-spacer = Add block spacing
 toolbar-block-settings = Block settings

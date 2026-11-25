@@ -18,6 +18,9 @@ pub const PREFIX: &str = "drawer:";
 pub struct Drawer {
     pub buttons: Vec<ToolButton>,
     pub mode: ButtonMode,
+    /// The drawer folds once one of its buttons is used (human request,
+    /// 2026-11-25; on by default, and for the drawers saved before).
+    pub closes: bool,
 }
 
 impl Default for Drawer {
@@ -25,6 +28,7 @@ impl Default for Drawer {
         Self {
             buttons: Vec::new(),
             mode: ButtonMode::IconsWithText,
+            closes: true,
         }
     }
 }
@@ -45,6 +49,7 @@ pub(super) fn show_settings(ctx: &egui::Context, p: &Palette, toolbar: &mut Tool
     let mut open = true;
     let mut name = button.tooltip.clone();
     let mut mode = drawer.mode;
+    let mut closes = drawer.closes;
     let mut own = settings.appearance.get(&id).cloned().unwrap_or_default();
     let before = (name.clone(), mode, own.clone());
     let mut window = widgets::Floater::new(
@@ -85,6 +90,12 @@ pub(super) fn show_settings(ctx: &egui::Context, p: &Palette, toolbar: &mut Tool
                             .small()
                             .color(p.muted),
                     );
+                    ui.add_space(12.0);
+                    let check = widgets::checkbox(ui, p, &mut closes, aurora_i18n::tr!("toolbar-drawer-closes"));
+                    #[cfg(test)]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(Id::unique(("drawer_closes_check", &id)), check.rect));
+                    let _ = check;
                 });
             });
     });
@@ -95,6 +106,8 @@ pub(super) fn show_settings(ctx: &egui::Context, p: &Palette, toolbar: &mut Tool
     }
     if (name.clone(), mode, own.clone()) != before {
         toolbar.pending = Some(Edit::DrawerOptions(id.clone(), name, mode, own));
+    } else if closes != drawer.closes {
+        toolbar.pending = Some(Edit::DrawerCloses(id.clone(), closes));
     }
     if !open {
         toolbar.drawer_editor = None;
@@ -282,6 +295,7 @@ pub(super) fn group_drop(
         Drawer {
             buttons: std::iter::once(target).chain(sources).collect(),
             mode,
+            ..Drawer::default()
         },
     );
     *settings = next;
@@ -293,6 +307,48 @@ pub(super) fn contents(settings: &ToolbarSettings, bar: Bar, anchor: &str, layou
         (Some(id.to_owned()), settings.drawers[id].buttons.clone())
     } else {
         (None, settings.bar(bar, layout).to_vec())
+    }
+}
+
+/// "Close after a click" of the drawer `id`.
+pub(super) fn update_closes(settings: &mut ToolbarSettings, id: &str, closes: bool) -> bool {
+    match settings.drawers.get_mut(id) {
+        Some(drawer) if !settings.locked && drawer.closes != closes => {
+            drawer.closes = closes;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// A click on one of the drawer's buttons (not a block, a separator or a
+/// divider, nor while the toolbars are edited) folds a drawer that closes:
+/// once the menu or the window the click opened leaves no popup. Only a click
+/// that reached the drawer counts: one on a window laid over it, or on a
+/// button scrolled out of its `visible` area, does not.
+fn close_after_click(
+    ctx: &egui::Context,
+    command: &str,
+    buttons: &[ToolButton],
+    rects: &[egui::Rect],
+    visible: egui::Rect,
+    layer: egui::LayerId,
+    editing: bool,
+) {
+    let Some(pos) = ctx.input(|input| input.pointer.any_click().then(|| input.pointer.interact_pos()).flatten()) else {
+        return;
+    };
+    if editing || !visible.contains(pos) || ctx.layer_id_at(pos) != Some(layer) {
+        return;
+    }
+    let used = buttons.iter().zip(rects).any(|(button, rect)| {
+        rect.contains(pos)
+            && !structure::is_block(&button.command)
+            && !structure::is_separator(&button.command)
+            && !structure::is_divider(&button.command)
+    });
+    if used {
+        ctx.data_mut(|data| data.insert_temp(area_id(command).with("close"), true));
     }
 }
 
@@ -350,6 +406,11 @@ pub fn show(
     }
     if open && ctx.input(|input| input.key_pressed(egui::Key::Escape)) && !egui::Popup::is_any_open(ctx) {
         open = false;
+    }
+    let close = area_id(&button.command).with("close");
+    if ctx.data(|data| data.get_temp::<bool>(close)).unwrap_or(false) && !egui::Popup::is_any_open(ctx) {
+        ctx.data_mut(|data| data.remove::<bool>(close));
+        open &= !drawer.closes;
     }
     if !open {
         set_open(ctx, &button.command, false);
@@ -553,6 +614,9 @@ pub fn show(
                     if let Some(edit) = insertion_edit(&button.command, rank, &drag) {
                         toolbar.pending = Some(edit);
                     }
+                }
+                if drawer.closes {
+                    close_after_click(ctx, &button.command, buttons, &rects, scroll.inner_rect, ui.layer_id(), editing);
                 }
                 if !matches!(action, bars::BarAction::None) {
                     toolbar.drawer_action = Some(action);
