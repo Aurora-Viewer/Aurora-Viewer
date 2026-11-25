@@ -13858,8 +13858,8 @@ What the inventory must show with these scenarios:
   build): `AURORA_RT_RAW=1` skips both of the traced shadows' denoisers,
   the temporal history and the à-trous filter (ReSTIR's reuse of last
   frame's light choices stays), `spatial` the à-trous filter only, `0`
-  neither; with DLSS Ray Reconstruction drawing, the default skips the
-  local lights' à-trous filter alone, and these force it either way.
+  neither; with DLSS Ray Reconstruction drawing, the default keeps every
+  pass's own denoiser, and these force it either way.
   `AURORA_RT_GI_RAW=1` hands the ray-traced indirect light to Ray
   Reconstruction without its own à-trous filter too (its history stays;
   the reflections keep theirs unless `AURORA_RT_RAW` says otherwise).

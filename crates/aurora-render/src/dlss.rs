@@ -3803,8 +3803,8 @@ mod imp {
                 .sum()
         }
 
-        /// Ray Reconstruction draws the frames: the renderer's
-        /// own ray-tracing denoisers step aside.
+        /// Ray Reconstruction draws the frames, on top of the
+        /// renderer's own ray-tracing denoisers.
         pub fn rr_on(&self) -> bool {
             self.rr.is_some() && self.on()
         }

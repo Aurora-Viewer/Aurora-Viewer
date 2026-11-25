@@ -1804,8 +1804,8 @@ pub struct Settings {
     /// The model DLSS draws with: 0 NVIDIA's choice per mode, 1 K, 2 L,
     /// 3 M (`aurora_render::DlssModel`). Like `dlss`, this computer's.
     pub dlss_model: u8,
-    /// With DLSS, its Ray Reconstruction denoises the ray-traced light in
-    /// Aurora's place (experimental, off by default; `AURORA_DLSS_RR`
+    /// With DLSS, its Ray Reconstruction denoises the ray-traced light on
+    /// top of Aurora's own filters (experimental, off by default; `AURORA_DLSS_RR`
     /// overrides it for a run). Like `dlss`, this computer's.
     pub dlss_rr: bool,
     /// The model Ray Reconstruction draws with: 0 NVIDIA's choice, 1 D,
