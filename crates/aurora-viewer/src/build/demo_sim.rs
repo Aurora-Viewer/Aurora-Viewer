@@ -159,6 +159,15 @@ fn script_copy_demo() -> bool {
 }
 
 impl DemoSim {
+    /// Ends every object's current edit, as if `EDIT_GAP` had passed: the
+    /// next update starts a new undo step (tests, without a sleep).
+    #[cfg(test)]
+    pub(crate) fn end_edits(&mut self) {
+        for h in self.history.values_mut() {
+            h.last = None;
+        }
+    }
+
     pub fn save_script(
         &mut self,
         target: aurora_net::scripts::ScriptTarget,
@@ -529,6 +538,8 @@ impl DemoSim {
             BuildCmd::Delink { handle, local_ids } => {
                 let mut objects = Vec::new();
                 for id in Self::uuids(world, *handle, local_ids) {
+                    // its placements were offsets from the root: stale now
+                    self.history.remove(&id);
                     let Some(idx) = world.objects.index_of_uuid(&id) else { continue };
                     let Some(o) = world.objects.get(idx) else { continue };
                     let Some((p, r)) = super::replace::region_transform(world, idx) else {
@@ -553,6 +564,9 @@ impl DemoSim {
                 };
                 let mut objects = Vec::new();
                 for id in &ids {
+                    // its placements were in the region (or another root's
+                    // frame): stale once it is part of this linkset
+                    self.history.remove(id);
                     let Some(idx) = world.objects.index_of_uuid(id) else { continue };
                     let Some(o) = world.objects.get(idx) else { continue };
                     let Some((op, or)) = super::replace::region_transform(world, idx) else {

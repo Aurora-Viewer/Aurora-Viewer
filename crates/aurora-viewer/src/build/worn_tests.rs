@@ -169,6 +169,40 @@ fn undo_follows_the_legacy_rights_on_our_own_object() {
     assert!(undo_allowed(&world, root, false) && !undo_allowed(&world, root, true));
     set(&mut world, OBJECT_MODIFY);
     assert!(undo_allowed(&world, root, false) && undo_allowed(&world, root, true));
+    // Move alone does not undo a permanent (pathfinding) object outside the
+    // agent's region: isPermanentEnforced
+    set(&mut world, OBJECT_MOVE | crate::ui::context::flags::AFFECTS_NAVMESH);
+    world.main_region = Some(world.objects.get(root).unwrap().key.region);
+    assert!(undo_allowed(&world, root, false));
+    world.main_region = None;
+    assert!(!undo_allowed(&world, root, false));
+    set(&mut world, OBJECT_MODIFY | crate::ui::context::flags::AFFECTS_NAVMESH);
+    assert!(undo_allowed(&world, root, false));
+}
+
+#[test]
+fn undo_of_a_mixed_selection_sends_only_our_own_attachment() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let mut world = world();
+    let hat = local(&world, 9100);
+    let (root, _) = worn(&world);
+    for idx in [hat, root] {
+        world.objects.get_mut(idx).unwrap().update_flags |= OBJECT_MODIFY | OBJECT_MOVE;
+    }
+    let s = BuildSettings::default();
+    let mut tool = BuildTool::default();
+    tool.click_select(&mut world, &s, Some(root), false);
+    tool.click_select(&mut world, &s, Some(hat), true);
+    assert_eq!(tool.roots(&world).len(), 2, "both attachments are selected");
+    tool.out.clear();
+    for redo in [false, true] {
+        assert!(tool.can_undo(&world, redo));
+        tool.undo(&world, redo);
+    }
+    let id = world.objects.get(root).unwrap().full_id;
+    assert_eq!(tool.out.len(), 2, "{:?}", tool.out);
+    assert!(matches!(&tool.out[0], NetCommand::Build(BuildCmd::Undo { ids, .. }) if ids == &[id]));
+    assert!(matches!(&tool.out[1], NetCommand::Build(BuildCmd::Redo { ids, .. }) if ids == &[id]));
 }
 
 #[test]
@@ -311,7 +345,7 @@ fn undo_puts_back_a_moved_object_of_ours_in_the_demo() {
     tool.open_build(Tool::Edit);
     tool.click_select(&mut world, &s, Some(obj), false);
     let mut sim = super::demo_sim::DemoSim::default();
-    let mut reply = |world: &mut World, tool: &mut BuildTool| {
+    let reply = |world: &mut World, tool: &mut BuildTool, sim: &mut super::demo_sim::DemoSim| {
         for c in std::mem::take(&mut tool.out) {
             if let NetCommand::Build(c) = c {
                 for ev in sim.reply(world, &c) {
@@ -320,27 +354,27 @@ fn undo_puts_back_a_moved_object_of_ours_in_the_demo() {
             }
         }
     };
-    reply(&mut world, &mut tool);
+    reply(&mut world, &mut tool, &mut sim);
     let at = |world: &World| world.objects.get(obj).unwrap().position;
     tool.set_transform(&mut world, &s, Some(start + Vec3::X), None, None, true);
-    reply(&mut world, &mut tool);
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    reply(&mut world, &mut tool, &mut sim);
+    sim.end_edits();
     tool.set_transform(&mut world, &s, Some(start + Vec3::X * 2.0), None, None, true);
-    reply(&mut world, &mut tool);
+    reply(&mut world, &mut tool, &mut sim);
     assert!(at(&world).abs_diff_eq(start + Vec3::X * 2.0, 1e-4));
     // the simulator's answer to Undo waits out our last edit's (edit_echo.rs)
     let settle = |world: &mut World| world.objects.expire_sent_edits(Instant::now() + std::time::Duration::from_secs(3));
     assert!(tool.can_undo(&world, false));
     tool.undo(&world, false);
-    reply(&mut world, &mut tool);
+    reply(&mut world, &mut tool, &mut sim);
     settle(&mut world);
     assert!(at(&world).abs_diff_eq(start + Vec3::X, 1e-4), "{:?}", at(&world));
     tool.undo(&world, false);
-    reply(&mut world, &mut tool);
+    reply(&mut world, &mut tool, &mut sim);
     settle(&mut world);
     assert!(at(&world).abs_diff_eq(start, 1e-4), "{:?}", at(&world));
     tool.undo(&world, true);
-    reply(&mut world, &mut tool);
+    reply(&mut world, &mut tool, &mut sim);
     settle(&mut world);
     assert!(at(&world).abs_diff_eq(start + Vec3::X, 1e-4), "{:?}", at(&world));
 }
@@ -415,4 +449,109 @@ fn a_prim_we_create_in_the_demo_is_our_own_work() {
         .expect("properties");
     let me = crate::demo::DEMO_AGENT;
     assert_eq!((props.creator_id, props.owner_id, props.last_owner_id), (me, me, me));
+}
+
+#[test]
+fn undo_after_link_or_unlink_in_the_demo_does_not_throw_a_prim_away() {
+    use aurora_net::build::TransformUpdate;
+    let mut world = world();
+    let ours: Vec<usize> = world
+        .objects
+        .iter()
+        .filter(|(i, o)| {
+            selectable(&world, *i)
+                && select_type(&world, *i) == SelectType::World
+                && o.parent_id == 0
+                && o.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
+                && world.objects.iter().all(|(_, c)| c.parent_id != o.key.local_id)
+        })
+        .map(|(i, _)| i)
+        .take(2)
+        .collect();
+    let [root, child] = ours[..] else {
+        panic!("two single prims of ours")
+    };
+    let handle = world.objects.get(root).unwrap().key.region;
+    assert_eq!(handle, world.objects.get(child).unwrap().key.region);
+    let (root_id, child_id) = (
+        world.objects.get(root).unwrap().key.local_id,
+        world.objects.get(child).unwrap().key.local_id,
+    );
+    let uuid = world.objects.get(child).unwrap().full_id;
+    let mut sim = super::demo_sim::DemoSim::default();
+    let send = |world: &mut World, sim: &mut super::demo_sim::DemoSim, c: BuildCmd| {
+        for ev in sim.reply(world, &c) {
+            world.apply(ev);
+        }
+    };
+    let nudge = |world: &World| BuildCmd::Transform {
+        handle,
+        updates: vec![TransformUpdate {
+            local_id: child_id,
+            position: Some(world.objects.get(child).unwrap().position + Vec3::X * 0.5),
+            rotation: None,
+            scale: None,
+            linked: false,
+            uniform: false,
+        }],
+    };
+    let undo = BuildCmd::Undo {
+        handle,
+        ids: vec![uuid],
+        group_id: Uuid::nil(),
+    };
+    let settle = |world: &mut World| world.objects.expire_sent_edits(Instant::now() + std::time::Duration::from_secs(3));
+    let region_pos = |world: &World| super::replace::region_transform(world, child).unwrap().0;
+    // a move in the region, then Link: the old region position must not
+    // come back as an offset from the root
+    send(
+        &mut world,
+        &mut sim,
+        BuildCmd::Select {
+            handle,
+            local_ids: vec![root_id, child_id],
+        },
+    );
+    let c = nudge(&world);
+    send(&mut world, &mut sim, c);
+    sim.end_edits();
+    send(
+        &mut world,
+        &mut sim,
+        BuildCmd::Link {
+            handle,
+            local_ids: vec![root_id, child_id],
+        },
+    );
+    assert_eq!(world.objects.get(child).unwrap().parent_id, root_id);
+    let linked_at = region_pos(&world);
+    send(&mut world, &mut sim, undo.clone());
+    settle(&mut world);
+    assert!(
+        region_pos(&world).abs_diff_eq(linked_at, 1e-3),
+        "{:?} vs {linked_at:?}",
+        region_pos(&world)
+    );
+    // a move as a linked part (an offset), then Unlink: the offset must not
+    // come back as a region position
+    let c = nudge(&world);
+    send(&mut world, &mut sim, c);
+    sim.end_edits();
+    send(
+        &mut world,
+        &mut sim,
+        BuildCmd::Delink {
+            handle,
+            local_ids: vec![child_id],
+        },
+    );
+    assert_eq!(world.objects.get(child).unwrap().parent_id, 0);
+    let unlinked_at = region_pos(&world);
+    send(&mut world, &mut sim, undo);
+    settle(&mut world);
+    assert!(
+        region_pos(&world).abs_diff_eq(unlinked_at, 1e-3),
+        "{:?} vs {unlinked_at:?}",
+        region_pos(&world)
+    );
 }
