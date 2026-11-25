@@ -67,6 +67,22 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0.0..=128.0,
                     " m",
                 );
+                // an Aurora addition, for the plates and the classic tags
+                cx.slider_whole(
+                    tr!("ui-options-name-tag-size"),
+                    tr!("ui-options-name-tag-size-help"),
+                    &field!(name_tag_size),
+                    crate::settings::NAME_TAG_SIZE_MIN..=crate::settings::NAME_TAG_SIZE_MAX,
+                    " %",
+                );
+                // FSNameTagZOffsetCorrection (panel_preferences_colors.xml)
+                cx.slider(
+                    tr!("ui-options-name-tag-height"),
+                    tr!("ui-options-name-tag-height-help"),
+                    &field!(name_tag_offset),
+                    crate::settings::NAME_TAG_OFFSET_MIN..=crate::settings::NAME_TAG_OFFSET_MAX,
+                    " m",
+                );
                 cx.toggle(
                     tr!("ui-options-contact-markers"),
                     tr!("ui-options-contact-markers-help"),

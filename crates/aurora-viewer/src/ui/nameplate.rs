@@ -971,6 +971,10 @@ pub struct Plates {
     pub friends_only_full: bool,
     /// Preferences › Aurora › "Plate style": complete, icon or name only.
     pub style: crate::settings::PlateStyle,
+    /// Preferences › Avatars › "Name tag size", 1 for 100 %: every measure
+    /// of the plates follows it (`paint::Env::scale`). 0 reads as 1, for a
+    /// `Plates::default()` the app has not set yet.
+    pub size: f32,
     /// Preferences › Avatars › "Tint friends' plates": the friends' color
     /// of Preferences › Colors, read each frame so a new color shows at once.
     pub friend_tint: bool,
@@ -1033,6 +1037,9 @@ impl Plates {
     ) {
         let mut env = paint::Env::new(painter, p, icons, now);
         env.friend = self.friend_tint.then(|| crate::ui::colors::c(crate::ui::colors::get().tag_friend));
+        if self.size > 0.0 {
+            env.scale = SCALE * self.size;
+        }
         // nearest first (`tags` ends with them): the level of each plate,
         // the complete ones limited in number, and the blur for the first ones
         let mut glass_left = if p.panel_alpha < 255 { MAX_GLASS } else { 0 };

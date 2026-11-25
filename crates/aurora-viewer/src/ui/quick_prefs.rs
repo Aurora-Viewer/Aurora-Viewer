@@ -3,7 +3,7 @@
 //!
 //! Port of FloaterQuickPrefs (newview/quickprefs.cpp, floater_quickprefs.xml,
 //! app_settings/quick_preferences.xml, originally LGPL 2.1). From top to
-//! bottom, like the Legacy Viewer: the user-defined rows (here seven of its
+//! bottom, like the Legacy Viewer: the user-defined rows (here eight of its
 //! nine default ones, each bound to the typed setting Preferences edits), a
 //! line, "Hover Height", "Max Bandwidth", "Max Complexity" (with "No Limit" at the
 //! end of the slider), then the environment block (Sky, Water, Day Cycle,
@@ -15,8 +15,9 @@
 //! saves the change like a change of Preferences, so the two never differ.
 //! Some Aurora ranges differ from the Legacy Viewer's (volume LOD 0.5..4
 //! against 0..4, fully rendered avatars
-//! 1..100 against 1..66, bandwidth 50..4000 against 50..3000). Left out for
-//! lack of an Aurora setting: FSNameTagZOffsetCorrection ("Tags Offset") and
+//! 1..100 against 1..66, bandwidth 50..4000 against 50..3000); "Tags
+//! Offset" shows metres (-0.5..0.5 by 0.1) where the Legacy Viewer shows its
+//! tenths (-5..5 by 1). Left out for lack of an Aurora setting:
 //! DebugShowColor ("Color Under Cursor"). Not here yet: the editor of the
 //! rows (any debug setting, add / remove / reorder, QuickPrefsEditMode).
 
@@ -51,6 +52,8 @@ pub enum Slot {
     Lod,
     /// IndirectMaxNonImpostors.
     Avatars,
+    /// FSNameTagZOffsetCorrection ("Tags Offset", Preferences › Avatars).
+    TagOffset,
     /// ThrottleBandwidthKBPS (Preferences › Network).
     Bandwidth,
 }
@@ -58,7 +61,14 @@ pub enum Slot {
 impl Slot {
     /// The rows of the Legacy Viewer's quick_preferences.xml that Aurora has
     /// a setting for, in its order.
-    pub const ROWS: [Slot; 5] = [Slot::DrawDistance, Slot::Particles, Slot::PhysicsDetail, Slot::Lod, Slot::Avatars];
+    pub const ROWS: [Slot; 6] = [
+        Slot::DrawDistance,
+        Slot::Particles,
+        Slot::PhysicsDetail,
+        Slot::Lod,
+        Slot::Avatars,
+        Slot::TagOffset,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -68,6 +78,7 @@ impl Slot {
             Slot::Lod => aurora_i18n::tr!("ui-options-level-of-detail-lod"),
             Slot::Avatars => aurora_i18n::tr!("ui-options-fully-rendered-avatars"),
             Slot::Bandwidth => aurora_i18n::tr!("ui-options-maximum-bandwidth"),
+            Slot::TagOffset => aurora_i18n::tr!("ui-options-name-tag-height"),
         }
     }
 
@@ -79,6 +90,7 @@ impl Slot {
             Slot::Lod => aurora_i18n::tr!("ui-options-lod-factor-for-sl-objects-and-meshes-2-by"),
             Slot::Avatars => aurora_i18n::tr!("ui-options-nearest-avatars-are-fully-rendered-others-use-impostors-periodically"),
             Slot::Bandwidth => aurora_i18n::tr!("ui-options-maximum-bandwidth-hint"),
+            Slot::TagOffset => aurora_i18n::tr!("ui-options-name-tag-height-help"),
         }
     }
 
@@ -91,6 +103,7 @@ impl Slot {
             Slot::Lod => 0.5..=4.0,
             Slot::Avatars => 1.0..=100.0,
             Slot::Bandwidth => 50.0..=f64::from(aurora_net::throttle::DEFAULT_KBPS),
+            Slot::TagOffset => f64::from(crate::settings::NAME_TAG_OFFSET_MIN)..=f64::from(crate::settings::NAME_TAG_OFFSET_MAX),
         }
     }
 
@@ -102,17 +115,23 @@ impl Slot {
             Slot::PhysicsDetail => Some(0.05),
             Slot::Lod => Some(0.125),
             Slot::Bandwidth => Some(50.0),
+            // the Legacy Viewer's increment of 1 tenth
+            Slot::TagOffset => Some(0.1),
         }
     }
 
     /// Fixed decimals of the Preferences row's value box (none: egui's).
     pub fn decimals(self) -> Option<usize> {
-        (self == Slot::PhysicsDetail).then_some(2)
+        match self {
+            Slot::PhysicsDetail => Some(2),
+            Slot::TagOffset => Some(1),
+            _ => None,
+        }
     }
 
     pub fn suffix(self) -> &'static str {
         match self {
-            Slot::DrawDistance => " m",
+            Slot::DrawDistance | Slot::TagOffset => " m",
             Slot::Bandwidth => aurora_i18n::tr!("bandwidth-kbps-suffix"),
             _ => "",
         }
@@ -127,6 +146,7 @@ impl Slot {
             Slot::Lod => f64::from(s.lod_factor),
             Slot::Avatars => f64::from(s.max_avatars),
             Slot::Bandwidth => f64::from(s.bandwidth_kbps),
+            Slot::TagOffset => f64::from(s.name_tag_offset),
         }
     }
 
@@ -141,6 +161,7 @@ impl Slot {
             Slot::Lod => s.lod_factor = value as f32,
             Slot::Avatars => s.max_avatars = value.round() as u32,
             Slot::Bandwidth => s.bandwidth_kbps = value.round() as u32,
+            Slot::TagOffset => s.name_tag_offset = value as f32,
         }
     }
 }
@@ -359,6 +380,7 @@ fn slot_row(ui: &mut egui::Ui, p: &Palette, settings: &mut Settings, slot: Slot)
             Slot::Lod => edit!(lod_factor),
             Slot::Avatars => edit!(max_avatars),
             Slot::Bandwidth => edit!(bandwidth_kbps),
+            Slot::TagOffset => edit!(name_tag_offset),
         }
     })
     .inner
@@ -428,13 +450,14 @@ fn name_tags_row(ui: &mut egui::Ui, p: &Palette, settings: &mut Settings) -> boo
 mod tests {
     use super::*;
 
-    const ALL: [Slot; 6] = [
+    const ALL: [Slot; 7] = [
         Slot::DrawDistance,
         Slot::Particles,
         Slot::PhysicsDetail,
         Slot::Lod,
         Slot::Avatars,
         Slot::Bandwidth,
+        Slot::TagOffset,
     ];
 
     /// What Preferences does to a field: the slider writes the value, the
@@ -448,6 +471,7 @@ mod tests {
             Slot::Lod => s.lod_factor = value as f32,
             Slot::Avatars => s.max_avatars = value as u32,
             Slot::Bandwidth => s.bandwidth_kbps = value as u32,
+            Slot::TagOffset => s.name_tag_offset = value as f32,
         }
         s.sanitized()
     }

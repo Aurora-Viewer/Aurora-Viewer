@@ -867,6 +867,9 @@ pub struct AvatarSample {
 }
 
 pub struct Scene {
+    /// Preferences › Avatars › "Name tag height" (FSNameTagZOffsetCorrection),
+    /// in metres, set by the app each frame: `name_tag_anchor`.
+    pub name_tag_offset: f32,
     /// Aurora Weather: the lying snow's detail texture.
     pub snow_detail: snow_detail::SnowDetail,
     /// Aurora Weather: the snow gathered on the avatars near the camera.
@@ -1726,6 +1729,7 @@ impl Scene {
         default_motions::register(&mut anims, &avatar_lib.rig);
         let physics_rig = body_physics::PhysicsRig::new(&avatar_lib.shape_params, &avatar_lib.rig).map(Arc::new);
         Scene {
+            name_tag_offset: 0.0,
             snow_detail: Default::default(),
             avatar_snow: Default::default(),
             snow_trails: Default::default(),
@@ -6486,9 +6490,11 @@ impl Scene {
     /// Stable name tag above the avatar root, also used for click depth.
     /// Its height includes shape, mesh offsets and translation deformers;
     /// neither body/head rotations nor animation bobbing move the anchor.
+    /// `name_tag_offset` (FSNameTagZOffsetCorrection) raises or lowers it,
+    /// and the contact markers above the name with it.
     pub fn name_tag_anchor(&self, id: &Uuid, root: Vec3) -> Vec3 {
         let height = self.motions.get(id).and_then(|c| c.name_tag_height).map_or(1.05, |h| h + 0.2);
-        root + Vec3::Z * height
+        root + Vec3::Z * (height + self.name_tag_offset)
     }
 
     /// Last rendered shape/pose, including mesh joint overrides, for framing.

@@ -18542,6 +18542,9 @@ impl App {
                     self.draw_focus_point(&ctx, projector);
                 }
                 let classic_tags = self.classic_name_tags();
+                // AURORA_NAME_TAG_OFFSET / _SIZE: the setting for this run, without saving it
+                self.scene.name_tag_offset = crate::demo::tags::tag_offset().unwrap_or(self.settings.name_tag_offset);
+                self.plates.size = crate::demo::tags::tag_size().unwrap_or(self.settings.name_tag_size) / 100.0;
                 // AURORA_PLATE_STYLE: the plates' look for this run, without saving it
                 self.plates.style = crate::demo::tags::plate_style().unwrap_or(self.settings.plate_style);
                 // AURORA_DEMO_FRIEND_PLATES=1: the setting for this run, without saving it

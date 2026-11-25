@@ -1557,3 +1557,35 @@ fn icon_plate_is_a_circle_around_the_picture() {
     assert!(l.badges[0].top() < 0.0);
     assert!((l.badges[0].center().x - l.size.x * 0.5).abs() < 0.01);
 }
+
+#[test]
+fn the_name_tag_size_scales_every_measure_of_a_plate() {
+    for level in [Level::Full, Level::Compact, Level::Far, Level::Icon, Level::Name] {
+        let (one, big) = (Metrics::of(level, SCALE), Metrics::of(level, SCALE * 1.5));
+        assert!((big.name_pt - one.name_pt * 1.5).abs() < 0.01, "{level:?}");
+        assert!((big.height - one.height * 1.5).abs() <= 2.0, "{level:?}: even heights round");
+        assert!((big.photo - one.photo * 1.5).abs() < 0.01, "{level:?}");
+    }
+}
+
+#[test]
+fn name_tag_size_and_height_are_bounded_like_the_legacy_viewer() {
+    use crate::settings::Settings;
+    let s = Settings::default();
+    assert_eq!((s.name_tag_size, s.name_tag_offset), (100.0, 0.0));
+    let s = Settings {
+        name_tag_size: 400.0,
+        name_tag_offset: -3.0,
+        ..Settings::default()
+    }
+    .sanitized();
+    // FSNameTagZOffsetCorrection's -5..5 tenths of a metre
+    assert_eq!((s.name_tag_size, s.name_tag_offset), (150.0, -0.5));
+    let s = Settings {
+        name_tag_size: f32::NAN,
+        name_tag_offset: f32::INFINITY,
+        ..Settings::default()
+    }
+    .sanitized();
+    assert_eq!((s.name_tag_size, s.name_tag_offset), (100.0, 0.0));
+}

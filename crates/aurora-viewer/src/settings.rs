@@ -45,6 +45,18 @@ pub enum BlockedChat {
     Greyed,
 }
 
+/// FSNameTagZOffsetCorrection's range (-5..5 tenths of a metre), in metres.
+pub const NAME_TAG_OFFSET_MIN: f32 = -0.5;
+pub const NAME_TAG_OFFSET_MAX: f32 = 0.5;
+/// The name tags' size, in percent.
+pub const NAME_TAG_SIZE_MIN: f32 = 75.0;
+pub const NAME_TAG_SIZE_MAX: f32 = 150.0;
+
+/// `value`, or `fallback` for a NaN or an infinity read from a file.
+fn finite_or(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() { value } else { fallback }
+}
+
 /// What an avatar's name plate shows at close range (`ui::nameplate`):
 /// the complete plate, the picture alone in a round plate, or the display
 /// name with its group title. The classic name tags (`classic_name_tags`) ignore it.
@@ -1367,6 +1379,13 @@ pub struct Settings {
     /// are typed (off, as in the Legacy Viewer).
     pub auto_replace: bool,
     pub name_tag_distance: f32,
+    /// FSNameTagZOffsetCorrection: every name tag raised or lowered by this
+    /// many metres (the Legacy Viewer's -5..5 tenths, 0 by default).
+    pub name_tag_offset: f32,
+    /// The size of every name tag, plates and classic tags alike, in percent
+    /// (100 by default). An Aurora addition: the Legacy Viewer's tags only
+    /// follow the interface's scale.
+    pub name_tag_size: f32,
     pub show_own_name_tag: bool,
     pub show_friend_name_tags: bool,
     pub show_other_name_tags: bool,
@@ -2735,6 +2754,8 @@ impl Default for Settings {
             spelling: Default::default(),
             auto_replace: false,
             name_tag_distance: 64.0,
+            name_tag_offset: 0.0,
+            name_tag_size: 100.0,
             show_own_name_tag: true,
             show_friend_name_tags: true,
             show_other_name_tags: true,
@@ -3878,6 +3899,8 @@ impl Settings {
         };
         self.toast_gap = toast_gap(self.toast_gap);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
+        self.name_tag_offset = finite_or(self.name_tag_offset, 0.0).clamp(NAME_TAG_OFFSET_MIN, NAME_TAG_OFFSET_MAX);
+        self.name_tag_size = finite_or(self.name_tag_size, 100.0).clamp(NAME_TAG_SIZE_MIN, NAME_TAG_SIZE_MAX);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
             self.name_tag_show_seconds.clamp(1.0, 60.0)
         } else {

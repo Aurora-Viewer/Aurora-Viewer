@@ -74,6 +74,27 @@ pub fn plate_style() -> Option<crate::settings::PlateStyle> {
     })
 }
 
+/// AURORA_NAME_TAG_SIZE=<percent> and AURORA_NAME_TAG_OFFSET=<metres>: the
+/// name tags' size and height for this run, bounded like Preferences,
+/// without touching the shared settings (docs/TESTING.md).
+pub fn tag_size() -> Option<f32> {
+    static SIZE: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *SIZE.get_or_init(|| {
+        let v: f32 = std::env::var("AURORA_NAME_TAG_SIZE").ok()?.trim().parse().ok()?;
+        use crate::settings::{NAME_TAG_SIZE_MAX, NAME_TAG_SIZE_MIN};
+        v.is_finite().then(|| v.clamp(NAME_TAG_SIZE_MIN, NAME_TAG_SIZE_MAX))
+    })
+}
+
+pub fn tag_offset() -> Option<f32> {
+    static OFFSET: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *OFFSET.get_or_init(|| {
+        let v: f32 = std::env::var("AURORA_NAME_TAG_OFFSET").ok()?.trim().parse().ok()?;
+        use crate::settings::{NAME_TAG_OFFSET_MAX, NAME_TAG_OFFSET_MIN};
+        v.is_finite().then(|| v.clamp(NAME_TAG_OFFSET_MIN, NAME_TAG_OFFSET_MAX))
+    })
+}
+
 pub fn mode() -> Option<Mode> {
     static MODE: std::sync::OnceLock<Option<Mode>> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_TAGS").ok()?.trim() {
