@@ -231,11 +231,10 @@ impl BackgroundFetch {
     pub fn pump_at(&mut self, inv: &mut Inventory, agent: Uuid, now: Instant) -> Vec<NetCommand> {
         let mut out = Vec::new();
         self.clock = Some(now);
-        // (a busy walk changes folders, and a folder the user's read takes
-        // (`Inventory::request`, queued until the app sends it after this
-        // pump) changes none's generation: either way the next idle sweep
-        // looks again, so the user's read is timed like any other)
-        if !self.is_idle() || !inv.queue.is_empty() {
+        // (a busy walk changes folders: the next idle sweep looks again; a
+        // user's read changes the generation itself (`Inventory::request`),
+        // so it is timed like any other)
+        if !self.is_idle() {
             self.swept_clean = None;
         }
         // a read unanswered past its deadline frees its slot and is tried
@@ -479,7 +478,14 @@ impl BackgroundFetch {
     /// pastes when the inventory stops loading, no log needed.
     pub fn report(&self, inv: &Inventory, now: Instant) -> String {
         let mut counts = [0usize; 4];
+        let mut known = 0;
         for f in inv.folders.values().filter(|f| !f.library) {
+            known += 1;
+            // (a folder over the server's limit is counted on its own line,
+            // never as reading or unread: the walk does not read it again)
+            if inv.too_big.contains(&f.info.id) {
+                continue;
+            }
             counts[match f.state {
                 FetchState::Fetched => 0,
                 FetchState::Fetching => 1,
@@ -519,7 +525,7 @@ impl BackgroundFetch {
              walk: {}, {} reads in flight (oldest {}), {} queued, {} waiting for a retry (next in {}), {} more asked by the user\n\
              last answer: {}; unanswered reads freed: {}; watchdog restarts: {}; failed rounds: {} of {FAILED_ROUNDS}\n\
              AIS: inventory {}, library {}",
-            counts.iter().sum::<usize>(),
+            known,
             counts[0],
             counts[1],
             counts[2],
@@ -584,43 +590,50 @@ impl BackgroundFetch {
                 FetchState::Fetching if self.pending.contains(&id) => {}
                 // asked for by the user: walked once it has arrived
                 FetchState::Fetching => self.waiting.push((id, kind)),
-                // the folder alone is already there (the login's own read of
-                // the root, or the cache): its folders by batches, as after
-                // that read in onAISFolderCalback, not one read each
-                FetchState::Fetched if kind == Kind::FolderAndContent => self.queue.push_front((id, Kind::ContentRecursive)),
-                // already fetched: check what is inside, its unread folders
-                // by batches (a read cut by its depth left them)
-                FetchState::Fetched => self.queue.push_back((id, Kind::ContentRecursive)),
+                // already fetched (the login's own read of the root, the
+                // cache, a read cut by its depth): what is inside is looked
+                // at in this same step, as bulkFetchViaAis's "Already
+                // fetched" branch does, its unread folders by batches as
+                // after a read in onAISFolderCalback, not one read each
+                FetchState::Fetched => self.scan(inv, agent, id, out),
             },
-            Kind::ContentRecursive => {
-                let mut batch = Vec::new();
-                let mut later = Vec::new();
-                let mut done = true;
-                for child in &folder.children {
-                    let Some(c) = inv.folders.get(child) else {
-                        continue;
-                    };
-                    match c.state {
-                        _ if c.info.type_default == MARKETPLACE_LISTINGS => {}
-                        // (read in parts after a timeout, on its own)
-                        _ if self.split.contains(child) => {}
-                        FetchState::Unknown | FetchState::Failed if batch.len() < BATCH => batch.push(*child),
-                        FetchState::Unknown | FetchState::Failed => done = false,
-                        FetchState::Fetching if self.pending.contains(child) => {}
-                        // a folder the user opened meanwhile is walked once
-                        // it has arrived, like a fetched one
-                        FetchState::Fetching | FetchState::Fetched => later.push(*child),
-                    }
-                }
-                if !batch.is_empty() {
-                    self.send(inv, agent, kind, id, batch, MAX_FOLDER_DEPTH, out, 0);
-                }
-                if done {
-                    self.queue.extend(later.into_iter().map(|child| (child, Kind::Recursive)));
-                } else {
-                    self.queue.push_back((id, Kind::ContentRecursive));
-                }
+            Kind::ContentRecursive => self.scan(inv, agent, id, out),
+        }
+    }
+
+    /// A read folder's content: its unread folders in batches of
+    /// [`BATCH`], its read ones queued to be walked in turn. A folder with
+    /// more unread folders than a batch is queued again for the next one.
+    fn scan(&mut self, inv: &mut Inventory, agent: Uuid, id: Uuid, out: &mut Vec<NetCommand>) {
+        let Some(folder) = inv.folders.get(&id) else {
+            return;
+        };
+        let mut batch = Vec::new();
+        let mut later = Vec::new();
+        let mut done = true;
+        for child in &folder.children {
+            let Some(c) = inv.folders.get(child) else {
+                continue;
+            };
+            match c.state {
+                _ if c.info.type_default == MARKETPLACE_LISTINGS => {}
+                // (read in parts after a timeout, on its own)
+                _ if self.split.contains(child) => {}
+                FetchState::Unknown | FetchState::Failed if batch.len() < BATCH => batch.push(*child),
+                FetchState::Unknown | FetchState::Failed => done = false,
+                FetchState::Fetching if self.pending.contains(child) => {}
+                // a folder the user opened meanwhile is walked once
+                // it has arrived, like a fetched one
+                FetchState::Fetching | FetchState::Fetched => later.push(*child),
             }
+        }
+        if !batch.is_empty() {
+            self.send(inv, agent, Kind::ContentRecursive, id, batch, MAX_FOLDER_DEPTH, out, 0);
+        }
+        if done {
+            self.queue.extend(later.into_iter().map(|child| (child, Kind::Recursive)));
+        } else {
+            self.queue.push_back((id, Kind::ContentRecursive));
         }
     }
 

@@ -1107,3 +1107,47 @@ fn an_unanswered_lost_items_request_is_given_up_until_the_next_region() {
             .any(|c| matches!(c, NetCommand::FetchInventoryOrphans { .. }))
     );
 }
+
+/// A tree already read (the cache) takes one queue step per folder, as
+/// bulkFetchViaAis's "Already fetched" branch: 401 folders end within one
+/// pump's 512 steps, where two steps a folder would leave half of them
+/// queued.
+#[test]
+fn a_read_tree_is_walked_in_one_step_per_folder() {
+    let mut tree = Vec::new();
+    for top in 0..20 {
+        tree.push((10 + top, 1, -1));
+        for n in 0..19 {
+            tree.push((1000 + top * 100 + n, 10 + top, -1));
+        }
+    }
+    let mut inv = skeleton(&tree);
+    inv.folders.values_mut().for_each(|f| f.state = FetchState::Fetched);
+    assert_eq!(inv.folders.values().filter(|f| !f.library).count(), 401);
+    let mut fetch = BackgroundFetch::default();
+    fetch.start(&inv);
+    let reads = fetch.pump_at(&mut inv, AGENT, Instant::now());
+    assert!(
+        reads.iter().all(|r| matches!(r, NetCommand::FetchInventoryOrphans { .. })),
+        "nothing to read"
+    );
+    assert!(fetch.queue.is_empty(), "{} steps left after one pump", fetch.queue.len());
+}
+
+/// N4 counts a folder over the server's limit on its own line, never as
+/// reading or unread while the walk is idle.
+#[test]
+fn n4_counts_an_over_limit_folder_only_as_over_the_limit() {
+    let tree = [(10, 1, -1), (11, 1, -1)];
+    let mut inv = skeleton(&tree);
+    inv.folders.values_mut().for_each(|f| f.state = FetchState::Fetched);
+    if let Some(f) = inv.folders.get_mut(&id(11)) {
+        f.state = FetchState::Fetching;
+    }
+    inv.too_big.insert(id(11));
+    let report = BackgroundFetch::default().report(&inv, Instant::now());
+    assert!(
+        report.contains("folders: 3 known, 2 read, 0 reading, 0 failed, 0 not read yet, 1 over the server's limit"),
+        "{report}"
+    );
+}

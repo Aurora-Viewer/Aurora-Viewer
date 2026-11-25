@@ -989,11 +989,8 @@ impl Bridge {
         if self.refresh_inventory {
             // A timed-out mutation may have succeeded. Refetch before any
             // creation so Repair cannot duplicate an unacknowledged copy.
-            for id in [world.inventory.root, self.container, self.folder] {
-                if let Some(folder) = world.inventory.folders.get_mut(&id) {
-                    folder.state = FetchState::Unknown;
-                }
-            }
+            let ids = [world.inventory.root, self.container, self.folder];
+            world.inventory.mark_unread(ids);
             self.refresh_inventory = false;
         }
         if matches!(

@@ -1886,3 +1886,30 @@ fn a_users_folder_read_changes_the_generation() {
     inv.request(folder);
     assert_eq!(inv.generation, after, "already on its way: nothing changes");
 }
+
+#[test]
+fn folders_set_back_to_unread_change_the_generation() {
+    let mut inv = fixture();
+    let folder = Uuid::from_u128(600);
+    inv.folders.insert(
+        folder,
+        Folder {
+            info: InvFolder {
+                id: folder,
+                parent: inv.root,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    let before = inv.generation;
+    inv.mark_unread([folder]);
+    assert_eq!(inv.folders[&folder].state, FetchState::Unknown);
+    assert!(inv.generation > before, "the background walk's sweep looks again");
+    let after = inv.generation;
+    inv.mark_unread([folder, Uuid::from_u128(601)]);
+    assert_eq!(inv.generation, after, "nothing changed: no new generation");
+}

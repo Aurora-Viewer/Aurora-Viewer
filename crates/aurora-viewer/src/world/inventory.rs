@@ -284,6 +284,25 @@ impl Inventory {
         }
     }
 
+    /// Set folders back to unread, to be read again. Changes the
+    /// generation when one changes, so the background walk's idle sweep
+    /// looks at them again, like a read the user asks for
+    /// ([`Self::request`]).
+    pub fn mark_unread(&mut self, ids: impl IntoIterator<Item = Uuid>) {
+        let mut changed = false;
+        for id in ids {
+            if let Some(f) = self.folders.get_mut(&id)
+                && f.state != FetchState::Unknown
+            {
+                f.state = FetchState::Unknown;
+                changed = true;
+            }
+        }
+        if changed {
+            self.generation += 1;
+        }
+    }
+
     /// Apply folder snapshots. A snapshot older than the contents already
     /// confirmed locally is not applied: the folder is queued again, like
     /// AISUpdate::parseCategory's stale-folder refetch (llaisapi.cpp).
