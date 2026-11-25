@@ -389,6 +389,17 @@ impl Live {
         }
     }
 
+    /// The session ended: stopped and empty again, ready for the next login.
+    /// The listener thread told to stop is still waited for at exit: a quit
+    /// on the grid comes through here first (the region's LogoutReply).
+    pub fn reset(&mut self) {
+        self.stop_server();
+        *self = Live {
+            closing: std::mem::take(&mut self.closing),
+            ..Default::default()
+        };
+    }
+
     /// The viewer quits, its renderer not dropped yet: stops the preview and
     /// waits up to `timeout` for its listener thread, false if it still runs.
     ///
@@ -396,19 +407,21 @@ impl Live {
     /// Told to stop and not waited for, it dropped the pool while the main
     /// thread was in `exit`: last owner of the device, it destroyed the
     /// buffers and the device under the finalizers of NVIDIA's driver on
-    /// Linux, and every quit with the preview on crashed there (SIGSEGV or a
-    /// corrupted heap, in `vkDestroyBuffer` or `vkDestroyDevice`). With the
-    /// thread gone first, the device's last owner is on the main thread again.
+    /// Linux, a crash there (SIGSEGV or a corrupted heap, in
+    /// `vkDestroyBuffer` or `vkDestroyDevice`). With the thread gone first,
+    /// what it shared is freed by the main thread.
     pub fn close_for_exit(&mut self, timeout: std::time::Duration) -> bool {
         self.stop_server();
         let deadline = std::time::Instant::now() + timeout;
-        for thread in self.closing.drain(..) {
+        while let Some(thread) = self.closing.pop() {
             while !thread.is_finished() {
                 if std::time::Instant::now() >= deadline {
+                    self.closing.push(thread);
                     return false;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
+            // (a panic in it is logged by the panic hook)
             let _ = thread.join();
         }
         true

@@ -1316,7 +1316,9 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
 #[test]
 fn blender_live_exit_waits_for_the_listener_thread() {
     for connected in [false, true] {
-        for stopped_before in [false, true] {
+        // running, stopped by hand, or stopped by the end of the session (a
+        // quit on the grid: `App::back_to_login`)
+        for before in ["running", "stopped", "logged out"] {
             let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
             let port = listener.local_addr().expect("address").port();
             let (shared, thread) = transport::start_listener(
@@ -1347,13 +1349,17 @@ fn blender_live_exit_waits_for_the_listener_thread() {
                     .expect("hello");
                 stream
             });
-            if stopped_before {
+            if before != "running" {
                 live.stop();
                 assert!(!live.running());
             }
+            if before == "logged out" {
+                live.reset();
+                assert!(!live.closing.is_empty(), "the thread is still waited for");
+            }
             assert!(
                 live.close_for_exit(Duration::from_secs(10)),
-                "connected: {connected}, stopped before: {stopped_before}"
+                "connected: {connected}, before: {before}"
             );
             assert!(!live.running());
             assert_eq!(Arc::strong_count(&shared), 1, "the thread let go of what it held");
@@ -1362,8 +1368,8 @@ fn blender_live_exit_waits_for_the_listener_thread() {
     }
 }
 
-/// A listener that does not end (busy preparing a snapshot) holds the exit
-/// for the time given only.
+/// A listener that does not end (a large snapshot, a blocked reply) holds
+/// the exit for the time given only.
 #[test]
 fn blender_live_exit_wait_is_bounded() {
     let (release, held) = std::sync::mpsc::channel::<()>();
@@ -1374,7 +1380,9 @@ fn blender_live_exit_wait_is_bounded() {
         ..Default::default()
     };
     assert!(!live.close_for_exit(Duration::from_millis(20)));
+    assert!(!live.close_for_exit(Duration::ZERO), "it still runs");
     drop(release);
+    assert!(live.close_for_exit(Duration::from_secs(10)));
 }
 
 #[test]

@@ -3837,7 +3837,7 @@ impl App {
         self.avatar_render_settings_ui = Default::default();
         self.blender_live.stop();
         self.clear_blender_preview();
-        self.blender_live = Default::default();
+        self.blender_live.reset();
         if let Some(g) = &mut self.gfx {
             self.scene.clear(&mut g.renderer);
         }
@@ -25302,7 +25302,8 @@ impl ApplicationHandler for App {
         #[cfg(windows)]
         crate::slurl_handoff::release();
         // before the renderer: LiveMesh's listener thread shares its staging
-        // memory. It ends within 150 ms, unless it prepares a large snapshot.
+        // memory. It usually ends within 150 ms; a large snapshot being
+        // prepared, or a reply Blender does not read, can take longer.
         if !self.blender_live.close_for_exit(Duration::from_secs(3)) {
             log::warn!("the LiveMesh preview was still closing at exit");
         }
