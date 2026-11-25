@@ -60,7 +60,12 @@ impl App {
                 self.panels.chat = false;
                 self.panels.inventory = false;
                 self.panels.people = false;
-                crate::ui::widgets::place_floater(&self.egui_ctx, "movelock", egui::pos2(60.0, 90.0), egui::vec2(470.0, 450.0));
+                crate::ui::widgets::place_floater(
+                    &self.egui_ctx,
+                    crate::ui::movelock::WINDOW,
+                    egui::pos2(60.0, 90.0),
+                    egui::vec2(470.0, 450.0),
+                );
                 let selected = crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 self.settings.ao.accounts.insert(
                     self.world.agent_id,
@@ -234,7 +239,7 @@ impl App {
     }
     pub(super) fn movelock_window(&mut self, ctx: &egui::Context, p: &Palette) {
         if std::mem::take(&mut self.toolbar_ui.movelock_options) {
-            self.movelock_ui.open = true;
+            ui::widgets::open_floater(ctx, ui::movelock::WINDOW, &mut self.movelock_ui.open);
         }
         let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
         let fallback = prefs.enabled && prefs.mode == crate::world::bridge::LockMode::NativeSit && self.native_anchor.bridge_fallback();

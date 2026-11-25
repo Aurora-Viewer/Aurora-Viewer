@@ -41,7 +41,8 @@ the avatar definition files (`crates/aurora-viewer/assets/character/`) come from
 the Second Life viewer sources (originally LGPL 2.1).
 The `character/bake/` subdirectory contains the same sources' TGA skin,
 clothing and visibility masks, used by the local wearable preview.
-The Blender extension bundles the same `avatar_skeleton.xml` and retains its
+The Maya plug-in's ZIP bundles the same `avatar_skeleton.xml`, as does the
+Blender extension, which retains its
 provenance in `blender/aurora_live/SKELETON-NOTICE.txt`.
 
 The terrain alpha ramp (`crates/aurora-render/src/terrain_alpha_ramp.r8`) is the

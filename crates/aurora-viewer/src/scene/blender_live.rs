@@ -52,10 +52,15 @@ impl Scene {
         (self.preview_appearances.len(), self.preview_images.len())
     }
     pub fn install_preview_images(&mut self, images: &[crate::blender_live::protocol::PreparedImage], renderer: &mut Renderer) -> bool {
-        if images
-            .iter()
-            .any(|image| image.staged.as_ref().is_none_or(|staged| !staged.data.ready()))
-        {
+        // (never from a pool of another device, lost since: its chunks are
+        // not unmapped any more, and this device cannot copy from them)
+        let pool = renderer.staging_pool();
+        if images.iter().any(|image| {
+            image
+                .staged
+                .as_ref()
+                .is_none_or(|staged| !staged.data.is_from(&pool) || !staged.data.ready())
+        }) {
             return false;
         }
         for image in images {

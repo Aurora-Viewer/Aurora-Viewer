@@ -361,7 +361,7 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Creator tools
 
-- **LiveMesh**: see your Blender mesh in the viewer while you edit it, with
+- **LiveMesh**: see your Blender or Maya mesh in the viewer while you edit it, with
   nothing uploaded. Rigged meshes follow your own avatar, with their weights,
   shape keys and materials; static meshes and linksets become local objects
   you can place on the ground, move, rotate, resize, attach to your body or

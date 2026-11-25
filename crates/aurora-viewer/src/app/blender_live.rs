@@ -66,6 +66,9 @@ impl App {
         if std::mem::take(&mut self.blender_live.save_addon) {
             self.blender_live.addon.save(&self.scene.jobs, ctx);
         }
+        if std::mem::take(&mut self.blender_live.save_maya_addon) {
+            self.blender_live.maya_addon.save(&self.scene.jobs, ctx);
+        }
         if let Some(action) = self.blender_live.shape.requested.take() {
             self.send_blender_shape(action);
         }
