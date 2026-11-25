@@ -829,11 +829,11 @@ impl World {
         !id.is_nil()
             && id != self.agent_id
             && (self.coarse.values().flatten().any(|(other, _)| *other == id)
-                || self.objects.avatars().any(|(_, o)| o.full_id == id && !self.is_mirror(&id)))
+                || self.objects.avatars().any(|(_, o)| o.full_id == id && !self.is_local_copy(&id)))
     }
 
     fn rlva_nearby_avatars(&self) -> std::collections::HashSet<Uuid> {
-        let loaded = self.objects.avatars().map(|(_, o)| o.full_id).filter(|id| !self.is_mirror(id));
+        let loaded = self.objects.avatars().map(|(_, o)| o.full_id).filter(|id| !self.is_local_copy(id));
         let coarse = self.coarse.values().flatten().map(|(id, _)| *id);
         loaded.chain(coarse).filter(|id| !id.is_nil() && *id != self.agent_id).collect()
     }

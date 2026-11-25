@@ -499,8 +499,12 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     critical_required: critical,
                     bad_credentials,
                     previous_session,
-                    next_server: match e {
-                        LoginError::NextServer(server) => Some(server),
+                    next_server: match &e {
+                        LoginError::NextServer(server) => Some(server.clone()),
+                        _ => None,
+                    },
+                    unencrypted_server: match e {
+                        LoginError::Unencrypted(server) => Some(server),
                         _ => None,
                     },
                 },
@@ -539,6 +543,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     bad_credentials: false,
                     previous_session: false,
                     next_server: None,
+                    unencrypted_server: None,
                 },
             );
             return;

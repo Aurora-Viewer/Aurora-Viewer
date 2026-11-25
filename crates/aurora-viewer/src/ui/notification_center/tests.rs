@@ -487,3 +487,14 @@ fn a_scripted_window_kept_in_comes_out_afterwards() {
         assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), windows);
     }
 }
+
+#[test]
+fn notification_list_closes_only_after_becoming_empty() {
+    use super::super::notifications::list_emptied;
+
+    assert!(list_emptied(true, false, Tab::ToDo));
+    assert!(!list_emptied(true, true, Tab::ToDo));
+    assert!(!list_emptied(false, false, Tab::ToDo));
+    assert!(!list_emptied(false, true, Tab::ToDo));
+    assert!(!list_emptied(true, false, Tab::History));
+}

@@ -32,6 +32,8 @@ mod drawn_pick;
 mod equirect;
 mod exposure;
 mod film_readback;
+mod fit_clip;
+pub use fit_clip::FitClipParams;
 pub mod frame_priority;
 mod fsr;
 pub mod gi;
@@ -1189,6 +1191,11 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     #[test]
     fn exposure_shader_is_valid() {
         validate(include_str!("shaders/exposure.wgsl"));
+    }
+
+    #[test]
+    fn fit_clip_shader_is_valid() {
+        validate(include_str!("shaders/fit_clip.wgsl"));
     }
 
     #[test]

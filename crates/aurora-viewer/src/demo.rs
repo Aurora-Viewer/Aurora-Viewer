@@ -51,6 +51,9 @@ pub mod about;
 pub mod alpha_mask_ab;
 #[path = "demo_alpha_sort.rs"]
 pub mod alpha_sort;
+/// Two inventory animations at once (AURORA_DEMO_INVENTORY=animation-play-two).
+#[path = "demo_animation_layers.rs"]
+pub mod animation_layers;
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
 #[path = "demo_arrival.rs"]
 pub mod arrival;
