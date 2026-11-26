@@ -69,13 +69,12 @@ impl Hosted {
         }
     }
 
-    pub(super) fn player(&self, muted: bool) -> String {
-        let mute = if muted { "&muted=1" } else { "" };
+    pub(super) fn player(&self) -> String {
         match self {
-            Self::Streamable(id) => format!("https://streamable.com/e/{id}?autoplay=1{mute}"),
+            Self::Streamable(id) => format!("https://streamable.com/e/{id}?autoplay=1"),
             Self::Vimeo { id, hash } => {
                 let hash = hash.as_ref().map(|h| format!("h={h}&")).unwrap_or_default();
-                format!("https://player.vimeo.com/video/{id}?{hash}autoplay=1{mute}")
+                format!("https://player.vimeo.com/video/{id}?{hash}autoplay=1&muted=0")
             }
         }
     }

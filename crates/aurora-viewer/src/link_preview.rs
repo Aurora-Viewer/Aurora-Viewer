@@ -263,33 +263,27 @@ impl Clip {
     /// The page the browser opens to play it, a page of our own served on
     /// this machine (`clip_page`), which reports the clip's shape under
     /// `key`; the file alone when that page cannot be served.
-    pub fn player_page(&self, options: &PlayerOptions, key: u64, muted: bool) -> String {
+    pub fn player_page(&self, options: &PlayerOptions, key: u64) -> String {
         match player_server() {
             Some(port) => {
                 let base = format!("http://127.0.0.1:{port}/clip");
                 let volume = options.volume.min(100).to_string();
                 let key = key.to_string();
-                let muted_param = if muted { "1" } else { "0" };
                 reqwest::Url::parse_with_params(
                     &base,
-                    [
-                        ("k", key.as_str()),
-                        ("vol", volume.as_str()),
-                        ("src", self.source().as_ref()),
-                        ("mute", muted_param),
-                    ],
+                    [("k", key.as_str()), ("vol", volume.as_str()), ("src", self.source().as_ref())],
                 )
                 .map(String::from)
-                .unwrap_or_else(|_| self.player(muted))
+                .unwrap_or_else(|_| self.player())
             }
-            None => self.player(muted),
+            None => self.player(),
         }
     }
 
-    fn player(&self, muted: bool) -> String {
+    fn player(&self) -> String {
         match &self.0 {
             ClipSource::File(file) => file.clone(),
-            ClipSource::Hosted(video) => video.player(muted),
+            ClipSource::Hosted(video) => video.player(),
         }
     }
 }
@@ -309,8 +303,8 @@ fn attribute_text(s: &str) -> String {
 /// player does, #848), and reports the clip's shape once known
 /// (`/aspect`): a link names no size. A browser that refuses to start a
 /// clip with sound starts it muted.
-fn clip_page(clip: &Clip, volume: u8, key: u64, muted: bool) -> String {
-    let src = attribute_text(&clip.player(muted));
+fn clip_page(clip: &Clip, volume: u8, key: u64) -> String {
+    let src = attribute_text(&clip.player());
     if clip.hosted() {
         return format!(
             "<!doctype html><html><head><meta charset=\"utf-8\">\
@@ -351,7 +345,7 @@ fn clip_answer(request: &str) -> Option<String> {
     let clip = Clip::of(&src).filter(|c| c.source() == src.as_str())?;
     let key = param("k").and_then(|v| v.parse::<u64>().ok())?;
     let volume = param("vol").and_then(|v| v.parse::<u8>().ok()).unwrap_or(100);
-    Some(clip_page(&clip, volume, key, param("mute").as_deref() == Some("1")))
+    Some(clip_page(&clip, volume, key))
 }
 
 /// A clip's shape its page reports (`GET /aspect?k=<key>&w=<px>&h=<px>`).
@@ -1449,16 +1443,15 @@ mod tests {
     fn hosted_clip_uses_provider_player_and_keeps_vimeo_privacy_hash() {
         let streamable = Clip::of("https://streamable.com/e/Demo42?loop=0").unwrap();
         assert_eq!(streamable.source(), "https://streamable.com/Demo42");
-        assert_eq!(streamable.player(true), "https://streamable.com/e/Demo42?autoplay=1&muted=1");
-        assert_eq!(streamable.player(false), "https://streamable.com/e/Demo42?autoplay=1");
+        assert_eq!(streamable.player(), "https://streamable.com/e/Demo42?autoplay=1");
 
         let vimeo = Clip::of("https://vimeo.com/123456789/deadbeef42").unwrap();
         assert_eq!(
             Clip::of("https://player.vimeo.com/video/123456789?h=deadbeef42"),
             Some(vimeo.clone())
         );
-        let page = clip_answer("GET /clip?k=42&mute=1&src=https%3A%2F%2Fvimeo.com%2F123456789%2Fdeadbeef42 HTTP/1.1").unwrap();
-        assert!(page.contains("https://player.vimeo.com/video/123456789?h=deadbeef42&amp;autoplay=1&amp;muted=1"));
+        let page = clip_answer("GET /clip?k=42&src=https%3A%2F%2Fvimeo.com%2F123456789%2Fdeadbeef42 HTTP/1.1").unwrap();
+        assert!(page.contains("https://player.vimeo.com/video/123456789?h=deadbeef42&amp;autoplay=1&amp;muted=0"));
         assert!(page.contains("allow=\"autoplay; fullscreen; encrypted-media\""));
         for url in [
             "https://streamable.com/pricing",
@@ -1927,7 +1920,7 @@ mod tests {
         );
         // the address the card opens leads to the same page
         let clip = Clip(ClipSource::File(file.into()));
-        let opened = clip.player_page(&PlayerOptions::default(), 7, false);
+        let opened = clip.player_page(&PlayerOptions::default(), 7);
         let path = opened
             .split_once("127.0.0.1:")
             .and_then(|(_, rest)| rest.split_once('/'))

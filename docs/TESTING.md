@@ -9167,10 +9167,9 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_CONV_PREVIEWS=hosted:<provider>`** with `AURORA_DEMO=1`
   and `AURORA_DEMO_CONV=aurora` opens a public sample in a simulated conversation.
   Use `streamable`, `vimeo`, `imgur`, `giphy`, or `tenor`. These demos request
-  real provider metadata and require an internet connection. Streamable and
-  Vimeo should start muted on a visible inline card. Stop and play again to
-  use the provider's normal audio controls. Imgur should offer playback for
-  the animated post. GIPHY and Tenor cards should animate.
+  real provider metadata and require an internet connection. Use
+  `AURORA_DEMO_SOUND=1` for audio. Click Play on Streamable, Vimeo or Imgur to
+  start the embedded player. GIPHY and Tenor cards should animate.
 - **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan|window|copy|links`**: with `AURORA_DEMO_CONV`
   and `AURORA_DEMO_CONV_PREVIEWS=1`, enlarge the first loaded still picture
   (`1`), or animated picture (`gif`); `zoom` starts at twice its fitted size,

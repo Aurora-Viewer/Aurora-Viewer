@@ -141,8 +141,6 @@ enum Entry {
         thumbnail: Option<Shown>,
         /// Width over height of the video.
         aspect: f32,
-        /// The hosted provider returned the video's size in oEmbed.
-        autoplay_ready: bool,
         /// A direct clip or hosted video. YouTube has its own player.
         clip: Option<lp::Clip>,
     },
@@ -229,9 +227,6 @@ pub struct Previews {
     hidden: HashSet<u64>,
     /// Blurred pictures clicked.
     revealed: HashSet<u64>,
-    // Hosted previews get one automatic attempt per card, so stopping or
-    // scrolling away never restarts the same player.
-    autoplay_seen: HashSet<u64>,
     playing: Option<Playing>,
     lightbox: Option<Lightbox>,
     image_window: Option<Lightbox>,
@@ -260,7 +255,6 @@ impl Default for Previews {
             asked: HashSet::new(),
             hidden: HashSet::new(),
             revealed: HashSet::new(),
-            autoplay_seen: HashSet::new(),
             playing: None,
             lightbox: None,
             image_window: None,
@@ -431,7 +425,6 @@ impl Previews {
                     channel: v.channel,
                     thumbnail: v.thumbnail.map(|p| Shown::new(ctx, &url, p)),
                     aspect: v.aspect.unwrap_or(DEFAULT_ASPECT),
-                    autoplay_ready: false,
                     clip: None,
                 },
                 Ok(Content::Clip(c)) => Entry::Video {
@@ -439,7 +432,6 @@ impl Previews {
                     channel: String::new(),
                     thumbnail: c.thumbnail.map(|p| Shown::new(ctx, &url, p)),
                     aspect: c.aspect.unwrap_or(DEFAULT_ASPECT),
-                    autoplay_ready: c.clip.hosted() && c.aspect.is_some(),
                     clip: Some(c.clip),
                 },
                 Err(f) => Entry::Failed(f),
@@ -893,7 +885,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
         }
         // A hosted video, a direct clip, or a clip found on a service page.
         (Entry::Video { .. }, _) => {
-            video_card(ui, p, pv, k, url, target, start);
+            video_card(ui, p, pv, k, url, target, width + VIDEO_EXTRA);
             return;
         }
         (Entry::Failed(Failure::TooLarge(size)), _) => {
@@ -1226,30 +1218,26 @@ fn too_large(ui: &mut egui::Ui, p: &Palette, url: &str, size: Option<u64>, width
 /// A YouTube video (`video`) or a clip: its picture with the play button,
 /// its title and channel (a clip: its site); playing, the player in place of
 /// the picture with its buttons under it.
-fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, target: &Target, start: Start) {
+fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, target: &Target, width: f32) {
     let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
-    let width = pv.settings.size.width().min(ui.available_width().max(80.0)) + VIDEO_EXTRA;
     let video = match target {
         Target::Video(video) => Some(video),
         _ => None,
     };
     let Some(Cached {
-        entry:
-            Entry::Video {
-                title,
-                channel,
-                thumbnail,
-                aspect,
-                autoplay_ready,
-                clip,
-            },
+        entry: Entry::Video {
+            title,
+            channel,
+            thumbnail,
+            aspect,
+            clip,
+        },
         ..
     }) = pv.cache.get(url)
     else {
         return;
     };
     let aspect = *aspect;
-    let autoplay_ready = *autoplay_ready;
     let clip = clip.clone();
     if clip.is_none() && video.is_none() {
         return;
@@ -1436,16 +1424,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
         note_link_hover(ui, resp.rect, egui::pos2(resp.rect.right() - 18.0, resp.rect.bottom() - 26.0));
     }
     let demo = pv.playing.is_none().then(|| pv.demo_play.take()).flatten();
-    // The app prepares the browser environment on the frame after playback starts.
-    let autoplay = autoplay_ready
-        && start == Start::Load
-        && pv.settings.player == lp::Player::InCard
-        && (pv.place != Place::Group || !pv.settings.blur_groups)
-        && ui.is_enabled()
-        && ui.is_rect_visible(resp.rect)
-        && pv.autoplay_seen.insert(k)
-        && pv.playing.is_none();
-    if play || autoplay || demo.is_some() {
+    if play || demo.is_some() {
         let mut options = pv.settings.player_options(aurora_i18n::language());
         // AURORA_DEMO_VIDEO_VOLUME=<0-100>: the level a video starts at,
         // as if kept from an earlier one
@@ -1459,7 +1438,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             web: {
                 let mut web = WebView::default();
                 match (&clip, video) {
-                    (Some(clip), _) => web.navigate(&clip.player_page(&options, k, autoplay && !play)),
+                    (Some(clip), _) => web.navigate(&clip.player_page(&options, k)),
                     (None, Some(video)) => web.navigate(&video.player_page(&options)),
                     (None, None) => {}
                 }
@@ -1620,7 +1599,6 @@ mod tests {
                         channel: String::new(),
                         thumbnail: None,
                         aspect: DEFAULT_ASPECT,
-                        autoplay_ready: false,
                         clip: None,
                     },
                     used: 0,

@@ -242,7 +242,7 @@ fn close_accelerator_dismisses_the_image_before_its_conversation() {
 }
 
 #[test]
-fn hosted_video_starts_before_the_browser_exists_and_only_once() {
+fn hosted_video_waits_for_a_play_click() {
     let ctx = Context::default();
     let p = crate::theme::Theme::default().palette();
     let url = "https://streamable.com/Demo42";
@@ -259,20 +259,24 @@ fn hosted_video_starts_before_the_browser_exists_and_only_once() {
                 channel: String::new(),
                 thumbnail: None,
                 aspect: 16.0 / 9.0,
-                autoplay_ready: true,
                 clip: Some(clip.clone()),
             },
             used: 0,
         },
     );
-    assert!(pv.web.is_none());
-    for already_played in [false, true] {
-        let _ = run_ui(&ctx, input(vec![]), |ui| {
+    let mut rect = Rect::NOTHING;
+    let _ = run_ui(&ctx, input(vec![]), |ui| {
+        card(ui, &p, &mut pv, 7, url, &target, start);
+        rect = ui.min_rect();
+    });
+    assert!(!pv.playing());
+    let play = Pos2::new(rect.center().x, rect.top() + 50.0);
+    for pressed in [true, false] {
+        let _ = run_ui(&ctx, input(vec![egui::Event::PointerMoved(play), pointer(play, pressed)]), |ui| {
             card(ui, &p, &mut pv, 7, url, &target, start);
         });
-        assert_eq!(pv.playing(), !already_played);
-        pv.playing = None;
     }
+    assert!(pv.playing());
 }
 
 #[test]
@@ -293,7 +297,6 @@ fn video_hover_actions_copy_the_original_url_and_use_the_browser_confirmation_pa
                 channel: "Demo channel".into(),
                 thumbnail: None,
                 aspect: 16.0 / 9.0,
-                autoplay_ready: false,
                 clip: None,
             },
             used: 0,
