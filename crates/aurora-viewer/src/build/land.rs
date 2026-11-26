@@ -8,9 +8,12 @@ use super::draw::{Painter3d, rgba};
 use super::geom::Cam;
 use super::{BuildSettings, REGION_FLAGS_BLOCK_TERRAFORM};
 use crate::world::World;
+use crate::world::land::{AgentRights, owned_by_agent, powers};
 use aurora_net::build::{BuildCmd, land_action};
-use aurora_net::{RegionHandle, parcel_flags};
+use aurora_net::{ParcelInfo, RegionHandle, parcel_flags};
 use glam::{Vec2, Vec3};
+use std::time::Instant;
+use uuid::Uuid;
 
 /// LLParcel PARCEL_GRID_STEP_METERS.
 const PARCEL_GRID: f32 = 4.0;
@@ -52,6 +55,9 @@ pub struct LandTool {
     pub parcel: Option<(RegionHandle, std::sync::Arc<aurora_net::ParcelInfo>)>,
     parcel_seq: i32,
     request_parcel: bool,
+    /// The 4 m cell under the brush last asked about, and when
+    /// (LLViewerParcelMgr::setHoverParcel), as the hover tips ask theirs.
+    hover_asked: crate::hover_tips::ParcelCellAsk,
 }
 
 /// Where the mouse ray meets the terrain (marching the height maps).
@@ -108,12 +114,59 @@ fn region_name(world: &World, h: RegionHandle) -> String {
     world.regions.get(&h).map(|r| r.name.clone()).unwrap_or_default()
 }
 
+/// LLViewerRegion::canManageEstate (indra/newview/llviewerregion.cpp): a
+/// god, an estate manager of the region or its owner.
+fn can_manage_estate(world: &World, h: RegionHandle) -> bool {
+    world.god_level > 0
+        || world
+            .regions
+            .get(&h)
+            .and_then(|r| r.info.as_ref())
+            .is_some_and(|i| i.is_estate_manager || i.owner == world.agent_id)
+}
+
+/// Port of LLToolBrushLand::canTerraformRegion (indra/newview/lltoolbrush.cpp):
+/// whoever can manage the estate terraforms even a region that blocks it.
+/// A region whose handshake has not come yet is not refused here: the
+/// simulator decides.
 fn can_terraform_region(world: &World, h: RegionHandle) -> bool {
-    world
-        .regions
-        .get(&h)
-        .and_then(|r| r.info.as_ref())
-        .is_none_or(|i| i.region_flags & REGION_FLAGS_BLOCK_TERRAFORM == 0)
+    let flags = world.regions.get(&h).and_then(|r| r.info.as_ref()).map(|i| i.region_flags);
+    terraform_region_allowed(flags, can_manage_estate(world, h))
+}
+
+fn terraform_region_allowed(region_flags: Option<u32>, manages_estate: bool) -> bool {
+    manages_estate || region_flags.is_none_or(|f| f & REGION_FLAGS_BLOCK_TERRAFORM == 0)
+}
+
+/// Port of LLToolBrushLand::canTerraformParcel (indra/newview/lltoolbrush.cpp):
+/// no warning when the agent can manage the estate of the brushed region
+/// (`regionp->canManageEstate()`, the region of the click), when the parcel
+/// belongs to the owner of its region, when the agent owns it, itself or
+/// through a group role with the Edit Terrain power (isParcelOwnedByAgent,
+/// GP_LAND_ALLOW_EDIT_LAND), or when the parcel's "Edit terrain" option is
+/// open to everyone (getAllowTerraform). The warning is only a hint: the
+/// simulator decides.
+fn terraform_parcel_allowed(parcel: &ParcelInfo, region_owner: Option<Uuid>, manages_estate: bool, agent: &AgentRights) -> bool {
+    manages_estate
+        || region_owner == Some(parcel.owner_id)
+        || owned_by_agent(parcel, agent, powers::LAND_ALLOW_EDIT_LAND)
+        || parcel.flags & parcel_flags::ALLOW_TERRAFORM != 0
+}
+
+/// The parcel under the brush, at `local` of the brushed region `handle`,
+/// when it warns (LLToolBrushLand::canTerraformParcel with that region's
+/// `regionp`); None when it does not, or while it is not known.
+fn parcel_refusing_terraform(world: &World, handle: RegionHandle, local: Vec3) -> Option<&ParcelInfo> {
+    let region_owner = world.regions.get(&handle).and_then(|r| r.info.as_ref()).map(|i| i.owner);
+    parcel_under(world, handle, local)
+        .filter(|parcel| !terraform_parcel_allowed(parcel, region_owner, can_manage_estate(world, handle), &world.agent_rights()))
+}
+
+/// The parcel holding `local` of region `handle`, among those the viewer
+/// knows (ours, About Land's, those asked about under the pointer): the
+/// Legacy Viewer's hover parcel.
+fn parcel_under(world: &World, handle: RegionHandle, local: Vec3) -> Option<&ParcelInfo> {
+    world.known_parcel_at(handle, local, world.seen_parcel_at(handle, local))
 }
 
 /// LLToolSelectLand::handleHover / handleMouseUp (indra/newview/lltoolselectland.cpp):
@@ -180,7 +233,7 @@ impl LandTool {
             return true;
         }
         let spot = Vec3::new((p.x + 0.5).floor(), (p.y + 0.5).floor(), p.z);
-        let Some((handle, _)) = region_at(world, spot) else {
+        let Some((handle, off)) = region_at(world, spot) else {
             return true;
         };
         if !can_terraform_region(world, handle) {
@@ -190,10 +243,10 @@ impl LandTool {
             ));
             return true;
         }
-        if let Some(parcel) = world.parcel.as_ref()
-            && parcel.flags & parcel_flags::ALLOW_TERRAFORM == 0
-            && parcel.owner_id != world.agent_id
-        {
+        // LLToolBrushLand::handleMouseDown: a warning on the parcel under the
+        // brush (getHoverParcel), the stroke still goes; none while that
+        // parcel is not known (alertNoTerraformParcel).
+        if let Some(parcel) = parcel_refusing_terraform(world, handle, spot - off) {
             self.message = Some(aurora_i18n::tr!(
                 "build-land-you-are-not-allowed-to-edit-terrain-on-parcel",
                 value0 = parcel.name.to_string()
@@ -230,6 +283,12 @@ impl LandTool {
             terrain_hit(world, o, d)
         };
         self.hover = hit.map(|p| Vec3::new((p.x + 0.5).floor(), (p.y + 0.5).floor(), p.z));
+        if s.land_action <= land_action::REVERT
+            && let Some(spot) = self.hover
+            && let Some(cmd) = self.ask_hover_parcel(world, spot, Instant::now())
+        {
+            out.push(cmd);
+        }
         if let (Some((a, _)), Some(p)) = (self.dragging, hit) {
             self.dragging = Some((a, p.truncate()));
         }
@@ -318,6 +377,20 @@ impl LandTool {
             });
             self.last_regions.push(handle);
         }
+    }
+
+    /// LLToolBrushLand::handleHover / LLViewerParcelMgr::setHoverParcel
+    /// (indra/newview/llviewerparcelmgr.cpp): the parcel under the brush,
+    /// asked for its 4 m cell with HOVERED_PARCEL_SEQ_ID when the viewer does
+    /// not know it, for the warning of `mouse_down`. The answer joins the
+    /// parcels seen under the pointer (`World::note_seen_parcel`).
+    fn ask_hover_parcel(&mut self, world: &World, spot: Vec3, now: Instant) -> Option<BuildCmd> {
+        let (handle, off) = region_at(world, spot)?;
+        let local = spot - off;
+        if parcel_under(world, handle, local).is_some() {
+            return None;
+        }
+        self.hover_asked.request(handle, local, now)
     }
 
     /// ParcelPropertiesRequest for the selected land, in the region of its
@@ -695,5 +768,211 @@ mod tests {
             assert_eq!(draw(&dragging, false), expected);
         }
         assert_eq!(draw(&committed, false), empty);
+    }
+
+    fn demo_world() -> (World, RegionHandle) {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.expect("demo region");
+        (world, handle)
+    }
+
+    fn set_region(world: &mut World, handle: RegionHandle, edit: impl FnOnce(&mut aurora_net::RegionInfo)) {
+        let region = world.regions.get_mut(&handle).expect("demo region");
+        edit(std::sync::Arc::make_mut(region.info.as_mut().expect("demo handshake")));
+    }
+
+    #[test]
+    fn estate_managers_terraform_a_region_that_blocks_terraforming() {
+        // LLToolBrushLand::canTerraformRegion
+        assert!(terraform_region_allowed(Some(0), false));
+        assert!(!terraform_region_allowed(Some(REGION_FLAGS_BLOCK_TERRAFORM), false));
+        assert!(terraform_region_allowed(Some(REGION_FLAGS_BLOCK_TERRAFORM), true));
+        assert!(terraform_region_allowed(None, false), "no handshake yet: the simulator decides");
+
+        let (mut world, handle) = demo_world();
+        let agent = world.agent_id;
+        set_region(&mut world, handle, |i| {
+            i.region_flags |= REGION_FLAGS_BLOCK_TERRAFORM;
+            i.is_estate_manager = false;
+            i.owner = Uuid::from_u128(77);
+        });
+        world.god_level = 0;
+        assert!(!can_terraform_region(&world, handle));
+        set_region(&mut world, handle, |i| i.is_estate_manager = true);
+        assert!(can_terraform_region(&world, handle), "estate manager");
+        set_region(&mut world, handle, |i| {
+            i.is_estate_manager = false;
+            i.owner = agent;
+        });
+        assert!(can_terraform_region(&world, handle), "region owner");
+        set_region(&mut world, handle, |i| i.owner = Uuid::from_u128(77));
+        world.god_level = 200;
+        assert!(can_terraform_region(&world, handle), "god");
+    }
+
+    #[test]
+    fn the_parcel_warning_follows_the_legacy_terraform_rule() {
+        let (me, region_owner, other, group) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(9));
+        let member = |powers: u64| aurora_net::GroupMembership {
+            id: group,
+            name: String::new(),
+            insignia: Uuid::nil(),
+            powers,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        let parcel = |owner: Uuid, flags: u32| ParcelInfo {
+            owner_id: owner,
+            group_id: group,
+            is_group_owned: owner == group,
+            flags,
+            ..Default::default()
+        };
+        let none: [aurora_net::GroupMembership; 0] = [];
+        let resident = AgentRights {
+            id: me,
+            groups: &none,
+            god: false,
+        };
+        let allowed = |p: &ParcelInfo, manager: bool, a: &AgentRights| terraform_parcel_allowed(p, Some(region_owner), manager, a);
+
+        // #3843: an estate manager on land that is not theirs gets no warning
+        assert!(allowed(&parcel(other, 0), true, &resident));
+        // land of the region's owner
+        assert!(allowed(&parcel(region_owner, 0), false, &resident));
+        // own land, or group land with the Edit Terrain power
+        assert!(allowed(&parcel(me, 0), false, &resident));
+        let editor = [member(powers::LAND_ALLOW_EDIT_LAND)];
+        assert!(allowed(
+            &parcel(group, 0),
+            false,
+            &AgentRights {
+                id: me,
+                groups: &editor,
+                god: false
+            }
+        ));
+        let plain = [member(powers::LAND_EDIT)];
+        assert!(!allowed(
+            &parcel(group, 0),
+            false,
+            &AgentRights {
+                id: me,
+                groups: &plain,
+                god: false
+            }
+        ));
+        // someone else's land warns, unless its "Edit terrain" option is open
+        // to everyone (getAllowTerraform)
+        assert!(!allowed(&parcel(other, 0), false, &resident));
+        assert!(allowed(&parcel(other, parcel_flags::ALLOW_TERRAFORM), false, &resident));
+        // public land is only a god's
+        assert!(!allowed(&parcel(Uuid::nil(), 0), false, &resident));
+        assert!(allowed(
+            &parcel(other, 0),
+            false,
+            &AgentRights {
+                id: me,
+                groups: &none,
+                god: true
+            }
+        ));
+        // the region's owner unknown: only the agent's rights count
+        assert!(!terraform_parcel_allowed(&parcel(region_owner, 0), None, false, &resident));
+    }
+
+    #[test]
+    fn the_parcel_warning_asks_about_the_brushed_region_not_the_agents() {
+        // canTerraformParcel's regionp->canManageEstate(): the region of the
+        // click, not gAgent's
+        let (mut world, here) = demo_world();
+        let (mut source, there) = demo_world();
+        assert_eq!(here, there);
+        let (x, y) = aurora_net::handle_to_origin(here);
+        let next = ((u64::from(x) + 256) << 32) | u64::from(y);
+        let mut region = source.regions.remove(&there).expect("demo region");
+        region.handle = next;
+        world.regions.insert(next, region);
+        world.god_level = 0;
+        world.land.seen_parcels.clear();
+        let (owner, other) = (Uuid::from_u128(77), Uuid::from_u128(78));
+        // the parcel at (21, 34) of the next region: someone else's
+        let mut bitmap = vec![0u8; 64 * 64 / 8];
+        let cell = 8 * 64 + 5;
+        bitmap[cell / 8] |= 1 << (cell % 8);
+        world.note_seen_parcel(
+            next,
+            std::sync::Arc::new(ParcelInfo {
+                local_id: 5,
+                bitmap,
+                owner_id: other,
+                ..Default::default()
+            }),
+        );
+        let local = Vec3::new(21.0, 34.0, 20.0);
+        let manages = |world: &mut World, handle: RegionHandle, yes: bool| {
+            set_region(world, handle, |i| {
+                i.is_estate_manager = yes;
+                i.owner = owner;
+            })
+        };
+        assert_eq!(world.main_region, Some(here));
+        // managing the region the agent stands in does not cover the next one
+        manages(&mut world, here, true);
+        manages(&mut world, next, false);
+        assert!(parcel_refusing_terraform(&world, next, local).is_some());
+        // managing the brushed region is enough, wherever the agent stands
+        manages(&mut world, here, false);
+        manages(&mut world, next, true);
+        assert!(parcel_refusing_terraform(&world, next, local).is_none());
+    }
+
+    #[test]
+    fn the_brush_asks_once_for_an_unknown_parcel_under_it() {
+        let (mut world, handle) = demo_world();
+        world.parcel = None;
+        world.land.sel = None;
+        world.land.seen_parcels.clear();
+        let off = world.region_offset(handle).expect("region offset");
+        let spot = off + Vec3::new(21.0, 34.0, 20.0);
+        let mut tool = LandTool::default();
+        let now = Instant::now();
+        let Some(BuildCmd::ParcelRequest {
+            handle: h,
+            sequence,
+            snap,
+            west,
+            south,
+            east,
+            north,
+        }) = tool.ask_hover_parcel(&world, spot, now)
+        else {
+            panic!("the parcel under the brush is asked for");
+        };
+        assert_eq!((h, sequence, snap), (handle, aurora_net::land::HOVERED_PARCEL_SEQ_ID, false));
+        assert_eq!((west, south, east, north), (20.0, 32.0, 24.0, 36.0));
+        // same cell: not again before the retry delay
+        assert!(tool.ask_hover_parcel(&world, spot + Vec3::new(1.0, 1.0, 0.0), now).is_none());
+        assert!(tool.ask_hover_parcel(&world, spot, now + crate::hover_tips::PARCEL_RETRY).is_some());
+        // a known parcel is not asked for
+        let mut bitmap = vec![0u8; 64 * 64 / 8];
+        let cell = 8 * 64 + 5;
+        bitmap[cell / 8] |= 1 << (cell % 8);
+        world.note_seen_parcel(
+            handle,
+            std::sync::Arc::new(ParcelInfo {
+                local_id: 5,
+                bitmap,
+                ..Default::default()
+            }),
+        );
+        assert!(
+            tool.ask_hover_parcel(&world, spot, now + crate::hover_tips::PARCEL_RETRY * 3)
+                .is_none()
+        );
     }
 }
