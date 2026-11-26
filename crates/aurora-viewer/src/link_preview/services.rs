@@ -434,6 +434,30 @@ fn adult_media_pages_keep_only_the_parameters_needed_to_share_the_item() {
     assert!(recognize("https://onlyfans.com/example").is_none());
 }
 
+#[test]
+fn mainland_mobile_links_map_to_the_public_watch_page() {
+    let cases = [
+        (
+            "https://www.iesdouyin.com/share/video/12345678/?tracking=1",
+            "https://www.douyin.com/video/12345678",
+        ),
+        (
+            "https://m.v.qq.com/x/m/play?vid=v3308e31l25&tracking=1",
+            "https://v.qq.com/x/page/v3308e31l25.html",
+        ),
+        (
+            "https://v.youku.com/video?vid=XNjMzNzY4MjYxNg%3D%3D&tracking=1",
+            "https://v.youku.com/v_show/id_XNjMzNzY4MjYxNg==.html",
+        ),
+    ];
+    for (url, expected) in cases {
+        assert!(
+            matches!(recognize(url), Some((Service::Site, Step::Publisher(page))) if page == expected),
+            "{url}"
+        );
+    }
+}
+
 fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
         return None;
@@ -443,6 +467,7 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     let slug = |id: &str| (1..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'='));
     let digits = |id: &str| (1..=24).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit());
     let html_id = |id: &str| id.strip_suffix(".html").is_some_and(slug);
+    let video_id = url.query_pairs().find(|(key, _)| key == "vid").map(|(_, value)| value);
     let viewkey = url.query_pairs().find(|(key, _)| key == "viewkey").map(|(_, value)| value);
     let safe = match (host.as_str(), parts.as_slice()) {
         ("pornhub.com", ["view_video.php"]) => viewkey.as_deref().is_some_and(slug),
@@ -469,32 +494,37 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         ("tv.naver.com", ["v", id]) | ("chzzk.naver.com", ["video", id]) => digits(id),
         ("vod.sooplive.co.kr", ["player", id]) => digits(id),
         ("tv.kakao.com", ["channel", channel, "cliplink", id]) => digits(channel) && digits(id),
-        ("douyin.com", ["video", id]) => digits(id),
+        ("douyin.com", ["video", id]) | ("iesdouyin.com", ["share", "video", id]) => digits(id),
         ("kuaishou.com", ["short-video", id]) => slug(id),
         ("xiaohongshu.com", ["explore", id] | ["discovery", "item", id]) => slug(id),
         ("v.qq.com", ["x", "cover", id]) => slug(id) || html_id(id),
         ("v.qq.com", ["x", "cover", series, id]) => slug(series) && html_id(id),
         ("v.qq.com", ["x", "page", id]) => html_id(id),
+        ("v.qq.com", ["x", "m", "play"]) => video_id.as_deref().is_some_and(|id| alnum(id, 5, 24)),
         ("iqiyi.com", [id]) => id.strip_prefix("v_").is_some_and(html_id),
         ("v.youku.com", ["v_show", id]) => id.strip_prefix("id_").is_some_and(html_id),
+        ("v.youku.com", ["video"]) => video_id.as_deref().is_some_and(slug),
         ("mgtv.com", ["b", series, id]) => digits(series) && html_id(id),
         _ => false,
     };
-    safe.then(|| {
-        let mut page = if host == "dai.ly" {
-            Url::parse(&format!("https://www.dailymotion.com/video/{}", parts[0])).expect("validated Dailymotion video ID")
-        } else {
-            url.clone()
-        };
-        page.set_query(None);
-        page.set_fragment(None);
-        if host == "pornhub.com"
-            && let Some(key) = viewkey
-        {
-            page.query_pairs_mut().append_pair("viewkey", &key);
-        }
-        (Service::Site, Step::Publisher(page.into()))
-    })
+    if !safe {
+        return None;
+    }
+    let mut page = match (host.as_str(), parts.as_slice()) {
+        ("dai.ly", [id]) => Url::parse(&format!("https://www.dailymotion.com/video/{id}")).ok()?,
+        ("iesdouyin.com", ["share", "video", id]) => Url::parse(&format!("https://www.douyin.com/video/{id}")).ok()?,
+        ("v.qq.com", ["x", "m", "play"]) => Url::parse(&format!("https://v.qq.com/x/page/{}.html", video_id?)).ok()?,
+        ("v.youku.com", ["video"]) => Url::parse(&format!("https://v.youku.com/v_show/id_{}.html", video_id?)).ok()?,
+        _ => url.clone(),
+    };
+    page.set_query(None);
+    page.set_fragment(None);
+    if host == "pornhub.com"
+        && let Some(key) = viewkey
+    {
+        page.query_pairs_mut().append_pair("viewkey", &key);
+    }
+    Some((Service::Site, Step::Publisher(page.into())))
 }
 
 /// Use an ARTE player only when the programme advertises its own embed URL.
