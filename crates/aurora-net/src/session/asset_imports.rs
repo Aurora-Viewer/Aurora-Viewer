@@ -1,5 +1,5 @@
 //! Materials use CreateInventoryItem followed by UpdateMaterialAgentInventory,
-//! as LLMaterialEditor::createInventoryItem (Firestorm, originally LGPL 2.1);
+//! as LLMaterialEditor::createInventoryItem (indra/newview/llmaterialeditor.cpp, originally LGPL 2.1);
 //! the new item's name and rights go through AIS, or UpdateInventoryItem on a
 //! grid without it (update_inventory_item, indra/newview/llviewerinventory.cpp).
 //! The callback owns its request; unrelated inventory creations cannot finish it.
