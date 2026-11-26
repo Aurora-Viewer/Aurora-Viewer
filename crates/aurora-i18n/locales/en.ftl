@@ -16125,7 +16125,7 @@ ui-options-legacy-lists-help = Adds this account's teleport history, asset black
 ui-options-legacy-lists-button = Import from the Legacy Viewer…
 ui-options-legacy-lists-no-account = Log in to import this account's lists.
 ui-options-legacy-lists-title = Import from the Legacy Viewer
-ui-options-legacy-lists-text = Everything is added to this account's lists and nothing here is removed. What the asset blacklist names leaves the world at once. Importing again brings back what you removed here.
+ui-options-legacy-lists-policy = This window adds the selected lists to this account. Teleport history can also import automatically once, at the first eligible Second Life login. Old teleport visits you removed stay removed. Re-importing the other lists can restore removed entries. Objects on the imported asset blacklist leave the world immediately.
 ui-options-legacy-lists-searching = Looking for the Legacy Viewer's folders…
 ui-options-legacy-lists-none = No Legacy Viewer folder with lists was found for this account.
 ui-options-legacy-lists-teleports = Teleport history ({ $count })
@@ -16804,3 +16804,10 @@ phototools-director-lens = The Director's lens is shown while its window is open
 phototools-view-angle-viewfinder = The viewfinder owns the view angle: yours comes back when it closes.
 ui-options-dof-show-focus-point = Show focus point
 ui-options-dof-show-focus-point-help = A small crosshair on the point the lens focuses on: yellow when it is free, red when it is locked.
+
+ui-places-legacy-history-import = Import from detected Legacy Viewers
+ui-places-legacy-history-folder = Choose Legacy Viewer folder…
+ui-places-legacy-history-imported-at-login = { $count ->
+    [one] Imported one teleport history place from Legacy Viewers at login.
+   *[other] Imported { $count } teleport history places from Legacy Viewers at login.
+    }

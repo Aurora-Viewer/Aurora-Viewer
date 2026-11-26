@@ -16134,7 +16134,7 @@ ui-options-legacy-lists-help = Ajoute l'historique des téléportations, la list
 ui-options-legacy-lists-button = Importer depuis le Legacy Viewer…
 ui-options-legacy-lists-no-account = Connectez-vous pour importer les listes de ce compte.
 ui-options-legacy-lists-title = Importer depuis le Legacy Viewer
-ui-options-legacy-lists-text = Tout est ajouté aux listes de ce compte et rien n'est retiré ici. Ce que nomme la liste noire des ressources quitte le monde aussitôt. Importer à nouveau ramène ce que vous avez retiré ici.
+ui-options-legacy-lists-policy = Cette fenêtre ajoute les listes sélectionnées à ce compte. L’historique de téléportation peut aussi être importé automatiquement une seule fois, à la première connexion éligible à Second Life. Les anciennes visites supprimées restent supprimées. Réimporter les autres listes peut restaurer des entrées supprimées. Les objets de la liste noire importée quittent aussitôt le monde.
 ui-options-legacy-lists-searching = Recherche des dossiers du Legacy Viewer…
 ui-options-legacy-lists-none = Aucun dossier du Legacy Viewer contenant des listes n'a été trouvé pour ce compte.
 ui-options-legacy-lists-teleports = Historique des téléportations ({ $count })
@@ -16810,3 +16810,10 @@ phototools-director-lens = L'objectif du Réalisateur est affiché tant que sa f
 phototools-view-angle-viewfinder = Le viseur gère l'angle de vue : le vôtre revient à sa fermeture.
 ui-options-dof-show-focus-point = Afficher le point de mise au point
 ui-options-dof-show-focus-point-help = Une petite croix sur le point où l'objectif fait la mise au point : jaune quand il est libre, rouge quand il est verrouillé.
+
+ui-places-legacy-history-import = Importer depuis les Legacy Viewers détectés
+ui-places-legacy-history-folder = Choisir le dossier du Legacy Viewer…
+ui-places-legacy-history-imported-at-login = { $count ->
+    [one] Un lieu importé depuis l’historique du Legacy Viewer à la connexion.
+   *[other] { $count } lieux importés depuis l’historique du Legacy Viewer à la connexion.
+    }

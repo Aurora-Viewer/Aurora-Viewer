@@ -6,10 +6,32 @@ use base64::Engine;
 use uuid::Uuid;
 
 pub(crate) fn format_date(secs: f64) -> String {
+    format_date_with_precision(secs, false)
+}
+
+pub(crate) fn format_notation_date(secs: f64) -> String {
+    format_date_with_precision(secs, true)
+}
+
+fn format_date_with_precision(secs: f64, preserve_fraction: bool) -> String {
     let whole = secs.floor();
     let nanos = ((secs - whole) * 1e9).round().clamp(0.0, 999_999_999.0) as u32;
+    let (nanos, format) = if preserve_fraction {
+        // Subtracting the whole seconds can leave a parsed millisecond just
+        // below its boundary. Try the nearest millisecond and use it only if
+        // parsing it recovers the original timestamp exactly.
+        let milliseconds = (nanos + 500_000) / 1_000_000;
+        let millisecond_nanos = milliseconds * 1_000_000;
+        if milliseconds < 1000 && whole + f64::from(millisecond_nanos) * 1e-9 == secs {
+            (millisecond_nanos, "%Y-%m-%dT%H:%M:%S%.3fZ")
+        } else {
+            (nanos, "%Y-%m-%dT%H:%M:%S%.9fZ")
+        }
+    } else {
+        (nanos, "%Y-%m-%dT%H:%M:%S%.3fZ")
+    };
     match chrono::DateTime::from_timestamp(whole as i64, nanos) {
-        Some(dt) => dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        Some(dt) => dt.format(format).to_string(),
         None => "1970-01-01T00:00:00Z".to_owned(),
     }
 }

@@ -15944,7 +15944,7 @@ ui-options-legacy-lists-help = このアカウントのテレポート履歴、�
 ui-options-legacy-lists-button = Legacy Viewer からインポート…
 ui-options-legacy-lists-no-account = このアカウントのリストをインポートするにはログインしてください。
 ui-options-legacy-lists-title = Legacy Viewer からインポート
-ui-options-legacy-lists-text = すべてこのアカウントのリストに追加され、ここにあるものは削除されません。アセットのブロックリストの対象はすぐにワールドから消えます。再度インポートすると、ここで削除した項目が戻ります。
+ui-options-legacy-lists-policy = 選択したリストをこのアカウントに追加します。テレポート履歴は、条件を満たす最初の Second Life ログイン時に一度だけ自動インポートされることがあります。削除した過去のテレポート履歴は戻りません。他のリストを再度インポートすると、削除した項目が戻ることがあります。インポートしたアセットのブロックリストの対象はすぐにワールドから消えます。
 ui-options-legacy-lists-searching = Legacy Viewer のフォルダーを探しています…
 ui-options-legacy-lists-none = このアカウントのリストがある Legacy Viewer のフォルダーは見つかりませんでした。
 ui-options-legacy-lists-teleports = テレポート履歴（{ $count }）
@@ -16620,3 +16620,7 @@ phototools-director-lens = ディレクターのウィンドウが開いてい�
 phototools-view-angle-viewfinder = 視野角はファインダーが管理しています。ファインダーを閉じると元の値に戻ります。
 ui-options-dof-show-focus-point = フォーカス点を表示
 ui-options-dof-show-focus-point-help = レンズがピントを合わせている点に小さな十字を表示します。自由なときは黄色、ロック中は赤です。
+
+ui-places-legacy-history-import = 検出したレガシービューアから取り込む
+ui-places-legacy-history-folder = レガシービューアのフォルダーを選択…
+ui-places-legacy-history-imported-at-login = ログイン時にレガシービューアからテレポート履歴に { $count } 件の場所を取り込みました。

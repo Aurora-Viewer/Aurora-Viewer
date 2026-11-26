@@ -9,7 +9,9 @@
 
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
+use crossbeam_channel::{Receiver, TryRecvError};
 use glam::{DVec3, Vec3};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -250,6 +252,7 @@ impl TeleportHistory {
 
 /// File of the saved history in the account folder.
 pub const TELEPORT_HISTORY_FILE: &str = "teleport_history.txt";
+const LEGACY_IMPORT_FILE: &str = "teleport_history_import.json";
 /// Two places closer than this with the same title are one
 /// (MAX_GLOBAL_POS_OFFSET).
 const MAX_GLOBAL_POS_OFFSET: f64 = 5.0;
@@ -295,6 +298,96 @@ impl HistoryItem {
     }
 }
 
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+struct RemovedPlace {
+    title_hash: [u8; 32],
+    // Store the exact bits in JSON so neither the cutoff nor the 5 m
+    // comparison can move when the policy is read back from disk.
+    position_bits: [u64; 3],
+    through_bits: u64,
+    exact_date_only: bool,
+}
+
+impl RemovedPlace {
+    fn new(visit: &HistoryItem, exact_date_only: bool) -> Self {
+        Self {
+            title_hash: Sha256::digest(&visit.title).into(),
+            position_bits: visit.global.to_array().map(f64::to_bits),
+            through_bits: visit.date.to_bits(),
+            exact_date_only,
+        }
+    }
+
+    fn through(&self) -> f64 {
+        f64::from_bits(self.through_bits)
+    }
+
+    fn blocks(&self, visit: &HistoryItem) -> bool {
+        let date_matches = if self.exact_date_only {
+            visit.date == self.through()
+        } else {
+            visit.date <= self.through()
+        };
+        let position = DVec3::from_array(self.position_bits.map(f64::from_bits));
+        date_matches && (position - visit.global).length() < MAX_GLOBAL_POS_OFFSET
+    }
+}
+
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize, Clone)]
+struct ImportPolicy {
+    initial_import_checked: bool,
+    cleared_through_bits: Option<u64>,
+    removed_places: Vec<RemovedPlace>,
+}
+
+impl ImportPolicy {
+    fn load(history: &Path) -> Option<Arc<Self>> {
+        match std::fs::read(history.with_file_name(LEGACY_IMPORT_FILE)) {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(policy) => Some(Arc::new(policy)),
+                Err(e) => {
+                    log::warn!("teleport history: invalid import policy ({e}); import disabled");
+                    None
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(Arc::default()),
+            Err(e) => {
+                log::warn!("teleport history: cannot read import policy ({e}); import disabled");
+                None
+            }
+        }
+    }
+
+    fn cutoff(&self) -> Option<f64> {
+        self.cleared_through_bits.map(f64::from_bits)
+    }
+
+    fn is_pristine(&self) -> bool {
+        !self.initial_import_checked && self.cleared_through_bits.is_none() && self.removed_places.is_empty()
+    }
+
+    fn filter(&self, visits: &mut Vec<HistoryItem>) {
+        let mut by_title: HashMap<[u8; 32], Vec<&RemovedPlace>> = HashMap::new();
+        for removal in &self.removed_places {
+            by_title.entry(removal.title_hash).or_default().push(removal);
+        }
+        let cutoff = self.cutoff();
+        visits.retain(|visit| {
+            cutoff.is_none_or(|date| visit.date > date)
+                && (by_title.is_empty()
+                    || !by_title
+                        .get(&<[u8; 32]>::from(Sha256::digest(&visit.title)))
+                        .is_some_and(|places| places.iter().any(|place| place.blocks(visit))))
+        });
+    }
+}
+
+#[derive(Debug, Default)]
+struct SavedHistory {
+    bytes: Vec<u8>,
+    policy: Option<Arc<ImportPolicy>>,
+}
+
 /// The saved history, oldest first (LLTeleportHistoryStorage::mItems).
 ///
 /// The file is never lost to a save (#2626): it is replaced atomically, on
@@ -312,6 +405,9 @@ pub struct HistoryStorage {
     path: Option<PathBuf>,
     /// The file exists but could not be read: nothing can be added to it.
     unreadable: bool,
+    had_saved_history: bool,
+    import_policy: Option<Arc<ImportPolicy>>,
+    initial_import: Option<Receiver<Vec<HistoryItem>>>,
 }
 
 impl HistoryStorage {
@@ -322,11 +418,23 @@ impl HistoryStorage {
     pub fn load(path: PathBuf) -> HistoryStorage {
         // A previous session may still be publishing this account's latest
         // history. Reading its snapshot also avoids waiting for a slow disk.
-        let bytes = match writers().snapshot(&path) {
-            Some(bytes) => bytes,
+        let (saved, had_saved_history) = match writers().snapshot(&path) {
+            Some(saved) => (saved, true),
             None => match std::fs::read(&path) {
-                Ok(bytes) => Arc::new(bytes),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Arc::default(),
+                Ok(bytes) => (
+                    Arc::new(SavedHistory {
+                        bytes,
+                        policy: ImportPolicy::load(&path),
+                    }),
+                    true,
+                ),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (
+                    Arc::new(SavedHistory {
+                        bytes: Vec::new(),
+                        policy: ImportPolicy::load(&path),
+                    }),
+                    false,
+                ),
                 Err(e) => {
                     log::warn!("teleport history: can't read the saved history ({e}); it is left as it is and not saved this session");
                     return HistoryStorage {
@@ -336,7 +444,7 @@ impl HistoryStorage {
                 }
             },
         };
-        let (mut items, kept) = parse(&bytes);
+        let (mut items, kept) = parse(&saved.bytes);
         if !kept.is_empty() {
             log::info!(
                 "teleport history: {} line(s) could not be read; they are kept in the file",
@@ -348,8 +456,51 @@ impl HistoryStorage {
             items,
             kept,
             path: Some(path),
-            unreadable: false,
+            had_saved_history,
+            import_policy: saved.policy.clone(),
+            ..Default::default()
         }
+    }
+
+    /// Automatic import is only for a fresh local history on Agni. Manual
+    /// imports use the common lists dialog, including its other-grid warning.
+    pub fn start_initial_import(&mut self, account: crate::legacy_profile::Account, apps: Vec<PathBuf>) {
+        if account.grid != "agni" || !self.check_initial_import() {
+            return;
+        }
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        match std::thread::Builder::new().name("aurora-legacy-teleports".into()).spawn(move || {
+            let _ = sender.send(super::legacy_lists::find_history(&apps, &account));
+        }) {
+            Ok(_) => self.initial_import = Some(receiver),
+            Err(e) => log::warn!("teleport history: cannot start the initial import ({e})"),
+        }
+    }
+
+    fn check_initial_import(&mut self) -> bool {
+        let Some(policy) = &mut self.import_policy else {
+            return false;
+        };
+        if self.path.is_none() || policy.initial_import_checked {
+            return false;
+        }
+        let eligible = !self.had_saved_history && self.items.is_empty() && self.kept.is_empty() && policy.is_pristine();
+        Arc::make_mut(policy).initial_import_checked = true;
+        self.save();
+        eligible
+    }
+
+    pub fn poll_initial_import(&mut self) -> Option<std::io::Result<usize>> {
+        let visits = match self.initial_import.as_ref()?.try_recv() {
+            Ok(visits) => visits,
+            Err(TryRecvError::Empty) => return None,
+            Err(TryRecvError::Disconnected) => {
+                self.initial_import = None;
+                return Some(Err(std::io::Error::other("the Legacy Viewer history reader stopped")));
+            }
+        };
+        self.initial_import = None;
+        Some(self.merge(visits))
     }
 
     /// A Legacy Viewer's places added to this history, adding only. `add`'s
@@ -358,13 +509,22 @@ impl HistoryStorage {
     /// The number of places added or updated; on a failed save the history
     /// stays as it was, in the file too. Nothing to add is never a failed
     /// save, even over a history that could not be read.
-    pub fn merge(&mut self, items: Vec<HistoryItem>) -> std::io::Result<usize> {
+    pub fn merge(&mut self, mut items: Vec<HistoryItem>) -> std::io::Result<usize> {
         if items.is_empty() {
             return Ok(0);
         }
         if self.unreadable {
             return Err(std::io::Error::other("the saved history could not be read"));
         }
+        if let Some(policy) = &self.import_policy {
+            policy.filter(&mut items);
+        } else if self.path.is_some() {
+            return Err(std::io::Error::other("the teleport history import policy could not be read"));
+        }
+        if items.is_empty() {
+            return Ok(0);
+        }
+        items.sort_by(|a, b| a.date.total_cmp(&b.date));
         let before = self.items.clone();
         let (changed, _) = merge_places(&mut self.items, items);
         if changed > 0 {
@@ -384,6 +544,7 @@ impl HistoryStorage {
     pub fn in_memory(items: Vec<HistoryItem>) -> HistoryStorage {
         HistoryStorage {
             items,
+            import_policy: Some(Arc::default()),
             ..Default::default()
         }
     }
@@ -433,7 +594,13 @@ impl HistoryStorage {
     /// "Remove from history" (removeItem + save).
     pub fn remove(&mut self, index: usize) {
         if index < self.items.len() {
-            self.items.remove(index);
+            let visit = self.items.remove(index);
+            if let Some(policy) = &mut self.import_policy
+                && importable(&visit)
+                && policy.cutoff().is_none_or(|date| visit.date > date)
+            {
+                Arc::make_mut(policy).removed_places.push(RemovedPlace::new(&visit, false));
+            }
             self.save();
         }
     }
@@ -441,6 +608,26 @@ impl HistoryStorage {
     /// onClearTeleportHistoryDialog: purgeItems + save. The lines kept
     /// unread go too: the user asked for an empty history.
     pub fn clear(&mut self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+        self.clear_at(now);
+    }
+
+    fn clear_at(&mut self, now: f64) {
+        self.initial_import = None;
+        if let Some(policy) = &mut self.import_policy {
+            let policy = Arc::make_mut(policy);
+            let cutoff = policy.cutoff().map_or(now, |earlier| earlier.max(now));
+            policy.cleared_through_bits = Some(cutoff.to_bits());
+            policy.removed_places.retain(|place| place.through() > cutoff);
+            policy.removed_places.extend(
+                self.items
+                    .iter()
+                    .filter(|visit| importable(visit) && visit.date > cutoff)
+                    .map(|visit| RemovedPlace::new(visit, true)),
+            );
+        }
         self.items.clear();
         self.kept.clear();
         self.save();
@@ -452,14 +639,11 @@ impl HistoryStorage {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        crate::atomic_file::publish(path, &self.file())
+        write_snapshot(path, &self.file(), crate::atomic_file::publish)
     }
 
     /// The file's bytes: the lines kept from the file, then the places.
-    fn file(&self) -> Vec<u8> {
+    fn file(&self) -> SavedHistory {
         let mut out = Vec::new();
         for line in &self.kept {
             out.extend_from_slice(line);
@@ -469,7 +653,10 @@ impl HistoryStorage {
             out.extend_from_slice(aurora_llsd::to_notation(&it.to_llsd()).as_bytes());
             out.push(b'\n');
         }
-        out
+        SavedHistory {
+            bytes: out,
+            policy: self.import_policy.clone(),
+        }
     }
 
     /// Hand the latest complete file to this account's writer.
@@ -595,11 +782,24 @@ fn parse(bytes: &[u8]) -> (Vec<HistoryItem>, Vec<Vec<u8>>) {
     (items, kept)
 }
 
-fn write_file(path: &std::path::Path, file: &[u8]) -> std::io::Result<()> {
+fn write_file(path: &Path, file: &SavedHistory) -> std::io::Result<()> {
+    write_snapshot(path, file, crate::atomic_file::write)
+}
+
+fn write_snapshot(path: &Path, file: &SavedHistory, publish: impl Fn(&Path, &[u8]) -> std::io::Result<()>) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    crate::atomic_file::write(path, file)
+    if let Some(policy) = &file.policy
+        && !policy.is_pristine()
+    {
+        let policy_path = path.with_file_name(LEGACY_IMPORT_FILE);
+        let encoded = serde_json::to_vec(policy.as_ref())?;
+        if !std::fs::read(&policy_path).is_ok_and(|saved| saved == encoded) {
+            publish(&policy_path, &encoded)?;
+        }
+    }
+    publish(path, &file.bytes)
 }
 
 /// One publisher per account file, shared across session and World resets.
@@ -610,7 +810,7 @@ fn write_file(path: &std::path::Path, file: &[u8]) -> std::io::Result<()> {
 /// LLTeleportHistoryStorage::save writes once and warns.
 #[derive(Default)]
 struct Writers {
-    pending: Mutex<HashMap<PathBuf, Arc<Vec<u8>>>>,
+    pending: Mutex<HashMap<PathBuf, Arc<SavedHistory>>>,
     finished: Condvar,
     /// Wakes a publisher waiting to try a refused write again.
     wake: Condvar,
@@ -620,11 +820,16 @@ struct Writers {
 }
 
 impl Writers {
-    fn snapshot(&self, path: &Path) -> Option<Arc<Vec<u8>>> {
+    fn snapshot(&self, path: &Path) -> Option<Arc<SavedHistory>> {
         self.pending.lock().unwrap_or_else(|p| p.into_inner()).get(path).cloned()
     }
 
-    fn queue(self: &Arc<Self>, path: PathBuf, bytes: Vec<u8>, publish: impl FnMut(&Path, &[u8]) -> std::io::Result<()> + Send + 'static) {
+    fn queue(
+        self: &Arc<Self>,
+        path: PathBuf,
+        bytes: SavedHistory,
+        publish: impl FnMut(&Path, &SavedHistory) -> std::io::Result<()> + Send + 'static,
+    ) {
         let bytes = Arc::new(bytes);
         // Inserting into a vacant slot reserves the only worker for this
         // path. Later requests replace its snapshot while the write runs.
@@ -648,13 +853,14 @@ impl Writers {
         }
     }
 
-    fn publish(&self, path: &Path, mut bytes: Arc<Vec<u8>>, mut write: impl FnMut(&Path, &[u8]) -> std::io::Result<()>) {
+    fn publish(&self, path: &Path, mut bytes: Arc<SavedHistory>, mut write: impl FnMut(&Path, &SavedHistory) -> std::io::Result<()>) {
         use std::sync::atomic::Ordering;
         let mut backoff = crate::save_retry::Backoff::default();
         loop {
             let written = write(path, &bytes);
             let mut pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
-            let newer = |pending: &HashMap<PathBuf, Arc<Vec<u8>>>| pending.get(path).is_some_and(|latest| !Arc::ptr_eq(latest, &bytes));
+            let newer =
+                |pending: &HashMap<PathBuf, Arc<SavedHistory>>| pending.get(path).is_some_and(|latest| !Arc::ptr_eq(latest, &bytes));
             if let Err(e) = written {
                 if self.closing.load(Ordering::Acquire) && !newer(&pending) {
                     log::warn!("can't save the teleport history at exit: {e}");
@@ -1380,6 +1586,93 @@ mod tests {
     /// Keep the first publication pending past the former 500 ms logout wait.
     /// A new session sees that visit; its own write must publish last.
     #[test]
+    fn first_agni_login_imports_detected_history_once() {
+        use crate::legacy_profile::Account;
+        let root = std::env::temp_dir().join(format!("aurora-tphist-first-{}", uuid::Uuid::new_v4()));
+        let source = root.join("legacy").join("jane_doe");
+        std::fs::create_dir_all(&source).unwrap();
+        let row = b"{'title':'Plaza','global_pos':[r1,r2,r3],'date':d\"2024-03-01T10:00:00.123456Z\"}\n";
+        std::fs::write(source.join(TELEPORT_HISTORY_FILE), row).unwrap();
+        let path = root.join("account").join(TELEPORT_HISTORY_FILE);
+        let account = Account {
+            first: "Jane".into(),
+            last: "Doe".into(),
+            grid: "agni".into(),
+        };
+        let apps = vec![root.join("legacy")];
+        let mut storage = HistoryStorage::load(path.clone());
+        let mut beta = account.clone();
+        beta.grid = "aditi".into();
+        storage.start_initial_import(beta, apps.clone());
+        assert!(storage.initial_import.is_none());
+        storage.start_initial_import(account.clone(), apps.clone());
+        let rows = storage
+            .initial_import
+            .take()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        tx.send(rows).unwrap();
+        storage.initial_import = Some(rx);
+        assert_eq!(storage.poll_initial_import().unwrap().unwrap(), 1);
+        assert_eq!(storage.items, places(row));
+        storage.clear();
+        storage.flush();
+        let mut storage = HistoryStorage::load(path);
+        storage.start_initial_import(account, apps);
+        assert!(storage.initial_import.is_none());
+        assert_eq!(storage.merge(places(row)).unwrap(), 0);
+        assert_eq!(std::fs::read(source.join(TELEPORT_HISTORY_FILE)).unwrap(), row);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn existing_empty_history_and_an_empty_first_check_skip_later_auto_imports() {
+        let root = std::env::temp_dir().join(format!("aurora-tphist-eligibility-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let existing = root.join(TELEPORT_HISTORY_FILE);
+        std::fs::write(&existing, []).unwrap();
+        let mut storage = HistoryStorage::load(existing);
+        assert!(!storage.check_initial_import());
+        storage.flush();
+        let fresh = root.join("fresh").join(TELEPORT_HISTORY_FILE);
+        let mut storage = HistoryStorage::load(fresh.clone());
+        assert!(storage.check_initial_import());
+        storage.flush();
+        assert!(!HistoryStorage::load(fresh).check_initial_import());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shared_merge_respects_precise_removal_and_clear_cutoffs_after_reload() {
+        let root = std::env::temp_dir().join(format!("aurora-tphist-policy-{}", uuid::Uuid::new_v4()));
+        let path = root.join(TELEPORT_HISTORY_FILE);
+        let row = places(b"{'title':'Plaza','global_pos':[r1,r2,r3],'date':d\"1969-12-31T23:59:59.004774Z\"}\n");
+        let mut storage = HistoryStorage::load(path.clone());
+        assert_eq!(storage.merge(row.clone()).unwrap(), 1);
+        storage.remove(0);
+        storage.flush();
+        let mut storage = HistoryStorage::load(path.clone());
+        let mut shifted = row[0].clone();
+        shifted.global.x += 1.0;
+        assert_eq!(storage.merge(vec![shifted]).unwrap(), 0);
+        let visit = |date| HistoryItem { date, ..row[0].clone() };
+        assert_eq!(storage.merge(vec![visit(20.0)]).unwrap(), 1);
+        storage.clear_at(5.0);
+        storage.flush();
+        let mut storage = HistoryStorage::load(path);
+        let removals = &storage.import_policy.as_ref().unwrap().removed_places;
+        assert_eq!(removals.len(), 1);
+        assert_eq!(removals[0].through(), 20.0);
+        assert!(removals[0].exact_date_only);
+        assert_eq!(storage.merge(vec![visit(5.0), visit(6.0), visit(20.0)]).unwrap(), 1);
+        assert_eq!(storage.items, vec![visit(6.0)]);
+        storage.flush();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn a_slow_save_survives_logout_relogin_and_orderly_shutdown() {
         use std::sync::mpsc;
         use std::time::Duration;
@@ -1389,13 +1682,20 @@ mod tests {
         let (started, writing) = mpsc::channel();
         let (release, gate) = mpsc::channel();
         let mut first_write = true;
-        writers().queue(path.clone(), Vec::new(), move |path, bytes| {
-            if std::mem::take(&mut first_write) {
-                started.send(()).unwrap();
-                gate.recv().unwrap();
-            }
-            write_file(path, bytes)
-        });
+        writers().queue(
+            path.clone(),
+            SavedHistory {
+                policy: Some(Arc::default()),
+                ..Default::default()
+            },
+            move |path, bytes| {
+                if std::mem::take(&mut first_write) {
+                    started.send(()).unwrap();
+                    gate.recv().unwrap();
+                }
+                write_file(path, bytes)
+            },
+        );
         writing.recv().unwrap();
         let mut first = HistoryStorage::load(path.clone());
         first.add("First", pos, 1.0, String::new());
@@ -1442,17 +1742,28 @@ mod tests {
         let writers = Arc::new(Writers::default());
         let tries = Arc::new(AtomicUsize::new(0));
         let counted = tries.clone();
-        writers.queue(path.clone(), b"visits".to_vec(), move |path, bytes| {
-            if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-                return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
-            }
-            write_file(path, bytes)
-        });
+        writers.queue(
+            path.clone(),
+            SavedHistory {
+                bytes: b"visits".to_vec(),
+                policy: None,
+            },
+            move |path, bytes| {
+                if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+                }
+                write_file(path, bytes)
+            },
+        );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while tries.load(Ordering::SeqCst) < 1 && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        assert_eq!(writers.snapshot(&path).as_deref().map(Vec::as_slice), Some(&b"visits"[..]), "kept");
+        assert_eq!(
+            writers.snapshot(&path).as_deref().map(|file| file.bytes.as_slice()),
+            Some(&b"visits"[..]),
+            "kept"
+        );
         writers.close();
         assert_eq!(tries.load(Ordering::SeqCst), 2);
         assert!(writers.snapshot(&path).is_none());

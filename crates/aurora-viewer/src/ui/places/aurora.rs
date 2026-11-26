@@ -105,6 +105,24 @@ pub struct AuroraState {
 }
 
 impl AuroraState {
+    pub(super) fn history_reordered(&mut self) {
+        // History rows use indices, so a merge or removal can move a row
+        // to another visit (#798).
+        self.catalog = None;
+        if matches!(self.selected, Some(Key::Visit(_))) {
+            self.selected = None;
+        }
+        if matches!(self.pending_click, Some((Key::Visit(_), _))) {
+            self.pending_click = None;
+        }
+        if matches!(self.note, Some((Key::Visit(_), _))) {
+            self.note = None;
+        }
+        if matches!(self.rename, Some((Key::Visit(_), _))) {
+            self.rename = None;
+        }
+    }
+
     /// `PlacesUi::open_tab` in Aurora's terms.
     pub fn open_tab(&mut self, tab: usize) {
         self.source = match tab {
@@ -608,10 +626,21 @@ impl PlacesUi {
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         tb.spacing_mut().item_spacing.x = 10.0;
-        let sort_w = widgets::action_button_fit(&tb, "arrows-sort", self.sort_label(env.sort)) + SORT_CHEVRON;
+        let history = self.aurora.source == Source::History;
+        let (icon, label) = if history {
+            ("settings-filled", aurora_i18n::tr!("ui-places-show-options"))
+        } else {
+            ("arrows-sort", self.sort_label(env.sort))
+        };
+        let sort_w = widgets::action_button_fit(&tb, icon, label) + SORT_CHEVRON;
         let w = (tb.available_width() - sort_w - 10.0).max(80.0);
         widgets::clearable_search_box(&mut tb, p, &mut self.filter, aurora_i18n::tr!("ui-places-search"), w);
-        self.sort_button(&mut tb, p, c.world, env.sort, actions);
+        if history {
+            let response = widgets::action_menu_button(&mut tb, p, icon, label, false, 28.0);
+            self.history_menu(&response, p, c.world, actions);
+        } else {
+            self.sort_button(&mut tb, p, env.sort, actions);
+        }
 
         let body = Rect::from_min_max(Pos2::new(full.left(), bar.bottom()), full.max);
         let rail_width = folder_rail_width(ui, p, body);
@@ -659,47 +688,49 @@ impl PlacesUi {
         }
     }
 
-    /// The order button and its menu; the history's offers to clear it.
-    fn sort_button(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, sort: PlacesSort, actions: &mut Vec<PlacesAction>) {
+    fn history_options(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<PlacesAction>) {
+        super::history_zone_menu(ui, p, self.history_zone, actions);
+        super::legacy_history_menu(ui, p, world, self.demo_import_menu, actions);
+        menu::separator(ui, p);
+        if menu::item_if(
+            ui,
+            p,
+            "trash-filled",
+            aurora_i18n::tr!("ui-places-clear-teleport-history"),
+            !world.tp_storage.items.is_empty(),
+        ) {
+            self.confirm = Some(Confirm::Clear);
+        }
+    }
+
+    fn history_menu(&mut self, response: &egui::Response, p: &Palette, world: &World, actions: &mut Vec<PlacesAction>) {
+        if self.demo_import_menu {
+            menu::dropdown_held(response, p, true, None, |ui| self.history_options(ui, p, world, actions));
+        } else {
+            menu::dropdown(response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                self.history_options(ui, p, world, actions);
+            });
+        }
+    }
+
+    fn sort_button(&mut self, ui: &mut egui::Ui, p: &Palette, sort: PlacesSort, actions: &mut Vec<PlacesAction>) {
         let resp = widgets::action_menu_button(ui, p, "arrows-sort", self.sort_label(sort), false, 28.0);
-        self.sort_menu(&resp, p, world, sort, actions);
+        self.sort_menu(&resp, p, sort, actions);
     }
 
     /// The narrow layout's order button (#4976), `height` tall: the icon
     /// and its chevron, the order shown in its tooltip, the same menu as
     /// `sort_button`. The Legacy Viewer's Places panel has its sorting in
     /// the toolbar at every width.
-    fn sort_icon_button(
-        &mut self,
-        ui: &mut egui::Ui,
-        p: &Palette,
-        world: &World,
-        sort: PlacesSort,
-        height: f32,
-        actions: &mut Vec<PlacesAction>,
-    ) {
+    fn sort_icon_button(&mut self, ui: &mut egui::Ui, p: &Palette, sort: PlacesSort, height: f32, actions: &mut Vec<PlacesAction>) {
         let resp = widgets::action_menu_button(ui, p, "arrows-sort", "", false, height).on_hover_text(self.sort_label(sort));
-        self.sort_menu(&resp, p, world, sort, actions);
+        self.sort_menu(&resp, p, sort, actions);
     }
 
-    fn sort_menu(&mut self, resp: &egui::Response, p: &Palette, world: &World, sort: PlacesSort, actions: &mut Vec<PlacesAction>) {
+    fn sort_menu(&mut self, resp: &egui::Response, p: &Palette, sort: PlacesSort, actions: &mut Vec<PlacesAction>) {
         menu::dropdown(resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| match self.aurora.source {
             Source::Favorites => {
                 menu::check(ui, p, "star-filled", aurora_i18n::tr!("ui-places-sort-bar"), true, false);
-            }
-            Source::History => {
-                menu::check(ui, p, "history", aurora_i18n::tr!("ui-places-sort-newest"), true, false);
-                super::history_zone_menu(ui, p, self.history_zone, actions);
-                menu::separator(ui, p);
-                if menu::item_if(
-                    ui,
-                    p,
-                    "trash-filled",
-                    aurora_i18n::tr!("ui-places-clear-teleport-history"),
-                    !world.tp_storage.items.is_empty(),
-                ) {
-                    self.confirm = Some(Confirm::Clear);
-                }
             }
             _ => {
                 for (by, icon, label) in [
@@ -1129,16 +1160,8 @@ impl PlacesUi {
             }
             if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("ui-places-remove-from-history")) {
                 actions.push(PlacesAction::RemoveHistory(i));
-                // the entries after it move up one index: nothing stays
-                // keyed by one (#798)
                 self.aurora.selected = None;
-                let by_index = |k: &Key| matches!(k, Key::Visit(_));
-                if self.aurora.note.as_ref().is_some_and(|(k, _)| by_index(k)) {
-                    self.aurora.note = None;
-                }
-                if self.aurora.rename.as_ref().is_some_and(|(k, _)| by_index(k)) {
-                    self.aurora.rename = None;
-                }
+                self.aurora.history_reordered();
             }
         }
     }
@@ -1604,13 +1627,21 @@ impl PlacesUi {
                 .show(ui, |ui| self.preview(ui, c, cat, true, actions));
             return;
         }
-        // in a row: the field takes the height of its line only, the order
-        // button what is left beside it (#4976), as tall as the field
+        // Leave room beside the search field for a control as tall as the field (#4976).
         ui.horizontal(|ui| {
-            let sort_w = widgets::action_button_fit(ui, "arrows-sort", "") + SORT_CHEVRON;
-            let w = (ui.available_width() - sort_w - ui.spacing().item_spacing.x).max(80.0);
+            let history = self.aurora.source == Source::History;
+            let icon = if history { "settings-filled" } else { "arrows-sort" };
+            let controls = widgets::action_button_fit(ui, icon, "") + SORT_CHEVRON + ui.spacing().item_spacing.x;
+            let w = (ui.available_width() - controls).max(80.0);
             let field = widgets::clearable_search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w);
-            self.sort_icon_button(ui, p, world, env.sort, field.rect.height(), actions);
+            let height = field.rect.height();
+            if history {
+                let response =
+                    widgets::action_menu_button(ui, p, icon, "", false, height).on_hover_text(aurora_i18n::tr!("ui-places-show-options"));
+                self.history_menu(&response, p, world, actions);
+            } else {
+                self.sort_icon_button(ui, p, env.sort, height, actions);
+            }
         });
         ui.add_space(8.0);
         // the three tabs
@@ -1997,6 +2028,20 @@ mod tests {
         restored.memory_mut(|memory| *memory = ron::from_str(&saved).unwrap());
         assert_eq!(frame(&restored, WIDE, vec![]), WIDE - PREVIEW_W - RAIL_HANDLE - MIN_LIST_W);
         assert_eq!(frame(&restored, 1000.0, vec![]), resized);
+    }
+
+    #[test]
+    fn history_reordering_discards_cached_row_indices() {
+        let mut state = AuroraState {
+            catalog: Some(((0, 0, 2, 0, 0), Arc::new(Catalog::default()))),
+            selected: Some(Key::Visit(0)),
+            pending_click: Some((Key::Visit(1), 0.0)),
+            ..Default::default()
+        };
+        state.history_reordered();
+        assert!(state.catalog.is_none());
+        assert!(state.selected.is_none());
+        assert!(state.pending_click.is_none());
     }
 
     #[test]

@@ -356,7 +356,7 @@ fn write_value(v: &Llsd, out: &mut String) {
         Llsd::Real(r) => out.push_str(&format!("r{r}")),
         Llsd::String(s) => write_string(s, out),
         Llsd::Uuid(u) => out.push_str(&format!("u{u}")),
-        Llsd::Date(d) => out.push_str(&format!("d\"{}\"", crate::xml_llsd::format_date(*d))),
+        Llsd::Date(d) => out.push_str(&format!("d\"{}\"", crate::xml_llsd::format_notation_date(*d))),
         Llsd::Uri(u) => {
             out.push('l');
             write_string(u, out);
@@ -390,6 +390,24 @@ fn write_value(v: &Llsd, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notation_dates_keep_milliseconds_and_round_trip_finer_precision() {
+        let milliseconds = Llsd::Date(1.125);
+        assert_eq!(to_notation(&milliseconds), "d\"1970-01-01T00:00:01.125Z\"");
+        for millis in 0..1000 {
+            let input = format!("d\"2024-03-01T10:00:00.{millis:03}Z\"");
+            let date = from_notation(input.as_bytes()).unwrap();
+            assert_eq!(to_notation(&date), input);
+        }
+        for micros in ["000001", "123456", "999999"] {
+            let input = format!("d\"2024-03-01T10:00:00.{micros}Z\"");
+            let date = from_notation(input.as_bytes()).unwrap();
+            let encoded = to_notation(&date);
+            assert_eq!(encoded.rsplit_once('.').unwrap().1.trim_end_matches("Z\"").len(), 9);
+            assert_eq!(from_notation(encoded.as_bytes()).unwrap(), date);
+        }
+    }
 
     #[test]
     fn gltf_override_payload() {

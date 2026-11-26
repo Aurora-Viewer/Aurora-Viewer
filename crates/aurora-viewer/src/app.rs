@@ -4659,6 +4659,13 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                if !self.demo
+                    && let Some(account) = self.legacy_lists_account()
+                {
+                    self.world
+                        .tp_storage
+                        .start_initial_import(account, self.world.chat_log.legacy_apps());
+                }
                 self.parcel_music
                     .enter(!self.demo && self.settings.parcel_music_accounts.contains(&l.agent_id));
                 self.session_started(l.session_id);
@@ -22034,6 +22041,15 @@ impl App {
                             self.settings.tp_history_zone = zone;
                             self.settings.save();
                         }
+                        PlacesAction::ImportLegacyHistory => self.open_teleport_history_import(None),
+                        PlacesAction::ChooseLegacyHistoryFolder => {
+                            if self.world.login.is_some() {
+                                self.choose_folder(
+                                    ui::options::Folder::LegacyTeleports(self.world.agent_id),
+                                    ui::options::FolderChoice::Pick,
+                                );
+                            }
+                        }
                     }
                 }
                 // "Search"
@@ -23419,6 +23435,7 @@ impl ApplicationHandler for App {
                 }
                 self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
                 self.places_ui.demo_classic = demo_how.split(',').any(|w| w == "classic");
+                self.places_ui.demo_import_menu = demo_tab == "history" && demo_how.split(',').any(|w| w == "import-menu");
                 self.places_ui.demo_zone = demo_how.split(',').find_map(|w| match w {
                     "utc" => Some(crate::settings::HistoryZone::Utc),
                     "local" => Some(crate::settings::HistoryZone::Local),
