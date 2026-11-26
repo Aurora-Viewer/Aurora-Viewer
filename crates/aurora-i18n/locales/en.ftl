@@ -1,4 +1,4 @@
-language-name = English
+language-name = English (US)
 avatar-studio-title = Avatar Studio
 avatar-studio-pose = Pose
 avatar-studio-pose-animated = AO / In-world

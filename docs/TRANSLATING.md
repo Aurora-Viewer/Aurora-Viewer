@@ -9,7 +9,10 @@ files are embedded at build time; adding `de.ftl`, for example, adds a
 language to the Preferences without changing the Rust code. The file name
 must be a language identifier, such as `de` or `pt-BR`, and `language-name`
 holds the name that its speakers recognise.
-The English catalogue (`en.ftl`) is written in American English.
+The canonical English catalogue (`en.ftl`) is written in American English.
+British English (`en-GB.ftl`) contains spelling overrides of the canonical
+catalogue. Australian English (`en-AU.ftl`) inherits British English and
+contains only Australian-specific overrides.
 
 The embedded fonts only cover European scripts. Other scripts, Japanese
 included, are drawn by the system fallback fonts (Meiryo UI or Yu Gothic UI
@@ -24,8 +27,9 @@ Viewer's `xui/ja` interface (インベントリ, 区画, リージョン, 初期
 "System language" is the default and follows the OS. An explicit saved
 choice takes precedence. Preferences shows the system match first among
 bundled languages, then common choices and the rest by language code. Each
-entry uses its native name and the exact catalogue code, such as `English
-(en)` or `日本語 (ja)`.
+entry uses its native name and the exact catalogue code, such as `日本語 (ja)`. The English variants are grouped together and
+displayed as English (US), English (UK) and English (AU), retaining their
+internal catalogue codes `en`, `en-GB` and `en-AU`.
 
 Regional variants prefer the exact catalogue and then try less specific
 codes (`es-MX` reads `es`). `zh-CN` and `zh-SG` can use `zh-Hans`, while `zh-TW`, `zh-HK` and
@@ -34,7 +38,13 @@ codes (`es-MX` reads `es`). `zh-CN` and `zh-SG` can use `zh-Hans`, while `zh-TW`
 (`nb`). When the language has no catalogue of its own, another region of it
 comes before English (`pt-BR` would serve `pt-PT` without its catalogue);
 the two Chinese scripts are never swapped this way. A missing locale or
-message uses English.
+message uses English. Australian English first tries British English
+before American English. English locales for New Zealand, Ireland,
+South Africa, India, Singapore, Hong Kong, Malaysia and Malta select
+British English when no exact catalogue exists. Canadian and World English
+select American English. Explicit saved language choices continue to take
+precedence. Imported Australian English catalogues also inherit bundled
+British English before canonical American English.
 
 The language and its visibility to scripts are sent to the simulator through
 `UpdateAgentLanguage`, after login, a region change or a change to the
@@ -53,7 +63,16 @@ community catalogues) catch up at each release (below): until then a new key
 uses the current English message. The checks require valid Fluent, exact
 variables on translated messages, and no stale keys in bundled catalogues.
 Only English, French and Japanese require complete parity on each feature
-PR. So:
+PR. Regional English overrides are maintained in the same PR as changes
+to their canonical messages. Review new English messages for regional
+spelling differences and add overrides where needed. The regional
+consistency test checks existing overrides against the canonical wording
+using approved spelling variations. Preserve Fluent variables, official
+Second Life terminology, inventory folder names, commands and protocol
+identifiers. Do not duplicate British overrides in the Australian
+catalogue.
+
+So:
 
 - a key removed from `en.ftl` is removed from every catalogue in the same
   PR; a key renamed is renamed in every catalogue, its translation kept;
@@ -68,7 +87,13 @@ be copied out of the source tree and imported through the language file
 picker.
 
 For a release, save the previous and current English catalogues and run
-the delta report for each language:
+the delta report for each community language. Do not run this report
+against `en-GB.ftl` or `en-AU.ftl`: these are intentionally sparse regional
+override catalogues, and missing entries are inherited rather than
+untranslated. Regional English overrides are maintained in each PR and
+validated by the regional consistency tests.
+
+For example:
 
 ```text
 cargo run -q -p aurora-i18n --example catalog_delta -- previous-en.ftl crates/aurora-i18n/locales/en.ftl crates/aurora-i18n/locales/zh-Hans.ftl
