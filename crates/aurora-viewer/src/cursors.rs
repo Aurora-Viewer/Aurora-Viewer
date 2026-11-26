@@ -219,22 +219,25 @@ fn draw_icon(pixmap: &mut resvg::tiny_skia::Pixmap, svg: &[u8], palette: &crate:
 }
 
 /// Draw Tabler's filled pointer and return the pixel at its tip.
+///
+/// The outline's width is given in SVG units, so the transform scales it with
+/// the arrow (about 2 px per unit of `scale`). The arrow is moved up and left
+/// by 0.4 px per unit of `scale`: the outline's corner then sits about 0.4 px
+/// per unit inside the bitmap, so a large arrow is not cut at the top left.
 fn draw_arrow(pixmap: &mut resvg::tiny_skia::Pixmap, palette: &crate::theme::Palette, scale: f32) -> Option<[u16; 2]> {
     let svg = std::str::from_utf8(include_bytes!("../assets/icons/tabler/filled/pointer.svg")).ok()?;
     let options = resvg::usvg::Options::default();
-    let transform = resvg::tiny_skia::Transform::from_scale(0.62 * scale, 0.62 * scale).post_translate(-1.2 * scale, -1.2 * scale);
+    let transform = resvg::tiny_skia::Transform::from_scale(0.62 * scale, 0.62 * scale).post_translate(-0.4 * scale, -0.4 * scale);
     let bar = hex(palette.bar);
-    let outline = format!(
-        "fill=\"{bar}\" stroke=\"{bar}\" stroke-width=\"{}\" stroke-linejoin=\"round\"",
-        3.2 * scale
-    );
+    let outline = format!("fill=\"{bar}\" stroke=\"{bar}\" stroke-width=\"3.2\" stroke-linejoin=\"round\"");
     let ink = format!("fill=\"{}\"", hex(palette.ink));
     for fill in [outline, ink] {
         let source = svg.replace("fill=\"currentColor\"", &fill);
         let tree = resvg::usvg::Tree::from_data(source.as_bytes(), &options).ok()?;
         resvg::render(&tree, transform, &mut pixmap.as_mut());
     }
-    Some([(scale.round() as u16).max(1); 2])
+    // The ink's tip is at 2.9 SVG units on both axes: 0.62 × 2.9 − 0.4 ≈ 1.4 px per unit of `scale`.
+    Some([((1.4 * scale).round() as u16).max(1); 2])
 }
 
 /// The theme arrow takes up more of the bitmap than the compact arrow.
@@ -625,6 +628,21 @@ mod tests {
         .unwrap();
         assert_ne!(light_arrow.rgba, theme_arrow.rgba);
         assert_eq!(light_arrow.hotspot, theme_arrow.hotspot);
+        for look in [PointerLook::Arrow, PointerLook::Original] {
+            let image = pointer_image(
+                &palette,
+                &Preferences {
+                    size: 64,
+                    look,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert!(
+                (0..64).all(|i| !opaque(&image, 0, i) && !opaque(&image, i, 0)),
+                "{look:?}: the 64 px arrow's outline stays inside the bitmap"
+            );
+        }
         assert!(
             pointer_image(
                 &palette,
@@ -722,6 +740,19 @@ mod tests {
         .unwrap();
         assert_eq!(mouse.rgba, theme_arrow.rgba, "the touch pointer uses the same theme arrow");
         assert_eq!(mouse.hotspot, theme_arrow.hotspot);
+        let large = touch_image(
+            &palette,
+            &Preferences {
+                touch_size: 64,
+                touch_look: TouchLook::NormalPointer,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            (0..64).all(|i| !opaque(&large, 0, i) && !opaque(&large, i, 0)),
+            "the 64 px touch arrow's outline stays inside the bitmap"
+        );
     }
 
     #[test]
