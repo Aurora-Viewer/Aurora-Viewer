@@ -392,7 +392,16 @@ pub fn write_glb(model: &Model, textures: &TextureFiles, images: &HashMap<Uuid, 
             let mut list: Vec<usize> = Vec::new();
             let mut bind: Vec<[f32; 16]> = Vec::new();
             for (name, inverse) in skin.joint_names.iter().zip(&skin.inverse_bind) {
-                let mut node = joints.by_name[name];
+                // (joint_nodes made one for every skin name; a name it ever
+                // misses gets a node of its own rather than a panic that
+                // would stop the export)
+                let mut node = match joints.by_name.get(name) {
+                    Some(&node) => node,
+                    None => {
+                        nodes.push(json!({ "name": name }));
+                        nodes.len() - 1
+                    }
+                };
                 if list.contains(&node) {
                     // a name and its alias both listed: glTF wants each joint
                     // once, so the second gets a node of its own on the first

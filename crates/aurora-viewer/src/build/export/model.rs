@@ -117,6 +117,15 @@ pub fn build(prims: &[SourcePrim], settings: &Settings) -> Model {
             weights: Vec::new(),
         };
         let rigged = out.skin.is_some();
+        // The last joint a vertex may name: a Weights byte past the skin's
+        // list is clamped to it, as LLSkinningUtil::scrubSkinWeights does
+        // (indra/newview/llskinningutil.cpp), so no vertex points past
+        // `skin.joints` (an invalid glTF file) or at a joint of another
+        // mesh listed after this one's. (usable_skin: at least one joint)
+        let last_joint = out
+            .skin
+            .as_ref()
+            .map_or(0, |s| u8::try_from(s.joint_names.len().saturating_sub(1)).unwrap_or(u8::MAX));
         // (face's material, its indices into the prim's lists)
         let mut faces: Vec<(usize, Vec<u32>)> = Vec::new();
         for face in &prim.faces {
@@ -139,7 +148,8 @@ pub fn build(prims: &[SourcePrim], settings: &Settings) -> Model {
             }
             if rigged {
                 // a vertex without weights follows the first joint whole
-                out.joints.extend((0..count).map(|i| face.joints.get(i).copied().unwrap_or([0; 4])));
+                out.joints
+                    .extend((0..count).map(|i| face.joints.get(i).copied().unwrap_or([0; 4]).map(|j| j.min(last_joint))));
                 out.weights
                     .extend((0..count).map(|i| face.weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0])));
             }
@@ -341,6 +351,15 @@ mod tests {
             ([0; 4], [1.0, 0.0, 0.0, 0.0]),
             "no weights: the first joint"
         );
+        // a joint byte past the skin's list follows its last joint
+        let mut past = quad(tex(1, [1.0; 4]));
+        past.joints = vec![[0, 1, 2, 255]; 4];
+        past.weights = vec![[0.25; 4]; 4];
+        let mut stray = prim(Vec3::ZERO, vec![past]);
+        stray.skin = Some(skin.clone());
+        let model = build(&[stray], &Settings::default());
+        assert_eq!(model.prims[0].joints[0], [0, 1, 1, 1], "clamped to the last joint");
+        assert_eq!(model.prims[0].weights[0], [0.25; 4], "weights kept");
         // a skin whose matrices do not match its joints is left out
         rigged.skin = Some(Arc::new(SkinInfo {
             joint_names: vec!["mPelvis".into()],

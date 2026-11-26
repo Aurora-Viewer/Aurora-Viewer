@@ -21,7 +21,7 @@ pub const OTHER_CREATOR: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_
 pub const OUR_TEXTURE_ITEM: Uuid = Uuid::from_u128(0xA0E0_0E10_0000_0000_0000_0000_0000_0001);
 pub const BOUGHT_TEXTURE_ITEM: Uuid = Uuid::from_u128(0xA0E0_0E10_0000_0000_0000_0000_0000_0002);
 
-/// `AURORA_DEMO_OBJECT_EXPORT=collada|obj`: the window opened in that
+/// `AURORA_DEMO_OBJECT_EXPORT=collada|obj|gltf`: the window opened in that
 /// format on the lamp.
 pub fn mode() -> Option<&'static str> {
     static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
