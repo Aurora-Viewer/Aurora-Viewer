@@ -399,6 +399,40 @@ fn publisher_shares_use_public_pages_and_publisher_images() {
     );
 }
 
+const VIEWER_CONFIRMATION_DOMAINS: &[&str] = &["pornhub.com", "xvideos.com", "onlyfans.com", "redgifs.com"];
+
+pub(super) fn adult_media_site(host: &str) -> bool {
+    VIEWER_CONFIRMATION_DOMAINS.iter().any(|domain| super::in_domain(host, domain))
+}
+
+#[test]
+fn adult_media_pages_keep_only_the_parameters_needed_to_share_the_item() {
+    let cases = [
+        (
+            "https://www.pornhub.com/view_video.php?opaque=example&viewkey=phabcdef#fragment",
+            "https://www.pornhub.com/view_video.php?viewkey=phabcdef",
+        ),
+        (
+            "https://www.xvideos.com/video.example/title?tracking=example",
+            "https://www.xvideos.com/video.example/title",
+        ),
+        (
+            "https://onlyfans.com/123456789/example?tracking=example",
+            "https://onlyfans.com/123456789/example",
+        ),
+        (
+            "https://www.redgifs.com/watch/sample?tracking=example",
+            "https://www.redgifs.com/watch/sample",
+        ),
+    ];
+    for (url, expected) in cases {
+        assert!(matches!(recognize(url), Some((Service::Site, Step::Publisher(page))) if page == expected));
+    }
+    assert!(!adult_media_site("redgifs.com.example.org"));
+    assert!(adult_media_site("media.redgifs.com"));
+    assert!(recognize("https://onlyfans.com/example").is_none());
+}
+
 fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
         return None;
@@ -408,7 +442,12 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     let slug = |id: &str| (1..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'='));
     let digits = |id: &str| (1..=24).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit());
     let html_id = |id: &str| id.strip_suffix(".html").is_some_and(slug);
+    let viewkey = url.query_pairs().find(|(key, _)| key == "viewkey").map(|(_, value)| value);
     let safe = match (host.as_str(), parts.as_slice()) {
+        ("pornhub.com", ["view_video.php"]) => viewkey.as_deref().is_some_and(slug),
+        ("xvideos.com", [video, ..]) => video.strip_prefix("video.").is_some_and(slug) || video.strip_prefix("video").is_some_and(digits),
+        ("onlyfans.com", [post, creator]) => digits(post) && slug(creator),
+        ("redgifs.com", ["watch", id]) => slug(id),
         ("snapchat.com", ["spotlight", id] | [_, "spotlight", id]) => {
             (8..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
         }
@@ -444,6 +483,11 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         let mut page = url.clone();
         page.set_query(None);
         page.set_fragment(None);
+        if host == "pornhub.com"
+            && let Some(key) = viewkey
+        {
+            page.query_pairs_mut().append_pair("viewkey", &key);
+        }
         (Service::Site, Step::Publisher(page.into()))
     })
 }
@@ -453,6 +497,10 @@ pub(super) fn publisher_poster(page: &str, html: &str) -> Option<String> {
     let page = Url::parse(page).ok()?;
     let owner = bare_host(&page)?;
     let allowed: &[&str] = match owner.as_str() {
+        "pornhub.com" => &["phncdn.com"],
+        "xvideos.com" => &["xvideos-cdn.com", "xvideos-cdn.net"],
+        "onlyfans.com" => &["ofstatic.com"],
+        "redgifs.com" => &["redgifs.com"],
         "snapchat.com" => &["sc-cdn.net", "snapcdn.com"],
         "dailymotion.com" => &["dmcdn.net"],
         "bbc.com" | "bbc.co.uk" => &["bbci.co.uk"],

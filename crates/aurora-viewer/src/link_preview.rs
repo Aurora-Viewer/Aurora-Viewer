@@ -864,8 +864,28 @@ pub fn decide(s: &Settings, place: Place, from: Sender, url: &str) -> Option<(Ta
         _ => Start::Ask,
     };
     // only a preview about to load by itself is looked at further
-    let by_itself = start == Start::Load && from == Sender::Resident && !waits_for_click(url);
+    let by_itself = start == Start::Load && from == Sender::Resident && !waits_for_click(url) && !services::adult_media_site(&host);
     Some((target, if by_itself { Start::Load } else { Start::Ask }))
+}
+
+#[test]
+fn adult_site_media_waits_for_an_explicit_preview_click() {
+    let settings = Settings {
+        load: Load::All,
+        ..Settings::default()
+    };
+    for url in [
+        "https://www.redgifs.com/watch/example",
+        "https://media.redgifs.com/example.gif",
+        "https://www.pornhub.com/view_video.php?viewkey=phabcdef",
+        "https://www.xvideos.com/video.example/title",
+        "https://onlyfans.com/123456789/example",
+    ] {
+        assert!(
+            matches!(decide(&settings, Place::Im, Sender::Resident, url), Some((_, Start::Ask))),
+            "{url}"
+        );
+    }
 }
 
 /// A picture decoded for its card.
