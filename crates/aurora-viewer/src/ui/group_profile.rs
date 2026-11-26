@@ -295,7 +295,15 @@ impl GroupProfileUi {
                 w.open = true;
                 w.raise = true;
             }
-            None => self.windows.push(GroupWindow::new(id)),
+            None => {
+                self.windows.push(GroupWindow::new(id));
+                // observed before its first frame asks for its data, so that
+                // a batch of copies does not evict its own groups from the
+                // cache (LLPanelGroup::setGroupID adds the observer before
+                // the tabs ask)
+                self.observed = self.windows.iter().map(|w| w.group).collect();
+                world.group_data.observe(self.observed.clone());
+            }
         }
         self.latest = Some(id);
     }
@@ -425,12 +433,9 @@ impl GroupProfileUi {
         // what was written in it
         self.windows.retain(|w| w.open);
         self.observe(&mut actions);
-        // the invitation is a window of its own (LLFloaterGroupInvite), with
-        // or without the group's profile
-        if let Some(group) = self.invite.target() {
-            let v = view::View::of(c.world, group);
-            self.invite.show(ctx, c, env.avatar_pics, &v, &mut actions);
-        }
+        // the invitations are windows of their own (LLFloaterGroupInvite, one
+        // per group), with or without the group's profile
+        self.invite.show(ctx, c, env.avatar_pics, &mut actions);
         self.confirm_dialog(ctx, c.p, &mut actions);
         actions
     }
@@ -563,11 +568,11 @@ impl GroupWindow {
         // the floater borrows its id while the body borrows the window
         let win_id = std::mem::take(&mut self.win_id);
         let header = if env.classic {
-            // floater_fs_group.xml: "Group Profile - [NAME]", made again only
-            // when the name changes
+            // floater_fs_group.xml: "Group Profile - [NAME]", or title_loading
+            // while the name is not known, made again only when it changes
             if self.title.0 != v.name || self.title.1.is_empty() {
                 let title = if v.name.is_empty() {
-                    aurora_i18n::tr!("ui-group-profile-title").to_owned()
+                    aurora_i18n::tr!("ui-group-profile-title-loading").to_owned()
                 } else {
                     aurora_i18n::tr!("ui-group-profile-title-named", name = v.name.clone())
                 };

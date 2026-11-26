@@ -89,6 +89,7 @@ GPL-3.0-or-later as described above.
 | Common helpers, `newview/fscommon.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/build/new_defaults.rs`, `ui/chat.rs`, `ui/emoji/recent.rs`, `world/groups.rs` | Originally LGPL 2.1 |
 | Avatar render settings, `newview/fsfloateravatarrendersettings.cpp` — Copyright © 2016 Ansariel Hiller | `aurora-viewer/src/ui/avatar_render_settings.rs` | Originally LGPL 2.1 |
 | Group titles, `newview/fsfloatergrouptitles.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/group_titles.rs` | Originally LGPL 2.1 |
+| Standalone group floater, `newview/fsfloatergroup.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/group_profile.rs` | Originally LGPL 2.1 |
 | Place details, `newview/fsfloaterplacedetails.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/place_details.rs`, `ui/places.rs`, `world/place_details.rs` | Originally LGPL 2.1 |
 | Partial inventory, `newview/fsfloaterpartialinventory.cpp` — Copyright © 2022 Ansariel Hiller | `aurora-viewer/src/ui/inventory.rs` | Originally LGPL 2.1 |
 | Favorite wearables, `newview/fsfloaterwearablefavorites.cpp` — Copyright © 2018 Ansariel Hiller | `aurora-viewer/src/world/wearable_favorites.rs`, `ui/appearance/wearable_favorites.rs`, `app/wearable_favorites.rs` | Originally LGPL 2.1 |

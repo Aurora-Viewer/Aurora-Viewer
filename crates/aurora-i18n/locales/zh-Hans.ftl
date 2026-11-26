@@ -12061,7 +12061,6 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
    *[other] 将这 { $owners } 位所有者的 { $count } 个物件归还？
     }
 ui-land-dialogs-objects-of-owners-returned = 所选所有者的物件已归还。
-ui-group-profile-title = 群组档案
 ui-group-profile-view = 查看群组档案
 ui-group-profile-members-and-roles = 成员与角色
 ui-group-profile-leave = 退出

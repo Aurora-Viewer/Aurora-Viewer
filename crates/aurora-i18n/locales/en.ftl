@@ -12575,7 +12575,7 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
    *[other] Return the { $count } objects of these { $owners } owners to them?
     }
 ui-land-dialogs-objects-of-owners-returned = The objects of the selected owners have been returned.
-ui-group-profile-title = Group Profile
+ui-group-profile-title-loading = Group Profile - Loading...
 ui-group-profile-title-named = Group Profile - { $name }
 ui-group-profile-view = View the group's profile
 ui-group-profile-members-and-roles = Members and roles

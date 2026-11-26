@@ -1154,9 +1154,16 @@ impl<'a> Floater<'a> {
             super::layout::reanchor(ctx, window_id);
             ctx.data_mut(|d| d.insert_temp(window_id.with(PLACE_POS), self.default_pos));
         }
-        let opening = self
-            .cascade
-            .and_then(|group| cascade::prepare(ctx, window_id, group, egui::Rect::from_min_size(self.default_pos, expanded), work));
+        let opening = self.cascade.and_then(|group| {
+            cascade::prepare(
+                ctx,
+                window_id,
+                group,
+                egui::Rect::from_min_size(self.default_pos, expanded),
+                work,
+                self.min_size,
+            )
+        });
         // A window as tall as its content (fixed, or of automatic height)
         // whose content is taller than the room scrolls it, from the frame
         // after the one that showed it too tall, and for as long as it is.

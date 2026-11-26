@@ -81,6 +81,8 @@ struct Window {
     born: u64,
     opening: bool,
     target: Pos2,
+    /// The height a `keeps_step` window was made smaller to, when it was.
+    asked: Option<f32>,
     primary: bool,
     visible: bool,
     minimized: bool,
@@ -101,7 +103,8 @@ pub(super) struct Opening {
 /// Called only by opted-in floaters. A remembered per-item egui position
 /// must not override a new instance's group placement. Existing instances
 /// keep their position, including when raised/restored or the UI is hidden.
-pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: Rect) -> Option<Opening> {
+/// `least` is the floater's least size, under which it is not made smaller.
+pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: Rect, least: Vec2) -> Option<Opening> {
     let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         let saved = group.saves_rect().then(|| data.get_persisted::<Rect>(group.saved_id())).flatten();
@@ -120,15 +123,16 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
         let mut size = saved.map_or(default.size(), |r| r.size()).min(work.size());
         let mut target = anchor.map_or_else(|| saved.map_or(default.min, |r| r.min), |w| w.rect.min + OFFSET);
         // a step down that would leave less than half the group's first
-        // window starts a new column, back at that window's top; at the
-        // screen's right edge the windows stop moving right and keep their
-        // width, stepping down only (human request, #4788: past ~13 group
-        // profiles the shrunk windows ended up anywhere)
+        // window, or less than a window of the group can really take, starts
+        // a new column, back at that window's top; at the screen's right edge
+        // the windows stop moving right and keep their width, stepping down
+        // only (human request, #4788: past ~13 group profiles the shrunk
+        // windows ended up anywhere, then piled at one spot)
         if anchor.is_some()
             && group.keeps_step()
             && let Some(first) = windows.0.iter().find(|w| w.group == group && w.visible && !w.minimized)
         {
-            if work.max.y - target.y < first.rect.height() * WRAP_LEAST {
+            if work.max.y - target.y < column_floor(&windows.0, group, first.rect.height(), least.y) {
                 target.y = first.rect.min.y;
             }
             target.x = target.x.min(work.max.x - size.x).max(work.min.x);
@@ -147,6 +151,7 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
             born: frame,
             opening: true,
             target,
+            asked: shrunk.then_some(size.y),
             primary,
             visible: true,
             minimized: false,
@@ -156,6 +161,19 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
             size: (saved.is_some() || shrunk).then_some(size),
         })
     })
+}
+
+/// The least room a stacked `keeps_step` window needs below its step: half
+/// the group's first window, the floater's least height, and the height a
+/// window made smaller really took when its content kept it taller (it was
+/// then put back inside, over the one before it, and every later one would
+/// land at that same spot).
+fn column_floor(windows: &[Window], group: Group, first: f32, least: f32) -> f32 {
+    windows
+        .iter()
+        .filter(|w| w.group == group && w.visible && !w.minimized)
+        .filter_map(|w| w.asked.filter(|&asked| w.rect.height() > asked + 1.0).map(|_| w.rect.height()))
+        .fold((first * WRAP_LEAST).max(least), f32::max)
 }
 
 pub(super) fn shown(ctx: &Context, id: Id, rect: Rect, minimized: bool) {

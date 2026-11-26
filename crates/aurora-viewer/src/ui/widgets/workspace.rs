@@ -579,6 +579,13 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     if id.starts_with("task_item_props") {
         return "file-info-filled";
     }
+    // One window per group: group_profile-<group>, group_invite-<group>.
+    if id.starts_with("group_profile-") {
+        return "users-group";
+    }
+    if id.starts_with("group_invite-") {
+        return "user-plus";
+    }
     if id == super::super::animation_explorer::WINDOW {
         return "run";
     }
@@ -890,6 +897,14 @@ mod tests {
         let item = uuid::Uuid::from_u128(0xb2);
         assert_eq!(window_icon(&format!("task_item_props_{object}_{item}")), "file-info-filled");
         assert_eq!(window_icon("task_item_props"), "file-info-filled");
+    }
+
+    #[test]
+    fn every_group_window_keeps_the_group_icon() {
+        let group = uuid::Uuid::from_u128(0xc3);
+        assert_eq!(window_icon(&format!("group_profile-{group}")), "users-group");
+        assert_eq!(window_icon("group_profile"), "users-group");
+        assert_eq!(window_icon(&format!("group_invite-{group}")), "user-plus");
     }
 
     #[test]

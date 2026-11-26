@@ -12442,7 +12442,7 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
    *[other] これら{ $owners }人の所有者の{ $count }個のオブジェクトを返却しますか？
     }
 ui-land-dialogs-objects-of-owners-returned = 選択した所有者のオブジェクトを返却しました。
-ui-group-profile-title = グループのプロフィール
+ui-group-profile-title-loading = グループのプロフィール－読み込んでいます…
 ui-group-profile-title-named = グループのプロフィール－{ $name }
 ui-group-profile-view = グループのプロフィールを表示
 ui-group-profile-members-and-roles = メンバーと役割

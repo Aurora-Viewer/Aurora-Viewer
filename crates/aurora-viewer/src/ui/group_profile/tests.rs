@@ -616,21 +616,24 @@ fn invitations_skip_members_and_ask_before_making_owners() {
     let mut st = invite::InviteUi::default();
     st.open(DEMO_GROUP1, vec![outsider, crate::demo::DEMO_LOUP]);
     // everyone's role: the member is left out and said so
-    let pairs = st.submit(&v).expect("sent");
+    let w = st.invitation_mut(DEMO_GROUP1).expect("open");
+    let (pairs, notice) = w.submit(&v).expect("sent");
     assert_eq!(pairs, vec![(outsider, Uuid::nil())]);
-    assert_eq!(st.notice, Some(invite::Notice::AlreadyInGroup));
+    assert_eq!(notice, Some(invite::Notice::AlreadyInGroup));
 
     // the owners' role waits for a yes
     st.open(DEMO_GROUP1, vec![outsider]);
-    st.role = owners.expect("owners");
-    assert!(st.submit(&v).is_none(), "asks first");
-    assert_eq!(st.submit(&v).expect("confirmed"), vec![(outsider, st.role)]);
+    let w = st.invitation_mut(DEMO_GROUP1).expect("open again");
+    assert_eq!(w.invitees, [outsider], "a sent invitation's list starts again");
+    w.role = owners.expect("owners");
+    assert!(w.submit(&v).is_none(), "asks first");
+    assert_eq!(w.submit(&v).expect("confirmed"), (vec![(outsider, w.role)], None));
 
     // more than 100 at once: nothing goes
     st.open(DEMO_GROUP1, (0..101u128).map(|i| Uuid::from_u128(0xABC0_0000 + i)).collect());
-    st.role = Uuid::nil();
-    assert_eq!(st.submit(&v), Some(Vec::new()));
-    assert_eq!(st.notice, Some(invite::Notice::TooMany));
+    let w = st.invitation_mut(DEMO_GROUP1).expect("open again");
+    w.role = Uuid::nil();
+    assert_eq!(w.submit(&v), Some((Vec::new(), Some(invite::Notice::TooMany))));
 }
 
 #[test]
@@ -1053,7 +1056,7 @@ fn show_group(st: &mut GroupProfileUi, world: &World, ctx: &egui::Context, p: &c
 fn the_invitation_keeps_its_size() {
     let world = world(true, MEMBER | powers::MEMBER_INVITE);
     crate::ui::widgets::steady_tests::assert_window_steady(
-        invite::WINDOW,
+        &invite::window_id(DEMO_GROUP1),
         &[egui::Vec2::new(380.0, 460.0), egui::Vec2::new(320.0, 360.0)],
         aurora_i18n::tr!("ui-group-invite-send"),
         || {
@@ -1178,6 +1181,9 @@ fn the_group_data_keeps_the_groups_shown() {
     let mut world = world(true, MEMBER);
     let mut st = opened(&mut world);
     st.open(&mut world, DEMO_GROUP2);
+    // told as the window opens, before its first frame asks for the data
+    // (LLPanelGroup::setGroupID adds the observer first)
+    assert_eq!(world.group_data.observed(), &HashSet::from([DEMO_GROUP1, DEMO_GROUP2]));
     let observed = |actions: &[GroupAction]| {
         actions
             .iter()
@@ -1188,13 +1194,32 @@ fn the_group_data_keeps_the_groups_shown() {
             .collect::<Vec<_>>()
     };
     let (_, actions) = texts(&mut st, &world, false);
-    assert_eq!(observed(&actions), [HashSet::from([DEMO_GROUP1, DEMO_GROUP2])], "told once");
+    assert!(observed(&actions).is_empty(), "not told again");
     // a closed window goes, its group no longer kept
     window_of(&mut st, DEMO_GROUP2).open = false;
     let (_, actions) = texts(&mut st, &world, false);
     assert_eq!(observed(&actions), [HashSet::from([DEMO_GROUP1])]);
     assert!(!st.is_shown(DEMO_GROUP2));
     assert_eq!(st.windows.len(), 1);
+}
+
+/// #4964 review: a third copy of 10 put the cache past its 20 groups in the
+/// frame its windows first asked for their data, before they were observed.
+#[test]
+fn a_batch_of_windows_never_evicts_its_own_groups() {
+    let mut world = world(true, MEMBER);
+    let mut st = opened(&mut world);
+    let groups: Vec<Uuid> = (1..=30u128).map(|n| Uuid::from_u128(0x4964_0000 + n)).collect();
+    for g in &groups {
+        st.open(&mut world, *g);
+    }
+    // what each window's first frame asks (`GroupAction::Load`)
+    for g in &groups {
+        world.group_data.open(*g, false);
+    }
+    for g in &groups {
+        assert!(world.group_data.get(g).is_some(), "{g} kept while its window is open");
+    }
 }
 
 #[test]
@@ -1246,6 +1271,11 @@ fn a_notice_copies_to_the_other_groups_we_may_send_notices_to() {
         vec![DEMO_GROUP2, zebra],
         "not this group nor one without the ability, by name"
     );
+    // a copy opens its windows in the menu's order, the pinned first, not
+    // in id order (#4964 review)
+    world.groups.favorites.insert(zebra);
+    let ticked = std::collections::BTreeSet::from([DEMO_GROUP2, zebra, readers]);
+    assert_eq!(notices::copy_order(&world, DEMO_GROUP1, ticked), vec![zebra, DEMO_GROUP2]);
 }
 
 #[test]
@@ -1414,4 +1444,7 @@ fn a_draft_remembers_the_groups_it_was_copied_to() {
     let world = world(true, MEMBER | powers::NOTICES_SEND);
     let copy = notices::copied(&draft, &world);
     assert_eq!(copy.copied_to, draft.copied_to, "the copy knows where the notice already went");
+    // the ticks belong to a draft: a copy, like a new notice, starts with none
+    assert!(copy.copy_to.is_empty());
+    assert!(notices::Compose::default().copy_to.is_empty());
 }

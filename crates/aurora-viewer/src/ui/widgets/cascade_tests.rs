@@ -6,6 +6,10 @@ struct Window {
     group: CascadeGroup,
     open: bool,
     size: Vec2,
+    /// The floater's least size and its content's height, when not the
+    /// defaults (a line of text).
+    least: Option<Vec2>,
+    content: f32,
 }
 
 #[derive(Default)]
@@ -27,12 +31,17 @@ impl Fixture {
                 },
                 |ui| {
                     for w in &mut self.windows {
-                        Floater::new(&w.id, &w.id, egui::pos2(100.0, 80.0), w.size)
+                        let mut floater = Floater::new(&w.id, &w.id, egui::pos2(100.0, 80.0), w.size)
                             .cascade(w.group)
-                            .silent()
-                            .show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut w.open, |ui| {
-                                ui.label("Independent document");
-                            });
+                            .silent();
+                        if let Some(least) = w.least {
+                            floater.min_size = least;
+                        }
+                        let content = w.content;
+                        floater.show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut w.open, |ui| {
+                            ui.label("Independent document");
+                            ui.allocate_space(egui::vec2(10.0, content));
+                        });
                     }
                 },
             );
@@ -41,12 +50,18 @@ impl Fixture {
     }
 
     fn open(&mut self, group: CascadeGroup, size: Vec2) -> usize {
+        self.open_with(group, size, None, 0.0)
+    }
+
+    fn open_with(&mut self, group: CascadeGroup, size: Vec2, least: Option<Vec2>, content: f32) -> usize {
         let n = self.windows.len();
         self.windows.push(Window {
             id: format!("cascade_{n}"),
             group,
             open: true,
             size,
+            least,
+            content,
         });
         self.settle();
         n
@@ -221,4 +236,33 @@ fn cascade_group_profiles_start_a_new_column_before_getting_too_small() {
     }
     assert!(wrapped, "30 windows on an 800 px screen start a new column");
     assert!(at_edge, "and reach the right edge");
+}
+
+/// A group profile's real least size and content (#4964 review: past about
+/// 20 windows they piled at one spot instead of starting a new column, the
+/// windows never getting as small as half the first one).
+#[test]
+fn cascade_group_profiles_with_a_real_least_size_start_a_new_column_instead_of_piling() {
+    for (least, content) in [(egui::vec2(320.0, 300.0), 420.0), (egui::vec2(400.0, 380.0), 200.0)] {
+        let mut f = Fixture::default();
+        let profile = CascadeGroup::Profile { classic: false };
+        let opened: Vec<usize> = (0..30)
+            .map(|_| f.open_with(profile, egui::vec2(500.0, 600.0), Some(least), content))
+            .collect();
+        let first = f.rect(opened[0]);
+        let mut columns = 1;
+        for pair in opened.windows(2) {
+            let (a, b) = (f.rect(pair[0]), f.rect(pair[1]));
+            assert!(b.bottom() <= 800.5, "on screen: {b:?}");
+            assert!((b.min - a.min).length() > 1.0, "never on the window before: {a:?} {b:?}");
+            if (b.min.y - first.min.y).abs() < 1.0 {
+                columns += 1;
+            } else {
+                // a step down, at most one window put back up as the column
+                // learns how small its windows really get
+                assert!(b.min.y > a.min.y, "below the window before: {a:?} {b:?}");
+            }
+        }
+        assert!(columns >= 3, "30 windows on an 800 px screen take several columns: {columns}");
+    }
 }

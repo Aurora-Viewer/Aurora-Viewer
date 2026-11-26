@@ -12072,7 +12072,6 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
    *[other] Returnere de { $count } objektene til disse { $owners } eierne?
     }
 ui-land-dialogs-objects-of-owners-returned = Objektene til de valgte eierne er returnert.
-ui-group-profile-title = Gruppeprofil
 ui-group-profile-view = Vis profilen til gruppen
 ui-group-profile-members-and-roles = Medlemmer og roller
 ui-group-profile-leave = Forlat

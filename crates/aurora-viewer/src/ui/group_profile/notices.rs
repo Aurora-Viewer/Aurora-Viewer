@@ -43,6 +43,9 @@ pub struct Compose {
     /// and their rows say so. Every copy carries it, so the next batch can
     /// be ticked from any window of the last one. Gone with the draft.
     pub copied_to: BTreeSet<Uuid>,
+    /// The groups ticked in the draft's "Copy to other groups" menu: gone
+    /// with the draft too, so a new notice starts with none.
+    pub copy_to: BTreeSet<Uuid>,
 }
 
 #[derive(Default)]
@@ -50,9 +53,7 @@ pub struct NoticesState {
     pub search: String,
     pub selected: Option<Uuid>,
     pub compose: Option<Compose>,
-    /// The groups ticked in the draft's "Copy to other groups" menu, and
-    /// its search.
-    pub copy_to: BTreeSet<Uuid>,
+    /// The search of the draft's "Copy to other groups" menu.
     pub copy_filter: String,
 }
 
@@ -126,6 +127,18 @@ pub fn tick_pinned(targets: &[CopyTarget], ticked: &mut BTreeSet<Uuid>, copied: 
     }
 }
 
+/// The ticked groups in the menu's order (pinned first, then by name), so
+/// that their windows open and stack as the menu listed them; `MAX_COPY`
+/// at most.
+pub fn copy_order(world: &World, from: Uuid, ticked: BTreeSet<Uuid>) -> Vec<Uuid> {
+    copy_targets(world, from)
+        .into_iter()
+        .map(|t| t.id)
+        .filter(|id| ticked.contains(id))
+        .take(MAX_COPY)
+        .collect()
+}
+
 /// The draft as another group's window gets it: subject, message, the
 /// groups it already went to, and the attachment only while a notice may
 /// still carry it (`attachable`, the same rule as a drop).
@@ -136,6 +149,7 @@ pub fn copied(draft: &Compose, world: &World) -> Compose {
         item: draft.item.and_then(|id| attachable(world, id)),
         refused: false,
         copied_to: draft.copied_to.clone(),
+        copy_to: BTreeSet::new(),
     }
 }
 
@@ -577,15 +591,15 @@ fn compose(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
     if st.notices.compose.is_none() {
         return;
     }
-    // a group left or an ability lost since it was ticked is unticked
-    if !st.notices.copy_to.is_empty() {
-        st.notices.copy_to.retain(|id| *id != v.id && may_send(c.world, *id));
-    }
     let can_copy = has_copy_target(c.world, v.id);
     let drafts = st.drafting.clone();
     let Some(draft) = st.notices.compose.as_mut() else {
         return;
     };
+    // a group left or an ability lost since it was ticked is unticked
+    if !draft.copy_to.is_empty() {
+        draft.copy_to.retain(|id| *id != v.id && may_send(c.world, *id));
+    }
     let mut cancel = false;
     let mut send = false;
     let mut copy = false;
@@ -673,7 +687,7 @@ fn compose(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
                         p,
                         c.world,
                         v.id,
-                        &mut st.notices.copy_to,
+                        &mut draft.copy_to,
                         &mut st.notices.copy_filter,
                         &drafts,
                         &draft.copied_to,
@@ -709,7 +723,7 @@ fn compose(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
     } else if cancel {
         st.notices.compose = None;
     } else if copy && let Some(d) = st.notices.compose.as_mut() {
-        let groups: Vec<Uuid> = std::mem::take(&mut st.notices.copy_to).into_iter().take(MAX_COPY).collect();
+        let groups = copy_order(c.world, v.id, std::mem::take(&mut d.copy_to));
         if !groups.is_empty() {
             // the group written in, and this batch: a window of the batch
             // ticks the next pinned groups, not these again
@@ -804,10 +818,12 @@ fn copy_menu(
                     crate::ui::menu::section(ui, p, title);
                 }
                 let mut on = ticked.contains(&t.id);
-                let label = if drafts.contains(&t.id) {
-                    aurora_i18n::tr!("ui-group-notices-copy-replaces", group = t.name.clone())
-                } else if copied.contains(&t.id) {
+                // a group this notice went to says so, its window holding
+                // the copy or not: "replaces" is for a notice of its own
+                let label = if copied.contains(&t.id) {
                     aurora_i18n::tr!("ui-group-notices-copy-copied", group = t.name.clone())
+                } else if drafts.contains(&t.id) {
+                    aurora_i18n::tr!("ui-group-notices-copy-replaces", group = t.name.clone())
                 } else {
                     t.name.clone()
                 };
