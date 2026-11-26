@@ -873,9 +873,9 @@ pub struct App {
     /// (scripts/test-ime-linux.py).
     demo_ime_interrupts: u64,
     demo_rlva_frame: Option<u64>,
-    /// Whether RLVa runs in this start of the viewer: the preference
-    /// (`settings.rlva_enabled`) only applies at the next start once RLVa
-    /// runs (world/rlva/switch.rs).
+    /// Whether RLVa runs in this start of the viewer: it starts with a
+    /// login, and the preference (`settings.rlva_enabled`) only applies at
+    /// the next start once it runs (world/rlva/switch.rs).
     rlva_switch: crate::world::rlva::switch::Switch,
     rlva_login: crate::world::rlva::login::State,
     rlva_minimap: rlva::HiddenMinimap,
@@ -3672,6 +3672,9 @@ impl App {
             .iter()
             .find(|account| account.key() == catalog_key)
             .and_then(|account| account.agent);
+        // RLVa starts with the login (STATE_LOGIN_CLEANUP, llstartup.cpp),
+        // before its forced last location is read
+        self.rlva_switch.login_starts(self.settings.rlva_enabled);
         let start = if self.rlva_login.requires_last(self.rlva_switch.running(), login_agent) {
             StartLocation::Last
         } else {
@@ -18450,7 +18453,7 @@ impl App {
                 .collect();
         }
         self.options_ui.rlva_restrictions = self.world.rlva.restrictions();
-        self.options_ui.rlva_running = self.rlva_switch.running();
+        self.options_ui.rlva_waits = self.rlva_switch.waiting(self.settings.rlva_enabled, self.rlva_can_enable());
         crate::world::rlva::modifiers::hide_texture_ids(&mut self.options_ui.rlva_restrictions, || {
             crate::world::inventory::asset_ids::AssetIds::per_frame(&self.world)
         });

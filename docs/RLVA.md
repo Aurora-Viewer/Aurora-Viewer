@@ -4,13 +4,14 @@ The `rlva` task implements the Legacy Viewer's RLVa 2.4.2 command families,
 targeting RLV protocol 3.4.3, referenced by issue #687. Human grid validation
 is pending. Preferences > RLVa > Enable RLVa is
 off by default, including settings written before the option existed.
-RLVa starts with the viewer when it is on, and once it runs it never stops
-before the viewer quits, as in the Legacy Viewer (RlvHandler::setEnabled,
-RlvSettings::onChangedSettingMain; `world/rlva/switch.rs`, #1866): turning
-it off shows "RLVa will be disabled after you restart" and the restrictions
-stay for the whole session. Turning it on is instant on the login screen,
-before a login starts, and otherwise waits for the next start too. Starting
-with it off releases all restrictions and discards queued commands.
+RLVa starts when a login starts with it on, and once it runs it never stops
+before the viewer quits, as in the Legacy Viewer (RlvHandler::setEnabled at
+STATE_LOGIN_CLEANUP, RlvSettings::onChangedSettingMain;
+`world/rlva/switch.rs`, #1866): turning it off shows "RLVa will be disabled
+after you restart" and the restrictions stay for the whole session. On the
+login screen, before RLVa has started, the switch applies at once both ways;
+turning it on during a session waits for the next login. Starting with it
+off releases all restrictions and discards queued commands.
 The preference persists; object locks never do. The native next-login flag
 persists separately by avatar UUID after tploc or a locked sitting session,
 forcing the last position while RLVa remains enabled. It initially defaults

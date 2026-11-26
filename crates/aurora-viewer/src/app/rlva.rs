@@ -163,12 +163,17 @@ impl App {
         self.world.agent.set_look_at(glam::Vec3::new(look.x, look.y, 0.0));
     }
 
+    /// RlvHandler::canEnable: the login screen, before a login starts.
+    pub(super) fn rlva_can_enable(&self) -> bool {
+        matches!(self.screen, super::Screen::Login) && !self.login_form.busy
+    }
+
     /// The preference, followed: once RLVa runs, a change applies at the
     /// next start of the viewer, with the Legacy Viewer's alert
     /// (RlvSettings::onChangedSettingMain; world/rlva/switch.rs). The login
     /// screen has no alerts: the Preferences page says it there.
     fn rlva_follow_switch(&mut self) {
-        let can_enable = matches!(self.screen, super::Screen::Login);
+        let can_enable = self.rlva_can_enable();
         if let Some(notice) = self.rlva_switch.follow(self.settings.rlva_enabled, can_enable) {
             log::info!("RLVa preference changed: {notice:?}");
             if let Some(text) = notice.text().filter(|_| self.in_world()) {

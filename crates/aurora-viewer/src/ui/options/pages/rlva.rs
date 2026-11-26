@@ -13,10 +13,10 @@ pub fn page(cx: &mut Cx) {
             .toggle(tr!("rlva-enable"), tr!("rlva-enable-hint"), &field!(rlva_enabled));
         // once RLVa runs, a change waits for the next start (the Legacy
         // Viewer's "(requires restart)" beside its checkbox)
-        cx.note(match (cx.s.rlva_enabled, cx.st.rlva_running) {
-            (true, false) => tr!("rlva-toggle-enabled-restart"),
-            (false, true) => tr!("rlva-toggle-disabled-restart"),
-            _ => tr!("rlva-restart-hint"),
+        cx.note(match (cx.st.rlva_waits, cx.s.rlva_enabled) {
+            (true, true) => tr!("rlva-toggle-enabled-restart"),
+            (true, false) => tr!("rlva-toggle-disabled-restart"),
+            (false, _) => tr!("rlva-restart-hint"),
         });
         cx.keywords("RLVa RLV console locks exceptions modifiers").row_with(
             tr!("rlva-tools-title"),
