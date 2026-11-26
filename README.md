@@ -418,7 +418,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
   or borders, at once and without a restart, and gives the window back
   exactly as it was (Preferences › Graphics).
-- **In 35 languages** ([language list](#language)): the interface follows
+- **In 35 languages with 37 catalogs** ([language list](#language)): the interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
   interface fonts and Japanese dates ([details](#language)).
@@ -731,7 +731,7 @@ frame on your own PC.
   tools, folder colours, outfit backups to JSON, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
-- **Interface** — in 35 languages, flat Aurora theme, Inter font, Tabler icons, glass island bars,
+- **Interface** — in 35 languages with 37 catalogs, flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable toolbars on all four edges and a rearrangeable main menu, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; an immersive mode that keeps only the chat; Aurora team and
@@ -793,7 +793,7 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
-The viewer ships English, French, Japanese (日本語), Korean (한국어), Simplified Chinese
+The viewer ships American, British and Australian English, French, Japanese (日本語), Korean (한국어), Simplified Chinese
 (简体中文), Traditional Chinese (繁體中文), Russian (Русский), German (Deutsch),
 Brazilian Portuguese (Português (Brasil)), Spanish (Español), Italian
 (Italiano), Polish (Polski), Turkish (Türkçe), European Portuguese (Português
@@ -805,8 +805,13 @@ Persian (فارسی), Romanian (Română), Swedish (Svenska), Tamil (தமி�
 Thai (ไทย), Urdu (اردو) and Vietnamese (Tiếng Việt). Wording review continues
 for the added catalogs. Arabic, Hebrew, Persian and Urdu still need
 right-to-left layout work. The viewer detects the system language
-by default. A choice saved in Preferences applies at once. The
-Japanese translation covers every message, with the official Second Life
+by default. A choice saved in Preferences applies at once. English (US),
+English (UK) and English (AU) are available independently. New Zealand,
+Ireland, South Africa, India, Singapore, Hong Kong, Malaysia and Malta use
+British English by default; Canada uses American English. Existing explicit
+language choices are retained. Users following their system language may
+automatically switch to British or Australian English after updating.
+The Japanese translation covers every message, with the official Second Life
 Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic
 UI or MS UI Gothic) and writes dates the Japanese way. The other languages
 use the Second Life terms of the Legacy Viewer's interface in that language,
