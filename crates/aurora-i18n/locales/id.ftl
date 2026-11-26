@@ -16077,3 +16077,739 @@ parcel-environment-empty = Tidak ada lingkungan yang disimpan
 parcel-environment-remove-all = Hapus semua
 parcel-environment-remove-all-title = Hapus semua lingkungan yang disimpan untuk paket?
 parcel-environment-remove-all-text = Lingkungan yang Anda simpan untuk petak tanah pada grid ini akan dihapus. Lingkungan di grid lain tetap tersimpan. Tindakan ini tidak dapat diurungkan.
+
+### Updated release translations
+
+anim-timeline-channels-hint = Tampilkan tombol rotasi dan lokasi tulang ini pada barisnya sendiri
+anim-timeline-channel-rotation = Putar
+anim-timeline-channel-location = Lokasi
+anim-timeline-keying-hint = Rekaman kunci apa. dengan Lokasi, Move mengambil joint sendirian, keluar dari rantai IK-nya. animasi Second Life tidak memiliki kunci skala.
+anim-timeline-keying-auto = Otomatis: rotasi, dan lokasi untuk pelvis dan sendi yang bergerak
+anim-timeline-keying-auto-short = Otomatis
+anim-timeline-keying-loc-rot = Lokasi dan rotasi
+anim-timeline-keying-loc-rot-short = Lokasi + Root
+anim-timeline-keying-rot-short = Root
+anim-timeline-keying-loc-short = Lokasi
+anim-edit-shortcut-play = Putar atau jeda
+area-search-scope-heading = Dimana
+area-search-scope-parcel = Parcel tanah saat ini
+area-search-scope-region = Wilayah
+area-search-scope-neighbours = Tetangga
+area-search-objects-heading = Objek mana
+inventory-copy-selection-count =
+    { $count ->
+        [one] Salin 1 item
+       *[other] Salin { $count } item
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Buat tautan di sini · Item: 1
+       *[other] Buat tautan di sini · Item: { $count }
+    }
+inventory-drop-move-here = Pindah ke sini
+inventory-drop-copy-here = Salin di sini
+inventory-drop-link-here = Buat tautan di sini
+inventory-sort-description = Deskripsi
+inventory-sort-reversed = { $order } (terbalik)
+inventory-column-creator = Pencipta
+inventory-column-count = Item
+inventory-columns-fit = Ukuran semua kolom agar sesuai
+inventory-columns-reset-widths = Atur ulang lebar kolom
+inventory-back = Kembali
+inventory-forward = Maju
+inventory-up = Satu tingkat ke atas
+keybinds-inventory-root = Pergi ke atas
+keybinds-inventory-search = Cari inventaris
+keybinds-inventory-filter = Saring folder
+keybinds-inventory-preview = Tampilkan panel pratinjau
+keybinds-inventory-view-large = Gambar besar
+keybinds-inventory-view-medium = Gambar medium
+keybinds-inventory-view-small = Gambar kecil
+keybinds-inventory-view-compact = Tampilan Kompakt
+keybinds-inventory-view-details = Tampilan Rincian
+keybinds-inventory-view-tiles = Tampilan Ubin
+keybinds-inventory-toggle = Pilih atau deselektifkan baris yang fokus
+keybinds-inventory-menu = Buka menu seleksi
+keybinds-inventory-purge = Bersihkan dari Sampah
+keybinds-inventory-refused = { $keys } tetap menjadi kunci daftar inventaris sendiri: pilih yang lain.
+inventory-path-edit = Masukkan sebuah path
+inventory-path-subfolders = Subfolder
+inventory-copy-path = Salin path
+inventory-show-in-folder = Tampilkan dalam folder
+inventory-pin = Pin ke akses cepat
+inventory-unpin = Unpin dari akses cepat
+inventory-quick-access = Akses cepat
+inventory-quick-access-drop = Letakkan folder di sini untuk mengikatnya
+inventory-invert-selection = Balikkan pemilihan
+inventory-undo = Batalkan
+inventory-redo = Ulangi
+inventory-undo-step = Batalkan { $what }
+inventory-redo-step = Ulangi { $what }
+inventory-history-move =
+    { $count ->
+        [one] pindahkan 1 item
+       *[other] pindah dari { $count } item
+    }
+inventory-history-delete =
+    { $count ->
+        [one] Hapus dari 1 item
+       *[other] menghapus dari { $count } item
+    }
+inventory-history-rename = ulang nama
+inventory-history-new-folder = folder baru
+inventory-history-copy =
+    { $count ->
+        [one] Salin · Item: 1
+       *[other] Salin · Item: { $count }
+    }
+inventory-history-link =
+    { $count ->
+        [one] Buat tautan di sini · Item: 1
+       *[other] Buat tautan di sini · Item: { $count }
+    }
+inventory-undo-nothing = Tidak ada yang tersisa untuk dibatalkan: item tersebut telah dipindahkan atau hilang.
+inventory-redo-nothing = Tidak ada yang tersisa untuk dilakukan kembali: item-item tersebut telah dipindahkan atau hilang.
+inventory-undo-empty = Tak ada yang harus dibatalkan.
+inventory-redo-empty = Tidak ada yang harus dilakukan lagi.
+inventory-undo-dropped = Item langkah terakhir telah dipindahkan atau hilang: itu dibuang. Batalkan lagi untuk langkah sebelumnya.
+inventory-redo-dropped = Item langkah berikutnya telah dipindahkan atau hilang: itu diturunkan. Lakukan lagi untuk langkah selanjutnya.
+inventory-undo-folder-not-empty = Folder baru itu menyimpan item yang ditempatkan di sana sejak: pindahkan mereka terlebih dahulu, atau hapus folder sendiri.
+inventory-undo-kept-out = Item-item itu ada di pakaian saat ini atau daftar Marketplace sekarang: ganti mereka di sana.
+inventory-restore-to = Pulihkan ke “{ $folder }”
+inventory-restore-to-origins = Pulihkan ke folder mereka
+inventory-purge-no-undo = Undo tidak bisa membawa mereka kembali.
+inventory-new-tab = Tab Baru
+inventory-close-tab = Tutup tab
+inventory-next-tab = Tab berikutnya
+inventory-previous-tab = Tab Sebelumnya
+inventory-open-in-new-tab = Buka dalam tab baru
+inventory-tabs-limit = Paling banyak { $count } tab.
+inventory-copy-to-other-pane = Salin ke panel lain
+inventory-move-to-other-pane = Pindah ke panel lain
+inventory-resize-columns = Seret untuk mengubah ukuran kolom. Klik dua kali untuk menyesuaikan kolom di kiri dengan isinya.
+inventory-resize-columns-first = Seret untuk mengubah ukuran kolom. Klik dua kali untuk memberikan lebar biasa pada kolom pertama.
+inventory-sort-by-column = Klik untuk menyusun menurut kolom ini, lagi untuk membalikkan urutan. Seret untuk memindahkan kolom.
+inventory-filter-hint = Saring folder ini…
+inventory-filter-close = Tutup filter (Esc)
+inventory-filter-nothing = Tidak ada yang cocok dengan filter
+inventory-view-compact = Tampilan Kompakt
+inventory-view-tiles = Tampilan Ubin
+inventory-view-per-folder = Ingat tampilan setiap folder
+inventory-group-by = Dikelompokkan oleh
+inventory-group-none = Tidak ada
+inventory-group-folders = Folder
+inventory-group-unknown-creator = Pencipta belum diketahui
+inventory-group-today = Hari ini
+inventory-group-yesterday = Kemarin
+inventory-group-this-week = Dalam 7 hari terakhir
+inventory-group-this-month = Dalam 30 hari terakhir
+inventory-group-this-year = Awal tahun ini
+inventory-group-earlier = Lama sekali.
+inventory-group-no-date = Tidak ada tanggal
+cmdline-mod-zoffset-usage = Tetapkan tinggi hover avatar Anda (penggunaan: nilai /zoffset atau +delta).
+dev-toolbox-n4 = Memuat inventaris
+dev-toolbox-what-n4 = Folder dibaca, gagal dan meninggalkan, pembaca loader membaca dalam penerbangan dan mencoba lagi; tidak ada nama
+ui-context-inspect-avatar = Periksa avatar
+inspect-window = Periksa
+inspect-tab-objects = Objek
+inspect-objects-title =
+    { $count ->
+        [one] Objek { $count }
+       *[other] { $count } objek
+    }
+inspect-summary-items =
+    { $count ->
+        [one] Item: { $count }
+       *[other] Item: { $count }
+    }
+inspect-open-profile = Buka profil
+inspect-over-limit = Di atas batasmu
+inspect-limit-tip = Batas kompleksitasmu: { $limit }
+inspect-search = Cari item atau pencipta
+inspect-outlined = { $name } digambarkan di dunia
+inspect-area-head = Kepala
+inspect-area-body = Tubuh
+inspect-area-arms = Lengan dan tangan
+inspect-area-legs = Kaki dan kaki
+inspect-area-hud = HUD
+inspect-area-other = Lain
+inspect-area-world = Objek
+inspect-own-eyes = Mata sistem
+inspect-own-body = Tubuh sistem
+inspect-own-description = Bagian dari avatar itu sendiri, bukan lampiran
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } kompleksitas
+inspect-no-match = Tidak ada yang cocok dengan "{ $query }".
+inspect-spoken-worn = { $name }, dipakai pada { $point }, kompleksitas { $complexity }, dibuat oleh { $creator }
+inspect-spoken-object = { $name }, milik { $owner }, kompleksitas { $complexity }, dibuat oleh { $creator }
+inspect-look-at-tip = Pindahkan kamera ke sana
+inspect-profile-tip = Buka profil pencipta
+inspect-made-by = Dibuat oleh
+inspect-owned-by = Dimiliki oleh
+inspect-worn-on = Digunakan pada
+inspect-prims-count =
+    { $count ->
+        [one] { $count } prima
+       *[other] { $count } prima
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Memori tekstur
+inspect-tile-vram = VRAM
+inspect-tile-prims = Prim
+board-close = Tutup { $title }
+board-grow = Besarkan { $title }
+board-remove = Buang { $name }
+board-more = dan { $count } lagi
+board-more-short = +{ $count }
+board-some-of = { $shown } dari { $all }
+board-of-all = dari { $all }
+stage-turn-left = Belok kiri.
+stage-turn-right = Belok kanan
+stage-higher = Lihat dari atas
+stage-lower = Lihat dari bawah
+stage-nearer = Lebih dekat.
+stage-further = Lebih jauh
+stage-reset = Kembali ke awal
+stage-hint = Seret untuk berputar, kanan-seret untuk bergerak
+stage-light = Latar belakang cerah
+stage-dark = Latar belakang gelap
+stage-playing = AO
+stage-paused = Dijeda
+stage-pause-tip = Tahan animasi mereka
+stage-play-tip = Mainkan animasi mereka
+stage-loading = Mempersiapkan tampilan 3D…
+stage-nothing = Belum ada yang bisa ditunjukkan dalam 3D.
+stage-refused = Tampilan 3D dimatikan sementara RLVa membatasi apa yang bisa kau lihat.
+inspect-your-limit = Batas Anda: { $limit }
+inspect-without-it = { $value } tanpa itu
+inspect-you = Kau
+inspect-person = Orang
+inspect-difference = Perbedaan
+inspect-drawn-in-full = Ditarik penuh
+inspect-nobody = Kompleksitas seseorang belum diketahui.
+inspect-aside-count = { $count } disisihkan
+inspect-is-aside = disisihkan
+inspect-set-aside = Singkirkan.
+inspect-set-aside-tip = Lihat kompleksitas tanpa item ini. Hanya dalam jendela ini: tidak ada yang berubah di dunia.
+inspect-put-back = Letakkan kembali
+inspect-put-back-tip = Hitung item ini lagi
+inspect-complexity-spoken = Kompleksitas { $value }, nomor { $rank } dari { $count } orang-orang di sini
+inspect-stage-outfit = Pakaian
+inspect-stage-objects = Objek
+inspect-stage-back = Kembali ke segalanya
+inspect-place-made-by = { $place } · dibuat oleh { $name }
+inspect-owned-by-name = Dimiliki oleh { $name }
+inspect-tile-items = Item
+inspect-tile-figures = Gambar
+inspect-col-item = Nama
+inspect-point = Titik
+inspect-look-at = Lihatlah
+inspect-selected-count = { $count } dipilih
+inspect-worn-count = { $count } dipakai
+inspect-creators-word = pencipta
+inspect-areas-word = area tubuh
+inspect-owners-word = pemilik
+inspect-triangles-word = segitiga
+inspect-made-of = { $count } dari { $all } item
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = Objek dalam urutan link: { $count }
+inspect-reset-columns = Atur ulang kolom
+inspect-by-creators =
+    { $count ->
+        [one] { $items } oleh satu pencipta
+       *[other] { $items } oleh { $count } pencipta
+    }
+inspect-owner-button = Profil pemilik
+inspect-group-button = Profil kelompok
+inspect-creator-button = Profil pencipta
+inspect-land-others = Lain { $n }
+inspect-land-these = Ini { $n }
+inspect-land-free = Bebas { $n }
+inspect-land-unknown = Ruangan paket menunjukkan ketika objek-objek semuanya ada di paket yang Anda miliki.
+ui-login-unencrypted = Masuk tanpa enkripsi
+ui-login-unencrypted-body = Alamat masuk { $server } diawali http://, bukan https://, sehingga proses masuk tidak dienkripsi. Siapa pun yang dapat melihat lalu lintas jaringan Anda, misalnya di Wi-Fi publik, jaringan bersama, atau dalam perjalanan ke grid, dapat membaca kata sandi dan menggunakan akun Anda. Belum ada data yang dikirim. Anda dapat meminta alamat masuk https:// kepada pengelola grid. Pilihan disimpan untuk server ini.
+ui-login-unencrypted-accept = Masuk tanpa enkripsi
+world-appearance-clothing-layers-full = Semua 60 lapisan pakaian sedang digunakan. Buang satu lapisan sebelum memakai item ini.
+ui-options-ray-tracing = Render grafik dengan ray tracing
+ui-options-ray-traced-shadows = Bayangan matahari yang dilacak sinar
+ui-options-ray-traced-shadows-help = Bayangan matahari dan bulan diikuti sinar demi sinar daripada dibaca dari peta bayangan: tepat di mana benda menyentuh dan pada jarak apapun. Perlu bayangan dan kartu grafis dengan pelacakan sinar, dan lebih mahal pada kartu grafis
+ui-options-ray-traced-lights = Bayang-bayang cahaya lokal
+ui-options-ray-traced-lights-help = Bayangan dari lampu titik di sekitar (lampu, lilin), yang tidak melemparkan apapun selainnya, dan dari projektor ketika Bayang-bayang Projector dihidupkan, di tempat peta bayangan mereka. Pilihan pelacakan sinar paling mahal: paling baik ditinggalkan pada grafik terintegrasi
+ui-options-rt-quality = Kualitas Ray tracing
+ui-options-rt-quality-help = Setiap efek yang dilacak tetap aktif: tingkatan yang lebih rendah melacak sampel yang lebih sedikit dan cahaya tidak langsung pada grid yang lebih kasar, untuk lebih banyak frame per detik pada kartu grafis yang lebih kecil. Tinggi adalah gambar penuh dari Deluxe (RT). Memilih tingkatan juga menetapkan cahaya yang menciptakan bayangan
+ui-options-rt-sun-softness = Kelenturan dari bayangan matahari
+ui-options-rt-sun-softness-help = Seberapa lembut tepi bayangan yang diikuti matahari: 1 adalah matahari sebenarnya, 0 tepi tajam, lebih untuk matahari yang lebih kabur
+ui-options-rt-lamp-softness = Lembut bayangan cahaya lokal
+ui-options-rt-lamp-softness-help = Seberapa lembut tepi bayangan yang dilacak lampu: 1 mengikuti ukuran setiap lampu, 0 tepi tajam
+ui-options-rt-shadow-lamps = Cahaya yang melemparkan bayangan
+ui-options-rt-shadow-lamps-help = Berapa banyak cahaya terdekat yang melemparkan bayangan yang dilacak; yang lain masih terang, tanpa bayangan. Lebih sedikit lebih murah pada kartu grafis
+ui-options-ray-traced-indirect = Cahaya tak langsung yang diikuti sinar
+ui-options-ray-traced-indirect-help = Cahaya yang terpantul oleh permukaan di sekitarnya, diikuti lebih dari apa yang ditampilkan layar, sebagai ganti cahaya tidak langsung dari GTAO
+ui-options-gi-probes = Probe untuk pencahayaan global
+ui-options-gi-probes-help = Probe menyebar melalui adegan yang menjaga cahaya dari beberapa lemparan dan langit mereka melihat: ruangan tertutup tetap gelap, cahaya pergi ke sudut-sudut.
+ui-options-ray-traced-reflections = Refleksi yang diikuti sinar
+ui-options-ray-traced-reflections-help = Refleksi dari apa yang tidak ditampilkan layar, sebagai ganti refleksi ruang layar, yang harus diaktifkan
+ui-options-ray-tracing-unsupported = Kartu grafis ini atau drivernya tidak memiliki ray tracing
+ui-options-ray-tracing-vr = Tidak tersedia dalam sesi yang dimulai untuk VR
+ui-options-tab-ray-tracing = Pengaturan pelacakan sinar
+ui-options-deluxe-rt-warning-title = Aktifkan Deluxe (RT)?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) adalah Tinggi dengan bayangan dan cahaya tidak langsung diikuti oleh kartu grafis. Ini memerlukan kartu dengan pelacakan sinar hardware (NVIDIA RTX, AMD Radeon RX 6000 atau lebih baru, Intel Arc) dan driver yang terkini, dan harganya jauh lebih mahal dari Tinggi: pada kartu kelas menengah frekuensi frame bisa turun banyak di tempat sibuk. Pelacakan cahaya masih dalam uji coba: jika gambar terlihat salah atau penonton melambat, kembali ke Tinggi. Tab pelacak sinar menyimpan pengaturannya.
+ui-options-deluxe-rt-warning-turn-on = Hidupkan
+ui-options-ray-tracing-needs-shadows = Perlu bayangan
+ui-options-ray-tracing-needs-ssr = Perlu refleksi ruang layar
+ui-options-preset-deluxe = Deluxe (RT)
+ui-options-normal-precision = Akurasi Refleksi
+ui-options-normal-precision-help = Seberapa baik arah dari setiap permukaan dipelihara untuk refleksi. Standar dapat menampilkan langkah-langkah dalam refleksi permukaan yang halus, melengkung seperti cat mobil; Tinggi menghapusnya dan menggunakan lebih banyak memori video. Otomatis menggunakan Tinggi dengan refleksi ray-traced, di mana langkah paling banyak ditampilkan, dan Standar jika tidak
+ui-options-normal-precision-automatic = Otomatis
+ui-options-normal-precision-standard = Standar
+ui-options-normal-precision-high = Tinggi
+ui-options-private-point-at-help = Sembunyikan objek yang sedang Anda edit, tetapkan lengan penyuntingan diturunkan, dan sembunyikan beam penyuntingannya.
+ui-options-private-edit-beam = Sembunyikan beam penyuntingan
+ui-options-private-edit-beam-help = Sembunyikan beam sepenuhnya saat Anda mengedit atau mengambil objek, baik di layar Anda maupun bagi pemirsa lain. Penjelasan target seleksi dan beam memberikan/melepaskan tidak terpengaruh.
+common-window-outside = Pindah ke luar jendela pemirsa
+common-window-inside = Bawa kembali ke jendela pemirsa
+common-window-rename-name = Klik dua kali untuk mengganti nama
+common-carry-hint = Klik untuk menjatuhkan di sini, Esc untuk melepaskannya
+common-window-paused-photo = Dihentikan sementara mode foto terbuka
+common-window-paused-director = Dihentikan sementara sutradara bermain
+common-window-paused-interface = Dihentikan sementara antarmuka dimatikan
+ui-options-warn-live-preview = Peringatkan ketika tekstur atau material tidak dapat diperiksa
+ui-options-warn-live-preview-help = Dalam pemilih jendela build, mengklik item no-copy tidak menerapkan apapun sampai OK: say so.
+ui-texture-picker-live-preview-texture = Kami tidak dapat menampilkan pratinjau dari tekstur ini karena tidak ada salinan.
+ui-texture-picker-live-preview-material = Kami tidak bisa menampilkan pratinjau dari materi ini karena itu bukan salinan.
+fetch-invalid-url = URL tidak sah
+ui-chat-close-all-ims = Tutup semua IM percakapan
+ui-chat-close-all-ims-question = Tutup semua percakapan IM dan selesaikan panggilan aktif?
+ui-chat-confirm-close-all-ims = Konfirmasi sebelum menutup semua IM percakapan
+ui-chat-confirm-close-all-ims-help = Tanya sebelum menutup semua IM percakapan ketika satu memiliki panggilan suara aktif.
+ui-options-aurora-controls-compact-help = Jendela Kendali terbuka pada kamera: joystick, zoom dan roll-nya. Tombol bar judulnya beralih antara kompak dan penuh, dan menetapkan ini juga. Dengan jendela Klasik, kamera dibuka pada jendela kamera kecil Legacy Viewer.
+rlva-restart-hint = RLVa dimulai ketika Anda log masuk. Setelah berjalan, menyalakan atau mematikannya akan berdampak pada peluncuran selanjutnya dari penampil: objek pembatasan tetap ada sampai saat itu.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa akan diaktifkan setelah Anda restart.
+rlva-toggle-disabled-restart = RLVa akan dimatikan setelah Anda restart.
+livemesh-import-connect = Sambungkan Blender dengan plug-in 0.11.0 atau lebih baru, atau Maya dengan plug - in 0,2,0 atau yang lebih baru untuk mempersiapkan LOD impor.
+livemesh-import-preparing = Mempersiapkan objek dan LOD-nya di Blender atau Maya…
+livemesh-import-ready = LOD diterima, siap di importer.
+livemesh-import-failed = Pengolahan impor gagal: { $error }
+livemesh-import-timeout = Blender atau Maya belum selesai mempersiapkan impor. Periksa sambungan (dalam Blender, gunakan Mod Objek) dan coba lagi.
+livemesh-shape-apply-tooltip = Periksa Ubah hak, lalu sesuaikan rangka yang dipilih di Blender atau Maya dan jaring terikatnya (melalui MayaStar untuk rig MayaStar). Pilih rangka lokal kompatibel Second Life.
+livemesh-shape-update-apply = Perbarui plug-in Blender ke 0.10.0 atau lebih baru, atau plug- in Maya ke 2.4.0, kemudian sambungkan kembali.
+livemesh-shape-applied = Bentuk diterapkan pada rangka yang dipilih.
+livemesh-shape-tooltip = Periksa hak modifikasi bentuk yang rusak dan buat tubuh referensi baru dalam Blender atau Maya.
+livemesh-shape-connect = Sambungkan plug-in Aurora ke Blender atau Maya terlebih dahulu.
+livemesh-shape-update-plugin = Perbarui plug-in Blender ke 0.9.0 atau lebih baru, atau plug- in Maya ke 1.3.0, kemudian sambungkan kembali.
+livemesh-shape-timeout = Blender atau Maya tidak mengkonfirmasi impor. Coba lagi (dalam Blender, pindah ke Mode Objek).
+livemesh-shape-success = Bentuk diimpor sebagai badan referensi yang baru.
+blender-live-maya-version = Aurora LiveMesh untuk Maya { $version }
+blender-live-maya-instructions = Simpan ZIP dan ekstrak, lalu seret install.mel ke viewport Maya. Buka LiveMesh dari rak Aurora, tambahkan jaring-jaring Anda dan klik Connect.
+blender-live-save-maya = Simpan plug-in Maya…
+blender-live-maya-saved = Plug-in telah disimpan. Ekstrak ZIP dan seret install.mel ke viewport Maya.
+livemesh-plugin-connected = Plug-in terhubung
+livemesh-token-refused = Sebuah program mencoba terhubung tanpa kunci pratinjau ini. Hanya plug-in Aurora di Blender atau Maya yang dapat terhubung.
+livemesh-waiting-plugin = Menunggu Blender atau Maya...
+blender-live-objects-help = Jaringan yang dikirim Blender atau Maya. Pilih satu untuk ditempatkan, atau impor dari menunya.
+blender-live-size-note = Ukuran melipatgandakan apa yang dikirim plug-in, sehingga penyuntingan selanjutnya di Blender atau Maya menyimpannya.
+blender-live-avatar-help = Untuk jaring-jaring yang dimanipulasi: kirimkan bentuk Anda ke Blender atau Maya untuk memodelkannya.
+livemesh-shape-section = Bentuk Anda di Blender atau Maya
+blender-live-import-help = Mengbekukan snapshot objek untuk impor normal: review, harga, kemudian konfirmasi. Penyuntingan selanjutnya di Blender atau Maya tidak mengubahnya.
+blender-live-changed-tip = Waktu sejak Blender atau Maya terakhir mengubah objek ini
+fit-lab-section = Lab pemasangan pakaian
+fit-lab-help = Manekin berpakaian apa yang Anda pakai, masing-masing dengan tubuh yang lain, berdiri di depan Anda untuk menunjukkan bagaimana pakaian cocok beberapa bentuk hanya Anda melihat mereka: tidak ada yang dikirim atau disimpan.
+fit-lab-body-me = Aku
+fit-lab-body-slim = Pintar.
+fit-lab-body-curvy = Bentuk tubuh melengkung
+fit-lab-body-full = Gambar penuh
+fit-lab-body-athletic = Atletik
+fit-lab-body-tall = Tinggi
+fit-lab-body-petite = Kecil
+fit-lab-motion = Gerakan
+fit-lab-motion-stand = Berdiri
+fit-lab-motion-walk = Jalan.
+fit-lab-motion-sit = Duduk.
+fit-lab-motion-range = Seluruh rentang gerakan
+fit-lab-pose = Berpose
+fit-lab-pose-all = Semua, berturut-turut
+fit-lab-pose-arms-up = Angkat tangan.
+fit-lab-pose-reach = Menjangkau kedua lengan ke depan
+fit-lab-pose-hug = Tangan bersinggungan
+fit-lab-pose-squat = Berbaring.
+fit-lab-pose-kneel = Berlutut.
+fit-lab-pose-knee-up = Lutut ditinggikan
+fit-lab-pose-twist = Putar tubuhmu
+fit-lab-pose-bend = Bengkok ke depan
+fit-lab-motion-like-me = Seperti aku
+fit-lab-show = Tunjukkan manekinnya
+fit-lab-place = Bawa mereka ke sini
+fit-lab-remove = Buang manekinnya.
+fit-lab-choose = Pilih setidaknya satu mayat.
+fit-lab-clip = Tunjukkan di mana mayat itu datang
+fit-lab-clip-note = Merah: tubuh keluar dari pakaian. Amber: tubuh dan pakaian bertemu. Pada avatar Anda dan manekin, seperti yang terlihat dari kamera. Semua hal lain yang Anda kenakan dihitung sebagai tubuh: lepaskan jaket atau rambut yang dikenakan di atas pakaian.
+blender-live-levels-pending = Blender atau Maya mempersiapkan tingkat rincian ketika Anda klik Impor.
+blender-live-levels-note = Disiapkan dalam Blender atau Maya dari pengaturan LiveMesh setiap objek.
+blender-live-quick-look-changed = Diubah dalam Blender atau Maya { $ago } tahun yang lalu.
+blender-live-warning-textures = Tekstur dilewatkan, warna biasa ditampilkan
+blender-live-warning-not-sent = Tidak dalam pratinjau
+blender-live-undo-derez = Derezzed { $name } · masih dalam daftar plugin
+blender-live-undo-detach = Terpisah { $name } · masih dalam daftar plugin
+inventory-open-current = Buka
+inventory-folder-back = Kembali
+inventory-folder-forward = Maju
+inventory-folder-up = Naik satu tingkat
+area-search-metres = { $n } m
+area-search-band-reach = Dalam jangkauan
+area-search-band-close = Dekat
+area-search-band-around = Di sekelilingmu
+area-search-band-further = Lebih jauh
+area-search-band-far = Ayah.
+area-search-band = Area pencarian
+area-search-within = Dalam { $distance }
+area-search-within-across = Dalam { $distance } melewati
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Tampilkan setiap jarak
+area-search-from = Jarak dari
+area-search-to = Jarak ke
+area-search-bar-tip =
+    { $count ->
+        [one] Satu objek, { $from } dua { $to }
+       *[other] { $count } objek, { $from } dua { $to }
+    }
+area-search-of-objects = dari { $total } objek
+area-search-li = { $value } LI
+area-search-li-count = { $value } dampak tanah
+area-search-owner-count =
+    { $count ->
+        [one] satu pemilik
+       *[other] { $count } pemilik
+    }
+area-search-object-count =
+    { $count ->
+        [one] satu objek
+       *[other] { $count } objek
+    }
+area-search-objects-word = objek
+area-search-in-reach = di sini
+area-search-tab-objects = Objek
+area-search-tab-owners = Pemilik
+area-search-hint-wide = Objek, pemilik, pencipta atau UUID
+area-search-kind-heading = Jenis objek
+area-search-kind-tip = Klik: hanya ini. Lagi: tersembunyi.
+area-search-kind-any = apapun
+area-search-kind-only = hanya ini
+area-search-kind-hidden = Tersembunyi
+area-search-kind-attached = Terlampir
+area-search-kind-probes = Tes
+area-search-click-all = Semua
+area-search-click-any-short = Apapun
+area-search-permissions = Keizinan
+area-search-price-heading = Harga penjualan, untuk objek yang dijual
+area-search-price-to = dua
+area-search-price-tip = Pilih "Untuk dijual" pertama
+area-search-linked = Prim terhubung
+area-search-one-field = Cari di satu medan
+area-search-regex-switch = Ekspresi Reguler
+area-search-regex-invalid = Bukan ekspresi reguler yang valid
+area-search-reset-filters-tip = Pulihkan setiap filter; teks pencarian tetap ada
+area-search-save-defaults-tip = Buka dengan filter ini dari sekarang
+area-search-reset-search = Reset teks pencarian
+area-search-reset-filters = Reset opsi filter
+area-search-reset-ranges = Reset jarak dan harga
+area-search-reset-all = Reset semuanya
+area-search-more = Lebih
+area-search-several = Pilih beberapa
+area-search-several-tip = Klik menambahkan ke seleksi (juga Ctrl atau Shift + klik, Ctrl+A)
+area-search-actions = Aksi
+area-search-nothing = Belum ada objek yang diterima.
+area-search-nothing-for-sale = Tak ada yang dijual di sini.
+area-search-not-for-sale = Tidak untuk dijual
+area-search-from-price = dari { $price }
+area-search-nearest = Terdekat pertama
+area-search-heaviest = Terberat pertama
+area-search-order-tip = Ubah urutan: terdekat atau paling berat pertama
+area-search-rank = #{ $rank } dari { $all }
+area-search-rank-here = # { $rank } di sini
+area-search-card-more = Tampilkan setiap gambar
+area-search-card-less = Tampilkan lebih sedikit
+area-search-open-group = Buka grup
+area-search-spoken = { $name }, { $distance }, dampak tanah { $li }, milik { $owner }
+area-search-owner-spoken = { $name }, { $count } Objek, dampak tanah { $li }
+area-search-stage-line = { $distance } jauh · { $li } dampak tanah · { $owner }
+area-search-tile-3d = Tampilan 3D
+area-search-on = Diaktifkan: { $count }
+area-search-on-word = Diaktifkan
+area-search-more-on =
+    { $count ->
+        [one] satu filter lagi pada
+       *[other] { $count } filter lebih pada
+    }
+ui-options-legacy-lists = Impor daftar dari Legacy Viewer
+ui-options-legacy-lists-help = Menambahkan sejarah teleport, daftar hitam aset, daftar filter media dan set kontak akun ini. Berkas dari Legacy Viewer hanya dapat dibaca.
+ui-options-legacy-lists-button = Impor dari Pelihat Lama...
+ui-options-legacy-lists-no-account = Log masuk untuk mengimpor daftar akun ini.
+ui-options-legacy-lists-title = Impor dari Penampil Lama
+ui-options-legacy-lists-text = Semuanya ditambahkan ke daftar akun ini dan tidak ada yang dihapus di sini. Nama-nama daftar hitam aset meninggalkan dunia dengan segera. Mengimpor kembali membawa kembali apa yang Anda hapus di sini
+ui-options-legacy-lists-searching = Mencari folder Legacy Viewer...
+ui-options-legacy-lists-none = Tidak ada folder Legacy Viewer dengan daftar yang ditemukan untuk akun ini.
+ui-options-legacy-lists-teleports = Sejarah Teleport ({ $count })
+ui-options-legacy-lists-derender = Daftar hitam aset ({ $count })
+ui-options-legacy-lists-media = Entri penapis media: { $count }
+ui-options-legacy-lists-contact-set-entries = Set entri kontak ({ $count })
+ui-options-legacy-lists-confirm = Impor
+ui-options-legacy-lists-added = Entri ditambahkan atau diperbarui. Riwayat teleportasi: { $teleports }, daftar aset yang diblokir: { $derender }, filter media: { $media }, entri set kontak: { $sets }.
+ui-options-legacy-lists-nothing = Tidak ada yang baru: akun ini sudah memiliki daftar ini.
+ui-options-legacy-lists-failed = Tidak dapat membaca: { $files }.
+ui-options-legacy-lists-unsaved = Tidak bisa disimpan, tinggalkan seperti itu: { $files }.
+ui-options-legacy-lists-other-grid = Pada grid ini, folder dengan nama yang sama dapat termasuk ke dalam grid lain: periksa apakah itu yang benar.
+ui-options-build-show-beams-hint = Tampilkan beam pemilihan Anda dan avatar lain saat mengedit, mengambil, atau memberikan. Ini hanya mengatur tampilan; gunakan Privasi > Sembunyikan beams penyuntingan untuk menghentikan beam penyuntingannya secara lokal dan melalui jaringan.
+teleport-failed-title = Teleport gagal.
+teleport-error-invalid-tport = Upaya teleport dibatasi pada 6 per menit. Jika Anda mengalami masalah, tunggu satu menit dan coba teleport lagi. Jika masalah terus terjadi, log keluar dan masuk lagi.
+teleport-error-invalid-region-handoff = Masalah terjadi saat memproses perlintasan wilayah Anda. Anda mungkin perlu log masuk kembali sebelum dapat melintasi wilayah. Jika pesan ini terus muncul, silakan hubungi dukungan.
+teleport-error-blocked-tport = Maaf, teleport saat ini terblokir. Coba lagi sebentar lagi. Jika Anda masih tidak dapat teleport, silakan keluar dan masuk kembali untuk menyelesaikan masalah.
+teleport-error-nolandmark-tport = Maaf, tapi sistem tidak dapat menemukan tujuan landmark.
+teleport-error-timeout-tport = Maaf, sistem tidak dapat menyelesaikan sambungan teleport. Coba lagi nanti.
+teleport-error-no-help-island = Kau tidak bisa teleport kembali ke Welcome Island.
+teleport-error-noaccess-tport = Maaf, kau tidak punya akses ke tujuan teleport itu.
+teleport-error-missing-attach-tport = Lampiran Anda belum sampai. Coba tunggu beberapa detik lagi atau log keluar dan masuk kembali sebelum mencoba teleport.
+teleport-error-too-many-uploads-tport = Baris tunggu aset di wilayah ini saat ini tersumbat, sehingga permintaan teleport Anda tidak akan berhasil dengan tepat waktu. Silakan coba lagi beberapa menit kemudian atau pergi ke daerah yang kurang sibuk.
+teleport-error-expired-tport = Maaf, sistem tidak dapat menyelesaikan permintaan teleport Anda dengan tepat waktu. Silakan coba lagi dalam beberapa menit.
+teleport-error-expired-region-handoff = Maaf, sistem tidak dapat menyelesaikan perlintasan wilayah Anda dengan tepat waktu. Silakan coba lagi dalam beberapa menit.
+teleport-error-preexisting-tport = Maaf, sistem tidak dapat memulai teleport Anda. Silakan coba lagi dalam beberapa menit.
+teleport-error-no-host = Tidak dapat menemukan tujuan teleport. Tujuan mungkin sementara tidak tersedia atau tidak ada lagi. Silakan coba lagi beberapa menit lagi.
+teleport-error-no-inventory-host = Sistem inventaris saat ini tidak tersedia.
+teleport-error-must-get-age-region = Anda harus berusia 18 tahun atau lebih untuk memasuki wilayah ini.
+teleport-error-special-usage-blocked = Tak bisa masuk ke wilayah. '{ $region }'adalah wilayah permainan keterampilan, dan Anda harus memenuhi kriteria tertentu untuk dapat masuk. Untuk rinciannya, silakan lihat FAQ Permainan Keterampilan: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Tidak dapat memasuki wilayah. Ini adalah wilayah Skill Gaming, dan Anda harus memenuhi kriteria tertentu untuk masuk. Untuk rinciannya, silakan lihat FAQ Skill Gaming: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Jaringan rumah Anda menolak pengembalian Anda. Ini biasanya berarti pengaturan alamat Hypergrid tidak cocok dengan alamat jaringan lain yang digunakan untuknya. Hubungi operator jaringan rumah Anda; log masuk lagi akan membawa Anda ke rumah.
+teleport-hint-hypergrid-unreachable = Grid lain tidak dapat dicapai. Mungkin tidak terhubung, atau tautan mungkin mengarah ke alamat lama.
+teleport-hint-hypergrid-visitors-refused = Jaringan itu hanya mengizinkan penduduk dari beberapa jaringan.
+teleport-hint-hypergrid-destination-gone = Wilayah tujuan tidak lagi ada atau telah dipindahkan. Landmark dan tautan ke grid lain dapat menjadi usang.
+toolbar-edit = Ubah tombol dan menu...
+toolbar-title = Tombol dan menu
+toolbar-interface-locked = antarmuka terkunci
+toolbar-help = Seret tombol atau entri menu ke atas, bawah atau bar sisi. Jatuhkan sebuah tombol kembali ke sini untuk menghapusnya. Klik kanan pada tombol apapun untuk mengubah penampilannya.
+toolbar-help-classic = Seret tombol atau entri menu ke atas, bawah atau bar sisi. Jatuhkan sebuah tombol kembali ke sini untuk menghapusnya. Klik kanan pada tombol apapun untuk mengubah penampilannya.
+toolbar-help-modes = Pilih ikon, label, keduanya, atau bar default untuk setiap tombol. Seret entri ke dalam menu Aurora untuk mengatur ulang.
+import-menu-textures = Tekstur
+import-menu-animations = Animasi
+import-menu-sounds = Bunyi
+import-menu-materials = Material
+import-menu-meshes = Jaringan
+import-menu-options = Opsi Impor
+import-upload-payment-title = Unggah
+import-upload-payment = Anda membayar L${ $cost } untuk mengunggah.
+import-quick-textures =
+    { $count ->
+        [one] Impor · Tekstur: 1 · L${ $cost }?
+       *[other] Impor · Tekstur: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Impor · Material: 1 · L${ $cost }?
+       *[other] Impor · Material: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Impor · Bunyi: 1 · L${ $cost }?
+       *[other] Impor · Bunyi: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Pilih ukuran impor. Tekstur yang mendukungnya dapat diimpor dengan ukuran 2048 × 2048:
+       *[other] ({ $count }) Pilih ukuran impor. Tekstur yang mendukungnya dapat diimpor dengan ukuran 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Pilih ukuran impor. Gambar material yang mendukungnya dapat diimpor dengan ukuran 2048 × 2048:
+       *[other] ({ $count }) Pilih ukuran impor. Gambar material yang mendukungnya dapat diimpor dengan ukuran 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Unggah gambar gratis dengan ukuran 2048 × 2048 tanpa bertanya
+import-quick-free-full-size-help = "Import textures" dan "Impor material" kemudian bertanya 1024 atau 2048 hanya ketika upload biaya L$.
+ui-bars-customize-bars = Ubah antarmuka
+build-tool-in-use = Digunakan
+build-create-options-toggle = Tampilkan / sembunyikan opsi
+build-create-keep-creating = Tetap menciptakan
+build-create-center-on-prim = Pusatkan pada prim
+build-create-copy-prim-rotation = Salin rotasi prim
+build-create-align-to-surface = Jajarkan ke permukaan
+build-capture-shape-button = Salin bentuk prim: klik ini, lalu primi di dunia
+build-capture-shape-armed = Klik sebuah prim untuk menyalin bentuknya (Escape membatalkan)
+build-capture-shape-full = 20 bentuk dipelihara. Buang satu untuk menyalin yang lain
+build-capture-shape-remove = Buang bentuk ini
+build-capture-shape-tooltip = Bentuk yang disalin ({ $kind })
+build-capture-shape-not-a-prim = Hanya bentuk prim yang dapat disalin
+build-capture-shape-mesh-or-sculpt = Bentuk jaring atau primi yang diukir tidak dapat disalin
+build-capture-shape-no-modify = Anda perlu izin untuk mengubah prim ini untuk menyalin bentuknya
+import-other-options = Opsi Lain
+toolbar-button-icons = Hanya ikon
+toolbar-button-text = Hanya label
+toolbar-button-icons-text = Ikon dan label
+toolbar-icon-default = Pulihkan ikon default
+toolbar-icon-choose = Pilih ikon
+toolbar-icon-change = Ubah ikon
+toolbar-presets = Preset
+toolbar-interfaces = Antarmuka
+toolbar-interfaces-shown = Tampilkan dalam blok antarmuka
+toolbar-interfaces-hidden = Tersembunyi dari blok antarmuka
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora OldSchool
+toolbar-preset-photographer = Aurora Fotografer
+toolbar-preset-legacy = Legacy
+toolbar-import-textures = Impor tekstur
+toolbar-import-sounds = Impor suara
+toolbar-import-animations = Impor animasi
+toolbar-import-materials = Impor bahan
+toolbar-import-meshes = Impor Jaringan
+toolbar-import-local = Berkas Lokal
+toolbar-import-advanced = Impor Lanjutan
+toolbar-import-settings = Pengaturan Impor
+toolbar-import-bar = Impor Bar
+toolbar-icon-search = Cari ikon...
+toolbar-in-top = Di toolbar atas
+toolbar-bar-top = Bilah alat atas
+toolbar-drop-here = Drop di sini
+toolbar-separator = Pemisah
+toolbar-interface-edit = Ubah antarmuka
+toolbar-edit-done = Selesai
+toolbar-edit-top = Atas
+toolbar-edit-bottom = Bawah
+toolbar-edit-left = Kiri
+toolbar-edit-right = Baik
+toolbar-edit-help = Klik sebuah item untuk memilihnya, seret untuk memindahkannya, atau klik kanan untuk opsi penyuntingan. Tutup jendela ini untuk selesai.
+toolbar-edit-locked = Bar terkunci. Buka di bawah untuk mengubah antarmuka.
+toolbar-edit-move = Pindah ke
+toolbar-edit-split-before = Pisahkan sebelum
+toolbar-edit-split-after = Pisahkan setelah
+toolbar-edit-merge-before = Gabungkan dengan blok sebelumnya
+toolbar-edit-merge-after = Merge dengan blok berikutnya
+toolbar-edit-merge-groups = Gabungkan blok-blok ini
+toolbar-drawer = Laci
+toolbar-drawer-default-mode = Tampilkan tombol secara default
+toolbar-drawer-closes = Tutup setelah klik pada tombol
+toolbar-block-shortcut = Jalan pintas:
+toolbar-drawer-hides-needs-shortcut = Memerlukan jalan pintas
+toolbar-floating-close-button = Tambahkan tombol tutup
+toolbar-block-name = Nama blok:
+toolbar-block-button-mode = Tampilkan tombol blok
+toolbar-button-inherited = Diwariskan
+toolbar-drawer-hides-button = Sembunyikan tombol saat terapung
+toolbar-floating-new = Blok terapung
+toolbar-floating-orientation = Orientasi
+toolbar-floating-horizontal = Horizontal
+toolbar-floating-vertical = Vertikal
+toolbar-floating-empty = Jatuhkan tombol di sini
+toolbar-shortcut-title = Jalan pintas
+toolbar-shortcut-block-name = Blok: { $name }
+toolbar-shortcut-none = Tidak ada jalan pintas
+toolbar-shortcut-press-key = Tekan tombol
+toolbar-shortcut-esc = Esc untuk membatalkan
+toolbar-shortcut-clear = Buang
+toolbar-shortcut-overrides = Mengambil lebih dari { $name }: jalan pintas ini menjalankan toolbar daripada penggunaan defaultnya.
+toolbar-shortcut-used = Sudah singkatan dari { $names }.
+toolbar-shortcut-replace = Ganti
+toolbar-shortcut-add = Tambahkan
+toolbar-shortcut-save = Simpan
+toolbar-shortcut-choose-key = Pilih kunci
+toolbar-shortcut-help = Hidupkan atau matikan Ctrl, Alt dan Shift, lalu klik tombol untuk mengubahnya. Ctrl atau Alt diperlukan, kecuali dengan F1 hingga F24.
+toolbar-shortcut-inactive = Tombol ini tidak ada di bar: jalan pintasnya bekerja setelah ditempatkan kembali.
+toolbar-shortcut-refused-keyboard = Hanya tombol papan ketik yang dapat menjadi jalan pintas.
+toolbar-shortcut-refused-modifier = Kunci modifier sendiri tidak dapat menjadi jalan pintas.
+toolbar-shortcut-refused-needs-modifier = Tambahkan Ctrl atau Alt: hanya dengan satu tombol, atau hanya dengan Shift, ketik di medan teks.
+toolbar-shortcut-refused-altgr = Ctrl+Alt dengan tombol ini adalah AltGr, yang menampilkan karakter pada banyak papan ketik.
+toolbar-shortcut-refused-editing = Medan teks menggunakan jalan pintas ini (pilih semua, salin, potong, tempel, hapus, ulang).
+toolbar-shortcut-refused-navigation = Medan teks bergerak dan dihapus dengan tombol ini.
+toolbar-shortcut-refused-typing = Chat dan dialog menggunakan kunci ini.
+toolbar-shortcut-refused-system = Sistem menyimpan jalan pintas ini.
+toolbar-shortcut-refused-window = Pintasan ini menutup atau beralih jendela.
+toolbar-shortcut-refused-zoom = Pintasan ini memperbesar antarmuka.
+toolbar-spacer = Jarak blok
+toolbar-add-spacer = Tambahkan ruang blok
+toolbar-button-settings = Pengaturan tombol
+toolbar-button-edit = Tombol Edit...
+toolbar-button-edit-title = Tombol Edit
+toolbar-button-name = Nama tombol:
+toolbar-button-display = Tampilkan tombol
+toolbar-shortcut-fixed-block-help = Jalan pintas blok tetap menunjukkan dan menyembunyikannya; sementara antarmuka diedit, ia tetap ditampilkan.
+toolbar-block-settings = Pengaturan Blok
+toolbar-parent-block-settings = Pengaturan blok induk
+toolbar-block-edit = Sunting blok...
+toolbar-block-edit-title = Sunting blok
+toolbar-block-alignment = Jajaran
+toolbar-block-sizing = Ukuran tombol
+toolbar-block-fixed-options = Opsi mode tetap
+toolbar-block-floating-options = Opsi mode apung
+toolbar-block-kind-fixed = Blok tetap
+toolbar-block-kind-drawer = Laci
+toolbar-block-kind-floating = Blok terapung
+toolbar-block-remove = Buang blok
+toolbar-move-block = Seret untuk memindahkan seluruh blok
+toolbar-remove-block = Buang blok
+toolbar-drawer-empty = Laci ini kosong.
+toolbar-drawer-drop = Seret tombol ke sini untuk menambahkan atau menyusun ulang mereka.
+toolbar-separator-settings = Pengaturan ruang blok
+toolbar-separator-size = Ukuran / minimum (px)
+toolbar-separator-stretch = Isi ruang yang tersedia
+toolbar-separator-help = Jarak fleksibel berbagi ruang yang ditinggalkan oleh blok. Ukurannya adalah lebar minimum, atau tinggi dalam bar sisi.
+toolbar-block-navigation = Navigasi dan SLURL
+toolbar-block-account = Akun dan saldo
+toolbar-block-system = Jam, indikator dan audio
+toolbar-block-status = Status ketersediaan
+toolbar-block-balance = Saldo
+toolbar-block-clock = Jam
+toolbar-block-ping = Latensi wilayah
+toolbar-block-fps = Tingkat bingkai (FPS)
+toolbar-block-network = Lalu lintas jaringan
+toolbar-block-media = Paket media
+toolbar-block-music = Paket musik
+toolbar-block-volume = Volume suara
+toolbar-block-notifications = Notifikasi
+toolbar-block-conversations = Ikon Percakapan
+toolbar-block-chat = Input obrolan dekat
+toolbar-category-all = Semua Kategori
+toolbar-section-main = Mainkan
+toolbar-section-advanced = Lanjutan
+toolbar-search-all = Pencarian termasuk perintah canggih.
+toolbar-category-avatar = Avatar dan gerakan
+toolbar-category-communication = Komunikasi
+toolbar-category-world = Dunia dan perjalanan
+toolbar-category-creation = Penciptaan dan isi
+toolbar-category-interface = antarmuka dan kamera
+toolbar-category-advanced = Alat canggih
+toolbar-category-help = Bantuan
+toolbar-category-custom = Perintah custom
+toolbar-bar-settings = Pengaturan toolbar
+toolbar-menu-group = Menu: { $name }
+toolbar-location-bar = Bar alamat SLURL
+toolbar-command-build-tool-focus = Bangun - KameraStencils
+toolbar-command-build-tool-grab = Bangun - Pindah
+toolbar-command-build-tool-edit = Bangun - Ubah
+toolbar-command-build-tool-create = Bangun - Cipta
+toolbar-command-build-tool-land = Bangunan - Tanah
+bug-copy-version = Salin versi pemirsa
+toolbar-notecard-save = Simpan ke notecard...
+toolbar-notecard-load = Muat dari notecard...
+toolbar-notecard-name = antarmuka Aurora
+toolbar-notecard-help = Tata letak dan penampilan toolbar, tombol, laci dan menu.
+toolbar-notecard-saved = Tata letak antarmuka disimpan di inventaris Anda.
+toolbar-notecard-invalid = Notecard ini tidak berisi tata letak antarmuka yang kompatibel.
+toolbar-notecard-unavailable = Notecard ini tidak lagi tersedia atau tidak dapat disalin.
+toolbar-notecard-layout-changed = Antarmuka berubah saat notecard sedang dimuat. Muat ulang untuk menerapkan tata letaknya.
+toolbar-notecard-demo-valid = antarmuka fotografer
+toolbar-notecard-demo-invalid = Notecard Lain
+toolbar-notecard-too-large = Konfigurasi antarmuka ini terlalu besar untuk sebuah notecard.
+toolbar-saved-interfaces = Antarmuka yang disimpan
+toolbar-saved-interfaces-empty = Belum ada antarmuka yang disimpan.
+toolbar-notecard-destination = Folder: { $path }
+toolbar-notecard-folder-error = Folder antarmuka tidak dapat dimuat atau dibuat. Silakan coba lagi.
+toolbar-current-preset = Interface yang dipilih: { $name }
+toolbar-preset-custom = antarmuka custom
+toolbar-preset-unsaved = Perubahan yang belum disimpan
+toolbar-preset-save-title = Simpan antarmuka
+toolbar-preset-save-name = Nama antarmuka
+toolbar-preset-save-new = Antarmuka pribadi baru
+toolbar-preset-save-replace = Ganti antarmuka pribadi ini
+toolbar-preset-save-unavailable = Antarmuka ini tidak dapat disimpan di sini. Pilih nama lain atau antarmuka pribadi yang tersedia dan dapat disunting.
+toolbar-interface-delete-unavailable = Antarmuka pribadi ini tidak dapat dihapus.
+toolbar-interface-delete-confirm = Pindahkan antarmuka pribadi “{ $name }” ke Sampah?

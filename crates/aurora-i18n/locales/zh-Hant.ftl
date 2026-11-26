@@ -15903,3 +15903,727 @@ parcel-environment-empty = 沒有保存環境
 parcel-environment-remove-all = 刪除所有
 parcel-environment-remove-all-title = 刪除為包裹保存的每個環境?
 parcel-environment-remove-all-text = 您為目前網格的地塊儲存的環境將被刪除。其他網格的紀錄會保留。此操作無法復原。
+
+### Updated release translations
+
+anim-edit-shortcut-play = 播放或暫停
+area-search-scope-heading = 哪里
+area-search-scope-parcel = 地塊
+area-search-scope-region = 區域
+area-search-scope-neighbours = 鄰居
+area-search-objects-heading = 哪些物體
+inventory-copy-selection-count =
+    { $count ->
+        [one] 復制1項
+       *[other] 復制{ $count }項
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] 鏈接 1項
+       *[other] 鏈接 { $count }個條目
+    }
+inventory-drop-move-here = 搬到這里來
+inventory-drop-copy-here = 復制到這里
+inventory-drop-link-here = 在這里創建鏈接
+inventory-sort-description = 描述
+inventory-sort-reversed = { $order }(逆轉)
+inventory-column-creator = 創造者
+inventory-column-count = 項目
+inventory-columns-fit = 調整所有列的大小以適合
+inventory-columns-reset-widths = 重置列寬度
+inventory-back = 返回
+inventory-forward = 向前
+inventory-up = 上升一個級別
+keybinds-inventory-root = 返回頂部
+keybinds-inventory-search = 搜索庫存
+keybinds-inventory-filter = 過濾文件夾
+keybinds-inventory-preview = 顯示預覽窗格
+keybinds-inventory-view-large = 大型圖片
+keybinds-inventory-view-medium = 媒體圖片
+keybinds-inventory-view-small = 小圖片
+keybinds-inventory-view-compact = 精簡檢視
+keybinds-inventory-view-details = 詳細信息視圖
+keybinds-inventory-view-tiles = 瓷磚視圖
+keybinds-inventory-toggle = 選擇或取消選擇焦點中的行
+keybinds-inventory-menu = 打開所選項的菜單
+keybinds-inventory-purge = 從垃圾桶中清理
+keybinds-inventory-refused = { $keys } 仍然是庫存列表自己的密鑰:選擇另一個。
+inventory-path-edit = 鍵入路徑
+inventory-path-subfolders = 子文件夾
+inventory-copy-path = 復制路徑
+inventory-show-in-folder = 在資料夾中顯示
+inventory-pin = 快速訪問
+inventory-unpin = 從快速訪問取消固定
+inventory-quick-access = 快速訪問
+inventory-quick-access-drop = 在此處拖放文件夾以固定它
+inventory-invert-selection = 反轉選擇
+inventory-undo = 復原
+inventory-redo = 重做
+inventory-undo-step = 撤銷{ $what }
+inventory-redo-step = 重做{ $what }
+inventory-history-move =
+    { $count ->
+        [one] 移動1個項目
+       *[other] 移動{ $count }個項目
+    }
+inventory-history-delete =
+    { $count ->
+        [one] 刪除1個項目
+       *[other] 刪除{ $count }個項目
+    }
+inventory-history-rename = 重命名
+inventory-history-new-folder = 新建文件夾
+inventory-history-copy =
+    { $count ->
+        [one] 1件物品的副本
+       *[other] { $count }項的副本
+    }
+inventory-history-link =
+    { $count ->
+        [one] 鏈接到1項
+       *[other] 鏈接到{ $count }個項目
+    }
+inventory-undo-nothing = 沒有任何東西可以撤銷:這些項目已經移動或消失。
+inventory-redo-nothing = 無需重做:這些項目已移動或消失。
+inventory-undo-empty = 沒有什么可撤銷的。
+inventory-redo-empty = 沒有什么要重做的。
+inventory-undo-dropped = 最后一步的項目已經移動或消失:它已被丟棄。 再次撤銷之前的一步。
+inventory-redo-dropped = 下一步的項目已經移動或消失:它被丟棄了。 再次重復以后的步驟。
+inventory-undo-folder-not-empty = 這個新文件夾包含了從以下時間開始放在那里的項目:首先將它們移出,或者自行刪除該文件夾。
+inventory-undo-kept-out = 這些物品現在在當前裝備或市場列表中:在那里更改它們。
+inventory-restore-to = 返回上一頁{ $folder }”
+inventory-restore-to-origins = 恢復到他們的文件夾
+inventory-purge-no-undo = 撤銷不能將它們帶回來。
+inventory-new-tab = 新標簽
+inventory-close-tab = 關閉選項卡
+inventory-next-tab = 下一個選項卡
+inventory-previous-tab = 上一頁
+inventory-open-in-new-tab = 在新標簽中打開
+inventory-tabs-limit = 最多{ $count }個標簽。
+inventory-copy-to-other-pane = 復制到其他窗格
+inventory-move-to-other-pane = 移動到其他窗格
+inventory-resize-columns = 拖移以調整列的大小: 連按兩次以將左側列調整到其內容。
+inventory-resize-columns-first = 拖移以調整列的大小。 連按兩次以將第一列設為正常寬度。
+inventory-sort-by-column = 點按以按此列排序,再次點按可反轉順序。 拖移以移動列。
+inventory-filter-hint = 過濾此文件夾
+inventory-filter-close = 關閉過濾器(Esc)
+inventory-filter-nothing = 這里沒有任何內容與過濾器匹配
+inventory-view-compact = 精簡檢視
+inventory-view-tiles = 瓷磚視圖
+inventory-view-per-folder = 記住每個文件夾的視圖
+inventory-group-by = 按類別分列
+inventory-group-none = 無
+inventory-group-folders = 資料夾
+inventory-group-unknown-creator = 創建者未知
+inventory-group-today = 今天
+inventory-group-yesterday = 昨天
+inventory-group-this-week = 過去7天
+inventory-group-this-month = 過去30天內
+inventory-group-this-year = 今年初
+inventory-group-earlier = 很久以前
+inventory-group-no-date = 無日期
+cmdline-mod-zoffset-usage = 設置你的頭像的懸停高度(用法: /zoffset value 或 +delta ) 。
+dev-toolbox-n4 = 庫存裝載
+dev-toolbox-what-n4 = 文件夾讀取,失敗并離開,加載程序在飛行和重試中讀取;沒有名稱
+ui-context-inspect-avatar = 檢查頭像
+inspect-window = 檢查
+inspect-tab-objects = 物件
+inspect-objects-title =
+    { $count ->
+        [one] 小行星{ $count }
+       *[other] 小行星{ $count }
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count }個條目
+       *[other] { $count }項
+    }
+inspect-open-profile = 打開個人資料
+inspect-over-limit = 超過您的限制
+inspect-limit-tip = 您的復雜度限制:{ $limit }
+inspect-search = 搜索物品或創建者
+inspect-outlined = { $name }在世界上概述
+inspect-area-head = 頭
+inspect-area-body = 身體部位
+inspect-area-arms = 手臂和手
+inspect-area-legs = 腿和腳
+inspect-area-hud = HUD
+inspect-area-other = 其他
+inspect-area-world = 物件
+inspect-own-eyes = 系統眼
+inspect-own-body = 系統機構
+inspect-own-description = 頭像本身的一部分,而不是附件
+inspect-own-maker = 化身 · Second Life
+inspect-own-place = 化身
+inspect-thousands = { $n }k
+inspect-megabytes = { $n }兆字節
+inspect-section-complexity = { $value }複雜度
+inspect-no-match = 沒有找到匹配“{ $query }”的內容。
+inspect-spoken-worn = { $name }, 穿著 { $point }復雜性 { $complexity }由下列國家提出 { $creator }
+inspect-spoken-object = { $name }, 擁有 { $owner }復雜性 { $complexity }由下列國家提出 { $creator }
+inspect-look-at-tip = 移動相機到它
+inspect-profile-tip = 打開創作者的個人資料
+inspect-made-by = 制造商
+inspect-owned-by = 擁有者
+inspect-worn-on = 穿戴位置
+inspect-prims-count =
+    { $count ->
+        [one] 小行星{ $count }
+       *[other] { $count }質數
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = 紋理記憶體
+inspect-tile-vram = 圖形記憶體
+inspect-tile-prims = 基本體
+board-close = 關閉{ $title }
+board-grow = 放大 { $title }
+board-remove = 刪除{ $name }
+board-more = 和{ $count }更多
+board-more-short = +{ $count }
+board-some-of = { $shown } 2013年1月1日至 { $all }
+board-of-all = 第{ $all }段
+stage-turn-left = 左轉
+stage-turn-right = 右轉
+stage-higher = 從高處看
+stage-lower = 從下面看
+stage-nearer = 更近
+stage-further = 更遠
+stage-reset = 回到開頭
+stage-hint = 拖動旋轉,右鍵拖動移動
+stage-light = 光背景
+stage-dark = 暗色背景
+stage-playing = AO
+stage-paused = 已暫停
+stage-pause-tip = 暫停他們的動畫
+stage-play-tip = 播放他們的動畫
+stage-loading = 準備3D視圖
+stage-nothing = 還沒有什么要展示的3D。
+stage-refused = 3D視圖關閉,而RLVa限制了您可能看到的內容。
+inspect-your-limit = 您的限額: { $limit }
+inspect-without-it = { $value } 沒有它
+inspect-you = 您
+inspect-person = 人物
+inspect-difference = 差異
+inspect-drawn-in-full = 全額提款
+inspect-nobody = 沒有人的復雜性尚未被發現。
+inspect-aside-count = { $count } 留存
+inspect-is-aside = 留存
+inspect-set-aside = 留出
+inspect-set-aside-tip = 只有在這個窗口中:世界上沒有什么變化,你只能看到它的復雜性。
+inspect-put-back = 把它放回去
+inspect-put-back-tip = 重新計算此項目
+inspect-complexity-spoken = 復雜性 { $value }數目 { $rank } 2013年1月1日至 { $count } 這里的人
+inspect-stage-outfit = 衣服
+inspect-stage-objects = 對象
+inspect-stage-back = 返回頂部
+inspect-place-made-by = { $place } · 由 { $name }
+inspect-owned-by-name = 由{ $name }擁有
+inspect-tile-items = 項目
+inspect-tile-figures = 圖表
+inspect-col-item = 名稱
+inspect-point = 點
+inspect-look-at = 看向
+inspect-selected-count = { $count }選定
+inspect-worn-count = 小行星{ $count }
+inspect-creators-word = 創造者
+inspect-areas-word = 身體部位
+inspect-owners-word = 業主
+inspect-triangles-word = 三角面
+inspect-made-of = { $count } 2013年1月1日至 { $all } 項目
+inspect-kilobytes = { $n }千字節
+inspect-linkset-order = { $count },在左側順序
+inspect-reset-columns = 重設欄
+inspect-by-creators =
+    { $count ->
+        [one] { $items } 由一個創建者
+       *[other] { $items } 由 { $count } 創造者
+    }
+inspect-owner-button = 業主簡介
+inspect-group-button = 群組檔案
+inspect-creator-button = 創作者簡介
+inspect-land-others = 其他{ $n }
+inspect-land-these = 這些{ $n }
+inspect-land-free = 免費 { $n }
+inspect-land-unknown = 包裹的房間顯示當物品都在你所在的包裹上。
+ui-login-unencrypted = 未加密登入
+ui-login-unencrypted-body = { $server } 的登入位址以 http:// 開頭，而非 https://，登入資訊將不會加密。能查看您網路流量的人，例如在公共 Wi-Fi、共用網路上或通往網格的途中，可能讀取您的密碼並使用您的帳號。目前尚未傳送任何資訊。您可以向網格索取 https:// 登入位址。此選擇將為這個伺服器儲存。
+ui-login-unencrypted-accept = 不加密並登入
+world-appearance-clothing-layers-full = 所有60層衣服都在使用中。 在穿上這件物品之前取下一層衣物。
+ui-options-ray-tracing = 光線追蹤
+ui-options-ray-traced-shadows = 光線追蹤太陽影
+ui-options-ray-traced-shadows-help = 太陽和月亮的陰影按照光線逐一追蹤,而不是從陰影圖中讀取:確切地了解物體在任何距離上的接觸點。 需要陰影和具有光線跟蹤功能的顯卡,顯卡成本更高
+ui-options-ray-traced-lights = 局部光影
+ui-options-ray-traced-lights-help = 來自周圍點燈(燈、蠟燭)的陰影,在其他情況下它們不會投射影像,當投影機陰影開啟時,來自投影儀的陰暗,而不是其陰影圖。 最昂貴的光線跟蹤選項:集成顯卡上最好不使用
+ui-options-rt-quality = 光線跟蹤質量
+ui-options-rt-quality-help = 每個跟蹤效果都保持開啟:較低的級別會在粗糙的網格上追蹤較少的樣本和間接光線,以便在較小的圖形卡上每秒獲得更多幀數。 高級是 Deluxe (RT) 的完整圖像。 選擇級別還可以設置投影陰影的燈光
+ui-options-rt-sun-softness = 日影柔軟度
+ui-options-rt-sun-softness-help = 太陽影子邊緣的柔軟程度:1是真正的太陽,0是尖銳的邊緣,更多是模糊的太陽
+ui-options-rt-lamp-softness = 局部光影柔度
+ui-options-rt-lamp-softness-help = 燈具追蹤影子的邊緣有多柔和:1 跟隨每個燈具的大小,0 銳利的邊界
+ui-options-rt-shadow-lamps = 投影的光
+ui-options-rt-shadow-lamps-help = 最近的燈具中有多少投射了痕跡影子;其他燈具仍然亮著,沒有影子。 顯卡成本更低
+ui-options-ray-traced-indirect = 間接光
+ui-options-ray-traced-indirect-help = 由周圍表面反射的光線,在屏幕顯示之外追蹤,取代 GTAO 的間接光線
+ui-options-gi-probes = 全局照明探頭
+ui-options-gi-probes-help = 探頭在場景中傳播,保持光線的幾個反彈和他們看到的天空:封閉的房間仍然黑暗,光線繞過角落。 大約0.8 ms的圖形卡
+ui-options-ray-traced-reflections = 光線追蹤反射
+ui-options-ray-traced-reflections-help = 屏幕不顯示的反射,而不是必須在屏幕空間反射
+ui-options-ray-tracing-unsupported = 此顯卡或其驅動程序沒有光線跟蹤
+ui-options-ray-tracing-vr = 在為 VR 啟動的會話中不可用
+ui-options-tab-ray-tracing = 光線追蹤
+ui-options-deluxe-rt-warning-title = 打開豪華版(RT)?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) 是高級模式,影子和間接光線由圖形卡追蹤。 它需要具有硬件光線跟蹤的顯卡(NVIDIA RTX、AMD Radeon RX 6000 或更高版本、Intel Arc)和最新驅動程序,并且成本遠高于 High:在中端顯卡上,幀速率可能會在繁忙場所下降很多。 Ray Tracing 仍在測試中:如果圖像看起來不對或者查看器速度減慢,請返回到 High。
+ui-options-deluxe-rt-warning-turn-on = 打開
+ui-options-ray-tracing-needs-shadows = 需要影子
+ui-options-ray-tracing-needs-ssr = 需要屏幕空間反射
+ui-options-preset-deluxe = 豪華房(RT)
+ui-options-normal-precision = 反射精度
+ui-options-normal-precision-help = 每個表面的反射方向保留的精度。 標準可以顯示光滑曲線表面(如汽車油漆)反射中的步驟;高級會刪除這些步驟并使用更多視頻內存。 自動使用高級與光線跟蹤反射,在這里步驟顯示最多,否則使用標準
+ui-options-normal-precision-automatic = 自動
+ui-options-normal-precision-standard = 標準
+ui-options-normal-precision-high = 高
+ui-options-private-point-at-help = 隱藏您正在編輯的對象,保持編輯臂下降,并隱藏編輯光束。
+common-window-outside = 移出查看器窗口
+common-window-inside = 返回到查看者窗口
+common-window-rename-name = 雙擊以重命名
+common-carry-hint = 點擊放到這里,Esc放開它
+common-window-paused-photo = 照片模式打開時暫停
+common-window-paused-director = 導演播放時暫停
+common-window-paused-interface = 當接口關閉時暫停
+ui-options-warn-live-preview = 無法預覽紋理或材料時警告
+ui-options-warn-live-preview-help = 在構建窗口的選擇器中,單擊不復制項目將不應用任何內容,直到 OK: say so。
+ui-texture-picker-live-preview-texture = 我們無法顯示此紋理的預覽,因為它是非復制的。
+ui-texture-picker-live-preview-material = 我們無法顯示此材料的預覽,因為它是非復制。
+fetch-invalid-url = 無效的URL
+ui-chat-close-all-ims = 關閉所有 IM 對話
+ui-chat-close-all-ims-question = 關閉所有 IM 對話并結束活動呼叫?
+ui-chat-confirm-close-all-ims = 關閉所有 IM 對話前確認
+ui-chat-confirm-close-all-ims-help = 當有一個活動的語音呼叫時,在關閉所有 IM 對話之前詢問。
+ui-options-aurora-controls-compact-help = Controls 窗口在相機上以緊湊的方式打開,包括操縱桿、縮放和滾動。 其標題欄按鈕可在緊湊和完整之間切換,并設置這一點。 使用 Classic 窗戶時,相機會在 Legacy Viewer 的小型相機窗口中打開。
+rlva-restart-hint = RLVa 在您登錄時啟動。 一旦運行,打開或關閉它將在下次啟動查看器時生效:限制對象持有保留到那時為止。
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa 將在您重新啟動后啟用。
+rlva-toggle-disabled-restart = 重新啟動后,RLVa 將被禁用。
+livemesh-import-connect = 連接帶有插件 0.11.0 或更高版本的 Blender,或帶有嵌入式插件0.2.0 的 Maya,以準備導入 LOD。
+livemesh-import-preparing = 在Blender或Maya中準備對象及其LOD . .
+livemesh-import-ready = 收到LOD，準備進入導入器
+livemesh-import-failed = 導入準備失敗:{ $error }
+livemesh-import-timeout = Blender 或 Maya 未完成導入準備工作。 檢查連接(在 Blender 中,使用對象模式)并重試。
+livemesh-shape-apply-tooltip = 選中修改權限,然后調整在 Blender 或 Maya 中選擇的骨架及其綁定網格(對于 MayaStar 設備,通過 MayaStar) 選擇本地兼容 Second Life 的骨骼。
+livemesh-shape-update-apply = 將 Blender 插件更新到 0.10.0 或更高版本,或將 Maya 插品更新至 04.0或更高,然后重新連接。
+livemesh-shape-applied = 應用到選定骨架的形狀。
+livemesh-shape-tooltip = 檢查磨損形狀的修改權限,并在 Blender 或 Maya 中創建新的操縱參考體。
+livemesh-shape-connect = 首先在Blender或Maya中連接Aurora插件。
+livemesh-shape-update-plugin = 將 Blender 插件更新到 0.9.0 或更高版本,或將 Maya 插品更新至 0,3.0或更高,然后重新連接。
+livemesh-shape-timeout = Blender 或 Maya 未確認導入,請重試(在 Blender 中切換到物件模式 ) 。
+livemesh-shape-success = 形狀作為新的裝配式參考體導入。
+blender-live-maya-version = Aurora 適用于 Maya 的 LiveMesh { $version }
+blender-live-maya-instructions = 保存 ZIP 文件并將其解壓,然后將 install.mel 拖動到 Maya 視窗中。 從 Aurora 架子上打開 LiveMesh,添加網格并單擊 Connect。
+blender-live-save-maya = 保存 Maya 插件
+blender-live-maya-saved = 插件已保存。 解壓 ZIP 文件并將 install.mel 拖入 Maya 視窗。
+livemesh-plugin-connected = 插件連接
+livemesh-token-refused = 某個程序試圖在沒有此預覽密鑰的情況下進行連接。 只有 Blender 或 Maya 中的 Aurora 插件可以連接.
+livemesh-waiting-plugin = 等待Blender或Maya . .
+blender-live-objects-help = Blender 或 Maya 發送的網格。 選擇一個放置它,或從菜單導入它。
+blender-live-size-note = Size 乘以插件發送的內容,因此后來在 Blender 或 Maya 中進行編輯時保留它。
+blender-live-avatar-help = 對于裝飾網格:將形狀發送到 Blender 或 Maya 以在其上建模。
+livemesh-shape-section = 在Blender或Maya中創建你的形狀
+blender-live-import-help = 凍結正常導入的對象快照:審查、價格,然后確認。 之后在 Blender 或 Maya 中進行編輯時不會更改它。
+blender-live-changed-tip = 自 Blender 或 Maya 最后一次更改此對象以來的時間
+fit-lab-section = 健身室
+fit-lab-help = 穿著您所穿的衣服的模特站在您面前,展示這件衣服如何適合不同的身材。 只有您可以看到它們:不會發送或保存任何信息。
+fit-lab-body-me = 我
+fit-lab-body-slim = 瘦
+fit-lab-body-curvy = 曲線
+fit-lab-body-full = 完整數字
+fit-lab-body-athletic = 運動
+fit-lab-body-tall = 高
+fit-lab-body-petite = 小型
+fit-lab-motion = 動態
+fit-lab-motion-stand = 站起
+fit-lab-motion-walk = 行走
+fit-lab-motion-sit = 坐下
+fit-lab-motion-range = 運動范圍
+fit-lab-pose = 姿勢
+fit-lab-pose-all = 所有,反過來
+fit-lab-pose-arms-up = 舉起手臂
+fit-lab-pose-reach = 向前邁進
+fit-lab-pose-hug = 手臂交叉
+fit-lab-pose-squat = 蹲姿
+fit-lab-pose-kneel = 跪
+fit-lab-pose-knee-up = 膝蓋抬起
+fit-lab-pose-twist = 扭轉
+fit-lab-pose-bend = 向前彎曲
+fit-lab-motion-like-me = 像我一樣
+fit-lab-show = 顯示模特
+fit-lab-place = 把他們帶到這里
+fit-lab-remove = 移除模型
+fit-lab-choose = 至少選擇一個身體。
+fit-lab-clip = 顯示身體穿過的位置
+fit-lab-clip-note = 紅色:身體從衣服中出來。 琥珀色:在你的頭像和模特上,從攝像機的角度看,身體和衣服相遇。 所有其他裝扮的衣物都算作身體:取下外套或穿在衣服上的頭發。
+blender-live-levels-pending = 當您點擊"導入"時,Blender 或 Maya 會準備詳細級別。
+blender-live-levels-note = 在 Blender 或 Maya 中從每個對象的 LiveMesh 設置中準備。
+blender-live-quick-look-changed = { $ago }年前在Blender或Maya中更改。
+blender-live-warning-textures = 跳過紋理,顯示純色
+blender-live-warning-not-sent = 未在預覽中
+blender-live-undo-derez = 德雷茲澤德 { $name } 還在插件列表中
+blender-live-undo-detach = 分離式 { $name } · 仍在插件列表中
+inventory-open-current = 開啟
+inventory-folder-back = 返回
+inventory-folder-forward = 向前
+inventory-folder-up = 向上移動一個級別
+area-search-metres = { $n } m
+area-search-band-reach = 在可及范圍內
+area-search-band-close = 近距離
+area-search-band-around = 你周圍
+area-search-band-further = 進一步
+area-search-band-far = 遠
+area-search-band = 面積
+area-search-within = { $distance }年之內
+area-search-within-across = 內部{ $distance }橫向
+area-search-between = { $from }–{ $to }
+area-search-any-distance = 顯示每個距離
+area-search-from = 距離
+area-search-to = 距離
+area-search-bar-tip =
+    { $count ->
+        [one] 一個物體， { $from } 至 { $to }
+       *[other] { $count } 物體， { $from } 至 { $to }
+    }
+area-search-of-objects = { $total }個物體
+area-search-li = 小行星{ $value }
+area-search-li-count = { $value }地球撞擊
+area-search-owner-count =
+    { $count ->
+        [one] 一個所有人
+       *[other] { $count }號車主
+    }
+area-search-object-count =
+    { $count ->
+        [one] 一個物體
+       *[other] 小行星{ $count }
+    }
+area-search-objects-word = 物件
+area-search-in-reach = 這里
+area-search-tab-objects = 物件
+area-search-tab-owners = 所有者
+area-search-hint-wide = 對象、所有者、創建者或 UUID
+area-search-kind-heading = 物體類型
+area-search-kind-tip = 點擊:只有這些。 再次:隱藏。
+area-search-kind-any = 任何
+area-search-kind-only = 只有這些
+area-search-kind-hidden = 隱藏
+area-search-kind-attached = 連生
+area-search-kind-probes = 探測器
+area-search-click-all = 全部
+area-search-click-any-short = 任何
+area-search-permissions = 權限
+area-search-price-heading = 銷售價格,對于出售的物品
+area-search-price-to = 至
+area-search-price-tip = 首先選擇“出售”
+area-search-linked = 連結質數
+area-search-one-field = 在一個字段中搜索
+area-search-regex-switch = 正則表達式
+area-search-regex-invalid = 正則表達式的定義
+area-search-reset-filters-tip = 恢復每個過濾器;搜索文本保留
+area-search-save-defaults-tip = 從現在開始使用這些過濾器打開
+area-search-reset-search = 重置搜索文本
+area-search-reset-filters = 重置過濾選項
+area-search-reset-ranges = 重置距離和價格
+area-search-reset-all = 重置一切
+area-search-more = 更多
+area-search-several = 選擇幾個
+area-search-several-tip = 點擊將添加到選擇(也可以使用 Ctrl 或 Shift + 點按,Ctrl+A)
+area-search-actions = 行動
+area-search-nothing = 尚未收到任何物品。
+area-search-nothing-for-sale = 這里沒有什么可賣的。
+area-search-not-for-sale = 不出售
+area-search-from-price = 從{ $price }起
+area-search-nearest = 最近的第一
+area-search-heaviest = 最重的先
+area-search-order-tip = 更改順序:最近或最重的首先
+area-search-rank = #{ $rank } 2013年1月1日至 { $all }
+area-search-rank-here = #{ $rank } 這里
+area-search-card-more = 顯示每個圖形
+area-search-card-less = 收起
+area-search-open-group = 打開群組
+area-search-spoken = { $name }, { $distance }土地影響 { $li }, 擁有 { $owner }
+area-search-owner-spoken = { $name }, { $count } 物體，地面撞擊 { $li }
+area-search-stage-line = { $distance } 離開 · { $li } 土地影響 · { $owner }
+area-search-tile-3d = 三維視圖
+area-search-on = { $count }年起
+area-search-on-word = 關于
+area-search-more-on =
+    { $count ->
+        [one] 再添加一個過濾器
+       *[other] { $count } 更多篩選器
+    }
+ui-options-legacy-lists = 從傳統查看器導入列表
+ui-options-legacy-lists-help = 添加此帳戶的傳送歷史記錄、資產黑名單、媒體過濾列表和聯系人集合。 Legacy Viewer 的文件僅限讀取。
+ui-options-legacy-lists-button = 從傳統檢視器匯入…
+ui-options-legacy-lists-no-account = 登錄以導入此帳戶的列表。
+ui-options-legacy-lists-title = 從傳統查看器導入
+ui-options-legacy-lists-text = 所有內容都會被添加到此帳戶的列表中,這里沒有任何內容被刪除。 資產黑名單中的名稱立即從世界中移除。
+ui-options-legacy-lists-searching = 尋找傳統查看器的文件夾 . .
+ui-options-legacy-lists-none = 此帳戶沒有帶有列表的 Legacy Viewer 文件夾。
+ui-options-legacy-lists-teleports = 電傳歷史({ $count })
+ui-options-legacy-lists-derender = 資產黑名單({ $count })
+ui-options-legacy-lists-media = 媒體過濾器列表({ $count })
+ui-options-legacy-lists-contact-set-entries = 觸點集成條目({ $count })
+ui-options-legacy-lists-confirm = 匯入
+ui-options-legacy-lists-added = 添加或更新。 傳送歷史: { $teleports }資產黑名單: { $derender }媒體過濾器: { $media }, 聯系人設置條目: { $sets }.
+ui-options-legacy-lists-nothing = 沒有什么新的:這個帳戶已經有這些列表。
+ui-options-legacy-lists-failed = 無法讀取: { $files }.
+ui-options-legacy-lists-unsaved = 無法保存,留下來,因為它是:{ $files }。
+ui-options-legacy-lists-other-grid = 在這個網格上,一個同名的文件夾可以屬于另一個網格:檢查它是否正確。
+ui-options-build-show-beams-hint = 在編輯、抓取或給予時顯示您的選擇光束和其他頭像的選選光束。 這只控制顯示;使用隱私 > 隱藏編輯光束 以停止本地和網絡上的編輯照射。
+teleport-failed-title = 傳送失敗
+teleport-error-invalid-tport = 每分鐘的傳送嘗試限制為6次,如果遇到問題,請等待一分鐘再試一次。 如果問題仍然存在,請退出并重新登錄。
+teleport-error-invalid-region-handoff = 處理您的區域跨越遇到問題,您可能需要重新登錄才能跨越區域。 如果繼續收到此消息,請聯系支持。
+teleport-error-blocked-tport = 對不起,您訪問的頁面暫時無法顯示,請稍后再試。 如果仍然無法瀏覽,請退出并重新登錄以解決問題。
+teleport-error-nolandmark-tport = 抱歉,系統無法找到地標目的地。
+teleport-error-timeout-tport = 抱歉,系統無法完成傳送連接,稍后再試。
+teleport-error-no-help-island = 您不能傳送回歡迎島。
+teleport-error-noaccess-tport = 抱歉,您沒有權限訪問該傳送目標。
+teleport-error-missing-attach-tport = 您的附件尚未到達。 嘗試等待幾秒鐘或退出并重新登錄,然后再嘗試傳送。
+teleport-error-too-many-uploads-tport = 此區域的資產隊列目前已堵塞,因此您的傳輸請求將無法及時成功。 請在幾分鐘后重試或前往較少人流的區域。
+teleport-error-expired-tport = 抱歉,系統無法及時完成您的傳送請求。 請在幾分鐘后重試。
+teleport-error-expired-region-handoff = 抱歉,系統無法及時完成您的區域過境。 請在幾分鐘后重試。
+teleport-error-preexisting-tport = 對不起,系統無法啟動您的電傳,請稍后再試。
+teleport-error-no-host = 無法找到傳送目標。 目標可能暫時不可用或不再存在,請在幾分鐘后重試。
+teleport-error-no-inventory-host = 庫存系統目前無法使用。
+teleport-error-must-get-age-region = 您必須年滿18歲才能進入本區域。
+teleport-error-special-usage-blocked = 無法找到頁面{ $region }' 是技能游戲區域,您必須滿足某些條件才能進入。 有關詳細信息,請查看技能玩家常見問題: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = 無法進入區域。 這是一個技能游戲區域,您必須滿足某些條件才能進入。 詳情請參閱技能玩家常見問題:https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = 您的家庭網絡拒絕了您的返回,這通常意味著它的 Hypergrid 地址設置與其他網絡使用的地址不匹配。 聯系您家庭電網的運營商;同時再次登錄將帶您回家。
+teleport-hint-hypergrid-unreachable = 您訪問的頁面不存在,可能已被刪除、重命名或暫時不可用。
+teleport-hint-hypergrid-visitors-refused = 那個網格只允許某些網格的居民進入。
+teleport-hint-hypergrid-destination-gone = 目標區域不再存在或已移動。 地標和其他網格鏈接可能過時。
+toolbar-edit = 自定義按鈕和菜單
+toolbar-title = 按鈕和菜單
+toolbar-interface-locked = 接口鎖定
+toolbar-help = 將按鈕或菜單條目拖動到頂部、底部或側邊欄,然后在此處放回按鈕以移除它。 右鍵點擊任何按鈕可更改其外觀。
+toolbar-help-classic = 將按鈕或菜單條目拖動到頂部、底部或側邊欄,然后在此處放回按鈕以移除它。 右鍵點擊任何按鈕可更改其外觀。
+toolbar-help-modes = 為每個按鈕選擇圖標、標簽、兩者或欄默認值。 在Aurora菜單中拖動條目以重新排列它。
+import-menu-textures = 紋理
+import-menu-animations = 動畫
+import-menu-sounds = 聲音
+import-menu-materials = 材質
+import-menu-meshes = 網格模型
+import-menu-options = 導入選項
+import-upload-payment-title = 上傳
+import-upload-payment = 你付了L${ $cost }上傳。
+import-quick-textures =
+    { $count ->
+        [one] 匯入 · 紋理: 1 · L${ $cost }?
+       *[other] 匯入 · 紋理: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] 匯入 · 材質: 1 · L${ $cost }?
+       *[other] 匯入 · 材質: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] 匯入 · 聲音: 1 · L${ $cost }?
+       *[other] 匯入 · 聲音: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] 請選擇匯入尺寸。符合條件的紋理可按 2048 × 2048 匯入：
+       *[other] ({ $count }) 請選擇匯入尺寸。符合條件的紋理可按 2048 × 2048 匯入：
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] 請選擇匯入尺寸。材質中符合條件的圖片可按 2048 × 2048 匯入：
+       *[other] ({ $count }) 請選擇匯入尺寸。材質中符合條件的圖片可按 2048 × 2048 匯入：
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = 直接按 2048 × 2048 上傳免費圖片，無須詢問
+import-quick-free-full-size-help = "Import textures"和"Import materials"只在上傳費用為 L$ 時才詢問 1024 或 2048。
+ui-bars-customize-bars = 自定義界面
+build-tool-in-use = 使用中
+build-create-options-toggle = 顯示/隱藏選項
+build-create-keep-creating = 繼續創造
+build-create-center-on-prim = 中心在prim
+build-create-copy-prim-rotation = 復制原始旋轉
+build-create-align-to-surface = 對齊到曲面
+build-capture-shape-button = 復制一個prim的形狀:點擊這個,然后在世界上一個prim
+build-capture-shape-armed = 點擊一個prim復制它的形狀(Escape取消)
+build-capture-shape-full = 保留20個形狀。 刪除一個來復制另一個
+build-capture-shape-remove = 刪除此形狀
+build-capture-shape-tooltip = 復制形狀({ $kind })
+build-capture-shape-not-a-prim = 只能復制prim的形狀
+build-capture-shape-mesh-or-sculpt = 網格或雕刻原型的形狀不能復制
+build-capture-shape-no-modify = 您需要權限來修改此prim復制其形狀
+import-other-options = 其他選擇
+toolbar-button-icons = 僅圖標
+toolbar-button-text = 僅標簽
+toolbar-button-icons-text = 圖標和標簽
+toolbar-icon-default = 恢復默認圖標
+toolbar-icon-choose = 選擇一個圖標
+toolbar-icon-change = 更改圖標
+toolbar-presets = 預設
+toolbar-interfaces = 接口
+toolbar-interfaces-shown = 顯示在接口塊中
+toolbar-interfaces-hidden = 從接口塊隱藏
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = 小行星Aurora
+toolbar-preset-photographer = 小行星Aurora
+toolbar-preset-legacy = 舊版
+toolbar-import-textures = 導入紋理
+toolbar-import-sounds = 導入聲音
+toolbar-import-animations = 導入動畫
+toolbar-import-materials = 進口材料
+toolbar-import-meshes = 導入網格
+toolbar-import-local = 本地檔案
+toolbar-import-advanced = 高級導入
+toolbar-import-settings = 匯入設定
+toolbar-import-bar = 進口欄
+toolbar-icon-search = 查找圖標
+toolbar-in-top = 在頂部工具欄中
+toolbar-bar-top = 頂部工具欄
+toolbar-drop-here = 拖放到此處
+toolbar-separator = 分隔線
+toolbar-interface-edit = 自定義界面
+toolbar-edit-done = 完成
+toolbar-edit-top = 頂部
+toolbar-edit-bottom = 底部
+toolbar-edit-left = 向左
+toolbar-edit-right = 右
+toolbar-edit-help = 單擊項目以選擇它,拖動以移動它,或右鍵單擊以獲取編輯選項。 關閉此窗口以完成操作。
+toolbar-edit-locked = 酒吧是鎖定的,解鎖他們下面改變界面。
+toolbar-edit-move = 移到
+toolbar-edit-split-before = 分割前
+toolbar-edit-split-after = 分割后
+toolbar-edit-merge-before = 與上一個塊合并
+toolbar-edit-merge-after = 與下一個塊合并
+toolbar-edit-merge-groups = 合并這些塊
+toolbar-drawer = 抽屜
+toolbar-drawer-default-mode = 按鈕的默認顯示
+toolbar-drawer-closes = 點擊按鈕后關閉
+toolbar-block-shortcut = 快捷方式：
+toolbar-drawer-hides-needs-shortcut = 需要快捷方式
+toolbar-floating-close-button = 添加關閉按鈕
+toolbar-block-name = 區塊名稱:
+toolbar-block-button-mode = 塊按鈕顯示
+toolbar-button-inherited = 繼承
+toolbar-drawer-hides-button = 浮動時隱藏按鈕
+toolbar-floating-new = 浮動塊
+toolbar-floating-orientation = 方向
+toolbar-floating-horizontal = 水平
+toolbar-floating-vertical = 垂直
+toolbar-floating-empty = 在這里放置按鈕
+toolbar-shortcut-title = 快速鍵
+toolbar-shortcut-block-name = 分組：{ $name }
+toolbar-shortcut-none = 沒有捷徑
+toolbar-shortcut-press-key = 按某個鍵
+toolbar-shortcut-esc = Esc 取消
+toolbar-shortcut-clear = 移除
+toolbar-shortcut-overrides = Takes over { $name }: 此快捷方式運行工具欄,而不是其默認使用。
+toolbar-shortcut-used = 已經{ $names }的快捷方式。
+toolbar-shortcut-replace = 替換
+toolbar-shortcut-add = 新增
+toolbar-shortcut-save = 儲存
+toolbar-shortcut-choose-key = 選擇一個鍵
+toolbar-shortcut-help = 打開或關閉 Ctrl、Alt 和 Shift,然后點擊鍵盤上的按鍵來更改它。 除了 F1 到 F24 之外,Ctrl 或 Alt 是必需的。
+toolbar-shortcut-inactive = 此按鈕不在任何欄中:它的快捷方式一旦重新放置就會工作。
+toolbar-shortcut-refused-keyboard = 只有鍵盤鍵才能成為快捷方式。
+toolbar-shortcut-refused-modifier = 單獨的修飾鍵不能成為快捷鍵。
+toolbar-shortcut-refused-needs-modifier = 添加 Ctrl 或 Alt:單獨或與 Shift 鍵一起在文本字段中鍵入。
+toolbar-shortcut-refused-altgr = Ctrl+Alt與此鍵是AltGr,它在許多鍵盤上輸入字符。
+toolbar-shortcut-refused-editing = 文本字段使用此快捷鍵(全部選擇、復制、剪切、粘貼、撤銷、重做 ) 。
+toolbar-shortcut-refused-navigation = 使用此鍵移動和刪除文本字段。
+toolbar-shortcut-refused-typing = 聊天和對話框使用此鍵。
+toolbar-shortcut-refused-system = 系統會保留此快捷方式。
+toolbar-shortcut-refused-window = 此快捷鍵關閉或切換窗口。
+toolbar-shortcut-refused-zoom = 此快捷方式縮放界面。
+toolbar-spacer = 塊間距
+toolbar-add-spacer = 添加塊間距
+toolbar-button-settings = 按鈕設置
+toolbar-button-edit = 編輯按鈕
+toolbar-button-edit-title = 編輯按鈕
+toolbar-button-name = 按鈕名稱:
+toolbar-button-display = 按鈕顯示
+toolbar-shortcut-fixed-block-help = 固定塊的快捷方式顯示和隱藏它;當界面被編輯時,它保持顯示。
+toolbar-block-settings = 塊設置
+toolbar-parent-block-settings = 父塊設置
+toolbar-block-edit = 編輯塊
+toolbar-block-edit-title = 編輯塊
+toolbar-block-alignment = 調整
+toolbar-block-sizing = 按鈕尺寸
+toolbar-block-fixed-options = 固定模式選項
+toolbar-block-floating-options = 浮動模式選項
+toolbar-block-kind-fixed = 固定塊
+toolbar-block-kind-drawer = 抽屜
+toolbar-block-kind-floating = 浮動塊
+toolbar-block-remove = 移除封鎖
+toolbar-move-block = 拖動以移動整個方塊
+toolbar-remove-block = 移除封鎖
+toolbar-drawer-empty = 這個抽屜是空的。
+toolbar-drawer-drop = 拖動按鈕到此處以添加或重新排序它們。
+toolbar-separator-settings = 塊間距設置
+toolbar-separator-size = 大小/最小(px)
+toolbar-separator-stretch = 填充可用空間
+toolbar-separator-help = 靈活間隙共享方塊留下的空間。 大小是它們的最小寬度,或側邊欄中的高度。
+toolbar-block-navigation = 導航和SLURL
+toolbar-block-account = 賬戶和余額
+toolbar-block-system = 時鐘、指示燈和音頻
+toolbar-block-status = 可用性狀況
+toolbar-block-balance = 餘額
+toolbar-block-clock = 時鐘
+toolbar-block-ping = 區域延遲
+toolbar-block-fps = 幀率(FPS)
+toolbar-block-network = 網絡流量
+toolbar-block-media = 地塊媒體
+toolbar-block-music = 地塊音樂
+toolbar-block-volume = 數量
+toolbar-block-notifications = 通知
+toolbar-block-conversations = 對話圖標
+toolbar-block-chat = 附近聊天輸入
+toolbar-category-all = 所有類別
+toolbar-section-main = 主要
+toolbar-section-advanced = 進階
+toolbar-search-all = 搜索包括高級命令。
+toolbar-category-avatar = 頭像和運動
+toolbar-category-communication = 通訊
+toolbar-category-world = 世界和旅行
+toolbar-category-creation = 創建和內容
+toolbar-category-interface = 界面和攝像頭
+toolbar-category-advanced = 高級工具
+toolbar-category-help = 說明
+toolbar-category-custom = 自定義命令
+toolbar-bar-settings = 工具欄設置
+toolbar-menu-group = 選單: { $name }
+toolbar-location-bar = SLURL地址欄
+toolbar-command-build-tool-focus = 構建 - 攝像頭
+toolbar-command-build-tool-grab = 建設 - 移動
+toolbar-command-build-tool-edit = 構建 - 編輯
+toolbar-command-build-tool-create = 構建 - 創建
+toolbar-command-build-tool-land = 建筑-土地
+bug-copy-version = 復制查看器版本
+toolbar-notecard-save = 保存到筆記本電腦
+toolbar-notecard-load = 從一個notecard加載
+toolbar-notecard-name = Aurora接口
+toolbar-notecard-help = 工具欄、按鈕、抽屜式導航欄和菜單的布局和外觀。
+toolbar-notecard-saved = 界面布局保存在您的庫存中。
+toolbar-notecard-invalid = 此筆記卡不包含兼容的界面布局。
+toolbar-notecard-unavailable = 您訪問的頁面不存在或已被刪除
+toolbar-notecard-layout-changed = 在加載卡片時,界面發生了變化。 重新加載它以應用其布局。
+toolbar-notecard-demo-valid = 攝影師界面
+toolbar-notecard-demo-invalid = 其他筆記卡
+toolbar-notecard-too-large = 此接口配置對于 notecard 來說太大。
+toolbar-saved-interfaces = 保存的接口
+toolbar-saved-interfaces-empty = 還沒有保存的接口。
+toolbar-notecard-destination = 資料夾: { $path }
+toolbar-notecard-folder-error = 無法加載模塊:Public到這里去看看!
+toolbar-current-preset = 選擇的接口:{ $name }
+toolbar-preset-custom = 自定義界面
+toolbar-preset-unsaved = 未儲存的變更
+toolbar-preset-save-title = 保存界面
+toolbar-preset-save-name = 接口名稱
+toolbar-preset-save-new = 新的個人界面
+toolbar-preset-save-replace = 替換此個人界面
+toolbar-preset-save-unavailable = 無法在此處保存該接口。 請選擇其他名稱或可用的可編輯個人接口
+toolbar-interface-delete-unavailable = 此個人界面無法刪除。
+toolbar-interface-delete-confirm = 要將個人介面「{ $name }」移入資源回收筒嗎？

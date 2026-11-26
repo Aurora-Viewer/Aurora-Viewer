@@ -16104,3 +16104,739 @@ parcel-environment-empty = Niciun mediu salvat
 parcel-environment-remove-all = Eliminați toate
 parcel-environment-remove-all-title = Eliminați fiecare mediu salvat pentru un pachet?
 parcel-environment-remove-all-text = Mediile salvate pentru parcelele din această grilă vor fi eliminate. Mediile din celelalte grile rămân neschimbate. Acțiunea nu poate fi anulată.
+
+### Updated release translations
+
+anim-timeline-channels-hint = Afișează cheile de rotație și locație ale acestui os pe rânduri proprii
+anim-timeline-channel-rotation = Rotație
+anim-timeline-channel-location = Locație
+anim-timeline-keying-hint = Cu Location, Move ia o articulație singură, din lanțul său IK. Animațiile Second Life nu au chei de scară.
+anim-timeline-keying-auto = Auto: rotație și locație pentru pelvis și articulații mutate
+anim-timeline-keying-auto-short = Automat
+anim-timeline-keying-loc-rot = Locație și rotație
+anim-timeline-keying-loc-rot-short = Loc + Root
+anim-timeline-keying-rot-short = Roșu
+anim-timeline-keying-loc-short = Locul
+anim-edit-shortcut-play = Redare sau pauză
+area-search-scope-heading = Unde
+area-search-scope-parcel = Parcelă
+area-search-scope-region = Regiune
+area-search-scope-neighbours = Vecini
+area-search-objects-heading = Ce obiecte
+inventory-copy-selection-count =
+    { $count ->
+        [one] Copiază 1 articol
+       *[other] Copiază { $count } articole
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Link 1 articol
+       *[other] Link { $count } articole
+    }
+inventory-drop-move-here = Mutare aici
+inventory-drop-copy-here = Copiază aici
+inventory-drop-link-here = Creați link-uri aici
+inventory-sort-description = Descriere
+inventory-sort-reversed = { $order } (în sens invers)
+inventory-column-creator = Creator de articole
+inventory-column-count = Articole
+inventory-columns-fit = Dimensiunea tuturor coloanelor pentru a se potrivi
+inventory-columns-reset-widths = Resetarea lățimii coloanelor
+inventory-back = Înapoi.
+inventory-forward = Înainte.
+inventory-up = În sus cu un nivel
+keybinds-inventory-root = Du-te la început
+keybinds-inventory-search = Caută în inventar
+keybinds-inventory-filter = Filtrați folderul
+keybinds-inventory-preview = Afișarea panoului de examinare
+keybinds-inventory-view-large = Imagini de mari dimensiuni
+keybinds-inventory-view-medium = Imagini de dimensiuni medii
+keybinds-inventory-view-small = Imagini de dimensiuni mici
+keybinds-inventory-view-compact = Vizualizare compactă
+keybinds-inventory-view-details = Vizualizare detalii
+keybinds-inventory-view-tiles = Vizualizare cu plăci
+keybinds-inventory-toggle = Selectarea sau deselectarea rândului în focalizare
+keybinds-inventory-menu = Deschiderea meniului selecției
+keybinds-inventory-purge = Purge de la gunoi
+keybinds-inventory-refused = { $keys } rămâne cheia proprie a listei de inventar: alegeți alta.
+inventory-path-edit = Tastați o cale
+inventory-path-subfolders = Subfoldere
+inventory-copy-path = Copiază calea
+inventory-show-in-folder = Afișează în folder
+inventory-pin = Fixați la Acces rapid
+inventory-unpin = Anulați fixarea din Acces rapid
+inventory-quick-access = Acces rapid
+inventory-quick-access-drop = Plasați un folder aici pentru a-l fixa
+inventory-invert-selection = Inversați selecția
+inventory-undo = Anulează
+inventory-redo = Reface
+inventory-undo-step = Anulează { $what }
+inventory-redo-step = Reface { $what }
+inventory-history-move =
+    { $count ->
+        [one] Afisare 1 - 1 din 1 produs
+       *[other] Afisare 1 - 8 din { $count } articole
+    }
+inventory-history-delete =
+    { $count ->
+        [one] Afisare 1 - 1 din 1 produs
+       *[other] Afisare 1 - 8 din { $count } articole
+    }
+inventory-history-rename = redenumește
+inventory-history-new-folder = Creează un dosar nou
+inventory-history-copy =
+    { $count ->
+        [one] Copie a 1 articol
+       *[other] Copie a { $count } articole
+    }
+inventory-history-link =
+    { $count ->
+        [one] Link la 1 articol
+       *[other] Link-uri către { $count } articole
+    }
+inventory-undo-nothing = Nu mai este nimic de anulat: acele elemente s-au mutat sau au dispărut.
+inventory-redo-nothing = Nu mai este nimic de reface: acele elemente s-au mutat sau au dispărut.
+inventory-undo-empty = Nimic de anulat.
+inventory-redo-empty = Nimic de refacut.
+inventory-undo-dropped = Elementele din ultimul pas s-au mutat sau au dispărut: a fost eliminat.Anulați din nou pentru pasul anterior.
+inventory-redo-dropped = Elementele pasului următor s-au mutat sau au dispărut: a fost aruncat.Repetă din nou pentru pasul următor.
+inventory-undo-folder-not-empty = Folderul nou conține elementele plasate acolo de când: mutați-le mai întâi sau ștergeți folderul.
+inventory-undo-kept-out = Aceste obiecte se află acum în ținuta curentă sau în listarea din Piață: schimbă-le acolo.
+inventory-restore-to = Restaurare la “{ $folder }”
+inventory-restore-to-origins = Restaurați în folderele lor
+inventory-purge-no-undo = Anularea nu le poate aduce înapoi.
+inventory-new-tab = Filă nouă
+inventory-close-tab = Închide tab
+inventory-next-tab = Filă următoare
+inventory-previous-tab = Filă anterioară
+inventory-open-in-new-tab = Deschide în fereastră nouă
+inventory-tabs-limit = Cel mult { $count } de file.
+inventory-copy-to-other-pane = Copierea în alt panou
+inventory-move-to-other-pane = Deplasarea la alt panou
+inventory-resize-columns = Trageți pentru redimensionarea coloanelor: Faceți dublu clic pentru a potrivi coloana din stânga la conținutul acesteia.
+inventory-resize-columns-first = Trageți pentru a redimensiona coloanele. Faceți dublu clic pentru a da primei coloane lățimea obișnuită.
+inventory-sort-by-column = Faceți clic pentru a sorta după această coloană, din nou pentru a inversa ordinea.Trageți pentru a muta coloana.
+inventory-filter-hint = Filtrează acest dosar…
+inventory-filter-close = Închide filtrul (Esc)
+inventory-filter-nothing = Nimic aici nu corespunde filtrului
+inventory-view-compact = Vizualizare compactă
+inventory-view-tiles = Vizualizare cu plăci
+inventory-view-per-folder = Rețineți vizualizarea fiecărui folder
+inventory-group-by = Grupează după:
+inventory-group-none = Niciuna
+inventory-group-folders = Foldere
+inventory-group-unknown-creator = Creatorul nu este cunoscut încă
+inventory-group-today = Azi
+inventory-group-yesterday = Ieri
+inventory-group-this-week = În ultimele 7 zile
+inventory-group-this-month = În ultimele 30 de zile
+inventory-group-this-year = La începutul acestui an
+inventory-group-earlier = Cu mult timp în urmă
+inventory-group-no-date = Fără dată
+cmdline-mod-zoffset-usage = Setează înălțimea avatarului tău (utilizare: /zoffset value sau +delta).
+dev-toolbox-n4 = Încărcarea inventarului
+dev-toolbox-what-n4 = Folderele citite, eșuate și lăsate, încărcătorul citește în zbor și reîncearcă; fără nume
+ui-context-inspect-avatar = Inspectează avatarul
+inspect-window = Inspectează.
+inspect-tab-objects = Obiecte
+inspect-objects-title =
+    { $count ->
+        [one] { $count } obiect
+       *[other] { $count } de obiecte
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } articole
+       *[other] { $count } articole
+    }
+inspect-open-profile = Deschide profilul
+inspect-over-limit = Deasupra limitei tale
+inspect-limit-tip = Limita ta de complexitate: { $limit }
+inspect-search = Căutare articole sau creatori
+inspect-outlined = { $name } este conturat în lume
+inspect-area-head = Cap
+inspect-area-body = Corp
+inspect-area-arms = Brațe și mâini
+inspect-area-legs = Picioare și picioare
+inspect-area-hud = HUD
+inspect-area-other = Altele
+inspect-area-world = Obiecte
+inspect-own-eyes = Ochii sistemului
+inspect-own-body = Corpul sistemului
+inspect-own-description = O parte a avatarului în sine, nu un atașament
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } complexitate
+inspect-no-match = Nimic nu se potrivește cu „{ $query }”.
+inspect-spoken-worn = { $name }, purtat pe { $point }, complexitate { $complexity }, fabricat de { $creator }
+inspect-spoken-object = { $name }, deținută de { $owner }, complexitate { $complexity }, fabricat de { $creator }
+inspect-look-at-tip = Mutați camera la ea
+inspect-profile-tip = Deschide profilul creatorului
+inspect-made-by = Fabricat de către
+inspect-owned-by = Deținut de către
+inspect-worn-on = Purtat pe picioare
+inspect-prims-count =
+    { $count ->
+        [one] Primitive: { $count }
+       *[other] Primitive: { $count }
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Memorie de textură
+inspect-tile-vram = Memorie video
+inspect-tile-prims = Primitive
+board-close = Închideți { $title }
+board-grow = Măreşte imaginea { $title }
+board-remove = Eliminați produsul { $name }
+board-more = și { $count } mai mult
+board-more-short = +{ $count }
+board-some-of = { $shown } din { $all }
+board-of-all = din { $all }
+stage-turn-left = Virează la stânga
+stage-turn-right = Virează la dreapta
+stage-higher = Privește de sus
+stage-lower = Priviți de jos
+stage-nearer = Mai aproape.
+stage-further = Mai departe, mai departe
+stage-reset = Înapoi la început
+stage-hint = Trage pentru a roti, dreapta-trage pentru a muta
+stage-light = Fundal de lumină
+stage-dark = Fundal închis la culoare
+stage-playing = AO
+stage-paused = În pauză
+stage-pause-tip = Puneți în pauză animația lor
+stage-play-tip = Redați animația lor
+stage-loading = Pregătirea vizualizării 3D…
+stage-nothing = Nimic de arătat în 3D încă.
+stage-refused = Vizualizarea 3D este dezactivată în timp ce RLVa limitează ceea ce puteți vedea.
+inspect-your-limit = Limita ta: { $limit }
+inspect-without-it = { $value } fără ea
+inspect-you = Tu...
+inspect-person = Persoană
+inspect-difference = Diferența
+inspect-drawn-in-full = Desenat în întregime
+inspect-nobody = Complexitatea nimănui nu este cunoscută încă.
+inspect-aside-count = { $count } teren pus deoparte
+inspect-is-aside = pus deoparte
+inspect-set-aside = Se pune deoparte
+inspect-set-aside-tip = Vezi complexitatea fără acest element. Numai în această fereastră: nimic nu se schimbă în lume.
+inspect-put-back = Pune înapoi
+inspect-put-back-tip = Numărați din nou acest articol
+inspect-complexity-spoken = Complexitate { $value }, număr { $rank } din { $count } Alte persoane aici
+inspect-stage-outfit = Despre tinuta
+inspect-stage-objects = Despre obiecte
+inspect-stage-back = Înapoi la toate
+inspect-place-made-by = { $place } · fabricat de { $name }
+inspect-owned-by-name = Deținut de { $name }
+inspect-tile-items = Articole
+inspect-tile-figures = Cifre
+inspect-col-item = Numele
+inspect-point = Punct
+inspect-look-at = Uită-te la asta.
+inspect-selected-count = { $count } produse selectate
+inspect-worn-count = { $count } purtat
+inspect-creators-word = Creatori
+inspect-areas-word = Zone ale corpului
+inspect-owners-word = Proprietari
+inspect-triangles-word = triunghiuri
+inspect-made-of = { $count } din { $all } articole
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, în ordine inversă
+inspect-reset-columns = Resetarea coloanelor
+inspect-by-creators =
+    { $count ->
+        [one] { $items } de un creator
+       *[other] { $items } de { $count } Creatori
+    }
+inspect-owner-button = Profilul proprietarului
+inspect-group-button = Profilul grupului
+inspect-creator-button = Profilul creatorului
+inspect-land-others = Altele { $n }
+inspect-land-these = Acestea { $n }
+inspect-land-free = Gratuit { $n }
+inspect-land-unknown = Camera coletului arată când obiectele sunt toate pe pachetul pe care vă aflați.
+ui-login-unencrypted = Autentificare necriptată
+ui-login-unencrypted-body = Adresa de autentificare pentru { $server } începe cu http:// în loc de https://, deci autentificarea nu va fi criptată. Cine poate vedea traficul, de exemplu pe Wi-Fi public, pe o rețea partajată sau pe traseul spre grilă, îți poate citi parola și folosi contul. Nu s-a trimis nimic încă. Poți cere grilei o adresă https://. Alegerea se păstrează pentru acest server.
+ui-login-unencrypted-accept = Autentifică-te fără criptare
+world-appearance-clothing-layers-full = Toate cele 60 de straturi de îmbrăcăminte sunt utilizate. Scoateți un strat înainte de a purta acest articol.
+ui-options-ray-tracing = Redare grafică cu ray tracing
+ui-options-ray-traced-shadows = Umbre de soare cu urmărirea razelor
+ui-options-ray-traced-shadows-help = Umbrele soarelui și lunii sunt urmărite rază cu rază în loc să fie citite din hărțile umbrelor: exact unde se ating lucrurile și la orice distanță.Necesită umbre și o placă grafică cu ray tracing, și costă mai mult pentru placa grafică
+ui-options-ray-traced-lights = Umbre locale de lumină
+ui-options-ray-traced-lights-help = Umbrele de la luminile punctuale din jur (lămpi, lumânări), care nu sunt proiectate altfel, și de la proiectoare atunci când Projector shadows este pornit, în locul hărților lor de umbre.Cea mai costisitoare dintre opțiunile de ray tracing: cel mai bine lăsat pe grafică integrată
+ui-options-rt-quality = Calitate Ray Tracing
+ui-options-rt-quality-help = Fiecare efect trasat rămâne activat: nivelurile mai scăzute trasează mai puține eșantioane și lumina indirectă pe o grilă mai grosieră, pentru mai multe cadre pe secundă pe un card grafic mai mic.High este imaginea completă a Deluxe (RT).Alegerea unui nivel stabilește, de asemenea, luminile care proiectează umbre
+ui-options-rt-sun-softness = Moliciunea umbrelor soarelui
+ui-options-rt-sun-softness-help = Cât de moi sunt marginile umbrelor trasate de soare: 1 este soarele real, 0 margini ascuțite, mai mult pentru un soare mai încețoșat
+ui-options-rt-lamp-softness = Moliciune locală a umbrei luminoase
+ui-options-rt-lamp-softness-help = Cât de moi sunt marginile umbrelor trasate ale lămpilor: 1 urmează dimensiunea fiecărei lămpi, 0 margini ascuțite
+ui-options-rt-shadow-lamps = Lumini care aruncă umbre
+ui-options-rt-shadow-lamps-help = Câte dintre luminile cele mai apropiate proiectează umbre trasate; celelalte sunt încă luminoase, fără umbre.Mai puține costă mai puțin pe placa grafică
+ui-options-ray-traced-indirect = Lumină indirectă cu ray-tracing
+ui-options-ray-traced-indirect-help = Lumina reflectată de suprafețele din jur, urmărită dincolo de ceea ce arată ecranul, în locul luminii indirecte a GTAO
+ui-options-gi-probes = Sonde globale de iluminare
+ui-options-gi-probes-help = Sondele se raspandesc prin scena, care pastreaza lumina de la mai multe salturi si cerul pe care il vad: camerele inchise raman intunecate, lumina merge in jurul colturilor.Aproximativ 0.8 ms pe placa video
+ui-options-ray-traced-reflections = Reflecții cu ray-tracing
+ui-options-ray-traced-reflections-help = Reflecțiile a ceea ce ecranul nu arată, în locul reflecțiilor spațiului ecranului, care trebuie să fie pe
+ui-options-ray-tracing-unsupported = Această placă grafică sau driverul său nu are ray tracing
+ui-options-ray-tracing-vr = Indisponibil într-o sesiune începută pentru VR
+ui-options-tab-ray-tracing = Setări Ray Tracing
+ui-options-deluxe-rt-warning-title = Activați Deluxe (RT)?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) este High cu umbrele și lumina indirectă trasată de placa grafică. Are nevoie de o placă cu ray tracing hardware (NVIDIA RTX, AMD Radeon RX 6000 sau mai târziu, Intel Arc) și un driver actualizat, și costă mult mai mult decât High: pe o placa din gama medie rata cadrelor poate scădea foarte mult în locuri aglomerate. Ray tracing-ul este încă testat: dacă imaginea arată greșit sau vizualizatorul încetinește, reveniți la High. Tab-ul Ray Tracing își păstrează setările.
+ui-options-deluxe-rt-warning-turn-on = Porneşte.
+ui-options-ray-tracing-needs-shadows = Are nevoie de umbre
+ui-options-ray-tracing-needs-ssr = Are nevoie de reflexiile spațiului ecranului
+ui-options-preset-deluxe = Cameră Deluxe (RT)
+ui-options-normal-precision = Precizia de reflexie
+ui-options-normal-precision-help = Cât de fin este păstrată direcția fiecărei suprafețe pentru reflexii. Standard poate afișa trepte în reflecțiile suprafeţelor netede, curbate, cum ar fi vopseaua unei mașini; Înalt le elimină și utilizează mai multă memorie video.Automat utilizează Înalt cu reflecţiile trasate prin raze, unde treptele apar cel mai mult, iar Standard altfel
+ui-options-normal-precision-automatic = Automat
+ui-options-normal-precision-standard = Precizie standard
+ui-options-normal-precision-high = Ridicat
+ui-options-private-point-at-help = Ascundeți obiectul pe care îl editați, mențineți brațul de editare coborât și ascundeți fasciculul de editare.
+ui-options-private-edit-beam = Ascundeți grila de editare
+ui-options-private-edit-beam-help = Ascundeți complet grinzile în timp ce editați sau capturați obiecte, atât pe ecranul dvs., cât și pentru alți vizualizatori. Sugestiile de selecție a țintei și grinzile de transmitere/eliberare nu sunt afectate.
+common-window-outside = Deplasarea în afara ferestrei vizualizatorului
+common-window-inside = Aduceți înapoi în fereastra vizualizatorului
+common-window-rename-name = Dublu-clic pentru a redenumi
+common-carry-hint = Faceți clic pentru a plasa aici, Esc pentru a da drumul la ea
+common-window-paused-photo = Pauză în timp ce modul foto este deschis
+common-window-paused-director = În pauză în timp ce directorul joacă
+common-window-paused-interface = Pauză în timp ce interfața este oprită
+ui-options-warn-live-preview = Avertizați atunci când o textură sau un material nu poate fi previzualizat
+ui-options-warn-live-preview-help = În selectorul ferestrei de construcție, făcând clic pe un element fără copiere nu se aplică nimic până la OK: spuneți-o.
+ui-texture-picker-live-preview-texture = Nu putem afișa o previzualizare a acestei texturi deoarece nu este copiată.
+ui-texture-picker-live-preview-material = Nu putem afișa o previzualizare a acestui material deoarece nu este copiat.
+fetch-invalid-url = Adresă URL nevalidă
+ui-chat-close-all-ims = Închide toate cele IM conversații
+ui-chat-close-all-ims-question = Închideți toate conversațiile IM și terminați apelul activ?
+ui-chat-confirm-close-all-ims = Confirmați înainte de a închide toate IM conversații
+ui-chat-confirm-close-all-ims-help = Întreabă înainte de a închide toate conversațiile IM atunci când unul are un apel vocal activ.
+ui-options-aurora-controls-compact-help = Fereastra Controls se deschide compact pe cameră: joystick-urile sale, zoom și derulare. Butonul din bara de titlu comută între compact și plin și setează și acest lucru.Cu ferestrele clasice, camera se deschid în fereastra mică a camerei Legacy Viewer.
+rlva-restart-hint = RLVa începe atunci când vă conectați.Odată ce rulează, activarea sau dezactivarea sa are efect la următoarea pornire a vizualizatorului: obiectele de restricții rămân până atunci.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa va fi activat după ce reporniți.
+rlva-toggle-disabled-restart = RLVa va fi dezactivat după repornire.
+livemesh-import-connect = Conectați Blender cu plugin 0.11.0 sau mai târziu, sau Maya cu plug-in 0,2,0 sau ulterior, pentru a pregăti importul LODs.
+livemesh-import-preparing = Pregătirea obiectului și a LOD-urilor sale în Blender sau Maya…
+livemesh-import-ready = LOD-uri primite. Gata în importator.
+livemesh-import-failed = Pregătirea importului a eșuat: { $error }
+livemesh-import-timeout = Blender sau Maya nu au terminat pregătirea importului, verifică conexiunea (în Blender folosește Object Mode) și încearcă din nou.
+livemesh-shape-apply-tooltip = Bifați Modifică drepturile, apoi adaptați scheletul selectat în Blender sau Maya și plasele sale legate (prin MayaStar pentru un rig MayaStar).Selectați un schelet local compatibil Second Life.
+livemesh-shape-update-apply = Actualizați plug-in-ul Blender la 0.10.0 sau mai târziu, sau plugin-ul Maya la 2.4.0, apoi reconectați-l.
+livemesh-shape-applied = Forma aplicată scheletului selectat.
+livemesh-shape-tooltip = Verificați drepturile de modificare ale formei uzate și creați un nou corp de referință rigged în Blender sau Maya.
+livemesh-shape-connect = Conectați plug-in-ul Aurora în Blender sau Maya mai întâi.
+livemesh-shape-update-plugin = Actualizați plug-in-ul Blender la 0.9.0 sau o versiune ulterioară, sau plugin-ul Maya la 1.3.0, apoi reconectați-l.
+livemesh-shape-timeout = Blender sau Maya nu au confirmat importul. Încercați din nou (în Blender, comutați la modul Object).
+livemesh-shape-success = Forma importată ca un nou corp de referință rigged.
+blender-live-maya-version = Aurora LiveMesh pentru Maya { $version }
+blender-live-maya-instructions = Salvați fișierul ZIP și extrageți-l, apoi trageți install.mel într-o fereastră Maya Deschideți LiveMesh din raftul Aurora, adăugați măștile și faceți clic pe Conectare.
+blender-live-save-maya = Salvați plug-inul Maya…
+blender-live-maya-saved = Plug-in salvat. Extrageți ZIP și trageți install.mel într-un viewport Maya.
+livemesh-plugin-connected = Plug-in conectat
+livemesh-token-refused = Un program a încercat să se conecteze fără cheia acestei previzualizări.Doar plug-in-ul Aurora din Blender sau Maya se poate conecta.
+livemesh-waiting-plugin = Așteptând Blender sau Maya…
+blender-live-objects-help = Mesh-urile pe care Blender sau Maya le trimite.Selectați una pentru a o plasa, sau importați-o din meniul său.
+blender-live-size-note = Dimensiunea multiplică ceea ce trimite plug-in-ul, astfel încât editările ulterioare din Blender sau Maya îl păstrează.
+blender-live-avatar-help = Pentru plase rigged: trimite forma ta la Blender sau Maya pentru a modela pe ea.
+livemesh-shape-section = Forma ta în Blender sau Maya
+blender-live-import-help = Îngheață un instantaneu al obiectului pentru importul normal: revizuire, preț, apoi confirmare.Editările ulterioare în Blender sau Maya nu îl schimbă.
+blender-live-changed-tip = Timpul de la ultima modificare a obiectului în Blender sau Maya
+fit-lab-section = Laborator de fixare a îmbrăcămintei
+fit-lab-help = Manechine îmbrăcate în ceea ce porți, fiecare cu un alt corp, stau în fața ta pentru a arăta cum se potrivește articolul de îmbrăcăminte mai multor forme.Doar tu le vezi: nimic nu este trimis sau salvat.
+fit-lab-body-me = Eu.
+fit-lab-body-slim = Formă subțire a corpului
+fit-lab-body-curvy = Curba
+fit-lab-body-full = Figură completă
+fit-lab-body-athletic = Atletism
+fit-lab-body-tall = Înalt
+fit-lab-body-petite = Mică
+fit-lab-motion = Propunere
+fit-lab-motion-stand = Stai.
+fit-lab-motion-walk = Mergi.
+fit-lab-motion-sit = Stai jos.
+fit-lab-motion-range = Gama de mișcare
+fit-lab-pose = Poză
+fit-lab-pose-all = Toate, la rândul său
+fit-lab-pose-arms-up = Braţele sus.
+fit-lab-pose-reach = Întinde-te înainte
+fit-lab-pose-hug = Brațele încrucișate
+fit-lab-pose-squat = Ghemuit.
+fit-lab-pose-kneel = Îngenunchează.
+fit-lab-pose-knee-up = Genunchiul ridicat
+fit-lab-pose-twist = Răsuciți trunchiul
+fit-lab-pose-bend = Îndoiți-vă înainte
+fit-lab-motion-like-me = Ca mine.
+fit-lab-show = Arată manechinele
+fit-lab-place = Adu-i aici.
+fit-lab-remove = Scoateți manechinele
+fit-lab-choose = Alegeți cel puțin un corp.
+fit-lab-clip = Arată unde trece corpul
+fit-lab-clip-note = Roșu: corpul iese din articolul de îmbrăcăminte. Amber: corpule și articolul se întâlnesc. Pe avatarul tău și pe manechine, așa cum sunt văzute de cameră. Orice altceva manipulat pe care îl porți este considerat corp: scoate o jachetă sau păr purtat peste articolul vestimentar.
+blender-live-levels-pending = Blender sau Maya pregătește nivelurile de detaliu atunci când faceți clic pe Import.
+blender-live-levels-note = Pregătit în Blender sau Maya din setările LiveMesh ale fiecărui obiect.
+blender-live-quick-look-changed = Schimbat în Blender sau Maya acum { $ago }.
+blender-live-warning-textures = Texturi sărite, culoare simplă afișată
+blender-live-warning-not-sent = Nu în previzualizare
+blender-live-undo-derez = Derezzed { $name } · încă în lista pluginului
+blender-live-undo-detach = Detached { $name } · încă în lista pluginului
+inventory-open-current = Deschide
+inventory-folder-back = Înapoi.
+inventory-folder-forward = Înainte.
+inventory-folder-up = Mergi cu un nivel mai sus
+area-search-metres = { $n } m
+area-search-band-reach = La îndemâna ta
+area-search-band-close = În apropiere de
+area-search-band-around = In jurul tau
+area-search-band-further = În continuare
+area-search-band-far = Tată.
+area-search-band = Suprafață
+area-search-within = În interiorul { $distance }
+area-search-within-across = În interiorul { $distance } peste
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Arată fiecare distanță
+area-search-from = Distanta de la centru
+area-search-to = Distanta pana la plaja
+area-search-bar-tip =
+    { $count ->
+        [one] Un singur obiect, { $from } la { $to }
+       *[other] { $count } obiecte, { $from } la { $to }
+    }
+area-search-of-objects = din { $total } obiecte
+area-search-li = { $value } LI
+area-search-li-count = { $value } impactul terenului
+area-search-owner-count =
+    { $count ->
+        [one] Un singur proprietar
+       *[other] { $count } de proprietari
+    }
+area-search-object-count =
+    { $count ->
+        [one] Un singur obiect
+       *[other] { $count } de obiecte
+    }
+area-search-objects-word = obiecte
+area-search-in-reach = Aici
+area-search-tab-objects = Obiecte
+area-search-tab-owners = Proprietarii
+area-search-hint-wide = Obiecte, proprietari, creatori sau UUID-uri
+area-search-kind-heading = Tip de obiect
+area-search-kind-tip = Click: doar acestea. Din nou: ascunse.
+area-search-kind-any = oricare
+area-search-kind-only = Numai acestea.
+area-search-kind-hidden = Ascuns
+area-search-kind-attached = Atașat
+area-search-kind-probes = Sonde
+area-search-click-all = Toate
+area-search-click-any-short = Orice
+area-search-permissions = Permisiuni
+area-search-price-heading = Prețul de vânzare, pentru obiectele de vînzare
+area-search-price-to = la
+area-search-price-tip = Alegeți mai întâi „De vânzare”
+area-search-linked = Numere prime legate
+area-search-one-field = Căutare într-un singur câmp
+area-search-regex-switch = Expresii regulate
+area-search-regex-invalid = Nu este o expresie regulată validă
+area-search-reset-filters-tip = Resetați fiecare filtru; textul de căutare rămâne
+area-search-save-defaults-tip = Deschideți cu aceste filtre de acum înainte
+area-search-reset-search = Resetarea textelor de căutare
+area-search-reset-filters = Resetați opțiunile de filtrare
+area-search-reset-ranges = Resetați distanța și prețul
+area-search-reset-all = Resetează totul
+area-search-more = Mai mult
+area-search-several = Selectați mai multe
+area-search-several-tip = Clickurile se adaugă la selecție (de asemenea, Ctrl sau Shift + clic, Ctrl+A)
+area-search-actions = Acțiuni
+area-search-nothing = Niciun obiect primit încă.
+area-search-nothing-for-sale = Nimic de vânzare aici.
+area-search-not-for-sale = Nu este de vânzare
+area-search-from-price = de la { $price } lei
+area-search-nearest = Cel mai apropiat întâi
+area-search-heaviest = Cele mai grele întâi
+area-search-order-tip = Schimba ordinea: cel mai apropiat sau cel mai greu primul
+area-search-rank = #{ $rank } din { $all }
+area-search-rank-here = #{ $rank } aici
+area-search-card-more = Arată fiecare figură
+area-search-card-less = Arată mai puțin
+area-search-open-group = Deschide grupul
+area-search-spoken = { $name }, { $distance }, impact pe teren { $li }, deținută de { $owner }
+area-search-owner-spoken = { $name }, { $count } Obiecte, impactul terenului { $li }
+area-search-stage-line = { $distance } 10 minute departe · { $li } Impactul asupra solului · { $owner }
+area-search-tile-3d = Vizualizare 3D
+area-search-on = { $count } pe
+area-search-on-word = pe
+area-search-more-on =
+    { $count ->
+        [one] Aplicați încă un filtru
+       *[other] { $count } mai multe filtre pe
+    }
+ui-options-legacy-lists = Importul listelor din Vizualizatorul moștenit
+ui-options-legacy-lists-help = Adaugă istoricul de teleportare al acestui cont, lista neagră a activelor, lista filtrelor media și seturile de contacte.Fișierele Legacy Viewer sunt doar citite.
+ui-options-legacy-lists-button = Import din Vizualizatorul Legacy…
+ui-options-legacy-lists-no-account = Conectează-te pentru a importa listele acestui cont.
+ui-options-legacy-lists-title = Importul din vizualizatorul vechi
+ui-options-legacy-lists-text = Totul este adăugat la listele acestui cont și nimic nu este șters aici. Ceea ce se numește lista neagră a activelor părăsește lumea imediat. Importul din nou aduce înapoi ceea ce ai eliminat aici.
+ui-options-legacy-lists-searching = Se caută folderele Legacy Viewer...
+ui-options-legacy-lists-none = Nu a fost găsit niciun dosar Legacy Viewer cu liste pentru acest cont.
+ui-options-legacy-lists-teleports = Istoria teleportării ({ $count })
+ui-options-legacy-lists-derender = Lista neagră a activelor ({ $count })
+ui-options-legacy-lists-media = Lista filtrelor media ({ $count })
+ui-options-legacy-lists-contact-set-entries = Seturi de contacte ({ $count })
+ui-options-legacy-lists-confirm = Importul listelor selectate
+ui-options-legacy-lists-added = A fost adăugat sau actualizat. Istoricul teleportării: { $teleports }, lista neagră de active: { $derender }, filtru media: { $media }, contact set intrări: { $sets }.
+ui-options-legacy-lists-nothing = Nimic nou: acest cont are deja aceste liste.
+ui-options-legacy-lists-failed = Imposibil de citit: { $files }.
+ui-options-legacy-lists-unsaved = Nu s-a putut salva, lăsat ca a fost: { $files }.
+ui-options-legacy-lists-other-grid = Pe această grilă un dosar cu același nume poate aparține unei alte grile: verificați că este cel corect.
+ui-options-build-show-beams-hint = Afișează grinzile de selecție și cele ale altor avatare atunci când editați, capturați sau oferiți.Acest lucru controlează doar afișarea; utilizați Confidențialitate > Ascundeți grinzile editate pentru a opri grinzile dvs. de editare local și prin rețea.
+teleport-failed-title = Teleportarea a eșuat.
+teleport-error-invalid-tport = Încercările de teleportare sunt limitate la 6 pe minut. Dacă întâmpinați probleme, așteptați un minut și încercați din nou teleportarea.Dacă problema persistă, deconectați-vă și conectați-v...
+teleport-error-invalid-region-handoff = S-a întâmplat o problemă la procesarea trecerii regiunii tale. Este posibil să fie nevoie să te autentifici din nou înainte de a putea trece regiunile. Dacă continui să primești acest mesaj, contactează asistența.
+teleport-error-blocked-tport = Ne pare rău, teleportul este blocat în acest moment. Încearcă din nou într-o clipă. Dacă tot nu poți să te teleportezi, te rugăm să te deconectezi și să te conectezi din nou pentru a rezolva problema.
+teleport-error-nolandmark-tport = Ne pare rău, dar sistemul nu a putut localiza destinaţia punctului de reper.
+teleport-error-timeout-tport = Ne pare rău, dar sistemul nu a putut finaliza conexiunea de teleportare. Încearcă din nou în câteva momente.
+teleport-error-no-help-island = Nu te poți teleporta înapoi pe Insula Binevenită.
+teleport-error-noaccess-tport = Ne pare rău, nu ai acces la acea destinație de teleportare.
+teleport-error-missing-attach-tport = Atașamentele tale nu au ajuns încă, încearcă să aștepți câteva secunde sau să te deconectezi și să te conectezi din nou înainte de a încerca teleportarea.
+teleport-error-too-many-uploads-tport = Coada de resurse din această regiune este acum înfundată, astfel că cererea ta de teleportare nu va reuși la timp.Te rugăm să încerci din nou peste câteva minute sau du-te într-o zonă mai puțin aglomerată.
+teleport-error-expired-tport = Ne pare rău, dar sistemul nu a putut finaliza cererea ta de teleportare la timp.Te rugăm să încerci din nou peste câteva minute.
+teleport-error-expired-region-handoff = Ne pare rău, dar sistemul nu a putut finaliza trecerea regiunii dvs. în timp util Vă rugăm să încercați din nou peste câteva minute.
+teleport-error-preexisting-tport = Ne pare rău, dar sistemul nu a putut să pornească teleportarea. Vă rugăm să încercați din nou peste câteva minute.
+teleport-error-no-host = Nu s-a putut găsi destinația de teleportare. Destinația poate fi temporar indisponibilă sau nu mai există. Vă rugăm să încercați din nou peste câteva minute.
+teleport-error-no-inventory-host = Sistemul de inventariere este momentan indisponibil.
+teleport-error-must-get-age-region = Trebuie să aveți cel puțin 18 ani pentru a intra în această regiune.
+teleport-error-special-usage-blocked = Nu se poate introduce regiunea. '{ $region }' este o regiune de jocuri de îndemânare, și trebuie să îndeplinești anumite criterii pentru a intra.Pentru detalii, vă rugăm să consultați Întrebări frecvente despre jocurile de abilitate: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Nu se poate intra în regiune. Aceasta este o regiune pentru jocuri de abilităţi şi trebuie să îndepliniţi anumite criterii pentru a intra. Pentru detalii, consultaţi Întrebări frecvente despre jocurile de abilităţi: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Rețeaua dvs. de acasă a refuzat returnarea, ceea ce înseamnă că adresa Hypergrid nu se potrivește cu adresa pe care o folosesc alte rețele. Contactați operatorii rețelei dvs; logarea din nou vă va duce acasă între timp.
+teleport-hint-hypergrid-unreachable = Cealaltă grilă nu a putut fi accesată, este posibil să fie offline sau link-ul poate indica o adresă veche.
+teleport-hint-hypergrid-visitors-refused = Acea rețea lasă să intre doar rezidenții anumitor rețele.
+teleport-hint-hypergrid-destination-gone = Regiunea de destinație nu mai există sau a fost mutată.Repertoriile și link-urile către alte grile pot fi depășite.
+toolbar-edit = Personalizați butoanele și meniurile…
+toolbar-title = Butoane şi meniuri
+toolbar-interface-locked = Interfața este blocată
+toolbar-help = Trageți butoanele sau intrările din meniu în barele de sus, de jos sau laterale și fixați-le aici pentru a le elimina. Faceți clic dreapta pe orice buton pentru a-i schimba aspectul.
+toolbar-help-classic = Trageți butoanele sau intrările din meniu în barele de sus, de jos sau laterale și fixați-le aici pentru a le elimina. Faceți clic dreapta pe orice buton pentru a-i schimba aspectul.
+toolbar-help-modes = Alegeți pictograme, etichete, ambele sau bara implicită pentru fiecare buton.Trageți intrări în meniul Aurora pentru a-l rearanja.
+import-menu-textures = Texturi
+import-menu-animations = Animații
+import-menu-sounds = Sunete
+import-menu-materials = Materiale
+import-menu-meshes = Meshes
+import-menu-options = Opțiuni de import
+import-upload-payment-title = Încărcare
+import-upload-payment = Ați plătit L${ $cost } pentru a încărca.
+import-quick-textures =
+    { $count ->
+        [one] Import · Texturi: 1 · L${ $cost }?
+       *[other] Import · Texturi: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Import · Materiale: 1 · L${ $cost }?
+       *[other] Import · Materiale: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Import · Sunete: 1 · L${ $cost }?
+       *[other] Import · Sunete: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Alege dimensiunea de import. Texturile compatibile pot fi importate la 2048 × 2048:
+       *[other] ({ $count }) Alege dimensiunea de import. Texturile compatibile pot fi importate la 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Alege dimensiunea de import. Imaginile compatibile ale materialelor pot fi importate la 2048 × 2048:
+       *[other] ({ $count }) Alege dimensiunea de import. Imaginile compatibile ale materialelor pot fi importate la 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Încarcă imaginile gratuite la 2048 × 2048 fără confirmare
+import-quick-free-full-size-help = "Import textures" și "Impor material" apoi întreabă 1024 sau 2048 numai atunci când încărcarea costă L$.
+ui-bars-customize-bars = Personalizați interfața
+build-tool-in-use = În utilizare
+build-create-options-toggle = Arată / ascunde opțiunile
+build-create-keep-creating = Continuă să creezi
+build-create-center-on-prim = Centrul pe prim
+build-create-copy-prim-rotation = Copiază rotația primă
+build-create-align-to-surface = Aliniere la suprafață
+build-capture-shape-button = Copiază forma unui prim: apasă aici, apoi un prim în lume
+build-capture-shape-armed = Faceți clic pe un prim pentru a copia forma sa (Escape anulează)
+build-capture-shape-full = Se păstrează 20 de forme. Eliminați una pentru a copia alta
+build-capture-shape-remove = Eliminați această formă
+build-capture-shape-tooltip = Formă copiată ({ $kind })
+build-capture-shape-not-a-prim = Numai forma unui prim poate fi copiată
+build-capture-shape-mesh-or-sculpt = Forma unei plase sau a unui prim sculptat nu poate fi copiată
+build-capture-shape-no-modify = Ai nevoie de permisiunea de a modifica acest prim pentru a copia forma sa
+import-other-options = Alte opțiuni disponibile
+toolbar-button-icons = Doar pictogramă
+toolbar-button-text = Numai etichetă
+toolbar-button-icons-text = Pictogramă și etichetă
+toolbar-icon-default = Restaurează pictograma implicită
+toolbar-icon-choose = Alegeți o pictogramă
+toolbar-icon-change = Schimbă pictograma
+toolbar-presets = Presetări
+toolbar-interfaces = Interfețe
+toolbar-interfaces-shown = Afișat în blocul Interfețe
+toolbar-interfaces-hidden = Ascuns din blocul Interfețe
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora Şcoala veche
+toolbar-preset-photographer = Aurora Fotograf profesionist
+toolbar-preset-legacy = Legacy
+toolbar-import-textures = Import texturi
+toolbar-import-sounds = Importă sunete
+toolbar-import-animations = Importarea animațiilor
+toolbar-import-materials = Materiale de import
+toolbar-import-meshes = Importă plase
+toolbar-import-local = Fișiere locale
+toolbar-import-advanced = Import avansat
+toolbar-import-settings = Setări de import
+toolbar-import-bar = Bara de import
+toolbar-icon-search = Găsiți o pictogramă…
+toolbar-in-top = În bara de instrumente din partea de sus
+toolbar-bar-top = Bara de instrumente de sus
+toolbar-drop-here = Lasă aici.
+toolbar-separator = Linie de separare
+toolbar-interface-edit = Personalizați interfața
+toolbar-edit-done = Efectuat
+toolbar-edit-top = Top
+toolbar-edit-bottom = Partea de jos
+toolbar-edit-left = Stânga
+toolbar-edit-right = Corect.
+toolbar-edit-help = Faceți clic pe un element pentru a-l selecta, glisați pentru a îl muta sau faceți clic dreapta pentru opțiuni de editare.Închideți această fereastră pentru a termina.Close this window to finish.
+toolbar-edit-locked = Barele sunt blocate, deblochează-le mai jos pentru a schimba interfața.
+toolbar-edit-move = Mută la
+toolbar-edit-split-before = Split înainte de
+toolbar-edit-split-after = Separă după
+toolbar-edit-merge-before = Îmbinare cu blocul anterior
+toolbar-edit-merge-after = Îmbinare cu blocul următor
+toolbar-edit-merge-groups = Fuzionează aceste blocuri
+toolbar-drawer = Sertar
+toolbar-drawer-default-mode = Afișarea implicită a butoanelor
+toolbar-drawer-closes = Închide după un clic pe un buton
+toolbar-block-shortcut = Scurtătură:
+toolbar-drawer-hides-needs-shortcut = Necesită o scurtătură
+toolbar-floating-close-button = Adăugarea unui buton de închidere
+toolbar-block-name = Numele blocului:
+toolbar-block-button-mode = Afișarea butonului de blocare
+toolbar-button-inherited = Moștenit
+toolbar-drawer-hides-button = Ascunderea butonului în timp ce plutește
+toolbar-floating-new = Bloc de plutire
+toolbar-floating-orientation = Orientare
+toolbar-floating-horizontal = Orizontal
+toolbar-floating-vertical = Vertical
+toolbar-floating-empty = Pune butoanele aici
+toolbar-shortcut-title = Comandă rapidă
+toolbar-shortcut-block-name = Bloc: { $name }
+toolbar-shortcut-none = Nici o scurtătură
+toolbar-shortcut-press-key = Apăsarea unei taste
+toolbar-shortcut-esc = Esc pentru a anula
+toolbar-shortcut-clear = Eliminare
+toolbar-shortcut-overrides = Ia peste { $name }: această comandă rapidă rulează bara de instrumente în loc de utilizarea sa implicită.
+toolbar-shortcut-used = Deja scurtătura de { $names }.
+toolbar-shortcut-replace = Înlocuire
+toolbar-shortcut-add = Adăugați
+toolbar-shortcut-save = Salvează
+toolbar-shortcut-choose-key = Alege o cheie
+toolbar-shortcut-help = Activează sau dezactivează tastele Ctrl, Alt și Shift, apoi fă clic pe tastă pentru a o schimba (este necesară apăsarea tastelor Ctrl sau Alt, cu excepția tastelor F1 până la F24).
+toolbar-shortcut-inactive = Acest buton nu se află în nici o bară: scurtătura sa funcționează odată ce este plasată din nou.
+toolbar-shortcut-refused-keyboard = Numai tastele de la tastatură pot fi o scurtătură.
+toolbar-shortcut-refused-modifier = O singură tastă modificatoare nu poate fi o comandă rapidă.
+toolbar-shortcut-refused-needs-modifier = Adăugați Ctrl sau Alt: o tastă singură sau cu Shift numai, tipurile în câmpurile de text.
+toolbar-shortcut-refused-altgr = Ctrl+Alt cu această tastă este AltGr, care tipează caractere pe multe tastaturi.
+toolbar-shortcut-refused-editing = Câmpurile text utilizează această scurtătură (selectați tot, copiați, tăiați, lipiți, anulați, refaceți).
+toolbar-shortcut-refused-navigation = Câmpurile de text se mută și se șterg cu această tastă.
+toolbar-shortcut-refused-typing = Chat-ul și dialogurile folosesc această tastă.
+toolbar-shortcut-refused-system = Sistemul păstrează această scurtătură.
+toolbar-shortcut-refused-window = Această comandă rapidă închide sau comută ferestrele.
+toolbar-shortcut-refused-zoom = Această scurtătură măreşte interfaţa.
+toolbar-spacer = Spațierea blocurilor
+toolbar-add-spacer = Adăugați spațierea blocului
+toolbar-button-settings = Setări pentru butoane
+toolbar-button-edit = Butonul Editează…
+toolbar-button-edit-title = Butonul de editare
+toolbar-button-name = Numele butonului:
+toolbar-button-display = Afişaj cu butoane
+toolbar-shortcut-fixed-block-help = Comandă rapidă a unui bloc fix afișează și ascunde; în timp ce interfața este editată, rămâne afișată.
+toolbar-block-settings = Setări de blocare
+toolbar-parent-block-settings = Setările blocului parental
+toolbar-block-edit = Editează blocul…
+toolbar-block-edit-title = Bloc de editare
+toolbar-block-alignment = Aliniere
+toolbar-block-sizing = Dimensiunea butonului
+toolbar-block-fixed-options = Opțiuni de mod fix
+toolbar-block-floating-options = Opţiuni pentru modul plutitor
+toolbar-block-kind-fixed = Bloc de fixare
+toolbar-block-kind-drawer = Sertar
+toolbar-block-kind-floating = Bloc de plutire
+toolbar-block-remove = Eliminați blocul
+toolbar-move-block = Trageți pentru a muta întregul bloc
+toolbar-remove-block = Eliminați blocul
+toolbar-drawer-empty = Acest sertar este gol.
+toolbar-drawer-drop = Trageți butoanele aici pentru a le adăuga sau reordona.
+toolbar-separator-settings = Setări de spațiere a blocurilor
+toolbar-separator-size = Dimensiune / minim (px)
+toolbar-separator-stretch = Umpleți spațiul disponibil
+toolbar-separator-help = Spațiile flexibile împart spațiul lăsat de blocuri.Dimensiunea este lățimea lor minimă, sau înălțimea într-o bară laterală.
+toolbar-block-navigation = Navigare și SLURL
+toolbar-block-account = Contul și soldul
+toolbar-block-system = Ceas, indicatori și audio
+toolbar-block-status = Starea de disponibilitate
+toolbar-block-balance = Sold
+toolbar-block-clock = Ceas
+toolbar-block-ping = Latenţa regiunii
+toolbar-block-fps = Rata cadrelor (FPS)
+toolbar-block-network = Trafic de rețea
+toolbar-block-media = Media de colete
+toolbar-block-music = Muzica de parcelă
+toolbar-block-volume = Volum
+toolbar-block-notifications = Notificări
+toolbar-block-conversations = Pictograme de conversație
+toolbar-block-chat = Intrare de chat în apropiere
+toolbar-category-all = Toate categoriile »
+toolbar-section-main = Principală
+toolbar-section-advanced = Avansat
+toolbar-search-all = Căutarea include comenzi avansate.
+toolbar-category-avatar = Avatar și mișcare
+toolbar-category-communication = Comunicare
+toolbar-category-world = Lume și călătorii
+toolbar-category-creation = Crearea și conținutul
+toolbar-category-interface = Interfață și cameră foto
+toolbar-category-advanced = Instrumente avansate
+toolbar-category-help = Ajutor
+toolbar-category-custom = Comenzi personalizate
+toolbar-bar-settings = Setările barei de instrumente
+toolbar-menu-group = Meniul: { $name }
+toolbar-location-bar = Bara de adrese SLURL
+toolbar-command-build-tool-focus = Construiește - aparat de fotografiat
+toolbar-command-build-tool-grab = Construi - muta
+toolbar-command-build-tool-edit = Construiește - editează
+toolbar-command-build-tool-create = Construiește - creează
+toolbar-command-build-tool-land = Construieste - teren
+bug-copy-version = Versiune de vizualizare a copiilor
+toolbar-notecard-save = Salvează într-un notecard…
+toolbar-notecard-load = Încarcă dintr-un notecard…
+toolbar-notecard-name = Interfaţă Aurora
+toolbar-notecard-help = Aspectul și aspectul barelor de instrumente, butoanelor, sertarelor și meniurilor.
+toolbar-notecard-saved = Aspectul interfeței este salvat în inventarul tău.
+toolbar-notecard-invalid = Acest notecard nu conține un aspect de interfață compatibil.
+toolbar-notecard-unavailable = Acest notecard nu mai este disponibil sau nu poate fi copiat.
+toolbar-notecard-layout-changed = Interfața s-a schimbat în timp ce notecardul se încărca. Încărcați-l din nou pentru a aplica aspectul său.
+toolbar-notecard-demo-valid = Interfaţă pentru fotograf
+toolbar-notecard-demo-invalid = Alte notecard-uri
+toolbar-notecard-too-large = Această configurație a interfeței este prea mare pentru un notecard.
+toolbar-saved-interfaces = Interfețe salvate
+toolbar-saved-interfaces-empty = Nu există încă interfețe salvate.
+toolbar-notecard-destination = Folder: { $path }
+toolbar-notecard-folder-error = Dosarul interfaces nu a putut fi încărcat sau creat. Vă rugăm să încercați din nou.
+toolbar-current-preset = Interfaţă selectată: { $name }
+toolbar-preset-custom = Interfață personalizată
+toolbar-preset-unsaved = Modificări nesalvate
+toolbar-preset-save-title = Salvați interfața
+toolbar-preset-save-name = Numele interfeței
+toolbar-preset-save-new = Noua interfață personală
+toolbar-preset-save-replace = Înlocuiți această interfață personală
+toolbar-preset-save-unavailable = Această interfață nu poate fi salvată aici. Alegeți un alt nume sau o interfaţă personală disponibilă, editabilă.
+toolbar-interface-delete-unavailable = Această interfață personală nu poate fi ștearsă.
+toolbar-interface-delete-confirm = Muți interfața personală „{ $name }” la coș?

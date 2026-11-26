@@ -16102,3 +16102,739 @@ parcel-environment-empty = Žádná prostředí uložena
 parcel-environment-remove-all = Odstranit vše
 parcel-environment-remove-all-title = Odstranit všechna prostředí uložená pro parcelu?
 parcel-environment-remove-all-text = Odstraní se prostředí uložená pro parcely na této síti. Ostatní sítě zůstanou beze změny. Tuto akci nelze vrátit.
+
+### Updated release translations
+
+anim-timeline-channels-hint = Zobrazit rotaci a umístění této kosti na vlastních řádcích
+anim-timeline-channel-rotation = Rotace
+anim-timeline-channel-location = Umístění
+anim-timeline-keying-hint = Co klíčové záznamy. S Location, Move bere joint sám, z jeho IK řetězce. Second Life animace nemají žádné stupnice kláves.
+anim-timeline-keying-auto = Auto: rotace a poloha pánve a pohyblivých kloubů
+anim-timeline-keying-auto-short = Automaticky
+anim-timeline-keying-loc-rot = Umístění a rotace
+anim-timeline-keying-loc-rot-short = Pozice a rotace
+anim-timeline-keying-rot-short = Červená
+anim-timeline-keying-loc-short = Místo
+anim-edit-shortcut-play = Přehrát nebo pozastavit
+area-search-scope-heading = Kde
+area-search-scope-parcel = Aktuální pozemek
+area-search-scope-region = Aktuální region
+area-search-scope-neighbours = Sousední regiony
+area-search-objects-heading = Které objekty
+inventory-copy-selection-count =
+    { $count ->
+        [one] Kopírovat 1 položka
+       *[other] Kopírovat { $count } položek
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Link 1 položka
+       *[other] Link { $count } položek
+    }
+inventory-drop-move-here = Přesuň se sem
+inventory-drop-copy-here = Zkopírujte sem
+inventory-drop-link-here = Vytvořit odkazy zde
+inventory-sort-description = Popis
+inventory-sort-reversed = { $order } (reverzní)
+inventory-column-creator = Tvůrce položky
+inventory-column-count = Položky
+inventory-columns-fit = Velikost všech sloupců, aby se vešly
+inventory-columns-reset-widths = Obnovení šířek sloupců
+inventory-back = Zpět
+inventory-forward = Jdi dopředu
+inventory-up = O úroveň výš
+keybinds-inventory-root = Přejít na hlavní stránku
+keybinds-inventory-search = Hledat v inventáři
+keybinds-inventory-filter = Filtrování složky
+keybinds-inventory-preview = Zobrazení podokna náhledu
+keybinds-inventory-view-large = Velké obrázky
+keybinds-inventory-view-medium = Střední obrázky
+keybinds-inventory-view-small = Malé obrázky
+keybinds-inventory-view-compact = Kompaktní zobrazení
+keybinds-inventory-view-details = Zobrazení podrobností
+keybinds-inventory-view-tiles = Zobrazení dlaždic
+keybinds-inventory-toggle = Výběr nebo zrušení výběru řádku ve fokusu
+keybinds-inventory-menu = Otevření nabídky výběru
+keybinds-inventory-purge = Čištění z odpadků
+keybinds-inventory-refused = { $keys } zůstává vlastním klíčem inventáře: zvolte jiný.
+inventory-path-edit = Zadejte cestu
+inventory-path-subfolders = Podsložky
+inventory-copy-path = Kopírovat cestu
+inventory-show-in-folder = Zobrazit ve složce
+inventory-pin = Rychlý přístup
+inventory-unpin = Rychlý přístup
+inventory-quick-access = Rychlý přístup
+inventory-quick-access-drop = Přetáhněte sem složku, kterou chcete připnout
+inventory-invert-selection = Invertovat výběr
+inventory-undo = Vrácení poslední akce zpět
+inventory-redo = Znovu
+inventory-undo-step = Zrušit tuto akci: { $what }
+inventory-redo-step = Znovu { $what }
+inventory-history-move =
+    { $count ->
+        [one] Zobrazeno 1 - 1 z 1 položek
+       *[other] Zobrazeno 1 - 8 z { $count } položek
+    }
+inventory-history-delete =
+    { $count ->
+        [one] Zobrazeno 1 - 1 z 1 položek
+       *[other] Zobrazeno 1 - 8 z { $count } položek
+    }
+inventory-history-rename = přejmenovat
+inventory-history-new-folder = Vytvořit novou složku
+inventory-history-copy =
+    { $count ->
+        [one] kopie 1 položky
+       *[other] kopie { $count } položek
+    }
+inventory-history-link =
+    { $count ->
+        [one] odkaz na 1 položku
+       *[other] odkazy na { $count } položek
+    }
+inventory-undo-nothing = Nezbývá nic, co by bylo možné vrátit zpět: tyto položky byly přesunuty nebo jsou pryč.
+inventory-redo-nothing = Nezbývá nic, co byste mohli opakovat: tyto položky byly přesunuty nebo jsou pryč.
+inventory-undo-empty = Není co vracet zpět.
+inventory-redo-empty = Není co opakovat.
+inventory-undo-dropped = Položky posledního kroku se přesunuly nebo jsou pryč: byl vynechán. Zrušte akci znovu pro předchozí krok.
+inventory-redo-dropped = Položky následujícího kroku se přesunuly nebo jsou pryč: byl vynechán. Opakujte to pro další krok.
+inventory-undo-folder-not-empty = Tato nová složka obsahuje položky, které tam byly umístěny od té doby: nejprve je přesuňte nebo složku smažte sami.
+inventory-undo-kept-out = Tyto předměty jsou nyní v aktuálním outfitu nebo na trhu: změňte je tam.
+inventory-restore-to = Obnovit na “{ $folder }”
+inventory-restore-to-origins = Obnovení do jejich složek
+inventory-purge-no-undo = Undo je nemůže vrátit zpět.
+inventory-new-tab = Nová záložka
+inventory-close-tab = Zavřít kartu
+inventory-next-tab = Další karta
+inventory-previous-tab = Předchozí karta
+inventory-open-in-new-tab = Otevřít v novém okně
+inventory-tabs-limit = Maximálně { $count } karet.
+inventory-copy-to-other-pane = Kopírování do jiného podokna
+inventory-move-to-other-pane = Přechod do jiného podokna
+inventory-resize-columns = Dvojitým kliknutím přizpůsobte sloupec vlevo tak, aby odpovídal jeho obsahu.
+inventory-resize-columns-first = Změna velikosti sloupců přetažením. Dvojitým kliknutím nastavte první sloupec na obvyklou šířku.
+inventory-sort-by-column = Kliknutím seřadíte podle tohoto sloupce, opětovným kliknutím pořadí změníte. Přetažením sloupec přesuňte.
+inventory-filter-hint = Filtrovat tuto složku…
+inventory-filter-close = Zavřít filtr (Esc)
+inventory-filter-nothing = Nic zde neodpovídá filtru
+inventory-view-compact = Kompaktní zobrazení
+inventory-view-tiles = Zobrazení dlaždic
+inventory-view-per-folder = Zapamatovat si zobrazení každé složky
+inventory-group-by = Seskupit podle
+inventory-group-none = Žádný
+inventory-group-folders = Složky
+inventory-group-unknown-creator = Tvůrce zatím není znám
+inventory-group-today = Dnes
+inventory-group-yesterday = Včera
+inventory-group-this-week = V posledních 7 dnech
+inventory-group-this-month = V posledních 30 dnech
+inventory-group-this-year = Začátkem tohoto roku
+inventory-group-earlier = Před dlouhou dobou
+inventory-group-no-date = Žádné datum
+cmdline-mod-zoffset-usage = Nastavte výšku pohybu avatara (použití: /zoffset value nebo +delta).
+dev-toolbox-n4 = Nakládání inventáře
+dev-toolbox-what-n4 = Složky čte, selhal a odešel, nakladač čte za běhu a znovu; žádné názvy
+ui-context-inspect-avatar = Zkontrolovat avatara
+inspect-window = Inspekce
+inspect-tab-objects = Objekty
+inspect-objects-title =
+    { $count ->
+        [one] Objekt { $count }
+       *[other] { $count } objektů
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } položka
+       *[other] { $count } položek
+    }
+inspect-open-profile = Otevřete profil
+inspect-over-limit = Nad tvým limitem
+inspect-limit-tip = Váš limit složitosti: { $limit }
+inspect-search = Hledat položky nebo tvůrce
+inspect-outlined = { $name } je nastíněn ve světě
+inspect-area-head = Hlava
+inspect-area-body = Avatarové tělo
+inspect-area-arms = Paže a ruce
+inspect-area-legs = Nohy a chodidla
+inspect-area-hud = HUD
+inspect-area-other = Ostatní
+inspect-area-world = Objekty
+inspect-own-eyes = Systémové oči
+inspect-own-body = Systémové těleso
+inspect-own-description = Součást samotného avatara, ne příloha
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } složitost
+inspect-no-match = Nic neodpovídá „{ $query }“.
+inspect-spoken-worn = { $name }, nošené na { $point }, složitost { $complexity }, vyrobeno podle { $creator }
+inspect-spoken-object = { $name }, ve vlastnictví { $owner }, složitost { $complexity }, vyrobeno podle { $creator }
+inspect-look-at-tip = Přesuňte fotoaparát k němu
+inspect-profile-tip = Otevřete profil autora
+inspect-made-by = Vyrobeno v ČR
+inspect-owned-by = Vlastněno společností
+inspect-worn-on = Nosí se na
+inspect-prims-count =
+    { $count ->
+        [one] Základní prvky: { $count }
+       *[other] Základní prvky: { $count }
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Texturová paměť
+inspect-tile-vram = VRAM
+inspect-tile-prims = Základní prvky
+board-close = Zavřít { $title }
+board-grow = Zvětšit obrázek { $title }
+board-remove = Odstranit { $name }
+board-more = a { $count } více
+board-more-short = +{ $count }
+board-some-of = { $shown } nebo { $all }
+board-of-all = z { $all }
+stage-turn-left = Odbočte doleva
+stage-turn-right = Odbočte vpravo
+stage-higher = Podívej se z výšky
+stage-lower = Podívejte se zdola
+stage-nearer = Bližší
+stage-further = Dále pryč
+stage-reset = Zpět na začátek
+stage-hint = Tažením otočíte, tažením doprava se přesunete
+stage-light = Světlé pozadí
+stage-dark = Tmavé pozadí
+stage-playing = AO
+stage-paused = 3D pohled pozastaven
+stage-pause-tip = Pozastavení jejich animace
+stage-play-tip = Přehrát jejich animaci
+stage-loading = Příprava 3D pohledu…
+stage-nothing = Zatím není nic k zobrazení ve 3D.
+stage-refused = 3D zobrazení je vypnuto, zatímco RLVa omezuje to, co můžete vidět.
+inspect-your-limit = Váš limit: { $limit }
+inspect-without-it = { $value } bez ní
+inspect-you = Ty
+inspect-person = Lidé
+inspect-difference = Rozdíl
+inspect-drawn-in-full = Kreslené v plném rozsahu
+inspect-nobody = Nikoho složitost není zatím známa.
+inspect-aside-count = { $count } půda vyňatá z produkce
+inspect-is-aside = vyčleněno
+inspect-set-aside = Odložit stranou
+inspect-set-aside-tip = Podívejte se na složitost bez této položky. Pouze v tomto okně: ve světě se nic nemění.
+inspect-put-back = Dej to zpátky
+inspect-put-back-tip = Započítat tuto položku znovu
+inspect-complexity-spoken = Složitost { $value }, číslo { $rank } nebo { $count } Lidé tady
+inspect-stage-outfit = O outfitu
+inspect-stage-objects = O objektech
+inspect-stage-back = Zpět ke všemu
+inspect-place-made-by = { $place } · vyrobeno podle { $name }
+inspect-owned-by-name = Vlastní { $name }
+inspect-tile-items = Položky
+inspect-tile-figures = Obrázky
+inspect-col-item = Název
+inspect-point = Připojovací bod
+inspect-look-at = Podívej se na to.
+inspect-selected-count = { $count } vybraných položek
+inspect-worn-count = { $count } opotřebený
+inspect-creators-word = tvůrci
+inspect-areas-word = oblasti těla
+inspect-owners-word = majitelé
+inspect-triangles-word = trojúhelníky
+inspect-made-of = { $count } nebo { $all } Položky
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, in linksset order
+inspect-reset-columns = Resetovat sloupce
+inspect-by-creators =
+    { $count ->
+        [one] { $items } · Tvůrce položky: 1
+       *[other] { $items } · Tvůrce položky: { $count }
+    }
+inspect-owner-button = Profil majitele
+inspect-group-button = Profil skupiny
+inspect-creator-button = Profil autora
+inspect-land-others = Ostatní { $n }
+inspect-land-these = Tyto objekty: { $n }
+inspect-land-free = Zdarma { $n }
+inspect-land-unknown = Místnost balíku ukazuje, kdy jsou všechny objekty na balíčku, na kterém jste.
+ui-login-unencrypted = Nešifrované přihlášení
+ui-login-unencrypted-body = Přihlašovací adresa serveru { $server } začíná http:// místo https://, takže přihlášení nebude šifrované. Kdo vidí síťový provoz, například na veřejné Wi-Fi nebo cestou do gridu, může přečíst heslo a použít váš účet. Zatím se nic neodeslalo. Můžete požádat provozovatele gridu o adresu https://. Volba se pro tento server uloží.
+ui-login-unencrypted-accept = Přihlásit se bez šifrování
+world-appearance-clothing-layers-full = Používá se všech 60 vrstev oblečení. Před použitím tohoto výrobku jednu vrstvu sejměte.
+ui-options-ray-tracing = Grafické vykreslování s ray tracingem
+ui-options-ray-traced-shadows = Ray-traced sluneční stíny
+ui-options-ray-traced-shadows-help = Sluneční a měsíční stíny jsou sledovány paprsek po paprsku místo čtení z map stínů: přesně tam, kde se věci dotýkají a v libovolné vzdálenosti.Vyžaduje stínu a grafickou kartu s ray-tracingem a stojí více na grafické kartě
+ui-options-ray-traced-lights = Místní světelné stíny
+ui-options-ray-traced-lights-help = Stíny od bodových světel kolem (lampy, svíčky), které jinak nevrhají žádné stíny, a od projektorů, když je zapnutá funkce Projector shadows, namísto jejich map stínů.Nejdrahší z možností ray-tracingu: nejlépe ponechat na integrované grafice
+ui-options-rt-quality = Kvalita ray tracingu
+ui-options-rt-quality-help = Každý sledovaný efekt zůstane zapnutý: nižší úrovně sledují méně vzorků a nepřímé světlo na hrubší mřížce, což umožňuje více snímků za sekundu na menší grafické kartě. Vysoká úroveň je plnohodnotný obraz Deluxe (RT).
+ui-options-rt-sun-softness = Měkkost slunečního stínu
+ui-options-rt-sun-softness-help = Jak měkké jsou okraje slunečních stínů: 1 je skutečné slunce, 0 ostré hrany, více pro mlhavější slunce
+ui-options-rt-lamp-softness = Místní měkkost světelného stínu
+ui-options-rt-lamp-softness-help = Jak měkké jsou okraje stínů lampy: 1 odpovídá velikosti každé lampy, 0 ostrým okrajům
+ui-options-rt-shadow-lamps = Světla, která vrhají stíny
+ui-options-rt-shadow-lamps-help = Kolik z nejbližších světel vrhá sledované stíny; ostatní stále svítí, bez stínu.Méně stojí méně na grafické kartě
+ui-options-ray-traced-indirect = Ray-traced nepřímé světlo
+ui-options-ray-traced-indirect-help = Světlo odražené od povrchů kolem, sledované za to, co obrazovka ukazuje, namísto nepřímého světla GTAO
+ui-options-gi-probes = Sondy globálního osvětlení
+ui-options-gi-probes-help = Sondy se rozprostírají scénou, které udržují světlo několika odrazů a oblohu, kterou vidí: uzavřené místnosti zůstávají tmavé, světlo jde kolem rohů.Okolo 0,8 ms na grafické kartě
+ui-options-ray-traced-reflections = Raytracing
+ui-options-ray-traced-reflections-help = Odrazy toho, co obrazovka neukazuje, namísto odrazů v prostoru obrazovky, které musí být na
+ui-options-ray-tracing-unsupported = Tato grafická karta nebo její ovladač nemá ray-tracing
+ui-options-ray-tracing-vr = Není k dispozici v relaci spuštěné pro VR
+ui-options-tab-ray-tracing = Nastavení ray tracingu
+ui-options-deluxe-rt-warning-title = Zapnout Deluxe (RT)?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) je High se stíny a nepřímým světlem sledovaným grafickou kartou. Vyžaduje kartu s hardwarovým ray tracingem (NVIDIA RTX, AMD Radeon RX 6000 nebo novější, Intel Arc) a aktuální ovladač a stojí mnohem víc než High: na středně výkonné kartě může v přeplněných místech snímková frekvence výrazně klesnout. Ray tracing je stále testován: pokud obraz vypadá špatně nebo se prohlížeč zpomaluje, vraťte se zpět na High. Na záložce Ray Tracing jsou uložena její nastavení.
+ui-options-deluxe-rt-warning-turn-on = Zapnout
+ui-options-ray-tracing-needs-shadows = Potřebuje stíny
+ui-options-ray-tracing-needs-ssr = Potřebuje odrazy na obrazovce
+ui-options-preset-deluxe = Pokoj typu Deluxe (RT)
+ui-options-normal-precision = Přesnost odrazu
+ui-options-normal-precision-help = Jak jemně je zachován směr každého povrchu pro odrazy. Standardní může zobrazit kroky v odrazech hladkých, zakřivených povrchů, jako je lak automobilu; Vysoká je odstraňuje a využívá více videopaměti. Automatické používá vysoké s ray-traced odrazy, kde jsou kroky nejvíce vidět, a standardní jinak
+ui-options-normal-precision-automatic = Automatické
+ui-options-normal-precision-standard = Standardní přesnost
+ui-options-normal-precision-high = Vysoká
+ui-options-private-point-at-help = Skrýt objekt, který upravujete, ponechat rameno pro úpravy spuštěné a skrýt paprsek pro úpravu.
+ui-options-private-edit-beam = Skrýt editační paprsek
+ui-options-private-edit-beam-help = Při úpravách nebo uchopování objektů můžete paprsek zcela skrýt, a to jak na obrazovce, tak pro ostatní uživatele.Tipy k cílům výběru a paprsky předávání/upouštění nejsou ovlivněny.
+common-window-outside = Přesunutí mimo okno prohlížeče
+common-window-inside = Přivést zpět do okna prohlížeče
+common-window-rename-name = Poklepejte pro přejmenování
+common-carry-hint = Klikněte pro umístění sem, Esc pro uvolnění
+common-window-paused-photo = Pozastaveno, když je otevřen režim fotografie
+common-window-paused-director = Pozastaveno, zatímco režisér hraje
+common-window-paused-interface = Pozastaveno, když je rozhraní vypnuté
+ui-options-warn-live-preview = Upozornění, když texturu nebo materiál nelze zobrazit náhled
+ui-options-warn-live-preview-help = Ve výběru okna sestavení kliknutím na položku bez kopírování nepoužije nic, dokud nedojde k OK: řekněte to.
+ui-texture-picker-live-preview-texture = Nemůžeme zobrazit náhled této textury, protože se jedná o nekopii.
+ui-texture-picker-live-preview-material = Nemůžeme zobrazit náhled tohoto materiálu, protože se jedná o nekopírovaný materiál.
+fetch-invalid-url = Neplatná adresa URL
+ui-chat-close-all-ims = Zavřít všechny IM konverzace
+ui-chat-close-all-ims-question = Zavřít všechny IM konverzace a ukončit aktivní hovor?
+ui-chat-confirm-close-all-ims = Potvrdit před zavřením všech IM konverzací
+ui-chat-confirm-close-all-ims-help = Zeptat se před uzavřením všech IM konverzací, když má jeden aktivní hlasový hovor.
+ui-options-aurora-controls-compact-help = Okno Ovládací prvky se otevírá kompaktně na kameře: jeho joysticky, zoom a rolování. Jeho tlačítko v titulní liště přepíná mezi kompaktním a plným zobrazením a také toto nastavuje. U klasických oken se kamera místo toho otevře v malém okně kamery Legacy Viewer.
+rlva-restart-hint = RLVa se spustí, když se přihlásíte.Po jeho spuštění se zapnutí nebo vypnutí projeví při příštím spuštěni prohlížeče: objekty omezení zůstanou do té doby zachované.Objects restrictions hold remain until then.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa bude povolen po restartování.
+rlva-toggle-disabled-restart = RLVa bude zakázán po restartování.
+livemesh-import-connect = Připojte Blender s pluginem 0.11.0 nebo novějším, nebo Maya s plugin 0,2,0 nebo pozdější, abyste připravili import LODs.
+livemesh-import-preparing = Příprava objektu a jeho LOD v Blenderu nebo Mayi…
+livemesh-import-ready = Připraveno v importéru.
+livemesh-import-failed = Příprava importu selhala: { $error }
+livemesh-import-timeout = Blender nebo Maya nedokončily přípravu importu, zkontrolujte připojení (v Blenderu použijte objektový režim) a zkuste to znovu.
+livemesh-shape-apply-tooltip = Zaškrtněte Upravit práva, pak upravte kostru vybranou v Blenderu nebo Mayi a její vázané sítě (prostřednictvím MayaStar pro MayaStar rig).Vyberte lokální Second Life kompatibilní kostru.
+livemesh-shape-update-apply = Aktualizujte zásuvný modul Blender na verzi 0.10.0 nebo novější, případně zásuvné moduly Maya na verze 04.0 a novější a poté je znovu připojte.
+livemesh-shape-applied = Tvar aplikovaný na vybranou kostru.
+livemesh-shape-tooltip = Zaškrtněte možnost Modifikace u opotřebovaného tvaru a vytvořte nové upravené referenční tělo v Blenderu nebo Mayi.
+livemesh-shape-connect = Nejprve připojte Aurora plug-in v Blenderu nebo Maya.
+livemesh-shape-update-plugin = Aktualizujte zásuvný modul Blender na verzi 0.9.0 nebo novější, případně zásuvné moduly Maya na verze 03.0 a novější a poté je znovu připojte.
+livemesh-shape-timeout = Blender nebo Maya nepotvrdily import, zkuste to znovu (v Blenderu přepněte do režimu objektů).
+livemesh-shape-success = Tvar je importován jako nové referenční těleso.
+blender-live-maya-version = Aurora LiveMesh pro Maya { $version }
+blender-live-maya-instructions = Uložte ZIP a rozbalte ho, pak přetáhněte install.mel do zobrazení Maya Otevřete LiveMesh z police Aurora, přidejte své sítě a klikněte na tlačítko Connect.
+blender-live-save-maya = Uložení zásuvného modulu Maya…
+blender-live-maya-saved = Rozbalte ZIP soubor a přetáhněte install.mel do okna Maya viewport.
+livemesh-plugin-connected = Plug-in připojen
+livemesh-token-refused = Program se pokusil připojit bez klíče tohoto náhledu.Připojit se může pouze plugin Aurora v Blenderu nebo Maya.
+livemesh-waiting-plugin = Čekání na Blender nebo Maya…
+blender-live-objects-help = Mřížky, které Blender nebo Maya posílají. Vyberte jednu pro umístění, nebo ji importujte z menu.
+blender-live-size-note = Velikost násobí to, co zásuvný modul odešle, takže pozdější úpravy v Blenderu nebo Maya ji zachovají.
+blender-live-avatar-help = Pro rigged sítě: pošlete svůj tvar do Blenderu nebo Maya k modelování na něm.
+livemesh-shape-section = Váš tvar v Blenderu nebo Maya
+blender-live-import-help = Zmrazí snímek objektu pro normální import: recenze, cena, pak potvrzení Pozdější úpravy v Blenderu nebo Maya jej nemění.
+blender-live-changed-tip = Čas od poslední změny tohoto objektu v Blenderu nebo Maya
+fit-lab-section = Oděvní fitovací laboratoř
+fit-lab-help = Před vámi stojí figuríny oblečené do toho, co máte na sobě, každá s jiným tělem, aby vám ukázaly, jak se oděv hodí k různým tvarům, vidíte je jen vy: nic není odesláno ani uloženo.
+fit-lab-body-me = Můj avatar
+fit-lab-body-slim = Štíhlý tvar těla
+fit-lab-body-curvy = Tvar těla Curvy
+fit-lab-body-full = Tvar celého těla
+fit-lab-body-athletic = Atletika
+fit-lab-body-tall = Vysoký tvar těla
+fit-lab-body-petite = Tvar těla Petite
+fit-lab-motion = Pohyb
+fit-lab-motion-stand = Stojím tiše
+fit-lab-motion-walk = Chůze
+fit-lab-motion-sit = Sedni si.
+fit-lab-motion-range = Rozsah pohybu
+fit-lab-pose = Póza
+fit-lab-pose-all = Všechny, v pořadí
+fit-lab-pose-arms-up = Ruce nahoru.
+fit-lab-pose-reach = Natáhni se dopředu
+fit-lab-pose-hug = Zkřížené ruce
+fit-lab-pose-squat = Dřep
+fit-lab-pose-kneel = Poklekni.
+fit-lab-pose-knee-up = Koleno zvednuté
+fit-lab-pose-twist = Otočte trup
+fit-lab-pose-bend = Ohněte se dopředu
+fit-lab-motion-like-me = Jako já
+fit-lab-show = Ukázat figuríny
+fit-lab-place = Přiveď je sem
+fit-lab-remove = Odstraňte figuríny
+fit-lab-choose = Vyberte alespoň jedno tělo.
+fit-lab-clip = Ukažte, kde tělo prochází
+fit-lab-clip-note = Červená: tělo vychází z oděvu. Jantarová: Tělo a oděv se setkávají. Na vašem avatarovi a figurínách, jak je vidět z kamery. Všechno ostatní, co máte na sobě, se počítá jako tělo: sundat sako nebo vlasy nošené přes oděvy.
+blender-live-levels-pending = Blender nebo Maya připraví úrovně detailů, když kliknete na Import.
+blender-live-levels-note = Připraveno v Blenderu nebo Maya z nastavení LiveMesh každého objektu.
+blender-live-quick-look-changed = Změněno v Blender nebo Maya před { $ago }.
+blender-live-warning-textures = Textury přeskočeny, zobrazena prostá barva
+blender-live-warning-not-sent = Není v náhledu
+blender-live-undo-derez = Derezzed { $name } · stále v seznamu pluginů
+blender-live-undo-detach = Detached { $name } · stále v seznamu pluginů
+inventory-open-current = Otevřít
+inventory-folder-back = Zpět
+inventory-folder-forward = Jdi dopředu
+inventory-folder-up = Přechod o úroveň výš
+area-search-metres = { $n } m
+area-search-band-reach = Na dosah ruky
+area-search-band-close = V blízkosti
+area-search-band-around = Kolem tebe
+area-search-band-further = Dále
+area-search-band-far = Daleko pryč
+area-search-band = Plocha
+area-search-within = V rámci { $distance }
+area-search-within-across = V rámci { $distance } přes
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Zobrazit každou vzdálenost
+area-search-from = Vzdálenost od centra
+area-search-to = Vzdálenost do centra
+area-search-bar-tip =
+    { $count ->
+        [one] Objekty: 1 · { $from } – { $to }
+       *[other] Objekty: { $count } · { $from } – { $to }
+    }
+area-search-of-objects = z { $total } objektů
+area-search-li = { $value } LI
+area-search-li-count = { $value } pozemní dopad
+area-search-owner-count =
+    { $count ->
+        [one] jeden majitel
+       *[other] { $count } majitelů
+    }
+area-search-object-count =
+    { $count ->
+        [one] Jeden objekt
+       *[other] { $count } objektů
+    }
+area-search-objects-word = objekty
+area-search-in-reach = Tady
+area-search-tab-objects = Objekty
+area-search-tab-owners = Majitelé
+area-search-hint-wide = Objekty, vlastníci, tvůrci nebo UUID
+area-search-kind-heading = Druh objektu
+area-search-kind-tip = Klikněte na: pouze tyto. Opět: skryté.
+area-search-kind-any = jakýkoli
+area-search-kind-only = pouze tyto
+area-search-kind-hidden = Skryté
+area-search-kind-attached = Připojeno k avataru
+area-search-kind-probes = Sondy
+area-search-click-all = Všechny
+area-search-click-any-short = Jakákoli akce kliknutí
+area-search-permissions = Oprávnění
+area-search-price-heading = Prodejní cena, pro objekty na prodej
+area-search-price-to = až do
+area-search-price-tip = Nejprve vyberte „Na prodej“
+area-search-linked = Propojené primitivní tvary
+area-search-one-field = Vyhledávání v jednom poli
+area-search-regex-switch = Regulární výrazy
+area-search-regex-invalid = Neplatný regulární výraz
+area-search-reset-filters-tip = Obnovit všechny filtry; vyhledávací text zůstane
+area-search-save-defaults-tip = Otevřít s těmito filtry od nynějška
+area-search-reset-search = Resetování vyhledávacích textů
+area-search-reset-filters = Resetovat možnosti filtru
+area-search-reset-ranges = Resetovat vzdálenost a cenu
+area-search-reset-all = Resetovat vše
+area-search-more = Více
+area-search-several = Vyberte několik položek
+area-search-several-tip = Kliknutí přidává do výběru (také Ctrl nebo Shift + kliknutí, Ctrl+A)
+area-search-actions = Akce
+area-search-nothing = Zatím nebyly přijaty žádné objekty.
+area-search-nothing-for-sale = Zde není nic na prodej.
+area-search-not-for-sale = Není na prodej
+area-search-from-price = od { $price } Kč
+area-search-nearest = Nejbližší první
+area-search-heaviest = Nejtěžší první
+area-search-order-tip = Změna pořadí: nejbližší nebo nejtěžší jako první
+area-search-rank = #{ $rank } nebo { $all }
+area-search-rank-here = #{ $rank } zde
+area-search-card-more = Zobrazit každý obrázek
+area-search-card-less = Zobrazit méně
+area-search-open-group = Otevřete skupinu
+area-search-spoken = Objekt: { $name }. Vzdálenost: { $distance }Dopad na půdu: { $li }. Majitel firmy: { $owner }.
+area-search-owner-spoken = { $name }, { $count } objekty, dopad na zemi { $li }
+area-search-stage-line = { $distance } 1 hodina pryč · { $li } dopad na půdu · { $owner }
+area-search-tile-3d = 3D pohled
+area-search-on = Povoleno: { $count }
+area-search-on-word = Povoleno
+area-search-more-on =
+    { $count ->
+        [one] Přidejte ještě jeden filtr
+       *[other] { $count } více filtrů na
+    }
+ui-options-legacy-lists = Import seznamů z Legacy Vieweru
+ui-options-legacy-lists-help = Přidá historii teleportů tohoto účtu, černou listinu aktiv, seznam filtru médií a sady kontaktů.Soubory Legacy Vieweru jsou pouze pro čtení.
+ui-options-legacy-lists-button = Import z původního prohlížeče…
+ui-options-legacy-lists-no-account = Přihlaste se pro import seznamů tohoto účtu.
+ui-options-legacy-lists-title = Import z původního prohlížeče
+ui-options-legacy-lists-text = Všechno se přidá do seznamů tohoto účtu a nic zde není odstraněno. To, co je na černé listině, okamžitě zmizí ze světa. Při opětovném importu se vrátí to, co jste zde odstranili.
+ui-options-legacy-lists-searching = Hledání složek Legacy Viewer...
+ui-options-legacy-lists-none = Pro tento účet nebyla nalezena žádná složka Legacy Viewer se seznamy.
+ui-options-legacy-lists-teleports = Teleport historie ({ $count })
+ui-options-legacy-lists-derender = Černá listina aktiv ({ $count })
+ui-options-legacy-lists-media = Seznam filtrů médií ({ $count })
+ui-options-legacy-lists-contact-set-entries = Položky sady kontaktů ({ $count })
+ui-options-legacy-lists-confirm = Import vybraných seznamů
+ui-options-legacy-lists-added = Přidány nebo aktualizovány položky. Teleport historie: { $teleports }. skryté objekty: { $derender }Filtr médií: { $media }. Kontaktní skupiny: { $sets }.
+ui-options-legacy-lists-nothing = Nic nového: tento účet již tyto seznamy má.
+ui-options-legacy-lists-failed = Nelze číst: { $files }.
+ui-options-legacy-lists-unsaved = Nelze uložit, zůstal jako to bylo: { $files }.
+ui-options-legacy-lists-other-grid = Na této mřížce může složka se stejným názvem patřit do jiné mříže: zkontrolujte, že je to ta správná.
+ui-options-build-show-beams-hint = Zobrazit paprsky výběru a paprsku ostatních avatarů při editaci, chytání nebo předávání. Toto ovládá pouze zobrazení. Použijte Soukromí > Skrýt editační paprsek pro zastavení editace lokálně a přes síť.
+teleport-failed-title = Teleport selhal.
+teleport-error-invalid-tport = Pokusy o teleportaci jsou omezeny na 6 za minutu. Pokud máte potíže, počkejte jednu minutu a zkuste se teleportovat znovu.Pokud problém přetrvává, odhlaste se a přihlaste znova.
+teleport-error-invalid-region-handoff = Došlo k problému při zpracování přechodu regionu. Možná se budete muset před přechodem regionu znovu přihlásit. Pokud se tato zpráva zobrazuje i nadále, kontaktujte prosím podporu.
+teleport-error-blocked-tport = Omlouváme se, ale teleport je momentálně zablokován. Pokud stále nemůžete teleportovat, odhlaste se a znovu se přihlaste, abyste problém vyřešili.
+teleport-error-nolandmark-tport = Je nám líto, ale systém nebyl schopen najít cíl orientačního bodu.
+teleport-error-timeout-tport = Je nám líto, ale systém nebyl schopen dokončit teleport spojení. Zkuste to prosím za chvíli znovu.
+teleport-error-no-help-island = Nemůžete se teleportovat zpět na Welcome Island.
+teleport-error-noaccess-tport = Omlouváme se, ale nemáte přístup k tomuto teleportnímu cíli.
+teleport-error-missing-attach-tport = Vaše přílohy ještě nepřišly, zkuste počkat několik sekund nebo se odhlaste a znovu přihlaste před pokusem o teleport.
+teleport-error-too-many-uploads-tport = Fronta aktiv v této oblasti je momentálně ucpaná, takže váš požadavek na teleport nebude úspěšný. Zkuste to znovu za několik minut nebo přejděte do méně rušné oblasti.
+teleport-error-expired-tport = Je nám líto, ale systém nebyl schopen dokončit váš požadavek na teleport včas. Zkuste to prosím znovu za několik minut.
+teleport-error-expired-region-handoff = Omlouváme se, ale systém nebyl schopen dokončit překročení vašeho regionu včas.Zkuste to prosím znovu za několik minut.
+teleport-error-preexisting-tport = Omlouváme se, ale systém nebyl schopen spustit váš teleport. Zkuste to prosím za pár minut znovu.
+teleport-error-no-host = Nepodařilo se najít cíl teleportu. Cíl může být dočasně nedostupný nebo již neexistuje. Zkuste to prosím znovu za několik minut.
+teleport-error-no-inventory-host = Stránka je momentálně nedostupná.
+teleport-error-must-get-age-region = Abyste mohli vstoupit do tohoto regionu, musíte být starší 18 let.
+teleport-error-special-usage-blocked = Nelze zadat region. '{ $region }' je Skill Gaming Region a pro vstup do něj musíte splnit určitá kritéria.Podrobnosti naleznete v často kladených otázkách o Skill Gaming: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Nemůžete zadat region. Jedná se o region pro dovednostní hry a pro vstup do něj musíte splnit určitá kritéria.Podrobnosti najdete v nejčastějších dotazech k dovednostním hrám: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Vaše domácí síť odmítla váš návrat, což obvykle znamená, že nastavení adresy Hypergrid neodpovídá adrese, kterou pro ni používají jiné sítě. Obraťte se na operátory vaší domácí siete; opětovné přihlášení vás mezitím vrátí domů.
+teleport-hint-hypergrid-unreachable = Další mřížka nebyla nalezena, je možné, že je offline nebo odkaz směřuje na starou adresu.
+teleport-hint-hypergrid-visitors-refused = Tato síť umožňuje vstup pouze obyvatelům některých sítí.
+teleport-hint-hypergrid-destination-gone = Cílová oblast již neexistuje nebo byla přemístěna, orientační body a odkazy na jiné mřížky mohou být zastaralé.
+toolbar-edit = Přizpůsobení tlačítek a nabídek…
+toolbar-title = Tlačítka a nabídky
+toolbar-interface-locked = Rozhraní zamčeno
+toolbar-help = Přetáhněte tlačítka nebo položky nabídek na horní, dolní nebo postranní panely. Pokud chcete tlačítko odstranit, přetáhnete ho zpět sem. Klepnutím pravým tlacítkem myši změníte vzhled libovolného tlacítka.
+toolbar-help-classic = Přetáhněte tlačítka nebo položky nabídek na horní, dolní nebo postranní panely. Pokud chcete tlačítko odstranit, přetáhnete ho zpět sem. Klepnutím pravým tlacítkem myši změníte vzhled libovolného tlacítka.
+toolbar-help-modes = Vyberte ikony, popisky, obojí nebo výchozí bar pro každé tlačítko.Tažením položek v menu Aurora změníte jeho uspořádání.
+import-menu-textures = Textury
+import-menu-animations = Animace
+import-menu-sounds = Zvuky
+import-menu-materials = Materiály
+import-menu-meshes = Sítě
+import-menu-options = Možnosti importu
+import-upload-payment-title = Import
+import-upload-payment = Za nahrání jste zaplatili L${ $cost }.
+import-quick-textures =
+    { $count ->
+        [one] Import · Textury: 1 · L${ $cost }?
+       *[other] Import · Textury: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Import · Materiály: 1 · L${ $cost }?
+       *[other] Import · Materiály: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Import · Zvuky: 1 · L${ $cost }?
+       *[other] Import · Zvuky: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Vyberte velikost importu. Podporované textury lze importovat ve velikosti 2048 × 2048:
+       *[other] ({ $count }) Vyberte velikost importu. Podporované textury lze importovat ve velikosti 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Vyberte velikost importu. Podporované obrázky materiálů lze importovat ve velikosti 2048 × 2048:
+       *[other] ({ $count }) Vyberte velikost importu. Podporované obrázky materiálů lze importovat ve velikosti 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Nahrávat obrázky zdarma ve velikosti 2048 × 2048 bez dotazu
+import-quick-free-full-size-help = "Import textures" a "Impor materiálů" se pak ptají na 1024 nebo 2048 pouze v případě, že upload stojí L$.
+ui-bars-customize-bars = Přizpůsobení rozhraní
+build-tool-in-use = V provozu
+build-create-options-toggle = Zobrazit / skrýt možnosti
+build-create-keep-creating = Pokračujte v tvorbě
+build-create-center-on-prim = Centrum na prim
+build-create-copy-prim-rotation = Kopírovat prim rotace
+build-create-align-to-surface = Zarovnání na povrch
+build-capture-shape-button = Zkopírujte tvar prim: klikněte na toto, pak na prim ve světě
+build-capture-shape-armed = Klikněte na prim pro kopírování jeho tvaru (Escape zruší)
+build-capture-shape-full = 20 tvarů je zachováno. Odstraňte jeden pro kopírování jiného
+build-capture-shape-remove = Odebrat tento obrazec
+build-capture-shape-tooltip = Kopírovaný tvar ({ $kind })
+build-capture-shape-not-a-prim = Kopírovat lze pouze tvar primátu
+build-capture-shape-mesh-or-sculpt = Tvar mřížky nebo tvarovaného prvku nelze kopírovat
+build-capture-shape-no-modify = Potřebujete oprávnění k úpravě tohoto prim pro kopírování jeho tvaru
+import-other-options = Další možnosti
+toolbar-button-icons = Pouze ikona
+toolbar-button-text = Pouze štítek
+toolbar-button-icons-text = Ikona a štítek
+toolbar-icon-default = Obnovit výchozí ikonu
+toolbar-icon-choose = Vyberte ikonu
+toolbar-icon-change = Změnit ikonu
+toolbar-presets = Přednastavení
+toolbar-interfaces = Rozhraní
+toolbar-interfaces-shown = Zobrazeno v bloku Rozhraní
+toolbar-interfaces-hidden = Skryto z bloku Rozhraní
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora OldSchool
+toolbar-preset-photographer = Aurora Fotograf
+toolbar-preset-legacy = Legacy
+toolbar-import-textures = Import textur
+toolbar-import-sounds = Import zvuků
+toolbar-import-animations = Import animací
+toolbar-import-materials = Import materiálů
+toolbar-import-meshes = Import sítí
+toolbar-import-local = Místní soubory
+toolbar-import-advanced = Pokročilý import
+toolbar-import-settings = Nastavení importu
+toolbar-import-bar = Panel importu
+toolbar-icon-search = Najděte ikonu…
+toolbar-in-top = Na horním panelu nástrojů
+toolbar-bar-top = Horní panel nástrojů
+toolbar-drop-here = Drop tady
+toolbar-separator = Separátor
+toolbar-interface-edit = Přizpůsobení rozhraní
+toolbar-edit-done = Hotovo
+toolbar-edit-top = Top
+toolbar-edit-bottom = Bottom
+toolbar-edit-left = Left
+toolbar-edit-right = Pravá
+toolbar-edit-help = Kliknutím vyberte položku, přetažením ji přesuňte nebo klikněte pravým tlačítkem myši a zobrazí se možnosti úprav.
+toolbar-edit-locked = Tyče jsou zamčené. Odemkněte je níže pro změnu rozhraní.
+toolbar-edit-move = Přesunout do
+toolbar-edit-split-before = Split předtím
+toolbar-edit-split-after = Rozdělit za touto položkou
+toolbar-edit-merge-before = Sloučit s předchozím blokem
+toolbar-edit-merge-after = Sloučit s dalším blokem
+toolbar-edit-merge-groups = Sloučit tyto bloky
+toolbar-drawer = Zásuvka
+toolbar-drawer-default-mode = Výchozí zobrazení tlačítek
+toolbar-drawer-closes = Zavřít po kliknutí na tlačítko
+toolbar-block-shortcut = Zkratka:
+toolbar-drawer-hides-needs-shortcut = Vyžaduje zkratku
+toolbar-floating-close-button = Přidání tlačítka zavřít
+toolbar-block-name = Název bloku:
+toolbar-block-button-mode = Blok tlačítko zobrazení
+toolbar-button-inherited = Zděděné
+toolbar-drawer-hides-button = Skrýt tlačítko při plovoucím zobrazení
+toolbar-floating-new = Plovoucí blok
+toolbar-floating-orientation = Orientace
+toolbar-floating-horizontal = Horizontální
+toolbar-floating-vertical = Vertikální
+toolbar-floating-empty = Drop tlačítka zde
+toolbar-shortcut-title = Zkratka
+toolbar-shortcut-block-name = Blok: { $name }
+toolbar-shortcut-none = Žádná zkratka
+toolbar-shortcut-press-key = Stisknutí klávesy
+toolbar-shortcut-esc = Esc pro zrušení
+toolbar-shortcut-clear = Odstranit
+toolbar-shortcut-overrides = Takes over { $name }: tato zkratka spustí panel nástrojů namísto jeho výchozího použití.
+toolbar-shortcut-used = Již zkratka { $names }.
+toolbar-shortcut-replace = Nahradit
+toolbar-shortcut-add = Přidat
+toolbar-shortcut-save = Uložit
+toolbar-shortcut-choose-key = Vyberte si klíč
+toolbar-shortcut-help = Zapněte nebo vypněte klávesy Ctrl, Alt a Shift a kliknutím na klávesu ji změňte (Ctrl nebo Alt jsou vyžadovány s výjimkou kláves F1 až F24).
+toolbar-shortcut-inactive = Toto tlačítko není v žádném panelu: jeho zkratka funguje, jakmile je umístěna znovu.
+toolbar-shortcut-refused-keyboard = Zkratkou mohou být pouze klávesy na klávesnici.
+toolbar-shortcut-refused-modifier = Samotná modifikační klávesa nemůže být zkratkou.
+toolbar-shortcut-refused-needs-modifier = Přidejte Ctrl nebo Alt: klávesa samotná, nebo pouze se Shiftem, zadejte do textových polí.
+toolbar-shortcut-refused-altgr = Ctrl+Alt s touto klávesou je AltGr, který zadává znaky na mnoha klávesnicích.
+toolbar-shortcut-refused-editing = Textová pole používají tuto zkratku (vybrat vše, kopírovat, vyjmout, vložit, vrátit zpět, opakovat).
+toolbar-shortcut-refused-navigation = Textová pole se přesouvají a mažou pomocí této klávesy.
+toolbar-shortcut-refused-typing = Chat a dialogy používají tuto klávesu.
+toolbar-shortcut-refused-system = Systém si tuto zkratku ponechá.
+toolbar-shortcut-refused-window = Tato zkratka zavře nebo přepne okna.
+toolbar-shortcut-refused-zoom = Tato zkratka přiblíží rozhraní.
+toolbar-spacer = Blokový prostor
+toolbar-add-spacer = Přidání blokových mezer
+toolbar-button-settings = Nastavení tlačítek
+toolbar-button-edit = Tlačítko Upravit…
+toolbar-button-edit-title = Tlačítko Upravit
+toolbar-button-name = Název tlačítka:
+toolbar-button-display = Tlačítkový displej
+toolbar-shortcut-fixed-block-help = Zkratka pevného bloku ji zobrazuje a skrývá; zatímco je rozhraní upravováno, zůstává zobrazeno.
+toolbar-block-settings = Nastavení bloku
+toolbar-parent-block-settings = Nastavení rodičovského bloku
+toolbar-block-edit = Upravit blok…
+toolbar-block-edit-title = Blok úprav
+toolbar-block-alignment = Zarovnání
+toolbar-block-sizing = Velikost tlačítka
+toolbar-block-fixed-options = Možnosti pevného režimu
+toolbar-block-floating-options = Možnosti plovoucího režimu
+toolbar-block-kind-fixed = Pevný blok
+toolbar-block-kind-drawer = Zásuvka
+toolbar-block-kind-floating = Plovoucí blok
+toolbar-block-remove = Odstranit blok
+toolbar-move-block = Přetažením přesuňte celý blok
+toolbar-remove-block = Odstranit blok
+toolbar-drawer-empty = Tato zásuvka je prázdná.
+toolbar-drawer-drop = Přetáhněte tlačítka sem, abyste je přidali nebo změnili jejich pořadí.
+toolbar-separator-settings = Nastavení rozestupů bloků
+toolbar-separator-size = Velikost / minimum (px)
+toolbar-separator-stretch = Vyplnění dostupného místa
+toolbar-separator-help = Flexibilní mezery sdílejí prostor ponechaný bloky.Velikost je jejich minimální šířka nebo výška v postranním panelu.
+toolbar-block-navigation = Navigace a vyhledávání
+toolbar-block-account = Účet a zůstatek
+toolbar-block-system = Hodiny, indikátory a zvuk
+toolbar-block-status = Stav dostupnosti
+toolbar-block-balance = Bilance
+toolbar-block-clock = Hodiny
+toolbar-block-ping = Regionální latence
+toolbar-block-fps = Snímková frekvence (FPS)
+toolbar-block-network = Síťový provoz
+toolbar-block-media = Média
+toolbar-block-music = Hudba
+toolbar-block-volume = Objem
+toolbar-block-notifications = Oznámení
+toolbar-block-conversations = Ikony pro konverzace
+toolbar-block-chat = Nearby chat vstup
+toolbar-category-all = Všechny kategorie
+toolbar-section-main = Hlavní
+toolbar-section-advanced = Pokročilé
+toolbar-search-all = Vyhledávání zahrnuje pokročilé příkazy.
+toolbar-category-avatar = Avatar a pohyb
+toolbar-category-communication = Komunikace
+toolbar-category-world = Svět a cestování
+toolbar-category-creation = Tvorba a obsah
+toolbar-category-interface = Rozhraní a fotoaparát
+toolbar-category-advanced = Pokročilé nástroje
+toolbar-category-help = Nápověda
+toolbar-category-custom = Vlastní příkazy
+toolbar-bar-settings = Nastavení panelu nástrojů
+toolbar-menu-group = Menu: { $name }
+toolbar-location-bar = Adresní řádek SLURL
+toolbar-command-build-tool-focus = Sestavit - fotoaparát
+toolbar-command-build-tool-grab = Stavět - pohyb
+toolbar-command-build-tool-edit = Sestavit - upravit
+toolbar-command-build-tool-create = Sestavit - vytvořit
+toolbar-command-build-tool-land = Stavba - pozemky
+bug-copy-version = Kopírovat verzi prohlížeče
+toolbar-notecard-save = Uložit do poznámkového bloku…
+toolbar-notecard-load = Načíst z poznámkové karty…
+toolbar-notecard-name = Rozhraní Aurora
+toolbar-notecard-help = Uspořádání a vzhled panelů nástrojů, tlačítek, zásuvek a nabídek.
+toolbar-notecard-saved = Rozvržení rozhraní uložené ve vašem inventáři.
+toolbar-notecard-invalid = Tento poznámkový blok neobsahuje kompatibilní rozložení rozhraní.
+toolbar-notecard-unavailable = Tato poznámka již není k dispozici nebo ji nelze kopírovat.
+toolbar-notecard-layout-changed = Rozhraní se změnilo během načítání poznámkové karty. Načtěte ji znovu, aby bylo použito její rozložení.
+toolbar-notecard-demo-valid = Rozhraní pro fotografy
+toolbar-notecard-demo-invalid = Ostatní notecard
+toolbar-notecard-too-large = Tato konfigurace rozhraní je příliš velká pro poznámkovou kartu.
+toolbar-saved-interfaces = Uložená rozhraní
+toolbar-saved-interfaces-empty = Zatím žádná uložená rozhraní.
+toolbar-notecard-destination = Složka: { $path }
+toolbar-notecard-folder-error = Složka interfaces nemohla být načtena nebo vytvořena. Zkuste to prosím znovu.
+toolbar-current-preset = Zvolené rozhraní: { $name }
+toolbar-preset-custom = Vlastní rozhraní
+toolbar-preset-unsaved = Neuložené změny
+toolbar-preset-save-title = Uložit rozhraní
+toolbar-preset-save-name = Název rozhraní
+toolbar-preset-save-new = Nové osobní rozhraní
+toolbar-preset-save-replace = Nahradit toto osobní rozhraní
+toolbar-preset-save-unavailable = Toto rozhraní zde nelze uložit. Zvolte jiný název nebo dostupné, editovatelné osobní rozhranní.
+toolbar-interface-delete-unavailable = Toto osobní rozhraní nelze odstranit.
+toolbar-interface-delete-confirm = Přesunout osobní rozhraní „{ $name }“ do koše?

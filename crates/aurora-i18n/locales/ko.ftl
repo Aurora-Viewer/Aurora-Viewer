@@ -16067,3 +16067,739 @@ parcel-environment-empty = 저장된 환경 없음
 parcel-environment-remove-all = 모두 삭제
 parcel-environment-remove-all-title = 패킷에 저장된 모든 환경을 제거하시겠습니까?
 parcel-environment-remove-all-text = 이 그리드의 구획에 저장한 환경을 삭제합니다. 다른 그리드에 저장한 환경은 유지됩니다. 이 작업은 취소할 수 없습니다.
+
+### Updated release translations
+
+anim-timeline-channels-hint = 이 뼈의 회전과 위치 키를 그들만의 행에 보여주기
+anim-timeline-channel-rotation = 회전
+anim-timeline-channel-location = 위치
+anim-timeline-keying-hint = 위치와 함께, Move는 IK 체인에서 혼자 조인트를 가져옵니다. Second Life 애니메이션에는 규모 키가 없습니다.
+anim-timeline-keying-auto = 자동: 골반과 이동 관절의 회전 및 위치
+anim-timeline-keying-auto-short = 자동
+anim-timeline-keying-loc-rot = 위치 및 회전
+anim-timeline-keying-loc-rot-short = 위치 + 루트
+anim-timeline-keying-rot-short = 루트
+anim-timeline-keying-loc-short = 위치
+anim-edit-shortcut-play = 재생 또는 일시 정지
+area-search-scope-heading = 어디
+area-search-scope-parcel = 패킷
+area-search-scope-region = 지역
+area-search-scope-neighbours = 이웃
+area-search-objects-heading = 어떤 개체
+inventory-copy-selection-count =
+    { $count ->
+        [one] 1개의 항목 복사
+       *[other] 복사 { $count } 항목
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] 링크 1 항목
+       *[other] 링크 { $count } 항목
+    }
+inventory-drop-move-here = 여기로 이동
+inventory-drop-copy-here = 여기로 복사
+inventory-drop-link-here = 여기에 링크 만들기
+inventory-sort-description = 설명
+inventory-sort-reversed = { $order } (역전)
+inventory-column-creator = 작성자
+inventory-column-count = 항목
+inventory-columns-fit = 모든 열의 크기를 맞추기
+inventory-columns-reset-widths = 열 너비 재설정
+inventory-back = 뒤로
+inventory-forward = 앞으로
+inventory-up = 한 단계 위로
+keybinds-inventory-root = 상단으로 이동
+keybinds-inventory-search = 인벤토리 검색
+keybinds-inventory-filter = 폴더 필터링
+keybinds-inventory-preview = 미리 보기 창 보이기
+keybinds-inventory-view-large = 큰 사진
+keybinds-inventory-view-medium = 중간 사진
+keybinds-inventory-view-small = 작은 사진
+keybinds-inventory-view-compact = 컴팩트 보기
+keybinds-inventory-view-details = 자세한 내용 보기
+keybinds-inventory-view-tiles = 타일 보기
+keybinds-inventory-toggle = 초점이 있는 행 선택 또는 선택 해제
+keybinds-inventory-menu = 선택 영역의 메뉴 열기
+keybinds-inventory-purge = 휴지통에서 삭제
+keybinds-inventory-refused = { $keys }은 인벤토리 목록의 자체 키로 남아 있습니다. 다른 것을 선택하십시오.
+inventory-path-edit = 경로 입력
+inventory-path-subfolders = 하위 폴더
+inventory-copy-path = 경로 복사
+inventory-show-in-folder = 폴더에 보이기
+inventory-pin = 빠른 액세스에 고정
+inventory-unpin = 빠른 액세스에서 핀 해제
+inventory-quick-access = 빠른 액세스
+inventory-quick-access-drop = 폴더를 여기로 드래그하여 고정하기
+inventory-invert-selection = 선택 영역 반전
+inventory-undo = 실행 취소
+inventory-redo = 다시 실행
+inventory-undo-step = 실행 취소 { $what }
+inventory-redo-step = 다시 실행 { $what }
+inventory-history-move =
+    { $count ->
+        [one] 1개의 항목 이동
+       *[other] { $count } 개의 항목을 이동
+    }
+inventory-history-delete =
+    { $count ->
+        [one] 1개의 항목 중 삭제됨
+       *[other] { $count }개의 항목 중 삭제됨
+    }
+inventory-history-rename = 이름 바꾸기
+inventory-history-new-folder = 새 폴더
+inventory-history-copy =
+    { $count ->
+        [one] 1 항목의 사본
+       *[other] { $count }개의 항목 사본
+    }
+inventory-history-link =
+    { $count ->
+        [one] 1개의 항목으로 연결
+       *[other] { $count } 항목에 대한 링크
+    }
+inventory-undo-nothing = 실행 취소할 것 없음: 해당 항목이 이동되었거나 사라졌습니다.
+inventory-redo-nothing = 다시 할 일이 남지 않았습니다. 해당 항목은 이동되었거나 사라졌습니다.
+inventory-undo-empty = 실행 취소할 수 없습니다.
+inventory-redo-empty = 다시 할 일이 없어요
+inventory-undo-dropped = 마지막 단계의 항목이 이동되었거나 사라졌습니다: 드롭되었습니다. 전 단계에 대해 다시 실행 취소합니다.
+inventory-redo-dropped = 다음 단계의 항목이 이동되었거나 사라졌습니다: 드롭되었습니다. 다음단계에서 다시 실행합니다.
+inventory-undo-folder-not-empty = 그 새로운 폴더는 이후에 넣어진 항목을 보유합니다. 먼저 이동하거나 직접 폴딩을 삭제하십시오.
+inventory-undo-kept-out = 이 아이템은 현재 의상 또는 마켓플레이스 목록에 있습니다. 거기서 변경하세요.
+inventory-restore-to = “{ $folder }”로 복원
+inventory-restore-to-origins = 폴더로 복원
+inventory-purge-no-undo = 실행 취소는 다시 가져올 수 없습니다.
+inventory-new-tab = 새 탭
+inventory-close-tab = 탭 닫기
+inventory-next-tab = 다음 탭
+inventory-previous-tab = 이전 탭
+inventory-open-in-new-tab = 새 탭에서 열기
+inventory-tabs-limit = 최대 { $count } 탭.
+inventory-copy-to-other-pane = 다른 창으로 복사
+inventory-move-to-other-pane = 다른 창으로 이동
+inventory-resize-columns = 드래그하여 열의 크기를 조절합니다. 이중 클릭하여 왼쪽에 있는 열을 내용에 맞추십시오.
+inventory-resize-columns-first = 열의 크기를 조절하려면 드래그하십시오. 이중 클릭하여 첫 번째 열을 일반적인 너비로 만듭니다.
+inventory-sort-by-column = 이 열에 따라 정렬하려면 클릭하고, 순서를 반전하려는 경우 다시 누르십시오. 드래그하여 열을 이동합니다.
+inventory-filter-hint = 이 폴더를 필터링합니다...
+inventory-filter-close = 필터 닫기 (Esc)
+inventory-filter-nothing = 필터와 일치하는 것이 없습니다
+inventory-view-compact = 컴팩트 보기
+inventory-view-tiles = 타일 보기
+inventory-view-per-folder = 각 폴더의 보기 기억
+inventory-group-by = 그룹
+inventory-group-none = 없음
+inventory-group-folders = 폴더
+inventory-group-unknown-creator = 아직 알 수 없는 작성자
+inventory-group-today = 오늘
+inventory-group-yesterday = 어제
+inventory-group-this-week = 지난 7일 동안
+inventory-group-this-month = 지난 30일 동안
+inventory-group-this-year = 올해 초에
+inventory-group-earlier = 오래 전에
+inventory-group-no-date = 날짜 없음
+cmdline-mod-zoffset-usage = 아바타의 호버 높이를 설정합니다 (사용: /zoffset value 또는 +delta).
+dev-toolbox-n4 = 재고 로딩
+dev-toolbox-what-n4 = 폴더 읽기, 실패 및 왼쪽, 로더의 플라이트와 재시도에 읽어; 이름 없음
+ui-context-inspect-avatar = 아바타 검사
+inspect-window = 검사
+inspect-tab-objects = 개체
+inspect-objects-title =
+    { $count ->
+        [one] { $count } 개체
+       *[other] { $count } 개체
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count }개 항목
+       *[other] { $count } 개의 항목
+    }
+inspect-open-profile = 프로필 열기
+inspect-over-limit = 한계를 넘어서
+inspect-limit-tip = 당신의 복잡성 한계: { $limit }
+inspect-search = 아이템 또는 작성자 검색
+inspect-outlined = { $name }은 세계에서 개요됩니다
+inspect-area-head = 머리
+inspect-area-body = 본문
+inspect-area-arms = 팔과 손
+inspect-area-legs = 다리와 발
+inspect-area-hud = HUD
+inspect-area-other = 기타
+inspect-area-world = 개체
+inspect-own-eyes = 시스템 눈
+inspect-own-body = 시스템 본문
+inspect-own-description = 첨부 파일이 아닌 아바타 자체의 일부
+inspect-own-maker = 아바타 · Second Life
+inspect-own-place = 아바타
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } 메가바이트
+inspect-section-complexity = { $value } 복잡도
+inspect-no-match = “{ $query }”과 일치하는 항목이 없습니다.
+inspect-spoken-worn = { $name }, 착용 { $point }, 복잡성 { $complexity }, 만든 사람 { $creator }
+inspect-spoken-object = { $name }, 소유자 { $owner }, 복잡성 { $complexity }, 만든 사람 { $creator }
+inspect-look-at-tip = 카메라를 이동
+inspect-profile-tip = 작성자 프로필 열기
+inspect-made-by = 제작자
+inspect-owned-by = 소유자
+inspect-worn-on = 착용
+inspect-prims-count =
+    { $count ->
+        [one] { $count } 소수
+       *[other] { $count } 소수
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = 텍스처 메모리
+inspect-tile-vram = 비디오 메모리
+inspect-tile-prims = 프림
+board-close = 닫기 { $title }
+board-grow = 확대 { $title }
+board-remove = { $name } 제거
+board-more = 그리고 { $count } 더
+board-more-short = +{ $count }
+board-some-of = { $shown } 다음 중 하나 { $all }
+board-of-all = { $all } 페이지 중
+stage-turn-left = 좌회전
+stage-turn-right = 우회전
+stage-higher = 더 높은 곳에서 보기
+stage-lower = 아래에서 보기
+stage-nearer = 가까이
+stage-further = 더 멀리
+stage-reset = 시작으로 돌아가기
+stage-hint = 회전하려면 드래그, 이동하려는 경우 오른쪽 클릭
+stage-light = 밝은 배경
+stage-dark = 어두운 배경
+stage-playing = AO
+stage-paused = 일시 정지됨
+stage-pause-tip = 애니메이션 일시 정지
+stage-play-tip = 그들의 애니메이션 재생
+stage-loading = 3D 뷰 준비 중...
+stage-nothing = 아직 3D로 보여줄 것이 없습니다.
+stage-refused = 3D 보기가 꺼져 있고 RLVa은 보이는 것을 제한합니다.
+inspect-your-limit = 당신의 한계: { $limit }
+inspect-without-it = { $value } 그것 없이
+inspect-you = 당신
+inspect-person = 사람
+inspect-difference = 차이점
+inspect-drawn-in-full = 완전히 그려짐
+inspect-nobody = 복잡도는 아직 알려져 있지 않다.
+inspect-aside-count = { $count } 예비
+inspect-is-aside = 예외
+inspect-set-aside = 옆에 두고
+inspect-set-aside-tip = 이 아이템 없이 복잡성을 보십시오. 이 창에서만: 세상에 아무것도 바뀌지 않습니다.
+inspect-put-back = 다시 넣어
+inspect-put-back-tip = 이 항목을 다시 계산하기
+inspect-complexity-spoken = 복잡도 { $value }, 숫자 { $rank } 다음 중 하나 { $count } 여기 사람들이
+inspect-stage-outfit = 그 옷
+inspect-stage-objects = 개체
+inspect-stage-back = 모든 항목으로 돌아가기
+inspect-place-made-by = { $place } 에 의해 만들어진 { $name }
+inspect-owned-by-name = { $name }에 의해 소유
+inspect-tile-items = 항목
+inspect-tile-figures = 그림
+inspect-col-item = 이름
+inspect-point = 점
+inspect-look-at = 보세요
+inspect-selected-count = { $count } 선택됨
+inspect-worn-count = { $count } 착용
+inspect-creators-word = 작성자
+inspect-areas-word = 본문 영역
+inspect-owners-word = 소유자
+inspect-triangles-word = 삼각형
+inspect-made-of = { $count } 다음 중 하나 { $all } 항목
+inspect-kilobytes = { $n } KB 디스크 공간
+inspect-linkset-order = { $count }, 왼쪽
+inspect-reset-columns = 열 재설정
+inspect-by-creators =
+    { $count ->
+        [one] { $items } by 하나의 창조자
+       *[other] { $items } 다음으로 { $count } 작성자
+    }
+inspect-owner-button = 소유자 프로필
+inspect-group-button = 그룹 프로필
+inspect-creator-button = 크리에이터 프로필
+inspect-land-others = 다른 { $n }
+inspect-land-these = 이 { $n }
+inspect-land-free = 무료 { $n }
+inspect-land-unknown = 패키지의 방은 개체가 모두 당신이있는 패킷에있을 때 보여줍니다.
+ui-login-unencrypted = 암호화되지 않은 로그인
+ui-login-unencrypted-body = { $server }의 로그인 주소가 https:// 대신 http://로 시작하므로 로그인 정보가 암호화되지 않습니다. 공용 Wi-Fi, 공유 네트워크 또는 그리드로 가는 경로에서 트래픽을 볼 수 있는 사람이 비밀번호를 읽어 계정을 사용할 수 있습니다. 아직 아무 정보도 전송되지 않았습니다. 그리드에 https:// 로그인 주소를 요청할 수 있습니다. 선택 사항은 이 서버에 대해 저장됩니다.
+ui-login-unencrypted-accept = 암호화 없이 로그인
+world-appearance-clothing-layers-full = 60개의 의류 레이어가 모두 사용되고 있습니다. 이 아이템을 입기 전에 1층을 제거하십시오.
+ui-options-ray-tracing = 레이 트레이싱
+ui-options-ray-traced-shadows = 레이트레이싱 일몰
+ui-options-ray-traced-shadows-help = 태양과 달의 그림자는 그림지도에서 읽는 대신 광선별로 추적됩니다. 물체가 만나는 정확한 위치와 모든 거리를 알 수 있습니다. 그림이 필요하고 레이 트레이싱을 지원하는 그래픽 카드가 필요하며 그래닉 카트에 더 많은 비용이 소요됩니다.
+ui-options-ray-traced-lights = 지역 빛 그림자
+ui-options-ray-traced-lights-help = 주변의 포인트 라이트(램프, 촛불)에서 나오는 그림자는 다른 방법으로는 투사되지 않으며, 프로젝터 그림 자가 켜져 있을 때 프로젝트로부터 나온 그림이 그림 맵 대신에 나타납니다. 가장 비싼 레이 트레이싱 옵션: 통합 그래픽에서 제거하는 것이 좋습니다.
+ui-options-rt-quality = 레이 트레이싱 품질
+ui-options-rt-quality-help = 모든 트레이싱 효과는 켜져 있습니다. 낮은 수준에서는 더 작은 그래픽 카드에서 초당 더 많은 프레임을 생성하기 위해 샘플이 적고 간접적인 조명이 더 거친 그리드에 추적됩니다. 높은 레벨은 Deluxe(RT)의 전체 이미지입니다.
+ui-options-rt-sun-softness = 태양 그림자 부드러움
+ui-options-rt-sun-softness-help = 태양 그림자의 가장자리가 얼마나 부드러운지를 나타냅니다. 1은 실제 태풍, 0은 날카로운 가장자리는 더 흐린 태평양을 나타낸다.
+ui-options-rt-lamp-softness = 지역 빛 그림자 부드러움
+ui-options-rt-lamp-softness-help = 램프의 추적 그림자의 가장자리가 얼마나 부드러운지: 1은 각 램플의 크기를 따르고, 0은 날카로운 가장자리는 따릅니다.
+ui-options-rt-shadow-lamps = 그림자를 던지는 불빛
+ui-options-rt-shadow-lamps-help = 가장 가까운 조명 중 몇 개가 추적 그림자를 만들고 나머지 조명은 계속해서 그림이 없습니다. 적은 조명을 사용하면 그래픽 카드 비용이 낮아집니다.
+ui-options-ray-traced-indirect = 레이트레이싱 간접광
+ui-options-ray-traced-indirect-help = GTAO의 간접광 대신 스크린이 보여주는 것 이상으로 추적되는 주변 표면에 반사된 빛
+ui-options-gi-probes = 글로벌 조명 프로브
+ui-options-gi-probes-help = 프로브는 여러 번 반사되는 빛과 그들이 보는 하늘을 유지하는 장면을 통해 확산됩니다. 닫힌 방은 어둡게 남아 있고, 빛은 모퉁이를 돌아갑니다. 그래픽 카드에서 약 0.8 ms
+ui-options-ray-traced-reflections = 레이트레이싱 반사
+ui-options-ray-traced-reflections-help = 화면이 보여주지 않는 것의 반사, 화질 공간 반사 대신에, 그것은 켜져 있어야합니다
+ui-options-ray-tracing-unsupported = 이 그래픽 카드 또는 드라이버에는 레이 트레이싱이 없습니다.
+ui-options-ray-tracing-vr = VR을 위해 시작된 세션에서 사용할 수 없음
+ui-options-tab-ray-tracing = 레이 트레이싱
+ui-options-deluxe-rt-warning-title = 디럭스(RT)를 켜십니까?
+ui-options-deluxe-rt-warning-text = Deluxe (RT)는 High 입니다. 그래픽 카드가 그림자와 간접적인 빛을 추적합니다. 하드웨어 레이 트레이싱(NVIDIA RTX, AMD Radeon RX 6000 이상, Intel Arc)과 최신 드라이버가 필요하며 High 보다 비용이 많이 듭니다. 중간급 카트리지에서는 붐비는 장소에서 프레임 속도가 많이 감소할 수 있습니다. Ray tracing은 아직 테스트 중입니다. 이미지가 잘못 보이거나 뷰어가 느려지면 High로 되돌아갑니다. Ray Tracing 탭은 설정을 유지합니다.
+ui-options-deluxe-rt-warning-turn-on = 켜기
+ui-options-ray-tracing-needs-shadows = 그림자가 필요해
+ui-options-ray-tracing-needs-ssr = 화면 공간 반사가 필요합니다
+ui-options-preset-deluxe = 디럭스 (RT)
+ui-options-normal-precision = 반사 정밀도
+ui-options-normal-precision-help = 반사를 위해 각 서페이스의 방향을 유지하는 정도. 표준은 자동차 페인트와 같은 부드럽고 곡선적인 표면의 반사에서 스텝을 보여줄 수 있으며, 고급은 이들을 제거하고 더 많은 비디오 메모리를 사용합니다. 자동은 스탯이 가장 많이 나타나는 레이 트레이싱 반사에 고급을 사용하며, 그렇지 않은 경우에는 기본
+ui-options-normal-precision-automatic = 자동
+ui-options-normal-precision-standard = 표준
+ui-options-normal-precision-high = 높음
+ui-options-private-point-at-help = 편집 중인 대상체를 숨기고, 에디션 암을 내려놓고 에ディ션 빔을 숨깁니다.
+ui-options-private-edit-beam = 편집 빔 숨기기
+ui-options-private-edit-beam-help = 개체를 편집하거나 잡는 동안 화면과 다른 시청자 모두에서 빔을 완전히 숨깁니다. 선택 대상 힌트 및 주어진/놓인 빔은 영향을 받지 않습니다.
+common-window-outside = 뷰어 창 밖으로 이동
+common-window-inside = 뷰어 창으로 다시 가져오기
+common-window-rename-name = 이름을 바꾸려면 두 번 클릭
+common-carry-hint = 여기에 드롭하려면 클릭, ESC를 놓으려면
+common-window-paused-photo = 사진 모드가 열려 있을 때 일시 정지됨
+common-window-paused-director = 감독이 재생하는 동안 일시 정지됨
+common-window-paused-interface = 인터페이스가 꺼져 있을 때 일시 정지됨
+ui-options-warn-live-preview = 텍스처나 재료를 미리 볼 수 없을 때 경고
+ui-options-warn-live-preview-help = 빌드 창의 선택자에서 no-copy 항목을 클릭하면 OK: say so 까지는 아무것도 적용되지 않습니다.
+ui-texture-picker-live-preview-texture = 이 텍스처는 복사가 불가능하기 때문에 미리보기를 표시할 수 없습니다.
+ui-texture-picker-live-preview-material = 이 자료는 사본이 없기 때문에 미리보기를 표시할 수 없습니다.
+fetch-invalid-url = 잘못된 URL
+ui-chat-close-all-ims = 모든 IM 대화 닫기
+ui-chat-close-all-ims-question = 모든 IM 대화를 닫고 활성 통화를 마치십시오.
+ui-chat-confirm-close-all-ims = 모두 닫기 전에 확인하기 IM 대화
+ui-chat-confirm-close-all-ims-help = 하나는 활성화된 음성 통화가있는 경우 모든 IM 대화를 닫기 전에 물어.
+ui-options-aurora-controls-compact-help = 제어 창은 조이스틱, 확대/축소 및 롤링을 포함하여 카메라에서 컴팩트하게 열립니다. 제목 바 버튼은 콤팩트와 전체 사이를 전환하며 이것도 설정합니다. 클래식 창에서는 레거시 뷰어의 작은 카メ라 창 대신에 카미라가 열리게 됩니다.
+rlva-restart-hint = RLVa은 로그인할 때 시작됩니다. 일단 실행되면, 켜거나 끄는 것은 다음에 뷰어를 시작할 때 효과가 나타납니다: 제한 객체 hold는 그때까지 남아 있습니다.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa은 재부팅 후에 사용할 수 있습니다.
+rlva-toggle-disabled-restart = RLVa은 재시작 후 비활성화됩니다.
+livemesh-import-connect = 가져오기 LOD를 준비하기 위해 플러그인 0.11.0 이상이 있는 Blender 또는 플루그인2.0 이상이 있는 Maya를 연결합니다.
+livemesh-import-preparing = Blender 또는 Maya에서 개체 및 LOD 준비...
+livemesh-import-ready = LOD를 받았습니다 가져오기 준비되었습니다
+livemesh-import-failed = 가져오기 준비 실패: { $error }
+livemesh-import-timeout = Blender 또는 Maya가 가져오기 준비를 완료하지 않았습니다. 연결을 확인하고(Blender에서는 Object Mode를 사용) 다시 시도합니다.
+livemesh-shape-apply-tooltip = 권한 수정을 선택하고, Blender 또는 Maya에서 선택한 골격과 그 바인딩 메쉬를 적용합니다(MayaStar rig의 경우 MayaStar를 통해). 로컬 Second Life 호환 골절을 선정합니다.
+livemesh-shape-update-apply = 블렌더 플러그인을 0.10.0 이상으로 또는 마야 플라그인 을 2.4.0 이하로 업데이트한 다음 다시 연결합니다.
+livemesh-shape-applied = 선택한 골격에 적용된 모양.
+livemesh-shape-tooltip = 마모된 모양의 수정 권한을 확인하고 Blender 또는 Maya에서 새로운 리그드 참조 바디를 만듭니다.
+livemesh-shape-connect = 먼저 Blender 또는 Maya에서 Aurora 플러그인을 연결합니다.
+livemesh-shape-update-plugin = 블렌더 플러그인을 0.9.0 이상으로 또는 마야 플라그인 을 1.3.0 이하로 업데이트한 다음 다시 연결합니다.
+livemesh-shape-timeout = Blender 또는 Maya가 가져오기를 확인하지 않았습니다. 다시 시도하십시오(Blender에서 개체 모드로 전환).
+livemesh-shape-success = 모양이 새로운 리그드 참조 바디로 가져옵니다.
+blender-live-maya-version = Aurora Maya용 LiveMesh { $version }
+blender-live-maya-instructions = ZIP 파일을 저장하고 압축 해제한 다음 install.mel을 Maya 뷰포트로 드래그합니다. Aurora 선반에서 LiveMesh를 열고 메시를 추가하고 Connect(연결)을 클릭합니다.
+blender-live-save-maya = Maya 플러그인 저장…
+blender-live-maya-saved = ZIP 파일을 압축 해제하고 install.mel을 Maya 뷰포트로 드래그합니다.
+livemesh-plugin-connected = 플러그인 연결됨
+livemesh-token-refused = 프로그램이 이 미리보기의 키 없이 연결하려고 시도했습니다. Blender 또는 Maya의 Aurora 플러그인만 연결할 수 있습니다.
+livemesh-waiting-plugin = 블렌더 또는 마야를 기다리는 중...
+blender-live-objects-help = Blender 또는 Maya가 보내는 메쉬입니다. 하나를 선택하여 배치하거나 메뉴에서 가져옵니다.
+blender-live-size-note = 크기는 플러그인이 보내는 것을 곱하여 나중에 Blender 또는 Maya에서 편집할 때 유지됩니다.
+blender-live-avatar-help = 리그드 메시의 경우: 모양을 Blender 또는 Maya로 보내서 모델링합니다.
+livemesh-shape-section = 블렌더 또는 마야에서의 모양
+blender-live-import-help = 일반 가져오기를 위한 개체의 스냅샷을 고정합니다: 검토, 가격, 그리고 확인. 나중에 Blender 또는 Maya에서 편집하면 변경되지 않습니다.
+blender-live-changed-tip = Blender 또는 Maya가 이 개체를 마지막으로 변경한 시간
+fit-lab-section = 맞는 실험실
+fit-lab-help = 당신이 입고 있는 옷을 입은 마네킹들은 각자 다른 신체를 가지고 있으며, 당신 앞에 서서 의류가 여러 모양에 어떻게 맞는지 보여줍니다.
+fit-lab-body-me = 내가
+fit-lab-body-slim = 슬림
+fit-lab-body-curvy = 곡선
+fit-lab-body-full = 전체 그림
+fit-lab-body-athletic = 스포츠
+fit-lab-body-tall = 높음
+fit-lab-body-petite = 작음
+fit-lab-motion = 동작
+fit-lab-motion-stand = 일어서기
+fit-lab-motion-walk = 걷기
+fit-lab-motion-sit = 앉아
+fit-lab-motion-range = 운동의 범위
+fit-lab-pose = 포즈
+fit-lab-pose-all = 모두, 차례로
+fit-lab-pose-arms-up = 팔을 들어
+fit-lab-pose-reach = 앞으로 뻗어
+fit-lab-pose-hug = 팔을 벌려
+fit-lab-pose-squat = 스쿼트
+fit-lab-pose-kneel = 무릎 꿇어
+fit-lab-pose-knee-up = 무릎 올려
+fit-lab-pose-twist = 트위스트
+fit-lab-pose-bend = 앞으로 구부리기
+fit-lab-motion-like-me = 나처럼
+fit-lab-show = 마네킹을 보여주세요
+fit-lab-place = 여기로 데려와
+fit-lab-remove = 마네킹을 제거합니다.
+fit-lab-choose = 적어도 하나의 몸을 선택합니다.
+fit-lab-clip = 시체가 어디를 통과하는지 보여주기
+fit-lab-clip-note = 빨간색: 의류에서 나오는 몸. 황동색: 몸과 의류가 만나는 부분입니다. 아바타와 마네킹의 경우, 카메라에서 보이는 모습입니다. 다른 모든 옷은 몸으로 간주됩니다. 의류 위에 입고 있는 자켓이나 머리카락을 벗으십시오.
+blender-live-levels-pending = 가져오기를 클릭하면 Blender 또는 Maya가 세부 수준을 준비합니다.
+blender-live-levels-note = 각 개체의 LiveMesh 설정에서 Blender 또는 Maya로 준비합니다.
+blender-live-quick-look-changed = 블렌더 또는 마야 { $ago } 전에 변경.
+blender-live-warning-textures = 텍스처 건너뛰기, 일반 색상 보이기
+blender-live-warning-not-sent = 미리 보기에 없음
+blender-live-undo-derez = 레벨 { $name } · 여전히 플러그인의 목록에
+blender-live-undo-detach = { $name } · 아직 플러그인의 목록에 있습니다
+inventory-open-current = 열기
+inventory-folder-back = 뒤로
+inventory-folder-forward = 앞으로
+inventory-folder-up = 한 단계 위로 이동
+area-search-metres = { $n } m
+area-search-band-reach = 도달 가능한 거리
+area-search-band-close = 가까이서
+area-search-band-around = 당신 주위에
+area-search-band-further = 더
+area-search-band-far = 월
+area-search-band = 영역
+area-search-within = 내부 { $distance }
+area-search-within-across = 내부 { $distance } 횡단
+area-search-between = { $from }–{ $to }
+area-search-any-distance = 모든 거리 보기
+area-search-from = 거리에서
+area-search-to = 목적지까지 거리
+area-search-bar-tip =
+    { $count ->
+        [one] 하나의 물체, { $from } 둘 { $to }
+       *[other] { $count } 개체, { $from } 둘 { $to }
+    }
+area-search-of-objects = { $total } 개체 중
+area-search-li = { $value } 리
+area-search-li-count = { $value } 지상 충격
+area-search-owner-count =
+    { $count ->
+        [one] 하나의 소유자
+       *[other] { $count } 소유자
+    }
+area-search-object-count =
+    { $count ->
+        [one] 하나의 객체
+       *[other] { $count } 개체
+    }
+area-search-objects-word = 개체
+area-search-in-reach = 여기
+area-search-tab-objects = 개체
+area-search-tab-owners = 소유자
+area-search-hint-wide = 개체, 소유자, 생성자 또는 UUID
+area-search-kind-heading = 물체의 종류
+area-search-kind-tip = 클릭: 이들만. 다시: 숨겨진.
+area-search-kind-any = 어느 날
+area-search-kind-only = 이것들만
+area-search-kind-hidden = 숨겨진
+area-search-kind-attached = 첨부된
+area-search-kind-probes = 테스트
+area-search-click-all = 모두
+area-search-click-any-short = 어떤 것도
+area-search-permissions = 권한
+area-search-price-heading = 판매 가격, 개체에 대한 판촉
+area-search-price-to = 둘
+area-search-price-tip = “판매용” 먼저 선택
+area-search-linked = 연결된 소수
+area-search-one-field = 하나의 필드에서 검색
+area-search-regex-switch = 정규식
+area-search-regex-invalid = 올바른 정규식이 아닙니다
+area-search-reset-filters-tip = 모든 필터 복원; 검색 텍스트 남아 있음
+area-search-save-defaults-tip = 이제부터는 다음 필터로 열기
+area-search-reset-search = 검색 텍스트 재설정
+area-search-reset-filters = 필터 옵션 재설정
+area-search-reset-ranges = 거리 및 가격 재설정
+area-search-reset-all = 모두 초기화
+area-search-more = 더 보기
+area-search-several = 여러 개 선택
+area-search-several-tip = 클릭하면 선택 영역에 추가됩니다(또한 Ctrl 또는 Shift + click, Ctrl+A)
+area-search-actions = 동작
+area-search-nothing = 아직 객체를 받지 않았습니다.
+area-search-nothing-for-sale = 여기서 판매하는 것은 없습니다.
+area-search-not-for-sale = 판매용이 아닙니다
+area-search-from-price = 부터 { $price }
+area-search-nearest = 가장 가까운 먼저
+area-search-heaviest = 가장 무거운 순서로
+area-search-order-tip = 순서 변경: 가장 가까운 또는 가장 무거운 먼저
+area-search-rank = #{ $rank } 다음 중 하나 { $all }
+area-search-rank-here = #{ $rank } 여기
+area-search-card-more = 모든 그림 보이기
+area-search-card-less = 덜 보기
+area-search-open-group = 그룹 열기
+area-search-spoken = { $name }, { $distance }, 땅 충격 { $li }, 소유자 { $owner }
+area-search-owner-spoken = { $name }, { $count } 개체, 토지 영향 { $li }
+area-search-stage-line = { $distance } 멀리 · { $li } 토지 영향 · { $owner }
+area-search-tile-3d = 3D 보기
+area-search-on = { $count }에
+area-search-on-word = 켜짐
+area-search-more-on =
+    { $count ->
+        [one] 하나 더 필터에
+       *[other] { $count } 더 많은 필터에
+    }
+ui-options-legacy-lists = 레거시 뷰어에서 목록 가져오기
+ui-options-legacy-lists-help = 이 계정의 텔레포트 기록, 자산 블랙리스트, 미디어 필터 목록 및 연락처 세트를 추가합니다. Legacy Viewer의 파일은 읽기 전용입니다.
+ui-options-legacy-lists-button = 기존 뷰어에서 가져오기...
+ui-options-legacy-lists-no-account = 이 계정의 목록을 가져오려면 로그인하십시오.
+ui-options-legacy-lists-title = 레거시 뷰어에서 가져오기
+ui-options-legacy-lists-text = 모든 것이 이 계정의 목록에 추가되고 여기에서 아무것도 제거되지 않습니다. 자산 블랙리스트 이름은 한 번에 세계를 떠납니다. 다시 가져오면 여기서 제거한 것을 다시 불러옵니다.
+ui-options-legacy-lists-searching = 레거시 뷰어의 폴더를 찾는 중...
+ui-options-legacy-lists-none = 이 계정에 대해 목록이 있는 Legacy Viewer 폴더를 찾을 수 없습니다.
+ui-options-legacy-lists-teleports = 텔레포트 역사 ({ $count })
+ui-options-legacy-lists-derender = 자산 블랙리스트 ({ $count })
+ui-options-legacy-lists-media = 미디어 필터 목록 ({ $count })
+ui-options-legacy-lists-contact-set-entries = 연락처 세트 항목 ({ $count })
+ui-options-legacy-lists-confirm = 가져오기
+ui-options-legacy-lists-added = 추가 또는 업데이트되었습니다. { $teleports }, 자산 블랙리스트: { $derender }미디어 필터: { $media }, 연락처 설정 항목: { $sets }.
+ui-options-legacy-lists-nothing = 새로운 것은 없습니다: 이 계정에는 이미 이러한 목록이 있습니다.
+ui-options-legacy-lists-failed = 읽을 수 없음: { $files }.
+ui-options-legacy-lists-unsaved = 저장할 수 없습니다. { $files }입니다.
+ui-options-legacy-lists-other-grid = 이 격자에서 같은 이름의 폴더는 다른 격서에 속할 수 있습니다: 그것이 올바른지 확인하십시오.
+ui-options-build-show-beams-hint = 편집, 그립핑 또는 전달할 때 선택 빔과 다른 아바타의 빔을 보여줍니다. 이것은 디스플레이만 제어하며, 개인정보 > 편곡 빔 숨기기 를 사용하여 로컬 및 네트워크에서 편성 빔이 중지됩니다.
+teleport-failed-title = 텔레포트 실패.
+teleport-error-invalid-tport = 텔레포트 시도는 분당 6회로 제한되어 있습니다. 문제가 발생하면, 1분간 기다린 후 다시 시도해 보세요. 만약 문제가 지속된다면, 로그아웃하고 다시 로거인하십시오.
+teleport-error-invalid-region-handoff = 지역 횡단을 처리하는 데 문제가 발생했습니다. 지역을 횡선하기 전에 다시 로그인해야 할 수 있습니다. 이 메시지가 계속 나타나면 지원팀에 연락하십시오.
+teleport-error-blocked-tport = 죄송합니다, 현재 텔레포트가 차단되어 있습니다. 잠시 후 다시 시도해 보십시오. 만약 여전히 텔レ포트를 할 수 없다면, 문제를 해결하기 위해서 로그아웃하고 다시 로거인하십시요.
+teleport-error-nolandmark-tport = 죄송하지만 시스템에서 랜드마크 목적지를 찾을 수 없습니다.
+teleport-error-timeout-tport = 죄송하지만 시스템이 텔레포트 연결을 완료할 수 없습니다. 잠시 후 다시 시도해 주십시오.
+teleport-error-no-help-island = 웰컴 아일랜드로 돌아갈 수 없습니다.
+teleport-error-noaccess-tport = 죄송합니다, 그 텔레포트 대상에 대한 접근권한이 없습니다.
+teleport-error-missing-attach-tport = 첨부 파일이 아직 도착하지 않았습니다. 몇 초 더 기다리거나 로그아웃한 후 다시 접속하여 텔레포트를 시도해 보세요.
+teleport-error-too-many-uploads-tport = 이 지역의 자산 대기열이 꽉 차 있습니다. 따라서 텔레포트 요청이 제때에 성공하지 못할 것입니다. 몇 분 후 다시 시도하거나 덜 붐비는 지역으로 가십시오.
+teleport-error-expired-tport = 죄송하지만 시스템이 텔레포트 요청을 적시에 완료할 수 없습니다. 몇 분 후 다시 시도해 주십시오.
+teleport-error-expired-region-handoff = 죄송하지만 시스템이 지역을 제때에 완료할 수 없습니다. 몇 분 후 다시 시도해 주십시오.
+teleport-error-preexisting-tport = 죄송하지만 시스템이 텔레포트를 시작할 수 없습니다. 몇 분 후에 다시 시도해 주십시오.
+teleport-error-no-host = 텔레포트 대상을 찾을 수 없습니다. 대상이 일시적으로 사용할 수 없거나 더 이상 존재하지 않을 수 있습니다. 몇 분 후에 다시 시도하십시오.
+teleport-error-no-inventory-host = 이 페이지는 현재 사용할 수 없습니다.
+teleport-error-must-get-age-region = 이 지역에 들어가려면 18세 이상이어야 합니다.
+teleport-error-special-usage-blocked = 지역을 입력할 수 없습니다. '{ $region }' 는 스킬 게임 지역이며, 입장하려면 특정 기준을 충족해야 합니다. 자세한 내용은 스킬게임 FAQ를 참조하십시오: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = 지역을 입력할 수 없습니다. 이 지역은 스킬 게이밍 지역이며, 참여하려면 특정 기준을 충족해야 합니다. 자세한 내용은 스킨 게이머 FAQ를 참조하십시오: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = 홈 그리드가 반환을 거부했습니다. 이것은 보통 Hypergrid 주소 설정이 다른 그리드에서 사용하는 주소와 일치하지 않는다는 것을 의미합니다. 홈 그리드의 관리자에게 연락하십시오; 다시 로그인하면 한동안 집으로 돌아갑니다.
+teleport-hint-hypergrid-unreachable = 다른 격자에 연결할 수 없습니다. 오프라인 상태이거나, 링크가 이전 주소를 가리키고 있을 수 있습니다.
+teleport-hint-hypergrid-visitors-refused = 그 격자는 어떤 격이 있는 거주자들만 허용해
+teleport-hint-hypergrid-destination-gone = 대상 영역이 더 이상 존재하지 않거나 이동되었습니다. 랜드마크 및 다른 격자에 대한 링크가 오래되어질 수 있습니다.
+toolbar-edit = 버튼과 메뉴 사용자화하기...
+toolbar-title = 단추 및 메뉴
+toolbar-interface-locked = 인터페이스가 잠겨 있습니다
+toolbar-help = 단추나 메뉴 항목을 상단, 하단 또는 사이드바로 끌어다 놓습니다. 단추를 여기에 다시 놓으면 제거됩니다. 어떤 단추든 오른쪽 클릭하면 모양을 바꿉니다.
+toolbar-help-classic = 단추나 메뉴 항목을 상단, 하단 또는 사이드바로 끌어다 놓습니다. 단추를 여기에 다시 놓으면 제거됩니다. 어떤 단추든 오른쪽 클릭하면 모양을 바꿉니다.
+toolbar-help-modes = 아이콘, 레이블, 두 가지 모두 또는 각 단추에 대한 바 기본값을 선택합니다. Aurora 메뉴 안에서 항목을 끌어서 재정렬합니다.
+import-menu-textures = 텍스처
+import-menu-animations = 애니메이션
+import-menu-sounds = 소리
+import-menu-materials = 재료
+import-menu-meshes = 메쉬
+import-menu-options = 가져오기 옵션
+import-upload-payment-title = 업로드
+import-upload-payment = 당신은 업로드하기 위해 L${ $cost }을 지불했습니다.
+import-quick-textures =
+    { $count ->
+        [one] 가져오기 · 텍스처: 1 · L${ $cost }?
+       *[other] 가져오기 · 텍스처: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] 가져오기 · 재료: 1 · L${ $cost }?
+       *[other] 가져오기 · 재료: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] 가져오기 · 소리: 1 · L${ $cost }?
+       *[other] 가져오기 · 소리: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] 가져올 크기를 선택하세요. 지원되는 텍스처는 2048 × 2048 크기로 가져올 수 있습니다.
+       *[other] ({ $count }) 가져올 크기를 선택하세요. 지원되는 텍스처는 2048 × 2048 크기로 가져올 수 있습니다.
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] 가져올 크기를 선택하세요. 지원되는 재질 이미지는 2048 × 2048 크기로 가져올 수 있습니다.
+       *[other] ({ $count }) 가져올 크기를 선택하세요. 지원되는 재질 이미지는 2048 × 2048 크기로 가져올 수 있습니다.
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = 무료 이미지를 묻지 않고 2048 × 2048 크기로 업로드
+import-quick-free-full-size-help = "텍스처 가져오기"와 "재료 가져 오기"는 업로드 비용이 L$일 때만 1024 또는 2048을 요청합니다.
+ui-bars-customize-bars = 인터페이스 사용자 정의
+build-tool-in-use = 사용 중
+build-create-options-toggle = 옵션 보기 / 숨기기
+build-create-keep-creating = 계속 만들기
+build-create-center-on-prim = 초기값 가운데
+build-create-copy-prim-rotation = 원형 회전 복사
+build-create-align-to-surface = 서페이스에 정렬
+build-capture-shape-button = 프림의 모양을 복사하세요: 이것을 클릭한 다음 세계에서 프린트
+build-capture-shape-armed = 모양을 복사하려면 원형을 클릭합니다(Escape로 취소)
+build-capture-shape-full = 20개의 모양이 보존됩니다. 하나를 제거하면 다른 하나가 복사됩니다.
+build-capture-shape-remove = 이 도형 삭제
+build-capture-shape-tooltip = 복사된 모양 ({ $kind })
+build-capture-shape-not-a-prim = prim의 모양만 복사할 수 있습니다.
+build-capture-shape-mesh-or-sculpt = 메쉬나 조각된 프림의 모양은 복사할 수 없습니다.
+build-capture-shape-no-modify = 모양을 복사하려면 이 prim을 수정할 권한이 필요합니다
+import-other-options = 기타 옵션
+toolbar-button-icons = 아이콘만
+toolbar-button-text = 레이블만
+toolbar-button-icons-text = 아이콘과 레이블
+toolbar-icon-default = 기본 아이콘 복원
+toolbar-icon-choose = 아이콘 선택
+toolbar-icon-change = 아이콘 변경
+toolbar-presets = 미리 설정
+toolbar-interfaces = 인터페이스
+toolbar-interfaces-shown = 인터페이스 블록에 표시됨
+toolbar-interfaces-hidden = 인터페이스 블록에서 숨겨짐
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora 올드 스쿨
+toolbar-preset-photographer = Aurora 사진 작가
+toolbar-preset-legacy = 레거시
+toolbar-import-textures = 텍스처 가져오기
+toolbar-import-sounds = 소리 가져오기
+toolbar-import-animations = 애니메이션 가져오기
+toolbar-import-materials = 자료 가져오기
+toolbar-import-meshes = 메시 가져오기
+toolbar-import-local = 로컬 파일
+toolbar-import-advanced = 고급 가져오기
+toolbar-import-settings = 가져오기 설정
+toolbar-import-bar = 가져오기 바
+toolbar-icon-search = 아이콘 찾기...
+toolbar-in-top = 상단 도구 모음에서
+toolbar-bar-top = 상단 도구 모음
+toolbar-drop-here = 여기 놓으세요
+toolbar-separator = 분리자
+toolbar-interface-edit = 인터페이스 사용자 정의
+toolbar-edit-done = 완료됨
+toolbar-edit-top = 위쪽
+toolbar-edit-bottom = 아래쪽
+toolbar-edit-left = 왼쪽
+toolbar-edit-right = 오른쪽
+toolbar-edit-help = 항목을 클릭하여 선택하거나, 이동하려면 드래그하고, 편집 옵션을 보려면 마우스 오른쪽 단추로 누르십시오. 마치려면 이 창을 닫습니다.
+toolbar-edit-locked = 바는 잠겨 있습니다. 인터페이스를 변경하려면 아래에서 잠금을 해제합니다.
+toolbar-edit-move = 다음으로 이동
+toolbar-edit-split-before = 이전에 분할
+toolbar-edit-split-after = 다음으로 나누기
+toolbar-edit-merge-before = 이전 블록과 병합
+toolbar-edit-merge-after = 다음 블록으로 병합
+toolbar-edit-merge-groups = 이 블록들을 병합하십시오
+toolbar-drawer = 서랍
+toolbar-drawer-default-mode = 단추의 기본 표시
+toolbar-drawer-closes = 버튼을 클릭한 후 닫기
+toolbar-block-shortcut = 단축키:
+toolbar-drawer-hides-needs-shortcut = 단축키가 필요함
+toolbar-floating-close-button = 닫기 단추 추가
+toolbar-block-name = 블록 이름:
+toolbar-block-button-mode = 블록 단추 표시
+toolbar-button-inherited = 상속됨
+toolbar-drawer-hides-button = 플로팅 중 단추 숨기기
+toolbar-floating-new = 부동 블록
+toolbar-floating-orientation = 방향
+toolbar-floating-horizontal = 가로
+toolbar-floating-vertical = 세로
+toolbar-floating-empty = 단추 여기로 드래그
+toolbar-shortcut-title = 단축키
+toolbar-shortcut-block-name = 블록: { $name }
+toolbar-shortcut-none = 단축키 없음
+toolbar-shortcut-press-key = 키 누르기
+toolbar-shortcut-esc = Esc를 눌러 취소합니다
+toolbar-shortcut-clear = 삭제
+toolbar-shortcut-overrides = Takes over { $name }: 이 단축키는 기본 사용 대신 도구 모음을 실행합니다.
+toolbar-shortcut-used = 이미 { $names }의 단축키입니다.
+toolbar-shortcut-replace = 대체
+toolbar-shortcut-add = 추가
+toolbar-shortcut-save = 저장
+toolbar-shortcut-choose-key = 키 선택
+toolbar-shortcut-help = Ctrl, Alt 및 Shift를 켜거나 끄고 변경하려는 키를 클릭합니다. F1에서 F24까지의 경우를 제외하고 Ctrl 또는 Alt가 필요합니다.
+toolbar-shortcut-inactive = 이 단추는 막대에 없습니다: 단축키가 다시 배치되면 작동합니다.
+toolbar-shortcut-refused-keyboard = 키보드 키만 단축키가 될 수 있습니다.
+toolbar-shortcut-refused-modifier = 수정자 키만 단축키가 될 수 없습니다.
+toolbar-shortcut-refused-needs-modifier = Ctrl 또는 Alt 추가: 키 하나만 사용하거나 Shift만 사용하여 텍스트 필드에 입력합니다.
+toolbar-shortcut-refused-altgr = Ctrl+Alt 이 키와 함께 AltGr는 많은 키보드에서 문자를 입력합니다.
+toolbar-shortcut-refused-editing = 텍스트 필드는 이 단축키를 사용합니다(모두 선택, 복사, 잘라내기, 붙여넣기, 실행 취소, 다시 실행).
+toolbar-shortcut-refused-navigation = 텍스트 필드는 이 키로 이동하고 지웁니다.
+toolbar-shortcut-refused-typing = 채팅과 대화 상자는 이 키를 사용합니다.
+toolbar-shortcut-refused-system = 시스템은 이 단축키를 유지합니다.
+toolbar-shortcut-refused-window = 이 단축키는 창을 닫거나 전환합니다.
+toolbar-shortcut-refused-zoom = 이 단축키는 인터페이스를 확대합니다.
+toolbar-spacer = 블록 간격
+toolbar-add-spacer = 블록 간격 추가
+toolbar-button-settings = 단추 설정
+toolbar-button-edit = 편집 단추...
+toolbar-button-edit-title = 편집 단추
+toolbar-button-name = 단추 이름:
+toolbar-button-display = 단추 디스플레이
+toolbar-shortcut-fixed-block-help = 고정된 블록의 단축키는 그것을 보여주고 숨깁니다; 인터페이스가 편집되는 동안, 그것은 표시되어 있습니다.
+toolbar-block-settings = 블록 설정
+toolbar-parent-block-settings = 부모 블록 설정
+toolbar-block-edit = 블록 편집...
+toolbar-block-edit-title = 블록 편집
+toolbar-block-alignment = 정렬
+toolbar-block-sizing = 단추 크기
+toolbar-block-fixed-options = 고정 모드 옵션
+toolbar-block-floating-options = 부동 모드 옵션
+toolbar-block-kind-fixed = 고정된 블록
+toolbar-block-kind-drawer = 서랍
+toolbar-block-kind-floating = 부동 블록
+toolbar-block-remove = 블록 제거
+toolbar-move-block = 전체 블록을 이동하려면 드래그
+toolbar-remove-block = 블록 제거
+toolbar-drawer-empty = 이 서랍은 비어 있습니다.
+toolbar-drawer-drop = 버튼을 여기로 드래그하여 추가하거나 재정렬합니다.
+toolbar-separator-settings = 블록 간격 설정
+toolbar-separator-size = 크기 / 최소 (px)
+toolbar-separator-stretch = 사용 가능한 공간 채우기
+toolbar-separator-help = 유연한 간격은 블록이 남긴 공간을 공유합니다. 크기는 최소 너비 또는 사이드바의 높이입니다.
+toolbar-block-navigation = 네비게이션 및 SLURL
+toolbar-block-account = 계정 및 잔액
+toolbar-block-system = 시계, 표시기 및 오디오
+toolbar-block-status = 가용성 상태
+toolbar-block-balance = 균형
+toolbar-block-clock = 시계
+toolbar-block-ping = 영역 지연 시간
+toolbar-block-fps = 프레임 속도(FPS)
+toolbar-block-network = 네트워크 트래픽
+toolbar-block-media = 패킷 미디어
+toolbar-block-music = 패키지 음악
+toolbar-block-volume = 볼륨
+toolbar-block-notifications = 알림
+toolbar-block-conversations = 대화 아이콘
+toolbar-block-chat = 인근 채팅 입력
+toolbar-category-all = 모든 카테고리
+toolbar-section-main = 주
+toolbar-section-advanced = 고급
+toolbar-search-all = 검색에는 고급 명령이 포함됩니다.
+toolbar-category-avatar = 아바타와 움직임
+toolbar-category-communication = 통신
+toolbar-category-world = 세계 및 여행
+toolbar-category-creation = 생성 및 콘텐츠
+toolbar-category-interface = 인터페이스 및 카메라
+toolbar-category-advanced = 고급 도구
+toolbar-category-help = 도움말
+toolbar-category-custom = 사용자 정의 명령
+toolbar-bar-settings = 도구 모음 설정
+toolbar-menu-group = 메뉴: { $name }
+toolbar-location-bar = SLURL 주소 표시줄
+toolbar-command-build-tool-focus = 빌드 - 카메라
+toolbar-command-build-tool-grab = 빌드 - 이동
+toolbar-command-build-tool-edit = 빌드 - 편집
+toolbar-command-build-tool-create = 빌드 - 생성
+toolbar-command-build-tool-land = 빌드 - 토지
+bug-copy-version = 뷰어 버전 복사
+toolbar-notecard-save = 노트카드에 저장하기...
+toolbar-notecard-load = 노트카드에서 읽어오기
+toolbar-notecard-name = Aurora 인터페이스
+toolbar-notecard-help = 도구 모음, 버튼, 서랍 및 메뉴의 레이아웃과 모양.
+toolbar-notecard-saved = 인벤토리에 저장된 인터페이스 레이아웃.
+toolbar-notecard-invalid = 이 노트카드에는 호환 가능한 인터페이스 레이아웃이 포함되어 있지 않습니다.
+toolbar-notecard-unavailable = 이 노트카드는 더 이상 사용할 수 없거나 복사 할 수 없습니다.
+toolbar-notecard-layout-changed = 노트카드를 불러오는 동안 인터페이스가 변경되었습니다. 레이아웃을 적용하려면 다시 불러옵니다.
+toolbar-notecard-demo-valid = 사진 작가 인터페이스
+toolbar-notecard-demo-invalid = 기타 노트카드
+toolbar-notecard-too-large = 이 인터페이스 구성은 노트카드에 너무 큽니다.
+toolbar-saved-interfaces = 저장된 인터페이스
+toolbar-saved-interfaces-empty = 아직 저장된 인터페이스가 없습니다.
+toolbar-notecard-destination = 폴더: { $path }
+toolbar-notecard-folder-error = 인터페이스 폴더를 불러오거나 만들 수 없습니다. 다시 시도하십시오.
+toolbar-current-preset = 선택된 인터페이스: { $name }
+toolbar-preset-custom = 사용자 정의 인터페이스
+toolbar-preset-unsaved = 저장되지 않은 변경 사항
+toolbar-preset-save-title = 인터페이스 저장
+toolbar-preset-save-name = 인터페이스 이름
+toolbar-preset-save-new = 새로운 개인 인터페이스
+toolbar-preset-save-replace = 이 개인 인터페이스 바꾸기
+toolbar-preset-save-unavailable = 이 인터페이스를 여기에 저장할 수 없습니다. 다른 이름을 선택하거나 사용 가능한 편집 가능한 개인 인터프리터를 선택합니다.
+toolbar-interface-delete-unavailable = 이 개인 인터페이스는 삭제할 수 없습니다.
+toolbar-interface-delete-confirm = 개인 인터페이스 “{ $name }”을(를) 휴지통으로 이동할까요?

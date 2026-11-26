@@ -16098,3 +16098,739 @@ parcel-environment-empty = Δεν έχουν αποθηκευτεί περιβά
 parcel-environment-remove-all = Αφαίρεση όλων των
 parcel-environment-remove-all-title = Διαγραφή κάθε περιβάλλοντος που έχει αποθηκευτεί για ένα αγροτεμάχιο;
 parcel-environment-remove-all-text = Διαγράφονται τα περιβάλλοντα που αποθηκεύσατε για οικόπεδα σε αυτό το grid. Τα άλλα grid μένουν ως έχουν. Η ενέργεια δεν αναιρείται.
+
+### Updated release translations
+
+anim-timeline-channels-hint = Εμφάνιση των πλήκτρων περιστροφής και θέσης αυτού του οστού σε δικές τους σειρές
+anim-timeline-channel-rotation = Περιστροφή
+anim-timeline-channel-location = Τοποθεσία
+anim-timeline-keying-hint = Με την Τοποθεσία, η Κίνηση παίρνει μια άρθρωση μόνη της, έξω από την αλυσίδα του Τα κινούμενα σχέδια δεν έχουν πλήκτρα κλίμακας.
+anim-timeline-keying-auto = Αυτόματο: περιστροφή, και θέση για τη λεκάνη και τις κινούμενες ενώσεις
+anim-timeline-keying-auto-short = Αυτόματα
+anim-timeline-keying-loc-rot = Τοποθεσία και περιστροφή
+anim-timeline-keying-loc-rot-short = Τοποθεσία + Ρίζα
+anim-timeline-keying-rot-short = Κόκκινο
+anim-timeline-keying-loc-short = Τοποθεσία
+anim-edit-shortcut-play = Αναπαραγωγή ή παύση
+area-search-scope-heading = Πού
+area-search-scope-parcel = Αγροτεμάχιο
+area-search-scope-region = Περιφέρεια
+area-search-scope-neighbours = Γείτονες
+area-search-objects-heading = Σε ποια αντικείμενα
+inventory-copy-selection-count =
+    { $count ->
+        [one] Αντιγραφή 1 αντικειμένου
+       *[other] Αντιγραφή { $count } αντικειμένων
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Σύνδεσμος 1 προϊόν
+       *[other] Σύνδεσμος { $count } αντικείμενα
+    }
+inventory-drop-move-here = Μετακινηθείτε εδώ
+inventory-drop-copy-here = Αντιγράψτε το εδώ
+inventory-drop-link-here = Δημιουργήστε συνδέσμους εδώ
+inventory-sort-description = Περιγραφή
+inventory-sort-reversed = { $order } (αντιστρόφως)
+inventory-column-creator = Δημιουργός
+inventory-column-count = Στοιχεία
+inventory-columns-fit = Μεγέθυνση όλων των στηλών ώστε να χωρούν
+inventory-columns-reset-widths = Επαναφορά πλατών στηλών
+inventory-back = Πίσω
+inventory-forward = Προώθηση
+inventory-up = Πάνω κατά ένα επίπεδο
+keybinds-inventory-root = Μετάβαση στην κορυφή
+keybinds-inventory-search = Αναζήτηση στην απογραφή
+keybinds-inventory-filter = Φιλτράρετε το φάκελο
+keybinds-inventory-preview = Εμφάνιση του παραθύρου προεπισκόπησης
+keybinds-inventory-view-large = Μεγάλες εικόνες
+keybinds-inventory-view-medium = Εικόνες μεσαίου μεγέθους
+keybinds-inventory-view-small = Μικρές εικόνες
+keybinds-inventory-view-compact = Συμπαγής προβολή
+keybinds-inventory-view-details = Προβολή λεπτομερειών
+keybinds-inventory-view-tiles = Προβολή πλακιδίων
+keybinds-inventory-toggle = Επιλογή ή ακύρωση επιλογής της γραμμής που βρίσκεται σε εστίαση
+keybinds-inventory-menu = Άνοιγμα του μενού της επιλογής
+keybinds-inventory-purge = Εκκαθάριση από τον κάδο απορριμμάτων
+keybinds-inventory-refused = Το { $keys } παραμένει το κλειδί της λίστας αποθεμάτων: επιλέξτε άλλο.
+inventory-path-edit = Πληκτρολογήστε μια διαδρομή
+inventory-path-subfolders = Υποφάκελοι
+inventory-copy-path = Αντιγραφή διαδρομής
+inventory-show-in-folder = Εμφάνιση στο φάκελο
+inventory-pin = Γρήγορη πρόσβαση
+inventory-unpin = Αποσύνδεση από Γρήγορη πρόσβαση
+inventory-quick-access = • Γρήγορη πρόσβαση
+inventory-quick-access-drop = Αποθέστε έναν φάκελο εδώ για να τον καρφιτσώσετε
+inventory-invert-selection = Αντιστροφή της επιλογής
+inventory-undo = Αναίρεση
+inventory-redo = Επανάληψη
+inventory-undo-step = Αναίρεση { $what }
+inventory-redo-step = Επανάληψη { $what }
+inventory-history-move =
+    { $count ->
+        [one] Προβολή 1 έως 1 από 1 προϊόν
+       *[other] Εμφάνιση 1 - 8 από { $count } αντικείμενα
+    }
+inventory-history-delete =
+    { $count ->
+        [one] Εμφάνιση 1 - 1 από 1 προϊόν
+       *[other] Εμφάνιση 1 - 8 από { $count } αντικείμενα
+    }
+inventory-history-rename = μετονομασία
+inventory-history-new-folder = Δημιουργία νέου φακέλου
+inventory-history-copy =
+    { $count ->
+        [one] Αντίγραφο 1 αντικειμένου
+       *[other] Αντίγραφο των { $count } αντικειμένων
+    }
+inventory-history-link =
+    { $count ->
+        [one] Σύνδεσμος σε 1 αντικείμενο
+       *[other] Σύνδεσμοι σε { $count } αντικείμενα
+    }
+inventory-undo-nothing = Τίποτα δεν έχει απομείνει για αναίρεση: αυτά τα στοιχεία έχουν μετακινηθεί ή έχουν εξαφανιστεί.
+inventory-redo-nothing = Τίποτα δεν έχει απομείνει για να επαναλάβετε: αυτά τα στοιχεία έχουν μετακινηθεί ή έχουν εξαφανιστεί.
+inventory-undo-empty = Τίποτα να αναιρέσεις.
+inventory-redo-empty = Τίποτα να ξανακάνεις.
+inventory-undo-dropped = Τα αντικείμενα του τελευταίου βήματος έχουν μετακινηθεί ή έχουν χαθεί: έχει πέσει Αναίρεση ξανά για το προηγούμενο βήμα.
+inventory-redo-dropped = Τα αντικείμενα του επόμενου βήματος έχουν μετακινηθεί ή έχουν χαθεί: έπεσε.Επαναλάβετε ξανά για το επόμενο βήμα.
+inventory-undo-folder-not-empty = Αυτός ο νέος φάκελος περιέχει στοιχεία που έχουν τοποθετηθεί εκεί από τότε: μετακινήστε τα πρώτα ή διαγράψτε τον φάκελο μόνοι σας.
+inventory-undo-kept-out = Αυτά τα αντικείμενα βρίσκονται στην τρέχουσα στολή ή στις καταχωρήσεις της Αγοράς τώρα: αλλάξτε τα εκεί.
+inventory-restore-to = Επαναφορά στο “{ $folder }”
+inventory-restore-to-origins = Επαναφορά στους φακέλους τους
+inventory-purge-no-undo = Η Αναίρεση δεν μπορεί να τις επαναφέρει.
+inventory-new-tab = Νέα καρτέλα
+inventory-close-tab = Κλείσιμο καρτέλας
+inventory-next-tab = Επόμενη καρτέλα
+inventory-previous-tab = Προηγούμενη καρτέλα
+inventory-open-in-new-tab = Άνοιγμα σε νέα καρτέλα
+inventory-tabs-limit = Το πολύ { $count } καρτέλες.
+inventory-copy-to-other-pane = Αντιγραφή στο άλλο παράθυρο
+inventory-move-to-other-pane = Μετακίνηση στο άλλο τμήμα παραθύρου
+inventory-resize-columns = Κάντε διπλό κλικ για να προσαρμόσετε τη στήλη στα αριστερά στα περιεχόμενά της.
+inventory-resize-columns-first = Σύρετε για να αλλάξετε το μέγεθος των στηλών. Κάντε διπλό κλικ για να δώσετε στην πρώτη στήλη το συνηθισμένο πλάτος της.
+inventory-sort-by-column = Κάντε κλικ για να ταξινομήσετε με βάση αυτήν τη στήλη, ξανά για να αντιστρέψετε τη σειρά.Σύρετε για να μετακινήσετε τη στήλης.
+inventory-filter-hint = Φιλτράρετε αυτόν το φάκελο…
+inventory-filter-close = Κλείσιμο του φίλτρου
+inventory-filter-nothing = Τίποτα δεν ταιριάζει με το φίλτρο
+inventory-view-compact = Συμπαγής προβολή
+inventory-view-tiles = Προβολή πλακιδίων
+inventory-view-per-folder = Αποθήκευση της προβολής κάθε φακέλου
+inventory-group-by = Ομαδοποίηση κατά
+inventory-group-none = Κανένα
+inventory-group-folders = Φάκελοι
+inventory-group-unknown-creator = Δημιουργός άγνωστος ακόμα
+inventory-group-today = Σήμερα
+inventory-group-yesterday = Χθες
+inventory-group-this-week = Τις τελευταίες 7 ημέρες
+inventory-group-this-month = Τις τελευταίες 30 ημέρες
+inventory-group-this-year = Νωρίτερα φέτος
+inventory-group-earlier = Πριν από πολύ καιρό
+inventory-group-no-date = Δεν υπάρχει ημερομηνία
+cmdline-mod-zoffset-usage = Ορίστε το ύψος του άβαταρ σας (χρήση: /τιμή ή +δέλτα).
+dev-toolbox-n4 = Φόρτωση απογραφής
+dev-toolbox-what-n4 = Οι φάκελοι διαβάστηκαν, απέτυχαν και έφυγαν, ο φορτωτής διαβάζει κατά την πτήση και επαναλαμβάνει τις προσπάθειες.
+ui-context-inspect-avatar = Επιθεώρηση του άβαταρ
+inspect-window = Επιθεώρηση
+inspect-tab-objects = Αντικείμενα
+inspect-objects-title =
+    { $count ->
+        [one] { $count } αντικείμενο
+       *[other] { $count } αντικείμενα
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } αντικείμενο
+       *[other] { $count } αντικείμενα
+    }
+inspect-open-profile = Ανοίξτε το προφίλ
+inspect-over-limit = Πάνω από το όριο σας
+inspect-limit-tip = Το όριο πολυπλοκότητας σας: { $limit }
+inspect-search = Αναζήτηση αντικειμένων ή δημιουργών
+inspect-outlined = { $name } περιγράφεται στον κόσμο
+inspect-area-head = Κεφάλι
+inspect-area-body = Σώμα
+inspect-area-arms = Βραχία και χέρια
+inspect-area-legs = Πόδια και πόδια
+inspect-area-hud = ΧΟΥΝΤ
+inspect-area-other = Άλλα
+inspect-area-world = Αντικείμενα
+inspect-own-eyes = Τα μάτια του συστήματος
+inspect-own-body = Σώμα του συστήματος
+inspect-own-description = Μέρος του ίδιου του άβαταρ, όχι ένα συνημμένο
+inspect-own-maker = Άβαταρ · Second Life
+inspect-own-place = Άβαταρ
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } ΜΒ
+inspect-section-complexity = { $value } πολυπλοκότητα
+inspect-no-match = Τίποτα δεν ταιριάζει με “{ $query }”.
+inspect-spoken-worn = { $name }, Φοριέται επάνω { $point }, πολυπλοκότητα { $complexity }, κατασκευασμένο από { $creator }
+inspect-spoken-object = { $name }, που ανήκει σε { $owner }, πολυπλοκότητα { $complexity }, κατασκευασμένο από { $creator }
+inspect-look-at-tip = Μετακινήστε την κάμερα σε αυτό
+inspect-profile-tip = Ανοίξτε το προφίλ του δημιουργού
+inspect-made-by = Κατασκευασμένο από
+inspect-owned-by = Ιδιοκτησία του
+inspect-worn-on = Φοριέται πάνω από
+inspect-prims-count =
+    { $count ->
+        [one] { $count } πρωτότυπο
+       *[other] { $count } πρώτοι αριθμοί
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Μνήμη υφής
+inspect-tile-vram = Μνήμη γραφικών
+inspect-tile-prims = Βασικά στοιχεία
+board-close = Κλείστε το { $title }
+board-grow = Μεγέθυνση εικόνας { $title }
+board-remove = Κατάργηση του { $name }
+board-more = και { $count } περισσότερα
+board-more-short = +{ $count }
+board-some-of = { $shown } του { $all }
+board-of-all = του { $all }
+stage-turn-left = Στρίψε αριστερά
+stage-turn-right = Στρίψε δεξιά
+stage-higher = Κοιτάξτε από ψηλά
+stage-lower = Κοιτάξτε από κάτω
+stage-nearer = Πιο κοντά.
+stage-further = Πιο μακριά από εμένα
+stage-reset = Επιστροφή στην αρχή
+stage-hint = Σύρετε για να περιστρέψετε, δεξιό-σύρετε να μετακινήσετε
+stage-light = Φωτεινό φόντο
+stage-dark = Σκούρο φόντο
+stage-playing = AO
+stage-paused = Σε παύση
+stage-pause-tip = Παύση της κίνησης τους
+stage-play-tip = Παίξτε το κινούμενο σχέδιό τους
+stage-loading = Προετοιμασία της τρισδιάστατης προβολής…
+stage-nothing = Τίποτα για να δείξει σε 3ακόμη.
+stage-refused = Η τρισδιάστατη προβολή είναι απενεργοποιημένη ενώ το RLVa περιορίζει αυτό που μπορείτε να δείτε.
+inspect-your-limit = Το όριο σας: { $limit }
+inspect-without-it = { $value } χωρίς αυτό
+inspect-you = Εσύ
+inspect-person = Άτομο
+inspect-difference = Διαφορά
+inspect-drawn-in-full = Σχεδιασμένο στο σύνολό του
+inspect-nobody = Η πολυπλοκότητα κανενός δεν είναι γνωστή ακόμα.
+inspect-aside-count = { $count } αγρανάπαυση
+inspect-is-aside = τοποθετείται σε παύση
+inspect-set-aside = Βάλτε στην άκρη
+inspect-set-aside-tip = Δείτε την πολυπλοκότητα χωρίς αυτό το στοιχείο.Μόνο σε αυτό το παράθυρο: τίποτα δεν αλλάζει στον κόσμο.
+inspect-put-back = Βάλτε πίσω
+inspect-put-back-tip = Μετρήστε ξανά αυτό το αντικείμενο
+inspect-complexity-spoken = Πολυπλοκότητα { $value }, αριθμός { $rank } του { $count } Οι άνθρωποι εδώ
+inspect-stage-outfit = Το ντύσιμο της ημέρας
+inspect-stage-objects = Τα αντικείμενα της έκθεσης
+inspect-stage-back = Πίσω στα πάντα
+inspect-place-made-by = { $place } · κατασκευασμένο από { $name }
+inspect-owned-by-name = Ιδιοκτησία του { $name }
+inspect-tile-items = Στοιχεία
+inspect-tile-figures = Σχήματα
+inspect-col-item = Όνομα
+inspect-point = Σημείο
+inspect-look-at = Κοίτα.
+inspect-selected-count = { $count } επιλεγμένα προϊόντα
+inspect-worn-count = { $count } φθαρμένα
+inspect-creators-word = Δημιουργοί
+inspect-areas-word = περιοχές του σώματος
+inspect-owners-word = ιδιοκτήτες
+inspect-triangles-word = τρίγωνα
+inspect-made-of = { $count } του { $all } αντικείμενα
+inspect-kilobytes = { $n } ΚΒ
+inspect-linkset-order = { $count }, σε αριστεράσειρά
+inspect-reset-columns = Επαναφορά στηλών
+inspect-by-creators =
+    { $count ->
+        [one] { $items } από έναν δημιουργό
+       *[other] { $items } από { $count } Δημιουργοί
+    }
+inspect-owner-button = Προφίλ του ιδιοκτήτη
+inspect-group-button = Προφίλ του Ομίλου
+inspect-creator-button = Το προφίλ του δημιουργού
+inspect-land-others = Άλλα { $n }
+inspect-land-these = Αυτά τα { $n }
+inspect-land-free = Δωρεάν { $n }
+inspect-land-unknown = Το δωμάτιο του δέματος δείχνει πότε τα αντικείμενα είναι όλα στο δέμα που βρίσκεστε.
+ui-login-unencrypted = Μη κρυπτογραφημένη σύνδεση
+ui-login-unencrypted-body = Η διεύθυνση σύνδεσης του { $server } αρχίζει με http:// αντί για https://, οπότε η σύνδεση δεν θα κρυπτογραφηθεί. Όποιος βλέπει την κίνηση του δικτύου σας, για παράδειγμα σε δημόσιο Wi-Fi, κοινόχρηστο δίκτυο ή καθ' οδόν προς το grid, μπορεί να διαβάσει τον κωδικό και να χρησιμοποιήσει τον λογαριασμό σας. Δεν έχει σταλεί τίποτα ακόμη. Μπορείτε να ζητήσετε διεύθυνση https://. Η επιλογή αποθηκεύεται για αυτόν τον διακομιστή.
+ui-login-unencrypted-accept = Σύνδεση χωρίς κρυπτογράφηση
+world-appearance-clothing-layers-full = Και τα 60 στρώματα του ενδύματος χρησιμοποιούνται. Αφαιρέστε ένα στρώμα πριν φορέσετε αυτό το προϊόν.
+ui-options-ray-tracing = Ανίχνευση ακτίνων
+ui-options-ray-traced-shadows = Σκιές ηλίου με ιχνηλάτηση ακτίνας
+ui-options-ray-traced-shadows-help = Οι σκιές του ήλιου και του φεγγαριού παρακολουθούνται ακτίνα με ακτίδα αντί να διαβάζονται από τους χάρτες σκιάς: ακριβώς όπου τα πράγματα αγγίζουν και σε οποιαδήποτε απόσταση.Χρειάζεται τις σκιες και μια κάρτα γραφικών με παρακολούθηση ακτίνων, και κοστίζει περισσότερο στην κάρτά γραφικά
+ui-options-ray-traced-lights = Τοπικές σκιές φωτός
+ui-options-ray-traced-lights-help = Σκιές από τα φώτα σημείου γύρω (λαμπτήρες, κεριά), που δεν ρίχνουν τίποτα διαφορετικά, και από τους προβολείς όταν είναι ενεργοποιημένη η επιλογή Η πιο ακριβή από τις επιλογές εντοπισμού ακτίνων: καλύτερα να παραμείνει στα ενσωματωμένα γραφικά
+ui-options-rt-quality = Ποιότητα ανίχνευσης ακτίνων
+ui-options-rt-quality-help = Κάθε εφέ ανίχνευσης παραμένει ενεργοποιημένο: τα χαμηλότερα επίπεδα παρακολουθούν λιγότερα δείγματα και το έμμεσο φως σε ένα πιο τραχύ πλέγμα, για περισσότερα καρέ ανά δευτερόλεπτο σε μια μικρότερη κάρτα γραφικών. Το υψηλό είναι η πλήρης εικόνα του Η επιλογή ενός επιπέδου καθορίζει επίσης τα φώτα που ρίχνουν σκιές
+ui-options-rt-sun-softness = Απαλότητα σκιάς ήλιων
+ui-options-rt-sun-softness-help = Πόσο μαλακές είναι οι άκρες των σκιών του ήλιου: 1 είναι ο πραγματικός ήλιος, 0 αιχμηρές άκρης, περισσότερες για έναν πιο θολό ήλιο
+ui-options-rt-lamp-softness = Τοπική ελαφριά μαλακότητα σκιών
+ui-options-rt-lamp-softness-help = Πόσο μαλακές είναι οι άκρες των σκιών που ακολουθούν τους λαμπτήρες: 1 ακολουθεί το μέγεθος του κάθε λαμπτήριου, 0 αιχμηρές άκρης
+ui-options-rt-shadow-lamps = Φώτα που ρίχνουν σκιές
+ui-options-rt-shadow-lamps-help = Πόσα από τα πλησιέστερα φώτα ρίχνουν σκιές με ίχνη, ενώ τα υπόλοιπα εξακολουθούν να είναι φωτεινά, χωρίς σκιά.
+ui-options-ray-traced-indirect = Έμμεσο φως με παρακολούθηση ακτίνων
+ui-options-ray-traced-indirect-help = Φως που ανακλάται από τις επιφάνειες γύρω, εντοπίζεται πέρα από αυτό που δείχνει η οθόνη, στη θέση του έμμεσου φωτός της ΓΤΑΟ
+ui-options-gi-probes = Παγκόσμιοι έλεγχοι φωτισμού
+ui-options-gi-probes-help = Ανιχνευτές απλώνονται στη σκηνή που κρατούν το φως από αρκετές αναπηδήσεις και τον ουρανό που βλέπουν: τα κλειστά δωμάτια παραμένουν σκοτεινά, το φώς πηγαίνει γύρω από τις γωνίες.Περίπου 0,8 στην κάρτα γραφικών
+ui-options-ray-traced-reflections = Αντικατοπτρισμοί με ιχνηλάτηση ακτίνων
+ui-options-ray-traced-reflections-help = Αντανακλάσεις αυτού που η οθόνη δεν δείχνει, στη θέση των αντανακλάσεων του χώρου της οθόνης, οι οποίες πρέπει να είναι ενεργοποιημένες
+ui-options-ray-tracing-unsupported = Αυτή η κάρτα γραφικών ή το πρόγραμμα οδήγησης δεν διαθέτει ανίχνευση ακτίνων
+ui-options-ray-tracing-vr = Δεν διατίθεται σε περίοδο λειτουργίας που ξεκίνησε για εικονική πραγματικότητα
+ui-options-tab-ray-tracing = Ανίχνευση ακτίνων
+ui-options-deluxe-rt-warning-title = Ενεργοποιήστε το Διαμέρισμα (ΡΤ);
+ui-options-deluxe-rt-warning-text = Το είναι Υψηλό με τις σκιές και το έμμεσο φως που ανιχνεύονται από την κάρτα γραφικών. Χρειάζεται μια κάρτας με υλικό και έναν ενημερωμένο οδηγό, και κοστίζει πολύ περισσότερο από το Υψηλή: σε μια κάрτα μεσαίας κατηγορίας ο ρυθμός καρέ μπορεί να πέσει πολύ σε πολυσύχναστα μέρη. Η παρακολούθηση ακτίνων εξακολουθεί να δοκιμάζεται: εάν η εικόνα φαίνεται λάθος ή το πρόγραμμα προβολής επιβραδύνεται, επιστρέψτε στο Υψηλά. Η καρτέλα παρακολουθησης ακτινών διατηρεί τις ρυθμίσεις της.
+ui-options-deluxe-rt-warning-turn-on = Ενεργοποίηση
+ui-options-ray-tracing-needs-shadows = Χρειάζεται τις σκιές
+ui-options-ray-tracing-needs-ssr = Χρειάζεται τις αντανακλάσεις της οθόνης-χώρου
+ui-options-preset-deluxe = Πολυτελές Δωμάτιο (1)
+ui-options-normal-precision = Ακρίβεια αντανάκλασης
+ui-options-normal-precision-help = Πόσο καλά διατηρείται η κατεύθυνση κάθε επιφάνειας για τις αντανακλάσεις. Η Βασική μπορεί να εμφανίζει βήματα στις αντανάκλαση λείων, καμπυλωτών επιφανειών, όπως το χρώμα ενός αυτοκινήτου. Η Υψηλή τα αφαιρεί και χρησιμοποιεί περισσότερη μνήμη βίντεο. Η Αυτόματη χρησιμοποιεί την υψηλή τιμή με τις αντανακλαστικές ανιχνεύσεις ακτίνων, όπου τα βήματα εμφανίζονται περισσότερο, και η Βασική διαφορετικά
+ui-options-normal-precision-automatic = Αυτόματη
+ui-options-normal-precision-standard = Πρότυπο
+ui-options-normal-precision-high = Υψηλή
+ui-options-private-point-at-help = Απόκρυψη του αντικειμένου που επεξεργάζεστε, διατήρηση του βραχίονα επεξεργασίας χαμηλωμένου και απόκρυψη της ακτίνας επεξέργειας.
+ui-options-private-edit-beam = Απόκρυψη ακτίνας επεξεργασίας
+ui-options-private-edit-beam-help = Απόκρυψη της ακτίνας εντελώς ενώ επεξεργάζεστε ή αρπάζετε αντικείμενα, τόσο στην οθόνη σας όσο και για άλλους θεατές.Οι συμβουλές στόχων επιλογής και οι ακτίνες παράδοσης / απόθεσης δεν επηρεάζονται.
+common-window-outside = Μετακίνηση έξω από το παράθυρο προβολής
+common-window-inside = Επαναφορά στο παράθυρο προβολής
+common-window-rename-name = Κάντε διπλό κλικ για μετονομασία
+common-carry-hint = Κάντε κλικ για να το ρίξετε εδώ, για να αφήσετε να φύγει
+common-window-paused-photo = Παύση ενώ είναι ανοιχτή η λειτουργία φωτογραφίας
+common-window-paused-director = Σε παύση ενώ ο Σκηνοθέτης παίζει
+common-window-paused-interface = Σε παύση ενώ η διεπαφή είναι απενεργοποιημένη
+ui-options-warn-live-preview = Προειδοποίηση όταν δεν είναι δυνατή η προεπισκόπηση μιας υφής ή υλικού
+ui-options-warn-live-preview-help = Στην επιλογή του παραθύρου κατασκευής, κάνοντας κλικ σε ένα στοιχείο χωρίς αντιγραφή δεν εφαρμόζεται τίποτα μέχρι να το πείτε.
+ui-texture-picker-live-preview-texture = Δεν μπορούμε να εμφανίσουμε μια προεπισκόπηση αυτής της υφής επειδή δεν είναι αντίγραφο.
+ui-texture-picker-live-preview-material = Δεν μπορούμε να εμφανίσουμε μια προεπισκόπηση αυτού του υλικού επειδή δεν είναι αντίγραφο.
+fetch-invalid-url = Μη έγκυρη διεύθυνση
+ui-chat-close-all-ims = Κλείσιμο όλων των IM συνομιλιών
+ui-chat-close-all-ims-question = Κλείσιμο όλων των IM συνομιλιών και τερματισμός της ενεργής κλήσης;
+ui-chat-confirm-close-all-ims = Επιβεβαίωση πριν από το κλείσιμο όλων των IM συνομιλιών
+ui-chat-confirm-close-all-ims-help = Ρωτήστε πριν κλείσετε όλες τις IM συνομιλίες όταν κάποιος έχει μια ενεργή φωνητική κλήση.
+ui-options-aurora-controls-compact-help = Το παράθυρο Ελέγχων ανοίγει συμπαγές στην κάμερα: τα χειριστήρια, το ζουμ και η κύλιση.Το κουμπί της γραμμής τίτλου εναλλάσσεται μεταξύ συμπαγούς και πλήρους, και ορίζει αυτό επίσης.Με τα κλασικά παράθυρα, η κάμερά σας θα ανοίξει στο μικρό παράθερο της κάμερας του παλιού προγράμματος προβολής αντί για αυτό.
+rlva-restart-hint = RLVa ξεκινά όταν συνδέεστε.Μόλις εκτελεστεί, η ενεργοποίησή του ή η απενεργοποίηση του θα έχει αποτέλεσμα στην επόμενη εκκίνηση του προγράμματος προβολής: τα αντικείμενα περιορισμών παραμένουν μέχρι τότε.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa θα ενεργοποιηθεί μετά την επανεκκίνηση.
+rlva-toggle-disabled-restart = RLVa θα απενεργοποιηθεί μετά την επανεκκίνηση.
+livemesh-import-connect = Συνδέστε το με πρόσθετο 0.11.0 ή νεότερο, ή το με προσθήκη 0,2.0 και νεότερο για να προετοιμάσετε τα εισαγόμενα στοιχεία.
+livemesh-import-preparing = Προετοιμάζοντας το αντικείμενο και τα επίπεδα του στο Μπλέντερ ή Μάγια…
+livemesh-import-ready = Έτοιμο στον εισαγωγέα.
+livemesh-import-failed = Η προετοιμασία εισαγωγής απέτυχε: { $error }
+livemesh-import-timeout = Το ή δεν ολοκλήρωσε την προετοιμασία της εισαγωγής Ελέγξτε τη σύνδεση (στο χρησιμοποιήστε τη λειτουργία αντικειμένου) και δοκιμάστε ξανά.
+livemesh-shape-apply-tooltip = Επιλέξτε Τροποποίηση δικαιωμάτων, στη συνέχεια προσαρμόστε τον σκελετό που επιλέχθηκε στο ή και τα δεσμευμένα πλέγματά του (μέσω για ένα Επιλέξετε έναν τοπικό συμβατό σκελατό.
+livemesh-shape-update-apply = Ενημερώστε το πρόσθετο σε 0.10.0 ή νεότερη έκδοση, ή το προσάρτημα σε 1.4.0 και μετά επανασυνδέστε το.
+livemesh-shape-applied = Σχήμα που εφαρμόζεται στον επιλεγμένο σκελετό.
+livemesh-shape-tooltip = Ελέγξτε τα δικαιώματα τροποποίησης του φθαρμένου σχήματος και δημιουργήστε ένα νέο παραποιημένο σώμα αναφοράς στο ή το Μάγια.
+livemesh-shape-connect = Συνδέστε το Aurora στο Μπλέντερ ή Μάγια πρώτα.
+livemesh-shape-update-plugin = Ενημερώστε το πρόσθετο σε 0.9.0 ή νεότερη έκδοση, ή το πρόσθετo σε 1.3.0 και μετά επανασυνδέστε το.
+livemesh-shape-timeout = Το Μπλέντερ ή το Μάγια δεν επιβεβαίωσαν την εισαγωγή.Δοκιμάστε ξανά (στο Μπλεντέρ, μεταβείτε στη Λειτουργία αντικειμένου).
+livemesh-shape-success = Σχήμα που εισάγεται ως νέο ρυθμισμένο σώμα αναφοράς.
+blender-live-maya-version = Aurora Εργαλεία για Μάγια { $version }
+blender-live-maya-instructions = Αποθηκεύστε το αρχείο και αποσυμπιέστε το, μετά σύρετε το σε ένα παράθυρο Ανοίξτε το από το ράφι του Aurora, προσθέστε τα πλέγματά σας και κάντε κλικ στο Συνδέστε.
+blender-live-save-maya = Αποθήκευση προσθήκης Μάγια…
+blender-live-maya-saved = Το πρόσθετο αποθηκεύτηκε. Αποσπάστε το αρχείο και σύρετε το σε ένα παράθυρο προβολής Μάγια.
+livemesh-plugin-connected = Το βύσμα συνδέθηκε
+livemesh-token-refused = Ένα πρόγραμμα προσπάθησε να συνδεθεί χωρίς το κλειδί αυτής της προεπισκόπησης.Μόνο η προσθήκη Aurora στο ή μπορεί να συνδεθείτε.
+livemesh-waiting-plugin = Περιμένοντας το Μπλέντερ ή τη Μάγια…
+blender-live-objects-help = Τα πλέγματα που στέλνει το ή Επιλέξτε ένα για να το τοποθετήσετε, ή εισαγάγετε το από το μενού του.
+blender-live-size-note = Το μέγεθος πολλαπλασιάζει αυτό που στέλνει η προσθήκη, έτσι ώστε οι μεταγενέστερες επεξεργασίες στο Blender ή το να το διατηρήσουν.
+blender-live-avatar-help = Για τα πλεγμένα πλέγματα: στείλτε το σχήμα σας στο ή για να μοντελοποιήσετε πάνω του.
+livemesh-shape-section = Το σχήμα σας στο Μπλέντερ ή Μάγια
+blender-live-import-help = Παγώνει ένα στιγμιότυπο του αντικειμένου για την κανονική εισαγωγή: αναθεώρηση, τιμή και επιβεβαίωση.Μεταγενέστερες επεξεργασίες στο ή δεν το αλλάζουν.
+blender-live-changed-tip = Χρόνος από την τελευταία αλλαγή αυτού του αντικειμένου
+fit-lab-section = Ταιριάζει στο εργαστήριο
+fit-lab-help = Ανδρείκελα ντυμένα με αυτό που φοράτε, το καθένα με διαφορετικό σώμα, στέκονται μπροστά σας για να δείξουν πώς ταιριάζει το ρούχο σε διάφορα σχήματα.Μόνο εσείς τα βλέπετε: τίποτα δεν αποστέλλεται ή αποθηκεύεται.
+fit-lab-body-me = Εγώ
+fit-lab-body-slim = Σλιμ.
+fit-lab-body-curvy = Καμπυλωτό
+fit-lab-body-full = Πλήρης μορφή
+fit-lab-body-athletic = Αθλητισμός
+fit-lab-body-tall = Ψηλά
+fit-lab-body-petite = Μικρό
+fit-lab-motion = Κίνηση
+fit-lab-motion-stand = Στάση
+fit-lab-motion-walk = Περπάτα.
+fit-lab-motion-sit = Κάθισε.
+fit-lab-motion-range = Εύρος κινήσεων
+fit-lab-pose = Πόζα
+fit-lab-pose-all = Όλα, με τη σειρά τους
+fit-lab-pose-arms-up = Τα χέρια ψηλά.
+fit-lab-pose-reach = Φτάστε μπροστά
+fit-lab-pose-hug = Τα χέρια σταυρωμένα
+fit-lab-pose-squat = Οκλαδόν.
+fit-lab-pose-kneel = Γονάτισε.
+fit-lab-pose-knee-up = Το γόνατο ανυψωμένο
+fit-lab-pose-twist = Στριπτίζ
+fit-lab-pose-bend = Λυγίστε προς τα εμπρός
+fit-lab-motion-like-me = Όπως κι εγώ
+fit-lab-show = Δείτε τα ανδρείκελα
+fit-lab-place = Φέρτε τους εδώ
+fit-lab-remove = Αφαιρέστε τα ανδρείκελα
+fit-lab-choose = Επιλέξτε τουλάχιστον ένα σώμα.
+fit-lab-clip = Δείξε πού περνάει το σώμα
+fit-lab-clip-note = Κόκκινο: το σώμα βγαίνει έξω από το ρούχο. Πορτοκαλί: το κορμί και το ένδυμα συναντώνται. Στο άβαταρ σας και στα μανεκέν, όπως φαίνεται από την κάμερα. Όλα τα άλλα που φοράτε μετράνε ως σώμα: αφαιρέστε ένα σακάκι ή μαλλιά που φοριούνται πάνω από το ενδύμα.
+blender-live-levels-pending = Το ή το Μάγια προετοιμάζει τα επίπεδα λεπτομέρειας όταν κάνετε κλικ στην επιλογή Εισαγωγή.
+blender-live-levels-note = Προετοιμάστηκε στο Μπλέντερ ή Μάγια από τις ρυθμίσεις του κάθε αντικειμένου.
+blender-live-quick-look-changed = Αλλαγή στο Μπλέντερ ή Μάγια πριν από { $ago }.
+blender-live-warning-textures = Υφές που παραλείπονται, απλό χρώμα που εμφανίζεται
+blender-live-warning-not-sent = Δεν είναι στην προεπισκόπηση
+blender-live-undo-derez = { $name } · ακόμα στη λίστα του πρόσθετου
+blender-live-undo-detach = Απομονωμένο { $name } · ακόμα στη λίστα του πρόσθετου
+inventory-open-current = Άνοιγμα
+inventory-folder-back = Πίσω
+inventory-folder-forward = Προώθηση
+inventory-folder-up = Ανέβασμα κατά ένα επίπεδο
+area-search-metres = { $n } m
+area-search-band-reach = Μέσα στα όρια
+area-search-band-close = Σε κοντινή απόσταση
+area-search-band-around = Γύρω από εσένα
+area-search-band-further = Επιπλέον
+area-search-band-far = Πατέρα
+area-search-band = Περιοχή
+area-search-within = Μέσα σε { $distance }
+area-search-within-across = Μέσα σε { $distance } κατά μήκος
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Δείτε κάθε απόσταση
+area-search-from = Απόσταση από το κέντρο
+area-search-to = Απόσταση από το κέντρο
+area-search-bar-tip =
+    { $count ->
+        [one] Ένα αντικείμενο, { $from } έως { $to }
+       *[other] { $count } αντικείμενα, { $from } έως { $to }
+    }
+area-search-of-objects = από { $total } αντικείμενα
+area-search-li = { $value } ΛΙ
+area-search-li-count = { $value } επιπτώσεις στη γη
+area-search-owner-count =
+    { $count ->
+        [one] Ένας μόνο ιδιοκτήτης
+       *[other] { $count } ιδιοκτήτες
+    }
+area-search-object-count =
+    { $count ->
+        [one] Ένα αντικείμενο
+       *[other] { $count } αντικείμενα
+    }
+area-search-objects-word = αντικείμενα
+area-search-in-reach = εδώ
+area-search-tab-objects = Αντικείμενα
+area-search-tab-owners = Ιδιοκτήτες
+area-search-hint-wide = Αντικείμενα, κάτοχοι, δημιουργοί ή UUID
+area-search-kind-heading = Είδος αντικειμένου
+area-search-kind-tip = Κάντε κλικ: μόνο αυτά. Και πάλι: κρυμμένα.
+area-search-kind-any = οποιοδήποτε
+area-search-kind-only = Μόνο αυτές.
+area-search-kind-hidden = Κρυφό
+area-search-kind-attached = Συνημμένα
+area-search-kind-probes = Ανιχνευτές
+area-search-click-all = Όλα
+area-search-click-any-short = Οποιοδήποτε
+area-search-permissions = Δικαιώματα
+area-search-price-heading = Τιμή πώλησης, για αντικείμενα προς πώληση
+area-search-price-to = έως
+area-search-price-tip = Επιλέξτε “Προς πώληση” πρώτα
+area-search-linked = Συνδεδεμένοι πρώτοι αριθμοί
+area-search-one-field = Αναζήτηση σε ένα πεδίο
+area-search-regex-switch = Οι κανονικές εκφράσεις
+area-search-regex-invalid = Δεν είναι έγκυρη κανονική έκφραση
+area-search-reset-filters-tip = Επαναφορά όλων των φίλτρων. Το κείμενο αναζήτησης παραμένει
+area-search-save-defaults-tip = Άνοιγμα με αυτά τα φίλτρα από τώρα και στο εξής
+area-search-reset-search = Επαναφορά των κειμένων αναζήτησης
+area-search-reset-filters = Επαναφορά των επιλογών φίλτρου
+area-search-reset-ranges = Επαναφορά απόστασης και τιμής
+area-search-reset-all = Επαναφορά των πάντων
+area-search-more = Περισσότερα
+area-search-several = Επιλέξτε αρκετά
+area-search-several-tip = Τα κλικ προστίθενται στην επιλογή (επίσης ή κλικ, Ctrl+A)
+area-search-actions = Δράσεις
+area-search-nothing = Κανένα αντικείμενο δεν έχει ληφθεί ακόμα.
+area-search-nothing-for-sale = Τίποτα προς πώληση εδώ.
+area-search-not-for-sale = Δεν είναι προς πώληση
+area-search-from-price = από { $price }
+area-search-nearest = Το πλησιέστερο πρώτα
+area-search-heaviest = Το βαρύτερο πρώτα
+area-search-order-tip = Αλλαγή της σειράς: πλησιέστερο ή βαρύτερο πρώτα
+area-search-rank = #{ $rank } του { $all }
+area-search-rank-here = #{ $rank } εδώ
+area-search-card-more = Δείξε κάθε φιγούρα
+area-search-card-less = Εμφάνιση λιγότερων
+area-search-open-group = Άνοιγμα της ομάδας
+area-search-spoken = { $name }, { $distance }, αντίκτυπος γης { $li }, που ανήκει σε { $owner }
+area-search-owner-spoken = { $name }, { $count } αντικείμενα, αντίκτυπος εδάφους { $li }
+area-search-stage-line = { $distance } 10 λεπτά μακριά · { $li } επιπτώσεις στο έδαφος · { $owner }
+area-search-tile-3d = Τρισδιάστατη προβολή
+area-search-on = { $count } Ενεργοποιημένο
+area-search-on-word = Ενεργοποιημένο
+area-search-more-on =
+    { $count ->
+        [one] Ένα ακόμα φίλτρο ενεργοποιημένο
+       *[other] { $count } περισσότερα φίλτρα στο
+    }
+ui-options-legacy-lists = Εισαγωγή λιστών από το πρόγραμμα προβολής παλαιού τύπου
+ui-options-legacy-lists-help = Προσθέτει το ιστορικό τηλεμεταφορών, τη μαύρη λίστα περιουσιακών στοιχείων, τη λίστα φίλτρων πολυμέσων και τα σύνολα επαφών αυτού του λογαριασμού.
+ui-options-legacy-lists-button = Εισαγωγή από το παλιό πρόγραμμα προβολής…
+ui-options-legacy-lists-no-account = Συνδεθείτε για να εισαγάγετε τις λίστες αυτού του λογαριασμού.
+ui-options-legacy-lists-title = Εισαγωγή από το παλιό πρόγραμμα προβολής
+ui-options-legacy-lists-text = Όλα προστίθενται στις λίστες αυτού του λογαριασμού και τίποτα εδώ δεν αφαιρείται.Τα ονόματα των περιουσιακών στοιχείων της μαύρης λίστας εγκαταλείπουν τον κόσμο αμέσως. Η εισαγωγή ξανά επιστρέφει ό,τι αφαιρέσατε εδώ.
+ui-options-legacy-lists-searching = Ψάχνοντας για τους φακέλους της παλιάς προβολής…
+ui-options-legacy-lists-none = Δεν βρέθηκε φάκελος προβολής παλαιού τύπου με λίστες για αυτόν το λογαριασμό.
+ui-options-legacy-lists-teleports = Ιστορία τηλεμεταφορών ({ $count })
+ui-options-legacy-lists-derender = Μαύρη λίστα περιουσιακών στοιχείων ({ $count })
+ui-options-legacy-lists-media = Λίστα φίλτρων μέσων ({ $count })
+ui-options-legacy-lists-contact-set-entries = Καταχωρήσεις σετ επαφών ({ $count })
+ui-options-legacy-lists-confirm = Εισαγωγή
+ui-options-legacy-lists-added = Προστέθηκε ή ενημερώθηκε. Ιστορικό τηλεμεταφορών: { $teleports }Μαύρη λίστα περιουσιακών στοιχείων: { $derender }, φίλτρο μέσων: { $media }, σύνολο καταχωρήσεων επαφών: { $sets }.
+ui-options-legacy-lists-nothing = Τίποτα νέο: αυτός ο λογαριασμός έχει ήδη αυτές τις λίστες.
+ui-options-legacy-lists-failed = Αδυναμία ανάγνωσης: { $files }.
+ui-options-legacy-lists-unsaved = Δεν ήταν δυνατή η αποθήκευση, έμεινε όπως ήταν: { $files }.
+ui-options-legacy-lists-other-grid = Σε αυτό το πλέγμα ένας φάκελος με το ίδιο όνομα μπορεί να ανήκει σε ένα άλλο πλέξιμο: ελέγξτε ότι είναι ο σωστός.
+ui-options-build-show-beams-hint = Εμφάνιση των ακτίνων επιλογής σας και αυτών των άλλων όταν επεξεργάζεστε, αρπάζετε ή δίνετε Αυτό ελέγχει μόνο την εμφάνιση. Χρησιμοποιήστε Προστασία προσωπικών δεδομένων > Απόκρυψη ακτίνας επεξεργασίας για να σταματήσετε την ακτίνη επεξέργειας τοπικά και στο δίκτυο.
+teleport-failed-title = Η τηλεμετάδοση απέτυχε.
+teleport-error-invalid-tport = Οι προσπάθειες τηλεμεταφοράς περιορίζονται σε 6 ανά λεπτό.Αν αντιμετωπίζετε προβλήματα, περιμένετε ένα λεπτό και δοκιμάστε να τηλεμεταφράσετε ξανά.Εάν το πρόβλημα παραμένει, αποσυνδεθείτε και συνδεθείτε ξανα.
+teleport-error-invalid-region-handoff = Αντιμετωπίστηκε πρόβλημα κατά την επεξεργασία της διέλευσης της περιοχής σας. Ίσως χρειαστεί να συνδεθείτε ξανά για να μπορέσετε να διασχίσετε περιοχές. Εάν εξακολουθείτε να λαμβάνετε αυτό το μήνυμα, επικοινωνήστε με την υποστήριξη.
+teleport-error-blocked-tport = Δοκιμάστε ξανά σε λίγο. Αν εξακολουθείτε να μην μπορείτε να τηλεμεταφερθείτε, παρακαλούμε αποσυνδεθείτε και συνδεθείτε ξανα για να επιλύσετε το πρόβλημα.
+teleport-error-nolandmark-tport = Λυπούμαστε, αλλά το σύστημα δεν μπόρεσε να εντοπίσει τον προορισμό ορόσημο.
+teleport-error-timeout-tport = Λυπούμαστε, αλλά το σύστημα δεν μπόρεσε να ολοκληρώσει τη σύνδεση Δοκιμάστε ξανά σε λίγο.
+teleport-error-no-help-island = Δεν μπορείτε να τηλεμεταφερθείτε πίσω στο Νησί Καλωσορίσματος.
+teleport-error-noaccess-tport = Λυπούμαστε, δεν έχετε πρόσβαση σε αυτόν τον προορισμό τηλεμεταφοράς.
+teleport-error-missing-attach-tport = Δοκιμάστε να περιμένετε μερικά ακόμη δευτερόλεπτα ή να αποσυνδεθείτε και να συνδεθείτε ξανά πριν προσπαθήσετε να τηλεμεταφερθείτε.Τα συνημμένα σας δεν έχουν φτάσει ακόμα.
+teleport-error-too-many-uploads-tport = Η ουρά πόρων σε αυτήν την περιοχή είναι φραγμένη προς το παρόν, επομένως το αίτημά σας για τηλεμεταφορά δεν θα μπορέσει να επιτύχει εγκαίρως.Προσπαθήστε ξανά σε λίγα λεπτά ή πηγαίνετε σε μια λιγότερο πολυσύχναστη περιοχή.
+teleport-error-expired-tport = Λυπούμαστε, αλλά το σύστημα δεν μπόρεσε να ολοκληρώσει εγκαίρως το αίτημά σας για τηλεμεταφορά.Παρακαλούμε δοκιμάστε ξανά σε λίγα λεπτά.
+teleport-error-expired-region-handoff = Λυπούμαστε, αλλά το σύστημα δεν μπόρεσε να ολοκληρώσει έγκαιρα τη διέλευση της περιοχής σας Παρακαλούμε δοκιμάστε ξανά σε λίγα λεπτά.
+teleport-error-preexisting-tport = Λυπούμαστε, αλλά το σύστημα δεν μπόρεσε να ξεκινήσει την τηλεμετάβασή σας.Παρακαλούμε δοκιμάστε ξανά σε λίγα λεπτά.
+teleport-error-no-host = Δεν είναι δυνατή η εύρεση του προορισμού τηλεμεταφοράς. Ο προορισμός μπορεί να είναι προσωρινά μη διαθέσιμος ή δεν υπάρχει πλέον. Παρακαλούμε δοκιμάστε ξανά σε λίγα λεπτά.
+teleport-error-no-inventory-host = Το σύστημα απογραφής είναι προς το παρόν μη διαθέσιμο.
+teleport-error-must-get-age-region = Πρέπει να είστε άνω των 18 ετών για να μπείτε σε αυτήν την περιοχή.
+teleport-error-special-usage-blocked = Αδυναμία εισόδου στην περιοχή. '{ $region }Η Περιοχή είναι μια περιοχή παιχνιδιών δεξιοτήτων και πρέπει να πληροίτε συγκεκριμένα κριτήρια για να συμμετάσχετε.Για λεπτομέρειες, ανατρέξτε στις Συχνές ερωτήσεις για τα παιχνίδια δεξιότητας: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Δεν είναι δυνατή η είσοδος στην περιοχή. Πρόκειται για μια Περιοχή παιχνιδιών δεξιοτήτων και πρέπει να πληροίτε συγκεκριμένα κριτήρια για να εισέλθετε.Για λεπτομέρειες, ανατρέξτε στις Συχνές ερωτήσεις σχετικά με τα παιχνίδια δεξιότητας: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Το δίκτυο του σπιτιού σας αρνήθηκε την επιστροφή σας. Αυτό συνήθως σημαίνει ότι η ρύθμιση της διεύθυνσής του δεν ταιριάζει με τη διεύθύνση που χρησιμοποιούν άλλα δίκτυα για αυτό. Επικοινωνήστε με τους χειριστές του δικτύου του σπιτιού σας, συνδεθείτε ξανά και θα επιστρέψετε στο σπίτι εν τω μεταξύ.
+teleport-hint-hypergrid-unreachable = Δεν ήταν δυνατή η πρόσβαση στο άλλο πλέγμα.Μπορεί να είναι εκτός σύνδεσης ή ο σύνδεσμος μπορεί να δείχνει σε μια παλιά διεύθυνση.
+teleport-hint-hypergrid-visitors-refused = Αυτό το πλέγμα επιτρέπει μόνο στους κατοίκους κάποιων πλεγμάτων.
+teleport-hint-hypergrid-destination-gone = Η περιοχή προορισμού δεν υπάρχει πλέον ή έχει μετακινηθεί.Ορόσημα και συνδέσεις σε άλλα πλέγματα μπορεί να είναι ξεπερασμένα.
+toolbar-edit = Προσαρμογή κουμπιών και μενού…
+toolbar-title = Κουμπιά και μενού
+toolbar-interface-locked = Διεπαφή κλειδωμένη
+toolbar-help = Σύρετε κουμπιά ή καταχωρήσεις μενού στην επάνω, κάτω ή πλαϊνή γραμμή και αποθέστε ένα κουμπί εδώ για να το αφαιρέσετε. Κάντε δεξί κλικ σε οποιοδήποτε κουμπι για να αλλάξετε την εμφάνισή του.
+toolbar-help-classic = Σύρετε κουμπιά ή καταχωρήσεις μενού στην επάνω, κάτω ή πλαϊνή γραμμή και αποθέστε ένα κουμπί εδώ για να το αφαιρέσετε. Κάντε δεξί κλικ σε οποιοδήποτε κουμπι για να αλλάξετε την εμφάνισή του.
+toolbar-help-modes = Επιλέξτε εικονίδια, ετικέτες, και τα δύο ή την προεπιλεγμένη γραμμή για κάθε κουμπί Σύρετε καταχωρήσεις μέσα στο μενού Aurora για να το αναδιατάξετε.
+import-menu-textures = Υφές
+import-menu-animations = Κινούμενα σχέδια
+import-menu-sounds = Ήχοι
+import-menu-materials = Υλικά
+import-menu-meshes = Πλέγματα
+import-menu-options = Επιλογές εισαγωγής
+import-upload-payment-title = Ανεβάστε
+import-upload-payment = Πληρώσατε L${ $cost } για τη μεταφόρτωση.
+import-quick-textures =
+    { $count ->
+        [one] Εισαγωγή · Υφές: 1 · L${ $cost }?
+       *[other] Εισαγωγή · Υφές: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Εισαγωγή · Υλικά: 1 · L${ $cost }?
+       *[other] Εισαγωγή · Υλικά: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Εισαγωγή · Ήχοι: 1 · L${ $cost }?
+       *[other] Εισαγωγή · Ήχοι: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Επιλέξτε μέγεθος εισαγωγής. Οι κατάλληλες υφές μπορούν να εισαχθούν σε 2048 × 2048:
+       *[other] ({ $count }) Επιλέξτε μέγεθος εισαγωγής. Οι κατάλληλες υφές μπορούν να εισαχθούν σε 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Επιλέξτε μέγεθος εισαγωγής. Οι κατάλληλες εικόνες υλικών μπορούν να εισαχθούν σε 2048 × 2048:
+       *[other] ({ $count }) Επιλέξτε μέγεθος εισαγωγής. Οι κατάλληλες εικόνες υλικών μπορούν να εισαχθούν σε 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Μεταφόρτωση δωρεάν εικόνων σε 2048 × 2048 χωρίς ερώτηση
+import-quick-free-full-size-help = Η εισαγωγή υφών και η εισαγωγή υλικών ζητούν επιλογή ανάμεσα σε 1024 και 2048 μόνο όταν η μεταφόρτωση κοστίζει L$.
+ui-bars-customize-bars = Προσαρμόστε τη διεπαφή
+build-tool-in-use = Κατά τη χρήση
+build-create-options-toggle = Εμφάνιση / απόκρυψη των επιλογών
+build-create-keep-creating = Συνεχίστε να δημιουργείτε
+build-create-center-on-prim = Κέντρο στην πρωτεύουσα
+build-create-copy-prim-rotation = Αντιγραφή πρωτογενούς περιστροφής
+build-create-align-to-surface = Ευθυγράμμιση στην επιφάνεια
+build-capture-shape-button = Αντιγράψτε το σχήμα μιας πρωτεύουσας: κάντε κλικ σε αυτό, στη συνέχεια μια πρωτεύουσά στον κόσμο
+build-capture-shape-armed = Κάντε κλικ σε ένα πρωτότυπο για να αντιγράψετε το σχήμα του (το πλήκτρο ακυρώνει)
+build-capture-shape-full = Διατηρούνται 20 σχήματα. Κατάργηση ενός για αντιγραφή άλλου
+build-capture-shape-remove = Κατάργηση αυτού του σχήματος
+build-capture-shape-tooltip = Αντιγραφή σχήματος ({ $kind })
+build-capture-shape-not-a-prim = Μόνο το σχήμα ενός πρωτεύοντος μπορεί να αντιγραφεί
+build-capture-shape-mesh-or-sculpt = Η μορφή ενός πλέγματος ή μιας γλυπτής αρχής δεν μπορεί να αντιγραφεί
+build-capture-shape-no-modify = Χρειάζεστε άδεια για να τροποποιήσετε αυτό το αρχείο για να αντιγράψετε το σχήμα του
+import-other-options = Άλλες επιλογές
+toolbar-button-icons = Μόνο το εικονίδιο
+toolbar-button-text = Ετικέτα μόνο
+toolbar-button-icons-text = Εικονίδιο και ετικέτα
+toolbar-icon-default = Επαναφορά προεπιλεγμένου εικονιδίου
+toolbar-icon-choose = Επιλέξτε ένα εικονίδιο
+toolbar-icon-change = Αλλαγή του εικονιδίου
+toolbar-presets = Προκαθορισμένες
+toolbar-interfaces = Διεπαφές
+toolbar-interfaces-shown = Εμφανίζεται στο μπλοκ Διασυνδέσεις
+toolbar-interfaces-hidden = Κρυμμένο από το μπλοκ Διασυνδέσεις
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora Παλιό Σχολείο
+toolbar-preset-photographer = Aurora φωτογράφος
+toolbar-preset-legacy = Κληρονομιά
+toolbar-import-textures = Εισαγωγή υφών
+toolbar-import-sounds = Εισαγωγή ήχων
+toolbar-import-animations = Εισαγωγή κινούμενων εικόνων
+toolbar-import-materials = Εισαγωγή υλικών
+toolbar-import-meshes = Εισαγωγή πλεγμάτων
+toolbar-import-local = Τοπικά αρχεία
+toolbar-import-advanced = Σύνθετη εισαγωγή
+toolbar-import-settings = Ρυθμίσεις εισαγωγής
+toolbar-import-bar = Γραμμή εισαγωγής
+toolbar-icon-search = Βρείτε ένα εικονίδιο…
+toolbar-in-top = Στην επάνω γραμμή εργαλείων
+toolbar-bar-top = Επάνω γραμμή εργαλείων
+toolbar-drop-here = Πέτα το εδώ
+toolbar-separator = Διαχωριστικό
+toolbar-interface-edit = Προσαρμόστε τη διεπαφή
+toolbar-edit-done = Τελειώσαμε.
+toolbar-edit-top = Κορυφή
+toolbar-edit-bottom = Κάτω
+toolbar-edit-left = Αριστερά
+toolbar-edit-right = Σωστά.
+toolbar-edit-help = Κάντε κλικ σε ένα στοιχείο για να το επιλέξετε, σύρετε το για να μετακινηθεί ή κάντε δεξί κλικ για επιλογές επεξεργασίας.Κλείστε αυτό το παράθυρο για να τελειώσετε.
+toolbar-edit-locked = Οι μπάρες είναι κλειδωμένες.Ξεκλειδώστε τις παρακάτω για να αλλάξετε τη διεπαφή.
+toolbar-edit-move = Μετακίνηση σε
+toolbar-edit-split-before = Διαχωρισμός πριν από
+toolbar-edit-split-after = Διαχωρισμός μετά από
+toolbar-edit-merge-before = Συγχώνευση με το προηγούμενο μπλοκ
+toolbar-edit-merge-after = Συγχώνευση με το επόμενο μπλοκ
+toolbar-edit-merge-groups = Συγχώνευση αυτών των μπλοκ
+toolbar-drawer = Συρτάρι
+toolbar-drawer-default-mode = Προεπιλεγμένη εμφάνιση κουμπιών
+toolbar-drawer-closes = Κλείσιμο μετά από ένα κλικ σε ένα κουμπί
+toolbar-block-shortcut = Συντόμευση:
+toolbar-drawer-hides-needs-shortcut = Απαιτεί μια συντόμευση
+toolbar-floating-close-button = Προσθήκη κουμπιού κλεισίματος
+toolbar-block-name = Όνομα του μπλοκ:
+toolbar-block-button-mode = Επίδειξη κουμπιών μπλοκ
+toolbar-button-inherited = Κληρονομημένη
+toolbar-drawer-hides-button = Απόκρυψη του κουμπιού κατά την αιώρηση
+toolbar-floating-new = Επιπλέων φραγμός
+toolbar-floating-orientation = Προσανατολισμός
+toolbar-floating-horizontal = Οριζόντια
+toolbar-floating-vertical = Κατακόρυφο
+toolbar-floating-empty = Ρίξτε κουμπιά εδώ
+toolbar-shortcut-title = Συντόμευση
+toolbar-shortcut-block-name = Φραγμός: { $name }
+toolbar-shortcut-none = Δεν υπάρχει συντόμευση
+toolbar-shortcut-press-key = Πατήστε ένα πλήκτρο
+toolbar-shortcut-esc = Πατήστε για να ακυρώσετε
+toolbar-shortcut-clear = Αφαίρεση
+toolbar-shortcut-overrides = Παίρνει πάνω από { $name }: αυτή η συντόμευση εκτελεί τη γραμμή εργαλείων αντί της προεπιλεγμένης χρήσης του.
+toolbar-shortcut-used = Ήδη η συντόμευση του { $names }.
+toolbar-shortcut-replace = Αντικατάσταση
+toolbar-shortcut-add = Προσθήκη
+toolbar-shortcut-save = Αποθήκευση
+toolbar-shortcut-choose-key = Επιλέξτε ένα κλειδί
+toolbar-shortcut-help = Ενεργοποιήστε ή απενεργοποιείστε τα πλήκτρα και και κατόπιν κάντε κλικ στο πλήκτρο για να το αλλάξετε.Απαιτείται το πλήκτρος ή εκτός από τις εντολές έως Η επιλογή αυτή δεν είναι διαθέσιμη σε όλες τις γλώσσες.
+toolbar-shortcut-inactive = Αυτό το κουμπί δεν βρίσκεται σε καμία γραμμή: η συντόμευσή του λειτουργεί μόλις τοποθετηθεί ξανά.
+toolbar-shortcut-refused-keyboard = Μόνο τα πλήκτρα πληκτρολογίου μπορούν να είναι συντόμευση.
+toolbar-shortcut-refused-modifier = Ένα πλήκτρο τροποποίησης από μόνο του δεν μπορεί να είναι συντόμευση.
+toolbar-shortcut-refused-needs-modifier = Προσθέστε ή ένα πλήκτρο μόνο του, ή με μόνο πληκτρολογήστε σε πεδία κειμένου.
+toolbar-shortcut-refused-altgr = Ctrl+Alt με αυτό το πλήκτρο είναι που πληκτρολογεί χαρακτήρες σε πολλά πληκτνολόγια.
+toolbar-shortcut-refused-editing = Τα πεδία κειμένου χρησιμοποιούν αυτήν τη συντόμευση (επιλογή όλων, αντιγραφή, αποκοπή, επικόλληση, αναίρεση, επανάληψη).
+toolbar-shortcut-refused-navigation = Τα πεδία κειμένου μετακινούνται και διαγράφονται με αυτό το πλήκτρο.
+toolbar-shortcut-refused-typing = Η συνομιλία και οι διάλογοι χρησιμοποιούν αυτό το πλήκτρο.
+toolbar-shortcut-refused-system = Το σύστημα διατηρεί αυτήν τη συντόμευση.
+toolbar-shortcut-refused-window = Αυτή η συντόμευση κλείνει ή αλλάζει παράθυρα.
+toolbar-shortcut-refused-zoom = Αυτή η συντόμευση μεγεθύνει τη διεπαφή.
+toolbar-spacer = Διάστημα μπλοκ
+toolbar-add-spacer = Προσθήκη διαστήματος μπλοκ
+toolbar-button-settings = Ρυθμίσεις κουμπιών
+toolbar-button-edit = Κουμπί επεξεργασίας…
+toolbar-button-edit-title = Κουμπί επεξεργασίας
+toolbar-button-name = Όνομα του κουμπιού:
+toolbar-button-display = Επίδειξη κουμπιών
+toolbar-shortcut-fixed-block-help = Η συντόμευση ενός σταθερού μπλοκ εμφανίζει και κρύβει. ενώ η διεπαφή επεξεργάζεται, παραμένει εμφανής.
+toolbar-block-settings = Ρυθμίσεις μπλοκ
+toolbar-parent-block-settings = Ρυθμίσεις γονικού μπλοκ
+toolbar-block-edit = Επεξεργασία μπλοκ…
+toolbar-block-edit-title = Επεξεργασία μπλοκ
+toolbar-block-alignment = Ευθυγράμμιση
+toolbar-block-sizing = Μέγεθος του κουμπιού
+toolbar-block-fixed-options = Επιλογές σταθερής λειτουργίας
+toolbar-block-floating-options = Επιλογές κυμαινόμενης λειτουργίας
+toolbar-block-kind-fixed = Σταθερός φραγμός
+toolbar-block-kind-drawer = Συρτάρι
+toolbar-block-kind-floating = Επιπλέων φραγμός
+toolbar-block-remove = Αφαίρεση του μπλοκ
+toolbar-move-block = Σύρετε για να μετακινήσετε ολόκληρο το μπλοκ
+toolbar-remove-block = Αφαίρεση του μπλοκ
+toolbar-drawer-empty = Αυτό το συρτάρι είναι άδειο.
+toolbar-drawer-drop = Σύρετε κουμπιά εδώ για να τα προσθέσετε ή να αλλάξετε τη σειρά τους.
+toolbar-separator-settings = Ρυθμίσεις απόστασης μπλοκ
+toolbar-separator-size = Μέγεθος / ελάχιστο (Χ)
+toolbar-separator-stretch = Γεμίστε το διαθέσιμο χώρο
+toolbar-separator-help = Τα ευέλικτα κενά μοιράζονται το χώρο που αφήνουν τα μπλοκ.Το μέγεθος είναι το ελάχιστο πλάτος τους, ή το ύψος σε μια πλευρική μπάρα.
+toolbar-block-navigation = Πλοήγηση και αναζήτηση
+toolbar-block-account = Λογαριασμός και υπόλοιπο
+toolbar-block-system = Ρολόι, δείκτες και ήχος
+toolbar-block-status = Κατάσταση διαθεσιμότητας
+toolbar-block-balance = Ισοζύγιο
+toolbar-block-clock = Ρολόι
+toolbar-block-ping = Λανθάνουσα κατάσταση περιοχής
+toolbar-block-fps = Ρυθμός καρέ (Φ/λεπτό)
+toolbar-block-network = Επισκεψιμότητα του δικτύου
+toolbar-block-media = Μέσα μαζικής ενημέρωσης
+toolbar-block-music = Μουσική για δέματα
+toolbar-block-volume = Όγκος
+toolbar-block-notifications = Ειδοποιήσεις
+toolbar-block-conversations = Εικονίδια συνομιλίας με κείμενο
+toolbar-block-chat = Κοντινή είσοδος συνομιλίας
+toolbar-category-all = Όλες οι κατηγορίες
+toolbar-section-main = Κύρια
+toolbar-section-advanced = Προηγμένη
+toolbar-search-all = Η αναζήτηση περιλαμβάνει σύνθετες εντολές.
+toolbar-category-avatar = Άβαταρ και κίνηση
+toolbar-category-communication = Επικοινωνία
+toolbar-category-world = Κόσμος και ταξίδια
+toolbar-category-creation = Δημιουργία και περιεχόμενο
+toolbar-category-interface = Διεπαφή και κάμερα
+toolbar-category-advanced = Τα προηγμένα εργαλεία
+toolbar-category-help = Βοήθεια
+toolbar-category-custom = Προσαρμοσμένες εντολές
+toolbar-bar-settings = Ρυθμίσεις γραμμής εργαλείων
+toolbar-menu-group = Μενού: { $name }
+toolbar-location-bar = Γραμμή διευθύνσεων
+toolbar-command-build-tool-focus = Κατασκευή - κάμερα
+toolbar-command-build-tool-grab = Κατασκευή - μετακίνηση
+toolbar-command-build-tool-edit = Κατασκευή - επεξεργασία
+toolbar-command-build-tool-create = Κατασκευάστε - δημιουργήστε
+toolbar-command-build-tool-land = Κατασκευή - γη
+bug-copy-version = Αντιγραφή έκδοσης προγράμματος προβολής
+toolbar-notecard-save = Αποθήκευση σε μια κάρτα σημειώσεων…
+toolbar-notecard-load = Φόρτωση από μια κάρτα σημειώσεων…
+toolbar-notecard-name = Διεπαφή Aurora
+toolbar-notecard-help = Διάταξη και εμφάνιση γραμμών εργαλείων, κουμπιών, συρταριών και μενού.
+toolbar-notecard-saved = Η διάταξη διεπαφής αποθηκεύεται στο απόθεμά σας.
+toolbar-notecard-invalid = Αυτή η κάρτα σημειώσεων δεν περιέχει μια συμβατή διάταξη διεπαφής.
+toolbar-notecard-unavailable = Αυτή η κάρτα σημειώσεων δεν είναι πλέον διαθέσιμη ή δεν μπορεί να αντιγραφεί.
+toolbar-notecard-layout-changed = Η διεπαφή άλλαξε κατά τη φόρτωση της κάρτας σημειώσεων. Φορτώστε την ξανά για να εφαρμόσετε τη διάταξή της.
+toolbar-notecard-demo-valid = Διεπαφή φωτογράφου
+toolbar-notecard-demo-invalid = Άλλη κάρτα σημειώσεων
+toolbar-notecard-too-large = Αυτή η διαμόρφωση διεπαφής είναι πολύ μεγάλη για μια κάρτα σημειώσεων.
+toolbar-saved-interfaces = Αποθηκευμένες διεπαφές
+toolbar-saved-interfaces-empty = Δεν υπάρχουν αποθηκευμένες διεπαφές ακόμα.
+toolbar-notecard-destination = Φάκελος: { $path }
+toolbar-notecard-folder-error = Δεν ήταν δυνατή η φόρτωση ή η δημιουργία του φακέλου Διασυνδέσεις. Παρακαλούμε δοκιμάστε ξανά.
+toolbar-current-preset = Επιλεγμένη διεπαφή: { $name }
+toolbar-preset-custom = Προσαρμοσμένη διεπαφή χρήστη
+toolbar-preset-unsaved = Μη αποθηκευμένες αλλαγές
+toolbar-preset-save-title = Αποθηκεύστε τη διεπαφή
+toolbar-preset-save-name = Όνομα διασύνδεσης
+toolbar-preset-save-new = Νέα προσωπική διεπαφή
+toolbar-preset-save-replace = Αντικατάσταση αυτής της προσωπικής διεπαφής
+toolbar-preset-save-unavailable = Αυτή η διασύνδεση δεν μπορεί να αποθηκευτεί εδώ. Επιλέξτε άλλο όνομα ή μια διαθέσιμη, επεξεργάσιμης προσωπικής διασυνδέσεως.
+toolbar-interface-delete-unavailable = Αυτή η προσωπική διεπαφή δεν μπορεί να διαγραφεί.
+toolbar-interface-delete-confirm = Να μετακινηθεί η προσωπική διάταξη «{ $name }» στον κάδο;

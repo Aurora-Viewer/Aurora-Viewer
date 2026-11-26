@@ -16075,3 +16075,739 @@ parcel-environment-empty = कोई वातावरण सहेजा न�
 parcel-environment-remove-all = सभी मिटाएँ
 parcel-environment-remove-all-title = पैकेज के लिए सहेजे गए सभी वातावरण को हटाएँ?
 parcel-environment-remove-all-text = इस ग्रिड के भूखंडों के लिए सहेजे गए परिवेश हट जाएँगे। दूसरे ग्रिड के परिवेश बने रहेंगे। यह कार्रवाई वापस नहीं ली जा सकती।
+
+### Updated release translations
+
+anim-timeline-channels-hint = इस बोन के घूर्णन और स्थान कुंजी को अपनी पंक्तियों पर दिखाएँ
+anim-timeline-channel-rotation = परिक्रमण
+anim-timeline-channel-location = स्थान
+anim-timeline-keying-hint = कौन सी कुंजी रिकॉर्ड करता है. स्थान के साथ, चलना एक जोड़ को अकेले लेता है, अपने IK श्रृंखला से बाहर. सेकंड लाइफ एनिमेशन में कोई स्केल कुंजियाँ नहीं हैं.
+anim-timeline-keying-auto = स्वचालित: परिक्रमण, तथा पिंड के लिए स्थान तथा खिसकाए गए जोड़
+anim-timeline-keying-auto-short = स्वचालित
+anim-timeline-keying-loc-rot = स्थिति तथा परिक्रमण
+anim-timeline-keying-loc-rot-short = स्थान + रूट
+anim-timeline-keying-rot-short = रूट
+anim-timeline-keying-loc-short = स्थान
+anim-edit-shortcut-play = बजाएँ या ठहरें
+area-search-scope-heading = कहाँ
+area-search-scope-parcel = पैकेज
+area-search-scope-region = क्षेत्र
+area-search-scope-neighbours = पड़ोसी
+area-search-objects-heading = कौन सी वस्तुएँ
+inventory-copy-selection-count =
+    { $count ->
+        [one] 1 वस्तु नक़ल करें
+       *[other] { $count } वस्तुएँ नक़ल करें
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] लिंक 1 वस्तु
+       *[other] लिंक { $count } वस्तुएँ
+    }
+inventory-drop-move-here = यहाँ खिसकाएँ
+inventory-drop-copy-here = यहाँ नक़ल करें
+inventory-drop-link-here = यहाँ लिंक बनाएँ
+inventory-sort-description = वर्णन
+inventory-sort-reversed = { $order } (उलटे)
+inventory-column-creator = निर्माता
+inventory-column-count = वस्तुएँ
+inventory-columns-fit = सभी स्तम्भों को फिट करने के लिए आकार दें
+inventory-columns-reset-widths = स्तम्भ चौड़ाई रीसेट करें
+inventory-back = पीछे (B)
+inventory-forward = आगे
+inventory-up = एक स्तर ऊपर
+keybinds-inventory-root = शीर्ष पर जाएँ
+keybinds-inventory-search = सूची में खोजें
+keybinds-inventory-filter = फ़ोल्डर फ़िल्टर करें
+keybinds-inventory-preview = पूर्वावलोकन पट्टी दिखाएँ
+keybinds-inventory-view-large = बड़े चित्र
+keybinds-inventory-view-medium = मध्यम छवियाँ
+keybinds-inventory-view-small = छोटे चित्र
+keybinds-inventory-view-compact = कॉम्पैक्ट दृश्य
+keybinds-inventory-view-details = विवरण दृश्य
+keybinds-inventory-view-tiles = टाइल दृश्य
+keybinds-inventory-toggle = फ़ोकस में पंक्ति को चुनें या अन- चयनित करें
+keybinds-inventory-menu = चयन के लिए मेन्यू खोलें
+keybinds-inventory-purge = रद्दी से साफ करें
+keybinds-inventory-refused = { $keys } इनवेस्टमेंट सूची की अपनी कुंजी रहता है: दूसरा चुनें।
+inventory-path-edit = पथ टाइप करें
+inventory-path-subfolders = सब- फ़ोल्डर
+inventory-copy-path = पथ नक़ल करें
+inventory-show-in-folder = फ़ोल्डर में दिखाएँ
+inventory-pin = त्वरित पहुँच में पिन करें
+inventory-unpin = त्वरित पहुँच से अनपिन करें
+inventory-quick-access = त्वरित पहुँच
+inventory-quick-access-drop = इसे पिन करने के लिए फ़ोल्डर को यहाँ ड्रॉप करें
+inventory-invert-selection = चयन उलटें
+inventory-undo = पहले जैसा (_U)
+inventory-redo = दोहराएँ (R)
+inventory-undo-step = पहले जैसा { $what }
+inventory-redo-step = { $what } फिर से करें
+inventory-history-move =
+    { $count ->
+        [one] 1 वस्तु खिसकाएँ
+       *[other] { $count } वस्तुओं की चाल
+    }
+inventory-history-delete =
+    { $count ->
+        [one] 1 वस्तु का मिटाएँ
+       *[other] { $count } वस्तुओं में से मिटाएँ
+    }
+inventory-history-rename = नाम बदलें
+inventory-history-new-folder = नया फ़ोल्डर
+inventory-history-copy =
+    { $count ->
+        [one] 1 वस्तु की प्रतिलिपि
+       *[other] { $count } वस्तुओं की प्रतिलिपि
+    }
+inventory-history-link =
+    { $count ->
+        [one] 1 वस्तु पर लिंक
+       *[other] { $count } वस्तुओं के लिंक
+    }
+inventory-undo-nothing = पहले जैसा करने के लिए कुछ नहीं बचा है: वे वस्तुएँ खिसका दी गई हैं या गायब हो चुकी हैं.
+inventory-redo-nothing = वापस करने के लिए कुछ नहीं बचा है: वे वस्तुएँ खिसका दी गई हैं या गायब हो चुकी हैं.
+inventory-undo-empty = पहले जैसा करने के लिए कुछ नहीं.
+inventory-redo-empty = फिर से करने के लिए कुछ नहीं.
+inventory-undo-dropped = अंतिम चरण की वस्तुओं को खिसका दिया गया है या गायब हो गया है: यह छोड़ा गया था. पहले चरण के लिए फिर से पूर्ववत करें.
+inventory-redo-dropped = अगले चरण की वस्तुएँ खिसका दी गई हैं या गायब हो चुकी हैं: इसे छोड़ा गया है. अगले कदम के लिए फिर से करें.
+inventory-undo-folder-not-empty = उस नए फ़ोल्डर में तब से रखी गई वस्तुएँ हैं: उन्हें पहले बाहर खिसकाएँ, या फ़ोल्टर को स्वयं मिटाएँ.
+inventory-undo-kept-out = ये वस्तुएँ वर्तमान परिधान या मार्केटप्लेस सूची में अब हैं: उन्हें वहाँ बदल दें।
+inventory-restore-to = “{ $folder }” में बहाल करें
+inventory-restore-to-origins = अपने फ़ोल्डर में बहाल करें
+inventory-purge-no-undo = पूर्ववत उन्हें वापस नहीं ला सकता है.
+inventory-new-tab = नया टैब
+inventory-close-tab = टैब बन्द करें
+inventory-next-tab = अगला टैब
+inventory-previous-tab = पिछला टैब
+inventory-open-in-new-tab = नए टैब में खोलें
+inventory-tabs-limit = अधिकतम { $count } टैब
+inventory-copy-to-other-pane = अन्य फलक में नक़ल करें
+inventory-move-to-other-pane = अन्य फलक में जाएँ
+inventory-resize-columns = स्तम्भों का आकार बदलने के लिए खींच लाएँ. बाएँ स्तंभ को उसके विषयवस्तु में फिट करने के लिए दोहरा क्लिक करें.
+inventory-resize-columns-first = स्तम्भों का आकार बदलने के लिए खींचें. पहले स्तंभ को उसकी सामान्य चौड़ाई देने के लिए दोहरा क्लिक करें.
+inventory-sort-by-column = इस स्तम्भ के द्वारा छाँटने के लिए क्लिक करें, अनुक्रम उलटने के लिये फिर से. स्तम्भ को खिसकाएँ.
+inventory-filter-hint = इस फ़ोल्डर को फ़िल्टर करें...
+inventory-filter-close = फ़िल्टर बंद करें (Esc)
+inventory-filter-nothing = फ़िल्टर के साथ यहाँ कुछ भी मेल नहीं खाता
+inventory-view-compact = कॉम्पैक्ट दृश्य
+inventory-view-tiles = टाइल दृश्य
+inventory-view-per-folder = प्रत्येक फ़ोल्डर का दृश्य याद रखें
+inventory-group-by = इस द्वारा समूहबद्ध करें
+inventory-group-none = कोई नहीं
+inventory-group-folders = फ़ोल्डर
+inventory-group-unknown-creator = निर्माता अभी तक अज्ञात है
+inventory-group-today = आज
+inventory-group-yesterday = कल
+inventory-group-this-week = पिछले7दिनों में
+inventory-group-this-month = पिछले 30 दिनों में
+inventory-group-this-year = इस साल पहले
+inventory-group-earlier = एक लंबे समय पहले
+inventory-group-no-date = कोई तिथि नहीं
+cmdline-mod-zoffset-usage = अपने अवतार की होवर ऊंचाई सेट करें (उपयोग: /zoffset मूल्य या +delta).
+dev-toolbox-n4 = सूचीपत्र लोड हो रहा है
+dev-toolbox-what-n4 = फ़ोल्डर पढ़ा, असफल और छोड़ा गया, लोडर के फ्लाइट में पढ़ता है और फिर कोशिश करता है; कोई नाम नहीं
+ui-context-inspect-avatar = अवतार जाँचें
+inspect-window = जाँचें
+inspect-tab-objects = वस्तुएँ
+inspect-objects-title =
+    { $count ->
+        [one] { $count } वस्तु
+       *[other] { $count } वस्तुएँ
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } वस्तु
+       *[other] { $count } वस्तुएँ
+    }
+inspect-open-profile = प्रोफ़ाइल खोलें
+inspect-over-limit = आपकी सीमा से ऊपर
+inspect-limit-tip = आपकी जटिलता सीमा: { $limit }
+inspect-search = वस्तुएँ या निर्माता ढूंढें
+inspect-outlined = { $name } दुनिया में वर्णित है
+inspect-area-head = शीर्ष
+inspect-area-body = बॉडी
+inspect-area-arms = हाथ और हाथ
+inspect-area-legs = पैर और पैर
+inspect-area-hud = हेड
+inspect-area-other = अन्य
+inspect-area-world = वस्तुएँ
+inspect-own-eyes = तंत्र आँखें
+inspect-own-body = तंत्र बॉडी
+inspect-own-description = अवतार का हिस्सा, संलग्नक नहीं
+inspect-own-maker = अवतार · Second Life
+inspect-own-place = अवतार
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } एमबी
+inspect-section-complexity = { $value } जटिलता
+inspect-no-match = "{ $query }" से कोई मेल नहीं खाता.
+inspect-spoken-worn = { $name }, पहना हुआ { $point }जटिलता { $complexity }द्वारा बनाया गया { $creator }
+inspect-spoken-object = { $name }, इसका स्वामित्व है { $owner }जटिलता { $complexity }द्वारा बनाया गया { $creator }
+inspect-look-at-tip = कैमरा यहाँ खिसकाएँ
+inspect-profile-tip = निर्माता का प्रोफ़ाइल खोलें
+inspect-made-by = द्वारा बनाया
+inspect-owned-by = द्वारा स्वामित्व में
+inspect-worn-on = पहना गया
+inspect-prims-count =
+    { $count ->
+        [one] { $count } प्राइम
+       *[other] { $count } प्राइम
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = टेक्सचर मेमोरी
+inspect-tile-vram = वी- रैम
+inspect-tile-prims = प्रिम
+board-close = बंद करें { $title }
+board-grow = बड़ा करें { $title }
+board-remove = { $name } मिटाएँ
+board-more = और { $count } अधिक
+board-more-short = +{ $count }
+board-some-of = { $shown } का { $all }
+board-of-all = का { $all }
+stage-turn-left = बाएँ घुमाएँ
+stage-turn-right = दाएँ घुमाएँ
+stage-higher = ऊपर से देखें
+stage-lower = नीचे से देखें
+stage-nearer = करीब
+stage-further = दूर
+stage-reset = प्रारंभ में वापस जाएँ
+stage-hint = घुमाने के लिए खींचें, चलने के लिए दायाँ-खींचें
+stage-light = हल्का पृष्ठभूमि
+stage-dark = गहरा पृष्ठभूमिcolor- kcm- preview
+stage-playing = AO
+stage-paused = ठहरा
+stage-pause-tip = उनके एनिमेशन को ठहराएँ
+stage-play-tip = उनके एनिमेशन को बजाएँ
+stage-loading = 3डी दृश्य तैयार कर रहा है...
+stage-nothing = अभी तक 3D में दिखाने के लिए कुछ नहीं.
+stage-refused = 3डी दृश्य बंद है जबकि RLVa आप देख सकते हैं कि क्या सीमित करता है।
+inspect-your-limit = आपकी सीमा: { $limit }
+inspect-without-it = इसके बिना { $value }
+inspect-you = आप
+inspect-person = व्यक्ति
+inspect-difference = अंतर
+inspect-drawn-in-full = पूर्णतया खींचा गया
+inspect-nobody = इसकी जटिलता अभी तक ज्ञात नहीं है।
+inspect-aside-count = { $count } छोड़ा
+inspect-is-aside = किनारे रखें
+inspect-set-aside = अलग रखें
+inspect-set-aside-tip = इस वस्तु के बिना जटिलता देखें. सिर्फ इस विंडो में: दुनिया में कुछ नहीं बदलता.
+inspect-put-back = वापस रखें
+inspect-put-back-tip = इस वस्तु को फिर से गिनें
+inspect-complexity-spoken = जटिलता { $value }, संख्या { $rank } का { $count } यहाँ लोग
+inspect-stage-outfit = आउटफिट
+inspect-stage-objects = वस्तुएँ
+inspect-stage-back = सब कुछ में वापस जाएँ
+inspect-place-made-by = { $place } द्वारा बनाया { $name }
+inspect-owned-by-name = { $name } द्वारा स्वामित्व में
+inspect-tile-items = वस्तुएँ
+inspect-tile-figures = आकृतियाँ
+inspect-col-item = नाम
+inspect-point = बिन्दु
+inspect-look-at = देखो
+inspect-selected-count = { $count } चुना गया
+inspect-worn-count = { $count } पहना
+inspect-creators-word = निर्माता
+inspect-areas-word = मुख्य भाग क्षेत्र
+inspect-owners-word = मालिक
+inspect-triangles-word = त्रिभुज
+inspect-made-of = { $count } का { $all } वस्तुएँ
+inspect-kilobytes = { $n } केबी
+inspect-linkset-order = { $count }, लिंक में
+inspect-reset-columns = स्तम्भ रीसेट करें
+inspect-by-creators =
+    { $count ->
+        [one] एक निर्माता द्वारा { $items }
+       *[other] { $items } द्वारा { $count } निर्माता
+    }
+inspect-owner-button = मालिक प्रोफ़ाइल
+inspect-group-button = समूह प्रोफ़ाइल
+inspect-creator-button = निर्माता प्रोफ़ाइल
+inspect-land-others = अन्य { $n }
+inspect-land-these = इन { $n }
+inspect-land-free = मुक्त { $n }
+inspect-land-unknown = इसका अर्थ यह है कि सभी वस्तुओं के गुणों में एक समानता है।
+ui-login-unencrypted = बिना एन्क्रिप्शन का लॉगिन
+ui-login-unencrypted-body = { $server } का लॉगिन पता https:// के बजाय http:// से शुरू होता है, इसलिए लॉगिन एन्क्रिप्ट नहीं होगा। सार्वजनिक Wi-Fi, साझा नेटवर्क या ग्रिड तक के रास्ते में आपका ट्रैफ़िक देखने वाला व्यक्ति पासवर्ड पढ़ सकता है और आपका खाता इस्तेमाल कर सकता है। अभी कुछ नहीं भेजा गया है। आप ग्रिड से https:// लॉगिन पता माँग सकते हैं। चुनाव इस सर्वर के लिए याद रखा जाएगा।
+ui-login-unencrypted-accept = बिना एन्क्रिप्शन लॉगिन करें
+world-appearance-clothing-layers-full = सभी 60 वस्त्र परत उपयोग में हैं. इस वस्तु को पहनने से पहले एक परत हटाएँ.
+ui-options-ray-tracing = रे ट्रेसिंग
+ui-options-ray-traced-shadows = रे- ट्रेस्ड सूर्य छाया
+ui-options-ray-traced-shadows-help = छाया नक्शे से पढ़ने के बजाय सूर्य और चंद्रमा की छाया रे द्वारा रे को ट्रैक करती है: सटीक जहाँ चीजें छूती हैं और किसी भी दूरी पर. छाया और रे ट्रेसिंग वाले ग्राफिक्स कार्ड की आवश्यकता होती है, और ग्राफिकल कार्ड पर अधिक लागत होती है
+ui-options-ray-traced-lights = स्थानीय प्रकाश छाया
+ui-options-ray-traced-lights-help = आसपास के बिंदु प्रकाशों से छायाएँ (लैंप, मोमबत्तियाँ), जो अन्यथा कोई नहीं फेंकते हैं, और प्रोजेक्टर से जब प्रोजेक्टर छाया चालू होता है, उनके छाया नक्शे के स्थान पर. रे ट्रेसिंग विकल्पों में सबसे महंगा: एकीकृत ग्राफिक्स पर बेहतर छोड़ा गया
+ui-options-rt-quality = रे ट्रेसिंग क्वालिटी
+ui-options-rt-quality-help = प्रत्येक ट्रैक प्रभाव चालू रहता है: निम्न स्तर कम नमूने और अप्रत्यक्ष प्रकाश को एक मोटी ग्रिड पर ट्रेस करते हैं, छोटे ग्राफिक्स कार्ड पर अधिक फ्रेम प्रति सेकंड के लिए. उच्च डिलक्स (RT) की पूर्ण छवि है. एक स्तर चुनना भी छाया डालने वाली रोशनी सेट करता है
+ui-options-rt-sun-softness = सूर्य छाया नरमपन
+ui-options-rt-sun-softness-help = सूर्य के ट्रेस किए गए छाया के किनारे कितने नरम हैं: 1 वास्तविक सूर्य है,0तीव्र किनारे हैं, अधिक धुंधले सूर्य के लिए अधिक
+ui-options-rt-lamp-softness = स्थानीय प्रकाश छाया नरमी
+ui-options-rt-lamp-softness-help = लैंप के ट्रेस किए गए छाया के किनारे कितने नरम हैं: 1 प्रत्येक लैम्प के आकार का अनुसरण करता है,0तीव्र किनारे
+ui-options-rt-shadow-lamps = प्रकाश जो छाया डालते हैं
+ui-options-rt-shadow-lamps-help = निकटतम प्रकाशों में से कितने ट्रेस छाया डालते हैं; अन्य अभी भी चमकते हैं, छाया के बिना. कम ग्राफिक्स कार्ड पर कम लागत
+ui-options-ray-traced-indirect = रे- ट्रेस्ड अप्रत्यक्ष प्रकाश
+ui-options-ray-traced-indirect-help = आसपास की सतहों द्वारा प्रतिबिम्बित प्रकाश, स्क्रीन पर दिखाई जाने वाली वस्तुओं से परे ट्रैक किया गया, जीटीएओ के अप्रत्यक्ष प्रकाश की जगह
+ui-options-gi-probes = वैश्विक प्रदीप्ति जांच
+ui-options-gi-probes-help = प्रोब दृश्य के माध्यम से फैलता है जो कि कई बाउंस की रोशनी को बनाए रखता है और आकाश वे देखते हैं: बंद कमरे अंधेरे में रहते हैं, प्रकाश किनारों पर घूमता है. ग्राफिक्स कार्ड पर लगभग 0.8 ms
+ui-options-ray-traced-reflections = रे- ट्रेस्ड प्रतिबिम्ब
+ui-options-ray-traced-reflections-help = स्क्रीन-स्पेस प्रतिबिम्बों के स्थान पर, जो कि चालू होना चाहिए, स्क्रीन द्वारा दिखाई नहीं जाने वाली वस्तुओं के प्रतिबिंब
+ui-options-ray-tracing-unsupported = इस ग्राफिक्स कार्ड या इसके ड्राइवर में कोई रे ट्रेसिंग नहीं है
+ui-options-ray-tracing-vr = वीआर के लिए प्रारंभ सत्र में उपलब्ध नहीं
+ui-options-tab-ray-tracing = रे ट्रेसिंग
+ui-options-deluxe-rt-warning-title = डीलक्स (आरटी) चालू करें?
+ui-options-deluxe-rt-warning-text = डीलक्स (RT) उच्च है छाया और अप्रत्यक्ष प्रकाश के साथ जो ग्राफिक्स कार्ड द्वारा ट्रैक किया जाता है. इसे हार्डवेयर रे ट्रेसिंग (NVIDIA RTX, AMD Radeon RX 6000 या बाद में, Intel Arc) के साथ एक कार्ड की आवश्यकता होती है और एक अपडेट ड्राइवर, और यह उच्च से बहुत अधिक खर्च करता है: मध्य-रेंज कार्ड पर फ्रेम दर व्यस्त स्थानों में बहुत कम हो सकता है. रे ट्रैकिंग अभी भी परीक्षण किया जा रहा है: यदि छवि गलत दिखती है या प्रदर्शक धीमी हो जाती है, उच्च पर वापस जाएँ. रे ट्रेकिंग टैब अपने विन्यास रखता है.
+ui-options-deluxe-rt-warning-turn-on = चालू करें
+ui-options-ray-tracing-needs-shadows = छाया की जरूरत है
+ui-options-ray-tracing-needs-ssr = स्क्रीन-स्पेस प्रतिबिम्बों की आवश्यकता है
+ui-options-preset-deluxe = डीलक्स (आरटी)
+ui-options-normal-precision = प्रतिबिम्ब सटीकता
+ui-options-normal-precision-help = प्रतिबिंब के लिए प्रत्येक सतह की दिशा कितनी अच्छी तरह से रखी जाती है. मानक, चिकनी, वक्र सतहों जैसे कार का पेंट के प्रतिबिम्ब में कदम दिखा सकता है; उच्च उन्हें हटाता है और अधिक वीडियो मेमोरी उपयोग करता है. स्वचालित रे-ट्रैक किए हुए प्रतिबिंबितों के साथ उच्च प्रयोग करता है, जहाँ कदम सबसे ज्यादा दिखाते हैं, और अन्यथा मानक
+ui-options-normal-precision-automatic = स्वचालित
+ui-options-normal-precision-standard = मानक
+ui-options-normal-precision-high = उच्च
+ui-options-private-point-at-help = कौन सी वस्तु आप संपादित कर रहे हैं उसे छुपाएँ, अपने संपादन आर्म को नीचे रखें तथा अपनी संपादन बीम को छुपाएं.
+ui-options-private-edit-beam = संपादन बीम छुपाएँ
+ui-options-private-edit-beam-help = बीम को पूरी तरह से छुपाएँ जब आप संपादित या वस्तुओं को पकड़ते हैं, दोनों अपने स्क्रीन पर और अन्य प्रदर्शकों के लिए. चयन लक्ष्य संकेत और दे/ड्रॉप बीम अप्रभावित हैं.
+common-window-outside = प्रदर्शक विंडो के बाहर जाएँ
+common-window-inside = प्रदर्शक विंडो में वापस लाएँ
+common-window-rename-name = नाम बदलने के लिए दोहरा क्लिक करें
+common-carry-hint = इसे यहाँ डालने के लिए क्लिक करें, इसे छोड़ने के लिये ESC दबाएँ
+common-window-paused-photo = जब फोटो मोड खुला हो तो ठहरा
+common-window-paused-director = जब निर्देशक बजा रहा हो तो ठहरा हुआ
+common-window-paused-interface = इंटरफेस बन्द होने पर ठहरा
+ui-options-warn-live-preview = चेतावनी दें जब कोई बनावट या सामग्री पूर्वावलोकन नहीं किया जा सकता
+ui-options-warn-live-preview-help = बिल्ड विंडो के चयनकर्ता में, एक नॉन-कॉपी आइटम पर क्लिक करने से ठीक: कहने तक कुछ भी लागू नहीं होता है।
+ui-texture-picker-live-preview-texture = हम इस बनावट का पूर्वावलोकन नहीं दिखा सकते क्योंकि यह नॉन-कॉपी है.
+ui-texture-picker-live-preview-material = हम इस सामग्री का पूर्वावलोकन नहीं दिखा सकते क्योंकि यह कोई प्रतिलिपि नहीं है.
+fetch-invalid-url = अवैध यूआरएल
+ui-chat-close-all-ims = सभी बन्द करें IM संवाद
+ui-chat-close-all-ims-question = सभी IM बातचीत बंद करें और सक्रिय कॉल समाप्त करें?
+ui-chat-confirm-close-all-ims = सभी बन्द करने से पहले पुष्टि करें IM संवाद
+ui-chat-confirm-close-all-ims-help = सभी IM बातचीत बंद करने से पहले पूछें जब एक सक्रिय आवाज कॉल है.
+ui-options-aurora-controls-compact-help = नियंत्रण विंडो कैमरा पर कॉम्पैक्ट खुलता है: इसके जॉयस्टिक, ज़ूम और रोल. इसका शीर्षक पट्टी बटन कॉम्पेक्ट और फुल के बीच स्विच करता है, और इसे भी सेट करता है. क्लासिक विंडो के साथ, कैमरा बजाए लेगेसी प्रदर्शक के छोटे कैमरा विंडो में खुलता हैं.
+rlva-restart-hint = RLVa प्रारंभ होता है जब आप लॉगइन करते हैं. एक बार यह चला जाता है, इसे चालू या बंद करना प्रदर्शक के अगले प्रारंभ पर प्रभाव डालता है: प्रतिबंध वस्तुओं को तब तक रखा रहता है.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa फिर से प्रारंभ करने के बाद सक्षम किया जाएगा.
+rlva-toggle-disabled-restart = RLVa फिर से प्रारंभ करने के बाद अक्षम हो जाएगा.
+livemesh-import-connect = आयात एलओडी तैयार करने के लिए ब्लेंडर को प्लगइन 0.11.0 या बाद के साथ जोड़ें, या प्लगइन्स 02.0 के साथ माया.
+livemesh-import-preparing = ब्लेंडर या माया में वस्तु और उसके LOD तैयार कर रहा है...
+livemesh-import-ready = एलओडी प्राप्त. आयातक में तैयार.
+livemesh-import-failed = आयात तैयार करना असफल: { $error }
+livemesh-import-timeout = ब्लेंडर या माया ने आयात तैयार करना पूरा नहीं किया. कनेक्शन जाँचें (ब्लेंडर में, ऑब्जेक्ट मोड का प्रयोग करें) और फिर कोशिश करें.
+livemesh-shape-apply-tooltip = संशोधित अधिकार जाँचें, फिर ब्लेंडर या माया में चयनित कंकाल को अनुकूलित करें और उसके बाउंड मेशेस (मायास्टार rig के लिए माया स्टार के माध्यम से). एक स्थानीय द्वितीय जीवन संगत कंकाल चुनें.
+livemesh-shape-update-apply = ब्लेंडर प्लगइन को 0.10.0 या बाद में अद्यतन करें, या माया प्लगइन्स को0.4.0 और बाद में, फिर इसे पुनः कनेक्ट करें.
+livemesh-shape-applied = चयनित कंकाल पर आकार लागू करें.
+livemesh-shape-tooltip = पहने हुए आकार के परिवर्धित अधिकारों को जाँचें और ब्लेंडर या माया में एक नया युक्त संदर्भ शरीर बनाएँ.
+livemesh-shape-connect = ब्लेंडर या माया में पहले Aurora प्लगइन को जोड़ें.
+livemesh-shape-update-plugin = ब्लेंडर प्लगइन को 0.9.0 या बाद में अद्यतन करें, या माया प्लगइन्स को 1.3.0 के लिए अद्यतने करें, फिर इसे पुनः कनेक्ट करें.
+livemesh-shape-timeout = ब्लेंडर या माया ने आयात की पुष्टि नहीं की. फिर कोशिश करें (ब्लेंडर में, वस्तु मोड में स्विच करें).
+livemesh-shape-success = आकार एक नए रिग्ड संदर्भ बॉडी के रूप में आयात किया गया.
+blender-live-maya-version = Aurora माया के लिए लाइवमेश { $version }
+blender-live-maya-instructions = ZIP को सहेजें और इसे निकालें, फिर install.mel को Maya viewport में खींचें. LiveMesh को Aurora शेल्फ से खोलें, अपने मेश जोड़ें और कनेक्ट पर क्लिक करें.
+blender-live-save-maya = माया प्लगइन सहेजें...
+blender-live-maya-saved = प्लगइन सहेजा. ZIP निकालें और install.mel को Maya viewport में खींचें.
+livemesh-plugin-connected = प्लगइन कनेक्टेड
+livemesh-token-refused = एक प्रोग्राम इस पूर्वावलोकन कुंजी के बिना जुड़ने की कोशिश करता है. केवल ब्लेंडर या माया में Aurora प्लगइन जोड़ सकता है.
+livemesh-waiting-plugin = ब्लेंडर या माया के लिए प्रतीक्षारत...
+blender-live-objects-help = ब्लेंडर या माया भेज रहा है मेश. इसे रखने के लिए एक चुनें, या इसके मेन्यू से आयात करें.
+blender-live-size-note = आकार प्लगइन भेजे जाने वाले को गुणा करता है, इसलिए बाद में ब्लेंडर या माया में संपादन इसे बनाए रखते हैं।
+blender-live-avatar-help = इसका प्रयोग मुख्यत: माइक्रोफोन या अन्य उपकरणों के लिए किया जाता है।
+livemesh-shape-section = ब्लेंडर या माया में आपका आकार
+blender-live-import-help = सामान्य आयात के लिए वस्तु के स्नैपशॉट को फ्रीज करता है: समीक्षा, कीमत, फिर पुष्टि. बाद में ब्लेंडर या माया में संपादन इसे नहीं बदलता है.
+blender-live-changed-tip = ब्लेंडर या माया ने इस वस्तु को अंतिम बार परिवर्तित करने के बाद से समय
+fit-lab-section = फिट लैब
+fit-lab-help = आप जो पहनते हैं, उसमें पोशाक पहने हुए मॉडल, प्रत्येक एक अलग शरीर के साथ, आपके सामने खड़े होते हैं यह दिखाने के लिए कि कैसे कपड़ा कई आकारों में फिट होता है. केवल आप उन्हें देखते हैं: कुछ भी भेजा या सहेजा नहीं जाता है.
+fit-lab-body-me = मई
+fit-lab-body-slim = स्लिम
+fit-lab-body-curvy = वक्र
+fit-lab-body-full = पूर्ण आकृति
+fit-lab-body-athletic = एथलेटिक
+fit-lab-body-tall = लंबा
+fit-lab-body-petite = छोटा
+fit-lab-motion = गति
+fit-lab-motion-stand = खड़े हों
+fit-lab-motion-walk = चलना
+fit-lab-motion-sit = बैठें
+fit-lab-motion-range = गति की सीमा
+fit-lab-pose = पोज़
+fit-lab-pose-all = सभी, बारी-बारी से
+fit-lab-pose-arms-up = हाथ ऊपर
+fit-lab-pose-reach = आगे पहुँचें
+fit-lab-pose-hug = हाथों को पार कर दिया
+fit-lab-pose-squat = स्क्वाट
+fit-lab-pose-kneel = घुटने टेक
+fit-lab-pose-knee-up = घुटना उठाया
+fit-lab-pose-twist = उलटना
+fit-lab-pose-bend = आगे झुकें
+fit-lab-motion-like-me = मेरे जैसा
+fit-lab-show = मैनिकॉन दिखाएँ
+fit-lab-place = उन्हें यहाँ लाओ
+fit-lab-remove = मनीकेन मिटाएँ
+fit-lab-choose = कम से कम एक शरीर चुनें.
+fit-lab-clip = दिखाएँ कि शरीर कहाँ से गुजरता है
+fit-lab-clip-note = लाल: शरीर कपड़े से बाहर आता है. पीला: शरीर और कपड़ा मिलते हैं. अपने अवतार पर और मैनेकिन पर, जैसा कि कैमरा से देखा जाता है. आप जो कुछ भी पहनते हैं वह शरीर के रूप में गिना जाता है: एक जैकेट या कपड़े के ऊपर पहने गए बालों को उतारें.
+blender-live-levels-pending = जब आप आयात पर क्लिक करते हैं तो ब्लेंडर या माया विवरण के स्तर तैयार करता है.
+blender-live-levels-note = प्रत्येक वस्तु के लाइवमेश सेटिंग्स से ब्लेंडर या माया में तैयार किया गया।
+blender-live-quick-look-changed = ब्लेंडर या माया में परिवर्तित { $ago } अगस्त का
+blender-live-warning-textures = टेक्सचर छोड़ा गया, सादा रंग दिखाया
+blender-live-warning-not-sent = पूर्वावलोकन में नहीं
+blender-live-undo-derez = Derezzed { $name } · अभी भी प्लगइन की सूची में
+blender-live-undo-detach = अलग { $name } · अभी भी प्लगइन की सूची में
+inventory-open-current = खोलें (O)
+inventory-folder-back = पीछे (B)
+inventory-folder-forward = आगे
+inventory-folder-up = एक स्तर ऊपर जाएँ
+area-search-metres = { $n } m
+area-search-band-reach = पहुँच के भीतर
+area-search-band-close = पास में
+area-search-band-around = आपके आसपास
+area-search-band-further = आगे
+area-search-band-far = फ़र
+area-search-band = क्षेत्र
+area-search-within = { $distance } के भीतर
+area-search-within-across = { $distance } के भीतर पार
+area-search-between = { $from }–{ $to }
+area-search-any-distance = प्रत्येक दूरी दिखाएँ
+area-search-from = से दूरी
+area-search-to = दूरी
+area-search-bar-tip =
+    { $count ->
+        [one] एक वस्तु, { $from } दो { $to }
+       *[other] { $count } वस्तुएँ, { $from } दो { $to }
+    }
+area-search-of-objects = का { $total } वस्तुएँ
+area-search-li = { $value } ली
+area-search-li-count = { $value } भूमि प्रभाव
+area-search-owner-count =
+    { $count ->
+        [one] एक मालिक
+       *[other] { $count } मालिक
+    }
+area-search-object-count =
+    { $count ->
+        [one] एक वस्तु
+       *[other] { $count } वस्तुएँ
+    }
+area-search-objects-word = वस्तुएँ
+area-search-in-reach = यहाँ
+area-search-tab-objects = वस्तुएँ
+area-search-tab-owners = मालिक
+area-search-hint-wide = वस्तुएँ, मालिक, निर्माता या UUIDs
+area-search-kind-heading = वस्तु का प्रकार
+area-search-kind-tip = क्लिक: सिर्फ ये. फिर से: छुपाएँ.
+area-search-kind-any = वर्ष
+area-search-kind-only = सिर्फ ये
+area-search-kind-hidden = छुपाएँ
+area-search-kind-attached = संलग्नक
+area-search-kind-probes = प्रोब
+area-search-click-all = सभी
+area-search-click-any-short = कोई भी
+area-search-permissions = अनुमतियाँ
+area-search-price-heading = बिक्री मूल्य, बिक्री के लिए वस्तुओं के लिए
+area-search-price-to = दो
+area-search-price-tip = "विक्री के लिए" पहले चुनें
+area-search-linked = लिंक्ड प्राइम
+area-search-one-field = एक फ़ील्ड में ढूंढें
+area-search-regex-switch = नियमित (रेगुलर) एक्सप्रेशन
+area-search-regex-invalid = वैध रेगुलर एक्सप्रेशन नहीं
+area-search-reset-filters-tip = सभी फ़िल्टर रीसेट करें; खोज पाठ रहता है
+area-search-save-defaults-tip = इन फ़िल्टरों के साथ अब से खोलें
+area-search-reset-search = खोज पाठ रीसेट करें
+area-search-reset-filters = फ़िल्टर विकल्प रीसेट करें
+area-search-reset-ranges = दूरी तथा मूल्य रीसेट करें
+area-search-reset-all = सब कुछ रीसेट करें
+area-search-more = अधिक
+area-search-several = कई चुनें
+area-search-several-tip = क्लिक चयन में जोड़ता है (Ctrl या Shift + क्लिक, Ctrl+A भी)
+area-search-actions = क्रियाएँ
+area-search-nothing = अभी तक कोई वस्तु प्राप्त नहीं हुई.
+area-search-nothing-for-sale = यहाँ बिक्री के लिए कुछ नहीं है.
+area-search-not-for-sale = बिक्री के लिए नहीं
+area-search-from-price = से { $price }
+area-search-nearest = निकटतम प्रथम
+area-search-heaviest = सबसे भारी पहले
+area-search-order-tip = अनुक्रम बदलें: निकटतम या सबसे भारी पहले
+area-search-rank = #{ $rank } का { $all }
+area-search-rank-here = #{ $rank } यहाँ
+area-search-card-more = प्रत्येक आकृति दिखाएँ
+area-search-card-less = कम दिखाएँ
+area-search-open-group = समूह खोलें
+area-search-spoken = { $name }, { $distance }, भूमि प्रभाव { $li }, इसका स्वामित्व है { $owner }
+area-search-owner-spoken = { $name }, { $count } वस्तुएँ, भूमि प्रभाव { $li }
+area-search-stage-line = { $distance } दूर · { $li } भूमि प्रभाव { $owner }
+area-search-tile-3d = 3डी दृश्य
+area-search-on = { $count } चालू
+area-search-on-word = चालू
+area-search-more-on =
+    { $count ->
+        [one] एक और फ़िल्टर चालू करें
+       *[other] { $count } अधिक फ़िल्टर
+    }
+ui-options-legacy-lists = लेगेसी प्रदर्शक से सूची आयात करें
+ui-options-legacy-lists-help = इस खाते के टेलिपोर्ट इतिहास, संपत्ति ब्लैकलिस्ट, मीडिया फ़िल्टर सूची और संपर्क सेट जोड़ता है. लीजेसी प्रदर्शक की फ़ाइलें सिर्फ पढ़ने योग्य हैं.
+ui-options-legacy-lists-button = लेगेसी प्रदर्शक से आयात करें...
+ui-options-legacy-lists-no-account = इस खाता की सूची आयात करने के लिए लॉगइन करें.
+ui-options-legacy-lists-title = लेगेसी प्रदर्शक से आयात करें
+ui-options-legacy-lists-text = इस खाते की सूची में सब कुछ जोड़ा जाता है और यहाँ कुछ भी हटाया नहीं जाता. जो संपत्ति ब्लैकलिस्ट नाम एक साथ दुनिया छोड़ देता है. फिर आयात करना वापस लाता है जो आपने यहाँ हटाया था.
+ui-options-legacy-lists-searching = लीजेसी प्रदर्शक के फ़ोल्डर को ढूंढ रहा है...
+ui-options-legacy-lists-none = इस खाते के लिए कोई लिजेसी प्रदर्शक फ़ोल्डर सूची के साथ नहीं मिला.
+ui-options-legacy-lists-teleports = टेलीपोर्ट इतिहास ({ $count })
+ui-options-legacy-lists-derender = संपत्ति ब्लैकलिस्ट ({ $count })
+ui-options-legacy-lists-media = मीडिया फ़िल्टर सूची ({ $count })
+ui-options-legacy-lists-contact-set-entries = संपर्क सेट प्रविष्टि ({ $count })
+ui-options-legacy-lists-confirm = आयात
+ui-options-legacy-lists-added = जोड़ा या अद्यतन किया गया. टेलीपोर्ट इतिहास: { $teleports }, संपत्ति ब्लैकलिस्ट: { $derender }, मीडिया फ़िल्टर: { $media }, संपर्क सेट प्रविष्टियाँ: { $sets }.
+ui-options-legacy-lists-nothing = कुछ नया नहीं: इस खाता में पहले से ही ये सूची हैं.
+ui-options-legacy-lists-failed = पढ़ नहीं सका: { $files }.
+ui-options-legacy-lists-unsaved = सहेज नहीं सका, जैसा था वैसा ही छोड़ा: { $files }.
+ui-options-legacy-lists-other-grid = इस ग्रिड पर एक ही नाम का फ़ोल्डर अन्य ग्रिड से संबंधित हो सकता है: जाँचें कि यह सही है.
+ui-options-build-show-beams-hint = अपने चयन बीम और अन्य अवतारों के बीम दिखाएँ जब संपादन, ग्रैपिंग या देने में. यह केवल प्रदर्शक को नियंत्रित करता है; स्थानीय रूप से और नेटवर्क पर संपादन बीम बंद करने के लिए गोपनीयता > संपादन बिम छुपाएँ का उपयोग करें.
+teleport-failed-title = टेलिपोर्ट असफल.
+teleport-error-invalid-tport = टेलिपोर्ट प्रयास प्रति मिनट6से सीमित है. यदि आपको समस्या हो रही है, एक मिनट इंतजार करें और फिर से टेलिपोर्ट करने की कोशिश करें. यदि समस्या बनी रहती है, लॉगआउट करें और पुनः लॉगइन करें.
+teleport-error-invalid-region-handoff = आपका क्षेत्र पार करने के प्रक्रिया में समस्या हुई. आपको क्षेत्रों को पार करने से पहले वापस लॉगइन करने की आवश्यकता हो सकती है. यदि आपको यह संदेश जारी रहता है, कृपया समर्थन का संपर्क करें.
+teleport-error-blocked-tport = माफ करें, टेलीपोर्ट वर्तमान में अवरुद्ध है. एक पल में फिर कोशिश करें. यदि आप अभी भी टेलीपोर्ट नहीं कर सकते हैं, कृपया लॉगआउट करें और समस्या को हल करने के लिए वापस लॉगइन करें.
+teleport-error-nolandmark-tport = माफ कीजिए, लेकिन तंत्र लैंडमार्क गंतव्य को ढूंढने में अक्षम है.
+teleport-error-timeout-tport = माफ करें, तंत्र टेलिपोर्ट कनेक्शन को पूरा करने में अक्षम है. कुछ क्षणों में फिर से कोशिश करें.
+teleport-error-no-help-island = आप स्वागत द्वीप पर वापस टेलीपोर्ट नहीं कर सकते हैं.
+teleport-error-noaccess-tport = माफ करें, आपके पास उस टेलिपोर्ट गंतव्य पर पहुँच नहीं है.
+teleport-error-missing-attach-tport = आपके संलग्नक अभी तक नहीं पहुंचे हैं. कुछ सेकंड के लिए प्रतीक्षा करें या लॉगआउट करें तथा फिर से लॉगइन करें टेलिपोर्ट करने की कोशिश करने से पहले.
+teleport-error-too-many-uploads-tport = इस क्षेत्र में संपत्ति कतार वर्तमान में अवरुद्ध है, इसलिए आपका टेलीपोर्ट निवेदन समय पर सफल नहीं हो पाएगा. कृपया कुछ मिनटों में फिर से कोशिश करें या कम व्यस्त क्षेत्र में जाएँ.
+teleport-error-expired-tport = माफ करें, तंत्र आपके टेलीपोर्ट निवेदन को समय पर पूरा करने में अक्षम है. कृपया कुछ मिनटों में फिर से कोशिश करें.
+teleport-error-expired-region-handoff = माफ करें, तंत्र आपके क्षेत्र पारगमन को समय पर पूरा करने में अक्षम है. कृपया कुछ मिनटों में फिर से कोशिश करें.
+teleport-error-preexisting-tport = माफ करें, तंत्र आपके टेलीपोर्ट को प्रारंभ करने में अक्षम है. कृपया कुछ मिनटों में फिर से कोशिश करें.
+teleport-error-no-host = टेलिपोर्ट गंतव्य ढूंढने में अक्षम. गंतव्य अस्थायी रूप से अनुपलब्ध हो सकता है या अब अस्तित्व में नहीं है. कृपया कुछ मिनटों में फिर कोशिश करें.
+teleport-error-no-inventory-host = वर्तमान में यह प्रणाली अप्रचलित है।
+teleport-error-must-get-age-region = इस क्षेत्र में प्रवेश करने के लिए आपको 18 वर्ष या उससे अधिक की आयु होनी चाहिए।
+teleport-error-special-usage-blocked = क्षेत्र प्रविष्ट करने में अक्षम. '{ $region }'एक कौशल गेमिंग क्षेत्र है, तथा आपको प्रविष्ट होने के लिए कुछ मानदंडों को पूरा करना होगा. विस्तृत विवरण के लिए कृपया कौशल खेल FAQ देखें: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = क्षेत्र प्रविष्ट करने में अक्षम. यह एक कौशल गेमिंग क्षेत्र है, और आपको प्रवेश के लिए कुछ मानदंडों को पूरा करना होगा. विस्तृत विवरण के लिए कृपया कौशल खेल FAQ: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ देखें
+teleport-hint-hypergrid-home-refused = आपके होम ग्रिड ने आपकी वापसी को अस्वीकार कर दिया. इसका आमतौर पर मतलब है कि इसके हाइपरग्रिड पता विन्यास अन्य ग्रिड के उपयोग के लिए पता से मेल नहीं खाता है. अपने होम ग्राइड के ऑपरेटरों से संपर्क करें; फिर लॉगइन करने से आप बीच में घर ले जाते हैं.
+teleport-hint-hypergrid-unreachable = अन्य ग्रिड पहुँचा नहीं जा सका. यह ऑफ़लाइन हो सकता है, या लिंक पुराने पता को इंगित कर सकता है.
+teleport-hint-hypergrid-visitors-refused = इस प्रकार के वृक्षों में केवल कुछ ही जातियों की जड़ें होती हैं।
+teleport-hint-hypergrid-destination-gone = गंतव्य क्षेत्र अब मौजूद नहीं है या इसे खिसका दिया गया है. अन्य ग्रिड के लिए लैंडमार्क तथा लिंक पुराने हो सकते हैं.
+toolbar-edit = बटन तथा मेन्यू मनपसंद बनाएँ...
+toolbar-title = बटन तथा मेन्यू
+toolbar-interface-locked = इंटरफेस तालाबंद
+toolbar-help = बटन या मेन्यू प्रविष्टियों को ऊपरी, निचली या बाजू पट्टी पर खींच लाएँ. बटन को हटाने के लिए इसे यहाँ वापस छोड़ें. किसी भी बटन की उपस्थिति बदलने के लिये दायाँ क्लिक करें.
+toolbar-help-classic = बटन या मेन्यू प्रविष्टियों को ऊपरी, निचली या बाजू पट्टी पर खींच लाएँ. बटन को हटाने के लिए इसे यहाँ वापस छोड़ें. किसी भी बटन की उपस्थिति बदलने के लिये दायाँ क्लिक करें.
+toolbar-help-modes = प्रत्येक बटन के लिए प्रतीक, लेबल, दोनों या पट्टी डिफ़ॉल्ट चुनें. इसे फिर से व्यवस्थित करने के लिए Aurora मेन्यू में प्रविष्टियों को खींच लाएँ.
+import-menu-textures = टेक्सचर
+import-menu-animations = एनीमेशन
+import-menu-sounds = ध्वनि
+import-menu-materials = सामग्री
+import-menu-meshes = जाल
+import-menu-options = आयात विकल्प
+import-upload-payment-title = अपलोड
+import-upload-payment = आपने अपलोड के लिए L${ $cost } चुकाए।
+import-quick-textures =
+    { $count ->
+        [one] आयात · टेक्सचर: 1 · L${ $cost }?
+       *[other] आयात · टेक्सचर: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] आयात · सामग्री: 1 · L${ $cost }?
+       *[other] आयात · सामग्री: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] आयात · ध्वनि: 1 · L${ $cost }?
+       *[other] आयात · ध्वनि: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] आयात का आकार चुनें। समर्थित टेक्सचर 2048 × 2048 आकार में आयात किए जा सकते हैं:
+       *[other] ({ $count }) आयात का आकार चुनें। समर्थित टेक्सचर 2048 × 2048 आकार में आयात किए जा सकते हैं:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] आयात का आकार चुनें। मटीरियल की समर्थित छवियाँ 2048 × 2048 आकार में आयात की जा सकती हैं:
+       *[other] ({ $count }) आयात का आकार चुनें। मटीरियल की समर्थित छवियाँ 2048 × 2048 आकार में आयात की जा सकती हैं:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = मुफ़्त छवियाँ बिना पूछे 2048 × 2048 आकार में अपलोड करें
+import-quick-free-full-size-help = "टेक्सचर आयात" और "सामग्री आयात", तब केवल 1024 या 2048 पूछते हैं जब अपलोड की लागत L$ होती है।
+ui-bars-customize-bars = इंटरफेस अनुकूलित करें
+build-tool-in-use = उपयोग में
+build-create-options-toggle = विकल्प दिखाएँ / छुपाएँ
+build-create-keep-creating = बनाना जारी रखें
+build-create-center-on-prim = प्राइम पर केंद्रित
+build-create-copy-prim-rotation = प्राम परिक्रमण की नक़ल लें
+build-create-align-to-surface = सतह के साथ पंक्तिबद्ध करें
+build-capture-shape-button = प्राम के आकार की नक़ल बनाये: इसपर क्लिक करे, फिर दुनिया में एक प्राम
+build-capture-shape-armed = इसका आकार नक़ल करने के लिये प्राम पर क्लिक करे (एस्केप रद्द करता है)
+build-capture-shape-full = 20 आकार रखे गये है. दूसरी प्रतिलिपि बनाने के लिये एक को मिटा दे
+build-capture-shape-remove = इस आकार को मिटाएँ
+build-capture-shape-tooltip = नक़ल आकार ({ $kind })
+build-capture-shape-not-a-prim = सिर्फ प्राम के आकार को नक़ल किया जा सकता है
+build-capture-shape-mesh-or-sculpt = एक जाल या मूर्तिकृत प्राम का आकार नक़ल नहीं किया जा सकता है
+build-capture-shape-no-modify = इस प्राम के आकार को नक़ल करने के लिए आपको अनुमति चाहिए
+import-other-options = अन्य विकल्प
+toolbar-button-icons = सिर्फ प्रतीक
+toolbar-button-text = सिर्फ लेबल
+toolbar-button-icons-text = प्रतीक तथा लेबल
+toolbar-icon-default = डिफ़ॉल्ट प्रतीक बहाल करें
+toolbar-icon-choose = प्रतीक चुनें
+toolbar-icon-change = प्रतीक बदलें
+toolbar-presets = प्रीसेट
+toolbar-interfaces = इंटरफेस
+toolbar-interfaces-shown = इंटरफेस ब्लॉक में दिखाया गया
+toolbar-interfaces-hidden = इंटरफेस ब्लॉक से छुपाएँ
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora पुराना स्कूल
+toolbar-preset-photographer = Aurora फोटोग्राफर
+toolbar-preset-legacy = लीजेसी
+toolbar-import-textures = टेक्सचर आयात करें
+toolbar-import-sounds = ध्वनि आयात करें
+toolbar-import-animations = एनिमेशन आयात करें
+toolbar-import-materials = सामग्री आयात करें
+toolbar-import-meshes = मेश आयात करें
+toolbar-import-local = स्थानीय फ़ाइलें
+toolbar-import-advanced = उन्नत आयात
+toolbar-import-settings = आयात विन्यास
+toolbar-import-bar = पट्टी आयात करें
+toolbar-icon-search = एक प्रतीक ढूंढें...
+toolbar-in-top = शीर्ष औज़ार पट्टी में
+toolbar-bar-top = शीर्ष औज़ार पट्टी
+toolbar-drop-here = यहाँ डालें
+toolbar-separator = विभाजक
+toolbar-interface-edit = इंटरफेस अनुकूलित करें
+toolbar-edit-done = पूर्ण
+toolbar-edit-top = शीर्ष
+toolbar-edit-bottom = नीचे
+toolbar-edit-left = बायाँ
+toolbar-edit-right = दायाँ
+toolbar-edit-help = किसी वस्तु को चुनने के लिए क्लिक करें, इसे खिसकाएँ या संपादन विकल्पों के लिए दायाँ क्लिक करे. समाप्त करने के लिए इस विंडो को बंद करें.
+toolbar-edit-locked = पट्टी तालाबंद हैं. इंटरफेस बदलने के लिए उन्हें नीचे ताला खोलें.
+toolbar-edit-move = यहाँ खिसकाएँ
+toolbar-edit-split-before = विभाजित करें
+toolbar-edit-split-after = इसके बाद विभाजित करें
+toolbar-edit-merge-before = पिछले ब्लॉक के साथ मिलाएं
+toolbar-edit-merge-after = अगले ब्लॉक के साथ मिलाएं
+toolbar-edit-merge-groups = इन खण्डों को मिलाएँ
+toolbar-drawer = ड्रायर
+toolbar-drawer-default-mode = बटनों का डिफ़ॉल्ट प्रदर्शक
+toolbar-drawer-closes = बटन पर क्लिक करने के बाद बंद करें (C)
+toolbar-block-shortcut = शॉर्टकट:
+toolbar-drawer-hides-needs-shortcut = शॉर्टकट आवश्यक है
+toolbar-floating-close-button = बन्द बटन जोड़ें
+toolbar-block-name = ब्लॉक नाम:
+toolbar-block-button-mode = ब्लॉक बटन प्रदर्शक
+toolbar-button-inherited = विरासत में मिला
+toolbar-drawer-hides-button = फ्लोटिंग बटन छुपाएँ
+toolbar-floating-new = फ्लोटिंग ब्लॉक
+toolbar-floating-orientation = अभिमुखीकरण
+toolbar-floating-horizontal = आड़ा
+toolbar-floating-vertical = खड़ा (V)
+toolbar-floating-empty = बटन यहाँ छोड़ें
+toolbar-shortcut-title = शॉर्टकट
+toolbar-shortcut-block-name = ब्लॉक: { $name }
+toolbar-shortcut-none = कोई शॉर्टकट नहीं
+toolbar-shortcut-press-key = कुंजी दबाएँ
+toolbar-shortcut-esc = रद्द करने के लिए Esc
+toolbar-shortcut-clear = मिटाएँ
+toolbar-shortcut-overrides = { $name } से अधिक लेता है: यह शॉर्टकट अपने डिफ़ॉल्ट उपयोग के बजाय टूलबार को चलाता है।
+toolbar-shortcut-used = पहले से ही { $names } का शॉर्टकट.
+toolbar-shortcut-replace = बदलें (R)
+toolbar-shortcut-add = जोड़ें (A)
+toolbar-shortcut-save = सहेजें (S)
+toolbar-shortcut-choose-key = कुंजी चुनें
+toolbar-shortcut-help = कंट्रोल, ऑल्ट तथा शिफ्ट को चालू या बन्द करें, फिर इसे बदलने के लिये कुंजी पर क्लिक करें. F1 से F24 तक के लिए कंट्रोल या ऑल्ट आवश्यक है.
+toolbar-shortcut-inactive = यह बटन कोई पट्टी में नहीं है: इसका शॉर्टकट कार्य करता है जब इसे फिर से रखा जाता है.
+toolbar-shortcut-refused-keyboard = केवल कुंजीपटल की कुंजियाँ शॉर्टकट हो सकती हैं.
+toolbar-shortcut-refused-modifier = एक मॉडिफायर कुंजी अकेला शॉर्टकट नहीं हो सकता.
+toolbar-shortcut-refused-needs-modifier = कंट्रोल या ऑल्ट जोड़ें: एक कुंजी अकेले, या केवल शिफ्ट के साथ, पाठ क्षेत्रों में टाइप करें.
+toolbar-shortcut-refused-altgr = Ctrl+Alt इस कुंजी के साथ AltGr है, जो कई कीबोर्डों पर अक्षर टाइप करता है।
+toolbar-shortcut-refused-editing = पाठ फ़ील्ड इस शॉर्टकट का उपयोग करते हैं (सब चुनें, नक़ल करें, काटें, चिपकाएँ, पहले जैसा करें, फिर से करें).
+toolbar-shortcut-refused-navigation = पाठ क्षेत्र इस कुंजी के साथ खिसकाएँ और मिटाएँ.
+toolbar-shortcut-refused-typing = गपशप और संवाद इस कुंजी का उपयोग करते हैं.
+toolbar-shortcut-refused-system = तंत्र इस शॉर्टकट को रखता है.
+toolbar-shortcut-refused-window = यह शॉर्टकट विंडो बन्द या स्विच करता है.
+toolbar-shortcut-refused-zoom = यह शॉर्टकट इंटरफेस को ज़ूम करता है.
+toolbar-spacer = ब्लॉक स्पेसिंग
+toolbar-add-spacer = ब्लॉक स्पेसिंग जोड़ें
+toolbar-button-settings = बटन विन्यास
+toolbar-button-edit = बटन संपादित करें...
+toolbar-button-edit-title = संपादन बटन
+toolbar-button-name = बटन नामः
+toolbar-button-display = बटन प्रदर्शक
+toolbar-shortcut-fixed-block-help = एक निश्चित ब्लॉक का शॉर्टकट इसे दिखाता और छुपाता है; जबकि इंटरफेस संपादित किया जाता है, यह दिखाई देता रहता है।
+toolbar-block-settings = ब्लॉक विन्यास
+toolbar-parent-block-settings = पैरेंट ब्लॉक विन्यास
+toolbar-block-edit = ब्लॉक संपादन...
+toolbar-block-edit-title = ब्लॉक संपादन
+toolbar-block-alignment = पंक्तिबद्धता
+toolbar-block-sizing = बटन आकार
+toolbar-block-fixed-options = स्थिर मोड विकल्प
+toolbar-block-floating-options = फ्लोटिंग मोड विकल्प
+toolbar-block-kind-fixed = स्थिर ब्लॉक
+toolbar-block-kind-drawer = ड्रायर
+toolbar-block-kind-floating = फ्लोटिंग ब्लॉक
+toolbar-block-remove = ब्लॉक मिटाएँ
+toolbar-move-block = पूरे ब्लॉक को खिसकाने के लिये खींचें
+toolbar-remove-block = ब्लॉक मिटाएँ
+toolbar-drawer-empty = यह ड्रायर खाली है.
+toolbar-drawer-drop = बटनों को जोड़ने या उन्हें फिर से अनुक्रमित करने के लिए यहाँ खींच लाएँ.
+toolbar-separator-settings = ब्लॉक स्पेसिंग विन्यास
+toolbar-separator-size = आकार / न्यूनतम (px)
+toolbar-separator-stretch = उपलब्ध जगह भरें
+toolbar-separator-help = लचीले अंतराल ब्लॉक के द्वारा छोड़ी गई जगह को साझा करते हैं. आकार उनकी न्यूनतम चौड़ाई है, या किनारे की पट्टी में ऊंचाई.
+toolbar-block-navigation = नेविगेशन तथा एसएलआरएल
+toolbar-block-account = खाता तथा संतुलन
+toolbar-block-system = घड़ी, संकेतक तथा ऑडियोName
+toolbar-block-status = उपलब्धता स्थिति
+toolbar-block-balance = संतुलन
+toolbar-block-clock = घड़ी
+toolbar-block-ping = क्षेत्र लेटेंसी
+toolbar-block-fps = फ्रेम दर (FPS)
+toolbar-block-network = नेटवर्क ट्रैफ़िक
+toolbar-block-media = पैकेट मीडिया
+toolbar-block-music = पार्सल संगीत
+toolbar-block-volume = आवाज़
+toolbar-block-notifications = सूचनाएँ
+toolbar-block-conversations = वार्तालाप प्रतीक
+toolbar-block-chat = निकटवर्ती गपशप इनपुट
+toolbar-category-all = सभी श्रेणियाँ
+toolbar-section-main = मुख्य
+toolbar-section-advanced = उन्नत
+toolbar-search-all = खोज में उन्नत कमांड शामिल हैं.
+toolbar-category-avatar = अवतार तथा गति
+toolbar-category-communication = संचार
+toolbar-category-world = विश्व और यात्रा
+toolbar-category-creation = रचना तथा विषयवस्तु
+toolbar-category-interface = इंटरफेस तथा कैमरा
+toolbar-category-advanced = उन्नत औज़ार
+toolbar-category-help = सहायता
+toolbar-category-custom = मनपसंद कमांड
+toolbar-bar-settings = औज़ार पट्टी विन्यास
+toolbar-menu-group = मेन्यू: { $name }
+toolbar-location-bar = एसएलयूआरएल पता पट्टी
+toolbar-command-build-tool-focus = बिल्ड - कैमरा
+toolbar-command-build-tool-grab = बिल्ड - खिसकाएँ
+toolbar-command-build-tool-edit = बिल्ड - संपादन
+toolbar-command-build-tool-create = बिल्ड - बनाएँ
+toolbar-command-build-tool-land = निर्माण - भूमि
+bug-copy-version = प्रदर्शक संस्करण की नक़ल बनाएँ
+toolbar-notecard-save = नोटकार्ड में सहेजें...
+toolbar-notecard-load = नोटकार्ड से लोड करें...
+toolbar-notecard-name = Aurora इंटरफेस
+toolbar-notecard-help = औज़ार पट्टी, बटन, ड्रायर तथा मेन्यू का ख़ाका तथा उपस्थिति. Name
+toolbar-notecard-saved = इंटरफ़ेस लेआउट जो आपके सूची में सहेजा गया है.
+toolbar-notecard-invalid = इस नोटकार्ड में कोई संगत इंटरफेस खाका नहीं है.
+toolbar-notecard-unavailable = यह नोटकार्ड अब उपलब्ध नहीं है या नक़ल नहीं किया जा सकता.
+toolbar-notecard-layout-changed = नोटकार्ड लोड होने के दौरान इंटरफेस बदल गया. इसका खाका लागू करने के लिए इसे फिर से लोड करें.
+toolbar-notecard-demo-valid = फोटोग्राफर इंटरफेस
+toolbar-notecard-demo-invalid = अन्य नोटकार्ड
+toolbar-notecard-too-large = यह इंटरफेस कॉन्फ़िगरेशन नोटकार्ड के लिए बहुत बड़ा है.
+toolbar-saved-interfaces = सहेजे गए इंटरफेस
+toolbar-saved-interfaces-empty = अभी कोई सहेजा गया इंटरफेस नहीं है.
+toolbar-notecard-destination = फ़ोल्डर (F): { $path }
+toolbar-notecard-folder-error = इंटरफेस फ़ोल्डर लोड या बनाया नहीं जा सका. कृपया फिर से कोशिश करें.
+toolbar-current-preset = चयनित इंटरफेस: { $name }
+toolbar-preset-custom = मनपसंद इंटरफेस
+toolbar-preset-unsaved = बिन सहेजे गए परिवर्तन
+toolbar-preset-save-title = इंटरफेस सहेजें
+toolbar-preset-save-name = इंटरफेस नाम
+toolbar-preset-save-new = नया व्यक्तिगत इंटरफेसName
+toolbar-preset-save-replace = इस व्यक्तिगत इंटरफेस को बदलें
+toolbar-preset-save-unavailable = यह इंटरफेस यहाँ सहेजा नहीं जा सकता. अन्य नाम या उपलब्ध, संपादन योग्य व्यक्तिगत इंटरफेस चुनें.
+toolbar-interface-delete-unavailable = यह व्यक्तिगत इंटरफेस मिटाया नहीं जा सकता.
+toolbar-interface-delete-confirm = निजी इंटरफ़ेस “{ $name }” को ट्रैश में भेजें?

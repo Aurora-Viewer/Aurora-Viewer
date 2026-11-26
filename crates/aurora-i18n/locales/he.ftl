@@ -16091,3 +16091,739 @@ parcel-environment-empty = לא נשמרו סביבות
 parcel-environment-remove-all = הסר את כולם
 parcel-environment-remove-all-title = להסיר כל סביבה שנשמרה עבור חבילה?
 parcel-environment-remove-all-text = הסביבות ששמרתם לחלקות קרקע בגריד הזה יוסרו. הסביבות בגרידים אחרים יישארו כפי שהן. לא ניתן לבטל את הפעולה.
+
+### Updated release translations
+
+anim-timeline-channels-hint = הראה את מפתחות הסיבוב והמיקום של עצם זו על שורות משלה
+anim-timeline-channel-rotation = סיבוב
+anim-timeline-channel-location = מיקום
+anim-timeline-keying-hint = איזה רשימות מפתח עם מיקום, תנועה לוקחת ג'וינט לבד, מחוץ לשרשרת IK שלה אנימציות Second Life אין מפתחות קנה מידה
+anim-timeline-keying-auto = אוטומטי: סיבוב, ומיקום של האגן והמפרקים הנעים
+anim-timeline-keying-auto-short = אוטומטי
+anim-timeline-keying-loc-rot = מיקום וסיבוב
+anim-timeline-keying-loc-rot-short = מיקום + שורש
+anim-timeline-keying-rot-short = רוט.
+anim-timeline-keying-loc-short = אתר
+anim-edit-shortcut-play = נגן או עצרו
+area-search-scope-heading = איפה
+area-search-scope-parcel = חבילה
+area-search-scope-region = אזור
+area-search-scope-neighbours = שכנים.
+area-search-objects-heading = איזה עצמים
+inventory-copy-selection-count =
+    { $count ->
+        [one] העתק 1 פריט
+       *[other] העתק { $count } פריטים
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] קישור 1
+       *[other] קישור { $count } פריטים
+    }
+inventory-drop-move-here = תזוז לכאן.
+inventory-drop-copy-here = העתק כאן
+inventory-drop-link-here = יצירת קישורים כאן
+inventory-sort-description = תיאור
+inventory-sort-reversed = { $order } (הפוך)
+inventory-column-creator = יוצר
+inventory-column-count = פריטים
+inventory-columns-fit = הגדלת גודל כל העמודות כדי שיתאימו
+inventory-columns-reset-widths = איפוס רוחב העמודה
+inventory-back = אחורה.
+inventory-forward = קדימה.
+inventory-up = מעלה רמה אחת.
+keybinds-inventory-root = לך למעלה.
+keybinds-inventory-search = חיפוש במזומנים
+keybinds-inventory-filter = הוספת תיקייה
+keybinds-inventory-preview = הראה את חלון התצוגה המקדימה
+keybinds-inventory-view-large = תמונות גדולות
+keybinds-inventory-view-medium = תמונות אמצעיות
+keybinds-inventory-view-small = תמונות קטנות
+keybinds-inventory-view-compact = תצוגה צפופה
+keybinds-inventory-view-details = תצוגת פרטים
+keybinds-inventory-view-tiles = תצוגת אריחים
+keybinds-inventory-toggle = בחר או ביטל את בחירת השורה במוקד
+keybinds-inventory-menu = פתיחת תפריט הבחירה
+keybinds-inventory-purge = ניקוי מהזבל
+keybinds-inventory-refused = { $keys } נשאר המפתח של רשימת המזומנים: בחר אחרת.
+inventory-path-edit = הקלדת נתיב
+inventory-path-subfolders = תיקיות משנה
+inventory-copy-path = העתק את הנתיב
+inventory-show-in-folder = הראה בתיקיה
+inventory-pin = תוסיף לגישה מהירה
+inventory-unpin = פתרון בעיות
+inventory-quick-access = גישה מהירה
+inventory-quick-access-drop = הזז תיקיה לכאן כדי לסמן אותה
+inventory-invert-selection = הפוך את הבחירה
+inventory-undo = בטל
+inventory-redo = חזרה
+inventory-undo-step = בטל { $what }
+inventory-redo-step = חזור על { $what }.
+inventory-history-move =
+    { $count ->
+        [one] הזזה של פריט אחד
+       *[other] הזזת { $count } פריטים
+    }
+inventory-history-delete =
+    { $count ->
+        [one] מחק של 1 פריט
+       *[other] מחיקת { $count } פריטים
+    }
+inventory-history-rename = שינוי שם
+inventory-history-new-folder = תיקיה חדשה
+inventory-history-copy =
+    { $count ->
+        [one] העתק של פריט 1
+       *[other] העתק של { $count } פריטים
+    }
+inventory-history-link =
+    { $count ->
+        [one] קישור לרכיב 1
+       *[other] קישורים ל-{ $count } פריטים
+    }
+inventory-undo-nothing = לא נותר שום דבר לבטל: הפריטים האלה נעו או נעלמו.
+inventory-redo-nothing = לא נותר שום דבר לעשות מחדש: הפריטים האלה עברו או נעדרו.
+inventory-undo-empty = אין מה לבטל.
+inventory-redo-empty = אין מה לעשות שוב.
+inventory-undo-dropped = פריטים של הצעד האחרון נעו או נעלמו: הוא הוסר. בטל שוב עבור הצעד הקודם.
+inventory-redo-dropped = פריטים של הצעד הבא נעו או נעלמו: הם נזרקו. חזור על התהליך בשלב הבא.
+inventory-undo-folder-not-empty = התיקייה החדשה מכילה פריטים שנמצאים שם מאז: זז אותם החוצה קודם, או מחק את התיקיה בעצמך.
+inventory-undo-kept-out = החפצים האלה נמצאים בתלבושת הנוכחית או ברשימת השוק עכשיו: שינוי אותם שם.
+inventory-restore-to = חזרה ל"{ $folder }"
+inventory-restore-to-origins = שחזר לתיקיות שלהם
+inventory-purge-no-undo = בטל לא יכול להחזיר אותם.
+inventory-new-tab = טבלה חדשה
+inventory-close-tab = סגור את הלשונית
+inventory-next-tab = טבלה הבאה
+inventory-previous-tab = טבלה קודמת
+inventory-open-in-new-tab = פתוח בלשונית חדשה
+inventory-tabs-limit = לכל היותר { $count } טבלאות.
+inventory-copy-to-other-pane = העתק לחלונית אחרת
+inventory-move-to-other-pane = להעביר לחלונית אחרת
+inventory-resize-columns = סובב כדי לשנות את גודל העמודות. לחץ פעמיים כדי להתאים את העמודה משמאל לתוכן שלה.
+inventory-resize-columns-first = סובב כדי לשנות את גודל העמודות. לחץ כפול כדי לתת לעמודה הראשונה את הרוחב הרגיל שלה.
+inventory-sort-by-column = לחץ כדי למיין לפי העמודה הזו, שוב כדי להפוך את הסדר. סובב כדי להזיז את העמודות.
+inventory-filter-hint = מסנן תיקייה זו...
+inventory-filter-close = סגור את המסנן (Esc)
+inventory-filter-nothing = שום דבר כאן לא מתאים למסנן.
+inventory-view-compact = תצוגה צפופה
+inventory-view-tiles = תצוגת אריחים
+inventory-view-per-folder = זכור את התצוגה של כל תיקייה
+inventory-group-by = קבוצה לפי
+inventory-group-none = אף אחד
+inventory-group-folders = תיקיות
+inventory-group-unknown-creator = יוצר לא ידוע עדיין
+inventory-group-today = היום.
+inventory-group-yesterday = אתמול.
+inventory-group-this-week = בשבעת הימים האחרונים
+inventory-group-this-month = ב-30 הימים האחרונים
+inventory-group-this-year = מוקדם יותר השנה
+inventory-group-earlier = לפני הרבה זמן.
+inventory-group-no-date = אין תאריך
+cmdline-mod-zoffset-usage = הגדרת גובה ההזזה של האווטאר שלך (שימוש: /zoffset value או +delta).
+dev-toolbox-n4 = אני טוען את המזומנים.
+dev-toolbox-what-n4 = תיקיות נקראות, נכשלו ונשארו, המטען קורא בתנועה ומנסה מחדש; אין שמות
+ui-context-inspect-avatar = בדוק את האווטאר.
+inspect-window = בדוק.
+inspect-tab-objects = עצמים
+inspect-objects-title =
+    { $count ->
+        [one] אובייקט { $count }
+       *[other] { $count } עצמים
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } פריטים
+       *[other] { $count } פריטים
+    }
+inspect-open-profile = פתח את הפרופיל
+inspect-over-limit = מעל לגבול שלך.
+inspect-limit-tip = גבול המורכבות שלך: { $limit }
+inspect-search = חיפוש פריטים או יוצרים
+inspect-outlined = { $name } מתוארת בעולם
+inspect-area-head = ראש.
+inspect-area-body = גוף
+inspect-area-arms = זרועות וידיים.
+inspect-area-legs = רגליים ורגליים.
+inspect-area-hud = היד.
+inspect-area-other = אחר
+inspect-area-world = עצמים
+inspect-own-eyes = עיני המערכת
+inspect-own-body = גוף המערכת
+inspect-own-description = חלק מהאווטאר עצמו, לא תוספת.
+inspect-own-maker = אווטאר · Second Life
+inspect-own-place = אווטאר
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } מ"ב
+inspect-section-complexity = { $value } מורכבות
+inspect-no-match = שום דבר לא מתאים ל"{ $query }".
+inspect-spoken-worn = { $name }, לבוש על { $point }מורכבות { $complexity }, עשוי על ידי { $creator }
+inspect-spoken-object = { $name }, בבעלות { $owner }מורכבות { $complexity }, עשוי על ידי { $creator }
+inspect-look-at-tip = תזיז את המצלמה אליו.
+inspect-profile-tip = פתח את הפרופיל של היוצר
+inspect-made-by = מיוצר על ידי
+inspect-owned-by = בבעלות
+inspect-worn-on = לובשים על
+inspect-prims-count =
+    { $count ->
+        [one] { $count } ראשוני
+       *[other] { $count } ראשוניים
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = זיכרון טקסטורות
+inspect-tile-vram = זיכרון וידאו
+inspect-tile-prims = פרימים
+board-close = סגור { $title }
+board-grow = להגדיל { $title }
+board-remove = הסר את { $name }
+board-more = ו { $count } עוד.
+board-more-short = +{ $count }
+board-some-of = { $shown } של { $all }
+board-of-all = של { $all }
+stage-turn-left = פנה שמאלה.
+stage-turn-right = פנה ימינה.
+stage-higher = תסתכל מלמעלה.
+stage-lower = תסתכל מתחת.
+stage-nearer = קרוב יותר.
+stage-further = יותר רחוק
+stage-reset = בחזרה להתחלה.
+stage-hint = סובב כדי להסתובב, ימינה כדי לזוז
+stage-light = רקע בהיר
+stage-dark = רקע כהה
+stage-playing = AO
+stage-paused = בשיחה
+stage-pause-tip = עצרו את האנימציה שלהם
+stage-play-tip = הפעל את ההנפשה שלהם
+stage-loading = מכינים את התצוגה התלת מימדית...
+stage-nothing = עדיין אין מה להראות בתלת מימד.
+stage-refused = התצוגה התלת מימדית כבושה בעוד ש-RLVa מגבילה את מה שאתה יכול לראות.
+inspect-your-limit = הגבול שלך: { $limit }
+inspect-without-it = { $value } בלי זה
+inspect-you = אתה.
+inspect-person = אנשים
+inspect-difference = ההבדל
+inspect-drawn-in-full = מושך בשלמות.
+inspect-nobody = המורכבות של אף אחד לא ידועה עדיין.
+inspect-aside-count = { $count } הניחו בצד.
+inspect-is-aside = הניחו בצד.
+inspect-set-aside = הניחו בצד.
+inspect-set-aside-tip = תראה את המורכבות בלי החלק הזה, רק בחלון הזה: שום דבר לא משתנה בעולם.
+inspect-put-back = תחזיר את זה.
+inspect-put-back-tip = ספירה מחדש של הרכיב הזה
+inspect-complexity-spoken = מורכבות { $value }מספר { $rank } של { $count } אנשים כאן
+inspect-stage-outfit = התלבושת.
+inspect-stage-objects = החפצים
+inspect-stage-back = בחזרה להכל.
+inspect-place-made-by = { $place } · עשוי על ידי { $name }
+inspect-owned-by-name = בבעלות { $name }.
+inspect-tile-items = פריטים
+inspect-tile-figures = מספרים
+inspect-col-item = שם:
+inspect-point = נקודה
+inspect-look-at = תראה את זה.
+inspect-selected-count = { $count } נבחרו
+inspect-worn-count = { $count } לבוש
+inspect-creators-word = יוצרים
+inspect-areas-word = אזורי גוף
+inspect-owners-word = הבעלים
+inspect-triangles-word = משולשים
+inspect-made-of = { $count } של { $all } פריטים
+inspect-kilobytes = { $n } קילובייט
+inspect-linkset-order = { $count }, בשמאלset order
+inspect-reset-columns = איפוס עמודות
+inspect-by-creators =
+    { $count ->
+        [one] { $items } על ידי יוצר אחד
+       *[other] { $items } על ידי { $count } יוצרים
+    }
+inspect-owner-button = פרופיל הבעלים
+inspect-group-button = פרופיל קבוצה
+inspect-creator-button = פרופיל היוצר
+inspect-land-others = אחרים { $n }
+inspect-land-these = אלה { $n }
+inspect-land-free = חופשי { $n }
+inspect-land-unknown = חדר החבילה מראה כאשר כל החפצים הם על החבילות שאתה נמצא על.
+ui-login-unencrypted = כניסה ללא הצפנה
+ui-login-unencrypted-body = כתובת הכניסה של { $server } מתחילה ב־http:// במקום https://, ולכן הכניסה לא תוצפן. מי שרואה את תעבורת הרשת שלכם, למשל ב־Wi-Fi ציבורי, ברשת משותפת או בדרך לגריד, עלול לקרוא את הסיסמה ולהשתמש בחשבון שלכם. עדיין לא נשלח דבר. אפשר לבקש מהגריד כתובת https://. הבחירה תישמר לשרת הזה.
+ui-login-unencrypted-accept = כניסה ללא הצפנה
+world-appearance-clothing-layers-full = כל 60 שכבות הבגדים נמצאות בשימוש, הסירו שכבה אחת לפני שתלבשו את הפריט הזה.
+ui-options-ray-tracing = עקוב אחרי קרינה
+ui-options-ray-traced-shadows = צללי שמש עם עקבות קרניים
+ui-options-ray-traced-shadows-help = הצללים של השמש והירח עוקבים אחר קרן אחרי קרן במקום לקרוא ממפות הצללים: בדיוק איפה דברים נוגעים ובכל מרחק צריך את הצללים וכרטיס גרפי עם עקוב אחר קרני, ועולה יותר על כרטיסי הגרפי
+ui-options-ray-traced-lights = צללים של אור מקומי
+ui-options-ray-traced-lights-help = צללים מנקודות אורות בסביבה (נורות, נרות), שאינן מטילות צללית אחרת, וממקרנים כאשר האפשרות "צללים במקרנים" פעילה, במקום מפות הצללים שלהן. היקרה ביותר מבין אפשרויות עקיבת הקרניים: מומלץ להשאיר אותה על גרפיקה משולבת
+ui-options-rt-quality = איכות עקוב אחר קרינה
+ui-options-rt-quality-help = כל אפקט שעוקב נשאר פעיל: רמות נמוכות מעקב אחר פחות דגימות והאור הלא ישיר על רשת גסה יותר, ליותר תמונות לשנייה על כרטיסי גרפיקה קטנים. גבוה הוא התמונה המלאה של Deluxe (RT). בחירת רמה גם קובעת את האורות שמטילים צללים
+ui-options-rt-sun-softness = רכות צללי השמש
+ui-options-rt-sun-softness-help = עד כמה רכים הקצוות של הצללים המעקבים אחרי השמש: 1 הוא השמש האמיתית, 0 קצות חדים, יותר עבור שמש ערפלית יותר
+ui-options-rt-lamp-softness = רכות צללית האור המקומית
+ui-options-rt-lamp-softness-help = עד כמה רכים הקצוות של הצללים המעקבים של הנורות: 1 עוקב אחרי הגודל של כל נורה, 0 קצות חדים
+ui-options-rt-shadow-lamps = אורות שמטילים צללים
+ui-options-rt-shadow-lamps-help = כמה מהאורים הקרובים ביותר מטילים צללים עקבוניים; האחרים עדיין נראים, ללא צללות. פחות עולה פחות על כרטיסי הגרפים
+ui-options-ray-traced-indirect = אור לא ישיר עם עקבות קרניים
+ui-options-ray-traced-indirect-help = אור מקפץ על משטחים מסביב, מעקב מעבר למה שהמסך מראה, במקום האור הלא ישיר של GTAO
+ui-options-gi-probes = גשושית תאורה גלובלית
+ui-options-gi-probes-help = גשושיות מתפשטות ברחבי הסצנה שמחזיקות את האור של מספר קפיצות והשמיים שהם רואים: חדרי סגור נשאר חשוך, אור עובר מסביב לפינות.
+ui-options-ray-traced-reflections = חזרות בעזרת עקבות קרינה
+ui-options-ray-traced-reflections-help = השתקפות של מה שהמסך לא מראה, במקום השקפות של חלל המסך, שצריך להיות על
+ui-options-ray-tracing-unsupported = לכרטיס הגרפי הזה או לנהג שלו אין מעקב אחר קרינהName
+ui-options-ray-tracing-vr = לא זמין בשיחה שהחלה עבור VR
+ui-options-tab-ray-tracing = עקוב אחרי קרינה
+ui-options-deluxe-rt-warning-title = להפעיל את ה- Deluxe (RT)?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) היא גבוהה עם הצללים והאור הלא ישיר שנעקבו על ידי כרטיסי הגרפיקה. היא דורשת כרטיס עם עקוב אחר קרינה בחומרה (NVIDIA RTX, AMD Radeon RX 6000 או מאוחר יותר, Intel Arc) ונתב עדכני, והיא עולה הרבה יותר מהרמה הגבוהה: על כרכים בטווח בינוני קצב הקשת יכול לרדת מאוד במקומות עמוסים. עקוב אחרי קרינה עדיין נמצא בניסוי: אם התמונה נראית לא נכונה או שהצופה מאט, חזור ל- High. הלשונית עקוב לאחר קרינה שומרת על ההגדרות שלה.
+ui-options-deluxe-rt-warning-turn-on = להדליק
+ui-options-ray-tracing-needs-shadows = זקוקה לצללים.
+ui-options-ray-tracing-needs-ssr = זקוקה לשיקוף של מסך-חלל.
+ui-options-preset-deluxe = דלוקס
+ui-options-normal-precision = דיוק השתקפות
+ui-options-normal-precision-help = עד כמה דק כיוון כל משטח נשמר עבור החזרות. סטנדרטי יכול להראות צעדים בחזרות של משטחים חלקים ועקומים כמו צבע של מכונית; גבוה מוריד אותם ומשתמש ביותר זיכרון וידאו. אוטומטית משתמשת בגבוה עם חזרות שעוקבות אחר קרניים, שם הצעדים מופיעים הכי הרבה, סטנדרטית אחרת
+ui-options-normal-precision-automatic = אוטומטי
+ui-options-normal-precision-standard = סטנדרטי
+ui-options-normal-precision-high = גבוהה
+ui-options-private-point-at-help = להסתיר את האובייקט שאתה עורך, לשמור את זרוע העריכת שלך נמוכה, ולהסתיר קרן העריכה שלך.
+ui-options-private-edit-beam = הסתיר את קרן העריכה
+ui-options-private-edit-beam-help = מסתיר את הקרן לחלוטין בזמן שאתה משנה או תופס עצמים, גם על המסך שלך וגם עבור צופים אחרים. רמזי היעד של הבחירה והקרנות העברת/ הפחתה לא מושפעות.
+common-window-outside = זז מחוץ לחלון הצופה
+common-window-inside = תחזיר לחלון הצופה.
+common-window-rename-name = לחץ כפול כדי לשנות שם
+common-carry-hint = לחץ כדי להשליך אותו לכאן, Esc כדי לשחרר אותו
+common-window-paused-photo = נעצר בזמן שמצב צילום פתוח
+common-window-paused-director = נעצר בזמן שהבמאי מנגן
+common-window-paused-interface = נעצר בזמן שהממשק כבוי
+ui-options-warn-live-preview = אזהרה כאשר לא ניתן לראות תצוגה מקדימה של טקסטורה או חומר
+ui-options-warn-live-preview-help = בבחירה של חלון הבנייה, לחיצה על פריט לא-העתקה לא מפעילה כלום עד OK: say so.
+ui-texture-picker-live-preview-texture = אנחנו לא יכולים להציג תצוגה מקדימה של המרקם הזה כי זה לא עותק.
+ui-texture-picker-live-preview-material = אנחנו לא יכולים להציג תצוגה מקדימה של החומר הזה כי זה לא עותק.
+fetch-invalid-url = כתובת לא תקינה
+ui-chat-close-all-ims = סגור את כל IM השיחות
+ui-chat-close-all-ims-question = לסגור את כל שיחות IM ולסיים את השיחה הפעילה?
+ui-chat-confirm-close-all-ims = אישור לפני סיום IM שיחות
+ui-chat-confirm-close-all-ims-help = שאל לפני סגירת כל שיחות IM כאשר אחד יש שיחת קול פעילה.
+ui-options-aurora-controls-compact-help = חלון הבקרה נפתח בצורה קומפקטית על המצלמה: ג' ויסטיקים, זום וגלישה. כפתור סרגל הכותרת שלו משנה בין קומפקטי למלא, ומגדיר גם את זה. עם חלונות קלאסיים, המצלמה נפתחת בחלון המצלמה הקטן של הצופה הישן במקום.
+rlva-restart-hint = RLVa מתחיל כשאתה מתחבר. ברגע שהוא מתחיל לפעול, הפעלתו או כיבויו ישפיעו על ההתחלה הבאה של הצג: האובייקטים המוגנים ישארו עד אז.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa יופעל לאחר שאתה מתחיל מחדש.
+rlva-toggle-disabled-restart = RLVa ייפסק לאחר שאתה מתחיל מחדש.
+livemesh-import-connect = לחבר את Blender עם תוספת 0. 11. 0 או מאוחר יותר, או Maya עם תסריט 02. 2 או מאוחרים יותר, כדי להכין את LODs היבוא.
+livemesh-import-preparing = הכנת האובייקט ו-LOD שלו ב-Blender או Maya...
+livemesh-import-ready = קבלתי את הנתונים, מוכן במכונה.
+livemesh-import-failed = הכנת הייבוא נכשלה: { $error }
+livemesh-import-timeout = Blender או Maya לא סיימו להכין את הייבוא. בדוק את החיבור (בBlender, השתמש במצב אובייקט) ונסי שוב.
+livemesh-shape-apply-tooltip = סמן את האפשרות לשנות זכויות, ולאחר מכן התאימו את השלד שנבחר ב- Blender או Maya ורשתותיו הקשורות (על ידי MayaStar עבור מערך MayaStar). בחר שלד מקומי תומך Second Life.
+livemesh-shape-update-apply = עדכנו את התוסף של Blender לגרסה 0.10.0 או מאוחר יותר, או את תוספת Maya לגרסת 04.0 ויותר מאוחר, ואז תחברו אותו מחדש.
+livemesh-shape-applied = הצורה יישמה על השלד הנבחר.
+livemesh-shape-tooltip = בדוק את זכויות השינוי של הצורה הלבושה ויצר גוף הישועה החדש בבלנדר או במאיה.
+livemesh-shape-connect = תחבר את התוסף Aurora בבלנדר או במאיה קודם.
+livemesh-shape-update-plugin = עדכנו את התוסף של Blender לגרסה 0.9.0 או מאוחר יותר, או את תוספת Maya לגרסת 03.0 ויותר מאוחר, ואז תחברו אותו מחדש.
+livemesh-shape-timeout = Blender או Maya לא אישרו את הייבוא. נסה שוב (ב- Blender, העבר למצב אובייקט).
+livemesh-shape-success = הצורה ייבאה כגוף הישועה החדש המכוער.
+blender-live-maya-version = Aurora LiveMesh עבור Maya { $version }
+blender-live-maya-instructions = שמור את הקובץ ZIP ותפרק אותו, ואז תגרור את install.mel לתוך חלון הראייה של Maya. פתח LiveMesh מהמדף Aurora, הוסף את הרשתות שלך ולחץ על Connect.
+blender-live-save-maya = שמור תוספת Maya...
+blender-live-maya-saved = התוסף נשמר. תפרוק את ה-ZIP וגרור את install.mel לתוך נקודת מבט של Maya.
+livemesh-plugin-connected = התוסף מחוברName
+livemesh-token-refused = תוכנה ניסתה להתחבר ללא מפתח התצוגה המקדימה הזו. רק התוסף Aurora ב-Blender או Maya יכול להתחברים.
+livemesh-waiting-plugin = מחכה לבלנדר או מאיה...
+blender-live-objects-help = הרשתות שבלנדר או מאיה שולח. בחר אחת כדי להציב אותה, או ייבוא אותה מהתפריט שלה.
+blender-live-size-note = הגודל מכפיל את מה שהתוספת שולחת, כך שעריכות מאוחר יותר ב-Blender או Maya ישמרו אותו.
+blender-live-avatar-help = עבור רשתות מתוחכמות: שלח את הצורה שלך ל- Blender או Maya כדי לדמות אותה.
+livemesh-shape-section = הצורה שלך ב- Blender או Maya
+blender-live-import-help = מקפיא תמונה של האובייקט עבור ייבוא רגיל: סקירה, מחיר, ואז אישור. עריכה מאוחר יותר ב- Blender או Maya לא תשנה אותו.
+blender-live-changed-tip = זמן מאז שבלנדר או מאיה שינתה את האובייקט האחרון
+fit-lab-section = מעבדת התאמה.
+fit-lab-help = בובות לבושות במה שאתה לובש, כל אחת עם גוף אחר, עומדות לפניך כדי להראות איך הבגד מתאים לצורות שונות רק אתה רואה אותן: שום דבר לא נשלח או נשמר.
+fit-lab-body-me = אני.
+fit-lab-body-slim = חכם.
+fit-lab-body-curvy = מעגלי.
+fit-lab-body-full = תמונה מלאה
+fit-lab-body-athletic = אתלטיקה
+fit-lab-body-tall = גבוה.
+fit-lab-body-petite = קטן.
+fit-lab-motion = תנועה
+fit-lab-motion-stand = עמדו!
+fit-lab-motion-walk = הליכה.
+fit-lab-motion-sit = שב.
+fit-lab-motion-range = טווח התנועה
+fit-lab-pose = פוזה.
+fit-lab-pose-all = כולם, בתמורה.
+fit-lab-pose-arms-up = זרועות למעלה.
+fit-lab-pose-reach = קדימה.
+fit-lab-pose-hug = זרועות מסודרות.
+fit-lab-pose-squat = קפוץ.
+fit-lab-pose-kneel = תכנסי על הברכיים.
+fit-lab-pose-knee-up = ברכיים מורמות.
+fit-lab-pose-twist = טוויסט.
+fit-lab-pose-bend = תתכופף קדימה.
+fit-lab-motion-like-me = כמוני.
+fit-lab-show = תראה את הבובות.
+fit-lab-place = תביא אותם לכאן.
+fit-lab-remove = תוריד את הבובות.
+fit-lab-choose = בחר לפחות גופה אחת.
+fit-lab-clip = תראה לי איפה הגופה נכנסת.
+fit-lab-clip-note = אדום: הגוף יוצא מהבגד. כתום: גוף ובגדים נפגשים. על האווטאר שלך והדוגמניות, כפי שנראה מהמצלמה. כל דבר אחר שאתה לובש נחשב כגוף: הורד את הג'קט או השיער שנלבש מעל הבגדים.
+blender-live-levels-pending = Blender או Maya מכינים את רמות הפרטים כשאתה לוחץ על ייבוא.
+blender-live-levels-note = מוכן בבלנדר או מאיה מההגדרות של LiveMesh של כל אובייקט.
+blender-live-quick-look-changed = שונה בבלנדר או מאיה לפני { $ago }.
+blender-live-warning-textures = טקסטורות נדחקו, צבע רגיל מופיע
+blender-live-warning-not-sent = לא בתצוגה מקדימה
+blender-live-undo-derez = Derezzed { $name } · עדיין ברשימת התוספים
+blender-live-undo-detach = מבודד { $name } · עדיין ברשימת התוספים
+inventory-open-current = פתוח
+inventory-folder-back = אחורה.
+inventory-folder-forward = קדימה.
+inventory-folder-up = לעלות רמה אחת
+area-search-metres = { $n } m
+area-search-band-reach = בטווח הידיים.
+area-search-band-close = קרוב.
+area-search-band-around = מסביבך
+area-search-band-further = עוד.
+area-search-band-far = אבא.
+area-search-band = שטח
+area-search-within = בתוך { $distance }
+area-search-within-across = בתוך { $distance } מעבר
+area-search-between = { $from }–{ $to }
+area-search-any-distance = הראה כל מרחקים
+area-search-from = מרחק מ
+area-search-to = מרחק ל
+area-search-bar-tip =
+    { $count ->
+        [one] חפץ אחד, { $from } שתי { $to }
+       *[other] { $count } חפצים, { $from } שתי { $to }
+    }
+area-search-of-objects = של { $total } עצמים
+area-search-li = { $value } לי.
+area-search-li-count = { $value } פגיעת אדמה.
+area-search-owner-count =
+    { $count ->
+        [one] בעל אחד
+       *[other] { $count } הבעלים
+    }
+area-search-object-count =
+    { $count ->
+        [one] אובייקט אחד
+       *[other] { $count } עצמים
+    }
+area-search-objects-word = עצמים
+area-search-in-reach = הנה
+area-search-tab-objects = עצמים
+area-search-tab-owners = הבעלים
+area-search-hint-wide = אובייקטים, בעלי חיים, יוצרים או UUIDs
+area-search-kind-heading = סוג האובייקט
+area-search-kind-tip = שוב, חבויים.
+area-search-kind-any = כל
+area-search-kind-only = רק אלה.
+area-search-kind-hidden = חבוי
+area-search-kind-attached = הצטרף
+area-search-kind-probes = בדיקות
+area-search-click-all = כל
+area-search-click-any-short = כל
+area-search-permissions = הרשאות
+area-search-price-heading = מחיר מכירה, עבור חפצים למכירה
+area-search-price-to = שתי
+area-search-price-tip = בחר "למכירה" קודם
+area-search-linked = ראשוניים מקושרים
+area-search-one-field = חיפוש בשדה אחד
+area-search-regex-switch = ביטויים רגילים
+area-search-regex-invalid = ביטוי רגיל לא תקין
+area-search-reset-filters-tip = שחזר את כל המסננים; טקסט החיפוש נשאר
+area-search-save-defaults-tip = פתוח עם המסננים האלה מעכשיו
+area-search-reset-search = אפס את טקסטי החיפוש
+area-search-reset-filters = איפוס אפשרויות המסנן
+area-search-reset-ranges = אפס את המרחק והמחיר.
+area-search-reset-all = אפס הכל.
+area-search-more = עוד.
+area-search-several = בחר מספר
+area-search-several-tip = לחיצות מוסיפות לבחירה (גם Ctrl או Shift + לחיצה, Ctrl+A)
+area-search-actions = פעולות
+area-search-nothing = לא קיבלנו עוד חפצים.
+area-search-nothing-for-sale = אין כאן שום דבר למכירה.
+area-search-not-for-sale = לא למכירה.
+area-search-from-price = מ-{ $price }
+area-search-nearest = הקרוב ביותר ראשון
+area-search-heaviest = הכבד ביותר קודם.
+area-search-order-tip = שינוי סדר: הקרוב או הכבד ביותר קודם
+area-search-rank = #{ $rank } של { $all }
+area-search-rank-here = # { $rank } כאן
+area-search-card-more = להראות כל דמויות
+area-search-card-less = הראה פחות
+area-search-open-group = פתח את הקבוצה
+area-search-spoken = { $name }, { $distance }, פגיעת אדמה { $li }, בבעלות { $owner }
+area-search-owner-spoken = { $name }, { $count } חפצים, פגיעת קרקע { $li }
+area-search-stage-line = { $distance } רחוק · { $li } השפעה על הקרקע · { $owner }
+area-search-tile-3d = תצוגה תלת מימדית
+area-search-on = { $count } על
+area-search-on-word = על
+area-search-more-on =
+    { $count ->
+        [one] עוד מסנן אחד על
+       *[other] { $count } יותר מסננים על
+    }
+ui-options-legacy-lists = ייבוא רשימת משתמשים מהצופה הישן
+ui-options-legacy-lists-help = מוסיף את ההיסטוריה של הטלפורטציה, הרשימה השחורה של הנכסים, רשימת מסנני המדיה וקבוצות אנשי הקשר של החשבון הזה. הקובצים של הצגת המורשת הם רק לקריאה.
+ui-options-legacy-lists-button = ייבוא מהצופה הישן...
+ui-options-legacy-lists-no-account = היכנס כדי לייבא את הרשימה של החשבון הזה.
+ui-options-legacy-lists-title = ייבוא מהצופה הישן
+ui-options-legacy-lists-text = הכל הוסף לרשימת החשבון הזה ושום דבר כאן לא נמחק. מה ששמו ברשימה השחורה של הנכסים עוזב את העולם מיד. ייבוא שוב מחזיר את מה שהסרת כאן.
+ui-options-legacy-lists-searching = מחפשת את התיקיות של הצג הישן...
+ui-options-legacy-lists-none = לא נמצאה תיקיה של מראה מורשת עם רשימת הודעות עבור החשבון הזה.
+ui-options-legacy-lists-teleports = היסטוריה של טלפורטציה ({ $count })
+ui-options-legacy-lists-derender = רשימה שחורה של נכסים ({ $count })
+ui-options-legacy-lists-media = רשימת מסנני מדיה ({ $count })
+ui-options-legacy-lists-contact-set-entries = קבוצת קשרים ({ $count })
+ui-options-legacy-lists-confirm = ייבוא
+ui-options-legacy-lists-added = הוסף או שונה. היסטוריה של טלפורט: { $teleports }רשימה שחורה: { $derender }, מסנן מדיה: { $media }, קובצי קבוצת קשרים: { $sets }.
+ui-options-legacy-lists-nothing = שום דבר חדש: לחשבון הזה כבר יש את הרשימה הזאת.
+ui-options-legacy-lists-failed = לא ניתן לקרוא: { $files }.
+ui-options-legacy-lists-unsaved = לא יכולתי לשמור, נשארתי כפי שהיה: { $files }.
+ui-options-legacy-lists-other-grid = ברשת זו, תיקיה בעלת אותו השם יכולה להיות שייכת לרשת אחרת: בדוק שהיא נכונה.
+ui-options-build-show-beams-hint = להראות את קרני הבחירה שלך ואלו של אווטארים אחרים כאשר אתה ערוך, מתפוס או מעניק. זה רק שולט בהצגה; השתמש בפרטיות > להסתיר קרן עריכת כדי לעצור את קרן העריכת שלך באופן מקומי וברשת.
+teleport-failed-title = הטלפורט כשל.
+teleport-error-invalid-tport = ניסיונות הטלפורטציה מוגבל ל- 6 בדקה. אם יש לך בעיות, חכה דקה ונסה שוב להעביר מידע. אם הבעיה נמשכת, צא מהמערכת והתחבר שוב.
+teleport-error-invalid-region-handoff = התגלתה בעיה בעת עיבוד חציית האזור שלך. אולי תצטרך להתחבר שוב לפני שתוכל לחצות את האזורים. אם אתה ממשיך לקבל את ההודעה הזו, אנא צור קשר עם שירות הלקוחות.
+teleport-error-blocked-tport = סליחה, הטלפורטציה חסומה כעת. נסה שוב בעוד דקה. אם עדיין לא תוכל לעבור לטלפורטה, בבקשה התנתק והתחבר מחדש כדי לפתור את הבעיה.
+teleport-error-nolandmark-tport = מצטער, אבל המערכת לא הצליחה לאתר את היעד המפורסם.
+teleport-error-timeout-tport = מצטער, אבל המערכת לא הצליחה להשלים את החיבור לטלפורט. נסה שוב בעוד רגע.
+teleport-error-no-help-island = אתה לא יכול לטלפורט בחזרה לאי של ברכה.
+teleport-error-noaccess-tport = מצטער, אין לך גישה ליעד הטלפורטציה הזה.
+teleport-error-missing-attach-tport = הצירופים שלך עדיין לא הגיעו. נסה לחכות עוד כמה שניות או לצאת מהמערכת ולחזור אליה שוב לפני שתנסה להעביר את ההודעה.
+teleport-error-too-many-uploads-tport = תור הנכסים באזור זה חסום כעת, כך שבקשת הטלפורטציה שלך לא תצליח בזמן. בבקשה נסה שוב לאחר מספר דקות או לכו לאזור פחות עסוק.
+teleport-error-expired-tport = מצטער, אבל המערכת לא הצליחה להשלים את בקשת הטלפורטציה שלך בזמן. בבקשה נסה שוב בעוד כמה דקות.
+teleport-error-expired-region-handoff = מצטער, אבל המערכת לא הצליחה להשלים את חציית האזור שלך בזמן. בבקשה נסה שוב לאחר מספר דקות.
+teleport-error-preexisting-tport = סליחה, אבל המערכת לא הצליחה להתחיל את הטלפורט שלך. בבקשה נסה שוב בעוד כמה דקות.
+teleport-error-no-host = לא ניתן למצוא את היעד של הטלפורט. היעד עשוי להיות זמני או כבר אינו קיים. בבקשה נסה שוב בעוד מספר דקות.
+teleport-error-no-inventory-host = מערכת המזומנים אינה זמינה כרגע.
+teleport-error-must-get-age-region = אתה חייב להיות מעל גיל 18 כדי להיכנס לאזור הזה.
+teleport-error-special-usage-blocked = לא ניתן להיכנס לאזור.{ $region }'הוא אזור משחקי כישורים, ואתה חייב לעמוד בקריטריונים מסוימים כדי להיכנס אליו. לפרטים נוספים, אנא עיין בשאלות נפוצות על משחקים של כישרון: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = לא ניתן להיכנס לאזור. זהו אזור של משחקי כישורים, ואתה חייב לעמוד בקריטריונים מסוימים כדי להיכנס אליו. לפרטים נוספים, אנא עיין בשאלות נפוצות אודות משחקים כישרון: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = רשת הבית שלך דחתה את החזרתך. זה בדרך כלל אומר שההגדרה של כתובת היפר- גריד שלה לא מתאימה לכתובת שרשתות אחרות משתמשות בה. צור קשר עם המפעילים של רשת ביתך; ההתחברות שוב תביא אותך הביתה בינתיים.
+teleport-hint-hypergrid-unreachable = לא ניתן היה להגיע לרשת השנייה. היא עלולה להיות מחוץ לרשת, או שהקישור עשוי להצביע לכתובת ישנה.
+teleport-hint-hypergrid-visitors-refused = הרשת הזו מאפשרת רק לתושבים של רשתות מסוימות להיכנס.
+teleport-hint-hypergrid-destination-gone = אזור היעד כבר לא קיים או נעלם. סימני דרך וקישוריות לרשתות אחרות עשויים להיות מיושנים.
+toolbar-edit = התאמה אישית של כפתורים ותפריטים...
+toolbar-title = כפתורים ותפריטים
+toolbar-interface-locked = ממשק נעול
+toolbar-help = גורר כפתורים או פריטים של תפריט לסרגל העליון, התחתון או הצידי. הנח כפתור כאן כדי להסיר אותו. לחץ ימינה על כל כפתור כדי לשנות את מראהו.
+toolbar-help-classic = גורר כפתורים או פריטים של תפריט לסרגל העליון, התחתון או הצידי. הנח כפתור כאן כדי להסיר אותו. לחץ ימינה על כל כפתור כדי לשנות את מראהו.
+toolbar-help-modes = בחר אייקונים, תגיות, שניהם, או סרגל ברירת המחדל עבור כל כפתור. גרר את הקישורים לתוך התפריט של Aurora כדי לסדר אותו מחדש.
+import-menu-textures = טקסטורות
+import-menu-animations = אנימציות
+import-menu-sounds = צלילים
+import-menu-materials = חומרים
+import-menu-meshes = רשתות
+import-menu-options = אפשרויות ייבוא
+import-upload-payment-title = העלאת קבצים
+import-upload-payment = שילמת L${ $cost } להעלות.
+import-quick-textures =
+    { $count ->
+        [one] ייבוא · טקסטורות: 1 · L${ $cost }?
+       *[other] ייבוא · טקסטורות: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] ייבוא · חומרים: 1 · L${ $cost }?
+       *[other] ייבוא · חומרים: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] ייבוא · צלילים: 1 · L${ $cost }?
+       *[other] ייבוא · צלילים: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] בחרו את גודל הייבוא. אפשר לייבא טקסטורות שתומכות בכך בגודל 2048 × 2048:
+       *[other] ({ $count }) בחרו את גודל הייבוא. אפשר לייבא טקסטורות שתומכות בכך בגודל 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] בחרו את גודל הייבוא. אפשר לייבא תמונות חומרים שתומכות בכך בגודל 2048 × 2048:
+       *[other] ({ $count }) בחרו את גודל הייבוא. אפשר לייבא תמונות חומרים שתומכות בכך בגודל 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = העלאת תמונות בחינם בגודל 2048 × 2048 ללא שאלה
+import-quick-free-full-size-help = "Import textures" ו-"Import materials" מבקשים 1024 או 2048 רק כאשר העלאה עולה L$.
+ui-bars-customize-bars = התאמה אישית של ממשק
+build-tool-in-use = בשימוש
+build-create-options-toggle = הראה / הסתר את האפשרויות
+build-create-keep-creating = תמשיך ליצור.
+build-create-center-on-prim = מרכז על ראשי
+build-create-copy-prim-rotation = העתק סיבוב ראשוני
+build-create-align-to-surface = התאמה למשטח
+build-capture-shape-button = העתק את הצורה של פרים: לחץ על זה, ואז פרים בעולם
+build-capture-shape-armed = לחץ על פרימט כדי להעתיק את הצורה שלו (הלחצן Esc מבטל)
+build-capture-shape-full = 20 צורות נשמרו. הסר אחת כדי להעתיק אחרת
+build-capture-shape-remove = הסר את הצורה
+build-capture-shape-tooltip = צורה מועתקת ({ $kind })
+build-capture-shape-not-a-prim = ניתן להעתיק רק צורה של פרים
+build-capture-shape-mesh-or-sculpt = לא ניתן להעתיק את הצורה של רשת או פרים פסל
+build-capture-shape-no-modify = אתה צריך רשות לשנות את הפרימט הזה כדי להעתיק את הצורה שלו.
+import-other-options = אפשרויות אחרות
+toolbar-button-icons = רק אייקונים
+toolbar-button-text = רק תווית
+toolbar-button-icons-text = אייקון ותווית
+toolbar-icon-default = שחזר את האייקון ברירת המחדל
+toolbar-icon-choose = בחר אייקון
+toolbar-icon-change = שינוי אייקון
+toolbar-presets = הגדרות מראש
+toolbar-interfaces = ממשקים
+toolbar-interfaces-shown = מופיע בבלוק ממשקים
+toolbar-interfaces-hidden = חבוי מבלוק הממשקים
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora בית ספר ישן
+toolbar-preset-photographer = Aurora צלם
+toolbar-preset-legacy = מורשת
+toolbar-import-textures = ייבוא טקסטורות
+toolbar-import-sounds = ייבוא קולות
+toolbar-import-animations = ייבוא אנימציות
+toolbar-import-materials = ייבוא חומרים
+toolbar-import-meshes = ייבוא רשתות
+toolbar-import-local = קבצים מקומיים
+toolbar-import-advanced = ייבוא מתקדם
+toolbar-import-settings = הגדרות ייבוא
+toolbar-import-bar = סרגל ייבוא
+toolbar-icon-search = חפש אייקון...
+toolbar-in-top = בסרגל הכלים העליון
+toolbar-bar-top = סרגל הכלים העליון
+toolbar-drop-here = תוריד את זה.
+toolbar-separator = מפרידה
+toolbar-interface-edit = התאמה אישית של ממשק
+toolbar-edit-done = סיימתי.
+toolbar-edit-top = למעלה
+toolbar-edit-bottom = תחתון
+toolbar-edit-left = שמאלה
+toolbar-edit-right = נכון.
+toolbar-edit-help = לחץ על פריט כדי לבחור אותו, סובב כדי להזיז אותו, או לחץ ימינה כדי לקבל אפשרויות עריכה. סגרו את החלון כדי לסיים.
+toolbar-edit-locked = הקווים נעולים, פתח אותם מתחת כדי לשנות את הממשק.
+toolbar-edit-move = הזז ל
+toolbar-edit-split-before = חלוקה לפני
+toolbar-edit-split-after = פיצול אחרי
+toolbar-edit-merge-before = מיזוג עם הבלוק הקודם
+toolbar-edit-merge-after = מיזוג עם הבלוק הבא
+toolbar-edit-merge-groups = תאחד את הבלוקים האלו
+toolbar-drawer = מגירה
+toolbar-drawer-default-mode = הצגת כפתור ברירת מחדל
+toolbar-drawer-closes = סגור אחרי לחיצה על כפתור
+toolbar-block-shortcut = קיצור דרך:
+toolbar-drawer-hides-needs-shortcut = דורש קיצור דרך
+toolbar-floating-close-button = הוסף כפתור סגירה
+toolbar-block-name = שם הבלוקים:
+toolbar-block-button-mode = הצגת כפתור לחסום
+toolbar-button-inherited = יורשת
+toolbar-drawer-hides-button = הסתיר את הכפתור בזמן שהוא צף
+toolbar-floating-new = בלוק צף
+toolbar-floating-orientation = כיוון
+toolbar-floating-horizontal = אופקית
+toolbar-floating-vertical = אנכית
+toolbar-floating-empty = הנח את הכפתורים כאן.
+toolbar-shortcut-title = קיצור דרך
+toolbar-shortcut-block-name = בלוק: { $name }
+toolbar-shortcut-none = אין קיצורי דרך
+toolbar-shortcut-press-key = לחץ על מקש
+toolbar-shortcut-esc = Esc כדי לבטל
+toolbar-shortcut-clear = הסר
+toolbar-shortcut-overrides = Takes over { $name }: קיצור זה מפעיל את סרגל הכלים במקום השימוש ברירת המחדל שלו.
+toolbar-shortcut-used = כבר קיצור דרך של { $names }.
+toolbar-shortcut-replace = תחליף
+toolbar-shortcut-add = הוסף
+toolbar-shortcut-save = שמור
+toolbar-shortcut-choose-key = בחר מפתח
+toolbar-shortcut-help = הפעל או נכבה את המקשים Ctrl, Alt ו- Shift, ולאחר מכן לחץ על המקש כדי לשנות אותו. דרושים מקש Ctrl או Alt, למעט עם F1 עד F24.
+toolbar-shortcut-inactive = הכפתור הזה אינו נמצא בשום סרגל: קיצור הדרך שלו עובד כאשר הוא מוצב מחדש.
+toolbar-shortcut-refused-keyboard = רק מקשיי מקלדת יכולים להיות קיצורי דרך.
+toolbar-shortcut-refused-modifier = מקש שינוי לבד לא יכול להיות קיצור דרך.
+toolbar-shortcut-refused-needs-modifier = הוספת Ctrl או Alt: מקש לבד, או עם Shift בלבד, הקלדה בשדות טקסט.
+toolbar-shortcut-refused-altgr = Ctrl+Alt עם מקש זה הוא AltGr, שמסוגל להקליד תווים במקלדות רבות.
+toolbar-shortcut-refused-editing = שדות טקסט משתמשים בקיצור הדרך הזה (בחירה, העתק, חתוך, הדבקה, ביטול, חזרה).
+toolbar-shortcut-refused-navigation = שדות טקסט נעים ומוחקים עם המקש הזה.
+toolbar-shortcut-refused-typing = הצ'אט והדיאלוגים משתמשים במפתח זה.
+toolbar-shortcut-refused-system = המערכת שומרת את קיצור הדרך הזה.
+toolbar-shortcut-refused-window = קיצור זה סוגר או משנה חלונות.
+toolbar-shortcut-refused-zoom = קיצור זה מגדיל את הממשק.
+toolbar-spacer = מרחק בלוקים
+toolbar-add-spacer = הוספת מרחק בלוק
+toolbar-button-settings = הגדרות כפתור
+toolbar-button-edit = כפתור עריכה...
+toolbar-button-edit-title = כפתור עריכה
+toolbar-button-name = שם הכפתור:
+toolbar-button-display = הצגת כפתור
+toolbar-shortcut-fixed-block-help = קיצור הדרך של בלוק קבוע מראה ומסתיר אותו; בזמן שהממשק מנוהל, הוא נשאר מופיע.
+toolbar-block-settings = הגדרות בלוקים
+toolbar-parent-block-settings = הגדרות של בלוקים הוראים
+toolbar-block-edit = עריכת בלוק...
+toolbar-block-edit-title = עריכת בלוק
+toolbar-block-alignment = קידום
+toolbar-block-sizing = גודל כפתור
+toolbar-block-fixed-options = אפשרויות מצב קבוע
+toolbar-block-floating-options = אפשרויות מצב צף
+toolbar-block-kind-fixed = בלוק קבוע
+toolbar-block-kind-drawer = מגירה
+toolbar-block-kind-floating = בלוק צף
+toolbar-block-remove = הסר את הבלוק
+toolbar-move-block = סובב כדי להזיז את כל הבלוק
+toolbar-remove-block = הסר את הבלוק
+toolbar-drawer-empty = המגירה הזאת ריקה.
+toolbar-drawer-drop = גרר כפתור לכאן כדי להוסיף או לשנות את הסדר שלהם.
+toolbar-separator-settings = הגדרות מרחק בין בלוקים
+toolbar-separator-size = גודל / מינימום (פיקסלים)
+toolbar-separator-stretch = ממלא את החלל הקיים
+toolbar-separator-help = הפערים הגמישים חולקים את החלל שנשאר מהבלוקים. גודל הוא הרוחב המינימלי שלהם, או הגובה בסרגל הצדדים.
+toolbar-block-navigation = ניווט ו- SLURL
+toolbar-block-account = חשבון ומאזן
+toolbar-block-system = שעון, אינדיקטורים ושמעName
+toolbar-block-status = זמינות
+toolbar-block-balance = שיווי משקל
+toolbar-block-clock = שעון
+toolbar-block-ping = משך זמן האזור
+toolbar-block-fps = קצב הקשתות (FPS)
+toolbar-block-network = תנועת רשת
+toolbar-block-media = מדיה בוויקישיתוף
+toolbar-block-music = מוזיקה של חבילה
+toolbar-block-volume = עוצמה
+toolbar-block-notifications = הודעות
+toolbar-block-conversations = סמלים של שיחות
+toolbar-block-chat = קלט צ'אט קרוב
+toolbar-category-all = כל הקטגוריות
+toolbar-section-main = עיקרית
+toolbar-section-advanced = מתקדם
+toolbar-search-all = החיפוש כולל פקודות מתקדמות.
+toolbar-category-avatar = אווטאר ותנועה
+toolbar-category-communication = תקשורת
+toolbar-category-world = עולם וטיולים
+toolbar-category-creation = יצירה ותוכן
+toolbar-category-interface = ממשק ומצלמה
+toolbar-category-advanced = כלים מתקדמים
+toolbar-category-help = עזרה
+toolbar-category-custom = פקודות מותאמות אישית
+toolbar-bar-settings = הגדרות סרגל הכלים
+toolbar-menu-group = תפריט: { $name }
+toolbar-location-bar = סרגל הכתובת SLURL
+toolbar-command-build-tool-focus = בנה - מצלמהStencils
+toolbar-command-build-tool-grab = בנה - הזז
+toolbar-command-build-tool-edit = בנייה - עריכה
+toolbar-command-build-tool-create = בנייה - יצירה
+toolbar-command-build-tool-land = בנייה - קרקע
+bug-copy-version = גרסת הצגת העתק
+toolbar-notecard-save = שמור לכרטיס הודעה...
+toolbar-notecard-load = טעון מכרטיס הודעה...
+toolbar-notecard-name = ממשק Aurora
+toolbar-notecard-help = תכנון ומראה של סרגל הכלים, הכפתורים, המגירות והתפריטים.
+toolbar-notecard-saved = תכנון הממשק נשמר במחסן שלך.
+toolbar-notecard-invalid = הכרטיס הזה אינו מכיל תכנון ממשק תואם.
+toolbar-notecard-unavailable = הכרטיס הזה כבר אינו זמין או לא ניתן להעתיק אותו.
+toolbar-notecard-layout-changed = הממשק השתנה בזמן הטענת הכרטיס. הטעינו אותו מחדש כדי ליישם את התכנון שלו.
+toolbar-notecard-demo-valid = ממשק צלםName
+toolbar-notecard-demo-invalid = כרטיס הודעה אחר
+toolbar-notecard-too-large = הגדרות הממשק הן גדולות מדי עבור כרטיסיות.
+toolbar-saved-interfaces = ממשקים נשמרים
+toolbar-saved-interfaces-empty = עדיין אין ממשקים נשמרים.
+toolbar-notecard-destination = תיקיה: { $path }
+toolbar-notecard-folder-error = לא ניתן היה לטעון או ליצור את התיקיה "ממשקי משתמש". בבקשה נסה שוב.
+toolbar-current-preset = ממשק נבחר: { $name }
+toolbar-preset-custom = ממשק מותאם אישית
+toolbar-preset-unsaved = שינויים לא נשמרו
+toolbar-preset-save-title = שמור את הממשק
+toolbar-preset-save-name = שם הממשק
+toolbar-preset-save-new = ממשק אישי חדשName
+toolbar-preset-save-replace = תחליף את הממשק האישי הזה
+toolbar-preset-save-unavailable = לא ניתן לשמור את הממשק הזה כאן. בחר שם אחר או ממשק אישי זמין וניתן לעריכה.
+toolbar-interface-delete-unavailable = לא ניתן למחוק את הממשק האישי הזה.
+toolbar-interface-delete-confirm = להעביר את הממשק האישי ״{ $name }״ לאשפה?

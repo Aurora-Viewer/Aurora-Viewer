@@ -16097,3 +16097,739 @@ parcel-environment-empty = هیچ محیطی ذخیره نشده است
 parcel-environment-remove-all = حذف همه
 parcel-environment-remove-all-title = حذف تمام محیطهای ذخیره‌شده برای یک بسته؟
 parcel-environment-remove-all-text = محیط‌هایی که برای قطعه‌زمین‌های این شبکه ذخیره کرده‌اید حذف می‌شوند. محیط‌های شبکه‌های دیگر دست‌نخورده می‌مانند. این کار برگشت‌پذیر نیست.
+
+### Updated release translations
+
+anim-timeline-channels-hint = نمایش کلیدهای چرخش و موقعیت این استخوان در سطرهای خودشان
+anim-timeline-channel-rotation = چرخش
+anim-timeline-channel-location = محل
+anim-timeline-keying-hint = چه رکورد مهمي. با مکان، حرکت فقط يه جفت رو از زنجیره IKش ميگيره. پويانمایی هاي زندگي دوم هيچ کلید مقیاسي ندارن
+anim-timeline-keying-auto = خودکار: چرخش و موقعیت برای لگن و مفاصل متحرک
+anim-timeline-keying-auto-short = خودکار
+anim-timeline-keying-loc-rot = موقعیت و چرخش
+anim-timeline-keying-loc-rot-short = محل + ریشه
+anim-timeline-keying-rot-short = ریشه
+anim-timeline-keying-loc-short = محل
+anim-edit-shortcut-play = پخش یا توقف
+area-search-scope-heading = کجا
+area-search-scope-parcel = بسته
+area-search-scope-region = منطقه
+area-search-scope-neighbours = همسايه ها
+area-search-objects-heading = کدام اشیا
+inventory-copy-selection-count =
+    { $count ->
+        [one] رونوشت یک مورد
+       *[other] رونوشت { $count } اشیا
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] پیوند ۱
+       *[other] لینک { $count } مورد
+    }
+inventory-drop-move-here = حرکت به اینجا
+inventory-drop-copy-here = اينجا رونوشت کن
+inventory-drop-link-here = ایجاد پیوندها در اینجا
+inventory-sort-description = توصیف
+inventory-sort-reversed = { $order } (معکوس)
+inventory-column-creator = ایجادکننده
+inventory-column-count = اشیا
+inventory-columns-fit = اندازه‌گیری همۀ ستونها برای جا دادن
+inventory-columns-reset-widths = بازنشانی عرض ستونها
+inventory-back = برگرد
+inventory-forward = به جلو
+inventory-up = یک سطح بالا
+keybinds-inventory-root = رفتن به بالا
+keybinds-inventory-search = جستجو در فهرست
+keybinds-inventory-filter = پوشه را پالایش کنید
+keybinds-inventory-preview = نمایش قاب پیش‌نمایش
+keybinds-inventory-view-large = تصاویر بزرگ
+keybinds-inventory-view-medium = تصاویر متوسط
+keybinds-inventory-view-small = عکسهای کوچک
+keybinds-inventory-view-compact = نمای فشرده
+keybinds-inventory-view-details = نمای جزئیات
+keybinds-inventory-view-tiles = نمای کاشی
+keybinds-inventory-toggle = برگزیدن یا لغو انتخاب سطر در تمرکز
+keybinds-inventory-menu = باز کردن منوی گزینش
+keybinds-inventory-purge = پاک کردن از زباله‌دان
+keybinds-inventory-refused = { $keys } کلید خود فهرست موجودی باقی می‌ماند: دیگری را انتخاب کنید.
+inventory-path-edit = تایپ مسیر
+inventory-path-subfolders = زیرپوشه
+inventory-copy-path = رونوشت مسیر
+inventory-show-in-folder = نمایش در پوشه
+inventory-pin = چسباندن به دسترسی سریع
+inventory-unpin = باز کردن دسترسی سریع
+inventory-quick-access = دسترسی سریع
+inventory-quick-access-drop = پوشه را برای چسباندن به اینجا بگذارید
+inventory-invert-selection = معکوس کردن گزینش
+inventory-undo = برگشت
+inventory-redo = & بازکردن‌
+inventory-undo-step = برگرداندن { $what }
+inventory-redo-step = بازگرداندن { $what }
+inventory-history-move =
+    { $count ->
+        [one] جابه‌جایی ۱ قطعه
+       *[other] حرکت { $count } اشیا
+    }
+inventory-history-delete =
+    { $count ->
+        [one] حذف از 1 مورد
+       *[other] حذف { $count } اشیا
+    }
+inventory-history-rename = تغییر نام
+inventory-history-new-folder = پوشۀ جدید
+inventory-history-copy =
+    { $count ->
+        [one] رونوشت از ۱ مورد
+       *[other] & باز کردن‌ { $count } اشیا
+    }
+inventory-history-link =
+    { $count ->
+        [one] پیوند به ۱ مورد
+       *[other] پیوندها به { $count } اشیا
+    }
+inventory-undo-nothing = هیچ چیز برای بازگرداندن باقی نماند: این اجزا حرکت کرده‌اند یا رفته اند.
+inventory-redo-nothing = هیچ چیز برای بازسازی باقی نماند: این اجزا حرکت کرده‌اند یا رفته اند.
+inventory-undo-empty = چيزي براي برگشتن نيست.
+inventory-redo-empty = چيزي براي بازسازي نيست
+inventory-undo-dropped = اجزای آخرین گام حرکت یا ناپدید شده‌اند: آن حذف شد. بازگشت دوباره برای گام قبلی.
+inventory-redo-dropped = عناصر گام بعدی حرکت کرده یا از بین رفته‌اند: افتاد. برای گام بعد دوباره انجام دهید.
+inventory-undo-folder-not-empty = این پوشه جدید حاوی اشیاء است که از زمانی که در آن قرار گرفته‌اند: اول آن‌ها را خارج کنید یا خودتان پوشه را حذف کنید.
+inventory-undo-kept-out = در این حالت، تابع‌های موجود در جدول به صورت زیر نمایش داده می‌شوند: تابع‌ها را تغییر دهید.
+inventory-restore-to = بازگرداندن به ”{ $folder }”
+inventory-restore-to-origins = بازگرداندن به پوشه‌های خودشان
+inventory-purge-no-undo = بازگشت نتونستم برگردونمش.
+inventory-new-tab = تب جدید
+inventory-close-tab = بستن زبانه
+inventory-next-tab = زبانۀ بعدی
+inventory-previous-tab = زبانۀ قبلی
+inventory-open-in-new-tab = باز کردن در تب جدید
+inventory-tabs-limit = حداکثر { $count } تابل
+inventory-copy-to-other-pane = رونوشت به پنجره‌ی دیگر
+inventory-move-to-other-pane = حرکت به پنجره‌ی دیگر
+inventory-resize-columns = کشیدن برای تغییر اندازۀ ستونها. دوبار کلیک کنید تا ستون سمت چپ را با محتوای آن سازگار کنید.
+inventory-resize-columns-first = کشیدن برای تغییر اندازه ستونها. دوبار کلیک برای دادن عرض عادی به ستون اول.
+inventory-sort-by-column = برای مرتب‌سازی بر اساس این ستون ، فشار دهید ، دوباره برای معکوس کردن ترتیب. کشیدن برای جابه‌جایی ستون.
+inventory-filter-hint = پالایش این پوشه...
+inventory-filter-close = بستن پالایه) Esc (
+inventory-filter-nothing = هيچ چيز اينجا با فيلتر مطابقت نداره
+inventory-view-compact = نمای فشرده
+inventory-view-tiles = نمای کاشی
+inventory-view-per-folder = یادآوری نمای هر پوشه
+inventory-group-by = گروه‌بندی بر اساس
+inventory-group-none = هیچ‌کدام
+inventory-group-folders = پوشه‌ها
+inventory-group-unknown-creator = خالق هنوز ناشناخته است
+inventory-group-today = امروز
+inventory-group-yesterday = ديروز
+inventory-group-this-week = در هفت روز گذشته
+inventory-group-this-month = در 30 روز گذشته
+inventory-group-this-year = در اوايل اين سال
+inventory-group-earlier = خيلي وقت پيش
+inventory-group-no-date = بدون تاریخ
+cmdline-mod-zoffset-usage = تنظیم ارتفاع حرکت آواتارت خود (استفاده: /zoffset value or +delta).
+dev-toolbox-n4 = بارگذاری فهرست
+dev-toolbox-what-n4 = پوشه‌ها خوانده شدند، شکست خوردند و رها شدند ، بارگذار در پرواز می‌خواند و دوباره تلاش می‌کند؛ بدون نام
+ui-context-inspect-avatar = بررسی آواتار
+inspect-window = بررسی
+inspect-tab-objects = اشیا
+inspect-objects-title =
+    { $count ->
+        [one] شیء { $count }
+       *[other] { $count } جسم
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } مورد
+       *[other] { $count } مورد
+    }
+inspect-open-profile = باز کردن پروفایل
+inspect-over-limit = فراتر از حدت
+inspect-limit-tip = محدودۀ پیچیدگی شما: { $limit }
+inspect-search = جستجوی اشیا یا سازنده‌ها
+inspect-outlined = { $name } در جهان مشخص شده است
+inspect-area-head = سر
+inspect-area-body = بدنه
+inspect-area-arms = بازوها و دستها
+inspect-area-legs = پاها
+inspect-area-hud = HUD
+inspect-area-other = دیگر
+inspect-area-world = اشیا
+inspect-own-eyes = چشمهای سیستمName
+inspect-own-body = بدنۀ سیستم
+inspect-own-description = بخشی از خود آواتار، نه یک پیوست
+inspect-own-maker = آواتار · Second Life
+inspect-own-place = آواتار
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } مگابیت
+inspect-section-complexity = { $value } پیچیدگی
+inspect-no-match = هيچ تطابقي وجود نداره{ $query }”.
+inspect-spoken-worn = { $name }, پوشیده شده { $point }پیچیدگی { $complexity }, ساخته شده توسط { $creator }
+inspect-spoken-object = { $name }, متعلق به { $owner }پیچیدگی { $complexity }, ساخته شده توسط { $creator }
+inspect-look-at-tip = دوربين رو به سمت اون ببر
+inspect-profile-tip = باز کردن پروفایل سازنده
+inspect-made-by = توسط
+inspect-owned-by = مالک
+inspect-worn-on = پوشیده شده
+inspect-prims-count =
+    { $count ->
+        [one] { $count } اول
+       *[other] { $count } اعداد اول
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = حافظه‌ی بافت
+inspect-tile-vram = حافظۀ تصویری
+inspect-tile-prims = اجزای پایه
+board-close = ببند { $title }
+board-grow = بزرگ کن { $title }
+board-remove = حذف { $name }
+board-more = و { $count } نفر ديگه
+board-more-short = +{ $count }
+board-some-of = { $shown } از { $all }
+board-of-all = از { $all }
+stage-turn-left = بچرخ
+stage-turn-right = بچرخيد به راست
+stage-higher = از بالا نگاه کن
+stage-lower = از پايين نگاه کن
+stage-nearer = نزديکتر
+stage-further = دورتر
+stage-reset = برگرد به آغاز
+stage-hint = کشیدن برای چرخش ، کشیدن راست برای حرکت
+stage-light = زمینه روشن
+stage-dark = زمینه تیره
+stage-playing = AO
+stage-paused = معلق
+stage-pause-tip = موقتاً پویانمایی را متوقف کنید
+stage-play-tip = پخش پویانمایی
+stage-loading = در حال آماده‌سازی نمای سه‌بعدی...
+stage-nothing = هنوز هيچي براي نشون دادن تو 3D نيست.
+stage-refused = 3D view غیرفعال شده در حالیکه RLVa محدودیت هایی رو که میتونید ببینید ایجاد میکنه
+inspect-your-limit = محدوديت شما: { $limit }
+inspect-without-it = { $value } بدون اون
+inspect-you = تو
+inspect-person = افراد
+inspect-difference = تفاوت
+inspect-drawn-in-full = کامل کشیده شد
+inspect-nobody = پیچیدگی هیچ‌کس هنوز شناخته نشده‌است.
+inspect-aside-count = { $count } کنار گذاشته شد
+inspect-is-aside = کنار گذاشته شد
+inspect-set-aside = کنار بذار
+inspect-set-aside-tip = پیچیدگی را بدون این مورد ببینید. فقط در این پنجره: هیچ چیز در جهان تغییر نمی‌کند.
+inspect-put-back = برگردونش
+inspect-put-back-tip = شمارش مجدد این مورد
+inspect-complexity-spoken = پیچیدگی { $value }, عدد { $rank } از { $count } مردم اينجا
+inspect-stage-outfit = لباس
+inspect-stage-objects = اشیا
+inspect-stage-back = برگرد به همه چيز
+inspect-place-made-by = { $place } ساخته شده توسط { $name }
+inspect-owned-by-name = مالکيت { $name }
+inspect-tile-items = اشیا
+inspect-tile-figures = شکل‌ها
+inspect-col-item = نام
+inspect-point = نقطه
+inspect-look-at = نگاه کن
+inspect-selected-count = { $count } برگزیده
+inspect-worn-count = { $count } پوشيده
+inspect-creators-word = ایجادکنندگان
+inspect-areas-word = مناطق بدنه
+inspect-owners-word = مالکان
+inspect-triangles-word = مثلثها
+inspect-made-of = { $count } از { $all } اشیا
+inspect-kilobytes = { $n } کیلوبایت
+inspect-linkset-order = { $count }, در سمت چپ
+inspect-reset-columns = بازنشانی ستونها
+inspect-by-creators =
+    { $count ->
+        [one] { $items } توسط يک سازنده
+       *[other] { $items } توسط { $count } ایجادکنندگان
+    }
+inspect-owner-button = پروفایل مالک
+inspect-group-button = پروفایل گروه
+inspect-creator-button = پروفایل سازنده
+inspect-land-others = بقيه { $n }
+inspect-land-these = اين { $n }
+inspect-land-free = آزاد { $n }
+inspect-land-unknown = در این روش، تمام اشیاء موجود در بسته را در همان مکان قرار می‌دهیم که قرار گرفته‌اند.
+ui-login-unencrypted = ورود رمزگذاری‌نشده
+ui-login-unencrypted-body = نشانی ورود { $server } به جای https:// با http:// شروع می‌شود، پس ورود رمزگذاری نمی‌شود. هرکس ترافیک شبکه را ببیند، برای مثال در وای‌فای عمومی، شبکهٔ مشترک یا در مسیر شبکهٔ مقصد، می‌تواند گذرواژه را بخواند و از حسابتان استفاده کند. هنوز چیزی فرستاده نشده است. می‌توانید از شبکهٔ مقصد نشانی https:// بخواهید. انتخاب برای این سرور ذخیره می‌شود.
+ui-login-unencrypted-accept = ورود بدون رمزگذاری
+world-appearance-clothing-layers-full = همه ۶۰ لایه لباس در حال استفاده هستند. قبل از پوشیدن این شیء، یک لایه را حذف کنید.
+ui-options-ray-tracing = ردیابی اشعه
+ui-options-ray-traced-shadows = سایه‌های خورشیدی ردیابی‌شده با اشعه
+ui-options-ray-traced-shadows-help = سایه‌های خورشید و ماه ، به جای خواندن از نقشه‌های سایه ، پرتو به پرتو ردیابی می‌شوند: دقیقاً جایی که چیزها با هم تماس دارند و در هر فاصله ای. نیازمند سایه‌ها و کارت گرافیکی با ردیابی پرتو است ، و هزینه بیشتری برای کارت گرافیک دارد
+ui-options-ray-traced-lights = سایه‌های روشن محلی
+ui-options-ray-traced-lights-help = سایه‌ها از نورهای نقطه‌ای اطراف) چراغ ، شمع (که در غیر این صورت پرتاب نمی‌شوند ، و از پروژکتورها هنگامی که سایه‌های پروژکتور فعال است ، به جای نقشه‌های سایه خود. گرانترین گزینۀ ردیابی شعاع: بهترین گزینه برای گرافیکهای یکپارچه
+ui-options-rt-quality = کیفیت ردیابی اشعه
+ui-options-rt-quality-help = هر جلوۀ ردیابی شده روشن می‌ماند: سطوح پایین نمونه‌های کمتری را ردیابی می‌کنند و نور غیرمستقیم روی یک شبکه خشن تر ، برای فریمهای بیشتری در ثانیه بر روی کارت گرافیکی کوچکتر. بالا تصویر کامل Deluxe (RT) است. انتخاب یک سطح همچنین روشنایی سایه‌ها را تنظیم می‌کند
+ui-options-rt-sun-softness = نرمی سایه خورشید
+ui-options-rt-sun-softness-help = چقدر لبه‌های سایه‌های دنبال‌شده خورشید نرم هستند: ۱ خورشید واقعی است ، ۰ لبه‌های تیز ، بیشتر برای خورشید مه آلودتر
+ui-options-rt-lamp-softness = نرمی سایه روشن محلی
+ui-options-rt-lamp-softness-help = چقدر لبه‌های سایه‌های دنبال‌شده چراغ نرم هستند: ۱ اندازه هر چراغ را دنبال می‌کند، ۰ لبه‌های تیز
+ui-options-rt-shadow-lamps = نورهايي که سايه‌ها رو پرتاب ميکنن
+ui-options-rt-shadow-lamps-help = چند تا از نزدیک‌ترین نورها سایه‌های دنباله‌دار می‌اندازند؛ بقیه هنوز روشن هستند، بدون سایه‌ها. کمتر هزینه کارت گرافیک را کاهش می‌دهد
+ui-options-ray-traced-indirect = نور غیرمستقیم ردیابی اشعه
+ui-options-ray-traced-indirect-help = نوري که از سطح اطراف باز ميگرده، دنباله اي از اونچه که صفحه نمايش نشون ميده، بجاي نور غيرمستقيم GTAO
+ui-options-gi-probes = کاوشگرهای روشنایی جهانی
+ui-options-gi-probes-help = کاوشگرها در اطراف صحنه پخش ميشن که نور رو از بازگشت هاي مختلف نگه ميدارن و آسماني که ميبينن: اتاقهاي بسته تاريك ميمونه، نور به گوشه ها ميره.
+ui-options-ray-traced-reflections = انعکاس دنبالۀ شعاع
+ui-options-ray-traced-reflections-help = انعکاس آنچه که صفحه نمایش نشان نمی‌دهد ، به جای انعكاس فضاي صفحه نمايش ، كه بايد فعال باشد
+ui-options-ray-tracing-unsupported = این کارت گرافیک یا گرداننده آن ردیابی اشعه ندارد
+ui-options-ray-tracing-vr = در نشست آغاز شده برای VR موجود نیست
+ui-options-tab-ray-tracing = ردیابی اشعه
+ui-options-deluxe-rt-warning-title = روشن کردن Deluxe (RT) ؟
+ui-options-deluxe-rt-warning-text = Deluxe (RT) با سایه‌ها و نور غیرمستقیم که توسط کارت گرافیک دنبال می‌شود، بالا است. به یک کارت با ردیابی اشعه سخت‌افزاری نیاز دارد (NVIDIA RTX ، AMD Radeon RX 6000 یا بالاتر ، Intel Arc) و یک گرداننده به روز شده ، و هزینه آن بسیار بیشتر از High است: در یک کارت میانی نرخ فریم می‌تواند در مکان‌های شلوغ بسیار کاهش یابد. ردیابی شعاع هنوز در حال آزمایش است: اگر تصویر اشتباه به نظر برسد یا بیننده کند شود ، به High برگردید. تب ردیاب اشعه تنظیمات خود را نگه می‌دارد.
+ui-options-deluxe-rt-warning-turn-on = روشن کردن
+ui-options-ray-tracing-needs-shadows = به سايه‌ها نياز داره
+ui-options-ray-tracing-needs-ssr = به انعکاس فضاي صفحه نياز داره
+ui-options-preset-deluxe = لوکس (RT)
+ui-options-normal-precision = دقت بازتاب
+ui-options-normal-precision-help = چقدر دقیق جهت هر سطح برای انعکاسها نگه داشته می‌شود. استاندارد می‌تواند در انعكاس سطح صاف و منحنی مانند رنگ ماشین ، گام‌ها را نشان دهد؛ بالا آنها را حذف می‌کند و حافظه ویدئویی بیشتری استفاده می‌کند. خودکار با انعقادهای ردیابی اشعه از بالا استفاده می‌کند ، جایی که گامها بیشتر نمایش داده می‌شوند ، و استاندارد در غیر این صورت
+ui-options-normal-precision-automatic = خودکار
+ui-options-normal-precision-standard = پیش‌فرض
+ui-options-normal-precision-high = بالا
+ui-options-private-point-at-help = مخفی کردن شیء مورد ویرایش، بازوی ویرایش را پایین نگه دارید و شعاع ویرایش را مخفی کنید.
+ui-options-private-edit-beam = مخفی کردن میله ویرایش
+ui-options-private-edit-beam-help = هنگام ویرایش یا گرفتن اشیا ، هم بر روی پرده و هم برای بینندگان دیگر ، شعاع را کاملاً مخفی می‌کند. نکات هدف انتخاب و شعاع‌های دادن/اندازیدن تحت تأثیر قرار نمی‌گیرند.
+common-window-outside = حرکت خارج از پنجرۀ نمایشگر
+common-window-inside = بازگرداندن به پنجرۀ بیننده
+common-window-rename-name = برای تغییر نام دوبار کلیک کنید
+common-carry-hint = برای انداختن آن اینجا کلیک کنید ، Esc برای رها کردن آن
+common-window-paused-photo = هنگامی که حالت عکس باز است، متوقف شد
+common-window-paused-director = زمانی که کارگردان پخش می‌کند متوقف می‌شود
+common-window-paused-interface = هنگامی که واسط خاموش است متوقف شد
+ui-options-warn-live-preview = هشدار هنگامی که یک بافت یا ماده نمی‌تواند پیش‌نمایش شود
+ui-options-warn-live-preview-help = در انتخاب‌کننده پنجره ساخت، کلیک بر روی یک عنصر کپی نشده هیچ چیزی را تا زمان OK: say so اعمال نمی‌کند.
+ui-texture-picker-live-preview-texture = نمی‌توانیم پیش‌نمایش این بافت را نمایش دهیم چون کپی ندارد.
+ui-texture-picker-live-preview-material = ما نميتونيم پيش‌نمايش اين مواد رو نشون بديم چون کپي نيست
+fetch-invalid-url = نشانی وب نامعتبر
+ui-chat-close-all-ims = بستن همه IM مکالمات
+ui-chat-close-all-ims-question = بستن همه IM و تماس فعال را خاتمه دهید؟
+ui-chat-confirm-close-all-ims = قبل از بستن همه تأیید کنید IM مکالمات
+ui-chat-confirm-close-all-ims-help = قبل از بستن همه پرسش کنید IM گفتگوها وقتي که يکي از شما تماس فعالي داشته باشه
+ui-options-aurora-controls-compact-help = پنجره‌ی کنترل‌ها در دوربین فشرده باز می‌شود: جوی‌ستیک‌ها، بزرگنمایی و چرخش آن. دکمه‌ی میله عنوان آن بین فشرده‌ای و کامل تغییر می‌کند و این را نیز تنظیم می‌کند. با پنجره‌های کلاسیک ، دوربین به جای آن در پنجرهٔ کوچک دوربین نمایشگر قدیمی باز می‌شود.
+rlva-restart-hint = RLVa هنگامی که وارد سیستم می‌شوید شروع می‌شود. وقتی اجرا شود ، روشن یا خاموش کردن آن در آغاز بعدی نمایشگر اثر خواهد داشت: اشیای محدودیت تا آن زمان باقی خواهند ماند.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa بعد از بازسازي فعال ميشه.
+rlva-toggle-disabled-restart = RLVa بعد از اينکه دوباره شروع کني غيرفعال ميشه
+livemesh-import-connect = برای آماده‌سازی LODهای وارداتی، Blender را با پلاگین 0.11.0 یا بالاتر، یا Maya را با پلگین 02.0 و بالاتر متصل کنید.
+livemesh-import-preparing = آماده‌سازی شیء و LODهای آن در Blender یا Maya…
+livemesh-import-ready = LODها دريافت شد، آماده واردات
+livemesh-import-failed = آماده‌سازی واردات شکست خورد: { $error }
+livemesh-import-timeout = Blender یا Maya آماده‌سازی واردات را به پایان نرساند. اتصال را بررسی کنید (در Blender، از حالت شی استفاده کنید) و دوباره سعی کنید.
+livemesh-shape-apply-tooltip = تغییر حق‌ها را علامت بزنید، سپس اسکلت انتخاب شده در بلندر یا مایا و شبکه‌های محدود آن (از طریق MayaStar برای یک rig MayaStar) را تطبیق دهید. یک اسکلت سازگار با Second Life محلی را انتخاب کنید.
+livemesh-shape-update-apply = به روز رسانی پلاگین Blender به 0.10.0 یا بالاتر، یا پلاگین Maya به 1.0.4 یا بالاتر و سپس مجدداً آن را متصل کنید.
+livemesh-shape-applied = شکلی که در اسکلت برگزیده اعمال می‌شود.
+livemesh-shape-tooltip = در این روش، یک گراف را با استفاده از تابعی به نام گراف تصادفی یا گرافی تصادف‌آمیز می‌سازیم.
+livemesh-shape-connect = اتصال Aurora ابتدا پلاگین را در بلندر یا مایا نصب کنید.
+livemesh-shape-update-plugin = به روزرسانی پلاگین بلندر به 0.9.0 یا بالاتر، یا پلاگین مایا به 1.0.3 یا بالاتر و سپس مجدداً آن را متصل کنید.
+livemesh-shape-timeout = Blender یا Maya واردات را تأیید نکردند. دوباره سعی کنید (در Blender، به حالت شی تغییر دهید).
+livemesh-shape-success = شکل به عنوان یک بدنه مرجع جدید وارد شد.
+blender-live-maya-version = Aurora LiveMesh برای Maya { $version }
+blender-live-maya-instructions = ذخیره‌سازی ZIP و استخراج آن، سپس کشیدن install.mel به یک viewport Maya. باز کردن LiveMesh از قفسه Aurora، اضافه کردن شبکه‌ها و کلیک بر روی Connect.
+blender-live-save-maya = ذخیره‌ی وصله‌ی Maya…
+blender-live-maya-saved = وصله ذخیره شد. باز کردن ZIP و کشیدن install.mel به یک درگاه نمایش مایا.
+livemesh-plugin-connected = وصله متصل شد
+livemesh-token-refused = یک برنامه تلاش کرد بدون این کلید پیش‌نمایش متصل شود. فقط Aurora پلاگین در بلندر یا مایا می‌تواند متصل شود.
+livemesh-waiting-plugin = منتظر Blender یا Maya...
+blender-live-objects-help = شبکه‌هایی که Blender یا Maya ارسال می‌کنند. یکی را برای قرار دادن انتخاب کنید، یا از منوی آن وارد کنید.
+blender-live-size-note = اندازه آنچه که پلاگین ارسال می‌کند را ضرب می‌کند، بنابراین ویرایش‌های بعدی در بلندر یا مایا آن را نگه می‌دارند.
+blender-live-avatar-help = برای شبکه‌های ریگی: شکل خود را به بلندر یا مایا بفرستید تا بر روی آن مدل سازی شود.
+livemesh-shape-section = شکل شما در Blender یا Maya
+blender-live-import-help = یک عکس‌العمل از شیء را برای واردات عادی یخ می‌زند: بررسی، قیمت، سپس تأیید. ویرایش‌های بعدی در بلندر یا مایا آن را تغییر نمی‌دهند.
+blender-live-changed-tip = زمان از آخرین تغییر این شیء توسط Blender یا Maya
+fit-lab-section = آزمايشگاه
+fit-lab-help = مدل هايي که لباسهايي رو ميپوشن که تو ميپوشي، هر کدوم با بدن ديگه اي جلوت ايستاده اند تا نشون بدن چطور لباسها شکل هاي مختلفي دارن. فقط تو اونا رو ميبيني: هيچ چيز فرستاده يا نگهداري نميشه.
+fit-lab-body-me = من
+fit-lab-body-slim = باهوش
+fit-lab-body-curvy = منحنی
+fit-lab-body-full = شکل کامل
+fit-lab-body-athletic = ورزشی
+fit-lab-body-tall = بلند
+fit-lab-body-petite = کوچک
+fit-lab-motion = حرکت
+fit-lab-motion-stand = ايست
+fit-lab-motion-walk = راه برو
+fit-lab-motion-sit = بشين
+fit-lab-motion-range = محدوده حرکت
+fit-lab-pose = پوزه
+fit-lab-pose-all = همه، به نوبت
+fit-lab-pose-arms-up = دستات رو بالا ببر
+fit-lab-pose-reach = دستت رو ببر جلو
+fit-lab-pose-hug = دستها رو بالا ببر
+fit-lab-pose-squat = خم شو
+fit-lab-pose-kneel = زانو بزن
+fit-lab-pose-knee-up = زانو بزن
+fit-lab-pose-twist = پیچش
+fit-lab-pose-bend = خم شو به جلو
+fit-lab-motion-like-me = مثل من
+fit-lab-show = مدل ها رو نشون بده
+fit-lab-place = بيارشون اينجا
+fit-lab-remove = عروسک ها رو بردار
+fit-lab-choose = حداقل يه جسد رو انتخاب کن
+fit-lab-clip = نشون بده که جسد از کجا مياد
+fit-lab-clip-note = قرمز: بدن از لباس بیرون می‌آید. کهربایی: بدن و لباس با هم برخورد می‌کنند. در آواتار شما و مانکن‌ها ، همان‌طور که از دوربین دیده می‌شود. هر چیز دیگری که پوشیده‌اید به عنوان بدن محسوب می‌شود: یک ژاکت یا مویی را که روی لباس پوشیده شده است در بیاورید.
+blender-live-levels-pending = Blender یا Maya سطوح جزئیات را هنگام کلیک بر روی Import آماده می‌کند.
+blender-live-levels-note = در این روش، هر یک از گراف‌ها یا مجموعه‌های گراف به صورت جداگانه مورد بررسی قرار می‌گیرند.
+blender-live-quick-look-changed = تغییر در بلندر یا مایا { $ago } قبلاً.
+blender-live-warning-textures = بافتها پرش داده شدند ، رنگ ساده نمایش داده شد
+blender-live-warning-not-sent = در پیش‌نمایش نیست
+blender-live-undo-derez = Derezzed { $name } · هنوز در فهرست افزونه
+blender-live-undo-detach = جداشده { $name } · هنوز در فهرست وصله است
+inventory-open-current = باز کردن
+inventory-folder-back = برگرد
+inventory-folder-forward = به جلو
+inventory-folder-up = رفتن به یک سطح بالا
+area-search-metres = { $n } m
+area-search-band-reach = در دسترس
+area-search-band-close = نزديک
+area-search-band-around = دور و برت
+area-search-band-further = بيشتر
+area-search-band-far = فروردین
+area-search-band = ناحیه
+area-search-within = در حدود { $distance }
+area-search-within-across = توي محدوده { $distance }
+area-search-between = { $from }–{ $to }
+area-search-any-distance = نمایش هر مسافت
+area-search-from = فاصله از
+area-search-to = فاصله تا
+area-search-bar-tip =
+    { $count ->
+        [one] يه چيز { $from } به { $to }
+       *[other] { $count } اشياء، { $from } به { $to }
+    }
+area-search-of-objects = از { $total } اشیا
+area-search-li = { $value } لي
+area-search-li-count = { $value } ضربه به زمين
+area-search-owner-count =
+    { $count ->
+        [one] یک مالک
+       *[other] { $count } صاحبان
+    }
+area-search-object-count =
+    { $count ->
+        [one] یک شیء
+       *[other] { $count } جسم
+    }
+area-search-objects-word = اشیا
+area-search-in-reach = اينجا
+area-search-tab-objects = اشیا
+area-search-tab-owners = مالکان
+area-search-hint-wide = شیءها ، مالکان ، خالقان یا UUIDها
+area-search-kind-heading = نوع شیء
+area-search-kind-tip = کلیک: فقط اینها. دوباره: مخفی.
+area-search-kind-any = هر
+area-search-kind-only = فقط اينا
+area-search-kind-hidden = مخفی
+area-search-kind-attached = پیوست
+area-search-kind-probes = آزمون
+area-search-click-all = همۀ
+area-search-click-any-short = هر کدام
+area-search-permissions = مجوزها
+area-search-price-heading = قیمت فروش، برای اشیای فروخته شده
+area-search-price-to = به
+area-search-price-tip = اول "برای فروش" رو انتخاب کن
+area-search-linked = اعداد اول پیوسته
+area-search-one-field = جستجو در یک حوزه
+area-search-regex-switch = عبارتهای منظم
+area-search-regex-invalid = عبارت منظم معتبر نیست
+area-search-reset-filters-tip = بازگرداندن همۀ پالایهها؛ متن جستجو باقی می‌ماند
+area-search-save-defaults-tip = باز کردن با این پالایهها از حالا به بعد
+area-search-reset-search = بازنشانی متنهای جستجو
+area-search-reset-filters = بازنشانی گزینه‌های پالایه
+area-search-reset-ranges = بازسازي فاصله و قيمت
+area-search-reset-all = بازنشانی همه چیز
+area-search-more = بيشتر
+area-search-several = برگزیدن چند تا
+area-search-several-tip = فشارها به گزینش افزوده می‌شوند) همچنین Ctrl یا Shift + فشار ، Ctrl+A)
+area-search-actions = & اعمال‌
+area-search-nothing = هنوز هيچ شيئي دريافت نشده.
+area-search-nothing-for-sale = اينجا چيزي براي فروش نيست
+area-search-not-for-sale = براي فروش نيست
+area-search-from-price = از { $price }
+area-search-nearest = نزدیکترین اول
+area-search-heaviest = اول سنگین‌ترین
+area-search-order-tip = تغییر ترتیب: نزدیکترین یا سنگین‌ترین اول
+area-search-rank = #{ $rank } از { $all }
+area-search-rank-here = #{ $rank } اينجا
+area-search-card-more = نمایش هر شکل
+area-search-card-less = نمایش کمتر
+area-search-open-group = باز کردن گروه
+area-search-spoken = { $name }, { $distance }, برخورد با زمين { $li }, متعلق به { $owner }
+area-search-owner-spoken = { $name }, { $count } اشیاء، برخورد با زمین { $li }
+area-search-stage-line = { $distance } دور { $li } اثر بر زمين { $owner }
+area-search-tile-3d = نمای سه بعدی
+area-search-on = { $count } در
+area-search-on-word = روشن
+area-search-more-on =
+    { $count ->
+        [one] یک پالایشگر دیگر فعال شد
+       *[other] { $count } فیلتر بیشتر
+    }
+ui-options-legacy-lists = واردات فهرستها از نمایشگر قدیمی
+ui-options-legacy-lists-help = تاریخچه اتصال از راه دور، فهرست سیاه دارایی‌ها، فهرست پالایۀ رسانه و مجموعه‌های آشنای این حساب را اضافه می‌کند. پرونده‌های نمایشگر قدیمی فقط قابل خواندن هستند.
+ui-options-legacy-lists-button = واردات از نمایشگر قدیمی...
+ui-options-legacy-lists-no-account = برای وارد کردن فهرست‌های این حساب وارد شوید.
+ui-options-legacy-lists-title = واردات از نمایشگر قدیمی
+ui-options-legacy-lists-text = همه چیز به فهرستهای این حساب افزوده می‌شود و هیچ‌چیز در اینجا حذف نمی‌شود. نامهایی که در فهرست سیاه موجودی هستند ، یکباره جهان را ترک می‌کنند. واردات مجدد آنچه را که در اینجا پاک کرده‌اید برمی‌گرداند.
+ui-options-legacy-lists-searching = در حال جستجو برای پوشه‌های نمایشگر قدیمی…
+ui-options-legacy-lists-none = برای این حساب ، هیچ پوشۀ نمایشگر قدیمی با فهرستها پیدا نشد.
+ui-options-legacy-lists-teleports = تاريخچه تلوپورت ({ $count })
+ui-options-legacy-lists-derender = فهرست سیاه دارایی ({ $count })
+ui-options-legacy-lists-media = فهرست پالایۀ رسانه ({ $count })
+ui-options-legacy-lists-contact-set-entries = تماس با مجموعه مدخل‌ها ({ $count })
+ui-options-legacy-lists-confirm = واردات
+ui-options-legacy-lists-added = افزوده یا به‌روزرسانی شد. تاریخچه انتقال: { $teleports }, فهرست سیاه دارایی: { $derender }, پالایۀ رسانه: { $media }, مدخلهای مجموعه تماس: { $sets }.
+ui-options-legacy-lists-nothing = چیز جدیدی نیست: این حساب از قبل این فهرست‌ها را دارد.
+ui-options-legacy-lists-failed = نمی‌توان خواند: { $files }.
+ui-options-legacy-lists-unsaved = نمی‌توان ذخیره کرد، همان‌طور که بود رها شد: { $files }.
+ui-options-legacy-lists-other-grid = در این شبکه، یک پوشه با همان نام می‌تواند متعلق به شبکه دیگری باشد: مطمئن شوید که درست است.
+ui-options-build-show-beams-hint = نمایش پرتوهای گزینش خود و آواتارهای دیگر هنگام ویرایش، گرفتن یا دادن. این فقط نمایش را کنترل می‌کند؛ از حریم خصوصی > مخفی کردن پرتو ویرایش برای متوقف کردن پرتونگاری ویرایش محلی و در شبکه استفاده کنید.
+teleport-failed-title = انتقال ناموفق بود
+teleport-error-invalid-tport = تلاش‌های انتقال از راه دور به ۶ مورد در دقیقه محدود می‌شود. اگر مشکلی دارید، یک دقیقه صبر کنید و دوباره تلاش برای انتقال از طریق تلفن را امتحان کنید. اگر این مشکل ادامه پیدا کند، خارج شوید و دوباره وارد شوید.
+teleport-error-invalid-region-handoff = مشکلی در پردازش عبور از منطقه شما رخ داد. ممکن است قبل از عبور کردن از مناطق نیاز به ورود مجدد داشته باشید. اگر همچنان این پیام را دریافت می‌کنید، لطفاً با پشتیبانی تماس بگیرید.
+teleport-error-blocked-tport = ببخشید ، انتقال از راه دور در حال حاضر مسدود شده است. یک لحظه صبر کنید و دوباره سعی کنید. اگر هنوز نمی‌توانید به راه دور بروید ، لطفاً برای حل مشکل خارج شوید و دوباره وارد شوید.
+teleport-error-nolandmark-tport = متاسفم، ولي سيستم نتونست مقصد رو پيدا کنه.
+teleport-error-timeout-tport = متاسفم ، اما سیستم نتوانست اتصال انتقال دور را تکمیل کند. در یک لحظه دوباره سعی کنید.
+teleport-error-no-help-island = تو نمي توني به جزيره خوش آمديد برگردي
+teleport-error-noaccess-tport = متاسفم، تو اجازه نداري به اون مقصد تله پورت برسي.
+teleport-error-missing-attach-tport = پیوستهای شما هنوز نرسیده است. سعی کنید چند ثانیه دیگر صبر کنید یا قبل از تلاش برای انتقال، خارج شوید و دوباره وارد شوید.
+teleport-error-too-many-uploads-tport = صف دارایی در این ناحیه در حال حاضر مسدود است ، بنابراین درخواست انتقال دور شما قادر به موفقیت در زمان نیست. لطفاً بعد از چند دقیقه دوباره سعی کنید یا به ناحیۀ پررفت‌وآمدتر بروید.
+teleport-error-expired-tport = متاسفم ، اما سیستم قادر به تکمیل درخواست انتقال دور شما در زمان مناسب نبود. لطفاً بعد از چند دقیقه دوباره سعی کنید.
+teleport-error-expired-region-handoff = متاسفم ، اما سیستم قادر به تکمیل عبور از منطقه شما در زمان مناسب نبود. لطفاً بعد از چند دقیقه دوباره سعی کنید.
+teleport-error-preexisting-tport = متاسفم ، اما سیستم قادر به آغاز انتقال دور شما نیست. لطفاً بعد از چند دقیقه دوباره سعی کنید.
+teleport-error-no-host = قادر به پیدا کردن مقصد انتقال دور نیست. ممکن است مقصد به‌طور موقت در دسترس نباشد یا دیگر وجود نداشته باشد. لطفاً بعد از چند دقیقه دوباره سعی کنید.
+teleport-error-no-inventory-host = این سیستم در حال حاضر غیرفعال است.
+teleport-error-must-get-age-region = برای ورود به این منطقه باید ۱۸ سال یا بیشتر داشته باشید.
+teleport-error-special-usage-blocked = نمي‌تونم وارد منطقه بشم{ $region }» یک منطقه بازی مهارت است ، و برای ورود باید معیارهای خاصی را برآورده کنید. برای جزئیات ، لطفاً پرسش و پاسخ بازی مهارتی را بررسی کنید: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = نمی‌توان وارد منطقه شد. این یک منطقه بازی مهارت است ، و برای ورود باید معیارهای خاصی را برآورده کنید. برای جزئیات ، لطفاً پرسش‌های متداول بازی مهارتی را بررسی کنید: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = شبکه خانگی شما بازگشت شما را رد کرد. این معمولاً به این معنی است که تنظیمات نشانی Hypergrid آن با آدرسی که شبکه‌های دیگر برای آن استفاده می‌کنند مطابقت ندارد. با کارفرمایان شبکه خانگی خود تماس بگیرید؛ ورود مجدد در این میان شما را به خانه می‌برد.
+teleport-hint-hypergrid-unreachable = نمی‌توان به شبکه دیگر دست یافت. ممکن است خارج از خط باشد یا پیوند به نشانی قدیمی اشاره کند.
+teleport-hint-hypergrid-visitors-refused = این شبکه فقط به ساکنین بعضی از شبکه‌ها اجازه ورود میده.
+teleport-hint-hypergrid-destination-gone = ناحیۀ مقصد دیگر وجود ندارد یا منتقل شده است. ممکن است نشانه‌های جغرافیایی و پیوندها به شبکه‌های دیگر منسوخ شوند.
+toolbar-edit = سفارشی‌سازی دکمه‌ها و گزینگان...
+toolbar-title = دکمه‌ها و گزینگان
+toolbar-interface-locked = واسط قفل شده
+toolbar-help = دکمه‌ها یا مدخلهای گزینگان را به نوارهای بالایی ، پایینی یا جانبی بکشید. برای حذف یک دکمۀ خاص ، آن را در اینجا بگذارید. برای تغییر ظاهر هر دکمه‌ای ، دکمه راست را فشار دهید.
+toolbar-help-classic = دکمه‌ها یا مدخلهای گزینگان را به نوارهای بالایی ، پایینی یا جانبی بکشید. برای حذف یک دکمۀ خاص ، آن را در اینجا بگذارید. برای تغییر ظاهر هر دکمه‌ای ، دکمه راست را فشار دهید.
+toolbar-help-modes = برگزیدن شمایلها ، برچسبها ، هر دو ، یا میله پیش‌فرض برای هر دکمه‌ای. مدخلها را درون Aurora منو براي ترتيب دوباره اش
+import-menu-textures = بافتها
+import-menu-animations = پویانمایی
+import-menu-sounds = صداها
+import-menu-materials = مواد
+import-menu-meshes = شبکه
+import-menu-options = گزینه‌های واردات
+import-upload-payment-title = بارگذاری
+import-upload-payment = برای بارگذاری L${ $cost } پرداخت کردید.
+import-quick-textures =
+    { $count ->
+        [one] واردات · بافتها: 1 · L${ $cost }?
+       *[other] واردات · بافتها: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] واردات · مواد: 1 · L${ $cost }?
+       *[other] واردات · مواد: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] واردات · صداها: 1 · L${ $cost }?
+       *[other] واردات · صداها: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] اندازهٔ درون‌ریزی را انتخاب کنید. بافت‌های سازگار را می‌توان با اندازهٔ 2048 × 2048 وارد کرد:
+       *[other] ({ $count }) اندازهٔ درون‌ریزی را انتخاب کنید. بافت‌های سازگار را می‌توان با اندازهٔ 2048 × 2048 وارد کرد:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] اندازهٔ درون‌ریزی را انتخاب کنید. تصاویر سازگار مواد را می‌توان با اندازهٔ 2048 × 2048 وارد کرد:
+       *[other] ({ $count }) اندازهٔ درون‌ریزی را انتخاب کنید. تصاویر سازگار مواد را می‌توان با اندازهٔ 2048 × 2048 وارد کرد:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = بارگذاری تصاویر رایگان با اندازهٔ 2048 × 2048 بدون سؤال
+import-quick-free-full-size-help = "Import textures" و "Importamaterials" سپس 1024 یا 2048 را فقط در صورتی که بارگذاری هزینه L$ داشته باشد می‌پرسند.
+ui-bars-customize-bars = سفارشی‌سازی واسط
+build-tool-in-use = در حال استفاده
+build-create-options-toggle = نمایش / مخفی کردن گزینه‌ها
+build-create-keep-creating = به خلق ادامه بده
+build-create-center-on-prim = مرکز در اول
+build-create-copy-prim-rotation = رونوشت چرخش اولیه
+build-create-align-to-surface = هم‌تراز کردن با سطح
+build-capture-shape-button = رونوشت شکل یک پرایم: روی این کلیک کنید، سپس یک پرائم در جهان
+build-capture-shape-armed = برای رونوشت شکل یک عنصر اولیه، روی آن کلیک کنید (ESCAPE لغو می‌شود)
+build-capture-shape-full = 20 شکل نگهداشته شد. یکی را حذف کنید تا دیگری را کپی کنید
+build-capture-shape-remove = حذف این شکل
+build-capture-shape-tooltip = شکل رونوشت شده ({ $kind })
+build-capture-shape-not-a-prim = فقط شکل یک پریم می‌تواند رونوشت شود
+build-capture-shape-mesh-or-sculpt = شکل یک شبکه یا یک پایه مجسمه را نمی‌توان رونوشت کرد
+build-capture-shape-no-modify = شما برای تغییر دادن این پرایم نیاز به اجازه دارید تا شکلش را کپی کنید
+import-other-options = گزینه‌های دیگر
+toolbar-button-icons = فقط شمایل
+toolbar-button-text = فقط برچسب
+toolbar-button-icons-text = شمایل و برچسب
+toolbar-icon-default = بازگرداندن شمایل پیش‌فرض
+toolbar-icon-choose = انتخاب یک شمایل
+toolbar-icon-change = تغییر شمایل
+toolbar-presets = تنظیمات پیش‌فرض
+toolbar-interfaces = واسطها
+toolbar-interfaces-shown = نمایش داده‌شده در بلوک واسط‌ها
+toolbar-interfaces-hidden = مخفی کردن از بلوک واسطها
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora مدرسه قديمي
+toolbar-preset-photographer = Aurora عکاس
+toolbar-preset-legacy = جانشین
+toolbar-import-textures = واردات بافت
+toolbar-import-sounds = واردات صداها
+toolbar-import-animations = واردات پویانمایی
+toolbar-import-materials = واردات مواد
+toolbar-import-meshes = واردات شبکه
+toolbar-import-local = پرونده‌های محلی
+toolbar-import-advanced = واردات پیشرفته
+toolbar-import-settings = واردات تنظیمات
+toolbar-import-bar = واردات نوار
+toolbar-icon-search = پیدا کردن شمایل...
+toolbar-in-top = در نوار ابزار بالا
+toolbar-bar-top = میله ابزار بالا
+toolbar-drop-here = اينجا بذارينش
+toolbar-separator = جداساز
+toolbar-interface-edit = سفارشی‌سازی واسط
+toolbar-edit-done = انجام شد
+toolbar-edit-top = بالا
+toolbar-edit-bottom = پایین
+toolbar-edit-left = چپ
+toolbar-edit-right = راست
+toolbar-edit-help = برای برگزیدن یک مورد ، روی آن کلیک کنید ، برای جابه‌جایی آن بکشید ، یا برای گزینه‌های ویرایش ، کلیک راست کنید. برای پایان دادن ، این پنجره را ببندید.
+toolbar-edit-locked = میله ها قفل شده اند. برای تغییر واسط ، آنها را در زیر باز کنید.
+toolbar-edit-move = حرکت به
+toolbar-edit-split-before = تقسیم قبل از
+toolbar-edit-split-after = تقسیم پس از
+toolbar-edit-merge-before = ادغام با بلوک قبلی
+toolbar-edit-merge-after = ادغام با بلوک بعدی
+toolbar-edit-merge-groups = ادغام این بلوک‌ها
+toolbar-drawer = کشو
+toolbar-drawer-default-mode = نمایش پیش‌فرض دکمه‌ها
+toolbar-drawer-closes = بستن پس از کلیک روی یک دکمۀ
+toolbar-block-shortcut = میان‌بر:
+toolbar-drawer-hides-needs-shortcut = نیازمند میان‌بر است
+toolbar-floating-close-button = افزودن دکمۀ بستن
+toolbar-block-name = نام بلوک:
+toolbar-block-button-mode = نمایش دکمۀ مسدود کردن
+toolbar-button-inherited = ارث برده شده
+toolbar-drawer-hides-button = مخفی کردن دکمۀ هنگام شناور بودن
+toolbar-floating-new = بلوک شناور
+toolbar-floating-orientation = جهت‌گیری
+toolbar-floating-horizontal = افقی
+toolbar-floating-vertical = عمودی
+toolbar-floating-empty = دکمه‌ها را اینجا بگذارید
+toolbar-shortcut-title = میان‌بر
+toolbar-shortcut-block-name = بلوک: { $name }
+toolbar-shortcut-none = هیچ میان‌بر
+toolbar-shortcut-press-key = فشار دادن یک کلید
+toolbar-shortcut-esc = Esc برای لغو
+toolbar-shortcut-clear = حذف
+toolbar-shortcut-overrides = داره مياد { $name }: این میان‌بر ، میله ابزار را به جای استفاده پیش‌فرض آن اجرا می‌کند.
+toolbar-shortcut-used = از قبل يه ميانبر براي { $names } هستش
+toolbar-shortcut-replace = جایگزینی
+toolbar-shortcut-add = افزودن
+toolbar-shortcut-save = ذخیره
+toolbar-shortcut-choose-key = یک کلید انتخاب کنید
+toolbar-shortcut-help = فعال یا غیرفعال کردن Ctrl ، Alt و Shift ، سپس کلیک روی کلید برای تغییر آن. Ctrl یا Alt لازم است ، به جز با F1 تا F24.
+toolbar-shortcut-inactive = این دکمه در هیچ میله ای نیست: میانبر آن هنگامی که دوباره قرار داده شود کار می‌کند.
+toolbar-shortcut-refused-keyboard = تنها کلیدهای صفحه کلید می‌توانند میانبر باشند.
+toolbar-shortcut-refused-modifier = یک کلید تغییردهنده به تنهایی نمی‌تواند میان‌بر باشد.
+toolbar-shortcut-refused-needs-modifier = اضافه کردن Ctrl یا Alt: یک کلید به تنهایی، یا فقط با Shift، در زمینه‌های متنی تایپ کنید.
+toolbar-shortcut-refused-altgr = Ctrl+Alt با این کلید AltGr است، که کاراکترهای بسیاری را در بسیاری از صفحه کلیدها تایپ می‌کند.
+toolbar-shortcut-refused-editing = در این حالت، تابع‌های زیر را اجرا می‌کنیم: انتخاب همه، رونوشت، برش، چسباندن، لغو، تکرار.
+toolbar-shortcut-refused-navigation = ستون‌های متن با این کلید حرکت و پاک می‌شوند.
+toolbar-shortcut-refused-typing = این کتاب‌ها و مقالات از این رویکرد استفاده می‌کنند.
+toolbar-shortcut-refused-system = سیستم این میان‌بر را نگه می‌دارد.
+toolbar-shortcut-refused-window = این میان‌بر پنجره‌ها را می‌بندد یا عوض می‌کند.
+toolbar-shortcut-refused-zoom = این میان‌بر رابط را بزرگنمایی می‌کند.
+toolbar-spacer = فاصله بلوک
+toolbar-add-spacer = افزودن فاصله بلوک
+toolbar-button-settings = تنظیمات دکمه‌ها
+toolbar-button-edit = دکمۀ ویرایش...
+toolbar-button-edit-title = دکمۀ ویرایش
+toolbar-button-name = نام دکمۀ:
+toolbar-button-display = نمایش دکمه‌ها
+toolbar-shortcut-fixed-block-help = میان‌بر یک بلوک ثابت آن را نشان می‌دهد و مخفی می‌کند؛ در حالی که رابط ویرایش می‌شود، نمایش داده می‌شود.
+toolbar-block-settings = تنظیمات بلوک
+toolbar-parent-block-settings = تنظیمات بلوک پدر
+toolbar-block-edit = ویرایش بلوک...
+toolbar-block-edit-title = ویرایش بلوک
+toolbar-block-alignment = هم‌ترازی
+toolbar-block-sizing = اندازه دکمه‌ها
+toolbar-block-fixed-options = گزینه‌های حالت ثابت
+toolbar-block-floating-options = گزینه‌های حالت شناور
+toolbar-block-kind-fixed = بلوک ثابت
+toolbar-block-kind-drawer = کشو
+toolbar-block-kind-floating = بلوک شناور
+toolbar-block-remove = حذف بلوک
+toolbar-move-block = کشیدن برای جابه‌جایی کل بلوک
+toolbar-remove-block = حذف بلوک
+toolbar-drawer-empty = اين کشو خاليه
+toolbar-drawer-drop = برای افزودن یا تغییر ترتیب ، دکمه‌ها را به اینجا بکشید.
+toolbar-separator-settings = تنظیمات فاصله بلوک
+toolbar-separator-size = اندازه / حداقل (پیکسل)
+toolbar-separator-stretch = پر کردن فضای موجود
+toolbar-separator-help = شکاف‌های انعطاف‌پذیر فضای باقی‌مانده توسط بلوک‌ها را به اشتراک می‌گذارند. اندازه، حداقل عرض یا ارتفاع آن‌ها در نوار جانبی است.
+toolbar-block-navigation = ناوبری و SLURL
+toolbar-block-account = حساب و کتاب
+toolbar-block-system = ساعت، نشانگرها و صداName
+toolbar-block-status = وضعیت دسترسی‌پذیری
+toolbar-block-balance = تعادل
+toolbar-block-clock = ساعت
+toolbar-block-ping = تأخیر ناحیه
+toolbar-block-fps = نرخ فریم) FPS (
+toolbar-block-network = ترافیک شبکه
+toolbar-block-media = رسانه بسته
+toolbar-block-music = موزیک راک
+toolbar-block-volume = حجم صدا
+toolbar-block-notifications = اطلاعیهها
+toolbar-block-conversations = شمایل‌های گفتگو
+toolbar-block-chat = ورودی گپ نزدیک
+toolbar-category-all = همۀ دسته‌ها
+toolbar-section-main = اصلی
+toolbar-section-advanced = پیشرفته
+toolbar-search-all = جستجوی شامل دستورات پیشرفته است.
+toolbar-category-avatar = آواتار و حرکت
+toolbar-category-communication = ارتباط
+toolbar-category-world = جهان و سفر
+toolbar-category-creation = ایجاد و محتوا
+toolbar-category-interface = رابط و دوربین
+toolbar-category-advanced = ابزارهای پیشرفته
+toolbar-category-help = کمک
+toolbar-category-custom = فرمانهای سفارشی
+toolbar-bar-settings = تنظیمات میله ابزار
+toolbar-menu-group = منو: { $name }
+toolbar-location-bar = میله نشانی SLURL
+toolbar-command-build-tool-focus = ساخت - دوربینStencils
+toolbar-command-build-tool-grab = ساختن - حرکت
+toolbar-command-build-tool-edit = ساختن - ویرایش
+toolbar-command-build-tool-create = ساختن - ایجاد
+toolbar-command-build-tool-land = ساختن - زمین
+bug-copy-version = نسخه رونوشت نمایشگر
+toolbar-notecard-save = ذخیره در یادداشت...
+toolbar-notecard-load = بارگذاری از یادداشت‌نامه...
+toolbar-notecard-name = Aurora واسط
+toolbar-notecard-help = طراحی و ظاهر نوار ابزار، دکمه ها، کشوها و منوها.
+toolbar-notecard-saved = طرح رابط کاربری که در فهرست شما ذخیره شده است.
+toolbar-notecard-invalid = این نوت‌کارد حاوی یک طرح‌بندی واسط سازگار نیست.
+toolbar-notecard-unavailable = این کارت یادداشت دیگر در دسترس نیست یا نمی‌توان آن را رونوشت کرد.
+toolbar-notecard-layout-changed = میان‌افزار در حین بارگذاری نوت‌کارد تغییر کرد. برای اعمال طرح‌بندی آن، دوباره بارگیری کنید.
+toolbar-notecard-demo-valid = واسط عکاس
+toolbar-notecard-demo-invalid = کارت یادداشت دیگر
+toolbar-notecard-too-large = این پیکربندی واسط برای یک کارت یادداشت خیلی بزرگ است.
+toolbar-saved-interfaces = میان‌افزارهای ذخیره‌شده
+toolbar-saved-interfaces-empty = هنوز هیچ واسط ذخیره نشده است.
+toolbar-notecard-destination = پوشه: { $path }
+toolbar-notecard-folder-error = پوشۀ میان‌افزارها را نمی‌توان بار کرد یا ایجاد کرد. لطفاً دوباره تلاش کنید.
+toolbar-current-preset = واسط برگزیده: { $name }
+toolbar-preset-custom = واسط سفارشی
+toolbar-preset-unsaved = تغییرات ذخیره‌شده
+toolbar-preset-save-title = ذخیرۀ واسط
+toolbar-preset-save-name = نام واسط
+toolbar-preset-save-new = میان‌افزار شخصی جدیدName
+toolbar-preset-save-replace = جایگزینی این واسط شخصی
+toolbar-preset-save-unavailable = این واسط را نمی‌توان در اینجا ذخیره کرد. لطفاً ، نام دیگری یا یک واسط شخصی ویرایش‌پذیر موجود را انتخاب کنید.
+toolbar-interface-delete-unavailable = این واسط شخصی را نمی‌توان حذف کرد.
+toolbar-interface-delete-confirm = رابط شخصی «{ $name }» به سطل زباله منتقل شود؟

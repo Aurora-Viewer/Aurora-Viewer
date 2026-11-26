@@ -16103,3 +16103,739 @@ parcel-environment-empty = Ingen miljøer gemt
 parcel-environment-remove-all = Fjern alle
 parcel-environment-remove-all-title = Fjerne alle miljøer, der er gemt for en pakke?
 parcel-environment-remove-all-text = De miljøer, du har gemt til parceller på dette grid, fjernes. Miljøerne på andre grids bevares. Handlingen kan ikke fortrydes.
+
+### Updated release translations
+
+anim-timeline-channels-hint = Vis denne knogles rotation og placering nøgler på rækker af deres egne
+anim-timeline-channel-rotation = Rotation af leddet
+anim-timeline-channel-location = Placering
+anim-timeline-keying-hint = Med Location tager Move en joint alene, ud af sin IK-kæde. Second Life animationer har ingen skalanøgler, men du kan vælge mellem at bruge dem i stedet for.
+anim-timeline-keying-auto = Auto: rotation og placering af bækkenet og bevægede led
+anim-timeline-keying-auto-short = Automatisk
+anim-timeline-keying-loc-rot = Placering og rotation
+anim-timeline-keying-loc-rot-short = Placering + rod
+anim-timeline-keying-rot-short = Rød
+anim-timeline-keying-loc-short = Placering
+anim-edit-shortcut-play = Afspil eller sæt på pause
+area-search-scope-heading = Hvor
+area-search-scope-parcel = Pakke
+area-search-scope-region = Nuværende region
+area-search-scope-neighbours = Naboer
+area-search-objects-heading = Hvilke objekter
+inventory-copy-selection-count =
+    { $count ->
+        [one] Kopiér 1 element
+       *[other] Kopier { $count } emner
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Link 1 vare
+       *[other] Link { $count } produkter
+    }
+inventory-drop-move-here = Flyt hertil
+inventory-drop-copy-here = Kopier her
+inventory-drop-link-here = Opret links her
+inventory-sort-description = Beskrivelse
+inventory-sort-reversed = { $order } (omvendt)
+inventory-column-creator = Skaber
+inventory-column-count = Poster
+inventory-columns-fit = Ændre størrelsen på alle kolonner, så de passer
+inventory-columns-reset-widths = Nulstil kolonnebredder
+inventory-back = Tilbage
+inventory-forward = Fremad
+inventory-up = Et niveau op
+keybinds-inventory-root = Gå til toppen af siden
+keybinds-inventory-search = Søg i beholdningen
+keybinds-inventory-filter = Filtrer mappen
+keybinds-inventory-preview = Vis eksempelruden
+keybinds-inventory-view-large = Store billeder
+keybinds-inventory-view-medium = Medium billeder
+keybinds-inventory-view-small = Små billeder
+keybinds-inventory-view-compact = Kompakt visning
+keybinds-inventory-view-details = Detaljer visning
+keybinds-inventory-view-tiles = Visning af fliser
+keybinds-inventory-toggle = Markere eller fjerne markeringen af den række, der er i fokus
+keybinds-inventory-menu = Åbn menuen for det valgte
+keybinds-inventory-purge = Udrensning fra papirkurven
+keybinds-inventory-refused = { $keys } forbliver lagerlistens egen nøgle: vælg en anden.
+inventory-path-edit = Skriv en sti
+inventory-path-subfolders = Undermapper
+inventory-copy-path = Kopiér sti
+inventory-show-in-folder = Vis i mappe
+inventory-pin = Fastgør til Hurtig adgang
+inventory-unpin = Fjern fastgørelse fra Hurtig adgang
+inventory-quick-access = Hurtig adgang
+inventory-quick-access-drop = Slip en mappe her for at fastgøre den
+inventory-invert-selection = Inverter valg
+inventory-undo = Fortryd
+inventory-redo = Gentag
+inventory-undo-step = Fortryd { $what }
+inventory-redo-step = Gentag { $what }
+inventory-history-move =
+    { $count ->
+        [one] Viser 1 til 1 (af 1 produkter)
+       *[other] Viser 1 til 8 af { $count } produkter
+    }
+inventory-history-delete =
+    { $count ->
+        [one] Viser 1 til 1 (af 1 produkter)
+       *[other] Viser 1 til 8 af { $count } produkter
+    }
+inventory-history-rename = omdøb
+inventory-history-new-folder = Ny mappe
+inventory-history-copy =
+    { $count ->
+        [one] Kopi af 1 vare
+       *[other] Kopi af { $count } emner
+    }
+inventory-history-link =
+    { $count ->
+        [one] link til 1 emne
+       *[other] links til { $count } emner
+    }
+inventory-undo-nothing = Intet tilbage at fortryde: disse elementer er flyttet eller er væk.
+inventory-redo-nothing = Intet tilbage at gentage: disse elementer er flyttet eller forsvundet.
+inventory-undo-empty = Intet at fortryde.
+inventory-redo-empty = Intet at gentage.
+inventory-undo-dropped = Det sidste trins elementer er flyttet eller forsvundet: det blev droppet. Fortryd igen for det foregående trin.
+inventory-redo-dropped = Næste trins elementer er flyttet eller forsvundet: det blev droppet Gentag igen for næste trin.
+inventory-undo-folder-not-empty = Den nye mappe indeholder elementer, der er placeret der siden: Flyt dem ud først, eller slet selv mappen.
+inventory-undo-kept-out = Disse genstande er i det aktuelle outfit eller på markedspladsen nu: Skift dem der.
+inventory-restore-to = Gendan til “{ $folder }”
+inventory-restore-to-origins = Gendan til deres mapper
+inventory-purge-no-undo = Fortryd kan ikke bringe dem tilbage.
+inventory-new-tab = Ny fane
+inventory-close-tab = Luk faneblad
+inventory-next-tab = Næste faneblad
+inventory-previous-tab = Forrige faneblad
+inventory-open-in-new-tab = Åbn i ny fane
+inventory-tabs-limit = Højst { $count } faner.
+inventory-copy-to-other-pane = Kopiere til den anden rude
+inventory-move-to-other-pane = Flytte til den anden rude
+inventory-resize-columns = Træk for at ændre størrelsen på kolonner. Dobbeltklik for at tilpasse kolonnen til venstre til dens indhold.
+inventory-resize-columns-first = Træk for at ændre størrelsen på kolonner. Dobbeltklik for at give den første kolonne dens normale bredde.
+inventory-sort-by-column = Klik for at sortere efter denne kolonne, igen for at vende rækkefølgen.Træk for at flytte kolonnen.
+inventory-filter-hint = Filtrer denne mappe…
+inventory-filter-close = Luk filteret (Esc)
+inventory-filter-nothing = Intet her matcher filteret
+inventory-view-compact = Kompakt visning
+inventory-view-tiles = Visning af fliser
+inventory-view-per-folder = Husk hver mappes visning
+inventory-group-by = Grupper efter
+inventory-group-none = Ingen
+inventory-group-folders = Mapper
+inventory-group-unknown-creator = Skaber ikke kendt endnu
+inventory-group-today = I dag
+inventory-group-yesterday = I går
+inventory-group-this-week = I de sidste 7 dage
+inventory-group-this-month = I de sidste 30 dage
+inventory-group-this-year = Tidligere i år
+inventory-group-earlier = For længe siden
+inventory-group-no-date = Ingen dato
+cmdline-mod-zoffset-usage = Indstil din avatars hover højde (brug: /zoffset værdi eller +delta).
+dev-toolbox-n4 = Indlæsning af lager
+dev-toolbox-what-n4 = Mapper læst, mislykkedes og forlod, læserens læser i flyvning og genforsøg; ingen navne
+ui-context-inspect-avatar = Undersøg avatar
+inspect-window = Undersøg
+inspect-tab-objects = Objekter
+inspect-objects-title =
+    { $count ->
+        [one] { $count } objekt
+       *[other] { $count } objekter
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } emner
+       *[other] { $count } emner
+    }
+inspect-open-profile = Åbn profilen
+inspect-over-limit = Over din grænse
+inspect-limit-tip = Din kompleksitetsgrænse: { $limit }
+inspect-search = Søg efter emner eller skabere
+inspect-outlined = { $name } er skitseret i verden
+inspect-area-head = Hoved
+inspect-area-body = Krop
+inspect-area-arms = Arme og hænder
+inspect-area-legs = Ben og fødder
+inspect-area-hud = HUD
+inspect-area-other = Andet
+inspect-area-world = Objekter
+inspect-own-eyes = Systemets øjne
+inspect-own-body = Systemkrop
+inspect-own-description = En del af selve avataren, ikke en vedhæftet fil
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } kompleksitet
+inspect-no-match = Intet matcher "{ $query }".
+inspect-spoken-worn = { $name }, båret på { $point }, kompleksitet { $complexity }, fremstillet af { $creator }
+inspect-spoken-object = { $name }, ejet af { $owner }, kompleksitet { $complexity }, fremstillet af { $creator }
+inspect-look-at-tip = Flyt kameraet til det
+inspect-profile-tip = Åbn skaberens profil
+inspect-made-by = Lavet af
+inspect-owned-by = Ejet af
+inspect-worn-on = Båret på
+inspect-prims-count =
+    { $count ->
+        [one] Primdele: { $count }
+       *[other] Primdele: { $count }
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Tekstur hukommelse
+inspect-tile-vram = VRAM
+inspect-tile-prims = Primdele
+board-close = Luk { $title }
+board-grow = Forstør { $title }
+board-remove = Fjern { $name }
+board-more = og { $count } flere
+board-more-short = +{ $count }
+board-some-of = { $shown } af { $all }
+board-of-all = af { $all }
+stage-turn-left = Drej til venstre
+stage-turn-right = Drej til højre
+stage-higher = Se fra højere hold
+stage-lower = Se fra nedefra
+stage-nearer = Tættere.
+stage-further = Længere væk
+stage-reset = Tilbage til toppen
+stage-hint = Træk for at dreje, højreklik for at flytte
+stage-light = Lys baggrund
+stage-dark = Mørk baggrund
+stage-playing = AO
+stage-paused = Pause
+stage-pause-tip = Sæt deres animation på pause
+stage-play-tip = Afspil deres animation
+stage-loading = Forbereder 3D-visningen…
+stage-nothing = Der er ikke noget at vise i 3D endnu.
+stage-refused = 3D-visningen er slået fra, mens RLVa begrænser, hvad du kan se.
+inspect-your-limit = Din grænse: { $limit }
+inspect-without-it = { $value } uden det
+inspect-you = Du
+inspect-person = Personer
+inspect-difference = Forskel
+inspect-drawn-in-full = Tegnet i fuld
+inspect-nobody = Ingens kompleksitet er kendt endnu.
+inspect-aside-count = { $count } braklagt jord
+inspect-is-aside = udtaget
+inspect-set-aside = Udtagning
+inspect-set-aside-tip = Se kompleksiteten uden dette element, kun i dette vindue: intet ændrer sig i verden.
+inspect-put-back = Sæt tilbage
+inspect-put-back-tip = Tæl denne vare igen
+inspect-complexity-spoken = Kompleksitet { $value }, nummer { $rank } af { $count } Flere mennesker her
+inspect-stage-outfit = Det tøj
+inspect-stage-objects = Objekterne
+inspect-stage-back = Tilbage til toppen
+inspect-place-made-by = { $place } · fremstillet af { $name }
+inspect-owned-by-name = Ejet af { $name }
+inspect-tile-items = Poster
+inspect-tile-figures = Figurer
+inspect-col-item = Navn
+inspect-point = Punkt
+inspect-look-at = Se på
+inspect-selected-count = { $count } udvalgt
+inspect-worn-count = { $count } slidt
+inspect-creators-word = skabere
+inspect-areas-word = områder af kroppen
+inspect-owners-word = ejere
+inspect-triangles-word = trekanter
+inspect-made-of = { $count } af { $all } varer
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, i venstrerækkefølge
+inspect-reset-columns = Nulstil kolonner
+inspect-by-creators =
+    { $count ->
+        [one] { $items } af en skaberen
+       *[other] { $items } af { $count } skabere
+    }
+inspect-owner-button = Se ejerprofil
+inspect-group-button = Koncernprofil
+inspect-creator-button = Skaberens profil
+inspect-land-others = Andet { $n }
+inspect-land-these = Disse { $n }
+inspect-land-free = Gratis { $n }
+inspect-land-unknown = Pakkens værelse viser, når genstandene er alle på den pakke, du er på.
+ui-login-unencrypted = Ukrypteret login
+ui-login-unencrypted-body = Loginadressen til { $server } starter med http:// i stedet for https://, så login bliver ikke krypteret. En person med adgang til din netværkstrafik på offentligt Wi-Fi, et delt netværk eller på vejen til gridet kan læse din adgangskode og bruge din konto. Intet er sendt endnu. Du kan bede gridet om en https://-adresse. Valget huskes for denne server.
+ui-login-unencrypted-accept = Log ind uden kryptering
+world-appearance-clothing-layers-full = Alle 60 tøjlag er i brug. Fjern et lag, før du tager denne vare på.
+ui-options-ray-tracing = Strålesporing
+ui-options-ray-traced-shadows = Ray-traced solskygger
+ui-options-ray-traced-shadows-help = Solens og månens skygger spores stråle for stråle i stedet for at læse fra skyggekortene: præcis hvor ting berører hinanden og på enhver afstand.Kræver skyggerne og et grafikkort med ray tracing, og koster mere på grafikkortet
+ui-options-ray-traced-lights = Lokale lysskygger
+ui-options-ray-traced-lights-help = Skygger fra punktlyset omkring (lamper, stearinlys), som ikke kaster skygger ellers, og fra projektorerne når Projector shadows er slået til, i stedet for deres skyggekort.Den dyreste af ray tracing mulighederne: bedst udeladt på integreret grafik
+ui-options-rt-quality = Ray tracing-kvalitet
+ui-options-rt-quality-help = Alle sporede effekter forbliver tændt: lavere niveauer sporer færre prøver og det indirekte lys på et grovere gitter, så der opnås flere billeder pr. sekund på et mindre grafikkort. Højt er det fulde billede af Deluxe (RT).Vælger du et niveau, indstiller du også de lys, der kaster skygger
+ui-options-rt-sun-softness = Solskygge blødhed
+ui-options-rt-sun-softness-help = Hvor bløde kanterne af solens skyggespor er: 1 er den virkelige sol, 0 skarpe kanter, mere for en tåget sol
+ui-options-rt-lamp-softness = Lokal lys skygge blødhed
+ui-options-rt-lamp-softness-help = Hvor bløde kanterne på lampernes skyggespor er: 1 følger størrelsen af hver lampe, 0 skarpe kanter
+ui-options-rt-shadow-lamps = Lys, der kaster skygger
+ui-options-rt-shadow-lamps-help = Hvor mange af de nærmeste lys kaster sporede skygger, mens de andre stadig er tændt uden skygger.Færre koster mindre på grafikkortet
+ui-options-ray-traced-indirect = Ray-traced indirekte lys
+ui-options-ray-traced-indirect-help = Lys, der reflekteres af overfladerne omkring, sporet ud over det, skærmen viser, i stedet for det indirekte lys fra GTAO
+ui-options-gi-probes = Globale belysningsprober
+ui-options-gi-probes-help = Prober spredt gennem scenen, der holder lyset fra flere afkast og himlen de ser: lukkede rum forbliver mørke, lys går rundt om hjørner.Omkring 0,8 ms på grafikkortet
+ui-options-ray-traced-reflections = Ray-traced refleksioner
+ui-options-ray-traced-reflections-help = Reflektioner af det, skærmen ikke viser, i stedet for de skærmrumsrefleksioner, der skal være på
+ui-options-ray-tracing-unsupported = Dette grafikkort eller dets driver har ingen ray tracing
+ui-options-ray-tracing-vr = Ikke tilgængelig i en session, der er startet for VR
+ui-options-tab-ray-tracing = Strålesporing
+ui-options-deluxe-rt-warning-title = Tænd for Deluxe (RT)?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) er Høj med skyggerne og det indirekte lys sporet af grafikkortet. Det kræver et kort med hardware ray tracing (NVIDIA RTX, AMD Radeon RX 6000 eller nyere, Intel Arc) og en opdateret driver, og det koster langt mere end Høj: på et mid-range kort kan billedfrekvensen falde meget i travle steder. Ray tracing testes stadig: hvis billedet ser forkert ud, eller seeren bliver langsommere, skal du gå tilbage til Høj. Fanen Raytracing holder sine indstillinger.
+ui-options-deluxe-rt-warning-turn-on = Tænd
+ui-options-ray-tracing-needs-shadows = Har brug for skyggerne
+ui-options-ray-tracing-needs-ssr = Har brug for skærmrummets refleksioner
+ui-options-preset-deluxe = Deluxe-værelse (RT)
+ui-options-normal-precision = Reflektionsnøjagtighed
+ui-options-normal-precision-help = Hvor fint retningen af hver overflade bevares for refleksionerne. Standard kan vise trin i refleksioner af glatte, buede overflader som f.eks. en bils lak; Høj fjerner dem og bruger mere videohukommelse. Automatisk bruger Høj med strålesporede reflektioner, hvor trinnene er mest synlige, og Standard ellers
+ui-options-normal-precision-automatic = Automatisk
+ui-options-normal-precision-standard = Standardpræcision
+ui-options-normal-precision-high = Høj
+ui-options-private-point-at-help = Skjul det objekt, du redigerer, hold redigeringsarmen sænket, og skjul din redigeringsstråle.
+ui-options-private-edit-beam = Skjul redigeringsbjælke
+ui-options-private-edit-beam-help = Skjul bjælken fuldstændigt, mens du redigerer eller griber objekter, både på din skærm og for andre seere.Tips til markeringsmål og give/slip-bjælker påvirkes ikke.
+common-window-outside = Flytte uden for fremviservinduet
+common-window-inside = Bring tilbage i seerens vindue
+common-window-rename-name = Dobbeltklik for at omdøbe
+common-carry-hint = Klik for at slippe den her, Esc for at give slip
+common-window-paused-photo = Pause, mens fototilstand er åben
+common-window-paused-director = Pause, mens instruktøren spiller
+common-window-paused-interface = Pause, mens grænsefladen er slukket
+ui-options-warn-live-preview = Advarsel, når en tekstur eller et materiale ikke kan forhåndsvises
+ui-options-warn-live-preview-help = I byggevinduets vælger klikker du på et kopieringselement, der ikke gælder noget, indtil OK: Sig det.
+ui-texture-picker-live-preview-texture = Vi kan ikke vise en forhåndsvisning af denne tekstur, fordi det er ingen kopi.
+ui-texture-picker-live-preview-material = Vi kan ikke vise en forhåndsvisning af dette materiale, fordi det er no-copy.
+fetch-invalid-url = Ugyldig URL
+ui-chat-close-all-ims = Luk alle IM samtaler
+ui-chat-close-all-ims-question = Lukke alle IM samtaler og afslutte det aktive opkald?
+ui-chat-confirm-close-all-ims = Bekræft, før du lukker alle IM samtaler
+ui-chat-confirm-close-all-ims-help = Spørg før du lukker alle IM samtaler, når man har et aktivt taleopkald.
+ui-options-aurora-controls-compact-help = Kontrolvinduet åbnes kompakt på kameraet: dets joysticks, zoom og rulning. Dets titellinjeknap skifter mellem kompakt og fuld, og indstiller også dette. Med klassiske vinduer åbner kameraet i Legacy Viewers lille kameravindue i stedet.
+rlva-restart-hint = RLVa starter, når du logger ind.Når det er kørt, vil aktivering eller deaktivering have effekt ved næste start af fremviseren: De begrænsninger objekter holder forbliver indtil da.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa vil blive aktiveret, når du genstarter.
+rlva-toggle-disabled-restart = RLVa vil blive deaktiveret, når du genstarter.
+livemesh-import-connect = Tilslut Blender med plug-in 0.11.0 eller nyere, eller Maya med plug - in 0,2,0 eller senere, for at forberede import LODs.
+livemesh-import-preparing = Forberedelse af objektet og dets LOD’er i Blender eller Maya…
+livemesh-import-ready = LOD'er modtaget. Klar i importøren.
+livemesh-import-failed = Importforberedelse mislykkedes: { $error }
+livemesh-import-timeout = Blender eller Maya er ikke færdig med at forberede importen.Tjek forbindelsen (i Blender, brug Object Mode) og prøv igen.
+livemesh-shape-apply-tooltip = Markér Modificér rettigheder, og tilpas derefter det skelet, der er valgt i Blender eller Maya, og dets bundne net (gennem MayaStar for en MayaStar-rig) Vælg et lokalt Second Life-kompatibelt skelet.
+livemesh-shape-update-apply = Opdater Blender-plugin'et til 0.10.0 eller nyere, eller Maya-plug-in'en til 1.4.0, og genforbind det derefter.
+livemesh-shape-applied = Figur anvendt på det valgte skelet.
+livemesh-shape-tooltip = Kontroller den slidte forms Modificeringsrettigheder og opret en ny rigget referencekrop i Blender eller Maya.
+livemesh-shape-connect = Tilslut Aurora plug-in i Blender eller Maya først.
+livemesh-shape-update-plugin = Opdater Blender-plugin'et til 0.9.0 eller nyere, eller Maya-plug-in'en til 1.3.0, og genforbind det derefter.
+livemesh-shape-timeout = Blender eller Maya bekræftede ikke importen. Prøv igen (i Blender skal du skifte til objekttilstand).
+livemesh-shape-success = Figuren importeres som en ny rigget referencekrop.
+blender-live-maya-version = Aurora LiveMesh til Maya { $version }
+blender-live-maya-instructions = Gem ZIP-filen og udpak den, træk derefter install.mel ind i et Maya-visningsvindue Åbn LiveMesh fra Aurora-hylden, tilføj dine net og klik på Connect.
+blender-live-save-maya = Gem Maya-plugin…
+blender-live-maya-saved = Plug-in gemt. Udpak ZIP og træk install.mel ind i en Maya viewport.
+livemesh-plugin-connected = Plug-in tilsluttet
+livemesh-token-refused = Et program forsøgte at oprette forbindelse uden denne forhåndsvisnings nøgle.Kun Aurora plug-in'en i Blender eller Maya kan forbinde.
+livemesh-waiting-plugin = Venter på Blender eller Maya…
+blender-live-objects-help = Vælg et af de net, som Blender eller Maya sender, for at placere det, eller importér det fra menuen.
+blender-live-size-note = Størrelse multiplicerer hvad plug-in sender, så senere redigeringer i Blender eller Maya beholde det.
+blender-live-avatar-help = For rigged net: send din form til Blender eller Maya for at modellere på det.
+livemesh-shape-section = Din figur i Blender eller Maya
+blender-live-import-help = Fryser et øjebliksbillede af objektet til den normale import: gennemgang, pris, derefter bekræft.Senere redigeringer i Blender eller Maya ændrer det ikke.
+blender-live-changed-tip = Tid siden Blender eller Maya sidst ændrede dette objekt
+fit-lab-section = Tøjpasningslaboratorium
+fit-lab-help = Mannequiner klædt i det, du bærer, hver med en anden krop, står foran dig for at vise, hvordan tøjet passer til forskellige former, kun du ser dem: intet sendes eller gemmes.
+fit-lab-body-me = Jeg
+fit-lab-body-slim = Slank
+fit-lab-body-curvy = Curvy krop form
+fit-lab-body-full = Fuld figur
+fit-lab-body-athletic = Atletik
+fit-lab-body-tall = Høj
+fit-lab-body-petite = Lille
+fit-lab-motion = Avatar-bevægelsen
+fit-lab-motion-stand = Stående stille
+fit-lab-motion-walk = Gå
+fit-lab-motion-sit = Sid ned.
+fit-lab-motion-range = Bevægelsesområde
+fit-lab-pose = Stilling
+fit-lab-pose-all = Alle, til gengæld
+fit-lab-pose-arms-up = Armerne op.
+fit-lab-pose-reach = Ræk ud fremad
+fit-lab-pose-hug = Armerne krydset.
+fit-lab-pose-squat = Kropsholdning på hug
+fit-lab-pose-kneel = Ned på knæ.
+fit-lab-pose-knee-up = Knæet hævet
+fit-lab-pose-twist = Drej torsoen
+fit-lab-pose-bend = Bøj dig fremad
+fit-lab-motion-like-me = Ligesom mig
+fit-lab-show = Vis mannequinerne
+fit-lab-place = Bring dem hertil.
+fit-lab-remove = Fjern mannequiner
+fit-lab-choose = Vælg mindst én krop.
+fit-lab-clip = Vis, hvor kroppen kommer igennem
+fit-lab-clip-note = Rød: kroppen kommer ud af tøjet. Rav: krop og tøj mødes. På din avatar og mannequiner, som set fra kameraet. Alt andet rigget du bærer tæller som krop: Tag en jakke eller hår båret over tøjet af.
+blender-live-levels-pending = Blender eller Maya forbereder detaljeringsniveauerne, når du klikker på Importer.
+blender-live-levels-note = Forberedt i Blender eller Maya fra hvert objekts LiveMesh indstillinger.
+blender-live-quick-look-changed = Ændret i Blender eller Maya for { $ago } år siden.
+blender-live-warning-textures = Teksturer springet over, almindelig farve vist
+blender-live-warning-not-sent = Ikke i forhåndsvisning
+blender-live-undo-derez = Derezzed { $name } · stadig i plug-ins liste
+blender-live-undo-detach = Fritstående { $name } · stadig i plugin'ets liste
+inventory-open-current = Åben
+inventory-folder-back = Tilbage
+inventory-folder-forward = Fremad
+inventory-folder-up = Gå et niveau op
+area-search-metres = { $n } m
+area-search-band-reach = Inden for rækkevidde
+area-search-band-close = Tæt på hoteller
+area-search-band-around = Omkring dig
+area-search-band-further = Yderligere
+area-search-band-far = Langt væk
+area-search-band = Område
+area-search-within = Inden for { $distance }
+area-search-within-across = Inden for { $distance } på tværs
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Vis alle afstande
+area-search-from = Afstand fra centrum
+area-search-to = Afstand til stranden
+area-search-bar-tip =
+    { $count ->
+        [one] Objekter: 1 · { $from } – { $to }
+       *[other] Objekter: { $count } · { $from } – { $to }
+    }
+area-search-of-objects = af { $total } objekter
+area-search-li = { $value } LI
+area-search-li-count = { $value } jordpåvirkning
+area-search-owner-count =
+    { $count ->
+        [one] Kun én ejer
+       *[other] { $count } ejere
+    }
+area-search-object-count =
+    { $count ->
+        [one] Et enkelt objekt
+       *[other] { $count } objekter
+    }
+area-search-objects-word = objekter
+area-search-in-reach = her
+area-search-tab-objects = Objekter
+area-search-tab-owners = Ejere
+area-search-hint-wide = Objekter, ejere, skabere eller UUID'er
+area-search-kind-heading = Type af objekt
+area-search-kind-tip = Klik: kun disse. Igen: skjult.
+area-search-kind-any = enhver
+area-search-kind-only = kun disse
+area-search-kind-hidden = Skjult
+area-search-kind-attached = Vedhæftet
+area-search-kind-probes = Prober
+area-search-click-all = Alle
+area-search-click-any-short = Enhver
+area-search-permissions = Tilladelser
+area-search-price-heading = Salgspris, for objekter til salg
+area-search-price-to = op til
+area-search-price-tip = Vælg "Til salg" først
+area-search-linked = Forbundne primtal
+area-search-one-field = Søg i ét felt
+area-search-regex-switch = Regulære udtryk
+area-search-regex-invalid = Ikke et gyldigt regulært udtryk
+area-search-reset-filters-tip = Nulstil alle filtre; søgeteksten forbliver
+area-search-save-defaults-tip = Åbn med disse filtre fra nu af
+area-search-reset-search = Nulstil søgetekster
+area-search-reset-filters = Nulstil filterindstillingerne
+area-search-reset-ranges = Nulstil afstand og pris
+area-search-reset-all = Nulstil alt
+area-search-more = Mere
+area-search-several = Vælg flere
+area-search-several-tip = Klik tilføjer til udvælgelsen (også Ctrl eller Skift + klik, Ctrl+A)
+area-search-actions = Handlinger
+area-search-nothing = Ingen objekter modtaget endnu.
+area-search-nothing-for-sale = Intet til salg her.
+area-search-not-for-sale = Ikke til salg
+area-search-from-price = fra { $price }
+area-search-nearest = Nærmeste først
+area-search-heaviest = Den tungeste først
+area-search-order-tip = Ændre rækkefølgen: nærmeste eller tungeste først
+area-search-rank = #{ $rank } af { $all }
+area-search-rank-here = #{ $rank } her
+area-search-card-more = Vis hver figur
+area-search-card-less = Vis mindre af
+area-search-open-group = Åbn gruppen
+area-search-spoken = { $name }, { $distance }, landpåvirkning { $li }, ejet af { $owner }
+area-search-owner-spoken = { $name }, { $count } objekter, jordpåvirkning { $li }
+area-search-stage-line = { $distance } 10 minutter væk · { $li } jordpåvirkning · { $owner }
+area-search-tile-3d = 3D- visning
+area-search-on = { $count } på
+area-search-on-word = på
+area-search-more-on =
+    { $count ->
+        [one] Sæt endnu et filter på
+       *[other] { $count } flere filtre på
+    }
+ui-options-legacy-lists = Importere lister fra den ældre fremviser
+ui-options-legacy-lists-help = Tilføjer denne kontos teleporteringshistorik, sortliste over aktiver, mediefilterliste og kontaktsæt. Legacy Viewers filer er kun læsbare.
+ui-options-legacy-lists-button = Importér fra den gamle fremviser…
+ui-options-legacy-lists-no-account = Log ind for at importere denne kontos lister.
+ui-options-legacy-lists-title = Importér fra den ældre fremviser
+ui-options-legacy-lists-text = Alt bliver føjet til denne kontos lister, og intet her bliver fjernet. Hvad aktivets sortliste navne forlader verden med det samme. Importering igen bringer tilbage hvad du fjernede her.
+ui-options-legacy-lists-searching = Leder efter Legacy Viewers mapper…
+ui-options-legacy-lists-none = Der blev ikke fundet nogen Legacy Viewer-mappe med lister for denne konto.
+ui-options-legacy-lists-teleports = Teleport historie ({ $count })
+ui-options-legacy-lists-derender = Sortliste over aktiver ({ $count })
+ui-options-legacy-lists-media = Mediefilterliste ({ $count })
+ui-options-legacy-lists-contact-set-entries = Kontakt sæt indgange ({ $count })
+ui-options-legacy-lists-confirm = Importere de valgte lister
+ui-options-legacy-lists-added = Tilføjet eller opdateret. Teleport historie: { $teleports }, aktiv sortliste: { $derender }, medie filter: { $media }, kontakt sæt poster: { $sets }.
+ui-options-legacy-lists-nothing = Intet nyt: Denne konto har allerede disse lister.
+ui-options-legacy-lists-failed = Kunne ikke læse: { $files }.
+ui-options-legacy-lists-unsaved = Kunne ikke gemme, efterladt som det var: { $files }.
+ui-options-legacy-lists-other-grid = På dette gitter kan en mappe med samme navn tilhøre et andet gitter: tjek at det er den rigtige.
+ui-options-build-show-beams-hint = Vis dine valgstråler og andre avatares når du redigerer, griber eller giver. Dette styrer kun visningen; brug Privatliv > Skjul redigeringsstråle for at stoppe din redigeringsbjælke lokalt og over netværket.
+teleport-failed-title = Teleporteringen mislykkedes.
+teleport-error-invalid-tport = Teleporteringsforsøg er begrænset til 6 pr. minut. Hvis du har problemer, så vent et minut og prøv at teleportere igen. Hvis problemet fortsætter, skal du logge ud og logge ind igen.
+teleport-error-invalid-region-handoff = Der opstod et problem under behandlingen af din regionkrydsning. Du skal muligvis logge ind igen, før du kan krydse regioner. Hvis du fortsat får denne meddelelse, bedes du kontakte support.
+teleport-error-blocked-tport = Prøv igen om et øjeblik. Hvis du stadig ikke kan teleportere, skal du logge ud og logge ind igen for at løse problemet.
+teleport-error-nolandmark-tport = Beklager, men systemet kunne ikke finde destinationen for vartegnet.
+teleport-error-timeout-tport = Beklager, men systemet kunne ikke fuldføre teleportforbindelsen. Prøv igen om et øjeblik.
+teleport-error-no-help-island = Du kan ikke teleportere tilbage til Welcome Island.
+teleport-error-noaccess-tport = Beklager, du har ikke adgang til denne teleport destination.
+teleport-error-missing-attach-tport = Dine vedhæftede filer er ikke ankommet endnu, prøv at vente et par sekunder mere eller log ud og ind igen før du forsøger at teleportere.
+teleport-error-too-many-uploads-tport = Aktivkøen i dette område er i øjeblikket tilstoppet, så din teleporteringsanmodning vil ikke kunne gennemføres til tiden.Prøv igen om et par minutter eller gå til et mindre travlt område.
+teleport-error-expired-tport = Beklager, men systemet kunne ikke fuldføre din teleporteringsanmodning i tide.Prøv igen om et par minutter.
+teleport-error-expired-region-handoff = Vi beklager, men systemet kunne ikke gennemføre din regionskrydsning til tiden.Prøv igen om et par minutter.
+teleport-error-preexisting-tport = Beklager, men systemet kunne ikke starte din teleportation. Prøv igen om et par minutter.
+teleport-error-no-host = Kan ikke finde teleport destination. Destinationen kan være midlertidigt utilgængelig eller eksisterer ikke længere. Prøv igen om et par minutter.
+teleport-error-no-inventory-host = Lagersystemet er i øjeblikket utilgængeligt.
+teleport-error-must-get-age-region = Du skal være 18 år eller ældre for at komme ind i denne region.
+teleport-error-special-usage-blocked = Kan ikke indtaste region. '{ $region }' er en Skill Gaming Region, og du skal opfylde visse kriterier for at kunne deltage.For detaljer, se venligst Skill Gaming FAQ: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Det er en Skill Gaming-region, og du skal opfylde visse kriterier for at kunne deltage. Du kan finde flere oplysninger i Ofte stillede spørgsmål om Skill Gaming: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Dit hjemmenetværk afviste din returnering, hvilket normalt betyder at dets Hypergrid adresseindstilling ikke stemmer overens med den adresse andre netværk bruger til det. Kontakt dit hjemnetværks operatører; ved at logge ind igen kommer du hjem i mellemtiden.
+teleport-hint-hypergrid-unreachable = Det andet gitter kunne ikke nås, det kan være offline eller linket peger på en gammel adresse.
+teleport-hint-hypergrid-visitors-refused = Det gitter lader kun beboere i nogle gitre komme ind.
+teleport-hint-hypergrid-destination-gone = Målregionen findes ikke længere eller er flyttet, og landemærker og links til andre gitre kan være forældede.
+toolbar-edit = Tilpas knapper og menuer…
+toolbar-title = Knapper og menuer
+toolbar-interface-locked = Grænseflade låst
+toolbar-help = Træk knapper eller menupunkter til den øverste, nederste eller indholdsoversigten. Slip en knap tilbage her for at fjerne den Højreklik på en knaps udseende for at ændre det.
+toolbar-help-classic = Træk knapper eller menupunkter til den øverste, nederste eller indholdsoversigten. Slip en knap tilbage her for at fjerne den Højreklik på en knaps udseende for at ændre det.
+toolbar-help-modes = Vælg ikoner, etiketter, begge dele eller standardlinjen for hver knap.Træk elementer i Aurora-menuen for at omarrangere den.
+import-menu-textures = Teksturer
+import-menu-animations = Animationer
+import-menu-sounds = Lyde
+import-menu-materials = Materialer
+import-menu-meshes = Masker
+import-menu-options = Indstillinger for import
+import-upload-payment-title = Import
+import-upload-payment = Du har betalt L${ $cost } Klik her for at uploade.
+import-quick-textures =
+    { $count ->
+        [one] Import · Teksturer: 1 · L${ $cost }?
+       *[other] Import · Teksturer: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Import · Materialer: 1 · L${ $cost }?
+       *[other] Import · Materialer: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Import · Lyde: 1 · L${ $cost }?
+       *[other] Import · Lyde: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Vælg importstørrelse. Understøttede teksturer kan importeres i størrelsen 2048 × 2048:
+       *[other] ({ $count }) Vælg importstørrelse. Understøttede teksturer kan importeres i størrelsen 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Vælg importstørrelse. Understøttede materialebilleder kan importeres i størrelsen 2048 × 2048:
+       *[other] ({ $count }) Vælg importstørrelse. Understøttede materialebilleder kan importeres i størrelsen 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Upload gratis billeder i størrelsen 2048 × 2048 uden at spørge
+import-quick-free-full-size-help = Importér teksturer og Importér materialer spørger derefter kun om 1024 eller 2048, når uploaden koster L$.
+ui-bars-customize-bars = Tilpas grænsefladen
+build-tool-in-use = I brug
+build-create-options-toggle = Vis / skjul mulighederne
+build-create-keep-creating = Bliv ved med at skabe
+build-create-center-on-prim = Centrer på prim
+build-create-copy-prim-rotation = Kopier prim rotation
+build-create-align-to-surface = Juster til overflade
+build-capture-shape-button = Kopier en prims form: klik her, så er det en prim i verden
+build-capture-shape-armed = Klik på en prim for at kopiere dens form (Escape annullerer)
+build-capture-shape-full = 20 figurer bevares. Fjern en for at kopiere en anden
+build-capture-shape-remove = Fjern denne figur
+build-capture-shape-tooltip = Kopieret form ({ $kind })
+build-capture-shape-not-a-prim = Kun en prims form kan kopieres
+build-capture-shape-mesh-or-sculpt = Formen af et net eller en skulptureret prim kan ikke kopieres
+build-capture-shape-no-modify = Du skal have tilladelse til at ændre denne prim for at kopiere dens form
+import-other-options = Andre valgmuligheder
+toolbar-button-icons = Kun ikon
+toolbar-button-text = Kun etiket
+toolbar-button-icons-text = Ikon og etiket
+toolbar-icon-default = Gendan standardikon
+toolbar-icon-choose = Vælg et ikon
+toolbar-icon-change = Skift ikon
+toolbar-presets = Forudindstillinger
+toolbar-interfaces = Grænseflade
+toolbar-interfaces-shown = Vist i grænsefladeblokken
+toolbar-interfaces-hidden = Skjult fra grænsefladeblokken
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora OldSchool
+toolbar-preset-photographer = Aurora fotograf
+toolbar-preset-legacy = Ældre
+toolbar-import-textures = Importér teksturer
+toolbar-import-sounds = Importér lyde
+toolbar-import-animations = Importér animationer
+toolbar-import-materials = Import af materialer
+toolbar-import-meshes = Importér masker
+toolbar-import-local = Lokale filer
+toolbar-import-advanced = Avanceret import
+toolbar-import-settings = Importindstillinger
+toolbar-import-bar = Importlinje
+toolbar-icon-search = Find et ikon…
+toolbar-in-top = I den øverste værktøjslinje
+toolbar-bar-top = Top værktøjslinje
+toolbar-drop-here = Drop her
+toolbar-separator = Skillelinje
+toolbar-interface-edit = Tilpas grænsefladen
+toolbar-edit-done = Udført
+toolbar-edit-top = Top
+toolbar-edit-bottom = Bund
+toolbar-edit-left = Venstre
+toolbar-edit-right = Højre
+toolbar-edit-help = Klik på et element for at vælge det, træk for at flytte det, eller højreklik for at få redigeringsmuligheder.Luk dette vindue for at afslutte.
+toolbar-edit-locked = Barer er låst, lås dem op nedenfor for at ændre grænsefladen.
+toolbar-edit-move = Flyt til
+toolbar-edit-split-before = Opdel før
+toolbar-edit-split-after = Opdel efter
+toolbar-edit-merge-before = Flet med forrige blok
+toolbar-edit-merge-after = Flet med næste blok
+toolbar-edit-merge-groups = Flet disse blokke
+toolbar-drawer = Skuffe
+toolbar-drawer-default-mode = Standardvisning af knapper
+toolbar-drawer-closes = Luk efter et klik på en knap
+toolbar-block-shortcut = Genvej:
+toolbar-drawer-hides-needs-shortcut = Kræver en genvej
+toolbar-floating-close-button = Tilføj en lukkeknap
+toolbar-block-name = Bloknavn:
+toolbar-block-button-mode = Bloker knap display
+toolbar-button-inherited = Nedarvet
+toolbar-drawer-hides-button = Skjul knappen, mens den flyder
+toolbar-floating-new = Flydende blok
+toolbar-floating-orientation = Orientering
+toolbar-floating-horizontal = Vandret
+toolbar-floating-vertical = Lodret
+toolbar-floating-empty = Drop knapper her
+toolbar-shortcut-title = Genvej
+toolbar-shortcut-block-name = Blok: { $name }
+toolbar-shortcut-none = Ingen genvej
+toolbar-shortcut-press-key = Tryk på en tast
+toolbar-shortcut-esc = Esc for at annullere
+toolbar-shortcut-clear = Fjern
+toolbar-shortcut-overrides = Tager over { $name }: Denne genvej kører værktøjslinjen i stedet for dens standardbrug.
+toolbar-shortcut-used = Allerede genvejen til { $names }.
+toolbar-shortcut-replace = Erstat
+toolbar-shortcut-add = Tilføj
+toolbar-shortcut-save = Gem
+toolbar-shortcut-choose-key = Vælg en nøgle
+toolbar-shortcut-help = Slå Ctrl, Alt og Skift til eller fra, og klik derefter på tasten for at ændre den.Ctrl eller Alt er nødvendigt, undtagen med F1 til F24.
+toolbar-shortcut-inactive = Denne knap er i ingen bar: dens genvej virker, når den er placeret igen.
+toolbar-shortcut-refused-keyboard = Kun tastaturtasterne kan være en genvej.
+toolbar-shortcut-refused-modifier = En ændringstast alene kan ikke være en genvej.
+toolbar-shortcut-refused-needs-modifier = Tilføj Ctrl eller Alt: en nøgle alene, eller med Shift kun, typer i tekstfelter.
+toolbar-shortcut-refused-altgr = Ctrl+Alt med denne tast er AltGr, som skriver tegn på mange tastaturer.
+toolbar-shortcut-refused-editing = Tekstfelter bruger denne genvej (markér alt, kopier, klip, indsæt, fortryd, gentag).
+toolbar-shortcut-refused-navigation = Tekstfelter flyttes og slettes med denne tast.
+toolbar-shortcut-refused-typing = Chatten og dialogerne bruger denne tast.
+toolbar-shortcut-refused-system = Systemet beholder denne genvej.
+toolbar-shortcut-refused-window = Denne genvej lukker eller skifter vinduer.
+toolbar-shortcut-refused-zoom = Denne genvej zoomer grænsefladen.
+toolbar-spacer = Blokafstand
+toolbar-add-spacer = Tilføj blokafstand
+toolbar-button-settings = Indstillinger for knapper
+toolbar-button-edit = Knappen Rediger…
+toolbar-button-edit-title = Knappen Rediger
+toolbar-button-name = Knappens navn:
+toolbar-button-display = Display med knap
+toolbar-shortcut-fixed-block-help = En fast bloks genvej viser og skjuler den; Mens grænsefladen redigeres, forbliver den vist.
+toolbar-block-settings = Blokindstillinger
+toolbar-parent-block-settings = Indstillinger for forældreblok
+toolbar-block-edit = Rediger blok…
+toolbar-block-edit-title = Rediger blok
+toolbar-block-alignment = Justering
+toolbar-block-sizing = Knapstørrelse
+toolbar-block-fixed-options = Indstillinger for fast tilstand
+toolbar-block-floating-options = Indstillinger for flydende tilstand
+toolbar-block-kind-fixed = Fast blok
+toolbar-block-kind-drawer = Skuffe
+toolbar-block-kind-floating = Flydende blok
+toolbar-block-remove = Fjern blokering
+toolbar-move-block = Træk for at flytte hele blokken
+toolbar-remove-block = Fjern blokering
+toolbar-drawer-empty = Denne skuffe er tom.
+toolbar-drawer-drop = Træk knapper hertil for at tilføje eller omarrangere dem.
+toolbar-separator-settings = Indstillinger for blokafstand
+toolbar-separator-size = Størrelse / minimum (px)
+toolbar-separator-stretch = Udfyld den ledige plads
+toolbar-separator-help = Størrelsen er deres mindste bredde, eller højden i en sidebjælke, og de kan ikke ændres.
+toolbar-block-navigation = Navigation og SLURL
+toolbar-block-account = Konto og saldo
+toolbar-block-system = Ur, indikatorer og lyd
+toolbar-block-status = Status for tilgængelighed
+toolbar-block-balance = Saldo
+toolbar-block-clock = Ur
+toolbar-block-ping = Regionsforsinkelse
+toolbar-block-fps = Billedhastighed (FPS)
+toolbar-block-network = Netværkstrafik
+toolbar-block-media = Pakkemedier
+toolbar-block-music = Pakke musik
+toolbar-block-volume = Volumen
+toolbar-block-notifications = Notifikationer
+toolbar-block-conversations = Samtale ikoner
+toolbar-block-chat = Nærliggende chat input
+toolbar-category-all = Alle kategorier
+toolbar-section-main = Hoved
+toolbar-section-advanced = Avanceret
+toolbar-search-all = Søg indeholder avancerede kommandoer.
+toolbar-category-avatar = Avatar og bevægelse
+toolbar-category-communication = Kommunikation
+toolbar-category-world = Verden og rejser
+toolbar-category-creation = Oprettelse og indhold
+toolbar-category-interface = Interface og kamera
+toolbar-category-advanced = Avancerede værktøjer
+toolbar-category-help = Hjælp
+toolbar-category-custom = Brugerdefinerede kommandoer
+toolbar-bar-settings = Indstillinger for værktøjslinje
+toolbar-menu-group = Menu: { $name }
+toolbar-location-bar = SLURL adresselinje
+toolbar-command-build-tool-focus = Byg - kamera
+toolbar-command-build-tool-grab = Byg - flyt
+toolbar-command-build-tool-edit = Byg - rediger
+toolbar-command-build-tool-create = Bygge - skabe
+toolbar-command-build-tool-land = Bygge - jord
+bug-copy-version = Kopier fremviserversion
+toolbar-notecard-save = Gem til et notecard…
+toolbar-notecard-load = Indlæs fra et notecard…
+toolbar-notecard-name = Aurora grænseflade
+toolbar-notecard-help = Layout og udseende af værktøjslinjer, knapper, skuffer og menuer.
+toolbar-notecard-saved = Interface layout gemt i din beholdning.
+toolbar-notecard-invalid = Dette notecard indeholder ikke et kompatibelt grænseflade layout.
+toolbar-notecard-unavailable = Dette notecard er ikke længere tilgængeligt eller kan ikke kopieres.
+toolbar-notecard-layout-changed = Grænsefladen blev ændret, mens notekortet blev indlæst. Indlæs det igen for at anvende layoutet.
+toolbar-notecard-demo-valid = Grænseflade til fotograf
+toolbar-notecard-demo-invalid = Andet notecard
+toolbar-notecard-too-large = Denne grænsefladekonfiguration er for stor til et notecard.
+toolbar-saved-interfaces = Gemte grænseflader
+toolbar-saved-interfaces-empty = Ingen gemte grænseflader endnu.
+toolbar-notecard-destination = Mappe: { $path }
+toolbar-notecard-folder-error = Mappen interfaces kunne ikke indlæses eller oprettes. Prøv igen.
+toolbar-current-preset = Valgt grænseflade: { $name }
+toolbar-preset-custom = Brugerdefineret grænseflade
+toolbar-preset-unsaved = Ikke gemte ændringer
+toolbar-preset-save-title = Gem grænseflade
+toolbar-preset-save-name = Grænseflade navn
+toolbar-preset-save-new = Ny personlig grænseflade
+toolbar-preset-save-replace = Udskift denne personlige grænseflade
+toolbar-preset-save-unavailable = Denne grænseflade kan ikke gemmes her. Vælg et andet navn eller en tilgængelig, redigerbar personlig grænseplader.
+toolbar-interface-delete-unavailable = Denne personlige grænseflade kan ikke slettes.
+toolbar-interface-delete-confirm = Flyt den personlige brugerflade »{ $name }« til papirkurven?

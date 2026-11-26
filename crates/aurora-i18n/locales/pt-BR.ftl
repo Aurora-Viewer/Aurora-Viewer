@@ -16079,3 +16079,727 @@ parcel-environment-empty = Nenhum ambiente salvo
 parcel-environment-remove-all = Remover tudo
 parcel-environment-remove-all-title = Remover todos os ambientes salvos para uma parcela?
 parcel-environment-remove-all-text = Os ambientes que você salvou para parcelas nesta grade serão removidos. Os das outras grades serão mantidos. Esta ação não pode ser desfeita.
+
+### Updated release translations
+
+anim-edit-shortcut-play = Reproduzir ou pausar
+area-search-scope-heading = Onde
+area-search-scope-parcel = Parcela
+area-search-scope-region = Região
+area-search-scope-neighbours = Vizinhos
+area-search-objects-heading = Quais objetos são
+inventory-copy-selection-count =
+    { $count ->
+        [one] Copiar 1 item
+       *[other] Copiar { $count } itens
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Criar links aqui · Artigos: 1
+       *[other] Criar links aqui · Artigos: { $count }
+    }
+inventory-drop-move-here = Mude-se para aqui
+inventory-drop-copy-here = Copie aqui
+inventory-drop-link-here = Criar links aqui
+inventory-sort-description = Descrição
+inventory-sort-reversed = { $order } (invertido)
+inventory-column-creator = Criador
+inventory-column-count = Artigos
+inventory-columns-fit = Dimensionar todas as colunas para caber
+inventory-columns-reset-widths = Redefinir larguras de coluna
+inventory-back = Voltar
+inventory-forward = Avançar
+inventory-up = Um nível acima
+keybinds-inventory-root = Ir para o topo
+keybinds-inventory-search = Pesquisar no inventário
+keybinds-inventory-filter = Filtrar a pasta
+keybinds-inventory-preview = Mostrar o painel de visualização
+keybinds-inventory-view-large = Imagens grandes
+keybinds-inventory-view-medium = Imagens de Medium
+keybinds-inventory-view-small = Imagens pequenas
+keybinds-inventory-view-compact = Visualização compacta
+keybinds-inventory-view-details = Detalhes da vista
+keybinds-inventory-view-tiles = Vista de azulejos
+keybinds-inventory-toggle = Seleccionar ou desmarcar a linha em foco
+keybinds-inventory-menu = Abrir o menu da seleção
+keybinds-inventory-purge = Expurgar do lixo
+keybinds-inventory-refused = { $keys } permanece a chave própria da lista de inventário: escolha outra.
+inventory-path-edit = Digite um caminho
+inventory-path-subfolders = Subpastas
+inventory-copy-path = Copiar caminho
+inventory-show-in-folder = Mostrar na pasta
+inventory-pin = Acesso rápido
+inventory-unpin = Desmarcar de acesso rápido
+inventory-quick-access = Acesso rápido
+inventory-quick-access-drop = Solte uma pasta aqui para fixá-la
+inventory-invert-selection = Inverter a selecção
+inventory-undo = Desfazer
+inventory-redo = Refazer
+inventory-undo-step = Desfazer { $what }
+inventory-redo-step = Refazer { $what }
+inventory-history-move =
+    { $count ->
+        [one] 1 - 1 de 1 item
+       *[other] Mover de { $count } itens
+    }
+inventory-history-delete =
+    { $count ->
+        [one] 1 - 1 de 1 item
+       *[other] 1 - 8 de { $count } itens
+    }
+inventory-history-rename = renomear
+inventory-history-new-folder = Criar nova pasta
+inventory-history-copy =
+    { $count ->
+        [one] cópia de 1 item
+       *[other] cópia de { $count } itens
+    }
+inventory-history-link =
+    { $count ->
+        [one] link para 1 item
+       *[other] links para { $count } itens
+    }
+inventory-undo-nothing = Não há nada para desfazer: esses itens foram movidos ou desapareceram.
+inventory-redo-nothing = Não há nada a refazer: esses itens foram movidos ou desapareceram.
+inventory-undo-empty = Nada a desfazer.
+inventory-redo-empty = Nada a refazer.
+inventory-undo-dropped = Os itens do último passo foram movidos ou desapareceram: ele foi descartado Desfaça novamente para o passo anterior.
+inventory-redo-dropped = Os itens do próximo passo foram movidos ou desapareceram: ele foi deixado cair.Refaça novamente para o passo seguinte.
+inventory-undo-folder-not-empty = Essa nova pasta contém itens colocados lá desde: mova-os para fora primeiro, ou exclua a pasta você mesmo.
+inventory-undo-kept-out = Esses itens estão na roupa atual ou nas listas do Mercado agora: mude-os lá.
+inventory-restore-to = Restaurar para “{ $folder }”
+inventory-restore-to-origins = Restaurar para suas pastas
+inventory-purge-no-undo = Desfazer não pode trazê-los de volta.
+inventory-new-tab = Novo separador
+inventory-close-tab = Fechar a aba
+inventory-next-tab = Próximo separador
+inventory-previous-tab = Aba anterior
+inventory-open-in-new-tab = Abrir em uma nova aba
+inventory-tabs-limit = No máximo { $count } guias.
+inventory-copy-to-other-pane = Copiar para o outro painel
+inventory-move-to-other-pane = Mover para o outro painel
+inventory-resize-columns = Faça duplo clique para ajustar a coluna à esquerda ao seu conteúdo.
+inventory-resize-columns-first = Faça duplo clique para dar à primeira coluna a largura habitual.
+inventory-sort-by-column = Clique para classificar por esta coluna, novamente para inverter a ordem.Arraste para mover a coluna.
+inventory-filter-hint = Filtrar esta pasta…
+inventory-filter-close = Fechar o filtro (Esc)
+inventory-filter-nothing = Nada aqui corresponde ao filtro
+inventory-view-compact = Visualização compacta
+inventory-view-tiles = Vista de azulejos
+inventory-view-per-folder = Lembre-se da exibição de cada pasta
+inventory-group-by = Agrupar por:
+inventory-group-none = Nenhuma
+inventory-group-folders = Pastas
+inventory-group-unknown-creator = Criador ainda não conhecido
+inventory-group-today = Hoje
+inventory-group-yesterday = Ontem
+inventory-group-this-week = Nos últimos 7 dias
+inventory-group-this-month = Nos últimos 30 dias
+inventory-group-this-year = No início deste ano
+inventory-group-earlier = Há muito tempo atrás
+inventory-group-no-date = Sem data
+cmdline-mod-zoffset-usage = Defina a altura de hover do seu avatar (uso: /zoffset value ou +delta).
+dev-toolbox-n4 = Carregamento de inventário
+dev-toolbox-what-n4 = Pastas lidas, falharam e saíram, o carregador lê em voo e retenta; sem nomes
+ui-context-inspect-avatar = Inspecionar o avatar
+inspect-window = Inspecionar
+inspect-tab-objects = Objetos
+inspect-objects-title =
+    { $count ->
+        [one] { $count } objecto
+       *[other] { $count } objetos
+    }
+inspect-summary-items =
+    { $count ->
+        [one] Artigos: { $count }
+       *[other] Artigos: { $count }
+    }
+inspect-open-profile = Abra o perfil
+inspect-over-limit = Acima do seu limite
+inspect-limit-tip = Seu limite de complexidade: { $limit }
+inspect-search = Pesquisar itens ou criadores
+inspect-outlined = { $name } é delineado no mundo
+inspect-area-head = Cabeça
+inspect-area-body = Corpo
+inspect-area-arms = Braços e mãos
+inspect-area-legs = Pernas e pés
+inspect-area-hud = HUD
+inspect-area-other = Outros
+inspect-area-world = Objetos
+inspect-own-eyes = Olhos do sistema
+inspect-own-body = Corpo do sistema
+inspect-own-description = Parte do próprio avatar, não um anexo
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } complexidade
+inspect-no-match = Nada corresponde a “{ $query }”.
+inspect-spoken-worn = { $name }, usado em { $point }, complexidade { $complexity }, feito por { $creator }
+inspect-spoken-object = { $name }, pertencente a { $owner }, complexidade { $complexity }, feito por { $creator }
+inspect-look-at-tip = Mova a câmera para ele
+inspect-profile-tip = Abra o perfil do criador
+inspect-made-by = Feito por:
+inspect-owned-by = De propriedade de
+inspect-worn-on = Anexado em
+inspect-prims-count =
+    { $count ->
+        [one] { $count } primário
+       *[other] { $count } primários
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Memória de textura
+inspect-tile-vram = Memória de vídeo
+inspect-tile-prims = Prims
+board-close = Fechar { $title }
+board-grow = Ampliar { $title }
+board-remove = Remover o { $name }
+board-more = e { $count } mais
+board-more-short = +{ $count }
+board-some-of = { $shown } de { $all }
+board-of-all = de { $all }
+stage-turn-left = Virar à esquerda
+stage-turn-right = Virar à direita
+stage-higher = Olhe de mais alto
+stage-lower = Olhe de baixo
+stage-nearer = Mais perto
+stage-further = Mais longe
+stage-reset = Voltar ao início
+stage-hint = Arrastar para girar, arrastar com o botão direito para mover
+stage-light = Fundo de luz
+stage-dark = Fundo escuro e branco
+stage-playing = AO
+stage-paused = Pausado
+stage-pause-tip = Pausar sua animação
+stage-play-tip = Reproduza sua animação
+stage-loading = Preparando a vista 3D…
+stage-nothing = Nada para mostrar em 3D ainda.
+stage-refused = A visualização 3D está desligada enquanto RLVa limita o que você pode ver.
+inspect-your-limit = Seu limite: { $limit }
+inspect-without-it = { $value } sem ele
+inspect-you = Você
+inspect-person = Pessoa
+inspect-difference = Diferença
+inspect-drawn-in-full = Desenhado na íntegra
+inspect-nobody = A complexidade de ninguém é conhecida ainda.
+inspect-aside-count = { $count } retirada de produção
+inspect-is-aside = Reservar
+inspect-set-aside = Reservar
+inspect-set-aside-tip = Veja a complexidade sem este item. Só nesta janela: nada muda no mundo.
+inspect-put-back = Coloque de volta
+inspect-put-back-tip = Contar este item novamente
+inspect-complexity-spoken = Complexidade { $value }, número { $rank } de { $count } Pessoas aqui
+inspect-stage-outfit = A roupa de banho
+inspect-stage-objects = Os objetos
+inspect-stage-back = De volta a tudo
+inspect-place-made-by = { $place } · feito por { $name }
+inspect-owned-by-name = Propriedade de { $name }
+inspect-tile-items = Artigos
+inspect-tile-figures = Figuras
+inspect-col-item = Nome
+inspect-point = Ponto
+inspect-look-at = Ver origem
+inspect-selected-count = { $count } selecionados
+inspect-worn-count = { $count } usado
+inspect-creators-word = criadores
+inspect-areas-word = áreas do corpo
+inspect-owners-word = proprietários
+inspect-triangles-word = triângulos
+inspect-made-of = { $count } de { $all } itens
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, em linkset ordem
+inspect-reset-columns = Redefinir colunas
+inspect-by-creators =
+    { $count ->
+        [one] { $items } por um criador
+       *[other] { $items } por { $count } criadores
+    }
+inspect-owner-button = Perfil do proprietário
+inspect-group-button = Perfil do grupo
+inspect-creator-button = Perfil do criador
+inspect-land-others = Outros { $n }
+inspect-land-these = Estes { $n }
+inspect-land-free = Livre { $n }
+inspect-land-unknown = O quarto da parcela mostra quando os objetos estão todos na parcela em que você está.
+ui-login-unencrypted = Login sem criptografia
+ui-login-unencrypted-body = O endereço de login de { $server } começa com http:// em vez de https://. O login não será criptografado. Quem puder observar seu tráfego, em uma rede Wi-Fi pública, numa rede compartilhada ou no caminho até a grade, poderá ler sua senha e usar sua conta. Nada foi enviado ainda. Você pode pedir à grade um endereço https://. Sua escolha será lembrada para este servidor.
+ui-login-unencrypted-accept = Entrar sem criptografia
+world-appearance-clothing-layers-full = Todas as 60 camadas de roupa estão em uso.Retire uma camada antes de usar este item.
+ui-options-ray-tracing = Renderização de gráficos com ray tracing
+ui-options-ray-traced-shadows = Sombras de sol ray-traced
+ui-options-ray-traced-shadows-help = As sombras do sol e da lua são rastreadas raio a raio em vez de serem lidas dos mapas de sombra: exatamente onde as coisas se tocam e a qualquer distância.Precisa das sombras e de uma placa gráfica com ray tracing, e custa mais na placa gráfico
+ui-options-ray-traced-lights = Sombras de luz locais
+ui-options-ray-traced-lights-help = Sombras das luzes de ponto ao redor (lâmpadas, velas), que não lançam nenhuma outra luz, e dos projetores quando Projector shadows está ligado, no lugar de seus mapas de sombra.A mais cara das opções de traçado de raios: melhor deixada em gráficos integrados
+ui-options-rt-quality = Qualidade de Ray tracing
+ui-options-rt-quality-help = Todos os efeitos rastreados permanecem ativos: níveis mais baixos rastreiam menos amostras e a luz indireta em uma grade mais grossa, para mais quadros por segundo em uma placa de vídeo menor. Alto é a imagem completa do Deluxe (RT). Escolhendo um nível também define as luzes que projetam sombras
+ui-options-rt-sun-softness = Sun sombra suavidade
+ui-options-rt-sun-softness-help = Quão suaves são as bordas das sombras traçadas do sol: 1 é o sol real, 0 bordas afiadas, mais para um sol mais nebuloso
+ui-options-rt-lamp-softness = Softness local da sombra clara
+ui-options-rt-lamp-softness-help = Quão suaves são as bordas das sombras traçadas das lâmpadas: 1 segue o tamanho de cada lâmpadinha, 0 bordas afiadas
+ui-options-rt-shadow-lamps = Luzes que lançam sombras
+ui-options-rt-shadow-lamps-help = Quantas das luzes mais próximas projetam sombras traçadas; as outras ainda são iluminadas, sem sombras.Menos custa menos na placa de vídeo
+ui-options-ray-traced-indirect = Luz indireta Ray-traced
+ui-options-ray-traced-indirect-help = Luz refletida pelas superfícies ao redor, traçada além do que a tela mostra, no lugar da luz indireta de GTAO
+ui-options-gi-probes = Sondas de iluminação global
+ui-options-gi-probes-help = Sondas espalhadas pela cena que mantêm a luz de vários saltos e o céu que eles vêem: quartos fechados ficam escuros, a luz vai em torno dos cantos.
+ui-options-ray-traced-reflections = Reflexões Ray-traced
+ui-options-ray-traced-reflections-help = Reflexões do que a tela não mostra, no lugar dos reflexos do espaço da tela, que devem estar
+ui-options-ray-tracing-unsupported = Esta placa gráfica ou seu driver não tem ray tracing
+ui-options-ray-tracing-vr = Não disponível em uma sessão iniciada para VR
+ui-options-tab-ray-tracing = Configurações de ray tracing
+ui-options-deluxe-rt-warning-title = Ativar o Deluxe (RT)?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) é Alta com as sombras e a luz indireta traçada pela placa gráfica. Ela precisa de uma placa com hardware ray tracing (NVIDIA RTX, AMD Radeon RX 6000 ou posterior, Intel Arc) e um driver atualizado, e custa muito mais do que High: em uma placa de gama média a taxa de quadros pode cair muito em locais movimentados. Ray tracing ainda está sendo testado: se a imagem parecer errada ou o visualizador desacelerar, volte para Alta. A guia Ray tracking mantém suas configurações.
+ui-options-deluxe-rt-warning-turn-on = Ligue-o.
+ui-options-ray-tracing-needs-shadows = Precisa das sombras
+ui-options-ray-tracing-needs-ssr = Precisa das reflexões do espaço da tela
+ui-options-preset-deluxe = Quarto Deluxe (RT)
+ui-options-normal-precision = Reflexão de precisão
+ui-options-normal-precision-help = A precisão com que a direção de cada superfície é mantida para os reflexos. Padrão pode mostrar passos nos reflexos de superfícies lisas e curvas, como a pintura de um carro; Alto remove-os e usa mais memória de vídeo.Automático usa Alto com os reflexo traçados por raios, onde os passos são mais visíveis, e Padrão caso contrário
+ui-options-normal-precision-automatic = Automático
+ui-options-normal-precision-standard = Padrão
+ui-options-normal-precision-high = Alto
+ui-options-private-point-at-help = Oculte o objeto que você está editando, mantenha seu braço de edição abaixado e oculte seu feixe de emissão.
+common-window-outside = Mover para fora da janela do visualizador
+common-window-inside = Trazer de volta para a janela do visualizador
+common-window-rename-name = Clique duas vezes para renomear
+common-carry-hint = Clique para soltá-lo aqui, Esc para soltar
+common-window-paused-photo = Pausado enquanto o modo foto está aberto
+common-window-paused-director = Em pausa enquanto o Diretor toca
+common-window-paused-interface = Pausado enquanto a interface está desligada
+ui-options-warn-live-preview = Alerta quando uma textura ou material não pode ser visualizado
+ui-options-warn-live-preview-help = No seletor da janela de compilação, clicar em um item sem cópia não aplica nada até OK: diga assim.
+ui-texture-picker-live-preview-texture = Não podemos exibir uma visualização dessa textura porque ela é sem cópia.
+ui-texture-picker-live-preview-material = Não podemos exibir uma prévia deste material porque não é cópia.
+fetch-invalid-url = URL inválido
+ui-chat-close-all-ims = Fechar todas as IM conversas
+ui-chat-close-all-ims-question = Fechar todas as IM conversas e terminar a chamada ativa?
+ui-chat-confirm-close-all-ims = Confirmar antes de fechar todas as IM conversas
+ui-chat-confirm-close-all-ims-help = Pergunte antes de fechar todas as conversas IM quando um tem uma chamada de voz ativa.
+ui-options-aurora-controls-compact-help = A janela Controles abre compacta na câmera: seus joysticks, zoom e rolagem. Seu botão da barra de título alterna entre compacto e cheio, e define isso também.Com janelas clássicas, a câmera abre na pequena janela da câmera do Legacy Viewer em vez disso.
+rlva-restart-hint = RLVa começa quando você faz login. Uma vez que ele é executado, ativá-lo ou desativá-la tem efeito na próxima inicialização do visualizador: os objetos de restrições permanecem até então.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa será habilitado após a reinicialização.
+rlva-toggle-disabled-restart = RLVa será desabilitado após a reinicialização.
+livemesh-import-connect = Conecte o Blender com o plug-in 0.11.0 ou posterior, ou o Maya com o plugin 02.0 para preparar os LODs de importação.
+livemesh-import-preparing = Preparando o objeto e seus LODs no Blender ou Maya…
+livemesh-import-ready = LODs recebidos. Pronto no importador.
+livemesh-import-failed = Falha na preparação da importação: { $error }
+livemesh-import-timeout = Verifique a conexão (no Blender, use o Modo de Objeto) e tente novamente.Check the connection (in Blander, use Object Mode) and try again.
+livemesh-shape-apply-tooltip = Marque a caixa de seleção Modify rights (Modificar direitos) e, em seguida, adapte o esqueleto selecionado no Blender ou Maya e suas malhas vinculadas (através do MayaStar para um equipamento MayaStar).
+livemesh-shape-update-apply = Atualize o plug-in do Blender para a versão 0.10.0 ou posterior, ou o Maya para a 0,4.0, ou posterior e reconecte-o.
+livemesh-shape-applied = Forma aplicada ao esqueleto selecionado.
+livemesh-shape-tooltip = Verifique os direitos de modificação da forma desgastada e crie um novo corpo de referência rigged no Blender ou Maya.
+livemesh-shape-connect = Conecte o plug-in Aurora no Blender ou Maya primeiro.
+livemesh-shape-update-plugin = Atualize o plug-in do Blender para a versão 0.9.0 ou posterior, ou o Maya para a 0,3.0, ou posterior e reconecte-o.
+livemesh-shape-timeout = Blender ou Maya não confirmaram a importação. Tente novamente (no Blender, mude para o Modo Objeto).
+livemesh-shape-success = Forma importada como um novo corpo de referência equipado.
+blender-live-maya-version = Aurora LiveMesh para Maya { $version }
+blender-live-maya-instructions = Salve o arquivo ZIP e extraia-o. Em seguida, arraste install.mel para uma janela do Maya. Abra o LiveMesh na prateleira Aurora, adicione suas malhas e clique em Conectar.
+blender-live-save-maya = Salvar Maya plug-in…
+blender-live-maya-saved = Extraia o arquivo ZIP e arraste install.mel para uma janela do Maya.
+livemesh-plugin-connected = Plug-in conectado
+livemesh-token-refused = Um programa tentou se conectar sem a chave desta visualização.Somente o plug-in Aurora no Blender ou Maya pode se conectar.
+livemesh-waiting-plugin = Esperando pelo Blender ou Maya…
+blender-live-objects-help = As malhas que o Blender ou Maya está enviando.Selecione uma para colocá-la, ou importe-a do menu.
+blender-live-size-note = O tamanho multiplica o que o plug-in envia, então edições posteriores no Blender ou Maya mantêm isso.
+blender-live-avatar-help = Para malhas rigged: envie sua forma para o Blender ou Maya para modelar nela.
+livemesh-shape-section = Sua forma no Blender ou Maya
+blender-live-import-help = Congela um instantâneo do objeto para a importação normal: revisão, preço e confirmação; edições posteriores no Blender ou Maya não o alteram.
+blender-live-changed-tip = Tempo desde que o Blender ou Maya alterou este objeto pela última vez
+fit-lab-section = Fit Lab 2.0
+fit-lab-help = Manequins vestidos com o que você veste, cada um com outro corpo, ficam à sua frente para mostrar como a roupa se encaixa em várias formas.Somente você os vê: nada é enviado ou salvo.
+fit-lab-body-me = Eu
+fit-lab-body-slim = Forma de corpo esbelto
+fit-lab-body-curvy = Forma de corpo curvilínea
+fit-lab-body-full = Figura completa
+fit-lab-body-athletic = Athletic FC
+fit-lab-body-tall = Alto
+fit-lab-body-petite = Pequena
+fit-lab-motion = Movimento
+fit-lab-motion-stand = Levantar
+fit-lab-motion-walk = Andar
+fit-lab-motion-sit = Sentar
+fit-lab-motion-range = Escala de movimento
+fit-lab-pose = Posição
+fit-lab-pose-all = Todos, por sua vez
+fit-lab-pose-arms-up = Braços para cima
+fit-lab-pose-reach = Alcance para a frente
+fit-lab-pose-hug = Os braços cruzados
+fit-lab-pose-squat = Agachamento
+fit-lab-pose-kneel = Ajoelhe-se.
+fit-lab-pose-knee-up = Joelho levantado
+fit-lab-pose-twist = Torção
+fit-lab-pose-bend = Curva para a frente
+fit-lab-motion-like-me = Como eu.
+fit-lab-show = Mostrar os manequins
+fit-lab-place = Traga-os aqui
+fit-lab-remove = Remova os manequins
+fit-lab-choose = Escolha pelo menos um corpo.
+fit-lab-clip = Mostre onde o corpo vem através
+fit-lab-clip-note = Vermelho: o corpo sai da roupa. Âmbar: corpo e roupa se encontram. No seu avatar e nos manequins, como visto pela câmera. Tudo o que você usa conta como corpo: tire um casaco ou cabelo usado sobre a roupa
+blender-live-levels-pending = O Blender ou Maya prepara os níveis de detalhe quando você clica em Importar.
+blender-live-levels-note = Preparado no Blender ou Maya a partir das configurações LiveMesh de cada objeto.
+blender-live-quick-look-changed = Alterado em Blender ou Maya { $ago } atrás.
+blender-live-warning-textures = Texturas ignoradas, cor simples mostrada
+blender-live-warning-not-sent = Não na pré-visualização
+blender-live-undo-derez = Derezzed { $name } · ainda na lista de plug-ins
+blender-live-undo-detach = Detached { $name } · ainda na lista do plug-in
+inventory-open-current = Abrir
+inventory-folder-back = Voltar
+inventory-folder-forward = Avançar
+inventory-folder-up = Subir um nível
+area-search-metres = { $n } m
+area-search-band-reach = Dentro do alcance
+area-search-band-close = Perto de mim
+area-search-band-around = Ao seu redor
+area-search-band-further = Além disso
+area-search-band-far = Distante
+area-search-band = Área
+area-search-within = Dentro de { $distance }
+area-search-within-across = Dentro de { $distance } através
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Mostrar todas as distâncias
+area-search-from = Distância a partir de
+area-search-to = Distância até a praia
+area-search-bar-tip =
+    { $count ->
+        [one] Um único objeto, { $from } para { $to }
+       *[other] { $count } objetos, { $from } para { $to }
+    }
+area-search-of-objects = de { $total } objetos
+area-search-li = { $value } LI
+area-search-li-count = { $value } impacto da terra
+area-search-owner-count =
+    { $count ->
+        [one] um único proprietário
+       *[other] { $count } proprietários
+    }
+area-search-object-count =
+    { $count ->
+        [one] um único objeto
+       *[other] { $count } objetos
+    }
+area-search-objects-word = objetos
+area-search-in-reach = aqui
+area-search-tab-objects = Objetos
+area-search-tab-owners = Proprietários
+area-search-hint-wide = Objetos, proprietários, criadores ou UUIDs
+area-search-kind-heading = Tipo de objeto
+area-search-kind-tip = Clique: apenas estes. Novamente: oculto.
+area-search-kind-any = qualquer
+area-search-kind-only = apenas estes dois
+area-search-kind-hidden = Oculto
+area-search-kind-attached = Aderidos
+area-search-kind-probes = Sondas
+area-search-click-all = Todos
+area-search-click-any-short = Qualquer
+area-search-permissions = Permissões
+area-search-price-heading = Preço de venda, para objetos à venda
+area-search-price-to = para
+area-search-price-tip = Escolha “Para venda” primeiro
+area-search-linked = Primários ligados
+area-search-one-field = Pesquisar em um campo
+area-search-regex-switch = Expressões regulares
+area-search-regex-invalid = Não é uma expressão regular válida
+area-search-reset-filters-tip = Restaurar todos os filtros; o texto de pesquisa permanece
+area-search-save-defaults-tip = Abra com estes filtros a partir de agora
+area-search-reset-search = Redefinir os textos de pesquisa
+area-search-reset-filters = Redefinir as opções de filtro
+area-search-reset-ranges = Redefinir distância e preço
+area-search-reset-all = Redefinir tudo
+area-search-more = Mais
+area-search-several = Selecione vários
+area-search-several-tip = Cliques adicionam à seleção (também Ctrl ou Shift + clique, Ctrl+A)
+area-search-actions = Acções
+area-search-nothing = Nenhum objeto recebido ainda.
+area-search-nothing-for-sale = Nada à venda aqui.
+area-search-not-for-sale = Não está à venda
+area-search-from-price = a partir de { $price }
+area-search-nearest = O mais próximo primeiro
+area-search-heaviest = O mais pesado primeiro
+area-search-order-tip = Altere a ordem: mais próximo ou mais pesado primeiro
+area-search-rank = #{ $rank } de { $all }
+area-search-rank-here = #{ $rank } aqui
+area-search-card-more = Mostrar cada figura
+area-search-card-less = Mostrar menos
+area-search-open-group = Abra o grupo
+area-search-spoken = { $name }, { $distance }, impacto na terra { $li }, pertencente a { $owner }
+area-search-owner-spoken = { $name }, { $count } objetos, impacto da terra { $li }
+area-search-stage-line = { $distance } 1 hora de distância · { $li } impacto no solo · { $owner }
+area-search-tile-3d = Vista em 3D
+area-search-on = Ativado: { $count } vezes
+area-search-on-word = Ativado
+area-search-more-on =
+    { $count ->
+        [one] Ative mais um filtro
+       *[other] { $count } mais filtros em
+    }
+ui-options-legacy-lists = Importar listas do Legacy Viewer
+ui-options-legacy-lists-help = Adiciona o histórico de teletransporte, lista negra de ativos, lista de filtros de mídia e conjuntos de contatos desta conta.
+ui-options-legacy-lists-button = Importar do Legacy Viewer…
+ui-options-legacy-lists-no-account = Faça login para importar as listas desta conta.
+ui-options-legacy-lists-title = Importar a partir do Legacy Viewer
+ui-options-legacy-lists-text = Tudo é adicionado às listas desta conta e nada aqui é removido. O que os nomes da lista negra de ativos deixam o mundo imediatamente. Importar novamente traz de volta o que você removeu aqui.
+ui-options-legacy-lists-searching = À procura das pastas do Legacy Viewer…
+ui-options-legacy-lists-none = Nenhuma pasta do Legacy Viewer com listas foi encontrada para esta conta.
+ui-options-legacy-lists-teleports = História de teletransporte ({ $count })
+ui-options-legacy-lists-derender = Lista negra de ativos ({ $count })
+ui-options-legacy-lists-media = Lista de filtros de mídia ({ $count })
+ui-options-legacy-lists-contact-set-entries = Entradas de conjunto de contato ({ $count })
+ui-options-legacy-lists-confirm = Importar
+ui-options-legacy-lists-added = Entradas adicionadas ou atualizadas. Histórico de teletransporte: { $teleports }. Objetos escondidos: { $derender }. Filtro de mídia: { $media }. Grupos de contato: { $sets }.
+ui-options-legacy-lists-nothing = Nada de novo: essa conta já tem essas listas.
+ui-options-legacy-lists-failed = Não foi possível ler: { $files }.
+ui-options-legacy-lists-unsaved = Não foi possível salvar, deixado como estava: { $files }.
+ui-options-legacy-lists-other-grid = Nesta grade uma pasta com o mesmo nome pode pertencer a outra grade: verifique se é a correta.
+ui-options-build-show-beams-hint = Mostrar seus feixes de seleção e os de outros avatares ao editar, capturar ou dar. Isso só controla a exibição; use Privacidade > Ocultar feixe de edição para interromper seu feixe localmente e na rede.
+teleport-failed-title = O teletransporte falhou.
+teleport-error-invalid-tport = As tentativas de teletransporte são limitadas a 6 por minuto. Se você estiver tendo problemas, aguarde um minuto e tente teletransportar novamente.Se o problema persistir, saia e entre novamente no jogo.
+teleport-error-invalid-region-handoff = Ocorreu um problema ao processar a sua travessia de região. Poderá ter de iniciar sessão novamente antes de poder cruzar regiões.Se continuar a receber esta mensagem, contacte o suporte.
+teleport-error-blocked-tport = Desculpe, o teletransporte está bloqueado no momento. Tente novamente em um momento. Se você ainda não consegue se teleportar, por favor saia e entre novamente para resolver o problema.
+teleport-error-nolandmark-tport = Desculpe, mas o sistema não conseguiu localizar o destino do marco.
+teleport-error-timeout-tport = Desculpe, mas o sistema não conseguiu concluir a conexão de teletransporte. Tente novamente em um momento.
+teleport-error-no-help-island = Você não pode se teletransportar de volta para Welcome Island.
+teleport-error-noaccess-tport = Desculpe, você não tem acesso a esse destino de teletransporte.
+teleport-error-missing-attach-tport = Seus anexos ainda não chegaram, tente esperar mais alguns segundos ou sair e entrar novamente antes de tentar teletransportar.
+teleport-error-too-many-uploads-tport = A fila de ativos nesta região está bloqueada no momento, portanto seu pedido de teletransporte não será bem-sucedido em tempo hábil. Tente novamente em alguns minutos ou vá para uma área menos movimentada.
+teleport-error-expired-tport = Desculpe, mas o sistema não conseguiu concluir seu pedido de teletransporte em tempo hábil. Tente novamente em alguns minutos.
+teleport-error-expired-region-handoff = Desculpe, mas o sistema não conseguiu concluir a travessia da sua região em tempo hábil. Tente novamente em alguns minutos.
+teleport-error-preexisting-tport = Desculpe, mas o sistema não pôde iniciar seu teletransporte. Tente novamente em alguns minutos.
+teleport-error-no-host = Não foi possível encontrar o destino de teletransporte. O destino pode estar temporariamente indisponível ou não existe mais. Tente novamente em alguns minutos.
+teleport-error-no-inventory-host = O sistema de inventário está atualmente indisponível.
+teleport-error-must-get-age-region = Você deve ter 18 anos ou mais para entrar nesta região.
+teleport-error-special-usage-blocked = Não é possível entrar na região. '{ $region }' é uma Região de Jogos de Habilidade, e você deve atender a certos critérios para entrar.Para mais detalhes, consulte as Perguntas Frequentes sobre Jogos De Habilidade: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Não é possível entrar na região. É uma Região de Jogos de Habilidade, e você deve atender a certos critérios para entrar.Para obter detalhes, consulte as Perguntas Frequentes sobre Jogos De Habilidade: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Sua rede doméstica recusou seu retorno. Isso geralmente significa que a configuração do endereço da Hypergrid não corresponde ao endereço usado por outras redes. Entre em contato com os operadores de sua rede doméstico; fazer login novamente leva você para casa no meio tempo.
+teleport-hint-hypergrid-unreachable = A outra grade não pôde ser acessada, pode estar offline ou o link pode apontar para um endereço antigo.
+teleport-hint-hypergrid-visitors-refused = Essa grade só deixa entrar residentes de algumas grades.
+teleport-hint-hypergrid-destination-gone = A região de destino não existe mais ou foi movida, e os pontos de referência e links para outras grades podem ficar desatualizados.
+toolbar-edit = Personalize botões e menus…
+toolbar-title = Botões e menus
+toolbar-interface-locked = Interface bloqueada
+toolbar-help = Arraste botões ou itens de menu para as barras superior, inferior ou lateral. Solte um botão aqui para removê-lo.Clique com o botão direito em qualquer botão para alterar sua aparência.
+toolbar-help-classic = Arraste botões ou itens de menu para as barras superior, inferior ou lateral. Solte um botão aqui para removê-lo.Clique com o botão direito em qualquer botão para alterar sua aparência.
+toolbar-help-modes = Escolha ícones, rótulos, ambos ou o padrão da barra para cada botão Arraste entradas dentro do menu Aurora para reorganizá-lo.
+import-menu-textures = Texturas
+import-menu-animations = Animações
+import-menu-sounds = Sons
+import-menu-materials = Materiais
+import-menu-meshes = Malhas
+import-menu-options = Opções de importação
+import-upload-payment-title = Enviar
+import-upload-payment = Você pagou L${ $cost } para fazer o upload.
+import-quick-textures =
+    { $count ->
+        [one] Importar · Texturas: 1 · L${ $cost }?
+       *[other] Importar · Texturas: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Importar · Materiais: 1 · L${ $cost }?
+       *[other] Importar · Materiais: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Importar · Sons: 1 · L${ $cost }?
+       *[other] Importar · Sons: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Escolha o tamanho da importação. As texturas compatíveis podem ser importadas em 2048 × 2048:
+       *[other] ({ $count }) Escolha o tamanho da importação. As texturas compatíveis podem ser importadas em 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Escolha o tamanho da importação. As imagens compatíveis dos materiais podem ser importadas em 2048 × 2048:
+       *[other] ({ $count }) Escolha o tamanho da importação. As imagens compatíveis dos materiais podem ser importadas em 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Enviar imagens gratuitas em 2048 × 2048 sem perguntar
+import-quick-free-full-size-help = "Importar texturas" e "Importar materiais" então pedem 1024 ou 2048 somente quando o upload custa L$.
+ui-bars-customize-bars = Personalize a interface
+build-tool-in-use = Em uso
+build-create-options-toggle = Mostrar / ocultar as opções
+build-create-keep-creating = Continue a criar
+build-create-center-on-prim = Centrar em prim
+build-create-copy-prim-rotation = Copiar prim rotação
+build-create-align-to-surface = Alinhar à superfície
+build-capture-shape-button = Copiar a forma de um prim: clique aqui, depois em um prim no mundo
+build-capture-shape-armed = Clique em um prim para copiar sua forma (Escape cancela)
+build-capture-shape-full = 20 formas são mantidas. Remover uma para copiar outra
+build-capture-shape-remove = Remover esta forma
+build-capture-shape-tooltip = Forma copiada ({ $kind })
+build-capture-shape-not-a-prim = Apenas a forma de um prim pode ser copiada
+build-capture-shape-mesh-or-sculpt = A forma de uma malha ou um prim esculpido não pode ser copiada
+build-capture-shape-no-modify = Você precisa de permissão para modificar este prim para copiar sua forma
+import-other-options = Outras opções disponíveis
+toolbar-button-icons = Apenas o ícone
+toolbar-button-text = Apenas o rótulo
+toolbar-button-icons-text = Ícone e rótulo
+toolbar-icon-default = Restaurar ícone padrão
+toolbar-icon-choose = Escolha um ícone
+toolbar-icon-change = Alterar o ícone
+toolbar-presets = Predefinições
+toolbar-interfaces = Interfaces
+toolbar-interfaces-shown = Mostrado no bloco Interfaces
+toolbar-interfaces-hidden = Oculto do bloco Interfaces
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora OldSchool
+toolbar-preset-photographer = Aurora Fotógrafo profissional
+toolbar-preset-legacy = Legado
+toolbar-import-textures = Importar texturas
+toolbar-import-sounds = Importar sons
+toolbar-import-animations = Importar animações
+toolbar-import-materials = Importação de materiais
+toolbar-import-meshes = Importar malhas
+toolbar-import-local = Arquivos locais
+toolbar-import-advanced = Importação avançada
+toolbar-import-settings = Configurações de importação
+toolbar-import-bar = Barra de importação
+toolbar-icon-search = Encontre um ícone…
+toolbar-in-top = Na barra de ferramentas superior
+toolbar-bar-top = Barra de ferramentas superior
+toolbar-drop-here = Solte aqui
+toolbar-separator = Separador
+toolbar-interface-edit = Personalize a interface
+toolbar-edit-done = Concluído
+toolbar-edit-top = Superior
+toolbar-edit-bottom = Inferior
+toolbar-edit-left = Esquerda
+toolbar-edit-right = Direita
+toolbar-edit-help = Clique em um item para selecioná-lo, arraste para movê-lo ou clique com o botão direito do mouse para obter as opções de edição.
+toolbar-edit-locked = As barras estão bloqueadas. Desbloqueie-as abaixo para mudar a interface.
+toolbar-edit-move = Mover para
+toolbar-edit-split-before = Dividir antes de
+toolbar-edit-split-after = Dividir depois de
+toolbar-edit-merge-before = Mesclar com bloco anterior
+toolbar-edit-merge-after = Mesclar com o próximo bloco
+toolbar-edit-merge-groups = Mesclar estes blocos
+toolbar-drawer = Gaveta
+toolbar-drawer-default-mode = Exibição padrão de botões
+toolbar-drawer-closes = Fechar após um clique em um botão
+toolbar-block-shortcut = Atalho:
+toolbar-drawer-hides-needs-shortcut = Requer um atalho
+toolbar-floating-close-button = Adicionar um botão de fechamento
+toolbar-block-name = Nome do bloco:
+toolbar-block-button-mode = Bloquear botão de exibição
+toolbar-button-inherited = Herdado
+toolbar-drawer-hides-button = Ocultar o botão enquanto flutua
+toolbar-floating-new = Bloco de flutuação
+toolbar-floating-orientation = Orientação
+toolbar-floating-horizontal = Horizontal
+toolbar-floating-vertical = Vertical
+toolbar-floating-empty = Solte os botões aqui
+toolbar-shortcut-title = Atalho
+toolbar-shortcut-block-name = Bloco: { $name }
+toolbar-shortcut-none = Nenhum atalho
+toolbar-shortcut-press-key = Pressione uma tecla
+toolbar-shortcut-esc = Esc para cancelar
+toolbar-shortcut-clear = Remover
+toolbar-shortcut-overrides = Toma sobre { $name }: este atalho executa a barra de ferramentas em vez do seu uso padrão.
+toolbar-shortcut-used = Já o atalho de { $names }.
+toolbar-shortcut-replace = Substituir
+toolbar-shortcut-add = Adicionar
+toolbar-shortcut-save = Salvar
+toolbar-shortcut-choose-key = Escolha uma chave
+toolbar-shortcut-help = Ativar ou desativar Ctrl, Alt e Shift, em seguida, clique na tecla para alterá-lo.Ctrl ou Alt é necessário, exceto com F1 a F24.
+toolbar-shortcut-inactive = Este botão está em nenhuma barra: seu atalho funciona uma vez que ele é colocado novamente.
+toolbar-shortcut-refused-keyboard = Apenas as teclas do teclado podem ser um atalho.
+toolbar-shortcut-refused-modifier = Uma tecla modificadora sozinha não pode ser um atalho.
+toolbar-shortcut-refused-needs-modifier = Adicionar Ctrl ou Alt: uma tecla sozinha, ou com apenas Shift, digita em campos de texto.
+toolbar-shortcut-refused-altgr = Ctrl+Alt com esta tecla é AltGr, que digita caracteres em muitos teclados.
+toolbar-shortcut-refused-editing = Campos de texto usam este atalho (selecionar tudo, copiar, cortar, colar, desfazer, refazer).
+toolbar-shortcut-refused-navigation = Campos de texto movem-se e apagam-se com esta tecla.
+toolbar-shortcut-refused-typing = O chat e os diálogos usam esta tecla.
+toolbar-shortcut-refused-system = O sistema mantém esse atalho.
+toolbar-shortcut-refused-window = Este atalho fecha ou alterna entre janelas.
+toolbar-shortcut-refused-zoom = Este atalho amplia a interface.
+toolbar-spacer = Espaçamento de blocos
+toolbar-add-spacer = Adicionar espaçamento de bloco
+toolbar-button-settings = Configurações do botão
+toolbar-button-edit = Botão Editar…
+toolbar-button-edit-title = Botão de editar
+toolbar-button-name = Nome do botão:
+toolbar-button-display = Botão de exibição
+toolbar-shortcut-fixed-block-help = O atalho de um bloco fixo mostra e oculta-o; enquanto a interface é editada, ela permanece mostrada.
+toolbar-block-settings = Configurações de bloco
+toolbar-parent-block-settings = Configurações de bloqueio parental
+toolbar-block-edit = Editar o bloco…
+toolbar-block-edit-title = Bloco de edição
+toolbar-block-alignment = Alinhamento
+toolbar-block-sizing = Tamanho do botão
+toolbar-block-fixed-options = Opções de modo fixo
+toolbar-block-floating-options = Opções de modo flutuante
+toolbar-block-kind-fixed = Bloco fixo
+toolbar-block-kind-drawer = Gaveta
+toolbar-block-kind-floating = Bloco de flutuação
+toolbar-block-remove = Remover o bloqueio
+toolbar-move-block = Arraste para mover todo o bloco
+toolbar-remove-block = Remover o bloqueio
+toolbar-drawer-empty = Esta gaveta está vazia.
+toolbar-drawer-drop = Arraste os botões aqui para adicioná-los ou reorganizá-lo.
+toolbar-separator-settings = Configurações de espaçamento de blocos
+toolbar-separator-size = Tamanho / mínimo (px)
+toolbar-separator-stretch = Preencher o espaço disponível
+toolbar-separator-help = Espaços flexíveis compartilham o espaço deixado pelos blocos.Tamanho é sua largura mínima, ou altura em uma barra lateral.
+toolbar-block-navigation = Navegação e SLURL
+toolbar-block-account = Conta e saldo
+toolbar-block-system = Relógio, indicadores e som
+toolbar-block-status = Status de disponibilidade
+toolbar-block-balance = Saldo
+toolbar-block-clock = Relógio
+toolbar-block-ping = Latência da região
+toolbar-block-fps = Taxa de quadros (FPS)
+toolbar-block-network = Tráfego de rede
+toolbar-block-media = Mídia da parcela
+toolbar-block-music = Música da parcela
+toolbar-block-volume = Volume do som
+toolbar-block-notifications = Notificações
+toolbar-block-conversations = Ícones de conversação
+toolbar-block-chat = Nearby chat entrada
+toolbar-category-all = Todas as categorias
+toolbar-section-main = Principal
+toolbar-section-advanced = Avançado
+toolbar-search-all = A pesquisa inclui comandos avançados.
+toolbar-category-avatar = Avatar e movimento
+toolbar-category-communication = Comunicação
+toolbar-category-world = Mundo e viagens
+toolbar-category-creation = Criação e conteúdo
+toolbar-category-interface = Interface e câmera
+toolbar-category-advanced = Ferramentas avançadas
+toolbar-category-help = Ajuda
+toolbar-category-custom = Comandos personalizados
+toolbar-bar-settings = Configurações da barra de ferramentas
+toolbar-menu-group = Menu: { $name }
+toolbar-location-bar = Barra de endereço SLURL
+toolbar-command-build-tool-focus = Construir - câmera
+toolbar-command-build-tool-grab = Construir - mover
+toolbar-command-build-tool-edit = Construir - editar
+toolbar-command-build-tool-create = Construir - criar
+toolbar-command-build-tool-land = Construir - terreno
+bug-copy-version = Copiar versão do visualizador
+toolbar-notecard-save = Salvar em um notecard…
+toolbar-notecard-load = Carregar a partir de um notecard…
+toolbar-notecard-name = Interface de Aurora
+toolbar-notecard-help = Layout e aparência de barras de ferramentas, botões, gavetas e menus.
+toolbar-notecard-saved = Layout de interface salvo no seu inventário.
+toolbar-notecard-invalid = Este notecard não contém um layout de interface compatível.
+toolbar-notecard-unavailable = Este notecard não está mais disponível ou não pode ser copiado.
+toolbar-notecard-layout-changed = A interface mudou enquanto o notecard estava sendo carregado. Carregue-o novamente para aplicar seu layout.
+toolbar-notecard-demo-valid = Interface do fotógrafo
+toolbar-notecard-demo-invalid = Outro notecard
+toolbar-notecard-too-large = Esta configuração de interface é muito grande para um notecard.
+toolbar-saved-interfaces = Interfaces salvas
+toolbar-saved-interfaces-empty = Nenhuma interface salva ainda.
+toolbar-notecard-destination = Pasta: { $path }
+toolbar-notecard-folder-error = A pasta interfaces não pôde ser carregada ou criada. Tente novamente.
+toolbar-current-preset = Interface selecionada: { $name }
+toolbar-preset-custom = Interface personalizada
+toolbar-preset-unsaved = Alterações não salvas
+toolbar-preset-save-title = Salvar a interface
+toolbar-preset-save-name = Nome da interface
+toolbar-preset-save-new = Nova interface pessoal
+toolbar-preset-save-replace = Substituir esta interface pessoal
+toolbar-preset-save-unavailable = Esta interface não pode ser salva aqui. Escolha outro nome ou uma interface pessoal disponível e editável.
+toolbar-interface-delete-unavailable = Esta interface pessoal não pode ser excluída.
+toolbar-interface-delete-confirm = Mover a interface pessoal “{ $name }” para a Lixeira?

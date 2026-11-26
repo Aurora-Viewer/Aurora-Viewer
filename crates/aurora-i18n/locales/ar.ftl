@@ -16117,3 +16117,739 @@ parcel-environment-empty = لا توجد بيئات محفوظة
 parcel-environment-remove-all = حذف كل شيء
 parcel-environment-remove-all-title = هل تريد إزالة كل البيئات التي تم حفظها للطرد؟
 parcel-environment-remove-all-text = ستُحذف البيئات المحفوظة لقطع الأراضي على هذه الشبكة فقط. لن تتأثر الشبكات الأخرى. لا يمكن التراجع عن هذا الإجراء.
+
+### Updated release translations
+
+anim-timeline-channels-hint = أظهر مفاتيح الدوران والموقع لهذه العظام على صفوفها الخاصة
+anim-timeline-channel-rotation = التناوب
+anim-timeline-channel-location = الموقع
+anim-timeline-keying-hint = يا لها من تسجيلات رئيسية مع المكان، التحرك يأخذ مفصل بمفرده، خارج سلسلة إيك. الرسوم المتحركة الحياة الثانية ليس لديها مفاتيح المقياس.
+anim-timeline-keying-auto = آلي: الدوران، وموضع الحوض والمفاصل المتحركة
+anim-timeline-keying-auto-short = تلقائي
+anim-timeline-keying-loc-rot = الموقع والتناوب
+anim-timeline-keying-loc-rot-short = المكان + العنوان
+anim-timeline-keying-rot-short = الأحمر
+anim-timeline-keying-loc-short = المكان
+anim-edit-shortcut-play = تشغيل أو إيقاف
+area-search-scope-heading = حيث
+area-search-scope-parcel = الطرد
+area-search-scope-region = المنطقة
+area-search-scope-neighbours = الجيران
+area-search-objects-heading = أي الأجسام
+inventory-copy-selection-count =
+    { $count ->
+        [one] نسخ بند واحد
+       *[other] نسخ { $count } بندا
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] البند 1
+       *[other] { $count } بنداً
+    }
+inventory-drop-move-here = انتقل إلى هنا
+inventory-drop-copy-here = نسخة هنا
+inventory-drop-link-here = إنشاء روابط هنا
+inventory-sort-description = وصف المشروع
+inventory-sort-reversed = { $order } (عكس)
+inventory-column-creator = المؤسس
+inventory-column-count = البنود
+inventory-columns-fit = حجم جميع الأعمدة لتتناسب
+inventory-columns-reset-widths = إعادة تعيين عرض العمود
+inventory-back = إلى الوراء
+inventory-forward = إلى الأمام
+inventory-up = زيادة رتبة واحدة
+keybinds-inventory-root = اذهب إلى الأعلى
+keybinds-inventory-search = البحث في الجرد
+keybinds-inventory-filter = ترشيح المجلد
+keybinds-inventory-preview = أظهر نافذة الاستعراض
+keybinds-inventory-view-large = صور كبيرة
+keybinds-inventory-view-medium = الصور المتوسطة
+keybinds-inventory-view-small = صور صغيرة
+keybinds-inventory-view-compact = نظرة متكاملة
+keybinds-inventory-view-details = عرض التفاصيل
+keybinds-inventory-view-tiles = عرض البلاطات
+keybinds-inventory-toggle = اختيار أو إلغاء اختيار الصف في التركيز
+keybinds-inventory-menu = فتح قائمة الاختيار
+keybinds-inventory-purge = التطهير من القمامة
+keybinds-inventory-refused = { $keys } يبقى مفتاح قائمة الجرد الخاص بك: اختار آخر.
+inventory-path-edit = أدخل مساراً
+inventory-path-subfolders = الملفات الفرعية
+inventory-copy-path = نسخ المسار
+inventory-show-in-folder = أظهر في المجلد
+inventory-pin = الوصول السريع
+inventory-unpin = إزالة من الوصول السريع
+inventory-quick-access = الوصول السريع
+inventory-quick-access-drop = إسقاط مجلد هنا لتثبيته
+inventory-invert-selection = عكس الاختيار
+inventory-undo = إلغاء
+inventory-redo = إعادة
+inventory-undo-step = إلغاء { $what }
+inventory-redo-step = إعادة { $what }
+inventory-history-move =
+    { $count ->
+        [one] نقل بند واحد
+       *[other] نقل { $count } البنود
+    }
+inventory-history-delete =
+    { $count ->
+        [one] حذف بند واحد
+       *[other] حذف من { $count } بندا
+    }
+inventory-history-rename = إعادة تسمية
+inventory-history-new-folder = مجلد جديد
+inventory-history-copy =
+    { $count ->
+        [one] نسخة من بند واحد
+       *[other] نسخة من { $count } بند
+    }
+inventory-history-link =
+    { $count ->
+        [one] وصلة إلى بند واحد
+       *[other] وصلات إلى { $count } بنداً
+    }
+inventory-undo-nothing = لم يعد هناك شيء يمكن إبطاله: فقد انتقلت تلك البنود أو اختفت.
+inventory-redo-nothing = لم يعد هناك ما يعاد القيام به: فقد نقلت تلك البنود أو اختفت.
+inventory-undo-empty = لا شيء للتراجع عنه
+inventory-redo-empty = لا شيء لإعادة القيام به.
+inventory-undo-dropped = بنود الخطوة الأخيرة تم نقلها أو اختفت: تم إسقاطها. إلغاء مرة أخرى للخطوة السابقة.
+inventory-redo-dropped = بنود الخطوة التالية تم نقلها أو اختفت: تم إسقاطها. أعد القيام بذلك مرة أخرى بالنسبة للخطوة التي تليها.
+inventory-undo-folder-not-empty = هذا المجلد الجديد يحتوي على البنود التي وضعت هناك منذ: نقلهم أولاً، أو حذف المجلد بنفسك.
+inventory-undo-kept-out = وهذه البنود موجودة في القائمة الحالية أو في قوائم السوق الآن: قم بتغييرها هناك.
+inventory-restore-to = يعاد إلى “{ $folder }”
+inventory-restore-to-origins = استعادة إلى مجلداتهم
+inventory-purge-no-undo = التراجع لا يمكن أن يعيدهم.
+inventory-new-tab = نافذة جديدة
+inventory-close-tab = إغلاق علامة التبويب
+inventory-next-tab = العلامة التالية
+inventory-previous-tab = الصفحة السابقة
+inventory-open-in-new-tab = افتح في نافذة جديدة
+inventory-tabs-limit = على أقصى تقدير { $count } قرص
+inventory-copy-to-other-pane = نسخ إلى النافذة الأخرى
+inventory-move-to-other-pane = الانتقال إلى النافذة الأخرى
+inventory-resize-columns = اسحب لتغيير حجم الأعمدة. انقر مرتين لتكييف العمود على اليسار مع محتوياته.
+inventory-resize-columns-first = اسحب لتغيير حجم الأعمدة. انقر مرتين لإعطاء العمود الأول عرضه المعتاد.
+inventory-sort-by-column = انقر للترتيب حسب هذا العمود، مرة أخرى لعكس الترتيب. اسحب لتحرك العمود.
+inventory-filter-hint = ترشيح هذا المجلد
+inventory-filter-close = إغلاق المرشح (Esc)
+inventory-filter-nothing = لا شيء هنا يتطابق مع المرشح
+inventory-view-compact = نظرة متكاملة
+inventory-view-tiles = عرض البلاطات
+inventory-view-per-folder = تذكر عرض كل مجلد
+inventory-group-by = المجموعة حسب
+inventory-group-none = لا شيء
+inventory-group-folders = الملفات
+inventory-group-unknown-creator = المؤلف غير معروف بعد
+inventory-group-today = اليوم
+inventory-group-yesterday = أمس
+inventory-group-this-week = في الأيام السبعة الأخيرة
+inventory-group-this-month = في الثلاثين يوما الأخيرة
+inventory-group-this-year = في وقت سابق من هذا العام
+inventory-group-earlier = منذ وقت طويل
+inventory-group-no-date = لا تاريخ
+cmdline-mod-zoffset-usage = حدد ارتفاع الصورة التي ترفعها (الاستخدام: /zoffset value or +delta).
+dev-toolbox-n4 = تحميل المخزون
+dev-toolbox-what-n4 = المجلدات قراءة، فشل وغادر، تحميل القراءة في الطيران وإعادة محاولة؛ لا أسماء
+ui-context-inspect-avatar = تفحص الصورة
+inspect-window = التفتيش
+inspect-tab-objects = اﻷشياء
+inspect-objects-title =
+    { $count ->
+        [one] { $count } جسم
+       *[other] { $count } قطعة
+    }
+inspect-summary-items =
+    { $count ->
+        [one] البند { $count }
+       *[other] { $count } بند
+    }
+inspect-open-profile = افتح الملف الشخصي
+inspect-over-limit = فوق حدودك
+inspect-limit-tip = حد تعقيدك: { $limit }
+inspect-search = البحث عن البنود أو المبدعين
+inspect-outlined = { $name } يحدد في العالم
+inspect-area-head = رئيس
+inspect-area-body = الهيئة
+inspect-area-arms = الذراعين واليدين
+inspect-area-legs = الساقين والقدمين
+inspect-area-hud = الرؤية
+inspect-area-other = مصادر أخرى
+inspect-area-world = اﻷشياء
+inspect-own-eyes = عيون النظام
+inspect-own-body = هيئة المنظومة
+inspect-own-description = جزء من الصورة ذاتها، وليس ملحقاً
+inspect-own-maker = الشخصية · Second Life
+inspect-own-place = الشخصية
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } ميغابايت
+inspect-section-complexity = { $value } التعقيد
+inspect-no-match = لا يوجد ما يتطابق مع " { $query } ".
+inspect-spoken-worn = { $name }, ملبوسة { $point })التعقيد( { $complexity }المقدم من { $creator }
+inspect-spoken-object = { $name }مملوكة لـ { $owner })التعقيد( { $complexity }المقدم من { $creator }
+inspect-look-at-tip = حرك الكاميرا نحوه
+inspect-profile-tip = افتح ملف المُنتج
+inspect-made-by = من إعداد
+inspect-owned-by = مملوكة لـ
+inspect-worn-on = ملبسة على
+inspect-prims-count =
+    { $count ->
+        [one] { $count } الأولية
+       *[other] { $count } أولية
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = ذاكرة النسيج
+inspect-tile-vram = ذاكرة الفيديو
+inspect-tile-prims = الأجزاء الأساسية
+board-close = إغلاق { $title }
+board-grow = توسيع { $title }
+board-remove = تحذف { $name }
+board-more = و { $count } أكثر
+board-more-short = +{ $count }
+board-some-of = { $shown } من { $all }
+board-of-all = من { $all }
+stage-turn-left = إتجهي إلى اليسار
+stage-turn-right = إذهب إلى اليمين
+stage-higher = انظر من أعلى
+stage-lower = انظر من الأسفل
+stage-nearer = أقرب
+stage-further = أبعد
+stage-reset = العودة إلى البداية
+stage-hint = إسحب للدوران، اسحب باليمين للتحرك
+stage-light = خلفية خفيفة
+stage-dark = خلفية داكنة
+stage-playing = AO
+stage-paused = موقوفة
+stage-pause-tip = توقّف حركتهم
+stage-play-tip = تشغيل الرسوم المتحركة
+stage-loading = إعداد العرض الثلاثي الأبعاد...
+stage-nothing = لا شيء لعرضه في 3D بعد.
+stage-refused = الرؤية الثلاثية الأبعاد معطلة بينما RLVa يحد من ما يمكنك رؤيته
+inspect-your-limit = حدك: { $limit }
+inspect-without-it = { $value } بدونها
+inspect-you = أنت
+inspect-person = شخص
+inspect-difference = الفرق
+inspect-drawn-in-full = المبالغ المسحوبة بالكامل
+inspect-nobody = لا يعرف أحد بعد مدى تعقيده.
+inspect-aside-count = { $count } مخصصة
+inspect-is-aside = مخصصة
+inspect-set-aside = المخصصة
+inspect-set-aside-tip = انظر إلى التعقيد بدون هذا البند، فقط في هذه النافذة: لا شيء يتغير في العالم.
+inspect-put-back = ضعها في مكانها
+inspect-put-back-tip = أعد حساب هذا البند
+inspect-complexity-spoken = التعقيد { $value })العدد( { $rank } من { $count } الناس هنا
+inspect-stage-outfit = الملبس
+inspect-stage-objects = الأهداف
+inspect-stage-back = العودة إلى كل شيء
+inspect-place-made-by = { $place } :: من إعداد { $name }
+inspect-owned-by-name = مملوكة لـ { $name }
+inspect-tile-items = البنود
+inspect-tile-figures = الأرقام
+inspect-col-item = الاسم
+inspect-point = البند
+inspect-look-at = انظري
+inspect-selected-count = { $count } مختارة
+inspect-worn-count = { $count } مستهلكة
+inspect-creators-word = المبدعون
+inspect-areas-word = مناطق الجسم
+inspect-owners-word = المالكون
+inspect-triangles-word = مثلثات
+inspect-made-of = { $count } من { $all } البنود
+inspect-kilobytes = { $n } كيلوبايت
+inspect-linkset-order = { $count }، في الترتيب الأيسر
+inspect-reset-columns = إعادة تعيين الأعمدة
+inspect-by-creators =
+    { $count ->
+        [one] { $items } من قبل مؤلف واحد
+       *[other] { $items } بحسب { $count } المبدعون
+    }
+inspect-owner-button = نبذة عن المالك
+inspect-group-button = نبذة عن المجموعة
+inspect-creator-button = نبذة عن المؤلف
+inspect-land-others = غير ذلك { $n }
+inspect-land-these = هذه { $n }
+inspect-land-free = مجاني { $n }
+inspect-land-unknown = تظهر غرفة الطرد عندما تكون الأشياء كلها على الطرد الذي أنت عليه.
+ui-login-unencrypted = تسجيل دخول غير مشفّر
+ui-login-unencrypted-body = يبدأ عنوان تسجيل الدخول إلى { $server } بـ http:// بدل https://، لذا لن يكون تسجيل الدخول مشفّرًا. من يستطيع مراقبة اتصالك، مثل الشبكة المشتركة أو العامة، قد يقرأ كلمة مرورك ويستخدم حسابك. لم يُرسل شيء بعد. يمكنك طلب عنوان https:// من الشبكة. يُحفظ اختيارك لهذا الخادم.
+ui-login-unencrypted-accept = تسجيل الدخول دون تشفير
+world-appearance-clothing-layers-full = جميع طبقات الملابس الـ 60 مستخدمة، ينبغي إزالة الطبقة قبل ارتداء هذا البند.
+ui-options-ray-tracing = تتبع الأشعة
+ui-options-ray-traced-shadows = ظلال الشمس المتبع الأشعة السينية
+ui-options-ray-traced-shadows-help = تتبع ظلال الشمس والقمر شعاعاً بعد شعاع بدلاً من القراءة من خرائط الظلال: تحديداً حيث تتلامس الأشياء وأي مسافة. يحتاج إلى الظلال وبطاقة رسومية مع تتبع الأشعة، وتكاليف أكثر على بطاقة الرسوميات
+ui-options-ray-traced-lights = ظلال ضوء محلية
+ui-options-ray-traced-lights-help = ظلال من أضواء النقاط حول (المصابيح، الشموع)، والتي لا تلقي أي شيء آخر، ومن المعرض عندما يكون مظلات المعرض على، في مكان خرائط الظلال الخاصة بهم. الأكثر تكلفة من خيارات تتبع الأشعة: أفضل تركها على الرسوم المتكاملة
+ui-options-rt-quality = نوعية تتبع الأشعة
+ui-options-rt-quality-help = يبقى كل تأثير متتبع على: المستويات الأدنى تتبع عينات أقل والضوء غير المباشر على شبكة أكثر خشونة ، لمزيد من الإطارات في الثانية على بطاقة رسومية أصغر. عالية هي الصورة الكاملة للدلوكس (RT). اختيار مستوى أيضا يحدد الأضواء التي تلقي الظلال
+ui-options-rt-sun-softness = نعومة ظلال الشمس
+ui-options-rt-sun-softness-help = مدى مرونة حواف ظلال الشمس المتتبعة: 1 هو الشمس الحقيقية، 0 الحواف الحادة، أكثر للشمس الأكثر غموضا
+ui-options-rt-lamp-softness = الليونة المحلية للظل الخفيف
+ui-options-rt-lamp-softness-help = مدى مرونة حواف ظلال المصابيح: 1 يتبع حجم كل مصباح، صفر للحواف الحادة
+ui-options-rt-shadow-lamps = الأضواء التي تلقي الظلال
+ui-options-rt-shadow-lamps-help = كم عدد المصابيح الأقرب التي تلقي ظلالاً متتبعة؛ وما زالت المصابيع الأخرى مضاءة، بدون ظلال.
+ui-options-ray-traced-indirect = الضوء غير المباشر المتتبع للأشعة
+ui-options-ray-traced-indirect-help = الضوء المنعكس من الأسطح المحيطة، المتتبع إلى ما وراء ما تظهره الشاشة، بدلاً من الضوء غير المباشر للغلاف الجوي العالمي
+ui-options-gi-probes = مسبار الإضاءة العالمية
+ui-options-gi-probes-help = مسبار ينتشر عبر المشهد الذي يحتفظ بالضوء من العديد من الارتدادات والسماء التي يرونها: الغرف المغلقة تظل مظلمة، الضوء يذهب حول الزوايا. حوالي 0.8 مللي ثانية على بطاقة الرسومات
+ui-options-ray-traced-reflections = انعكاسات متتبعة للأشعة
+ui-options-ray-traced-reflections-help = انعكاسات لما لا تظهره الشاشة، بدلاً من الانعكاس في الفضاء بين الشاشة والشاشة، التي يجب أن تكون على الشاشة
+ui-options-ray-tracing-unsupported = هذه البطاقة الرسومية أو مشغلها لا يحتوي على تتبع الأشعة
+ui-options-ray-tracing-vr = غير متاح في جلسة بدأت لـ VR
+ui-options-tab-ray-tracing = تتبع الأشعة
+ui-options-deluxe-rt-warning-title = هل تريد أن تقوم بتشغيل (RT)؟
+ui-options-deluxe-rt-warning-text = Deluxe (RT) هي عالية مع الظلال والضوء غير المباشر الذي تتبعه بطاقة الرسوميات. إنها تحتاج إلى بطاقة مع تعقب الأشعة (NVIDIA RTX، AMD Radeon RX 6000 أو أحدث، Intel Arc) ومحول محدث، وهي تكلف أكثر بكثير من High: على بطاقة متوسطة النطاق يمكن أن ينخفض معدل الإطارات كثيراً في الأماكن المكتظة. لا يزال التعقب الضوئي قيد الاختبار: إذا كانت الصورة تبدو خاطئة أو تباطأ المشاهدين، ارجع إلى High. تحتوي علامة التبويب التعقيب الضوئي على إعداداتها.
+ui-options-deluxe-rt-warning-turn-on = إشغل
+ui-options-ray-tracing-needs-shadows = يحتاج إلى الظلال
+ui-options-ray-tracing-needs-ssr = يحتاج إلى انعكاسات شاشة الفضاء
+ui-options-preset-deluxe = فاخرة (RT)
+ui-options-normal-precision = دقة الانعكاس
+ui-options-normal-precision-help = مدى دقة الإبقاء على اتجاه كل سطح للانعكاسات. يمكن أن تظهر القيمة القياسية خطوات في انعكاس الأسطح السلسة والمنحنية مثل طلاء السيارة؛ وتزيل القيمة العالية هذه الخطوات وتستخدم المزيد من ذاكرة الفيديو. تستخدم القيمة التلقائية القيمة المرتفعة مع انعكسات تتبع الأشعة، حيث تظهر الخطوات أكثر، أما القيمة المعتادة فتعمل خلاف ذلك
+ui-options-normal-precision-automatic = آلي
+ui-options-normal-precision-standard = المعيارية
+ui-options-normal-precision-high = مرتفع
+ui-options-private-point-at-help = إخفي الكائن الذي تقوم بتعديله، وابق ذراع التحرير منخفضاً، وإخفي شعاع التحرير.
+ui-options-private-edit-beam = إخفاء شريط التحرير
+ui-options-private-edit-beam-help = إخفاء الحزمة بالكامل أثناء تحرير أو أخذ الأشياء، على الشاشة الخاصة بك وللمشاهدين الآخرين. لا تتأثر إشارات هدف الاختيار ومنح/إسقاط الحزم.
+common-window-outside = تحرك خارج نافذة العرض
+common-window-inside = أعيده إلى نافذة المشاهد
+common-window-rename-name = انقر مرتين لإعادة تسمية
+common-carry-hint = انقر لإسقاطها هنا، اضغط على Esc لإطلاقها
+common-window-paused-photo = تم إيقافه بينما طريقة التصوير مفتوحة
+common-window-paused-director = توقف العرض بينما يعزف المدير
+common-window-paused-interface = تم إيقافه بينما الوصلة البينية مغلقة
+ui-options-warn-live-preview = تحذير عندما لا يمكن استعراض نسيج أو مادة
+ui-options-warn-live-preview-help = في مختار نافذة البناء، النقر على بند لا نسخة لا يطبق أي شيء حتى موافق: قل ذلك.
+ui-texture-picker-live-preview-texture = لا نستطيع عرض صورة مسبقة لهذا النسيج لأنه ليس نسخة.
+ui-texture-picker-live-preview-material = لا نستطيع عرض مسبق لهذه المادة لأنها ليست نسخة.
+fetch-invalid-url = عنوان URL غير صحيح
+ui-chat-close-all-ims = أغلق جميع المحادثات IM
+ui-chat-close-all-ims-question = إغلاق جميع المحادثات IM وإنهاء المكالمة النشطة؟
+ui-chat-confirm-close-all-ims = تأكّد قبل إغلاق جميع المحادثات IM
+ui-chat-confirm-close-all-ims-help = يسأل قبل إغلاق جميع المحادثات IM عندما يكون لديك مكالمة صوتية نشطة.
+ui-options-aurora-controls-compact-help = تفتح نافذة التحكمات بشكل مضغوط على الكاميرا: عصا التحكم والتكبير والتدحرج. يقوم زر شريط العنوان بالتبديل بين المضغوط والمكتمل، ويحدد هذا أيضاً. مع النوافذ الكلاسيكية، تفتح الكاميرا في نافذه الكاميرا الصغيرة للمشاهد القديم بدلاً من ذلك.
+rlva-restart-hint = RLVa يبدأ عند دخولك. بمجرد أن يتم تشغيله، تفعيله أو تعطيله يدخل حيز التنفيذ في البدء التالي للمشاهدة: تبقى الأشياء المقيدة حتى ذلك الحين.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa سيتم تفعيله بعد أن تعيد التشغيل.
+rlva-toggle-disabled-restart = سيتم تعطيل RLVa بعد أن تقوم بإعادة التشغيل.
+livemesh-import-connect = يربط Blender مع plug-in 0.11.0 أو أحدث، أو Maya مع plug - in 0,2,0 أو الأحدث، لإعداد LODs الاستيراد.
+livemesh-import-preparing = إعداد الكائن ومستوياته في Blender أو Maya ...
+livemesh-import-ready = لقد تم استلام بيانات الـ LOD جاهزة في المستورد
+livemesh-import-failed = فشل إعداد الاستيراد: { $error }
+livemesh-import-timeout = لم يستكمل Blender أو Maya إعداد الاستيراد. تحقق من الاتصال (في Blender، استخدم طريقة الكائن) وحاول مرة أخرى.
+livemesh-shape-apply-tooltip = حدد تعديل الحقوق، ثم قم بتعديل الهيكل المختار في Blender أو Maya وشبكاته المقيدة (من خلال MayaStar لـ MayaStar rig). اختار هيكل محلي متوافق مع Second Life.
+livemesh-shape-update-apply = تحديث Blender plug-in إلى 0.10.0 أو أحدث، أو Maya plug-ins إلى 4.0 0 أو أكثر، ثم إعادة توصيله.
+livemesh-shape-applied = الشكل المطبق على الهيكل المختار.
+livemesh-shape-tooltip = تحقق من حقوق تعديل الشكل المستعمل وإنشاء جسم مرجعي جديد في Blender أو Maya.
+livemesh-shape-connect = ربط Aurora plug-in في Blender أو Maya أولاً.
+livemesh-shape-update-plugin = تحديث Blender plug-in إلى 0.9.0 أو أحدث، أو Maya plug-In إلى 3.0 0 أو لاحقا، ثم إعادة توصيله.
+livemesh-shape-timeout = لم تؤكد Blender أو Maya عملية الاستيراد. حاول مرة أخرى (في Blender، انتقل إلى وضع الكائن).
+livemesh-shape-success = استيراد الشكل كجسم مرجعي جديد معدّل.
+blender-live-maya-version = Aurora LiveMesh لـ Maya { $version }
+blender-live-maya-instructions = حفظ ZIP وفك تشفيرها، ثم سحب install.mel إلى مايا viewport. فتح LiveMesh من رف Aurora، أضف شبكة الشبكة الخاصة بك ونقر على Connect.
+blender-live-save-maya = حفظ ملحق مايا...
+blender-live-maya-saved = تم حفظ الملحق. إخراج ZIP و سحب install.mel إلى مايا viewport.
+livemesh-plugin-connected = وصلة إضافية متصلة
+livemesh-token-refused = حاول برنامج الاتصال بدون مفتاح هذه المُشاهدة المسبقة. لا يمكن الاتصال إلا بملحق Aurora في Blender أو Maya.
+livemesh-waiting-plugin = في انتظار بلندر أو مايا...
+blender-live-objects-help = الشبكات التي يرسلها Blender أو Maya. اختار واحدة لوضعها، أو استوردها من قائمة.
+blender-live-size-note = الحجم يضاعف ما يرسله الملحق، لذا فإن التحرير اللاحق في Blender أو Maya يحتفظ به.
+blender-live-avatar-help = بالنسبة للشبكات المضلعة: أرسل شكلك إلى Blender أو Maya لوضع النماذج عليه.
+livemesh-shape-section = شكلك في بلندير أو مايا
+blender-live-import-help = تجمد صورة سريعة للكائن من أجل الاستيراد العادي: مراجعة، السعر، ثم التأكيد. التحرير اللاحق في Blender أو مايا لا يغيرها.
+blender-live-changed-tip = الزمن منذ آخر تعديل لهذا الكائن بواسطة Blender أو Maya
+fit-lab-section = مختبر التكيف
+fit-lab-help = إن نموذجك يبدو وكأنه صورة حقيقية. فهناك نماذج ترتدي ما ترتديه، وكل واحدة منها تحمل جسداً مختلفاً، وتقف أمامك لتظهر لك كيف أن الملابس تلائم العديد من الأشكال. وأنت وحدك الذي ترى هذه النماذج: فلا شيء يُرسَل أو يُحفَظ.
+fit-lab-body-me = أنا
+fit-lab-body-slim = ضعيف
+fit-lab-body-curvy = المنحنى
+fit-lab-body-full = الرقم الكامل
+fit-lab-body-athletic = الرياضة
+fit-lab-body-tall = طويل
+fit-lab-body-petite = الصغير
+fit-lab-motion = اقتراح
+fit-lab-motion-stand = الوقوف
+fit-lab-motion-walk = المشي
+fit-lab-motion-sit = إجلس
+fit-lab-motion-range = نطاق الحركة
+fit-lab-pose = الوضع
+fit-lab-pose-all = جميعهم، بالتناوب
+fit-lab-pose-arms-up = ارفعوا أيديكم
+fit-lab-pose-reach = التمدُّ إلى الأمام
+fit-lab-pose-hug = الأيدي متقاطعة
+fit-lab-pose-squat = الوقوف
+fit-lab-pose-kneel = إركع
+fit-lab-pose-knee-up = رفع الركبة
+fit-lab-pose-twist = تويست
+fit-lab-pose-bend = انحني للأمام
+fit-lab-motion-like-me = مثلي
+fit-lab-show = أظهروا النموذجين
+fit-lab-place = أحضرهم إلى هنا
+fit-lab-remove = إزالة الدمى
+fit-lab-choose = اختار هيئة واحدة على الأقل.
+fit-lab-clip = أظهر مكان مرور الجثة
+fit-lab-clip-note = الأحمر: الجسم يخرج من الملابس. الكهرومغناطيسي: الجسم والملابس تلتقي. على avatar الخاص بك ونماذج، كما هو مرئي من الكاميرا. كل شيء آخر معقد أن ترتدي يعتبر جسما: إزالة سترة أو الشعر الذي يرتدى فوق الملابس
+blender-live-levels-pending = يقوم Blender أو Maya بإعداد مستويات التفاصيل عندما تنقر على Import.
+blender-live-levels-note = تم إعداده في Blender أو Maya من كل كائن LiveMesh settings.
+blender-live-quick-look-changed = تم تغييرها في (بلندر) أو (مايا) منذ { $ago } سنة
+blender-live-warning-textures = تم تجاوز النسيج، وعرض اللون العادي
+blender-live-warning-not-sent = غير موجود في العرض التمهيدي
+blender-live-undo-derez = Derezzed { $name } · لا يزال في قائمة الملحقات
+blender-live-undo-detach = منفصل { $name } · لا يزال في قائمة الملحقات
+inventory-open-current = مفتوح
+inventory-folder-back = إلى الوراء
+inventory-folder-forward = إلى الأمام
+inventory-folder-up = اذهب إلى المستوى التالي
+area-search-metres = { $n } m
+area-search-band-reach = في متناول اليد
+area-search-band-close = بالقرب من
+area-search-band-around = حولك
+area-search-band-further = مزيد من المعلومات
+area-search-band-far = أبريل
+area-search-band = المنطقة
+area-search-within = داخل { $distance }
+area-search-within-across = داخل { $distance } عبر
+area-search-between = { $from }–{ $to }
+area-search-any-distance = أظهر كل مسافة
+area-search-from = المسافة من
+area-search-to = المسافة إلى
+area-search-bar-tip =
+    { $count ->
+        [one] جسم واحد، { $from } إلى { $to }
+       *[other] { $count } )أ( اﻷشياء، { $from } إلى { $to }
+    }
+area-search-of-objects = من { $total } قطعة
+area-search-li = { $value } لي
+area-search-li-count = { $value } الارتطام بالأرض
+area-search-owner-count =
+    { $count ->
+        [one] مالك واحد
+       *[other] { $count } مالك
+    }
+area-search-object-count =
+    { $count ->
+        [one] جسم واحد
+       *[other] { $count } قطعة
+    }
+area-search-objects-word = اﻷجسام
+area-search-in-reach = هنا
+area-search-tab-objects = اﻷشياء
+area-search-tab-owners = المالكون
+area-search-hint-wide = الأشياء، المالكون، المبدعون أو UUIDs
+area-search-kind-heading = نوع الجسم
+area-search-kind-tip = انقر: هذه فقط. مرة أخرى: مخفية.
+area-search-kind-any = أيام
+area-search-kind-only = فقط هذه
+area-search-kind-hidden = مخفي
+area-search-kind-attached = مرفق
+area-search-kind-probes = مسبار
+area-search-click-all = الجميع
+area-search-click-any-short = أي
+area-search-permissions = الإذن
+area-search-price-heading = سعر البيع، بالنسبة للأشياء المعروضة للبيع
+area-search-price-to = إلى
+area-search-price-tip = اختار "للبيع" أولا
+area-search-linked = الأعداد الأولية المرتبطة
+area-search-one-field = البحث في حقل واحد
+area-search-regex-switch = التعبيرات المنتظمة
+area-search-regex-invalid = تعبير منتظم غير صحيح
+area-search-reset-filters-tip = استعادة كل مرشح؛ يبقى نص البحث
+area-search-save-defaults-tip = افتح مع هذه المرشحات من الآن فصاعداً
+area-search-reset-search = إعادة تعيين نصوص البحث
+area-search-reset-filters = إعادة تعيين خيارات المرشح
+area-search-reset-ranges = إعادة المسافة والسعر
+area-search-reset-all = إعادة كل شيء
+area-search-more = أكثر
+area-search-several = اختار عدة
+area-search-several-tip = النقرات تضيف إلى الاختيار (أيضا Ctrl أو Shift + نقرة، Ctrl+A)
+area-search-actions = الإجراءات
+area-search-nothing = لم ترد أي أشياء بعد.
+area-search-nothing-for-sale = لا شيء للبيع هنا
+area-search-not-for-sale = غير مخصصة للبيع
+area-search-from-price = من { $price }
+area-search-nearest = أقرب أولاً
+area-search-heaviest = الأثقل أولا
+area-search-order-tip = تغيير الترتيب: أقرب أو أثقل أولاً
+area-search-rank = #{ $rank } من { $all }
+area-search-rank-here = #{ $rank } هنا
+area-search-card-more = أظهر كل صورة
+area-search-card-less = أظهر أقل
+area-search-open-group = افتح المجموعة
+area-search-spoken = { $name }, { $distance })أ( تأثير اﻷرض { $li }مملوكة لـ { $owner }
+area-search-owner-spoken = { $name }, { $count } الأجسام القريبة من الأرض { $li }
+area-search-stage-line = { $distance } بعيدا { $li } أثر الأراضي { $owner }
+area-search-tile-3d = نظرة ثلاثية الأبعاد
+area-search-on = { $count } على
+area-search-on-word = على
+area-search-more-on =
+    { $count ->
+        [one] مرشح آخر على
+       *[other] { $count } مرشحات إضافية على
+    }
+ui-options-legacy-lists = استيراد قوائم من برنامج العرض القديم
+ui-options-legacy-lists-help = يضيف تاريخ النقل عن بعد لهذا الحساب، والقائمة السوداء للأصول، وقائمة مرشحات الوسائط ومجموعات الاتصالات. ملفات Viewer القديمة قراءة فقط.
+ui-options-legacy-lists-button = الاستيراد من العرض القديم...
+ui-options-legacy-lists-no-account = تسجيل الدخول لاستيراد قوائم هذا الحساب.
+ui-options-legacy-lists-title = الاستيراد من العرض القديم
+ui-options-legacy-lists-text = كل شيء يضاف إلى قوائم هذا الحساب ولا شيء هنا يتم إزالته. ما أسماء القائمة السوداء الأصول تغادر العالم في وقت واحد. الاستيراد مرة أخرى يعيد ما قمت بإزالته هنا.
+ui-options-legacy-lists-searching = البحث عن مجلدات العرض القديمة...
+ui-options-legacy-lists-none = لم يُعثر على مجلد لـ Legacy Viewer مع قوائم لهذا الحساب.
+ui-options-legacy-lists-teleports = تاريخ النقل عن بعد ({ $count })
+ui-options-legacy-lists-derender = القائمة السوداء للأصول ({ $count })
+ui-options-legacy-lists-media = قائمة مرشحات الوسائط ({ $count })
+ui-options-legacy-lists-contact-set-entries = مدخلات مجموعات الاتصالات ({ $count })
+ui-options-legacy-lists-confirm = الواردات
+ui-options-legacy-lists-added = تاريخ النقل عن بعد: { $teleports }قائمة الأصول السوداء: { $derender }, مرشح الوسائط: { $media }, مجموعة مدخلات الاتصال: { $sets }.
+ui-options-legacy-lists-nothing = لا شيء جديد: هذا الحساب لديه هذه القوائم بالفعل.
+ui-options-legacy-lists-failed = لا يمكن قراءة: { $files }.
+ui-options-legacy-lists-unsaved = لم يتمكن من حفظ، ترك كما كان: { $files }.
+ui-options-legacy-lists-other-grid = على هذه الشبكة، يمكن أن ينتمي مجلد بنفس الاسم إلى شبكة أخرى: تحقق من أنه هو الصحيح.
+ui-options-build-show-beams-hint = إظهار شعاع اختيارك وتلك من صور أخرى عند التحرير، الإمساك، أو إعطاء. هذا فقط التحكم في العرض؛ استخدام الخصوصية > إخفاء تحرير الشعاع لإيقاف تحرير شعاع محليا وعبر الشبكة.
+teleport-failed-title = فشلت عملية النقل
+teleport-error-invalid-tport = محاولات النقل عن بعد محدودة بـ 6 في الدقيقة. إذا كنت تواجه مشكلة، انتظر دقيقة واحدة ثم حاول النقل من جديد. إذا استمرت المشكلة أخرج من البرنامج ودخل مرة أخرى.
+teleport-error-invalid-region-handoff = حدثت مشكلة في معالجة عبور منطقتك. قد تحتاج إلى الدخول مرة أخرى قبل أن تتمكن من عبور المناطق. إذا استمرت هذه الرسالة، يرجى الاتصال بالدعم.
+teleport-error-blocked-tport = آسف، النقل عن بعد محظور حاليا. حاول مرة أخرى في لحظة. إذا كنت لا تزال لا تستطيع النقل من بعد، الرجاء الخروج ثم الدخول مجددا لحل المشكلة.
+teleport-error-nolandmark-tport = آسف، لكن النظام لم يتمكن من تحديد موقع الوجهة المرجعية
+teleport-error-timeout-tport = آسف، لكن النظام لم يتمكن من إكمال الاتصال بالنقل عن بعد. حاول مرة أخرى في لحظة.
+teleport-error-no-help-island = لا تستطيع العودة إلى جزيرة (ويلكوم)
+teleport-error-noaccess-tport = آسف، ليس لديك القدرة على الوصول إلى ذلك المقصد.
+teleport-error-missing-attach-tport = لم تصل مرفقاتك بعد. حاول الانتظار لثواني قليلة أخرى أو إخرج من الحساب ثم ادخل مرة أخرى قبل محاولة الانتقال إلى الحساب الآخر.
+teleport-error-too-many-uploads-tport = صف الأصول في هذه المنطقة ممتلئ حالياً، لذا لن يتمكن طلب نقلك من النجاح في الوقت المناسب. رجاءً حاول مرة أخرى بعد بضع دقائق أو اذهب إلى منطقة أقل ازدحاماً.
+teleport-error-expired-tport = آسف، ولكن النظام لم يتمكن من إكمال طلب نقلك في الوقت المناسب. يرجى محاولة مرة أخرى بعد بضع دقائق.
+teleport-error-expired-region-handoff = آسف، ولكن النظام لم يتمكن من إكمال عبور منطقتك في الوقت المناسب. يرجى محاولة مرة أخرى بعد بضع دقائق.
+teleport-error-preexisting-tport = آسف، ولكن النظام لم يتمكن من بدء نقلك عن بعد. يرجى محاولة مرة أخرى في بضع دقائق.
+teleport-error-no-host = لا يمكن العثور على مقصد النقل عن بُعد. قد يكون المقصد غير متاح مؤقتاً أو لم يعد موجوداً. حاول مرة أخرى بعد بضع دقائق.
+teleport-error-no-inventory-host = ونظام الجرد غير متاح حاليا.
+teleport-error-must-get-age-region = يجب أن يكون عمرك 18 سنة أو أكثر للدخول إلى هذه المنطقة.
+teleport-error-special-usage-blocked = لا يمكن دخول المنطقة.{ $region }' هو منطقة ألعاب المهارات، ويجب أن تستوفي معايير معينة من أجل الدخول. للمزيد من التفاصيل، يرجى مراجعة الأسئلة الشائعة حول ألعاب مهارات: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = لا يمكن دخول المنطقة. إنها منطقة ألعاب مهارة، ويجب أن تستوفي معايير معينة من أجل الدخول. للمزيد من التفاصيل، يرجى مراجعة الأسئلة الشائعة حول ألعاب المهارة: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = رفضت شبكتك المنزلية عودتك. هذا يعني عادة أن إعداد عنوان Hypergrid لا يتطابق مع العنوان الذي تستخدمه الشبكات الأخرى له. اتصل بمشغلي شبكة منزلك؛ يأخذك الدخول مرة أخرى إلى المنزل في الوقت نفسه.
+teleport-hint-hypergrid-unreachable = لم يكن بالإمكان الوصول إلى الشبكة الأخرى، وربما تكون غير متصلة بالإنترنت، أو ربما تشير الوصلة إلى عنوان قديم.
+teleport-hint-hypergrid-visitors-refused = تلك الشبكة لا تسمح إلا للمقيمين في بعض الشبكات.
+teleport-hint-hypergrid-destination-gone = لم تعد المنطقة المستهدفة موجودة أو انتقلت، وقد تكون المعالم والروابط مع الشبكات الأخرى قديمة.
+toolbar-edit = تعديل الأزرار والقوائم...
+toolbar-title = الأزرار والقوائم
+toolbar-interface-locked = الوصلة البينية مقفلة
+toolbar-help = اسحب الأزرار أو مدخلات القائمة إلى أعلى، أسفل أو الشريط الجانبي. إسقط الزر هنا لإزالته. انقر بزر الماوس الأيمن على أي زر لتغيير مظهره.
+toolbar-help-classic = اسحب الأزرار أو مدخلات القائمة إلى أعلى، أسفل أو الشريط الجانبي. إسقط الزر هنا لإزالته. انقر بزر الماوس الأيمن على أي زر لتغيير مظهره.
+toolbar-help-modes = اختار الأيقونات، العلامات، كلاهما، أو الشريط الافتراضي لكل زر. اسحب المدخلات داخل قائمة Aurora لإعادة ترتيبها.
+import-menu-textures = النسيج
+import-menu-animations = الرسوم المتحركة
+import-menu-sounds = الأصوات
+import-menu-materials = المواد
+import-menu-meshes = شبكة
+import-menu-options = خيارات الاستيراد
+import-upload-payment-title = تحميل
+import-upload-payment = دفعت L${ $cost } مقابل الرفع.
+import-quick-textures =
+    { $count ->
+        [one] الواردات · النسيج: 1 · L${ $cost }?
+       *[other] الواردات · النسيج: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] الواردات · المواد: 1 · L${ $cost }?
+       *[other] الواردات · المواد: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] الواردات · الأصوات: 1 · L${ $cost }?
+       *[other] الواردات · الأصوات: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] اختر حجم الاستيراد. يمكن استيراد الأنسجة المؤهلة بحجم 2048 × 2048:
+       *[other] ({ $count }) اختر حجم الاستيراد. يمكن استيراد الأنسجة المؤهلة بحجم 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] اختر حجم الاستيراد. يمكن استيراد صور المواد المؤهلة بحجم 2048 × 2048:
+       *[other] ({ $count }) اختر حجم الاستيراد. يمكن استيراد صور المواد المؤهلة بحجم 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = رفع الصور المجانية بحجم 2048 × 2048 دون سؤال
+import-quick-free-full-size-help = "Import textures" و"Import materials" بعد ذلك تسأل 1024 أو 2048 فقط عندما يكلف التحميل L$.
+ui-bars-customize-bars = تعديل الواجهة البينية
+build-tool-in-use = قيد الاستخدام
+build-create-options-toggle = أظهر/اخفي الخيارات
+build-create-keep-creating = واصلي الإبداع
+build-create-center-on-prim = المركز على الأولوية
+build-create-copy-prim-rotation = نسخة من الدوران الرئيسي
+build-create-align-to-surface = السطح
+build-capture-shape-button = نسخة من شكل رئيس: انقر هنا، ثم رئيس في العالم
+build-capture-shape-armed = انقر على نقطة لنسخ شكلها (الإفلات يقوم بالإلغاء)
+build-capture-shape-full = يتم الاحتفاظ بـ 20 شكلاً. إزالة أحدها لتكرار الآخر
+build-capture-shape-remove = أزل هذا الشكل
+build-capture-shape-tooltip = شكل مستنسخ ({ $kind })
+build-capture-shape-not-a-prim = لا يمكن نسخ سوى شكل من أشكال الأول
+build-capture-shape-mesh-or-sculpt = لا يمكن استنساخ شكل شبكة أو رأس نحتي
+build-capture-shape-no-modify = أنت بحاجة إلى إذن لتعديل هذا النموذج لنسخ شكله
+import-other-options = خيارات أخرى
+toolbar-button-icons = إيقونة فقط
+toolbar-button-text = الوسم فقط
+toolbar-button-icons-text = الرمز والعلامة
+toolbar-icon-default = استعادة الأيقونة الافتراضية
+toolbar-icon-choose = اختار أيقونة
+toolbar-icon-change = تغيير الأيقونة
+toolbar-presets = المحددات المسبقة
+toolbar-interfaces = الوصلات البينية
+toolbar-interfaces-shown = يظهر في كتلة الوصلات البينية
+toolbar-interfaces-hidden = مخفي من كتلة الوصلات البينية
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora المدرسة القديمة
+toolbar-preset-photographer = Aurora مصور
+toolbar-preset-legacy = تراث
+toolbar-import-textures = استيراد النسيج
+toolbar-import-sounds = استيراد الأصوات
+toolbar-import-animations = استيراد الرسوم المتحركة
+toolbar-import-materials = استيراد المواد
+toolbar-import-meshes = استيراد الشباك
+toolbar-import-local = الملفات المحلية
+toolbar-import-advanced = الاستيراد المسبق
+toolbar-import-settings = إعدادات الاستيراد
+toolbar-import-bar = شريط الاستيراد
+toolbar-icon-search = ابحث عن أيقونة
+toolbar-in-top = في شريط الأدوات العلوي
+toolbar-bar-top = شريط الأدوات العلوي
+toolbar-drop-here = اسقط هنا
+toolbar-separator = فاصل
+toolbar-interface-edit = تعديل الواجهة البينية
+toolbar-edit-done = أنجز
+toolbar-edit-top = أعلى
+toolbar-edit-bottom = أسفل
+toolbar-edit-left = اليسرى
+toolbar-edit-right = اليمين
+toolbar-edit-help = انقر على البند لاختياره، أو اسحبه لنقله، او انقر بزر الماوس الأيمن لاختيارات التحرير. أغلق هذه النافذة للانتهاء.
+toolbar-edit-locked = الشريط مُقفل، أفتحه من الأسفل لتغيير الواجهة
+toolbar-edit-move = انتقل إلى
+toolbar-edit-split-before = مقسمة قبل
+toolbar-edit-split-after = مقسمة بعد
+toolbar-edit-merge-before = دمج مع الكتلة السابقة
+toolbar-edit-merge-after = دمج مع الكتلة التالية
+toolbar-edit-merge-groups = دمج هذه الكتل
+toolbar-drawer = أدراج
+toolbar-drawer-default-mode = العرض الافتراضي للأزرار
+toolbar-drawer-closes = أغلق بعد النقر على زر
+toolbar-block-shortcut = اختصار:
+toolbar-drawer-hides-needs-shortcut = يتطلب اختصارا
+toolbar-floating-close-button = أضف زر إغلاق
+toolbar-block-name = اسم الكتلة:
+toolbar-block-button-mode = عرض أزرار التثبيت
+toolbar-button-inherited = موروثة
+toolbar-drawer-hides-button = إخفي الزر أثناء الطفو
+toolbar-floating-new = كتل عائمة
+toolbar-floating-orientation = التوجيه
+toolbar-floating-horizontal = أفقيا
+toolbar-floating-vertical = الرأسي
+toolbar-floating-empty = أسقط الأزرار هنا
+toolbar-shortcut-title = اختصار
+toolbar-shortcut-block-name = القسم: { $name }
+toolbar-shortcut-none = لا يوجد اختصار
+toolbar-shortcut-press-key = اضغط على مفتاح
+toolbar-shortcut-esc = Esc للإلغاء
+toolbar-shortcut-clear = حذف
+toolbar-shortcut-overrides = يأخذ أكثر من { $name }: هذا الاختصار يعمل شريط الأدوات بدلا من استخدامه الافتراضي.
+toolbar-shortcut-used = بالفعل اختصار { $names }.
+toolbar-shortcut-replace = يستعاض عن عبارة
+toolbar-shortcut-add = إضافة
+toolbar-shortcut-save = حفظ
+toolbar-shortcut-choose-key = اختار مفتاحاً
+toolbar-shortcut-help = قم بتفعيل أو تعطيل مفاتيح Ctrl و Alt و Shift، ثم انقر على المفتاح لتغييره. يلزم استخدام مفتاح Ctrl أو Alt، باستثناء F1 إلى F24.
+toolbar-shortcut-inactive = هذا الزر ليس في أي شريط: اختصاره يعمل بمجرد وضعه مرة أخرى.
+toolbar-shortcut-refused-keyboard = فقط مفاتيح لوحة المفاتيح يمكن أن تكون اختصار.
+toolbar-shortcut-refused-modifier = لا يمكن أن يكون مفتاح التعديل وحده اختصارا.
+toolbar-shortcut-refused-needs-modifier = إضافة Ctrl أو Alt: مفتاح بمفرده، أو مع Shift فقط، يكتب في حقول النص.
+toolbar-shortcut-refused-altgr = Ctrl+Alt مع هذا المفتاح هو AltGr، الذي يكتب الحروف على لوحات مفاتيح كثيرة.
+toolbar-shortcut-refused-editing = وتستخدم حقول النص هذا الاختصار (اختيار كل شيء، نسخ، قطع، لصق، إلغاء، إعادة).
+toolbar-shortcut-refused-navigation = تحرك حقول النص ومحوها بهذا المفتاح.
+toolbar-shortcut-refused-typing = يستخدم الدردشة والحوارات هذا المفتاح.
+toolbar-shortcut-refused-system = ويحتفظ النظام بهذا الاختصار.
+toolbar-shortcut-refused-window = هذا الاختصار يغلق أو يغير النوافذ.
+toolbar-shortcut-refused-zoom = يقوم هذا الاختصار بتكبير الواجهة
+toolbar-spacer = المسافات بين القطع
+toolbar-add-spacer = إضافة مسافة بين القطع
+toolbar-button-settings = إعدادات الأزرار
+toolbar-button-edit = زر تعديل...
+toolbar-button-edit-title = زر تعديل
+toolbar-button-name = اسم الزر:
+toolbar-button-display = عرض زر
+toolbar-shortcut-fixed-block-help = يظهر اختصار الكتلة الثابتة ويخفيه؛ بينما يتم تحرير الواجهة، فهي تظل معرضة.
+toolbar-block-settings = إعدادات القطع
+toolbar-parent-block-settings = إعدادات الكتلة الأم
+toolbar-block-edit = تحرير الكتلة...
+toolbar-block-edit-title = كتلة تحرير
+toolbar-block-alignment = المواءمة
+toolbar-block-sizing = حجم الزر
+toolbar-block-fixed-options = خيارات الطرائق الثابتة
+toolbar-block-floating-options = خيارات الطريقة العائمة
+toolbar-block-kind-fixed = كتلة ثابتة
+toolbar-block-kind-drawer = أدراج
+toolbar-block-kind-floating = كتل عائمة
+toolbar-block-remove = إزالة الحظر
+toolbar-move-block = اسحب لتحريك الكتلة بأكملها
+toolbar-remove-block = إزالة الحظر
+toolbar-drawer-empty = هذا الدرج فارغ
+toolbar-drawer-drop = اسحب الأزرار هنا لإضافة أو إعادة ترتيبها.
+toolbar-separator-settings = إعدادات المسافات بين القطع
+toolbar-separator-size = الحجم/الحد الأدنى (بيكسل)
+toolbar-separator-stretch = ملء الحيز المتاح
+toolbar-separator-help = الفجوات المرنة تتقاسم المساحة المتبقية من الكتل. الحجم هو الحد الأدنى لعرضها، أو ارتفاعها في شريط جانبي.
+toolbar-block-navigation = الملاحة و SLURL
+toolbar-block-account = الحساب والرصيد
+toolbar-block-system = الساعة والمؤشرات والصوت
+toolbar-block-status = حالة التوافر
+toolbar-block-balance = الرصيد
+toolbar-block-clock = الساعة
+toolbar-block-ping = التأخير الإقليمي
+toolbar-block-fps = معدل الإطار (FPS)
+toolbar-block-network = حركة الشبكة
+toolbar-block-media = الوسائل
+toolbar-block-music = موسيقى الطرود
+toolbar-block-volume = الحجم
+toolbar-block-notifications = الإشعارات
+toolbar-block-conversations = أيقونات المحادثة
+toolbar-block-chat = مدخلات الدردشة القريبة
+toolbar-category-all = جميع الفئات
+toolbar-section-main = الوظائف الرئيسية
+toolbar-section-advanced = متقدمة
+toolbar-search-all = ويشمل البحث أوامر متقدمة.
+toolbar-category-avatar = الصورة والحركة
+toolbar-category-communication = الاتصالات
+toolbar-category-world = العالم والسفر
+toolbar-category-creation = الإنشاء والمحتوى
+toolbar-category-interface = واجهة وكاميرا
+toolbar-category-advanced = الأدوات المتقدمة
+toolbar-category-help = المساعدة
+toolbar-category-custom = الأوامر المخصصة
+toolbar-bar-settings = إعدادات شريط الأدوات
+toolbar-menu-group = القائمة: { $name }
+toolbar-location-bar = شريط العنوان SLURL
+toolbar-command-build-tool-focus = البناء - الكاميرا
+toolbar-command-build-tool-grab = بناء - نقل
+toolbar-command-build-tool-edit = بناء - تحرير
+toolbar-command-build-tool-create = بناء - إنشاء
+toolbar-command-build-tool-land = البناء - الأراضي
+bug-copy-version = النسخة
+toolbar-notecard-save = حفظ إلى ذاكرة...
+toolbar-notecard-load = تحميل من بطاقة ذاكرة...
+toolbar-notecard-name = وصلة بينية Aurora
+toolbar-notecard-help = تصميم ومظهر أشرطة الأدوات والأزرار والأدراج والقوائم.
+toolbar-notecard-saved = تم حفظ تخطيط الواجهة في مخزونك.
+toolbar-notecard-invalid = لا تحتوي هذه البطاقة الملحوظة على مخطط وصلة بينية متوافق.
+toolbar-notecard-unavailable = لم تعد هذه البطاقة متاحة أو لا يمكن نسخها.
+toolbar-notecard-layout-changed = تغيرت الواجهة أثناء تحميل بطاقة الملاحظات. أعيد تحميلها لتطبيق تخطيطها.
+toolbar-notecard-demo-valid = وصلة بينية للمصورين
+toolbar-notecard-demo-invalid = بطاقات أخرى
+toolbar-notecard-too-large = هذه الواجهة هي كبيرة جداً بالنسبة لبطاقة ملاحظات.
+toolbar-saved-interfaces = الوصلات البينية المسجلة
+toolbar-saved-interfaces-empty = لا توجد وصلات بينية محفوظة بعد.
+toolbar-notecard-destination = المجلد: { $path }
+toolbar-notecard-folder-error = لم يكن من الممكن تحميل مجلد الواجهات أو إنشاؤه. حاول مرة أخرى.
+toolbar-current-preset = الوصلة البينية المختارة: { $name }
+toolbar-preset-custom = وصلة بينية مصممة حسب الطلب
+toolbar-preset-unsaved = التغييرات غير المحفوظة
+toolbar-preset-save-title = حفظ الواجهة
+toolbar-preset-save-name = اسم الوصلة البينية
+toolbar-preset-save-new = واجهة شخصية جديدة
+toolbar-preset-save-replace = استبدال هذا الواجهة الشخصية
+toolbar-preset-save-unavailable = لا يمكن حفظ هذه الواجهة هنا. اختر اسماً آخر أو واجهة شخصية متاحة وقابلة للتحرير.
+toolbar-interface-delete-unavailable = لا يمكن حذف هذه الواجهة الشخصية.
+toolbar-interface-delete-confirm = هل تريد نقل الواجهة الشخصية «{ $name }» إلى سلة المهملات؟

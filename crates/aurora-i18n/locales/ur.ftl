@@ -16103,3 +16103,739 @@ parcel-environment-empty = کوئی ماحول محفوظ نہیں ہے
 parcel-environment-remove-all = سب کو حذف کریں
 parcel-environment-remove-all-title = ایک پیکل کے لیے محفوظ تمام ماحول کو ہٹا دیں؟
 parcel-environment-remove-all-text = اس گرڈ میں زمین کے قطعات کے لیے محفوظ کیے گئے ماحول حذف ہو جائیں گے۔ دوسرے گرڈ کے ماحول برقرار رہیں گے۔ یہ عمل واپس نہیں لیا جا سکتا۔
+
+### Updated release translations
+
+anim-timeline-channels-hint = اس هڈی کے گردش اور مقام کيو ں کو انکے اپنے قطاروں پر دکھا ئيں
+anim-timeline-channel-rotation = گردش
+anim-timeline-channel-location = جگہ
+anim-timeline-keying-hint = کيو کي ريکورڈس هيں پوزيشن کے ساتھ ، منتقلي صرف ایک جڑي ميں لے تا هے ، اسکے IK چينل سے باہر ثانوي زندگي جي متحرک کيوں ميں کو ئي سکل کيز نهيں هے
+anim-timeline-keying-auto = خودکار: گردش، اور پينس کے ليے مقام اور منتقل شدہ جوڑوں
+anim-timeline-keying-auto-short = خودکار
+anim-timeline-keying-loc-rot = مقام اور گردش
+anim-timeline-keying-loc-rot-short = جڑ
+anim-timeline-keying-rot-short = جڑ
+anim-timeline-keying-loc-short = مقام
+anim-edit-shortcut-play = چلاؤ يا توقف کرو
+area-search-scope-heading = کہاں
+area-search-scope-parcel = پيک
+area-search-scope-region = ريگيون
+area-search-scope-neighbours = ہمسا يں
+area-search-objects-heading = کس چیز کو
+inventory-copy-selection-count =
+    { $count ->
+        [one] 1 آیٹم کاپی کریں
+       *[other] { $count } آیٹم کاپی کریں
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] رابطہ 1
+       *[other] رابطہ { $count } چیزیں
+    }
+inventory-drop-move-here = یہاں منتقل کریں
+inventory-drop-copy-here = یہاں کاپی کریں
+inventory-drop-link-here = یہاں رابطے بنائیں
+inventory-sort-description = بیان
+inventory-sort-reversed = { $order } (تبدیل)
+inventory-column-creator = بنانے والا
+inventory-column-count = چیزیں
+inventory-columns-fit = تمام ستونوں کا سائز ٹھیک ہو نے کے لیے
+inventory-columns-reset-widths = کالم کی عرض
+inventory-back = واپس
+inventory-forward = آگے بڑھو
+inventory-up = ایک سطح اوپر
+keybinds-inventory-root = اوپر جاؤ
+keybinds-inventory-search = انسٹاليشن کي تلاش کريں
+keybinds-inventory-filter = فولڈر فلٹر کریں
+keybinds-inventory-preview = پیش نظر پینل دکھائیں
+keybinds-inventory-view-large = بڑی تصویریں
+keybinds-inventory-view-medium = متوسط تصویریں
+keybinds-inventory-view-small = چھوٹی تصویریں
+keybinds-inventory-view-compact = کمپوز وِيو
+keybinds-inventory-view-details = تفصیلات
+keybinds-inventory-view-tiles = ٹائلز نظريه
+keybinds-inventory-toggle = فائلز کو منتخب کریں
+keybinds-inventory-menu = انتخاب کا مینو کھولیں
+keybinds-inventory-purge = رستہ سے پاک کریں
+keybinds-inventory-refused = { $keys } انسٹالمنٹ فہرست کی خود کلید رہتا ہے: ایک اور منتخب کریں.
+inventory-path-edit = راستہ ٹائپ کریں
+inventory-path-subfolders = سب فولڈر
+inventory-copy-path = راستہ کاپی کریں
+inventory-show-in-folder = فولڈر میں دکھائیں
+inventory-pin = تیز رسائی کے لیے پین
+inventory-unpin = جلدی رسائی سے پینٹ کھولیں
+inventory-quick-access = تیز رسائی
+inventory-quick-access-drop = اس کو پینٹ کرنے کے لیے یہاں فولڈر ڈالیں
+inventory-invert-selection = منتخب کريں
+inventory-undo = واپس لوڈ
+inventory-redo = دوبارہ کرو
+inventory-undo-step = واپس کریں { $what }
+inventory-redo-step = دوبارہ { $what }
+inventory-history-move =
+    { $count ->
+        [one] 1 ٹکٹ کھينچیں
+       *[other] { $count } ايٹموں کو منتقل کريں
+    }
+inventory-history-delete =
+    { $count ->
+        [one] 1 سے کم چیزیں
+       *[other] { $count } چیزوں کا حذف
+    }
+inventory-history-rename = نام بدلیں
+inventory-history-new-folder = نیا فولڈر
+inventory-history-copy =
+    { $count ->
+        [one] 1 آئٹم کا نقل
+       *[other] { $count } چیزوں کی کاپي
+    }
+inventory-history-link =
+    { $count ->
+        [one] 1 ایٹم پر لنک
+       *[other] { $count } ایٹموں کے لينک
+    }
+inventory-undo-nothing = واپس لینے کے لیے کچھ باقی نہیں: وہ آیٹم ہجرت کر دی گئی ہیں یا غائب ہو چکی ہے.
+inventory-redo-nothing = دوبارہ کرنے کے لیے کچھ باقی نہیں: وہ آیٹم ہٹا دی گئی ہیں یا چلی گئی ہیں.
+inventory-undo-empty = واپس لے نے کے لئے کچھ بھی نہیں.
+inventory-redo-empty = دوبارہ کرنے کے لئے کچھ بھی نہیں.
+inventory-undo-dropped = آخري قدم کے ايٹموں کو منتقل کيا جا چکا هے يا گم ہو چکا هيں: اس کو ڈال دیا گيا هے. پہلے قدم کے ليے پھر واپس کريں
+inventory-redo-dropped = اگلے قدم کے ايٹموں کو ہٹا يا جا چکا هے يا نهيں هيں: اس کو ڈال دیا گيا هے. بعد از قدم کے ليے دوباره کريں
+inventory-undo-folder-not-empty = وہ نیا فولڈر اس وقت سے چیزوں کو محفوظ رکھتا ہے: پہلے انہیں باہر ہٹاو، یا خود ہی فولڈر کو حذف کرو.
+inventory-undo-kept-out = وہ آیٹم موجودہ لباس يا بازار فہرست میں ہیں: ان کو وہاں بدليں.
+inventory-restore-to = “{ $folder }” پر واپس کریں
+inventory-restore-to-origins = ان کے فولڈر میں بحالی کریں
+inventory-purge-no-undo = ان کو واپس نہیں لا سکتا.
+inventory-new-tab = نیا ٹیب
+inventory-close-tab = بند کریں
+inventory-next-tab = اگلا ٹیب
+inventory-previous-tab = پہلے ٹیب
+inventory-open-in-new-tab = نئے ٹیب میں کھولیں
+inventory-tabs-limit = زیادہ سے زیادہ { $count } ٹیب.
+inventory-copy-to-other-pane = دوسرے پنل میں کاپی کریں
+inventory-move-to-other-pane = دوسرے پنل میں منتقل کریں
+inventory-resize-columns = کالم کي سا ز تبديل کر نے کے ليے کھينچيں با ئيں ميں کالم کو اسکے مواد ميں فٹ کر نےکے ليے دو گنا کلک کريں
+inventory-resize-columns-first = کالموں کي سا ز تبديل کر نے کے ليے کھينچيں دو گنا کلک کريں گذشتہ کالم کو اسکے عام عرض ميں دے نے کے لیے
+inventory-sort-by-column = اس کالم کے مطابق مرتب کر نے کے ليے کلک کريں ، ترتيب کو بدلنے کے ليا دو باره کلک کيجئے کالم کو منتقل کر نےکے ليے کھينچيں
+inventory-filter-hint = اس فولڈر کو فلٹر کریں
+inventory-filter-close = فلٹر بند کریں (Esc)
+inventory-filter-nothing = فلٹر سے کوئی مطابقت نہیں
+inventory-view-compact = کمپوز وِيو
+inventory-view-tiles = ٹائلز نظريه
+inventory-view-per-folder = ہر فولڈر کی رائے یاد رکھیں
+inventory-group-by = گروہ بندی
+inventory-group-none = کوئی نہیں
+inventory-group-folders = فولڈر
+inventory-group-unknown-creator = پیدا کرنے والا ابھی تک نامعلوم
+inventory-group-today = آج
+inventory-group-yesterday = کل
+inventory-group-this-week = گزشتہ 7 دنوں میں
+inventory-group-this-month = گزشتہ 30 دن میں
+inventory-group-this-year = اس سال کے آغاز میں
+inventory-group-earlier = ایک طویل وقت پہلے
+inventory-group-no-date = کوئی تاریخ نہیں
+cmdline-mod-zoffset-usage = آپکے آوٹار کے ہوور بلندي مقرر کريں ( استعمال: /zoffset قيمت يا +delta )
+dev-toolbox-n4 = انسٹالیشن لوڈ ہو رہا ہے
+dev-toolbox-what-n4 = فولڈر پڑھنے میں ناکامی اور چھوڑ دیا گیا، لوڈر پرواز میں پڑھتا ہے اور دوبارہ کوشش کرتا ہے؛ کوئی نام نہیں
+ui-context-inspect-avatar = آ ویٹر کي جانچ کريں
+inspect-window = جانچ
+inspect-tab-objects = اشيا ں
+inspect-objects-title =
+    { $count ->
+        [one] { $count } جسم
+       *[other] { $count } اشياء
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } آئٹم
+       *[other] { $count } چیزیں
+    }
+inspect-open-profile = پروفائل کھولیں
+inspect-over-limit = آپ کی حد سے اوپر
+inspect-limit-tip = آپ کا پیچیدگي حد: { $limit }
+inspect-search = چیزوں يا بنانے والوں کو تلاش کریں
+inspect-outlined = { $name } دنیا میں بیان کیا گیا ہے
+inspect-area-head = سر
+inspect-area-body = جسم
+inspect-area-arms = بازو اور ہاتھ
+inspect-area-legs = ٹانگیں اور پاؤں
+inspect-area-hud = هيڈ
+inspect-area-other = باقی
+inspect-area-world = اشيا ں
+inspect-own-eyes = سسٹم آنکھیں
+inspect-own-body = نظام جسم
+inspect-own-description = خود آوٹار کا حصہ، ایک متصلہ نہیں
+inspect-own-maker = اوتار · Second Life
+inspect-own-place = اوتار
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } ميگا بائٹ
+inspect-section-complexity = { $value } پیچیدگي
+inspect-no-match = “{ $query }” سے کوئی مطابقت نہیں.
+inspect-spoken-worn = { $name }, پر پہنایا { $point }, پیچیدگي { $complexity }, بنایا گیا { $creator }
+inspect-spoken-object = { $name }, مالک { $owner }, پیچیدگي { $complexity }, بنایا گیا { $creator }
+inspect-look-at-tip = کيمرا اس تک منتقل کريں
+inspect-profile-tip = پیدا کرنے والے کا پروفائل کھولیں
+inspect-made-by = بنایا گیا
+inspect-owned-by = مالک
+inspect-worn-on = پہنایا گیا
+inspect-prims-count =
+    { $count ->
+        [one] { $count } پرائم
+       *[other] { $count } اهم
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = ٹائپ ميمري
+inspect-tile-vram = VRAM
+inspect-tile-prims = پرِمز
+board-close = بند کرو { $title }
+board-grow = { $title }بڑھاؤ
+board-remove = حذف { $name }
+board-more = اور { $count } زیادہ
+board-more-short = +{ $count }
+board-some-of = { $shown } يا { $all }
+board-of-all = { $all } کا
+stage-turn-left = بائیں موڑو
+stage-turn-right = دائیں موڑو
+stage-higher = اوپر سے دیکھو
+stage-lower = نيچے سے دیکھيں
+stage-nearer = قریب
+stage-further = زیادہ دور
+stage-reset = شروع پر واپس
+stage-hint = موڑنے کے ليے کھينچيں ، منتقل کر نے کے ليئے دا ئيں کھينچیں
+stage-light = روشن پس منظر
+stage-dark = گہرے پس منظر
+stage-playing = AO
+stage-paused = معطل
+stage-pause-tip = انکے متحرک کيا توقف کريں
+stage-play-tip = انکا متحرک تصوير چلا ئيں
+stage-loading = 3D منظر نامہ تیار کیا جارہا ہے...
+stage-nothing = 3D میں دکھانے کے لئے کچھ بھی نہیں.
+stage-refused = 3D ویو بند ہے جبکہ RLVa آپ کو دیکھنے کے لئے کیا محدود.
+inspect-your-limit = آپ کی حد: { $limit }
+inspect-without-it = اس کے بغیر { $value }
+inspect-you = آپ
+inspect-person = آدمي
+inspect-difference = فرق
+inspect-drawn-in-full = مکمل طور پر دوڑا
+inspect-nobody = کسی کی پیچیدگی اب تک معلوم نہیں ہے۔
+inspect-aside-count = { $count } کنارے
+inspect-is-aside = وقفہ
+inspect-set-aside = الگ رکھو
+inspect-set-aside-tip = اس ايٹم کے بغير پيچيدگي کو دیکھيں صرف اس وينڈوز ميں: دنيا ميں کچھ بھی تبديلي نہیں آتا
+inspect-put-back = واپس رکھو
+inspect-put-back-tip = اس آئٹم کو دوبارہ شمار کريں
+inspect-complexity-spoken = پیچیدگي { $value }نمبر { $rank } يا { $count } یہاں لوگ
+inspect-stage-outfit = اس کے لباس
+inspect-stage-objects = اشيا عات
+inspect-stage-back = سب کچھ واپس
+inspect-place-made-by = { $place } بنایا گیا { $name }
+inspect-owned-by-name = { $name } کے ذمہ دار
+inspect-tile-items = چیزیں
+inspect-tile-figures = تصويریں
+inspect-col-item = نام
+inspect-point = نقطہ
+inspect-look-at = دیکھو
+inspect-selected-count = { $count } منتخب کردہ
+inspect-worn-count = { $count } پہنا
+inspect-creators-word = بنانے والے
+inspect-areas-word = باڈي ايريا
+inspect-owners-word = مالک
+inspect-triangles-word = مثلث
+inspect-made-of = { $count } يا { $all } چیزیں
+inspect-kilobytes = { $n } کی بی
+inspect-linkset-order = { $count }، بائیں طرف
+inspect-reset-columns = ستونوں کو دوبارہ ترتیب دیں
+inspect-by-creators =
+    { $count ->
+        [one] { $items } ایک تخلیق کار کے ذریعہ
+       *[other] { $items } سے { $count } بنانے والے
+    }
+inspect-owner-button = مالک پرو فا ئل
+inspect-group-button = گروپ پروفا ئل
+inspect-creator-button = پرو فا ئل بنانے والا
+inspect-land-others = باقی { $n }
+inspect-land-these = یہ { $n }
+inspect-land-free = مفت { $n }
+inspect-land-unknown = پيک ليٹ کے کمرے ميں اس وقت کو دکھلا تا هے جب تمام اشيا ي آپکے پيک ليٹ پر هے
+ui-login-unencrypted = خفیہ کاری کے بغیر لاگ اِن
+ui-login-unencrypted-body = { $server } کا لاگ اِن پتہ https:// کے بجائے http:// سے شروع ہوتا ہے، اس لیے لاگ اِن پر خفیہ کاری نہیں ہوگی۔ عوامی Wi-Fi، مشترکہ نیٹ ورک یا گرڈ کے راستے میں ٹریفک دیکھنے والا پاس ورڈ پڑھ کر آپ کا اکاؤنٹ استعمال کر سکتا ہے۔ ابھی کچھ نہیں بھیجا گیا۔ آپ گرڈ سے https:// پتہ مانگ سکتے ہیں۔ اس سرور کے لیے انتخاب یاد رکھا جائے گا۔
+ui-login-unencrypted-accept = خفیہ کاری کے بغیر لاگ اِن کریں
+world-appearance-clothing-layers-full = تمام 60 لباس کے طبقے استعمال ميں هيں اس آئٹم کو پہنا نے سے پہلے ایک طبقہ ہٹا ئيں
+ui-options-ray-tracing = رے ٹریسنگ
+ui-options-ray-traced-shadows = رے ٹریک آف سورج سائے
+ui-options-ray-traced-shadows-help = سورج اور چا ن کے سا يں رے سے رے تراش کريے جا تے هيں اسکے بر عوض سائيد ميپ سے پڑھا جا تا هے : دراصل جتي چيزیں ٹکتے هيں اور کو ئي دوري پر سا يوں کي ضرورت هے اور گرافيک کارڈ جس ميں ري ٹریسنگ ہو اور گرافیک کارڈ پر زیادہ خرچ ہوتا هے
+ui-options-ray-traced-lights = مقامي روشني سائے
+ui-options-ray-traced-lights-help = اطراف کے پو ئنٹ لائٹس سے سائے (لمب ، مو نچ) جو اس کے بر عوض کچھ بھی نہیں ڈالتے اور پروجيکٹر سے جب پرو جيکٹر سا يے ان پر هيں ، انکے سا ئيے ميپ کے مقام پر ري ٹریسنگ آپشنز کا سب سے قيمتي: بهترين شامل گيرافيکس پر چھوڑا جا تا هے
+ui-options-rt-quality = رے ٹریسنگ کوالٹی
+ui-options-rt-quality-help = هر تلا ش کر نے والا اثر فعال رہتا هے : کم سطح کم نمونے اور غير متوقع روشني کو تلاش کر تا هے ، چھوٹے گرافکس کارڈ پر هر سيکنڈ ميں زیادہ فريم کے ليے اعليٰ دي لوکس (RT) کا پورا ايميج هے ليول منتخب کر نے سے سائے کے ليکھنے کي روشني بھی مقرر ہو جا تا هئے
+ui-options-rt-sun-softness = سورج سایہ نرمي
+ui-options-rt-sun-softness-help = سورج کے سائے کے کنارے کتنا نرم هے: 1 اصل سورج هے،0تند کنارے هے ، زیادہ کو گہرا سورج
+ui-options-rt-lamp-softness = مقامی روشنی سائے کی نرمی
+ui-options-rt-lamp-softness-help = لمبوں کے سا ئے کے کنارے کتنا نرم هے: 1 ہر لمبے کے سائز کا تعاقب کرتا هے،0 تیز کنارے
+ui-options-rt-shadow-lamps = روشنی کہ سایہ ڈالتے ہیں
+ui-options-rt-shadow-lamps-help = نيچے سے روشنيوں ميں سے کتنے سا يں تير کريتے هيں اور دوسرا اب بھی روشن هے، سا يوں کے بغير
+ui-options-ray-traced-indirect = رے ٹریسڈ غیر مستقیم روشني
+ui-options-ray-traced-indirect-help = اسکرين ميں دکھائي جا نے والے رنگوں کے ليے روشني کے دور میں تير، GTAO کے غير متوقع روشني کی جگہ
+ui-options-gi-probes = عالمی روشني
+ui-options-gi-probes-help = ميں نے اس منظر ميں پرو بيز کو پھیلا يا جو چند باؤنس اور آسمان کي روشني کو محفوظ رکھتا هے : بند کمرے اندھیرا رہتا هئے ، روشني چوڑيوں ميں گزرتا هے۔ گرافک کارڈ پر تقريبا 0.8 ms
+ui-options-ray-traced-reflections = رے-ترکے ہوئے عکاس
+ui-options-ray-traced-reflections-help = اسکرين پر انعکاس اسکے عڪس جو اسکر ين پر نما ن نا هے اسکرين- اسپيس انعکاش کے مقام پر جو ان کي ضرورت هے
+ui-options-ray-tracing-unsupported = اس گرافک کارڈ يا اسکے ڈرائيور ميں رے ٹریسنگ نہیں ہے
+ui-options-ray-tracing-vr = VR کے لیے شروع کئے گئے سیشن میں دستیاب نہیں
+ui-options-tab-ray-tracing = رے ٹریسنگ
+ui-options-deluxe-rt-warning-title = Deluxe (RT) کو فعال کریں؟
+ui-options-deluxe-rt-warning-text = دي لوکس (RT) اعلا سا ج اور غير متوقع روشني کے ساتھ گرافکس کارڈ سے تراش کر يا جا تا هے اسکے ليے هارڈ و ري ٹری س کينگ (NVIDIA RTX ، AMD Radeon RX 6000 يا بعد ميں ، Intel Arc) کے ساتھ کارڈ کا احتياج هے اور جديد درائيور، اور اسکا خرچ بلند سے زياده هے: ميڈم رينج کارڈ پر فريم ريٹ مشغول مقامات ميں بہت گھٹا جا سکتا هے رے ٹریس کينگ اب تک آزمايا جا رہا هے اگر تصوير غلط نظر آتا هے يا ناظر سست ہو جاتا هے تو اوپري طرف واپس جا ئيں رے ٽريس کينگ ٹب اسکے انتظامات محفوظ رکھتا هئے
+ui-options-deluxe-rt-warning-turn-on = روشن کریں
+ui-options-ray-tracing-needs-shadows = سائے کی ضرورت ہے
+ui-options-ray-tracing-needs-ssr = اسکرين اسپيس انعکاس کي ضرورت هے
+ui-options-preset-deluxe = دي لوکس (RT)
+ui-options-normal-precision = انعکاس دقت
+ui-options-normal-precision-help = هر سطح کي سمت کس حد تک انعکاس کے ليے محفوظ هے معياري نرم ، کرين سطحوں کے انعکاش ميں قدم دکھا سکتا هے مثلا کار پينٹ اعليٰ ان کو ہٹا تا هے اور زیادہ ويڈیو ميمري استعمال کرتا هے خودکار رے تراش شدہ انعکاش ميں اعليٰ استعمال کرتا هے جہاں قدم سب سے زائد نظر آتے هيں اور غير اسکے معياري
+ui-options-normal-precision-automatic = خودکار
+ui-options-normal-precision-standard = معیرِم
+ui-options-normal-precision-high = اعلیٰ
+ui-options-private-point-at-help = آپ کيا چيز ميں ترميم کررہے هيں اسے چھپا ئيں ، آپکے ترميمي بازو کو نيچے رکھيں اور آپکے تھرميمي بيم کو چھپائيں
+ui-options-private-edit-beam = ایڈٹنگ بیم چھپائیں
+ui-options-private-edit-beam-help = بيم کو مکمل طور پر چھپائيں جب آپ عروض کي ترميم کريں يا پکڑيں ، دوئي آپکے اسڪرين پر اور ديگر ناظروں کے ليے منتخب کر نے کے مقصد کے اشارے اور گيڈ/ ڈراپ بيم متاثر نہيں هے
+common-window-outside = دیکھنے والے کی ونڈو سے باہر جائیں
+common-window-inside = دیکھنے والے کی ونڈو میں واپس لاؤ
+common-window-rename-name = نام بدلنے کے ليے دو گنا کلک کريں
+common-carry-hint = اس کو یہاں ڈالنے کے ليے کلک کريں ، اسے چھوڑ نے کے ليئے Esc د
+common-window-paused-photo = فوٹو موڈ کھولنے کے دوران معطل
+common-window-paused-director = ڈائرکٹر کے کھیلتے ہوئے معطل
+common-window-paused-interface = وقفہ جب انٹرفیس بند ہے
+ui-options-warn-live-preview = جب ایک ساخت يا مادے کو پيش نگوي نہیں کريا جا سکے تو ڈرائيں
+ui-options-warn-live-preview-help = بلڈ وینڈو کے منتخب کر نے میں، ایک نا کاپی آیٹم پر کلک کرنے سے کچھ بھی نہیں لگتا جب تک ٹھیک ہو جاتا ہے: اس طرح کہتے ہیں.
+ui-texture-picker-live-preview-texture = ہم اس ڈھانچے کی پیش نگوئی نہیں دکھا سکتے کیونکہ یہ کاپی نہیں ہے.
+ui-texture-picker-live-preview-material = ہم اس مواد کی پیش نگوئی نہیں دکھا سکتے کیونکہ یہ کوئی کاپی نہیں ہے.
+fetch-invalid-url = نامناسب URL
+ui-chat-close-all-ims = تمام IM بات چیت بند کریں
+ui-chat-close-all-ims-question = تمام IM بات چیت بند کریں اور فعال کال ختم کریں؟
+ui-chat-confirm-close-all-ims = تمام IM بات چیت بند کرنے سے پہلے تصدیق کریں
+ui-chat-confirm-close-all-ims-help = تمام IM بات چیت بند کرنے سے پہلے پوچھو جب ایک فعال آواز کال ہو.
+ui-options-aurora-controls-compact-help = کنٹرول وينڈو کيمرا پر کمپیکٹ کھولتا هے: اسکے جو يسٹک ، زوم اور رول اسکا عنوان بار بٹن کمپیکٹ اور پورا کے ميں تبديل کر تا هے اور اس کو بھی سيٹ کرتا هے کلاسیکي وينڈوں کے ساتھ کيمرے ليجڈسي ويو ئر کی چھوٹي کمرا وينڈہ ميں کھولتا هيں
+rlva-restart-hint = RLVa شروع ہوتا ہے جب آپ لاگ ان ہوتے ہیں. ایک بار یہ چلنے کے بعد، اس کو روشن یا خاموش کرنا دیکھنے والے کی اگلی شروعات میں اثر ڈالتا ہے:مشکلات چیزیں اس وقت تک باقی رہتی ہیں۔
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa آپ کے دوبارہ شروع کرنے کے بعد فعال کیا جائے گا.
+rlva-toggle-disabled-restart = RLVa آپ کو دوبارہ شروع کرنے کے بعد غیر فعال کیا جائے گا.
+livemesh-import-connect = Blender کو پلگ ان 0.11.0 يا بعدي سے يا Maya کو پلا گ ان0.2.0يا بعدي کے ساتھ جوڑيں LODsکے امدادي تيار کر نے کے ليے
+livemesh-import-preparing = بلنڈر يا مايا ميں اوبجیکٹ اور اسکے LODs کو تیار کريں
+livemesh-import-ready = LODs حاصل کیا گیا، واردات میں تیار.
+livemesh-import-failed = واردات تیار کرنے میں ناکامی: { $error }
+livemesh-import-timeout = بلنڈر يا مايا نے ادخلات کو تیار کرنا ختم نہیں کیا اتصال کو جانچیں (بلنڈر ميں، اوبجیکٹ موڈ استعمال کريں) اور پھر کوشش کریں
+livemesh-shape-apply-tooltip = بدلنے کے حق چيک کريں ، پھر بلنڈر يا ما يا ميں منتخب کيا گيا سکلٹ اور اسکے با ند ميشز کو تبديل کريے (ما يا ستار ريگ کے ليے ما يا ستار کے ذریعے) مقامي سيکنڈ لائف سازگار سکلٹ منتخب کريئے
+livemesh-shape-update-apply = بلنڈر پلگ ان کو 0.10.0 یا اس سے بعد تک اپ گریڈ کریں، یا مایا پلگ این کو0.4.0یا اس سے پچھلے تک اپگریڈ کریں اور پھر اسے دوبارہ جوڑیں
+livemesh-shape-applied = منتخب کردہ سکلٹ پر شکل لا گيا هے
+livemesh-shape-tooltip = برے شکل کو تبديل کر نے کے حق کو چکيں اور بلنڈر يا ما يا ميں جديد ريفرنس با ڑ بنا ئيں
+livemesh-shape-connect = Aurora پلگ ان کو بلنڈر يا مايا ميں پہلے جوڑيں
+livemesh-shape-update-plugin = بلنڈر پلگ ان کو 0.9.0 یا اس سے بعد تک اپ گریڈ کریں، یا مایا پلگ این کو0.3.0یا اس سے پچھلے تک اپگریڈ کریں اور پھر اسے دوبارہ جوڑیں
+livemesh-shape-timeout = بلنڈر يا مايا نے واردات کو تائید نہيں کيا. دوبارہ کوشش کريں (بلنڈر ميں، اوبجیکٹ موڈ ميں تبديل کريے)
+livemesh-shape-success = شکل کو نئے ريگڈ ريفرنس با ڑ کے طور پر وارد کريں
+blender-live-maya-version = Aurora Maya کے ليے LiveMesh { $version }
+blender-live-maya-instructions = ZIP محفوظ کريں اور اس کو نکا ليں، پھر install.mel کو Maya viewport ميں کھينچيں Aurora شيلف سے LiveMesh کھوليں ، آپ کے ميش شامل کريے اور کنکنا کي کلک کريے۔
+blender-live-save-maya = Maya پلگ ان محفوظ کریں...
+blender-live-maya-saved = پلگ ان محفوظ کیا گیا ZIP کو نکالیں اور install.mel کو Maya ویز پورٹ میں گھسیٹیں
+livemesh-plugin-connected = پلگ ان متصل ہے
+livemesh-token-refused = ایک پروگرام اس پیش نظر کی کلید کے بغیر اتصال کرنے کی کوشش کر رہا ہے. صرف Aurora پلگ ان Blender يا Maya میں اتصال کر سکتا ہے.
+livemesh-waiting-plugin = بلنڈر یا مایا کا انتظار...
+blender-live-objects-help = ميش Blender يا Maya بھیج رہا هے اسے رکھنے کے ليے ایک منتخب کريں يا اسکے مينو سے اخراج کريے
+blender-live-size-note = سائز اس چیز کو ضرب کرتا ہے جو پلگ ان بھیجتا ہے، تو بعد میں بلنڈر یا مایا میں ادائیگی اسے محفوظ رکھتی ہے۔
+blender-live-avatar-help = ريگڈ ميشز کے ليے: آپ کي شکل کو بلنڈر يا ما يا ميں بھیجيں اس پر ماڈل بنا نے کے ليئے
+livemesh-shape-section = بلنڈر يا مايا ميں آپ کا شکل
+blender-live-import-help = عام واردات کے ليے اوبجیکٹ کا سناپ شاٹ محفوظ کريں: جائزہ، قيمت، پھر تصديق کريں۔ بعد میں بلنڈر يا مايا ميں ايڈٹ اس کو تبديل نہیں کريگا
+blender-live-changed-tip = بلنڈر يا مايا نے اس اشياء کو آخری بار بدلا تھا
+fit-lab-section = ليبارٹری ميں ملے
+fit-lab-help = آپ کے لباس میں پوشیدہ ماڈل، ہر ایک دوسرے کے جسم کے ساتھ، آپ کے سامنے کھڑے ہیں تاکہ وہ دکھائیں کہ کپڑے کی کتنی مختلف شکلیں ہیں، صرف آپ انہیں دیکھ سکتے ہیں: کوئی بھی نہیں بھیجا گیا یا محفوظ کیا گیا.
+fit-lab-body-me = مي
+fit-lab-body-slim = ذہین
+fit-lab-body-curvy = منحني
+fit-lab-body-full = پورا تصوير
+fit-lab-body-athletic = ورزشي
+fit-lab-body-tall = بلند
+fit-lab-body-petite = چھوٹا
+fit-lab-motion = حرکت
+fit-lab-motion-stand = کھڑا
+fit-lab-motion-walk = چلو
+fit-lab-motion-sit = بیٹھ جاؤ
+fit-lab-motion-range = حرکت کا رينج
+fit-lab-pose = پو ز
+fit-lab-pose-all = سب، ایک بار
+fit-lab-pose-arms-up = ہاتھ اوپر
+fit-lab-pose-reach = آگے بڑھيں
+fit-lab-pose-hug = ہاتھوں کو کراس
+fit-lab-pose-squat = سکوٹ
+fit-lab-pose-kneel = گڑگڑا.
+fit-lab-pose-knee-up = گھٹنے اٹھایا
+fit-lab-pose-twist = ٹک
+fit-lab-pose-bend = آگے بڑھو
+fit-lab-motion-like-me = میرے جیسے
+fit-lab-show = ما نيکيونز دکھا ئيں
+fit-lab-place = انہیں یہاں لے آؤ
+fit-lab-remove = ما نيکيونز کو ہٹا ئيں
+fit-lab-choose = کم از کم ایک جسم منتخب کريں
+fit-lab-clip = جس جسم سے آتا هے اس کو دکھا ئيں
+fit-lab-clip-note = سرخ : جسم لباس سے باہر آتا هے امبارک : بدن اور لباس ميں ملتا هو تا هے آپکے ايوارٹ اور مان کين پر ، جیسے کيمرا سے دکھيا جا تا هے۔ جو کچھ بھی آپپہنچے هيں وہ جسم کے طور پر شمار کيا جاتا هے : ایک جيکٹ يا بالوں کو اس لباس پر سے اتار ليں
+blender-live-levels-pending = بلنڈر يا ما يا تفصيل کے ليول تيار کر تا هے جب آپ واردات پر کلک کريں
+blender-live-levels-note = بلنڈر يا مايا ميں تيار کريے گيا هے ہر اوبجیکٹ کے LiveMesh سيٹنگز سے
+blender-live-quick-look-changed = بلنڈر يا مايا ميں تبديلي { $ago } سال قبل
+blender-live-warning-textures = ساختیں چھوڑ دی گئیں، عام رنگ دکھائيں
+blender-live-warning-not-sent = پیش منظر میں نہیں
+blender-live-undo-derez = Derezzed { $name } · ابھی بھی پلگ ان کی فهرست میں
+blender-live-undo-detach = الگ { $name } · ابھی بھی پلگ ان کی فهرست میں
+inventory-open-current = کھولیں
+inventory-folder-back = واپس
+inventory-folder-forward = آگے بڑھو
+inventory-folder-up = ایک سطح اوپر جائیں
+area-search-metres = { $n } m
+area-search-band-reach = دسترس میں
+area-search-band-close = قریب
+area-search-band-around = آپ کے ارد گرد
+area-search-band-further = مزید
+area-search-band-far = فر
+area-search-band = علاقہ
+area-search-within = اندر { $distance }
+area-search-within-across = { $distance } کے اندر
+area-search-between = { $from }–{ $to }
+area-search-any-distance = ہر فاصلہ دکھايں
+area-search-from = دوری
+area-search-to = فاصلہ
+area-search-bar-tip =
+    { $count ->
+        [one] ایک چیز، { $from } دو { $to }
+       *[other] { $count } اشياء، { $from } دو { $to }
+    }
+area-search-of-objects = { $total } اجزا
+area-search-li = { $value } لي
+area-search-li-count = { $value } زمین اثر
+area-search-owner-count =
+    { $count ->
+        [one] ایک مالک
+       *[other] { $count } مالک
+    }
+area-search-object-count =
+    { $count ->
+        [one] ایک عائد
+       *[other] { $count } اشياء
+    }
+area-search-objects-word = اشيا عات
+area-search-in-reach = یہاں
+area-search-tab-objects = اشيا ں
+area-search-tab-owners = مالک
+area-search-hint-wide = اشیا، مالک، بنانے والے یا UUIDs
+area-search-kind-heading = چیز کا قسم
+area-search-kind-tip = کلک کريں: صرف یہ
+area-search-kind-any = ہر
+area-search-kind-only = صرف یہ
+area-search-kind-hidden = چھپائی ہوئی
+area-search-kind-attached = متصل
+area-search-kind-probes = پرز
+area-search-click-all = سب
+area-search-click-any-short = کوئی بھی
+area-search-permissions = اجازتیں
+area-search-price-heading = فروخت کے لئے چیزوں کے لیے فروخت قیمت
+area-search-price-to = دو
+area-search-price-tip = اول "سيل کے ليے" منتخب کريں
+area-search-linked = رابطہ
+area-search-one-field = ایک فائل میں تلاش کریں
+area-search-regex-switch = ريگل ايکسپريشن
+area-search-regex-invalid = صحيح ريگل ايکسپريشن نہیں
+area-search-reset-filters-tip = تمام فلٹرز واپس لائیں؛ تلاش متن باقی رہتا ہے
+area-search-save-defaults-tip = اب سے ان فلٹرز کے ساتھ کھولیں
+area-search-reset-search = تلاش کے متن ریسٹار کریں
+area-search-reset-filters = فلٹر اختیارات ریسٹ
+area-search-reset-ranges = فاصلہ اور قيمت ريسٹ کريں
+area-search-reset-all = سب کچھ ریسٹال کریں
+area-search-more = مزید
+area-search-several = چند منتخب کريں
+area-search-several-tip = کلک کر کے انتخاب میں شامل کریں (Ctrl یا Shift + کلک بھی، Ctrl+A)
+area-search-actions = عمل
+area-search-nothing = ابھی تک کوئی اشیا نہیں ملا.
+area-search-nothing-for-sale = یہاں فروخت کے لئے کچھ بھی نہیں.
+area-search-not-for-sale = فروخت کے لئے نہیں
+area-search-from-price = { $price } سے
+area-search-nearest = قریب ترین پہلے
+area-search-heaviest = سب سے بھاری پہلے
+area-search-order-tip = ترتيب تبديل کريں: اول قریب يا گہرا
+area-search-rank = #{ $rank } يا { $all }
+area-search-rank-here = #{ $rank } یہاں
+area-search-card-more = تمام تصويریں دکھا ئيں
+area-search-card-less = کم دکھائیں
+area-search-open-group = گروپ کھولیں
+area-search-spoken = { $name }, { $distance }, زمین اثر { $li }, مالک { $owner }
+area-search-owner-spoken = { $name }, { $count } عينات ، زميني اثر { $li }
+area-search-stage-line = { $distance } دور { $li } زمین کا اثر { $owner }
+area-search-tile-3d = 3D منظر نامہ
+area-search-on = { $count } پر
+area-search-on-word = آن
+area-search-more-on =
+    { $count ->
+        [one] ایک اور فلٹر
+       *[other] { $count } زیادہ فیلٹر
+    }
+ui-options-legacy-lists = ليگيسي ويزرز سے فهرستیں آئیں
+ui-options-legacy-lists-help = اس اکاؤنٹ کے ٹیلی پورٹ تاریخ، اثاثہ بلاک لسٹ، میڈیا فلٹر فہرست اور رابطے کے سیٹ شامل کرتا ہے۔ لیجڈی ویئر کی فائلیں صرف پڑھنے کے لئے ہیں۔
+ui-options-legacy-lists-button = ليجنڈيز ناظر سے واردات کریں
+ui-options-legacy-lists-no-account = اس اکاؤنٹ کی فہرستوں کو وارد کرنے کے لیے لاگ ان کریں.
+ui-options-legacy-lists-title = ليجسٹي ناظر سے واردات کریں
+ui-options-legacy-lists-text = ہر چیز اس اکاؤنٹ کی فہرستوں میں شامل کی جاتی ہے اور یہاں کچھ بھی حذف نہیں کیا جاتا۔ اس اثاثے کے بلیک لسٹ نام دنیا کو ایک دفعہ چھوڑ دیتے ہیں۔ دوبارہ واردات وہ سب کچھ واپس لاتی ہے جو آپ نے یہاں حذفی کیا ہے۔
+ui-options-legacy-lists-searching = لیجسٹک ویئر کے فولڈروں کی تلاش...
+ui-options-legacy-lists-none = اس اکاونٹ کے لیے کوئی لیجیسٹی ویئر فولڈر نہیں ملا جس میں فہرستیں ہوں.
+ui-options-legacy-lists-teleports = تليفون تاريخ ({ $count })
+ui-options-legacy-lists-derender = بلاک لسٹ ({ $count })
+ui-options-legacy-lists-media = میڈیا فلٹر فہرست ({ $count })
+ui-options-legacy-lists-contact-set-entries = رابطہ سیٹ انٹرے ({ $count })
+ui-options-legacy-lists-confirm = _ادخل
+ui-options-legacy-lists-added = شامل يا اپڈٹ کريں { $teleports }, اس اموال بلیک لسٹ: { $derender }, میڈیا فلٹر: { $media }, رابطہ سیٹ انٹرے: { $sets }.
+ui-options-legacy-lists-nothing = کچھ نیا نہیں: اس اکاؤنٹ میں پہلے ہی یہ فہرستیں موجود ہیں۔
+ui-options-legacy-lists-failed = پڑھ نہیں سکا: { $files }.
+ui-options-legacy-lists-unsaved = محفوظ نہیں کیا جاسکتا، اس طرح چھوڑ دیا گیا جیسے کہ تھا: { $files }
+ui-options-legacy-lists-other-grid = اس گر ے پر ایک ئي نام کا فولڈر دوسرے گرے سے تعلق رکھتا هے: اسکے صحيح هے کيے جانچيں
+ui-options-build-show-beams-hint = آپ کا انتخاب بيم دکھايں اور دوسرا آ ویٹر جب تدارک کريں ، گر پٹ کريے يا ديں هيں یہ صرف دکھلا نے کو کنٹرول کر تا هے آپکے تدارك کي بيم کو مقامي طور پر اور نيٹ ورک پر بند کر نے کے ليے ذاتي زندگي > تدار ک بيم چھپائيں استعمال کريں۔
+teleport-failed-title = ٹیلی پورٹ ناکام.
+teleport-error-invalid-tport = تيلي پورٹ کو شش ميں محدود کريں اگر آپ کو مشکل ہو تو 1 منٹ انتظار کريے اور پھر ت لي پورٹ کي کوشش کريں۔ اگر مسئلہ قائم هے تو لاگ آؤٹ کريئے اور پھر لاگ ان کريے۔
+teleport-error-invalid-region-handoff = آپ کا علاقہ کروز کرنے کے عمل میں مشکل پیش آئی. آپ کو ممکن ہے کہ علاقوں کو کروز کر نے سے پہلے واپس لاگ ان ہونا پڑے. اگر آپ کو یہ پیغام ملتا رہے تو، لطفاً مدد سے رابطہ کریں.
+teleport-error-blocked-tport = معذرت، ٹی لي پورٹ حاليں بند هے ۔ ایک لمحے ميں دوباري کوشش کريں ۔ اگر آپ ابھی تک ٹی ليپورٹ نہیں کر سکتے تو ، لطفاً لاگ آؤٹ کريئے اور مسئلہ حل کرنے کے ليے واپس لاگ ان کيجئے
+teleport-error-nolandmark-tport = معاف کیجئے گا، لیکن نظام ہدف کو ڈھونڈنے میں ناکام رہا.
+teleport-error-timeout-tport = معاف کیجئے، لیکن نظام ٹیلی پورٹ اتصال کو مکمل کرنے میں ناکام رہا۔ ایک لمحے میں دوبارہ کوشش کرو۔
+teleport-error-no-help-island = آپ خوش آمدید جزیرہ واپس teleport نہیں کرسکتے.
+teleport-error-noaccess-tport = معذرت، آپ کو اس teleport مقصد تک رسائی نہیں ہے.
+teleport-error-missing-attach-tport = آپ کے متصلات ابھی تک نہیں پہنچے ہیں. کچھ سیکنڈ اور انتظار کی کوشش کریں یا لوگ آؤٹ کریں اور دوبارہ داخل ہوں قبل اسکے کہ آپ ٹیلی پورٹ کریں.
+teleport-error-too-many-uploads-tport = اس ريجن ميں وسيلہ کي قطار حاليں بند هے، تو آپ کا تيلي پورٹ درخواست وقت پر کامیاب نہيں ہو سکے گا. چند منٹ ميں دوباره کوشش کريں يا کم مشغول ايريا ميں جا ئيں
+teleport-error-expired-tport = معاف کیجئے، لیکن نظام آپ کی ٹیلی پورٹ درخواست کو وقت پر مکمل کرنے میں ناکام رہا. چند منٹ میں دوبارہ کوشش کریں.
+teleport-error-expired-region-handoff = معاف کیجئے، لیکن نظام آپ کے علاقے کو وقت پر کروز کرنے میں ناکام رہا. چند منٹ میں دوبارہ کوشش کریں.
+teleport-error-preexisting-tport = معاف کیجئے، لیکن نظام آپ کے ٹیلی پورٹ کو شروع کرنے میں ناکام رہا. چند منٹ میں دوبارہ کوشش کریں.
+teleport-error-no-host = ٹیلی پورٹ مقصد تلاش نہیں کر سکا. مقصد ممکنہ طور پر عارضی طور پر دستیاب نہیں ہے یا اب موجود نہیں ہے. چند منٹ میں دوبارہ کوشش کریں.
+teleport-error-no-inventory-host = انسٹالمنٹ سسٹم اب تک دستیاب نہیں ہے.
+teleport-error-must-get-age-region = آپ کو اس خطے میں داخل ہونے کے لئے 18 سال یا اس سے زائد عمر ہونا چاہیے۔
+teleport-error-special-usage-blocked = علاقہ میں داخل نہیں ہو سکتا. '{ $region }'کچھ مهارت گيمنگ ريجن هے ، اور آپ کو داخل ہونے کے ليے بعض معيار پورا کر نا چا هيے ۔ تفصيلات کے ليئے ، لطفاً مهارت گیمنگ FAQ پر نظر کريں: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = ريجن ميں داخل کر نے ميں نا قادر هيں یہ مهارت گيمنگ ريجن هے اور آپ کو داخل کيا جا نے کے ليے بعض معيار پورا کرنا چا هيے معلومات کے ليئے ، لطفاً مهارت گیمنگ FAQ پر نظر کريں: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = آپ کا گھر گرڈ آپ کے واپسي سے انکار کر تا هے اسکا مطلب عام طور پر اسکے Hypergrid ايڈر سيٹنگ کو اسکے ليے استعمال کيے جا نے والے دوسرے گرڈ کے ايڈر سے ملا نا هے آپکے گھر گرد کے آپريٽرس سے رابطہ کريں
+teleport-hint-hypergrid-unreachable = دوسرے گرڈ تک رسائی نہیں کی جاسکتی. ممکن ہے کہ وہ آف لائن ہو يا لينک پرانا پتہ بتائے
+teleport-hint-hypergrid-visitors-refused = یہ گرڈ صرف کچھ گرڈ کے باشندوں میں اجازت دیتا ہے.
+teleport-hint-hypergrid-destination-gone = مقصدي علاقہ اب موجود نهيں يا منتقل کيا جا چکا هے مقامي نشان اور ديگر گرينز کے ليکڈس کو قديمه کر دیا جا سکتا هے
+toolbar-edit = بٹن اور مینو کا انتخاب کریں...
+toolbar-title = بٹن اور مینو
+toolbar-interface-locked = انٹرفیس بند ہے
+toolbar-help = بٹن يا مينو ايڑي اوپر ، نيچے يا سا ئڈ بار ميں کھينچيں هے بٹن کو ہٹا نے کے ليے هيں اس پر دائيں کلک کريں
+toolbar-help-classic = بٹن يا مينو ايڑي اوپر ، نيچے يا سا ئڈ بار ميں کھينچيں هے بٹن کو ہٹا نے کے ليے هيں اس پر دائيں کلک کريں
+toolbar-help-modes = ہر بٹن کے ليے آئکن ، ليبل ، دو ئيں يا بار دي فائل منتخب کريں Aurora مينو ميں داخلے کو واپس ترتيب د نے کے ليا کھينچيں
+import-menu-textures = ساخت
+import-menu-animations = متحرک
+import-menu-sounds = آوازیں
+import-menu-materials = مواد
+import-menu-meshes = ميکرو
+import-menu-options = اختیارات
+import-upload-payment-title = اپ لوڈ
+import-upload-payment = آپ نے اپ لوڈ کے لیے L${ $cost } ادا کیے۔
+import-quick-textures =
+    { $count ->
+        [one] _ادخل · ساخت: 1 · L${ $cost }?
+       *[other] _ادخل · ساخت: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] _ادخل · مواد: 1 · L${ $cost }?
+       *[other] _ادخل · مواد: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] _ادخل · آوازیں: 1 · L${ $cost }?
+       *[other] _ادخل · آوازیں: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] درآمد کا سائز منتخب کریں۔ معاون ٹیکسچرز کو 2048 × 2048 سائز میں درآمد کیا جا سکتا ہے:
+       *[other] ({ $count }) درآمد کا سائز منتخب کریں۔ معاون ٹیکسچرز کو 2048 × 2048 سائز میں درآمد کیا جا سکتا ہے:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] درآمد کا سائز منتخب کریں۔ معاون مٹیریل تصاویر کو 2048 × 2048 سائز میں درآمد کیا جا سکتا ہے:
+       *[other] ({ $count }) درآمد کا سائز منتخب کریں۔ معاون مٹیریل تصاویر کو 2048 × 2048 سائز میں درآمد کیا جا سکتا ہے:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = مفت تصاویر بغیر پوچھے 2048 × 2048 سائز میں اپ لوڈ کریں
+import-quick-free-full-size-help = "تصويرات کو اخراج کريں" اور "مواد کو اخذ کريے" پھر 1024 يا 2048 پوچھيں صرف جب آپ لوڈ کر نے کے ليے L$ لگتا هے
+ui-bars-customize-bars = انٹرفیس ذاتي کریں
+build-tool-in-use = استعمال میں
+build-create-options-toggle = اختیارات دکھائیں / چھپائیں
+build-create-keep-creating = بناتے رہیں
+build-create-center-on-prim = پرائم پر مرکز
+build-create-copy-prim-rotation = پرائم گردش کا نقل کریں
+build-create-align-to-surface = سطح کے ساتھ سازگار
+build-capture-shape-button = پريم کي شکل کا نسخ کريں : اس پر کلک کريے ، پھر دنيا ميں پريم
+build-capture-shape-armed = اسکے شکل کو نقل کر نے کے ليے پريم پر کلک کريں (Escape بند کر تا هے)
+build-capture-shape-full = 20 شکلیں محفوظ هے هيں ایک کو نيچے کپي کر نے کے ليے ميں ہٹا ئيں
+build-capture-shape-remove = اس شکل کو حذف کريں
+build-capture-shape-tooltip = کاپي شدہ شکل ({ $kind })
+build-capture-shape-not-a-prim = صرف پريم کي شکل کا کپي کر يا جا سکتا هے
+build-capture-shape-mesh-or-sculpt = ميش يا مجسمہ پريم کي شکل کا نسخه نہیں کريا جا سکتا
+build-capture-shape-no-modify = آپ کو اس شکل کي نقل کر نے کے ليے اس پريم ميں تبديلي کر نےکے ليے اجازت چا هيے
+import-other-options = دیگر اختیارات
+toolbar-button-icons = صرف آئکن
+toolbar-button-text = صرف ليبل
+toolbar-button-icons-text = آئکن اور لیبل
+toolbar-icon-default = دیفالٹ آئکن واپس کریں
+toolbar-icon-choose = ایک آئکن منتخب کریں
+toolbar-icon-change = آئکن بدلیں
+toolbar-presets = پریسیٹس
+toolbar-interfaces = انٹرفیس
+toolbar-interfaces-shown = رابطے بلاک میں دکھايا گیا
+toolbar-interfaces-hidden = رابطے بلاک سے چھپا ہوا
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora پرانا سکول
+toolbar-preset-photographer = Aurora فوٹوگرافر
+toolbar-preset-legacy = ليجنڈ
+toolbar-import-textures = متن وارد کریں
+toolbar-import-sounds = آوازیں وارد کریں
+toolbar-import-animations = متحرک تصویریں وارد کریں
+toolbar-import-materials = مواد وارد کریں
+toolbar-import-meshes = ميشوں کو وارد کریں
+toolbar-import-local = مقامی فائلیں
+toolbar-import-advanced = اعلیٰ واردات
+toolbar-import-settings = ترتیبات وارد کریں
+toolbar-import-bar = بار وارد کریں
+toolbar-icon-search = ایک آئکن تلاش کریں...
+toolbar-in-top = اوپری اوزار پٹی میں
+toolbar-bar-top = اوپری اوزار پٹی
+toolbar-drop-here = یہاں ڈالو
+toolbar-separator = تقسيم
+toolbar-interface-edit = انٹرفیس ذاتي کریں
+toolbar-edit-done = ختم
+toolbar-edit-top = اوپر
+toolbar-edit-bottom = نیچے
+toolbar-edit-left = بائیں
+toolbar-edit-right = دائیں
+toolbar-edit-help = اس کو منتخب کر نے کے ليے ايٹم پر کلک کريں ، اسے منتقل کر نےکے ليے کھينچيں يا ايڈٹ آپشنز کے ليئے دائيں کلک کرو ۔ ختم کرنے کے ليا يں اس وينڈوز کو بند کريے
+toolbar-edit-locked = بارز تا کلي هے انکو زير سے تا کل کھوليں رابطہ تبديل کر نے کے ليے
+toolbar-edit-move = یہاں منتقل کریں
+toolbar-edit-split-before = اس سے پہلے تقسیم کریں
+toolbar-edit-split-after = بعد میں تقسیم کریں
+toolbar-edit-merge-before = اگلے بلاک کے ساتھ ملا دیں
+toolbar-edit-merge-after = اگلے بلاک کے ساتھ ملا دیں
+toolbar-edit-merge-groups = ان بلاکوں کو ملا ئيں
+toolbar-drawer = ڈرائور
+toolbar-drawer-default-mode = بٹنوں کی دیفالٹ ڈسپلے
+toolbar-drawer-closes = بٹن پر کلک کرنے کے بعد بند کریں
+toolbar-block-shortcut = شرائط
+toolbar-drawer-hides-needs-shortcut = ایک شرائط کی ضرورت ہے
+toolbar-floating-close-button = بند بٹن شامل کریں
+toolbar-block-name = بلاک کا نام:
+toolbar-block-button-mode = بٹن ڈسپلے بند کریں
+toolbar-button-inherited = وراثت
+toolbar-drawer-hides-button = بٹن کو چھپائیں جب وہ ابھر رہا ہو
+toolbar-floating-new = فلو نگ بلاک
+toolbar-floating-orientation = سمت
+toolbar-floating-horizontal = افقي
+toolbar-floating-vertical = عمودي
+toolbar-floating-empty = بٹن یہاں ڈالیں
+toolbar-shortcut-title = شرائط
+toolbar-shortcut-block-name = بلاک: { $name }
+toolbar-shortcut-none = کوئی شرائط نہیں
+toolbar-shortcut-press-key = کي بورڈ پر دبا ئيں
+toolbar-shortcut-esc = منسوخ کرنے کے لیے Esc
+toolbar-shortcut-clear = حذف
+toolbar-shortcut-overrides = { $name } سے زائد لیتا ہے: یہ شرائط اسکے ڈیفالٹ استعمال کی جگہ ٹولبارے کو چلاتا ہے.
+toolbar-shortcut-used = پہلے سے ہی { $names } کے مختصر.
+toolbar-shortcut-replace = بدلیں
+toolbar-shortcut-add = شامل کریں
+toolbar-shortcut-save = محفوظ کریں
+toolbar-shortcut-choose-key = ایک کلید منتخب کریں
+toolbar-shortcut-help = Ctrl ، Alt اور Shift کو فعال يا غير فعال کريں ، پھر اس کو تبديل کر نے کے ليے کيد کلک کريں۔Ctrl يا Alt ضروري هے مگر F1 سے F24 تک
+toolbar-shortcut-inactive = یہ بٹن کوئی بار میں نہیں ہے: اس کا مختصر عمل کام کرتا ہے جب اسے دوبارہ رکھا جاتا ہے.
+toolbar-shortcut-refused-keyboard = صرف کی بورڈ کے کلیدوں کو شرائط میں شامل کیا جاسکتا ہے.
+toolbar-shortcut-refused-modifier = صرف موڈیفیئر کی بورڈ ایک مختصر راستہ نہیں ہو سکتا.
+toolbar-shortcut-refused-needs-modifier = Ctrl يا Alt شامل کريں : صرف کو ئي ، يا صرف Shift کے ساتھ ، متن کے فائل ميں تا ئپ کريے
+toolbar-shortcut-refused-altgr = Ctrl+Alt اس کو ڑي کے ساتھ AltGr هے ، جو اکثر کي بورڈ پر حروف تا ئپ کر تا هے
+toolbar-shortcut-refused-editing = ٹیکس فیلڈز اس مختصر راستے کو استعمال کرتے ہیں (تمام منتخب کريں، نقل کريے، کاٹيں ، چپکا ئيں، معطل کريئے، دوبارہ کريں۔)
+toolbar-shortcut-refused-navigation = متن کے شعبے اس کيڈ سے منتقل اور پاک کريں
+toolbar-shortcut-refused-typing = بات چیت اور ڈائیلاگ اس کوڈ کا استعمال کرتے ہیں.
+toolbar-shortcut-refused-system = سیسٹم اس کو محفوظ رکھتا ہے.
+toolbar-shortcut-refused-window = یہ شرائط بند یا وینڈوز بدلتے ہیں.
+toolbar-shortcut-refused-zoom = یہ شٹ کٹ انٹرفیس کو زوم کرتا ہے.
+toolbar-spacer = بلاک فاصلہ
+toolbar-add-spacer = بلاک فاصلہ شامل کريں
+toolbar-button-settings = بٹن ترتیبات
+toolbar-button-edit = بٹن بدلیں...
+toolbar-button-edit-title = ایڈٹ بٹن
+toolbar-button-name = بٹن کا نام:
+toolbar-button-display = بٹن ڈسپلے
+toolbar-shortcut-fixed-block-help = ثابت بلاک کا مختصر طريقہ اس کو دکھاتا اور چھپا تا هے جب انٹر فيس ميں ترميم کري جا ئيں تو یہ دکھلا رهتا هے
+toolbar-block-settings = بلاک ترتیبات
+toolbar-parent-block-settings = والدین بلاک ترتیبات
+toolbar-block-edit = بلاک متعین کریں
+toolbar-block-edit-title = بلاک ايڈٹ کريں
+toolbar-block-alignment = برابری
+toolbar-block-sizing = بٹن سایز
+toolbar-block-fixed-options = ثابت موڈ اختیارات
+toolbar-block-floating-options = فلوٹ موڈ اختیارات
+toolbar-block-kind-fixed = محفوظ بلاک
+toolbar-block-kind-drawer = ڈرائور
+toolbar-block-kind-floating = فلو نگ بلاک
+toolbar-block-remove = بلاک ہٹا ں
+toolbar-move-block = تمام بلاک کو منتقل کر نے کے ليے کھينچيں
+toolbar-remove-block = بلاک ہٹا ں
+toolbar-drawer-empty = یہ ڈرائنگ خالی ہے.
+toolbar-drawer-drop = بٹنوں کو شامل کرنے يا انکا ترتیب بدلنے کے ليے یہاں کھينچیں
+toolbar-separator-settings = بلاک فاصلے کی ترتیبات
+toolbar-separator-size = سائز / کم سے کم (px)
+toolbar-separator-stretch = دستیاب جگہ بھریں
+toolbar-separator-help = لچک دار فاصلے بلاک کے ليے چھوڑيے جا نے کو شريک کر تے هيں سائز انکے کم از کم عرض يا سا يڑ بار ميں بلندي هے
+toolbar-block-navigation = نیگيشن اور SLURL
+toolbar-block-account = اکاؤنٹ اور بلنڈ
+toolbar-block-system = گھڑی، اشارے اور آڈیو
+toolbar-block-status = دستیابی کی حالت
+toolbar-block-balance = توازن
+toolbar-block-clock = گھڑی
+toolbar-block-ping = علاقہ لاٹینسی
+toolbar-block-fps = فریم شرح (FPS)
+toolbar-block-network = نیٹ ورک ٹریفک
+toolbar-block-media = پارشل میڈیا
+toolbar-block-music = پارشل ميوزيک
+toolbar-block-volume = آواز
+toolbar-block-notifications = اطلاع
+toolbar-block-conversations = بات چیت نمائش
+toolbar-block-chat = قریبی بات چیت
+toolbar-category-all = تمام زمرے
+toolbar-section-main = کھیل
+toolbar-section-advanced = اعلیٰ
+toolbar-search-all = تلاش میں اعلیٰ کمانڈز شامل ہیں.
+toolbar-category-avatar = آ وٹر اور حرکت
+toolbar-category-communication = مواصلات
+toolbar-category-world = دنيا اور سفر
+toolbar-category-creation = تخلیق اور مواد
+toolbar-category-interface = انٹرفیس اور کیمرا
+toolbar-category-advanced = اعلیٰ اوزار
+toolbar-category-help = مدد
+toolbar-category-custom = سفارشی کمانڈز
+toolbar-bar-settings = ٹول بار ترتیبات
+toolbar-menu-group = مینو: { $name }
+toolbar-location-bar = SLURL پتہ پٹی
+toolbar-command-build-tool-focus = بحال کريں
+toolbar-command-build-tool-grab = بنا ئيں - منتقل کريں
+toolbar-command-build-tool-edit = بنائیں - تعدیل کریں
+toolbar-command-build-tool-create = بنائیں - بنائیں
+toolbar-command-build-tool-land = بنائيں - زمين
+bug-copy-version = دیکھنے والا ورژن کاپی کریں
+toolbar-notecard-save = نوٹ کارڈ میں محفوظ کریں...
+toolbar-notecard-load = نوٹ کارڈ سے لوڈ کریں...
+toolbar-notecard-name = Aurora انٹرفیس
+toolbar-notecard-help = ٹول بار ، بٹن ، ڈرائور اور مینو کا لانچر اور منظر عامہ.
+toolbar-notecard-saved = آپ کے انسٹالیشن میں محفوظ انٹرفیس لانچر.
+toolbar-notecard-invalid = اس نوٹ کارڈ ميں کوئی سازگار رابطہ نگاري لانچر نہیں هے
+toolbar-notecard-unavailable = یہ نوٹ کارڈ اب موجود نہیں ہے يا تو کاپي نہیں کی جاسکتی
+toolbar-notecard-layout-changed = نوٹ کارڈ کو لوڈ کر نے کے دوران رابطہ تبديل هو تا هے اس کي لانچر کو لا گنے کے ليے دوباره لوڈ کرو
+toolbar-notecard-demo-valid = فوٹوگرافر انٹرفیس
+toolbar-notecard-demo-invalid = دوسرے نوٹ کارڈ
+toolbar-notecard-too-large = یہ انٹرفیس کی ترتیبات ایک نوٹ کارڈ کے لیے بہت بڑی ہے.
+toolbar-saved-interfaces = محفوظ کردہ انٹرفیس
+toolbar-saved-interfaces-empty = ابھی تک کوئی محفوظ انٹرفیس نہیں.
+toolbar-notecard-destination = فولڈر: { $path }
+toolbar-notecard-folder-error = انٹرفیس فولڈر لوڈ نہیں کیا جاسکتا یا نہیں بنایا جاسکتا۔ لطفاً دوبارہ کوشش کریں۔
+toolbar-current-preset = منتخب شدہ انٹرفیس: { $name }
+toolbar-preset-custom = خود ساختہ انٹرفیس
+toolbar-preset-unsaved = نا محفوظ تبدیلییں
+toolbar-preset-save-title = انٹرفیس محفوظ کریں
+toolbar-preset-save-name = انٹرفیس کا نام
+toolbar-preset-save-new = نیا ذاتی انٹرفیس
+toolbar-preset-save-replace = اس ذاتی انٹرفیس کو تبدیل کریں
+toolbar-preset-save-unavailable = اس انٹرفیس کو یہاں محفوظ نہیں کیا جاسکتا. دوسرا نام یا ایک دستیاب، تحریری ذاتی انٹرفیس منتخب کریں.
+toolbar-interface-delete-unavailable = یہ ذاتی انٹرفیس حذف نہیں کیا جاسکتا.
+toolbar-interface-delete-confirm = ذاتی انٹرفیس «{ $name }» کو ردی کی ٹوکری میں منتقل کریں؟

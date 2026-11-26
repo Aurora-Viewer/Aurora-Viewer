@@ -16100,3 +16100,739 @@ parcel-environment-empty = Walang naka-save na kapaligiran
 parcel-environment-remove-all = Alisin ang lahat
 parcel-environment-remove-all-title = Alisin ang bawat kapaligiran na nai-save para sa isang parcel?
 parcel-environment-remove-all-text = Aalisin ang mga kapaligirang na-save mo para sa mga lote sa grid na ito. Mananatili ang nasa ibang grid. Hindi na ito mababawi.
+
+### Updated release translations
+
+anim-timeline-channels-hint = Ipakita ang pag-ikot ng buto na ito at lokasyon key sa mga hilera ng kanilang sariling
+anim-timeline-channel-rotation = Paglipat
+anim-timeline-channel-location = _Lokasyon:
+anim-timeline-keying-hint = Ano ang isang pangunahing talaan. Sa lokasyon, ilipat ay tumatagal ng isang joint nag-iisa, sa labas ng kanyang IK chain. Second Life animations ay walang scale key.
+anim-timeline-keying-auto = Auto: pag-ikot, at lokasyon para sa pelvis at inilipat joints
+anim-timeline-keying-auto-short = Awtomatiko
+anim-timeline-keying-loc-rot = Lugar at pag-ikot
+anim-timeline-keying-loc-rot-short = Lugar + Root
+anim-timeline-keying-rot-short = Root
+anim-timeline-keying-loc-short = Lugar
+anim-edit-shortcut-play = I-play o i-pause
+area-search-scope-heading = Saan
+area-search-scope-parcel = Pakikipag-usap
+area-search-scope-region = Rehiyon
+area-search-scope-neighbours = Mga kapitbahay
+area-search-objects-heading = Aling mga bagay
+inventory-copy-selection-count =
+    { $count ->
+        [one] Kopyahin ang 1 item
+       *[other] Kopyahin { $count } mga item
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Mag-link 1 item
+       *[other] Link { $count } mga item
+    }
+inventory-drop-move-here = Maglipat dito
+inventory-drop-copy-here = Kopyahin dito
+inventory-drop-link-here = Lumikha ng mga link dito
+inventory-sort-description = Paglalarawan
+inventory-sort-reversed = { $order } (bago)
+inventory-column-creator = Gumawa
+inventory-column-count = Mga Item
+inventory-columns-fit = Tamasahin ang lahat ng mga haligi upang umangkop
+inventory-columns-reset-widths = I-reset ang haligi ng lapad
+inventory-back = Bumalik
+inventory-forward = I-paste ang _Panahon
+inventory-up = Umakyat ng isang antas
+keybinds-inventory-root = Pumunta sa tuktok
+keybinds-inventory-search = Maghanap sa inventory
+keybinds-inventory-filter = I-filter ang folder
+keybinds-inventory-preview = Ipakita ang preview pane
+keybinds-inventory-view-large = Malaking larawan
+keybinds-inventory-view-medium = Mga larawan
+keybinds-inventory-view-small = Maliit na larawan
+keybinds-inventory-view-compact = Compact imbakan view
+keybinds-inventory-view-details = Tingnan ang mga detalye
+keybinds-inventory-view-tiles = Pagtingin sa Tile
+keybinds-inventory-toggle = Piliin o huwag piliin ang hilera sa focus
+keybinds-inventory-menu = Buksan ang menu ng pagpipilian
+keybinds-inventory-purge = Purge mula sa Trash
+keybinds-inventory-refused = { $keys } mananatiling inventory listahan ng sariling key: pumili ng iba.
+inventory-path-edit = Mag-type ng path
+inventory-path-subfolders = Subfolder
+inventory-copy-path = I-copy ang path
+inventory-show-in-folder = Ipakita sa folder
+inventory-pin = Mag-pin sa mabilis na access
+inventory-unpin = I-unpin mula sa Mabilis na access
+inventory-quick-access = Mabilis na pag-access
+inventory-quick-access-drop = I-drop ang isang folder dito upang i-pin ito
+inventory-invert-selection = Ibaliktad ang seleksyon
+inventory-undo = Ibalik
+inventory-redo = Ibalik
+inventory-undo-step = Ibalik ang { $what }
+inventory-redo-step = Ibalik { $what }
+inventory-history-move =
+    { $count ->
+        [one] ilipat ng 1 item
+       *[other] ilipat ng { $count } mga item
+    }
+inventory-history-delete =
+    { $count ->
+        [one] tanggalin ng 1 item
+       *[other] tanggalin ng { $count } mga item
+    }
+inventory-history-rename = baguhin ang pangalan
+inventory-history-new-folder = bagong folder
+inventory-history-copy =
+    { $count ->
+        [one] kopya ng 1 item
+       *[other] kopya ng { $count } mga item
+    }
+inventory-history-link =
+    { $count ->
+        [one] link sa 1 item
+       *[other] mga link sa { $count } mga item
+    }
+inventory-undo-nothing = Walang natitira upang i-undo: ang mga item ay inilipat o nawala.
+inventory-redo-nothing = Walang natitira upang muling gawin: ang mga item ay inilipat o nawala.
+inventory-undo-empty = Walang anuman upang i-undo.
+inventory-redo-empty = Walang dapat gawin.
+inventory-undo-dropped = Ang mga item ng huling hakbang ay inilipat o nawala: ito ay nahulog. Undo muli para sa hakbang bago.
+inventory-redo-dropped = Ang mga item ng susunod na hakbang ay inilipat o nawala: ito ay nahulog. Redo muli para sa hakbang pagkatapos.
+inventory-undo-folder-not-empty = Ang bagong folder na ito ay may mga item ilagay doon dahil: ilipat ang mga ito out una, o tanggalin ang folder sa iyong sarili.
+inventory-undo-kept-out = Ang mga item na iyon ay nasa kasalukuyang damit o ang Marketplace listings ngayon: baguhin ang mga ito doon.
+inventory-restore-to = Ibalik sa “{ $folder }”
+inventory-restore-to-origins = Ibalik sa kanilang mga folder
+inventory-purge-no-undo = Ang Undo ay hindi maaaring dalhin ang mga ito pabalik.
+inventory-new-tab = Bagong tab
+inventory-close-tab = Magsara ng tab
+inventory-next-tab = Susunod na tab
+inventory-previous-tab = Nakaraang tab
+inventory-open-in-new-tab = Magbukas sa bagong tab
+inventory-tabs-limit = Ang pinakamalaking bilang ng mga tab: { $count }.
+inventory-copy-to-other-pane = I-copy sa ibang pane
+inventory-move-to-other-pane = Maglipat sa ibang pane
+inventory-resize-columns = I-drag upang baguhin ang laki ng mga haligi. Double-click upang umangkop sa haligi sa kaliwa sa mga nilalaman nito.
+inventory-resize-columns-first = I-drag upang baguhin ang laki ng mga haligi. Double-click upang bigyan ang unang haligi nito karaniwang lapad.
+inventory-sort-by-column = I-click upang i-sort sa pamamagitan ng haligi na ito, muli upang baguhin ang pagkakasunud-sunod. I-drag upang ilipat ang haligi.
+inventory-filter-hint = I-filter ang folder na ito…
+inventory-filter-close = Isara ang filter (Esc)
+inventory-filter-nothing = Walang bagay dito ang tumutugma sa filter
+inventory-view-compact = Compact imbakan view
+inventory-view-tiles = Pagtingin sa Tile
+inventory-view-per-folder = Tandaan ang view ng bawat folder
+inventory-group-by = Pag-grupo ayon sa
+inventory-group-none = Walang
+inventory-group-folders = Folder
+inventory-group-unknown-creator = May-akda hindi kilala pa
+inventory-group-today = Ngayon
+inventory-group-yesterday = Kahapon
+inventory-group-this-week = Sa huling7araw
+inventory-group-this-month = Sa huling 30 araw
+inventory-group-this-year = Mas maaga sa taong ito
+inventory-group-earlier = Isang mahabang panahon na ang nakakaraan
+inventory-group-no-date = Walang petsa
+cmdline-mod-zoffset-usage = Itakda ang taas ng iyong avatar (gamitin: /zoffset value o +delta).
+dev-toolbox-n4 = Inventory pag-load
+dev-toolbox-what-n4 = Folder basahin, nabigo at kaliwa, ang loader's basahin sa flight at retries; walang pangalan
+ui-context-inspect-avatar = Tingnan ang avatar
+inspect-window = Pagmasdan
+inspect-tab-objects = Mga bagay sa mundo
+inspect-objects-title =
+    { $count ->
+        [one] { $count } na bagay
+       *[other] { $count } mga bagay
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } mga item
+       *[other] { $count } mga item
+    }
+inspect-open-profile = Buksan ang profile
+inspect-over-limit = Sa itaas ng iyong limitasyon
+inspect-limit-tip = Ang iyong complexity limitasyon: { $limit }
+inspect-search = Maghanap ng mga item o tagapaglikha
+inspect-outlined = { $name } ay inilarawan sa mundo
+inspect-area-head = Tagapangulo
+inspect-area-body = Katawan
+inspect-area-arms = Arms at kamay
+inspect-area-legs = Paa at paa
+inspect-area-hud = HUD
+inspect-area-other = Iba
+inspect-area-world = Mga bagay sa mundo
+inspect-own-eyes = Mga mata ng sistema
+inspect-own-body = Katawan ng sistema
+inspect-own-description = Bahagi ng avatar mismo, hindi isang attachment
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } kumplikado
+inspect-no-match = Walang tumutugma sa “{ $query }”.
+inspect-spoken-worn = { $name }, suot sa { $point }, kumplikado { $complexity }, ginawa ng { $creator }
+inspect-spoken-object = { $name }, pagmamay-ari ng { $owner }, kumplikado { $complexity }, ginawa ng { $creator }
+inspect-look-at-tip = Ilipat ang camera sa ito
+inspect-profile-tip = Buksan ang profile ng tagalikha
+inspect-made-by = Ginawa ng
+inspect-owned-by = Pag-aari ng
+inspect-worn-on = Nasusuot sa
+inspect-prims-count =
+    { $count ->
+        [one] { $count } na unang bilang
+       *[other] { $count } mga primes
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Memorya ng texture
+inspect-tile-vram = VRAM
+inspect-tile-prims = Mga prim
+board-close = Magsara { $title }
+board-grow = Palakihin { $title }
+board-remove = Alisin ang { $name }
+board-more = at { $count } higit pa
+board-more-short = +{ $count }
+board-some-of = { $shown } ng { $all }
+board-of-all = ng { $all }
+stage-turn-left = Mag-ikot sa kaliwa
+stage-turn-right = Mag-turn right
+stage-higher = Tingnan mula sa mas mataas na
+stage-lower = Tingnan mula sa mas mababang
+stage-nearer = Mas malapit
+stage-further = Higit pang malayo
+stage-reset = Bumalik sa simula
+stage-hint = I-drag upang i-turn, kanan-i-drag na ilipat
+stage-light = Maliwanag na background
+stage-dark = Madilim na background
+stage-playing = AO
+stage-paused = I-pause
+stage-pause-tip = I-pause ang kanilang animasyon
+stage-play-tip = I-play ang kanilang animasyon
+stage-loading = Paghahanda ng 3D view…
+stage-nothing = Walang bagay na ipakita sa 3D pa.
+stage-refused = Ang 3D view ay off habang RLVa limitasyon kung ano ang maaari mong makita.
+inspect-your-limit = Ang iyong limitasyon: { $limit }
+inspect-without-it = { $value } nang walang ito
+inspect-you = Ikaw
+inspect-person = Tao
+inspect-difference = Pagkakaiba
+inspect-drawn-in-full = Inilabas sa buong
+inspect-nobody = Walang complexity ng sinuman ay kilala pa.
+inspect-aside-count = { $count } ilagay sa tabi
+inspect-is-aside = ilagay sa tabi
+inspect-set-aside = Ilagay sa tabi
+inspect-set-aside-tip = Tingnan ang mga kumplikadong walang item na ito. Lamang sa window na ito: walang pagbabago sa mundo.
+inspect-put-back = Ilagay muli
+inspect-put-back-tip = Bilangin muli ang item na ito
+inspect-complexity-spoken = Kumplikado { $value }, numero { $rank } ng { $count } mga tao dito
+inspect-stage-outfit = Ang outfit
+inspect-stage-objects = Ang mga bagay
+inspect-stage-back = Bumalik sa lahat
+inspect-place-made-by = { $place } · ginawa ng { $name }
+inspect-owned-by-name = Pag-aari ng { $name }
+inspect-tile-items = Mga Item
+inspect-tile-figures = Larawan
+inspect-col-item = Pangalan
+inspect-point = Punto
+inspect-look-at = Tingnan ang
+inspect-selected-count = { $count } napili
+inspect-worn-count = { $count } nasusuot
+inspect-creators-word = tagapaglikha
+inspect-areas-word = mga lugar ng katawan
+inspect-owners-word = may-ari
+inspect-triangles-word = mga tatsulok
+inspect-made-of = { $count } ng { $all } mga item
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, sa kaliwa
+inspect-reset-columns = I-reset ang mga haligi
+inspect-by-creators =
+    { $count ->
+        [one] { $items } sa pamamagitan ng isang tagalikha
+       *[other] { $items } ng { $count } tagapaglikha
+    }
+inspect-owner-button = Profile ng may-ari
+inspect-group-button = Profile ng grupo
+inspect-creator-button = Profile ng may-akda
+inspect-land-others = Iba pa { $n }
+inspect-land-these = Ito { $n }
+inspect-land-free = Libre { $n }
+inspect-land-unknown = Ang kuwarto ng parcel ay nagpapakita kapag ang mga bagay ay lahat sa parcel ikaw ay sa.
+ui-login-unencrypted = Login na walang encryption
+ui-login-unencrypted-body = Nagsisimula sa http:// ang login address ng { $server } sa halip na https://, kaya hindi mae-encrypt ang pag-login. Maaaring mabasa ng sinumang nakakakita ng network traffic mo ang password mo at magamit ang account mo, halimbawa sa pampublikong Wi-Fi, shared network o sa daan papuntang grid. Wala pang naipadala. Maaari kang humingi sa grid ng https:// na address. Tatandaan ang pagpili para sa server na ito.
+ui-login-unencrypted-accept = Mag-login nang walang encryption
+world-appearance-clothing-layers-full = Lahat ng 60 mga layer ng damit ay ginagamit. Alisin ang isang layer bago magsuot ng item na ito.
+ui-options-ray-tracing = Graphics rendering na may ray tracing
+ui-options-ray-traced-shadows = Sun shadows computed gamit ang ray tracing
+ui-options-ray-traced-shadows-help = Ang araw at ang buwan ng mga lilim traced ray sa pamamagitan ng ray sa halip na basahin mula sa mga mapa ng lilim: eksaktong kung saan ang mga bagay na hawakan at sa anumang distansya. Kailangan ang mga lihim at isang graphics card na may ray tracing, at gastos ng higit pa sa graphics cards
+ui-options-ray-traced-lights = Lokal na ilaw shadows
+ui-options-ray-traced-lights-help = Shadows mula sa mga punto ng ilaw sa paligid (lamps, kandila), kung saan cast walang iba pa, at mula sa projectors kapag Projector shadows ay on, sa kanilang mga mapa ng lilim' lugar. Ang pinaka-mahal ng ray tracing pagpipilian: pinakamahusay na kaliwa off sa integrated graphics
+ui-options-rt-quality = Ray tracing kalidad
+ui-options-rt-quality-help = Ang bawat traced epekto ay nananatili sa: mas mababang mga antas trace mas kaunting sample at ang hindi direktang ilaw sa isang coarser grid, para sa higit pang mga frame sa bawat segundo sa isang mas maliit na graphics card. Mataas ay ang buong imahe ng Deluxe (RT). Pagpili ng isang antas din set ang mga ilaw na cast lilim
+ui-options-rt-sun-softness = Araw lilim softness
+ui-options-rt-sun-softness-help = Paano malambot ang mga gilid ng araw's traced shadows ay: 1 ay ang tunay na araw,0matalim gilid, higit pa para sa isang hazier araw
+ui-options-rt-lamp-softness = Lokal na ilaw lilim softness
+ui-options-rt-lamp-softness-help = Paano malambot ang mga gilid ng lamp' traced shadows ay: 1 sumusunod sa laki ng bawat lampara,0matalim na gilid
+ui-options-rt-shadow-lamps = Mga ilaw na naglalagay ng mga lilim
+ui-options-rt-shadow-lamps-help = Gaano karaming mga ng ang pinakamalapit na ilaw cast traced shadows; ang iba pa liwanag, nang walang shadow. Mas mababa gastos mas mababa sa graphic card
+ui-options-ray-traced-indirect = Ray-traced hindi direktang ilaw
+ui-options-ray-traced-indirect-help = Ilaw bounced sa pamamagitan ng mga ibabaw sa paligid, traced lampas kung ano ang screen ay nagpapakita, sa lugar ng hindi direkta liwanag ng GTAO
+ui-options-gi-probes = Global ilaw probes
+ui-options-gi-probes-help = Probes kumalat sa pamamagitan ng eksena na panatilihin ang ilaw ng ilang bounces at ang langit nakikita nila: sarado kuwarto manatili madilim, ilaw ay napupunta round sulok. Tungkol sa 0.8 ms sa graphic card
+ui-options-ray-traced-reflections = Reflections kinakalkula gamit ang ray tracing
+ui-options-ray-traced-reflections-help = Reflections ng kung ano ang screen ay hindi ipakita, sa lugar ng screen-space reflections, na dapat ay sa
+ui-options-ray-tracing-unsupported = Ang graphic card na ito o ang driver nito ay walang ray tracing
+ui-options-ray-tracing-vr = Hindi magagamit sa isang session na nagsimula para sa VR
+ui-options-tab-ray-tracing = Mga setting ng ray tracing
+ui-options-deluxe-rt-warning-title = I-on ang Deluxe (RT)?
+ui-options-deluxe-rt-warning-text = Ang Deluxe (RT) ay Mataas na may mga lilim at ang hindi direktang ilaw traced sa pamamagitan ng graphics card. Ito ay nangangailangan ng isang card na may hardware ray tracing (NVIDIA RTX, AMD Radeon RX 6000 o mamaya, Intel Arc) at isang up-to-date driver, at ito ay nagkakahalaga ng malayo higit pa kaysa sa Mataas: sa isang mid-range card ang frame rate ay maaaring mahulog ng marami sa busy lugar. Ray tracing ay pa rin na sinubukan: kung ang imahe ay mukhang mali o ang viewer slows down, bumalik sa mataas na. Ang Ray Tracing tab hold nito setting.
+ui-options-deluxe-rt-warning-turn-on = I-on
+ui-options-ray-tracing-needs-shadows = Kailangan ang mga lilim
+ui-options-ray-tracing-needs-ssr = Kailangan ang screen-space reflections
+ui-options-preset-deluxe = Deluxe (RT)
+ui-options-normal-precision = Pagpapahiwatig ng katumpakan
+ui-options-normal-precision-help = Paano finely ang direksyon ng bawat ibabaw ay pinananatiling para sa mga reflections. Standard ay maaaring ipakita ang mga hakbang sa mga pag-iisip ng makinis, kurbada ibabaw tulad ng pintura ng isang kotse; Mataas inaalis ang mga ito at gumagamit ng higit pang video memory. Awtomatikong ginagamit ang Mataas na may ray-traced reflections, kung saan ang mga Hakbang ipakita ang pinaka, at Standard kung hindi man
+ui-options-normal-precision-automatic = Awtomatikong
+ui-options-normal-precision-standard = Pamantayan
+ui-options-normal-precision-high = Mataas
+ui-options-private-point-at-help = Itago kung aling mga bagay na ikaw ay pag-edit, panatilihin ang iyong pag-editing arm lowered, at itago ang iyong editing beam.
+ui-options-private-edit-beam = I-edit ang beam
+ui-options-private-edit-beam-help = Itago ang beam ganap habang i-edit mo o grab bagay, parehong sa iyong screen at para sa iba pang mga viewers. Pagpili target hints at magbigay / drop beams ay hindi apektado.
+common-window-outside = Ilipat sa labas ng window ng viewer
+common-window-inside = Bumalik sa window ng viewer
+common-window-rename-name = Mag-double-click upang baguhin ang pangalan
+common-carry-hint = Mag-click upang ihulog ito dito, Esc upang payagan ang pumunta ng mga ito
+common-window-paused-photo = I-pause habang bukas ang mode ng larawan
+common-window-paused-director = Paused habang ang Direktor ay naglalaro
+common-window-paused-interface = I-pause habang ang interface ay off
+ui-options-warn-live-preview = Babala kapag ang isang texture o materyal ay hindi maaaring ma-preview
+ui-options-warn-live-preview-help = Sa picker ng window build, pag-click sa isang no-copy item ay hindi nalalapat hanggang OK: sabihin mo.
+ui-texture-picker-live-preview-texture = Hindi namin maaaring ipakita ang isang preview ng texture na ito dahil ito ay walang-copy.
+ui-texture-picker-live-preview-material = Hindi namin maaaring ipakita ang isang preview ng materyal na ito dahil ito ay walang-kopiya.
+fetch-invalid-url = Hindi wastong URL
+ui-chat-close-all-ims = Isara ang lahat ng IM mga pag-uusap
+ui-chat-close-all-ims-question = Magsara ang lahat ng IM na pag-uusap at tapusin ang aktibong tawag?
+ui-chat-confirm-close-all-ims = Kumpirmahin bago isara ang lahat ng IM pag-uusap
+ui-chat-confirm-close-all-ims-help = Magtanong bago isara ang lahat ng IM pag-uusap kapag ang isa ay may isang aktibong tawag sa boses.
+ui-options-aurora-controls-compact-help = Ang Controls window ay bukas compact sa camera: nito joysticks, zoom at roll. Ito title bar button switches sa pagitan ng compact at buong, at set na ito masyadong. Sa Classic windows, ang camera ay bubukas sa Legacy Viewer's maliit na camera window sa halip.
+rlva-restart-hint = RLVa nagsisimula kapag nag-log ka sa. Kapag ito ay tumatakbo, pag-on o pag-off nito ay may epekto sa susunod na simula ng viewer: ang mga bagay paghihigpit hold manatili hanggang pagkatapos.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa ay pinagana pagkatapos mong i-restart.
+rlva-toggle-disabled-restart = RLVa ay hindi magagamit pagkatapos mong i-restart.
+livemesh-import-connect = Ikonekta ang Blender na may plug-in 0.11.0 o mamaya, o Maya na may plugin 0,2,0 o mas huli, upang maghanda ng pag-import LODs.
+livemesh-import-preparing = Paghahanda ng mga bagay at LODs nito sa Blender o Maya…
+livemesh-import-ready = LODs natanggap. Handa sa importer.
+livemesh-import-failed = Import paghahanda nabigo: { $error }
+livemesh-import-timeout = Blender o Maya ay hindi natapos paghahanda ng import. Tingnan ang koneksyon (sa Blender, gamitin Object Mode) at subukan muli.
+livemesh-shape-apply-tooltip = I-check ang Modifiy rights, at pagkatapos ay iakma ang skeleton na pinili sa Blender o Maya at ang mga nakatali meshes nito (sa pamamagitan ng MayaStar para sa isang MayaStar rig). Pumili ng isang lokal na Second Life compatible skeletons.
+livemesh-shape-update-apply = I-update ang Blender plug-in sa 0.10.0 o mamaya, o ang Maya plug- in sa 2.4.0, pagkatapos ay muling ikonekta ito.
+livemesh-shape-applied = Ang hugis ay inilalapat sa napili skeleton.
+livemesh-shape-tooltip = Tingnan ang nasusuot hugis ng baguhin ang mga karapatan at lumikha ng isang bagong rigged reference katawan sa Blender o Maya.
+livemesh-shape-connect = Ikonekta ang Aurora plug-in sa Blender o Maya una.
+livemesh-shape-update-plugin = I-update ang Blender plug-in sa 0.9.0 o mamaya, o ang Maya plug- in sa 1.3.0, pagkatapos ay muling ikonekta ito.
+livemesh-shape-timeout = Blender o Maya hindi nakumpirma ang pag-import. Subukan muli (sa Blender, ilipat sa Object Mode).
+livemesh-shape-success = Shape na-import bilang isang bagong rigged reference katawan.
+blender-live-maya-version = Aurora LiveMesh para sa Maya { $version }
+blender-live-maya-instructions = I-save ang ZIP at i-extract ito, pagkatapos ay i-drag install.mel sa isang Maya viewport. Buksan LiveMesh mula sa Aurora shelf, magdagdag ng iyong mga meshes at mag-click Connect.
+blender-live-save-maya = I-save ang Maya plug-in…
+blender-live-maya-saved = Plug-in nai-save. I-extract ang ZIP at i-drag install.mel sa isang Maya viewport.
+livemesh-plugin-connected = Plug-in na konektado
+livemesh-token-refused = Isang programa ang sinubukan na kumonekta nang walang key ng preview na ito. Tanging ang Aurora plug-in sa Blender o Maya ay maaaring kumonecta.
+livemesh-waiting-plugin = Paghintay para sa Blender o Maya…
+blender-live-objects-help = Ang mga meshes Blender o Maya ay nagpapadala. Pumili ng isa upang ilagay ito, o mag-import ito mula sa menu nito.
+blender-live-size-note = Ang laki multiplies kung ano ang plug-in ay nagpapadala, kaya mamaya edits sa Blender o Maya panatilihin ito.
+blender-live-avatar-help = Para sa rigged meshes: ipadala ang iyong hugis sa Blender o Maya upang modelo sa ito.
+livemesh-shape-section = Ang iyong hugis sa Blender o Maya
+blender-live-import-help = Freezes isang snapshot ng bagay para sa normal na import: review, presyo, pagkatapos ay kumpirmahin. Mamaya edits sa Blender o Maya hindi baguhin ito.
+blender-live-changed-tip = Oras mula noong huling binago ng Blender o Maya ang bagay na ito
+fit-lab-section = Mag-fit lab
+fit-lab-help = Mannequins nakasuot sa kung ano ang iyong magsuot, bawat isa na may iba pang katawan, tumayo sa harap mo upang ipakita kung paano ang damit fits ilang mga hugis. Lamang mong makita ang mga ito: walang ipinadala o nai-save.
+fit-lab-body-me = Ako
+fit-lab-body-slim = Slim hugis ng katawan
+fit-lab-body-curvy = Kurbadong
+fit-lab-body-full = Buong larawan
+fit-lab-body-athletic = Atletiko
+fit-lab-body-tall = Mataas
+fit-lab-body-petite = Maliit
+fit-lab-motion = Paggalaw
+fit-lab-motion-stand = Mag-iwan
+fit-lab-motion-walk = Lakad
+fit-lab-motion-sit = Mag-upo
+fit-lab-motion-range = Ranggo ng paggalaw
+fit-lab-pose = Pag-pose
+fit-lab-pose-all = Lahat, sa turn
+fit-lab-pose-arms-up = Parehong mga armas na itinaas
+fit-lab-pose-reach = Makarating sa harap
+fit-lab-pose-hug = Ang crossed armas
+fit-lab-pose-squat = Pag-upo
+fit-lab-pose-kneel = Tuhod
+fit-lab-pose-knee-up = Tuhod na itinaas
+fit-lab-pose-twist = Pag-ikot
+fit-lab-pose-bend = Mag-ahit pasulong
+fit-lab-motion-like-me = Tulad ko
+fit-lab-show = Ipakita ang mannequins
+fit-lab-place = Dalhin ang mga ito dito
+fit-lab-remove = Alisin ang mannequins
+fit-lab-choose = Pumili ng hindi bababa sa isang katawan.
+fit-lab-clip = Ipakita kung saan ang katawan ay dumating sa pamamagitan ng
+fit-lab-clip-note = Amber: katawan at damit matugunan. Sa iyong avatar at ang mga mannequins, tulad ng makikita mula sa camera. Lahat ng iba pang rigged magsuot mo counts bilang katawan: alisin ang isang jacket o buhok na suot sa ibabaw ng damit.
+blender-live-levels-pending = Blender o Maya naghahanda ang mga antas ng detalye kapag nag-click ka Import.
+blender-live-levels-note = Ang mga ito ay natagpuan sa Maynila at iba pang pook sa buong bansa.
+blender-live-quick-look-changed = Nabago sa Blender o Maya { $ago } taon na ang nakakaraan.
+blender-live-warning-textures = Textures skipped, simpleng kulay na ipinapakita
+blender-live-warning-not-sent = Hindi sa preview
+blender-live-undo-derez = Derezzed { $name } · pa rin sa listahan ng plug-in
+blender-live-undo-detach = Detached { $name } · pa rin sa listahan ng plug-in
+inventory-open-current = Magbukas
+inventory-folder-back = Bumalik
+inventory-folder-forward = I-paste ang _Panahon
+inventory-folder-up = Pumunta ng isang antas pataas
+area-search-metres = { $n } m
+area-search-band-reach = Sa loob ng maabot
+area-search-band-close = Malapit sa
+area-search-band-around = Sa paligid mo
+area-search-band-further = Higit pa
+area-search-band-far = Pebrero
+area-search-band = Lugar
+area-search-within = Sa loob ng { $distance }
+area-search-within-across = Sa loob ng { $distance } sa kabuuan
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Ipakita ang bawat distansya
+area-search-from = Distansya mula sa
+area-search-to = Distansya sa
+area-search-bar-tip =
+    { $count ->
+        [one] Isang bagay, { $from } sa { $to }
+       *[other] { $count } mga bagay, { $from } sa { $to }
+    }
+area-search-of-objects = ng { $total } bagay
+area-search-li = { $value } LI
+area-search-li-count = { $value } epekto ng lupa
+area-search-owner-count =
+    { $count ->
+        [one] isang may-ari
+       *[other] { $count } may-ari
+    }
+area-search-object-count =
+    { $count ->
+        [one] isang bagay
+       *[other] { $count } mga bagay
+    }
+area-search-objects-word = mga bagay
+area-search-in-reach = dito
+area-search-tab-objects = Mga bagay sa mundo
+area-search-tab-owners = May-ari
+area-search-hint-wide = Mga bagay, may-ari, mga tagalikha o UUIDs
+area-search-kind-heading = Uri ng bagay
+area-search-kind-tip = Mag-click: lamang ang mga ito. Muli: nakatago.
+area-search-kind-any = anumang
+area-search-kind-only = lamang ang mga ito
+area-search-kind-hidden = Nakatagong
+area-search-kind-attached = Naka-attach
+area-search-kind-probes = Pagsasaalang-alang probes
+area-search-click-all = Lahat
+area-search-click-any-short = Anuman
+area-search-permissions = Pahintulot
+area-search-price-heading = Pagbebenta presyo, para sa mga bagay para sa pagbebenta
+area-search-price-to = sa
+area-search-price-tip = Piliin ang “Para sa pagbebenta” una
+area-search-linked = Naka-link na prims
+area-search-one-field = Maghanap sa isang patlang
+area-search-regex-switch = Regular na expression
+area-search-regex-invalid = Hindi isang wastong regular na expression
+area-search-reset-filters-tip = Ibalik ang bawat filter; ang teksto ng paghahanap ay mananatiling
+area-search-save-defaults-tip = Magbukas sa mga filter na ito mula ngayon
+area-search-reset-search = I-reset ang mga teksto ng paghahanap
+area-search-reset-filters = I-reset ang mga pagpipilian sa filter
+area-search-reset-ranges = I-reset ang distansya at presyo
+area-search-reset-all = I-reset ang lahat
+area-search-more = Higit pa
+area-search-several = Piliin ang ilang
+area-search-several-tip = Mag-click magdagdag sa pagpili (din Ctrl o Shift + i-click, Ctrl+A)
+area-search-actions = Mga Pagkilos
+area-search-nothing = Walang mga bagay na natanggap pa.
+area-search-nothing-for-sale = Walang para sa pagbebenta dito.
+area-search-not-for-sale = Hindi para sa pagbebenta
+area-search-from-price = mula sa { $price }
+area-search-nearest = Pinakamalapit una
+area-search-heaviest = Mabigat na una
+area-search-order-tip = Baguhin ang pagkakasunud-sunod: pinakamalapit o pinakamabigat na una
+area-search-rank = #{ $rank } ng { $all }
+area-search-rank-here = #{ $rank } dito
+area-search-card-more = Ipakita ang bawat figure
+area-search-card-less = Ipakita ang mas kaunti
+area-search-open-group = Buksan ang grupo
+area-search-spoken = { $name }, { $distance }, epekto ng lupa { $li }, pagmamay-ari ng { $owner }
+area-search-owner-spoken = { $name }, { $count } mga bagay, epekto ng lupa { $li }
+area-search-stage-line = { $distance } layo · { $li } lupa epekto · { $owner }
+area-search-tile-3d = Tatlong-dimensional na view
+area-search-on = { $count } sa
+area-search-on-word = sa
+area-search-more-on =
+    { $count ->
+        [one] isa pang filter sa
+       *[other] { $count } higit pang mga filter sa
+    }
+ui-options-legacy-lists = Mag-import ng mga listahan mula sa Legacy Viewer
+ui-options-legacy-lists-help = Nagdaragdag ng kasaysayan ng teleport, asset blacklist, media filter list at contact sets ng account na ito. Ang mga file ng Legacy Viewer ay basahin lamang.
+ui-options-legacy-lists-button = Mag-import mula sa Legacy Viewer…
+ui-options-legacy-lists-no-account = Mag-log in upang i-import ang mga listahan ng account na ito.
+ui-options-legacy-lists-title = Mag-import mula sa Legacy Viewer
+ui-options-legacy-lists-text = Lahat ng bagay ay idinagdag sa mga listahan ng account na ito at wala dito ay tinanggal. Ano ang asset blacklist pangalan umaalis sa mundo nang sabay-sabay. Pag-import muli ay nagdadala bumalik kung ano ang iyong inalis dito.
+ui-options-legacy-lists-searching = Naghahanap para sa mga folder ng Legacy Viewer…
+ui-options-legacy-lists-none = Walang Legacy Viewer folder na may mga listahan ay natagpuan para sa account na ito.
+ui-options-legacy-lists-teleports = Teleport kasaysayan ({ $count })
+ui-options-legacy-lists-derender = Pag-aari blacklist ({ $count })
+ui-options-legacy-lists-media = Listahan ng media filter ({ $count })
+ui-options-legacy-lists-contact-set-entries = Mag-set ng mga entry sa contact ({ $count })
+ui-options-legacy-lists-confirm = Mag-import
+ui-options-legacy-lists-added = Nagdagdag o nag-update ng mga entry. Kasaysayan ng teleport: { $teleports }, listahan ng nakatagong asset: { $derender }, filter ng media: { $media }, mga entry sa contact set: { $sets }.
+ui-options-legacy-lists-nothing = Walang bagong: ang account na ito ay may mga listahan.
+ui-options-legacy-lists-failed = Hindi mabasa: { $files }.
+ui-options-legacy-lists-unsaved = Hindi maaaring i-save, kaliwa bilang ito ay: { $files }.
+ui-options-legacy-lists-other-grid = Sa grid na ito ng isang folder ng parehong pangalan ay maaaring kabilang sa iba pang grid: suriin na ito ay ang tamang isa.
+ui-options-build-show-beams-hint = Ipakita ang iyong pagpili beams at mga ito ng iba pang mga avatar kapag pag-edit, grabbing, o pagbibigay. Ito lamang ang controls display; gamitin Privacy > Hide editing beam upang ihinto ang iyong pag-editing beam lokal at sa network.
+teleport-failed-title = Ang Teleport ay nabigo.
+teleport-error-invalid-tport = Ang mga pagtatangka sa teleport ay limitado sa6sa bawat minuto. Kung mayroon kang problema, maghintay ng isang minuto at subukan ang teleport muli. Kung nananatili ang problema, mag-log out at mag-sign in muli.
+teleport-error-invalid-region-handoff = Problema nakaranas ng pagpoproseso ng iyong rehiyon crossing. Maaari mong kailangang mag-log back in bago ka maaaring cross rehiyon. Kung patuloy kang makakuha ng mensaheng ito, mangyaring makipag-ugnay sa suporta.
+teleport-error-blocked-tport = Sorry, teleport ay kasalukuyang naka-block. Subukan muli sa isang sandali. Kung hindi mo pa rin maaaring teleport, mangyaring mag-log out at mag-sign back in upang malutas ang problema.
+teleport-error-nolandmark-tport = Nalulungkot naming sabihin ito, ngunit hindi mahanap ng sistema ang destinasyong landmark.
+teleport-error-timeout-tport = Nalulungkot, ngunit hindi natapos ng sistema ang koneksyon sa teleport. Subukan muli sa isang sandali.
+teleport-error-no-help-island = Hindi ka maaaring teleport bumalik sa Welcome Island.
+teleport-error-noaccess-tport = Sorry, hindi ka magkaroon ng access sa na teleport destinasyon.
+teleport-error-missing-attach-tport = Hindi pa dumating ang iyong mga attachment. Subukan mong maghintay ng ilang segundo o mag-log out at bumalik muli bago subukan na teleport.
+teleport-error-too-many-uploads-tport = Ang asset queue sa rehiyon na ito ay kasalukuyang clogged, kaya ang iyong teleport kahilingan ay hindi magagawang upang magtagumpay sa isang napapanahong paraan. Mangyaring subukan muli sa loob ng ilang minuto o pumunta sa isang mas mababa busy lugar.
+teleport-error-expired-tport = Nalulungkot, ngunit hindi natapos ng sistema ang iyong teleport request sa oras. Mangyaring subukan muli sa loob ng ilang minuto.
+teleport-error-expired-region-handoff = Sorry, ngunit ang sistema ay hindi maaaring makumpleto ang iyong rehiyon crossing sa isang napapanahong paraan. Mangyaring subukan muli sa loob ng ilang minuto.
+teleport-error-preexisting-tport = Nalulungkot, ngunit hindi nagsimula ang sistema ng iyong teleport. Mangyaring subukan muli sa loob ng ilang minuto.
+teleport-error-no-host = Hindi mahanap ang teleport na patutunguhan. Maaaring pansamantalang hindi magagamit o hindi na umiiral ang patutunguhang ito. Mangyaring subukan muli sa loob ng ilang minuto.
+teleport-error-no-inventory-host = Ang sistema ng imbentaryo ay kasalukuyang hindi magagamit.
+teleport-error-must-get-age-region = Dapat kang 18 taong gulang o higit pa upang makapasok sa rehiyong ito.
+teleport-error-special-usage-blocked = Hindi maaaring ipasok ang rehiyon. '{ $region }' ay isang Skill Gaming Region, at dapat mong matugunan ang ilang mga pamantayan upang makapasok. Para sa mga detalye, mangyaring suriin ang Skill Gaming FAQ: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Hindi makakapasok sa rehiyon. Ito ay isang Skill Gaming Region, at dapat mong matugunan ang ilang mga pamantayan upang makapasok. Para sa mga detalye, mangyaring suriin ang Skill Gaming FAQ: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Ang iyong home grid tinanggihan ang iyong bumalik. Ito ay karaniwang nangangahulugan na ang kanyang Hypergrid address setting ay hindi tumutugma sa address ng iba pang mga grids gamitin para sa ito. Makipag-ugnay sa operator ng iyong bahay grid; pag-log in muli ay tumatagal sa iyo ng bahay sa gitna.
+teleport-hint-hypergrid-unreachable = Ang iba pang grid ay hindi maaaring maabot. Maaari itong offline, o ang link ay maaaring tumutukoy sa isang lumang address.
+teleport-hint-hypergrid-visitors-refused = Ang mga ito ay maaaring maglaman ng mga selula ng ibang mga organismo.
+teleport-hint-hypergrid-destination-gone = Ang destinasyon rehiyon ay hindi na umiiral o ay inilipat. Landmark at mga link sa iba pang mga grids ay maaaring pumunta out ng petsa.
+toolbar-edit = I-customize ang mga button at menu…
+toolbar-title = Mga pindutan at menu
+toolbar-interface-locked = Interface na naka-lock
+toolbar-help = I-drag ang mga button o entry sa menu sa tuktok, ibaba o gilid ng bar. I-drop muli dito ang isang button upang alisin ito. Right-click ang anumang button para baguhin ang hitsura nito.
+toolbar-help-classic = I-drag ang mga button o entry sa menu sa tuktok, ibaba o gilid ng bar. I-drop muli dito ang isang button upang alisin ito. Right-click ang anumang button para baguhin ang hitsura nito.
+toolbar-help-modes = Pumili ng mga icon, label, parehong, o ang default bar para sa bawat button. I-drag entry sa loob ng Aurora menu upang muling ayusin ito.
+import-menu-textures = Mga texture
+import-menu-animations = Animasyon
+import-menu-sounds = Mga tunog
+import-menu-materials = Materyales
+import-menu-meshes = Mga Mesh
+import-menu-options = Mga pagpipilian sa pag-import
+import-upload-payment-title = Mag-upload
+import-upload-payment = Nagbayad ka ng L${ $cost } para mag-upload.
+import-quick-textures =
+    { $count ->
+        [one] Mag-import · Mga texture: 1 · L${ $cost }?
+       *[other] Mag-import · Mga texture: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Mag-import · Materyales: 1 · L${ $cost }?
+       *[other] Mag-import · Materyales: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Mag-import · Mga tunog: 1 · L${ $cost }?
+       *[other] Mag-import · Mga tunog: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Piliin ang laki ng pag-import. Maaaring i-import sa 2048 × 2048 ang mga texture na sumusuporta rito:
+       *[other] ({ $count }) Piliin ang laki ng pag-import. Maaaring i-import sa 2048 × 2048 ang mga texture na sumusuporta rito:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Piliin ang laki ng pag-import. Maaaring i-import sa 2048 × 2048 ang mga larawan ng materyal na sumusuporta rito:
+       *[other] ({ $count }) Piliin ang laki ng pag-import. Maaaring i-import sa 2048 × 2048 ang mga larawan ng materyal na sumusuporta rito:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = I-upload ang mga libreng larawan sa 2048 × 2048 nang walang tanong
+import-quick-free-full-size-help = "Import textures" at "I-import ang mga materyales" pagkatapos ay hilingin 1024 o 2048 lamang kapag ang pag-upload ng gastos L$.
+ui-bars-customize-bars = I-customize ang interface
+build-tool-in-use = Sa paggamit
+build-create-options-toggle = Ipakita / itago ang mga pagpipilian
+build-create-keep-creating = Magpatuloy sa paglikha
+build-create-center-on-prim = I-center ang prim
+build-create-copy-prim-rotation = Kopyahin ang pag-ikot ng prim
+build-create-align-to-surface = I-align sa ibabaw
+build-capture-shape-button = Kopyahin ang hugis ng isang prim: i-click ito, pagkatapos ay isang prim sa mundo
+build-capture-shape-armed = I-click ang isang prim upang kopyahin ang hugis nito (Escape cancels)
+build-capture-shape-full = 20 hugis ay pinananatili. Alisin ang isa upang kopyahin ang iba
+build-capture-shape-remove = Alisin ang hugis na ito
+build-capture-shape-tooltip = Kopyahin ang hugis ({ $kind })
+build-capture-shape-not-a-prim = Lamang hugis ng isang prim ay maaaring kopyahin
+build-capture-shape-mesh-or-sculpt = Ang hugis ng isang mesh o isang hugis-itlog prim ay hindi maaaring kopyahin
+build-capture-shape-no-modify = Kailangan mo ng pahintulot upang baguhin ang prim na ito upang kopyahin ang hugis nito
+import-other-options = Iba pang mga pagpipilian
+toolbar-button-icons = Icon lamang
+toolbar-button-text = Label lamang
+toolbar-button-icons-text = Icon at label
+toolbar-icon-default = Ibalik ang default na icon
+toolbar-icon-choose = Pumili ng isang icon
+toolbar-icon-change = Baguhin ang icon
+toolbar-presets = Preset
+toolbar-interfaces = Interface
+toolbar-interfaces-shown = Ipinapakita sa interface block
+toolbar-interfaces-hidden = Nakatago mula sa Interfaces block
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora Lumang paaralan
+toolbar-preset-photographer = Aurora manunulat ng larawan
+toolbar-preset-legacy = Legacy
+toolbar-import-textures = Mag-import ng mga texture
+toolbar-import-sounds = Mag-import ng mga tunog
+toolbar-import-animations = Mag-import ng mga animasyon
+toolbar-import-materials = Import ng mga materyales
+toolbar-import-meshes = Mag-import ng mga meshes
+toolbar-import-local = Lokal na mga file
+toolbar-import-advanced = Advanced na pag-import
+toolbar-import-settings = Pag-import ng mga setting
+toolbar-import-bar = I-import ang bar
+toolbar-icon-search = Maghanap ng icon…
+toolbar-in-top = Sa tuktok na toolbar
+toolbar-bar-top = Taas na toolbar
+toolbar-drop-here = Mag-drop dito
+toolbar-separator = Panghiwalay
+toolbar-interface-edit = I-customize ang interface
+toolbar-edit-done = Natapos
+toolbar-edit-top = Sa itaas
+toolbar-edit-bottom = Ibabang
+toolbar-edit-left = Kaliwa
+toolbar-edit-right = Kanang
+toolbar-edit-help = I-click ang isang item upang piliin ito, i-drag upang ilipat ito, o right-click para sa mga pagpipilian sa pag-edit. Isara ang window na ito upang magtapos.
+toolbar-edit-locked = Bar ay naka-lock. Unlock ang mga ito sa ibaba upang baguhin ang interface.
+toolbar-edit-move = Ilipat sa
+toolbar-edit-split-before = Ibahagi bago
+toolbar-edit-split-after = Ibahagi pagkatapos
+toolbar-edit-merge-before = Magsama sa nakaraang bloke
+toolbar-edit-merge-after = Magsama sa susunod na bloke
+toolbar-edit-merge-groups = Isama ang mga blokeng ito
+toolbar-drawer = Nabubuksang panel
+toolbar-drawer-default-mode = Default na pagpapakita ng mga pindutan
+toolbar-drawer-closes = Magsara pagkatapos ng pag-click sa isang button
+toolbar-block-shortcut = Shortcut sa keyboard:
+toolbar-drawer-hides-needs-shortcut = Kailangan ng isang shortcut
+toolbar-floating-close-button = Magdagdag ng isang button magsara
+toolbar-block-name = Pangalan ng bloke:
+toolbar-block-button-mode = I-block ang display ng button
+toolbar-button-inherited = Manahan
+toolbar-drawer-hides-button = Itago ang button habang lumulutang
+toolbar-floating-new = Pahalang na bloke
+toolbar-floating-orientation = Orientasyon
+toolbar-floating-horizontal = Pahalang
+toolbar-floating-vertical = Pahalang
+toolbar-floating-empty = Mag-drop ng mga button dito
+toolbar-shortcut-title = Shortcut sa keyboard
+toolbar-shortcut-block-name = Bloke: { $name }
+toolbar-shortcut-none = Walang shortcut
+toolbar-shortcut-press-key = Pindutin ang isang key
+toolbar-shortcut-esc = Esc upang baguhin
+toolbar-shortcut-clear = Mag-alis
+toolbar-shortcut-overrides = Tumatagal ng higit sa { $name }: ito shortcut tumatakbo ang toolbar sa halip ng default na paggamit nito.
+toolbar-shortcut-used = Na ang shortcut ng { $names }.
+toolbar-shortcut-replace = Palitan
+toolbar-shortcut-add = Magdagdag
+toolbar-shortcut-save = I-save
+toolbar-shortcut-choose-key = Pumili ng isang key
+toolbar-shortcut-help = I-on o i-off ang Ctrl, Alt at Shift, pagkatapos ay i-click ang key upang baguhin ito. Kailangan ang Control o Alt, maliban sa F1 hanggang F24.
+toolbar-shortcut-inactive = Ang pindutan na ito ay sa walang bar: ang shortcut nito gumagana kapag ito ay inilagay muli.
+toolbar-shortcut-refused-keyboard = Lamang keyboard keys ay maaaring maging isang shortcut.
+toolbar-shortcut-refused-modifier = Ang isang modifier key nag-iisa ay hindi maaaring maging isang shortcut.
+toolbar-shortcut-refused-needs-modifier = Magdagdag ng Ctrl o Alt: isang key nag-iisa, o sa Shift lamang, uri sa mga patlang ng teksto.
+toolbar-shortcut-refused-altgr = Ang Ctrl+Alt ay isang planetang hindi pangunahin. ang lathalaing ito na tungkol sa Agham ay isang usbong.
+toolbar-shortcut-refused-editing = Teksto patlang gamitin ito shortcut (piliin ang lahat, kopyahin, gupitin, i-paste, ibalik, gawin muli).
+toolbar-shortcut-refused-navigation = Text patlang ilipat at tanggalin sa key na ito.
+toolbar-shortcut-refused-typing = Ang chat at ang mga dialogs gamitin ang key na ito.
+toolbar-shortcut-refused-system = Pinapanatili ng sistema ang shortcut na ito.
+toolbar-shortcut-refused-window = Ang shortcut na ito ay nag-uugnay sa mga window.
+toolbar-shortcut-refused-zoom = Ang shortcut na ito zooms ang interface.
+toolbar-spacer = Agwat sa pagitan ng mga block
+toolbar-add-spacer = Magdagdag ng block spacing
+toolbar-button-settings = Mga setting ng button
+toolbar-button-edit = I-edit ang button…
+toolbar-button-edit-title = I-edit ang button
+toolbar-button-name = Pangalan ng button:
+toolbar-button-display = Ipakita ang pindutan
+toolbar-shortcut-fixed-block-help = Ang isang nakapirming block ng shortcut ay nagpapakita at hides ito; habang ang interface ay nai-edit, ito ay nananatiling ipinapakita.
+toolbar-block-settings = Mga setting ng block
+toolbar-parent-block-settings = Mga setting ng block ng magulang
+toolbar-block-edit = I-edit ang block…
+toolbar-block-edit-title = I-edit ang bloke
+toolbar-block-alignment = Pagkakahanay
+toolbar-block-sizing = Laki ng pindutan
+toolbar-block-fixed-options = Taning mode pagpipilian
+toolbar-block-floating-options = Mga pagpipilian sa mode ng patakbo
+toolbar-block-kind-fixed = Taning na bloke
+toolbar-block-kind-drawer = Block na nabubuksang panel
+toolbar-block-kind-floating = Pahalang na bloke
+toolbar-block-remove = Alisin ang bloke
+toolbar-move-block = I-drag upang ilipat ang buong bloke
+toolbar-remove-block = Alisin ang bloke
+toolbar-drawer-empty = Walang laman ang drawer na ito.
+toolbar-drawer-drop = I-drag ang mga button dito upang magdagdag o muling ayusin ang mga ito.
+toolbar-separator-settings = Mga setting ng block spacing
+toolbar-separator-size = Laki / minimum (px)
+toolbar-separator-stretch = Punan ang magagamit na espasyo
+toolbar-separator-help = Flexible gaps ibahagi ang espasyo na kaliwa sa pamamagitan ng mga bloke. Size ay ang kanilang minimum na lapad, o taas sa isang side bar.
+toolbar-block-navigation = Navigation at SLURL
+toolbar-block-account = Account at balanse
+toolbar-block-system = Oras, tagapagpahiwatig at audio
+toolbar-block-status = Katayuan ng availability
+toolbar-block-balance = Balanse
+toolbar-block-clock = Oras
+toolbar-block-ping = Rehiyon latency
+toolbar-block-fps = Bilis ng mga frame (FPS)
+toolbar-block-network = Trapiko ng network
+toolbar-block-media = Media ng Parcel
+toolbar-block-music = Musika ng Parcel
+toolbar-block-volume = Lakas ng tunog
+toolbar-block-notifications = Mga abiso
+toolbar-block-conversations = Mga icon ng pag-uusap
+toolbar-block-chat = Kalapit na chat input
+toolbar-category-all = Lahat ng kategorya
+toolbar-section-main = Pangunahing
+toolbar-section-advanced = Paunang
+toolbar-search-all = Kasama sa paghahanap ang mga advanced na utos.
+toolbar-category-avatar = Avatar at paggalaw
+toolbar-category-communication = Komunikasyon
+toolbar-category-world = Mundo at paglalakbay
+toolbar-category-creation = Paglikha at nilalaman
+toolbar-category-interface = Interface at kamera
+toolbar-category-advanced = Advanced na mga tool
+toolbar-category-help = Tulong
+toolbar-category-custom = Custom na mga utos
+toolbar-bar-settings = Mga setting ng toolbar
+toolbar-menu-group = Menu: { $name }
+toolbar-location-bar = Bar ng SLURL address
+toolbar-command-build-tool-focus = Bumuo - Kamera
+toolbar-command-build-tool-grab = Bumuo - Ilipat
+toolbar-command-build-tool-edit = Bumuo - I-edit
+toolbar-command-build-tool-create = Bumuo - Lumikha
+toolbar-command-build-tool-land = Bumuo - Lupa
+bug-copy-version = Kopyahin ang viewer na bersyon
+toolbar-notecard-save = I-save sa isang notecard…
+toolbar-notecard-load = I-load mula sa isang notecard…
+toolbar-notecard-name = Interface ng Aurora
+toolbar-notecard-help = Layout at hitsura ng toolbars, mga pindutan, drawer at menu.
+toolbar-notecard-saved = Interface layout nai-save sa iyong imbentaryo.
+toolbar-notecard-invalid = Ang notecard na ito ay hindi naglalaman ng isang tugma interface layout.
+toolbar-notecard-unavailable = Ang notecard na ito ay hindi na magagamit o hindi maaaring kopyahin.
+toolbar-notecard-layout-changed = Ang interface ay nagbago habang ang notecard ay loading. I-load ito muli upang ilapat ang layout nito.
+toolbar-notecard-demo-valid = Interface ng photographer
+toolbar-notecard-demo-invalid = Iba pang mga notecard
+toolbar-notecard-too-large = Ang configuration interface na ito ay masyadong malaki para sa isang notecard.
+toolbar-saved-interfaces = I-save ang mga interface
+toolbar-saved-interfaces-empty = Walang naka-save interface pa.
+toolbar-notecard-destination = Folder: { $path }
+toolbar-notecard-folder-error = Ang interfaces folder ay hindi na-load o nilikha. Mangyaring subukan muli.
+toolbar-current-preset = Napili interface: { $name }
+toolbar-preset-custom = Sariling ayos ng interface
+toolbar-preset-unsaved = Hindi nai-save na mga pagbabago
+toolbar-preset-save-title = I-save ang interface
+toolbar-preset-save-name = Pangalan ng interface
+toolbar-preset-save-new = Bagong personal na interface
+toolbar-preset-save-replace = Palitan ang personal na interface
+toolbar-preset-save-unavailable = Ang interface na ito ay hindi maaaring i-save dito. Pumili ng ibang pangalan o isang magagamit, editable personal interface.
+toolbar-interface-delete-unavailable = Ang personal na interface na ito ay hindi maaaring tanggalin.
+toolbar-interface-delete-confirm = Ilipat sa Basurahan ang personal na interface na “{ $name }”?

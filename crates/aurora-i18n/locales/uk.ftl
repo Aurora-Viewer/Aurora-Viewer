@@ -16258,3 +16258,727 @@ parcel-environment-empty = Середовище не збережено
 parcel-environment-remove-all = Вилучити всі
 parcel-environment-remove-all-title = Вилучити всі середовища, збережені для пакета?
 parcel-environment-remove-all-text = Збережені вами середовища для ділянок у цій мережі буде видалено. Середовища в інших мережах залишаться. Цю дію не можна скасувати.
+
+### Updated release translations
+
+anim-edit-shortcut-play = Відтворити або призупинити
+area-search-scope-heading = Де
+area-search-scope-parcel = Ділянка
+area-search-scope-region = Регіон
+area-search-scope-neighbours = Сусіди
+area-search-objects-heading = Які об’ єкти
+inventory-copy-selection-count =
+    { $count ->
+        [one] Скопіювати 1 елемент
+       *[other] Скопіювати { $count } елементів
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Посилання на 1 елемент
+       *[other] Посилання { $count } елементів
+    }
+inventory-drop-move-here = Пересунути сюди
+inventory-drop-copy-here = Скопіювати сюди
+inventory-drop-link-here = Створити посилання тут
+inventory-sort-description = Опис
+inventory-sort-reversed = { $order } (зворотне)
+inventory-column-creator = Автор
+inventory-column-count = Елементи
+inventory-columns-fit = Змінити розмір всіх стовпчиків, щоб вмістити
+inventory-columns-reset-widths = Скинути ширину стовпчиків
+inventory-back = Назад
+inventory-forward = Уперед
+inventory-up = Вгору на один рівень
+keybinds-inventory-root = Перейти до початку
+keybinds-inventory-search = Шукати в інвентарі
+keybinds-inventory-filter = Фільтрувати теку
+keybinds-inventory-preview = Показати панель перегляду
+keybinds-inventory-view-large = Великі зображення
+keybinds-inventory-view-medium = Зображення середнього розміру
+keybinds-inventory-view-small = Малі зображення
+keybinds-inventory-view-compact = Компактний вигляд
+keybinds-inventory-view-details = Перегляд подробиць
+keybinds-inventory-view-tiles = Перегляд плитками
+keybinds-inventory-toggle = Вибрати або скасувати вибір рядка у фокусі
+keybinds-inventory-menu = Відкрити меню вибраного
+keybinds-inventory-purge = Очистити зі смітника
+keybinds-inventory-refused = { $keys } залишається власним ключем списку запасів: виберіть інший.
+inventory-path-edit = Введіть шлях
+inventory-path-subfolders = Підтеки
+inventory-copy-path = Копіювати контур
+inventory-show-in-folder = Показати в папці
+inventory-pin = Прикріпити до швидкого доступу
+inventory-unpin = Відштовхнути від швидкого доступу
+inventory-quick-access = Швидкий доступ
+inventory-quick-access-drop = Перетягніть сюди теку, щоб пришити її
+inventory-invert-selection = Інвертувати вибране
+inventory-undo = Скасувати
+inventory-redo = Повторити
+inventory-undo-step = Вернути { $what }
+inventory-redo-step = Повторити { $what }
+inventory-history-move =
+    { $count ->
+        [one] Пересунути на 1 елемент
+       *[other] пересунути { $count } елементів
+    }
+inventory-history-delete =
+    { $count ->
+        [one] вилучити з 1 елемента
+       *[other] вилучити з { $count } елементів
+    }
+inventory-history-rename = перейменувати
+inventory-history-new-folder = нова тека
+inventory-history-copy =
+    { $count ->
+        [one] копія 1 елемента
+       *[other] копія з { $count } елементів
+    }
+inventory-history-link =
+    { $count ->
+        [one] посилання на 1 елемент
+       *[other] посилання на { $count } елементів
+    }
+inventory-undo-nothing = Немає нічого, що можна скасувати: ці елементи було пересунуто або зникли.
+inventory-redo-nothing = Немає нічого, що можна було б переробити: ці елементи було пересунуто або зникли.
+inventory-undo-empty = Нет ничего, что можно отменить.
+inventory-redo-empty = Нічого не потрібно робити знову.
+inventory-undo-dropped = Елементи останнього кроку було пересунуто або зникли: його було відкинуто. Скасувати знову для попереднього крока.
+inventory-redo-dropped = Елементи наступного кроку було пересунуто або зникли: його було відкинуто. Повторіть це для наступного крок.
+inventory-undo-folder-not-empty = У цій новій теці зберігаються елементи, які було внесено до неї: спочатку пересунути їх або вилучити теку самостійно.
+inventory-undo-kept-out = Ці предмети знаходяться у поточній колекції або на ринку: змініть їх там.
+inventory-restore-to = Відновити до « { $folder } »
+inventory-restore-to-origins = Відновити до їх тек
+inventory-purge-no-undo = Скасування не може повернути їх.
+inventory-new-tab = Нова вкладка
+inventory-close-tab = Закрити вкладку
+inventory-next-tab = Наступна вкладка
+inventory-previous-tab = Попередня вкладка
+inventory-open-in-new-tab = Відкрити у новій вкладці
+inventory-tabs-limit = Найбільше { $count } таблеток.
+inventory-copy-to-other-pane = Копіювати на іншу панель
+inventory-move-to-other-pane = Перейти до іншої панелі
+inventory-resize-columns = Перетягніть, щоб змінити розмір стовпчиків. Двічі клацніть лівою кнопкою миші, щоб встановити стовпчик ліворуч відповідно до його вмісту.
+inventory-resize-columns-first = Перетягніть, щоб змінити розмір стовпчиків. Двічі клацніть лівою кнопкою миші, щоб надати першому стовпчику звичну ширину.
+inventory-sort-by-column = Клацніть, щоб впорядкувати за цим стовпчиком, знову клацніть для зміни порядку. Перетягніть мишею, щоб пересунути стовпчик.
+inventory-filter-hint = Фільтрувати цю теку…
+inventory-filter-close = Закрити фільтр (Esc)
+inventory-filter-nothing = Тут немає нічого, що відповідало б фільтру
+inventory-view-compact = Компактний вигляд
+inventory-view-tiles = Перегляд плитками
+inventory-view-per-folder = Запам' ятати перегляд кожної теки
+inventory-group-by = Групувати за
+inventory-group-none = Немає
+inventory-group-folders = Папки
+inventory-group-unknown-creator = Творець ще невідомий
+inventory-group-today = Сьогодні
+inventory-group-yesterday = Учора
+inventory-group-this-week = За останні 7 днів
+inventory-group-this-month = За останні 30 днів
+inventory-group-this-year = Раніше цього року
+inventory-group-earlier = Давненько.
+inventory-group-no-date = Без дати
+cmdline-mod-zoffset-usage = Встановити висоту вашого аватара під час наведення вказівника миші (використання: / zoffset value або +delta).
+dev-toolbox-n4 = Завантаження інвентарю
+dev-toolbox-what-n4 = Теки прочитано, помилка і вихід, завантажувач читає в польоті і повторює спроби; без назв
+ui-context-inspect-avatar = Перевірити аватар
+inspect-window = Перевірити
+inspect-tab-objects = Об'єкти
+inspect-objects-title =
+    { $count ->
+        [one] Об' єкт { $count }object name (optional)
+       *[other] { $count } об' єктів
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } елементів
+       *[other] { $count } елементів
+    }
+inspect-open-profile = Відкрити профіль
+inspect-over-limit = За межами дозволеного
+inspect-limit-tip = Ваша межа складності: { $limit }
+inspect-search = Пошук елементів або творців
+inspect-outlined = { $name } описано у світі
+inspect-area-head = Голова
+inspect-area-body = Тіло
+inspect-area-arms = Руки і ноги
+inspect-area-legs = Ноги і ступні
+inspect-area-hud = ХУД
+inspect-area-other = Інше
+inspect-area-world = Об'єкти
+inspect-own-eyes = Системні очі
+inspect-own-body = Тіло системи
+inspect-own-description = Частина самого аватара, а не долучення
+inspect-own-maker = Аватар · Second Life
+inspect-own-place = Аватар
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } МБ
+inspect-section-complexity = Складність { $value }
+inspect-no-match = Нічого не відповідає « { $query } ».
+inspect-spoken-worn = { $name }, носять на { $point }, складність { $complexity }, створено { $creator }
+inspect-spoken-object = { $name }, власник { $owner }, складність { $complexity }, створено { $creator }
+inspect-look-at-tip = Пересунути фотоапарат до нього
+inspect-profile-tip = Відкрити профіль творця
+inspect-made-by = Створено
+inspect-owned-by = Власник
+inspect-worn-on = Де вдягнено
+inspect-prims-count =
+    { $count ->
+        [one] { $count } простих
+       *[other] { $count } простих
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Пам'ять текстур
+inspect-tile-vram = ОЗУ
+inspect-tile-prims = Прими
+board-close = Закрити { $title }
+board-grow = Збільшити { $title }
+board-remove = Вилучити { $name }
+board-more = і ще { $count }
+board-more-short = +{ $count }
+board-some-of = { $shown } з { $all }
+board-of-all = з { $all }
+stage-turn-left = Повернути ліворуч
+stage-turn-right = Повернути праворуч
+stage-higher = Погляньте вище.
+stage-lower = Погляд з нижньої частини
+stage-nearer = Ближче
+stage-further = Дальше.
+stage-reset = На початок
+stage-hint = Перетягніть, щоб повернути, перетягніться правою кнопкою миші, щоб пересунути
+stage-light = Світле тло
+stage-dark = Темне тло
+stage-playing = AO
+stage-paused = Призупинено
+stage-pause-tip = Призупинити їх анімацію
+stage-play-tip = Відтворити їх анімацію
+stage-loading = Підготовка тривимірного перегляду…
+stage-nothing = Поки що немає нічого, що можна було б показати у 3D.
+stage-refused = Тривимірний перегляд вимкнено, а RLVa обмежує те, що ви можете бачити.
+inspect-your-limit = Ваше обмеження: { $limit }
+inspect-without-it = { $value } без цього
+inspect-you = Ви
+inspect-person = Людина
+inspect-difference = Різниця
+inspect-drawn-in-full = Намальовано повністю
+inspect-nobody = Складність ніхто ще не знає.
+inspect-aside-count = { $count } відкладено
+inspect-is-aside = відкласти
+inspect-set-aside = Відкласти
+inspect-set-aside-tip = Переглянути складність без цього елемента. Тільки у цьому вікні: нічого не змінюється у світі.
+inspect-put-back = Поклади назад
+inspect-put-back-tip = Перерахувати цей елемент
+inspect-complexity-spoken = Складність { $value }, номер { $rank } з { $count } люди тут
+inspect-stage-outfit = Одежда.
+inspect-stage-objects = Об' єкти
+inspect-stage-back = Повернутися до всього
+inspect-place-made-by = { $place } · створено { $name }
+inspect-owned-by-name = Власник { $name }
+inspect-tile-items = Елементи
+inspect-tile-figures = Діаграми
+inspect-col-item = Назва
+inspect-point = Точка
+inspect-look-at = Подивитися
+inspect-selected-count = { $count } вибрано
+inspect-worn-count = { $count } зношений
+inspect-creators-word = творці
+inspect-areas-word = ділянки тіла
+inspect-owners-word = власники
+inspect-triangles-word = трикутники
+inspect-made-of = { $count } з { $all } елементи
+inspect-kilobytes = { $n } КБ
+inspect-linkset-order = { $count }, у лівій частині
+inspect-reset-columns = Скинути стовпці
+inspect-by-creators =
+    { $count ->
+        [one] { $items } від одного творця
+       *[other] { $items } за { $count } творці
+    }
+inspect-owner-button = Профіль власника
+inspect-group-button = Профіль групи
+inspect-creator-button = Профіль творця
+inspect-land-others = Інші { $n }
+inspect-land-these = Ці { $n }
+inspect-land-free = Безкоштовний { $n }
+inspect-land-unknown = У кімнаті пакета буде показано, коли всі об’ єкти знаходяться у пакеті, на якому ви зараз перебуваєте.
+ui-login-unencrypted = Вхід без шифрування
+ui-login-unencrypted-body = Адреса входу на { $server } починається з http:// замість https://, тому вхід не буде зашифровано. Хто бачить ваш трафік, наприклад у загальнодоступній мережі Wi-Fi, спільній мережі чи на шляху до гріда, може прочитати пароль і скористатися обліковим записом. Нічого ще не надіслано. Можна попросити оператора гріда надати адресу https://. Вибір зберігається для цього сервера.
+ui-login-unencrypted-accept = Увійти без шифрування
+world-appearance-clothing-layers-full = Використовуються всі 60 шарів одягу. Вилучити шар перед тим, як надягати цей елемент.
+ui-options-ray-tracing = Відстеження променів
+ui-options-ray-traced-shadows = Сонячні тіні з відстеженням променів
+ui-options-ray-traced-shadows-help = Сонячні і місячні тіні відслідковуються по променях замість читання з карти тіней: точно визначено, де предмети торкаються один одного і на будь- якій відстані. Потрібно мати тінь і графічну карту з функцією відстеження променів, а також більшу вартість графічної карти
+ui-options-ray-traced-lights = Локальні світлі тіні
+ui-options-ray-traced-lights-help = Тінь від точкових світильників навколо (ламп, свічок), які не відкидають ніяких тіней, а також від проекторів, якщо увімкнено параметр Проекторні тіні, замість їхніх карт тіней. Найдорожчий з варіантів відстеження променів: найкраще залишити без змін на інтегрованих графіках
+ui-options-rt-quality = Якість відстеження променів
+ui-options-rt-quality-help = Кожен ефект відстеження залишається ввімкненим: нижчі рівні відстежують менше вибірок і непряме світло на грубішій ґратці, для більшої кількості кадрів за секунду на меншій графічній карті. Висока — це повне зображення Deluxe (RT). Вибір рівня також визначає світло, яке відкидає тіні
+ui-options-rt-sun-softness = М' якість сонячної тіні
+ui-options-rt-sun-softness-help = Наскільки м’ якими будуть краї тіні, що відслідковується сонцем: 1 — справжнє сонце, 0 — гострі краї, більше для більш туманного сонця
+ui-options-rt-lamp-softness = Локальна м' якість світлої тіні
+ui-options-rt-lamp-softness-help = Наскільки м’ якими будуть краї тіні, створеної світлодіодами: 1 відповідає розміру кожного з світильників, 0 — гострим краям
+ui-options-rt-shadow-lamps = Світла, що відкидають тіні
+ui-options-rt-shadow-lamps-help = Скільки найближчих світильників відкидають сліди тіні; інші все ще світяться, без тіні. Менше коштує менше на графічній карті
+ui-options-ray-traced-indirect = Непряме світло з відстеженням променів
+ui-options-ray-traced-indirect-help = Світло, що відбивається від поверхні навколо, відслідковується за межами того, що показано на екрані, замість непрямого світла GTAO
+ui-options-gi-probes = Глобальні зонди освітлення
+ui-options-gi-probes-help = Сонди розкидані по сцені, що утримують світло від декількох відбивань і небо, яке вони бачать: закриті кімнати залишаються темними, світло проходить через кути. Близько 0, 8 мсек на графічній карті
+ui-options-ray-traced-reflections = Відбиття з просвітленням
+ui-options-ray-traced-reflections-help = Відбиття того, що не показано на екрані, замість відбиття простору екрана, яке має бути ввімкнено
+ui-options-ray-tracing-unsupported = Ця графічна карта або її драйвер не має відстеження променів
+ui-options-ray-tracing-vr = Недоступний у сеансі, запущеному для VR
+ui-options-tab-ray-tracing = Відстеження променів
+ui-options-deluxe-rt-warning-title = Ввімкнути Deluxe (RT)?
+ui-options-deluxe-rt-warning-text = Режим Deluxe (RT) — Висока, у якому тінь і непряме світло відслідковуються графічною карткою. Для цього режиму потрібна карта з апаратним відстеженням променів (NVIDIA RTX, AMD Radeon RX 6000 або пізніше, Intel Arc) та найновіший драйвер, а вартість цього параметра значно перевищує вартість режиму Високий: на картках середнього класу частота кадрів може значно впасти у заповнених місцях. Відстеження променів ще перевіряється: якщо зображення виглядає неправильно або переглядач сповільнюється, поверніться до режиму Високий. На вкладці Відстежування променів зберігаються параметри.
+ui-options-deluxe-rt-warning-turn-on = Ввімкнути
+ui-options-ray-tracing-needs-shadows = Потрібні тіні
+ui-options-ray-tracing-needs-ssr = Потрібні відбиття на екрані
+ui-options-preset-deluxe = Делюкс (RT)
+ui-options-normal-precision = Точність відбиття
+ui-options-normal-precision-help = Наскільки чітко зберігається напрямок кожної поверхні для відбиття. Стандартне може показувати кроки у відображенні гладких, кривих поверхонь, таких як фарба автомобіля; Високе вилучає їх і використовує більше пам’ яті відеокарти. Автоматично використано значення Високе для відбивання за допомогою слідування променям, де кроки показано найбільше, а Стандартний — у інших випадках
+ui-options-normal-precision-automatic = Автоматично
+ui-options-normal-precision-standard = Стандартна
+ui-options-normal-precision-high = Високий
+ui-options-private-point-at-help = Сховати об’ єкт, який ви редагуєте, залишити рукоятку редагування зниженою і сховати промінь редагувань.
+common-window-outside = Пересунути за межі вікна переглядача
+common-window-inside = Повернути до вікна переглядача
+common-window-rename-name = Двічі клацніть, щоб перейменувати
+common-carry-hint = Клацніть, щоб пересунути його сюди, клацніть Esc, щоб відпустити
+common-window-paused-photo = Призупинено, коли відкрито режим фото
+common-window-paused-director = Призупинено під час відтворення директором
+common-window-paused-interface = Призупинено, коли інтерфейс вимкнено
+ui-options-warn-live-preview = Попереджати, якщо текстуру або матеріал неможливо переглянути
+ui-options-warn-live-preview-help = У інструменті вибору вікна збирання, якщо ви натиснете пункт не копіювати, програма нічого не застосує до тих пір, поки ви не натиснете кнопку Гаразд: скажіть так.
+ui-texture-picker-live-preview-texture = Неможливо показати перегляд цієї текстури, оскільки вона не є копією.
+ui-texture-picker-live-preview-material = Неможливо показати попередній перегляд цього матеріалу, оскільки він не є копією.
+fetch-invalid-url = Некоректна адреса URL
+ui-chat-close-all-ims = Закрити всі IM розмов
+ui-chat-close-all-ims-question = Закрити всі IM розмов і завершити активний виклик?
+ui-chat-confirm-close-all-ims = Підтверджувати перед закриттям всіх IM розмов
+ui-chat-confirm-close-all-ims-help = Запитувати перед закриттям всіх IM розмов, якщо в одній з них активний голосовий дзвінок.
+ui-options-aurora-controls-compact-help = Вікно Керування відкривається у компактному вигляді на фотоапараті: його джойстики, масштабування і перегортання. За допомогою кнопки заголовка можна перемикатися між компактним і повним виглядом, а також встановити цей параметр. У класичних вікнах камеру буде відкрито у маленькому вікні старого переглядача.
+rlva-restart-hint = RLVa запускається під час входу до системи. Після запуску програми її вмикання або вимикання набере чинності при наступному запускі переглядача: обмеження, які встановлено для об’ єктів, залишаться чинними до цього часу.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa буде ввімкнено після перезапуску.
+rlva-toggle-disabled-restart = RLVa буде вимкнено після перезапуску.
+livemesh-import-connect = З’ єднайте Blender з додатком версії 0. 11. 0 або пізнішою, або Maya з додатками версій 0, 2 і пізніше, щоб підготувати імпорт LOD.
+livemesh-import-preparing = Підготовка об’ єкта і його LOD у Blender або Maya…
+livemesh-import-ready = Отримано LOD. Готові до імпорту.
+livemesh-import-failed = Помилка підготовки імпорту: { $error }
+livemesh-import-timeout = Blender або Maya не завершили підготовку імпорту. Перевірте з’ єднання (в Blender використовуйте режим об’ єкта) і спробуйте ще раз.
+livemesh-shape-apply-tooltip = Позначте пункт Змінити права доступу, а потім змініть скелет, вибраний у Blender або Maya, і його зв’ язані мережі (за допомогою MayaStar для обладнання MayaStar). Виберіть локальну модель скелета, сумісну з Second Life.
+livemesh-shape-update-apply = Оновіть додаток Blender до версії 0.10.0 або пізнішої, або додаток Maya до вершини 04.0 чи пізніше, а потім знову під'єднайте його.
+livemesh-shape-applied = Форма, застосована до вибраного скелета.
+livemesh-shape-tooltip = Позначте пункт Змінити права доступу до зношеної форми і створіть нове підроблене тіло посилання у Blender або Maya.
+livemesh-shape-connect = Спочатку з’ єднайте додаток Aurora у Blender або Maya.
+livemesh-shape-update-plugin = Оновіть додаток Blender до версії 0.9.0 або пізнішої, або додаток Maya до 0,3.0 чи пізніше, а потім знову під'єднайте його.
+livemesh-shape-timeout = Blender або Maya не підтвердили імпортування. Спробуйте знову (у Blender, перемкніться на режим об’ єкта).
+livemesh-shape-success = Форму імпортовано як нове оброблене тіло посилання.
+blender-live-maya-version = Aurora LiveMesh для Maya { $version }
+blender-live-maya-instructions = Зберегти файл ZIP і розпакувати його, а потім перетягнути install. mel до вікна перегляду Maya. Відкрити LiveMesh з полиці Aurora, додати ваші мережі і натиснути кнопку З’ єднати.
+blender-live-save-maya = Зберегти додаток Maya…
+blender-live-maya-saved = Додаток збережено. Розпакуйте файл ZIP і перетягніть install. mel до вікна Maya.
+livemesh-plugin-connected = Додаток з' єднано
+livemesh-token-refused = Програма спробувала з’ єднатися без цього ключа перегляду. З’ єднати можна лише додаток Aurora у Blender або Maya.
+livemesh-waiting-plugin = Очікування на Blender або Maya...
+blender-live-objects-help = Сітки, які надсилають Blender або Maya. Виберіть одну з них, щоб розмістити її, або імпортуйте її з меню.
+blender-live-size-note = Розмір множить те, що надсилає додаток, отже, при подальшому редагуванні у Blender або Maya цей розмір буде збережено.
+blender-live-avatar-help = Для сіток з неправильними розмірами: надішліть вашу форму до Blender або Maya, щоб створити модель на її основі.
+livemesh-shape-section = Ваша форма в Blender або Maya
+blender-live-import-help = Заморожує знімок об’ єкта для звичайного імпорту: перегляд, ціна, потім підтвердження. Пізніші редагування у Blender або Maya не змінять його.
+blender-live-changed-tip = Час з моменту останньої зміни цього об’ єкта в Blender або Maya
+fit-lab-section = Встановити лабораторію
+fit-lab-help = Манекени, одягнені у те, що ви носите, кожен з яких має інше тіло, стоять перед вами, щоб показати вам, як одяг підходить до кількох форм. Ви бачите їх тільки ви: нічого не надсилається і не зберігається.
+fit-lab-body-me = Я
+fit-lab-body-slim = Смарт
+fit-lab-body-curvy = Криві
+fit-lab-body-full = Повна фігура
+fit-lab-body-athletic = Спортивний
+fit-lab-body-tall = Високий
+fit-lab-body-petite = Малий
+fit-lab-motion = Рух
+fit-lab-motion-stand = Встати
+fit-lab-motion-walk = Ходьба
+fit-lab-motion-sit = Сісти
+fit-lab-motion-range = Діапазон руху
+fit-lab-pose = Поза
+fit-lab-pose-all = Всі, по черзі
+fit-lab-pose-arms-up = Руки вверх.
+fit-lab-pose-reach = Дотягнутися вперед
+fit-lab-pose-hug = Руки перехрещені.
+fit-lab-pose-squat = Присядь
+fit-lab-pose-kneel = На коліна.
+fit-lab-pose-knee-up = Коліна підняті.
+fit-lab-pose-twist = Скручування
+fit-lab-pose-bend = Нахилитися вперед
+fit-lab-motion-like-me = Як і я.
+fit-lab-show = Показати манекени
+fit-lab-place = Приведи їх сюди.
+fit-lab-remove = Вилучити манекени
+fit-lab-choose = Виберіть принаймні одне тіло.
+fit-lab-clip = Показувати, де проходить тіло
+fit-lab-clip-note = Червоний: тіло виходить з одягу. Бурштиновий: тіла і одяг зустрічаються. На вашому аватарі і манекенах, як це видно з камери. Все інше, що ви носите, вважається тілом: зніміть куртку або волосся, яке ви носили над одягом.
+blender-live-levels-pending = Після натискання кнопки Імпортувати Blender або Maya підготують рівні деталізації.
+blender-live-levels-note = Підготовано в Blender або Maya з параметрів LiveMesh кожного об' єкта.
+blender-live-quick-look-changed = Змінено в Blender або Maya { $ago } років тому.
+blender-live-warning-textures = Текстури пропущено, показано простий колір
+blender-live-warning-not-sent = Не в перегляді
+blender-live-undo-derez = Derezzed { $name } · все ще в списку додатків
+blender-live-undo-detach = Відокремлений { $name } · все ще у списку додатків
+inventory-open-current = Відкрити
+inventory-folder-back = Назад
+inventory-folder-forward = Уперед
+inventory-folder-up = Перейти на один рівень вгору
+area-search-metres = { $n } m
+area-search-band-reach = В межах досяжності
+area-search-band-close = Поблизу
+area-search-band-around = Навколо тебе
+area-search-band-further = Далі
+area-search-band-far = Далеко
+area-search-band = Площа
+area-search-within = В межах { $distance }
+area-search-within-across = В межах { $distance } поперечно
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Показувати кожну відстань
+area-search-from = Відстань від
+area-search-to = Відстань до
+area-search-bar-tip =
+    { $count ->
+        [one] Один об'єкт, { $from } до { $to }
+       *[other] { $count } об' єкти, { $from } до { $to }
+    }
+area-search-of-objects = з { $total } об' єктів
+area-search-li = { $value } Лі
+area-search-li-count = { $value } удар землі
+area-search-owner-count =
+    { $count ->
+        [one] один власник
+       *[other] { $count } власників
+    }
+area-search-object-count =
+    { $count ->
+        [one] один об' єкт
+       *[other] { $count } об' єктів
+    }
+area-search-objects-word = об'єкти
+area-search-in-reach = тут
+area-search-tab-objects = Об'єкти
+area-search-tab-owners = Власники
+area-search-hint-wide = Об' єкти, власники, творці або UUID
+area-search-kind-heading = Тип об' єкта
+area-search-kind-tip = Клацніть: тільки ці. Знову: приховані.
+area-search-kind-any = будь- яка
+area-search-kind-only = тільки ці
+area-search-kind-hidden = Приховано
+area-search-kind-attached = Прирослі
+area-search-kind-probes = Пробування
+area-search-click-all = Усе
+area-search-click-any-short = Будь- яка
+area-search-permissions = Дозволи
+area-search-price-heading = Продажна ціна, для об’ єктів на продаж
+area-search-price-to = до
+area-search-price-tip = Спочатку виберіть « На продаж »
+area-search-linked = Поєднані прості
+area-search-one-field = Пошук у одному полі
+area-search-regex-switch = Формальні вирази
+area-search-regex-invalid = Некоректний формальний вираз
+area-search-reset-filters-tip = Відновити всі фільтри; текст пошуку залишиться
+area-search-save-defaults-tip = Відкривати з цими фільтрами відтепер
+area-search-reset-search = Скинути тексти пошуку
+area-search-reset-filters = Скинути параметри фільтра
+area-search-reset-ranges = Скинути відстань і ціну
+area-search-reset-all = Скинути все
+area-search-more = Більше
+area-search-several = Вибрати кілька
+area-search-several-tip = Клацання додають до вибраного (також Ctrl або Shift + клацання, Ctrl+A)
+area-search-actions = Дії
+area-search-nothing = Об' єктів ще не отримано.
+area-search-nothing-for-sale = Тут нічого не продається.
+area-search-not-for-sale = Не продається
+area-search-from-price = від { $price }
+area-search-nearest = Найближчий перший
+area-search-heaviest = Спочатку найважчі
+area-search-order-tip = Змінити порядок: спочатку найближче або найважче
+area-search-rank = #{ $rank } з { $all }
+area-search-rank-here = #{ $rank } тут
+area-search-card-more = Показати всі фігури
+area-search-card-less = Згорнути
+area-search-open-group = Відкрити групу
+area-search-spoken = { $name }, { $distance }, удар землі { $li }, власник { $owner }
+area-search-owner-spoken = { $name }, { $count } об' єкти, зіткнення з землею { $li }
+area-search-stage-line = { $distance } відсутній · { $li } вплив на землю · { $owner }
+area-search-tile-3d = Тривимірний перегляд
+area-search-on = { $count } на
+area-search-on-word = ввімкнено
+area-search-more-on =
+    { $count ->
+        [one] ще один фільтр
+       *[other] { $count } більше фільтрів
+    }
+ui-options-legacy-lists = Імпортувати списки з старого переглядача
+ui-options-legacy-lists-help = Додає історію телепортації, чорний список активів, список фільтрів носія та набори контактів цього облікового запису. Файли старого переглядача можна лише читати.
+ui-options-legacy-lists-button = Імпортувати з класичного переглядача…
+ui-options-legacy-lists-no-account = Ввійдіть до системи, щоб імпортувати списки цього облікового запису.
+ui-options-legacy-lists-title = Імпортувати з застарілого переглядача
+ui-options-legacy-lists-text = Все буде додано до списків цього облікового запису, і нічого тут не буде вилучено. Назва ресурсу з чорного списку одразу ж зникне зі світу. Знову імпортувати — значить повернути те, що ви вилучили тут.
+ui-options-legacy-lists-searching = Пошук тек старого переглядача…
+ui-options-legacy-lists-none = Для цього облікового запису не було знайдено теки з списками у старій версії переглядача.
+ui-options-legacy-lists-teleports = Історія телепортації ({ $count })
+ui-options-legacy-lists-derender = Чорний список активів ({ $count })
+ui-options-legacy-lists-media = Список фільтрів носія ({ $count })
+ui-options-legacy-lists-contact-set-entries = Записи набору контактів ({ $count }) Name
+ui-options-legacy-lists-confirm = Імпорт
+ui-options-legacy-lists-added = Додано або оновлено. Історія телепортації: { $teleports }, актив чорний список: { $derender }, фільтр носія: { $media }, записи контактів: { $sets }.
+ui-options-legacy-lists-nothing = Нічого нового: у цьому обліковому записі вже є ці списки.
+ui-options-legacy-lists-failed = Не вдалося прочитати: { $files }.
+ui-options-legacy-lists-unsaved = Не вдалося зберегти, залишити як є: { $files }.
+ui-options-legacy-lists-other-grid = На цій ґратці тека з такою ж назвою може належати до іншої ґратки: перевірте, чи це правильна ґратка.
+ui-options-build-show-beams-hint = Показувати ваші промені вибору і промені інших аватарів під час редагування, захоплення або передачі. Цей параметр керує лише показом; скористайтеся пунктом меню Приватність > Сховати промені редагувань, щоб зупинити локальний та мережевий промінь редагувальних променів.
+teleport-failed-title = Помилка телепортації.
+teleport-error-invalid-tport = Кількість спроб телепортації обмежена 6 за хвилину. Якщо ви зіткнулися з проблемами, зачекайте хвилину і спробуйте знову. Якщо проблеми не зникнуть, вийдіть і знову увійдіть до системи.
+teleport-error-invalid-region-handoff = Сталася проблема під час обробки вашого переходу до іншої регіональної системи. Вам, можливо, слід знову увійти до системи, щоб перейти до іншого регіону. Якщо ви продовжуєте отримувати це повідомлення, будь ласка, зверніться до підтримки.
+teleport-error-blocked-tport = Вибачте, телепортація зараз заблокована. Спробуйте ще раз за хвилину. Якщо ви все ще не можете телепортуватися, будь ласка, вийдіть і знову увійдіть до системи, щоб розв’ язати проблему.
+teleport-error-nolandmark-tport = Вибачте, але системі не вдалося знайти місце призначення.
+teleport-error-timeout-tport = Вибачте, але системі не вдалося завершити з' єднання телепортації. Будь ласка, спробуйте ще раз за хвилину.
+teleport-error-no-help-island = Ти не можеш телепортуватися назад на Острови Привітання.
+teleport-error-noaccess-tport = Вибачте, у вас немає доступу до цього місця призначення телепортації.
+teleport-error-missing-attach-tport = Ваші долучення ще не надійшли. Спробуйте зачекати декілька секунд або вийти і знову увійти до системи перед спробою телепортації.
+teleport-error-too-many-uploads-tport = Черга ресурсів у цій області зараз переповнена, отже ваш запит на телепортацію не буде виконано вчасно. Будь ласка, спробуйте ще раз через декілька хвилин або перейдіть до менш завантаженої області.
+teleport-error-expired-tport = Вибачте, але система не змогла виконати ваш запит на телепортацію вчасно. Будь ласка, спробуйте ще раз через декілька хвилин.
+teleport-error-expired-region-handoff = Вибачте, але системі не вдалося завершити перенесення вашого регіону вчасно. Будь ласка, спробуйте ще раз за декілька хвилин.
+teleport-error-preexisting-tport = Вибачте, але системі не вдалося запустити ваш телепорт. Будь ласка, спробуйте ще раз через кілька хвилин.
+teleport-error-no-host = Не вдалося знайти призначення телепортації. Призначення, можливо, тимчасово недоступне або його більше не існує. Будь ласка, спробуйте знову за кілька хвилин.
+teleport-error-no-inventory-host = Система інвентаризації зараз недоступна.
+teleport-error-must-get-age-region = Для входу в цей регіон вам має бути не менше 18 років.
+teleport-error-special-usage-blocked = Неможливо ввести регіон. '{ $region }« є регіоном для гри на майстерність, і ви повинні задовольняти певним критеріям, щоб брати участь. Щоб дізнатися більше, будь ласка, прочитайте Часті запитання щодо гри на магію: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Не вдалося ввести регіон. Це регіони для гри на майстерність, і ви повинні відповідати певним критеріям, щоб увійти до них. Щоб дізнатися більше, зверніться до Частих запитань щодо гри на магію: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Ваша домашня мережа відмовила у поверненні. Зазвичай, це означає, що параметр адреси гіпермережі не збігається з адресою, яку використовують інші мережі. Зв’ язайтеся з операторами вашої домашньої мережі; знову ввійшовши до системи, ви потрапите додому.
+teleport-hint-hypergrid-unreachable = Не вдалося отримати доступ до іншої ґратки. Можливо, вона не працює або посилання вказує на стару адресу.
+teleport-hint-hypergrid-visitors-refused = Ця сітка пропускає тільки жителів деяких решток.
+teleport-hint-hypergrid-destination-gone = Ділянку призначення більше не існує або її було пересунуто. Позначки та посилання на інші ґратки можуть бути застарілими.
+toolbar-edit = Налаштування кнопок і меню...
+toolbar-title = Кнопки і меню
+toolbar-interface-locked = Інтерфейс заблоковано
+toolbar-help = Перетягніть кнопки або пункти меню на верхню, нижню або бічну панелі. Перемістіть кнопку сюди, щоб вилучити її. Клацніть правою кнопкою миші на будь- якій з кнопок, щоб змінити її вигляд.
+toolbar-help-classic = Перетягніть кнопки або пункти меню на верхню, нижню або бічну панелі. Перемістіть кнопку сюди, щоб вилучити її. Клацніть правою кнопкою миші на будь- якій з кнопок, щоб змінити її вигляд.
+toolbar-help-modes = Виберіть піктограми, мітки, обидва варіанти або типову панель для кожної кнопки. Перетягніть пункти меню Aurora, щоб змінити порядок їх розташування.
+import-menu-textures = Текстури
+import-menu-animations = Анімації
+import-menu-sounds = Звуки
+import-menu-materials = Матеріали
+import-menu-meshes = Меші
+import-menu-options = Параметри імпорту
+import-upload-payment-title = Вивантажити
+import-upload-payment = Ти заплатив { $cost } L$ за завантаження.
+import-quick-textures =
+    { $count ->
+        [one] Імпорт · Текстури: 1 · L${ $cost }?
+       *[other] Імпорт · Текстури: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Імпорт · Матеріали: 1 · L${ $cost }?
+       *[other] Імпорт · Матеріали: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Імпорт · Звуки: 1 · L${ $cost }?
+       *[other] Імпорт · Звуки: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Виберіть розмір імпорту. Сумісні текстури можна імпортувати в розмірі 2048 × 2048:
+       *[other] ({ $count }) Виберіть розмір імпорту. Сумісні текстури можна імпортувати в розмірі 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Виберіть розмір імпорту. Сумісні зображення матеріалів можна імпортувати в розмірі 2048 × 2048:
+       *[other] ({ $count }) Виберіть розмір імпорту. Сумісні зображення матеріалів можна імпортувати в розмірі 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Завантажувати безкоштовні зображення розміром 2048 × 2048 без запиту
+import-quick-free-full-size-help = «Імпорт текстур» і «Інформація про матеріали» запитують 1024 або 2048 тільки тоді, коли завантаження коштує L$.
+ui-bars-customize-bars = Налаштування інтерфейсу
+build-tool-in-use = Використовується
+build-create-options-toggle = Показати / сховати параметри
+build-create-keep-creating = Продовжити створення
+build-create-center-on-prim = Центрувати на первинному
+build-create-copy-prim-rotation = Скопіювати поворот
+build-create-align-to-surface = Вирівняти за поверхнею
+build-capture-shape-button = Скопіювати форму примара: натисніть на це, а потім на примара у світі
+build-capture-shape-armed = Клацніть на елементі, щоб скопіювати його форму (клавіша Escape скасує дію)
+build-capture-shape-full = Зберігаються 20 форм. Вилучити одну, щоб копіювати іншу
+build-capture-shape-remove = Вилучити цю форму
+build-capture-shape-tooltip = Скопійована форма ({ $kind }) Name
+build-capture-shape-not-a-prim = Можна скопіювати тільки форму прим
+build-capture-shape-mesh-or-sculpt = Неможливо скопіювати форму сітки або скульптурного елемента
+build-capture-shape-no-modify = Вам потрібні права для зміни цього прим, щоб копіювати його форму
+import-other-options = Інші параметри
+toolbar-button-icons = Тільки піктограма
+toolbar-button-text = Тільки мітка
+toolbar-button-icons-text = Піктограма і мітка
+toolbar-icon-default = Відновити типову піктограму
+toolbar-icon-choose = Виберіть піктограму
+toolbar-icon-change = Змінити піктограму
+toolbar-presets = Набори
+toolbar-interfaces = Інтерфейси
+toolbar-interfaces-shown = Показано у блоку Інтерфейси
+toolbar-interfaces-hidden = Приховано від блоку інтерфейсів
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora Стара школа
+toolbar-preset-photographer = Aurora Фотограф
+toolbar-preset-legacy = Класичне
+toolbar-import-textures = Імпорт текстур
+toolbar-import-sounds = Імпортувати звуки
+toolbar-import-animations = Імпорт анімації
+toolbar-import-materials = Імпортувати матеріали
+toolbar-import-meshes = Імпортувати сітку
+toolbar-import-local = Локальні файли
+toolbar-import-advanced = Додатковий імпорт
+toolbar-import-settings = Налаштування імпорту
+toolbar-import-bar = Панель імпорту
+toolbar-icon-search = Знайти піктограму…
+toolbar-in-top = У верхній панелі інструментів
+toolbar-bar-top = Верхня панель
+toolbar-drop-here = Перетягніть сюди
+toolbar-separator = Роздільник
+toolbar-interface-edit = Налаштування інтерфейсу
+toolbar-edit-done = Готово
+toolbar-edit-top = Угорі
+toolbar-edit-bottom = Унизу
+toolbar-edit-left = Ліворуч
+toolbar-edit-right = Праворуч
+toolbar-edit-help = Клацніть лівою кнопкою миші на елементі, щоб його вибрати, перетягніть його, щоб пересунути, або клацніть правою кнопкою для зміни параметрів. Закрийте це вікно, щоб завершити роботу.
+toolbar-edit-locked = Смужки заблоковано. Розблокуйте їх нижче, щоб змінити інтерфейс.
+toolbar-edit-move = Перемістити в
+toolbar-edit-split-before = Розділити перед
+toolbar-edit-split-after = Розділити після
+toolbar-edit-merge-before = Об' єднати з попереднім блоком
+toolbar-edit-merge-after = Об' єднати з наступним блоком
+toolbar-edit-merge-groups = Об’ єднати ці блоки
+toolbar-drawer = Лоток
+toolbar-drawer-default-mode = Типовий спосіб показу кнопок
+toolbar-drawer-closes = Закрити після натискання кнопки
+toolbar-block-shortcut = Скорочення:
+toolbar-drawer-hides-needs-shortcut = Вимагає скорочення
+toolbar-floating-close-button = Додати кнопку закриття
+toolbar-block-name = Назва блоку:
+toolbar-block-button-mode = Показ кнопок блокування
+toolbar-button-inherited = Успадковане
+toolbar-drawer-hides-button = Сховати кнопку під час плавання
+toolbar-floating-new = Плаваючий блок
+toolbar-floating-orientation = Орієнтація
+toolbar-floating-horizontal = Горизонтально
+toolbar-floating-vertical = Вертикально
+toolbar-floating-empty = Пересунути сюди кнопки
+toolbar-shortcut-title = Комбінація клавіш
+toolbar-shortcut-block-name = Блок: { $name }
+toolbar-shortcut-none = Без скорочень
+toolbar-shortcut-press-key = Натисніть клавішу
+toolbar-shortcut-esc = Esc, щоб скасувати
+toolbar-shortcut-clear = Вилучити
+toolbar-shortcut-overrides = Забирає більше { $name }: це скорочення запускає панель інструментів замість її типового використання.
+toolbar-shortcut-used = Вже скорочення { $names }.
+toolbar-shortcut-replace = Замінити
+toolbar-shortcut-add = Додати
+toolbar-shortcut-save = Зберегти
+toolbar-shortcut-choose-key = Виберіть ключ
+toolbar-shortcut-help = Увімкніть або вимкніть клавіші Ctrl, Alt і Shift, а потім клацніть на кнопці, щоб змінити її. Потрібно натискати клавішами Ctrl або Alt, за винятком F1 до F24.
+toolbar-shortcut-inactive = Ця кнопка не знаходиться на панелі інструментів: її скорочення працюватиме після того, як ви знову розташуєте цю кнопку.
+toolbar-shortcut-refused-keyboard = Скороченнями можуть бути лише клавіші клавіатури.
+toolbar-shortcut-refused-modifier = Клавіша- модифікатор сама по собі не може бути скороченням.
+toolbar-shortcut-refused-needs-modifier = Додати Ctrl або Alt: клавішу самостійно або з клавішею Shift, введення тексту у текстові поля.
+toolbar-shortcut-refused-altgr = Ctrl+Alt з цією клавішею є AltGr, який вводить символи на багатьох клавіатурах.
+toolbar-shortcut-refused-editing = Текстові поля використовують це скорочення (вибрати все, копіювати, вирізати, вставити, скасувати, повторити).
+toolbar-shortcut-refused-navigation = Текстові поля можна пересувати і вилучати за допомогою цієї клавіші.
+toolbar-shortcut-refused-typing = Цю клавішу використовують балачки і діалогові вікна.
+toolbar-shortcut-refused-system = Система зберігає це скорочення.
+toolbar-shortcut-refused-window = Це скорочення закриває або перемикає вікна.
+toolbar-shortcut-refused-zoom = Це скорочення змінює масштаб інтерфейсу.
+toolbar-spacer = Інтервал між блоками
+toolbar-add-spacer = Додати проміжок між блоками
+toolbar-button-settings = Параметри кнопок
+toolbar-button-edit = Кнопка « Редагувати »...
+toolbar-button-edit-title = Кнопка редагування
+toolbar-button-name = Назва кнопки:
+toolbar-button-display = Показувати кнопки
+toolbar-shortcut-fixed-block-help = Скорочення до фіксованого блоку показує і ховає його; під час редагування інтерфейсу, скорочення залишається показаним.
+toolbar-block-settings = Параметри блоку
+toolbar-parent-block-settings = Параметри батьківського блоку
+toolbar-block-edit = Редагувати блок…
+toolbar-block-edit-title = Редагувати блок
+toolbar-block-alignment = Вирівнювання
+toolbar-block-sizing = Розмір кнопки
+toolbar-block-fixed-options = Параметри фіксованого режиму
+toolbar-block-floating-options = Параметри плаваючого режиму
+toolbar-block-kind-fixed = Фіксований блок
+toolbar-block-kind-drawer = Лоток
+toolbar-block-kind-floating = Плаваючий блок
+toolbar-block-remove = Вилучити блок
+toolbar-move-block = Перетягніть, щоб пересунути весь блок
+toolbar-remove-block = Вилучити блок
+toolbar-drawer-empty = Цей ящик порожній.
+toolbar-drawer-drop = Перетягніть сюди кнопки, щоб додати їх або змінити порядок.
+toolbar-separator-settings = Параметри блокових інтервалів
+toolbar-separator-size = Розмір / мінімум (пкс)
+toolbar-separator-stretch = Заповнити вільний простір
+toolbar-separator-help = Гнучкі проміжки розділяють простір, залишений блоками. Розмір — це їх мінімальна ширина або висота на бічній панелі.
+toolbar-block-navigation = Навігація та SLURL
+toolbar-block-account = Рахунок і баланс
+toolbar-block-system = Годинник, індикатори та звукName
+toolbar-block-status = Стан доступності
+toolbar-block-balance = Баланс
+toolbar-block-clock = Годинник
+toolbar-block-ping = Затримка регіону
+toolbar-block-fps = Частота кадрів (К/ с)
+toolbar-block-network = Мережевий трафік
+toolbar-block-media = Медіа ділянки
+toolbar-block-music = Музика ділянки
+toolbar-block-volume = Гучність
+toolbar-block-notifications = Сповіщення
+toolbar-block-conversations = Піктограми розмов
+toolbar-block-chat = Введення балачки поблизу
+toolbar-category-all = Усі категорії
+toolbar-section-main = Основне
+toolbar-section-advanced = Розширений
+toolbar-search-all = Пошук включає додаткові команди.
+toolbar-category-avatar = Аватар і рух
+toolbar-category-communication = Спілкування
+toolbar-category-world = Світ і подорожіName
+toolbar-category-creation = Створення і вміст
+toolbar-category-interface = Інтерфейс і камера
+toolbar-category-advanced = Додаткові засоби
+toolbar-category-help = Довідка
+toolbar-category-custom = Нетипові команди
+toolbar-bar-settings = Параметри панелі інструментів
+toolbar-menu-group = Menu: { $name }
+toolbar-location-bar = Панель адреси SLURL
+toolbar-command-build-tool-focus = Збудувати — ФотоапаратStencils
+toolbar-command-build-tool-grab = Збудувати — Пересунути
+toolbar-command-build-tool-edit = Збудувати — Редагувати
+toolbar-command-build-tool-create = Збудувати — Створити
+toolbar-command-build-tool-land = Будівництво - ЗемляStencils
+bug-copy-version = Копіювати версію переглядача
+toolbar-notecard-save = Зберегти до картки нотаток…
+toolbar-notecard-load = Завантажити з картки нотаток…
+toolbar-notecard-name = Інтерфейс Aurora
+toolbar-notecard-help = Розкладка і вигляд панелей інструментів, кнопок, лотків та меню.
+toolbar-notecard-saved = Розкладка інтерфейсу, збережена у вашому інвентарі.
+toolbar-notecard-invalid = Ця нотатка не містить сумісного розкладу інтерфейсу.
+toolbar-notecard-unavailable = Ця картка вже не доступна або її неможливо скопіювати.
+toolbar-notecard-layout-changed = Інтерфейс змінився під час завантаження нотатки. Перезавантажте її, щоб застосувати її розкладку.
+toolbar-notecard-demo-valid = Інтерфейс фотографа
+toolbar-notecard-demo-invalid = Інша картка
+toolbar-notecard-too-large = Це налаштування інтерфейсу занадто велике для картки нотаток.
+toolbar-saved-interfaces = Збережені інтерфейси
+toolbar-saved-interfaces-empty = Інтерфейсів ще не збережено.
+toolbar-notecard-destination = Папка: { $path }
+toolbar-notecard-folder-error = Не вдалося завантажити або створити теку інтерфейсів. Будь ласка, спробуйте ще раз.
+toolbar-current-preset = Вибраний інтерфейс: { $name }
+toolbar-preset-custom = Нетиповий інтерфейс
+toolbar-preset-unsaved = Незбережені зміни
+toolbar-preset-save-title = Зберегти інтерфейс
+toolbar-preset-save-name = Назва інтерфейсу
+toolbar-preset-save-new = Новий особистий інтерфейсName
+toolbar-preset-save-replace = Замінити цей особистий інтерфейс
+toolbar-preset-save-unavailable = Цей інтерфейс не можна зберегти тут. Будь ласка, виберіть іншу назву або доступний особистий інтерфес, який можна редагувати.
+toolbar-interface-delete-unavailable = Цей особистий інтерфейс не можна вилучити.
+toolbar-interface-delete-confirm = Перемістити особистий інтерфейс «{ $name }» у кошик?

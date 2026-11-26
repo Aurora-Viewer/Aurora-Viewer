@@ -16102,3 +16102,739 @@ parcel-environment-empty = சூழல்கள் சேமிக்கப்�
 parcel-environment-remove-all = எல்லாவற்றையும் நீக்கு
 parcel-environment-remove-all-title = ஒரு தொகுப்பிற்கு சேமிக்கப்பட்ட அனைத்து சூழல்களையும் நீக்கவா?
 parcel-environment-remove-all-text = இந்தக் கிரிட்டில் நிலத்துண்டுகளுக்காகச் சேமித்த சூழல்கள் நீக்கப்படும். மற்ற கிரிட்களில் உள்ளவை மாறாது. இதை மீளச் செய்ய முடியாது.
+
+### Updated release translations
+
+anim-timeline-channels-hint = இந்த எலும்பின் சுழற்சி மற்றும் இட விசைகளை அவற்றின் சொந்த வரிசைகளில் காட்டு
+anim-timeline-channel-rotation = சுழற்சி
+anim-timeline-channel-location = இடம்
+anim-timeline-keying-hint = என்ன ஒரு விசையை பதிவு செய்கிறது. இடத்துடன், நகர்த்தல் ஒரு இணைப்பை தனியாக எடுத்துக் கொள்கிறது, அதன் IK சங்கிலி வெளியே. இரண்டாம் வாழ்க்கை அசைவூட்டங்களுக்கு அளவு விசைகள் இல்லை.
+anim-timeline-keying-auto = தானியக்கமாக: சுழற்சி, மற்றும் இடம் மார்பகங்கள் மற்றும் நகர்த்தப்பட்ட இணைப்புகளுக்கு
+anim-timeline-keying-auto-short = தானியங்கி
+anim-timeline-keying-loc-rot = இடம் மற்றும் சுழற்சி
+anim-timeline-keying-loc-rot-short = இடம்+மூலம்
+anim-timeline-keying-rot-short = மூலங்கள்
+anim-timeline-keying-loc-short = இடம்
+anim-edit-shortcut-play = இயக்கு அல்லது தற்காலிகமாக நிறுத்து
+area-search-scope-heading = எங்கே
+area-search-scope-parcel = பரிமாற்றம்
+area-search-scope-region = வடக்கு டக்கொடphilippines. kgm
+area-search-scope-neighbours = அண்டை நாடுகள்
+area-search-objects-heading = எந்த பொருள்கள்
+inventory-copy-selection-count =
+    { $count ->
+        [one] 1 பொருளை நகலெடு
+       *[other] { $count } பொருள்களை நகலெடு
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] இணைப்பு 1 பொருள்
+       *[other] இணைப்பு { $count } பொருள்கள்
+    }
+inventory-drop-move-here = இங்கே நகர்த்து
+inventory-drop-copy-here = இங்கே நகலெடு
+inventory-drop-link-here = இங்கே இணைப்புகளை உருவாக்கு
+inventory-sort-description = & விவரக்குறிப்பு
+inventory-sort-reversed = { $order } (திசைமாற்றம்)
+inventory-column-creator = உருவாக்குபவர்
+inventory-column-count = உருப்படிகள்
+inventory-columns-fit = எல்லா நெடுக்கைகளையும் பொருத்த அளவாக்கு
+inventory-columns-reset-widths = நெடுவரிசை அகலத்தை மீட்டமை
+inventory-back = பின்
+inventory-forward = முன்னேற்றம்
+inventory-up = ஒரு நிலை மேலே
+keybinds-inventory-root = மேலே செல்லவும்
+keybinds-inventory-search = பட்டியலில் தேடுக
+keybinds-inventory-filter = அடைவை வடிகட்டு
+keybinds-inventory-preview = முன்பார்வை பலகத்தை காட்டு
+keybinds-inventory-view-large = பெரிய படங்கள்
+keybinds-inventory-view-medium = நடுத்தர படங்கள்
+keybinds-inventory-view-small = சிறிய படங்கள்
+keybinds-inventory-view-compact = நெருக்கமான காட்சி
+keybinds-inventory-view-details = விவரங்கள்
+keybinds-inventory-view-tiles = தளபாடக் காட்சி
+keybinds-inventory-toggle = முன்னுரிமையிலுள்ள கிடக்கையை தேர்ந்தெடு அல்லது தேர்வு நீக்கு
+keybinds-inventory-menu = தேர்ந்தெடுக்கப்பட்டவற்றின் பட்டியலை திற
+keybinds-inventory-purge = குப்பைத்தொட்டியில் இருந்து துடை
+keybinds-inventory-refused = { $keys } பட்டியலின் சொந்த விசையை வைத்திருக்கும்: மற்றொன்றை தேர்வு செய்க.
+inventory-path-edit = பாதையை உள்ளிடு
+inventory-path-subfolders = துணை அடைவுகள்
+inventory-copy-path = பாதையை நகலெடு
+inventory-show-in-folder = அடைவில் காட்டு
+inventory-pin = விரைவான அணுகலுக்கு பிணை
+inventory-unpin = விரைவான அணுகலிலிருந்து பிரித்தெடு
+inventory-quick-access = விரைவு அணுகல்
+inventory-quick-access-drop = அடைவினை இங்கு இழுத்து அதை பிணைக்கவும்
+inventory-invert-selection = தேர்ந்தெடுத்ததை திருப்பு
+inventory-undo = & திரும்பச் செய்
+inventory-redo = & திரும்பச் செய்
+inventory-undo-step = செயல் நீக்கு { $what }
+inventory-redo-step = திரும்பச் செய் { $what }
+inventory-history-move =
+    { $count ->
+        [one] 1 பொருளை நகற்று
+       *[other] { $count } பொருள்களை நகர்த்து
+    }
+inventory-history-delete =
+    { $count ->
+        [one] % 1ஐ நீக்கு
+       *[other] { $count } பொருள்களை நீக்கு
+    }
+inventory-history-rename = மறுபெயரிடு
+inventory-history-new-folder = புதிய அடைவு
+inventory-history-copy =
+    { $count ->
+        [one] 1 பொருளின் நகல்
+       *[other] { $count } பொருள்களின் நகல்
+    }
+inventory-history-link =
+    { $count ->
+        [one] 1 உருப்படிக்கான இணைப்பு
+       *[other] { $count } பொருட்களுக்கு இணைப்புகள்
+    }
+inventory-undo-nothing = திரும்பப்பெற எதுவுமில்லை: அந்த உருப்படிகள் நகர்த்தப்பட்டுள்ளன அல்லது நீக்கப்பட்டுள்ளன.
+inventory-redo-nothing = திரும்பச் செய்ய எதுவுமில்லை: அந்த உருப்படிகள் நகர்த்தப்பட்டுள்ளன அல்லது நீக்கப்பட்டுள்ளன.
+inventory-undo-empty = திரும்பப்பெற எதுவுமில்லை.
+inventory-redo-empty = மீண்டும் செய்ய எதுவுமில்லை.
+inventory-undo-dropped = கடைசி படியின் பொருள்கள் நகர்த்தப்பட்டுள்ளன அல்லது போய்விட்டன: அது இழக்கப்பட்டது. முந்தைய படிக்கு மீண்டும் செயல் நீக்கு.
+inventory-redo-dropped = அடுத்த படியின் உருப்படிகள் நகர்த்தப்பட்டுள்ளன அல்லது நீக்கப்பட்டுள்ளன: அது இழக்கப்பட்டது. அடுத்த படிக்கு மீண்டும் செய்யவும்.
+inventory-undo-folder-not-empty = அந்த புதிய அடைவில் பொருட்கள் வைக்கப்பட்டுள்ளன: முதலில் அவற்றை வெளியே நகர்த்து, அல்லது நீங்கள் தாங்களே இந்த அடைவை நீக்கு.
+inventory-undo-kept-out = அந்த பொருட்கள் தற்போதைய உடை அல்லது சந்தை இடம் பட்டியலில் உள்ளன: அவற்றை அங்கு மாற்றவும்.
+inventory-restore-to = “{ $folder }” க்கு மீளமை
+inventory-restore-to-origins = அவற்றின் அடைவுகளுக்கு திரும்ப அமை
+inventory-purge-no-undo = செயல் நீக்குதல் அவற்றை திரும்பக் கொண்டுவர முடியாது.
+inventory-new-tab = புதிய தத்து
+inventory-close-tab = தத்தலை மூடு
+inventory-next-tab = அடுத்த தத்து
+inventory-previous-tab = முந்தைய தத்து
+inventory-open-in-new-tab = புதிய தத்தலில் திற
+inventory-tabs-limit = அதிகபட்சமாக { $count } தத்தல்கள்.
+inventory-copy-to-other-pane = மற்ற சாளரத்திற்கு நகலெடு
+inventory-move-to-other-pane = மற்றொரு பலகத்திற்கு நகர்த்து
+inventory-resize-columns = நெடுவரிசைகளை மறுஅளவாக்க இழுக்கவும். இடதுபுறத்தில் உள்ள நெடுவரிசையை அதன் உள்ளடக்கத்திற்கு பொருத்த இருமுறை சொடுக்கவும்.
+inventory-resize-columns-first = நெடுவரிசைகளை மறுஅளவாக்க இழுக்கவும். முதல் நெடுக்கையை அதன் இயல்பான அகலத்திற்கு மாற்ற இருமுறை க்ளிக் செய்யவும்.
+inventory-sort-by-column = இந்த நெடுக்கையை வைத்து வரிசையாக்க க்ளிக் செய்யவும், மீண்டும் வரிசை மாற்றவும். நெடுக்கை நகர்த்த இழுக்கவும்.
+inventory-filter-hint = இந்த அடைவை வடிகட்டு
+inventory-filter-close = வடிகட்டியை மூடு (Esc)
+inventory-filter-nothing = வடிகட்டிக்கு பொருந்தாத ஒன்றும் இங்கே இல்லை
+inventory-view-compact = நெருக்கமான காட்சி
+inventory-view-tiles = தளபாடக் காட்சி
+inventory-view-per-folder = ஒவ்வொரு அடைவின் காட்சியை நினைவில் கொள்
+inventory-group-by = குழுவாக்கம்
+inventory-group-none = & எதுவும் இல்லை
+inventory-group-folders = அடைவுகள்
+inventory-group-unknown-creator = உருவாக்கியவர் இன்னும் தெரியவில்லை
+inventory-group-today = இன்று
+inventory-group-yesterday = நேற்று
+inventory-group-this-week = கடைசி7நாட்கள்
+inventory-group-this-month = கடைசி 30 நாட்களில்
+inventory-group-this-year = இந்த ஆண்டு ஆரம்பத்தில்
+inventory-group-earlier = நீண்ட காலம் முன்
+inventory-group-no-date = தேதி இல்லை
+cmdline-mod-zoffset-usage = உங்கள் அவாட்டரின் ஹோவர் உயரத்தை அமைக்கவும் (பயன்பாடு: /zoffset value or +delta).
+dev-toolbox-n4 = பட்டியலை ஏற்றுகிறது
+dev-toolbox-what-n4 = அடைவுகள் படிக்கப்பட்டது, தோல்வியுற்றது மற்றும் வெளியேறியது, ஏற்றுபவரின் படிப்பு விரைவில் மற்றும் மீண்டும் முயற்சி; பெயர் இல்லை
+ui-context-inspect-avatar = ஆவணத்தை சரிபார்
+inspect-window = கண்காணி
+inspect-tab-objects = பொருள்கள்
+inspect-objects-title =
+    { $count ->
+        [one] { $count } பொருள்
+       *[other] { $count } பொருள்கள்
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } பொருள்
+       *[other] { $count } உருப்படிகள்
+    }
+inspect-open-profile = பண்பை திற
+inspect-over-limit = உங்கள் வரம்புக்கு மேல்
+inspect-limit-tip = உங்கள் சிக்கலான வரம்பு: { $limit }
+inspect-search = உருப்படிகள் அல்லது உருவாக்குபவர்களை தேடுக
+inspect-outlined = { $name } உலகில் வரையறுக்கப்பட்டுள்ளது
+inspect-area-head = தலை
+inspect-area-body = உடல்
+inspect-area-arms = கைகளும் கைகளும்
+inspect-area-legs = கால்களும் கால்நடைகளும்
+inspect-area-hud = ஹூட்
+inspect-area-other = மற்றவை
+inspect-area-world = பொருள்கள்
+inspect-own-eyes = கணினி கண்கள்
+inspect-own-body = கணினி உடல்
+inspect-own-description = இணைப்பு இல்லை
+inspect-own-maker = அவதாரம் · Second Life
+inspect-own-place = அவதாரம்
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } மெகாபைட்
+inspect-section-complexity = { $value } சிக்கல்
+inspect-no-match = "{ $query }" க்கு ஏதும் பொருந்தாது.
+inspect-spoken-worn = { $name }, அணிந்த { $point }, சிக்கல் { $complexity }, உருவாக்கியவர் { $creator }
+inspect-spoken-object = { $name }, உரிமையாளர் { $owner }, சிக்கல் { $complexity }, உருவாக்கியவர் { $creator }
+inspect-look-at-tip = கேமராவை அங்கு நகர்த்து
+inspect-profile-tip = உருவாக்குபவரின் பண்பை திற
+inspect-made-by = உருவாக்கியவர்
+inspect-owned-by = உரிமையாளர்
+inspect-worn-on = அணியப்பட்ட
+inspect-prims-count =
+    { $count ->
+        [one] முதல் எண் { $count }
+       *[other] { $count } பகா எண்கள்
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = நுட்ப நினைவு
+inspect-tile-vram = விராம்
+inspect-tile-prims = அடிப்படைப் பொருட்கள்
+board-close = மூடு { $title }
+board-grow = பெரிதாக்கு { $title }
+board-remove = { $name }ஐ நீக்கு
+board-more = மற்றும் { $count } மேலும்
+board-more-short = +{ $count }
+board-some-of = { $shown } அல்லது { $all }
+board-of-all = { $all }ல்
+stage-turn-left = இடது பக்கம் திரும்பு
+stage-turn-right = வலது பக்கம் திரும்பு
+stage-higher = மேலே இருந்து பார்
+stage-lower = கீழிருந்து பார்க்கவும்
+stage-nearer = நெருங்கிய
+stage-further = நீண்ட தூரம்
+stage-reset = ஆரம்பத்திற்கு திரும்பு
+stage-hint = சுழற்ற இழு, நகர்த்த வலது- இழு
+stage-light = வெளிர் பின்னணி
+stage-dark = கருப்பு பின்னணி
+stage-playing = AO
+stage-paused = தற்காலிகமாக நிறுத்தப்பட்டது
+stage-pause-tip = அசைவூட்டத்தை தற்காலிகமாக நிறுத்து
+stage-play-tip = அவர்களின் அசைவூட்டத்தை இயக்கு
+stage-loading = முப்பரிமாண காட்சியை தயாரிக்கிறது...
+stage-nothing = முப்பரிமாணத்தில் காட்ட எதுவுமில்லை.
+stage-refused = 3D பார்வை நிறுத்தப்பட்டுள்ளது, ஆனால் RLVa நீங்கள் பார்க்க முடியும் என்று வரையறுக்கிறது.
+inspect-your-limit = உங்கள் வரம்பு: { $limit }
+inspect-without-it = { $value } இல்லாமல்
+inspect-you = நீ
+inspect-person = நபர்கள்
+inspect-difference = வேறுபாடு
+inspect-drawn-in-full = முழுமையாக வரையப்பட்ட
+inspect-nobody = இவரது பிறந்த தேதி இன்னும் தெரியவில்லை.
+inspect-aside-count = { $count } ஒதுக்கு
+inspect-is-aside = ஒதுக்கு
+inspect-set-aside = ஒதுக்கு
+inspect-set-aside-tip = இந்த உருப்படி இல்லாமல் சிக்கலானதை பார்க்கவும். இந்த சாளரத்தில் மட்டும்: உலகில் எதுவுமே மாறாது.
+inspect-put-back = திரும்ப வைக்கவும்
+inspect-put-back-tip = இந்த உருப்படி மீண்டும் கணக்கிடப்படுகிறது
+inspect-complexity-spoken = சிக்கல் { $value }, எண் { $rank } அல்லது { $count } மக்கள் இங்கே
+inspect-stage-outfit = உடை
+inspect-stage-objects = பொருள்கள்
+inspect-stage-back = எல்லாவற்றிற்கும் திரும்பு
+inspect-place-made-by = { $place } செய்தவர் { $name }
+inspect-owned-by-name = { $name } இற்கு சொந்தமானது
+inspect-tile-items = உருப்படிகள்
+inspect-tile-figures = வரைபடங்கள்
+inspect-col-item = பெயர்
+inspect-point = புள்ளி
+inspect-look-at = பார்
+inspect-selected-count = { $count } தேர்ந்தெடுக்கப்பட்ட
+inspect-worn-count = { $count } வோர்ன்
+inspect-creators-word = உருவாக்கியவர்கள்
+inspect-areas-word = உடல் பகுதிகள்
+inspect-owners-word = உரிமையாளர்கள்
+inspect-triangles-word = முக்கோணங்கள்
+inspect-made-of = { $count } அல்லது { $all } உருப்படிகள்
+inspect-kilobytes = { $n } கிபி
+inspect-linkset-order = { $count }, in linksset order
+inspect-reset-columns = நெடுக்கைகளை மீட்டமை
+inspect-by-creators =
+    { $count ->
+        [one] { $items } ஒரு உருவாக்குநரால்
+       *[other] { $items } மூலம் { $count } உருவாக்கியவர்கள்
+    }
+inspect-owner-button = உரிமையாளர் விவரக்குறிப்பு
+inspect-group-button = குழுப் பண்பு
+inspect-creator-button = உருவாக்குபவர்
+inspect-land-others = பிறர் { $n }
+inspect-land-these = இந்த { $n }
+inspect-land-free = இலவச { $n }
+inspect-land-unknown = இந்தப் பட்டியலில் உள்ள அனைத்து நகரங்களும், அவற்றின் எல்லைகளில் உள்ள பகுதிகளும் அடங்கியுள்ளன.
+ui-login-unencrypted = மறையாக்கமற்ற உள்நுழைவு
+ui-login-unencrypted-body = { $server } சேவையகத்தின் உள்நுழைவு முகவரி https:// என்பதற்குப் பதிலாக http:// எனத் தொடங்குகிறது. உள்நுழைவு மறையாக்கப்படாது. பொது Wi-Fi, பகிரப்பட்ட பிணையம் அல்லது கிரிட்டுக்கான பாதையில் உங்கள் பிணையப் போக்குவரத்தைப் பார்க்கக்கூடியவர் கடவுச்சொல்லைப் படித்துக் கணக்கைப் பயன்படுத்தலாம். இதுவரை எதுவும் அனுப்பப்படவில்லை. கிரிட்டிடம் https:// முகவரியைக் கேட்கலாம். தேர்வு இந்தச் சேவையகத்துக்காகச் சேமிக்கப்படும்.
+ui-login-unencrypted-accept = மறையாக்கமின்றி உள்நுழை
+world-appearance-clothing-layers-full = அனைத்து 60 உடை அடுக்குகளும் பயன்பாட்டில் உள்ளன. இந்த பொருளை அணிவதற்கு முன் ஒரு அடுக்கை நீக்கு
+ui-options-ray-tracing = கதிர் தடம்
+ui-options-ray-traced-shadows = கதிர்வீச்சு சூரிய நிழல்கள்
+ui-options-ray-traced-shadows-help = சூரியன் மற்றும் சந்திரனின் நிழல்கள் நிழல் வரைபடத்திலிருந்து படிப்பதற்கு பதிலாக கதிர் மூலம் கதிரை பின்தொடர்கிறது: எந்த தொலைவிலும் பொருட்கள் எங்கு தொடர்பு கொள்கின்றன என்பதை சரியாக குறிப்பிடுகிறது. நிழலும், கதிர்கள் பின்தொடரும் வரைகலை அட்டையும் தேவைப்படுகிறது, மேலும் வரைகலன் அட்டைக்கு அதிக செலவாகும்
+ui-options-ray-traced-lights = உள் ஒளி நிழல்கள்
+ui-options-ray-traced-lights-help = சுற்றியுள்ள புள்ளி விளக்குகளிலிருந்து நிழல்கள் (விளக்குகள், மெழுகுவர்த்திகள்), மற்றபடி எதுவும் வீசாதவை, மற்றும் பிரொஜெக்டர் நிழல் செயல்பட்டால், அதன் நிழலின் வரைபடத்தின் இடத்தில். கதிர்வீச்சு தேர்வுகளில் அதிக செலவாகும்: ஒருங்கிணைந்த வரைகலையில் சிறந்தது விட்டுவிடுதல்
+ui-options-rt-quality = கதிர் தடம் தரம்
+ui-options-rt-quality-help = ஒவ்வொன்றும் பின்தொடரப்பட்ட விளைவுகள் செயல்படுகிறது: குறைந்த மட்டங்கள் குறைவான மாதிரிகளை பின்தெடுக்கும் மற்றும் நேரடி ஒளி ஒரு பெரிய கட்டத்தில், சிறிய வரைகலை அட்டைகளில் நொடிக்கு அதிக சட்டங்களை பெறுவதற்கு. உயர்ந்தது முழு பிம்பம் டெலக்ஸ் (RT). ஒரு மட்டத்தை தேர்ந்தெடுப்பது நிழல் வீசும் ஒளிகளையும் அமைக்கிறது
+ui-options-rt-sun-softness = சூரிய நிழலின் மென்மை
+ui-options-rt-sun-softness-help = சூரியனின் பின்தொடர்ந்த நிழலின் விளிம்புகள் எவ்வளவு மென்மையானவை: 1 உண்மையான சூரியன்,0கடுமையான விளிம்புகள், அதிகமான சூரியனைக் கொண்டிருக்கும்
+ui-options-rt-lamp-softness = உள் வெளிச்ச நிழலின் மென்மை
+ui-options-rt-lamp-softness-help = விளக்குகளின் பின்தொடர் நிழலின் ஓரங்கள் எவ்வளவு மென்மையானவை: 1 ஒவ்வொரு விளக்கின் அளவை பின்பற்றுகிறது,0கடுமையான ஓரங்களுடன்
+ui-options-rt-shadow-lamps = நிழல்களை வீசும் ஒளிகள்
+ui-options-rt-shadow-lamps-help = நெருங்கிய விளக்குகளில் எத்தனை வெளிச்சம் நிழல்களை வீசுகிறது; மற்றவை இன்னும் ஒளிரும், நிழல்கள் இல்லாமல். குறைவானது வரைகலை அட்டைக்கு குறைந்த செலவு
+ui-options-ray-traced-indirect = நேரடி ஒளி
+ui-options-ray-traced-indirect-help = சுற்றியுள்ள பரப்புகள் மூலம் ஒளி திரும்புகிறது, திரை காட்டுவதை விட அதிகமாக உள்ளது, GTAO இன் நேரடி ஒளிக்கு பதிலாக
+ui-options-gi-probes = உலகளாவிய ஒளிமயமாக்கல் கண்டுபிடிப்பு
+ui-options-gi-probes-help = பல பாய்வுகளின் ஒளி மற்றும் அவர்கள் பார்க்கும் வானம்: மூடப்பட்ட அறைகள் இருளாகவே இருக்கும், வெளிச்சம் முனைகளில் சுழலும். வரைகலை அட்டையில் 0. 8 ms
+ui-options-ray-traced-reflections = கதிர்வழிப் பிரதிபலிப்பு
+ui-options-ray-traced-reflections-help = திரை காட்டாததைப் பிரதிபலிக்கிறது, திரை- இடம் பிரதிபலிப்புகளுக்கு பதிலாக, இது செயல்பட வேண்டும்
+ui-options-ray-tracing-unsupported = இந்த வரைகலை அட்டை அல்லது அதன் இயக்கிக்கு கதிர் தடம் இல்லை
+ui-options-ray-tracing-vr = VR க்கு தொடங்கப்பட்ட அமர்வில் கிடைக்கவில்லை
+ui-options-tab-ray-tracing = கதிர் தடம்
+ui-options-deluxe-rt-warning-title = டெலக்ஸ் (RT) ஐ செயல்படுத்து
+ui-options-deluxe-rt-warning-text = டிலக்ஸ் (RT) உயர்வானது, நிழல்கள் மற்றும் நேரடி ஒளி வரைகலை அட்டையால் பின்தொடரப்படுகிறது. இது வன்பொருள் கதிர் தடம் கொண்ட ஒரு அட்டை தேவைப்படுகிறது (NVIDIA RTX, AMD Radeon RX 6000 அல்லது அதற்கு மேல், Intel Arc) மற்றும் புதுப்பிக்கப்பட்ட இயக்கி, மற்றும் அது உயர்ந்ததை விட அதிக செலவாகும்: நடுத்தர அளவிலான அட்டைகளில் சட்ட விகிதம் அதிகமாக இருக்கும் இடங்களில் குறைந்துவிடும். கதிர்கள் தடம் இன்னும் சோதனை செய்யப்படுகின்றது: பிம்பம் தவறாக இருந்தால் அல்லது பார்வையாளன் தாமதமானால், மீண்டும் உயர்ந்த நிலைக்கு செல்லவும். கீறல் தடம் தத்தலில் அதன் அமைப்புகள் உள்ளன.
+ui-options-deluxe-rt-warning-turn-on = செயல்படுத்து
+ui-options-ray-tracing-needs-shadows = நிழல்கள் தேவை
+ui-options-ray-tracing-needs-ssr = திரை- இடம் பிரதிபலிப்புகள் தேவை
+ui-options-preset-deluxe = டிலக்ஸ் (RT)
+ui-options-normal-precision = பிரதிபலிப்புத் துல்லியமான
+ui-options-normal-precision-help = ஒவ்வொரு பரப்பின் திசை எவ்வளவு நுணுக்கமாக பிரதிபலிக்கிறது. இயல்பு நிலை, காரின் வண்ணம் போன்ற மென்மையான, வளைந்த பரப்புகளின் பிரதிபலிப்புகளில் படிகளைக் காட்டும்; உயர்நிலை அவற்றை நீக்கி மேலும் அதிக வீடியோ நினைவகத்தை பயன்படுத்துகிறது. தானியங்கி கதிர்வீச்சுப் பிரதிபிம்பங்களுடன் உயர்நிலையை பயன்படுத்துகிறது, அங்கு படிகள் மிகவும் தெரிகிறது, இல்லையென்றால் இயல்பான
+ui-options-normal-precision-automatic = தானியக்க
+ui-options-normal-precision-standard = இயல்பிருப்பு
+ui-options-normal-precision-high = அதிக
+ui-options-private-point-at-help = எந்த பொருளை நீங்கள் தொகுக்க விரும்புகிறீர்கள் என்பதை மறைக்கவும், உங்கள் தொகுப்பு கைகளை கீழே வைக்கவும், மற்றும் உங்கள் தொகுதியை மறை.
+ui-options-private-edit-beam = தொகுப்பு கம்பியை மறை
+ui-options-private-edit-beam-help = உங்களின் திரையில் மற்றும் மற்ற பார்வையாளர்களுக்கும், நீங்கள் பொருள்களை திருத்தும்போது அல்லது எடுத்துக் கொள்ளும் போது முழுவதுமாக பீம் மறைக்கவும். தேர்வு இலக்கு குறிப்புகள் மற்றும் கொடுக்க/ இழுக்க பீமைகள் பாதிக்கப்படுவதில்லை.
+common-window-outside = பார்வையாளரின் சாளரத்திற்கு வெளியே நகர்த்து
+common-window-inside = பார்வையாளரின் சாளரத்தில் திரும்ப கொண்டுவா
+common-window-rename-name = மறுபெயரிட இருமுறை சொடுக்கவும்
+common-carry-hint = அதை இங்கே விட க்ளிக் செய்யவும், அதை விடுவதற்கு எஸ்கேப்
+common-window-paused-photo = புகைப்பட வகை திறந்திருக்கும் போது தற்காலிகமாக நிறுத்தப்பட்டது
+common-window-paused-director = இயக்குநர் விளையாடும் போது தற்காலிகமாக நிறுத்தப்பட்டது
+common-window-paused-interface = இடைமுகம் செயல்படாத போது தற்காலிகமாக நிறுத்தப்பட்டது
+ui-options-warn-live-preview = ஒரு வடிவமைப்பு அல்லது பொருள் முன்பார்வை செய்ய முடியாத போது எச்சரிக்கை செய்
+ui-options-warn-live-preview-help = உருவாக்க சாளரத்தின் தேர்வாளர், நகலெடுக்காத பொருளை கிளிக் செய்வது சரி: அதைச் சொல்லுங்கள் வரை எதையும் செயல்படுத்தாது.
+ui-texture-picker-live-preview-texture = இந்த நுட்பத்தின் முன்தோற்றத்தை காண்பிக்க முடியாது ஏனெனில் அது நகலெடுக்கப்படவில்லை.
+ui-texture-picker-live-preview-material = இந்த பொருளின் முன்காட்சியை காட்ட இயலாது ஏனெனில் அது நகல் இல்லை.
+fetch-invalid-url = தவறான URL
+ui-chat-close-all-ims = அனைத்தையும் மூடு IM உரையாடல்கள்
+ui-chat-close-all-ims-question = அனைத்து IM உரையாடல்களையும் மூடவும் மற்றும் செயலில் உள்ள அழைப்பை முடிக்கவும்
+ui-chat-confirm-close-all-ims = அனைத்து IM உரையாடல்களையும் மூடும் முன் உறுதிப்படுத்தவும்
+ui-chat-confirm-close-all-ims-help = ஒரு செயலில் உள்ள குரல் அழைப்பு இருந்தால், அனைத்து IM உரையாடல்களையும் மூடுவதற்கு முன் கேட்கவும்.
+ui-options-aurora-controls-compact-help = கட்டுப்பாட்டு சாளரம் கேமராவில் குறுகலாக திறக்கப்படுகிறது: அதன் ஜோய்ஸ்டிக்கள், பெரிதாக்குதல் மற்றும் சுழற்றல். அதன் தலைப்பு பட்டி பொத்தான் குறுகிய மற்றும் முழுமையான இடையே மாற்றுகிறது, மேலும் இதை அமைக்கிறது. பாரம்பரிய சாளரங்களுடன், கேமரத்தை லெகசி பார்வையாளரின் சிறிய கேமராமேன் சாளரமாகவும் திறக்கும்.
+rlva-restart-hint = RLVa நீங்கள் நுழைந்தவுடன் தொடங்கும். இது இயங்கும் போது, அதை இயக்கி அல்லது நிறுத்துவதற்கு அடுத்த பார்வையாளரின் துவக்கத்தில் விளைவு ஏற்படும்: கட்டுப்பாடுகள் பொருட்கள் அந்த நேரத்திற்கு வரை இருக்கும்.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa நீங்கள் மீண்டும் துவங்கிய பிறகு செயல்படுத்தப்படும்.
+rlva-toggle-disabled-restart = RLVa நீங்கள் மீண்டும் துவங்கிய பிறகு செயல் நீக்கப்படும்.
+livemesh-import-connect = 0.11.0 அல்லது அதற்கு மேல் செருகலுடன் பிளண்டரை இணைக்கவும், அல்லது 02.0 மற்றும் அதற்கு மேலான செருகல்களுடன் மாயாவை இணைக்க வேண்டும், இறக்குமதி LODகளை தயாரிக்க.
+livemesh-import-preparing = பிளண்டர் அல்லது மாயாவில் பொருள் மற்றும் அதன் LOD களை தயார் செய்கிறது...
+livemesh-import-ready = LODs கிடைத்தது. இறக்குமதி செய்ய தயாராக உள்ளது.
+livemesh-import-failed = இறக்குமதி தயாரிப்பு தோல்வியடைந்தது: { $error }
+livemesh-import-timeout = பிளண்டர் அல்லது மாயா இறக்குமதியை தயார்படுத்துவதை முடிக்கவில்லை. இணைப்பை சரிபார்க்கவும் (பிளண்டரில், பொருள் முறையை பயன்படுத்தவும்) மற்றும் மீண்டும் முயற்சி செய்யவும்.
+livemesh-shape-apply-tooltip = மாற்று உரிமைகளை சரிபார்க்கவும், பின்னர் பிளண்டர் அல்லது மாயாவில் தேர்ந்தெடுக்கப்பட்ட கட்டமைப்பை மாற்றவும் மற்றும் அதன் கட்டுப்படுத்தப்பட்ட மேசைகள் (மாயாஸ்டார் மூலம் ஒரு மாயாஸ்டர் ரிக்). உள்ளூர் இரண்டாம் வாழ்க்கை பொருத்தமான கட்டமைப்பைத் தேர்வுசெய்க.
+livemesh-shape-update-apply = பிளண்டர் சொருகுப்பொருளை 0.10.0 அல்லது அதற்கு மேல், அல்லது மாயா சொருகப்பொருளின் 04.0 மற்றும் அதற்கு மேலாக புதுப்பிக்கவும், பின்னர் அதை மீண்டும் இணைக்கவும்
+livemesh-shape-applied = தேர்ந்தெடுக்கப்பட்ட கட்டமைப்புக்கு வடிவம் பயன்படுத்தப்பட்டது.
+livemesh-shape-tooltip = பயன்படுத்தப்பட்ட வடிவத்தின் மாற்று உரிமைகளை சரிபார்க்கவும் மற்றும் பிளண்டர் அல்லது மாயாவில் புதிய ரிகிட் செய்யப்பட்ட குறிப்பு உடலை உருவாக்கவும்.
+livemesh-shape-connect = பிளண்டர் அல்லது மாயாவில் Aurora செருகலை முதலில் இணைக்கவும்.
+livemesh-shape-update-plugin = பிளண்டர் சொருகுப்பொருளை 0.9.0 அல்லது அதற்கு மேல், அல்லது மாயா சொருகி 03.0 மற்றும் அதற்கு மேலாக புதுப்பிக்கவும், பின்னர் அதை மீண்டும் இணைக்கவும்
+livemesh-shape-timeout = பிளண்டர் அல்லது மாயா இறக்குமதியை உறுதி செய்யவில்லை. மீண்டும் முயற்சிக்கவும் (பிளண்டரில், பொருள் முறைமைக்கு மாற்று)
+livemesh-shape-success = வடிவம் புதிய ரிகிட் சார்பு உடல் போல இறக்குமதி செய்யப்பட்டது.
+blender-live-maya-version = Aurora மாயாவிற்கான லைவ்மெஷ் { $version }
+blender-live-maya-instructions = ZIP ஐ சேமித்து அதை பிரித்தெடு, பின்னர் install.mel ஐ மயா பார்வை துறைக்குள் இழுக்கவும். Aurora ஷெல்ஃபில் இருந்து LiveMesh ஐ திறக்கவும், உங்கள் மெஷ்களை சேர்க்கவும் மற்றும் இணைக்க கிளிக் செய்யவும்.
+blender-live-save-maya = மாயா சொருகுப்பொருளை சேமி
+blender-live-maya-saved = சொருகுப்பொருள் சேமிக்கப்பட்டது. ZIP ஐ பிரித்தெடுத்து install.mel ஐ மாயா பார்வை துறைக்குள் இழுக்கவும்.
+livemesh-plugin-connected = செருகல் இணைக்கப்பட்டது
+livemesh-token-refused = ஒரு நிரல் இந்த முன்பார்வை விசை இல்லாமல் இணைக்க முயன்றது. பிளண்டர் அல்லது மாயாவில் உள்ள Aurora சொருகுப்பொருள் மட்டுமே இணைக்க முடியும்.
+livemesh-waiting-plugin = பிளண்டர் அல்லது மாயாவுக்காக காத்திருக்கிறது...
+blender-live-objects-help = பிளண்டர் அல்லது மாயா அனுப்பும் கட்டங்கள். அவற்றை வைக்க ஒன்றைத் தேர்ந்தெடு, அல்லது அதன் பட்டியலிலிருந்து இறக்குமதி செய்.
+blender-live-size-note = அளவு செருகல் அனுப்புவதை பெருக்குகிறது, எனவே பிளண்டர் அல்லது மாயாவில் பின்வரும் திருத்தங்கள் அதை வைத்திருக்கும்.
+blender-live-avatar-help = ரிகிட் செய்யப்பட்ட மேசைகளுக்கான: உங்கள் வடிவத்தை பிளண்டர் அல்லது மயாவிற்கு அனுப்பவும் அதை மாடலிங் செய்யவும்.
+livemesh-shape-section = பிளண்டர் அல்லது மாயாவில் உங்கள் வடிவம்
+blender-live-import-help = இயல்பான இறக்குமதிக்காக பொருளின் ஸ்னாப்ஷாட்டை முடக்குகிறது: பரிசீலனை, விலை, பின்னர் உறுதிப்படுத்தவும். பிளண்டர் அல்லது மாயாவில் பின்பு தொகுப்புகள் அதை மாற்றாது.
+blender-live-changed-tip = பிளண்டர் அல்லது மாயா இந்த பொருளை மாற்றிய காலம்
+fit-lab-section = ஃபிட் லாப்
+fit-lab-help = நீங்கள் அணியும் ஆடைகளை அணிந்த மாடல்கள், ஒவ்வொன்றும் மற்றொரு உடலுடன், உங்கள் முன் நிற்கிறது, எப்படி ஆடைகள் பல வடிவங்களில் பொருந்துகின்றன என்பதைக் காண்பிக்க. நீங்கள் மட்டுமே அவர்களை பார்க்கிறீர்கள்: எதுவுமே அனுப்பப்படவில்லை அல்லது சேமிக்கப்படவில்லை.
+fit-lab-body-me = நான்
+fit-lab-body-slim = ஸ்லிம்
+fit-lab-body-curvy = வளைவு
+fit-lab-body-full = முழு உருவம்
+fit-lab-body-athletic = விளையாட்டுப் போட்டிகள்
+fit-lab-body-tall = உயரம்
+fit-lab-body-petite = சிறிய
+fit-lab-motion = இயக்கம்
+fit-lab-motion-stand = நிலை
+fit-lab-motion-walk = நடக்கவும்
+fit-lab-motion-sit = உட்காருங்கள்
+fit-lab-motion-range = இயக்கத்தின் அளவு
+fit-lab-pose = காட்சி
+fit-lab-pose-all = அனைவரும், வரிசையாக
+fit-lab-pose-arms-up = கைகளை மேலே
+fit-lab-pose-reach = முன்னே செல்
+fit-lab-pose-hug = கைகளை இணைத்தல்
+fit-lab-pose-squat = குத்து
+fit-lab-pose-kneel = முழங்க
+fit-lab-pose-knee-up = முழங்கால் உயர்த்தப்பட்டது
+fit-lab-pose-twist = சுழற்சி
+fit-lab-pose-bend = முன்னோக்கி மடக்கு
+fit-lab-motion-like-me = என்னைப் போல்
+fit-lab-show = மாணவர்களை காட்டு
+fit-lab-place = அவர்களை இங்கே கொண்டு
+fit-lab-remove = மான்கீன்களை நீக்கு
+fit-lab-choose = குறைந்தது ஒரு உடலை தேர்ந்தெடுக்கவும்.
+fit-lab-clip = உடல் எங்கு செல்கிறது என்பதை காட்டு
+fit-lab-clip-note = சிவப்பு: உடல் ஆடையில் இருந்து வெளியே வருகிறது. அம்பர்: உடலும் ஆடையும் சந்திக்கின்றன. உங்கள் அவதாரத்தில் மற்றும் மான்கீன்களில், கேமராவில் காணப்படும் போல். நீங்கள் அணிந்திருக்கும் மற்ற எல்லாவற்றையும் உடல் என்று கணக்கிடவும்: ஒரு ஜாக்கெட் அல்லது ஆடையின் மேல் அணிந்துள்ள முடிவை நீக்கு.
+blender-live-levels-pending = நீங்கள் இறக்குமதி செய்வதை கிளிக் செய்யும் போது பிளண்டர் அல்லது மாயா விவரங்களின் நிலைகளை தயார்படுத்துகிறது.
+blender-live-levels-note = ஒவ்வொரு பொருளின் லைவ்மெஷ் அமைப்புகளிலிருந்து பிளண்டர் அல்லது மாயாவில் தயாரிக்கப்பட்டது.
+blender-live-quick-look-changed = பிளண்டர் அல்லது மாயாவில் { $ago } ஆண்டுகளுக்கு முன் மாற்றப்பட்டது.
+blender-live-warning-textures = நுட்பம் தவிர்க்கப்பட்டது, வெறும் வண்ணம் காட்டப்பட்டது
+blender-live-warning-not-sent = முன்தோற்றத்தில் இல்லை
+blender-live-undo-derez = Derezzed { $name } · இன்னும் செருகலின் பட்டியலில் உள்ளது
+blender-live-undo-detach = பிரிக்கப்பட்ட { $name } · இன்னும் செருகல் பட்டியலில் உள்ளது
+inventory-open-current = திற
+inventory-folder-back = பின்
+inventory-folder-forward = முன்னேற்றம்
+inventory-folder-up = ஒரு நிலை மேலே செல்
+area-search-metres = { $n } m
+area-search-band-reach = அடையக்கூடிய
+area-search-band-close = அருகில்
+area-search-band-around = உன்னை சுற்றி
+area-search-band-further = மேலும்
+area-search-band-far = ஃபார்
+area-search-band = பரப்பளவு
+area-search-within = உள்ளே { $distance }
+area-search-within-across = { $distance } வரை உள்ள
+area-search-between = { $from }–{ $to }
+area-search-any-distance = ஒவ்வொரு தொலைவையும் காட்டு
+area-search-from = இடைவெளி:
+area-search-to = தூரம்
+area-search-bar-tip =
+    { $count ->
+        [one] ஒரு பொருள், { $from } இரண்டு { $to }
+       *[other] { $count } பொருள்கள், { $from } இரண்டு { $to }
+    }
+area-search-of-objects = { $total } பொருள்கள்
+area-search-li = { $value } லீ
+area-search-li-count = { $value } நில விபத்து
+area-search-owner-count =
+    { $count ->
+        [one] ஒரு உரிமையாளர்
+       *[other] { $count } உரிமையாளர்கள்
+    }
+area-search-object-count =
+    { $count ->
+        [one] ஒரு பொருள்
+       *[other] { $count } பொருள்கள்
+    }
+area-search-objects-word = பொருள்கள்
+area-search-in-reach = இங்கே
+area-search-tab-objects = பொருள்கள்
+area-search-tab-owners = உரிமையாளர்கள்
+area-search-hint-wide = பொருள்கள், உரிமையாளர்கள், உருவாக்குபவர்கள் அல்லது UUIDs
+area-search-kind-heading = பொருளின் வகை
+area-search-kind-tip = க்ளிக்: இவை மட்டும். மீண்டும்: மறைக்கப்பட்ட
+area-search-kind-any = எப்போதும்
+area-search-kind-only = இவை மட்டும்
+area-search-kind-hidden = மறைக்கப்பட்ட
+area-search-kind-attached = இணைக்கப்பட்ட
+area-search-kind-probes = சோதனைகள்
+area-search-click-all = அனைத்து
+area-search-click-any-short = ஏதாவது
+area-search-permissions = அனுமதிகள்
+area-search-price-heading = விற்பனை விலை, விற்கப்படும் பொருட்களுக்கு
+area-search-price-to = இரண்டு
+area-search-price-tip = முதலில் "விற்பனைக்கு" தேர்ந்தெடு
+area-search-linked = இணைக்கப்பட்ட முக்கோணங்கள்
+area-search-one-field = ஒரு புலத்தில் தேடு
+area-search-regex-switch = வழக்கமான தொடர்
+area-search-regex-invalid = சரியான வழக்கமான தொடர் இல்லை
+area-search-reset-filters-tip = எல்லா வடிகட்டிகளையும் மீட்டெடு; தேடுதல் உரை இருக்கட்டும்
+area-search-save-defaults-tip = இந்த வடிகட்டிகளுடன் திற
+area-search-reset-search = தேடப்பட்ட உரைகளை மீட்டமை
+area-search-reset-filters = வடிகட்டி விருப்பத்தேர்வுகள்
+area-search-reset-ranges = தொலைவு மற்றும் விலையை மீட்டமை
+area-search-reset-all = எல்லாவற்றையும் மீட்டமை
+area-search-more = அதிகம்
+area-search-several = பலவற்றை தேர்ந்தெடு
+area-search-several-tip = க்ளிக்குகள் தேர்ந்தெடுப்பிற்கு சேர்க்கப்படும் (Ctrl அல்லது Shift + கிளிக், Ctrl+A)
+area-search-actions = செயல்கள்
+area-search-nothing = பொருட்கள் ஏதும் கிடைக்கவில்லை.
+area-search-nothing-for-sale = இங்கே விற்பனைக்கு ஒன்றுமில்லை.
+area-search-not-for-sale = விற்பனைக்கு இல்லை
+area-search-from-price = இருந்து { $price }
+area-search-nearest = நெருங்கிய முதல்
+area-search-heaviest = அதிக எடை முதலில்
+area-search-order-tip = வரிசை மாற்று: நெருங்கிய அல்லது அதிக எடை முதலில்
+area-search-rank = #{ $rank } அல்லது { $all }
+area-search-rank-here = #{ $rank } இங்கே
+area-search-card-more = ஒவ்வொரு வடிவத்தையும் காட்டு
+area-search-card-less = குறைந்த அளவை காட்டு
+area-search-open-group = குழுவை திற
+area-search-spoken = { $name }, { $distance }, நில விளைவு { $li }, உரிமையாளர் { $owner }
+area-search-owner-spoken = { $name }, { $count } பொருள்கள், நில விளைவு { $li }
+area-search-stage-line = { $distance } தொலைவில் உள்ளது · { $li } நிலத்தின் தாக்கம் · { $owner }
+area-search-tile-3d = முப்பரிமாண காட்சி
+area-search-on = { $count } ஆன்
+area-search-on-word = திறந்த
+area-search-more-on =
+    { $count ->
+        [one] ஒரு வடிகட்டி மேலே
+       *[other] { $count } மேலும் வடிகட்டிகள்
+    }
+ui-options-legacy-lists = பழைய காட்சியாளரிலிருந்து பட்டியலை இறக்குமதி செய்
+ui-options-legacy-lists-help = இந்த கணக்கின் தொலைநோக்கி வரலாற்றை, சொத்து கருப்பு பட்டியலை, ஊடக வடிகட்டி பட்டியலையும் மற்றும் தொடர்பு அமைப்புகளையும் சேர்க்கிறது. லேகாசி பார்வையாளரின் கோப்புகள் படிப்பதற்கு மட்டுமே.
+ui-options-legacy-lists-button = பழைய காட்சியாளரிலிருந்து இறக்குமதி செய்...
+ui-options-legacy-lists-no-account = இந்த கணக்கின் பட்டியலை இறக்குமதி செய்ய நுழையவும்.
+ui-options-legacy-lists-title = பழைய காட்சியாளரிலிருந்து இறக்குமதி செய்
+ui-options-legacy-lists-text = எல்லாவற்றையும் இந்த கணக்கின் பட்டியலில் சேர்க்கவும் இங்கே எதுவுமே நீக்கப்படாது. கருப்பு பட்டியலிலுள்ள சொத்து பெயர்கள் ஒரே நேரத்தில் உலகை விட்டுச் செல்கிறது. மீண்டும் இறக்குமதி செய்வது நீங்கள் இங்கே நீக்கியதை திரும்பக் கொண்டுவருகிறது.
+ui-options-legacy-lists-searching = பழைய பார்வையாளரின் அடைவுகளுக்காக தேடப்படுகிறது...
+ui-options-legacy-lists-none = இந்த கணக்கிற்கு பட்டியலுடன் கூடிய லெகசி பார்வையாளரின் அடைவு இல்லை.
+ui-options-legacy-lists-teleports = தொலைதூர வரலாறு ({ $count })
+ui-options-legacy-lists-derender = சொத்து கருப்பு பட்டியல் ({ $count })
+ui-options-legacy-lists-media = ஊடக வடிகட்டி பட்டியல் ({ $count })
+ui-options-legacy-lists-contact-set-entries = தொடர்பு அமைப்பு உள்ளீடுகள் ({ $count })
+ui-options-legacy-lists-confirm = இறக்குமதி
+ui-options-legacy-lists-added = சேர்க்கப்பட்டது அல்லது புதுப்பிக்கப்பட்டது. தொலைநோக்கி வரலாறு: { $teleports }, சொத்து கருப்பு பட்டியலை: { $derender }ஊடக வடிகட்டி: { $media }, தொடர்பு அமைப்பு உள்ளீடுகள்: { $sets }.
+ui-options-legacy-lists-nothing = புதியது எதுவும் இல்லை: இந்த கணக்கில் ஏற்கனவே பட்டியல்கள் உள்ளன.
+ui-options-legacy-lists-failed = படிக்க முடியவில்லை: { $files }.
+ui-options-legacy-lists-unsaved = சேமிக்க முடியவில்லை, இருந்தபடியே விட்டுவிட்டேன்: { $files }.
+ui-options-legacy-lists-other-grid = இந்த கட்டத்தில் அதே பெயரில் உள்ள அடைவு மற்றொரு கட்டத்திற்குச் சொந்தமானதாக இருக்கலாம்: அது சரியானதா என்று சரிபார்க்கவும்.
+ui-options-build-show-beams-hint = தொகுக்கும்போது, பிடிக்கும்போது அல்லது கொடுக்கும் போது உங்கள் தேர்ந்தெடுப்பு மற்றும் மற்ற அவாட்டர்களின் கம்பிகளைக் காட்டு. இது காட்சியை மட்டுமே கட்டுப்படுத்துகிறது; உள் மற்றும் வலைப்பின்னல் வழியாக உங்கள் தொகுப்பு கம்பியை நிறுத்த தனியுரிமை > தொகுப்பின் கம்பி மறைக்க பயன்படுத்தவும்.
+teleport-failed-title = தொலைநகர்த்தி தோல்வியுற்றது.
+teleport-error-invalid-tport = தொலைநோக்கு முயற்சிகள் நிமிடத்திற்கு6வரை வரையறுக்கப்பட்டுள்ளது. உங்களுக்கு பிரச்சனை ஏற்பட்டால், ஒரு நிமிடம் காத்திருந்து மீண்டும் தொலை நோக்கு முயற்சி செய்யவும். பிரச்சனை தொடர்ந்தால், வெளியேறி மீண்டும் நுழைக.
+teleport-error-invalid-region-handoff = உங்கள் மண்டலத்தை கடக்கும் போது பிரச்சனை ஏற்பட்டது. நீங்கள் மண்டலம் கடக்க முன் மீண்டும் நுழைய வேண்டும். இந்த செய்தி தொடர்ந்து வந்தால், தயவு செய்து ஆதரவை தொடர்பு கொள்ளவும்.
+teleport-error-blocked-tport = மன்னிக்கவும், தொலைநகர்த்தி தற்பொழுது முடக்கப்பட்டுள்ளது. சிறிது நேரத்தில் மீண்டும் முயற்சி செய்யவும். நீங்கள் இன்னும் தொலை நகர்த்தி இயலவில்லை என்றால், தயவு செய்து வெளியேறவும் மீண்டும் நுழைந்து பிரச்சனையை தீர்க்கவும்.
+teleport-error-nolandmark-tport = மன்னிக்கவும், அமைப்பு அடையாளம் காண முடியவில்லை.
+teleport-error-timeout-tport = மன்னிக்கவும், தொலைதூர இணைப்பை முடிக்க இயலவில்லை. சிறிது நேரத்தில் மீண்டும் முயற்சி செய்யவும்.
+teleport-error-no-help-island = நீங்கள் வரவேற்பு தீவு திரும்ப teleport முடியாது.
+teleport-error-noaccess-tport = மன்னிக்கவும், உங்களுக்கு அந்த தொலைநோக்கி இலக்கு அணுகல் இல்லை.
+teleport-error-missing-attach-tport = உங்கள் இணைப்புகள் இன்னும் வரவில்லை. இன்னும் சில நொடிகள் காத்திருக்கவும் அல்லது வெளியேறி மீண்டும் உள்ளே செல்லுங்கள் தொலைநகர்த்தி முயற்சி செய்யும் முன்.
+teleport-error-too-many-uploads-tport = இந்த பகுதியில் உள்ள சொத்து வரிசை தற்போது அடைக்கப்பட்டுள்ளது, எனவே உங்கள் தொலைநகர்த்தி கோரிக்கை சரியான நேரத்தில் வெற்றி பெற முடியாது. சில நிமிடங்களில் மீண்டும் முயற்சி செய்யவும் அல்லது குறைவான வேலை நிறைந்த பகுதிக்கு செல்லவும்.
+teleport-error-expired-tport = மன்னிக்கவும், கணினி உங்கள் தொலைநோக்கி கோரிக்கையை சரியான நேரத்தில் நிறைவேற்ற முடியவில்லை. சில நிமிடங்களில் மீண்டும் முயற்சி செய்யவும்.
+teleport-error-expired-region-handoff = மன்னிக்கவும், கணினி உங்கள் பிராந்தியத்தை சரியான நேரத்தில் கடக்க முடியவில்லை. தயவு செய்து சில நிமிடங்களில் மீண்டும் முயற்சி செய்யுங்கள்.
+teleport-error-preexisting-tport = மன்னிக்கவும், கணினி உங்கள் தொலைநோக்கியை துவக்க முடியவில்லை. சில நிமிடங்களில் மீண்டும் முயற்சி செய்யவும்.
+teleport-error-no-host = தொலைநோக்கு இலக்கை கண்டுபிடிக்க முடியவில்லை. இலக்கு தற்காலிகமாக கிடைக்காது அல்லது இல்லை. சில நிமிடங்களில் மீண்டும் முயற்சி செய்யவும்.
+teleport-error-no-inventory-host = பட்டியலிடுதல் முறைமை தற்போது கிடைக்கவில்லை.
+teleport-error-must-get-age-region = நீங்கள் 18 வயது அல்லது அதற்கு மேற்பட்டவராக இருக்க வேண்டும் இந்த பகுதியில் நுழைய.
+teleport-error-special-usage-blocked = மண்டலத்தை நுழைக்க முடியவில்லை. '{ $region }'இது ஒரு திறன் விளையாட்டு மண்டலம், மற்றும் நீங்கள் குறிப்பிட்ட விதிமுறைகளை நிறைவேற்ற வேண்டும் நுழைய. விவரங்களுக்கு, தயவு செய்து திறம் விளையாட்டு FAQ பார்வையிடுக: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = பகுதியை நுழைக்க முடியவில்லை. இது ஒரு திறன் விளையாட்டுப் பகுதி, நீங்கள் சில விதிமுறைகளை நிறைவேற்ற வேண்டும் நுழையும் போது. விவரங்களுக்கு, தயவுசெய்து Skill Gaming FAQ: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = உங்கள் வீட்டு கட்டம் உங்கள் திரும்புதலை நிராகரித்தது. இது பொதுவாக அதன் ஹைபர்கிராட் முகவரி அமைப்பு மற்ற கட்டங்கள் பயன்படுத்தும் முகவரியை பொருந்தாது என்று பொருள்படும். உங்கள் வீட்டுக் கட்டத்தின் செயல்பாட்டாளர்களை தொடர்பு கொள்ளவும்; மீண்டும் நுழைவது உங்களை வீட்டிற்கு கொண்டு செல்கிறது.
+teleport-hint-hypergrid-unreachable = மற்ற கட்டத்தை அடைய இயலவில்லை. அது இணையத்திலிருந்து விலகி இருக்கலாம், அல்லது இணைப்பு பழைய முகவரியை காட்டலாம்.
+teleport-hint-hypergrid-visitors-refused = அந்த பிணையம் சில பிணையங்கள் குடிமக்கள் மட்டுமே அனுமதிக்கிறது.
+teleport-hint-hypergrid-destination-gone = இலக்குப் பகுதி இல்லை அல்லது நகர்த்தப்பட்டுள்ளது. அடையாளங்கள் மற்றும் மற்ற கட்டங்களுக்கு இணைப்புகள் காலாவதியாகலாம்.
+toolbar-edit = பட்டன்களையும் பட்டிகளையும் தனிப்பயனாக்கு...
+toolbar-title = பொத்தான்கள் மற்றும் பட்டியல்
+toolbar-interface-locked = இடைமுகப்பு பூட்டப்பட்டது
+toolbar-help = பட்டன்களை அல்லது மெனு உள்ளீடுகளை மேல், கீழ் அல்லது பக்க பட்டிகளுக்கு இழுக்கவும். ஒரு பொத்தானை இங்கே இழுத்து அதை நீக்கவும் எந்தப் பொத்தானையும் அதன் தோற்றத்தை மாற்ற வலது க்ளிக் செய்யவும்.
+toolbar-help-classic = பட்டன்களை அல்லது மெனு உள்ளீடுகளை மேல், கீழ் அல்லது பக்க பட்டிகளுக்கு இழுக்கவும். ஒரு பொத்தானை இங்கே இழுத்து அதை நீக்கவும் எந்தப் பொத்தானையும் அதன் தோற்றத்தை மாற்ற வலது க்ளிக் செய்யவும்.
+toolbar-help-modes = ஒவ்வொரு பொத்தானுக்கும் சின்னங்கள், குறிகள், இரண்டும் அல்லது பட்டி முன்னிருப்புகளை தேர்ந்தெடுக்கவும். Aurora பட்டியில் உள்ள பதிவுகளை இழுத்து மாற்றி அமைக்கவும்.
+import-menu-textures = நுட்பம்
+import-menu-animations = அசைவூட்டங்கள்
+import-menu-sounds = ஒலிகள்
+import-menu-materials = பொருள்கள்
+import-menu-meshes = கட்டங்கள்
+import-menu-options = இறக்குமதி விருப்பத்தேர்வுகள்
+import-upload-payment-title = ஏற்றுதல்
+import-upload-payment = பதிவேற்றத்திற்கு L${ $cost } செலுத்தினீர்கள்.
+import-quick-textures =
+    { $count ->
+        [one] இறக்குமதி · நுட்பம்: 1 · L${ $cost }?
+       *[other] இறக்குமதி · நுட்பம்: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] இறக்குமதி · பொருள்கள்: 1 · L${ $cost }?
+       *[other] இறக்குமதி · பொருள்கள்: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] இறக்குமதி · ஒலிகள்: 1 · L${ $cost }?
+       *[other] இறக்குமதி · ஒலிகள்: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] இறக்குமதி அளவைத் தேர்வுசெய்யவும். ஆதரிக்கும் இழைமங்களை 2048 × 2048 அளவில் இறக்குமதி செய்யலாம்:
+       *[other] ({ $count }) இறக்குமதி அளவைத் தேர்வுசெய்யவும். ஆதரிக்கும் இழைமங்களை 2048 × 2048 அளவில் இறக்குமதி செய்யலாம்:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] இறக்குமதி அளவைத் தேர்வுசெய்யவும். ஆதரிக்கும் பொருள் படங்களை 2048 × 2048 அளவில் இறக்குமதி செய்யலாம்:
+       *[other] ({ $count }) இறக்குமதி அளவைத் தேர்வுசெய்யவும். ஆதரிக்கும் பொருள் படங்களை 2048 × 2048 அளவில் இறக்குமதி செய்யலாம்:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = இலவசப் படங்களை கேட்காமல் 2048 × 2048 அளவில் பதிவேற்று
+import-quick-free-full-size-help = "Import textures" மற்றும் "Importamaterials" எனும் வசதிகளில், ஏற்றுதல் L$ செலவாகும் போது மட்டுமே 1024 அல்லது 2048 என்று கேட்கப்படும்.
+ui-bars-customize-bars = இடைமுகத்தை தனிப்பயனாக்கு
+build-tool-in-use = பயன்பாட்டில்
+build-create-options-toggle = விருப்பங்களை காட்டு / மறை
+build-create-keep-creating = உருவாக்குவதை தொடரவும்
+build-create-center-on-prim = முதன்மையில் மையப்படுத்து
+build-create-copy-prim-rotation = முதன்மை சுழற்சியை நகலெடு
+build-create-align-to-surface = மேல்பகுதியை ஒழுங்குபடுத்து
+build-capture-shape-button = ஒரு முதன்மையின் வடிவத்தை நகலெடு: இதனை க்ளிக் செய்யவும், பின்னர் உலகில் ஒரு முதன்மையானது
+build-capture-shape-armed = அதன் வடிவத்தை நகலெடுக்க ஒரு முதன்மையை க்ளிக் செய்யவும் (எஸ்கேப் ரத்து செய்கிறது)
+build-capture-shape-full = 20 வடிவங்கள் சேமிக்கப்பட்டுள்ளன. மற்றொன்றை நகலெடுக்க ஒன்றை நீக்கு
+build-capture-shape-remove = இந்த வடிவத்தை நீக்கு
+build-capture-shape-tooltip = நகலெடுக்கப்பட்ட வடிவம் ({ $kind })
+build-capture-shape-not-a-prim = ஒரு முதன்மை வடிவத்தை மட்டுமே நகலெடுக்க முடியும்
+build-capture-shape-mesh-or-sculpt = ஒரு கட்டத்தின் அல்லது ஒரு சிற்பத்தின் வடிவத்தை நகலெடுக்க முடியாது
+build-capture-shape-no-modify = அதன் வடிவத்தை நகலெடுக்க இந்த prim ஐ மாற்ற அனுமதி தேவை
+import-other-options = மற்ற விருப்பத்தேர்வுகள்
+toolbar-button-icons = சின்னம் மட்டும்
+toolbar-button-text = அடையாளம் மட்டும்
+toolbar-button-icons-text = சின்னம் மற்றும் குறி
+toolbar-icon-default = முன்னிருப்பு சின்னத்தை மீட்டெடு
+toolbar-icon-choose = சின்னத்தை தேர்ந்தெடு
+toolbar-icon-change = சின்னத்தை மாற்று
+toolbar-presets = முன் அமைப்புகள்
+toolbar-interfaces = இடைமுகப்புகள்
+toolbar-interfaces-shown = இடைமுகப்புகள் குழுவில் காட்டப்பட்டது
+toolbar-interfaces-hidden = இடைமுகப்புகள் குழுவில் இருந்து மறைக்கப்பட்ட
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora பழைய பள்ளி
+toolbar-preset-photographer = Aurora புகைப்படக் கலைஞர்
+toolbar-preset-legacy = பழைய
+toolbar-import-textures = நுட்பங்களை இறக்குமதி செய்
+toolbar-import-sounds = ஒலிகளை இறக்குமதி செய்
+toolbar-import-animations = அசைவூட்டங்களை இறக்குமதி செய்
+toolbar-import-materials = பொருட்களை இறக்குமதி செய்
+toolbar-import-meshes = இறக்குமதி செய்க
+toolbar-import-local = உள்ளமை கோப்புகள்
+toolbar-import-advanced = மேம்பட்ட இறக்குமதி
+toolbar-import-settings = இறக்குமதி அமைப்புகள்
+toolbar-import-bar = இறக்குமதி பட்டி
+toolbar-icon-search = ஒரு சின்னத்தை கண்டுபிடி...
+toolbar-in-top = மேல் கருவிப்பட்டையில்
+toolbar-bar-top = மேல் கருவிப்பட்டை
+toolbar-drop-here = இங்கே விடு
+toolbar-separator = பிரிப்பான்
+toolbar-interface-edit = இடைமுகத்தை தனிப்பயனாக்கு
+toolbar-edit-done = முடிந்தது
+toolbar-edit-top = மேல்
+toolbar-edit-bottom = கீழ்
+toolbar-edit-left = இடது
+toolbar-edit-right = வலது
+toolbar-edit-help = ஒரு பொருளை தேர்ந்தெடுக்க க்ளிக் செய்யவும், அதை நகர்த்த இழுக்கவும், அல்லது தொகுப்பு விருப்பத்தேர்வுகளுக்கு வலது புறம் க்லிக் செய்யுங்கள். முடிக்க இந்த சாளரத்தை மூடவும்.
+toolbar-edit-locked = பட்டை பூட்டப்பட்டுள்ளது. இடைமுகத்தை மாற்ற அவற்றை கீழே திற.
+toolbar-edit-move = இதற்கு நகர்த்து
+toolbar-edit-split-before = முன்பு பிரி
+toolbar-edit-split-after = பின் பிரி
+toolbar-edit-merge-before = முந்தைய கட்டத்துடன் சேர்
+toolbar-edit-merge-after = அடுத்த குறுக்குவரிசையுடன் சேர்
+toolbar-edit-merge-groups = இந்த குறுக்குவழிகளை ஒன்றாக்கு
+toolbar-drawer = தட்டு
+toolbar-drawer-default-mode = பட்டன்களின் முன்னிருப்பு காட்சி
+toolbar-drawer-closes = பொத்தானை க்ளிக் செய்த பின் மூடு
+toolbar-block-shortcut = குறுக்குவழி:
+toolbar-drawer-hides-needs-shortcut = குறுக்குவழி தேவை
+toolbar-floating-close-button = மூடும் பொத்தானை சேர்
+toolbar-block-name = தொகுதி பெயர்:
+toolbar-block-button-mode = தடுப்பு பொத்தானை காட்டு
+toolbar-button-inherited = மரபுரிமை
+toolbar-drawer-hides-button = மிதக்கும் பொத்தானை மறைக்கவும்
+toolbar-floating-new = மிதக்கும் குழு
+toolbar-floating-orientation = திசை
+toolbar-floating-horizontal = இடவலமாக
+toolbar-floating-vertical = செங்குத்து
+toolbar-floating-empty = பட்டன்களை இங்கே விடவும்
+toolbar-shortcut-title = குறுக்குவழி
+toolbar-shortcut-block-name = தொகுதி: { $name }
+toolbar-shortcut-none = குறுக்குவழி இல்லை
+toolbar-shortcut-press-key = விசையை அழுத்தவும்
+toolbar-shortcut-esc = ரத்து செய்ய Esc
+toolbar-shortcut-clear = & நீக்கு
+toolbar-shortcut-overrides = { $name } க்கு மேல் எடுக்கும்: இந்த குறுக்குவழி கருவிப்பட்டையின் இயல்பிருப்பு பயன்பாட்டிற்கு பதிலாக செயல்படுகிறது.
+toolbar-shortcut-used = ஏற்கனவே { $names } குறுக்குவழி.
+toolbar-shortcut-replace = & மாற்று
+toolbar-shortcut-add = & சேர்
+toolbar-shortcut-save = சேமி
+toolbar-shortcut-choose-key = விசை தேர்ந்தெடு
+toolbar-shortcut-help = Ctrl, Alt மற்றும் Shift ஐ செயல்படுத்து அல்லது முடக்கு, பின்னர் அதை மாற்ற விசையை க்ளிக் செய். F1 முதல் F24 வரையிலானவை தவிர Ctrl அல்லது Alt தேவைப்படுகிறது.
+toolbar-shortcut-inactive = இந்த பட்டன் பட்டியிலில்லை: அதன் குறுக்குவழி மீண்டும் இடப்பட்டால் வேலை செய்கிறது.
+toolbar-shortcut-refused-keyboard = விசைப்பலகை விசைகளே குறுக்குவழியாக இருக்க முடியும்.
+toolbar-shortcut-refused-modifier = ஒரு மாற்று விசை மட்டும் குறுக்குவழியாக இருக்க முடியாது.
+toolbar-shortcut-refused-needs-modifier = Ctrl அல்லது Alt: ஒரு விசையை மட்டும் சேர்க்கவும், அல்லது ஷிப்ட் மட்டுமே உரை புலங்களில் உள்ளிடவும்.
+toolbar-shortcut-refused-altgr = Ctrl+Alt இந்த விசையுடன் AltGr, இது பல விசைப்பலகைகளில் எழுத்துக்களை எழுதுகிறது.
+toolbar-shortcut-refused-editing = உரை புலங்கள் இந்த குறுக்குவழியை பயன்படுத்து (எல்லாவற்றையும் தேர்ந்தெடு, நகலெடுக்க, வெட்டு, ஒட்ட, திரும்ப செய், மீண்டும் செய்).
+toolbar-shortcut-refused-navigation = உரை புலங்கள் இந்த விசையால் நகர்த்தவும் நீக்கவும்.
+toolbar-shortcut-refused-typing = உரையாடல் மற்றும் பலகங்கள் இந்த விசையை பயன்படுத்துகின்றன.
+toolbar-shortcut-refused-system = கணினி இந்த குறுக்குவழியை வைத்திருக்கும்.
+toolbar-shortcut-refused-window = இந்த குறுக்குவழி சாளரங்களை மூடு அல்லது மாற்றுகிறது.
+toolbar-shortcut-refused-zoom = இந்த குறுக்குவழி இடைமுகத்தை பெரிதாக்குகிறது.
+toolbar-spacer = குறுக்கு இடைவெளி
+toolbar-add-spacer = குறுக்கு இடைவெளியை சேர்
+toolbar-button-settings = பட்டன் அமைப்புகள்
+toolbar-button-edit = பொத்தானை தொகு...
+toolbar-button-edit-title = தொகுப்பு பொத்தான்
+toolbar-button-name = பொத்தானின் பெயர்:
+toolbar-button-display = பொத்தானை காட்டு
+toolbar-shortcut-fixed-block-help = ஒரு நிலையான தொகுதியின் குறுக்குவழி அதை காண்பிக்கிறது மற்றும் மறைக்குகிறது; இடைமுகம் திருத்தப்படும் போது, அது காட்டப்படாமல் இருக்கும்.
+toolbar-block-settings = அடைவு அமைப்புகள்
+toolbar-parent-block-settings = பெற்றோர் அடைவு அமைப்புகள்
+toolbar-block-edit = தொகுதியை திருத்து...
+toolbar-block-edit-title = தொகுதியைத் திருத்து
+toolbar-block-alignment = ஒழுங்குபடுத்தல்
+toolbar-block-sizing = பட்டன் அளவு
+toolbar-block-fixed-options = நிலையான முறைமை விருப்பத்தேர்வுகள்
+toolbar-block-floating-options = மிதக்கும் வகை விருப்பத்தேர்வுகள்
+toolbar-block-kind-fixed = நிலையான தட்டு
+toolbar-block-kind-drawer = தட்டு
+toolbar-block-kind-floating = மிதக்கும் குழு
+toolbar-block-remove = தடுப்பை நீக்கு
+toolbar-move-block = முழுப் பலகத்தையும் நகர்த்த இழுக்கவும்
+toolbar-remove-block = தடுப்பை நீக்கு
+toolbar-drawer-empty = இந்த தட்டு வெற்று.
+toolbar-drawer-drop = பட்டன்களை இங்கே இழுத்து சேர்க்கவும் அல்லது மறுவரிசைப்படுத்தவும்.
+toolbar-separator-settings = குறுக்கு இடைவெளி அமைப்புகள்
+toolbar-separator-size = அளவு / குறைந்தபட்சம் (பிக்சல்கள்)
+toolbar-separator-stretch = கிடைக்கக்கூடிய இடத்தை நிரப்பு
+toolbar-separator-help = தளர்வான இடைவெளிகள் வட்டங்களால் விட்டு வைக்கப்பட்ட இடத்தை பகிர்ந்து கொள்கிறது. அளவு அதன் குறைந்தபட்ச அகலம், அல்லது பக்கப்பட்டியில் உயரம்.
+toolbar-block-navigation = உலாவல் மற்றும் SLURL
+toolbar-block-account = கணக்கு மற்றும் சமநிலை
+toolbar-block-system = கடிகாரம், காட்டிகள் மற்றும் ஒலிName
+toolbar-block-status = கிடைக்கக்கூடிய நிலை
+toolbar-block-balance = சமநிலை
+toolbar-block-clock = கடிகாரம்
+toolbar-block-ping = பகுதி தாமதம்
+toolbar-block-fps = சட்ட விகிதம் (FPS)
+toolbar-block-network = வலைப்பின்னல் போக்குவரத்து
+toolbar-block-media = தொகுப்பு ஊடகம்
+toolbar-block-music = பாரிசல் இசை
+toolbar-block-volume = ஒலியளவு
+toolbar-block-notifications = அறிவிப்புகள்
+toolbar-block-conversations = உரையாடல் குறும்படங்கள்
+toolbar-block-chat = நெருங்கிய உரையாடல் உள்ளீடு
+toolbar-category-all = அனைத்து வகைகள்
+toolbar-section-main = முக்கிய
+toolbar-section-advanced = மேம்பட்ட
+toolbar-search-all = மேம்பட்ட கட்டளைகளை உள்ளடக்கிய தேடல்.
+toolbar-category-avatar = அவாட்டர் மற்றும் நகர்வு
+toolbar-category-communication = தகவல் தொடர்பு
+toolbar-category-world = உலகம் மற்றும் பயணம்
+toolbar-category-creation = உருவாக்கம் மற்றும் உள்ளடக்கம்
+toolbar-category-interface = இடைமுகம் மற்றும் கேமரா
+toolbar-category-advanced = மேம்பட்ட கருவிகள்
+toolbar-category-help = உதவி
+toolbar-category-custom = தனிப்பயன் கட்டளைகள்
+toolbar-bar-settings = கருவிப்பட்டை அமைப்புகள்
+toolbar-menu-group = பட்டியல்: { $name }
+toolbar-location-bar = SLURL முகவரிப் பட்டி
+toolbar-command-build-tool-focus = உருவாக்கு - கேமராStencils
+toolbar-command-build-tool-grab = உருவாக்கு - நகர்த்து
+toolbar-command-build-tool-edit = உருவாக்கு - திருத்து
+toolbar-command-build-tool-create = உருவாக்கு - உருவாக்கு
+toolbar-command-build-tool-land = கட்டுதல் - நிலம்
+bug-copy-version = காட்சியாளரின் பதிப்பு நகலெடு
+toolbar-notecard-save = குறிப்பு அட்டைக்கு சேமி...
+toolbar-notecard-load = குறிப்பு அட்டையிலிருந்து ஏற்றுக...
+toolbar-notecard-name = Aurora இடைமுகம்
+toolbar-notecard-help = கருவிப்பட்டிகள், பட்டன்கள், தட்டுகள் மற்றும் பட்டிகளின் உருவரையும் தோற்றமும். Name
+toolbar-notecard-saved = உங்கள் பட்டியலில் சேமிக்கப்பட்ட இடைமுக அமைப்பு.
+toolbar-notecard-invalid = இந்த குறிப்பு அட்டையில் பொருத்தமான இடைமுகப்பு உருவரை இல்லை.
+toolbar-notecard-unavailable = இந்த குறிப்பு அட்டை கிடைக்கவில்லை அல்லது நகலெடுக்க முடியவில்லை.
+toolbar-notecard-layout-changed = குறிப்பு அட்டை ஏற்றப்படும் போது இடைமுகம் மாறியது. அதன் உருவரையை செயல்படுத்த மீண்டும் ஏற்றவும்.
+toolbar-notecard-demo-valid = புகைப்படக்காரர் இடைமுகம்
+toolbar-notecard-demo-invalid = மற்ற குறிப்பு அட்டை
+toolbar-notecard-too-large = இந்த இடைமுக வடிவமைப்பு குறிப்பு அட்டைக்கு மிகப்பெரியதாக உள்ளது.
+toolbar-saved-interfaces = சேமிக்கப்பட்ட இடைமுகப்புகள்
+toolbar-saved-interfaces-empty = சேமிக்கப்பட்ட இடைமுகப்புகள் இல்லை.
+toolbar-notecard-destination = அடைவு: { $path }
+toolbar-notecard-folder-error = இடைமுகப்பு அடைவு ஏற்றப்படவோ அல்லது உருவாக்கப்படவോ முடியவில்லை. தயவு செய்து மீண்டும் முயற்சி செய்யவும்.
+toolbar-current-preset = தேர்வு செய்யப்பட்ட இடைமுகம்: { $name }
+toolbar-preset-custom = தனிப்பயன் இடைமுகப்பு
+toolbar-preset-unsaved = சேமிக்கப்படாத மாற்றங்கள்
+toolbar-preset-save-title = இடைமுகத்தை சேமி
+toolbar-preset-save-name = இடைமுகப்பு பெயர்
+toolbar-preset-save-new = புதிய தனிப்பட்ட இடைமுகப்புName
+toolbar-preset-save-replace = இந்த தனிப்பட்ட இடைமுகத்தை மாற்று
+toolbar-preset-save-unavailable = இந்த இடைமுகத்தை இங்கே சேமிக்க முடியாது. வேறு பெயரை அல்லது கிடைக்கக்கூடிய, தொகுக்கக்கூடிய தனிப்பட்ட இடைமேடையை தேர்ந்தெடுக்கவும்.
+toolbar-interface-delete-unavailable = இந்த தனிப்பட்ட இடைமுகத்தை நீக்க முடியாது.
+toolbar-interface-delete-confirm = தனிப்பட்ட இடைமுகமான “{ $name }” என்பதைக் குப்பைத்தொட்டிக்கு நகர்த்தவா?

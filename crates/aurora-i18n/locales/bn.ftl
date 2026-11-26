@@ -16096,3 +16096,739 @@ parcel-environment-empty = কোন এনভায়রনমেন্ট সং
 parcel-environment-remove-all = সব অপসারণ করো
 parcel-environment-remove-all-title = একটি প্যাকেজের জন্য সংরক্ষিত সকল এনভায়রনমেন্ট মুছে ফেলা হবে কি?
 parcel-environment-remove-all-text = এই গ্রিডের জমির খণ্ডগুলোর জন্য আপনার সংরক্ষিত পরিবেশ মুছে যাবে। অন্য গ্রিডের পরিবেশ অপরিবর্তিত থাকবে। এই কাজ ফেরানো যাবে না।
+
+### Updated release translations
+
+anim-timeline-channels-hint = এই হাড়ের ঘূর্ণন এবং অবস্থান কী তাদের নিজস্ব সারিগুলিতে প্রদর্শন করা হবে
+anim-timeline-channel-rotation = ঘূর্ণন
+anim-timeline-channel-location = অবস্থান
+anim-timeline-keying-hint = কি কী রেকর্ড। অবস্থান, Move তার IK চেইন থেকে একটি joint একাই নেয়। Second Life অ্যানিমেশনের কোন স্কেল কী নেই।
+anim-timeline-keying-auto = স্বয়ংক্রিয়: পেলভিস এবং সরানো সংযোগস্থলের জন্য ঘূর্ণন, এবং অবস্থান
+anim-timeline-keying-auto-short = স্বয়ংক্রিয়
+anim-timeline-keying-loc-rot = অবস্থান এবং আবর্তন
+anim-timeline-keying-loc-rot-short = অবস্থান + মূল
+anim-timeline-keying-rot-short = রুট
+anim-timeline-keying-loc-short = অবস্থান
+anim-edit-shortcut-play = চালাও অথবা স্থগিত রাখো
+area-search-scope-heading = কোথায়
+area-search-scope-parcel = টুকরা
+area-search-scope-region = অঞ্চল
+area-search-scope-neighbours = প্রতিবেশী
+area-search-objects-heading = কোন বস্তু
+inventory-copy-selection-count =
+    { $count ->
+        [one] ১টি বস্তু কপি করো
+       *[other] { $count } আইটেম কপি করো
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] লিঙ্ক ১ আইটেম
+       *[other] লিঙ্ক { $count } বস্তু
+    }
+inventory-drop-move-here = এখানে সরাও
+inventory-drop-copy-here = এখানে কপি করুন
+inventory-drop-link-here = এখানে লিঙ্ক তৈরি করো
+inventory-sort-description = বর্ণনা
+inventory-sort-reversed = { $order } (উল্টো)
+inventory-column-creator = নির্মাতা
+inventory-column-count = আইটেম
+inventory-columns-fit = সমস্ত কলামের আকার পরিবর্তন করুন
+inventory-columns-reset-widths = কলাম প্রস্থ পুনরায় নির্ধারণ করো
+inventory-back = পিছনে যাও
+inventory-forward = & সামনের দিকে
+inventory-up = একটি স্তর উপরে
+keybinds-inventory-root = উপরে যাও
+keybinds-inventory-search = ইনভেস্টমেন্ট অনুসন্ধান করুন
+keybinds-inventory-filter = ফোল্ডার পরিশোধক
+keybinds-inventory-preview = প্রাকদর্শন পেন দেখাও
+keybinds-inventory-view-large = বড় ছবি
+keybinds-inventory-view-medium = মাঝারি আকারের ছবি
+keybinds-inventory-view-small = ছোট ছবি
+keybinds-inventory-view-compact = সংকুচিত প্রদর্শন
+keybinds-inventory-view-details = বিস্তারিত প্রদর্শন
+keybinds-inventory-view-tiles = টাইলস প্রদর্শন
+keybinds-inventory-toggle = ফোকাস করা সারিটি নির্বাচন করুন অথবা নির্বাচিত নয়
+keybinds-inventory-menu = নির্বাচিত অংশের মেনু খোলো
+keybinds-inventory-purge = আবর্জনা থেকে পরিষ্কার করো
+keybinds-inventory-refused = { $keys } ইনভেস্টরি তালিকার নিজস্ব কী হিসেবে থাকবে: অন্য একটি নির্বাচন করুন।
+inventory-path-edit = একটি পাথ লিখুন
+inventory-path-subfolders = সাব- ফোল্ডার
+inventory-copy-path = পাথ অনুলিপি করো
+inventory-show-in-folder = ফোল্ডারে দেখাও
+inventory-pin = দ্রুত প্রবেশযোগ্য স্থানে পিন করুন
+inventory-unpin = দ্রুত প্রবেশাধিকার থেকে আনপিন করুন
+inventory-quick-access = দ্রুত প্রবেশ
+inventory-quick-access-drop = পিন করার জন্য এখানে একটি ফোল্ডার ছেড়ে দিন
+inventory-invert-selection = নির্বাচন উল্টাও
+inventory-undo = বাতিল করো
+inventory-redo = পুনরায় করো
+inventory-undo-step = বাতিল করো { $what }
+inventory-redo-step = পুনরায় করো { $what }
+inventory-history-move =
+    { $count ->
+        [one] ১টি বস্তু সরাও
+       *[other] { $count } টি বস্তু সরাও
+    }
+inventory-history-delete =
+    { $count ->
+        [one] % 1- এর মধ্যে%2টি বস্তু মুছে ফেলো
+       *[other] বার্তা সরিয়ে ফেলো { $count } বস্তু
+    }
+inventory-history-rename = নাম পরিবর্তন
+inventory-history-new-folder = নতুন ফোল্ডার
+inventory-history-copy =
+    { $count ->
+        [one] % 1- এর অনুলিপি
+       *[other] { $count } আইটেমের অনুলিপি
+    }
+inventory-history-link =
+    { $count ->
+        [one] ১টি বস্তুর সাথে লিঙ্ক
+       *[other] { $count } বস্তুর লিঙ্ক
+    }
+inventory-undo-nothing = বাতিল করার জন্য কিছুই বাকি নেই: এই বস্তুগুলো সরানো হয়েছে অথবা মুছে ফেলা হয়েছে।
+inventory-redo-nothing = পুনরায় করার জন্য কিছুই বাকি নেই: এই বস্তুগুলি সরানো হয়েছে অথবা মুছে ফেলা হয়েছে।
+inventory-undo-empty = বাতিল করার কিছু নেই।
+inventory-redo-empty = আর কিছুই করার নেই।
+inventory-undo-dropped = শেষ পদক্ষেপের আইটেমগুলি সরানো হয়েছে অথবা হারিয়ে গেছে: এটি পরিত্যাগ করা হয়েছে। পূর্ববর্তী পদক্ষেপটি পুনরায় বাতিল করুন।
+inventory-redo-dropped = পরবর্তী ধাপটির আইটেমগুলি সরানো হয়েছে অথবা হারিয়ে গেছে: এটি ছেড়ে দেওয়া হয়েছে। পরের ধাপটি পুনরায় সম্পন্ন করুন।
+inventory-undo-folder-not-empty = এই নতুন ফোল্ডারে যে বস্তুগুলো রাখা হয়েছে সেগুলির সময়কাল হল: প্রথমে এগুলোকে বের করে আনুন, অথবা নিজেই ফোল্টটি মুছে ফেলুন।
+inventory-undo-kept-out = এই সব জিনিসপত্র বর্তমান পোশাক বা মার্কেটপ্লেস লিস্টিং-এ আছে: সেগুলো সেখানে পরিবর্তন করুন।
+inventory-restore-to = “{ $folder }”-এ পুনরুদ্ধার করুন
+inventory-restore-to-origins = তাদের ফোল্ডারে পুনরুদ্ধার করুন
+inventory-purge-no-undo = পূর্বাবস্থায় ফিরিয়ে আনা যায় না।
+inventory-new-tab = নতুন ট্যাব
+inventory-close-tab = ট্যাব বন্ধ করো
+inventory-next-tab = পরবর্তী ট্যাব
+inventory-previous-tab = পূর্ববর্তী ট্যাব
+inventory-open-in-new-tab = নতুন ট্যাব- এ খোলো
+inventory-tabs-limit = সর্বোচ্চ { $count } ট্যাব
+inventory-copy-to-other-pane = অন্য পেন-এ অনুলিপি করুন
+inventory-move-to-other-pane = অন্য পেন-এ যাও
+inventory-resize-columns = কলামের আকার পরিবর্তন করতে টেনে আনুন । বাম দিকের কলামটিকে তার বিষয়বস্তু অনুযায়ী সাজাতে দুইবার ক্লিক করুন ।
+inventory-resize-columns-first = কলামের আকার পরিবর্তন করতে টেনে আনুন । প্রথম কলামকে তার স্বাভাবিক প্রস্থ দিতে দুইবার ক্লিক করুন ।
+inventory-sort-by-column = এই কলাম অনুসারে সাজানো হলে ক্লিক করুন, ক্রম বদলানো হলে আবারও ক্লিক করে দেখুন । কলাম সরাতে টেনে আনুন ।
+inventory-filter-hint = এই ফোল্ডারটি পরিশোধক করুন…
+inventory-filter-close = ফিল্টার বন্ধ করো (Esc)
+inventory-filter-nothing = ফিল্টারের সাথে এখানে কিছুই মিলছে না
+inventory-view-compact = সংকুচিত প্রদর্শন
+inventory-view-tiles = টাইলস প্রদর্শন
+inventory-view-per-folder = প্রত্যেক ফোল্ডারের প্রদর্শন বিন্যাস মনে রাখা হবে
+inventory-group-by = গ্রুপওয়্যার
+inventory-group-none = কোনটিই নয়
+inventory-group-folders = ফোল্ডার
+inventory-group-unknown-creator = নির্মাতা এখনো অজানা
+inventory-group-today = আজ
+inventory-group-yesterday = গতকাল
+inventory-group-this-week = শেষ ৭ দিনে
+inventory-group-this-month = শেষ ৩০ দিনে
+inventory-group-this-year = এই বছরের শুরুতে
+inventory-group-earlier = অনেক দিন আগে
+inventory-group-no-date = তারিখ নেই
+cmdline-mod-zoffset-usage = আপনার অ্যাভাটারের হোভার উচ্চতা নির্ধারণ করুন (ব্যবহার: /zoffset মান অথবা +delta)।
+dev-toolbox-n4 = তালিকা লোড করা হচ্ছে
+dev-toolbox-what-n4 = ফোল্ডার পড়া হয়েছে, ব্যর্থ এবং প্রস্থান করা হয়েছে, লোডার ফ্লাইটে পড়ে এবং পুনরায় চেষ্টা করে; কোন নাম নেই
+ui-context-inspect-avatar = অ্যাভাটার পরীক্ষা করো
+inspect-window = পরীক্ষা করো
+inspect-tab-objects = বস্তু
+inspect-objects-title =
+    { $count ->
+        [one] { $count } বস্তু
+       *[other] { $count } বস্তু
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } আইটেম
+       *[other] { $count } বস্তু
+    }
+inspect-open-profile = প্রোফাইল খোলো
+inspect-over-limit = আপনার সীমার উপরে
+inspect-limit-tip = আপনার জটিলতার সীমা: { $limit }
+inspect-search = আইটেম অথবা নির্মাতা অনুসন্ধান করুন
+inspect-outlined = { $name } বিশ্বে বর্ণনা করা হয়
+inspect-area-head = মাথা
+inspect-area-body = মূল অংশ
+inspect-area-arms = হাত ও পা
+inspect-area-legs = পা ও পায়
+inspect-area-hud = হেড
+inspect-area-other = অন্যান্য
+inspect-area-world = বস্তু
+inspect-own-eyes = সিস্টেম চোখ
+inspect-own-body = সিস্টেম বডি
+inspect-own-description = অ্যাটাচমেন্ট নয়, আসল আভাটার অংশ
+inspect-own-maker = অ্যাভাটার · Second Life
+inspect-own-place = অ্যাভাটার
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } মেগাবাইট
+inspect-section-complexity = { $value } জটিলতা
+inspect-no-match = কিছুই মেলেনি “{ $query }”.
+inspect-spoken-worn = { $name }, পরেছে { $point }জটিলতা { $complexity }, তৈরি করেছেন { $creator }
+inspect-spoken-object = { $name }, মালিক { $owner }জটিলতা { $complexity }, তৈরি করেছেন { $creator }
+inspect-look-at-tip = ক্যামেরা এদিকে সরাও
+inspect-profile-tip = নির্মাতার প্রোফাইল খুলুন
+inspect-made-by = তৈরি করেছেন
+inspect-owned-by = মালিক
+inspect-worn-on = ব্যবহার করা হয়েছে
+inspect-prims-count =
+    { $count ->
+        [one] { $count } প্রাথমিক
+       *[other] { $count } মৌলিক
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = টেক্সচার মেমরি
+inspect-tile-vram = ভি- র‌্যাম
+inspect-tile-prims = প্রিম
+board-close = বন্ধ করো { $title }
+board-grow = বড় করে দেখাও{ $title }
+board-remove = { $name } অপসারণ করো
+board-more = এবং { $count } আরো
+board-more-short = +{ $count }
+board-some-of = { $shown } এর { $all }
+board-of-all = এর { $all }
+stage-turn-left = বামে ঘুরো
+stage-turn-right = ডানদিকে ঘুরে যাও
+stage-higher = উঁচু থেকে দেখ
+stage-lower = নিচে থেকে দেখুন
+stage-nearer = আরো কাছে
+stage-further = আরো দূরে
+stage-reset = শুরুতে ফিরে যাও
+stage-hint = আবর্তন করার জন্য টেনে আনুন, সরানোর জন্য ডান-চাপুন
+stage-light = উজ্জ্বল পটভূমি
+stage-dark = গাঢ় পটভূমি
+stage-playing = AO
+stage-paused = স্থগিত
+stage-pause-tip = তাদের অ্যানিমেশন স্থগিত করো
+stage-play-tip = তাদের অ্যানিমেশন চালাও
+stage-loading = ত্রিমাত্রিক প্রদর্শন প্রস্তুত করা হচ্ছে...
+stage-nothing = এখনো ত্রিমাত্রিকভাবে দেখানোর মত কিছু নেই।
+stage-refused = ত্রিমাত্রিক প্রদর্শন বন্ধ করা হয়েছে RLVa আপনি যা দেখতে পারেন তা সীমাবদ্ধ করে।
+inspect-your-limit = আপনার সীমা: { $limit }
+inspect-without-it = { $value } এটা ছাড়া
+inspect-you = তুমি
+inspect-person = ব্যক্তি
+inspect-difference = পার্থক্য
+inspect-drawn-in-full = সম্পূর্ণভাবে আঁকা হয়েছে
+inspect-nobody = কারো জটিলতা এখনো জানা যায়নি।
+inspect-aside-count = { $count } ছেড়ে দাও
+inspect-is-aside = অপসারণ করো
+inspect-set-aside = একপাশে রাখো
+inspect-set-aside-tip = এই বস্তু ছাড়া জটিলতা দেখুন। শুধুমাত্র এই উইন্ডোতে: পৃথিবীতে কিছুই পরিবর্তন হয় না।
+inspect-put-back = ফিরিয়ে দাও
+inspect-put-back-tip = এই বস্তুটি আবার গণনা করো
+inspect-complexity-spoken = জটিলতা { $value }, সংখ্যা { $rank } এর { $count } এখানে লোকজন
+inspect-stage-outfit = পোশাক
+inspect-stage-objects = বস্তু
+inspect-stage-back = সবকিছুতে ফিরে যাও
+inspect-place-made-by = { $place } · তৈরি করেছে { $name }
+inspect-owned-by-name = { $name } এর মালিকানাধীন
+inspect-tile-items = আইটেম
+inspect-tile-figures = আকার
+inspect-col-item = নাম
+inspect-point = বিন্দু
+inspect-look-at = দেখো
+inspect-selected-count = { $count } নির্বাচিত
+inspect-worn-count = { $count } ব্যবহার করা হয়েছে
+inspect-creators-word = নির্মাতা
+inspect-areas-word = মূল অংশ
+inspect-owners-word = মালিক
+inspect-triangles-word = ত্রিভুজ
+inspect-made-of = { $count } এর { $all } বস্তু
+inspect-kilobytes = { $n } কিলোবাইট
+inspect-linkset-order = { $count }, বাম দিকে
+inspect-reset-columns = কলাম পুনরায় নির্ধারণ করো
+inspect-by-creators =
+    { $count ->
+        [one] { $items } একটি নির্মাতা দ্বারা
+       *[other] { $items } দ্বারা { $count } নির্মাতা
+    }
+inspect-owner-button = মালিকের প্রোফাইল
+inspect-group-button = গ্রুপ প্রোফাইল
+inspect-creator-button = নির্মাতা প্রোফাইল
+inspect-land-others = অন্যান্য { $n }
+inspect-land-these = এইগুলো { $n }
+inspect-land-free = মুক্ত { $n }
+inspect-land-unknown = প্যাকেজের রুম দেখায় যখন সব বস্তু আপনি যে প্যাকেজে আছেন তার উপর রয়েছে।
+ui-login-unencrypted = এনক্রিপশন ছাড়া লগইন
+ui-login-unencrypted-body = { $server }-এর লগইন ঠিকানা https://-এর বদলে http:// দিয়ে শুরু, তাই লগইন এনক্রিপ্ট হবে না। সর্বজনীন Wi-Fi, শেয়ার করা নেটওয়ার্ক বা পথে ট্র্যাফিক দেখতে পারলে কেউ আপনার পাসওয়ার্ড পড়ে অ্যাকাউন্ট ব্যবহার করতে পারে। এখনও কিছু পাঠানো হয়নি। গ্রিডের কাছে https:// ঠিকানা চাইতে পারেন। এই সার্ভারের জন্য সিদ্ধান্তটি মনে রাখা হবে।
+ui-login-unencrypted-accept = এনক্রিপশন ছাড়া লগইন করুন
+world-appearance-clothing-layers-full = সকল ৬০ টি পোশাক স্তর ব্যবহার করা হচ্ছে। এই বস্তুটি পরার আগে একটি স্তর অপসারণ করুন।
+ui-options-ray-tracing = রে ট্র্যাকিং
+ui-options-ray-traced-shadows = রে- ট্র্যাক করা সূর্যের ছায়া
+ui-options-ray-traced-shadows-help = সূর্য এবং চাঁদের ছায়া রে- এর পর রে অনুসরণ করে, ছায়া মানচিত্র থেকে পড়ার পরিবর্তে: বস্তুর যে কোন দূরত্বে স্পর্শ করার স্থান নির্ধারণ করে। ছায়া এবং রে অনুসন্ধান সহ একটি গ্রাফিক্স কার্ডের প্রয়োজন হয়, এবং গ্রাফিক কার্ডে খরচ বেশি হয়
+ui-options-ray-traced-lights = স্থানীয় হালকা ছায়া
+ui-options-ray-traced-lights-help = চারপাশের আলোর বিন্দু (লাম্প, মোমবাতি) থেকে ছায়া, যা অন্যথায় কোন কিছুই প্রক্ষেপ করে না, এবং প্রজেক্টর ছায়া সক্রিয় করার সময় প্রজেকটরের ছায়া থেকে, তাদের ছায়া ম্যাপের জায়গায়। রে ট্র্যাকিং অপশনগুলির মধ্যে সবচেয়ে ব্যয়বহুল: সমন্বিত গ্রাফিক্সের ক্ষেত্রে সেটিকে ছেড়ে দেওয়া ভাল
+ui-options-rt-quality = রে ট্র্যাকিং- এর গুণমান
+ui-options-rt-quality-help = প্রত্যেকটি ট্র্যাক করা এফেক্ট সক্রিয় থাকবে: নিম্ন স্তরের ক্ষেত্রে কম সংখ্যক নমুনা এবং অপ্রত্যক্ষ আলোকে একটি পাতলা গ্রিডে ট্র্যাক করে, ছোট গ্রাফিক্স কার্ডের ক্ষেত্রে প্রতি সেকেন্ডে বেশি ফ্রেমের জন্য। উচ্চ স্তরের ছবিটি ডিলক্স (RT)-এর সম্পূর্ণ ছবি। একটি স্তর বেছে নেওয়ার ফলে ছায়া প্রদর্শনকারী আলোও নির্ধারিত হবে
+ui-options-rt-sun-softness = সূর্যের ছায়ার নরমতা
+ui-options-rt-sun-softness-help = সূর্যের ছায়ার প্রান্ত কতটা নরম হবে: ১ হলে সত্যিকার সূর্য, ০ হলে চকচকে প্রান্ত, আরও বেশি হলে সূর্য অন্ধকার হয়ে যাবে
+ui-options-rt-lamp-softness = স্থানীয় আলোর ছায়ার নরমতা
+ui-options-rt-lamp-softness-help = লাম্পের অনুসরণকৃত ছায়ার প্রান্ত কতটা নরম হবে: ১ প্রতিটি লাম্প এর আকার অনুসরণ করে, ০ তীক্ষ্ণ প্রান্ত
+ui-options-rt-shadow-lamps = আলো যে ছায়া ছড়ায়
+ui-options-rt-shadow-lamps-help = নিকটবর্তী আলোর কতটি ছায়া প্রদর্শন করে; অন্যগুলো এখনও আলোকিত, ছায়া ব্যতীত। কম হলে গ্রাফিক্স কার্ডের খরচ কম হয়
+ui-options-ray-traced-indirect = রে- ট্র্যাক করা পরোক্ষ আলো
+ui-options-ray-traced-indirect-help = চারপাশের পৃষ্ঠ থেকে প্রতিফলিত আলো, স্ক্রীন দেখানোর বাইরে অনুসন্ধান করা হয়, জিটিএও এর পরোক্ষ আলোর পরিবর্তে
+ui-options-gi-probes = গ্লোবাল ইলাস্ট্রেশন প্রোব
+ui-options-gi-probes-help = প্রজেক্টরটি দৃশ্যের মধ্যে ছড়িয়ে পড়ে যা আলোকে বেশ কয়েকবার ফিরে আসতে দেয় এবং তারা যে আকাশ দেখতে পায়: বন্ধ রুম অন্ধকার হয়ে থাকে, আলো কোণায় ঘুরে যায়। গ্রাফিক্স কার্ডের ক্ষেত্রে প্রায় ০. ৮ মিলিসেকেন্ড
+ui-options-ray-traced-reflections = রে- ট্র্যাক করা প্রতিফলন
+ui-options-ray-traced-reflections-help = পর্দা থেকে দেখানো না যাওয়ার প্রতিফলন, পর্দা-স্থান প্রতিফলনের পরিবর্তে, যা অবশ্যই সক্রিয় করা হবে
+ui-options-ray-tracing-unsupported = এই গ্রাফিক্স কার্ড অথবা এর ড্রাইভারের রে ট্র্যাকিং নেই
+ui-options-ray-tracing-vr = VR-এর জন্য আরম্ভকৃত সেশনে উপলব্ধ নয়
+ui-options-tab-ray-tracing = রে ট্র্যাকিং
+ui-options-deluxe-rt-warning-title = ডিলক্স (RT) সক্রিয় করা হবে কি?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) উচ্চ, যেখানে গ্রাফিক্স কার্ড দ্বারা ছায়া এবং পরোক্ষ আলো অনুসরণ করা হয়। এর জন্য হার্ডওয়্যার রে ট্র্যাকিং সহ একটি কার্ড (NVIDIA RTX, AMD Radeon RX 6000 অথবা পরবর্তী, Intel Arc) এবং একটি আপডেট করা ড্রাইভার প্রয়োজন, এবং এটি High-এর চেয়ে অনেক বেশি খরচ করে: মাঝারি মানের কার্ডের ক্ষেত্রে ব্যস্ত স্থানে ফ্রেমের হার অনেক কমে যেতে পারে। রে ট্রেকিং এখনো পরীক্ষা করা হচ্ছে: ছবিটি যদি ভুল দেখায় বা প্রদর্শক ধীর হয়ে যায়, তাহলে উচ্চে ফিরে যান। রে-ট্রেকিং ট্যাব তার বৈশিষ্ট্য সংরক্ষণ করে।
+ui-options-deluxe-rt-warning-turn-on = চালু করো
+ui-options-ray-tracing-needs-shadows = ছায়া দরকার
+ui-options-ray-tracing-needs-ssr = পর্দা-স্থান প্রতিফলন প্রয়োজন
+ui-options-preset-deluxe = ডিলক্স (RT)
+ui-options-normal-precision = প্রতিফলন নির্ভুলতা
+ui-options-normal-precision-help = প্রতিফলনের জন্য প্রত্যেক পৃষ্ঠের দিক কতটা সুন্দরভাবে সংরক্ষণ করা হবে। স্ট্যান্ডার্ড মোটামুটি, বক্র পৃষ্ঠ যেমন গাড়ির পেইন্টিং এর প্রতিফলনে ধাপ প্রদর্শন করতে পারে; উচ্চ তা অপসারণ করে এবং আরও বেশি ভিডিও মেমরি ব্যবহার করে। স্বয়ংক্রিয় রে- ট্র্যাক প্রতিফলন ব্যবহার করে উচ্চ, যেখানে ধাপ সবচেয়ে বেশি দেখানো হয়, এবং অন্যান্য ক্ষেত্রে স্ট্যান্ডার্ড
+ui-options-normal-precision-automatic = স্বয়ংক্রিয়
+ui-options-normal-precision-standard = ডিফল্ট
+ui-options-normal-precision-high = উচ্চ
+ui-options-private-point-at-help = আপনি যে বস্তুটি সম্পাদন করছেন তা আড়াল করো, আপনার সম্পাদনা হাতকে নিচে রাখো এবং আপনার সম্পাদকের বিম আড়ালে রাখো ।
+ui-options-private-edit-beam = সম্পাদন বিম আড়াল করো
+ui-options-private-edit-beam-help = বস্তু সম্পাদন অথবা ধরে রাখার সময় বিম সম্পূর্ণরূপে আড়াল করা হবে, আপনার পর্দায় এবং অন্য প্রদর্শকদের জন্য। নির্বাচনের লক্ষ্য ইঙ্গিত এবং বিম প্রদান/প্রত্যাহার প্রভাবিত হবে না।
+common-window-outside = প্রদর্শকের উইন্ডোর বাইরে চলে যাও
+common-window-inside = প্রদর্শকের উইন্ডোতে ফিরিয়ে আনুন
+common-window-rename-name = নাম পরিবর্তন করতে দুইবার ক্লিক করুন
+common-carry-hint = এটি এখানে ফেলার জন্য ক্লিক করুন, ছেড়ে দেবার জন্য Esc টিপুন
+common-window-paused-photo = ফটো মোড খোলার সময় স্থগিত করা হয়েছে
+common-window-paused-director = পরিচালক বাজানোকালীন স্থগিত
+common-window-paused-interface = ইন্টারফেস বন্ধ থাকাকালীন স্থগিত করা হয়েছে
+ui-options-warn-live-preview = টেক্সচার অথবা পদার্থ প্রাকদর্শন করা সম্ভব না হলে সতর্ক করো
+ui-options-warn-live-preview-help = নির্মাণ উইন্ডোর পছন্দকারীতে, অনুলিপি না করা বস্তুর উপর ক্লিক করলে ঠিক আছে: বলুন পর্যন্ত কিছু প্রয়োগ করা হবে না।
+ui-texture-picker-live-preview-texture = এই টেক্সচারের প্রাকদর্শন প্রদর্শন করা যায়নি কারণ এটি অনুলিপি নয়।
+ui-texture-picker-live-preview-material = আমরা এই উপাদানের প্রাকদর্শন প্রদর্শন করতে পারি না কারণ এটি নকল নয়।
+fetch-invalid-url = অকার্যকর ইউ- আর- এল
+ui-chat-close-all-ims = সব বন্ধ করো IM কথোপকথন
+ui-chat-close-all-ims-question = সমস্ত IM কথোপকথন বন্ধ করে সক্রিয় কল শেষ করা হবে কি?
+ui-chat-confirm-close-all-ims = সব IM কথোপকথন বন্ধ করার পূর্বে নিশ্চিত করুন
+ui-chat-confirm-close-all-ims-help = সব বন্ধ করার আগে জিজ্ঞাসা করো IM যখন একজন সক্রিয় ভয়েস কল করে তখন কথোপকথন।
+ui-options-aurora-controls-compact-help = নিয়ন্ত্রণ উইন্ডোটি ক্যামেরাটির উপর সংকুচিতভাবে খোলা হয়: এর জয়স্টিক, বড় আকারে প্রদর্শন এবং রোল। এর শিরোনাম বার বাটনটি সংকুচিত ও সম্পূর্ণরূপে প্রদর্শনের মধ্যে পরিবর্তন করে এবং এটিও নির্ধারণ করে। ক্লাসিক উইণ্ডোর ক্ষেত্রে, ক্যামেরার পরিবর্তে লিগেসি প্রদর্শকের ছোট ক্যামেরায় উইન્ડোটি খোলা হবে।
+rlva-restart-hint = RLVa আপনি লগ-ইন করার সময় শুরু হয়। এটি চালানোর পর, এটি সক্রিয় বা নিষ্ক্রিয় করা প্রদর্শক পরবর্তীবার চালু করার সময় কার্যকর হবে: প্রতিবন্ধকতা অবজেক্টগুলি তখন পর্যন্ত ধরে রাখা থাকবে।
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = পুনরায় আরম্ভ করার পর RLVa সক্রিয় করা হবে।
+rlva-toggle-disabled-restart = পুনরায় আরম্ভ করার পর RLVa নিষ্ক্রিয় করা হবে।
+livemesh-import-connect = LODs ইম্পোর্ট করার জন্য প্লাগ-ইন ০.১১.০ অথবা তার পরবর্তী সংস্করণ সহযোগে ব্লেন্ডারের সাথে সংযুক্ত হোন, অথবা প্লাগইন ০০.২.০ বা তার পরের সংস্করনের সহায়তায় মায়া সংযুক্ত করুন।
+livemesh-import-preparing = বস্তু এবং তার LODs বেলন্ডার অথবা মায়া-এ প্রস্তুত করা হচ্ছে...
+livemesh-import-ready = LODs পেয়েছি, ইম্পোর্টারে প্রস্তুত।
+livemesh-import-failed = ইম্পোর্ট প্রস্তুত করতে ব্যর্থ: { $error }
+livemesh-import-timeout = Blender অথবা Maya ইম্পোর্টের প্রস্তুতি শেষ করেনি। সংযোগ পরীক্ষা করুন (Blender-এ, অবজেক্ট মোড ব্যবহার করুন) এবং পুনরায় চেষ্টা করুন।
+livemesh-shape-apply-tooltip = সম্পাদন করার অনুমতি পরীক্ষা করুন, তারপর ব্লেন্ডার অথবা মায়া-এ নির্বাচিত কাঠামো এবং এর বাঁধা মেশ (মায়াস্টার রিগ-এর জন্য মায়াস্টারের মাধ্যমে) সংশোধন করুন। একটি স্থানীয় Second Life-র সাথে সামঞ্জস্যপূর্ণ কাঠাম নির্বাচন করুন।
+livemesh-shape-update-apply = ব্লেন্ডার প্লাগ-ইন ০.১০.০ অথবা পরবর্তী সংস্করণে, অথবা মায়া প্লাগইন ০০.৪.০ বা পরবর্তীতে আপডেট করুন এবং পুনরায় সংযুক্ত করুন।
+livemesh-shape-applied = নির্বাচিত কাঠামোর ওপর আকৃতি প্রয়োগ করা হবে ।
+livemesh-shape-tooltip = পরিধানকৃত আকৃতির পরিবর্তনের অধিকার পরীক্ষা করুন এবং ব্লেন্ডার অথবা মায়া-তে একটি নতুন রিগড রেফারেন্স বডি তৈরি করুন।
+livemesh-shape-connect = প্রথমে ব্লেন্ডার অথবা মায়া-এ Aurora প্লাগ-ইন সংযুক্ত করুন।
+livemesh-shape-update-plugin = ব্লেন্ডার প্লাগ-ইন ০.৯.০ অথবা পরবর্তী সংস্করণে, অথবা মায়া প্লাগইন ০০.৩.০ বা পরবর্তীতে আপডেট করুন এবং পুনরায় সংযুক্ত করুন।
+livemesh-shape-timeout = Blender অথবা Maya ইম্পোর্ট নিশ্চিত করেনি। পুনরায় চেষ্টা করুন (Blender-এ, অবজেক্ট মোডে পরিবর্তন করুন)।
+livemesh-shape-success = আকৃতিটি একটি নতুন বানানো রেফারেন্স বডি হিসেবে আমদানি করা হয়েছে ।
+blender-live-maya-version = Aurora Maya এর জন্য LiveMesh { $version }
+blender-live-maya-instructions = ZIP সংরক্ষণ করুন এবং এটি এক্সট্র্যাক্ট করুন, তারপর install.mel-কে Maya viewport-এ টেনে আনুন। Aurora shelf থেকে LiveMesh খুলুন, আপনার মেশ যোগ করুন এবং সংযোগে ক্লিক করুন।
+blender-live-save-maya = Maya প্লাগ-ইন সংরক্ষণ করুন…
+blender-live-maya-saved = প্লাগ-ইন সংরক্ষণ করা হয়েছে। ZIP এক্সট্র্যাক্ট করুন এবং install.mel ফাইলটি Maya viewport এ টেনে আনুন।
+livemesh-plugin-connected = প্লাগ-ইন সংযুক্ত
+livemesh-token-refused = একটি প্রোগ্রাম এই প্রাকদর্শনের কী ছাড়া সংযোগ করার চেষ্টা করেছে। শুধুমাত্র Aurora ব্লেন্ডার অথবা মায়া'র প্লাগ-ইন সংযোগ করতে পারে।
+livemesh-waiting-plugin = ব্লেন্ডার অথবা মায়া-এর জন্য অপেক্ষা করা হচ্ছে...
+blender-live-objects-help = ব্লেন্ডার অথবা মায়া প্রেরণ করা মেশ। এটি স্থাপনের জন্য একটি নির্বাচন করুন, অথবা এর মেনু থেকে ইম্পোর্ট করুন।
+blender-live-size-note = প্লাগ-ইন থেকে যা প্রেরণ করা হয় তার আকার গুণ করে, তাই পরবর্তী বেলন্ডার অথবা মায়া সম্পাদনে এটি সংরক্ষণ করা হবে।
+blender-live-avatar-help = বানানো মেশের জন্য: আপনার আকৃতিকে ব্লেন্ডার অথবা মায়া-এ পাঠিয়ে এর উপর মডেল তৈরি করুন।
+livemesh-shape-section = ব্লেন্ডার অথবা মায়া-এ আপনার আকৃতি
+blender-live-import-help = স্বাভাবিক ইম্পোর্টের জন্য অবজেক্টের স্ন্যাপশট স্থগিত করে: পর্যালোচনা, মূল্য, তারপর নিশ্চিতকরণ। পরবর্তীতে ব্লেন্ডার অথবা মায়া-তে সম্পাদনা করলে এটি পরিবর্তন হবে না।
+blender-live-changed-tip = Blender অথবা Maya এই অবজেক্টটি শেষ পরিবর্তন করার সময়
+fit-lab-section = ল্যাব- এ ফিট করো
+fit-lab-help = আপনি যে পোশাক পরেন, সেটি পরিধান করা ম্যানেকিনরা আপনার সামনে দাঁড়িয়ে আছে, প্রত্যেকের দেহ ভিন্ন। তারা আপনাকে দেখাবে কিভাবে এই পোশাকে বিভিন্ন আকৃতির জিনিস লাগানো যায়। কেবলমাত্র আপনিই তাদের দেখতে পাবেন: কিছুই পাঠানো হয় না বা সংরক্ষিত হয় না।
+fit-lab-body-me = আমি
+fit-lab-body-slim = স্মার্ট
+fit-lab-body-curvy = বাঁকানো
+fit-lab-body-full = পূর্ণ আকৃতি
+fit-lab-body-athletic = অ্যাথলেটিক
+fit-lab-body-tall = উচ্চ
+fit-lab-body-petite = ছোট
+fit-lab-motion = গতি
+fit-lab-motion-stand = স্ট্যান্ডার্ড
+fit-lab-motion-walk = হাঁট
+fit-lab-motion-sit = বসো
+fit-lab-motion-range = নড়াচড়ার পরিধি
+fit-lab-pose = পোজ
+fit-lab-pose-all = সবাই, একের পর এক
+fit-lab-pose-arms-up = হাত উপরে তোল
+fit-lab-pose-reach = সামনের দিকে যাও
+fit-lab-pose-hug = হাত মিলিয়ে দাও
+fit-lab-pose-squat = স্কুট
+fit-lab-pose-kneel = নতজানু হও
+fit-lab-pose-knee-up = হাঁটু উঠাও
+fit-lab-pose-twist = টুইস্ট
+fit-lab-pose-bend = সামনের দিকে ঝুঁকো
+fit-lab-motion-like-me = আমার মত
+fit-lab-show = ম্যানেকিন দেখাও
+fit-lab-place = ওদেরকে এখানে নিয়ে এসো
+fit-lab-remove = ম্যানেকিন সরিয়ে ফেলুন
+fit-lab-choose = অন্তত একটা মৃতদেহ বেছে নাও।
+fit-lab-clip = শরীরের যে অংশ দিয়ে প্রবেশ করবে তা দেখাও
+fit-lab-clip-note = লাল: পোশাক থেকে শরীর বেরিয়ে আসে। আম্বার: শরীর এবং পোশাকের মিলন। আপনার অ্যাভাটারে এবং ম্যানেকিনগুলিতে, যেমনটি ক্যামেরা থেকে দেখা যায়। অন্য যে কোন কিছু যা আপনি পরেন তা শরীর হিসেবে গণ্য হবে: কাপড়ের উপরে একটি জ্যাকেট বা চুল খুলে ফেলুন।
+blender-live-levels-pending = ইম্পোর্ট ক্লিক করার সময় ব্লেন্ডার অথবা মায়া বিস্তারিত স্তর প্রস্তুত করে।
+blender-live-levels-note = প্রতিটি অবজেক্টের LiveMesh সেটিংস থেকে Blender অথবা Maya-এ প্রস্তুত করা হয়েছে।
+blender-live-quick-look-changed = ব্লেন্ডার অথবা মায়া- এ পরিবর্তন করা হয়েছে { $ago } আগস্ট
+blender-live-warning-textures = টেক্সচার উপেক্ষা করা হয়েছে, সাধারণ রং দেখানো হয়েছে
+blender-live-warning-not-sent = প্রাকদর্শনে নেই
+blender-live-undo-derez = Derezzed { $name } · এখনও প্লাগ-ইনের তালিকায় আছে
+blender-live-undo-detach = বিচ্ছিন্ন { $name } · এখনও প্লাগ-ইনের তালিকায় রয়েছে
+inventory-open-current = খোলা
+inventory-folder-back = পিছনে যাও
+inventory-folder-forward = & সামনের দিকে
+inventory-folder-up = একটি স্তর উপরে যাও
+area-search-metres = { $n } m
+area-search-band-reach = পৌঁছানো সম্ভব
+area-search-band-close = কাছে
+area-search-band-around = আপনার চারপাশে
+area-search-band-further = আরো
+area-search-band-far = ফার
+area-search-band = এলাকা
+area-search-within = { $distance } এর মধ্যে
+area-search-within-across = { $distance } এর মধ্যে
+area-search-between = { $from }–{ $to }
+area-search-any-distance = প্রতিটি দূরত্ব দেখাও
+area-search-from = থেকে দূরত্ব
+area-search-to = দূরত্ব
+area-search-bar-tip =
+    { $count ->
+        [one] একটি বস্তু, { $from } দুই { $to }
+       *[other] { $count } বস্তু, { $from } দুই { $to }
+    }
+area-search-of-objects = এর { $total } বস্তু
+area-search-li = { $value } লি
+area-search-li-count = { $value } ভূমিকম্প
+area-search-owner-count =
+    { $count ->
+        [one] এক মালিক
+       *[other] { $count } মালিক
+    }
+area-search-object-count =
+    { $count ->
+        [one] একটি বস্তু
+       *[other] { $count } বস্তু
+    }
+area-search-objects-word = বস্তু
+area-search-in-reach = এখানে
+area-search-tab-objects = বস্তু
+area-search-tab-owners = মালিক
+area-search-hint-wide = বস্তু, মালিক, নির্মাতা অথবা UUID
+area-search-kind-heading = বস্তুর ধরন
+area-search-kind-tip = ক্লিক করুন: শুধুমাত্র এগুলো। আবার: লুকানো।
+area-search-kind-any = বছর
+area-search-kind-only = শুধু এইগুলো
+area-search-kind-hidden = লুকানো
+area-search-kind-attached = সংযুক্ত
+area-search-kind-probes = পরীক্ষা
+area-search-click-all = সব
+area-search-click-any-short = যে কোন
+area-search-permissions = অনুমতি
+area-search-price-heading = বিক্রয়ের জন্য বস্তুর জন্য বিক্রয় মূল্য
+area-search-price-to = দুই
+area-search-price-tip = প্রথমে “বিক্রয়ের জন্য” বেছে নিন
+area-search-linked = লিঙ্কড প্রাইম
+area-search-one-field = একটি ক্ষেত্র অনুসন্ধান করুন
+area-search-regex-switch = রেগুলার এক্সপ্রেশন
+area-search-regex-invalid = একটি বৈধ রেগুলার এক্সপ্রেশন নয়
+area-search-reset-filters-tip = প্রত্যেক ফিল্টার পুনরুদ্ধার করো; অনুসন্ধানের টেক্সট থাকবে
+area-search-save-defaults-tip = এখন থেকে এই ফিল্টার ব্যবহার করে খোলো
+area-search-reset-search = অনুসন্ধানের টেক্সট পুনরায় নির্ধারণ করো
+area-search-reset-filters = ফিল্টার অপশন পুনরায় নির্ধারণ করো
+area-search-reset-ranges = দূরত্ব এবং মূল্য পুনরায় নির্ধারণ করো
+area-search-reset-all = সবকিছু রিসেট করো
+area-search-more = আরো
+area-search-several = একাধিক নির্বাচন করুন
+area-search-several-tip = ক্লিক করে নির্বাচন যোগ করা হবে (এছাড়াও Ctrl অথবা Shift + ক্লিক, Ctrl+A)
+area-search-actions = কাজ
+area-search-nothing = এখনো কোন বস্তু পাওয়া যায়নি ।
+area-search-nothing-for-sale = এখানে বিক্রির জন্য কিছু নেই।
+area-search-not-for-sale = বিক্রির জন্য নয়
+area-search-from-price = থেকে { $price }
+area-search-nearest = নিকটতম প্রথম
+area-search-heaviest = সবচেয়ে ভারী প্রথমে
+area-search-order-tip = ক্রম পরিবর্তন করো: প্রথমে নিকটতম বা সবচেয়ে ভারী
+area-search-rank = #{ $rank } এর { $all }
+area-search-rank-here = #{ $rank } এখানে
+area-search-card-more = প্রতিটি আকৃতি দেখাও
+area-search-card-less = কম দেখাও
+area-search-open-group = গ্রুপ খুলুন
+area-search-spoken = { $name }, { $distance }, ভূমিকম্প { $li }, মালিক { $owner }
+area-search-owner-spoken = { $name }, { $count } বস্তু, ভূমি আঘাত { $li }
+area-search-stage-line = { $distance } দূরে · { $li } ভূমির উপর প্রভাব · { $owner }
+area-search-tile-3d = ত্রিমাত্রিক প্রদর্শন
+area-search-on = { $count } এ
+area-search-on-word = চালু
+area-search-more-on =
+    { $count ->
+        [one] আরো একটি ফিল্টার
+       *[other] { $count } আরো ফিল্টার
+    }
+ui-options-legacy-lists = লিগেসি প্রদর্শক থেকে তালিকা ইম্পোর্ট করো
+ui-options-legacy-lists-help = এই অ্যাকাউন্টের টেলিপোর্ট ইতিহাস, সম্পদ ব্ল্যাকলিস্ট, মিডিয়া পরিশোধক তালিকা এবং পরিচিতি সেট যোগ করে। Legacy Viewer-এর ফাইল শুধুমাত্র পড়া যায়।
+ui-options-legacy-lists-button = পুরোনো প্রদর্শক থেকে আমদানি করো...
+ui-options-legacy-lists-no-account = এই অ্যাকাউন্টের তালিকা ইম্পোর্ট করার জন্য লগ-ইন করুন।
+ui-options-legacy-lists-title = লেগেসি প্রদর্শক থেকে আমদানি করো
+ui-options-legacy-lists-text = সবকিছু এই অ্যাকাউন্টের তালিকায় যোগ করা হবে এবং এখানে কিছুই অপসারণ করা হবে না। সম্পদের কালো তালিকার নাম একবার বিশ্ব থেকে চলে যাবে। পুনরায় ইম্পোর্ট করলে আপনি এখানে যা অপসারিত করেছেন তা ফিরে আসবে।
+ui-options-legacy-lists-searching = Legacy প্রদর্শকের ফোল্ডার অনুসন্ধান করা হচ্ছে…
+ui-options-legacy-lists-none = এই অ্যাকাউন্টের জন্য তালিকা সহ কোনো লিগেসি প্রদর্শক ফোল্ডার পাওয়া যায়নি।
+ui-options-legacy-lists-teleports = টেলিপোর্ট ইতিহাস ({ $count })
+ui-options-legacy-lists-derender = সম্পদ ব্ল্যাকলিস্ট ({ $count })
+ui-options-legacy-lists-media = মিডিয়া পরিশোধক তালিকা ({ $count })
+ui-options-legacy-lists-contact-set-entries = পরিচিতি সেট এন্ট্রি ({ $count })
+ui-options-legacy-lists-confirm = আমদানি
+ui-options-legacy-lists-added = যোগ করা হয়েছে অথবা হালনাগাদ করা হয়েছে । টেলিপোর্ট ইতিহাস: { $teleports }, সম্পদ কালো তালিকা: { $derender }, মিডিয়া ফিল্টার: { $media }, পরিচিতি সেট এন্ট্রি: { $sets }.
+ui-options-legacy-lists-nothing = নতুন কিছু নেই: এই অ্যাকাউন্টে ইতিমধ্যেই এই তালিকা রয়েছে।
+ui-options-legacy-lists-failed = পড়া যায়নি: { $files }.
+ui-options-legacy-lists-unsaved = সংরক্ষণ করা যায়নি, যেভাবে ছিল তেমনই রেখে দেওয়া হয়েছে: { $files }.
+ui-options-legacy-lists-other-grid = এই গ্রিড- এ একই নামের একটি ফোল্ডার অন্য গ্রিডের অন্তর্ভুক্ত হতে পারে: এটি সঠিক কিনা তা পরীক্ষা করুন ।
+ui-options-build-show-beams-hint = সম্পাদন, গ্রিপিং অথবা প্রদান করার সময় আপনার নির্বাচিত বিম এবং অন্যান্য অ্যাভাটারের বিম প্রদর্শন করা হবে। এটি শুধুমাত্র প্রদর্শনের নিয়ন্ত্রণ করে; স্থানীয়ভাবে এবং নেটওয়ার্কের মাধ্যমে আপনার সম্পাদনা বিম বন্ধ করতে গোপনীয়তা > সম্পাদনার বিম আড়াল ব্যবহার করুন।
+teleport-failed-title = টেলিপোর্ট ব্যর্থ হয়েছে।
+teleport-error-invalid-tport = টেলিপোর্ট প্রচেষ্টা প্রতি মিনিটে ৬-এ সীমাবদ্ধ। যদি সমস্যা হয়, তাহলে এক মিনিট অপেক্ষা করে আবার টেলিপোর্ট করার চেষ্টা করুন। সমস্যা স্থায়ী হলে লগ আউট করে পুনরায় লগ ইন করুন।
+teleport-error-invalid-region-handoff = আপনার অঞ্চল অতিক্রম প্রক্রিয়াকরণে সমস্যা দেখা দিয়েছে। আপনি সম্ভবত পুনরায় লগ-ইন করতে হবে অঞ্চল অতিক্রান্ত করার পূর্বে। যদি আপনি এই বার্তাটি পেতে থাকেন, অনুগ্রহ করে সমর্থনের সাথে যোগাযোগ করুন।
+teleport-error-blocked-tport = দুঃখিত, টেলিপোর্ট বর্তমানে বন্ধ করা হয়েছে। কিছুক্ষণের মধ্যে পুনরায় চেষ্টা করুন। যদি আপনি এখনও টেলিপোর্ট করতে না পারেন, তাহলে সমস্যা সমাধানের জন্য অনুগ্রহ করে লগ-আউট করে আবার লগ-ইন করুন।
+teleport-error-nolandmark-tport = দুঃখিত, কিন্তু সিস্টেমটি ভূমি চিহ্ন গন্তব্যস্থল খুঁজে পেতে পারেনি।
+teleport-error-timeout-tport = দুঃখিত, কিন্তু সিস্টেম টেলিপোর্ট সংযোগ সম্পন্ন করতে ব্যর্থ হয়েছে। অনুগ্রহ করে কিছুক্ষণের মধ্যে আবার চেষ্টা করুন।
+teleport-error-no-help-island = আপনি Welcome দ্বীপে ফিরে টেলিপোর্ট করতে পারবেন না.
+teleport-error-noaccess-tport = দুঃখিত, আপনার সেই টেলিপোর্ট গন্তব্যে প্রবেশের অনুমতি নেই।
+teleport-error-missing-attach-tport = আপনার সংযুক্ত বস্তু এখনো পৌঁছেনি। টেলিপোর্ট করার চেষ্টা করার পূর্বে আরো কয়েক সেকেন্ড অপেক্ষা করুন অথবা লগ-আউট করে আবার লগ-ইন করুন।
+teleport-error-too-many-uploads-tport = এই অঞ্চলের সম্পদ লাইন বর্তমানে আটকে আছে, তাই আপনার টেলিপোর্ট অনুরোধ সঠিক সময়ে সফল হবে না। অনুগ্রহ করে কয়েক মিনিটের মধ্যে আবার চেষ্টা করুন অথবা কম ব্যস্ত এলাকায় যান।
+teleport-error-expired-tport = দুঃখিত, কিন্তু সিস্টেম আপনার টেলিপোর্ট অনুরোধ সঠিক সময়ে সম্পন্ন করতে ব্যর্থ হয়েছে। অনুগ্রহ করে কয়েক মিনিটের মধ্যে পুনরায় চেষ্টা করুন।
+teleport-error-expired-region-handoff = দুঃখিত, কিন্তু সিস্টেম আপনার অঞ্চল অতিক্রম করা সময়মত সম্পন্ন করতে পারেনি । অনুগ্রহ করে কয়েক মিনিটের মধ্যে আবার চেষ্টা করুন ।
+teleport-error-preexisting-tport = দুঃখিত, কিন্তু সিস্টেম আপনার টেলিপোর্ট চালু করতে পারেনি। অনুগ্রহ করে কয়েক মিনিটের মধ্যে আবার চেষ্টা করুন।
+teleport-error-no-host = টেলিপোর্ট গন্তব্যস্থল খুঁজে পাওয়া যায়নি। সম্ভবত গন্ত্যবস্থাটি অস্থায়ীভাবে ব্যবহারযোগ্য নয় অথবা এর কোন অস্তিত্ব নেই। অনুগ্রহ করে কয়েক মিনিটের মধ্যে পুনরায় চেষ্টা করুন।
+teleport-error-no-inventory-host = ইনভেস্টরি সিস্টেম বর্তমানে উপলব্ধ নয়।
+teleport-error-must-get-age-region = এই অঞ্চলে প্রবেশের জন্য আপনার বয়স অবশ্যই ১৮ বা তার বেশি হতে হবে।
+teleport-error-special-usage-blocked = অঞ্চলে প্রবেশ করতে ব্যর্থ। '{ $region }'একটি দক্ষতাভিত্তিক খেলার অঞ্চল, এবং আপনি প্রবেশ করার জন্য কিছু শর্ত পূরণ করতে হবে । বিস্তারিত জানার জন্য, অনুগ্রহ করে স্কিল গেমিং FAQ দেখুন: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = এই অঞ্চলে প্রবেশ করতে ব্যর্থ। এটি একটি দক্ষতাভিত্তিক খেলার অঞ্চল এবং এখানে প্রবেশের জন্য আপনাকে কিছু শর্ত পূরণ করতে হবে। বিস্তারিত জানতে, অনুগ্রহ করে দক্ষতামূলক খেলা FAQ-এ দেখুন: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = আপনার হোম গ্রিড আপনার প্রত্যাবর্তন প্রত্যাখ্যান করেছে। সাধারণত এর অর্থ হল এর Hypergrid ঠিকানা সেটিংস অন্যান্য গ্রিডের সাথে মিলছে না। আপনার হোমের গ্রিড অপারেটরদের সাথে যোগাযোগ করুন; পুনরায় লগ-ইন করা হলে আপনি তাৎক্ষণিকভাবে ঘরে ফিরে যাবেন।
+teleport-hint-hypergrid-unreachable = অন্য গ্রিডে পৌঁছানো যায়নি। সম্ভবত এটি অফলাইন, অথবা লিঙ্কটি একটি পুরনো ঠিকানা নির্দেশ করে।
+teleport-hint-hypergrid-visitors-refused = যে গ্রিড শুধুমাত্র কিছু গ্রিডের অধিবাসীদের প্রবেশ করতে দেয়।
+teleport-hint-hypergrid-destination-gone = গন্তব্য অঞ্চলটি বর্তমানে অস্তিত্বহীন অথবা স্থানান্তর করা হয়েছে। অন্যান্য গ্রিডের দিকের চিহ্ন এবং লিঙ্কগুলি পুরোনো হয়ে যেতে পারে।
+toolbar-edit = বাটন এবং মেনু স্বনির্বাচিত করুন...
+toolbar-title = বাটন এবং মেনু
+toolbar-interface-locked = ইন্টারফেস লক করা হয়েছে
+toolbar-help = বাটন অথবা মেনু এন্ট্রি উপরে, নীচে অথবা পার্শ্ববর্তী বার- এ টেনে নিয়ে যাও । একটি বাটন সরিয়ে ফেলার জন্য এটি এখানে ফেলে দাও । যে কোন বাটন পরিবর্তন করার জন্য ডান ক্লিক করো ।
+toolbar-help-classic = বাটন অথবা মেনু এন্ট্রি উপরে, নীচে অথবা পার্শ্ববর্তী বার- এ টেনে নিয়ে যাও । একটি বাটন সরিয়ে ফেলার জন্য এটি এখানে ফেলে দাও । যে কোন বাটন পরিবর্তন করার জন্য ডান ক্লিক করো ।
+toolbar-help-modes = প্রতিটি বাটন- এর জন্য আইকন, লেবেল, উভয়ই অথবা বার ডিফল্ট বেছে নিন। এন্ট্রিগুলির মধ্যে টেনে আনুন Aurora এটি পুনরায় সাজানোর জন্য মেনু ।
+import-menu-textures = টেক্সচার
+import-menu-animations = অ্যানিমেশন
+import-menu-sounds = শব্দ
+import-menu-materials = উপাদান
+import-menu-meshes = মেশ
+import-menu-options = ইম্পোর্ট অপশন
+import-upload-payment-title = আপলোড
+import-upload-payment = আপলোড করার জন্য আপনি L${ $cost } খরচ করেছেন।
+import-quick-textures =
+    { $count ->
+        [one] আমদানি · টেক্সচার: 1 · L${ $cost }?
+       *[other] আমদানি · টেক্সচার: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] আমদানি · উপাদান: 1 · L${ $cost }?
+       *[other] আমদানি · উপাদান: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] আমদানি · শব্দ: 1 · L${ $cost }?
+       *[other] আমদানি · শব্দ: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] আমদানির আকার বেছে নিন। উপযুক্ত টেক্সচারের আকার 2048 × 2048 হতে পারে:
+       *[other] ({ $count }) আমদানির আকার বেছে নিন। উপযুক্ত টেক্সচারের আকার 2048 × 2048 হতে পারে:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] আমদানির আকার বেছে নিন। উপযুক্ত ম্যাটেরিয়ালের ছবির আকার 2048 × 2048 হতে পারে:
+       *[other] ({ $count }) আমদানির আকার বেছে নিন। উপযুক্ত ম্যাটেরিয়ালের ছবির আকার 2048 × 2048 হতে পারে:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = বিনা প্রশ্নে বিনামূল্যের ছবি 2048 × 2048 আকারে আপলোড করুন
+import-quick-free-full-size-help = "টেক্সচার ইম্পোর্ট" এবং "মটিরিয়াল ইম্পার্ট" শুধুমাত্র আপলোডের খরচ L$ হলে 1024 অথবা 2048 জিজ্ঞাসা করে।
+ui-bars-customize-bars = ইন্টারফেস স্বনির্বাচিত করুন
+build-tool-in-use = ব্যবহৃত
+build-create-options-toggle = অপশন দেখাও / আড়াল করো
+build-create-keep-creating = তৈরি করা চালিয়ে যাও
+build-create-center-on-prim = প্রাথমিকের কেন্দ্রে
+build-create-copy-prim-rotation = প্রাথমিক ঘূর্ণন অনুলিপি করো
+build-create-align-to-surface = পৃষ্ঠের সাথে সংযুক্ত করো
+build-capture-shape-button = প্রাইম এর আকৃতি অনুলিপি করুন: এখানে ক্লিক করুন, তারপর পৃথিবীর একটি প্রাইমের ছবি নিন
+build-capture-shape-armed = একটি প্রাইম ক্লিক করে তার আকৃতি অনুলিপি করুন (Escape বাতিল করবে)
+build-capture-shape-full = ২০টি আকৃতি সংরক্ষণ করা হয়েছে । অন্য একটি কপি করার জন্য একটি সরিয়ে ফেলুন
+build-capture-shape-remove = এই আকৃতিটি সরিয়ে ফেলো
+build-capture-shape-tooltip = অনুলিপিকৃত আকৃতি ({ $kind })
+build-capture-shape-not-a-prim = শুধুমাত্র প্রাইম- এর আকৃতি অনুলিপি করা যাবে
+build-capture-shape-mesh-or-sculpt = মেশ বা ভাস্কর্যের প্রাথমিক আকৃতি অনুলিপি করা যাবে না
+build-capture-shape-no-modify = এর আকৃতি অনুলিপি করার জন্য এই প্রাইমটি পরিবর্তন করতে আপনার অনুমতি প্রয়োজন
+import-other-options = অন্যান্য অপশন
+toolbar-button-icons = শুধুমাত্র আইকন
+toolbar-button-text = শুধু লেবেল
+toolbar-button-icons-text = আইকন এবং লেবেল
+toolbar-icon-default = ডিফল্ট আইকন পুনরুদ্ধার করো
+toolbar-icon-choose = একটি আইকন বেছে নিন
+toolbar-icon-change = আইকন বদলাও
+toolbar-presets = প্রাক- নির্ধারিত
+toolbar-interfaces = ইন্টারফেস
+toolbar-interfaces-shown = ইন্টারফেস ব্লকে প্রদর্শিত
+toolbar-interfaces-hidden = ইন্টারফেস ব্লক থেকে আড়াল করো
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora পুরনো স্কুল
+toolbar-preset-photographer = Aurora ফটোগ্রাফার
+toolbar-preset-legacy = পুরোনো
+toolbar-import-textures = টেক্সচার আমদানি করো
+toolbar-import-sounds = শব্দ আমদানি করো
+toolbar-import-animations = অ্যানিমেশন আমদানি করো
+toolbar-import-materials = উপাদান আমদানি করো
+toolbar-import-meshes = মেশ আমদানি করো
+toolbar-import-local = স্থানীয় ফাইল
+toolbar-import-advanced = উন্নত আমদানি
+toolbar-import-settings = ইম্পোর্ট সেটিংস
+toolbar-import-bar = আমদানি বার
+toolbar-icon-search = একটি আইকন খুঁজুন...
+toolbar-in-top = উপরের টুলবার- এ
+toolbar-bar-top = উপরের টুলবার
+toolbar-drop-here = এখানে ফেলে দাও
+toolbar-separator = বিভাজক
+toolbar-interface-edit = ইন্টারফেস স্বনির্বাচিত করুন
+toolbar-edit-done = সম্পন্ন
+toolbar-edit-top = উপরে
+toolbar-edit-bottom = নিচের অংশ
+toolbar-edit-left = বাম
+toolbar-edit-right = ডানদিকে
+toolbar-edit-help = একটি বস্তু নির্বাচন করার জন্য ক্লিক করুন, এটি সরানোর জন্য টেনে আনুন অথবা সম্পাদন অপশনের জন্য ডান-ক্লিক করুন। শেষ করতে এই উইন্ডোটি বন্ধ করুন।
+toolbar-edit-locked = বারগুলি লক করা আছে । ইন্টারফেস পরিবর্তনের জন্য নিচে তা আনলক করুন ।
+toolbar-edit-move = এখানে সরাও
+toolbar-edit-split-before = এর আগে বিভক্ত করো
+toolbar-edit-split-after = বিভাজনের পরে
+toolbar-edit-merge-before = পূর্ববর্তী ব্লকের সাথে সংযুক্ত করো
+toolbar-edit-merge-after = পরবর্তী ব্লকের সাথে সংযুক্ত করো
+toolbar-edit-merge-groups = এই ব্লকগুলোকে একত্রিত করো
+toolbar-drawer = ড্রয়ার
+toolbar-drawer-default-mode = বাটন ডিফল্ট প্রদর্শন
+toolbar-drawer-closes = বাটন ক্লিক করার পর বন্ধ করো
+toolbar-block-shortcut = শর্টকাট:
+toolbar-drawer-hides-needs-shortcut = শর্টকাট প্রয়োজন
+toolbar-floating-close-button = বন্ধ বাটন যোগ করো
+toolbar-block-name = ব্লকের নাম:
+toolbar-block-button-mode = ব্লক বাটন প্রদর্শন
+toolbar-button-inherited = উত্তরাধিকারসূত্রে প্রাপ্ত
+toolbar-drawer-hides-button = ফ্ল্যাট অবস্থায় বাটন আড়াল করো
+toolbar-floating-new = ফ্ল্যাট ব্লক
+toolbar-floating-orientation = দিক নির্দেশক
+toolbar-floating-horizontal = অনুভূমিক
+toolbar-floating-vertical = উলম্ব
+toolbar-floating-empty = বাটন এখানে ফেলে দিন
+toolbar-shortcut-title = শর্টকাট
+toolbar-shortcut-block-name = ব্লক: { $name }
+toolbar-shortcut-none = কোন শর্টকাট নেই
+toolbar-shortcut-press-key = একটি কী চাপুন
+toolbar-shortcut-esc = বাতিল করতে Esc টিপুন
+toolbar-shortcut-clear = অপসারণ করো
+toolbar-shortcut-overrides = { $name } এর বেশি সময় নেয়: এই শর্টকাটটি ডিফল্ট ব্যবহারের পরিবর্তে টুলবার চালায়।
+toolbar-shortcut-used = { $names } এর শর্টকাট এখনো আছে।
+toolbar-shortcut-replace = প্রতিস্থাপন
+toolbar-shortcut-add = যোগ করো
+toolbar-shortcut-save = সংরক্ষণ করো
+toolbar-shortcut-choose-key = একটি কী বেছে নিন
+toolbar-shortcut-help = Ctrl, Alt এবং Shift সক্রিয় অথবা নিষ্ক্রিয় করুন, তারপর পরিবর্তনের জন্য কী-তে ক্লিক করুন। F1 থেকে F24 ব্যতীত Ctrl বা Alt ব্যবহার করা আবশ্যক।
+toolbar-shortcut-inactive = এই বাটনটি কোন বার- এ নেই: এটি পুনরায় বসানো হলে এর শর্টকাট কাজ করবে ।
+toolbar-shortcut-refused-keyboard = শুধুমাত্র কীবোর্ড কীগুলি শর্টকাট হতে পারে।
+toolbar-shortcut-refused-modifier = শুধুমাত্র একটি পরিবর্তক কী শর্টকাট হতে পারে না।
+toolbar-shortcut-refused-needs-modifier = টেক্সট ফিল্ড- এ টাইপ করতে Ctrl অথবা Alt যোগ করো: শুধুমাত্র একটি কী, অথবা শুধুমাত্র Shift- এর সাথে।
+toolbar-shortcut-refused-altgr = এই কী সহ Ctrl+Alt হল AltGr, যা অনেক কীবোর্ডে অক্ষর টাইপ করে।
+toolbar-shortcut-refused-editing = টেক্সট ক্ষেত্র এই শর্টকাট ব্যবহার করে (সব নির্বাচন করো, অনুলিপি করো , কাটো , পেস্ট করো এবং বাতিল করো) ।
+toolbar-shortcut-refused-navigation = এই কী-এর সাহায্যে টেক্সট ক্ষেত্র সরানো ও মুছে ফেলা হবে।
+toolbar-shortcut-refused-typing = আড্ডা এবং ডায়ালগ এই কী ব্যবহার করে।
+toolbar-shortcut-refused-system = সিস্টেম এই শর্টকাট রাখে।
+toolbar-shortcut-refused-window = এই শর্টকাটটি উইণ্ডো বন্ধ বা পরিবর্তন করে ।
+toolbar-shortcut-refused-zoom = এই শর্টকাটটি ইন্টারফেস- এর মাপ বড় করে দেখায় ।
+toolbar-spacer = ব্লক ফাঁকা স্থান
+toolbar-add-spacer = ব্লক স্পেস যোগ করো
+toolbar-button-settings = বাটন সেটিংস
+toolbar-button-edit = বাটন সম্পাদন করো...
+toolbar-button-edit-title = সম্পাদন বাটন
+toolbar-button-name = বাটন নাম:
+toolbar-button-display = বাটন প্রদর্শন
+toolbar-shortcut-fixed-block-help = একটি স্থায়ী ব্লকের শর্টকাট এটি প্রদর্শন করে এবং আড়াল করে; ইন্টারফেস সম্পাদনা করা হলে, এটি দেখানো থাকবে।
+toolbar-block-settings = ব্লক সেটিংস
+toolbar-parent-block-settings = পিতামাতার ব্লক সেটিংস
+toolbar-block-edit = ব্লক সম্পাদন করো...
+toolbar-block-edit-title = ব্লক সম্পাদন করো
+toolbar-block-alignment = সারণী
+toolbar-block-sizing = বাটন মাপ
+toolbar-block-fixed-options = স্থায়ী মোড অপশন
+toolbar-block-floating-options = ফ্ল্যাট মোড অপশন
+toolbar-block-kind-fixed = স্থির ব্লক
+toolbar-block-kind-drawer = ড্রয়ার
+toolbar-block-kind-floating = ফ্ল্যাট ব্লক
+toolbar-block-remove = ব্লক অপসারণ করো
+toolbar-move-block = পুরো ব্লকটি সরানোর জন্য টেনে আনুন
+toolbar-remove-block = ব্লক অপসারণ করো
+toolbar-drawer-empty = এই ড্রয়ার ফাঁকা।
+toolbar-drawer-drop = বাটন যোগ করতে অথবা তাদের পুনরায় বিন্যাস করতে এখানে টেনে আনুন ।
+toolbar-separator-settings = ব্লক স্পেস সেটিংস
+toolbar-separator-size = মাপ / সর্বনিম্ন (পিক্সেল)
+toolbar-separator-stretch = বিদ্যমান স্থান ভরাট করুন
+toolbar-separator-help = ব্লকগুলির মধ্যে অবশিষ্ট স্থানে নমনীয় ফাঁকা স্থানের অংশবিশেষ দেখানো হবে। মাপ হল তাদের সর্বনিম্ন প্রস্থ, অথবা সাইডবার- এর উচ্চতা।
+toolbar-block-navigation = ন্যাভিগেশন এবং SLURL
+toolbar-block-account = অ্যাকাউন্ট এবং ভারসাম্য
+toolbar-block-system = ঘড়ি, সূচক এবং অডিওName
+toolbar-block-status = উপলব্ধতার অবস্থা
+toolbar-block-balance = ভারসাম্য
+toolbar-block-clock = ঘড়ি
+toolbar-block-ping = অঞ্চলের লেটেন্সী
+toolbar-block-fps = ফ্রেমের হার (FPS)
+toolbar-block-network = নেটওয়ার্ক ট্রাফিক
+toolbar-block-media = মিডিয়া
+toolbar-block-music = পার্সেল মিউজিক
+toolbar-block-volume = ভলিউম
+toolbar-block-notifications = বিজ্ঞপ্তি
+toolbar-block-conversations = কথোপকথন আইকন
+toolbar-block-chat = নিকটবর্তী আড্ডার ইনপুট
+toolbar-category-all = সকল শ্রেণী
+toolbar-section-main = প্রধান
+toolbar-section-advanced = অগ্রসর
+toolbar-search-all = অনুসন্ধানে অগ্রসর কমান্ড অন্তর্ভুক্ত রয়েছে।
+toolbar-category-avatar = অ্যাভাটার এবং চলাচল
+toolbar-category-communication = যোগাযোগ
+toolbar-category-world = বিশ্ব এবং ভ্রমণ
+toolbar-category-creation = সৃষ্টি ও বিষয়বস্তু
+toolbar-category-interface = ইন্টারফেস এবং ক্যামেরা
+toolbar-category-advanced = উন্নত টুল
+toolbar-category-help = সহায়তা
+toolbar-category-custom = স্বনির্বাচিত কমান্ড
+toolbar-bar-settings = টুলবার সেটিংস
+toolbar-menu-group = মেনু: { $name }
+toolbar-location-bar = SLURL ঠিকানা বার
+toolbar-command-build-tool-focus = নির্মাণ করো - ক্যামেরা
+toolbar-command-build-tool-grab = নির্মাণ করো - সরাও
+toolbar-command-build-tool-edit = নির্মাণ - সম্পাদন
+toolbar-command-build-tool-create = নির্মাণ - তৈরি করো
+toolbar-command-build-tool-land = নির্মাণ - ভূমি
+bug-copy-version = প্রদর্শকের সংস্করণ অনুলিপি করো
+toolbar-notecard-save = একটি নোটকার্ডে সংরক্ষণ করুন…
+toolbar-notecard-load = নোটকার্ড থেকে লোড করো...
+toolbar-notecard-name = Aurora ইন্টারফেস
+toolbar-notecard-help = টুলবার, বাটন, ড্রয়ার এবং মেনু- এর বিন্যাস ও আকৃতি । Name
+toolbar-notecard-saved = ইন্টারফেস বিন্যাস আপনার তালিকায় সংরক্ষণ করা হয়েছে।
+toolbar-notecard-invalid = এই নোটকার্ডে কোন সুসংগত ইন্টারফেস বিন্যাস নেই।
+toolbar-notecard-unavailable = এই নোটকার্ডটি আর উপলব্ধ নেই অথবা অনুলিপি করা সম্ভব নয়।
+toolbar-notecard-layout-changed = নোটকার্ড লোড করার সময় ইন্টারফেস পরিবর্তন করা হয়েছে। এর বিন্যাস প্রয়োগ করতে পুনরায় লোড করুন।
+toolbar-notecard-demo-valid = ফটোগ্রাফার ইন্টারফেস
+toolbar-notecard-demo-invalid = অন্যান্য নোটকার্ড
+toolbar-notecard-too-large = এই ইন্টারফেস কনফিগারেশন একটি নোটকার্ডের জন্য খুব বড়।
+toolbar-saved-interfaces = সংরক্ষিত ইন্টারফেস
+toolbar-saved-interfaces-empty = এখনো কোন ইন্টারফেস সংরক্ষণ করা হয়নি ।
+toolbar-notecard-destination = ফোল্ডার: { $path }
+toolbar-notecard-folder-error = ইন্টারফেস ফোল্ডার লোড অথবা তৈরি করা যায়নি । অনুগ্রহ করে আবার চেষ্টা করুন ।
+toolbar-current-preset = নির্বাচিত ইন্টারফেস: { $name }
+toolbar-preset-custom = স্বনির্বাচিত ইন্টারফেস
+toolbar-preset-unsaved = অসংরক্ষিত পরিবর্তন
+toolbar-preset-save-title = ইন্টারফেস সংরক্ষণ করো
+toolbar-preset-save-name = ইন্টারফেস নাম
+toolbar-preset-save-new = নতুন ব্যক্তিগত ইন্টারফেসName
+toolbar-preset-save-replace = এই ব্যক্তিগত ইন্টারফেসটি প্রতিস্থাপন করুন
+toolbar-preset-save-unavailable = এই ইন্টারফেসটি এখানে সংরক্ষণ করা যাবে না । অন্য নাম বা একটি উপলব্ধ, সম্পাদনযোগ্য ব্যক্তিগত ইন্টারফেস বেছে নিন ।
+toolbar-interface-delete-unavailable = এই ব্যক্তিগত ইন্টারফেসটি মুছে ফেলা যাবে না।
+toolbar-interface-delete-confirm = ব্যক্তিগত ইন্টারফেস “{ $name }” ট্র্যাশে সরাবেন?

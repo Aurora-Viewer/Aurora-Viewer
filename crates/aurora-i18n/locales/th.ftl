@@ -16093,3 +16093,739 @@ parcel-environment-empty = ไม่มีสภาพแวดล้อมท�
 parcel-environment-remove-all = ลบทั้งหมด
 parcel-environment-remove-all-title = ลบสิ่งแวดล้อมทั้งหมดที่บันทึกไว้สำหรับแพ็คเกจ?
 parcel-environment-remove-all-text = ระบบจะลบสภาพแวดล้อมที่คุณบันทึกไว้สำหรับแปลงที่ดินบนกริดนี้ สภาพแวดล้อมบนกริดอื่นจะยังอยู่ การดำเนินการนี้ย้อนกลับไม่ได้
+
+### Updated release translations
+
+anim-timeline-channels-hint = แสดงปุ่มหมุนและตำแหน่งของโบรชัวร์นี้บนแถวของมันเอง
+anim-timeline-channel-rotation = หมุน
+anim-timeline-channel-location = สถานที่
+anim-timeline-keying-hint = นี่มันบันทึกที่สำคัญจริงๆ ด้วย Location, Move จะเอาข้อต่อไปเอง ออกจากห่วงโซ่ IK ของมัน
+anim-timeline-keying-auto = อัตโนมัติ: การหมุน และตำแหน่งของกระดูกเชิงกรานและข้อต่อที่เคลื่อนไหว
+anim-timeline-keying-auto-short = อัตโนมัติ
+anim-timeline-keying-loc-rot = หมุน
+anim-timeline-keying-loc-rot-short = สถานที่ + ราก
+anim-timeline-keying-rot-short = ร็อด
+anim-timeline-keying-loc-short = สถานที่
+anim-edit-shortcut-play = เล่นหรือหยุดชั่วคราว
+area-search-scope-heading = ที่ไหน
+area-search-scope-parcel = แพ็คเกจ
+area-search-scope-region = เขต
+area-search-scope-neighbours = เพื่อนบ้าน
+area-search-objects-heading = ตัวอย่าง
+inventory-copy-selection-count =
+    { $count ->
+        [one] คัดลอกรายการ 1
+       *[other] คัดลอก { $count } รายการ
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] เชื่อมโยงรายการ 1
+       *[other] ลิงก์ { $count } รายการ
+    }
+inventory-drop-move-here = ย้ายมาที่นี่
+inventory-drop-copy-here = คัดลอกที่นี่
+inventory-drop-link-here = สร้างลิงก์ที่นี่
+inventory-sort-description = คำอธิบาย
+inventory-sort-reversed = { $order } (ย้อนกลับ)
+inventory-column-creator = ผู้สร้าง
+inventory-column-count = รายการ
+inventory-columns-fit = ปรับขนาดคอลัมน์ทั้งหมดให้เหมาะสม
+inventory-columns-reset-widths = ตั้งค่าความกว้างของคอลัมน์ใหม่
+inventory-back = กลับไป
+inventory-forward = ไปข้างหน้า
+inventory-up = ขึ้นไปอีกระดับ
+keybinds-inventory-root = ไปยังส่วนบนสุด
+keybinds-inventory-search = ค้นหาในรายการ
+keybinds-inventory-filter = โฟลเดอร์
+keybinds-inventory-preview = แสดงแถบตัวอย่าง
+keybinds-inventory-view-large = ภาพใหญ่
+keybinds-inventory-view-medium = รูปภาพขนาดกลาง
+keybinds-inventory-view-small = รูปภาพขนาดเล็ก
+keybinds-inventory-view-compact = มุมมองแบบบีบอัด
+keybinds-inventory-view-details = มุมมองรายละเอียด
+keybinds-inventory-view-tiles = มุมมองแบบแผ่น
+keybinds-inventory-toggle = เลือกหรือยกเลิกการเลือกแถวที่อยู่ในโฟกัส
+keybinds-inventory-menu = เปิดเมนูของสิ่งที่เลือกไว้
+keybinds-inventory-purge = ลบจากถังขยะ
+keybinds-inventory-refused = { $keys } ยังคงเป็นกุญแจส่วนตัวของรายการสินค้า เลือกอีกอัน
+inventory-path-edit = พิมพ์พาธ
+inventory-path-subfolders = โฟลเดอร์ย่อย
+inventory-copy-path = คัดลอกพาธ
+inventory-show-in-folder = แสดงในโฟลเดอร์
+inventory-pin = ติดตั้งไปยังการเข้าถึงอย่างรวดเร็ว
+inventory-unpin = ยกเลิกการติดตั้งจากการเข้าถึงแบบเร็ว
+inventory-quick-access = เข้าถึงได้เร็ว
+inventory-quick-access-drop = โยนโฟลเดอร์มาที่นี่เพื่อปักหมุด
+inventory-invert-selection = เปลี่ยนการเลือก
+inventory-undo = ยกเลิก
+inventory-redo = ทำใหม่
+inventory-undo-step = ยกเลิก { $what }
+inventory-redo-step = ทำใหม่ { $what }
+inventory-history-move =
+    { $count ->
+        [one] ย้ายชิ้นส่วนหนึ่งตัว
+       *[other] ย้ายของ { $count } รายการ
+    }
+inventory-history-delete =
+    { $count ->
+        [one] ลบรายการทั้งหมด
+       *[other] ลบรายการ { $count } รายการ
+    }
+inventory-history-rename = เปลี่ยนชื่อ
+inventory-history-new-folder = โฟลเดอร์ใหม่
+inventory-history-copy =
+    { $count ->
+        [one] สร้างรายการใหม่
+       *[other] คัดลอกของ { $count } รายการ
+    }
+inventory-history-link =
+    { $count ->
+        [one] เชื่อมโยงไปยังรายการ 1
+       *[other] เชื่อมโยงไปยังรายการ { $count }
+    }
+inventory-undo-nothing = ไม่มีอะไรเหลือที่จะทำซ้ำ: รายการเหล่านี้ถูกย้ายหรือหายไปแล้ว
+inventory-redo-nothing = ไม่เหลืออะไรให้ทำอีกแล้ว: รายการเหล่านี้ถูกย้ายหรือหายไป
+inventory-undo-empty = ไม่มีอะไรต้องทำซ้ำ
+inventory-redo-empty = ไม่มีอะไรต้องทำอีกแล้ว
+inventory-undo-dropped = รายการของขั้นตอนสุดท้ายถูกย้ายหรือหายไป: มันถูกทิ้ง ทำซ้ำสำหรับขั้นตอนก่อนหน้านี้
+inventory-redo-dropped = รายการของขั้นตอนถัดไปถูกย้ายหรือหายไป: มันถูกทิ้ง ทำใหม่อีกครั้งสำหรับขั้นตอนต่อไป
+inventory-undo-folder-not-empty = โฟลเดอร์ใหม่นี้มีรายการที่ถูกวางไว้ในนั้นตั้งแต่เมื่อไหร่: ย้ายมันออกไปก่อน หรือลบโฟลด์ด้วยตัวเอง
+inventory-undo-kept-out = สิ่งเหล่านั้นอยู่ในชุดปัจจุบัน หรือในตลาดตอนนี้ เปลี่ยนมันที่นั่น
+inventory-restore-to = เรียกคืนเป็น “{ $folder }”
+inventory-restore-to-origins = เรียกคืนไปยังโฟลเดอร์ของมัน
+inventory-purge-no-undo = ยกเลิกไม่ได้นำพวกเขากลับมา
+inventory-new-tab = แท็บใหม่
+inventory-close-tab = ปิดแท็บ
+inventory-next-tab = แท็บถัดไป
+inventory-previous-tab = แท็บก่อนหน้า
+inventory-open-in-new-tab = เปิดในแท็บใหม่
+inventory-tabs-limit = มากที่สุด { $count } แผ่น
+inventory-copy-to-other-pane = คัดลอกไปยังแผ่นอื่น
+inventory-move-to-other-pane = ย้ายไปยังแผ่นอื่น
+inventory-resize-columns = ลากเพื่อเปลี่ยนขนาดคอลัมน์ คลิกสองครั้ง เพื่อปรับให้คอลุมที่อยู่ทางซ้ายเหมาะกับเนื้อหาของมัน
+inventory-resize-columns-first = ลากเพื่อปรับขนาดคอลัมน์ คลิกสองครั้ง เพื่อเปลี่ยนความกว้างของคอลุมแรกให้เป็นค่าปกติ
+inventory-sort-by-column = คลิกเพื่อเรียงลำดับตามคอลัมน์นี้ และอีกครั้ง เพื่อเปลี่ยนลำدับ ลากเพื่อย้ายคอลุม
+inventory-filter-hint = ลบจดหมายแล้ว
+inventory-filter-close = ปิดตัวกรอง (Esc)
+inventory-filter-nothing = ไม่มีอะไรที่ตรงกับตัวกรอง
+inventory-view-compact = มุมมองแบบบีบอัด
+inventory-view-tiles = มุมมองแบบแผ่น
+inventory-view-per-folder = จดจำมุมมองของโฟลเดอร์แต่ละตัว
+inventory-group-by = จัดกลุ่มโดย
+inventory-group-none = ไม่มี
+inventory-group-folders = โฟลเดอร์
+inventory-group-unknown-creator = ยังไม่รู้จักผู้สร้าง
+inventory-group-today = วันนี้
+inventory-group-yesterday = เมื่อวานนี้
+inventory-group-this-week = ใน7วันที่ผ่านมา
+inventory-group-this-month = ในช่วง 30 วันที่ผ่านมา
+inventory-group-this-year = เมื่อต้นปีนี้
+inventory-group-earlier = นานมาแล้ว
+inventory-group-no-date = ไม่มีวันที่
+cmdline-mod-zoffset-usage = ตั้งค่าระดับความสูงของตัวละครของคุณ (ใช้: /zoffset value หรือ +delta)
+dev-toolbox-n4 = กำลังโหลดรายการ
+dev-toolbox-what-n4 = การอ่านโฟลเดอร์ ล้มเหลว และทิ้งไว้ ตัวโหลดอ่านในระหว่างการทำงานและพยายามอีกครั้ง;ไม่มีชื่อ
+ui-context-inspect-avatar = ตรวจสอบภาพถ่าย
+inspect-window = ตรวจสอบ
+inspect-tab-objects = ตัวอย่าง
+inspect-objects-title =
+    { $count ->
+        [one] { $count } ตัวอย่าง
+       *[other] { $count } ตัวอย่าง
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } รายการ
+       *[other] { $count } รายการ
+    }
+inspect-open-profile = เปิดโพรไฟล์
+inspect-over-limit = เกินขอบเขตของคุณ
+inspect-limit-tip = จำกัดความซับซ้อนของคุณ: { $limit }
+inspect-search = ค้นหารายการหรือผู้สร้าง
+inspect-outlined = { $name } ถูกกำหนดไว้ในโลก
+inspect-area-head = หัว
+inspect-area-body = ส่วนตัว
+inspect-area-arms = แขนและมือ
+inspect-area-legs = ขาและเท้า
+inspect-area-hud = หน้าจอแสดงผล
+inspect-area-other = อื่น ๆ
+inspect-area-world = ตัวอย่าง
+inspect-own-eyes = ตาของระบบName
+inspect-own-body = ตัวระบบ
+inspect-own-description = ส่วนหนึ่งของตัวอวตารเอง ไม่ใช่สิ่งที่ติดตั้ง
+inspect-own-maker = อวตาร · Second Life
+inspect-own-place = อวตาร
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } เมกะไบต์
+inspect-section-complexity = ความซับซ้อน { $value }
+inspect-no-match = ไม่มีอะไรที่ตรงกับ "{ $query }"
+inspect-spoken-worn = { $name }, ใส่แล้ว { $point }ความซับซ้อน { $complexity }, ทำโดย { $creator }
+inspect-spoken-object = { $name }, เจ้าของโดย { $owner }ความซับซ้อน { $complexity }, ทำโดย { $creator }
+inspect-look-at-tip = ย้ายกล้องไปที่มัน
+inspect-profile-tip = เปิดโปรไฟล์ของผู้สร้าง
+inspect-made-by = สร้างโดย
+inspect-owned-by = เจ้าของ
+inspect-worn-on = สวมใส่
+inspect-prims-count =
+    { $count ->
+        [one] จำนวนเฉพาะ { $count }
+       *[other] จำนวนเฉพาะ { $count }
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = หน่วยความจำพื้นผิว
+inspect-tile-vram = หน่วยความจำภาพ
+inspect-tile-prims = ไพรม์
+board-close = ปิด { $title }
+board-grow = ขยายขนาด { $title }
+board-remove = ลบ { $name }
+board-more = และ { $count } อีก
+board-more-short = +{ $count }
+board-some-of = { $shown } ของ { $all }
+board-of-all = ของ { $all }
+stage-turn-left = เลี้ยวซ้าย
+stage-turn-right = เลี้ยวขวา
+stage-higher = มองจากที่สูงขึ้น
+stage-lower = ดูจากด้านล่าง
+stage-nearer = ใกล้ขึ้น
+stage-further = ห่างออกไปอีก
+stage-reset = กลับไปที่จุดเริ่มต้น
+stage-hint = ลากเพื่อหมุน, คลิกขวาเพื่อย้าย
+stage-light = พื้นหลังสีอ่อน
+stage-dark = พื้นหลังที่มืด
+stage-playing = AO
+stage-paused = กำลังยั้งการทำงาน
+stage-pause-tip = หยุดชั่วคราวการเคลื่อนไหว
+stage-play-tip = เปิดแอนิเมชันของพวกเขา
+stage-loading = กำลังเตรียมภาพ3มิติ...
+stage-nothing = ยังไม่มีอะไรให้แสดงใน3มิติ
+stage-refused = มุมมอง3มิติถูกปิดในขณะที่ RLVa จำกัดสิ่งที่คุณอาจจะเห็น
+inspect-your-limit = จำกัดของคุณ: { $limit }
+inspect-without-it = { $value } ถ้าไม่มีมัน
+inspect-you = นาย
+inspect-person = คน
+inspect-difference = ความแตกต่าง
+inspect-drawn-in-full = วาดเต็มที่
+inspect-nobody = ความซับซ้อนของทุกคนยังไม่รู้
+inspect-aside-count = { $count } วางไว้ข้างหลัง
+inspect-is-aside = วางไว้ด้านข้าง
+inspect-set-aside = วางไว้ข้างๆ
+inspect-set-aside-tip = เห็นความซับซ้อนโดยไม่มีสิ่งนี้ แค่ในหน้าต่างนี้: ไม่มีอะไรเปลี่ยนแปลงในโลก
+inspect-put-back = เอากลับไป
+inspect-put-back-tip = นับรายการนี้อีกครั้ง
+inspect-complexity-spoken = ความซับซ้อน { $value }, หมายเลข { $rank } ของ { $count } คนที่นี่
+inspect-stage-outfit = เสื้อผ้า
+inspect-stage-objects = วัตถุ
+inspect-stage-back = กลับไปที่ทุกอย่าง
+inspect-place-made-by = { $place } ผลิตโดย { $name }
+inspect-owned-by-name = เจ้าของโดย { $name }
+inspect-tile-items = รายการ
+inspect-tile-figures = ตัวเลข
+inspect-col-item = ชื่อ
+inspect-point = จุด
+inspect-look-at = ดูนี่สิ
+inspect-selected-count = { $count } ที่เลือกไว้
+inspect-worn-count = { $count } ใส่แล้ว
+inspect-creators-word = ผู้สร้าง
+inspect-areas-word = พื้นที่ส่วนตัว
+inspect-owners-word = เจ้าของ
+inspect-triangles-word = สามเหลี่ยม
+inspect-made-of = { $count } ของ { $all } รายการ
+inspect-kilobytes = { $n } คีบ
+inspect-linkset-order = { $count }, ในทางซ้ายset order
+inspect-reset-columns = ตั้งค่าคอลัมน์ใหม่
+inspect-by-creators =
+    { $count ->
+        [one] { $items } โดยผู้สร้างคนหนึ่ง
+       *[other] { $items } โดย { $count } ผู้สร้าง
+    }
+inspect-owner-button = โพรไฟล์เจ้าของ
+inspect-group-button = โพรไฟล์กลุ่ม
+inspect-creator-button = ผู้สร้างโปรไฟล์
+inspect-land-others = อื่นๆ { $n }
+inspect-land-these = นี่คือ { $n }
+inspect-land-free = ฟรี { $n }
+inspect-land-unknown = ห้องของแพ็คเกจแสดงเมื่อวัตถุทั้งหมดอยู่ในแพคเกจที่คุณอยู่
+ui-login-unencrypted = เข้าสู่ระบบโดยไม่เข้ารหัส
+ui-login-unencrypted-body = ที่อยู่เข้าสู่ระบบของ { $server } ขึ้นต้นด้วย http:// แทน https:// จึงไม่มีการเข้ารหัส ผู้ที่เห็นการรับส่งข้อมูลของคุณ เช่น บน Wi-Fi สาธารณะ เครือข่ายที่ใช้ร่วมกัน หรือระหว่างทางไปยังกริด อาจอ่านรหัสผ่านและใช้บัญชีของคุณได้ ยังไม่ได้ส่งข้อมูลใด คุณสามารถขอที่อยู่ https:// จากกริดได้ ระบบจะจำตัวเลือกนี้สำหรับเซิร์ฟเวอร์นี้
+ui-login-unencrypted-accept = เข้าสู่ระบบโดยไม่เข้ารหัส
+world-appearance-clothing-layers-full = ใช้เสื้อผ้าทั้งหมด 60 ชั้น ถอดเสื้อออกก่อนใส่สิ่งนี้
+ui-options-ray-tracing = การติดตามรังสี
+ui-options-ray-traced-shadows = ภาพเงาแสงอาทิตย์ที่ติดตามรังสี
+ui-options-ray-traced-shadows-help = เงาของดวงอาทิตย์และดวงจันทร์จะถูกติดตามลำแสงแต่ละรังสี แทนที่จะอ่านจากแผนที่เงา: แน่นอนว่าเมื่อสิ่งต่าง ๆ สัมผัสกัน และในระยะทางใด ๆ ก็ตาม ต้องการเงาและกราฟิกการ์ดที่ใช้การติดตามรังภาพ และค่าใช้จ่ายในการใช้งานกรา ฟิกคาร์ดสูงกว่า
+ui-options-ray-traced-lights = เงาของแสงภายใน
+ui-options-ray-traced-lights-help = เงาจากจุดแสงรอบๆ (หลอดไฟ, เทียน) ซึ่งจะไม่ปรากฏเมื่อเปิดใช้โปรเจคเตอร์ เมื่อเปิดใช้งานโปรเจกเตอร์เงา จะปรากฎในตำแหน่งของแผนภูมิเงาของมัน ตัวเลือกการติดตามรังสีที่แพงที่สุด: ดีที่สุดที่จะทิ้งไว้บนกราฟิกรวม
+ui-options-rt-quality = คุณภาพการติดตามรังสี
+ui-options-rt-quality-help = ทุกผลลัพธ์ที่ทำการติดตามจะยังคงเปิดอยู่: ระดับต่ำกว่า จะใช้ตัวอย่างน้อยลง และแสงโดยตรงบนกริดที่หยาบกว่า, สำหรับเฟรมต่อวินาทีมากขึ้นบนกราฟิกการ์ดขนาดเล็ก ระดับสูง คือภาพเต็มของ Deluxe (RT) การเลือกระดับก็จะกำหนดแสงที่สร้างเงาด้วย
+ui-options-rt-sun-softness = ความนุ่มของเงาแสงอาทิตย์
+ui-options-rt-sun-softness-help = ระดับความอ่อนของขอบของเงาของดวงอาทิตย์: 1 คือดวงจันทร์จริง,0คือขอบที่คมชัด, มากขึ้นสำหรับดวงอังคารที่มีหมอก
+ui-options-rt-lamp-softness = ความบางของเงาแสงภายใน
+ui-options-rt-lamp-softness-help = ระดับความบางของขอบของเงาที่ติดตามแสงจากหลอดไฟ: 1 ใช้กับขนาดของหลอดทุกตัว,0ใช้กับขอบที่คมชัด
+ui-options-rt-shadow-lamps = แสงที่วางเงา
+ui-options-rt-shadow-lamps-help = แสงที่อยู่ใกล้ที่สุดมีจำนวนเท่าไหร่ที่จะสร้างเงาตามรอย; อีกแสงจะยังคงสว่างโดยไม่มีเงาสะท้อน หากน้อยกว่านั้น จะทำให้ค่าใช้จ่ายของกราฟิกการ์ดลดลง
+ui-options-ray-traced-indirect = แสงอ้างอิงแบบ Raytracing
+ui-options-ray-traced-indirect-help = แสงสะท้อนกลับจากพื้นผิวรอบๆ ตามรอยไปไกลกว่าที่จอแสดงผล แทนที่จะเป็นแสงอ่อนของ GTAO
+ui-options-gi-probes = เครื่องตรวจจับแสงทั่วโลก
+ui-options-gi-probes-help = เครื่องตรวจจับกระจายไปทั่วสถานที่ ที่เก็บแสงของการสะท้อนหลายครั้ง และท้องฟ้าที่พวกเขาเห็น: ห้องปิดอยู่มืด, แสงไปรอบมุม
+ui-options-ray-traced-reflections = ภาพสะท้อนแสง
+ui-options-ray-traced-reflections-help = การสะท้อนของสิ่งที่จอภาพไม่แสดงให้เห็น แทนการสะท้ายพื้นที่บนจอภาพ ซึ่งต้องเปิดใช้งาน
+ui-options-ray-tracing-unsupported = การ์ดกราฟิกหรือไดรเวอร์ของมันไม่มีการติดตามรังสี
+ui-options-ray-tracing-vr = ไม่สามารถใช้ได้ในวาระงานที่เริ่มสำหรับ VR
+ui-options-tab-ray-tracing = การติดตามรังสี
+ui-options-deluxe-rt-warning-title = เปิดใช้งาน Deluxe (RT) หรือไม่?
+ui-options-deluxe-rt-warning-text = ค่า Deluxe (RT) คือระดับสูง โดยมีเงาและแสงที่ไม่ตรงไปตรงมาถูกติดตามโดยกราฟิกการ์ด ซึ่งจะต้องใช้การ์ดเคลื่อนไหวของรังสีบนฮาร์ดแวร์ (NVIDIA RTX, AMD Radeon RX 6000 หรือรุ่นต่อไป, Intel Arc) และไดรเวอร์ที่ทันสมัย และราคาแพงกว่าค่า High มาก: ในกรณีของการ์เดอร์ระดับกลาง อัตราเฟรมอาจลดลงในสถานที่ที่มีคนเยอะ การติดตามรังภาพยังคงอยู่ในขั้นตอนการทดสอบ: หากภาพดูผิดปกติ หรือโปรแกรมมองภาพช้าลง ให้กลับไปใช้ค่า High แถบติดตามแสงรังรูป จะเก็บค่าตั้งค่าไว้
+ui-options-deluxe-rt-warning-turn-on = เปิดใช้งาน
+ui-options-ray-tracing-needs-shadows = ต้องการเงา
+ui-options-ray-tracing-needs-ssr = ต้องการภาพสะท้อนจากจอภาพ
+ui-options-preset-deluxe = ดีลักซ์ (RT)
+ui-options-normal-precision = ความแม่นยำของการสะท้อน
+ui-options-normal-precision-help = ความละเอียดของการเก็บทิศทางของพื้นผิวแต่ละส่วนไว้สำหรับภาพสะท้อนแสง ค่ามาตรฐาน สามารถแสดงกราฟในรูปแบบก้าวในภาพสะเทือนแสงของพื้นหลังที่โค้งและเรียบง่าย เช่น สีรถยนต์ ค่าสูง จะลบมันออกไป และใช้หน่วยความจำวิดีโอมากขึ้น การอัตโนมัติ จะใช้ค่าสูงกับภาพสะท้านแสงแบบรอยส่อง ซึ่งเป็นจุดที่กรา ฟจะปรากฏมากที่สุด และค่ามาตราฐาน ในกรณีอื่น ๆ
+ui-options-normal-precision-automatic = ปรับแต่งอัตโนมัติ
+ui-options-normal-precision-standard = มาตรฐาน
+ui-options-normal-precision-high = สูง
+ui-options-private-point-at-help = ซ่อนวัตถุที่คุณกำลังแก้ไขอยู่ เก็บแขนปรับแต่งไว้ด้านล่าง และซ่อนลำแสงการปรับแต่งกรอบ
+ui-options-private-edit-beam = ซ่อนแถบเครื่องมือแก้ไข
+ui-options-private-edit-beam-help = ซ่อนลำแสงโดยสมบูรณ์ ขณะที่คุณกำลังแก้ไขหรือจับวัตถุ ทั้งบนจอภาพของคุณ และสำหรับผู้ดูอื่น ๆ ไม่มีการเปลี่ยนแปลงคำแนะนำของเป้าหมายการเลือกและการให้/ ทิ้งลำสว่าง
+common-window-outside = ย้ายออกจากหน้าต่างของตัวดู
+common-window-inside = นำกลับไปยังหน้าต่างผู้ดู
+common-window-rename-name = คลิกสองครั้งเพื่อเปลี่ยนชื่อ
+common-carry-hint = คลิกเพื่อปล่อยมันที่นี่, กดปุ่ม Esc เพื่อปล่อย
+common-window-paused-photo = หยุดชั่วคราวเมื่อเปิดโหมดภาพถ่าย
+common-window-paused-director = หยุดชั่วคราว ขณะที่ผู้กำกับเล่น
+common-window-paused-interface = หยุดชั่วคราวเมื่อระบบอินเทอร์เฟซปิด
+ui-options-warn-live-preview = แจ้งเตือนเมื่อไม่สามารถแสดงตัวอย่างพื้นผิวหรือวัสดุได้
+ui-options-warn-live-preview-help = ในตัวเลือกของหน้าต่างการสร้าง การคลิกที่รายการไม่คัดลอก จะไม่ทำอะไรเลย จนกว่าคุณจะกดปุ่ม OK: Say so
+ui-texture-picker-live-preview-texture = เราไม่สามารถแสดงตัวอย่างของเนื้อหานี้ได้ เพราะมันไม่มีการคัดลอก
+ui-texture-picker-live-preview-material = เราไม่สามารถแสดงตัวอย่างของวัสดุนี้ได้ เพราะว่ามันไม่มีคัดลอก
+fetch-invalid-url = ที่อยู่ URL ไม่ถูกต้อง
+ui-chat-close-all-ims = ปิดทั้งหมด IM การสนทนา
+ui-chat-close-all-ims-question = ปิดการสนทนาทั้งหมด IM และจบการโทรที่กำลังทำงานอยู่?
+ui-chat-confirm-close-all-ims = ยืนยันก่อนปิดทั้งหมด IM การสนทนา
+ui-chat-confirm-close-all-ims-help = ถามก่อนปิดการสนทนาทั้งหมด IM ครั้ง เมื่อมีผู้โทรเข้ามา
+ui-options-aurora-controls-compact-help = หน้าต่างการควบคุมจะถูกเปิดขึ้นมาในรูปแบบที่คมชัดบนกล้อง เช่น จอยสติ๊ก, การปรับขนาดและหมุน ปุ่มแถบหัวเรื่องของมันสามารถเปลี่ยนระหว่างคม ชัด และเต็ม และตั้งค่าได้ด้วย ในกรณีของหน้าต่างคลาสสิค กล้องจะเปิดขึ้นในหน้าต่างกล้องขนาดเล็กของโปรแกรมดูภาพแบบเก่าแทน
+rlva-restart-hint = RLVa จะเริ่มเมื่อคุณล็อกอิน เมื่อมันทำงานแล้ว การเปิดหรือปิดมันจะส่งผลต่อการเริ่มโปรแกรมมองดูครั้งถัดไป: วัตถุที่ถูกจำกัดจะยังคงอยู่จนกว่ามันจะหมดอายุ
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa จะถูกเปิดใช้งานหลังจากที่คุณเริ่มใหม่
+rlva-toggle-disabled-restart = RLVa จะถูกปิดการใช้งานหลังจากที่คุณเริ่มใหม่
+livemesh-import-connect = เชื่อมต่อกับ Blender โดยใช้โปรแกรมเสริมเวอร์ชั่น 0.11.0 หรือรุ่นใหม่กว่า หรือ Maya โดยใช้ โปรแกรมเสริมรุ่น 02.0 และรุ่นใหม่ๆ เพื่อเตรียมการนำเข้า LODs
+livemesh-import-preparing = กำลังเตรียมวัตถุและระดับความสูงของมันไว้ใน Blender หรือ Maya...
+livemesh-import-ready = รับข้อมูล LOD พร้อมในเครื่องส่งออก
+livemesh-import-failed = การเตรียมการนำเข้าล้มเหลว: { $error }
+livemesh-import-timeout = Blender หรือ Maya ยังไม่เสร็จการเตรียมการนำเข้า ตรวจสอบการเชื่อมต่อ (ใน Blender ให้ใช้โหมดวัตถุ) และลองใหม่อีกครั้ง
+livemesh-shape-apply-tooltip = ตรวจสอบสิทธิ์ในการแก้ไข แล้วปรับแต่งโครงสร้างที่เลือกไว้ใน Blender หรือ Maya และเมชที่จำกัดของมัน (ผ่าน MayaStar ในกรณีของ MayaStar rig) เลือกโครงสถาปัตยกรรมที่เข้ากันได้กับ Second Life
+livemesh-shape-update-apply = ปรับปรุงส่วนเสริมของ Blender ให้เป็นเวอร์ชัน 0.10.0 หรือรุ่นต่อไป, หรือส่วนเติมเต็มของ Maya ให้เป็นรุ่น 04.0 และรุ่นต่อมา แล้วเชื่อมต่อมันอีกครั้ง
+livemesh-shape-applied = รูปร่างที่ใช้กับโครงสร้างที่เลือกไว้
+livemesh-shape-tooltip = ตรวจสอบสิทธิ์ในการแก้ไขของรูปร่างที่ใช้แล้ว และสร้างตัวอ้างอิงใหม่ใน Blender หรือ Maya
+livemesh-shape-connect = เชื่อมต่อส่วนเสริม Aurora ใน Blender หรือ Maya ก่อน
+livemesh-shape-update-plugin = ปรับปรุงส่วนเสริมของ Blender ให้เป็นเวอร์ชั่น 0.9.0 หรือรุ่นต่อไป, หรือส่วนเติมเต็มของ Maya ให้เป็น 03.0 และรุ่นต่อมา แล้วเชื่อมต่อมันอีกครั้ง
+livemesh-shape-timeout = บลัดเดอร์หรือมายาไม่ยืนยันการนำเข้า ลองใหม่อีกครั้ง (ในบลัดด์ เปลี่ยนเป็นโหมดวัตถุ)
+livemesh-shape-success = รูปร่างถูกนำเข้าเป็นส่วนอ้างอิงที่ถูกปรับแต่งใหม่
+blender-live-maya-version = Aurora LiveMesh สำหรับ Maya { $version }
+blender-live-maya-instructions = บันทึกไฟล์ ZIP และดึงมันออกมา จากนั้นลาก install.mel เข้าไปในหน้าจอ Maya เปิด LiveMesh จากชั้นวางของ Aurora เพิ่มเมชของคุณ แล้วคลิก Connect
+blender-live-save-maya = บันทึกส่วนเสริม Maya...
+blender-live-maya-saved = ส่วนเสริมถูกบันทึกไว้แล้ว ดึงแฟ้ม ZIP และลาก install. mel เข้าไปในหน้าจอ Maya
+livemesh-plugin-connected = ปลั๊กอินเชื่อมต่อแล้ว
+livemesh-token-refused = โปรแกรมพยายามเชื่อมต่อโดยไม่มีกุญแจของตัวอย่างนี้ มีเพียงส่วนเสริม Aurora ใน Blender หรือ Maya ที่สามารถเชื่อมโยงได้
+livemesh-waiting-plugin = กำลังรอ Blender หรือ Maya...
+blender-live-objects-help = ตาข่ายที่ Blender หรือ Maya ส่งไปให้ เลือกหนึ่งเพื่อวางไว้ หรือนำเข้าจากเมนูของมัน
+blender-live-size-note = ขนาดจะคูณกับสิ่งที่ปลั๊กอินส่งไป ดังนั้นการแก้ไขในภายหลังใน Blender หรือ Maya จะเก็บมันไว้
+blender-live-avatar-help = สำหรับเมชที่ถูกปรับแต่ง: ส่งรูปร่างของคุณไปยัง Blender หรือ Maya เพื่อสร้างโมเดลบนมัน
+livemesh-shape-section = รูปร่างของคุณใน Blender หรือ Maya
+blender-live-import-help = เก็บภาพถ่ายชั่วคราวของวัตถุไว้สำหรับการนำเข้าปกติ: ตรวจสอบ, ราคา, แล้วยืนยัน การแก้ไขในภายหลังใน Blender หรือ Maya จะไม่เปลี่ยนรูปภาพนี้
+blender-live-changed-tip = เวลาตั้งแต่ Blender หรือ Maya เปลี่ยนวัตถุนี้ครั้งสุดท้าย
+fit-lab-section = ฟิตแลป
+fit-lab-help = รูปหล่อที่ใส่ชุดที่คุณสวมใส่ ทุกคนมีร่างกายที่แตกต่างกัน ยืนอยู่ข้างหน้าคุณ เพื่อแสดงให้เห็นว่า ชุดนั้นเหมาะกับรูปร่างของคุณอย่างไร มีเพียงคุณเท่านั้นที่เห็นมัน ไม่มีอะไรถูกส่งหรือบันทึก
+fit-lab-body-me = ฉัน
+fit-lab-body-slim = ฉลาด
+fit-lab-body-curvy = โค้ง
+fit-lab-body-full = รูปเต็ม
+fit-lab-body-athletic = กีฬา
+fit-lab-body-tall = สูง
+fit-lab-body-petite = ขนาดเล็ก
+fit-lab-motion = การเคลื่อนไหว
+fit-lab-motion-stand = รอ
+fit-lab-motion-walk = เดิน
+fit-lab-motion-sit = นั่ง
+fit-lab-motion-range = ระยะการเคลื่อนไหว
+fit-lab-pose = โพสต์
+fit-lab-pose-all = ทุกคน ตามลำดับ
+fit-lab-pose-arms-up = ยกแขนขึ้น
+fit-lab-pose-reach = ก้าวหน้า
+fit-lab-pose-hug = แขนคู่
+fit-lab-pose-squat = คุกเข่า
+fit-lab-pose-kneel = คุกเข่า
+fit-lab-pose-knee-up = ยกเข่าขึ้น
+fit-lab-pose-twist = หมุน
+fit-lab-pose-bend = หมอบไปข้างหน้า
+fit-lab-motion-like-me = เหมือนกับฉัน
+fit-lab-show = แสดงนางแบบ
+fit-lab-place = พาพวกเขามาที่นี่
+fit-lab-remove = ถอดชุดว่ายน้ำออก
+fit-lab-choose = เลือกศพอย่างน้อยหนึ่งตัว
+fit-lab-clip = แสดงให้เห็นว่าศพมาจากไหน
+fit-lab-clip-note = สีแดง: ร่างกายจะออกมาจากเสื้อผ้า สีเหลือง: ร่างกายและเสื้อคลุมพบกัน ในอวตารของคุณ และนางแบบ ตามที่เห็นจากกล้อง ทุกอย่างที่คุณสวมใส่จะนับเป็นร่างกายนั่นเอง ถอดแจ็คเก็ตหรือผมที่ใส่อยู่บนเสื้อ
+blender-live-levels-pending = Blender หรือ Maya จะเตรียมระดับรายละเอียดเมื่อคุณคลิกที่ นำเข้า
+blender-live-levels-note = เตรียมไว้ใน Blender หรือ Maya จากการตั้งค่า LiveMesh ของแต่ละวัตถุ
+blender-live-quick-look-changed = เปลี่ยนใน Blender หรือ Maya เมื่อ { $ago } ปีที่แล้ว
+blender-live-warning-textures = ข้ามเนื้อหา, แสดงสีธรรมดา
+blender-live-warning-not-sent = ไม่ได้อยู่ในตัวอย่าง
+blender-live-undo-derez = Derezzed { $name } · ยังอยู่ในรายการของโปรแกรมเสริม
+blender-live-undo-detach = แยกออก { $name } ยังอยู่ในรายการของโปรแกรมเสริม
+inventory-open-current = เปิด
+inventory-folder-back = กลับไป
+inventory-folder-forward = ไปข้างหน้า
+inventory-folder-up = ขึ้นไปอีกระดับ
+area-search-metres = { $n } m
+area-search-band-reach = ในระยะห่าง
+area-search-band-close = ใกล้ๆ
+area-search-band-around = รอบๆตัวคุณ
+area-search-band-further = ต่อไป
+area-search-band-far = พ่อ
+area-search-band = พื้นที่
+area-search-within = ภายใน { $distance }
+area-search-within-across = ภายใน { $distance } ตรงข้าม
+area-search-between = { $from }–{ $to }
+area-search-any-distance = แสดงทุกระยะทาง
+area-search-from = ระยะห่างจาก
+area-search-to = ระยะทาง
+area-search-bar-tip =
+    { $count ->
+        [one] วัตถุหนึ่ง { $from } ไปที่ { $to }
+       *[other] { $count } สิ่งของ { $from } ไปที่ { $to }
+    }
+area-search-of-objects = ของ { $total } วัตถุ
+area-search-li = { $value } ลิ
+area-search-li-count = { $value } ชนพื้นดิน
+area-search-owner-count =
+    { $count ->
+        [one] เจ้าของเดียว
+       *[other] { $count } เจ้าของ
+    }
+area-search-object-count =
+    { $count ->
+        [one] ตัวอย่าง
+       *[other] { $count } ตัวอย่าง
+    }
+area-search-objects-word = วัตถุ
+area-search-in-reach = นี่
+area-search-tab-objects = ตัวอย่าง
+area-search-tab-owners = เจ้าของ
+area-search-hint-wide = วัตถุ, เจ้าของ, ผู้สร้าง หรือ UUIDs
+area-search-kind-heading = ประเภทของวัตถุ
+area-search-kind-tip = คลิก: นี่เท่านั้น ซ่อนอีกครั้ง
+area-search-kind-any = ทุกอย่าง
+area-search-kind-only = มีแต่พวกนี้
+area-search-kind-hidden = ซ่อน
+area-search-kind-attached = ที่แนบมาด้วย
+area-search-kind-probes = ตัวทดสอบ
+area-search-click-all = ทั้งหมด
+area-search-click-any-short = อะไรก็ได้
+area-search-permissions = สิทธิ์
+area-search-price-heading = ราคาขาย สำหรับวัตถุที่ขาย
+area-search-price-to = ไปที่
+area-search-price-tip = เลือก "สำหรับขาย" ก่อน
+area-search-linked = จำนวนหลักที่เชื่อมโยงกัน
+area-search-one-field = ค้นหาในช่องหนึ่ง
+area-search-regex-switch = ข้อความที่ถูกต้อง
+area-search-regex-invalid = ไม่ใช่ regular expression ที่ถูกต้อง
+area-search-reset-filters-tip = เรียกคืนตัวกรองทั้งหมด แต่ข้อความค้นหาจะยังคงอยู่
+area-search-save-defaults-tip = เปิดใช้ตัวกรองเหล่านี้จากนี้ไป
+area-search-reset-search = ตั้งค่าข้อความค้นหาใหม่
+area-search-reset-filters = ตั้งค่าตัวกรองใหม่
+area-search-reset-ranges = ตั้งค่าระยะทางและราคาใหม่
+area-search-reset-all = รีเซ็ตทุกอย่าง
+area-search-more = อีก
+area-search-several = เลือกหลายรายการ
+area-search-several-tip = การคลิกจะเพิ่มไปยังสิ่งที่เลือกไว้ (เช่น Ctrl หรือ Shift +คลิก, Ctrl+A)
+area-search-actions = การกระทำ
+area-search-nothing = ยังไม่ได้รับวัตถุ
+area-search-nothing-for-sale = ไม่มีอะไรให้ขายที่นี่
+area-search-not-for-sale = ไม่ใช่ขาย
+area-search-from-price = จาก { $price }
+area-search-nearest = ใกล้ที่สุดก่อน
+area-search-heaviest = ตัวหนักที่สุดก่อน
+area-search-order-tip = เปลี่ยนลำดับ: ใกล้ที่สุดหรือหนักที่สุดก่อน
+area-search-rank = #{ $rank } ของ { $all }
+area-search-rank-here = # { $rank } ที่นี่
+area-search-card-more = แสดงรูปทุกตัว
+area-search-card-less = แสดงน้อยกว่า
+area-search-open-group = เปิดกลุ่ม
+area-search-spoken = { $name }, { $distance }, ชนพื้นดิน { $li }, เจ้าของโดย { $owner }
+area-search-owner-spoken = { $name }, { $count } วัตถุ, ชนพื้นดิน { $li }
+area-search-stage-line = { $distance } ห่างไกล · { $li } ความเสียหายที่เกิดจากดิน { $owner }
+area-search-tile-3d = มุมมอง3มิติ
+area-search-on = { $count } บน
+area-search-on-word = เปิด
+area-search-more-on =
+    { $count ->
+        [one] เพิ่มตัวกรองอีกตัว
+       *[other] { $count } ตัวกรองเพิ่มเติมบน
+    }
+ui-options-legacy-lists = นำเข้ารายการจากเครื่องมือดูแบบเก่า
+ui-options-legacy-lists-help = เพิ่มประวัติการเชื่อมต่อทางไกลของบัญชีผู้ใช้นี้, รายชื่อสีดำของทรัพย์สิน, รายการตัวกรองสื่อและชุดที่อยู่ติดต่อ
+ui-options-legacy-lists-button = นำเข้าจากตัวดูแบบเก่า...
+ui-options-legacy-lists-no-account = ล็อกอิน เพื่อนำเข้ารายการของบัญชีผู้ใช้นี้
+ui-options-legacy-lists-title = นำเข้าจากเครื่องมือดูแบบเก่า
+ui-options-legacy-lists-text = ทุกอย่างจะถูกเพิ่มเข้าไปในรายการของบัญชีผู้ใช้นี้ และไม่มีอะไรจะถูกลบออกจากที่นี่ ชื่อของทรัพย์สินในรายการปิด จะถูกลบจากโลกทันที การนำเข้าอีกครั้ง จะนำสิ่งที่คุณได้ลบออกมาจากที่นี้กลับมา
+ui-options-legacy-lists-searching = กำลังค้นหาโฟลเดอร์ของโปรแกรมแสดงผลรุ่นเก่า...
+ui-options-legacy-lists-none = ไม่พบโฟลเดอร์ของโปรแกรมแสดงผลแบบเก่าที่มีรายการสำหรับบัญชีผู้ใช้นี้
+ui-options-legacy-lists-teleports = ประวัติการส่งข้อมูลทางไกล ({ $count })
+ui-options-legacy-lists-derender = รายการบล็อกทรัพย์สิน ({ $count })
+ui-options-legacy-lists-media = รายการตัวกรองสื่อ ({ $count })
+ui-options-legacy-lists-contact-set-entries = รายการชุดผู้ติดต่อ ({ $count }) Name
+ui-options-legacy-lists-confirm = นำเข้า
+ui-options-legacy-lists-added = เพิ่มหรือปรับปรุงรายการ { $teleports }วัตถุที่ซ่อนอยู่: { $derender }ตัวกรองสื่อ: { $media }กลุ่มผู้ติดต่อ: { $sets }.
+ui-options-legacy-lists-nothing = ไม่มีอะไรใหม่: บัญชีนี้มีรายการเหล่านี้อยู่แล้ว
+ui-options-legacy-lists-failed = ไม่สามารถอ่าน: { $files } ได้
+ui-options-legacy-lists-unsaved = ไม่สามารถบันทึกได้ ทิ้งไว้ที่เดิม: { $files }
+ui-options-legacy-lists-other-grid = บนตารางนี้ โฟลเดอร์ที่มีชื่อเดียวกันอาจเป็นส่วนหนึ่งของอีกตารางสักอันได้ โปรดตรวจสอบให้แน่ใจว่ามันเป็นตารางแน่นอน
+ui-options-build-show-beams-hint = แสดงลำแสงการเลือกของคุณ และของอวตารอื่น ๆ ขณะที่คุณกำลังแก้ไข, ดึงหรือให้ ตัวเลือกนี้ใช้ได้เฉพาะกับการแสดงผลเท่านั้น ใช้ ความเป็นส่วนตัว > ซ่อนลำแหน่งการแก้ไฟเพื่อหยุดการแกะรอยต่อในท้องถิ่นและบนเครือข่าย
+teleport-failed-title = การเชื่อมต่อล้มเหลว
+teleport-error-invalid-tport = จำนวนการพยายามส่งข้อมูลทางไกลมีจำกัดอยู่ที่6ครั้งต่อนาที หากคุณมีปัญหา โปรดรออีก 1 นาที และลองใช้วิธีนี้อีกครั้ง หากยังมีปัญหาอยู่ ให้ล็อกอินและออกจากระบบใหม่
+teleport-error-invalid-region-handoff = เกิดปัญหาในการประมวลผลการข้ามภูมิภาคของคุณ คุณอาจจะต้องล็อกอินอีกครั้งก่อนที่จะสามารถข้ามพื้นที่ได้ หากคุณยังคงได้รับข้อความนี้ โปรดติดต่อฝ่ายสนับสนุน
+teleport-error-blocked-tport = ขอโทษครับ การส่งข้อมูลทางไกลถูกปิดกั้นอยู่ โปรดลองใหม่อีกครั้งในไม่ช้า หากคุณยังสามารถส่งข้อมูลได้ โปรดเชิญออกจากระบบ แล้วล็อกอินอีกครั้ง เพื่อแก้ไขปัญหา
+teleport-error-nolandmark-tport = ขอโทษครับ แต่ระบบไม่สามารถหาจุดหมายปลายทางได้
+teleport-error-timeout-tport = ขอโทษครับ แต่ระบบไม่สามารถเชื่อมต่อเทเลพอร์ตได้ โปรดลองใหม่อีกทีนะครับ
+teleport-error-no-help-island = คุณไม่สามารถโทรกลับไปที่เกาะเวลค็อปได้
+teleport-error-noaccess-tport = ขอโทษครับ คุณไม่สามารถเข้าถึงจุดหมายของเทเลพอร์ตได้
+teleport-error-missing-attach-tport = ยังไม่ได้รับสิ่งที่แนบมาด้วยของคุณ โปรดรออีกสักครู่ หรือออกจากระบบและเข้าใช้งานใหม่ก่อนที่จะพยายามส่งข้อมูล
+teleport-error-too-many-uploads-tport = คิวของทรัพยากรในบริเวณนี้ กำลังติดขัดอยู่ ดังนั้น การเรียกใช้เทเลพอร์ตของคุณ จะไม่สามารถทำได้สำเร็จ ในเวลาที่กำหนด โปรดลองใหม่อีกครั้งในอีกไม่กี่นาที หรือไปยังพื้นที่ที่มีคนน้อยกว่านี้
+teleport-error-expired-tport = ขออภัย แต่ระบบไม่สามารถทำการเชื่อมต่อไปยังอุปกรณ์ที่ต้องการได้ตามเวลาที่กำหนด โปรดลองใหม่อีกครั้งในอีกไม่กี่นาที
+teleport-error-expired-region-handoff = ขอโทษครับ แต่ระบบไม่สามารถทำการข้ามภูมิภาคของคุณให้เสร็จสมบูรณ์ในเวลาที่กำหนดได้ โปรดลองใหม่อีกครั้งในอีกไม่กี่นาที
+teleport-error-preexisting-tport = ขออภัย แต่ระบบไม่สามารถเริ่มการเชื่อมต่อของคุณได้ โปรดลองใหม่อีกครั้งในอีกไม่กี่นาที
+teleport-error-no-host = ไม่สามารถค้นหาจุดหมายของการส่งข้อมูลทางไกลได้ จุดหมายอาจจะไม่สามารถใช้ได้ชั่วคราว หรือไม่มีอยู่อีกต่อไป โปรดลองใหม่อีกครั้งในอีกไม่กี่นาที
+teleport-error-no-inventory-host = ระบบจัดเก็บสินค้าไม่สามารถใช้งานได้ในตอนนี้
+teleport-error-must-get-age-region = คุณต้องอายุ 18 ปีขึ้นไป เพื่อเข้าสู่พื้นที่นี้
+teleport-error-special-usage-blocked = ไม่สามารถเข้าไปในภูมิภาคได้{ $region }'เป็นพื้นที่เกมระดับทักษะ และคุณจะต้องปฏิบัติตามเงื่อนไขบางประการเพื่อเข้าร่วม สำหรับรายละเอียดเพิ่มเติม โปรดดูคำถามที่พบบ่อยเกี่ยวกับเกมระดับตำรา: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = ไม่สามารถเข้าไปยังภูมิภาคได้ นี่เป็นภูมิตเกมระดับทักษะ และคุณจะต้องปฏิบัติตามเงื่อนไขบางประการเพื่อที่จะเข้าไปเล่น สำหรับรายละเอียดเพิ่มเติม โปรดดูคำถามที่พบบ่อยเกี่ยวกับเกมระดับตำรา: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = เครือข่ายบ้านของคุณปฏิเสธการส่งกลับของคุณ โดยปกติแล้ว หมายความว่า การตั้งค่าที่อยู่ Hypergrid ของมัน ไม่ตรงกับที่อยู่ที่ใช้ในระบบอื่น ๆ โปรดติดต่อผู้ดูแลของเครือญาติของคุณ หากล็อกอินอีกครั้ง จะนำคุณกลับไปยังบ้าน
+teleport-hint-hypergrid-unreachable = ไม่สามารถเชื่อมต่อไปยังตารางอื่นได้ อาจเป็นเพราะว่ามันไม่ได้ใช้งานอยู่ หรืออาจจะเป็นการเชื่อมโยงไปยังที่อยู่เก่า
+teleport-hint-hypergrid-visitors-refused = กริดนั้นให้ผู้อยู่อาศัยในบางกริดเท่านั้น
+teleport-hint-hypergrid-destination-gone = พื้นที่เป้าหมายไม่ได้มีอยู่อีกต่อไปหรือถูกย้ายไปแล้ว จุดหมายและลิงก์ไปยังกริดอื่น ๆ อาจจะหมดอายุ
+toolbar-edit = ปรับแต่งปุ่มและเมนู...
+toolbar-title = ปุ่มและเมนู
+toolbar-interface-locked = ส่วนเชื่อมต่อถูกล็อค
+toolbar-help = โยนปุ่มหรือรายการเมนูไปยังแถบด้านบน, ด้านล่าง หรือด้านข้าง จะทำการปล่อยปุ่มกลับมาที่นี่เพื่อลบมันออกไป คลิกขวาที่ปุ่มใด ๆ เพื่อเปลี่ยนรูปลักษณ์ของมัน
+toolbar-help-classic = โยนปุ่มหรือรายการเมนูไปยังแถบด้านบน, ด้านล่าง หรือด้านข้าง จะทำการปล่อยปุ่มกลับมาที่นี่เพื่อลบมันออกไป คลิกขวาที่ปุ่มใด ๆ เพื่อเปลี่ยนรูปลักษณ์ของมัน
+toolbar-help-modes = เลือกไอคอน, ป้ายกำกับ, ทั้งสองอย่าง หรือแถบปริยายสำหรับแต่ละปุ่ม โยนรายการเข้าไปในเมนู Aurora เพื่อจัดเรียงมันใหม่
+import-menu-textures = เนื้อหา
+import-menu-animations = การเคลื่อนไหว
+import-menu-sounds = เสียง
+import-menu-materials = วัสดุ
+import-menu-meshes = เส้นใย
+import-menu-options = ตัวเลือกการนำเข้า
+import-upload-payment-title = โหลด
+import-upload-payment = คุณจ่ายเงิน L${ $cost } เพื่ออัพโหลด
+import-quick-textures =
+    { $count ->
+        [one] นำเข้า · เนื้อหา: 1 · L${ $cost }?
+       *[other] นำเข้า · เนื้อหา: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] นำเข้า · วัสดุ: 1 · L${ $cost }?
+       *[other] นำเข้า · วัสดุ: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] นำเข้า · เสียง: 1 · L${ $cost }?
+       *[other] นำเข้า · เสียง: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] เลือกขนาดนำเข้า เท็กซ์เจอร์ที่รองรับสามารถนำเข้าได้ที่ขนาด 2048 × 2048
+       *[other] ({ $count }) เลือกขนาดนำเข้า เท็กซ์เจอร์ที่รองรับสามารถนำเข้าได้ที่ขนาด 2048 × 2048
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] เลือกขนาดนำเข้า รูปภาพของวัสดุที่รองรับสามารถนำเข้าได้ที่ขนาด 2048 × 2048
+       *[other] ({ $count }) เลือกขนาดนำเข้า รูปภาพของวัสดุที่รองรับสามารถนำเข้าได้ที่ขนาด 2048 × 2048
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = อัปโหลดภาพฟรีขนาด 2048 × 2048 โดยไม่ต้องถาม
+import-quick-free-full-size-help = "นำเข้าเนื้อหา" และ "นำเข้ามาวัสดุ" จากนั้นถาม 1024 หรือ 2048 เมื่ออัปโหลดค่าใช้จ่าย L$
+ui-bars-customize-bars = ปรับแต่งส่วนติดต่อผู้ใช้
+build-tool-in-use = กำลังใช้อยู่
+build-create-options-toggle = แสดง/ ซ่อนตัวเลือก
+build-create-keep-creating = สร้างต่อไป
+build-create-center-on-prim = ตั้งค่า
+build-create-copy-prim-rotation = คัดลอกการหมุนตัวแรก
+build-create-align-to-surface = ปรับแต่งรูปแบบ
+build-capture-shape-button = คัดลอกรูปร่างของตัวพิมพ์หลัก: คลิกที่นี่ แล้วเลือกตัวพิมในโลก
+build-capture-shape-armed = คลิกบนตัวอักษรเพื่อคัดลอกรูปทรงของมัน (กดปุ่ม Escape เพื่อยกเลิก)
+build-capture-shape-full = รูปร่าง 20 รูปจะถูกเก็บไว้ ลบรูปหนึ่งเพื่อคัดลอกอีกรูป
+build-capture-shape-remove = ลบรูปร่างนี้ออก
+build-capture-shape-tooltip = คัดลอกรูปร่าง ({ $kind })
+build-capture-shape-not-a-prim = สามารถคัดลอกได้เฉพาะรูปร่างของพริ้มเท่านั้น
+build-capture-shape-mesh-or-sculpt = ไม่สามารถคัดลอกรูปร่างของตาข่ายหรือรูปปั้นหลักได้
+build-capture-shape-no-modify = คุณต้องได้รับอนุญาตก่อนที่จะปรับแต่งรูปแบบนี้เพื่อคัดลอกรูปร่างของมัน
+import-other-options = ตัวเลือกอื่น ๆ
+toolbar-button-icons = แค่ไอคอน
+toolbar-button-text = แค่แท็กเท่านั้น
+toolbar-button-icons-text = ไอคอนและป้ายกำกับ
+toolbar-icon-default = ปรับปรุงไอคอนปริยาย
+toolbar-icon-choose = เลือกไอคอน
+toolbar-icon-change = เปลี่ยนไอคอน
+toolbar-presets = ตั้งค่าก่อน
+toolbar-interfaces = ส่วนติดต่อ
+toolbar-interfaces-shown = แสดงในบล็อกส่วนเชื่อมต่อ
+toolbar-interfaces-hidden = ซ่อนจากบล็อกอินเทอร์เฟส
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora โรงเรียนเก่า
+toolbar-preset-photographer = Aurora ช่างภาพ
+toolbar-preset-legacy = รุ่นเก่า
+toolbar-import-textures = นำเข้าเนื้อหา
+toolbar-import-sounds = นำเข้าเสียง
+toolbar-import-animations = นำเข้าภาพเคลื่อนไหว
+toolbar-import-materials = นำเข้าวัสดุ
+toolbar-import-meshes = นำเข้ารูปแบบ
+toolbar-import-local = แฟ้มภายในระบบ
+toolbar-import-advanced = นำเข้าระดับสูง
+toolbar-import-settings = ตั้งค่าการนำเข้า
+toolbar-import-bar = นำเข้าบาร์
+toolbar-icon-search = ค้นหาไอคอน...
+toolbar-in-top = ในแถบเครื่องมือด้านบน
+toolbar-bar-top = แถบเครื่องมือด้านบน
+toolbar-drop-here = วางตรงนี้
+toolbar-separator = ตัวแยก
+toolbar-interface-edit = ปรับแต่งส่วนติดต่อผู้ใช้
+toolbar-edit-done = เสร็จแล้ว
+toolbar-edit-top = ด้านบน
+toolbar-edit-bottom = ด้านล่าง
+toolbar-edit-left = ซ้าย
+toolbar-edit-right = ขวา
+toolbar-edit-help = คลิกที่รายการเพื่อเลือกมัน, ลากเพื่อย้ายมัน หรือคลิกขวาเพื่อปรับแต่งตัวเลือก ปิดหน้าต่างนี้เพื่อเสร็จสิ้นการทำงาน
+toolbar-edit-locked = แถบถูกล็อค ปลดล็อคมันด้านล่างนี้ เพื่อเปลี่ยนส่วนติดต่อ
+toolbar-edit-move = ย้ายไปยัง
+toolbar-edit-split-before = แยกก่อน
+toolbar-edit-split-after = แยกหลังจาก
+toolbar-edit-merge-before = ผสมกับบล็อกก่อนหน้านี้
+toolbar-edit-merge-after = เชื่อมต่อกับบล็อกถัดไป
+toolbar-edit-merge-groups = ผสมบล็อกเหล่านี้เข้าด้วยกัน
+toolbar-drawer = ลิ้นชัก
+toolbar-drawer-default-mode = การแสดงผลปุ่มปริยาย
+toolbar-drawer-closes = ปิดหลังจากคลิกที่ปุ่ม
+toolbar-block-shortcut = ทางลัด:
+toolbar-drawer-hides-needs-shortcut = ต้องการปุ่มพิมพ์ลัด
+toolbar-floating-close-button = เพิ่มปุ่มปิด
+toolbar-block-name = ชื่อบล็อก:
+toolbar-block-button-mode = แสดงปุ่มบล็อก
+toolbar-button-inherited = ได้รับมรดก
+toolbar-drawer-hides-button = ซ่อนปุ่มเมื่อลอยอยู่
+toolbar-floating-new = บล็อกลอยตัว
+toolbar-floating-orientation = ทิศทาง
+toolbar-floating-horizontal = แนวนอน
+toolbar-floating-vertical = แนวตั้ง
+toolbar-floating-empty = วางปุ่มที่นี่
+toolbar-shortcut-title = ทางลัด
+toolbar-shortcut-block-name = บล๊อก: { $name }
+toolbar-shortcut-none = ไม่มีทางลัด
+toolbar-shortcut-press-key = กดปุ่ม
+toolbar-shortcut-esc = กดปุ่ม Esc เพื่อยกเลิก
+toolbar-shortcut-clear = ลบ
+toolbar-shortcut-overrides = ใช้เวลามากกว่า { $name }: ปุ่มพิมพ์ลัดนี้จะเรียกใช้แถบเครื่องมือแทนการใช้งานปริยาย
+toolbar-shortcut-used = ทางลัดของ { $names } อยู่แล้ว
+toolbar-shortcut-replace = แทนที่
+toolbar-shortcut-add = เพิ่ม
+toolbar-shortcut-save = บันทึก
+toolbar-shortcut-choose-key = เลือกกุญแจ
+toolbar-shortcut-help = เปิดหรือปิดการทำงานของปุ่ม Control, Alt และ Shift แล้วคลิกปุ่มเพื่อเปลี่ยนมัน โดยใช้ปุ่ม Ctrl หรือ Alt ยกเว้น F1 ถึง F24
+toolbar-shortcut-inactive = ปุ่มนี้ไม่ได้อยู่ในแถบเครื่องมือ ทางลัดของมันจะทำงานเมื่อมันถูกวางไว้อีกครั้ง
+toolbar-shortcut-refused-keyboard = มีแค่ปุ่มพิมพ์ลัดเท่านั้นที่สามารถใช้ได้
+toolbar-shortcut-refused-modifier = ปุ่มปรับแต่งเพียงปุ่มเดียวไม่สามารถเป็นทางลัดได้
+toolbar-shortcut-refused-needs-modifier = เพิ่มปุ่ม Ctrl หรือ Alt: ปุ่มเดียว หรือใช้กับปุ่ม Shift เท่านั้น, พิมพ์ในช่องข้อความ
+toolbar-shortcut-refused-altgr = Ctrl+Alt กับปุ่มนี้คือ AltGr ซึ่งใช้พิมพ์อักขระบนคีย์บอร์ดหลายตัว
+toolbar-shortcut-refused-editing = ช่องข้อความใช้ปุ่มพิมพ์ลัดนี้ (เลือกทั้งหมด, คัดลอก, ตัด, แปะ, ยกเลิก, ทำใหม่)
+toolbar-shortcut-refused-navigation = ใช้ปุ่มนี้เพื่อย้ายและลบช่องข้อความ
+toolbar-shortcut-refused-typing = การสนทนาและกล่องโต้ตอบใช้ปุ่มนี้
+toolbar-shortcut-refused-system = ระบบจะเก็บทางลัดนี้ไว้
+toolbar-shortcut-refused-window = ปุ่มพิมพ์ลัดนี้ใช้ปิดหรือสลับหน้าต่าง
+toolbar-shortcut-refused-zoom = ปุ่มพิมพ์ลัดนี้ใช้ปรับขนาดหน้าจอ
+toolbar-spacer = ช่องว่างบล็อก
+toolbar-add-spacer = เพิ่มช่องว่างบล็อก
+toolbar-button-settings = ตั้งค่าปุ่ม
+toolbar-button-edit = ปุ่มแก้ไข...
+toolbar-button-edit-title = ปุ่มแก้ไข
+toolbar-button-name = ชื่อปุ่ม:
+toolbar-button-display = แสดงปุ่ม
+toolbar-shortcut-fixed-block-help = ปุ่มพิมพ์ลัดของบล็อกที่กำหนดไว้ จะแสดงและซ่อนมัน ขณะที่ส่วนติดต่อถูกแก้ไข มันจะยังคงแสดงอยู่
+toolbar-block-settings = ตั้งค่าบล็อก
+toolbar-parent-block-settings = ตั้งค่าบล็อกแม่
+toolbar-block-edit = แก้ไขบล็อก...
+toolbar-block-edit-title = แก้ไขบล็อก
+toolbar-block-alignment = การจัดเรียง
+toolbar-block-sizing = ขนาดปุ่ม
+toolbar-block-fixed-options = ตัวเลือกโหมดแนบ
+toolbar-block-floating-options = ตัวเลือกโหมดลอย
+toolbar-block-kind-fixed = บล็อกที่ตั้งไว้
+toolbar-block-kind-drawer = ลิ้นชัก
+toolbar-block-kind-floating = บล็อกลอยตัว
+toolbar-block-remove = ลบบล็อก
+toolbar-move-block = ลากเพื่อย้ายบล็อกทั้งหมด
+toolbar-remove-block = ลบบล็อก
+toolbar-drawer-empty = ลิ้นชักนี้ว่างเปล่า
+toolbar-drawer-drop = ลากปุ่มไปที่นี่ เพื่อเพิ่มหรือเปลี่ยนลำดับของมัน
+toolbar-separator-settings = ตั้งค่าช่องว่างระหว่างบล็อก
+toolbar-separator-size = ขนาด / ขนาดต่ำสุด (พิกเซล)
+toolbar-separator-stretch = เติมพื้นที่ว่าง
+toolbar-separator-help = ช่องว่างยืดหยุ่นใช้พื้นที่ที่บล๊อกมีอยู่ ขนาดคือความกว้างหรือความสูงต่ำสุดในแถบด้านข้าง
+toolbar-block-navigation = การนำทางและ SLURL
+toolbar-block-account = บัญชีและสมดุล
+toolbar-block-system = นาฬิกา, ตัวชี้วัดและเสียงName
+toolbar-block-status = สถานะการใช้งาน
+toolbar-block-balance = สมดุล
+toolbar-block-clock = นาฬิกา
+toolbar-block-ping = ความล่าช้าของพื้นที่
+toolbar-block-fps = อัตราเฟรม (FPS)
+toolbar-block-network = การใช้งานเครือข่าย
+toolbar-block-media = เครื่องมือจัดส่ง
+toolbar-block-music = เพลงของแพ็คเกจ
+toolbar-block-volume = ระดับเสียง
+toolbar-block-notifications = การแจ้งเตือน
+toolbar-block-conversations = ไอคอนการสนทนา
+toolbar-block-chat = ข้อมูลที่เข้าถึงได้จากแชทในพื้นที่ใกล้เคียง
+toolbar-category-all = หมวดหมู่ทั้งหมด
+toolbar-section-main = เพลง
+toolbar-section-advanced = ระดับสูง
+toolbar-search-all = การค้นหามีคำสั่งที่ซับซ้อน
+toolbar-category-avatar = ภาพถ่ายและการเคลื่อนไหว
+toolbar-category-communication = การติดต่อ
+toolbar-category-world = โลกและเดินทาง
+toolbar-category-creation = การสร้างและเนื้อหา
+toolbar-category-interface = ส่วนติดต่อและกล้อง
+toolbar-category-advanced = เครื่องมือระดับสูง
+toolbar-category-help = ความช่วยเหลือ
+toolbar-category-custom = คำสั่งที่กำหนดเอง
+toolbar-bar-settings = ตั้งค่าแถบเครื่องมือ
+toolbar-menu-group = เมนู: { $name }
+toolbar-location-bar = แถบที่อยู่ SLURL
+toolbar-command-build-tool-focus = สร้าง - กล้อง
+toolbar-command-build-tool-grab = สร้าง - ย้าย
+toolbar-command-build-tool-edit = สร้าง - แก้ไข
+toolbar-command-build-tool-create = สร้างใหม่
+toolbar-command-build-tool-land = สร้าง - ดิน
+bug-copy-version = คัดลอกรุ่นของตัวดู
+toolbar-notecard-save = บันทึกไปยังโน้ตบอร์ด...
+toolbar-notecard-load = โหลดจากโน้ตบอร์ด...
+toolbar-notecard-name = ส่วนติดต่อ Aurora
+toolbar-notecard-help = การจัดวางและรูปลักษณ์ของแถบเครื่องมือ ปุ่ม ลิ้นชัก และเมนู
+toolbar-notecard-saved = จัดวางของส่วนติดต่อสื่อสารที่เก็บไว้ในคลังของคุณ
+toolbar-notecard-invalid = บัตรโน้ตนี้ ไม่มีการจัดวางส่วนติดต่อที่เข้ากันได้
+toolbar-notecard-unavailable = ไม่มีบัตรโน้ตนี้อยู่แล้ว หรือไม่สามารถคัดลอกได้
+toolbar-notecard-layout-changed = ส่วนติดต่อเปลี่ยนแปลงระหว่างที่กำลังโหลดบันทึกการ์ด โปรดโหลดมันอีกครั้งเพื่อใช้รูปแบบของมัน
+toolbar-notecard-demo-valid = ส่วนติดต่อผู้ถ่ายภาพName
+toolbar-notecard-demo-invalid = อื่น ๆ
+toolbar-notecard-too-large = การปรับแต่งส่วนติดต่อนี้ ใหญ่เกินไปสำหรับบัตรโน้ต
+toolbar-saved-interfaces = ส่วนติดต่อที่บันทึกไว้
+toolbar-saved-interfaces-empty = ยังไม่มีการบันทึกอินเทอร์เฟส
+toolbar-notecard-destination = โฟลเดอร์: { $path }
+toolbar-notecard-folder-error = ไม่สามารถโหลดหรือสร้างโฟลเดอร์ของส่วนเชื่อมต่อได้ โปรดลองใหม่อีกครั้ง
+toolbar-current-preset = ตัวเชื่อมต่อที่เลือกไว้: { $name }
+toolbar-preset-custom = ปรับแต่งส่วนติดต่อผู้ใช้Name
+toolbar-preset-unsaved = การเปลี่ยนแปลงที่ยังไม่ได้บันทึก
+toolbar-preset-save-title = บันทึกส่วนติดต่อผู้ใช้
+toolbar-preset-save-name = ชื่อส่วนเชื่อมต่อ
+toolbar-preset-save-new = ส่วนติดต่อส่วนบุคคลใหม่Name
+toolbar-preset-save-replace = แทนที่ส่วนติดต่อส่วนตัวนี้
+toolbar-preset-save-unavailable = ไม่สามารถบันทึกอินเทอร์เฟสนี้ไว้ที่นี่ได้ โปรดเลือกชื่ออื่น หรือใช้อินเตอร์เฟซส่วนตัวที่สามารถแก้ไขได้
+toolbar-interface-delete-unavailable = ไม่สามารถลบอินเทอร์เฟสส่วนตัวนี้ได้
+toolbar-interface-delete-confirm = ย้ายส่วนติดต่อส่วนตัว “{ $name }” ไปที่ถังขยะหรือไม่

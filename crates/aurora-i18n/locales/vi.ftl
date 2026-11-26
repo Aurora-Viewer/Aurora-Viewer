@@ -16064,3 +16064,739 @@ parcel-environment-empty = Không có môi trường nào được lưu
 parcel-environment-remove-all = Xoá tất cả
 parcel-environment-remove-all-title = Xóa tất cả môi trường đã lưu cho một gói?
 parcel-environment-remove-all-text = Các môi trường đã lưu cho những thửa đất trên lưới này sẽ bị xóa. Môi trường trên lưới khác vẫn được giữ. Không thể hoàn tác thao tác này.
+
+### Updated release translations
+
+anim-timeline-channels-hint = Hiển thị phím quay và vị trí của xương này trên hàng riêng
+anim-timeline-channel-rotation = Xoay
+anim-timeline-channel-location = Địa điểm
+anim-timeline-keying-hint = Đó là một bản ghi nhớ quan trọng. Với vị trí, di chuyển chỉ lấy một hợp đồng riêng lẻ, ra khỏi chuỗi IK của nó.
+anim-timeline-keying-auto = Tự động: quay, và vị trí cho xương chậu và khớp di chuyển
+anim-timeline-keying-auto-short = Tự động
+anim-timeline-keying-loc-rot = Vị trí và xoay
+anim-timeline-keying-loc-rot-short = Địa điểm + Gốc
+anim-timeline-keying-rot-short = Đầu ra
+anim-timeline-keying-loc-short = Địa điểm
+anim-edit-shortcut-play = Chơi hoặc tạm dừng
+area-search-scope-heading = Ở đâu?
+area-search-scope-parcel = Hộp thư
+area-search-scope-region = Vùng
+area-search-scope-neighbours = Xã hội
+area-search-objects-heading = Những vật thể nào
+inventory-copy-selection-count =
+    { $count ->
+        [one] Sao chép 1 mục
+       *[other] Sao chép { $count } mục
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Liên kết 1 mục
+       *[other] Liên kết { $count } mục
+    }
+inventory-drop-move-here = Đi tới đây.
+inventory-drop-copy-here = Sao chép đây
+inventory-drop-link-here = Tạo liên kết ở đây
+inventory-sort-description = Mô tả
+inventory-sort-reversed = { $order } (đóng)
+inventory-column-creator = Người tạo
+inventory-column-count = Mục
+inventory-columns-fit = Cỡ tất cả các cột để phù hợp
+inventory-columns-reset-widths = Đặt lại độ rộng cột
+inventory-back = Lùi lại.
+inventory-forward = Tiếp tục
+inventory-up = Lên một cấp
+keybinds-inventory-root = Đi tới đầu trang
+keybinds-inventory-search = Tìm kiếm trong kho
+keybinds-inventory-filter = Lọc thư mục
+keybinds-inventory-preview = Hiện hộp xem thử
+keybinds-inventory-view-large = Hình ảnh lớn
+keybinds-inventory-view-medium = Hình trung bình
+keybinds-inventory-view-small = Ảnh nhỏ
+keybinds-inventory-view-compact = Xem nhỏ gọn
+keybinds-inventory-view-details = Xem chi tiết
+keybinds-inventory-view-tiles = Xem theo khối
+keybinds-inventory-toggle = Chọn hoặc bỏ chọn hàng đang tập trung
+keybinds-inventory-menu = Mở trình đơn của vùng chọn
+keybinds-inventory-purge = Dọn dẹp từ thùng rác
+keybinds-inventory-refused = { $keys } vẫn là chìa khóa của danh sách hàng tồn kho: chọn một cái khác.
+inventory-path-edit = Nhập đường dẫn
+inventory-path-subfolders = Thư mục con
+inventory-copy-path = Sao chép đường dẫn
+inventory-show-in-folder = Hiện trong thư mục
+inventory-pin = Đóng vào truy cập nhanh
+inventory-unpin = Đổi tên
+inventory-quick-access = Truy cập nhanh
+inventory-quick-access-drop = Đưa thư mục vào đây để dán nó
+inventory-invert-selection = Lật ngược sự chọn
+inventory-undo = Hủy
+inventory-redo = & Lặp lại
+inventory-undo-step = Hủy { $what }
+inventory-redo-step = Lặp lại { $what }
+inventory-history-move =
+    { $count ->
+        [one] Chuyển 1 mục
+       *[other] di chuyển của { $count } mục
+    }
+inventory-history-delete =
+    { $count ->
+        [one] xóa 1 mục
+       *[other] xóa của { $count } mục
+    }
+inventory-history-rename = đổi tên
+inventory-history-new-folder = thư mục mới
+inventory-history-copy =
+    { $count ->
+        [one] Sao chép · Mục: 1
+       *[other] Sao chép · Mục: { $count }
+    }
+inventory-history-link =
+    { $count ->
+        [one] liên kết tới 1 mục
+       *[other] liên kết tới { $count } mục
+    }
+inventory-undo-nothing = Không còn gì để hủy bỏ: những mục đã được chuyển hoặc biến mất.
+inventory-redo-nothing = Không còn gì để làm lại: những mục đó đã được chuyển hoặc biến mất.
+inventory-undo-empty = Không có gì để hủy bỏ.
+inventory-redo-empty = Không có gì phải làm lại.
+inventory-undo-dropped = Các mục của bước cuối cùng đã được di chuyển hoặc biến mất: nó đã bị bỏ đi. Hủy lại lần nữa cho bước trước đó.
+inventory-redo-dropped = Các mục của bước tiếp theo đã được di chuyển hoặc biến mất: nó đã bị bỏ đi. Lặp lại cho bước sau.
+inventory-undo-folder-not-empty = Thư mục mới chứa các mục được đặt ở đó từ: di chuyển chúng ra trước, hoặc tự xóa thư mục.
+inventory-undo-kept-out = Những món đồ đó là trong trang phục hiện tại hoặc danh sách Marketplace bây giờ: thay đổi chúng ở đó.
+inventory-restore-to = Trả lại “{ $folder }”
+inventory-restore-to-origins = Phục hồi vào thư mục của chúng
+inventory-purge-no-undo = Undo không thể mang chúng trở lại.
+inventory-new-tab = Thẻ mới
+inventory-close-tab = Đóng thẻ
+inventory-next-tab = Thẻ tiếp theo
+inventory-previous-tab = Thẻ trước
+inventory-open-in-new-tab = Mở trong thẻ mới
+inventory-tabs-limit = Nhiều nhất là { $count } tờ.
+inventory-copy-to-other-pane = Sao chép vào hộp khác
+inventory-move-to-other-pane = Chuyển đến hộp khác
+inventory-resize-columns = Kéo để thay đổi kích thước cột. Nhấn đôi để phù hợp cột bên trái với nội dung của nó.
+inventory-resize-columns-first = Kéo để thay đổi kích thước cột. Nhấn đôi để cho cột đầu tiên bề rộng bình thường.
+inventory-sort-by-column = Nhấn để sắp xếp theo cột này, một lần nữa để đảo ngược thứ tự. Kéo để di chuyển cột.
+inventory-filter-hint = Lọc thư mục này...
+inventory-filter-close = Đóng bộ lọc (Esc)
+inventory-filter-nothing = Không có gì ở đây phù hợp với bộ lọc
+inventory-view-compact = Xem nhỏ gọn
+inventory-view-tiles = Xem theo khối
+inventory-view-per-folder = Nhớ xem của mỗi thư mục
+inventory-group-by = Nhóm theo
+inventory-group-none = Không có
+inventory-group-folders = Thư mục
+inventory-group-unknown-creator = chưa biết tác giả
+inventory-group-today = Hôm nay
+inventory-group-yesterday = Hôm qua.
+inventory-group-this-week = Trong 7 ngày qua
+inventory-group-this-month = Trong 30 ngày qua
+inventory-group-this-year = Đầu năm nay.
+inventory-group-earlier = Đã lâu lắm rồi.
+inventory-group-no-date = Không có ngày
+cmdline-mod-zoffset-usage = Đặt độ cao khi avatar của bạn bay (dùng: /zoffset value hoặc +delta).
+dev-toolbox-n4 = Đang tải kho
+dev-toolbox-what-n4 = Thư mục đọc, thất bại và bỏ đi, trình tải đọc trong khi chạy và thử lại; không có tên
+ui-context-inspect-avatar = Kiểm tra hình tượng
+inspect-window = Kiểm tra
+inspect-tab-objects = Đối tượng
+inspect-objects-title =
+    { $count ->
+        [one] { $count } vật thể
+       *[other] { $count } vật thể
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } mục
+       *[other] { $count } mục
+    }
+inspect-open-profile = Mở hồ sơ
+inspect-over-limit = Vượt quá giới hạn của anh
+inspect-limit-tip = Giới hạn phức tạp: { $limit }
+inspect-search = Tìm mục hoặc tác giả
+inspect-outlined = { $name } được mô tả trong thế giới
+inspect-area-head = Đầu
+inspect-area-body = Cơ thể
+inspect-area-arms = Tay và cánh tay
+inspect-area-legs = Chân và chân
+inspect-area-hud = HUD
+inspect-area-other = Khác
+inspect-area-world = Đối tượng
+inspect-own-eyes = Mắt hệ thốngName
+inspect-own-body = Cơ thể hệ thống
+inspect-own-description = Một phần của hình tượng, không phải là một tập tin gắn liền
+inspect-own-maker = Nhân vật · Second Life
+inspect-own-place = Nhân vật
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = Phức tạp { $value }
+inspect-no-match = Không có gì khớp với “{ $query }”.
+inspect-spoken-worn = Mục: { $name }Điểm gắn: { $point }Phức tạp: { $complexity }. Người tạo: { $creator }.
+inspect-spoken-object = Đối tượng: { $name }. Chủ sở hữu: { $owner }Phức tạp: { $complexity }. Người tạo: { $creator }.
+inspect-look-at-tip = Đưa máy quay tới đó.
+inspect-profile-tip = Mở hồ sơ người tạo
+inspect-made-by = Làm bởi
+inspect-owned-by = Được sở hữu bởi
+inspect-worn-on = Mặc trên
+inspect-prims-count =
+    { $count ->
+        [one] { $count } nguyên tố
+       *[other] { $count } nguyên tố
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Bộ nhớ kết cấu
+inspect-tile-vram = RAM VRAM
+inspect-tile-prims = Prim
+board-close = Đóng cửa { $title }
+board-grow = Phóng to { $title }
+board-remove = Xoá { $name }
+board-more = và { $count } người khác.
+board-more-short = +{ $count }
+board-some-of = { $shown } của { $all }
+board-of-all = của { $all }
+stage-turn-left = Quay sang trái.
+stage-turn-right = Bên phải.
+stage-higher = Nhìn từ trên cao
+stage-lower = Xem từ dưới lên
+stage-nearer = Gần hơn.
+stage-further = xa hơn.
+stage-reset = Quay lại bắt đầu
+stage-hint = Kéo để xoay, kéo phải để di chuyển
+stage-light = Nền sáng
+stage-dark = Nền tối
+stage-playing = AO
+stage-paused = Đã tạm dừng
+stage-pause-tip = Ngừng hoạt hình của chúng
+stage-play-tip = Bật hoạt hình của họ
+stage-loading = Đang chuẩn bị xem 3D...
+stage-nothing = Chưa có gì để trình chiếu 3D.
+stage-refused = Hình ảnh 3D bị tắt trong khi RLVa giới hạn những gì bạn có thể thấy.
+inspect-your-limit = Giới hạn của anh: { $limit }
+inspect-without-it = { $value } không có nó.
+inspect-you = Anh...
+inspect-person = Người
+inspect-difference = Khác biệt
+inspect-drawn-in-full = Lấy toàn bộ
+inspect-nobody = Không ai biết được sự phức tạp của nó.
+inspect-aside-count = { $count } bỏ ra.
+inspect-is-aside = bỏ ra ngoài
+inspect-set-aside = Bỏ ra.
+inspect-set-aside-tip = Xem sự phức tạp mà không có mục này. Chỉ trong cửa sổ này: không thay đổi gì trên thế giới.
+inspect-put-back = Đặt lại đi.
+inspect-put-back-tip = Đếm lại mục này
+inspect-complexity-spoken = Phức tạp { $value }, số { $rank } của { $count } người ở đây
+inspect-stage-outfit = Quần áo.
+inspect-stage-objects = Các vật thể
+inspect-stage-back = Quay lại với mọi thứ
+inspect-place-made-by = { $place } · làm bởi { $name }
+inspect-owned-by-name = Được sở hữu bởi { $name }
+inspect-tile-items = Mục
+inspect-tile-figures = Hình ảnh
+inspect-col-item = Tên
+inspect-point = Điểm
+inspect-look-at = Nhìn kìa.
+inspect-selected-count = { $count } đã chọn
+inspect-worn-count = { $count } đã mặc.
+inspect-creators-word = tác giả
+inspect-areas-word = vùng cơ thể
+inspect-owners-word = chủ
+inspect-triangles-word = tam giác
+inspect-made-of = { $count } của { $all } mục
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, in leftset order
+inspect-reset-columns = Đặt lại cột
+inspect-by-creators =
+    { $count ->
+        [one] { $items } bởi một người tạo ra
+       *[other] { $items } bởi { $count } tác giả
+    }
+inspect-owner-button = Hồ sơ chủ sở hữu
+inspect-group-button = Hồ sơ nhóm
+inspect-creator-button = Hồ sơ người tạo
+inspect-land-others = Khác { $n }
+inspect-land-these = Đây là { $n }.
+inspect-land-free = Miễn phí { $n }
+inspect-land-unknown = Phòng của gói cho thấy khi các đối tượng đều nằm trên gói mà bạn đang ở.
+ui-login-unencrypted = Đăng nhập không mã hóa
+ui-login-unencrypted-body = Địa chỉ đăng nhập của { $server } bắt đầu bằng http:// thay vì https://, nên thông tin đăng nhập sẽ không được mã hóa. Người xem được lưu lượng mạng, chẳng hạn trên Wi-Fi công cộng, mạng dùng chung hoặc trên đường đến lưới, có thể đọc mật khẩu và dùng tài khoản của bạn. Chưa có dữ liệu nào được gửi. Bạn có thể yêu cầu lưới cung cấp địa chỉ https://. Lựa chọn được lưu cho máy chủ này.
+ui-login-unencrypted-accept = Đăng nhập không mã hóa
+world-appearance-clothing-layers-full = Tất cả 60 lớp quần áo đang được sử dụng. Cắt bỏ một lớp trước khi mặc đồ này.
+ui-options-ray-tracing = Điển hình
+ui-options-ray-traced-shadows = Bóng mặt trời theo tia
+ui-options-ray-traced-shadows-help = Bóng Mặt Trời và Mặt trăng được theo từng tia thay vì đọc từ bản đồ bóng: chính xác nơi mọi thứ chạm vào nhau và ở bất kỳ khoảng cách nào. Cần những bóng và một card đồ họa có khả năng theo tia, và tốn nhiều tiền hơn cho card đồ hoạ
+ui-options-ray-traced-lights = Bóng sáng cục bộ
+ui-options-ray-traced-lights-help = Bóng từ các đèn điểm xung quanh (đèn, nến), không ném bóng khác, và từ máy chiếu khi bật Bóng máy chiêm, thay vì bản đồ bóng của chúng. Tùy chọn theo dõi tia tốn kém nhất: tốt nhất là bỏ qua trên đồ họa tích hợp
+ui-options-rt-quality = Chất lượng theo dõi tia
+ui-options-rt-quality-help = Mọi hiệu ứng theo dõi vẫn được bật: cấp thấp hơn sẽ theo dấu ít mẫu và ánh sáng gián tiếp trên một lưới thô hơn, cho nhiều khung mỗi giây trên một card đồ họa nhỏ hơn. Cao là hình ảnh đầy đủ của Deluxe (RT). Chọn một cấp độ cũng đặt các ánh đèn tạo bóng tối
+ui-options-rt-sun-softness = Độ mềm của bóng mặt trời
+ui-options-rt-sun-softness-help = Độ mềm của các cạnh của bóng Mặt Trời: 1 là mặt trời thật, 0 là các cạnh sắc nét, nhiều hơn cho một mặt trăng mờ nhạt
+ui-options-rt-lamp-softness = Độ mềm bóng sáng cục bộ
+ui-options-rt-lamp-softness-help = Độ mềm của các cạnh của bóng đèn: 1 theo kích thước của mỗi bóng đêm, 0 là các cạnh sắc nét
+ui-options-rt-shadow-lamps = Ánh sáng tạo ra bóng tối
+ui-options-rt-shadow-lamps-help = Có bao nhiêu ánh sáng gần nhất tạo ra bóng tối; những ánh đèn còn lại vẫn sáng, không có bóng tối. Ít hơn sẽ tốn ít tiền hơn cho card đồ họa
+ui-options-ray-traced-indirect = Ánh sáng gián tiếp theo dõi tia
+ui-options-ray-traced-indirect-help = Ánh sáng bị phản xạ bởi các bề mặt xung quanh, được theo dõi bên ngoài những gì màn hình cho thấy, thay vì ánh sáng gián tiếp của GTAO.
+ui-options-gi-probes = Kiểm tra ánh sáng toàn cầu
+ui-options-gi-probes-help = Các ống thăm dò lan rộng khắp hiện trường để giữ ánh sáng của một vài điểm phản xạ và bầu trời mà họ thấy: các phòng đóng kín vẫn tối, ánh đèn đi vòng quanh góc.
+ui-options-ray-traced-reflections = Hình phản xạ theo tia
+ui-options-ray-traced-reflections-help = Hình ảnh phản chiếu của những gì màn hình không thể hiển thị, thay vì hình ảnh ảnh chụp không gian màn hình, cần phải bật
+ui-options-ray-tracing-unsupported = Card đồ họa này hay trình điều khiển của nó không có khả năng theo dõi tia
+ui-options-ray-tracing-vr = Không có sẵn trong phiên chạy bắt đầu cho VR
+ui-options-tab-ray-tracing = Điển hình
+ui-options-deluxe-rt-warning-title = Bật Deluxe (RT) không?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) là Cao với bóng tối và ánh sáng gián tiếp được theo dõi bởi card đồ họa. Nó cần một card có khả năng theo dấu tia phần cứng (NVIDIA RTX, AMD Radeon RX 6000 hoặc sau đó, Intel Arc) và trình điều khiển mới nhất, và nó tốn nhiều hơn cao: trên card trung cấp tốc độ khung có thể giảm nhiều ở những nơi bận rộn. Theo dấu ray vẫn đang được thử nghiệm: nếu hình ảnh trông không đúng hay trình xem chậm lại, hãy quay lại High. Thẻ theo dữ liệu Ray giữ các thiết lập của nó.
+ui-options-deluxe-rt-warning-turn-on = Bật lên
+ui-options-ray-tracing-needs-shadows = Cần bóng tối.
+ui-options-ray-tracing-needs-ssr = Cần phản xạ không gian màn hình
+ui-options-preset-deluxe = Đặc biệt (RT)
+ui-options-normal-precision = Độ chính xác phản chiếu
+ui-options-normal-precision-help = Độ tinh tế mà hướng của mỗi bề mặt được giữ cho các phản xạ. Tiêu chuẩn có thể hiển thị các bước trong phản chiếu của các bề ngoài mịn, cong như sơn xe; Cao loại bỏ chúng và sử dụng nhiều bộ nhớ video hơn. Tự động dùng Cao với phản quang theo tia, nơi các bước được hiển hiện nhiều nhất, và tiêu chuẩn nếu không
+ui-options-normal-precision-automatic = Tự động
+ui-options-normal-precision-standard = Mặc định
+ui-options-normal-precision-high = Cao
+ui-options-private-point-at-help = Ẩn đối tượng bạn đang chỉnh sửa, giữ cánh tay chỉnh chữ xuống và ẩn thanh chỉnh.
+ui-options-private-edit-beam = Ẩn thanh chỉnh sửa
+ui-options-private-edit-beam-help = Ẩn hoàn toàn tia khi bạn chỉnh sửa hoặc bắt đối tượng, cả trên màn hình của bạn và cho người xem khác. Những gợi ý mục tiêu chọn lựa và tia trao/ bỏ không bị ảnh hưởng.
+common-window-outside = Chuyển ra ngoài cửa sổ xem
+common-window-inside = Đưa lại cửa sổ xem
+common-window-rename-name = Nhấn đôi để đổi tên
+common-carry-hint = Nhấn để thả xuống đây, Esc để thả ra
+common-window-paused-photo = Đã tạm dừng khi chế độ chụp ảnh mở
+common-window-paused-director = Dừng lại trong khi đạo diễn chơi
+common-window-paused-interface = Đã tạm dừng khi giao diện tắt
+ui-options-warn-live-preview = Cảnh báo khi không thể xem trước kết cấu hay vật liệu
+ui-options-warn-live-preview-help = Trong trình chọn cửa sổ xây dựng, nhấn vào một mục không sao chép không áp dụng gì cho đến khi OK: nói vậy.
+ui-texture-picker-live-preview-texture = Không thể hiển thị xem trước kết cấu này vì nó không sao chép.
+ui-texture-picker-live-preview-material = Chúng tôi không thể hiển thị bản xem trước của tài liệu này vì nó không được sao chép.
+fetch-invalid-url = URL sai
+ui-chat-close-all-ims = Đóng tất cả IM cuộc nói chuyện
+ui-chat-close-all-ims-question = Đóng tất cả IM cuộc nói chuyện và kết thúc cuộc gọi đang hoạt động?
+ui-chat-confirm-close-all-ims = Kiểm tra trước khi đóng tất cả IM cuộc nói chuyện
+ui-chat-confirm-close-all-ims-help = Hỏi trước khi đóng tất cả IM cuộc nói chuyện khi có một cuộc gọi giọng nói đang hoạt động.
+ui-options-aurora-controls-compact-help = Cửa sổ Kiểm soát mở nhỏ trên máy ảnh: thanh điều khiển, phóng to và cuộn. Nút thanh tiêu đề của nó thay đổi giữa nhỏ và đầy, cũng như thiết lập điều này. Với cửa sổ Cổ điển thì máy ảnh mở trong cửa sập máy ảnh nhỏ của trình xem cũ thay vì vậy.
+rlva-restart-hint = RLVa bắt đầu khi bạn đăng nhập. Một khi nó chạy, việc bật hay tắt nó sẽ có hiệu lực vào lần khởi động tiếp theo của trình xem: các đối tượng hạn chế giữ ở lại cho đến lúc đó.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa sẽ được kích hoạt sau khi bạn khởi động lại.
+rlva-toggle-disabled-restart = RLVa sẽ bị vô hiệu hóa sau khi bạn khởi động lại.
+livemesh-import-connect = Kết nối Blender với plug-in 0.11.0 hoặc sau, hoặc Maya với plugin 02.0 hay sau, để chuẩn bị các LOD nhập khẩu.
+livemesh-import-preparing = Đang chuẩn bị đối tượng và LOD của nó trong Blender hoặc Maya…
+livemesh-import-ready = LOD nhận được, sẵn sàng nhập khẩu.
+livemesh-import-failed = Lỗi chuẩn bị nhập: { $error }
+livemesh-import-timeout = Blender hay Maya chưa hoàn thành việc chuẩn bị nhập. Kiểm tra kết nối (trong Blender, dùng Chế độ đối tượng) và thử lại.
+livemesh-shape-apply-tooltip = Chọn tùy chọn Sửa đổi quyền, sau đó điều chỉnh bộ xương đã chọn trong Blender hoặc Maya và lưới liên kết của nó (thông qua MayaStar cho một máy MayaStar). Chọn một bộ xô tương thích Second Life.
+livemesh-shape-update-apply = Cập nhật phần mở rộng Blender lên 0.10.0 hoặc sau, hoặc phần mềm Maya lên 2.4.0 hay sau, sau đó kết nối lại.
+livemesh-shape-applied = Hình ảnh được áp dụng cho bộ xương đã chọn.
+livemesh-shape-tooltip = Kiểm tra quyền sửa đổi của hình dạng bị hỏng và tạo một cơ thể tham chiếu mới trong Blender hoặc Maya.
+livemesh-shape-connect = Kết nối bổ sung Aurora trong Blender hoặc Maya trước.
+livemesh-shape-update-plugin = Cập nhật phần mở rộng Blender lên 0.9.0 hoặc sau, hoặc phần mềm Maya lên 1.3.0 hay sau, sau đó kết nối lại.
+livemesh-shape-timeout = Blender hay Maya không xác nhận việc nhập. Hãy thử lại (trong Blender, chuyển sang Chế độ đối tượng).
+livemesh-shape-success = Hình ảnh đã được nhập vào như một cơ thể tham chiếu mới.
+blender-live-maya-version = Aurora LiveMesh cho Maya { $version }
+blender-live-maya-instructions = Lưu tập tin ZIP và nén nó ra, sau đó kéo install.mel vào cửa sổ xem Maya. Mở LiveMesh từ thùng Aurora, thêm các mạng lưới của bạn và nhấn Connect.
+blender-live-save-maya = Lưu bổ sung Maya...
+blender-live-maya-saved = Phần bổ sung đã được lưu. Xóa tập tin ZIP và kéo install. mel vào cửa sổ xem Maya.
+livemesh-plugin-connected = Bổ sung đã kết nối
+livemesh-token-refused = Một chương trình đã cố kết nối mà không có chìa khóa xem trước này. Chỉ bổ sung Aurora trong Blender hoặc Maya mới có thể kết nắm.
+livemesh-waiting-plugin = Đang chờ Blender hoặc Maya...
+blender-live-objects-help = Các lưới mà Blender hay Maya đang gửi. Chọn một để đặt nó, hoặc nhập nó từ thực đơn của nó.
+blender-live-size-note = Kích thước nhân những gì plug-in gửi, vì vậy sau đó sửa đổi trong Blender hoặc Maya giữ nó.
+blender-live-avatar-help = Đối với các lưới bị hỏng: gửi hình dạng của bạn đến Blender hoặc Maya để mô phỏng trên nó.
+livemesh-shape-section = Hình dạng của bạn trong Blender hoặc Maya
+blender-live-import-help = Đóng băng một bức ảnh chụp của đối tượng cho việc nhập thông thường: xem xét, giá, sau đó xác nhận. Sửa đổi sau này trong Blender hay Maya không thay đổi nó.
+blender-live-changed-tip = Thời gian kể từ khi Blender hoặc Maya thay đổi đối tượng này
+fit-lab-section = Phòng thí nghiệm phù hợp
+fit-lab-help = Những người mẫu mặc những thứ bạn đang mặc, mỗi người có một cơ thể khác nhau, đứng trước mặt bạn để cho thấy cách mà quần áo phù hợp với nhiều hình dạng. Chỉ có bạn nhìn thấy chúng: không gì được gửi hay lưu.
+fit-lab-body-me = Tôi.
+fit-lab-body-slim = Thông minh.
+fit-lab-body-curvy = Đường cong
+fit-lab-body-full = Toàn bộ
+fit-lab-body-athletic = Thể thao
+fit-lab-body-tall = Cao
+fit-lab-body-petite = Nhỏ
+fit-lab-motion = Di chuyển
+fit-lab-motion-stand = Đứng dậy
+fit-lab-motion-walk = Đi thôi.
+fit-lab-motion-sit = Ngồi đi.
+fit-lab-motion-range = Phạm vi chuyển động
+fit-lab-pose = Chụp ảnh
+fit-lab-pose-all = Tất cả, lần lượt
+fit-lab-pose-arms-up = Giơ tay lên.
+fit-lab-pose-reach = Đưa tay ra trước.
+fit-lab-pose-hug = Giơ tay lên.
+fit-lab-pose-squat = Ngồi xuống.
+fit-lab-pose-kneel = Quỳ xuống!
+fit-lab-pose-knee-up = Đầu gối lên.
+fit-lab-pose-twist = Quay người lại.
+fit-lab-pose-bend = Cúi thấp xuống.
+fit-lab-motion-like-me = Như tôi vậy.
+fit-lab-show = Hãy cho chúng tôi xem những người mẫu.
+fit-lab-place = Đưa chúng tới đây.
+fit-lab-remove = Bỏ những người mẫu ra.
+fit-lab-choose = Chọn ít nhất một cái xác.
+fit-lab-clip = Hãy cho tôi thấy nơi xác chết đi qua
+fit-lab-clip-note = Đỏ: cơ thể thoát ra khỏi quần áo. Hồng: thân thể và quần Áo gặp nhau. Trên avatar của bạn và các người mẫu, như được nhìn thấy từ máy quay. Mọi thứ khác mà bạn mặc được tính là cơ thể: cởi áo khoác hay tóc trên quần.
+blender-live-levels-pending = Blender hoặc Maya chuẩn bị các cấp độ chi tiết khi bạn nhấn Import.
+blender-live-levels-note = Được chuẩn bị trong Blender hoặc Maya từ các cài đặt LiveMesh của mỗi đối tượng.
+blender-live-quick-look-changed = Thay đổi trong Blender hoặc Maya { $ago } trước.
+blender-live-warning-textures = Bỏ qua kết cấu, hiển thị màu đơn giản
+blender-live-warning-not-sent = Không có trong bản xem trước
+blender-live-undo-derez = Derezzed { $name } · vẫn còn trong danh sách plugin
+blender-live-undo-detach = Detached { $name } · vẫn còn trong danh sách của plugin
+inventory-open-current = Mở
+inventory-folder-back = Lùi lại.
+inventory-folder-forward = Tiếp tục
+inventory-folder-up = Lên một cấp
+area-search-metres = { $n } m
+area-search-band-reach = Trong tầm tay.
+area-search-band-close = Gần đây.
+area-search-band-around = Quanh cô
+area-search-band-further = Tiếp theo
+area-search-band-far = Thứ Bảy
+area-search-band = Khu vực
+area-search-within = Trong { $distance }
+area-search-within-across = Trong khoảng { $distance }
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Hiện khoảng cách
+area-search-from = Khoảng cách
+area-search-to = Khoảng cách đến
+area-search-bar-tip =
+    { $count ->
+        [one] Một vật thể, { $from } hai { $to }
+       *[other] { $count } vật thể, { $from } hai { $to }
+    }
+area-search-of-objects = của { $total } vật thể
+area-search-li = { $value } LI
+area-search-li-count = { $value } va chạm đất.
+area-search-owner-count =
+    { $count ->
+        [one] một chủ sở hữu
+       *[other] { $count } chủ sở hữu
+    }
+area-search-object-count =
+    { $count ->
+        [one] một vật thể
+       *[other] { $count } vật thể
+    }
+area-search-objects-word = vật thể
+area-search-in-reach = Ở đây
+area-search-tab-objects = Đối tượng
+area-search-tab-owners = Chủ sở hữu
+area-search-hint-wide = Đối tượng, chủ sở hữu, người tạo hay UUID
+area-search-kind-heading = Kiểu vật thể
+area-search-kind-tip = Click: chỉ những thứ này.
+area-search-kind-any = bất kỳ
+area-search-kind-only = Chỉ có những thứ này.
+area-search-kind-hidden = Ẩn
+area-search-kind-attached = Đóng gói
+area-search-kind-probes = Thử nghiệm
+area-search-click-all = Tất cả
+area-search-click-any-short = Tất cả
+area-search-permissions = Quyền hạn
+area-search-price-heading = Giá bán, cho các vật phẩm đang bán
+area-search-price-to = hai
+area-search-price-tip = Chọn "Để bán" trước
+area-search-linked = Tính nguyên tố liên kết
+area-search-one-field = Tìm kiếm trong một trường
+area-search-regex-switch = Biểu thức chính quy
+area-search-regex-invalid = Không phải là biểu thức chính quy hợp lệ
+area-search-reset-filters-tip = Phục hồi tất cả bộ lọc; văn bản tìm kiếm vẫn còn
+area-search-save-defaults-tip = Mở với những bộ lọc này từ bây giờ
+area-search-reset-search = Nạp lại văn bản tìm kiếm
+area-search-reset-filters = Nạp lại các tùy chọn lọc
+area-search-reset-ranges = Đặt lại khoảng cách và giá
+area-search-reset-all = Đặt lại mọi thứ
+area-search-more = Nhiều hơn
+area-search-several = Chọn nhiều
+area-search-several-tip = Nhấn chuột thêm vào lựa chọn (cũng như Ctrl hay Shift + nhấn, Ctrl+A)
+area-search-actions = Hành động
+area-search-nothing = Chưa nhận được vật thể nào.
+area-search-nothing-for-sale = Không có gì để bán ở đây.
+area-search-not-for-sale = Không bán.
+area-search-from-price = từ { $price }
+area-search-nearest = Gần nhất trước
+area-search-heaviest = Nặng nhất trước
+area-search-order-tip = Thay đổi thứ tự: gần nhất hay nặng nhất trước
+area-search-rank = #{ $rank } của { $all }
+area-search-rank-here = #{ $rank } Ở đây
+area-search-card-more = Hiển thị từng hình ảnh
+area-search-card-less = Hiện ít hơn
+area-search-open-group = Mở nhóm
+area-search-spoken = { $name }, { $distance }, tác động đến mặt đất { $li }, thuộc về { $owner }
+area-search-owner-spoken = { $name }, { $count } vật thể, va chạm đất { $li }
+area-search-stage-line = { $distance } xa · { $li } ảnh hưởng đất đai · { $owner }
+area-search-tile-3d = Xem 3D
+area-search-on = { $count } trên
+area-search-on-word = bật
+area-search-more-on =
+    { $count ->
+        [one] 1 bộ lọc nữa
+       *[other] { $count } bộ lọc thêm vào
+    }
+ui-options-legacy-lists = Nhập danh sách từ trình xem cũ
+ui-options-legacy-lists-help = Thêm lịch sử truyền tải, danh sách đen tài sản, Danh sách lọc phương tiện và tập hợp liên lạc của tài khoản này. Tập tin của trình xem cũ chỉ đọc được.
+ui-options-legacy-lists-button = Nhập từ trình xem cũ...
+ui-options-legacy-lists-no-account = Đăng nhập để nhập danh sách của tài khoản này.
+ui-options-legacy-lists-title = Nhập từ trình xem cũ
+ui-options-legacy-lists-text = Mọi thứ sẽ được thêm vào danh sách tài khoản này và không có gì ở đây bị gỡ bỏ. Những tên trong danh mục tài sản đen sẽ rời khỏi thế giới ngay lập tức. Nhập khẩu lại sẽ mang lại lại những gì bạn đã gỡ ở đây.
+ui-options-legacy-lists-searching = Đang tìm kiếm thư mục của Legacy Viewer...
+ui-options-legacy-lists-none = Không tìm thấy thư mục xem cũ với danh sách cho tài khoản này.
+ui-options-legacy-lists-teleports = Lịch sử truyền tải ({ $count })
+ui-options-legacy-lists-derender = Danh sách đen tài sản ({ $count })
+ui-options-legacy-lists-media = Danh sách bộ lọc phương tiện ({ $count })
+ui-options-legacy-lists-contact-set-entries = Tập tin liên lạc ({ $count })
+ui-options-legacy-lists-confirm = Nhập
+ui-options-legacy-lists-added = Điểm nhập đã được thêm hoặc cập nhật. Lịch sử truyền: { $teleports }Đối tượng ẩn: { $derender }Bộ lọc phương tiện: { $media }Nhóm liên lạc: { $sets }.
+ui-options-legacy-lists-nothing = Không có gì mới: tài khoản này đã có danh sách này.
+ui-options-legacy-lists-failed = Không thể đọc: { $files }.
+ui-options-legacy-lists-unsaved = Không thể lưu, để lại như cũ: { $files }.
+ui-options-legacy-lists-other-grid = Trên lưới này, một thư mục có cùng tên có thể thuộc về một lưới khác: kiểm tra xem nó đúng không.
+ui-options-build-show-beams-hint = Hiển thị các thanh chọn của bạn và các thanh lựa chọn của các hình tượng khác khi sửa đổi, lấy hoặc trao. Điều này chỉ điều khiển hiển thị; dùng Tình cảm > Ẩn thanh chỉnh sửa để dừng thanh chặn cục bộ và qua mạng.
+teleport-failed-title = Teleport thất bại.
+teleport-error-invalid-tport = Số lần cố gắng di chuyển được giới hạn là 6 mỗi phút. Nếu bạn gặp rắc rối, hãy đợi một phút và thử di chuyển lại lần nữa. nếu vấn đề vẫn tồn tại, thì hãy thoát ra và đăng nhập lại.
+teleport-error-invalid-region-handoff = Có vấn đề xảy ra khi xử lý việc vượt vùng của bạn. Bạn có thể cần phải đăng nhập lại trước khi có thể vượt khu vực. Nếu vẫn nhận được thông điệp này, hãy liên hệ với hỗ trợ.
+teleport-error-blocked-tport = Xin lỗi, hiện giờ việc truyền đã bị chặn. Hãy thử lại sau một lúc. Nếu vẫn không thể truyền được, hãy thoát ra và đăng nhập lại để giải quyết vấn đề.
+teleport-error-nolandmark-tport = Xin lỗi, nhưng hệ thống không thể xác định được điểm đến.
+teleport-error-timeout-tport = Xin lỗi, nhưng hệ thống không thể hoàn thành kết nối truyền tải. Hãy thử lại sau.
+teleport-error-no-help-island = Anh không thể quay trở lại đảo Welcome.
+teleport-error-noaccess-tport = Xin lỗi, anh không có quyền truy cập mục tiêu truyền tải đó.
+teleport-error-missing-attach-tport = Các tập tin gắn liền của bạn chưa đến. Hãy chờ thêm vài giây hoặc thoát ra và đăng nhập lại trước khi thử di chuyển.
+teleport-error-too-many-uploads-tport = Hiện giờ hàng đợi tài sản trong khu vực này bị tắc nghẽn, vì vậy yêu cầu chuyển tiếp của bạn sẽ không thành công đúng thời gian. Xin hãy thử lại sau vài phút hoặc đi đến một khu vực ít bận rộn hơn.
+teleport-error-expired-tport = Xin lỗi, nhưng hệ thống không thể hoàn thành yêu cầu di chuyển của bạn đúng thời gian. Hãy thử lại sau vài phút.
+teleport-error-expired-region-handoff = Xin lỗi, nhưng hệ thống không thể hoàn thành việc vượt vùng của bạn đúng thời gian. Hãy thử lại sau vài phút.
+teleport-error-preexisting-tport = Xin lỗi, nhưng hệ thống không thể bắt đầu chuyển tuyến của bạn. Hãy thử lại sau vài phút.
+teleport-error-no-host = Không thể tìm thấy mục tiêu di chuyển. Có lẽ mục tiêu tạm thời không có sẵn hoặc không còn tồn tại nữa. Hãy thử lại sau vài phút.
+teleport-error-no-inventory-host = Hệ thống hàng tồn kho hiện không có sẵn.
+teleport-error-must-get-age-region = Bạn phải trên 18 tuổi để vào khu vực này.
+teleport-error-special-usage-blocked = Không thể nhập khu vực.{ $region }'là một khu vực Trò chơi kỹ năng, và bạn phải đáp ứng một số tiêu chí nhất định để tham gia. Để biết chi tiết, hãy xem câu hỏi thường gặp về Trò Chơi Kỹ năng: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Không thể nhập khu vực. Đây là khu vực Trò chơi kỹ năng, và bạn phải đáp ứng một số tiêu chí nhất định để có thể nhập vào. Để biết chi tiết, hãy xem câu hỏi thường gặp về Trò Chơi Kỹ năng: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Mạng nhà của bạn đã từ chối sự trở lại của bạn. Thường thì điều này có nghĩa là thiết lập địa chỉ Hypergrid không tương ứng với địa chỉ mà mạng khác sử dụng cho nó. Hãy liên lạc với người quản lý mạng nhà của mình; đăng nhập lại sẽ đưa bạn về nhà trong lúc đó.
+teleport-hint-hypergrid-unreachable = Không thể truy cập vào mạng lưới khác. Có lẽ nó không kết nối, hoặc liên kết có thể chỉ đến địa chỉ cũ.
+teleport-hint-hypergrid-visitors-refused = Đường dây đó chỉ cho phép cư dân của một số đường dây.
+teleport-hint-hypergrid-destination-gone = Vùng đích không còn tồn tại hay đã được chuyển. Các điểm dừng và liên kết đến các lưới khác có thể bị lỗi thời.
+toolbar-edit = Tùy chỉnh nút và thực đơn...
+toolbar-title = Nút và thực đơn
+toolbar-interface-locked = Giao diện bị khóa
+toolbar-help = Kéo các nút hoặc mục thực đơn vào thanh trên, dưới hay bên. Thả một nút về đây để gỡ nó đi. Nhấn phải bất kỳ nút nào để thay đổi hình dạng của nó.
+toolbar-help-classic = Kéo các nút hoặc mục thực đơn vào thanh trên, dưới hay bên. Thả một nút về đây để gỡ nó đi. Nhấn phải bất kỳ nút nào để thay đổi hình dạng của nó.
+toolbar-help-modes = Chọn biểu tượng, nhãn, cả hai hoặc thanh mặc định cho mỗi nút. Kéo các mục vào thực đơn Aurora để sắp xếp lại nó.
+import-menu-textures = Hợp chất
+import-menu-animations = Di chuyển
+import-menu-sounds = Âm thanh
+import-menu-materials = Vật liệu
+import-menu-meshes = Lưới
+import-menu-options = Tùy chọn nhập
+import-upload-payment-title = Tải lên
+import-upload-payment = Anh đã trả { $cost } L$ để tải lên.
+import-quick-textures =
+    { $count ->
+        [one] Nhập · Hợp chất: 1 · L${ $cost }?
+       *[other] Nhập · Hợp chất: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Nhập · Vật liệu: 1 · L${ $cost }?
+       *[other] Nhập · Vật liệu: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Nhập · Âm thanh: 1 · L${ $cost }?
+       *[other] Nhập · Âm thanh: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Chọn kích thước nhập. Kết cấu tương thích có thể được nhập ở kích thước 2048 × 2048:
+       *[other] ({ $count }) Chọn kích thước nhập. Kết cấu tương thích có thể được nhập ở kích thước 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Chọn kích thước nhập. Hình ảnh tương thích của vật liệu có thể được nhập ở kích thước 2048 × 2048:
+       *[other] ({ $count }) Chọn kích thước nhập. Hình ảnh tương thích của vật liệu có thể được nhập ở kích thước 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Tải ảnh miễn phí lên ở kích thước 2048 × 2048 mà không hỏi
+import-quick-free-full-size-help = "Import textures" và "Impost materials" sau đó hỏi 1024 hoặc 2048 chỉ khi tải lên có giá trị L$.
+ui-bars-customize-bars = Tự chọn giao diện
+build-tool-in-use = Đang sử dụng
+build-create-options-toggle = Hiện/ ẩn các tùy chọn
+build-create-keep-creating = Tiếp tục tạo ra
+build-create-center-on-prim = Tại trung tâm
+build-create-copy-prim-rotation = Sao chép quay
+build-create-align-to-surface = Đường thẳng
+build-capture-shape-button = Sao chép hình dạng của prim: bấm nút này rồi bấm vào một prim trong thế giới
+build-capture-shape-armed = Nhấn vào một nguyên tố để sao chép hình dạng của nó (Escape hủy)
+build-capture-shape-full = 20 hình được giữ lại. Xoá một hình để sao chép một hình khác
+build-capture-shape-remove = Xoá hình dạng này
+build-capture-shape-tooltip = Hình sao chép ({ $kind }) Name
+build-capture-shape-not-a-prim = Chỉ có thể sao chép hình dạng của một nguyên tố
+build-capture-shape-mesh-or-sculpt = Không thể sao chép hình dạng của lưới hoặc một nguyên tố điêu khắc
+build-capture-shape-no-modify = Bạn cần quyền sửa đổi hình này để sao chép hình dạng của nó
+import-other-options = Tùy chọn khác
+toolbar-button-icons = Chỉ biểu tượng
+toolbar-button-text = Chỉ thẻ
+toolbar-button-icons-text = Biểu tượng và nhãn
+toolbar-icon-default = Phục hồi biểu tượng mặc định
+toolbar-icon-choose = Chọn biểu tượng
+toolbar-icon-change = Thay đổi biểu tượng
+toolbar-presets = Đặt sẵn
+toolbar-interfaces = Giao diện
+toolbar-interfaces-shown = Hiển thị trong khối Giao diện
+toolbar-interfaces-hidden = Ẩn khỏi khối Giao diện
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora Trường cũ
+toolbar-preset-photographer = Aurora Nhiếp ảnh gia
+toolbar-preset-legacy = Lịch sử
+toolbar-import-textures = Nhập kết cấu
+toolbar-import-sounds = Nhập âm
+toolbar-import-animations = Nhập hoạt hình
+toolbar-import-materials = Nhập vật liệu
+toolbar-import-meshes = Nhập lưới
+toolbar-import-local = Tập tin cục bộ
+toolbar-import-advanced = Nhập cao cấp
+toolbar-import-settings = Cấu hình nhập
+toolbar-import-bar = Nhập thanh
+toolbar-icon-search = Tìm biểu tượng...
+toolbar-in-top = Trong thanh công cụ trên
+toolbar-bar-top = Thanh công cụ trên
+toolbar-drop-here = Bỏ xuống đây.
+toolbar-separator = Ký hiệu phân cách
+toolbar-interface-edit = Tự chọn giao diện
+toolbar-edit-done = Xong.
+toolbar-edit-top = Trên
+toolbar-edit-bottom = Dưới
+toolbar-edit-left = Trái
+toolbar-edit-right = Phải.
+toolbar-edit-help = Nhấn vào một mục để chọn nó, kéo để di chuyển nó, hoặc nhấn phải để sửa đổi tùy chọn. Đóng cửa sổ này để kết thúc.
+toolbar-edit-locked = Các thanh đã được khóa. Mở khóa chúng bên dưới để thay đổi giao diện.
+toolbar-edit-move = Chuyển tới
+toolbar-edit-split-before = Phân tách trước
+toolbar-edit-split-after = Phân tách sau
+toolbar-edit-merge-before = Liên kết với khối trước
+toolbar-edit-merge-after = Liên hợp với khối kế tiếp
+toolbar-edit-merge-groups = Gộp những khối này lại
+toolbar-drawer = Khay
+toolbar-drawer-default-mode = Hiện các nút mặc định
+toolbar-drawer-closes = Đóng sau khi nhấn vào nút
+toolbar-block-shortcut = Phím tắt:
+toolbar-drawer-hides-needs-shortcut = Cần phím tắt
+toolbar-floating-close-button = Thêm nút đóng
+toolbar-block-name = Tên khối:
+toolbar-block-button-mode = Hiện nút chặn
+toolbar-button-inherited = Thừa kế
+toolbar-drawer-hides-button = Ẩn nút khi trôi nổi
+toolbar-floating-new = Khối trôi nổi
+toolbar-floating-orientation = Phương hướng
+toolbar-floating-horizontal = Thẳng đứng
+toolbar-floating-vertical = Dọc
+toolbar-floating-empty = Bỏ nút xuống đây
+toolbar-shortcut-title = Phím tắt
+toolbar-shortcut-block-name = Khối: { $name }
+toolbar-shortcut-none = Không có phím tắt
+toolbar-shortcut-press-key = Nhấn một phím
+toolbar-shortcut-esc = Esc để hủy bỏ
+toolbar-shortcut-clear = Xoá
+toolbar-shortcut-overrides = Takes over { $name }: phím tắt này chạy thanh công cụ thay vì sử dụng mặc định.
+toolbar-shortcut-used = Đã có đường tắt của { $names } rồi.
+toolbar-shortcut-replace = Thay thế
+toolbar-shortcut-add = Thêm
+toolbar-shortcut-save = Lưu
+toolbar-shortcut-choose-key = Chọn một chìa khóa
+toolbar-shortcut-help = Bật hay tắt Ctrl, Alt và Shift, sau đó nhấn phím để thay đổi nó. Cần Ctrl hoặc Alt, ngoại trừ với F1 đến F24.
+toolbar-shortcut-inactive = Nút này không nằm trong thanh: phím tắt của nó hoạt động khi nó được đặt lại.
+toolbar-shortcut-refused-keyboard = Chỉ các phím bàn phím có thể là đường tắt.
+toolbar-shortcut-refused-modifier = Một phím sửa đổi đơn lẻ không thể là đường tắt.
+toolbar-shortcut-refused-needs-modifier = Thêm Ctrl hoặc Alt: một phím đơn lẻ, hoặc chỉ với Shift, gõ vào các ô văn bản.
+toolbar-shortcut-refused-altgr = Ctrl+Alt với phím này là AltGr, dùng để gõ các ký tự trên nhiều bàn phím.
+toolbar-shortcut-refused-editing = Các trường văn bản sử dụng phím tắt này (chọn tất cả, sao chép, cắt, dán, hủy, làm lại).
+toolbar-shortcut-refused-navigation = Các ô văn bản được di chuyển và xóa bằng phím này.
+toolbar-shortcut-refused-typing = Trả lời và các hộp thoại sử dụng phím này.
+toolbar-shortcut-refused-system = Hệ thống giữ đường tắt này.
+toolbar-shortcut-refused-window = Phím tắt này đóng hoặc chuyển cửa sổ.
+toolbar-shortcut-refused-zoom = Phím tắt này phóng to giao diện.
+toolbar-spacer = Khoảng cách khối
+toolbar-add-spacer = Thêm khoảng cách khối
+toolbar-button-settings = Thiết lập nút
+toolbar-button-edit = Nút Sửa...
+toolbar-button-edit-title = Nút sửa đổi
+toolbar-button-name = Tên nút:
+toolbar-button-display = Hiển thị nút
+toolbar-shortcut-fixed-block-help = Phím tắt của một khối cố định hiển thị và ẩn nó; trong khi giao diện được chỉnh sửa, nó vẫn được hiển hiện.
+toolbar-block-settings = Thiết lập khối
+toolbar-parent-block-settings = Thiết lập khối cha
+toolbar-block-edit = Sửa khối...
+toolbar-block-edit-title = Sửa khối
+toolbar-block-alignment = Đường thẳng
+toolbar-block-sizing = Cỡ nút
+toolbar-block-fixed-options = Tùy chọn chế độ cố định
+toolbar-block-floating-options = Tùy chọn chế độ trôi nổi
+toolbar-block-kind-fixed = Khối cố định
+toolbar-block-kind-drawer = Khay
+toolbar-block-kind-floating = Khối trôi nổi
+toolbar-block-remove = Xoá khối
+toolbar-move-block = Kéo để di chuyển toàn bộ khối
+toolbar-remove-block = Xoá khối
+toolbar-drawer-empty = Ngăn kéo này trống rỗng.
+toolbar-drawer-drop = Kéo các nút tới đây để thêm hoặc sắp xếp lại chúng.
+toolbar-separator-settings = Thiết lập khoảng cách khối
+toolbar-separator-size = Cỡ / tối thiểu (px)
+toolbar-separator-stretch = Lấp đầy không gian có sẵn
+toolbar-separator-help = Khoảng cách linh hoạt chia sẻ không gian còn lại của các khối. Cỡ là chiều rộng tối thiểu, hay chiều cao trong thanh bên.
+toolbar-block-navigation = Đường dẫn và SLURL
+toolbar-block-account = Tài khoản và cân bằng
+toolbar-block-system = Đồng hồ, chỉ thị và âm thanh
+toolbar-block-status = Tình trạng sẵn sàng
+toolbar-block-balance = Tăng cân
+toolbar-block-clock = Đồng hồ
+toolbar-block-ping = Vùng chậm
+toolbar-block-fps = Tốc độ khung (FPS)
+toolbar-block-network = Giao thông mạng
+toolbar-block-media = Truyền thông gói
+toolbar-block-music = Âm nhạc
+toolbar-block-volume = Âm lượng
+toolbar-block-notifications = Thông báo
+toolbar-block-conversations = Biểu tượng trò chuyện
+toolbar-block-chat = Đầu vào trò chuyện gần đây
+toolbar-category-all = Tất cả các loại
+toolbar-section-main = Trò chơi
+toolbar-section-advanced = Cao cấp
+toolbar-search-all = Tìm kiếm bao gồm các lệnh cao cấp.
+toolbar-category-avatar = Avatar và chuyển động
+toolbar-category-communication = Giao tiếp
+toolbar-category-world = Thế giới và du lịch
+toolbar-category-creation = Tạo và nội dung
+toolbar-category-interface = Giao diện và máy ảnh
+toolbar-category-advanced = Công cụ cao cấp
+toolbar-category-help = Trợ giúp
+toolbar-category-custom = Lệnh tùy chọn
+toolbar-bar-settings = Thiết lập thanh công cụ
+toolbar-menu-group = Trình đơn: { $name }
+toolbar-location-bar = Thanh địa chỉ SLURL
+toolbar-command-build-tool-focus = Tạo - Máy ảnh
+toolbar-command-build-tool-grab = Tạo - Di chuyển
+toolbar-command-build-tool-edit = Tạo - Sửa
+toolbar-command-build-tool-create = Xây dựng - Tạo
+toolbar-command-build-tool-land = Xây dựng - Đất
+bug-copy-version = Sao chép bản xem
+toolbar-notecard-save = Lưu vào notecard...
+toolbar-notecard-load = Tải từ notecard...
+toolbar-notecard-name = Giao diện Aurora
+toolbar-notecard-help = Bố trí và hình ảnh của thanh công cụ, nút, thùng và menu.
+toolbar-notecard-saved = Bố trí giao diện đã được lưu trong kho của anh.
+toolbar-notecard-invalid = Thẻ ghi chú này không chứa bảng bố trí giao diện tương thích.
+toolbar-notecard-unavailable = Bảng ghi chú này không còn sẵn hoặc không thể sao chép.
+toolbar-notecard-layout-changed = Giao diện đã thay đổi trong khi thẻ ghi chú đang được tải. Nạp lại nó để áp dụng thiết kế của nó.
+toolbar-notecard-demo-valid = Giao diện nhiếp ảnh gia
+toolbar-notecard-demo-invalid = Thẻ ghi chú khác
+toolbar-notecard-too-large = Cấu hình giao diện này quá lớn cho một thẻ ghi chú.
+toolbar-saved-interfaces = Giao diện đã lưu
+toolbar-saved-interfaces-empty = Chưa có giao diện nào được lưu.
+toolbar-notecard-destination = Thư mục: { $path }
+toolbar-notecard-folder-error = Không thể tải hay tạo thư mục giao diện. Hãy thử lại.
+toolbar-current-preset = Giao diện chọn: { $name }
+toolbar-preset-custom = Giao diện tùy chọn
+toolbar-preset-unsaved = Sửa đổi chưa lưu
+toolbar-preset-save-title = Lưu giao diện
+toolbar-preset-save-name = Tên giao diện
+toolbar-preset-save-new = Giao diện cá nhân mớiName
+toolbar-preset-save-replace = Thay thế giao diện cá nhân này
+toolbar-preset-save-unavailable = Không thể lưu giao diện này ở đây. Hãy chọn tên khác hoặc một giao diện cá nhân có sẵn, có thể chỉnh sửa.
+toolbar-interface-delete-unavailable = Không thể xóa giao diện cá nhân này.
+toolbar-interface-delete-confirm = Chuyển giao diện cá nhân “{ $name }” vào Thùng rác?

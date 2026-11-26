@@ -16101,3 +16101,739 @@ parcel-environment-empty = Geen omgevingen opgeslagen
 parcel-environment-remove-all = Alles verwijderen
 parcel-environment-remove-all-title = Elke omgeving verwijderen die is opgeslagen voor een pakket?
 parcel-environment-remove-all-text = Je opgeslagen omgevingen voor percelen op dit grid worden verwijderd. Die op andere grids blijven behouden. Dit kan niet ongedaan worden gemaakt.
+
+### Updated release translations
+
+anim-timeline-channels-hint = Toon de rotatie- en locatiesleutels van dit bot op hun eigen rijen
+anim-timeline-channel-rotation = Draaien
+anim-timeline-channel-location = Locatie
+anim-timeline-keying-hint = Met Location neemt Move een joint alleen, uit zijn IK-keten. Second Life animaties hebben geen schaaltoetsen, dus het is niet mogelijk om de schaal te veranderen.
+anim-timeline-keying-auto = Auto: rotatie en locatie voor het bekken en verplaatste gewrichten
+anim-timeline-keying-auto-short = Automatisch
+anim-timeline-keying-loc-rot = Locatie en rotatie
+anim-timeline-keying-loc-rot-short = Loc + Root
+anim-timeline-keying-rot-short = Rood
+anim-timeline-keying-loc-short = Plaats
+anim-edit-shortcut-play = Afspelen of pauzeren
+area-search-scope-heading = Waar
+area-search-scope-parcel = Pakket
+area-search-scope-region = Regio
+area-search-scope-neighbours = Buren
+area-search-objects-heading = Welke objecten zijn
+inventory-copy-selection-count =
+    { $count ->
+        [one] Kopieer 1 item
+       *[other] Kopieer { $count } items
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Link 1 product
+       *[other] Link { $count } artikelen
+    }
+inventory-drop-move-here = Verhuis hierheen
+inventory-drop-copy-here = Hier kopiëren
+inventory-drop-link-here = Maak hier links aan
+inventory-sort-description = Beschrijving
+inventory-sort-reversed = { $order } (omgekeerd)
+inventory-column-creator = Maker
+inventory-column-count = Aantal items
+inventory-columns-fit = Alle kolommen passend maken
+inventory-columns-reset-widths = Kolombreedtes opnieuw instellen
+inventory-back = Terug
+inventory-forward = Vooruit
+inventory-up = Een niveau omhoog
+keybinds-inventory-root = Ga naar boven
+keybinds-inventory-search = Zoek in de inventaris
+keybinds-inventory-filter = Filter de map
+keybinds-inventory-preview = Het voorbeeldvenster weergeven
+keybinds-inventory-view-large = Grote foto's
+keybinds-inventory-view-medium = Middelgrote foto's
+keybinds-inventory-view-small = Kleine foto's
+keybinds-inventory-view-compact = Compacte weergave
+keybinds-inventory-view-details = Details bekijken
+keybinds-inventory-view-tiles = Tegelweergave
+keybinds-inventory-toggle = De rij met de focus selecteren of deselecteren
+keybinds-inventory-menu = Het menu van de selectie openen
+keybinds-inventory-purge = Verwijderen uit de prullenbak
+keybinds-inventory-refused = { $keys } blijft de eigen sleutel van de inventarislijst: kies een andere.
+inventory-path-edit = Typ een pad
+inventory-path-subfolders = Submappen
+inventory-copy-path = Pad kopiëren
+inventory-show-in-folder = Toon in map
+inventory-pin = Pin aan snelle toegang
+inventory-unpin = Ontgrendelen van Snelle toegang
+inventory-quick-access = Snelle toegang tot
+inventory-quick-access-drop = Een map hier neerzetten om deze vast te maken
+inventory-invert-selection = Selectie omkeren
+inventory-undo = Ongedaan maken
+inventory-redo = Opnieuw
+inventory-undo-step = Ongedaan maken { $what }
+inventory-redo-step = Herstel { $what }
+inventory-history-move =
+    { $count ->
+        [one] Artikel 1 tot 1 van 1 artikel
+       *[other] Artikel 1 tot 8 van { $count } artikelen
+    }
+inventory-history-delete =
+    { $count ->
+        [one] 1 - 1 van 1 artikel
+       *[other] Artikel 1 tot 8 van { $count } artikelen
+    }
+inventory-history-rename = hernoemen
+inventory-history-new-folder = Een nieuwe map maken
+inventory-history-copy =
+    { $count ->
+        [one] 1 exemplaar van 1 artikel
+       *[other] Kopie van { $count } items
+    }
+inventory-history-link =
+    { $count ->
+        [one] Link naar 1 item
+       *[other] Links naar { $count } items
+    }
+inventory-undo-nothing = Niets meer om ongedaan te maken: die items zijn verplaatst of verdwenen.
+inventory-redo-nothing = Niets meer om opnieuw te doen: die items zijn verplaatst of verdwenen.
+inventory-undo-empty = Niets om ongedaan te maken.
+inventory-redo-empty = Niets om opnieuw te doen.
+inventory-undo-dropped = De items van de vorige stap zijn verplaatst of verdwenen: het is weggelaten.Ongedaan maken opnieuw voor de stap ervoor.
+inventory-redo-dropped = De items van de volgende stap zijn verplaatst of verdwenen: het werd weggegooid, herhaal dit voor de stap erna.
+inventory-undo-folder-not-empty = Deze nieuwe map bevat items die er sindsdien zijn geplaatst: verplaats ze eerst, of verwijder de map zelf.
+inventory-undo-kept-out = Deze items staan nu in de huidige outfit of de Marketplace-aanbiedingen: wijzig ze daar.
+inventory-restore-to = Terugzetten naar “{ $folder }”
+inventory-restore-to-origins = Terugzetten naar hun mappen
+inventory-purge-no-undo = Ongedaan maken kan ze niet terugbrengen.
+inventory-new-tab = Een nieuw tabblad
+inventory-close-tab = Tabblad sluiten
+inventory-next-tab = Volgende tabblad
+inventory-previous-tab = Vorige tabblad
+inventory-open-in-new-tab = Openen in een nieuw tabblad
+inventory-tabs-limit = Hoogstens { $count } tabs.
+inventory-copy-to-other-pane = Kopiëren naar het andere deelvenster
+inventory-move-to-other-pane = Naar het andere deelvenster gaan
+inventory-resize-columns = Sleep om de grootte van kolommen te wijzigen. Klik dubbel om de kolom aan de linkerkant aan te passen aan de inhoud ervan.
+inventory-resize-columns-first = Sleep om de grootte van kolommen te wijzigen. Dubbelklik om de eerste kolom de gebruikelijke breedte te geven.
+inventory-sort-by-column = Klik op deze kolom om te sorteren, klik nogmaals om de volgorde om te draaien en sleep om de kolom te verplaatsen.
+inventory-filter-hint = Filter deze map…
+inventory-filter-close = Sluit het filter (Esc)
+inventory-filter-nothing = Niets hier komt overeen met het filter
+inventory-view-compact = Compacte weergave
+inventory-view-tiles = Tegelweergave
+inventory-view-per-folder = De weergave van elke map onthouden
+inventory-group-by = Groeperen op:
+inventory-group-none = Geen
+inventory-group-folders = Mappen
+inventory-group-unknown-creator = Maker nog niet bekend
+inventory-group-today = Vandaag
+inventory-group-yesterday = Gisteren
+inventory-group-this-week = In de laatste 7 dagen
+inventory-group-this-month = In de afgelopen 30 dagen
+inventory-group-this-year = Eerder dit jaar
+inventory-group-earlier = Lang geleden
+inventory-group-no-date = Geen datum
+cmdline-mod-zoffset-usage = Stel de hoverhoogte van je avatar in (gebruik: /zoffset value of +delta).
+dev-toolbox-n4 = Het laden van inventaris
+dev-toolbox-what-n4 = Mappen gelezen, mislukt en verlaten, de lader leest in flight en probeert opnieuw; geen namen
+ui-context-inspect-avatar = Avatar inspecteren
+inspect-window = Inspecteren
+inspect-tab-objects = Objecten
+inspect-objects-title =
+    { $count ->
+        [one] Objecten: { $count }
+       *[other] Objecten: { $count }
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } artikelen
+       *[other] { $count } artikelen
+    }
+inspect-open-profile = Het profiel openen
+inspect-over-limit = Boven uw limiet
+inspect-limit-tip = Uw complexiteitslimiet: { $limit }
+inspect-search = Zoek items of makers
+inspect-outlined = { $name } wordt geschetst in de wereld
+inspect-area-head = Hoofd
+inspect-area-body = Lichaam
+inspect-area-arms = Armen en handen
+inspect-area-legs = Benen en voeten
+inspect-area-hud = HUD
+inspect-area-other = Overige
+inspect-area-world = Objecten
+inspect-own-eyes = Ogen van het systeem
+inspect-own-body = Systeemlichaam
+inspect-own-description = Onderdeel van de avatar zelf, geen bijlage
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } complexiteit
+inspect-no-match = Niets komt overeen met “{ $query }”.
+inspect-spoken-worn = { $name }, gedragen op { $point }, complexiteit { $complexity }, gemaakt door { $creator }
+inspect-spoken-object = { $name }, eigendom van { $owner }, complexiteit { $complexity }, gemaakt door { $creator }
+inspect-look-at-tip = Beweeg de camera ernaar toe
+inspect-profile-tip = Open het profiel van de maker
+inspect-made-by = Gemaakt door
+inspect-owned-by = In eigendom van
+inspect-worn-on = Wordt gedragen op
+inspect-prims-count =
+    { $count ->
+        [one] { $count } primair
+       *[other] { $count } Priemgetallen
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Het geheugen van de textuur
+inspect-tile-vram = Videogeheugen
+inspect-tile-prims = Prims
+board-close = Sluit { $title }
+board-grow = Vergroot de afbeelding { $title }
+board-remove = Verwijder { $name }
+board-more = en { $count } meer
+board-more-short = +{ $count }
+board-some-of = { $shown } van { $all }
+board-of-all = van { $all }
+stage-turn-left = Sla linksaf
+stage-turn-right = Sla rechtsaf
+stage-higher = Kijk van hoger
+stage-lower = Kijk van beneden
+stage-nearer = Dichterbij.
+stage-further = Nog verder weg
+stage-reset = Terug naar het begin
+stage-hint = Sleep om te draaien, rechts-slepen om te bewegen
+stage-light = Een lichte achtergrond
+stage-dark = Donkere achtergrond
+stage-playing = AO
+stage-paused = Gepauzeerd
+stage-pause-tip = Hun animatie pauzeren
+stage-play-tip = Speel hun animatie af
+stage-loading = De 3D-weergave voorbereiden…
+stage-nothing = Er is nog niets in 3D te zien.
+stage-refused = De 3D-weergave is uitgeschakeld terwijl RLVa beperkt wat je kunt zien.
+inspect-your-limit = Uw limiet: { $limit }
+inspect-without-it = { $value } zonder het
+inspect-you = Jij.
+inspect-person = Persoon
+inspect-difference = Verschil
+inspect-drawn-in-full = Volledig getekend
+inspect-nobody = Niemands complexiteit is nog bekend.
+inspect-aside-count = { $count } braakgelegde grond
+inspect-is-aside = opzij gezet
+inspect-set-aside = Opzij zetten
+inspect-set-aside-tip = Zie de complexiteit zonder dit item, alleen in dit venster: er verandert niets in de wereld.
+inspect-put-back = Terugzetten
+inspect-put-back-tip = Tel dit item opnieuw
+inspect-complexity-spoken = Complexiteit { $value }, nummer { $rank } van { $count } aanwezigen
+inspect-stage-outfit = Bekijk de outfit
+inspect-stage-objects = De objecten van de collectie
+inspect-stage-back = Terug naar alles
+inspect-place-made-by = { $place } · gemaakt door { $name }
+inspect-owned-by-name = Eigendom van { $name }
+inspect-tile-items = Aantal items
+inspect-tile-figures = Cijfers
+inspect-col-item = Naam
+inspect-point = Punt
+inspect-look-at = Kijk eens.
+inspect-selected-count = { $count } geselecteerd
+inspect-worn-count = { $count } versleten
+inspect-creators-word = makers
+inspect-areas-word = Andere lichaamsdelen
+inspect-owners-word = Eigenaars
+inspect-triangles-word = driehoeken
+inspect-made-of = { $count } van { $all } items
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, in linkse volgorde
+inspect-reset-columns = Kolommen opnieuw instellen
+inspect-by-creators =
+    { $count ->
+        [one] { $items } door één maker
+       *[other] { $items } door { $count } makers
+    }
+inspect-owner-button = Profiel van de eigenaar
+inspect-group-button = Profiel van de groep
+inspect-creator-button = Profiel van de maker
+inspect-land-others = Overige { $n }
+inspect-land-these = Deze { $n }
+inspect-land-free = Gratis { $n }
+inspect-land-unknown = De kamer van het pakket geeft aan wanneer de voorwerpen allemaal op het pakketje liggen waarop je zit.
+ui-login-unencrypted = Onversleuteld aanmelden
+ui-login-unencrypted-body = Het aanmeldadres van { $server } begint met http:// in plaats van https://. Aanmelden gebeurt daardoor zonder versleuteling. Iedereen die je netwerkverkeer kan zien, bijvoorbeeld op openbare wifi, een gedeeld netwerk of onderweg naar het grid, kan je wachtwoord lezen en je account gebruiken. Er is nog niets verzonden. Je kunt het grid om een https://-adres vragen. Je keuze wordt voor deze server onthouden.
+ui-login-unencrypted-accept = Aanmelden zonder versleuteling
+world-appearance-clothing-layers-full = Alle 60 kledinglagen worden gebruikt. Verwijder een laag voordat u dit item draagt.
+ui-options-ray-tracing = Grafische weergave met ray tracing
+ui-options-ray-traced-shadows = Ray-traced zon schaduwen
+ui-options-ray-traced-shadows-help = De schaduwen van de zon en de maan worden straal voor straal getraceerd in plaats van uit de schaduwkaarten te lezen: precies waar dingen elkaar raken en op elke afstand.Heeft de schaduven en een grafische kaart met ray tracing nodig, en kost meer op de grafische
+ui-options-ray-traced-lights = Lokale lichte schaduwen
+ui-options-ray-traced-lights-help = Schaduwen van de lichtpunten in de buurt (lampen, kaarsen), die anders geen schaduw werpen, en van de projectoren als Projector shadows is ingeschakeld, in plaats van hun schaduwkaarten.De duurste van de ray tracing opties: het beste achtergelaten op geïntegreerde grafische kaarten
+ui-options-rt-quality = Ray tracing kwaliteit
+ui-options-rt-quality-help = Elk getraceerd effect blijft aan: lagere niveaus traceren minder samples en het indirecte licht op een grover raster, voor meer frames per seconde op een kleinere grafische kaart. Hoog is het volledige beeld van Deluxe (RT).Kiezen van een niveau bepaalt ook de lichten die schaduwen werpen
+ui-options-rt-sun-softness = Zon schaduw zachtheid
+ui-options-rt-sun-softness-help = Hoe zacht de randen van de schaduwen van de zon zijn: 1 is de echte zon, 0 scherpe randen, meer voor een wazige zon
+ui-options-rt-lamp-softness = Lokale lichte schaduwzachtheid
+ui-options-rt-lamp-softness-help = Hoe zacht de randen van de schaduwen zijn: 1 volgt de grootte van elke lamp, 0 scherpe randen
+ui-options-rt-shadow-lamps = Lichten die schaduwen werpen
+ui-options-rt-shadow-lamps-help = Hoeveel van de dichtstbijzijnde lichten werpen schaduwen; de overige lichten zijn nog steeds licht, zonder schaduw.Minder kost minder op de grafische kaart
+ui-options-ray-traced-indirect = Ray-traced indirect licht
+ui-options-ray-traced-indirect-help = Licht dat wordt weerkaatst door de oppervlakken rondom, achtervolgd voorbij wat het scherm toont, in plaats van het indirecte licht van GTAO
+ui-options-gi-probes = Globale verlichtingssondes
+ui-options-gi-probes-help = Sondes verspreiden zich door de scène die het licht van meerdere bounce's en de lucht die ze zien vasthouden: gesloten kamers blijven donker, licht gaat rond hoeken.Ongeveer 0.8 ms op de grafische kaart
+ui-options-ray-traced-reflections = Ray-traced reflecties
+ui-options-ray-traced-reflections-help = Reflecties van wat het scherm niet toont, in plaats van de reflecties van de schermruimte, die op
+ui-options-ray-tracing-unsupported = Deze grafische kaart of het stuurprogramma heeft geen ray tracing
+ui-options-ray-tracing-vr = Niet beschikbaar in een sessie die is gestart voor VR
+ui-options-tab-ray-tracing = Raytracing-instellingen
+ui-options-deluxe-rt-warning-title = Deluxe (RT) inschakelen?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) is High met de schaduwen en het indirecte licht getraceerd door de grafische kaart. Het vereist een kaart met hardware ray tracing (NVIDIA RTX, AMD Radeon RX 6000 of hoger, Intel Arc) en een up-to-date driver, en kost veel meer dan High: op een midrange kaart kan de frame rate in drukke plaatsen flink dalen. Ray tracing wordt nog steeds getest: als het beeld er verkeerd uitziet of de viewer vertraagt, ga dan terug naar High.
+ui-options-deluxe-rt-warning-turn-on = Zet aan
+ui-options-ray-tracing-needs-shadows = Heeft de schaduwen nodig
+ui-options-ray-tracing-needs-ssr = Heeft de scherm-ruimte reflecties nodig
+ui-options-preset-deluxe = Deluxe kamer (RT)
+ui-options-normal-precision = De precisie van de reflectie
+ui-options-normal-precision-help = Hoe fijn de richting van elk oppervlak wordt behouden voor reflecties. Standaard kan stappen weergeven in de reflecties van gladde, gebogen oppervlakken zoals autolak; Hoog verwijdert deze en gebruikt meer videogeheugen. Automatisch gebruikt Hoog met ray-traced reflecties, waar de stappen het meest te zien zijn, en Standaart anders
+ui-options-normal-precision-automatic = Automatisch
+ui-options-normal-precision-standard = Standaard
+ui-options-normal-precision-high = Hoog
+ui-options-private-point-at-help = Verberg het object dat u bewerkt, houd uw bewerkingsarm omlaag en verberg uw bewerkbalk.
+ui-options-private-edit-beam = Bewerkingsbalk verbergen
+ui-options-private-edit-beam-help = Verberg de balk volledig terwijl u objecten bewerkt of grijpt, zowel op uw scherm als voor andere kijkers.Selectiedoelhints en balken geven/neerzetten worden niet beïnvloed.
+common-window-outside = Buiten het viewervenster gaan
+common-window-inside = Terugbrengen naar het venster van de kijker
+common-window-rename-name = Dubbelklik om de naam te wijzigen
+common-carry-hint = Klik om het hier neer te zetten, Esc om het los te laten
+common-window-paused-photo = Gepauzeerd terwijl de fotomodus is geopend
+common-window-paused-director = Gepauzeerd terwijl de regisseur speelt
+common-window-paused-interface = Onderbroken terwijl de interface is uitgeschakeld
+ui-options-warn-live-preview = Waarschuwen wanneer een textuur of materiaal niet kan worden bekeken
+ui-options-warn-live-preview-help = In de kiezer van het bouwvenster, klikt u op een niet-kopieerbaar item dat niets toepast tot OK: zeg het.
+ui-texture-picker-live-preview-texture = We kunnen geen voorbeeld van deze textuur weergeven omdat het geen kopie is.
+ui-texture-picker-live-preview-material = We kunnen geen voorbeeld van dit materiaal weergeven omdat het geen kopie is.
+fetch-invalid-url = Ongeldige URL
+ui-chat-close-all-ims = Sluit alle IM gesprekken
+ui-chat-close-all-ims-question = Sluit alle IM gesprekken en beëindig het actieve gesprek?
+ui-chat-confirm-close-all-ims = Bevestigen voor het sluiten van alle IM conversaties
+ui-chat-confirm-close-all-ims-help = Vraag voor het sluiten van alle IM gesprekken wanneer men een actieve voice call heeft.
+ui-options-aurora-controls-compact-help = Het Controls venster opent compact op de camera: zijn joysticks, zoom en roll. Zijn titelbalk knop schakelt tussen compact en volledig, en stelt dit ook in.Met Classic vensters, wordt de camera geopend in het kleine cameravenster van Legacy Viewer in plaats daarvan.
+rlva-restart-hint = RLVa start wanneer u zich aanmeldt. Zodra het wordt uitgevoerd, heeft het in- of uitschakelen ervan effect bij de volgende start van de viewer: de beperkingen die objecten vasthouden blijven tot die tijd bestaan.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa wordt ingeschakeld nadat u opnieuw start.
+rlva-toggle-disabled-restart = RLVa wordt uitgeschakeld nadat u opnieuw start.
+livemesh-import-connect = Verbind Blender met plug-in 0.11.0 of hoger, of Maya met plugin 0,2.0, om de import LOD's voor te bereiden.
+livemesh-import-preparing = Het voorbereiden van het object en zijn LODs in Blender of Maya…
+livemesh-import-ready = LOD's ontvangen. Klaar in de importeur.
+livemesh-import-failed = Importvoorbereiding mislukt: { $error }
+livemesh-import-timeout = Controleer de verbinding (gebruik in Blender de Object Mode) en probeer het opnieuw.Check the connection (in Blender, use Object mode) and try again.
+livemesh-shape-apply-tooltip = Vink het vakje Modify rights aan en pas vervolgens het skelet aan dat is geselecteerd in Blender of Maya en de gebonden netten (via MayaStar voor een MayaStar rig) Selecteer een lokaal Second Life compatibel skelet.
+livemesh-shape-update-apply = Werk de Blender-plugin bij naar 0.10.0 of hoger, of de Maya-plug-in naar 2.4.0 en hoger en maak vervolgens opnieuw verbinding.
+livemesh-shape-applied = Vorm toegepast op het geselecteerde skelet.
+livemesh-shape-tooltip = Controleer de Wijzig rechten van de versleten vorm en maak een nieuwe gereglementeerde referentie body in Blender of Maya.
+livemesh-shape-connect = Sluit eerst de Aurora plug-in aan in Blender of Maya.
+livemesh-shape-update-plugin = Werk de Blender-plugin bij naar 0.9.0 of hoger, of de Maya-plug-in naar 1.3.0, en sluit deze vervolgens opnieuw aan.
+livemesh-shape-timeout = Blender of Maya heeft de import niet bevestigd. Probeer het opnieuw (schakel in Blender over naar Objectmodus).
+livemesh-shape-success = Shape geïmporteerd als een nieuw gereed referentielichaam.
+blender-live-maya-version = Aurora LiveMesh voor Maya { $version }
+blender-live-maya-instructions = Open LiveMesh vanuit de Aurora shelf, voeg je meshes toe en klik op Connect (Verbinden) om het bestand te openen.
+blender-live-save-maya = Maya-plug-in opslaan…
+blender-live-maya-saved = Plug-in opgeslagen. Pak de ZIP uit en sleep install.mel naar een Maya viewport.
+livemesh-plugin-connected = Plug-in aangesloten
+livemesh-token-refused = Een programma probeerde verbinding te maken zonder de sleutel van deze preview.Alleen de Aurora plug-in in Blender of Maya kan verbinding maken.
+livemesh-waiting-plugin = Wachten op Blender of Maya…
+blender-live-objects-help = De netten die Blender of Maya verstuurt Selecteer er een om te plaatsen, of importeer het uit het menu.
+blender-live-size-note = Grootte vermenigvuldigt wat de plug-in verzendt, dus latere bewerkingen in Blender of Maya houden het.
+blender-live-avatar-help = Voor rigged netten: stuur je shape naar Blender of Maya om erop te modelleren.
+livemesh-shape-section = Je vorm in Blender of Maya
+blender-live-import-help = Bevriest een momentopname van het object voor de normale import: beoordeling, prijs en vervolgens bevestigen Latere bewerkingen in Blender of Maya veranderen dit niet.
+blender-live-changed-tip = Tijd sinds Blender of Maya dit object voor het laatst heeft gewijzigd
+fit-lab-section = Fit lab 2016
+fit-lab-help = Poppen gekleed in wat jij draagt, elk met een ander lichaam, staan voor je om te laten zien hoe het kledingstuk past bij verschillende vormen.Alleen jij ziet ze: niets wordt verzonden of opgeslagen.
+fit-lab-body-me = Ik
+fit-lab-body-slim = Slank
+fit-lab-body-curvy = Curvy lichaamsvorm
+fit-lab-body-full = Volledige figuur
+fit-lab-body-athletic = Atletiek
+fit-lab-body-tall = Hoog
+fit-lab-body-petite = Klein
+fit-lab-motion = Motie
+fit-lab-motion-stand = Opstaan
+fit-lab-motion-walk = Loop.
+fit-lab-motion-sit = Ga zitten.
+fit-lab-motion-range = Bewegingsbereik
+fit-lab-pose = Positie
+fit-lab-pose-all = Allemaal, op hun beurt
+fit-lab-pose-arms-up = Beide armen omhoog
+fit-lab-pose-reach = Reik naar voren
+fit-lab-pose-hug = Met armen gekruist
+fit-lab-pose-squat = Het kruipen pose
+fit-lab-pose-kneel = Kniel.
+fit-lab-pose-knee-up = Knie omhoog gebracht
+fit-lab-pose-twist = Draai de torso
+fit-lab-pose-bend = Buig naar voren
+fit-lab-motion-like-me = Net als ik
+fit-lab-show = Toon de mannequins
+fit-lab-place = Breng ze hier
+fit-lab-remove = Verwijder de mannequins
+fit-lab-choose = Kies minstens één lichaam.
+fit-lab-clip = Laat zien waar het lichaam door komt
+fit-lab-clip-note = Rood: het lichaam komt uit het kledingstuk. Amber: lichaam en kleding ontmoeten elkaar. Op je avatar en de mannequins, zoals gezien vanuit de camera. Al het andere dat je draagt telt als lichaam: doe een jas of haar uit dat over het kledij wordt gedragen.
+blender-live-levels-pending = Blender of Maya bereidt de detailniveaus voor wanneer u op Importeren klikt.
+blender-live-levels-note = Voorbereid in Blender of Maya vanuit de LiveMesh-instellingen van elk object.
+blender-live-quick-look-changed = Gewijzigd in Blender of Maya { $ago } geleden.
+blender-live-warning-textures = Texturen overgeslagen, effen kleur getoond
+blender-live-warning-not-sent = Niet in de preview
+blender-live-undo-derez = Derezzed { $name } · nog steeds in de lijst van de plug-in
+blender-live-undo-detach = Vrijstaand { $name } · nog steeds in de lijst van de plug-in
+inventory-open-current = Openen
+inventory-folder-back = Terug
+inventory-folder-forward = Vooruit
+inventory-folder-up = Een niveau omhoog gaan
+area-search-metres = { $n } m
+area-search-band-reach = Binnen handbereik
+area-search-band-close = In de buurt
+area-search-band-around = Om je heen
+area-search-band-further = Verder
+area-search-band-far = Vader
+area-search-band = Gebied
+area-search-within = Binnen de { $distance }
+area-search-within-across = Binnen { $distance } over
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Laat elke afstand zien
+area-search-from = Afstand vanaf het centrum
+area-search-to = Afstand tot het strand
+area-search-bar-tip =
+    { $count ->
+        [one] Eén object bekijken, { $from } naar { $to }
+       *[other] { $count } voorwerpen, { $from } naar { $to }
+    }
+area-search-of-objects = van { $total } objecten
+area-search-li = { $value } LI
+area-search-li-count = Impact op het land: { $value }
+area-search-owner-count =
+    { $count ->
+        [one] Eén eigenaar
+       *[other] { $count } eigenaren
+    }
+area-search-object-count =
+    { $count ->
+        [one] Bekijk één object
+       *[other] { $count } objecten
+    }
+area-search-objects-word = objecten
+area-search-in-reach = hier
+area-search-tab-objects = Objecten
+area-search-tab-owners = Eigenaren
+area-search-hint-wide = Objecten, eigenaren, makers of UUID's
+area-search-kind-heading = Soort object
+area-search-kind-tip = Klik: alleen deze. Nogmaals: verborgen.
+area-search-kind-any = elk
+area-search-kind-only = Alleen deze pagina's
+area-search-kind-hidden = Verborgen
+area-search-kind-attached = Bijgevoegd
+area-search-kind-probes = Sondes
+area-search-click-all = Allemaal
+area-search-click-any-short = Elk
+area-search-permissions = Machtigingen
+area-search-price-heading = Verkoopprijs, voor objecten te koop
+area-search-price-to = naar
+area-search-price-tip = Kies eerst “Te koop”
+area-search-linked = Gekoppelde prims
+area-search-one-field = Zoeken in één veld
+area-search-regex-switch = Reguliere expressies gebruiken
+area-search-regex-invalid = Geen geldige reguliere expressie
+area-search-reset-filters-tip = Herstel alle filters; de zoektekst blijft behouden
+area-search-save-defaults-tip = Openen met deze filters vanaf nu
+area-search-reset-search = Reset de zoekteksten
+area-search-reset-filters = Reset de filteropties
+area-search-reset-ranges = Reset afstand en prijs
+area-search-reset-all = Alles opnieuw instellen
+area-search-more = Meer
+area-search-several = Selecteer meerdere items
+area-search-several-tip = Klikken voegen toe aan de selectie (ook Ctrl of Shift + klikken, Ctrl+A)
+area-search-actions = Acties
+area-search-nothing = Nog geen objecten ontvangen.
+area-search-nothing-for-sale = Niets te koop hier.
+area-search-not-for-sale = Niet te koop
+area-search-from-price = Vanaf { $price }
+area-search-nearest = Dichtstbijzijnde eerst
+area-search-heaviest = Het zwaarste eerst
+area-search-order-tip = Wijzig de volgorde: dichtstbijzijnde of zwaarste eerst
+area-search-rank = Nummer { $rank } van { $all }
+area-search-rank-here = #{ $rank } hier
+area-search-card-more = Toon elke figuur
+area-search-card-less = Laat minder zien
+area-search-open-group = De groep openen
+area-search-spoken = { $name }, afstand { $distance }, landimpact { $li }, eigenaar { $owner }
+area-search-owner-spoken = { $name }, { $count } Objecten, land impact { $li }
+area-search-stage-line = Afstand { $distance } · landimpact { $li } · { $owner }
+area-search-tile-3d = 3D-weergave
+area-search-on = { $count } aan
+area-search-on-word = aan
+area-search-more-on =
+    { $count ->
+        [one] Nog één filter aan
+       *[other] { $count } meer filters op
+    }
+ui-options-legacy-lists = Lijsten importeren vanuit de Legacy Viewer
+ui-options-legacy-lists-help = Hiermee voegt u de teleportgeschiedenis, zwarte lijst met middelen, mediafilterlijst en contactsets van dit account toe.
+ui-options-legacy-lists-button = Importeren vanuit de verouderde viewer…
+ui-options-legacy-lists-no-account = Log in om de lijsten van dit account te importeren.
+ui-options-legacy-lists-title = Importeren vanuit de verouderde viewer
+ui-options-legacy-lists-text = Alles wordt toegevoegd aan de lijsten van deze account en niets hier wordt verwijderd. Wat op de zwarte lijst staat, verlaat in één keer de wereld.
+ui-options-legacy-lists-searching = Op zoek naar de mappen van Legacy Viewer…
+ui-options-legacy-lists-none = Er is geen map met lijsten gevonden voor dit account.
+ui-options-legacy-lists-teleports = Teleport geschiedenis ({ $count })
+ui-options-legacy-lists-derender = Zwarte lijst van activa ({ $count })
+ui-options-legacy-lists-media = Mediafilterlijst ({ $count })
+ui-options-legacy-lists-contact-set-entries = Contact set vermeldingen ({ $count })
+ui-options-legacy-lists-confirm = Importeren
+ui-options-legacy-lists-added = Vermeldingen toegevoegd of bijgewerkt. Teleportgeschiedenis: { $teleports }, lijst met geblokkeerde assets: { $derender }, mediafilter: { $media }, vermeldingen in contactgroepen: { $sets }.
+ui-options-legacy-lists-nothing = Niets nieuws: dit account heeft deze lijsten al.
+ui-options-legacy-lists-failed = Kan niet lezen: { $files }.
+ui-options-legacy-lists-unsaved = Kon niet opslaan, achtergelaten zoals het was: { $files }.
+ui-options-legacy-lists-other-grid = Op dit rooster kan een map met dezelfde naam tot een ander rooster behoren: controleer of het de juiste is.
+ui-options-build-show-beams-hint = Toon je selectiebalken en die van andere avatars bij het bewerken, grijpen of geven. Dit regelt alleen de weergave. Gebruik Privacy > Verberg bewerkingsbalk om je bewerkingsbeam lokaal en via het netwerk te stoppen.
+teleport-failed-title = Teleporteren mislukt.
+teleport-error-invalid-tport = Teleportpogingen zijn beperkt tot 6 per minuut. Als je problemen ondervindt, wacht dan een minuut en probeer opnieuw te teleporteren.Als het probleem aanhoudt, log dan uit en opnieuw in.
+teleport-error-invalid-region-handoff = Er is een probleem opgetreden bij het verwerken van je regio-overschrijding. Mogelijk moet je opnieuw inloggen voordat je regio's kunt overschrijden. Als je dit bericht blijft ontvangen, neem dan contact op met de ondersteuning.
+teleport-error-blocked-tport = Sorry, teleporteren is momenteel geblokkeerd. Probeer het over enkele ogenblikken opnieuw. Als je nog steeds niet kunt teleporten, log dan uit en weer in om het probleem op te lossen.
+teleport-error-nolandmark-tport = Sorry, maar het systeem kon de bestemming van de landmark niet vinden.
+teleport-error-timeout-tport = Sorry, het systeem kon de teleportverbinding niet voltooien. Probeer het over een ogenblik opnieuw.
+teleport-error-no-help-island = Je kunt niet terug teleporteren naar Welcome Island.
+teleport-error-noaccess-tport = Sorry, je hebt geen toegang tot die teleportbestemming.
+teleport-error-missing-attach-tport = Je bijlagen zijn nog niet aangekomen, wacht een paar seconden of log uit en weer in voordat je probeert te teleporteren.
+teleport-error-too-many-uploads-tport = De assetwachtrij in deze regio is momenteel verstopt, dus uw teleportverzoek zal niet tijdig kunnen slagen.Probeer het over een paar minuten opnieuw of ga naar een minder druk gebied.
+teleport-error-expired-tport = Sorry, maar het systeem kon uw teleportverzoek niet tijdig voltooien.Probeer het over een paar minuten opnieuw.
+teleport-error-expired-region-handoff = Sorry, maar het systeem kon uw regio-overschrijding niet tijdig voltooien.Probeer het over een paar minuten opnieuw.
+teleport-error-preexisting-tport = Sorry, het systeem kon je teleport niet starten. Probeer het over een paar minuten opnieuw.
+teleport-error-no-host = De pagina die u probeert te bereiken bestaat niet (meer) of is tijdelijk niet beschikbaar. Probeer het over enkele minuten opnieuw.
+teleport-error-no-inventory-host = Deze website is momenteel niet beschikbaar.
+teleport-error-must-get-age-region = Je moet 18 jaar of ouder zijn om deze regio te betreden.
+teleport-error-special-usage-blocked = Kan regio niet invoeren. '{ $region }' is een Skill Gaming regio, en je moet aan bepaalde criteria voldoen om mee te doen.Bekijk voor meer informatie de Skill Gaming FAQ: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = De regio kan niet worden ingevoerd. Dit is een Skill Gaming-regio en je moet aan bepaalde criteria voldoen om deel te nemen. Raadpleeg voor meer informatie de veelgestelde vragen over Skill Gaming: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Uw thuisnetwerk weigerde uw terugkeer, dit betekent meestal dat het Hypergrid-adres niet overeenkomt met het adres dat andere netwerken gebruiken. Neem contact op met de exploitanten van uw thuisnet; door opnieuw in te loggen komt u ondertussen naar huis.
+teleport-hint-hypergrid-unreachable = Het andere rooster kon niet worden bereikt, het kan offline zijn of de link verwijst naar een oud adres.
+teleport-hint-hypergrid-visitors-refused = Dat rooster laat alleen bewoners van sommige roosters binnen.
+teleport-hint-hypergrid-destination-gone = De bestemmingsregio bestaat niet meer of is verplaatst, de oriëntatiepunten en links naar andere grids kunnen verouderd zijn.
+toolbar-edit = Knoppen en menu's aanpassen…
+toolbar-title = Knoppen en menu's
+toolbar-interface-locked = Interface vergrendeld
+toolbar-help = Sleep knoppen of menu-items naar de bovenste, onderste of zijbalk en zet een knop hier neer om deze te verwijderen. Klik met de rechtermuisknop op een willekeurige knop om het uiterlijk ervan te wijzigen.
+toolbar-help-classic = Sleep knoppen of menu-items naar de bovenste, onderste of zijbalk en zet een knop hier neer om deze te verwijderen. Klik met de rechtermuisknop op een willekeurige knop om het uiterlijk ervan te wijzigen.
+toolbar-help-modes = Kies iconen, labels, beide of de standaardbalk voor elke knop.Sleep items in het Aurora menu om het te herschikken.
+import-menu-textures = Texturen
+import-menu-animations = Animaties
+import-menu-sounds = Geluiden
+import-menu-materials = Materialen
+import-menu-meshes = Meshes
+import-menu-options = Opties voor importeren
+import-upload-payment-title = Uploaden
+import-upload-payment = Je hebt L${ $cost } betaald om te uploaden.
+import-quick-textures =
+    { $count ->
+        [one] Importeren · Texturen: 1 · L${ $cost }?
+       *[other] Importeren · Texturen: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Importeren · Materialen: 1 · L${ $cost }?
+       *[other] Importeren · Materialen: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Importeren · Geluiden: 1 · L${ $cost }?
+       *[other] Importeren · Geluiden: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Kies de importgrootte. Geschikte texturen kunnen worden geïmporteerd op 2048 × 2048:
+       *[other] ({ $count }) Kies de importgrootte. Geschikte texturen kunnen worden geïmporteerd op 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Kies de importgrootte. Geschikte materiaalafbeeldingen kunnen worden geïmporteerd op 2048 × 2048:
+       *[other] ({ $count }) Kies de importgrootte. Geschikte materiaalafbeeldingen kunnen worden geïmporteerd op 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Upload gratis afbeeldingen op 2048 × 2048 zonder te vragen
+import-quick-free-full-size-help = "Import textures" en "Impor materialen" vragen dan 1024 of 2048 alleen als het uploaden L$ kost.
+ui-bars-customize-bars = Interface aanpassen
+build-tool-in-use = In gebruik
+build-create-options-toggle = Toon / verberg de opties
+build-create-keep-creating = Blijf aan het creëren
+build-create-center-on-prim = Centreer op prim
+build-create-copy-prim-rotation = Kopieer prim rotatie
+build-create-align-to-surface = Uitlijnen op oppervlak
+build-capture-shape-button = Kopieer de vorm van een prim: klik hier, dan een prim in de wereld
+build-capture-shape-armed = Klik op een prim om de vorm te kopiëren (Escape annuleert)
+build-capture-shape-full = 20 vormen blijven behouden. Verwijder een om een andere te kopiëren
+build-capture-shape-remove = Verwijder deze vorm
+build-capture-shape-tooltip = Gekopieerde vorm ({ $kind })
+build-capture-shape-not-a-prim = Alleen de vorm van een prim kan worden gekopieerd
+build-capture-shape-mesh-or-sculpt = De vorm van een mesh of een gesculpteerde prim kan niet worden gekopieerd
+build-capture-shape-no-modify = Je hebt toestemming nodig om deze prim te wijzigen om de vorm te kopiëren
+import-other-options = Andere opties
+toolbar-button-icons = Alleen pictogram
+toolbar-button-text = Alleen label
+toolbar-button-icons-text = Pictogram en label
+toolbar-icon-default = Standaardpictogram herstellen
+toolbar-icon-choose = Kies een pictogram
+toolbar-icon-change = Pictogram wijzigen
+toolbar-presets = Voorinstellingen
+toolbar-interfaces = Interfaces
+toolbar-interfaces-shown = Getoond in het Interfaces blok
+toolbar-interfaces-hidden = Verborgen in het Interfaces blok
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora OldSchool
+toolbar-preset-photographer = Aurora Fotograaf zoeken
+toolbar-preset-legacy = Legacy
+toolbar-import-textures = Texturen importeren
+toolbar-import-sounds = Geluiden importeren
+toolbar-import-animations = Animaties importeren
+toolbar-import-materials = Materialen importeren
+toolbar-import-meshes = Importeer netten
+toolbar-import-local = Lokale bestanden
+toolbar-import-advanced = Geavanceerd importeren
+toolbar-import-settings = Instellingen voor importeren
+toolbar-import-bar = Importbalk
+toolbar-icon-search = Zoek een pictogram…
+toolbar-in-top = In de bovenste werkbalk
+toolbar-bar-top = Bovenste werkbalk
+toolbar-drop-here = Laat het hier vallen
+toolbar-separator = Scheidingsteken
+toolbar-interface-edit = Interface aanpassen
+toolbar-edit-done = Gereed
+toolbar-edit-top = Boven
+toolbar-edit-bottom = Onderkant
+toolbar-edit-left = Links
+toolbar-edit-right = Rechts
+toolbar-edit-help = Klik op een item om het te selecteren, sleep het om te verplaatsen of klik met de rechtermuisknop voor bewerkingsopties.Sluit dit venster om te voltooien.
+toolbar-edit-locked = Bars zijn vergrendeld. Ontgrendel ze hieronder om de interface te veranderen.
+toolbar-edit-move = Verplaatsen naar
+toolbar-edit-split-before = Split voorafgaand aan
+toolbar-edit-split-after = Splitsen na
+toolbar-edit-merge-before = Samenvoegen met vorig blok
+toolbar-edit-merge-after = Samenvoegen met volgende blok
+toolbar-edit-merge-groups = Voeg deze blokken samen
+toolbar-drawer = Lade
+toolbar-drawer-default-mode = Standaardweergave van knoppen
+toolbar-drawer-closes = Sluiten na een klik op een knop
+toolbar-block-shortcut = Snelkoppeling:
+toolbar-drawer-hides-needs-shortcut = Vereist een snelkoppeling
+toolbar-floating-close-button = Een sluitknop toevoegen
+toolbar-block-name = Naam van blok:
+toolbar-block-button-mode = Blokknopweergave
+toolbar-button-inherited = Overgenomen
+toolbar-drawer-hides-button = De knop verbergen tijdens zweven
+toolbar-floating-new = Het drijvende blok
+toolbar-floating-orientation = Oriëntatie
+toolbar-floating-horizontal = Horizontaal
+toolbar-floating-vertical = Verticaal
+toolbar-floating-empty = Knoppen hier neerzetten
+toolbar-shortcut-title = Snelkoppeling
+toolbar-shortcut-block-name = Blok: { $name }
+toolbar-shortcut-none = Geen snelkoppeling
+toolbar-shortcut-press-key = Druk op een toets
+toolbar-shortcut-esc = Esc om te annuleren
+toolbar-shortcut-clear = Verwijderen
+toolbar-shortcut-overrides = Neemt over { $name }: deze snelkoppeling voert de werkbalk uit in plaats van het standaardgebruik.
+toolbar-shortcut-used = Al de snelkoppeling van { $names }.
+toolbar-shortcut-replace = Vervangen
+toolbar-shortcut-add = Toevoegen
+toolbar-shortcut-save = Opslaan
+toolbar-shortcut-choose-key = Kies een sleutel
+toolbar-shortcut-help = Schakel Ctrl, Alt en Shift in of uit en klik vervolgens op de toets om deze te wijzigen.Ctrl of Alt is vereist, behalve bij F1 tot en met F24.
+toolbar-shortcut-inactive = Deze knop bevindt zich niet in een balk: de snelkoppeling werkt zodra deze opnieuw is geplaatst.
+toolbar-shortcut-refused-keyboard = Alleen toetsenbordtoetsen kunnen een snelkoppeling zijn.
+toolbar-shortcut-refused-modifier = Een wijzigingstoets alleen kan geen sneltoets zijn.
+toolbar-shortcut-refused-needs-modifier = Voeg Ctrl of Alt toe: een toets alleen, of met alleen Shift, typt in tekstvelden.
+toolbar-shortcut-refused-altgr = Ctrl+Alt met deze toets is AltGr, waarmee karakters op veel toetsenborden worden getypt.
+toolbar-shortcut-refused-editing = Tekstvelden gebruiken deze sneltoets (alles selecteren, kopiëren, knippen, plakken, ongedaan maken, opnieuw).
+toolbar-shortcut-refused-navigation = Tekstvelden verplaatsen en wissen met deze toets.
+toolbar-shortcut-refused-typing = De chat en de dialoogvensters gebruiken deze toets.
+toolbar-shortcut-refused-system = Het systeem behoudt deze snelkoppeling.
+toolbar-shortcut-refused-window = Deze sneltoets sluit of schakelt tussen vensters.
+toolbar-shortcut-refused-zoom = Met deze sneltoets zoomt u in op de interface.
+toolbar-spacer = Blokafstand
+toolbar-add-spacer = Blokafstand toevoegen
+toolbar-button-settings = Instellingen voor knoppen
+toolbar-button-edit = Knop bewerken…
+toolbar-button-edit-title = De knop Bewerken
+toolbar-button-name = Naam van de knop:
+toolbar-button-display = De vertoning van de knoop
+toolbar-shortcut-fixed-block-help = De snelkoppeling van een vast blok toont en verbergt het; terwijl de interface wordt bewerkt, blijft deze getoond.
+toolbar-block-settings = Instellingen voor blokkeren
+toolbar-parent-block-settings = Instellingen voor ouderblok
+toolbar-block-edit = Blok bewerken…
+toolbar-block-edit-title = Blok bewerken
+toolbar-block-alignment = Uitlijning
+toolbar-block-sizing = De grootte van de knop
+toolbar-block-fixed-options = Opties voor vaste modus
+toolbar-block-floating-options = Opties voor zwevende modus
+toolbar-block-kind-fixed = Vast blok 1
+toolbar-block-kind-drawer = Lade
+toolbar-block-kind-floating = Het drijvende blok
+toolbar-block-remove = Blok verwijderen
+toolbar-move-block = Sleep om het hele blok te verplaatsen
+toolbar-remove-block = Blok verwijderen
+toolbar-drawer-empty = Deze lade is leeg.
+toolbar-drawer-drop = Sleep knoppen hierheen om ze toe te voegen of opnieuw te rangschikken.
+toolbar-separator-settings = Instellingen voor blokafstand
+toolbar-separator-size = Grootte / minimum (px)
+toolbar-separator-stretch = Beschikbare ruimte vullen
+toolbar-separator-help = De grootte is de minimale breedte, of hoogte in een zijbalk, van de ruimte die door de blokken wordt gedeeld.
+toolbar-block-navigation = Navigatie en SLURL
+toolbar-block-account = Rekening en saldo
+toolbar-block-system = Klok, indicatoren en audio
+toolbar-block-status = Status van beschikbaarheid
+toolbar-block-balance = Saldo
+toolbar-block-clock = Klok
+toolbar-block-ping = Regio latency
+toolbar-block-fps = Framesnelheid (FPS)
+toolbar-block-network = Het netwerkverkeer
+toolbar-block-media = Pakketmedia
+toolbar-block-music = Parcel muziek bestellen
+toolbar-block-volume = Geluidsvolume
+toolbar-block-notifications = Meldingen
+toolbar-block-conversations = De pictogrammen van het gesprek
+toolbar-block-chat = Nabijgelegen chat input
+toolbar-category-all = Alle categorieën »
+toolbar-section-main = Hoofd
+toolbar-section-advanced = Geavanceerd
+toolbar-search-all = Zoeken bevat geavanceerde opdrachten.
+toolbar-category-avatar = Avatar en beweging
+toolbar-category-communication = Communicatie
+toolbar-category-world = Wereld en reizen
+toolbar-category-creation = Creatie en inhoud
+toolbar-category-interface = Interface en camera
+toolbar-category-advanced = Geavanceerde tools
+toolbar-category-help = Hulp
+toolbar-category-custom = Aangepaste opdrachten
+toolbar-bar-settings = Werkbalkinstellingen
+toolbar-menu-group = Menu: { $name }
+toolbar-location-bar = SLURL adresbalk
+toolbar-command-build-tool-focus = Bouw - camera
+toolbar-command-build-tool-grab = Bouwen - verplaatsen
+toolbar-command-build-tool-edit = Bouwen - bewerken
+toolbar-command-build-tool-create = Bouwen - maken
+toolbar-command-build-tool-land = Bouw - grond
+bug-copy-version = Kopieer viewer versie
+toolbar-notecard-save = Opslaan op een notitiekaart…
+toolbar-notecard-load = Laden vanuit een notitiekaart…
+toolbar-notecard-name = De interface van Aurora
+toolbar-notecard-help = Lay-out en uiterlijk van werkbalken, knoppen, laden en menu's.
+toolbar-notecard-saved = Interface lay-out opgeslagen in uw inventaris.
+toolbar-notecard-invalid = Deze notecard bevat geen compatibele interface lay-out.
+toolbar-notecard-unavailable = Deze notitiekaart is niet meer beschikbaar of kan niet worden gekopieerd.
+toolbar-notecard-layout-changed = De interface veranderde terwijl de notitiekaart werd geladen. Laad deze opnieuw om de lay-out toe te passen.
+toolbar-notecard-demo-valid = Interface voor fotografen
+toolbar-notecard-demo-invalid = Overige notecard
+toolbar-notecard-too-large = Deze interface configuratie is te groot voor een notecard.
+toolbar-saved-interfaces = Opgeslagen interfaces
+toolbar-saved-interfaces-empty = Nog geen opgeslagen interfaces.
+toolbar-notecard-destination = Map: { $path }
+toolbar-notecard-folder-error = De map interfaces kon niet worden geladen of gemaakt. Probeer het opnieuw.
+toolbar-current-preset = Geselecteerde interface: { $name }
+toolbar-preset-custom = Interface op maat
+toolbar-preset-unsaved = Niet opgeslagen wijzigingen
+toolbar-preset-save-title = Interface opslaan
+toolbar-preset-save-name = Naam van interface
+toolbar-preset-save-new = Nieuwe persoonlijke interface
+toolbar-preset-save-replace = Vervang deze persoonlijke interface
+toolbar-preset-save-unavailable = Deze interface kan hier niet worden opgeslagen. Kies een andere naam of een beschikbare, bewerkbare persoonlijke interface.
+toolbar-interface-delete-unavailable = Deze persoonlijke interface kan niet worden verwijderd.
+toolbar-interface-delete-confirm = De persoonlijke interface ‘{ $name }’ naar de prullenbak verplaatsen?

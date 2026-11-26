@@ -16092,3 +16092,739 @@ parcel-environment-empty = Ympäristöjä ei ole tallennettu
 parcel-environment-remove-all = Poista kaikki
 parcel-environment-remove-all-title = Poistaa kaikki paketille tallennetut ympäristöt?
 parcel-environment-remove-all-text = Tämän verkon maa-alueille tallentamasi ympäristöt poistetaan. Muiden verkkojen ympäristöt säilyvät. Tätä toimintoa ei voi perua.
+
+### Updated release translations
+
+anim-timeline-channels-hint = Näytä tämän luun kierto- ja sijaintiavaimet omalla rivillä
+anim-timeline-channel-rotation = Kierto
+anim-timeline-channel-location = Sijainti
+anim-timeline-keying-hint = Locationin kanssa Move ottaa yhden jointin yksin, pois IK-ketjustaan. Second Life -animaatioissa ei ole skaalausnäppäimiä, vaan ne on sijoitettu äänenvoimakkuuden mukaan.
+anim-timeline-keying-auto = Auto: kierto ja sijainti lantion ja siirrettyjen nivelten
+anim-timeline-keying-auto-short = Automaattinen
+anim-timeline-keying-loc-rot = Sijainti ja kierto
+anim-timeline-keying-loc-rot-short = Sijainti + root
+anim-timeline-keying-rot-short = Punainen
+anim-timeline-keying-loc-short = Sijainti
+anim-edit-shortcut-play = Toista tai keskeytä
+area-search-scope-heading = Missä
+area-search-scope-parcel = Paketti
+area-search-scope-region = Alue
+area-search-scope-neighbours = Naapurit
+area-search-objects-heading = Mitkä esineet
+inventory-copy-selection-count =
+    { $count ->
+        [one] Kopioi 1 tuote
+       *[other] Kopioi { $count } kohdetta
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Linkki 1 tuote
+       *[other] Linkki { $count } kohdetta
+    }
+inventory-drop-move-here = Siirrä tänne
+inventory-drop-copy-here = Kopioi tähän
+inventory-drop-link-here = Luo linkkejä tähän
+inventory-sort-description = Kuvaus
+inventory-sort-reversed = { $order } (käänteinen)
+inventory-column-creator = Luoja
+inventory-column-count = Kohteet
+inventory-columns-fit = Kaikkien sarakkeiden koon muuttaminen sopivaksi
+inventory-columns-reset-widths = Sarakeleveyksien palauttaminen
+inventory-back = Takaisin
+inventory-forward = Eteenpäin
+inventory-up = Yksi taso ylöspäin
+keybinds-inventory-root = Siirry alkuun
+keybinds-inventory-search = Etsi varastosta
+keybinds-inventory-filter = Suodata kansio
+keybinds-inventory-preview = Näytä esikatseluruutu
+keybinds-inventory-view-large = Suuret kuvat
+keybinds-inventory-view-medium = Medium kuvat
+keybinds-inventory-view-small = Pienet kuvat
+keybinds-inventory-view-compact = Kompakti näkymä
+keybinds-inventory-view-details = Yksityiskohtainen näkymä
+keybinds-inventory-view-tiles = Laatat-näkymä
+keybinds-inventory-toggle = Valitse kohdistuksessa oleva rivi tai poista sen valinta
+keybinds-inventory-menu = Avaa valinnan valikko
+keybinds-inventory-purge = Purge roskakorista
+keybinds-inventory-refused = { $keys } pysyy inventaariolistan omana avaimena: valitse toinen.
+inventory-path-edit = Kirjoita polku
+inventory-path-subfolders = Alikansiot
+inventory-copy-path = Kopioi polku
+inventory-show-in-folder = Näytä kansiossa
+inventory-pin = Pin nopeaan käyttöön
+inventory-unpin = Poista kiinnitys pikakäytöstä
+inventory-quick-access = Nopea pääsy
+inventory-quick-access-drop = Pudota kansio tähän kiinnittääksesi sen
+inventory-invert-selection = Käänteinen valinta
+inventory-undo = Kumoa
+inventory-redo = Tee uudelleen
+inventory-undo-step = Kumoa { $what }
+inventory-redo-step = Tee uudelleen { $what }
+inventory-history-move =
+    { $count ->
+        [one] Näytetään 1-10 / 12 tuotteesta
+       *[other] Näytetään 1 - 88/{ $count } kohdetta
+    }
+inventory-history-delete =
+    { $count ->
+        [one] Näytetään 1 - 10 / 12
+       *[other] Näytetään 1 - 88/{ $count } kohdetta
+    }
+inventory-history-rename = uudelleennimeä
+inventory-history-new-folder = Luo uusi kansio
+inventory-history-copy =
+    { $count ->
+        [one] Näytetään 1 tuote.
+       *[other] Kopio { $count } kohteesta
+    }
+inventory-history-link =
+    { $count ->
+        [one] Linkki 1 kohteeseen
+       *[other] Linkkejä { $count } kohteeseen
+    }
+inventory-undo-nothing = Mitään ei ole jäljellä peruutettavaksi: nämä kohteet ovat siirtyneet tai poissa.
+inventory-redo-nothing = Mitään ei ole jäljellä tehtäväksi: nämä kohteet ovat siirtyneet tai poissa.
+inventory-undo-empty = Ei mitään mitä perua.
+inventory-redo-empty = Ei mitään tehtävää.
+inventory-undo-dropped = Viimeisen vaiheen kohteet ovat siirtyneet tai poissa: se on pudotettu. Kumoa uudelleen edellisen vaiheen kohdalla.
+inventory-redo-dropped = Seuraavan vaiheen kohteet ovat siirtyneet tai ne ovat poissa: se on pudonnut. Tee seuraavassa vaiheessa uudelleen.
+inventory-undo-folder-not-empty = Uusi kansio sisältää kohteet, jotka on sijoitettu sinne siitä lähtien: siirrä ne ensin ulos tai poista kansio itse.
+inventory-undo-kept-out = Nämä esineet ovat nykyisessä asussa tai Torin listauksissa nyt: vaihda ne siellä.
+inventory-restore-to = Palauta arvoon “{ $folder }”
+inventory-restore-to-origins = Palauta kansioihinsa
+inventory-purge-no-undo = Kumoa ei voi palauttaa niitä.
+inventory-new-tab = Uusi välilehti
+inventory-close-tab = Sulje välilehti
+inventory-next-tab = Seuraava välilehti
+inventory-previous-tab = Edellinen sivu
+inventory-open-in-new-tab = Avaa uudessa välilehdessä
+inventory-tabs-limit = Enintään { $count } välilehteä.
+inventory-copy-to-other-pane = Kopioi toiseen ruutuun
+inventory-move-to-other-pane = Siirtyy toiseen ruutuun
+inventory-resize-columns = Muuta sarakkeiden kokoa vetämällä. Kaksoisosoita, jos haluat sovittaa vasemmalla olevan sarakkeen sen sisältöön.
+inventory-resize-columns-first = Muuta sarakkeiden kokoa vetämällä. Kaksoisosoita, jos haluat antaa ensimmäiselle sarakkeelle tavallisen leveyden.
+inventory-sort-by-column = Napsauta, jos haluat lajitella sarakkeen mukaan, tai uudelleen, jos haluaa muuttaa järjestystä.
+inventory-filter-hint = Suodata tämä kansio…
+inventory-filter-close = Sulje suodatin (Esc)
+inventory-filter-nothing = Mikään ei täsmää suodattimen kanssa
+inventory-view-compact = Kompakti näkymä
+inventory-view-tiles = Laatat-näkymä
+inventory-view-per-folder = Muista kunkin kansion näkymä
+inventory-group-by = Ryhmittele hakusanan mukaan
+inventory-group-none = Ei mitään
+inventory-group-folders = Kansiot
+inventory-group-unknown-creator = Luoja ei vielä tiedossa
+inventory-group-today = Tänään
+inventory-group-yesterday = Eilen
+inventory-group-this-week = Viimeisten 7 päivän aikana
+inventory-group-this-month = Viimeisen 30 päivän aikana
+inventory-group-this-year = Aiemmin tänä vuonna
+inventory-group-earlier = Pitkä aika sitten
+inventory-group-no-date = Ei päivämäärää
+cmdline-mod-zoffset-usage = Aseta avatarin liikkumisen korkeus (käyttö: /zoffset value tai +delta).
+dev-toolbox-n4 = Varaston lastaus
+dev-toolbox-what-n4 = Kansiot luetaan, epäonnistuivat ja lähtivät, lastaaja lukee lennon aikana ja yrittää uudelleen; ei nimiä
+ui-context-inspect-avatar = Tarkista avatar
+inspect-window = Tarkista
+inspect-tab-objects = Objektit
+inspect-objects-title =
+    { $count ->
+        [one] { $count } esine
+       *[other] { $count } kohdetta
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } kohdetta
+       *[other] { $count } kohdetta
+    }
+inspect-open-profile = Avaa profiili
+inspect-over-limit = Rajojen yläpuolella
+inspect-limit-tip = Monimutkaisuusrajasi: { $limit }
+inspect-search = Etsi kohteita tai tekijöitä
+inspect-outlined = { $name } on hahmoteltu maailmassa
+inspect-area-head = Pää
+inspect-area-body = Runko
+inspect-area-arms = Käsivarret ja kädet
+inspect-area-legs = Jalat ja jalat
+inspect-area-hud = HUD
+inspect-area-other = Muut
+inspect-area-world = Objektit
+inspect-own-eyes = Järjestelmän silmät
+inspect-own-body = Järjestelmän runko
+inspect-own-description = Osa itse avataria, ei liitetiedostoa
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } Mt
+inspect-section-complexity = { $value } monimutkaisuus
+inspect-no-match = Mikään ei vastaa hakusanaa ”{ $query }”.
+inspect-spoken-worn = { $name }, kulunut päälle { $point }, monimutkaisuus { $complexity }, valmistanut { $creator }
+inspect-spoken-object = { $name }, omistaa { $owner }, monimutkaisuus { $complexity }, valmistanut { $creator }
+inspect-look-at-tip = Siirrä kamera siihen
+inspect-profile-tip = Avaa luojan profiili
+inspect-made-by = Valmistanut
+inspect-owned-by = Omistaa:
+inspect-worn-on = Käytetty päällä
+inspect-prims-count =
+    { $count ->
+        [one] { $count } alkio
+       *[other] { $count } alkiot
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Tekstuurimuisti
+inspect-tile-vram = Videomuisti
+inspect-tile-prims = Primit
+board-close = Sulje { $title }
+board-grow = Suurenna kuva { $title }
+board-remove = Poista { $name }
+board-more = ja { $count } lisää
+board-more-short = +{ $count }
+board-some-of = { $shown } tai { $all }
+board-of-all = { $all }:sta
+stage-turn-left = Käänny vasemmalle
+stage-turn-right = Käänny oikealle
+stage-higher = Katso korkealta
+stage-lower = Katso alhaalta
+stage-nearer = Lähemmäksi.
+stage-further = Kauemmas pois
+stage-reset = Takaisin alkuun
+stage-hint = Vedä kääntyäksesi, oikea-vetä liikkuaksesi
+stage-light = Vaalea tausta
+stage-dark = Tumma tausta
+stage-playing = AO
+stage-paused = Keskeytetty
+stage-pause-tip = Keskeytä niiden animaatio
+stage-play-tip = Toista heidän animaationsa
+stage-loading = Valmistellaan 3D-näkymää…
+stage-nothing = Ei vielä mitään näytettävää 3D:nä.
+stage-refused = 3D-näkymä on pois päältä, kun taas RLVa rajoittaa sitä, mitä voit nähdä.
+inspect-your-limit = Rajasi: { $limit }
+inspect-without-it = { $value } ilman sitä
+inspect-you = Sinä
+inspect-person = Henkilö
+inspect-difference = Erotus
+inspect-drawn-in-full = Vedetty kokonaan
+inspect-nobody = Kenenkään monimutkaisuus ei ole vielä tiedossa.
+inspect-aside-count = { $count } kesannoitu maa
+inspect-is-aside = kesannoitu
+inspect-set-aside = Keskeytys
+inspect-set-aside-tip = Näe monimutkaisuus ilman tätä kohdetta. Vain tässä ikkunassa: mikään ei muutu maailmassa.
+inspect-put-back = Laita takaisin.
+inspect-put-back-tip = Laske tämä tuote uudelleen
+inspect-complexity-spoken = Monimutkaisuus { $value }, numero { $rank } tai { $count } Ihmisiä täällä
+inspect-stage-outfit = Asukokonaisuus
+inspect-stage-objects = Esineet
+inspect-stage-back = Takaisin kaikkeen
+inspect-place-made-by = { $place } · valmistanut { $name }
+inspect-owned-by-name = Omistaa { $name }
+inspect-tile-items = Kohteet
+inspect-tile-figures = Lukuja
+inspect-col-item = Nimi
+inspect-point = Piste
+inspect-look-at = Katso tätä.
+inspect-selected-count = { $count } valittu
+inspect-worn-count = { $count } kulunut
+inspect-creators-word = Luojat
+inspect-areas-word = Kehon eri alueet
+inspect-owners-word = omistajat
+inspect-triangles-word = kolmiot
+inspect-made-of = { $count } tai { $all } tuotteet
+inspect-kilobytes = { $n } Kt
+inspect-linkset-order = { $count }, vasemmalleasetettu järjestys
+inspect-reset-columns = Sarakkeiden palauttaminen
+inspect-by-creators =
+    { $count ->
+        [one] { $items } · Luoja: 1
+       *[other] { $items } · Luoja: { $count }
+    }
+inspect-owner-button = Omistajan profiili
+inspect-group-button = Konsernin profiili
+inspect-creator-button = Luojan profiili
+inspect-land-others = Muut { $n }
+inspect-land-these = Nämä { $n }
+inspect-land-free = Ilmainen { $n }
+inspect-land-unknown = Paketin huone näyttää, milloin esineet ovat kaikki siinä paketissa, jossa olet.
+ui-login-unencrypted = Salaamaton kirjautuminen
+ui-login-unencrypted-body = Palvelimen { $server } kirjautumisosoite alkaa http:// eikä https://, joten kirjautumista ei salata. Verkkoliikennettäsi näkevä henkilö, esimerkiksi julkisessa Wi-Fi-verkossa, jaetussa verkossa tai matkalla gridiin, voisi lukea salasanasi ja käyttää tiliäsi. Mitään ei ole vielä lähetetty. Voit pyytää gridiltä https://-kirjautumisosoitetta. Valinta muistetaan tälle palvelimelle.
+ui-login-unencrypted-accept = Kirjaudu ilman salausta
+world-appearance-clothing-layers-full = Kaikki 60 vaatekerrosta ovat käytössä. Poista kerros ennen tämän tuotteen käyttämistä.
+ui-options-ray-tracing = Säteenseuranta
+ui-options-ray-traced-shadows = Ray-traced auringon varjot
+ui-options-ray-traced-shadows-help = Auringon ja kuun varjot jäljitetään säteittäin sen sijaan, että ne luetaan varjokartoista. Näet täsmälleen, missä kohteet koskettavat toisiaan ja millä etäisyydellä. Tarvitset varjot ja näytönohjaimen, jossa on säteenseuranta, ja se maksaa enemmän näytönohjaajalta
+ui-options-ray-traced-lights = Paikalliset valovarjot
+ui-options-ray-traced-lights-help = Varjot ympärillä olevista pistevaloista (lamput, kynttilät), joita ei muuten heitetä, ja projektoreista kun Projektorin varjot on päällä, niiden varjokarttojen sijaan. Kallein säteenseurantavaihtoehdoista: paras jättää pois integroidulla näytönohjaimella
+ui-options-rt-quality = Säteenseurannan laatu
+ui-options-rt-quality-help = Kaikki jäljitetyt tehosteet pysyvät päällä: alemmat tasot jäljittävät vähemmän näytteitä ja epäsuoraa valoa karkeammalle ruudukolle, jolloin saat enemmän kuvia sekunnissa pienemmällä näytönohjaimella. Korkea on Deluxe (RT) -kuvan koko kuva, ja tason valitseminen määrittää myös varjoja heittävät valot.
+ui-options-rt-sun-softness = Auringonvarjo pehmeys
+ui-options-rt-sun-softness-help = Kuinka pehmeitä auringon varjojen reunat ovat: 1 tarkoittaa oikeaa aurinkoa, 0 teräviä reunoja, enemmän sumuisemman auringon kohdalla
+ui-options-rt-lamp-softness = Paikallinen kevyt varjo pehmeys
+ui-options-rt-lamp-softness-help = Kuinka pehmeitä lampun varjojen reunat ovat: 1 seuraa kunkin lampun kokoa, 0 teräviä reunoja
+ui-options-rt-shadow-lamps = Valot, jotka heittävät varjoja
+ui-options-rt-shadow-lamps-help = Kuinka moni lähimmistä valoista heittää jälkivarjoja, kun taas muut valot ovat edelleen valaistuja ilman varjoja. Vähemmän maksaa vähemmän näytönohjaimella.
+ui-options-ray-traced-indirect = Säteenseuranta epäsuora valo
+ui-options-ray-traced-indirect-help = Ympäröivistä pinnoista heijastuva valo, joka jäljitetään näytön ulkopuolelle GTAO:n epäsuoran valon sijaan
+ui-options-gi-probes = Globaalit valaistusanturit
+ui-options-gi-probes-help = Kohteen läpi levittäytyvät anturit pitävät valon useista poikkeamista ja taivasta, jonka ne näkevät: suljetut huoneet pysyvät pimeinä, valo kulkee nurkkien ympäri.
+ui-options-ray-traced-reflections = Säteenjäljitys
+ui-options-ray-traced-reflections-help = Heijastukset siitä, mitä näyttö ei näytä, näytön tilan heijastuksien sijasta, joiden on oltava päällä
+ui-options-ray-tracing-unsupported = Tässä näytönohjaimessa tai sen ohjaimessa ei ole säteenseurantaa
+ui-options-ray-tracing-vr = Ei käytettävissä VR:lle aloitetussa istunnossa
+ui-options-tab-ray-tracing = Säteenseuranta
+ui-options-deluxe-rt-warning-title = Ota Deluxe (RT) käyttöön?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) on Korkea, jossa varjot ja epäsuora valo tulevat näytönohjaimelta. Se vaatii kortin, jolla on laitteistopohjainen säteenseuranta (NVIDIA RTX, AMD Radeon RX 6000 tai uudempi, Intel Arc) ja ajan tasalla olevan ajurin, ja se maksaa paljon enemmän kuin Korkean: keskiluokan kortilla kuvataajuus voi laskea paljon kiireisissä paikoissa. Säteenseurausta testataan vielä: jos kuva näyttää väärältä tai katselu hidastuu, palaa takaisin Korkeaan. Säteilyn seuranta -välilehti säilyttää asetuksensa.
+ui-options-deluxe-rt-warning-turn-on = Kytke päälle
+ui-options-ray-tracing-needs-shadows = Tarvitsee varjoja
+ui-options-ray-tracing-needs-ssr = Tarvitsee näytön tilan heijastuksia
+ui-options-preset-deluxe = Deluxe-huone (RT)
+ui-options-normal-precision = Heijastus tarkkuus
+ui-options-normal-precision-help = Kuinka tarkasti kunkin pinnan suunta säilytetään heijastuksissa. Normaali voi näyttää askelmia sileiden, kaarevien pintojen, kuten auton maalipinnan, heijastuksiin; Korkea poistaa ne ja käyttää enemmän videomuistia. Automaattinen käyttää korkeaa säteenseurannan heijastuksia varten, joissa askelmat näkyvät eniten, ja normaali muussa tapauksessa
+ui-options-normal-precision-automatic = Automaattinen
+ui-options-normal-precision-standard = Standardi
+ui-options-normal-precision-high = Korkea
+ui-options-private-point-at-help = Piilota muokattava objekti, pidä muokkausvarsi alaspäin ja piilota muokkaussäde.
+ui-options-private-edit-beam = Piilota muokkauspalkki
+ui-options-private-edit-beam-help = Piilota palkki kokonaan, kun muokkaat tai tartutte objekteihin, sekä näytölläsi että muiden katsojien silmissä.Valintakohdevihjeet ja antaminen/pudotuspalkit eivät muutu.
+common-window-outside = Siirtyy katseluohjelman ikkunan ulkopuolelle
+common-window-inside = Tuo takaisin katsojan ikkunaan
+common-window-rename-name = Nimeä uudelleen kaksoisnapsauttamalla
+common-carry-hint = Klikkaa pudottaaksesi sen tänne, Esc päästääksesi siitä irti
+common-window-paused-photo = Keskeytetty, kun valokuvatila on auki
+common-window-paused-director = Tauolla, kun ohjaaja soittaa
+common-window-paused-interface = Keskeytetty, kun käyttöliittymä on pois päältä
+ui-options-warn-live-preview = Varoitus, kun tekstuuria tai materiaalia ei voi esikatsella
+ui-options-warn-live-preview-help = Rakennusikkunan valitsimessa kopioimaton kohde napsauttamalla ei sovelleta mitään, kunnes OK: sano niin.
+ui-texture-picker-live-preview-texture = Emme voi näyttää tämän tekstuurin esikatselua, koska se ei ole kopio.
+ui-texture-picker-live-preview-material = Emme voi näyttää esikatselua tästä materiaalista, koska se ei ole kopio.
+fetch-invalid-url = Virheellinen URL-osoite
+ui-chat-close-all-ims = Sulje kaikki IM keskustelua
+ui-chat-close-all-ims-question = Sulje kaikki IM-keskustelut ja lopeta aktiivinen puhelu?
+ui-chat-confirm-close-all-ims = Vahvista ennen kaikkien IM keskustelun sulkemista
+ui-chat-confirm-close-all-ims-help = Kysy ennen sulkemista kaikki IM keskusteluja, kun yksi on aktiivinen puhelu.
+ui-options-aurora-controls-compact-help = Ohjaimet-ikkuna avautuu kompaktina kamerassa: sen joystickit, zoomaus ja vieritys. Sen otsikkopalkin painike vaihtaa kompaktin ja täyden välillä ja asettaa tämän myös. Klassisissa ikkunoissa kamera avautuu Legacy Viewerin pieneen kamera-ikkunaan sen sijaan.
+rlva-restart-hint = RLVa käynnistyy kirjautuessasi sisään. Kun se on suoritettu, sen ottaminen käyttöön tai pois käytöstä vaikuttaa katseluohjelman seuraavaan käynnistykseen: rajoitukset objektit pysyvät siihen asti.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa otetaan käyttöön uudelleenkäynnistyksen jälkeen.
+rlva-toggle-disabled-restart = RLVa poistetaan käytöstä uudelleenkäynnistyksen jälkeen.
+livemesh-import-connect = Yhdistä Blender plug-in 0.11.0 tai uudempi, tai Maya plug-In 0,2,0 tai uudempia, valmistella tuonti LODs.
+livemesh-import-preparing = Objektin ja sen LOD:ien valmistelu Blenderissä tai Mayassa…
+livemesh-import-ready = LODit vastaanotettu, valmiina tuontiohjelmassa.
+livemesh-import-failed = Tuonnin valmistelu epäonnistui: { $error }
+livemesh-import-timeout = Blender tai Maya ei valmistellut tuontiprosessia loppuun, tarkista yhteys (Blenderissä käytä Object Modea) ja yritä uudelleen.
+livemesh-shape-apply-tooltip = Valitse Muokkaa oikeuksia ja muokkaa sitten Blenderissä tai Mayassa valittua luurankoa ja sen sidottuja verkkoja (MayaStarin kautta, jos kyseessä on MayaStar rig).Valitse paikallinen Second Life -yhteensopiva luuranko.
+livemesh-shape-update-apply = Päivitä Blender-laajennus versioon 0.10.0 tai uudempaan, tai Maya-laajennusversio versioon, joka vastaa versiota 04.0, ja yhdistä se sitten uudelleen.
+livemesh-shape-applied = Muoto, jota käytetään valittuun luurankoon.
+livemesh-shape-tooltip = Tarkista kuluneen muodon Muokkaa-oikeudet ja luo uusi rigged reference body Blenderissä tai Mayassa.
+livemesh-shape-connect = Liitä Aurora plug-in Blenderissä tai Mayassa ensin.
+livemesh-shape-update-plugin = Päivitä Blender-laajennus versioon 0.9.0 tai uudempaan tai Maya-laakennus versiooni 0,3.0 ja yhdistä se sitten uudelleen.
+livemesh-shape-timeout = Blender tai Maya ei vahvistanut tuontia. Yritä uudelleen (Blenderissä siirry objektitilaan).
+livemesh-shape-success = Muoto tuodaan uutena rigged-viitekehänä.
+blender-live-maya-version = Aurora LiveMesh Mayalle { $version }
+blender-live-maya-instructions = Tallenna ZIP-tiedosto ja pura se. Vedä sitten install.mel Maya-näkymään. Avaa LiveMesh Aurora:n hyllystä, lisää verkot ja klikkaa Connect.
+blender-live-save-maya = Tallenna Maya-laajennus…
+blender-live-maya-saved = Lisäosa on tallennettu. Pura ZIP-tiedosto ja vedä install.mel Maya-näkymään.
+livemesh-plugin-connected = Plug-in kytketty
+livemesh-token-refused = Ohjelma yritti muodostaa yhteyden ilman tämän esikatselun avainta. Vain Aurora-liitännäinen Blenderissä tai Mayassa voi muodosta yhteyden.
+livemesh-waiting-plugin = Odotetaan Blenderiä tai Mayaa…
+blender-live-objects-help = Blenderin tai Mayan lähettämät verkot. Valitse jokin ja sijoita se, tai tuo se valikosta.
+blender-live-size-note = Koko moninkertaistaa sen, mitä laajennus lähettää, joten myöhemmät muokkaukset Blenderissä tai Mayassa säilyttävät sen.
+blender-live-avatar-help = Rigged-verkot: lähetä muotosi Blenderiin tai Mayaan mallintamista varten.
+livemesh-shape-section = Muotosi Blenderissä tai Mayassa
+blender-live-import-help = Jäädyttää objektin tilannekuvan normaalia tuontiprosessia varten: arvostelu, hinta ja vahvistus. Myöhemmät muokkaukset Blenderissä tai Mayassa eivät muuta sitä.
+blender-live-changed-tip = Aika siitä, kun Blender tai Maya viimeksi muutti tätä objektia
+fit-lab-section = Fit lab -ohjelma
+fit-lab-help = Nuket, jotka ovat pukeutuneet siihen mitä käytät ja joilla on eri vartalo, seisovat edessäsi näyttääkseen kuinka vaate sopii useisiin muotoihin. Vain sinä näet ne: mitään ei lähetetä tai tallenneta.
+fit-lab-body-me = Minä
+fit-lab-body-slim = Ohut
+fit-lab-body-curvy = Kurvikas
+fit-lab-body-full = Koko hahmo
+fit-lab-body-athletic = Urheilu
+fit-lab-body-tall = Pitkä
+fit-lab-body-petite = Pieni
+fit-lab-motion = Liike
+fit-lab-motion-stand = Seiso
+fit-lab-motion-walk = Kävele.
+fit-lab-motion-sit = Istu.
+fit-lab-motion-range = Liikealue
+fit-lab-pose = Aseta
+fit-lab-pose-all = Kaikki, vuorostaan
+fit-lab-pose-arms-up = Kädet ylös.
+fit-lab-pose-reach = Ulotu eteenpäin
+fit-lab-pose-hug = Kädet ristissä
+fit-lab-pose-squat = Kyykky
+fit-lab-pose-kneel = Polvistu.
+fit-lab-pose-knee-up = Polvi nostettuna
+fit-lab-pose-twist = Kierrä
+fit-lab-pose-bend = Taivuta eteenpäin
+fit-lab-motion-like-me = Kuten minä
+fit-lab-show = Näytä nuket
+fit-lab-place = Tuokaa heidät tänne
+fit-lab-remove = Poista nuket
+fit-lab-choose = Valitse vähintään yksi runko.
+fit-lab-clip = Näytä, missä ruumis tulee läpi
+fit-lab-clip-note = Punainen: vartalo tulee ulos vaatekappaleesta. Keltainen: Vartalo ja vaate kohtaavat. Avatarissasi ja nukkeissa kameran näkökulmasta. Kaikki muut riffit, joita käytät, lasketaan vartaloksi: ota pois takki tai hiukset, jotka ovat vaatteen päällä.
+blender-live-levels-pending = Blender tai Maya valmistelee yksityiskohtaisuustasot, kun napsautat Tuo-painiketta.
+blender-live-levels-note = Valmistettu Blenderissä tai Mayassa kunkin objektin LiveMesh-asetuksista.
+blender-live-quick-look-changed = Muutettu Blenderissä tai Mayassa { $ago } vuotta sitten.
+blender-live-warning-textures = Tekstuurit ohitettu, tavallinen väri näytetään
+blender-live-warning-not-sent = Ei esikatselussa
+blender-live-undo-derez = Derezzed { $name } · vielä laajennuksen luettelossa
+blender-live-undo-detach = Erillinen { $name } · edelleen laajennuksen luettelossa
+inventory-open-current = Avaa
+inventory-folder-back = Takaisin
+inventory-folder-forward = Eteenpäin
+inventory-folder-up = Siirry yhden tason ylöspäin
+area-search-metres = { $n } m
+area-search-band-reach = Kaikki ulottuvillasi
+area-search-band-close = Lähellä kohdetta
+area-search-band-around = Ympärilläsi
+area-search-band-further = Lisäksi
+area-search-band-far = - Ei.
+area-search-band = Alue
+area-search-within = Sisällä { $distance }
+area-search-within-across = Sisällä { $distance } yli
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Näytä kaikki etäisyydet
+area-search-from = Etäisyys keskustasta
+area-search-to = Etäisyys keskustaan
+area-search-bar-tip =
+    { $count ->
+        [one] Objektit: 1 · { $from } – { $to }
+       *[other] Objektit: { $count } · { $from } – { $to }
+    }
+area-search-of-objects = Näytetään 1-80 / { $total } kohdetta
+area-search-li = { $value } LI
+area-search-li-count = { $value } maavaikutus
+area-search-owner-count =
+    { $count ->
+        [one] Yksi omistaja
+       *[other] { $count } omistajat
+    }
+area-search-object-count =
+    { $count ->
+        [one] Yksi objekti
+       *[other] { $count } kohdetta
+    }
+area-search-objects-word = esineet
+area-search-in-reach = Tässä.
+area-search-tab-objects = Objektit
+area-search-tab-owners = Omistajat
+area-search-hint-wide = Objektit, omistajat, luojat tai UUID:t
+area-search-kind-heading = Objektin tyyppi
+area-search-kind-tip = Klikkaa: vain nämä. Jälleen: piilotettu.
+area-search-kind-any = milloin tahansa
+area-search-kind-only = Vain nämä
+area-search-kind-hidden = Piilotettu
+area-search-kind-attached = Liitetty
+area-search-kind-probes = Koettimet
+area-search-click-all = Kaikki
+area-search-click-any-short = Kaikki
+area-search-permissions = Oikeudet
+area-search-price-heading = Myyntihinta, myynnissä oleville kohteille
+area-search-price-to = enintään
+area-search-price-tip = Valitse “Myytävänä” ensin
+area-search-linked = Linkitetyt prim-luvut
+area-search-one-field = Etsi yhdestä kentästä
+area-search-regex-switch = Säännölliset lausekkeet
+area-search-regex-invalid = Ei kelvollinen säännöllinen lauseke
+area-search-reset-filters-tip = Palauta kaikki suodattimet, hakuteksti säilyy
+area-search-save-defaults-tip = Avaa näillä suodattimilla tästä lähtien
+area-search-reset-search = Nollaa hakutekstit
+area-search-reset-filters = Nollaa suodatinvaihtoehdot
+area-search-reset-ranges = Nollaa etäisyys ja hinta
+area-search-reset-all = Nollaa kaikki
+area-search-more = Lisää
+area-search-several = Valitse useita
+area-search-several-tip = Napsautukset lisäävät valinnan (myös Ctrl tai Shift + klikkaus, Ctrl+A)
+area-search-actions = Toimet
+area-search-nothing = Ei vielä vastaanotettuja esineitä.
+area-search-nothing-for-sale = Mitään ei ole myynnissä täällä.
+area-search-not-for-sale = Ei myytävänä
+area-search-from-price = alkaen { $price }
+area-search-nearest = Lähin ensin
+area-search-heaviest = Raskain ensin
+area-search-order-tip = Muuta järjestystä: lähin tai raskain ensin
+area-search-rank = #{ $rank } tai { $all }
+area-search-rank-here = #{ $rank } täällä
+area-search-card-more = Näytä jokainen kuva
+area-search-card-less = Näytä vähemmän
+area-search-open-group = Avaa ryhmä
+area-search-spoken = { $name }, { $distance }, maavaikutus { $li }, omistaa { $owner }
+area-search-owner-spoken = { $name }, { $count } esineet, maavaikutukset { $li }
+area-search-stage-line = { $distance } 1,5 km päässä · { $li } Maaperän vaikutus · { $owner }
+area-search-tile-3d = 3D-näkymä
+area-search-on = { $count } 10 mg/ ml
+area-search-on-word = 10 mg/ ml
+area-search-more-on =
+    { $count ->
+        [one] Lisää yksi suodatin lisää
+       *[other] { $count } lisää suodattimia
+    }
+ui-options-legacy-lists = Luetteloiden tuominen Legacy Viewerista
+ui-options-legacy-lists-help = Lisää tämän tilin teleporttihistorian, resurssien mustan listan, mediasuodattimen luettelon ja yhteystietojoukon. Legacy Viewerin tiedostot ovat vain lukumuodossa.
+ui-options-legacy-lists-button = Tuo vanhasta katseluohjelmasta…
+ui-options-legacy-lists-no-account = Kirjaudu sisään tuodaksesi tämän tilin luettelot.
+ui-options-legacy-lists-title = Tuonti vanhasta katseluohjelmasta
+ui-options-legacy-lists-text = Kaikki lisätään tämän tilin listoille eikä mitään poisteta täältä. Mustalla listalla olevat resurssin nimet poistuvat maailmasta heti. Tuominen uudelleen tuo takaisin sen, mitä poistit täällä.
+ui-options-legacy-lists-searching = Etsitään Legacy Viewerin kansioita…
+ui-options-legacy-lists-none = Tälle tilille ei löytynyt Legacy Viewer -kansiota, jossa olisi luetteloita.
+ui-options-legacy-lists-teleports = Teleport historia ({ $count })
+ui-options-legacy-lists-derender = Omaisuuden musta lista ({ $count })
+ui-options-legacy-lists-media = Mediasuodatinluettelo ({ $count })
+ui-options-legacy-lists-contact-set-entries = Kosketussarjamerkinnät ({ $count })
+ui-options-legacy-lists-confirm = Tuonti
+ui-options-legacy-lists-added = Merkintöjä lisätty tai päivitetty. Teleporttihistoria: { $teleports }Piilotettuja esineitä: { $derender }. Media suodatin: { $media }. Yhteystietoryhmät: { $sets }.
+ui-options-legacy-lists-nothing = Ei mitään uutta: tällä tilillä on jo nämä luettelot.
+ui-options-legacy-lists-failed = Lukuvirhe: { $files }.
+ui-options-legacy-lists-unsaved = Ei voinut tallentaa, jäi kuten se oli: { $files }.
+ui-options-legacy-lists-other-grid = Tässä ruudukossa samanniminen kansio voi kuulua toiseen ruudukkoon: tarkista, että se on oikea kansio.
+ui-options-build-show-beams-hint = Näytä valintapalkkisi ja muiden avatarien palkit muokkausta, tarttumista tai antamista varten. Tämä säätelee vain näyttöä. Käytä Privacy > Hide editing beam lopettaaksesi muokkaamisen paikallisesti ja verkossa.
+teleport-failed-title = Teleportti epäonnistui.
+teleport-error-invalid-tport = Teleporttiyrityksiä on rajoitettu 6:een minuutissa. Jos sinulla on ongelmia, odota minuutti ja yritä teleporttia uudelleen.Jos ongelma jatkuu, kirjaudu ulos ja kirjaudu uudelleen sisään.
+teleport-error-invalid-region-handoff = Alueen vaihdossa ilmeni ongelmia. Sinun on ehkä kirjauduttava uudelleen sisään, ennen kuin voit vaihtaa aluetta. Jos saat tämän viestin edelleen, ota yhteyttä tukeen.
+teleport-error-blocked-tport = Teleportaatio on tällä hetkellä estetty. Yritä hetken kuluttua uudelleen. Jos et vieläkään pysty teleportoimaan, kirjaudu ulos ja sitten takaisin sisään ongelman ratkaisemiseksi.
+teleport-error-nolandmark-tport = Pahoittelemme, mutta järjestelmä ei löytänyt maamerkkikohdetta.
+teleport-error-timeout-tport = Anteeksi, mutta järjestelmä ei pystynyt suorittamaan teleport-yhteyttä loppuun. Yritä hetken kuluttua uudelleen.
+teleport-error-no-help-island = Et voi teleportoida takaisin Welcome Islandille.
+teleport-error-noaccess-tport = Valitettavasti sinulla ei ole pääsyä teleporttikohteeseen.
+teleport-error-missing-attach-tport = Liitteet eivät ole vielä saapuneet, kokeile odottaa muutama sekunti tai kirjaudu ulos ja takaisin sisään ennen kuin yrität teleporttia.
+teleport-error-too-many-uploads-tport = Tämän alueen resurssien jono on tällä hetkellä tukossa, joten teleporttipyyntösi ei onnistu ajoissa. Yritä uudelleen muutaman minuutin kuluttua tai siirry vähemmän vilkkaalle alueelle. Voit myös lähettää pyynnön sähköpostitse osoitteeseen:
+teleport-error-expired-tport = Pahoittelemme, mutta järjestelmä ei voinut suorittaa teleporttipyyntöäsi ajoissa. Yritä uudelleen muutaman minuutin kuluttua. Yhteystiedot
+teleport-error-expired-region-handoff = Pahoittelemme, mutta järjestelmä ei pystynyt suorittamaan alueesi ylittämistä ajoissa. Yritä uudelleen muutaman minuutin kuluttua. Yhteystiedot
+teleport-error-preexisting-tport = Pahoittelemme, mutta järjestelmä ei pystynyt aloittamaan teleporttiasi. Yritä uudelleen muutaman minuutin kuluttua.
+teleport-error-no-host = Teleportaation kohdetta ei löydy. Kohde saattaa olla tilapäisesti poissa käytöstä tai sitä ei enää ole olemassa. Yritä uudelleen muutaman minuutin kuluttua.
+teleport-error-no-inventory-host = Varastojärjestelmä on tällä hetkellä poissa käytöstä.
+teleport-error-must-get-age-region = Sinun on oltava vähintään 18-vuotias päästäksesi tälle alueelle.
+teleport-error-special-usage-blocked = Aluetta ei voida syöttää. '{ $region }' on Skill Gaming -alue, ja sinun on täytettävä tietyt kriteerit päästäksesi mukaan.Lisätietoja saat Skill Gaming UKK:sta: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Alueeseen ei voida siirtyä. Tämä on Skill Gaming -alue, ja sinun on täytettävä tietyt ehdot päästäksesi alueelle. Lisätietoja saat Skill Gamingin usein kysytyistä kysymyksistä: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Kotiverkkosi hylkäsi palautuksesi, mikä tarkoittaa yleensä sitä, että sen Hypergrid-osoiteasetus ei vastaa osoitetta, jota muut verkot käyttävät. Ota yhteyttä kotiverkkosi operaattoreihin; kirjautuminen uudelleen vie sinut kotiin sillä välin.
+teleport-hint-hypergrid-unreachable = Toiseen ruudukkoon ei päästy, se voi olla offline-tilassa tai linkki voi osoittaa vanhaan osoitteeseen.
+teleport-hint-hypergrid-visitors-refused = Se ruudukko päästää sisään vain joidenkin ruudukoiden asukkaita.
+teleport-hint-hypergrid-destination-gone = Kohdealuetta ei ole enää olemassa tai se on siirretty.Maamerkit ja linkit muihin ruudukkoihin voivat olla vanhentuneita.
+toolbar-edit = Painikkeiden ja valikoiden muokkaaminen…
+toolbar-title = Painikkeet ja valikot
+toolbar-interface-locked = Liitäntä lukittu
+toolbar-help = Vedä painikkeita tai valikkokohtia ylä-, ala- tai sivupalkkeihin. Voit poistaa painikkeen vetämällä sen takaisin tähän kohtaan ja muuttaa sen ulkoasua hiiren kakkospainikkeella.
+toolbar-help-classic = Vedä painikkeita tai valikkokohtia ylä-, ala- tai sivupalkkeihin. Voit poistaa painikkeen vetämällä sen takaisin tähän kohtaan ja muuttaa sen ulkoasua hiiren kakkospainikkeella.
+toolbar-help-modes = Voit valita jokaiselle painikkeelle kuvakkeita, nimiöitä, molempia tai palkin oletusasetuksen.Vedä kohteita Aurora-valikon sisällä järjestääksesi sen uudelleen.
+import-menu-textures = Tekstuuri
+import-menu-animations = Animaatiot
+import-menu-sounds = Äänet
+import-menu-materials = Materiaalit
+import-menu-meshes = Verkko
+import-menu-options = Tuontivaihtoehdot
+import-upload-payment-title = Lähetä
+import-upload-payment = Maksoit L${ $cost } lataamiseen.
+import-quick-textures =
+    { $count ->
+        [one] Tuonti · Tekstuuri: 1 · L${ $cost }?
+       *[other] Tuonti · Tekstuuri: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Tuonti · Materiaalit: 1 · L${ $cost }?
+       *[other] Tuonti · Materiaalit: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Tuonti · Äänet: 1 · L${ $cost }?
+       *[other] Tuonti · Äänet: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Valitse tuontikoko. Sitä tukevat pintakuvat voi tuoda koossa 2048 × 2048:
+       *[other] ({ $count }) Valitse tuontikoko. Sitä tukevat pintakuvat voi tuoda koossa 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Valitse tuontikoko. Sitä tukevat materiaalien kuvat voi tuoda koossa 2048 × 2048:
+       *[other] ({ $count }) Valitse tuontikoko. Sitä tukevat materiaalien kuvat voi tuoda koossa 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Lähetä maksuttomat kuvat koossa 2048 × 2048 kysymättä
+import-quick-free-full-size-help = "Import textures" ja "Impor materiaalit" kysyvät sitten 1024 tai 2048 vain kun lataus maksaa L$.
+ui-bars-customize-bars = Mukauta käyttöliittymää
+build-tool-in-use = Käytössä
+build-create-options-toggle = Näytä / piilota vaihtoehdot
+build-create-keep-creating = Jatka luomista
+build-create-center-on-prim = Keskitä prim
+build-create-copy-prim-rotation = Kopioi prim kierto
+build-create-align-to-surface = Kohdista pintaan
+build-capture-shape-button = Kopioi päällikön muoto: klikkaa tätä, sitten päällikkö maailmassa
+build-capture-shape-armed = Kopioi muoto napsauttamalla prim-kuvaa (Escape peruuttaa)
+build-capture-shape-full = 20 muotoa säilytetään. Poista yksi kopioidaksesi toisen
+build-capture-shape-remove = Poista tämä muoto
+build-capture-shape-tooltip = Kopioitu muoto ({ $kind })
+build-capture-shape-not-a-prim = Vain prim-muoto voidaan kopioida
+build-capture-shape-mesh-or-sculpt = Verkon tai veistoksen muotoa ei voi kopioida
+build-capture-shape-no-modify = Tarvitset luvan muokata tätä prim kopioidaksesi sen muodon
+import-other-options = Muut vaihtoehdot
+toolbar-button-icons = Vain kuvake
+toolbar-button-text = Vain etiketti
+toolbar-button-icons-text = Kuvake ja etiketti
+toolbar-icon-default = Palauta oletuskuvake
+toolbar-icon-choose = Valitse kuvake
+toolbar-icon-change = Vaihda kuvake
+toolbar-presets = Esiasetukset
+toolbar-interfaces = Liitännät
+toolbar-interfaces-shown = Näytetään Interfaces-lohkossa
+toolbar-interfaces-hidden = Piilotettu Liitännät-lohkosta
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora Vanha koulu
+toolbar-preset-photographer = Aurora valokuvaaja
+toolbar-preset-legacy = Vanha
+toolbar-import-textures = Tuo tekstuurit
+toolbar-import-sounds = Tuo ääniä
+toolbar-import-animations = Animaatioiden tuominen
+toolbar-import-materials = Materiaalien tuonti
+toolbar-import-meshes = Tuo verkkosilmukat
+toolbar-import-local = Paikalliset tiedostot
+toolbar-import-advanced = Edistynyt tuonti
+toolbar-import-settings = Tuo asetukset
+toolbar-import-bar = Tuontipalkki
+toolbar-icon-search = Etsi kuvake…
+toolbar-in-top = Yläosan työkalurivillä
+toolbar-bar-top = Ylin työkalurivi
+toolbar-drop-here = Pudota tähän
+toolbar-separator = Erotin
+toolbar-interface-edit = Mukauta käyttöliittymää
+toolbar-edit-done = Valmis
+toolbar-edit-top = Yläosa
+toolbar-edit-bottom = Alaosassa
+toolbar-edit-left = Vasen
+toolbar-edit-right = Oikea
+toolbar-edit-help = Valitse kohde napsauttamalla sitä, siirrä se vetämällä tai napsauta hiiren kakkospainikkeella saadaksesi muokkausvaihtoehdot.Sulje tämä ikkuna, kun olet valmis.
+toolbar-edit-locked = Palkit ovat lukittuja. Avaa ne alla muuttaaksesi käyttöliittymää.
+toolbar-edit-move = Siirrä
+toolbar-edit-split-before = Split ennen
+toolbar-edit-split-after = Split jälkeen
+toolbar-edit-merge-before = Yhdistä edelliseen lohkoon
+toolbar-edit-merge-after = Yhdistä seuraavaan lohkoon
+toolbar-edit-merge-groups = Yhdistä nämä lohkot
+toolbar-drawer = Laatikko
+toolbar-drawer-default-mode = Painikkeiden oletusnäyttö
+toolbar-drawer-closes = Sulje painikkeen napsautuksen jälkeen
+toolbar-block-shortcut = Pikanäppäin:
+toolbar-drawer-hides-needs-shortcut = Vaatii oikotien
+toolbar-floating-close-button = Sulje-painikkeen lisääminen
+toolbar-block-name = Lohkojen nimi:
+toolbar-block-button-mode = Estä painike näyttö
+toolbar-button-inherited = Peritty
+toolbar-drawer-hides-button = Piilota painike kelluessaan
+toolbar-floating-new = Kelluva lohko
+toolbar-floating-orientation = Suuntaus
+toolbar-floating-horizontal = Vaakasuora
+toolbar-floating-vertical = Pystysuora
+toolbar-floating-empty = Pudota painikkeet tähän
+toolbar-shortcut-title = Pikakuvake
+toolbar-shortcut-block-name = Lohko: { $name }
+toolbar-shortcut-none = Ei ole oikotietä
+toolbar-shortcut-press-key = Paina näppäintä
+toolbar-shortcut-esc = Esc peruuttaaksesi
+toolbar-shortcut-clear = Poista
+toolbar-shortcut-overrides = Takes over { $name }: tämä pikakuvake suorittaa työkalupalkin sen oletuskäytön sijaan.
+toolbar-shortcut-used = Jo oikotie { $names }.
+toolbar-shortcut-replace = Korvaa
+toolbar-shortcut-add = Lisää
+toolbar-shortcut-save = Tallenna
+toolbar-shortcut-choose-key = Valitse avain
+toolbar-shortcut-help = Ota Ctrl-, Alt- ja Vaihto-näppäimet käyttöön tai poista ne käytöstä ja valitse sitten haluamasi näppäin. Tarvitaan Ctrl tai Alt. F1–F24:ää lukuun ottamatta.
+toolbar-shortcut-inactive = Tämä painike ei ole palkissa: sen pikavalinta toimii, kun se sijoitetaan uudelleen.
+toolbar-shortcut-refused-keyboard = Vain näppäimistön näppäin voi olla pikanäppäin.
+toolbar-shortcut-refused-modifier = Pelkkä muuttonäppäin ei voi olla pikanäppäin.
+toolbar-shortcut-refused-needs-modifier = Lisää Ctrl tai Alt: näppäin yksinään tai vain vaihtonäppäimellä, kirjoita tekstikenttään.
+toolbar-shortcut-refused-altgr = Ctrl+Alt Tämän näppäimen kanssa on AltGr, joka kirjoittaa merkkejä monissa näpväimistöissä.
+toolbar-shortcut-refused-editing = Tekstikentät käyttävät tätä pikanäppäintä (valitse kaikki, kopioi, leikkaa, liitä, kumoa, tee uudelleen).
+toolbar-shortcut-refused-navigation = Tekstikentät siirretään ja poistetaan tällä näppäimellä.
+toolbar-shortcut-refused-typing = Chat ja dialogit käyttävät tätä näppäintä.
+toolbar-shortcut-refused-system = Järjestelmä säilyttää tämän pikavalinnan.
+toolbar-shortcut-refused-window = Tämä pikanäppäin sulkee tai vaihtaa ikkunoita.
+toolbar-shortcut-refused-zoom = Tämä pikavalinta zoomaa käyttöliittymän.
+toolbar-spacer = Lohkoväli
+toolbar-add-spacer = Lisää lohkoväli
+toolbar-button-settings = Painikkeen asetukset
+toolbar-button-edit = Muokkaa-painiketta…
+toolbar-button-edit-title = Muokkaa-painike
+toolbar-button-name = Painikkeen nimi:
+toolbar-button-display = Painikkeen näyttö
+toolbar-shortcut-fixed-block-help = Kiinteän lohkon pikakuvake näyttää ja piilottaa sen; kun käyttöliittymää muokataan, se pysyy näkyvissä.
+toolbar-block-settings = Estä asetukset
+toolbar-parent-block-settings = Lapsilukkoasetukset
+toolbar-block-edit = Muokkaa lohkoa...
+toolbar-block-edit-title = Muokkaa lohkoa
+toolbar-block-alignment = Kohdistus
+toolbar-block-sizing = Painikkeen koko
+toolbar-block-fixed-options = Kiinteät tilavaihtoehdot
+toolbar-block-floating-options = Kelluvan tilan vaihtoehdot
+toolbar-block-kind-fixed = Kiinteä lohko
+toolbar-block-kind-drawer = Laatikko
+toolbar-block-kind-floating = Kelluva lohko
+toolbar-block-remove = Poista esto
+toolbar-move-block = Siirrä koko lohko vetämällä
+toolbar-remove-block = Poista esto
+toolbar-drawer-empty = Tämä laatikko on tyhjä.
+toolbar-drawer-drop = Vedä painikkeita tähän, jos haluat lisätä tai järjestää ne uudelleen.
+toolbar-separator-settings = Lohkoväliasetukset
+toolbar-separator-size = Koko / minimi (px)
+toolbar-separator-stretch = Täytä käytettävissä oleva tila
+toolbar-separator-help = Joustavat välit jakavat lohkojen jäljelle jäävän tilan, ja niiden koko on niiden vähimmäisleveys tai korkeus sivupalkissa.
+toolbar-block-navigation = Navigointi ja SLURL
+toolbar-block-account = Tili ja saldo
+toolbar-block-system = Kello, merkkivalot ja ääni
+toolbar-block-status = Saatavuuden tila
+toolbar-block-balance = Saldo
+toolbar-block-clock = Kello
+toolbar-block-ping = Alueen latenssi
+toolbar-block-fps = Kuvataajuus (FPS)
+toolbar-block-network = Verkkoliikenne
+toolbar-block-media = Pakettimedia
+toolbar-block-music = Pakettimusiikki
+toolbar-block-volume = Tilavuus
+toolbar-block-notifications = Ilmoitukset
+toolbar-block-conversations = Keskustelu kuvakkeet
+toolbar-block-chat = Lähistöllä chat input
+toolbar-category-all = Kaikki kategoriat
+toolbar-section-main = Pää
+toolbar-section-advanced = Lisäasetukset
+toolbar-search-all = Haku sisältää lisäkomennot.
+toolbar-category-avatar = Avatar ja liike
+toolbar-category-communication = Viestintä
+toolbar-category-world = Maailma ja matkailu
+toolbar-category-creation = Luominen ja sisältö
+toolbar-category-interface = Käyttöliittymä ja kamera
+toolbar-category-advanced = Edistykselliset työkalut
+toolbar-category-help = Ohje
+toolbar-category-custom = Mukautetut komennot
+toolbar-bar-settings = Työkalurivin asetukset
+toolbar-menu-group = Valikko: { $name }
+toolbar-location-bar = SLURL-osoitepalkki
+toolbar-command-build-tool-focus = Rakenna - kamera
+toolbar-command-build-tool-grab = Rakenna - siirrä
+toolbar-command-build-tool-edit = Rakenna - muokkaa
+toolbar-command-build-tool-create = Rakenna - luo
+toolbar-command-build-tool-land = Rakenna - maa
+bug-copy-version = Kopioi katseluohjelman versio
+toolbar-notecard-save = Tallenna muistiinpanokortille…
+toolbar-notecard-load = Lataa notecardista…
+toolbar-notecard-name = Aurora-liitäntä
+toolbar-notecard-help = Työkalurivien, painikkeiden, laatikoiden ja valikkojen asettelu ja ulkonäkö.
+toolbar-notecard-saved = Käyttöliittymän ulkoasu tallennetaan tavaraluetteloon.
+toolbar-notecard-invalid = Tämä muistikortti ei sisällä yhteensopivaa käyttöliittymän asettelua.
+toolbar-notecard-unavailable = Tämä muistikortti ei ole enää saatavilla tai sitä ei voi kopioida.
+toolbar-notecard-layout-changed = Käyttöliittymä muuttui muistikortin lataamisen aikana. Lataa se uudelleen, jotta sen asettelu otetaan käyttöön.
+toolbar-notecard-demo-valid = Valokuvaajan käyttöliittymä
+toolbar-notecard-demo-invalid = Muu muistikortti
+toolbar-notecard-too-large = Tämä liitäntäkokoonpano on liian suuri muistikortille.
+toolbar-saved-interfaces = Tallennetut rajapinnat
+toolbar-saved-interfaces-empty = Ei tallennettuja rajapintoja vielä.
+toolbar-notecard-destination = Kansio: { $path }
+toolbar-notecard-folder-error = Interfaces-kansiota ei voitu ladata tai luoda. Yritä uudelleen.
+toolbar-current-preset = Valittu liitäntä: { $name }
+toolbar-preset-custom = Mukautettu käyttöliittymä
+toolbar-preset-unsaved = Tallentamattomat muutokset
+toolbar-preset-save-title = Tallenna käyttöliittymä
+toolbar-preset-save-name = Liitäntänimi
+toolbar-preset-save-new = Uusi henkilökohtainen käyttöliittymä
+toolbar-preset-save-replace = Korvaa tämä henkilökohtainen käyttöliittymä
+toolbar-preset-save-unavailable = Tätä käyttöliittymää ei voi tallentaa tänne. Valitse toinen nimi tai käytettävissä oleva, muokattavissa oleva henkilökohtainen käyttöliitto.
+toolbar-interface-delete-unavailable = Tätä henkilökohtaista käyttöliittymää ei voi poistaa.
+toolbar-interface-delete-confirm = Siirretäänkö oma käyttöliittymä ”{ $name }” roskakoriin?
