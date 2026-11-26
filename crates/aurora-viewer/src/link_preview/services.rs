@@ -357,6 +357,7 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     let parts = segments(url);
     let slug = |id: &str| (1..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'='));
     let digits = |id: &str| (1..=24).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit());
+    let html_id = |id: &str| id.strip_suffix(".html").is_some_and(slug);
     let safe = match (host.as_str(), parts.as_slice()) {
         ("snapchat.com", ["spotlight", id] | [_, "spotlight", id]) => {
             (8..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
@@ -369,6 +370,15 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         ("tv.naver.com", ["v", id]) | ("chzzk.naver.com", ["video", id]) => digits(id),
         ("vod.sooplive.co.kr", ["player", id]) => digits(id),
         ("tv.kakao.com", ["channel", channel, "cliplink", id]) => digits(channel) && digits(id),
+        ("douyin.com", ["video", id]) => digits(id),
+        ("kuaishou.com", ["short-video", id]) => slug(id),
+        ("xiaohongshu.com", ["explore", id] | ["discovery", "item", id]) => slug(id),
+        ("v.qq.com", ["x", "cover", id]) => slug(id) || html_id(id),
+        ("v.qq.com", ["x", "cover", series, id]) => slug(series) && html_id(id),
+        ("v.qq.com", ["x", "page", id]) => html_id(id),
+        ("iqiyi.com", [id]) => id.strip_prefix("v_").is_some_and(html_id),
+        ("v.youku.com", ["v_show", id]) => id.strip_prefix("id_").is_some_and(html_id),
+        ("mgtv.com", ["b", series, id]) => digits(series) && html_id(id),
         _ => false,
     };
     safe.then(|| {
@@ -392,6 +402,13 @@ pub(super) fn publisher_poster(page: &str, html: &str) -> Option<String> {
         "tv.naver.com" | "chzzk.naver.com" => &["pstatic.net"],
         "vod.sooplive.co.kr" => &["sooplive.co.kr", "afreecatv.com"],
         "tv.kakao.com" => &["kakaocdn.net"],
+        "douyin.com" => &["douyinpic.com", "pstatp.com"],
+        "kuaishou.com" => &["kwaicdn.com", "gifshow.com"],
+        "xiaohongshu.com" => &["xhscdn.com"],
+        "v.qq.com" => &["qpic.cn", "gtimg.cn"],
+        "iqiyi.com" => &["qiyi.com", "iqiyipic.com"],
+        "v.youku.com" => &["ykimg.com"],
+        "mgtv.com" => &["mgtv.com", "hunantv.com"],
         _ => &[],
     };
     head_meta(html).find_map(|(key, value)| {
