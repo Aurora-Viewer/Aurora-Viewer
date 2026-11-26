@@ -25969,6 +25969,28 @@ impl ApplicationHandler for App {
         {
             return;
         }
+        // egui-winit drops text while Ctrl is held. Preserve a real Windows
+        // layout character (Ctrl+Alt+2 -> @) for its focused text field. A
+        // key a window outside hands on is not typed in this one: its own
+        // fields are read in `outside_ctrl_alt_text`.
+        #[cfg(target_os = "windows")]
+        if !from_outside
+            && let WindowEvent::KeyboardInput { event: key, .. } = &event
+            && let Some(text) = self.ctrl_alt_text(key)
+        {
+            // typing like any other: activity for auto-away, and the pointer
+            // hidden over the field
+            self.last_input = Instant::now();
+            let held = self.cursor_hold.held() || self.clicks.scripted();
+            if let Some(graphics) = &mut self.gfx {
+                let events = &mut graphics.egui_state.egui_input_mut().events;
+                events.push(egui::Event::Text(text));
+                if !held {
+                    self.typing_pointer.on_text(&self.egui_ctx, self.cursor_pos, events);
+                }
+            }
+            return;
+        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
