@@ -794,6 +794,9 @@ pub(super) fn from_head(service: Service, html: &str) -> Option<String> {
 /// Imgur share pages advertise a cover and, for animated posts, a stream.
 /// Keep galleries and albums as cover cards even when their first item moves.
 pub(super) fn clip_from_head(service: Service, page: &str, html: &str) -> Option<FoundClip> {
+    if service == Service::Site {
+        return declared_video(page, html);
+    }
     if service != Service::Imgur {
         return None;
     }
@@ -842,6 +845,51 @@ pub(super) fn clip_from_head(service: Service, page: &str, html: &str) -> Option
         posters: from_head(service, html).into_iter().collect(),
         size: width.zip(height),
     })
+}
+
+/// A configured site can name a direct video in its sharing metadata.
+fn declared_video(page: &str, html: &str) -> Option<FoundClip> {
+    let page = Url::parse(page).ok()?;
+    let clip = head_meta(html).find_map(|(name, value)| {
+        if !matches!(
+            name.to_ascii_lowercase().as_str(),
+            "og:video:secure_url" | "og:video:url" | "og:video" | "twitter:player:stream"
+        ) || value.len() > 2048
+        {
+            return None;
+        }
+        let media = page.join(&unescape(value)).ok()?;
+        if media.origin() != page.origin() {
+            return None;
+        }
+        let clip = super::Clip::of(media.as_str())?;
+        clip.download_url().is_some().then_some(clip)
+    })?;
+    let width = metadata(html, &["og:video:width"]).and_then(|s| s.parse().ok());
+    let height = metadata(html, &["og:video:height"]).and_then(|s| s.parse().ok());
+    Some(FoundClip {
+        clip,
+        title: metadata(html, &["og:title", "twitter:title"]).unwrap_or_default(),
+        channel: metadata(html, &["author"]).unwrap_or_default(),
+        posters: from_head(Service::Site, html).into_iter().collect(),
+        size: width.zip(height),
+    })
+}
+
+#[test]
+fn configured_pages_promote_same_origin_direct_media_only() {
+    let page = "https://i.imgur.com/shares/example";
+    let html = r#"<meta property="og:video" content="https://streamable.com/e/Demo42">
+        <meta property="og:video:secure_url" content="/sample.mp4">
+        <meta property="og:title" content="A vertical video">
+        <meta property="og:video:width" content="360">
+        <meta property="og:video:height" content="640">"#;
+    let result = declared_video(page, html).unwrap();
+    assert_eq!(result.clip.download_url(), Some("https://i.imgur.com/sample.mp4"));
+    assert_eq!(result.title, "A vertical video");
+    assert_eq!(result.size, Some((360.0, 640.0)));
+    let cross_site = r#"<meta property="og:video" content="https://video.twimg.com/example.mp4">"#;
+    assert!(declared_video(page, cross_site).is_none());
 }
 
 pub(super) fn reddit_feed(xml: &str) -> Option<super::PostInfo> {
