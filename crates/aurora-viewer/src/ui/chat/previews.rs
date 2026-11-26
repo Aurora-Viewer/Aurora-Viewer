@@ -1040,7 +1040,7 @@ fn paint_icon(painter: &egui::Painter, icon: &str, rect: egui::Rect, color: Colo
     super::thread::paint_icon(painter, icon, rect, color);
 }
 
-/// A square button over a picture; true when clicked.
+/// A square button over media; true when clicked.
 fn overlay_button(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, tip: &str) -> bool {
     let resp = ui.interact(
         rect,
@@ -1056,6 +1056,7 @@ fn overlay_button(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, 
         egui::Rect::from_center_size(rect.center(), Vec2::splat(15.0)),
         p.ink,
     );
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
     resp.on_hover_text(tip).clicked()
 }
 
@@ -1341,6 +1342,14 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                         v.drawn = pass;
                     }
                     web.show(v, &mut child, p, size);
+                    if !provider_click && (v.muted || ui.rect_contains_pointer(visible_area)) {
+                        let button = egui::Rect::from_min_size(visible_area.right_top() + Vec2::new(-32.0, 6.0), Vec2::splat(26.0));
+                        let icon = if v.muted { "volume-off" } else { "volume" };
+                        if visible_area.contains_rect(button) && overlay_button(ui, p, button, icon, sound_action(v.muted)) {
+                            v.muted = !v.muted;
+                            v.automatic = false;
+                        }
+                    }
                 }
                 _ => {
                     let ui = &mut child;
@@ -1416,16 +1425,11 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             }
             if here == Some(false)
                 && let Some(v) = &mut pv.playing
+                && v.native_video
             {
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
-                    if v.native_video {
-                        native_video_control(ui, &mut v.web);
-                    }
-                    if ui.small_button(sound_action(v.muted)).clicked() {
-                        v.muted = !v.muted;
-                        v.automatic = false;
-                    }
+                    native_video_control(ui, &mut v.web);
                 });
             }
             egui::Frame::new()
