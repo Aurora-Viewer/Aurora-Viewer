@@ -1813,9 +1813,9 @@ impl Scene {
             if world.ground_height(p).is_some_and(|z| p.z <= z) {
                 return Some(p);
             }
-            // from 2^24 m on a step of 1 m no longer moves `t` (f32), and
-            // `from` is as far as the drawn face under the cursor: the
-            // window froze there (#5021)
+            // from 2^24 m on a step of 1 m can leave `t` unchanged (f32;
+            // from 2^25 m it always does), and `from` is as far as the drawn
+            // face under the cursor: the window froze there (#5021)
             let next = t + 1.0;
             if next <= t {
                 break;
