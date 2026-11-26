@@ -95,7 +95,7 @@ pub(super) enum Step {
     /// Public sharing metadata from a recognized video publisher.
     Publisher(String),
     /// Reddit's Atom feed of a post.
-    Feed(String),
+    Feed { feed: String, page: String },
     /// A Bluesky or X post as JSON (`from_post`).
     Post(String),
 }
@@ -302,9 +302,17 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
                 _ => return None,
             };
             reddit_id(id).then(|| {
+                let page = if host == "redd.it" {
+                    format!("https://www.reddit.com/comments/{id}/")
+                } else {
+                    format!("https://www.reddit.com{}", parsed.path())
+                };
                 (
                     Service::Reddit,
-                    Step::Feed(format!("https://www.reddit.com/comments/{id}/.rss?limit=1")),
+                    Step::Feed {
+                        feed: format!("https://www.reddit.com/comments/{id}/.rss?limit=1"),
+                        page,
+                    },
                 )
             })
         }
@@ -976,7 +984,7 @@ pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
         )),
         Step::Head(_) => plain(from_head(service, IMGUR_ALBUM)),
         Step::Publisher(_) => None,
-        Step::Feed(_) => plain(from_feed(if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST })),
+        Step::Feed { .. } => plain(from_feed(if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST })),
         Step::Post(_) if service == Service::X => from_post(service, X_POST.as_bytes()),
         Step::Post(_) => from_post(
             service,

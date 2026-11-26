@@ -1780,6 +1780,12 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         "bilibili" => "https://www.bilibili.com/video/BV1B7411m7LV/",
                         "framatube" => "https://framatube.org/w/9c9de5e8-0a1e-484a-b099-e80766180a6d",
                         "twitch" => "https://clips.twitch.tv/IncredulousAbstemiousFennelImGlitch",
+                        "twitch-live" => "https://www.twitch.tv/lofigirl",
+                        "kick" => "https://kick.com/xqc",
+                        "reddit-post" => {
+                            "https://www.reddit.com/r/funnyvideos/comments/15byye8/turning_delay_into_play_these_guys_know_how_to/"
+                        }
+                        "dailymotion" => "https://www.dailymotion.com/video/x84sh87",
                         "x" => "https://x.com/NASA/status/2042791040516845925",
                         "youtube" => "https://youtu.be/jNQXAC9IVRw",
                         "instagram" => "https://www.instagram.com/reel/DfF3eqGSKKc/",

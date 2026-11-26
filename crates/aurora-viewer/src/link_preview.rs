@@ -1224,7 +1224,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 source
             })
         }
-        Step::Feed(feed) => {
+        Step::Feed { feed, page } => {
             let now = std::time::Instant::now();
             if REDDIT_PAUSE.lock().ok().and_then(|p| *p).is_some_and(|until| now < until) {
                 return Err(Failure::Unavailable);
@@ -1245,7 +1245,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 };
                 return Ok(Content::Post(post, picture));
             }
-            if let Some(page) = feed.strip_suffix("/.rss?limit=1") {
+            {
                 let endpoint =
                     reqwest::Url::parse_with_params("https://www.reddit.com/oembed", [("url", page)]).map_err(|_| Failure::Unavailable)?;
                 if let Some(data) = download(client, endpoint.as_str(), "application/json", 64 * 1024)

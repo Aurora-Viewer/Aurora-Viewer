@@ -1741,7 +1741,7 @@ fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url:
             _ => None,
         })
         .map(str::to_owned);
-    let status_id = egui::Id::new(("save_chat_video", k));
+    let status_id = egui::Id::unique(("save_chat_video", k));
     crate::ui::menu::context_menu_also(resp, p, right_click, |ui| {
         if crate::ui::menu::item(ui, p, "external-link-filled", aurora_i18n::tr!("ui-chat-preview-open")) {
             super::open_web_link(ui.ctx(), url);
