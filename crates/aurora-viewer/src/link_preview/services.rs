@@ -430,6 +430,14 @@ fn adult_media_pages_keep_only_the_parameters_needed_to_share_the_item() {
     for (url, expected) in cases {
         assert!(matches!(recognize(url), Some((Service::Site, Step::Publisher(page))) if page == expected));
     }
+    assert!(matches!(
+        recognize("https://www.redgifs.com/ifr/sample?tracking=1"),
+        Some((Service::Site, Step::Publisher(page))) if page == "https://www.redgifs.com/watch/sample"
+    ));
+    assert!(matches!(
+        recognize("https://www.pornhub.com/embed/phabcdef?viewkey=ignored"),
+        Some((Service::Site, Step::Publisher(page))) if page == "https://www.pornhub.com/view_video.php?viewkey=phabcdef"
+    ));
     assert!(!adult_media_site("redgifs.com.example.org"));
     assert!(adult_media_site("media.redgifs.com"));
     assert!(recognize("https://onlyfans.com/example").is_none());
@@ -474,7 +482,9 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         ("pornhub.com", ["view_video.php"]) => viewkey.as_deref().is_some_and(slug),
         ("xvideos.com", [video, ..]) => video.strip_prefix("video.").is_some_and(slug) || video.strip_prefix("video").is_some_and(digits),
         ("onlyfans.com", [post, creator]) => digits(post) && slug(creator),
-        ("redgifs.com", ["watch", id]) => slug(id),
+        ("redgifs.com", ["watch" | "ifr", id]) => slug(id),
+        ("pornhub.com", ["embed", id]) => alnum(id, 5, 48),
+        ("xvideos.com", ["embedframe", id]) => digits(id),
         ("snapchat.com", ["spotlight", id] | [_, "spotlight", id]) => {
             (8..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
         }
@@ -515,15 +525,21 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     }
     let mut page = match (host.as_str(), parts.as_slice()) {
         ("dai.ly", [id]) => Url::parse(&format!("https://www.dailymotion.com/video/{id}")).ok()?,
+        ("redgifs.com", ["ifr", id]) => Url::parse(&format!("https://www.redgifs.com/watch/{id}")).ok()?,
+        ("pornhub.com", ["embed", id]) => Url::parse(&format!("https://www.pornhub.com/view_video.php?viewkey={id}")).ok()?,
+        ("xvideos.com", ["embedframe", id]) => Url::parse(&format!("https://www.xvideos.com/video{id}")).ok()?,
         ("nico.ms", [id]) | ("sp.nicovideo.jp", ["watch", id]) => Url::parse(&format!("https://www.nicovideo.jp/watch/{id}")).ok()?,
         ("iesdouyin.com", ["share", "video", id]) => Url::parse(&format!("https://www.douyin.com/video/{id}")).ok()?,
         ("v.qq.com", ["x", "m", "play"]) => Url::parse(&format!("https://v.qq.com/x/page/{}.html", video_id?)).ok()?,
         ("v.youku.com", ["video"]) => Url::parse(&format!("https://v.youku.com/v_show/id_{}.html", video_id?)).ok()?,
         _ => url.clone(),
     };
-    page.set_query(None);
+    if !matches!((host.as_str(), parts.as_slice()), ("pornhub.com", ["embed", _])) {
+        page.set_query(None);
+    }
     page.set_fragment(None);
     if host == "pornhub.com"
+        && parts.as_slice() == ["view_video.php"]
         && let Some(key) = viewkey
     {
         page.query_pairs_mut().append_pair("viewkey", &key);
