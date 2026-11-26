@@ -312,9 +312,11 @@ impl App {
                 columns: &mut columns,
             },
         );
-        // (a demo's ground is never kept in the settings)
+        // (the ground of an AURORA_DEMO_INSPECT run is never kept in the
+        // settings, which every viewer of the PC shares)
+        let scripted = self.demo && std::env::var_os("AURORA_DEMO_INSPECT").is_some();
         let light = self.inspect_ui.stage.light;
-        let stage = !self.inspect_ui.demo_light() && light != self.settings.stage_light;
+        let stage = !scripted && light != self.settings.stage_light;
         if stage {
             self.settings.stage_light = light;
         }

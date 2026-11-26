@@ -352,11 +352,6 @@ impl InspectUi {
         }
     }
 
-    /// The demo chose the 3D view's ground: it is not kept.
-    pub fn demo_light(&self) -> bool {
-        self.demo_light
-    }
-
     /// AURORA_DEMO_INSPECT's pause and ground.
     pub fn demo_stage(&mut self) {
         if self.demo_paused {

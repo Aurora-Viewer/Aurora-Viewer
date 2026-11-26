@@ -137,7 +137,7 @@ pub(super) fn show(
         whole: Whole::of(items),
         open: state.opened.and_then(|id| items.iter().find(|i| i.root == id)),
     };
-    header(state, ui, p, frame, &view);
+    header(state, ui, p, frame, &view, actions);
     ui.add_space(8.0);
     let (mut body, foot) = widgets::above_footer(ui);
     board_tiles(state, &mut body, p, frame, &view, actions);
@@ -146,7 +146,7 @@ pub(super) fn show(
 
 /// Who or what is inspected and what the board is narrowed to; the search on
 /// the right, as wide as the tiles under it.
-fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &Frame<'_>, view: &View<'_>) {
+fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &Frame<'_>, view: &View<'_>, actions: &mut Vec<Action>) {
     let scale = crate::ui::fonts::scale(ui.ctx());
     let (line, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), HEADER * scale.max(1.0)), Sense::hover());
     let half = (line.width() - board::GAP) / 2.0;
@@ -178,7 +178,10 @@ fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &Frame<'
     let chips = chips(state, frame, view);
     // the name keeps what the chips leave, a hundred points at least
     let font = egui::FontId::new(15.0, crate::ui::fonts::semibold(ui.ctx()));
-    let name_w = ui.painter().layout_no_wrap(title.clone(), font.clone(), p.ink).size().x;
+    let title_w = ui.painter().layout_no_wrap(title.clone(), font.clone(), p.ink).size().x;
+    // the wearer's profile, a quiet link after their name
+    let link = if frame.subject_profile.is_some() { LINK + 4.0 } else { 0.0 };
+    let name_w = title_w + link;
     let second_w = ui
         .painter()
         .layout_no_wrap(second.clone(), egui::FontId::proportional(12.0), p.ink)
@@ -191,14 +194,24 @@ fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &Frame<'
         wanted.min((left.width() * 0.5).max(100.0))
     };
     let off = if second.is_empty() { 0.0 } else { 9.0 * scale };
+    let title_room = (name_w - link).max(20.0);
     widgets::paint_elided(
         ui,
         &title,
         egui::pos2(left.left(), line.center().y - off),
-        name_w + 1.0,
+        title_room + 1.0,
         font,
         p.ink,
     );
+    if let Some(id) = frame.subject_profile {
+        let middle = egui::pos2(left.left() + title_w.min(title_room) + 4.0 + LINK / 2.0, line.center().y - off);
+        if profile_link(ui, p, middle) {
+            actions.push(Action::Profile {
+                who: id,
+                named_here_alone: false,
+            });
+        }
+    }
     widgets::paint_elided(
         ui,
         &second,
@@ -223,6 +236,25 @@ fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &Frame<'
             }
         }
     }
+}
+
+/// Side of the profile link beside the wearer's name.
+const LINK: f32 = 20.0;
+
+/// The quiet link beside the wearer's name, `LINK` wide around `middle`: a
+/// small icon, a face only when pointed at.
+fn profile_link(ui: &mut egui::Ui, p: &Palette, middle: egui::Pos2) -> bool {
+    let r = Rect::from_center_size(middle, Vec2::splat(LINK));
+    let resp = ui.interact(r, ui.scope_id().with("inspect_profile_link"), Sense::click());
+    let hovered = resp.hovered();
+    if hovered {
+        ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, p.raised);
+    }
+    let ink = if hovered { p.ink } else { p.muted };
+    crate::ui::sheet::icon_at(ui, "external-link-filled", r.center(), 14.0, ink);
+    let tip = aurora_i18n::tr!("inspect-open-profile");
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, tip));
+    resp.on_hover_text(tip).clicked()
 }
 
 /// What a chip takes away.
@@ -1907,7 +1939,11 @@ fn prims(
             ui.add_space(4.0);
             let kept: Vec<&Row> = match view.open {
                 Some(item) => item.prims.iter().map(|i| &view.rows[*i]).collect(),
-                None => view.shown.iter().flat_map(|i| i.prims.iter().map(|r| &view.rows[*r])).collect(),
+                None => view
+                    .shown
+                    .iter()
+                    .flat_map(|i| model::found_prims(view.rows, i, &state.query).map(|r| &view.rows[r]))
+                    .collect(),
             };
             details::table(state, ui, p, kept, *frame.columns);
         }

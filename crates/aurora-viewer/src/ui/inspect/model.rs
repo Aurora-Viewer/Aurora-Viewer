@@ -148,20 +148,31 @@ impl Whole {
     }
 }
 
-/// The items to list for `query` (name or creator, ignoring case), head to
-/// toe by section (objects in the world: the linksets' order).
+/// Whether a prim's name or creator holds `query` (already lowercase).
+fn finds(row: &Row, query: &str) -> bool {
+    query.is_empty() || row.name.to_lowercase().contains(query) || row.creator_name.to_lowercase().contains(query)
+}
+
+/// The items to list for `query` (the name or creator of any of their prims,
+/// ignoring case), head to toe by section (objects in the world: the
+/// linksets' order).
 pub fn shown<'a>(rows: &[Row], items: &'a [Item], query: &str) -> Vec<&'a Item> {
     let query = query.trim().to_lowercase();
     let mut list: Vec<&Item> = items
         .iter()
-        .filter(|item| {
-            let row = &rows[item.first];
-            query.is_empty() || row.name.to_lowercase().contains(&query) || row.creator_name.to_lowercase().contains(&query)
-        })
+        .filter(|item| item.prims.iter().any(|i| finds(&rows[*i], &query)))
         .collect();
     // a stable sort keeps the linksets' order inside a section
     list.sort_by_key(|item| item.area);
     list
+}
+
+/// The prims of `item` the search keeps: all of them when the item itself
+/// (its root) is found, else those whose name or creator holds `query`.
+pub fn found_prims<'a>(rows: &'a [Row], item: &'a Item, query: &str) -> impl Iterator<Item = usize> + 'a {
+    let query = query.trim().to_lowercase();
+    let whole = finds(&rows[item.first], &query);
+    item.prims.iter().copied().filter(move |i| whole || finds(&rows[*i], &query))
 }
 
 /// The badge of a complexity: light, medium, or among the heaviest.
@@ -291,6 +302,30 @@ mod tests {
         assert_eq!(names(""), ["Aster Head", "Hair", "Boots"]);
         assert_eq!(names("ASTER"), ["Aster Head"]);
         assert_eq!(names("maker 1"), ["Boots"]);
+    }
+
+    #[test]
+    fn search_finds_an_item_by_one_of_its_prims_and_keeps_those_prims() {
+        let mut rows = vec![
+            row(1, true, "Boots", 7, 400),
+            row(2, false, "Laces", 7, 0),
+            row(3, false, "Heel", 7, 0),
+            row(4, true, "Hair", 2, 700),
+        ];
+        rows[2].creator_name = "Cobbler".into();
+        let list = items(&rows);
+        let found = |q: &str| {
+            shown(&rows, &list, q)
+                .iter()
+                .map(|i| found_prims(&rows, i, q).map(|r| rows[r].name.as_str()).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        };
+        // a child prim's name, or its creator alone: its item, that prim only
+        assert_eq!(found("laces"), [vec!["Laces"]]);
+        assert_eq!(found("COBBLER"), [vec!["Heel"]]);
+        // the item's own name: every prim of it
+        assert_eq!(found("boots"), [vec!["Boots", "Laces", "Heel"]]);
+        assert_eq!(found("").len(), 2);
     }
 
     #[test]

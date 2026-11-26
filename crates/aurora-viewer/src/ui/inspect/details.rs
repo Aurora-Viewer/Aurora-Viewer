@@ -196,7 +196,8 @@ fn rows(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, rows: Vec<&Row>, 
                 aurora_i18n::integer(i64::from(row.triangles)),
                 aurora_i18n::tr!("inspect-col-triangles")
             );
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+            let outlined = state.selected == Some(row.id);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, outlined, &label));
             if resp.clicked() {
                 state.selected = Some(row.id);
             }

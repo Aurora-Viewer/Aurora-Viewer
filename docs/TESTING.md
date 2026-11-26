@@ -3809,7 +3809,7 @@ scenarios simulate nearby voice membership without starting an audio session:
 verify the volume stays above all movable rows, including while editing, and
 does not overlap Profile. Technical actions are grouped under Display,
 Avatar information, Reset, Moderation (with rights) and Disturbance.
-Avatar information offers Inspect all attachments; Clicked object offers
+Avatar information offers Inspect avatar; Clicked object offers
 Inspect for that object. Both use Script information for their own target. A clicked
 attachment's object actions are separate from its wearer's actions.
 `customize-hud` additionally needs
@@ -6936,7 +6936,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   of the market below, of several owners. Inspect has one view, the board of
   tiles: `item` opens the third object, `hover`
   outlines the fourth in 3D, `paused` and `light` its
-  animation and ground (`light` is never kept in the settings), `grow-3d`, `grow-items`, `grow-complexity`,
+  animation and ground (never kept in the settings during an `AURORA_DEMO_INSPECT` run), `grow-3d`, `grow-items`, `grow-complexity`,
   `grow-makers`, `grow-places`, `grow-figures` and `grow-prims` grow that tile.
   Options go together, separated by commas (`wolf:item,grow-prims`). Check
   that nothing spins by itself, dragging, a right drag, the arrow keys and each button, the outline
