@@ -674,14 +674,14 @@ pub const FOV_RANGE: std::ops::RangeInclusive<f32> = 0.17..=2.97;
 /// (floater_phototools_camera.xml, floater_phototools.xml), up to a half-life
 /// of 6 s, and not the 9 of panel_preferences_move.xml: both sliders drive the
 /// same setting, and Aurora has one.
+pub const SMOOTHING_RANGE: std::ops::RangeInclusive<f32> = 0.0..=300.0;
+
 /// Ranges of the over-the-shoulder camera's sliders, as the Megapahit
 /// viewer's Preferences › Move & View › Over-The-Shoulder offers them.
 pub const OTS_DISTANCE_RANGE: std::ops::RangeInclusive<f32> = 1.0..=10.0;
 pub const OTS_SIDE_RANGE: std::ops::RangeInclusive<f32> = -1.0..=1.0;
 pub const OTS_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=2.0;
 pub const OTS_FOCUS_RANGE: std::ops::RangeInclusive<f32> = 2.0..=30.0;
-
-pub const SMOOTHING_RANGE: std::ops::RangeInclusive<f32> = 0.0..=300.0;
 
 impl CameraSettings {
     pub fn camera_offset(&self) -> Vec3 {

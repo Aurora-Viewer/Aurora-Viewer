@@ -2378,8 +2378,13 @@ impl Camera {
         }
         // a camera held closer to the avatar than the shoulder offset
         // (`@setcam_avdistmax`, `@camdistmax`) is the first-person view
-        // those restrictions ask for, not a shoulder camera pulled inwards
-        let reach = Vec3::new(s.ots_distance, s.ots_side, s.ots_height).length();
+        // those restrictions ask for, not a shoulder camera pulled inwards.
+        // RLVa measures from the head (as `limit_rlva_distance`), and the
+        // offset turns with the pitch, so the bound is the offset's length
+        // plus the head's distance from the root (the triangle inequality):
+        // never closer than the camera can get at any pitch, so the shoulder
+        // view never stays past the limit (stricter, never looser)
+        let reach = Vec3::new(s.ots_distance, s.ots_side, s.ots_height).length() + self.posed_head(f).distance(self.avatar.root);
         if self.shoulder_view() && world.rlva.camera_limit("setcam_avdistmax", f32::INFINITY, false) < reach {
             self.shoulder = false;
         }
@@ -6690,7 +6695,10 @@ mod tests {
             over_the_shoulder: true,
             ..Default::default()
         };
-        for (limit, shoulder) in [(10.0, true), (1.0, false)] {
+        // with the defaults the offset is 3.08 m and the head 0.65 m above
+        // the root: 3.3 m is past the offset but short of the reach at
+        // some pitch, so it gives the first person too
+        for (limit, shoulder) in [(10.0, true), (3.3, false), (1.0, false)] {
             let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
             let mut camera = Camera::default();
             settle(&mut camera, &mut world, &s);

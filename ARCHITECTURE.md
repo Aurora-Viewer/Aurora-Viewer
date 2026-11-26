@@ -1058,6 +1058,8 @@ hide those faces without rebuilding records or disturbing the enabled body's
 shadow/reflection geometry. HUDs and other avatars keep their ordinary visibility.
 Camera visibility uses the completed mouselook transition, keeping the head
 visible throughout the incoming approach (Legacy Viewer `cameraMouselook`).
+The over-the-shoulder view (`Camera::shoulder_view`, mouselook's input with the
+camera behind the avatar) is not first person: it keeps the avatar shown.
 
 Seated first-person camera updates run after `Scene::update_poses`, sharing the
 current animated eye positions used by look-at (`Scene::eyes_offset`). The camera
