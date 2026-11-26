@@ -878,8 +878,11 @@ pub(super) fn clip_from_feed(xml: &str) -> Option<FoundClip> {
 pub(super) fn reddit_animation(xml: &str) -> Option<String> {
     let entry = xml.split("<entry").nth(1)?.split("</entry>").next()?;
     let html = unescape(entry.split("<content").nth(1)?.split("</content>").next()?);
-    html.split("<a ").skip(1).find_map(|tag| {
-        let tag = tag.split_once('>')?.0;
+    html.split('<').find_map(|tag| {
+        let tag = tag.split_once('>')?.0.strip_prefix('a')?;
+        if !tag.starts_with(|c: char| c.is_ascii_whitespace()) {
+            return None;
+        }
         let url = Url::parse(&unescape(attribute(tag, "href")?)).ok()?;
         let path = url.path().to_ascii_lowercase();
         (url.host_str() == Some("i.redd.it")
