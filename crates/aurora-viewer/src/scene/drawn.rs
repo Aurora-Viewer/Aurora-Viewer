@@ -680,6 +680,37 @@ mod tests {
         assert_eq!(scene.drawn_action_point(&world, ray, None, 100.0), None);
     }
 
+    /// #5021: an avatar's face drawn 2^24 m or more along the ray. The
+    /// search for the ground behind it ends, and the press keeps the drawn
+    /// depth.
+    #[test]
+    fn press_on_an_avatar_face_drawn_far_along_the_ray_ends() {
+        let (world, mut scene, front, _) = super::super::picking::tests::indexed_scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        scene.gpu.resize_with(scene.gpu.len().max(own + 1), Default::default);
+        scene.gpu[own].is_avatar = true;
+        let body_draw = FaceDraw {
+            record: 2,
+            ..scene.gpu[front].faces[0]
+        };
+        scene.gpu[own].faces.push(body_draw);
+        for distance in [16_777_216.0_f32, 1.0e9] {
+            let point = ray.0 + ray.1 * distance;
+            let drawn = Drawn {
+                opaque: Some(DrawnFace {
+                    record: 2,
+                    point,
+                    st: glam::Vec2::ZERO,
+                    normal: -Vec3::X,
+                    binormal: Vec3::Z,
+                }),
+                blend: None,
+            };
+            assert_eq!(scene.touch_depth(&world, &drawn, Some(ray), Some(point), 100.0), Some(point));
+        }
+    }
+
     #[test]
     fn own_avatar_steering_requires_a_drawn_body_surface() {
         let (world, mut scene, front, back) = super::super::picking::tests::indexed_scene_with_two_objects();
