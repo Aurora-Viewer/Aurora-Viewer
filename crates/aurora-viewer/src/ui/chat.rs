@@ -3438,6 +3438,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             None => (None, w.chat_clock),
         },
     };
+    let nearby = st.selected.is_none();
     let menu = ui.layer_id().id.with(("chat_line_menu", st.selected));
     let paused = line_menu::is_open(ui.ctx(), menu);
     if paused && !view.is_paused() {
@@ -3556,6 +3557,16 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                     match &mut rows {
                         Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
                         Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
+                    }
+                    if nearby && let Some(outcome) = w.chat_translation.outcome(clock.token, clock.first + row.line as u64) {
+                        use crate::chat_translation::Outcome;
+                        let text = match outcome {
+                            Outcome::Translated(text) => aurora_i18n::tr!("ui-chat-translation-result", text = text.as_str()),
+                            Outcome::Credentials => aurora_i18n::tr!("ui-chat-translation-credentials").to_owned(),
+                            Outcome::Quota => aurora_i18n::tr!("ui-chat-translation-quota").to_owned(),
+                            Outcome::Unavailable => aurora_i18n::tr!("ui-chat-translation-unavailable").to_owned(),
+                        };
+                        ui.label(RichText::new(text).size(super::fonts::chat_size(ui.ctx(), 12.0)).color(p.muted));
                     }
                     ui.set_opacity(opacity);
                 };

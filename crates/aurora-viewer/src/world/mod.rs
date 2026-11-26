@@ -531,6 +531,7 @@ pub struct World {
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
+    pub chat_translation: crate::chat_translation::Nearby,
     /// The origin of each object's chat line (its object and the line's
     /// time), as the Legacy Viewer links each line to its own `objectim`
     /// SLURL; bounded by chat history.
@@ -1115,6 +1116,7 @@ impl World {
             motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
+            chat_translation: Default::default(),
             chat_objects: HashMap::new(),
             bubble_chat: Default::default(),
             chat_clock: Default::default(),
@@ -5499,6 +5501,7 @@ impl World {
             && c.region
                 .and_then(|h| self.region_offset(h))
                 .is_some_and(|offset| radar::beyond_say_range(c.position, offset, self.agent.position, radar::chat_ranges().say));
+        let translate = !c.source_id.is_nil() && matches!(kind, ChatKind::Local(ChatType::Whisper | ChatType::Normal | ChatType::Shout));
         self.push_chat(ChatLine {
             time,
             from,
@@ -5511,6 +5514,10 @@ impl World {
             speaker,
             private_history: false,
         });
+        if translate && let Some(line) = self.chat.back() {
+            let seq = self.chat_clock.first + self.chat.len() as u64 - 1;
+            self.chat_translation.offer(self.chat_clock.token, seq, &line.text);
+        }
     }
 
     fn on_im(&mut self, mut im: InstantMessage) {

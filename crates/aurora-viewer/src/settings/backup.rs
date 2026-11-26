@@ -53,7 +53,11 @@ const THIS_PC_AUDIO: &[&str] = &["output_device", "voice_output_device", "input_
 /// random id. A backup file is carried around and shared; keys are not.
 const THIS_PC_GIFS: &[&str] = &["giphy_key", "klipy_key", "customer_id"];
 /// The nested sections that hold settings of this PC, and those settings.
-const THIS_PC_NESTED: &[(&str, &[&str])] = &[("audio", THIS_PC_AUDIO), ("gifs", THIS_PC_GIFS)];
+const THIS_PC_NESTED: &[(&str, &[&str])] = &[
+    ("audio", THIS_PC_AUDIO),
+    ("gifs", THIS_PC_GIFS),
+    ("chat_translation", &["enabled", "azure_key", "azure_region"]),
+];
 
 /// Whether the path of a setting (`gifs.giphy_key`) names a setting of the
 /// login or of this PC.
@@ -301,6 +305,11 @@ impl Settings {
         self.gifs.giphy_key = current.gifs.giphy_key.clone();
         self.gifs.klipy_key = current.gifs.klipy_key.clone();
         self.gifs.customer_id = current.gifs.customer_id.clone();
+        self.chat_translation.enabled = current.chat_translation.enabled;
+        self.chat_translation.azure_key.clone_from(&current.chat_translation.azure_key);
+        self.chat_translation
+            .azure_region
+            .clone_from(&current.chat_translation.azure_region);
         self.mfa_hash = current.mfa_hash.clone();
         self.debug = current.debug;
         // a newer build's own values are not the backup's to drop
@@ -346,6 +355,9 @@ mod tests {
         s.gifs.giphy_key = "giphy-key-of-this-pc".into();
         s.gifs.klipy_key = "klipy-key-of-this-pc".into();
         s.gifs.customer_id = "id-of-this-pc".into();
+        s.chat_translation.enabled = true;
+        s.chat_translation.azure_key = "translation-key-of-this-pc".into();
+        s.chat_translation.azure_region = "translation-region-of-this-pc".into();
         s
     }
 
@@ -365,6 +377,8 @@ mod tests {
             "giphy-key-of-this-pc",
             "klipy-key-of-this-pc",
             "id-of-this-pc",
+            "translation-key-of-this-pc",
+            "translation-region-of-this-pc",
         ] {
             assert!(!text.contains(value), "{value} written in the backup");
         }

@@ -330,6 +330,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 conversation_rows(cx);
             });
             link_previews(cx);
+            chat_translation(cx);
             gifs(cx);
         }
         1 => notifications(cx),
@@ -756,6 +757,75 @@ fn videos(cx: &mut Cx) {
                 },
             );
         });
+    });
+}
+
+fn chat_translation(cx: &mut Cx) {
+    use crate::ui::widgets;
+    use aurora_i18n::tr;
+    let p = cx.p;
+    cx.group(tr!("ui-options-chat-translation"), |cx| {
+        cx.note(tr!("ui-options-chat-translation-privacy"));
+        cx.toggle(tr!("ui-options-chat-translation-enabled"), "", &field!(chat_translation.enabled));
+        cx.row(
+            tr!("ui-options-chat-translation-target"),
+            tr!("ui-options-chat-translation-target-hint"),
+            &field!(chat_translation.target),
+            |ui, s| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut s.chat_translation.target)
+                        .char_limit(24)
+                        .desired_width(100.0),
+                )
+                .changed()
+            },
+        );
+        cx.wide().row(
+            tr!("ui-options-chat-translation-key"),
+            "",
+            &field!(chat_translation.azure_key),
+            |ui, s| {
+                let changed = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut s.chat_translation.azure_key)
+                            .password(true)
+                            .char_limit(256)
+                            .desired_width(super::super::COMBO_W),
+                    )
+                    .changed();
+                if widgets::action_button(
+                    ui,
+                    &p,
+                    "external-link",
+                    tr!("ui-options-chat-translation-setup"),
+                    widgets::ActionKind::Flat,
+                    egui::vec2(0.0, 24.0),
+                )
+                .clicked()
+                {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(
+                        "https://learn.microsoft.com/azure/ai-services/translator/how-to/create-translator-resource",
+                    ));
+                }
+                changed
+            },
+        );
+        cx.row(
+            tr!("ui-options-chat-translation-region"),
+            tr!("ui-options-chat-translation-region-hint"),
+            &field!(chat_translation.azure_region),
+            |ui, s| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut s.chat_translation.azure_region)
+                        .char_limit(64)
+                        .desired_width(100.0),
+                )
+                .changed()
+            },
+        );
+        if cx.s.chat_translation.enabled && !cx.s.chat_translation.ready() {
+            cx.note(tr!("ui-options-chat-translation-incomplete"));
+        }
     });
 }
 
