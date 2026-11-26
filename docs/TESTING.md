@@ -4236,7 +4236,11 @@ rigged shell remaining on the avatar.
 The listener accepts the Blender extension on port 17655. Check that live
 retouches replace the shell, invalid data preserves the previous geometry,
 and Stop removes all preview objects. The demo log reports `ready_skinned`
-objects using our avatar's skeleton. See [LiveMesh](BLENDER_LIVE.md).
+objects using our avatar's skeleton, and, for each revision the listener
+receives, when all its objects are drawn with their new geometry and textures
+(`demo Blender live: revision <n> drawn … ms, … frames after it arrived`): two
+frames at 60 fps when the uploads are not held back, with or without a textured
+object shown. See [LiveMesh](BLENDER_LIVE.md).
 
 The Maya plug-in's rules run without Maya: `python maya/tests/test_convert.py`
 (frames, binds, weights, packing, colour tables, and a fake viewer checking
