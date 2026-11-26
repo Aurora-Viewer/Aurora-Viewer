@@ -20,7 +20,7 @@ use crate::settings::{MapSettings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::place_details::Source;
-use crate::world::worldmap::{Track, access_label, location_label, teleport_command};
+use crate::world::worldmap::{SIM_ACCESS_NONE, SimInfo, Track, access_label, location_label, teleport_command};
 use aurora_net::{NetCommand, map_item};
 use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2, pos2, vec2};
 use std::collections::{HashMap, HashSet};
@@ -1177,23 +1177,50 @@ fn map_slurl(world: &World, track: Option<&Track>) -> Option<String> {
     if world.rlva.has("showloc") {
         return None;
     }
-    let (x, y, z) = match track {
-        Some(t) => (t.x, t.y, t.z),
+    let (x, y, z, region) = match track {
+        Some(t) => (t.x, t.y, t.z, world.map.sim_at_global(t.x, t.y).map(|(k, s)| (k, s.clone()))),
         None => {
-            let (ox, oy) = world.main_origin()?;
-            let p = world.agent.position;
-            (ox as f64 + p.x as f64, oy as f64 + p.y as f64, p.z)
+            let (x, y, z, region) = own_place(world)?;
+            (x, y, z, Some(region))
         }
     };
-    if let Some(((sx, sy), s)) = world.map.sim_at_global(x, y) {
-        let local = glam::Vec3::new((x - sx as f64 * 256.0) as f32, (y - sy as f64 * 256.0) as f32, z);
-        return Some(crate::slurl::make(&s.name, local));
-    }
     // a tracked place is disabled until the map knows its region; our own
-    // position can still be named from the connected region
-    let name = track.is_none().then(|| world.region_name())?;
+    // position is already named from the connected region
+    let ((sx, sy), s) = region?;
+    let local = glam::Vec3::new((x - sx as f64 * 256.0) as f32, (y - sy as f64 * 256.0) as f32, z);
+    Some(crate::slurl::make(&s.name, local))
+}
+
+/// Our own position in global meters and the region it is in
+/// (LLFloaterWorldMap::updateLocation's mSetToUserPosition): the map's own
+/// region once it knows it, otherwise the connected region named from the
+/// world, so both layouts can show and copy it before the map metadata
+/// arrives.
+fn own_place(world: &World) -> Option<(f64, f64, f32, ((u32, u32), SimInfo))> {
     let (ox, oy) = world.main_origin()?;
-    (!name.is_empty()).then(|| crate::slurl::make(&name, glam::Vec3::new((x - ox as f64) as f32, (y - oy as f64) as f32, z)))
+    let p = world.agent.position;
+    let (x, y) = (ox as f64 + p.x as f64, oy as f64 + p.y as f64);
+    let region = match world.map.sim_at_global(x, y) {
+        Some((k, s)) => (k, s.clone()),
+        None => {
+            let name = world.region_name();
+            if name.is_empty() {
+                return None;
+            }
+            (
+                (ox / 256, oy / 256),
+                SimInfo {
+                    name,
+                    access: SIM_ACCESS_NONE,
+                    flags: 0,
+                    image: Uuid::nil(),
+                    size_x: 256,
+                    size_y: 256,
+                },
+            )
+        }
+    };
+    Some((x, y, p.z, region))
 }
 
 /// A region's label in the full-frame layout, at its bottom left: the
@@ -1660,6 +1687,19 @@ mod coordinate_tests {
         b.world.map.track_location(256_100.0, 256_110.0, 90.0, false);
         let tracked = b.map.current_slurl(&b.world).expect("the tracked place's SLURL");
         assert!(tracked.ends_with("Coordinate%20Region/100/110/90"), "{tracked}");
+    }
+
+    #[test]
+    fn editing_only_the_height_of_our_own_position_sets_a_destination() {
+        let mut b = Bench::new();
+        // our own card: our position is the Bench's (32, 48, 70) in its
+        // region, and a height alone still commits all three fields
+        // (LLFloaterWorldMap::onCoordinatesCommit → trackURL)
+        b.map.commit_coordinates(&mut b.world, true, 256_032.0, 256_048.0, 90.0, false);
+        let t = b.world.map.track.as_ref().expect("the edited height becomes a destination");
+        assert_eq!((t.x, t.y, t.z), (256_032.0, 256_048.0, 90.0));
+        assert!(t.label.starts_with("Coordinate Region"), "{}", t.label);
+        assert!(b.world.map.take_commands().is_empty(), "editing coordinates does not teleport");
     }
 }
 

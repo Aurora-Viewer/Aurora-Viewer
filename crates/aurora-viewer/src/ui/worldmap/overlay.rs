@@ -6,12 +6,14 @@
 //! suggestions grouped, and under it a drawer with the landmarks by folder,
 //! the history and the friends; top right, the layers as pills; bottom
 //! left, the card of the selected place (or of our own position when none
-//! is); bottom right, the zoom, our position and home. Every control of Firestorm's side panel
-//! (`WorldMapUi::side_panel`, the legacy layout) has its place here. The
-//! panels fade while the map is dragged, and those of the last frame keep
-//! the map from taking their clicks.
+//! is); bottom right, the zoom, our position and home. Every control of the
+//! Legacy Viewer's side panel (`WorldMapUi::side_panel`, the legacy layout)
+//! has its place here. The panels fade while the map is dragged, and those
+//! of the last frame keep the map from taking their clicks.
 
-use super::{DRAW_SIMINFO_THRESHOLD, ItemKind, MapPictures, PAN_TAU_CENTER, WorldMapAction, WorldMapUi, ZOOM_MAX, ZOOM_MIN, item_icon};
+use super::{
+    DRAW_SIMINFO_THRESHOLD, ItemKind, MapPictures, PAN_TAU_CENTER, WorldMapAction, WorldMapUi, ZOOM_MAX, ZOOM_MIN, item_icon, own_place,
+};
 use crate::settings::MapSettings;
 use crate::theme::Palette;
 use crate::ui::map_tiles::{MapTiles, scale_to_level};
@@ -23,7 +25,7 @@ use crate::world::landmarks::{Landmarks, Resolved};
 use crate::world::place_details::Source;
 use crate::world::social::rights;
 use crate::world::tphistory::{self, HistoryItem};
-use crate::world::worldmap::{SIM_ACCESS_NONE, SimInfo, Track, location_label};
+use crate::world::worldmap::{Track, location_label};
 use aurora_i18n::UiUpper;
 use aurora_net::map_item;
 use egui::{Align, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
@@ -1619,6 +1621,33 @@ impl WorldMapUi {
         }
     }
 
+    /// LLFloaterWorldMap::onCoordinatesCommit: `trackURL` with all three
+    /// fields. Our own card has no track yet, so any change, the height
+    /// alone included, makes the spot a destination; on a tracked place a
+    /// height alone keeps the same spot.
+    pub(super) fn commit_coordinates(&mut self, world: &mut World, ours: bool, x: f64, y: f64, z: f32, moved: bool) {
+        // another spot: no landmark nor friend any more
+        self.landmark = None;
+        self.ov.landmark_at = None;
+        if moved || ours {
+            let label = world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
+            world.map.track_location(x, y, z, false);
+            let name = world.map.sim_at_global(x, y).map(|(_, s)| s.name.clone());
+            let (lx, ly) = world.map.local_xy(x, y);
+            if let (Some(t), Some(n)) = (world.map.track.as_mut(), name) {
+                // our own card has no label to keep, and a place whose label
+                // is the spot's own moves with it
+                t.label = if ours || label.is_empty() || label.starts_with(&n) {
+                    location_label(&n, lx, ly, z)
+                } else {
+                    label
+                };
+            }
+        } else {
+            world.map.set_track_altitude(z);
+        }
+    }
+
     /// Bottom left: the selected place: its picture, its name and rating,
     /// its people and events, the position (editable) and how far it is,
     /// then teleport, SLurl, its profile, centring and clearing. Returns
@@ -1644,12 +1673,12 @@ impl WorldMapUi {
         // nothing selected: the card is about our own position, with the
         // Legacy Viewer's mSetToUserPosition spot
         let ours = selection == Selection::Me;
-        let own = ours.then(|| to_global(world, world.agent.position));
+        let own = if ours { own_place(world) } else { None };
         let track = match own {
-            Some((x, y)) => Some(Track {
+            Some((x, y, z, _)) => Some(Track {
                 x,
                 y,
-                z: world.agent.position.z,
+                z,
                 label: String::new(),
                 tooltip: String::new(),
                 pending: false,
@@ -1660,26 +1689,7 @@ impl WorldMapUi {
         };
         let avatar = world.map.avatar.clone();
         let region = match own {
-            Some((x, y)) => match world.map.sim_at_global(x, y) {
-                Some((k, s)) => Some((k, s.clone())),
-                // before the map knows the region, name it from the world
-                None => world.main_origin().and_then(|(ox, oy)| {
-                    let name = world.region_name();
-                    (!name.is_empty()).then(|| {
-                        (
-                            (ox / 256, oy / 256),
-                            SimInfo {
-                                name,
-                                access: SIM_ACCESS_NONE,
-                                flags: 0,
-                                image: Uuid::nil(),
-                                size_x: 256,
-                                size_y: 256,
-                            },
-                        )
-                    })
-                }),
-            },
+            Some((_, _, _, region)) => Some(region),
             None => track
                 .as_ref()
                 .and_then(|t| world.map.sim_at_global(t.x, t.y))
@@ -1939,25 +1949,7 @@ impl WorldMapUi {
         }
 
         if let Some((x, y, z, moved)) = edited {
-            // another spot: no landmark nor friend any more; a height only:
-            // the same spot
-            self.landmark = None;
-            self.ov.landmark_at = None;
-            if moved {
-                let label = track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
-                world.map.track_location(x, y, z, false);
-                let name = world.map.sim_at_global(x, y).map(|(_, s)| s.name.clone());
-                let (lx, ly) = world.map.local_xy(x, y);
-                if let (Some(t), Some(n)) = (world.map.track.as_mut(), name) {
-                    t.label = if label.starts_with(&n) {
-                        location_label(&n, lx, ly, z)
-                    } else {
-                        label
-                    };
-                }
-            } else {
-                world.map.set_track_altitude(z);
-            }
+            self.commit_coordinates(world, ours, x, y, z, moved);
         }
         if go {
             match (&self.landmark, &world.map.track) {
