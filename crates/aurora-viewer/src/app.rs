@@ -68,6 +68,7 @@ mod describe;
 mod dev_toolbox;
 mod folders;
 mod hover_pick;
+mod legacy_lists;
 mod texture_picker;
 mod typing_pointer;
 use folders::chat_log_root;
@@ -1335,6 +1336,7 @@ pub struct App {
     /// The cache and transcript folders being chosen (app/folders.rs).
     folders: folders::Folders,
     chat_import: chat_import::ChatImport,
+    legacy_lists: legacy_lists::LegacyLists,
     /// The settings backup being written or read (app/settings_backup.rs).
     settings_backup: settings_backup::Job,
     /// The stream list being exported or imported (app/stream_list.rs).
@@ -2030,6 +2032,7 @@ impl App {
             favorite_images: Default::default(),
             history_ui: Default::default(),
             chat_import: Default::default(),
+            legacy_lists: Default::default(),
             perf: PerfData::default(),
             monitor: ui::monitor::Monitor::default(),
             monitor_feed: monitor::MonitorFeed::default(),
@@ -3706,6 +3709,7 @@ impl App {
         // before the settings are saved and the account state replaced
         self.close_pose_stand();
         self.panels.pose_stand = false;
+        self.legacy_lists_reset();
         self.parcel_music.enter(false);
         self.stream_url.clear();
         self.music_fade.reset();
@@ -11237,6 +11241,7 @@ impl App {
         }
         self.world.poll_transcripts();
         self.poll_chat_import();
+        self.poll_legacy_lists();
         self.update_hover_height();
         self.update_avatar_health();
         if self.demo {
@@ -13705,6 +13710,9 @@ impl App {
             self.sound_cues.pass_start(ui.ctx());
             // before any field reads its keys: Ctrl+W is the frontmost window's
             ui::close_key::begin(ui.ctx());
+            // before any window scrolls: a web page holding the pointer keeps
+            // the wheel from what is drawn before it (review of #3599)
+            ui::web_view::hold_wheel(ui.ctx());
             // the chat fields' shortcuts, as Preferences › Shortcuts set them
             ui::chat::shortcuts::publish(ui.ctx(), &self.settings.keybinds);
             ui::inventory::publish_shortcuts(ui.ctx(), &self.settings.keybinds);
@@ -18290,6 +18298,7 @@ impl App {
         self.options_ui.cache_usage = self.disk_cache.usage();
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
+        self.options_ui.legacy_lists_ready = self.in_world() && self.world.login.is_some();
         self.options_ui.conversation_log_entries = self.world.chat_log.conversations.list.len();
         self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
         self.options_ui.chat_log_shared = self.world.chat_log.shared();
@@ -18496,6 +18505,12 @@ impl App {
         }
         if res.clear_conversation_log {
             self.world.chat_log.clear_conversations();
+        }
+        if res.find_legacy_lists {
+            self.legacy_lists_opened();
+        }
+        if let Some((index, parts)) = res.import_legacy_lists.take() {
+            self.legacy_lists_start(index, parts);
         }
         if res.erase_chat_logs {
             self.options_ui.chat_log_status = if self.world.chat_log.busy() {

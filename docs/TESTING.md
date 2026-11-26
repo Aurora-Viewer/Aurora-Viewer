@@ -6819,6 +6819,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
 | `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs, the Chat Service's direct history (`service`) and saved private/group conversation restoration |
+| `AURORA_DEMO_LEGACY_LISTS=1\|run\|again\|none\|unreadable\|other-grid` | The import of a Legacy Viewer's lists in Preferences |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
@@ -9137,6 +9138,16 @@ failure. Grid validation and any paid upload are performed by the human.
   (also in the window's title bar) opens Preferences › Chat on "YouTube
   videos". Moving YouTube's own volume slider logs `video volume kept at
   N %`, and the next video starts at that level.
+  A click on a window laid over the playing card or the player window must
+  not start or stop the video or give the page the keyboard (#3436): move
+  Inventory over the embed and click it. A click on the uncovered page still
+  reaches the video. The web browser and a profile page under another window
+  follow the same rule. A press on a page holds the pointer until its release
+  (#3599): drag from a page of the web browser out over Inventory and the
+  world, and the page follows to the release while nothing else reacts; the
+  wheel during the hold scrolls neither Inventory nor a chat list; minimise
+  the browser mid-drag, let go, click another page, then press in the world:
+  the minimised page gets nothing more.
 - **`AURORA_DEMO_VIDEO_VOLUME=<0-100>`**: demo only, the level YouTube's
   player is set to when a video starts (what Preferences › Chat › Video
   volume keeps). With `AURORA_DEMO_PREVIEW_PLAY=window` and `0`, the
@@ -10378,6 +10389,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
+- **`AURORA_DEMO_LEGACY_LISTS=1|run|again|none|unreadable|other-grid`**: a
+  Legacy Viewer's folder is made up in
+  `config\demo\accounts\<demo account uuid>\legacy-lists\` and Preferences ›
+  Language and updates opens on it. `1` waits in the import window, `run`
+  imports (an object of the plaza leaves the world, the row says what was
+  added), `again` imports twice (the row says there is nothing new), `none`
+  shows a folder missing, `unreadable` a media list that cannot be read and
+  `other-grid` the warning of a grid whose folders cannot be told apart. The
+  four lists are in memory during the run; no transcript is written or
+  removed.
 - **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew|self]|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in

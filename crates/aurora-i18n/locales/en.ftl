@@ -15898,6 +15898,25 @@ ui-weather-precipitation-on-tip = Rain or snow falls as set below; off, nothing 
 ui-weather-wind-on-tip = The weather's wind blows the rain and snow and is heard outdoors; off, the air is calm
 ui-weather-wind-follow-region = Region's wind
 
+ui-options-legacy-lists = Import lists from the Legacy Viewer
+ui-options-legacy-lists-help = Adds this account's teleport history, asset blacklist, media filter list and contact sets. The Legacy Viewer's files are only read.
+ui-options-legacy-lists-button = Import from the Legacy Viewer…
+ui-options-legacy-lists-no-account = Log in to import this account's lists.
+ui-options-legacy-lists-title = Import from the Legacy Viewer
+ui-options-legacy-lists-text = Everything is added to this account's lists and nothing here is removed. What the asset blacklist names leaves the world at once. Importing again brings back what you removed here.
+ui-options-legacy-lists-searching = Looking for the Legacy Viewer's folders…
+ui-options-legacy-lists-none = No Legacy Viewer folder with lists was found for this account.
+ui-options-legacy-lists-teleports = Teleport history ({ $count })
+ui-options-legacy-lists-derender = Asset blacklist ({ $count })
+ui-options-legacy-lists-media = Media filter list ({ $count })
+ui-options-legacy-lists-contact-set-entries = Contact set entries ({ $count })
+ui-options-legacy-lists-confirm = Import
+ui-options-legacy-lists-added = Added or updated. Teleport history: { $teleports }, asset blacklist: { $derender }, media filter: { $media }, contact set entries: { $sets }.
+ui-options-legacy-lists-nothing = Nothing new: this account already has these lists.
+ui-options-legacy-lists-failed = Could not read: { $files }.
+ui-options-legacy-lists-unsaved = Could not save, left as it was: { $files }.
+ui-options-legacy-lists-other-grid = On this grid a folder of the same name can belong to another grid: check that it is the right one.
+
 picker-pipette-hint = Click an object face to select its texture or material from your inventory.
 
 picker-pipette-no-texture = No copyable texture found in your inventory.
