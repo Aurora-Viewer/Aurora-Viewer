@@ -10,7 +10,22 @@ use crate::ui::skin::{Layout, ToolButton};
 const FORMAT: &str = "aurora-toolbar-interface";
 const MAX_BUTTONS: usize = 512;
 const MAX_MAP: usize = 1024;
-const FIELDS: [&str; 22] = [
+/// The fields `drawers::Drawer` and `drawers::BlockProfile` write: a field
+/// added there is added here, or no interface saves (the notecard test
+/// fills every one of them).
+const DRAWER_FIELDS: [&str; 9] = [
+    "buttons",
+    "mode",
+    "closes",
+    "hides_button",
+    "close_button",
+    "vertical",
+    "align",
+    "sizing",
+    "floating",
+];
+const PROFILE_FIELDS: [&str; 7] = ["name", "look", "closes", "vertical", "hides_button", "close_button", "id"];
+const FIELDS: [&str; 25] = [
     "buttons",
     "locked",
     "vr_button_migrated",
@@ -28,6 +43,9 @@ const FIELDS: [&str; 22] = [
     "appearance",
     "separators",
     "drawers",
+    "block_profiles",
+    "hidden_interfaces",
+    "hidden_blocks",
     "shortcuts",
     "menu_layout",
     "address_visible",
@@ -125,11 +143,20 @@ fn fields(value: &serde_json::Value) -> bool {
     if let Some(value) = value.get("drawers")
         && !value.as_object().is_some_and(|map| {
             map.values().all(|drawer| {
-                known_fields(drawer, &["buttons", "mode", "closes", "floating"])
+                known_fields(drawer, &DRAWER_FIELDS)
                     && drawer.get("buttons").is_none_or(buttons)
                     && drawer
                         .get("floating")
-                        .is_none_or(|floating| known_fields(floating, &["name", "icon", "vertical", "shown"]))
+                        .is_none_or(|floating| known_fields(floating, &["name", "icon", "vertical", "shown", "closes"]))
+            })
+        })
+    {
+        return false;
+    }
+    if let Some(value) = value.get("block_profiles")
+        && !value.as_object().is_some_and(|map| {
+            map.values().all(|profile| {
+                known_fields(profile, &PROFILE_FIELDS) && profile.get("look").is_none_or(|look| known_fields(look, &["mode", "icon"]))
             })
         })
     {
@@ -157,6 +184,9 @@ fn valid(toolbar: &ToolbarSettings) -> bool {
         || toolbar.drawers.len() > 64
         || [
             toolbar.block_styles.len(),
+            toolbar.block_profiles.len(),
+            toolbar.hidden_interfaces.len(),
+            toolbar.hidden_blocks.len(),
             toolbar.appearance.len(),
             toolbar.separators.len(),
             toolbar.shortcuts.len(),
@@ -208,6 +238,13 @@ fn valid(toolbar: &ToolbarSettings) -> bool {
             .iter()
             .any(|command| drawers::is_drawer(command) && !toolbar.drawers.contains_key(*command))
         || !toolbar.block_styles.keys().all(|key| id(key))
+        || !toolbar.block_profiles.iter().all(|(key, profile)| {
+            id(key)
+                && caption(&profile.name)
+                && profile.look.icon.as_deref().is_none_or(icon)
+                && (profile.id.is_empty() || (id(&profile.id) && drawers::is_drawer(&profile.id)))
+        })
+        || !toolbar.hidden_interfaces.iter().chain(&toolbar.hidden_blocks).all(|key| id(key))
         || !shortcuts_valid(toolbar)
         || !toolbar
             .appearance
@@ -526,5 +563,58 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&text).expect("json");
         assert_eq!(value.as_object().expect("document").len(), 4);
         assert_eq!(read(&value.to_string()).expect("same schema without indentation"), restored);
+    }
+
+    /// Every field the bars write saves and loads again: a field the
+    /// validator does not know refused every save (human report,
+    /// 2026-11-26: "This notecard does not contain a compatible interface
+    /// layout" on Save).
+    #[test]
+    fn an_interface_with_every_block_option_saves_and_loads() {
+        use crate::ui::toolbar::{Align, Sizing, drawers::BlockProfile};
+        let layout = Layout::default();
+        for islands in [true, false] {
+            let mut toolbar = Preset::OldSchool.layout(&layout);
+            let drawer = drawers::create(&mut toolbar, Bar::Bottom, &layout);
+            let entry = toolbar.drawers.get_mut(&drawer).expect("drawer");
+            entry.hides_button = true;
+            entry.close_button = true;
+            entry.vertical = true;
+            entry.align = Some(Align::Center);
+            entry.sizing = Some(Sizing::Fixed);
+            let floating = drawers::create_floating(&mut toolbar, "Tools");
+            toolbar
+                .drawers
+                .get_mut(&floating)
+                .expect("floating")
+                .floating
+                .as_mut()
+                .expect("floating")
+                .closes = true;
+            let first = toolbar.top.first().expect("a top button").command.clone();
+            toolbar.block_profiles.insert(
+                first.clone(),
+                BlockProfile {
+                    name: "Mine".into(),
+                    look: crate::ui::toolbar::appearance::Appearance {
+                        mode: Some(ButtonMode::IconsOnly),
+                        icon: Some("star-filled".into()),
+                    },
+                    closes: Some(false),
+                    vertical: Some(true),
+                    hides_button: true,
+                    close_button: true,
+                    id: drawers::create(&mut ToolbarSettings::default(), Bar::Bottom, &layout),
+                },
+            );
+            toolbar.hidden_interfaces.insert("old-school".into());
+            toolbar.hidden_blocks.insert(super::super::shortcuts::block_key(&first));
+            let text = write(&toolbar, &layout, islands).expect("every option saves");
+            let loaded = read(&text).expect("and loads").toolbar;
+            assert_eq!(loaded.drawers, toolbar.drawers);
+            assert_eq!(loaded.block_profiles, toolbar.block_profiles);
+            assert_eq!(loaded.hidden_interfaces, toolbar.hidden_interfaces);
+            assert_eq!(loaded.hidden_blocks, toolbar.hidden_blocks);
+        }
     }
 }
