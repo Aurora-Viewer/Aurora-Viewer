@@ -44,6 +44,12 @@ fn chat_header_username_follows_preferences_and_saved_names_stay_frozen() {
     );
     message.origin = Origin::Log;
     assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
+    // a private conversation's history line: its name resolves, its header
+    // keeps the short form
+    message.private_history = true;
+    assert!(super::cached_line_sender(&h.world, &message).is_some());
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
+    message.private_history = false;
     message.origin = Origin::Live;
     h.world.social.avatar_names.options.show_usernames = false;
     assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
@@ -97,6 +103,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     }
 }
 

@@ -216,23 +216,6 @@ impl Export {
     }
 }
 
-/// Appearance > Export shape XML of our avatar's menu: the worn shape's
-/// asset is read (`loading`, the item and asset asked for), then exported
-/// as the editor's button does, under the same rule.
-#[derive(Default)]
-pub struct MenuExport {
-    pub loading: Option<(uuid::Uuid, uuid::Uuid)>,
-    /// Where to save without the dialog (`AURORA_DEMO_SHAPE_XML_MENU`).
-    pub path: Option<PathBuf>,
-    pub job: Export,
-}
-
-impl MenuExport {
-    pub fn busy(&self) -> bool {
-        self.loading.is_some() || self.job.busy()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

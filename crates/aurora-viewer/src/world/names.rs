@@ -285,6 +285,17 @@ impl AvatarName {
         }
     }
 
+    /// `name`, a legacy name ("Jane Doe", "Jane Resident", "Jane"), is this
+    /// resident's user name, whatever its case, with a "Resident" last name
+    /// written out or not: the test LLAvatarNameCache::findIdByName finds a
+    /// transcript's sender by (`AvatarNames::find_id_by_name`, on the
+    /// `build_legacy_name` of what the file wrote).
+    pub fn has_user_name(&self, name: &str) -> bool {
+        let name = name.trim();
+        let bare = name.strip_suffix(" Resident").unwrap_or(name);
+        !name.is_empty() && self.user_name().eq_ignore_ascii_case(bare)
+    }
+
     /// LLAvatarName::getLegacyName: "Firstname Lastname" with the last name
     /// whatever it is ("Resident" too), the display name without either.
     pub fn legacy_name(&self) -> String {
@@ -608,15 +619,10 @@ impl AvatarNames {
     /// what a transcript wrote in lower case, and user names are unique
     /// whatever their case). Queues nothing: a name not cached stays unknown.
     pub fn find_id_by_name(&self, name: &str) -> Option<Uuid> {
-        let name = name.trim();
-        if name.is_empty() {
+        if name.trim().is_empty() {
             return None;
         }
-        let bare = name.strip_suffix(" Resident").unwrap_or(name);
-        self.cache
-            .iter()
-            .find(|(_, n)| n.user_name().eq_ignore_ascii_case(bare))
-            .map(|(id, _)| *id)
+        self.cache.iter().find(|(_, n)| n.has_user_name(name)).map(|(id, _)| *id)
     }
 
     /// Complete name ("Jane Doe (janedoe)") if known.

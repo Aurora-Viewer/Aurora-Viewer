@@ -122,8 +122,50 @@ fn the_archive_comes_back_as_history_without_touching_unread() {
     let s = &w.social.ims[0];
     assert_eq!(s.unread, 1, "history is never unread");
     assert_eq!(s.lines[0].source, JANE);
+    // a direct conversation's history: its names looked up when drawn
+    let private: Vec<bool> = s.lines.iter().map(|l| l.private_history).collect();
+    assert_eq!(private, [true, true, false]);
     assert!(!w.chat_service.view_loading(JANE));
     clean(&w, &root);
+}
+
+/// A history row without a sender id whose name is not recognised takes
+/// the other resident for its picture and its profile, never for its name:
+/// one we wrote under an earlier account name keeps it.
+#[test]
+fn a_service_row_under_another_name_keeps_it() {
+    let mut w = World::new(Arc::new(AvatarLibrary::load()));
+    w.agent_id = ME;
+    w.social.avatar_names.on_display_names(
+        &[aurora_net::AvatarNameData {
+            id: JANE,
+            username: "jane.doe".into(),
+            display_name: "Janie".into(),
+            legacy_first: "Jane".into(),
+            legacy_last: "Doe".into(),
+            ..Default::default()
+        }],
+        &[],
+        Some(3600),
+    );
+    let message = |from: &str, from_id: Option<Uuid>| HistoryMessage {
+        from: from.into(),
+        from_id,
+        message: "hello".into(),
+        timestamp: Some(BASE as i32),
+        is_history: true,
+        ..Default::default()
+    };
+    let rows = [
+        message("Jane Doe", None),
+        message("Myold Name", None),
+        message("Jane Doe", Some(JANE)),
+    ];
+    let lines = w.service_lines(rows.iter(), Some(JANE));
+    let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
+    assert_eq!(sources, [JANE, JANE, JANE]);
+    let senders: Vec<String> = lines.iter().map(|l| crate::ui::chat::sender_name(&w, "Me", l)).collect();
+    assert_eq!(senders, ["Janie", "Myold Name", "Janie"]);
 }
 
 #[test]
@@ -234,6 +276,69 @@ fn a_blocked_resident_s_automatic_response_is_neither_shown_nor_captured() {
     assert!(!w.social.has_session(&JANE));
     assert!(!w.chat_service.views.contains_key(&JANE));
     assert!(!w.social.auto_responded.contains(&JANE));
+    clean(&w, &root);
+}
+
+/// A row of ours recorded at `secs` (UTC seconds), `tail` telling apart
+/// rows of the same second.
+fn own_row_at(secs: u64, text: &str, tail: i8) -> HistoryRow {
+    let mut row = row_at(secs, text, 0);
+    row.key.tail[1] = tail;
+    row.msg_id = format_time_uuid(&row.key);
+    row.from_id = ME;
+    row.from_name = "Me Resident".into();
+    row
+}
+
+/// About 1,428 bytes of words, as in the report of #4875: two IMs.
+fn long_text() -> String {
+    (0..238).map(|i| format!("w{i:04}")).collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn a_long_sent_im_and_the_service_rows_of_its_parts_show_once() {
+    let root = temp();
+    let text = long_text();
+    let parts = aurora_net::message_split::message_parts(&text);
+    assert_eq!(parts.len(), 2, "{} bytes", text.len());
+    // the service records each part a moment after it left
+    let now = u64::from(grid_now());
+    archive(
+        &root,
+        &[
+            row(1, "from the service"),
+            own_row_at(now + 2, parts[0], 1),
+            own_row_at(now + 2, parts[1], 2),
+        ],
+    );
+    let mut w = world(&root);
+    w.own_im(JANE, &text);
+    let c = w.chat_service.views[&JANE].captures.last().unwrap();
+    assert_eq!(c.parts, parts);
+    w.chat_service_settle();
+    w.poll_transcripts();
+    w.chat_service_settle();
+    assert_eq!(
+        texts(&w),
+        [("from the service".to_owned(), Origin::Log), (text, Origin::Live)],
+        "the line once, live, and neither part as history"
+    );
+    clean(&w, &root);
+}
+
+#[test]
+fn a_sent_im_of_one_full_message_keeps_one_capture_body() {
+    let root = temp();
+    let text = "x".repeat(aurora_net::message_split::MAX_MESSAGE_BYTES);
+    let now = u64::from(grid_now());
+    archive(&root, &[row(1, "from the service"), own_row_at(now + 2, &text, 1)]);
+    let mut w = world(&root);
+    w.own_im(JANE, &text);
+    assert!(w.chat_service.views[&JANE].captures.last().unwrap().parts.is_empty());
+    w.chat_service_settle();
+    w.poll_transcripts();
+    w.chat_service_settle();
+    assert_eq!(texts(&w), [("from the service".to_owned(), Origin::Log), (text, Origin::Live)]);
     clean(&w, &root);
 }
 

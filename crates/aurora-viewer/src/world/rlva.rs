@@ -44,6 +44,7 @@ mod relative;
 mod rename;
 mod sitting;
 pub mod startup;
+pub mod switch;
 mod teleport;
 mod temporary;
 mod version;

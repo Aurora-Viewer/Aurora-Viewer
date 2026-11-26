@@ -62,6 +62,7 @@ pub mod land;
 pub mod land_buy;
 pub mod land_moderation;
 pub mod landmarks;
+pub mod legacy_lists;
 pub mod lookat;
 pub mod lsl_syntax;
 pub mod lslbridge;
@@ -379,6 +380,17 @@ pub struct ChatLine {
     /// How RLVa's `@shownames` left the resident who wrote the line when it
     /// arrived (`World::rlva_freeze_line`).
     pub speaker: Speaker,
+    /// Read back into a private conversation, in the conversation or on a
+    /// page of its History window, decided when the history loads, where
+    /// the other resident is known (`peer` of `World::history_lines` and
+    /// `World::service_lines`, `World::private_peer`): its sender's name,
+    /// ours included, is looked up each time it is drawn, as a live line's,
+    /// when the name the file gives is that resident's
+    /// (`ui::chat::log_names_resolve`, `cached_line_sender`, #4261). False
+    /// for every other line: the nearby chat's, a group's or a conference's
+    /// history keep the name the file gives, in the conversation and in the
+    /// History window.
+    pub private_history: bool,
 }
 
 impl ChatLine {
@@ -1903,7 +1915,15 @@ impl World {
         // OpenSim has no AIS: FetchInventoryDescendents2 reads one level
         self.inventory_background
             .set_legacy(!self.main_has_cap("InventoryAPIv3"), !self.main_has_cap("LibraryAPIv3"));
+        // (items a busy server would not give are asked again after their
+        // pause, whether or not another read comes)
+        self.inventory.expire_given_up(std::time::Instant::now());
         self.inventory_background.pump(&mut self.inventory, self.agent_id)
+    }
+
+    /// The background inventory walk's state (Dev Toolbox N4).
+    pub fn inventory_loading_report(&self) -> String {
+        self.inventory_background.report(&self.inventory, std::time::Instant::now())
     }
 
     /// Persist the fetched inventory (next login skips unchanged folders).
@@ -2691,6 +2711,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
@@ -2709,6 +2730,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.notice_topics.note(&line, topic);
         self.conversation_push(session, line, false);
@@ -3337,6 +3359,7 @@ impl World {
                 self.anti_spam.reset();
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
+                self.agent.rotate_grabbed = false;
                 // the account is known: its transcripts open
                 self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
                 // LLChatServiceHistory::start, in the account's own folder
@@ -4112,6 +4135,8 @@ impl World {
                 for (take, controls, pass_on) in blocks {
                     self.script_controls.apply(take, controls, pass_on);
                 }
+                // LLAgent::rotateGrabbed, read by AgentState::yaw_by
+                self.agent.rotate_grabbed = self.script_controls.rotate_grabbed();
                 None
             }
             NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
@@ -5027,10 +5052,14 @@ impl World {
                 None
             }
             NetEvent::InventoryItems(items) => {
+                let ids: Vec<_> = items.iter().map(|item| item.id).collect();
+                self.inventory.items_answered(&ids, false);
                 self.inventory.add_items(items);
                 None
             }
             NetEvent::AttachmentInventoryItems(items) => {
+                let ids: Vec<_> = items.iter().map(|item| item.id).collect();
+                self.inventory.items_answered(&ids, true);
                 self.inventory.add_attachment_items(items);
                 None
             }
@@ -5088,13 +5117,17 @@ impl World {
                 }
                 None
             }
-            NetEvent::InventoryItemsFailed { items } => {
+            NetEvent::InventoryItemsFailed { items, attachment } => {
                 log::warn!("{} inventory items could not be fetched", items.len());
+                // (only this kind's claim: the other kind's read of the same
+                // item may still be on its way)
+                self.inventory.items_answered(&items, attachment);
                 self.inventory.items_failed(&items);
                 None
             }
-            NetEvent::InventoryItemsMissing { items } => {
+            NetEvent::InventoryItemsMissing { items, attachment } => {
                 log::warn!("{} inventory items do not exist (broken links)", items.len());
+                self.inventory.items_answered(&items, attachment);
                 self.inventory.items_missing(items);
                 None
             }
@@ -5476,6 +5509,7 @@ impl World {
             blocked: false,
             beyond_range,
             speaker,
+            private_history: false,
         });
     }
 
@@ -5572,6 +5606,7 @@ impl World {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             };
             let opened = !self.chat_log.conversations.known.contains(&im.from_agent_id);
             let (line_time, line_text) = (line.time, line.text.clone());
@@ -5690,6 +5725,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         });
     }
 
@@ -6795,6 +6831,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let (line_time, line_text) = (line.time, line.text.clone());
         self.conversation_push(to, line, false);
