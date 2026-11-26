@@ -64,7 +64,25 @@ impl App {
                 attributes
             };
             match opens_at(was.and_then(|was| was.at), origin, ask.rect.min, zoom) {
-                Some(at) => attributes.with_position(at),
+                Some(asked) => {
+                    let screens: Vec<Screen> = event_loop.available_monitors().map(|monitor| Screen::of(&monitor)).collect();
+                    let home = own
+                        .current_monitor()
+                        .or_else(|| event_loop.primary_monitor())
+                        .map(|monitor| Screen::of(&monitor));
+                    let at = on_a_screen(asked, logical(ask.rect.size(), zoom), &screens, home);
+                    if at != asked {
+                        log::info!(
+                            "window outside: \"{}\" asked at {}, {}, on no screen: opens at {}, {}",
+                            ask.title,
+                            asked.x,
+                            asked.y,
+                            at.x,
+                            at.y
+                        );
+                    }
+                    attributes.with_position(at)
+                }
                 None => attributes,
             }
         });
@@ -379,6 +397,66 @@ fn opens_at(
     was.or_else(|| origin.map(|(origin, scale)| on_screen(origin, scale, at, zoom)))
 }
 
+/// A screen of the system: where it is among the screens and its size, in
+/// pixels, and its scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Screen {
+    at: winit::dpi::PhysicalPosition<i32>,
+    size: winit::dpi::PhysicalSize<u32>,
+    scale: f64,
+}
+
+impl Screen {
+    fn of(monitor: &winit::monitor::MonitorHandle) -> Screen {
+        Screen {
+            at: monitor.position(),
+            size: monitor.size(),
+            scale: monitor.scale_factor(),
+        }
+    }
+}
+
+/// What of a window's title bar, from its corner and in pixels, a screen
+/// has to show for the user to take hold of the window.
+const TITLE_HOLD: (i64, i64) = (96, 40);
+
+/// The title bar of a window at `at` can be taken hold of on `screen`.
+fn title_on(screen: Screen, at: winit::dpi::PhysicalPosition<i32>) -> bool {
+    let (left, top) = (i64::from(screen.at.x), i64::from(screen.at.y));
+    let (right, bottom) = (left + i64::from(screen.size.width), top + i64::from(screen.size.height));
+    let (x, y) = (i64::from(at.x), i64::from(at.y));
+    x + TITLE_HOLD.0 > left && x < right && y + TITLE_HOLD.1 > top && y < bottom
+}
+
+/// Where a window outside of the size `size` opens when it is asked at
+/// `asked`: there, if one of the `screens` shows its title bar; else at the
+/// middle of `home`, the screen of the viewer's own window. A place asked
+/// on no screen is one the user cannot bring the window back from. It
+/// comes from a viewer's window that is minimized (Windows then counts
+/// from -32000), or smaller or elsewhere than when the window was last
+/// inside it, whose place there is then beyond the screen, or from a
+/// screen that is gone. No screen told: as asked.
+fn on_a_screen(
+    asked: winit::dpi::PhysicalPosition<i32>,
+    size: winit::dpi::LogicalSize<f32>,
+    screens: &[Screen],
+    home: Option<Screen>,
+) -> winit::dpi::PhysicalPosition<i32> {
+    if screens.iter().any(|screen| title_on(*screen, asked)) {
+        return asked;
+    }
+    let Some(screen) = home.or_else(|| screens.first().copied()) else {
+        return asked;
+    };
+    let size = size.to_physical::<u32>(screen.scale);
+    // (a window larger than the screen: its corner at the screen's)
+    let middle = |room: u32, taken: u32| ((room - taken.min(room)) / 2) as i32;
+    winit::dpi::PhysicalPosition::new(
+        screen.at.x.saturating_add(middle(screen.size.width, size.width)),
+        screen.at.y.saturating_add(middle(screen.size.height, size.height)),
+    )
+}
+
 /// An event a window outside hands on (`Asked::Viewer`). Its focus that
 /// goes lets go of what the keyboard and the pointer held, as the viewer's
 /// own does, unless the viewer's own window has the focus already: what
@@ -436,6 +514,46 @@ mod tests {
         assert_eq!(opens_at(Some(was), origin, inside, 1.0), Some(was));
         // the system places the windows itself and says nothing of it
         assert_eq!(opens_at(None, None, inside, 1.0), None);
+    }
+
+    fn screen(x: i32, y: i32, width: u32, height: u32, scale: f64) -> Screen {
+        Screen {
+            at: winit::dpi::PhysicalPosition::new(x, y),
+            size: winit::dpi::PhysicalSize::new(width, height),
+            scale,
+        }
+    }
+
+    #[test]
+    fn a_window_asked_on_no_screen_opens_at_the_middle_of_the_viewer_s() {
+        let at = winit::dpi::PhysicalPosition::new;
+        let size = winit::dpi::LogicalSize::new(600.0, 400.0);
+        let wide = screen(0, 0, 5120, 1440, 1.0);
+        let left = screen(-1920, 0, 1920, 1080, 1.0);
+        // on the screen, or on the one at its left: as asked
+        assert_eq!(on_a_screen(at(3000, 200), size, &[wide, left], Some(wide)), at(3000, 200));
+        assert_eq!(on_a_screen(at(-1500, 420), size, &[wide, left], Some(wide)), at(-1500, 420));
+        // its title bar still shows at the screen's edge
+        assert_eq!(on_a_screen(at(5100, 1430), size, &[wide], Some(wide)), at(5100, 1430));
+        assert_eq!(on_a_screen(at(-50, -20), size, &[wide], Some(wide)), at(-50, -20));
+        // the viewer's window minimized on Windows, which then counts from
+        // -32000: the middle of its screen
+        assert_eq!(on_a_screen(at(-31600, -31800), size, &[wide], Some(wide)), at(2260, 520));
+        // its place in a viewer's window that was wider, beyond the screen
+        assert_eq!(on_a_screen(at(7700, 300), size, &[wide], Some(wide)), at(2260, 520));
+        // under the screen, and on a screen that is gone
+        assert_eq!(on_a_screen(at(3000, 1440), size, &[wide], Some(wide)), at(2260, 520));
+        assert_eq!(on_a_screen(at(-1500, 420), size, &[wide], Some(wide)), at(2260, 520));
+        // the viewer's screen at 150 %: the window is 900 x 600 pixels there
+        let dense = screen(5120, 0, 3840, 2160, 1.5);
+        assert_eq!(on_a_screen(at(-9000, 0), size, &[wide, dense], Some(dense)), at(6590, 780));
+        // larger than the screen: its corner at the screen's
+        let small = screen(0, 0, 500, 300, 1.0);
+        assert_eq!(on_a_screen(at(900, 900), size, &[small], Some(small)), at(0, 0));
+        // the viewer's screen is not told: the first one
+        assert_eq!(on_a_screen(at(9000, 0), size, &[left, wide], None), at(-1260, 340));
+        // no screen is told: as asked
+        assert_eq!(on_a_screen(at(9000, 0), size, &[], None), at(9000, 0));
     }
 
     #[test]
