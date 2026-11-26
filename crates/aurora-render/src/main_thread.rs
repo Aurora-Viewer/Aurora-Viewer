@@ -1321,8 +1321,9 @@ impl Renderer {
     }
 
     /// The last frame the backend finished was drawn with the settings last
-    /// applied: false while the pipelines for new MSAA samples or SSR compile
-    /// on their worker (#1746), and until the backend has seen them.
+    /// applied: false while the pipelines for new MSAA samples, SSR or
+    /// another G-buffer format compile on their worker (#1746), and until
+    /// the backend has seen them.
     pub fn settings_applied(&self) -> bool {
         self.last_stats.settings == Some(self.settings)
     }
@@ -2274,6 +2275,19 @@ fn open_device(
     if adapter_specific {
         features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
     }
+    // the G-buffer's High precision in 16 normalized bits (renderer.rs
+    // `gbuf_format`): asked whatever the settings say, so that Preferences
+    // changes the precision on this device
+    let gbuf_wide = crate::renderer::gbuf_wide(adapter);
+    if gbuf_wide {
+        features |= crate::renderer::GBUF_WIDE;
+    }
+    // (at the sample counts the card draws them at; the format in use is
+    // in the renderer's "compiling the pipelines" line)
+    log::info!(
+        "G-buffer at High precision: {}",
+        if gbuf_wide { "16 normalized bits" } else { "16-bit floats" }
+    );
     // debug wireframe
     if afeat.contains(wgpu::Features::POLYGON_MODE_LINE) {
         features |= wgpu::Features::POLYGON_MODE_LINE;

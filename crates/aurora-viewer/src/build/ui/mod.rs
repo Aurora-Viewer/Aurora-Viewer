@@ -34,6 +34,7 @@ mod second_tab;
 mod shape_preview;
 pub(in crate::build) mod texture;
 mod texture_preview;
+mod tool_floaters;
 mod tools;
 mod workspace;
 
@@ -212,6 +213,18 @@ pub struct MaterialSaveDraft {
     pub name: String,
     pub data: Vec<u8>,
     pub rights: crate::build::texture_copy::MaterialSave,
+}
+
+impl FloaterState {
+    /// The Legacy window style is in use (one window for every tool).
+    pub(crate) fn legacy(&self) -> bool {
+        self.legacy_window
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_legacy(&mut self, on: bool) {
+        self.legacy_window = on;
+    }
 }
 
 /// State of the floater kept between frames.
@@ -478,6 +491,7 @@ pub fn show(
 ) -> bool {
     floaters::link_error(ctx, p, tool);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
+    tool.ui.legacy_window = s.legacy_window;
     if !tool.open {
         tool.ui.status_notice = None;
         tool.status.clear();
@@ -577,7 +591,6 @@ pub fn show(
         tool.tab = 6;
     }
     if !s.legacy_window
-        && tool.tool == Tool::Edit
         && (detach::tab_detached(s, tool.tab) || !s.layout.in_bars().iter().any(|item| layout::section(*item) == Some(tool.tab)))
     {
         // A section in a window of its own leaves the build window to the
@@ -610,7 +623,7 @@ pub fn show(
     let (title_icon, title) = if s.legacy_window {
         ("tools", aurora_i18n::tr!("build-compact-title"))
     } else {
-        compact::window_heading(tool)
+        compact::window_heading(Tool::Edit)
     };
     let default_size = if s.legacy_window {
         legacy::DEFAULT_SIZE
@@ -632,14 +645,10 @@ pub fn show(
         ));
         // the build settings, under UUID (the human's request, 2026-11-22)
         floater.header_summary_icon = Some(("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut settings_clicked));
-        if tool.tool == Tool::Edit {
-            floater.header_summary = Some(compact::selection_summary(p, tool, world).into());
-            if !tool.selection.is_empty() {
-                floater.header_summary_action = Some(&mut summary_clicked);
-            }
-        } else {
-            // the selection line's room, so the bars do not move between tools
-            floater.header_summary = Some(egui::RichText::new(" ").size(common::BODY).into());
+        // the main window is the Edit tool's (the others have their own)
+        floater.header_summary = Some(compact::selection_summary(p, tool, world).into());
+        if !tool.selection.is_empty() {
+            floater.header_summary_action = Some(&mut summary_clicked);
         }
     }
     // Keep the user's Build size. Large Appearance › Text size reflows inside
@@ -669,26 +678,40 @@ pub fn show(
     if layout::settings_shown(ctx, tool) {
         floater.side_outside = layout::SETTINGS_ROOM;
     }
-    floater.show(ctx, p, &mut open, |ui| {
-        common::typography(ui);
-        // (in the window's own pass: outside the viewer's, it is another window)
-        widgets::copied_feedback(ui.ctx(), p, uuid_feedback, window_rect(ui.ctx()));
-        if s.legacy_window {
-            legacy_toggle_sections = legacy::body(ui, p, tool, world, s, mods, env);
-        } else {
-            compact::body(ui, p, tool, world, s, mods, env);
-        }
-        if outside {
-            let room = widgets::side_room_outside(ui.ctx(), INSPECTOR_ID);
-            layout::settings(ui.ctx(), p, tool, world, s, mods, layout::Beside::Outside(room));
-            layout::finish(ui.ctx(), p, tool, s);
-        }
-    });
+    // The Aurora main window may be closed while tool windows stay open
+    // (tool_floaters.rs): its sections, their detached windows and the
+    // settings panel beside it go with it.
+    let main_shown = s.legacy_window || tool.main_open;
+    if !main_shown {
+        tool.ui.layout.open = false;
+        detach::hide(tool);
+    }
+    if main_shown {
+        floater.show(ctx, p, &mut open, |ui| {
+            common::typography(ui);
+            // (in the window's own pass: outside the viewer's, it is another window)
+            widgets::copied_feedback(ui.ctx(), p, uuid_feedback, window_rect(ui.ctx()));
+            if s.legacy_window {
+                legacy_toggle_sections = legacy::body(ui, p, tool, world, s, mods, env);
+            } else {
+                compact::body(ui, p, tool, world, s, mods, env);
+            }
+            if outside {
+                let room = widgets::side_room_outside(ui.ctx(), INSPECTOR_ID);
+                layout::settings(ui.ctx(), p, tool, world, s, mods, layout::Beside::Outside(room));
+                layout::finish(ui.ctx(), p, tool, s);
+            }
+        });
+    }
     if restore_text {
         name_focus::apply(ctx);
     }
-    if !s.legacy_window {
+    if !s.legacy_window && main_shown {
         detach::fit_window(ctx, tool, s);
+        // the main window pressed: its tool, Edit, is the one in use
+        if tool_floaters::pressed_in(ctx, INSPECTOR_ID) {
+            tool.activate(Tool::Edit);
+        }
     }
     if let Some(size) = widgets::take_floater_resize(ctx, INSPECTOR_ID) {
         second_tab::resized(tool, size.x);
@@ -730,9 +753,14 @@ pub fn show(
         tool.ui.layout.open = true;
         tool.ui.grid_options_open = false;
     }
-    detach::finish(ctx, p, tool, s);
-    detach::windows(ctx, p, tool, world, s, mods, env);
-    if !outside {
+    if main_shown {
+        detach::finish(ctx, p, tool, s);
+        detach::windows(ctx, p, tool, world, s, mods, env);
+    }
+    if !s.legacy_window {
+        tool_floaters::show(ctx, p, tool, world, s, mods, env);
+    }
+    if !outside && main_shown {
         layout::settings(ctx, p, tool, world, s, mods, layout::Beside::Window);
         layout::finish(ctx, p, tool, s);
     }
@@ -768,7 +796,7 @@ pub fn show(
     if !open {
         contents_selection::finish_rename(tool, world);
         tool.dismiss_texture_picker();
-        tool.close(world, s);
+        tool.close_main(world, s);
     }
     status_notice(ctx, p, tool);
     *s != before || *env.property_lines != property_lines_before
@@ -783,7 +811,13 @@ fn status_notice(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool) {
         tool.ui.status_notice = None;
     }
     let Some((text, until)) = &tool.ui.status_notice else { return };
-    let Some(anchor) = ctx.memory(|memory| memory.area_rect(egui::Id::unique(INSPECTOR_ID))) else {
+    // under the main window, or with it closed under the tool's window
+    let window = if tool.main_open {
+        INSPECTOR_ID
+    } else {
+        tool_floaters::floater_id(tool.tool_windows().last().copied().unwrap_or(Tool::Edit))
+    };
+    let Some(anchor) = ctx.memory(|memory| memory.area_rect(egui::Id::unique(window))) else {
         return;
     };
     // An opaque themed surface keeps text legible over emissive objects and

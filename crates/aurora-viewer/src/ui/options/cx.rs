@@ -286,6 +286,10 @@ struct Grid {
     top: f32,
     height: f32,
     indent: f32,
+    /// The right edge of the line's widest control, past `left + width`
+    /// when one does not fit the window (#4935): the line takes it, so the
+    /// page scrolls sideways to it.
+    right: f32,
 }
 
 pub(super) struct Cx<'a> {
@@ -896,11 +900,13 @@ impl<'a> Cx<'a> {
         if !self.grid.open {
             return;
         }
-        let rect = Rect::from_min_size(pos2(self.grid.left, self.grid.top), vec2(self.grid.width, self.grid.height));
+        let width = self.grid.width.max(self.grid.right - self.grid.left);
+        let rect = Rect::from_min_size(pos2(self.grid.left, self.grid.top), vec2(width, self.grid.height));
         self.ui.advance_cursor_after_rect(rect);
         self.grid.open = false;
         self.grid.col = 0;
         self.grid.height = 0.0;
+        self.grid.right = 0.0;
     }
 
     /// Paints the background of an open cog's block, now that its end is known.
@@ -1109,6 +1115,12 @@ impl<'a> Cx<'a> {
         let changed = body(&mut child, self.s, self.st, self.r);
         let used = child.min_rect().size();
         let measured = vec2(used.x.ceil(), used.y.max(20.0).ceil());
+        // a control that does not fit its row, by its stable measure: the
+        // frame that measures it lays it out wider for a moment, which must
+        // not scroll the page (#4935)
+        if control.x > right - left + 0.5 {
+            self.grid.right = self.grid.right.max(left + control.x);
+        }
         if (measured - control).abs().max_elem() > 0.5 {
             self.st.control_sizes.insert(size_key, (cell.width(), measured));
             ctx.request_discard("preferences row measured");

@@ -1,5 +1,188 @@
 # Aurora Viewer architecture
 
+`ui/toolbar/native_context.rs` scopes native toolbar widgets while their context
+menus render. The shared menu popup appends one final Customize interface entry
+inside that scope; ordinary world/window menus do not acquire it. A queued target
+opens the editor and selects the native control without rewriting its layout.
+Normal menus retain actions and individual properties; block/bar layout operations
+are exposed in customization mode. Bug-version copying and notification DND are
+explicit context actions, sharing the same final customization entry.
+Appearance and customization rows share one footer group; preceding
+control-specific content introduces a separator above that group.
+Normal context menus expose per-button presentation directly and anchor the
+shared icon picker beside the menu. Its protected rectangle keeps the menu tree
+open while the picker is used. Customization mode retains the appearance floater.
+Normal button choices are Icon only, Label only, Icon and label, then Default;
+a separator follows these four rows before a normal Change icon row with a fixed
+glyph. It opens the same protected adjacent picker without closing the menu.
+Toolbar footer markers identify owned context popups; a second stationary right
+click dismisses their stack and suppresses reopening during the same input frame.
+Native readouts retain their live widget rendering during customization: a fully
+opaque disabled preview suppresses functional gestures, and an enabled edit
+target owns selection, dragging and context options on the same rectangle.
+Their independent favorites surface inherits that disabled preview state; volume
+and graphics hover panels do not open from read-only native previews.
+The nearby-media panel is drawn after all movable controls. Its anchor resets
+each frame; only the live media control registers it, and customization suppresses
+its hover panel. It uses the shared viewport placement rule at any bar edge.
+`ui/toolbar/commands.rs` records explicitly identified main-menu entries with live
+checks and availability; selection dispatches one enabled entry through its original
+menu handler. Layout overrides preserve semantic IDs across locales and new commands.
+`ui/toolbar/appearance.rs` owns per-button presentation and the virtualized Tabler
+icon picker; menu entries have overrides independent of their toolbar copies. `ui/bars/top.rs` shares the toolbar renderer and drag payload with the
+bottom and side bars. Global toolbar preferences also hold main-menu order and the
+reversible SLURL address-bar visibility.
+`ui/bars/chat_bar.rs` makes the nearby-chat input a native toolbar command. A one-time
+migration materializes the implicit field using the active skin. Every placement,
+including the first bottom block, shares chrome slots, bar geometry and the original
+input/send/focus path. Canonical drop rectangles and the editing region contain
+the field directly; edit interception uses the same selection cell and whole-block
+controls as other native entries. No position-dependent external chat island remains.
+`ui/toolbar/catalogue_view.rs` groups the editor's commands by purpose and merges
+explicit aliases of menu and toolbar actions while preserving saved command IDs.
+Its resizable editor reflows the tile grid and filters categories independently
+of the search text.
+The initial catalogue contains curated everyday commands; specialist tools and
+native menu details are in Advanced. Search spans both levels without changing
+the selected level or any saved placements.
+`ui/toolbar/edit_mode.rs` owns the editing bounds, session header, selection highlight and
+split/merge rules. Opening the catalogue exposes all four destinations and
+replaces native actions with shared selection/drag/context controls for the
+whole editing session, extending LLToolBarView::draw's drag-only destinations.
+`ui/toolbar/surface_drop.rs` reserves the central 40% of the bar axis for creating
+a drawer after a stationary 350 ms hover. Reordering remains available along both
+ends and on quick centre drops; release cannot arm a grouping preview unseen.
+Canonical pre-drag targets take precedence over moving preview geometry; their
+full faces and adjacent gaps keep the same insertion rank throughout the wait,
+even if the provisional block shrinks or recentres. Existing
+drawer icons remain immediate, full-face drop targets for every source.
+`ui/toolbar/drop_preview.rs` collects canonical root geometry and resolves one
+nearby destination after the editor/drawers/menus. The same commit transaction
+derives a transient layout with stable virtual separator IDs. `Display` renders
+that layout while mapping control rectangles back to the canonical command list;
+drawer contents use a separate display scope. Native metrics follow the proposed
+placement. The button and separator space therefore appear at their final layout
+positions, without an outcome tooltip or a settings write. A detached floating
+glass group follows the pointer away from destinations. Singleton same-place
+drops are no-ops, while detached whole-group moves reuse a boundary run and its
+size instead of adding redundant separators. Only release commits the layout.
+`ui/toolbar/blocks.rs` overlays editing grips on complete blocks and moves their
+members through that same commit path, preserving internal order and settings.
+Icon-only block controls face inward: below top blocks, right of left blocks,
+and the opposite edges for bottom/right blocks. A dotted drag area is paired with
+a settings gear immediately beside it (below it for vertical blocks). Both stay
+button-sized and form a compact pair centered on their block. Hover or an open settings menu
+highlights the whole block. The gear opens block-scoped presentation, sizing, alignment, split, merge, drawer,
+divider and removal actions through the guarded transaction. Interface-customization
+context menus share one final Customize interface row with consistent target selection.
+Block defaults persist independently of bar defaults and individual button
+appearances. The shared commit path reconciles membership after moves, splits and
+merges; drawer unfolding creates a separate block with its content default.
+`ui/bars/sizing.rs` applies optional block anchors on every edge and style. Blocks
+with the same anchor form a run; runs use free space while retaining canonical
+order, intrinsic control sizes and minimum gaps. Surplus extends existing gap
+slots, so the renderer, edit handles and provisional drop layout agree. The
+legacy bar-wide alignment remains the fallback for blocks without an override.
+Editing bands use translucent guides independent of compact glass block bounds.
+The catalogue does not insert an action panel when selection changes; context
+menus and block gears remain the editing controls. `ui/toolbar/presets.rs` owns
+the five named layouts and their typed import bindings. The editor queues a
+preset; the app applies layout and the existing Preferences Aurora/Legacy look
+setter together after drawing, then marks settings changed for renderer/UI refresh.
+Locked layouts refuse presets. Aurora, OldSchool and Builder clone validated
+bundled profiles from assets/toolbar/, parsed once with LazyLock through the
+shared interface codec. Authored order, icons, spacing, dividers and block styles
+are preserved; built-in captions stay localized and generated local IDs become
+deterministic. OldSchool retains six native text menus after separate Aurora,
+Bug report and Customize interface blocks. Builder keeps its authored import
+block and gaps, with Save back to object contents after an internal divider.
+That button uses the identified native Build-menu action, including live
+selection availability and validation again on dispatch. Legacy retains its traditional code-generated arrangement.
+Photographer clones Aurora’s complete bottom presentation and customization
+block, then adds graphics/environment controls at the top and camera tools
+not already placed at the left. Snapshot/camera controls therefore keep their
+Aurora bottom positions; photo roll and immersive mode stay on the left.
+Typed import commands open the existing per-type windows and stay in Advanced.
+`ui/toolbar/selection.rs` persists the selected built-in or personal preset identity
+and its confirmed portable snapshot separately from toolbar exports. The editor caches
+normalized presentation, highlights that identity and reports unsaved edits until a
+matching successful upload; reverting restores the clean state. Uploads retain their
+original snapshot, so edits made during saving stay dirty and switching presets does
+not let an older reply replace the new selection. `notecards/save_picker.rs` presents
+one Save selector with an editable name and personal interfaces for replacement; existing
+cards reuse the shared COPY/MODIFY preview rule and native content-update command.
+The selected-interface header and Save/Delete actions stay above the preset section. Save is present only for an unsaved interface; a clean personal interface retains Delete. The actions and conditional unsaved status share the selected-interface row, reserving their widths and eliding long names; the status follows the displayed name immediately. The customization heading has no separate Finish button: the normal floater close path ends editing. The draggable divider sits beside Main/Advanced, outside search filtering.
+`notecards/removal.rs` moves only a selected personal notecard to Trash through the
+shared inventory mutation rules, including protected entries and the existing delete-confirmation preference. Only its matching
+successful acknowledgement clears that selected identity; the displayed layout stays
+as a custom unsaved interface. A later selection is never cleared by an older reply.
+
+Toolbar notecards use ui/toolbar/profile.rs for the bounded versioned layout document (indented technical JSON, schema version 2 with a required Aurora/Legacy bar base), ui/toolbar/notecards.rs for the COPY-aware picker/transfer state, and app/toolbar_notecards.rs for native inventory callbacks. `ui/toolbar/notecards/library.rs` resolves the dedicated #Aurora/Aurora Interfaces path from fetched parents and caches its notecard list by inventory generation. Save snapshots its name/content before loading or creating folders; dependent uploads wait for a matching mutation acknowledgement, including remapped folder IDs. Saved-preset clicks retain live lock and COPY checks. The editor bounds and scrolls its preset area on short windows so command controls and a catalogue row remain reachable. The snapshot materializes source-skin bar defaults and restores classic_bars from its explicit base, leaving other preferences and window geometry unchanged. Successful loading is silent; unsupported older schemas are rejected. Only a fully validated, matching download with unchanged rights, base and layout is applied; save success requires its matching upload acknowledgement. An internal demo-only import picker retains its distinct owner ID; the editor loads personal presets directly from its saved list.
+Default composition anchors newly added nearby chat at the start of its block.
+The microphone always draws its live-state glyph and exposes display modes only.
+Legacy side destinations use panels even while empty, so a provisional block
+does not switch layout backends during hover or on release.
+Dragging a placed control or block away from accepted destinations shows its
+glass preview with a removal badge and commits removal only on release inside
+the viewport. Catalogue/menu copies and releases outside the viewport cancel.
+`ui/bars/location_popup.rs` owns the SLURL button's inward-facing popup and its
+separate editing/focus state. It shares navigation parsing, suggestions and
+privacy guards without changing integrated navigation placement or visibility.
+`ui/toolbar/drawers.rs` anchors collapsible glass panels to toolbar buttons.
+`ui/toolbar/floating.rs` draws the floating blocks, drawers of their own on
+the screen that the quick import bar is one of.
+`ui/toolbar/block_window.rs` is the one "Edit block…" window of every block,
+drawer, floating or fixed: the same fields whatever its type, read from and
+applied to where that type keeps them (a fixed block's name, icon, closing,
+orientation and hiding live in `block_profiles` until it becomes a drawer).
+`ui/toolbar/shortcuts.rs` holds the keyboard shortcuts of toolbar buttons,
+drawers and blocks: the keys refused at capture, the target of a press, and the
+click it gives the drawn button (or the menu's way when it is not drawn).
+One-level drawer contents persist in the toolbar settings, reuse the same native
+handlers and drag payload, and can move between drawers and all four bars.
+`ui/toolbar/surface_drop.rs` freezes idle button-face geometry throughout a drag,
+restores the canonical layout before drawing an accepted face, and resolves it
+before root insertion or removal. Drawer faces append; ordinary root button faces
+create a drawer whose content mode inherits the target's effective display.
+A typed release snapshot prevents unrelated drop handlers from consuming toolbar
+cargo. All sources share lock, uniqueness and no-nesting guards; hover never saves.
+The shared commit transaction removes a previously populated drawer when its last
+control leaves, while new empty placeholders remain available to fill.
+Each drawer persists its own default content mode (icons and text for older
+settings); explicit per-command appearances override it. Its right-click menu
+opens a unified editor for name, toggle display and icon, then content defaults, or interface
+editing. The icon button opens a shared picker beside the editor, flipping left near the screen edge.
+Expanded panels show contents alone and align their icon row with the toggle's block height.
+Their current effective child modes determine
+their size: icon-only side drawers unfold as horizontal rows; one visible label
+restores a column, and top/bottom icon drawers remain narrow columns. Native
+conversation strips, divider geometry, insertion and scrolling follow the same
+orientation. Scrolling starts only beyond viewport capacity. Only their open state is transient.
+Folding/unfolding preserves group order;
+the shared commit path enforces lock, uniqueness and cycle protection.
+Live conversation placement includes the drawer identity and child index;
+moving the icons into a drawer does not disable their display preference.
+`ui/toolbar/structure.rs` owns uniquely identified gap separators, visible-group
+layout, internal dividers and the one-time migration of the complete top row.
+Dividers draw across the toolbar's cross axis without splitting its glass or
+becoming elastic gaps. `ui/bars/chrome.rs`
+measures live navigation, availability status, balance, clock, latency, FPS,
+traffic, media, music, volume, notification and conversation blocks,
+then renders them in toolbar slots on any edge using the original widget handlers
+and layer. Glass surfaces split at gaps; hidden blocks leave no empty groups.
+Separator instances own a persisted minimum size and optional elasticity.
+Horizontal and vertical layouts allocate surplus to elastic gaps before button
+Fill or navigation expansion; multiple elastic gaps share it. Explicit outer
+gaps remain visible, while untouched decorative gaps retain their compacting
+rules. The separator dialog uses the shared appearance-editor selection and
+commit/lock guards, and dock springs preserve conversation-thumbnail space.
+The old account/system aggregates expand in place on any edge once, preserving
+separators and explicit existing placements. The split controls share the native
+account/readout/audio widgets, including their click handlers and hover panels.
+Conversation blocks derive their orientation from their saved edge. Side bars
+reserve a narrow column and its full height; thumbnails share the same unread
+ordering, overflow menu, interactions and clipping as horizontal rows.
+
 `imports::ImageSizeLimit` separates a draft's Default/1024/2048 choice from
 the shared persisted image limit beside Import. Effective options feed previews,
 quotes, deduplication and encoding; changing the general limit updates inherited
@@ -541,11 +724,17 @@ with `ui/fonts.rs::TextEmphasis` carried through emoji runs, links and search
 highlights. `ChatKind::volume` includes object messages. `ui/chat/volume_tests.rs`
 checks the painted text across all renderers.
 
-`imports/ui/launcher.rs` supplies the optional movable quick import bar.
+`imports/ui/launcher.rs` keeps the quick import bar's window id and Esc;
+the bar itself is a floating block of the toolbars.
 One shared Aurora glass overlay groups flat native action buttons and a drag
 grip; the visible inspector or Permissions receives the accent state.
 Preferences > Inventory persists `imports.icon_bar` (off by default) for
-the shared Import shortcut/menu entry point. `imports/windows.rs` owns independent
+the shared Import shortcut/menu entry point. `imports/quick.rs` runs the
+toolbar's quick imports (textures, materials, sounds): the files picked go up
+without the list through `start_confirmed`, scoped to them alone
+(`Imports::with_only`), after one price or 1024 / 2048 question drawn by
+`imports/ui.rs`; anything that cannot go up as it is falls back to its type
+window. `imports/windows.rs` owns independent
 type windows (open state, selection, tab, filters and destination picker), over
 the shared drafts and asynchronous workers. Each type scopes its queue, prices,
 confirmation and delayed folder/mesh work; its geometry uses a separate Floater ID.
@@ -1247,18 +1436,16 @@ geometry, expires after 30 seconds, and cancels on failure, manual movement,
 Escape, Stop or closing the controller. A recovered pilot requires at least
 one metre of actual travel before another automatic recovery can be requested.
 
-`ui/inspect/` draws Inspect: `mod.rs` the window (summary card, search with
-its View panel, the Outfit / Creators / Details switch), `model.rs` the prims
-gathered into objects (body areas, sort orders, badge tiers, shares),
-`list.rs` the one-line object cards and the Creators tab, `details.rs` the
-Legacy prim table with its totals. `app/inspect.rs` selects the prims, builds
-their rows and answers the window's actions (profiles, Look at).
-Wide, the window is a board of tiles: `wide.rs` the tiles (the objects in 3D,
-items, complexity or land impact, Made by, Worn on / Owned by, figures, prims)
-and what one narrows in the others, `people.rs` the complexity among the people
-here. `ui/board.rs` is the board both wide windows share: packing on four, two
-or one columns, a tile that grows, rows with one Tab stop, virtual lists, table
-headings, the small / wide view of a window.
+`ui/inspect/` draws Inspect, a board of tiles: `mod.rs` the window and its
+rows, `wide.rs` the tiles (the objects in 3D, items, complexity or land
+impact, Made by, Worn on / Owned by, figures, prims) and what one narrows in
+the others, `model.rs` the prims gathered into objects (body areas, badge
+tiers, shares), `details.rs` the Legacy prim table of the grown Prims tile,
+`people.rs` the complexity among the people here. `app/inspect.rs` selects
+the prims, builds their rows and answers the window's actions (profiles, Look
+at). `ui/board.rs` is the board Inspect and Area Search share: packing on
+four, two or one columns, a tile that grows, rows with one Tab stop, virtual
+lists, table headings.
 
 `object_stage/` is their 3D view: `mod.rs` keeps one model per window up to
 date (refused under RLVa's `second_camera_blocked`), `build.rs` takes the
@@ -1771,6 +1958,9 @@ value keep their own guards against `inf` and `nan`. `rlva/dictionary.rs` is
 the Legacy behaviour dictionary in registration order, which @getcommand
 lists. `rlva/startup.rs` keeps the settings RLVa reads once when it starts
 (at the login) and retains the commands received before the login completes.
+`rlva/switch.rs` holds whether RLVa runs in this start of the viewer, apart
+from its saved switch: it starts with a login, and once it runs a change
+applies at the next start.
 `collection.rs` is shared by forced wear and worn-inventory queries:
 it folds point folders and single-level folder links, includes gestures,
 honors shared-wear and prefix preferences, and reports missing targets for
@@ -1993,6 +2183,11 @@ Contents keeps its three-column action strip. The fixed Legacy controls remain
 independent of the customized Aurora arrangement. Aurora's five editing sections share a full-width
 folding transform area and an editable footer; `build/ui/second_tab.rs` shows a
 second section beside the active one in a window widened for two.
+The Aurora main window is the Edit tool's: Camera, Move, Create and Land each
+have a window of their own (`build/ui/tool_floaters.rs`), opened and closed
+from the rail, their toolbar buttons, menu entries and Ctrl+1, 2, 4, 5;
+`build/tool_windows.rs` holds which ones are shown, the tool in use (the
+window last opened or pressed) and the lit buttons, for both styles.
 `build/face_buttons.rs` holds the face buttons, Invert / All and the face step
 shared by the arrows and the Ctrl+, / Ctrl+. keys. `build/layout.rs` owns the saved
 item order/destinations and the versioned, validated notecard profile, excluding
@@ -2757,24 +2952,23 @@ and pointer events; `drag_navigation_tests.rs` covers hover latching, scrolling,
 hidden sources, filtered lists, window ownership and cancellation.
 `drag_demo.rs` provides offline move/hover/rejection/scroll/fold scenarios.
 
-`ui/toolbar.rs` owns Firestorm's three toolbars (the bottom one, left and
-right), their context menus and drag/drop edits; a command stands in one of
-them at most. `toolbar/catalogue.rs` lists Firestorm's toybox commands and
-Aurora's own, with whether Aurora runs them; `toolbar/editor.rs` is the
-"Toolbar buttons" window (tiles, each toolbar's mode / alignment / size,
-Locked, Clear all, Restore defaults). `Settings::toolbar` stores the three
-button lists, each toolbar's style and the lock, shared by all accounts at the
+`ui/toolbar.rs` owns the four edge toolbars, drawer membership, context menus
+and drag/drop commits; a command has at most one placement across all containers.
+`toolbar/catalogue.rs` lists the Legacy Viewer's toybox commands and Aurora's
+own, with whether Aurora runs them; `toolbar/editor.rs` is the resizable
+"Buttons and menus" catalogue and interface editing window. `Settings::toolbar`
+stores the root button lists, drawer contents, styles and lock, shared by all accounts at the
 human's request; a style left unset follows the default of the look in use.
 The first account entering the world after the update supplies its former
 per-account layout; an existing shared layout always wins. Legacy layouts
 survive pre-login saves until migration. Without an override the skin's live
 bottom layout remains authoritative. Edits save only on release or an
 explicit action, and an empty override stays empty. The empty Aurora dock
-is drawn only during an unlocked toolbar drag, matching
+is drawn during an unlocked drag or the entire visual editing session, extending
 LLToolBarView::draw; nearby chat retains its independent island (#1631).
 `ui/bars/side.rs` draws
 the left and right toolbars (glass islands with the islands, full-height
-panels with Firestorm's bars) and the windows' room beside them;
+panels with Legacy bars) and the windows' room beside them;
 `ui/bars/sizing.rs` lays out a toolbar's buttons by mode and layout style on
 one row, cutting labels before buttons narrow.
 `ui/balance_gains.rs` shows the balance's changes, for both bar styles: rows
