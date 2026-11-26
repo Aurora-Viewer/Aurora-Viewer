@@ -873,6 +873,10 @@ pub struct App {
     /// (scripts/test-ime-linux.py).
     demo_ime_interrupts: u64,
     demo_rlva_frame: Option<u64>,
+    /// Whether RLVa runs in this start of the viewer: it starts with a
+    /// login, and the preference (`settings.rlva_enabled`) only applies at
+    /// the next start once it runs (world/rlva/switch.rs).
+    rlva_switch: crate::world::rlva::switch::Switch,
     rlva_login: crate::world::rlva::login::State,
     rlva_minimap: rlva::HiddenMinimap,
     named_teleport: teleport_lookup::NamedTeleport,
@@ -1715,6 +1719,14 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_SSR") {
         settings.ssr = v != "0";
     }
+    if let Ok(v) = std::env::var("AURORA_NORMAL_PRECISION") {
+        match v.as_str() {
+            "auto" => settings.normal_precision = crate::settings::NORMAL_PRECISION_AUTO,
+            "standard" => settings.normal_precision = crate::settings::NORMAL_PRECISION_STANDARD,
+            "high" => settings.normal_precision = crate::settings::NORMAL_PRECISION_HIGH,
+            other => log::warn!("AURORA_NORMAL_PRECISION: unknown value {other:?} (auto, standard or high)"),
+        }
+    }
     if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
         settings.occlusion_culling = v != "0";
     }
@@ -1941,6 +1953,7 @@ impl App {
         scene.tree_lod_factor = settings.tree_lod_factor;
         scene.surface_protection = settings.surface_protection();
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
+        let rlva_switch = crate::world::rlva::switch::Switch::new(settings.rlva_enabled);
         Ok(Box::new(App {
             area_search_ui: ui::area_search::AreaSearchUi::from_saved(&settings.area_search),
             settings,
@@ -2196,6 +2209,7 @@ impl App {
             frame_count: 0,
             demo_ime_interrupts: 0,
             demo_rlva_frame: None,
+            rlva_switch,
             rlva_minimap: Default::default(),
             rlva_login: if std::env::var("AURORA_DEMO").as_deref() == Ok("1") {
                 Default::default()
@@ -2568,7 +2582,7 @@ impl App {
             return;
         }
         self.rlva_sync_settings();
-        if !self.settings.rlva_enabled {
+        if !self.rlva_switch.running() {
             self.named_teleport.cancel_scripts();
             self.world.maturity.cancel_script_teleports();
             if !actor.is_nil() {
@@ -3658,7 +3672,10 @@ impl App {
             .iter()
             .find(|account| account.key() == catalog_key)
             .and_then(|account| account.agent);
-        let start = if self.rlva_login.requires_last(self.settings.rlva_enabled, login_agent) {
+        // RLVa starts with the login (STATE_LOGIN_CLEANUP, llstartup.cpp),
+        // before its forced last location is read
+        self.rlva_switch.login_starts(self.settings.rlva_enabled);
+        let start = if self.rlva_login.requires_last(self.rlva_switch.running(), login_agent) {
             StartLocation::Last
         } else {
             start
@@ -3949,7 +3966,7 @@ impl App {
             return;
         }
         if let NetEvent::TeleportRegionResolved { request, result } = ev {
-            if !self.settings.rlva_enabled {
+            if !self.rlva_switch.running() {
                 self.named_teleport.cancel_scripts();
             }
             if let Some((actor, result)) = self.named_teleport.resolve(request, result) {
@@ -10745,7 +10762,7 @@ impl App {
         self.update_places();
         // the maturity preference's requests, and the teleport that waited
         // for it
-        if !self.settings.rlva_enabled {
+        if !self.rlva_switch.running() {
             self.world.maturity.cancel_script_teleports();
             self.world.teleport_access.cancel_script_teleports();
         }
@@ -18436,6 +18453,7 @@ impl App {
                 .collect();
         }
         self.options_ui.rlva_restrictions = self.world.rlva.restrictions();
+        self.options_ui.rlva_waits = self.rlva_switch.waiting(self.settings.rlva_enabled, self.rlva_can_enable());
         crate::world::rlva::modifiers::hide_texture_ids(&mut self.options_ui.rlva_restrictions, || {
             crate::world::inventory::asset_ids::AssetIds::per_frame(&self.world)
         });

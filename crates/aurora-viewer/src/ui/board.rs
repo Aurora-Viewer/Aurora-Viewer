@@ -566,65 +566,6 @@ pub fn figure_cell(ui: &egui::Ui, rect: Rect, text: &str, color: egui::Color32) 
     text_ending(ui, rect.right() - 8.0, rect.center().y, text, 12.5, color);
 }
 
-/// A window with a small and a wide view: the wide one from a width of
-/// `from` points inside.
-#[derive(Debug, Clone, Copy)]
-pub struct Views {
-    pub window: &'static str,
-    pub small: Vec2,
-    pub wide: Vec2,
-    pub from: f32,
-}
-
-/// Whether the window shows its wide view this frame. A window that opens
-/// takes the view chosen last, whatever size the layout kept.
-pub fn is_wide(ctx: &egui::Context, views: &Views, saved: bool, opening: bool) -> bool {
-    let last = widgets::floater_size(ctx, views.window);
-    let measured = last.map(|s| s.x - widgets::floater_chrome(ctx).x >= views.from);
-    let placed = ctx.data_mut(|d| d.get_temp::<bool>(egui::Id::unique(views.window).with("restore_size")));
-    // a size kept from before the window had two views is not one of theirs
-    let known = egui::Id::unique(views.window).with("board_views");
-    let first = opening && !ctx.data_mut(|d| d.get_persisted::<bool>(known)).unwrap_or(false);
-    if first {
-        ctx.data_mut(|d| d.insert_persisted(known, true));
-    }
-    let other = measured.is_some_and(|wide| wide != saved);
-    if opening && placed != Some(true) && (other || (first && last.is_some())) {
-        widgets::size_floater(ctx, views.window, views.size(ctx, saved));
-        return saved;
-    }
-    measured.unwrap_or(saved)
-}
-
-impl Views {
-    /// The size of a view, as much of it as the screen has room for.
-    pub fn size(&self, ctx: &egui::Context, wide: bool) -> Vec2 {
-        let room = super::layout::work_area(ctx).size() - Vec2::splat(2.0 * super::layout::GAP);
-        let size = if wide { self.wide } else { self.small };
-        size.min(room).max(Vec2::new(300.0, 300.0))
-    }
-}
-
-/// After the window: its size button was pressed, or an edge was dragged
-/// across the limit between the two views.
-pub fn after(ctx: &egui::Context, views: &Views, toggled: bool, wide: bool, saved: &mut bool) {
-    if toggled {
-        widgets::size_floater(ctx, views.window, views.size(ctx, !wide));
-        *saved = !wide;
-    } else if let Some(resized) = widgets::take_floater_resize(ctx, views.window) {
-        *saved = resized.x - widgets::floater_chrome(ctx).x >= views.from;
-    }
-}
-
-/// The icon and the tooltip of the size button.
-pub fn size_button(wide: bool) -> (&'static str, &'static str) {
-    if wide {
-        ("arrows-minimize", aurora_i18n::tr!("common-compact-view"))
-    } else {
-        ("arrows-maximize", aurora_i18n::tr!("inventory-widen"))
-    }
-}
-
 /// The search of a wide window over `rect`, with its shortcut written in it
 /// while it is empty.
 pub fn search(ui: &mut egui::Ui, p: &Palette, rect: Rect, text: &mut String, hint: &str) {
