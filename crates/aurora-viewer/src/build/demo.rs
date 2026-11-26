@@ -3,11 +3,14 @@
 //!
 //! - mode: move | rotate | stretch | face | align | grab | focus | create |
 //!   land | select | select-join (a simulated multi-parcel selection)
-//!   rect | rect-shift | rect-focus | rect-tool (`rect,x,y,-,dx,dy` or
-//!   `rect,object:<id>,-,dx,dy`, then `keep:<id>`): a press through the real
-//!   click path, a drag and its release, logged as `demo rect:`. `keep`
-//!   selects an object first; `focus` loses the focus and `tool` changes
-//!   tool with the button down.
+//!   rect | rect-shift | rect-ctrl | rect-focus | rect-tool
+//!   (`rect,x,y,-,dx,dy` or `rect,object:<id>,-,dx,dy`, then
+//!   `keep:<id>` once per object): a press through the real click path, a
+//!   drag and its release, logged as `demo rect:`. `keep` selects objects
+//!   first; `rect-shift` holds Shift and `rect-ctrl` Ctrl (a deselect
+//!   rectangle, whose box turns red and, with `object:<id>`, surrounds that
+//!   prim); `focus` loses the focus and `tool` changes tool with the button
+//!   down.
 //!   cycle | cycle-linked: nested objects, three CTRL + wheel notches
 //!   (deeper, deeper, nearer), centered on `object:99610`.
 //!   linked-click | linked-click-ready: select a whole object, then switch
@@ -59,7 +62,8 @@
 //!
 //! `AURORA_DEMO_BUILD_TAB` shows a section: general | rights | object | transform |
 //! shape | features | texture | contents, the texture tab with `:pbr`, `:bp` or
-//! `:media` (e.g. `texture:bp`); `:bp-normal` / `:bp-specular` select empty
+//! `:media` (e.g. `texture:bp`); `:bp-alpha` paints the selection with the
+//! built-in Transparent texture; `:bp-normal` / `:bp-specular` select empty
 //! legacy map channels, and opens `+weights`, `+grid`, `+media`
 //! (e.g. `general+weights+grid`); `contents+permissions` opens bulk rights.
 //! `AURORA_DEMO_BUILD_HANDLES=<percent>` sets the edit handle size.
@@ -110,6 +114,8 @@ pub enum Step {
     Release,
     /// Shift held for the mouse.
     Shift(bool),
+    /// Ctrl held for the mouse (a deselect rectangle).
+    Ctrl(bool),
     /// The window loses the focus with the button down: the release that
     /// never comes is the app's own (WindowEvent::Focused).
     FocusLost,
@@ -123,6 +129,8 @@ pub enum Step {
     ReplaceApply,
     /// "Place on surface" on or off.
     Place(bool),
+    /// Paint the selection with the built-in Transparent texture.
+    TransparentDiffuse,
     /// Its Auto rotate, with that side.
     PlaceRotate(super::place::Side),
 }
@@ -146,6 +154,21 @@ fn part_of(s: &str) -> Option<Part> {
         c if c.starts_with('c') => Part::Corner(c[1..].parse().ok()?),
         _ => return None,
     })
+}
+
+/// The screen rectangle around prim `idx` (its box), for a rectangle that
+/// must surround it; none when it is behind the camera.
+fn footprint_px(tool: &BuildTool, world: &World, idx: usize) -> Option<egui::Rect> {
+    let now = Instant::now();
+    let (position, rot, _) = crate::scene::Scene::object_transform(world, idx, now, 0)?;
+    let model = glam::Mat4::from_scale_rotation_translation(world.visual_scale_at(idx, now), rot, position);
+    let mut rect = egui::Rect::NOTHING;
+    for i in 0..8 {
+        let corner = Vec3::new([-0.5, 0.5][i & 1], [-0.5, 0.5][(i >> 1) & 1], [-0.5, 0.5][(i >> 2) & 1]);
+        let (x, y) = tool.cam.project_px(model.transform_point3(corner))?;
+        rect.extend_with(egui::pos2(x, y));
+    }
+    Some(rect)
 }
 
 /// Screen position (physical pixels) of a handle of the current selection.
@@ -252,12 +275,15 @@ pub fn apply_tab(tool: &mut BuildTool) {
     };
     tool.ui.tex_tab = match sub.trim() {
         "pbr" => 1,
-        "bp" | "classic" | "bp-normal" | "bp-specular" => 0,
+        "bp" | "classic" | "bp-normal" | "bp-specular" | "bp-alpha" => 0,
         "media" => 2,
         _ => tool.ui.tex_tab,
     };
     // The scenario's tab, not the one its selection would open on.
-    if matches!(sub.trim(), "pbr" | "bp" | "classic" | "bp-normal" | "bp-specular" | "media") {
+    if matches!(
+        sub.trim(),
+        "pbr" | "bp" | "classic" | "bp-normal" | "bp-specular" | "bp-alpha" | "media"
+    ) {
         tool.keep_texture_tab();
     }
     match sub.trim() {
@@ -348,6 +374,19 @@ pub fn texture_inventory(world: &mut World) {
     }
 }
 
+/// The overlapping sample prims used by the selection-cycle and rectangle demos.
+pub fn uses_cycle_objects(spec: &str) -> bool {
+    let mut parts = spec.split(',').map(str::trim);
+    match parts.next() {
+        Some("cycle" | "cycle-linked") => true,
+        Some(mode) if mode.starts_with("rect") => parts
+            .filter_map(|part| part.strip_prefix("object:").or_else(|| part.strip_prefix("keep:")))
+            .filter_map(|id| id.parse::<u32>().ok())
+            .any(|id| (99610..=99614).contains(&id)),
+        _ => false,
+    }
+}
+
 /// Optional direct object selection, used for animated-shape captures.
 pub fn target_index(spec: &str, world: &World) -> Option<usize> {
     let target = spec.split(',').nth(1)?.trim().strip_prefix("object:")?;
@@ -431,16 +470,23 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         };
     }
     if parts[0].starts_with("rect") {
-        let keep = parts
-            .iter()
-            .find_map(|p| p.strip_prefix("keep:")?.parse::<u32>().ok())
-            .and_then(|id| world.objects.iter().find_map(|(i, o)| (o.key.local_id == id).then_some(i)));
         let start = match object {
             Some(idx) => crate::scene::Scene::object_transform(world, idx, Instant::now(), 0).and_then(|(p, _, _)| tool.cam.project_px(p)),
             None => Some((x, y)),
         };
-        let (dx, dy) = (num(h + 1).unwrap_or(120.0), num(h + 2).unwrap_or(0.0));
         let shift = parts[0] == "rect-shift";
+        let ctrl = parts[0] == "rect-ctrl";
+        // a deselect box has to surround the prim: from a corner of its
+        // footprint to the other one
+        let surround = if ctrl {
+            object.and_then(|idx| footprint_px(tool, world, idx))
+        } else {
+            None
+        };
+        let start = surround.map_or(start, |r| Some((r.min.x - 12.0, r.min.y - 12.0)));
+        let (dx, dy) = surround.map_or((num(h + 1).unwrap_or(120.0), num(h + 2).unwrap_or(0.0)), |r| {
+            (r.width() + 24.0, r.height() + 24.0)
+        });
         let log_state = |at: &str| {
             log::info!(
                 "demo rect: {at} selection={:?} hud={} rect={}",
@@ -451,10 +497,22 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         };
         return match frame {
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
-            225 => keep.into_iter().map(Step::Select).collect(),
+            225 => {
+                let keep: Vec<_> = parts
+                    .iter()
+                    .filter_map(|p| p.strip_prefix("keep:"))
+                    .filter_map(|id| id.parse::<u32>().ok())
+                    .filter_map(|id| world.objects.iter().find_map(|(i, o)| (o.key.local_id == id).then_some(i)))
+                    .collect();
+                if keep.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Step::SelectMany(keep)]
+                }
+            }
             235 => {
                 log_state("before");
-                let mut steps = vec![Step::Shift(shift)];
+                let mut steps = vec![Step::Shift(shift), Step::Ctrl(ctrl)];
                 steps.extend(start.map(|(x, y)| Step::Cursor(x, y)));
                 steps
             }
@@ -477,7 +535,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             }
             285 => {
                 log_state("released");
-                vec![Step::Shift(false)]
+                vec![Step::Shift(false), Step::Ctrl(false)]
             }
             _ => Vec::new(),
         };
@@ -776,6 +834,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         215 => vec![Step::Open(t, m, land)],
         280 if parts[0] == "material-deselect" => vec![Step::CloseEditor],
         220 if object.is_some() => object.into_iter().map(Step::Select).collect(),
+        230 if bp_alpha_demo() => vec![Step::TransparentDiffuse],
         220 => vec![Step::Cursor(x, y), Step::Press],
         // land brush / selection: held (land: no release), others released
         226 if t != Tool::Land => vec![Step::Release],
@@ -838,6 +897,18 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     }
 }
 
+/// `AURORA_DEMO_BUILD_TAB=texture:bp-alpha`: the texture tab only, as
+/// `apply_tab` reads it.
+fn bp_alpha_demo() -> bool {
+    std::env::var("AURORA_DEMO_BUILD_TAB").is_ok_and(|value| is_bp_alpha_tab(&value))
+}
+
+fn is_bp_alpha_tab(value: &str) -> bool {
+    let head = value.split('+').next().unwrap_or("");
+    head.split_once(':')
+        .is_some_and(|(tab, sub)| tab.trim() == "texture" && sub.trim() == "bp-alpha")
+}
+
 fn x_start(tool: &BuildTool) -> f32 {
     tool.manip.drag.as_ref().map(|d| d.start_cursor.0).unwrap_or(0.0)
 }
@@ -876,5 +947,27 @@ pub fn link_setup(world: &mut World, tool: &mut BuildTool, settings: &BuildSetti
         if let Some(index) = world.objects.index_of_uuid(&crate::demo::action_id(id)) {
             tool.click_select(world, settings, Some(index), id == 99751);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cycle_objects_only_join_demos_that_use_them() {
+        use super::uses_cycle_objects;
+        assert!(uses_cycle_objects("cycle-linked,1,2"));
+        assert!(uses_cycle_objects("rect-ctrl,object:99614"));
+        assert!(uses_cycle_objects("rect,1,2, keep:99610"));
+        assert!(!uses_cycle_objects("rect-ctrl,object:996140"));
+        assert!(!uses_cycle_objects("create,object:99614"));
+    }
+
+    #[test]
+    fn bp_alpha_needs_the_texture_tab() {
+        assert!(super::is_bp_alpha_tab("texture:bp-alpha"));
+        assert!(super::is_bp_alpha_tab(" texture : bp-alpha +grid"));
+        assert!(!super::is_bp_alpha_tab("general:bp-alpha"));
+        assert!(!super::is_bp_alpha_tab("texture:bp"));
+        assert!(!super::is_bp_alpha_tab("general+texture:bp-alpha"));
     }
 }

@@ -6,6 +6,7 @@
 
 pub mod backup;
 pub(crate) mod cx;
+pub mod legacy_lists;
 mod pages;
 /// The rows of the Phototools window, borrowed from the pages.
 mod phototools;
@@ -326,6 +327,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
     st.reveal = match what {
         "tonemap" => row(Page::Graphics, 4, tr!("ui-options-tone-mapping")),
         "occlusion" => row(Page::Graphics, 1, tr!("ui-options-screen-indirect-light")),
+        "ray-tracing" => row(Page::Graphics, 7, tr!("ui-options-ray-traced-shadows")),
         "bloom" => row(Page::Graphics, 1, tr!("ui-options-bloom")),
         "name-tags" => row(Page::Avatars, 0, tr!("ui-options-show-own-tag")),
         "group-titles" => row(Page::Avatars, 1, tr!("ui-options-group-titles")),
@@ -435,6 +437,9 @@ pub struct OptionsUi {
     pub selected_parcel: Option<crate::world::parcel_visibility::Entry>,
     pub rlva_tools: super::rlva::Tools,
     pub rlva_restrictions: Vec<(uuid::Uuid, String)>,
+    /// RLVa's switch differs from what runs and waits for the next start
+    /// (world/rlva/switch.rs): its row says so.
+    pub rlva_waits: bool,
     pub rlva_camera_preset_locked: bool,
     pub rlva_camera_fov_locked: bool,
     /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
@@ -536,6 +541,8 @@ pub struct OptionsUi {
     pub gpus: Vec<String>,
     pub gpu_in_use: String,
     pub gpu_notice: Option<aurora_render::adapter_choice::Notice>,
+    /// Whether the GPU device ray-traces; set by the app with the GPUs.
+    pub ray_tracing: aurora_render::RayTracingSupport,
     /// The sky in use is tone mapped (not classic); set by the app each
     /// frame: the tone mapper choice is greyed otherwise.
     pub sky_tone_mapped: bool,
@@ -602,6 +609,12 @@ pub struct OptionsUi {
     reset_confirmed: Option<ResetAsk>,
     /// The import of a Legacy Viewer's chat history (set by the app).
     pub chat_import: ChatImportUi,
+    /// The import of a Legacy Viewer's lists (set by the app).
+    pub legacy_lists: legacy_lists::State,
+    /// What the last one did.
+    pub legacy_lists_status: String,
+    /// An account is logged in: its lists can be imported (set by the app).
+    pub legacy_lists_ready: bool,
     /// Files done and files to do of the import under way (set by the app).
     pub chat_log_importing: Option<(usize, usize)>,
     pub restart_voice: bool,
@@ -811,6 +824,10 @@ pub struct OptionsResult {
     pub find_legacy_logs: bool,
     /// Import from these folders.
     pub import_legacy_logs: Option<Vec<std::path::PathBuf>>,
+    /// The lists' import window opened: read the Legacy Viewers' folders.
+    pub find_legacy_lists: bool,
+    /// Import these lists from the folder found at this index.
+    pub import_legacy_lists: Option<(usize, crate::world::legacy_lists::Parts)>,
     /// The content rating chosen (SIM_ACCESS_*), to send to the server.
     pub maturity: Option<u8>,
     /// An account setting of Privacy changed, to send to the server.
@@ -1130,22 +1147,87 @@ fn blend_precisions() -> [(u8, &'static str); 4] {
 /// The five graphics levels, side by side; none is lit once a setting of
 /// the page no longer matches any of them ("Custom", like the Legacy
 /// Viewer's slider after a manual change).
-fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, rt: aurora_render::RayTracingSupport) -> bool {
     use crate::graphics_presets::Preset;
     let current = Preset::matching(s);
     let options: Vec<(&str, bool)> = Preset::ALL.iter().map(|l| (l.label(), true)).collect();
+    // Deluxe (RT) traces: out of reach where the Ray tracing tab is greyed
+    // (a card without ray queries, a run set up for VR), with its reason
+    let traced = deluxe_rt_blocked(rt);
+    let disabled: Vec<Option<&str>> = Preset::ALL.iter().map(|l| traced.filter(|_| *l == Preset::Deluxe)).collect();
     let mut selected = current.and_then(|c| Preset::ALL.iter().position(|l| *l == c)).unwrap_or(usize::MAX);
-    let changed = super::widgets::segmented(ui, p, &mut selected, &options);
+    let changed = super::widgets::segmented_with_disabled(ui, p, &mut selected, &options, &disabled);
     if current.is_none() && !changed {
         ui.label(RichText::new(preset_label(s)).size(12.0).color(p.violet_pale));
     }
+    let warning = egui::Id::unique("options_deluxe_rt_warning");
     match Preset::ALL.get(selected) {
+        // the first time, a warning before anything changes
+        Some(Preset::Deluxe) if changed && !s.deluxe_rt_warned => {
+            ui.data_mut(|d| d.insert_temp(warning, true));
+            false
+        }
         Some(level) if changed => {
             level.apply(s);
             true
         }
-        _ => false,
+        _ => deluxe_rt_warning(ui, p, s, warning),
     }
+}
+
+/// Why Deluxe (RT) cannot be chosen, if it cannot: the reasons of the Ray
+/// tracing tab (pages/graphics.rs `ray_tracing`).
+fn deluxe_rt_blocked(rt: aurora_render::RayTracingSupport) -> Option<&'static str> {
+    use aurora_render::RayTracingSupport as Support;
+    match rt {
+        Support::Unsupported => Some(aurora_i18n::tr!("ui-options-ray-tracing-unsupported")),
+        Support::Vr => Some(aurora_i18n::tr!("ui-options-ray-tracing-vr")),
+        Support::Ready | Support::NotOpened => None,
+    }
+}
+
+/// The warning shown the first time Deluxe (RT) is chosen: it needs a card
+/// that ray-traces and costs far more than High. "Turn on" applies the level
+/// and the warning is not shown again (`Settings::deluxe_rt_warned`);
+/// "Cancel" leaves the level as it was. Aurora's own: the Legacy Viewer has
+/// no traced level.
+fn deluxe_rt_warning(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, id: egui::Id) -> bool {
+    use super::widgets::{ActionKind, action_button, primary_button_sized};
+    use aurora_i18n::tr;
+    if !ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false)) {
+        return false;
+    }
+    let mut chosen = false;
+    let mut closed = false;
+    let modal = super::widgets::Modal::new(egui::Id::unique("options_deluxe_rt_warning_modal")).show(ui.ctx(), |ui| {
+        ui.set_width(380.0);
+        ui.label(
+            RichText::new(tr!("ui-options-deluxe-rt-warning-title"))
+                .size(15.0)
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(6.0);
+        ui.label(RichText::new(tr!("ui-options-deluxe-rt-warning-text")).size(12.5).color(p.muted));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let size = Vec2::new(0.0, 26.0);
+            if primary_button_sized(ui, p, tr!("ui-options-deluxe-rt-warning-turn-on"), Vec2::new(120.0, 26.0)).clicked() {
+                chosen = true;
+            }
+            if action_button(ui, p, "x", tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                closed = true;
+            }
+        });
+    });
+    if chosen {
+        s.deluxe_rt_warned = true;
+        crate::graphics_presets::Preset::Deluxe.apply(s);
+    }
+    if chosen || closed || modal.should_close() {
+        ui.data_mut(|d| d.remove::<bool>(id));
+    }
+    chosen
 }
 
 /// The line under the level row when no level matches: the Mac's own
@@ -1532,6 +1614,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     clear_conversation_log_modal(ctx, p, st, &mut r, *open);
     reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
+    legacy_lists::modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
     saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
     st.defaults = Some(d);
@@ -2144,7 +2227,9 @@ fn page_area(
     ui.add_space(10.0);
     if !searching && !modified_view && tabs.len() > 1 {
         let labels: Vec<(&str, bool)> = tabs.iter().map(|t| (*t, true)).collect();
-        if super::widgets::tabs(&mut ui, p, &mut st.tab, &labels) {
+        // whole names on a second row in a narrow window, where the strip
+        // cut them down to "…" (#4935)
+        if super::widgets::wrapping_tabs(&mut ui, p, &mut st.tab, &labels) {
             st.cancel_capture();
             st.flash = None;
         }
@@ -2176,7 +2261,11 @@ fn page_area(
     // Its animated appearance otherwise changes the cells' width, invalidates
     // their control measurements and can alternate short/tall rows forever.
     let rows_width = (super::widgets::scrolled_width(&ui) - 6.0).max(0.0);
-    egui::ScrollArea::vertical()
+    // The rows are laid out at the window's width; a control wider than
+    // that (a row of fixed buttons, a long translation) scrolls into view
+    // sideways instead of being cut off under the scrollbar in a narrow
+    // window (#4935).
+    egui::ScrollArea::both()
         .id_salt(scroll_id)
         .auto_shrink([false, false])
         .max_height(rows_h)

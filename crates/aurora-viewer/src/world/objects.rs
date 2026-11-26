@@ -60,6 +60,8 @@ pub struct RenderState {
     /// Texture handles held by this object (for refcounting).
     pub textures: Vec<Uuid>,
     pub needs_records: bool,
+    /// Only the Ignore Object bit of existing draw records needs an update.
+    pub click_pick_dirty: bool,
     pub lod: u8,
     pub last_lod_check: u32,
     /// World bounds (render space): center, radius.
@@ -351,6 +353,15 @@ impl Object {
         })
     }
 
+    /// Only Ignore Object is part of the GPU face records.
+    pub fn set_click_action(&mut self, action: u8) {
+        let ignore = crate::interaction::code::IGNORE;
+        if (self.click_action == ignore) != (action == ignore) {
+            self.render.click_pick_dirty = true;
+        }
+        self.click_action = action;
+    }
+
     pub fn apply_full(&mut self, mut u: ObjectUpdate) {
         // Like LLViewerObject::processUpdateMessage
         // (indra/newview/llviewerobject.cpp), retain an existing flexi
@@ -406,7 +417,7 @@ impl Object {
         self.parent_id = u.parent_id;
         self.pcode = u.pcode;
         self.state = u.state;
-        self.click_action = u.click_action;
+        self.set_click_action(u.click_action);
         self.position = u.position;
         self.rotation = u.rotation;
         self.scale = u.scale;
@@ -2079,6 +2090,26 @@ mod tests {
     }
 
     const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    #[test]
+    fn only_entering_or_leaving_ignore_invalidates_click_draw_records() {
+        use crate::interaction::code::{BUY, IGNORE, TOUCH};
+        let mut update = update(1, PRIM, "");
+        update.click_action = TOUCH;
+        let mut object = Object::from_update(1, update.clone());
+        object.material_dirty = false;
+        for (action, dirty) in [(BUY, false), (IGNORE, true), (IGNORE, false), (TOUCH, true)] {
+            object.render.click_pick_dirty = false;
+            object.set_click_action(action);
+            assert_eq!(object.render.click_pick_dirty, dirty);
+            assert!(!object.material_dirty);
+        }
+        update.click_action = IGNORE;
+        object.render.click_pick_dirty = false;
+        object.apply_full(update);
+        assert!(object.render.click_pick_dirty);
+        assert!(!object.material_dirty);
+    }
 
     #[test]
     fn full_update_with_empty_name_values_keeps_previous() {

@@ -293,6 +293,8 @@ impl Scene {
                     color,
                     falloff: l.falloff * 0.5,
                     projector,
+                    source_radius: o.visual_scale().length() * 0.5,
+                    source_id: u32::try_from(idx + 1).unwrap_or(0),
                 },
                 texture,
             });
@@ -571,6 +573,8 @@ mod tests {
                 color: Vec3::ONE,
                 falloff: 0.0,
                 projector: None,
+                source_radius: 0.0,
+                source_id: 0,
             },
             texture: None,
         }

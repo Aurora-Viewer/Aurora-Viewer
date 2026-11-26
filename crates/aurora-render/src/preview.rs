@@ -3,6 +3,7 @@
 //! UI gets an image in the same frame without a readback or a GPU wait.
 
 use crate::pipeline_cache::CachedPipelines;
+use crate::preview_blend::{Exact, Order};
 pub use crate::preview_mesh::paint as paint_antialiased_mesh;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
@@ -36,6 +37,23 @@ pub struct Skin {
     pub rest: Vec<Mat4>,
 }
 pub type Pose = Arc<[[[f32; 4]; 4]]>;
+/// Parts outlined over the picture.
+#[derive(Clone)]
+pub struct Highlight {
+    /// Per part: 0 not outlined, 1 pointed at, 2 selected.
+    pub classes: Arc<[u8]>,
+    /// Displayed colours of 1 and 2, and how strongly each shows.
+    pub colors: [[f32; 4]; 2],
+}
+impl Highlight {
+    fn same(a: Option<&Self>, b: Option<&Self>) -> bool {
+        match (a, b) {
+            (Some(a), Some(b)) => Arc::ptr_eq(&a.classes, &b.classes) && a.colors == b.colors,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
 #[derive(Clone)]
 pub struct Image {
     pub size: [u32; 2],
@@ -96,6 +114,15 @@ pub struct View {
     pub edges: bool,
     pub uv: bool,
     pub material: Option<Material>,
+    /// Lit as in a photo studio that turns with the camera.
+    pub studio: Option<Studio>,
+}
+/// A studio: reflections, a key light with shadows, rim lights, a ground that
+/// is lighter behind the model.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Studio {
+    /// Height of the floor the model stands on and shades.
+    pub floor: Option<f32>,
 }
 impl Default for View {
     fn default() -> Self {
@@ -111,6 +138,7 @@ impl Default for View {
             edges: false,
             uv: false,
             material: None,
+            studio: None,
         }
     }
 }
@@ -132,17 +160,88 @@ impl View {
         );
         let right = Vec3::Z.cross(outward).normalize_or_zero();
         let up = outward.cross(right);
-        let height = 2.0 * model.radius.max(0.001) * self.distance * (0.75_f32 * 0.5).tan();
+        let height = 2.0 * model.radius.max(0.001) * self.distance * (FOV_Y * 0.5).tan();
         // Pan in screen coordinates at any orbit/zoom, following the pointer.
         let center = model.center - right * self.pan[0] * height * aspect + up * self.pan[1] * height;
         (center + outward * model.radius.max(0.001) * self.distance, center)
     }
+
+    /// The ray through `at`, a point of a preview drawn over `rect`: where it
+    /// starts and its direction, in the model's space.
+    pub fn ray(&self, model: &Model, rect: egui::Rect, at: egui::Pos2) -> (Vec3, Vec3) {
+        let aspect = (rect.width() / rect.height().max(1.0)).max(0.01);
+        let (eye, center) = self.camera(model, aspect);
+        let forward = (center - eye).normalize_or(Vec3::NEG_X);
+        let right = forward.cross(Vec3::Z).normalize_or(Vec3::Y);
+        let up = right.cross(forward);
+        let half = (FOV_Y * 0.5).tan();
+        let x = (at.x - rect.center().x) / (rect.width() * 0.5).max(1.0) * half * aspect;
+        let y = (rect.center().y - at.y) / (rect.height() * 0.5).max(1.0) * half;
+        (eye, (forward + right * x + up * y).normalize())
+    }
 }
+/// Vertical field of view of the previews, in radians.
+const FOV_Y: f32 = 0.75;
 struct Region {
     id: egui::Id,
     model: Arc<Model>,
     view: View,
     pose: Option<Pose>,
+    highlight: Option<Highlight>,
+}
+
+/// A window that shows previews: the viewer's own, or one of the interface
+/// outside it (outside.rs, by its key). They share the cache, and each is
+/// drawn when its own picture changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Shower {
+    Viewer,
+    Outside(u64),
+}
+
+/// What each window showed in its last pass: a target is kept while one of
+/// them shows it. A window outside is not drawn at every frame of the
+/// viewer, and what it shows must not go with the viewer's next frame.
+pub(crate) struct Shown<K>(HashMap<Shower, HashSet<K>>);
+
+impl<K> Default for Shown<K> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+impl<K: Eq + std::hash::Hash> Shown<K> {
+    pub fn set(&mut self, shower: Shower, seen: HashSet<K>) {
+        self.0.insert(shower, seen);
+    }
+
+    pub fn has(&self, key: &K) -> bool {
+        self.0.values().any(|seen| seen.contains(key))
+    }
+
+    /// The windows outside that are gone show nothing any more; whether
+    /// one went.
+    pub fn keep_outside(&mut self, alive: impl Fn(u64) -> bool) -> bool {
+        let before = self.0.len();
+        self.0.retain(|shower, _| match shower {
+            Shower::Viewer => true,
+            Shower::Outside(key) => alive(*key),
+        });
+        self.0.len() != before
+    }
+}
+
+/// Whether two callbacks of one place show the same preview: the same
+/// model, view and pose. `None`: not both previews.
+pub(crate) fn same(a: &egui::PaintCallback, b: &egui::PaintCallback) -> Option<bool> {
+    let (a, b) = (a.callback.downcast_ref::<Region>()?, b.callback.downcast_ref::<Region>()?);
+    let same_pose = match (&a.pose, &b.pose) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    };
+    let same_highlight = Highlight::same(a.highlight.as_ref(), b.highlight.as_ref());
+    Some(a.id == b.id && Arc::ptr_eq(&a.model, &b.model) && a.view == b.view && same_pose && same_highlight)
 }
 pub fn paint(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: &mut View, size: egui::Vec2) -> egui::Response {
     paint_with_pose(ui, id, model, view, size, None)
@@ -169,6 +268,7 @@ fn paint_tile(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, si
                 model,
                 view,
                 pose: None,
+                highlight: None,
             }),
         }));
     }
@@ -210,9 +310,35 @@ pub fn paint_with_pose(
             model,
             view: *view,
             pose,
+            highlight: None,
         }),
     }));
     response
+}
+
+/// A preview over `rect`, drawn only: its caller turns the camera and reads
+/// the clicks itself.
+pub fn paint_stage(
+    ui: &egui::Ui,
+    id: egui::Id,
+    model: Arc<Model>,
+    view: View,
+    rect: egui::Rect,
+    pose: Option<Pose>,
+    highlight: Option<Highlight>,
+) {
+    if ui.is_rect_visible(rect) {
+        ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
+            rect,
+            callback: Arc::new(Region {
+                id,
+                model,
+                view,
+                pose,
+                highlight,
+            }),
+        }));
+    }
 }
 
 #[repr(C)]
@@ -227,6 +353,12 @@ struct Uniform {
     ambient: [f32; 4],
     surface: [f32; 4],
     uv: [[[f32; 4]; 2]; 4],
+    shadow: [[f32; 4]; 4],
+    /// Lit in a studio, the camera's yaw (cosine, sine), the outline's class.
+    studio: [f32; 4],
+    /// The floor: its height, its radius, whether there is one.
+    floor: [f32; 4],
+    ground: [f32; 4],
 }
 /// The palette a part's skin shares with its other parts (0: no skin).
 fn skin_key(skin: Option<&Arc<Skin>>) -> usize {
@@ -244,12 +376,40 @@ struct GpuPart {
     source: usize,
     group: wgpu::BindGroup,
 }
-struct Pipelines {
-    layout: wgpu::BindGroupLayout,
+/// The pipelines of one sample count.
+struct Passes {
     triangles: wgpu::RenderPipeline,
     blended: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
+    ground: wgpu::RenderPipeline,
+    floor: wgpu::RenderPipeline,
+}
+/// What the studio and the outlines add, one sample a pixel.
+struct Extras {
+    shadow: wgpu::RenderPipeline,
+    mask: wgpu::RenderPipeline,
+    outline: wgpu::RenderPipeline,
+}
+struct Pipelines {
+    layout: wgpu::BindGroupLayout,
+    shader: wgpu::ShaderModule,
+    pipeline_layout: wgpu::PipelineLayout,
+    /// Without anti-aliasing, and with it, each made when first used.
+    passes: [Option<Passes>; 2],
+    extras: Option<Extras>,
+    /// The exact order of the see-through faces, for each of `passes`.
+    order: [Option<Order>; 2],
+    mips: crate::preview_mips::Mips,
     sampler: wgpu::Sampler,
+    /// The shadow map, for the passes that read it, and the map of none.
+    shadow_layout: wgpu::BindGroupLayout,
+    shadow_sampler: wgpu::Sampler,
+    no_shadow: wgpu::BindGroup,
+    outline_layout: wgpu::BindGroupLayout,
+    outline_sampler: wgpu::Sampler,
+    /// The layout of the passes that do not read the shadow map.
+    plain_layout: wgpu::PipelineLayout,
+    outline_pipeline_layout: wgpu::PipelineLayout,
     assets: SharedAssets,
 }
 struct Target {
@@ -257,15 +417,28 @@ struct Target {
     parts: Vec<GpuPart>,
     size: [u32; 2],
     color: wgpu::TextureView,
+    /// What is drawn to before `color`, with anti-aliasing.
+    smooth: Option<wgpu::TextureView>,
     depth: wgpu::TextureView,
+    samples: u32,
     texture: egui::TextureId,
     last: Option<View>,
     last_pose: Option<Pose>,
+    last_highlight: Option<Highlight>,
+    shadow: Option<Shadow>,
+    outline: Option<Outline>,
+    /// For its see-through faces, in a studio.
+    exact: Option<Exact>,
+    /// The memory had no room for it, at this size: not asked again.
+    no_exact: bool,
 }
 #[derive(Default)]
 pub(crate) struct Cache {
+    /// Samples a pixel of the previews drawn from now on (0: one).
+    samples: u32,
     pipeline: Option<Pipelines>,
     targets: HashMap<egui::Id, Target>,
+    shown: Shown<egui::Id>,
     /// The panorama viewers (panorama.rs), drawn the same way.
     pano: crate::panorama::Cache,
     meshes: crate::preview_mesh::Cache,
@@ -331,37 +504,174 @@ impl Pipelines {
             label: Some("Preview material"),
             entries: &entries,
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Preview"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
+        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Preview shadow"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
         });
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Preview shadow"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        let none = shadow_map(device, 1);
+        let no_shadow = shadow_group(device, &shadow_layout, &shadow_sampler, &none);
+        let outline_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Preview outline"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let outline_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Preview outline"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let layout_of = |label, groups: &[Option<&wgpu::BindGroupLayout>]| {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: groups,
+                immediate_size: 0,
+            })
+        };
+        let pipeline_layout = layout_of("Preview", &[Some(&layout), Some(&shadow_layout)]);
+        let plain_layout = layout_of("Preview plain", &[Some(&layout)]);
+        let outline_pipeline_layout = layout_of("Preview outline", &[Some(&outline_layout)]);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Asset preview"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/preview.wgsl").into()),
         });
-        let pipeline = |topology, entry, depth_write| {
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Preview textures"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..Default::default()
+        });
+        Self {
+            layout,
+            shader,
+            pipeline_layout,
+            passes: [None, None],
+            extras: None,
+            order: [None, None],
+            mips: crate::preview_mips::Mips::new(device),
+            sampler,
+            shadow_layout,
+            shadow_sampler,
+            no_shadow,
+            outline_layout,
+            outline_sampler,
+            plain_layout,
+            outline_pipeline_layout,
+            assets: SharedAssets::default(),
+        }
+    }
+
+    /// The pipelines of `samples` a pixel (1, or `SMOOTH`), made if needed.
+    fn prepare(&mut self, device: &wgpu::Device, samples: u32) -> &Passes {
+        let Self {
+            shader,
+            pipeline_layout,
+            passes,
+            ..
+        } = self;
+        passes[usize::from(samples > 1)].get_or_insert_with(|| Passes::new(device, shader, pipeline_layout, samples))
+    }
+
+    fn prepare_extras(&mut self, device: &wgpu::Device) {
+        if self.extras.is_none() {
+            self.extras = Some(Extras::new(device, self));
+        }
+    }
+
+    fn prepare_order(&mut self, device: &wgpu::Device, samples: u32) -> &Order {
+        let Self {
+            layout,
+            shadow_layout,
+            order,
+            ..
+        } = self;
+        order[usize::from(samples > 1)].get_or_insert_with(|| Order::new(device, layout, shadow_layout, VERTEX_LAYOUT, samples))
+    }
+
+    fn passes(&self, samples: u32) -> &Passes {
+        self.passes[usize::from(samples > 1)].as_ref().expect("prepared with the target")
+    }
+}
+
+impl Passes {
+    fn new(device: &wgpu::Device, shader: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, samples: u32) -> Self {
+        let pipeline = |topology, vertex, entry, depth_write| {
+            let solid = samples > 1 && depth_write;
+            // (the ground and the floor make their own corners)
+            let buffers: &[Option<wgpu::VertexBufferLayout>] = if vertex == "vs" { &[Some(VERTEX_LAYOUT)] } else { &[] };
             device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some("Asset preview"),
-                layout: Some(&pipeline_layout),
+                layout: Some(layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs"),
+                    module: shader,
+                    entry_point: Some(vertex),
                     compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Uint32x4, 4 => Float32x4],
-                    })],
+                    buffers,
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module: shader,
                     entry_point: Some(entry),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: wgpu::TextureFormat::Rgba8Unorm,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        // (the covered part of a cut-out is the opacity:
+                        // blending it too would thin it twice)
+                        blend: (!solid).then_some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: if solid { wgpu::ColorWrites::COLOR } else { wgpu::ColorWrites::ALL },
                     })],
                 }),
                 primitive: wgpu::PrimitiveState {
@@ -372,47 +682,266 @@ impl Pipelines {
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
                     depth_write_enabled: Some(depth_write),
-                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    depth_compare: Some(if vertex == "vs_ground" {
+                        wgpu::CompareFunction::Always
+                    } else {
+                        wgpu::CompareFunction::LessEqual
+                    }),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
+                multisample: wgpu::MultisampleState {
+                    count: samples,
+                    // the edges of the cut-outs (hair, lashes) too
+                    alpha_to_coverage_enabled: solid,
+                    ..Default::default()
+                },
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        Self {
+            triangles: pipeline(wgpu::PrimitiveTopology::TriangleList, "vs", "fs", true),
+            blended: pipeline(wgpu::PrimitiveTopology::TriangleList, "vs", "fs", false),
+            edges: pipeline(wgpu::PrimitiveTopology::LineList, "vs", "fs_edge", false),
+            ground: pipeline(wgpu::PrimitiveTopology::TriangleList, "vs_ground", "fs_ground", false),
+            floor: pipeline(wgpu::PrimitiveTopology::TriangleList, "vs_floor", "fs_floor", false),
+        }
+    }
+}
+
+const VERTEX_LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+    array_stride: std::mem::size_of::<Vertex>() as u64,
+    step_mode: wgpu::VertexStepMode::Vertex,
+    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Uint32x4, 4 => Float32x4],
+};
+
+/// Side of the shadow map of a studio.
+const SHADOW_SIZE: u32 = 1536;
+
+fn shadow_map(device: &wgpu::Device, side: u32) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("Preview shadow"),
+            size: wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+        .create_view(&Default::default())
+}
+
+fn shadow_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    map: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Preview shadow"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(map),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
+impl Extras {
+    fn new(device: &wgpu::Device, pipelines: &Pipelines) -> Self {
+        let depth = |compare, write, bias| wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: Some(write),
+            depth_compare: Some(compare),
+            stencil: Default::default(),
+            bias,
+        };
+        let bias = wgpu::DepthBiasState {
+            constant: 2,
+            slope_scale: 2.0,
+            clamp: 0.0,
+        };
+        let model = |label, vertex, fragment, targets: &[Option<wgpu::ColorTargetState>], depth_stencil| {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipelines.plain_layout),
+                vertex: wgpu::VertexState {
+                    module: &pipelines.shader,
+                    entry_point: Some(vertex),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(VERTEX_LAYOUT)],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &pipelines.shader,
+                    entry_point: Some(fragment),
+                    compilation_options: Default::default(),
+                    targets,
+                }),
+                primitive: Default::default(),
+                depth_stencil,
                 multisample: Default::default(),
                 multiview_mask: None,
                 cache: None,
             })
         };
-        let triangles = pipeline(wgpu::PrimitiveTopology::TriangleList, "fs", true);
-        let blended = pipeline(wgpu::PrimitiveTopology::TriangleList, "fs", false);
-        let edges = pipeline(wgpu::PrimitiveTopology::LineList, "fs_edge", false);
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Preview textures"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
+        let most = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Max,
+        };
+        let mask = wgpu::ColorTargetState {
+            format: MASK_FORMAT,
+            blend: Some(wgpu::BlendState { color: most, alpha: most }),
+            write_mask: wgpu::ColorWrites::ALL,
+        };
+        let outline = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Preview outline"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/preview_outline.wgsl").into()),
         });
         Self {
-            layout,
-            triangles,
-            blended,
-            edges,
-            sampler,
-            assets: SharedAssets::default(),
+            shadow: model(
+                "Preview shadow",
+                "vs_shadow",
+                "fs_shadow",
+                &[],
+                Some(depth(wgpu::CompareFunction::Less, true, bias)),
+            ),
+            mask: model("Preview mask", "vs", "fs_mask", &[Some(mask)], None),
+            outline: device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+                label: Some("Preview outline"),
+                layout: Some(&pipelines.outline_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &outline,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &outline,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::COLOR,
+                    })],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            }),
         }
     }
 }
 
+const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
+
+/// The shadow map and the outline's mask of a target that needs them.
+struct Shadow {
+    view: wgpu::TextureView,
+    group: wgpu::BindGroup,
+}
+struct Outline {
+    size: [u32; 2],
+    mask: wgpu::TextureView,
+    uniform: wgpu::Buffer,
+    group: wgpu::BindGroup,
+}
+
+impl Outline {
+    fn new(device: &wgpu::Device, pipelines: &Pipelines, size: [u32; 2]) -> Self {
+        let mask = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Preview mask"),
+                size: wgpu::Extent3d {
+                    width: size[0],
+                    height: size[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: MASK_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        let uniform = crate::gpu_alloc::buffer_init(
+            device,
+            "Preview outline",
+            &[0; std::mem::size_of::<OutlineUniform>()],
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Preview outline"),
+            layout: &pipelines.outline_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&mask),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&pipelines.outline_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform.as_entire_binding(),
+                },
+            ],
+        });
+        Self {
+            size,
+            mask,
+            uniform,
+            group,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct OutlineUniform {
+    colors: [[f32; 4]; 2],
+    /// One pixel, and the outline's width in pixels.
+    pixel: [f32; 4],
+}
+
+/// Towards the studio's key light, in the camera's frame: towards the camera,
+/// to its right, up (preview.wgsl).
+const KEY_LIGHT: [f32; 3] = [0.55, -0.6, 0.62];
+
+/// The studio's key light, as the shadow map sees the model.
+fn shadow_matrix(model: &Model, yaw: f32) -> Mat4 {
+    let (s, c) = yaw.sin_cos();
+    let [front, right, up] = KEY_LIGHT;
+    let toward = Vec3::new(front * c - right * s, front * s + right * c, up).normalize();
+    let radius = model.radius.max(0.001) * 1.1;
+    let eye = model.center + toward * radius * 2.0;
+    glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, radius * 0.5, radius * 4.0)
+        * glam::camera::rh::view::look_at_mat4(eye, model.center, Vec3::Z)
+}
+
 impl Target {
-    fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        egui: &mut egui_wgpu::Renderer,
-        pipeline: &mut Pipelines,
-        model: Arc<Model>,
-        size: [u32; 2],
-    ) -> Self {
-        let target = |label, format| {
+    /// What it draws to: the picture, the samples before it (with
+    /// anti-aliasing), the depth.
+    fn surfaces(device: &wgpu::Device, size: [u32; 2], samples: u32) -> (wgpu::TextureView, Option<wgpu::TextureView>, wgpu::TextureView) {
+        let target = |label, format, samples| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some(label),
@@ -422,7 +951,7 @@ impl Target {
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
-                    sample_count: 1,
+                    sample_count: samples,
                     dimension: wgpu::TextureDimension::D2,
                     format,
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -430,12 +959,37 @@ impl Target {
                 })
                 .create_view(&Default::default())
         };
-        let color = target("Preview color", wgpu::TextureFormat::Rgba8Unorm);
-        let depth = target("Preview depth", wgpu::TextureFormat::Depth32Float);
+        let color = target("Preview color", wgpu::TextureFormat::Rgba8Unorm, 1);
+        let smooth = (samples > 1).then(|| target("Preview samples", wgpu::TextureFormat::Rgba8Unorm, samples));
+        let depth = target("Preview depth", wgpu::TextureFormat::Depth32Float, samples);
+        (color, smooth, depth)
+    }
+
+    /// Another size or sample count of the same model: its parts stay.
+    fn resize(&mut self, device: &wgpu::Device, egui: &mut egui_wgpu::Renderer, pipeline: &mut Pipelines, size: [u32; 2], samples: u32) {
+        pipeline.prepare(device, samples);
+        (self.color, self.smooth, self.depth) = Self::surfaces(device, size, samples);
+        egui.update_egui_texture_from_wgpu_texture(device, &self.color, wgpu::FilterMode::Linear, self.texture);
+        (self.size, self.samples, self.last) = (size, samples, None);
+        (self.exact, self.no_exact) = (None, false);
+    }
+
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        egui: &mut egui_wgpu::Renderer,
+        pipeline: &mut Pipelines,
+        model: Arc<Model>,
+        size: [u32; 2],
+        samples: u32,
+    ) -> Self {
+        pipeline.prepare(device, samples);
+        let (color, smooth, depth) = Self::surfaces(device, size, samples);
         let texture = egui.register_native_texture(device, &color, wgpu::FilterMode::Linear);
         let assets = &mut pipeline.assets;
         let mut parts = Vec::new();
         let mut bones = HashMap::new();
+        let mut smaller: Option<wgpu::CommandEncoder> = None;
         for (source, part) in model.parts.iter().enumerate() {
             if part.vertices.is_empty() || part.indices.is_empty() {
                 continue;
@@ -518,7 +1072,7 @@ impl Target {
                             height: size[1],
                             depth_or_array_layers: 1,
                         },
-                        mip_level_count: 1,
+                        mip_level_count: crate::preview_mips::levels(size),
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: if slot == 0 || slot == 3 {
@@ -526,7 +1080,9 @@ impl Target {
                         } else {
                             wgpu::TextureFormat::Rgba8Unorm
                         },
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING
+                            | wgpu::TextureUsages::COPY_DST
+                            | wgpu::TextureUsages::RENDER_ATTACHMENT,
                         view_formats: &[],
                     });
                     queue.write_texture(
@@ -543,6 +1099,10 @@ impl Target {
                             depth_or_array_layers: 1,
                         },
                     );
+                    if texture.mip_level_count() > 1 {
+                        let encoder = smaller.get_or_insert_with(|| device.create_command_encoder(&Default::default()));
+                        pipeline.mips.record(device, encoder, &texture);
+                    }
                     let view = texture.create_view(&Default::default());
                     assets.images.insert(key, (image.as_ref().map(Arc::downgrade), view.clone()));
                     view
@@ -583,32 +1143,96 @@ impl Target {
                 group,
             });
         }
+        if let Some(encoder) = smaller {
+            queue.submit([encoder.finish()]);
+        }
         Self {
             model,
             parts,
             size,
             color,
+            smooth,
             depth,
+            samples,
             texture,
             last: None,
             last_pose: None,
+            last_highlight: None,
+            shadow: None,
+            outline: None,
+            exact: None,
+            no_exact: false,
         }
     }
-    fn draw(&mut self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, pipeline: &Pipelines, view: View, pose: Option<&Pose>) {
+    #[allow(clippy::too_many_arguments)]
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &mut Pipelines,
+        view: View,
+        pose: Option<&Pose>,
+        highlight: Option<&Highlight>,
+    ) {
+        // nothing outlined, or not at all: no outline to draw
+        let highlight = highlight.filter(|h| {
+            h.classes
+                .iter()
+                .any(|c| (1..=2).contains(c) && h.colors[usize::from(*c) - 1][3] > 0.0)
+        });
         let same_pose = match (pose, self.last_pose.as_ref()) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
             _ => false,
         };
-        if self.last == Some(view) && same_pose {
+        let same_highlight = Highlight::same(highlight, self.last_highlight.as_ref());
+        // (the last picture may have found its pool too small)
+        let short = self.exact.as_ref().is_some_and(|e| e.short(device));
+        if self.last == Some(view) && same_pose && same_highlight && !short {
             return;
         }
         self.last = Some(view);
         self.last_pose = pose.cloned();
+        self.last_highlight = highlight.cloned();
+        pipeline.prepare(device, self.samples);
+        if view.studio.is_some() || highlight.is_some() {
+            pipeline.prepare_extras(device);
+        }
+        if view.studio.is_some() && self.shadow.is_none() {
+            let map = shadow_map(device, SHADOW_SIZE);
+            let group = shadow_group(device, &pipeline.shadow_layout, &pipeline.shadow_sampler, &map);
+            self.shadow = Some(Shadow { view: map, group });
+        }
+        if highlight.is_some() && self.outline.as_ref().is_none_or(|o| o.size != self.size) {
+            self.outline = Some(Outline::new(device, pipeline, self.size));
+        }
+        let blends = view.studio.is_some()
+            && !self.no_exact
+            && Exact::possible(device)
+            && self
+                .parts
+                .iter()
+                .any(|p| effective_material(&self.model.parts[p.source], &view).alpha_mode == 1);
+        if blends {
+            let order = pipeline.prepare_order(device, self.samples);
+            match &mut self.exact {
+                Some(exact) if exact.fits(self.size, self.samples) => exact.follow(device),
+                exact => *exact = Exact::new(device, order, self.size, self.samples, &self.depth),
+            }
+            self.no_exact = self.exact.is_none();
+        } else {
+            self.exact = None;
+        }
+        let pipeline = &*pipeline;
+        let exact = self.exact.as_ref().zip(pipeline.order[usize::from(self.samples > 1)].as_ref());
+        let drawn = exact.map_or(&self.color, |(exact, _)| &exact.solid);
+        let light = shadow_matrix(&self.model, view.yaw).to_cols_array_2d();
+        let floor = view.studio.and_then(|s| s.floor);
         let radius = self.model.radius.max(0.001);
         let (eye, center) = view.camera(&self.model, self.size[0] as f32 / self.size[1] as f32);
         let projection =
-            glam::camera::rh::proj::directx::perspective(0.75, self.size[0] as f32 / self.size[1] as f32, radius * 0.01, radius * 100.0)
+            glam::camera::rh::proj::directx::perspective(FOV_Y, self.size[0] as f32 / self.size[1] as f32, radius * 0.01, radius * 100.0)
                 * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z);
         let mut posed = HashSet::new();
         for part in &self.parts {
@@ -646,17 +1270,67 @@ impl Target {
                     view.edge_color
                 },
                 ambient: [view.ambient[0], view.ambient[1], view.ambient[2], 1.0],
-                surface: [material.normal_scale, if material.double_sided { 1.0 } else { 0.0 }, 0.0, 0.0],
+                surface: [
+                    material.normal_scale,
+                    if material.double_sided { 1.0 } else { 0.0 },
+                    if self.samples > 1 { 1.0 } else { 0.0 },
+                    0.0,
+                ],
                 uv: material.uv,
+                shadow: light,
+                studio: [
+                    if view.studio.is_some() { 1.0 } else { 0.0 },
+                    view.yaw.cos(),
+                    view.yaw.sin(),
+                    highlight
+                        .and_then(|h| h.classes.get(part.source))
+                        .map_or(0.0, |class| f32::from(*class)),
+                ],
+                floor: [
+                    floor.unwrap_or_default(),
+                    radius * 1.6,
+                    if floor.is_some() && eye.z > floor.unwrap_or_default() {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                    0.0,
+                ],
+                ground: view.background,
             };
             queue.write_buffer(&part.uniform, 0, bytemuck::bytes_of(&uniforms));
+        }
+        let shadow = self.shadow.as_ref().filter(|_| view.studio.is_some());
+        if let (Some(shadow), Some(extras)) = (shadow, &pipeline.extras) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Preview shadow"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &shadow.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&extras.shadow);
+            for part in &self.parts {
+                pass.set_bind_group(0, &part.group, &[]);
+                pass.set_vertex_buffer(0, part.vertices.slice(..));
+                pass.set_index_buffer(part.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..part.count, 0, 0..1);
+            }
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Asset preview"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.color,
+                view: self.smooth.as_ref().unwrap_or(drawn),
                 depth_slice: None,
-                resolve_target: None,
+                resolve_target: self.smooth.is_some().then_some(drawn),
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
                         r: view.background[0] as f64,
@@ -664,7 +1338,11 @@ impl Target {
                         b: view.background[2] as f64,
                         a: 1.0,
                     }),
-                    store: wgpu::StoreOp::Store,
+                    store: if self.smooth.is_some() {
+                        wgpu::StoreOp::Discard
+                    } else {
+                        wgpu::StoreOp::Store
+                    },
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -679,10 +1357,26 @@ impl Target {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        let passes = pipeline.passes(self.samples);
+        pass.set_bind_group(1, shadow.map_or(&pipeline.no_shadow, |s| &s.group), &[]);
+        if view.studio.is_some()
+            && let Some(first) = self.parts.first()
+        {
+            pass.set_bind_group(0, &first.group, &[]);
+            pass.set_pipeline(&passes.ground);
+            pass.draw(0..3, 0..1);
+            if floor.is_some() {
+                pass.set_pipeline(&passes.floor);
+                pass.draw(0..6, 0..1);
+            }
+        }
         // Like the world passes, skin/masked faces precede blended cosmetics.
         // A transparent layer must never write depth over the face behind it.
         for blended in [false, true] {
-            pass.set_pipeline(if blended { &pipeline.blended } else { &pipeline.triangles });
+            if blended && exact.is_some() {
+                continue;
+            }
+            pass.set_pipeline(if blended { &passes.blended } else { &passes.triangles });
             for part in &self.parts {
                 if (effective_material(&self.model.parts[part.source], &view).alpha_mode == 1) != blended {
                     continue;
@@ -694,7 +1388,7 @@ impl Target {
             }
         }
         if view.edges || self.model.parts.iter().any(|p| p.diagnostic) {
-            pass.set_pipeline(&pipeline.edges);
+            pass.set_pipeline(&passes.edges);
             for part in &self.parts {
                 if !view.edges && !self.model.parts[part.source].diagnostic {
                     continue;
@@ -705,6 +1399,82 @@ impl Target {
                 pass.draw_indexed(0..part.edge_count, 0, 0..1);
             }
         }
+        drop(pass);
+        if let Some((exact, order)) = exact {
+            let shadow = shadow.map_or(&pipeline.no_shadow, |s| &s.group);
+            exact.record(encoder, order, shadow, &self.color, |pass| {
+                for part in &self.parts {
+                    if effective_material(&self.model.parts[part.source], &view).alpha_mode != 1 {
+                        continue;
+                    }
+                    pass.set_bind_group(0, &part.group, &[]);
+                    pass.set_vertex_buffer(0, part.vertices.slice(..));
+                    pass.set_index_buffer(part.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..part.count, 0, 0..1);
+                }
+            });
+        }
+        let (Some(highlight), Some(outline), Some(extras)) = (highlight, &self.outline, &pipeline.extras) else {
+            return;
+        };
+        let uniform = OutlineUniform {
+            colors: highlight.colors,
+            pixel: [
+                1.0 / self.size[0] as f32,
+                1.0 / self.size[1] as f32,
+                // as wide on any screen: a small part of the picture's height
+                (self.size[1] as f32 / 300.0).clamp(1.2, 3.0),
+                0.0,
+            ],
+        };
+        queue.write_buffer(&outline.uniform, 0, bytemuck::bytes_of(&uniform));
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Preview mask"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &outline.mask,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&extras.mask);
+            for part in &self.parts {
+                if highlight.classes.get(part.source).is_none_or(|class| *class == 0) {
+                    continue;
+                }
+                pass.set_bind_group(0, &part.group, &[]);
+                pass.set_vertex_buffer(0, part.vertices.slice(..));
+                pass.set_index_buffer(part.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..part.count, 0, 0..1);
+            }
+        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Preview outline"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.color,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&extras.outline);
+        pass.set_bind_group(0, &outline.group, &[]);
+        pass.draw(0..3, 0..1);
     }
 }
 
@@ -735,9 +1505,28 @@ pub(crate) fn target_size(size: egui::Vec2, scale: f32) -> [u32; 2] {
     ]
 }
 
+/// Samples a pixel with anti-aliasing: the count every card has.
+const SMOOTH: u32 = 4;
+
 impl Cache {
+    pub fn new(aa: crate::AntiAliasing) -> Self {
+        let mut cache = Self::default();
+        cache.set_anti_aliasing(aa);
+        cache
+    }
+
+    /// Follow the viewer's anti-aliasing: none, or smooth edges (the world's
+    /// own kind, FXAA, SMAA, TAA…, needs the frame's passes).
+    pub fn set_anti_aliasing(&mut self, aa: crate::AntiAliasing) {
+        self.samples = if aa == crate::AntiAliasing::None { 1 } else { SMOOTH };
+    }
+
+    /// The previews of `shower`'s pass become meshes of their targets,
+    /// drawn first when they changed. What no window shows any more goes.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
+        shower: Shower,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
@@ -745,7 +1534,7 @@ impl Cache {
         primitives: &mut [egui::ClippedPrimitive],
         scale: f32,
     ) {
-        self.meshes.render(device, encoder, egui, primitives, scale);
+        self.meshes.render(shower, device, encoder, egui, primitives, scale);
         let mut seen = HashSet::new();
         let mut pano_seen = HashSet::new();
         for primitive in primitives {
@@ -777,20 +1566,34 @@ impl Cache {
                 continue;
             }
             let size = target_size(rect.size(), scale);
+            let samples = self.samples.max(1);
             let pipeline = self.pipeline.get_or_insert_with(|| Pipelines::new(device));
             let changed = self
                 .targets
                 .get(&region.id)
-                .is_none_or(|target| target.size != size || !Arc::ptr_eq(&target.model, &region.model));
+                .is_none_or(|target| !Arc::ptr_eq(&target.model, &region.model));
             if changed {
                 if let Some(old) = self.targets.remove(&region.id) {
                     egui.free_texture(&old.texture);
                 }
-                self.targets
-                    .insert(region.id, Target::new(device, queue, egui, pipeline, region.model.clone(), size));
+                self.targets.insert(
+                    region.id,
+                    Target::new(device, queue, egui, pipeline, region.model.clone(), size, samples),
+                );
             }
             let target = self.targets.get_mut(&region.id).expect("preview target initialized");
-            target.draw(queue, encoder, pipeline, region.view, region.pose.as_ref());
+            if (target.size, target.samples) != (size, samples) {
+                target.resize(device, egui, pipeline, size, samples);
+            }
+            target.draw(
+                device,
+                queue,
+                encoder,
+                pipeline,
+                region.view,
+                region.pose.as_ref(),
+                region.highlight.as_ref(),
+            );
             seen.insert(region.id);
             let mut mesh = egui::Mesh::with_texture(target.texture);
             mesh.add_rect_with_uv(
@@ -800,15 +1603,33 @@ impl Cache {
             );
             primitive.primitive = egui::epaint::Primitive::Mesh(mesh);
         }
+        self.shown.set(shower, seen);
+        self.pano.show(shower, pano_seen);
+        self.prune(egui);
+    }
+
+    /// The windows outside that are gone (`alive`: by key) show nothing
+    /// any more: their previews go.
+    pub fn keep_outside(&mut self, alive: impl Fn(u64) -> bool, egui: &mut egui_wgpu::Renderer) {
+        self.meshes.keep_outside(&alive, egui);
+        // (each is asked: no `||`, which would stop at the first)
+        let gone = [self.shown.keep_outside(&alive), self.pano.keep_outside(&alive)];
+        if gone.contains(&true) {
+            self.prune(egui);
+        }
+    }
+
+    fn prune(&mut self, egui: &mut egui_wgpu::Renderer) {
+        let shown = &self.shown;
         self.targets.retain(|id, target| {
-            if seen.contains(id) {
+            if shown.has(id) {
                 true
             } else {
                 egui.free_texture(&target.texture);
                 false
             }
         });
-        self.pano.retain(&pano_seen, egui);
+        self.pano.retain(egui);
         // Image UUIDs are immutable; all min/max views share their GPU maps.
         // Weak owners bound the cache to the images still held by previews.
         if let Some(pipeline) = &mut self.pipeline {
@@ -821,6 +1642,246 @@ impl Cache {
 mod tests {
     use super::*;
     use wgpu::util::DeviceExt;
+
+    /// With anti-aliasing a slanted edge has in-between pixels; without, none.
+    #[test]
+    fn anti_aliasing_smooths_the_edges_of_a_preview() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let mut egui = egui_wgpu::Renderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, Default::default());
+        const SIZE: u32 = 64;
+        let corner = |x: f32, z: f32| Vertex::new([0.0, x, z], [-1.0, 0.0, 0.0], [0.0, 0.0]);
+        let part = Part {
+            diagnostic: false,
+            vertices: vec![corner(-0.8, -0.7), corner(0.8, -0.5), corner(0.1, 0.8)].into(),
+            indices: vec![0, 1, 2].into(),
+            textures: [None, None, None, None],
+            material: Material {
+                // its own light: one colour whatever the angle
+                color: [0.0, 0.0, 0.0, 1.0],
+                emissive: [1.0; 3],
+                double_sided: true,
+                ..Default::default()
+            },
+            skin: None,
+        };
+        let model = Arc::new(Model {
+            parts: vec![part],
+            center: Vec3::ZERO,
+            radius: 1.0,
+        });
+        let mut pipeline = Pipelines::new(&device);
+        let mut between = |samples| {
+            let mut target = Target::new(&device, &queue, &mut egui, &mut pipeline, model.clone(), [SIZE; 2], 1);
+            target.resize(&device, &mut egui, &mut pipeline, [SIZE; 2], samples);
+            let color = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Edge test"),
+                size: wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            target.color = color.create_view(&Default::default());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let view = View {
+                yaw: 0.0,
+                pitch: 0.0,
+                distance: 3.0,
+                background: [0.0, 0.0, 0.0, 1.0],
+                ..Default::default()
+            };
+            target.draw(&device, &queue, &mut encoder, &mut pipeline, view, None, None);
+            let pixels = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Edge pixels"),
+                size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_texture_to_buffer(
+                color.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &pixels,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(SIZE * 4),
+                        rows_per_image: Some(SIZE),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([encoder.finish()]);
+            pixels.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU work");
+            let data = pixels.slice(..).get_mapped_range().expect("mapped").to_vec();
+            let red: Vec<u8> = data.chunks(4).take((SIZE * SIZE) as usize).map(|p| p[0]).collect();
+            assert!(
+                data.chunks(4).take((SIZE * SIZE) as usize).all(|p| p[3] == 255),
+                "the picture stays opaque"
+            );
+            let full = red.iter().copied().max().unwrap_or(0);
+            assert!(full > 100, "the triangle shows");
+            red.iter().filter(|r| **r > 8 && **r < full - 8).count()
+        };
+        assert_eq!(between(1), 0);
+        assert!(between(SMOOTH) > 20);
+    }
+
+    /// Layers of hair: the nearer is over the farther whichever comes first in
+    /// the model, and what is solid hides both.
+    #[test]
+    fn see_through_faces_of_a_studio_are_sorted_pixel_by_pixel() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let early = crate::blend_exact::EARLY_TEST;
+        if !adapter.features().contains(early) {
+            eprintln!("no early depth test: skipped");
+            return;
+        }
+        let wanted = wgpu::DeviceDescriptor {
+            required_features: early | (adapter.features() & crate::blend_exact::WIDE_RANGE),
+            ..Default::default()
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wanted)).expect("GPU device");
+        let mut egui = egui_wgpu::Renderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, Default::default());
+        const SIZE: u32 = 64;
+        // a pane facing the camera at `x`, nearer when greater
+        let pane = |x: f32, light: [f32; 3], alpha: f32| {
+            let corner = |y: f32, z: f32| Vertex::new([x, y, z], [1.0, 0.0, 0.0], [0.0, 0.0]);
+            Part {
+                diagnostic: false,
+                vertices: vec![corner(-0.9, -0.9), corner(0.9, -0.9), corner(0.9, 0.9), corner(-0.9, 0.9)].into(),
+                indices: vec![0, 1, 2, 0, 2, 3].into(),
+                textures: [None, None, None, None],
+                material: Material {
+                    color: [0.0, 0.0, 0.0, alpha],
+                    emissive: light,
+                    alpha_mode: u32::from(alpha < 1.0),
+                    double_sided: true,
+                    ..Default::default()
+                },
+                skin: None,
+            }
+        };
+        let mut pipeline = Pipelines::new(&device);
+        let mut middle = |parts: Vec<Part>, samples| -> [u8; 4] {
+            let model = Arc::new(Model {
+                parts,
+                center: Vec3::ZERO,
+                radius: 1.0,
+            });
+            let mut target = Target::new(&device, &queue, &mut egui, &mut pipeline, model, [SIZE; 2], samples);
+            let color = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Order test"),
+                size: wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            target.color = color.create_view(&Default::default());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let view = View {
+                yaw: 0.0,
+                pitch: 0.0,
+                distance: 3.0,
+                background: [0.0, 0.0, 0.0, 1.0],
+                studio: Some(Studio { floor: None }),
+                ..Default::default()
+            };
+            target.draw(&device, &queue, &mut encoder, &mut pipeline, view, None, None);
+            let pixels = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Order pixels"),
+                size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_texture_to_buffer(
+                color.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &pixels,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(SIZE * 4),
+                        rows_per_image: Some(SIZE),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([encoder.finish()]);
+            pixels.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU work");
+            let data = pixels.slice(..).get_mapped_range().expect("mapped").to_vec();
+            let at = ((SIZE / 2 * SIZE + SIZE / 2) * 4) as usize;
+            [data[at], data[at + 1], data[at + 2], data[at + 3]]
+        };
+        let eye = View {
+            yaw: 0.0,
+            pitch: 0.0,
+            distance: 3.0,
+            ..Default::default()
+        }
+        .camera(
+            &Model {
+                parts: Vec::new(),
+                center: Vec3::ZERO,
+                radius: 1.0,
+            },
+            1.0,
+        )
+        .0;
+        let near = 0.3 * eye.x.signum();
+        let (red, green) = (|| pane(near, [0.6, 0.0, 0.0], 0.6), || pane(-near, [0.0, 0.6, 0.0], 0.6));
+        for samples in [1, SMOOTH] {
+            let a = middle(vec![red(), green()], samples);
+            let b = middle(vec![green(), red()], samples);
+            assert_eq!(a, b, "the same whichever comes first");
+            assert!(a[0] > a[1] + 20 && a[1] > 20, "the red one is over the green: {a:?}");
+            // many layers, more than a pixel's own slots
+            let mut stack: Vec<Part> = (0..20)
+                .map(|i| pane(-near + near * 0.05 * i as f32, [0.0, 0.6, 0.0], 0.2))
+                .collect();
+            let one = middle(stack.clone(), samples);
+            stack.reverse();
+            let other = middle(stack, samples);
+            assert!(one.iter().zip(other).all(|(a, b)| a.abs_diff(b) <= 2), "{one:?} {other:?}");
+            // a solid one between them hides the farther
+            let solid = middle(vec![green(), red(), pane(0.0, [0.0, 0.0, 0.6], 1.0)], samples);
+            assert!(solid[2] > 60 && solid[1] < a[1], "{solid:?}");
+            let behind = middle(vec![red(), green(), pane(near * 2.0, [0.0, 0.0, 0.6], 1.0)], samples);
+            let alone = middle(vec![pane(near * 2.0, [0.0, 0.0, 0.6], 1.0)], samples);
+            assert_eq!(behind, alone, "what is behind a solid face does not show");
+        }
+    }
 
     #[test]
     fn large_preview_targets_keep_the_shape_of_their_rectangle() {
@@ -878,7 +1939,7 @@ mod tests {
                 center: Vec3::ZERO,
                 radius: 1.0,
             });
-            let mut target = Target::new(&device, &queue, egui, pipeline, model, [SIZE; 2]);
+            let mut target = Target::new(&device, &queue, egui, pipeline, model, [SIZE; 2], 1);
             let color = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Layered head test"),
                 size: wgpu::Extent3d {
@@ -896,6 +1957,7 @@ mod tests {
             target.color = color.create_view(&Default::default());
             let mut encoder = device.create_command_encoder(&Default::default());
             target.draw(
+                &device,
                 &queue,
                 &mut encoder,
                 pipeline,
@@ -905,6 +1967,7 @@ mod tests {
                     distance: 3.0,
                     ..Default::default()
                 },
+                None,
                 None,
             );
             let pixels = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1126,6 +2189,10 @@ mod tests {
                 ambient: [0.2, 0.2, 0.2, 1.0],
                 surface: [1.0, 1.0, 0.0, 0.0],
                 uv: Material::default().uv,
+                shadow: Mat4::IDENTITY.to_cols_array_2d(),
+                studio: [0.0; 4],
+                floor: [0.0; 4],
+                ground: [0.0; 4],
             }),
             wgpu::BufferUsages::UNIFORM,
         );
@@ -1191,7 +2258,8 @@ mod tests {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&pipeline.triangles);
+            pass.set_pipeline(&pipeline.passes(1).triangles);
+            pass.set_bind_group(1, &pipeline.no_shadow, &[]);
             pass.set_bind_group(0, &group, &[]);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -1245,7 +2313,8 @@ mod tests {
             return;
         };
         let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
-        let pipeline = Pipelines::new(&device);
+        let mut pipeline = Pipelines::new(&device);
+        pipeline.prepare(&device, 1);
         for (mirrored, back, name) in [
             (false, false, "regular UV"),
             (true, false, "mirrored UV"),

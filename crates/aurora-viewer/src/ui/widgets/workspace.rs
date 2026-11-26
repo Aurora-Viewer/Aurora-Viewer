@@ -538,6 +538,9 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         return "photo-filled";
     }
     // the tools of a script editor carry its egui id and their own suffix
+    if id == super::super::area_search::WINDOW {
+        return "radar-2";
+    }
     if id.ends_with("_search") {
         return "search-filled";
     }
@@ -594,10 +597,11 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
         "beacons" => "radar-filled",
+        "inspect" => "scan-eye",
         "environment_selector" | "personal_lighting" => "sun-filled",
         "perf" | "performance" => "gauge-filled",
         "photo" | "photo_classic" => "camera-filled",
-        "controls" | "camera_controls" => "video-filled",
+        "controls" | "camera_controls" | "camera_controls_small" => "video-filled",
         "director" => "movie",
         "second_camera" => "device-cctv-filled",
         "movement_controls" => "walk",
@@ -781,13 +785,13 @@ impl ModalGround {
 
     /// For the modals of this frame, drawn after this call.
     pub fn set(self, ctx: &egui::Context) {
-        let frame = ctx.cumulative_frame_nr();
+        let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ctx.data_mut(|d| d.insert_temp(Self::id(), (frame, self)));
     }
 
     fn current(ctx: &egui::Context) -> Option<Self> {
         let (frame, ground) = ctx.data(|d| d.get_temp::<(u64, Self)>(Self::id()))?;
-        (frame == ctx.cumulative_frame_nr()).then_some(ground)
+        (frame == ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)).then_some(ground)
     }
 
     /// The shapes for a modal on `rect`: the part of the picture under it.

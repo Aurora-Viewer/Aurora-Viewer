@@ -1,7 +1,7 @@
 //! Preferences › Graphics (panel_preferences_graphics1.xml and its
 //! advanced floater): the level of the whole, then quality, light, the sky,
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
-//! depth of field), smoothness and parcel visibility.
+//! depth of field), smoothness, parcel visibility and ray tracing.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
@@ -21,6 +21,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
             overlays(cx);
         }
         6 => parcels(cx),
+        7 => ray_tracing(cx),
         _ => {}
     }
 }
@@ -190,6 +191,113 @@ fn night_sky_rows(cx: &mut Cx) {
     ) {
         cx.s.sync_night_sky();
     }
+}
+
+/// Ray tracing (aurora-render's rt_shadows.rs): the sun's shadows, and
+/// behind their cog what else traces the scene they build. Greyed with the
+/// reason on a graphics card that cannot, in a run set up for VR, and
+/// without the shadows.
+fn ray_tracing(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    use aurora_render::RayTracingSupport as Support;
+    cx.group(tr!("ui-options-ray-tracing"), |cx| {
+        let p = cx.p;
+        let card = match cx.st.ray_tracing {
+            Support::Unsupported => Some(tr!("ui-options-ray-tracing-unsupported")),
+            Support::Vr => Some(tr!("ui-options-ray-tracing-vr")),
+            Support::Ready | Support::NotOpened => None,
+        };
+        if let Some(why) = card {
+            cx.note(why);
+        }
+        let blocked = card.or((cx.s.shadow_quality == 0).then(|| tr!("ui-options-ray-tracing-needs-shadows")));
+        // (on by default where the card can, in the shadow maps' place: no
+        // experimental mark; the indirect light and the reflections keep it)
+        cx.keywords("RT raytracing").row(
+            tr!("ui-options-ray-traced-shadows"),
+            tr!("ui-options-ray-traced-shadows-help"),
+            &field!(ray_tracing.enabled),
+            |ui, s| {
+                let r = ui.add_enabled_ui(blocked.is_none(), |ui| toggle(ui, &p, &mut s.ray_tracing.enabled));
+                if let Some(why) = blocked {
+                    r.response.on_disabled_hover_text(why);
+                }
+                r.inner
+            },
+        );
+        let off = blocked.is_some() || !cx.s.ray_tracing.enabled;
+        cx.subs(off, |cx| {
+            use crate::settings::{RT_QUALITY_HIGH, RT_SHADOW_LAMPS_MAX, RT_SOFTNESS_MAX, Settings};
+            // (Aurora's own, as the games that trace rays have it: every
+            // traced effect stays on, with fewer samples; choosing one sets
+            // its lamps' count, which the slider below still moves)
+            let levels = [
+                (0, tr!("ui-options-preset-low"), false),
+                (1, tr!("ui-options-preset-medium"), false),
+                (RT_QUALITY_HIGH, tr!("ui-options-preset-high"), false),
+            ];
+            if cx.keywords("RT raytracing").choice(
+                tr!("ui-options-rt-quality"),
+                tr!("ui-options-rt-quality-help"),
+                &field!(rt_quality),
+                &levels,
+            ) {
+                let lamps = Settings::rt_lamp_quality(cx.s.rt_quality).lamps;
+                cx.s.rt_shadow_lamps = u8::try_from(lamps).unwrap_or(RT_SHADOW_LAMPS_MAX).clamp(1, RT_SHADOW_LAMPS_MAX);
+            }
+            // (Aurora's own: the Legacy Viewer's maps blur by a kernel,
+            // RenderShadowBlurSize, a debug setting)
+            cx.slider(
+                tr!("ui-options-rt-sun-softness"),
+                tr!("ui-options-rt-sun-softness-help"),
+                &field!(rt_sun_softness),
+                0.0..=RT_SOFTNESS_MAX,
+                "×",
+            );
+            cx.toggle(
+                tr!("ui-options-ray-traced-lights"),
+                tr!("ui-options-ray-traced-lights-help"),
+                &field!(ray_tracing.lights),
+            );
+            cx.greyed(!cx.s.ray_tracing.lights);
+            cx.slider(
+                tr!("ui-options-rt-lamp-softness"),
+                tr!("ui-options-rt-lamp-softness-help"),
+                &field!(rt_lamp_softness),
+                0.0..=RT_SOFTNESS_MAX,
+                "×",
+            );
+            cx.slider(
+                tr!("ui-options-rt-shadow-lamps"),
+                tr!("ui-options-rt-shadow-lamps-help"),
+                &field!(rt_shadow_lamps),
+                1..=RT_SHADOW_LAMPS_MAX,
+                "",
+            );
+            cx.greyed(false);
+            cx.experimental().toggle(
+                tr!("ui-options-ray-traced-indirect"),
+                tr!("ui-options-ray-traced-indirect-help"),
+                &field!(ray_tracing.indirect),
+            );
+            // (Aurora's own, under the traced indirect light it completes)
+            cx.greyed(!cx.s.ray_tracing.indirect);
+            cx.experimental()
+                .toggle(tr!("ui-options-gi-probes"), tr!("ui-options-gi-probes-help"), &field!(rt_gi_probes));
+            cx.greyed(false);
+            let ssr = cx.s.ssr;
+            cx.experimental().row(
+                tr!("ui-options-ray-traced-reflections"),
+                tr!("ui-options-ray-traced-reflections-help"),
+                &field!(ray_tracing.reflections),
+                |ui, s| {
+                    let r = ui.add_enabled_ui(ssr, |ui| toggle(ui, &p, &mut s.ray_tracing.reflections));
+                    r.response.on_disabled_hover_text(tr!("ui-options-ray-tracing-needs-ssr"));
+                    r.inner
+                },
+            );
+        });
+    });
 }
 
 fn graphics_card(cx: &mut Cx) {
@@ -378,12 +486,12 @@ fn quality(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-presets"), |cx| {
         let p = cx.p;
-        cx.wide().keywords(tr!("ui-options-preset-custom")).row(
+        cx.wide().keywords(tr!("ui-options-preset-custom")).row_with(
             tr!("ui-options-preset-level"),
             tr!("ui-options-preset-level-help"),
             // a level writes the page's settings: they are the rows below
             &Nothing,
-            |ui, s| preset_choice(ui, &p, s),
+            |ui, s, st, _| preset_choice(ui, &p, s, st.ray_tracing),
         );
         cx.below()
             .row_with(tr!("graphics-saved-title"), tr!("graphics-saved-help"), &Nothing, |ui, s, st, _| {
@@ -889,6 +997,23 @@ fn reflections_and_water(cx: &mut Cx) {
             tr!("ui-options-shiny-surfaces-expensive-disabled-by-default"),
             &field!(ssr),
         );
+        // (Aurora's own: the Legacy Viewer keeps its deferred normals in 16
+        // bits whatever is drawn, LLPipeline::addDeferredAttachments; here
+        // Automatic keeps them so for the traced reflections, which show
+        // the steps of 8, and the user decides otherwise)
+        cx.subs(!cx.s.ssr, |cx| {
+            use crate::settings::{NORMAL_PRECISION_AUTO, NORMAL_PRECISION_HIGH, NORMAL_PRECISION_STANDARD};
+            cx.keywords("normals G-buffer 8-bit 16-bit banding").choice(
+                tr!("ui-options-normal-precision"),
+                tr!("ui-options-normal-precision-help"),
+                &field!(normal_precision),
+                &[
+                    (NORMAL_PRECISION_AUTO, tr!("ui-options-normal-precision-automatic"), false),
+                    (NORMAL_PRECISION_STANDARD, tr!("ui-options-normal-precision-standard"), false),
+                    (NORMAL_PRECISION_HIGH, tr!("ui-options-normal-precision-high"), false),
+                ],
+            );
+        });
         cx.stepped(
             tr!("common-reflection-probes"),
             tr!("ui-options-what-shiny-surfaces-reflect-as-in-firestorm"),

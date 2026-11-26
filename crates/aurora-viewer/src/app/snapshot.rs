@@ -188,6 +188,8 @@ pub(super) struct Snapshots {
     /// What the preview was drawn for (photo size, interface, HUDs).
     preview_for: Option<((u32, u32), bool, bool)>,
     pub(super) preview_wanted: bool,
+    /// The photo window was open last frame (its opening asks a preview).
+    was_open: bool,
     camera: Option<[f32; 7]>,
     camera_moved: Option<Instant>,
     saving: Option<save::Saving>,
@@ -456,6 +458,7 @@ impl Default for Snapshots {
             preview: None,
             preview_for: None,
             preview_wanted: false,
+            was_open: false,
             camera: None,
             camera_moved: None,
             saving: None,
@@ -719,10 +722,11 @@ impl App {
         })
     }
 
-    /// The GPU time of a frame just reported, which plans the photo's
-    /// passes (`snapshot::GpuCost`), and the video memory its targets take.
+    /// The GPU time of a frame just reported, as a photo would spend it
+    /// (its traced passes run more rounds), which plans the photo's passes
+    /// (`snapshot::GpuCost`), and the video memory its targets take.
     pub(super) fn photo_gpu_time(&mut self, stats: &aurora_render::RenderStats) {
-        self.snapshots.gpu_cost.note(stats.gpu_ms, stats.gpu_pixels);
+        self.snapshots.gpu_cost.note(stats.gpu_photo_ms, stats.gpu_pixels);
         if stats.target_bytes_per_pixel.is_some() {
             self.snapshots.target_bytes = stats.target_bytes_per_pixel;
         }
@@ -1665,7 +1669,7 @@ impl App {
                 self.world.inventory.add_items(vec![item]);
                 // the inventory shows the new photo (upload_done_callback,
                 // openInventoryPanelAndSetSelection)
-                self.panels.inventory = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                 self.inventory_ui.show_original(&self.world.inventory, id);
                 self.snapshots.message = Some((aurora_i18n::tr!("photo-uploaded").to_owned(), false));
                 self.snapshots.message_item = Some(id);
@@ -1762,6 +1766,12 @@ impl App {
 
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
     pub(super) fn photo_update(&mut self, renderer: &mut Renderer) {
+        // every opening (toolbar, menu, shortcut, Phototools…) draws a fresh
+        // preview, as LLFloaterSnapshot::onOpen's updateSnapshot(true); the
+        // preview's own guards (frozen, viewfinder, 360°) still hold it
+        if just_opened(&mut self.snapshots.was_open, self.panels.snapshot) {
+            self.snapshots.preview_wanted = true;
+        }
         if std::mem::take(&mut self.snapshots.to_disk) {
             self.snapshots.quiet = !self.panels.snapshot;
             self.photo_take(renderer, None);
@@ -2023,7 +2033,9 @@ impl App {
                     self.settings.save();
                 }
             }
-            Action::PersonalLighting => self.panels.personal_lighting = true,
+            Action::PersonalLighting => {
+                crate::ui::widgets::open_floater(&self.egui_ctx, "personal_lighting", &mut self.panels.personal_lighting)
+            }
             Action::KeepLight => self.keep_photo_light(),
             Action::Controls => {
                 if !self.panels.camera_controls && !self.panels.movement_controls {
@@ -2035,7 +2047,7 @@ impl App {
             }
             Action::ShowItem => {
                 if let Some(id) = self.snapshots.message_item {
-                    self.panels.inventory = true;
+                    crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                     self.inventory_ui.show_original(&self.world.inventory, id);
                 }
             }
@@ -2682,6 +2694,38 @@ LUT_3D_SIZE {n}
         self.panels.snapshot && (self.snapshots.ui.full_frame || self.viewfinder_on())
     }
 
+    /// Ctrl+Shift+S (Action::PhotoWindow) and the menu's Photo. Port of the
+    /// "Take Snapshot" menu item, `Floater.Show` "snapshot" (menu_viewer.xml),
+    /// and of LLFloaterSnapshot::onOpen (indra/newview/llfloatersnapshot.cpp):
+    /// opens the photo window, or brings an open one forward with a fresh
+    /// preview, and never closes it (#4625); the viewfinder is the exception
+    /// ([`photo_shortcut`]). The toolbar button stays a toggle
+    /// ([`Self::photo_window_toggle`]).
+    pub(super) fn photo_window_shortcut(&mut self) {
+        let style = self.photo_style();
+        match photo_shortcut(self.panels.snapshot, style) {
+            PhotoShortcut::Leave => self.panels.snapshot = false,
+            PhotoShortcut::Show => {
+                let id = photo_window_id(style);
+                if self.panels.snapshot {
+                    crate::ui::widgets::bring_floater_front(&self.egui_ctx, id);
+                } else {
+                    crate::ui::widgets::open_floater(&self.egui_ctx, id, &mut self.panels.snapshot);
+                }
+                // (the viewfinder needs none: its view is live)
+                self.snapshots.preview_wanted = true;
+            }
+        }
+    }
+
+    /// The toolbar's Photo button (the snapshot command, `Floater.Toggle`,
+    /// commands.xml): the window of the chosen style, a minimized one
+    /// expanded.
+    pub(super) fn photo_window_toggle(&mut self) {
+        let id = photo_window_id(self.photo_style());
+        crate::ui::widgets::toggle_floater(&self.egui_ctx, id, &mut self.panels.snapshot);
+    }
+
     /// Escape leaves the full-frame view, then brings the free camera back,
     /// instead of resetting the camera. In the viewfinder: a menu open
     /// closes, the free camera comes back, the first person view ends, then
@@ -2831,7 +2875,7 @@ LUT_3D_SIZE {n}
         use crate::camera::free::{CLEARANCE, collide};
         let (world, scene) = (&self.world, &self.scene);
         let moved = collide(from, delta, |at, dir, length| {
-            let (hit, _) = scene.selection_pick(world, Some((at, dir)), None, true, false, length);
+            let hit = scene.photo_probe(world, (at, dir), length);
             let mut room = hit.map_or(length, |p| (p - at).dot(dir).clamp(0.0, length));
             if dir.z < 0.0
                 && let Some(land) = world.ground_height(at)
@@ -3125,6 +3169,7 @@ LUT_3D_SIZE {n}
             max_samples: renderer.msaa_supported().iter().copied().filter(|&n| n <= 8).max().unwrap_or(1),
             // (the renderer's measure, else the photo plan's fallback)
             target_bytes: snapshot::pass_bytes_per_pixel(self.snapshots.target_bytes, samples) - snapshot::PASS_OUTPUT_BYTES,
+            wide_normals: self.settings.normals_high(),
         };
         let memory = self.photo_memory(renderer);
         snapshot::quality::plan(memory, user, screen, current, may_raise)
@@ -3517,6 +3562,43 @@ pub(super) fn env_view<'a>(
     }
 }
 
+/// What Ctrl+Shift+S does to the photo mode ([`App::photo_window_shortcut`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PhotoShortcut {
+    /// Open the window, or bring it forward with a fresh preview.
+    Show,
+    /// Leave the viewfinder.
+    Leave,
+}
+
+/// The Legacy and Panel windows only open, as the Legacy Viewer's
+/// `Floater.Show`. The viewfinder (the Aurora style) is a full-screen mode
+/// with a live view and no preview to refresh: the key that entered it
+/// leaves it, as M does mouselook.
+fn photo_shortcut(open: bool, style: crate::settings::PhotoWindowStyle) -> PhotoShortcut {
+    if open && style == crate::settings::PhotoWindowStyle::Aurora {
+        PhotoShortcut::Leave
+    } else {
+        PhotoShortcut::Show
+    }
+}
+
+/// `open` rose since the last frame; `was` follows it.
+fn just_opened(was: &mut bool, open: bool) -> bool {
+    let opened = open && !*was;
+    *was = open;
+    opened
+}
+
+/// The floater of a photo window style: the Legacy one has its own.
+fn photo_window_id(style: crate::settings::PhotoWindowStyle) -> &'static str {
+    if style == crate::settings::PhotoWindowStyle::Legacy {
+        crate::ui::snapshot::CLASSIC_WINDOW
+    } else {
+        crate::ui::snapshot::WINDOW
+    }
+}
+
 /// A picture shared with another reader (the photo window's panorama),
 /// handed to the texture encoder without a copy.
 struct SharedRgba(std::sync::Arc<Vec<u8>>);
@@ -3524,5 +3606,44 @@ struct SharedRgba(std::sync::Arc<Vec<u8>>);
 impl AsRef<[u8]> for SharedRgba {
     fn as_ref(&self) -> &[u8] {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::PhotoWindowStyle;
+
+    /// Ctrl+Shift+S opens the windowed photo styles and keeps them open
+    /// (#4625); only the viewfinder is left by it.
+    #[test]
+    fn photo_shortcut_opens_and_never_closes_a_photo_window() {
+        for style in [PhotoWindowStyle::Legacy, PhotoWindowStyle::Panel, PhotoWindowStyle::Aurora] {
+            assert_eq!(photo_shortcut(false, style), PhotoShortcut::Show, "{style:?} closed");
+        }
+        assert_eq!(photo_shortcut(true, PhotoWindowStyle::Legacy), PhotoShortcut::Show);
+        assert_eq!(photo_shortcut(true, PhotoWindowStyle::Panel), PhotoShortcut::Show);
+        assert_eq!(photo_shortcut(true, PhotoWindowStyle::Aurora), PhotoShortcut::Leave);
+    }
+
+    /// Only the frame the window opens asks a preview (#4625: the toolbar's
+    /// opening refreshes it too).
+    #[test]
+    fn photo_window_opening_is_seen_once() {
+        let mut was = false;
+        assert!(!just_opened(&mut was, false));
+        assert!(just_opened(&mut was, true));
+        assert!(!just_opened(&mut was, true), "still open");
+        assert!(!just_opened(&mut was, false));
+        assert!(just_opened(&mut was, true), "opened again");
+    }
+
+    /// The Legacy style's window is its own floater: the toolbar and the
+    /// shortcut expand that one when it is minimized.
+    #[test]
+    fn photo_window_id_follows_the_style() {
+        assert_eq!(photo_window_id(PhotoWindowStyle::Legacy), crate::ui::snapshot::CLASSIC_WINDOW);
+        assert_eq!(photo_window_id(PhotoWindowStyle::Panel), crate::ui::snapshot::WINDOW);
+        assert_eq!(photo_window_id(PhotoWindowStyle::Aurora), crate::ui::snapshot::WINDOW);
     }
 }

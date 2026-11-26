@@ -612,7 +612,7 @@ impl BuildTool {
             .collect();
         for &i in &prims {
             if let Some(o) = world.objects.get_mut(i) {
-                o.click_action = action;
+                o.set_click_action(action);
             }
         }
         for (handle, local_ids) in Self::by_region(world, &prims) {

@@ -7,6 +7,16 @@
 use super::*;
 use crate::autopilot::{self, AutoPilot, DoubleClick, Finish};
 
+/// AURORA_DEMO_RT_WALK: where the walk began; the frames in which our
+/// avatar's ray-traced levels were left waiting and the farthest it stood
+/// from them (m); the same for any skeleton.
+#[derive(Default)]
+pub(super) struct RtWalkDemo {
+    from: Option<Vec3>,
+    own: (u32, f32),
+    any: (u32, f32),
+}
+
 impl App {
     /// What a double click on the ground does in this session.
     pub(super) fn double_click_action(&self) -> DoubleClick {
@@ -447,6 +457,54 @@ impl App {
         }
     }
 
+    /// AURORA_DEMO_RT_WALK=1: our avatar, heavy and hatted
+    /// (`demo::rt_walk_events`), walks 8 m from frame 700 and the log says at
+    /// frame 940 whether the ray tracer followed it: at each frame, how far
+    /// our avatar stood from the levels its shadow is traced from
+    /// (`Renderer::rt_avatar_behind`), and the same for the farthest of all
+    /// the skeletons (`Renderer::rt_skeletons_waiting`).
+    pub(super) fn demo_rt_walk_steps(&mut self) {
+        const START: u64 = 700;
+        const END: u64 = 940;
+        if !crate::demo::rt_walk() || !(START..=END).contains(&self.frame_count) || !matches!(self.screen, Screen::World) {
+            return;
+        }
+        let at = self.world.agent.position;
+        if self.frame_count == START {
+            self.rt_walk_demo = RtWalkDemo {
+                from: Some(at),
+                ..Default::default()
+            };
+            self.walk_to(at + Vec3::new(8.0, 1.0, 0.0), false);
+            return;
+        }
+        let Some(from) = self.rt_walk_demo.from else {
+            return;
+        };
+        let Some(g) = &self.gfx else {
+            return;
+        };
+        let own = self
+            .scene
+            .palette_of(&self.world.agent_id)
+            .map_or(0.0, |base| g.renderer.rt_avatar_behind(base));
+        let (waiting, any) = g.renderer.rt_skeletons_waiting();
+        let d = &mut self.rt_walk_demo;
+        d.own = (d.own.0 + u32::from(own > 0.0), d.own.1.max(own));
+        d.any = (d.any.0 + u32::from(waiting > 0), d.any.1.max(any));
+        if self.frame_count == END {
+            log::info!(
+                "demo rt walk: the avatar walked {:.1} m in {} frames; its traced levels were left waiting in {} of them, {:.2} m behind at most (any skeleton's: {} frames, {:.2} m)",
+                at.distance(from),
+                END - START,
+                d.own.0,
+                d.own.1,
+                d.any.0,
+                d.any.1,
+            );
+        }
+    }
+
     /// AURORA_DEMO_DOUBLECLICK=walk|run|tp[,x,y]: once the world shows, a
     /// double click with the left button at pixel (x, y) of the window (on
     /// the ground ahead and to the left by default), through the same way
@@ -566,8 +624,7 @@ impl App {
                 teleport_if_stuck: matches!(mode.as_str(), "stuck-teleport" | "stuck-denied"),
             };
             if mode == "stuck-denied" {
-                self.settings.rlva_enabled = true;
-                self.world.rlva_configure(true);
+                self.rlva_demo_switch(true);
                 self.rlva_demo_message("@tploc=n,tplocal:0=n".into());
             }
             self.on_ctx_action(if matches!(mode.as_str(), "go" | "go-flight" | "go-flight-late") {

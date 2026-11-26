@@ -9,6 +9,7 @@ files are embedded at build time; adding `de.ftl`, for example, adds a
 language to the Preferences without changing the Rust code. The file name
 must be a language identifier, such as `de` or `pt-BR`, and `language-name`
 holds the name that its speakers recognise.
+The English catalogue (`en.ftl`) is written in American English.
 
 The embedded fonts only cover European scripts. Other scripts, Japanese
 included, are drawn by the system fallback fonts (Meiryo UI or Yu Gothic UI

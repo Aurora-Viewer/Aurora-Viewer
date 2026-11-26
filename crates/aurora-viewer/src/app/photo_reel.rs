@@ -446,7 +446,7 @@ impl App {
                     self.snapshots.reel.mail = None;
                     self.snapshots.reel.apply = None;
                     self.panels.snapshot = false;
-                    self.panels.inventory = true;
+                    crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                     self.inventory_ui.show_original(&self.world.inventory, item);
                 }
             }

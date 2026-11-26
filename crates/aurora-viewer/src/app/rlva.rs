@@ -140,7 +140,7 @@ impl App {
     /// RLVa on or off and its settings, before a command is checked: the
     /// ones read once keep the values RLVa started with.
     pub(super) fn rlva_sync_settings(&mut self) {
-        self.world.rlva_configure(self.settings.rlva_enabled);
+        self.rlva_follow_switch();
         let phase = self.rlva_phase();
         self.world.rlva.apply_preferences(&self.settings.rlva, phase);
     }
@@ -163,6 +163,31 @@ impl App {
         self.world.agent.set_look_at(glam::Vec3::new(look.x, look.y, 0.0));
     }
 
+    /// RlvHandler::canEnable: the login screen, before a login starts.
+    pub(super) fn rlva_can_enable(&self) -> bool {
+        matches!(self.screen, super::Screen::Login) && !self.login_form.busy
+    }
+
+    /// The preference, followed: once RLVa runs, a change applies at the
+    /// next start of the viewer, with the Legacy Viewer's alert
+    /// (RlvSettings::onChangedSettingMain; world/rlva/switch.rs). The login
+    /// screen has no alerts: the Preferences page says it there.
+    fn rlva_follow_switch(&mut self) {
+        let can_enable = self.rlva_can_enable();
+        if let Some(notice) = self.rlva_switch.follow(self.settings.rlva_enabled, can_enable) {
+            log::info!("RLVa preference changed: {notice:?}");
+            if let Some(text) = notice.text().filter(|_| self.in_world()) {
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Alert,
+                    aurora_i18n::tr!("rlva-toggle-title"),
+                    text,
+                    crate::world::notifications::Data::None,
+                );
+            }
+        }
+        self.world.rlva_configure(self.rlva_switch.running());
+    }
+
     pub(super) fn update_rlva(&mut self) {
         self.demo_rlva();
         if std::mem::take(&mut self.world.rlva.im.remember) {
@@ -171,14 +196,14 @@ impl App {
                 self.settings.save();
             }
         }
-        self.world.rlva_configure(self.settings.rlva_enabled);
+        self.rlva_follow_switch();
         let phase = self.rlva_phase();
         self.world.rlva_startup(phase, &self.settings.rlva, Instant::now());
-        // RLVa off in session (Aurora only) drops the open @list / @except
-        // questions; the IM queries option does not: it only stops new ones
-        // (RlvHandler::processIMQuery), and a question already shown still
-        // answers (RlvHandler::onIMQueryListResponse)
-        if !self.settings.rlva_enabled {
+        // RLVa not running (a demo's stand-in for the next start) drops the
+        // open @list / @except questions; the IM queries option does not: it
+        // only stops new ones (RlvHandler::processIMQuery), and a question
+        // already shown still answers (RlvHandler::onIMQueryListResponse)
+        if !self.rlva_switch.running() {
             self.world
                 .notifications
                 .list
@@ -191,13 +216,13 @@ impl App {
                 self.chat_ui.show_profile = false;
             }
         }
-        if !self.settings.rlva_enabled {
+        if !self.rlva_switch.running() {
             self.named_teleport.cancel_scripts();
             self.world.maturity.cancel_script_teleports();
         }
         self.create_landmark_ui.apply_rlva_privacy(self.world.rlva.has("showloc"));
         self.media.enforce_focus(&self.world);
-        if !self.settings.rlva_enabled && !self.appearance_ui.pending_actor.is_nil() {
+        if !self.rlva_switch.running() && !self.appearance_ui.pending_actor.is_nil() {
             if let Some((_, sync)) = self.appearance_ui.pending.as_mut() {
                 *sync = false;
             }
@@ -207,7 +232,7 @@ impl App {
         self.world.rlva_controllers_tick(Instant::now());
         let login_locked = self.world.rlva.has("tploc") || (self.world.agent.is_sitting() && self.world.rlva.has("unsit"));
         self.rlva_login.update(
-            self.settings.rlva_enabled,
+            self.rlva_switch.running(),
             self.world.agent_id,
             self.world.movement_complete,
             login_locked,
@@ -294,7 +319,7 @@ impl App {
             .apply(self.world.rlva.has("showminimap"), &mut self.panels.minimap);
         keep_windows_closed(&self.world.rlva, &mut self.panels);
         if self.world.rlva.has("showinv") {
-            self.inventory_ui.close_additional_window();
+            self.inventory_ui.close_showinv_windows();
         }
         if self.world.rlva.has("alwaysrun") && self.always_run {
             self.set_always_run(false);
@@ -383,14 +408,13 @@ impl App {
         }
         self.demo_rlva_frame = Some(self.frame_count);
         if self.frame_count == 360 {
-            self.settings.rlva_enabled = false;
+            self.rlva_demo_switch(false);
             self.panels.settings = true;
             self.options_ui.page = ui::options::Page::Rlva;
             self.options_ui.tab = 0;
         }
         if self.frame_count == 700 {
-            self.settings.rlva_enabled = mode != "disabled";
-            self.world.rlva_configure(self.settings.rlva_enabled);
+            self.rlva_demo_switch(mode != "disabled");
             let scenario = mode.strip_suffix("-released").unwrap_or(&mode);
             if scenario == "baseline"
                 || scenario == "ground-wear"
@@ -958,14 +982,35 @@ impl App {
                 self.world.agent.seated
             );
         }
-        if (mode == "released" || mode.ends_with("-released")) && self.frame_count == 760 {
+        // the user turns RLVa off in the session: the alert, and the
+        // restrictions held until the next start
+        if mode == "restart" && self.frame_count == 760 {
             self.settings.rlva_enabled = false;
-            self.world.rlva_configure(false);
+        }
+        if mode == "restart" && self.frame_count == 800 {
+            log::info!(
+                "RLVa demo: switched off in session, running={}, restrictions kept={}",
+                self.rlva_switch.running(),
+                self.world.rlva.has("fly") && self.world.rlva.has("sendchat")
+            );
+        }
+        // the next start with RLVa off, in the same session
+        if (mode == "released" || mode.ends_with("-released")) && self.frame_count == 760 {
+            self.rlva_demo_switch(false);
             log::info!(
                 "RLVa demo: disabled, all restrictions released={}",
                 !self.world.rlva.has("fly") && !self.world.rlva.has("sendchat")
             );
         }
+    }
+
+    /// A demo turns RLVa on or off at once, the preference with it: it
+    /// stands for the next start of the viewer (world/rlva/switch.rs). The
+    /// demo never saves the settings.
+    pub(super) fn rlva_demo_switch(&mut self, on: bool) {
+        self.settings.rlva_enabled = on;
+        self.rlva_switch.demo_set(on);
+        self.world.rlva_configure(on);
     }
 
     pub(super) fn rlva_demo_message(&mut self, message: String) {
