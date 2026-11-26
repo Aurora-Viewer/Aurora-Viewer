@@ -28,6 +28,10 @@
 //!   the feature, or `AURORA_PIPELINE_CACHE=0`, nothing changes: the
 //!   pipelines are made without one, as before.
 
+mod activity;
+pub use activity::PipelineWork;
+pub(crate) use activity::{current as current_work, waiting_for};
+
 use parking_lot::{Condvar, Mutex};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -434,6 +438,7 @@ impl CachedPipelines for wgpu::Device {
     fn create_render_pipeline_cached(&self, desc: &wgpu::RenderPipelineDescriptor<'_>) -> wgpu::RenderPipeline {
         let started = Instant::now();
         let cache = desc.cache.is_none().then(|| cache_for(self)).flatten();
+        let work = activity::Guard::render(desc.label);
         let pipeline = match &cache {
             Some(cache) => {
                 let mut d: wgpu::RenderPipelineDescriptor<'_> = desc.clone();
@@ -442,6 +447,7 @@ impl CachedPipelines for wgpu::Device {
             }
             None => self.create_render_pipeline(desc),
         };
+        drop(work);
         made(desc.label, started.elapsed());
         pipeline
     }
@@ -449,6 +455,7 @@ impl CachedPipelines for wgpu::Device {
     fn create_compute_pipeline_cached(&self, desc: &wgpu::ComputePipelineDescriptor<'_>) -> wgpu::ComputePipeline {
         let started = Instant::now();
         let cache = desc.cache.is_none().then(|| cache_for(self)).flatten();
+        let work = activity::Guard::compute(desc.label);
         let pipeline = match &cache {
             Some(cache) => {
                 let mut d: wgpu::ComputePipelineDescriptor<'_> = desc.clone();
@@ -457,6 +464,7 @@ impl CachedPipelines for wgpu::Device {
             }
             None => self.create_compute_pipeline(desc),
         };
+        drop(work);
         made(desc.label, started.elapsed());
         pipeline
     }

@@ -916,16 +916,39 @@ fn the_scene_module_of_the_stochastic_depth_pass_is_rewritten() {
         | wgpu::Features::PRIMITIVE_INDEX;
     let shaders = SampleMaskShaders::with_facts(Some(facts.clone()), true);
     let words = shaders
-        .fixed_words_mapped(&facts, "scene stochastic mask", &wgsl, map)
+        .fixed_words_mapped(
+            &facts,
+            "scene stochastic mask",
+            &wgsl,
+            map.clone(),
+            crate::oit_stochastic::MASK_ENTRIES,
+        )
         .expect("the scene module is written and rewritten")
         .expect("the module has a SampleMask built-in to rewrite");
     verify(&words.spirv).expect("verified");
     assert_eq!(rewrite(&words.spirv), Ok(Outcome::AlreadyArray));
-    assert!(words.entry_points.iter().any(|(name, _)| name == "fs_st_depth_mask"));
-    // (the module declares many resources the entry point never uses: only
-    // the faults about the mask matter here)
-    if let Some(Err(report)) = spirv_val(&words.spirv, &facts) {
-        let about_the_mask: Vec<String> = faults(&report).into_iter().filter(|f| f.contains("SampleMask")).collect();
-        assert!(about_the_mask.is_empty(), "{about_the_mask:?}");
+    let entries: Vec<_> = words.entry_points.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(entries, ["vs_main", "fs_st_depth_mask"]);
+    // This fixture maps every slot to a globally unique binding number.
+    // Both stochastic bindings must retain their numbers. An exact-blend
+    // storage buffer used only by the discarded entries must disappear.
+    let emitted: Vec<u32> = instructions(&words.spirv)
+        .expect("instructions")
+        .into_iter()
+        .filter(|i| i.op == op(spirv::Op::Decorate) && i.len == 4)
+        .map(|i| i.words(&words.spirv))
+        .filter(|w| w[2] == spirv::Decoration::Binding as u32)
+        .map(|w| w[3])
+        .collect();
+    let slot = |binding| map[&naga::ResourceBinding { group: 3, binding }].binding;
+    assert!(emitted.contains(&slot(30)) && emitted.contains(&slot(31)));
+    assert!(!emitted.contains(&slot(9)));
+    if let Some(result) = spirv_val(&words.spirv, &facts) {
+        result.expect("the complete depth mask module is valid SPIR-V");
     }
+    // A stage mismatch cannot silently deliver the wrong pipeline interface.
+    assert!(matches!(
+        shaders.fixed_words_mapped(&facts, "wrong stage", &wgsl, map, &[(naga::ShaderStage::Fragment, "vs_main")]),
+        Err(FixError::Validate(_))
+    ));
 }

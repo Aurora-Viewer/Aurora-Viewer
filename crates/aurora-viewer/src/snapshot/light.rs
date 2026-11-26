@@ -97,8 +97,9 @@ pub fn photo_level(open: bool, chosen: Option<u8>, user: u8, boosted: bool) -> u
 /// photo's while its window is `open`, else Preferences'.
 pub fn drawn_levels(settings: &crate::settings::Settings, light: &PhotoLight, open: bool) -> (u8, u8) {
     let boost = settings.photo_held.is_some();
+    let quality = if settings.shadows { settings.shadow_quality } else { 0 };
     (
-        photo_level(open, light.shadow_quality, settings.shadow_quality, boost),
+        photo_level(open, light.shadow_quality, quality, boost),
         photo_level(open, light.ambient_occlusion, settings.ssao, boost),
     )
 }
@@ -111,9 +112,31 @@ pub fn drawn_levels(settings: &crate::settings::Settings, light: &PhotoLight, op
 pub fn drawn_shadows(settings: &crate::settings::Settings, light: &PhotoLight, open: bool) -> (f32, f32) {
     let chosen = |value: Option<f32>| value.filter(|_| open);
     (
-        chosen(light.shadow_softness).unwrap_or(settings.shadow_softness),
+        chosen(light.shadow_softness).unwrap_or_else(|| settings.projector_softness()),
         chosen(light.shadow_intensity).unwrap_or(settings.shadow_intensity),
     )
+}
+
+/// A photo quality override selects a different map explicitly. At the user's
+/// own level keep the exact P3 resolution and reach, including Custom values.
+pub fn shadow_params(settings: &crate::settings::Settings, quality: u8) -> (u32, f32) {
+    if quality == 0 {
+        (0, 0.0)
+    } else if quality == settings.shadow_quality {
+        settings.shadow_params()
+    } else {
+        crate::settings::Settings::shadow_params_of(quality)
+    }
+}
+
+pub fn sun_diameter(settings: &crate::settings::Settings, light: &PhotoLight, open: bool) -> f32 {
+    if !settings.sun_shadow_contact_hardening || drawn_levels(settings, light, open).0 == 0 {
+        return 0.0;
+    }
+    if let Some(softness) = light.shadow_softness.filter(|_| open) {
+        return crate::settings::Settings::diameter_from_softness(softness);
+    }
+    settings.sun_shadow_angular_diameter_deg
 }
 
 /// Preferences' render settings with the photo's shadow quality and
@@ -124,7 +147,9 @@ pub fn drawn_shadows(settings: &crate::settings::Settings, light: &PhotoLight, o
 pub fn render_settings(settings: &crate::settings::Settings, light: &PhotoLight, open: bool) -> aurora_render::RenderSettings {
     let (shadow_quality, ssao) = drawn_levels(settings, light, open);
     let mut out = settings.render_settings();
-    out.shadow_resolution = crate::settings::Settings::shadow_params_of(shadow_quality).0;
+    out.shadow_resolution = shadow_params(settings, shadow_quality).0;
+    out.sun_shadow_angular_diameter_deg = sun_diameter(settings, light, open);
+    out.soft_shadows = out.sun_shadow_angular_diameter_deg > 0.0;
     out.ssao = ssao;
     out
 }
@@ -147,7 +172,7 @@ mod tests {
     #[test]
     fn the_photo_shadow_sliders_hold_while_the_window_is_open() {
         let settings = crate::settings::Settings {
-            shadow_softness: 0.25,
+            sun_shadow_angular_diameter_deg: crate::settings::Settings::diameter_from_softness(0.25),
             shadow_intensity: 1.0,
             ..Default::default()
         };
@@ -158,13 +183,39 @@ mod tests {
         };
         assert_eq!(drawn_shadows(&settings, &light, true), (2.0, 0.3));
         // closed with the light not reset yet (the Director gives the sun)
-        assert_eq!(drawn_shadows(&settings, &light, false), (0.25, 1.0));
+        assert_eq!(drawn_shadows(&settings, &light, false), (settings.projector_softness(), 1.0));
         // one chosen, the other Preferences'
         let light = PhotoLight {
             shadow_intensity: Some(0.5),
             ..Default::default()
         };
-        assert_eq!(drawn_shadows(&settings, &light, true), (0.25, 0.5));
+        assert_eq!(drawn_shadows(&settings, &light, true), (settings.projector_softness(), 0.5));
+    }
+
+    #[test]
+    fn photo_uses_p3_custom_map_and_restores_the_exact_world_angle() {
+        let mut s = crate::settings::Settings::default();
+        use crate::settings::shadow_profile::{self, Tier};
+        shadow_profile::select_fixed_tier(&mut s, Tier::High);
+        shadow_profile::set_custom_enabled(&mut s, true);
+        s.set_shadow_map_size(1024);
+        s.graded_shadow_distance = 73;
+        s.sun_shadow_angular_diameter_deg = 0.72;
+        shadow_profile::commit_edits(&mut s);
+        let light = PhotoLight {
+            shadow_softness: Some(2.0),
+            ..Default::default()
+        };
+        assert_eq!(shadow_params(&s, s.shadow_quality), (1024, 73.0));
+        assert_eq!(render_settings(&s, &light, true).shadow_resolution, 1024);
+        assert_eq!(
+            sun_diameter(&s, &light, true),
+            crate::settings::Settings::diameter_from_softness(2.0)
+        );
+        assert_eq!(sun_diameter(&s, &light, false), 0.72);
+        assert_eq!(render_settings(&s, &light, false), s.render_settings());
+        s.sun_shadow_contact_hardening = false;
+        assert_eq!(sun_diameter(&s, &light, true), 0.0);
     }
 
     #[test]

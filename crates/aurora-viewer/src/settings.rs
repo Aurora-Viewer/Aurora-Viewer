@@ -10,6 +10,7 @@ pub mod backup;
 pub mod draw_stepping;
 mod hover_height;
 pub mod registry;
+pub mod shadow_profile;
 pub mod stream_list;
 
 /// Where a contact-set marker stands on an avatar (`ui/contact_markers.rs`).
@@ -1724,8 +1725,45 @@ pub struct Settings {
     pub(crate) former_look_at: Option<bool>,
     #[serde(rename = "look_at_range", skip_serializing)]
     pub(crate) former_look_at_range: Option<f32>,
+    /// Shadow controls added after v2.3.5. Missing in historical profiles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow_profile: Option<shadow_profile::Profile>,
+    /// Disclosure state for this preferences session; never a renderer input.
+    #[serde(skip)]
+    pub(crate) shadow_advanced_open: bool,
     /// 0 off, 1 low, 2 medium, 3 high, 4 ultra
     pub shadow_quality: u8,
+    /// Explicit side length in texels. Zero imports the active v2.3.0 mode's resolution.
+    pub shadow_map_resolution: u16,
+    /// Quality restored when the shadow master is turned back on.
+    pub shadow_resume_quality: u8,
+    /// Separate reach for the three-level sun maps; zero imports the old quality step.
+    pub three_level_shadow_distance: u16,
+    /// Mild edge filtering on the close, middle and far graded shadow maps.
+    pub graded_shadow_edge_smoothing: bool,
+    /// Contact-hardening on the directional shadow maps, independent of screen-space contacts.
+    pub sun_shadow_contact_hardening: bool,
+    /// Full apparent diameter in degrees, retained when contact-hardening is disabled.
+    pub sun_shadow_angular_diameter_deg: f32,
+    /// Four geometric shadow levels with a separate near depth target.
+    pub graded_sun_shadows: bool,
+    /// Camera distance of the first transition endpoint, in metres.
+    pub graded_shadow_detail_metres: u8,
+    /// Requested directional shadow distance; the camera far plane still limits it.
+    pub graded_shadow_distance: u16,
+    /// Opt-in near shadow-map detail. Keeps the prior rendering path when off.
+    pub near_shadow_detail: bool,
+    /// Upper bound for the first cascade split, in metres (2-12, default 4).
+    /// A tighter existing percentage split still wins.
+    pub near_shadow_detail_metres: u8,
+    /// Experimental: tighten the nearest sun shadow cascade without changing
+    /// the shadow resolution or the total shadow distance.
+    pub near_shadow_precision: bool,
+    /// Coverage of the nearest cascade, as a percentage of shadow distance.
+    /// Aurora original = 8; tighter = 3-7 (smaller coverage but finer texels).
+    pub near_shadow_cascade_percent: u8,
+    /// Show Aurora's existing red/green/blue shadow cascade debug overlay.
+    pub near_shadow_debug: bool,
     /// Projectors cast shadows within the configured budget
     /// (Legacy Viewer RenderShadowDetail 2, "Sun/Moon + Projectors").
     pub projector_shadows: bool,
@@ -1744,18 +1782,37 @@ pub struct Settings {
     /// Legacy Viewer (contact_shadows.rs): what the shadow map is too coarse
     /// to show, where things touch. Off by default; only with the shadows.
     pub contact_shadows: bool,
-    /// Soft sun shadows, experimental (aurora-render `soft_shadows.rs`): the
-    /// penumbra widens with the distance of the caster, like the sun's in
-    /// real life. Beyond the Legacy Viewer, off by default and in every
-    /// graphics level; only with the shadows.
-    pub soft_shadows: bool,
-    /// With soft shadows, the size of the light: 1 = 2.3 degrees across (the
-    /// real sun, 0.53 degrees, is a softness of 0.23), 0 = no size, up to 2. Without soft
-    /// shadows it has no effect.
-    pub shadow_softness: f32,
     /// How dark the sun's shadows are, 0 to 1: 1 = as the Legacy Viewer's,
     /// less lets the light through. Works with or without soft shadows.
     pub shadow_intensity: f32,
+    /// Original Bend wavefront 0; experimental view-space contact rays 1.
+    pub contact_ray_method: u8,
+    pub contact_view_reach: f32,
+    pub contact_view_thickness: f32,
+    pub contact_view_budget: u32,
+    pub contact_view_debug: bool,
+    /// 0 reads legacy diagnostic switches; 1 map, 2 contact, 3 combined, 4 cascades.
+    pub shadow_visibility_debug: u8,
+    /// Experimental ray-depth window extension on receding rays.
+    pub contact_integrity_depth: bool,
+    /// Repair only narrow, depth-supported holes within the contact mask.
+    pub contact_integrity_hole_repair: bool,
+    /// Obsolete saved option, retained for compatibility and ignored by rendering.
+    pub contact_integrity_composite: bool,
+    /// Experimental contact shadow ray reach; 0 retains upstream behavior.
+    pub experimental_contact_reach_mode: u8,
+    /// Adaptive contact ray extent in approximate world-space metres.
+    pub experimental_contact_reach_metres: f32,
+    /// Live occluder-thickness window. 0.05 m preserves upstream behavior.
+    pub experimental_contact_occluder_depth_metres: f32,
+    /// Experimental attenuation of isolated screen-space contact-mask hits.
+    pub experimental_contact_coherence: bool,
+    /// Show the contact-shadow mask as a diagnostic (not the unfiltered raw pass).
+    pub experimental_contact_mask_debug: bool,
+    /// Candidate hit and ray extent diagnostics for screen-space contact shadows.
+    pub experimental_contact_hit_debug: bool,
+    /// Show near depth-window misses, screen-edge, and reach-budget outcomes.
+    pub experimental_contact_failure_debug: bool,
     /// 0 none, 1 FXAA, 2 MSAA 2x, 3 MSAA 4x, 4 MSAA 8x, 5 TAA, 6 SMAA (the
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt), 7 AMD FSR 3.1 (beyond the Legacy Viewer)
@@ -1789,6 +1846,15 @@ pub struct Settings {
     /// pixel, so they stop shimmering as the camera moves. An Aurora
     /// improvement, on by default.
     pub specular_aa: bool,
+    /// Aurora experimental: diffuse-only lighting harmonization for non-PBR objects.
+    /// The original legacy specular, environment and alpha calculations remain intact.
+    pub legacy_light_harmonization: bool,
+    /// Normalize legacy direct sunlight toward the PBR diffuse response (modern skies).
+    pub harmonize_sunlight: bool,
+    /// Soften only the legacy diffuse component's screen-space ambient occlusion.
+    pub harmonize_ambient: bool,
+    /// Avoid the extra GGX local highlight already present ahead of legacy specular.
+    pub harmonize_local_lights: bool,
     /// The sky ambient keeps its colour at full strength (x 0.7), as the
     /// first PBR release lit it (tag Second_Life_Release#843866d-DRTVWR-559),
     /// instead of a softened ambient (pow 0.9, x 0.57) turned grey under
@@ -1813,6 +1879,17 @@ pub struct Settings {
     /// mapping nor sharpening, no emissive on opaque PBR faces and 8-bit
     /// reflection probes (`RenderSettings::hdr`).
     pub hdr_emissive: bool,
+    /// Client-side experiment: never changes SL material assets or permissions.
+    /// Off by default; scope 0 chooses one material UUID, scope 1 explicitly
+    /// tests all double-sided alpha-masked PBR surfaces.
+    pub pbr_thin_enabled: bool,
+    pub pbr_thin_scope: u8,
+    pub pbr_thin_material_id: String,
+    /// Minimum ORM red-channel visibility for matching PBR surfaces only.
+    pub pbr_thin_ao_floor: f32,
+    /// Back-light transmission approximation for matching surfaces only.
+    pub pbr_thin_transmission: f32,
+    pub pbr_thin_debug: bool,
     /// Optional frame rate cap (on by default at 60 images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
@@ -1862,6 +1939,8 @@ pub struct Settings {
     pub screen_indirect_light: bool,
     /// Its strength, 0 to 4 (1 = one physical bounce).
     pub screen_indirect_intensity: f32,
+    /// Experimental XeGTAO compensation for overly thick thin occluders.
+    pub experimental_gtao_thin_compensation: f32,
     /// Water reflections: 0 off, 1 low, 2 medium, 3 high, 4 ultra.
     pub water_reflections: u8,
     /// Mirrors: 0 off, 1 low, 2 medium, 3 high, 4 ultra.
@@ -2093,7 +2172,10 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 47;
+// Older viewers preserve the directional-shadow controls in flat settings and
+// per-tier snapshots through their newer-document merger, including builds
+// with the ray-tracing migrations through version 47.
+const SETTINGS_VERSION: u32 = 48;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2895,15 +2977,45 @@ impl Default for Settings {
             beams: Default::default(),
             former_look_at: None,
             former_look_at_range: None,
+            shadow_profile: None,
+            shadow_advanced_open: false,
             shadow_quality: 3,
+            shadow_map_resolution: 0,
+            shadow_resume_quality: 3,
+            three_level_shadow_distance: 0,
+            graded_shadow_edge_smoothing: false,
+            sun_shadow_contact_hardening: true,
+            sun_shadow_angular_diameter_deg: shadow_profile::DEFAULT_SUN_DIAMETER,
+            graded_sun_shadows: false,
+            graded_shadow_detail_metres: 2,
+            graded_shadow_distance: 192,
+            near_shadow_detail: false,
+            near_shadow_detail_metres: 4,
+            near_shadow_precision: false,
+            near_shadow_cascade_percent: 4,
+            near_shadow_debug: false,
             projector_shadows: true,
             others_attached_lights: true,
             local_light_count: crate::scene::lights::MAX_LIGHTS as u32,
             projector_shadow_limit: 2,
             contact_shadows: false,
-            soft_shadows: false,
-            shadow_softness: SHADOW_SOFTNESS,
             shadow_intensity: SHADOW_INTENSITY,
+            contact_ray_method: 0,
+            contact_view_reach: 0.8,
+            contact_view_thickness: 0.10,
+            contact_view_budget: 96,
+            contact_view_debug: false,
+            shadow_visibility_debug: 0,
+            contact_integrity_depth: false,
+            contact_integrity_hole_repair: false,
+            contact_integrity_composite: false,
+            experimental_contact_reach_mode: 0,
+            experimental_contact_reach_metres: 0.5,
+            experimental_contact_occluder_depth_metres: 0.05,
+            experimental_contact_coherence: false,
+            experimental_contact_mask_debug: false,
+            experimental_contact_hit_debug: false,
+            experimental_contact_failure_debug: false,
             antialiasing: 6,
             blend_order: crate::graphics_presets::BLEND_ORDER_FULL,
             fsr_quality: 1,
@@ -2911,11 +3023,21 @@ impl Default for Settings {
             render_scale_percent: 100,
             render_scale_auto: cfg!(target_os = "macos"),
             specular_aa: true,
+            legacy_light_harmonization: false,
+            harmonize_sunlight: true,
+            harmonize_ambient: true,
+            harmonize_local_lights: true,
             colored_sky_ambient: false,
             volumetric_clouds: false,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
+            pbr_thin_enabled: false,
+            pbr_thin_scope: 0,
+            pbr_thin_material_id: String::new(),
+            pbr_thin_ao_floor: 0.35,
+            pbr_thin_transmission: 0.4,
+            pbr_thin_debug: false,
             fps_cap: true,
             fps_limit: 60,
             graphics_saved: Default::default(),
@@ -2935,6 +3057,7 @@ impl Default for Settings {
             water_effects: WaterEffectsSettings::default(),
             screen_indirect_light: false,
             screen_indirect_intensity: SCREEN_INDIRECT_INTENSITY,
+            experimental_gtao_thin_compensation: 0.0,
             water_reflections: 1,
             reflection_probes: 3,
             probe_count: 256,
@@ -3271,6 +3394,40 @@ impl Settings {
             crate::tolerant::backup(path);
             return None;
         };
+        // Unversioned shadow profiles from before the tier editor had no
+        // source size. Preserve an explicit flat angle, including 0.53°.
+        let missing_sun = |document: &serde_json::Value| {
+            document.get("shadow_profile").is_none_or(serde_json::Value::is_null)
+                && document.get("sun_shadow_angular_diameter_deg").is_none()
+        };
+        // Upstream's shadow tiers through the ray-tracing releases predate
+        // the P3 layout keys; stable 0.9.12 also predates the softness key.
+        let stock_schema = (44..=47).contains(&version)
+            && value.get("shadow_quality").is_some()
+            && value.get("graded_sun_shadows").is_none()
+            && value.get("shadow_map_resolution").is_none();
+        if missing_sun(&value) {
+            if version < 46 && (stock_schema || value.get("soft_shadows").is_some()) {
+                // Compare the historical Deluxe before the P3 import changes
+                // its shadow size and projector budget. The ordinary migration
+                // below remains responsible for files without upstream controls.
+                read.value.ray_tracing = RayTracingSettings::OFF;
+                crate::graphics_presets::upgrade_deluxe_to_high(&mut read.value);
+            }
+            if !shadow_profile::import_upstream_controls(&mut read.value, &value, stock_schema) {
+                read.value.sun_shadow_angular_diameter_deg = shadow_profile::imported_sun_diameter(&read.value);
+            }
+        }
+        if let Some(profiles) = value["graphics_saved"].as_object() {
+            for (name, profile) in &mut read.value.graphics_saved {
+                if let Some(document) = profiles.get(name).filter(|doc| missing_sun(doc)) {
+                    let stock_profile = stock_schema
+                        && document.get("graded_sun_shadows").is_none()
+                        && document["quality"].get("shadow_map_resolution").is_none();
+                    profile.import_legacy_sun(&document["quality"]["effects"], stock_profile);
+                }
+            }
+        }
         if version <= SETTINGS_VERSION as u64 && value.get("gamepad").is_none() && read.value.joystick.enabled {
             read.value.pending_legacy_gamepad = Some(read.value.joystick.clone());
             let mut preset = crate::joystick::Settings::default();
@@ -3280,9 +3437,8 @@ impl Settings {
             }
         }
         if version < 45 && value.get("ray_tracing").is_none() {
-            // a file written before ray tracing traced nothing: the earlier
-            // levels' migrations compare it so, before the version 45 one
-            // turns the shadows on (`sanitized`)
+            // A file written before ray tracing traced nothing; the earlier
+            // levels' migrations must compare it that way too.
             read.value.ray_tracing = RayTracingSettings::OFF;
         }
         let mut newer = None;
@@ -3308,6 +3464,18 @@ impl Settings {
     /// Migrated and bounded, remembering a newer build's file to save over.
     fn finished(self, newer: Option<(serde_json::Value, Vec<String>)>) -> Settings {
         let mut s = self.sanitized();
+        if s.new_profile {
+            shadow_profile::reset_all(&mut s);
+        } else {
+            shadow_profile::loaded(&mut s);
+        }
+        // Resolve historical named snapshots using their own flat settings
+        // and dormant slots. Older snapshots without a slot remain lazy.
+        let mut saved = std::mem::take(&mut s.graphics_saved);
+        for preset in saved.values_mut() {
+            preset.upgrade_shadow_history(&s);
+        }
+        s.graphics_saved = saved;
         if let Some((theirs, kept)) = newer
             && let Ok(loaded) = serde_json::to_value(&s)
         {
@@ -3384,7 +3552,13 @@ impl Settings {
         self.planet_curvature.then_some(self.planet_radius_km * 1000.0)
     }
 
-    pub(crate) fn sanitized(mut self) -> Settings {
+    pub(crate) fn sanitized(self) -> Settings {
+        self.sanitize_values(true)
+    }
+
+    // Loading a historical document pins implicit shadow sizes before a mode switch.
+    // A single registry edit is not a file import: leave unrelated implicit values alone.
+    fn sanitize_values(mut self, import_implicit_shadows: bool) -> Settings {
         if self.settings_version <= SETTINGS_VERSION {
             self.gamepad.migrate_gamepad_layout();
         }
@@ -3822,16 +3996,27 @@ impl Settings {
         crate::snapshot::looks::sanitize(&mut self.world_look.looks);
         self.dof.sanitize();
         self.game_control.sanitize();
+        self.experimental_contact_occluder_depth_metres = if self.experimental_contact_occluder_depth_metres.is_finite() {
+            self.experimental_contact_occluder_depth_metres.clamp(0.0, 0.30)
+        } else {
+            0.05
+        };
+        self.pbr_thin_scope = self.pbr_thin_scope.min(1);
+        self.pbr_thin_ao_floor = if self.pbr_thin_ao_floor.is_finite() {
+            self.pbr_thin_ao_floor.clamp(0.0, 0.8)
+        } else {
+            0.35
+        };
+        self.pbr_thin_transmission = if self.pbr_thin_transmission.is_finite() {
+            self.pbr_thin_transmission.clamp(0.0, 1.5)
+        } else {
+            0.4
+        };
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.screen_indirect_intensity = if self.screen_indirect_intensity.is_finite() {
             self.screen_indirect_intensity.clamp(0.0, 4.0)
         } else {
             SCREEN_INDIRECT_INTENSITY
-        };
-        self.shadow_softness = if self.shadow_softness.is_finite() {
-            self.shadow_softness.clamp(0.0, SHADOW_SOFTNESS_MAX)
-        } else {
-            SHADOW_SOFTNESS
         };
         self.shadow_intensity = if self.shadow_intensity.is_finite() {
             self.shadow_intensity.clamp(0.0, 1.0)
@@ -3899,6 +4084,43 @@ impl Settings {
             HoverTips::default().delay
         };
         self.shadow_quality = self.shadow_quality.min(4);
+        self.shadow_resume_quality = if self.shadow_quality > 0 {
+            self.shadow_quality
+        } else {
+            self.shadow_resume_quality.clamp(1, 4)
+        };
+        if import_implicit_shadows || self.shadow_map_resolution != 0 {
+            self.shadow_map_resolution = self.shadow_map_size();
+        }
+        if import_implicit_shadows || self.three_level_shadow_distance != 0 {
+            self.three_level_shadow_distance = self.three_level_shadow_reach();
+        }
+        // Older profiles stored the master separately from the tier, including
+        // false + a positive tier. Keep that resolution for the next enable.
+        self.shadows = self.shadows && self.shadow_quality != 0;
+        if !self.shadows {
+            self.shadow_quality = 0;
+        }
+        self.contact_ray_method = self.contact_ray_method.min(1);
+        if self.shadow_visibility_debug > 4 {
+            self.shadow_visibility_debug = 0;
+        }
+        self.contact_view_reach = if self.contact_view_reach.is_finite() {
+            self.contact_view_reach.clamp(0.10, 2.0)
+        } else {
+            0.8
+        };
+        self.contact_view_thickness = if self.contact_view_thickness.is_finite() {
+            self.contact_view_thickness.clamp(0.01, 0.30)
+        } else {
+            0.10
+        };
+        self.contact_view_budget = self.contact_view_budget.clamp(48, 128);
+        self.near_shadow_cascade_percent = self.near_shadow_cascade_percent.clamp(3, 12);
+        self.near_shadow_detail_metres = self.near_shadow_detail_metres.clamp(2, 12);
+        self.graded_shadow_detail_metres = self.graded_shadow_detail_metres.clamp(2, 12);
+        self.graded_shadow_distance = self.graded_shadow_distance.clamp(16, 512);
+        self.sun_shadow_angular_diameter_deg = shadow_profile::bounded_sun_diameter(self.sun_shadow_angular_diameter_deg);
         self.projector_shadow_limit = self
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
@@ -4015,6 +4237,7 @@ impl Settings {
             hover_height_account: old.hover_height_account,
             ..Settings::default()
         };
+        shadow_profile::reset_all(self);
     }
 
     /// The settings as they are now, written by a save thread (saves.rs):
@@ -4059,6 +4282,13 @@ impl Settings {
             held.sync(&copy);
             held.restore(&mut copy);
         }
+        // Reconcile edits from other quality entry points after removing the
+        // temporary photo boost. Other tiers keep their own custom settings.
+        copy.shadow_profile = Some(shadow_profile::captured(
+            &copy,
+            &crate::graphics_presets::Values::read(&copy),
+            copy.shadows,
+        ));
         // the draw distance being stepped: the user's
         if let Some(steps) = copy.draw_stepping.take() {
             copy.draw_distance = steps.user;
@@ -4124,9 +4354,104 @@ impl Settings {
         auto_texture_budget(dedicated_mb, shared_mb, integrated)
     }
 
-    /// (resolution, distance) for the shadow quality step.
+    /// Materialize the old mode's resolution and three-map reach once, before changing
+    /// a tier or mode. Old JSON has zero for both newly independent preferences.
+    fn pin_shadow_preferences(&mut self) {
+        self.shadow_resume_quality = self.shadow_resume_quality.clamp(1, 4);
+        if self.shadow_quality > 0 {
+            self.shadow_resume_quality = self.shadow_quality.min(4);
+        }
+        self.three_level_shadow_distance = self.three_level_shadow_reach();
+        self.shadow_map_resolution = self.shadow_map_size();
+    }
+
+    pub fn three_level_shadow_reach(&self) -> u16 {
+        if self.three_level_shadow_distance == 0 {
+            let quality = if self.shadow_quality == 0 {
+                self.shadow_resume_quality
+            } else {
+                self.shadow_quality
+            };
+            Self::shadow_params_of(quality.clamp(1, 4)).1 as u16
+        } else {
+            self.three_level_shadow_distance.clamp(16, 512)
+        }
+    }
+
+    /// The selected map size, including the remembered selection while the master is off.
+    pub fn shadow_map_size(&self) -> u16 {
+        let quality = if self.shadow_quality == 0 {
+            self.shadow_resume_quality
+        } else {
+            self.shadow_quality
+        };
+        Self::shadow_resolution_for(quality.clamp(1, 4), self.graded_sun_shadows, self.shadow_map_resolution) as u16
+    }
+
+    pub(crate) fn shadow_resolution_for(quality: u8, graded: bool, explicit: u16) -> u32 {
+        if quality == 0 {
+            return 0;
+        }
+        if explicit != 0 {
+            return [512u32, 1024, 2048, 4096]
+                .into_iter()
+                .min_by_key(|size| size.abs_diff(u32::from(explicit)))
+                .unwrap_or(2048);
+        }
+        if graded {
+            Self::graded_shadow_resolution(quality)
+        } else {
+            Self::shadow_params_of(quality).0
+        }
+    }
+
+    pub fn set_shadow_map_size(&mut self, requested: u16) {
+        self.pin_shadow_preferences();
+        let size = Self::shadow_resolution_for(1, true, requested);
+        self.shadow_map_resolution = size as u16;
+        self.shadow_resume_quality = match size {
+            512 => 1,
+            1024 => 2,
+            2048 => 3,
+            _ => 4,
+        };
+        if self.shadow_quality != 0 {
+            self.shadow_quality = self.shadow_resume_quality;
+        }
+    }
+
+    pub fn set_shadow_enabled(&mut self, enabled: bool) {
+        self.pin_shadow_preferences();
+        self.shadow_quality = if enabled { self.shadow_resume_quality } else { 0 };
+        self.shadows = enabled;
+    }
+
+    /// Convert the beta photo/projector light-size scale to the physical angular
+    /// diameter used by P3. Its light tangent is 0.02 per unit of softness.
+    pub(crate) fn diameter_from_softness(softness: f32) -> f32 {
+        (0.02 * softness.clamp(0.0, SHADOW_SOFTNESS_MAX)).atan().to_degrees() * 2.0
+    }
+
+    pub(crate) fn projector_softness(&self) -> f32 {
+        (self.sun_shadow_angular_diameter_deg.to_radians() * 0.5).tan() / 0.02
+    }
+
+    /// Resolution and requested reach. The camera draw distance may cap the latter.
     pub fn shadow_params(&self) -> (u32, f32) {
-        Self::shadow_params_of(self.shadow_quality)
+        if self.shadow_quality == 0 {
+            return (0, 0.0);
+        }
+        let reach = if self.graded_sun_shadows {
+            self.graded_shadow_distance.clamp(16, 512)
+        } else {
+            self.three_level_shadow_reach()
+        };
+        (u32::from(self.shadow_map_size()), f32::from(reach))
+    }
+
+    /// Independent map size for graded shadows. Quality never widens a map's coverage.
+    pub fn graded_shadow_resolution(quality: u8) -> u32 {
+        [0, 512, 1024, 2048, 4096][usize::from(quality.min(4))]
     }
 
     /// (resolution, distance) of a shadow quality step.
@@ -4172,7 +4497,7 @@ impl Settings {
             self.render_scale_percent == 100 && self.graphics_saved_active.is_none() && Preset::matching(self) == Some(Preset::Medium);
         self.render_scale_auto = mac && former_default;
         if self.render_scale_auto {
-            mac_mid_high::apply(self);
+            mac_mid_high::apply_legacy_values(self);
             log::info!("settings v36: a Mac profile on the former default takes the Mac MidHigh values and matches the display");
         }
     }
@@ -4214,6 +4539,14 @@ impl Settings {
             vr_vibrancy: self.camera.vr.vibrancy,
             vr_resolution: self.camera.vr.resolution,
             render_scale_percent: self.render_scale_percent.clamp(50, 100),
+            pbr_thin_scope: if self.pbr_thin_enabled { self.pbr_thin_scope.min(1) + 1 } else { 0 },
+            pbr_thin_key: uuid::Uuid::parse_str(self.pbr_thin_material_id.trim())
+                .ok()
+                .map(|id| aurora_render::pbr_thin_material_key(*id.as_bytes()))
+                .unwrap_or([0; 2]),
+            pbr_thin_ao_floor: self.pbr_thin_ao_floor.clamp(0.0, 0.8),
+            pbr_thin_transmission: self.pbr_thin_transmission.clamp(0.0, 1.5),
+            pbr_thin_debug: self.pbr_thin_debug,
             water_effects,
             aa: match self.antialiasing {
                 0 => AntiAliasing::None,
@@ -4239,8 +4572,23 @@ impl Settings {
             },
             hdr: self.hdr_emissive,
             shadow_resolution: self.shadow_params().0,
-            projector_shadow_limit: if self.projector_shadows { self.projector_shadow_limit } else { 0 },
+            graded_sun_shadows: self.graded_sun_shadows,
+            graded_shadow_edge_smoothing: self.graded_shadow_edge_smoothing,
+            sun_shadow_angular_diameter_deg: shadow_profile::effective_sun_diameter(self),
+            graded_shadow_overlap: shadow_profile::ultra_detail(self),
+            graded_shadow_detail_metres: self.graded_shadow_detail_metres.clamp(2, 12),
+            near_shadow_detail: self.near_shadow_detail,
+            near_shadow_detail_metres: self.near_shadow_detail_metres.clamp(2, 12),
+            near_shadow_precision: self.near_shadow_precision,
+            near_shadow_cascade_percent: self.near_shadow_cascade_percent.clamp(3, 12),
+            near_shadow_debug: self.near_shadow_debug,
+            projector_shadow_limit: if self.shadows && self.shadow_quality > 0 && self.projector_shadows {
+                self.projector_shadow_limit
+            } else {
+                0
+            },
             ssao: self.ssao,
+            dof_alpha_depth: self.dof.experimental_alpha_depth_proxy,
             ao_method: if self.ao_method == 1 {
                 AoMethod::Gtao {
                     quality: self.gtao_quality,
@@ -4250,9 +4598,30 @@ impl Settings {
             },
             screen_indirect: self.ao_method == 1 && self.screen_indirect_light,
             screen_indirect_intensity: self.screen_indirect_intensity,
-            contact_shadows: self.contact_shadows,
-            soft_shadows: self.soft_shadows,
+            experimental_gtao_thin_compensation: self.experimental_gtao_thin_compensation.clamp(0.0, 1.5),
+            contact_shadows: self.shadows && self.shadow_quality > 0 && self.contact_shadows,
+            contact_ray_method: self.contact_ray_method,
+            contact_view_reach: self.contact_view_reach,
+            contact_view_thickness: self.contact_view_thickness,
+            contact_view_budget: self.contact_view_budget,
+            contact_view_debug: self.contact_view_debug,
+            shadow_visibility_debug: self.shadow_visibility_debug,
+            contact_integrity_depth: self.contact_integrity_depth,
+            contact_integrity_hole_repair: self.contact_integrity_hole_repair,
+            contact_integrity_composite: self.contact_integrity_composite,
+            experimental_contact_reach_mode: self.experimental_contact_reach_mode.min(4),
+            experimental_contact_reach_metres: self.experimental_contact_reach_metres.clamp(0.10, 1.20),
+            experimental_contact_occluder_depth_metres: self.experimental_contact_occluder_depth_metres,
+            experimental_contact_coherence: self.experimental_contact_coherence,
+            experimental_contact_mask_debug: self.experimental_contact_mask_debug,
+            experimental_contact_hit_debug: self.experimental_contact_hit_debug,
+            experimental_contact_failure_debug: self.experimental_contact_failure_debug,
+            soft_shadows: shadow_profile::effective_sun_diameter(self) > 0.0,
             specular_aa: self.specular_aa,
+            legacy_light_harmonization: self.legacy_light_harmonization,
+            harmonize_sunlight: self.harmonize_sunlight,
+            harmonize_ambient: self.harmonize_ambient,
+            harmonize_local_lights: self.harmonize_local_lights,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 256),
@@ -5592,11 +5961,21 @@ mod tests {
             };
             level(&mut s);
             let mut file = serde_json::to_value(s).expect("synthetic saved settings");
-            file.as_object_mut().expect("settings object").remove("ray_tracing");
+            // These upstream files predate both RT and the P3 shadow fields.
+            for key in [
+                "ray_tracing",
+                "shadow_profile",
+                "sun_shadow_angular_diameter_deg",
+                "sun_shadow_contact_hardening",
+                "graded_sun_shadows",
+                "shadow_map_resolution",
+            ] {
+                file.as_object_mut().expect("settings object").remove(key);
+            }
             let (s, newer) = Settings::read_document(file, &path).expect("readable settings");
             s.finished(newer)
         };
-        let now = without(44, &|s| Preset::High.apply(s));
+        let now = without(44, &|s| Preset::High.values().write(s));
         assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
         assert_eq!(Preset::matching(&now), Some(Preset::High));
         // the former Deluxe moves to High, nothing traced
@@ -5604,8 +5983,14 @@ mod tests {
         assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
         assert_eq!(Preset::matching(&now), Some(Preset::High));
         let now = without(20, &|s| high_v20().write(s));
-        assert_eq!(Preset::matching(&now), Some(Preset::High));
-        let now = without(44, &|s| Preset::Low.apply(s));
+        // The older flat shadow layout is preserved as a custom shadow
+        // profile, while its historical graphics values still reach High.
+        assert_eq!(
+            crate::graphics_presets::Values::read(&now).as_shown(),
+            Preset::High.values().as_shown()
+        );
+        assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
+        let now = without(44, &|s| Preset::Low.values().write(s));
         assert_eq!(Preset::matching(&now), Some(Preset::Low));
         // a file of version 45, which traced the shadows by default: back to
         // the shadow maps once, its High and its Deluxe both to High
@@ -6716,6 +7101,123 @@ mod tests {
         serde_json::from_slice(&std::fs::read(path).expect("saved settings")).expect("saved JSON")
     }
 
+    /// Model an upstream 47 writer editing a known field while retaining this
+    /// build's unknown top-level and nested settings through the shared merger.
+    fn save_through_upstream_47(path: &Path) -> Settings {
+        let theirs = read_back(path);
+        let loaded = serde_json::json!({
+            "settings_version": 47,
+            "draw_distance": theirs["draw_distance"],
+            "ray_tracing": theirs["ray_tracing"],
+            "dof": { "enabled": theirs["dof"]["enabled"], "f_number": theirs["dof"]["f_number"] }
+        });
+        let mut changed = loaded.clone();
+        changed["draw_distance"] = 160.0.into();
+        let written = if theirs["settings_version"].as_u64().expect("settings version") > 47 {
+            crate::tolerant::merge_over_newer(&theirs, changed, &loaded, &["settings_version".into()])
+        } else {
+            changed
+        };
+        for key in [
+            "shadow_profile",
+            "sun_shadow_angular_diameter_deg",
+            "dof",
+            "legacy_light_harmonization",
+            "pbr_thin_enabled",
+        ] {
+            assert_eq!(written[key], theirs[key], "upstream save lost {key}");
+        }
+        std::fs::write(path, serde_json::to_vec(&written).expect("upstream save")).expect("write settings");
+        Settings::load_from(path)
+    }
+
+    #[test]
+    fn the_shadow_forks_version_46_keeps_its_choices_across_rt_migrations_and_older_saves() {
+        use crate::settings::shadow_profile::{self as profile, Tier};
+        for alpha_depth in [false, true] {
+            let path = scratch_settings_file();
+            let mut original = Settings {
+                settings_version: 46,
+                legacy_light_harmonization: true,
+                harmonize_ambient: false,
+                pbr_thin_enabled: true,
+                pbr_thin_ao_floor: 0.6,
+                ..Settings::default()
+            };
+            original.dof.experimental_alpha_depth_proxy = alpha_depth;
+            profile::select_tier(&mut original, Tier::High);
+            profile::set_custom_enabled(&mut original, true);
+            original.sun_shadow_angular_diameter_deg = 1.0;
+            original.graded_shadow_distance = 123;
+            profile::commit_edits(&mut original);
+            profile::select_tier(&mut original, Tier::Low);
+            original.sun_shadow_angular_diameter_deg = 0.75;
+            profile::commit_edits(&mut original);
+            profile::select_tier(&mut original, Tier::High);
+            let expected_profile = serde_json::to_value(&original.shadow_profile).expect("shadow history");
+            let mut file = serde_json::to_value(original).expect("shadow fork settings");
+            // The reviewed fork used version 46 before upstream added RT.
+            file.as_object_mut()
+                .expect("settings object")
+                .retain(|key, _| key != "ray_tracing" && key != "deluxe_rt_warned" && !key.starts_with("rt_"));
+            std::fs::write(&path, serde_json::to_vec(&file).expect("old settings")).expect("write settings");
+            let loaded = Settings::load_from(&path);
+            assert_eq!(loaded.settings_version, SETTINGS_VERSION);
+            assert_eq!(loaded.ray_tracing, RayTracingSettings::OFF);
+            assert_eq!(serde_json::to_value(&loaded.shadow_profile).unwrap(), expected_profile);
+            // A directional source deliberately set to 1 must not take the
+            // traced-shadow migration that replaces its old default of 1.
+            assert_eq!(loaded.sun_shadow_angular_diameter_deg, 1.0);
+            assert_eq!(loaded.rt_sun_softness, RT_SOFTNESS);
+            assert_eq!(loaded.dof.experimental_alpha_depth_proxy, alpha_depth);
+            assert!(loaded.legacy_light_harmonization && !loaded.harmonize_ambient && loaded.pbr_thin_enabled);
+            assert_eq!(loaded.pbr_thin_ao_floor, 0.6);
+            loaded.save_to(&path);
+            let reopened = save_through_upstream_47(&path);
+            assert_eq!(reopened.draw_distance, 160.0);
+            assert_eq!(serde_json::to_value(&reopened.shadow_profile).unwrap(), expected_profile);
+            assert_eq!(reopened.dof.experimental_alpha_depth_proxy, alpha_depth);
+            assert!(reopened.legacy_light_harmonization && reopened.pbr_thin_enabled);
+        }
+    }
+
+    #[test]
+    fn upstream_rt_versions_46_and_47_keep_their_choices_when_shadow_controls_are_added() {
+        for version in [46, 47] {
+            let path = scratch_settings_file();
+            let file = serde_json::json!({
+                "settings_version": version,
+                "ray_tracing": { "enabled": true, "lights": true, "indirect": true, "reflections": true },
+                "ssr": true, "shadows": true, "shadow_quality": 2,
+                "projector_shadows": true, "projector_shadow_limit": 2, "contact_shadows": true,
+                "soft_shadows": true, "shadow_softness": 0.6, "shadow_intensity": 0.375,
+                "rt_sun_softness": 1.0, "rt_lamp_softness": 0.7,
+                "dof": { "enabled": true, "f_number": 1.4 }
+            });
+            std::fs::write(&path, serde_json::to_vec(&file).expect("upstream settings")).expect("write settings");
+            let mut loaded = Settings::load_from(&path);
+            assert_eq!(loaded.settings_version, SETTINGS_VERSION);
+            assert!(
+                loaded.ray_tracing.enabled && loaded.ray_tracing.lights && loaded.ray_tracing.indirect && loaded.ray_tracing.reflections
+            );
+            assert_eq!(loaded.rt_sun_softness, if version < 47 { RT_SOFTNESS } else { 1.0 });
+            assert_eq!(loaded.rt_lamp_softness, 0.7);
+            assert_eq!(loaded.shadow_intensity, 0.375);
+            assert!(loaded.dof.experimental_alpha_depth_proxy, "the blended lens depth defaults on");
+            let angle = Settings::diameter_from_softness(0.6);
+            assert!((loaded.sun_shadow_angular_diameter_deg - angle).abs() < 1e-6);
+            // The old default selected deliberately after migration stays so.
+            loaded.rt_sun_softness = 1.0;
+            loaded.save_to(&path);
+            let reopened = save_through_upstream_47(&path);
+            assert_eq!(reopened.rt_sun_softness, 1.0);
+            assert_eq!(reopened.rt_lamp_softness, 0.7);
+            assert_eq!(reopened.ray_tracing, loaded.ray_tracing);
+            assert!((reopened.sun_shadow_angular_diameter_deg - angle).abs() < 1e-6);
+            assert!(reopened.dof.experimental_alpha_depth_proxy);
+        }
+    }
+
     /// The file an older build sees after a newer one: a shortcut, a choice
     /// and an option it does not know, under a higher version.
     fn file_from_a_newer_build() -> serde_json::Value {
@@ -6778,6 +7280,112 @@ mod tests {
         assert_eq!(again.chat_style, ChatStyle::Legacy);
         assert_eq!(again.draw_distance, 128.0);
         assert!(newer.is_some());
+    }
+
+    #[test]
+    fn stock_upstream_shadow_settings_adopt_p3_and_keep_the_master_and_intensity() {
+        use crate::settings::shadow_profile::{self as profile, Tier};
+        let read = |document| {
+            let (settings, newer) = Settings::read_document(document, &scratch_settings_file()).unwrap();
+            settings.finished(newer)
+        };
+        let stable = serde_json::json!({
+            "settings_version": 44, "shadows": true, "shadow_quality": 3,
+            "projector_shadows": true, "projector_shadow_limit": 2, "contact_shadows": false,
+        });
+        let mut beta = stable.clone();
+        beta["soft_shadows"] = false.into();
+        beta["shadow_softness"] = 0.25.into();
+        beta["shadow_intensity"] = 0.375.into();
+        for file in [stable, beta.clone()] {
+            let settings = read(file);
+            assert_eq!(profile::tier(&settings), Tier::High);
+            assert!(!profile::custom_enabled(&settings));
+            assert!(settings.sun_shadow_contact_hardening && settings.contact_shadows && settings.graded_sun_shadows);
+            assert_eq!(settings.shadow_params(), (4096, 144.0));
+        }
+        let reopened = read(serde_json::to_value(read(beta.clone())).unwrap());
+        assert_eq!(reopened.shadow_intensity, 0.375);
+        assert_eq!(reopened.shadow_params(), (4096, 144.0));
+        beta["shadows"] = false.into();
+        beta["shadow_quality"] = 0.into();
+        let disabled = read(beta);
+        assert_eq!(profile::tier(&disabled), Tier::Off);
+        assert_eq!(disabled.render_settings().shadow_resolution, 0);
+    }
+
+    #[test]
+    fn custom_beta_named_shadow_settings_round_trip_with_the_converted_size() {
+        use crate::settings::shadow_profile as profile;
+        let base = Settings::default();
+        let mut named = serde_json::to_value(crate::graphics_presets::saved::Saved::read(&base)).unwrap();
+        for key in [
+            "shadow_profile",
+            "sun_shadow_angular_diameter_deg",
+            "sun_shadow_contact_hardening",
+            "graded_sun_shadows",
+        ] {
+            named.as_object_mut().unwrap().remove(key);
+        }
+        named["quality"]["effects"]["soft_shadows"] = true.into();
+        named["quality"]["effects"]["shadow_softness"] = 0.60.into();
+        named["quality"]["effects"]["contact_shadows"] = false.into();
+        named["quality"]["projector_shadow_limit"] = 3.into();
+        let document = serde_json::json!({
+            "settings_version": 44, "shadow_quality": 3,
+            "soft_shadows": false, "shadow_softness": 0.25, "graphics_saved": { "manual": named }
+        });
+        let path = scratch_settings_file();
+        let (s, newer) = Settings::read_document(document, &path).unwrap();
+        let mut s = s.finished(newer);
+        assert!(crate::graphics_presets::saved::select(&mut s, "manual"));
+        assert!(profile::custom_enabled(&s) && s.sun_shadow_contact_hardening);
+        assert!(s.graded_sun_shadows);
+        assert!(!s.contact_shadows);
+        assert_eq!(s.projector_shadow_limit, 3);
+        assert!((s.sun_shadow_angular_diameter_deg - Settings::diameter_from_softness(0.60)).abs() < 0.0001);
+        let (s, newer) = Settings::read_document(serde_json::to_value(&s).unwrap(), &path).unwrap();
+        let s = s.finished(newer);
+        assert!(s.graphics_saved["manual"].matches_current(&s));
+        assert_eq!(s.projector_shadow_limit, 3);
+    }
+
+    #[test]
+    fn legacy_flat_shadow_angles_follow_each_profiles_own_resolution_and_preserve_explicit_values() {
+        use crate::settings::shadow_profile::{self as profile, Tier};
+        let path = scratch_settings_file();
+        let mut low = Settings::default();
+        profile::select_tier(&mut low, Tier::Low);
+        let mut medium = Settings::default();
+        profile::select_tier(&mut medium, Tier::Medium);
+        low.graphics_saved
+            .insert("medium".into(), crate::graphics_presets::saved::Saved::capture(&medium));
+        let mut file = serde_json::to_value(&low).unwrap();
+        for key in ["shadow_profile", "sun_shadow_angular_diameter_deg", "sun_shadow_contact_hardening"] {
+            file.as_object_mut().unwrap().remove(key);
+            file["graphics_saved"]["medium"].as_object_mut().unwrap().remove(key);
+        }
+        let (loaded, newer) = Settings::read_document(file.clone(), &path).unwrap();
+        let mut loaded = loaded.finished(newer);
+        assert_eq!(
+            loaded.render_settings().sun_shadow_angular_diameter_deg,
+            low.sun_shadow_angular_diameter_deg
+        );
+        let named = loaded.graphics_saved["medium"].clone();
+        named.apply(&mut loaded);
+        assert_eq!(
+            loaded.render_settings().sun_shadow_angular_diameter_deg,
+            medium.sun_shadow_angular_diameter_deg
+        );
+        assert!(named.matches_current(&loaded));
+        file["sun_shadow_angular_diameter_deg"] = 0.53.into();
+        file["graphics_saved"]["medium"]["sun_shadow_angular_diameter_deg"] = 1.25.into();
+        let (loaded, newer) = Settings::read_document(file, &path).unwrap();
+        let mut loaded = loaded.finished(newer);
+        assert_eq!(loaded.sun_shadow_angular_diameter_deg, 0.53);
+        let named = loaded.graphics_saved["medium"].clone();
+        named.apply(&mut loaded);
+        assert_eq!(loaded.sun_shadow_angular_diameter_deg, 1.25);
     }
 
     #[test]
@@ -6909,5 +7517,43 @@ mod tests {
         let loaded = file.sanitized();
         assert!(!loaded.render_scale_auto);
         assert_eq!(loaded.render_scale_percent, 67);
+    }
+
+    #[test]
+    fn shadow_visibility_settings_keep_legacy_choices_and_sanitize_unknown_modes() {
+        use aurora_render::render_controls::{ContactDiagnostic, ContactDiagnosticSwitches};
+        let legacy: Settings = serde_json::from_value(serde_json::json!({
+            "settings_version": SETTINGS_VERSION,
+            "contact_view_debug": true,
+            "contact_integrity_composite": true,
+        }))
+        .expect("legacy shadow settings");
+        let legacy = legacy.sanitized();
+        assert_eq!(legacy.shadow_visibility_debug, 0);
+        assert!(legacy.contact_view_debug && legacy.contact_integrity_composite);
+        assert_eq!(
+            ContactDiagnostic::from_saved(
+                legacy.shadow_visibility_debug,
+                ContactDiagnosticSwitches {
+                    view_ray: legacy.contact_view_debug,
+                    ..Default::default()
+                },
+                false
+            ),
+            ContactDiagnostic::ViewRayOutcomes,
+        );
+        for mode in 0..=u8::MAX {
+            let loaded = Settings {
+                shadow_visibility_debug: mode,
+                ..legacy.clone()
+            }
+            .sanitized();
+            let expected = if mode <= 4 { mode } else { 0 };
+            assert_eq!(loaded.shadow_visibility_debug, expected);
+            assert_eq!(loaded.render_settings().shadow_visibility_debug, expected);
+            let roundtrip: Settings = serde_json::from_value(serde_json::to_value(&loaded).expect("save settings")).expect("read settings");
+            assert_eq!(roundtrip.shadow_visibility_debug, expected);
+            assert!(roundtrip.contact_view_debug && roundtrip.contact_integrity_composite);
+        }
     }
 }

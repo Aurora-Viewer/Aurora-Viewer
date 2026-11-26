@@ -788,6 +788,15 @@ impl RecordStore {
         }
     }
 
+    /// Worn and dropped attachments can reuse the same face records.
+    pub fn set_avatar_shadow_receiver(&mut self, id: u32, enabled: bool) {
+        if let Some(slot) = self.mirror.get_mut(id as usize)
+            && slot.set_avatar_shadow_receiver(enabled)
+        {
+            self.mark(id as usize);
+        }
+    }
+
     /// The rez effect of a record (`DrawRecord::rez`), uploaded only when
     /// it changes.
     pub fn set_rez(&mut self, id: u32, rez: [u32; 4]) {

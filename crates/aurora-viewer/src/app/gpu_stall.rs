@@ -23,6 +23,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 /// No frame for this long and the notice shows.
 const NOTICE_AFTER: Duration = Duration::from_secs(6);
+/// Cold driver compiles can take tens of seconds. Give a known pipeline
+/// call a little longer before interrupting the user. This bound is on the
+/// entire held frame, including all calls, and applies to the notice only.
+const PIPELINE_NOTICE_AFTER: Duration = Duration::from_secs(30);
 /// Kept waiting from the notice: shown again after this long if still stuck.
 const NOTICE_AGAIN: Duration = Duration::from_secs(60);
 
@@ -60,8 +64,9 @@ pub(super) struct GpuStall {
 }
 
 /// Whether to show the notice now.
-fn notice_due(stalled: Duration, shown: bool, waited_at: Option<Instant>, now: Instant) -> bool {
-    !shown && stalled >= NOTICE_AFTER && waited_at.is_none_or(|at| now.duration_since(at) >= NOTICE_AGAIN)
+fn notice_due(stalled: Duration, compiling: bool, shown: bool, waited_at: Option<Instant>, now: Instant) -> bool {
+    let after = if compiling { PIPELINE_NOTICE_AFTER } else { NOTICE_AFTER };
+    !shown && stalled >= after && waited_at.is_none_or(|at| now.duration_since(at) >= NOTICE_AGAIN)
 }
 
 impl App {
@@ -114,21 +119,30 @@ impl App {
             return;
         }
         match renderer.stalled_for() {
-            Some(stalled) => {
-                if !stall.noted && stalled >= NOTICE_AFTER {
+            Some(stalled) if stalled >= NOTICE_AFTER => {
+                let pipeline = renderer.stalled_pipeline();
+                if !stall.noted {
                     stall.noted = true;
-                    log::warn!(
-                        "the graphics card has not finished a frame for {} s: notice shown",
-                        stalled.as_secs()
-                    );
-                    crate::crash::gpu_stalled(stalled.as_secs());
+                    if let Some(work) = pipeline {
+                        log::warn!("render thread held a frame for {} s during {work}", stalled.as_secs());
+                    } else {
+                        log::warn!("render thread has not finished a frame for {} s", stalled.as_secs());
+                    }
+                    crate::crash::gpu_stalled(stalled.as_secs(), pipeline);
                 }
-                if notice_due(stalled, stall.notice.is_some(), stall.waited_at, now) {
-                    let (title, body) = text(stalled.as_secs());
+                if notice_due(stalled, pipeline.is_some(), stall.notice.is_some(), stall.waited_at, now) {
+                    let (title, body) = if pipeline.is_some() {
+                        (
+                            aurora_i18n::tr!("app-gpu-pipeline-stall-title").to_string(),
+                            aurora_i18n::tr!("app-gpu-pipeline-stall", seconds = stalled.as_secs().to_string()).to_string(),
+                        )
+                    } else {
+                        text(stalled.as_secs())
+                    };
                     stall.notice = show(title, body, true);
                 }
             }
-            None => {
+            _ => {
                 if std::mem::take(&mut stall.noted) {
                     log::warn!("the graphics card answered again");
                     crate::crash::gpu_answered();
@@ -464,12 +478,24 @@ mod tests {
     #[test]
     fn the_notice_waits_for_a_real_stall_and_for_the_user_s_patience() {
         let now = Instant::now();
-        assert!(!notice_due(Duration::from_secs(3), false, None, now));
-        assert!(notice_due(NOTICE_AFTER, false, None, now));
-        assert!(!notice_due(Duration::from_secs(30), true, None, now), "already shown");
+        assert!(!notice_due(Duration::from_secs(3), false, false, None, now));
+        assert!(notice_due(NOTICE_AFTER, false, false, None, now));
+        assert!(!notice_due(Duration::from_secs(30), false, true, None, now), "already shown");
         // kept waiting a moment ago: not again at once, but later
-        assert!(!notice_due(Duration::from_secs(30), false, Some(now), now));
-        assert!(notice_due(Duration::from_secs(90), false, Some(now), now + NOTICE_AGAIN));
+        assert!(!notice_due(Duration::from_secs(30), false, false, Some(now), now));
+        assert!(notice_due(Duration::from_secs(90), false, false, Some(now), now + NOTICE_AGAIN));
+    }
+
+    #[test]
+    fn a_compiling_frame_keeps_its_diagnostic_and_has_bounded_notice_grace() {
+        let now = Instant::now();
+        assert!(!notice_due(Duration::from_secs(20), true, false, None, now));
+        // A different pipeline in the same held frame does not restart the clock.
+        assert!(notice_due(PIPELINE_NOTICE_AFTER, true, false, None, now));
+        // After leaving the compiler, a held frame gets the normal deadline at once.
+        assert!(notice_due(Duration::from_secs(20), false, false, None, now));
+        assert!(!notice_due(PIPELINE_NOTICE_AFTER, true, true, None, now));
+        assert!(!notice_due(PIPELINE_NOTICE_AFTER, true, false, Some(now), now));
     }
 
     #[test]

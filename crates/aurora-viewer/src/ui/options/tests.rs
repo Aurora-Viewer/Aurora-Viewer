@@ -1148,6 +1148,163 @@ fn rows_after_a_width_change_match_a_fresh_layout() {
 }
 
 #[test]
+fn shadow_preferences_keep_custom_on_the_selected_tier_and_reset_only_that_tier() {
+    use crate::settings::shadow_profile::{self as profile, Tier};
+    use aurora_i18n::tr;
+
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    profile::select_tier(&mut s, Tier::Medium);
+    profile::set_custom_enabled(&mut s, true);
+    profile::set_coverage(&mut s, 2);
+    profile::select_tier(&mut s, Tier::Low);
+    profile::set_coverage(&mut s, 0);
+    profile::set_custom_enabled(&mut s, false);
+
+    let mut frame = |s: &mut Settings, events| preference_shapes(&mut frames, s, &mut st, &mut r, (Page::Graphics, 1, 700.0), events);
+    let mut shapes = Vec::new();
+    for _ in 0..4 {
+        shapes = frame(&mut s, vec![]);
+    }
+    let custom = shapes
+        .iter()
+        .find_map(|shape| match shape {
+            egui::Shape::Text(t) if t.galley.text() == tr!("ui-options-preset-custom") => {
+                Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+            }
+            _ => None,
+        })
+        .expect("Custom checkbox label");
+    let level = shapes
+        .iter()
+        .find_map(|shape| match shape {
+            egui::Shape::Text(t) if t.galley.text() == tr!("ui-options-low") => Some(egui::Rect::from_min_size(t.pos, t.galley.size())),
+            _ => None,
+        })
+        .expect("Low quality value");
+    let same_line = |left: egui::Rect, right: egui::Rect| (left.center().y - right.center().y).abs() < 2.0;
+    assert!(
+        custom.top() > level.bottom(),
+        "Custom and rollback share a line below the quality slider"
+    );
+    let rail = shapes
+        .iter()
+        .find_map(|shape| match shape {
+            egui::Shape::Rect(r)
+                if same_line(r.rect, level) && r.rect.right() < level.left() && r.rect.width() >= 80.0 && r.rect.height() < 12.0 =>
+            {
+                Some(r.rect)
+            }
+            _ => None,
+        })
+        .expect("quality slider rail");
+    let rollback = shapes
+        .iter()
+        .find_map(|shape| match shape {
+            egui::Shape::Rect(r)
+                if same_line(r.rect, custom) && r.rect.left() > custom.right() && r.rect.size() == egui::Vec2::splat(20.0) =>
+            {
+                Some(r.rect.center())
+            }
+            _ => None,
+        })
+        .expect("lighting-style rollback beside Custom");
+    let mut press = |s: &mut Settings, pos| {
+        let mut painted = Vec::new();
+        for events in click(pos) {
+            painted = frame(s, events);
+        }
+        painted
+    };
+    let shows = |shapes: &[egui::Shape], label: &str| shapes.iter().any(|s| matches!(s, egui::Shape::Text(t) if t.galley.text() == label));
+
+    let low = press(&mut s, custom.center());
+    assert_eq!(profile::tier(&s), Tier::Low);
+    assert!(profile::custom_enabled(&s));
+    assert_eq!(profile::coverage(&s), 0);
+    assert!(shows(&low, tr!("ui-shadow-profile-distance")));
+    assert!(!shows(&low, tr!("ui-shadow-map-resolution")));
+
+    press(&mut s, rail.center());
+    assert_eq!(profile::tier(&s), Tier::Medium);
+    assert!(profile::custom_enabled(&s));
+    assert_eq!(profile::coverage(&s), 2);
+    press(&mut s, rollback);
+    assert_eq!(profile::tier(&s), Tier::Medium);
+    assert!(profile::custom_enabled(&s));
+    assert!(!profile::can_reset(&s));
+
+    let off = press(&mut s, rail.left_center() + egui::vec2(1.0, 0.0));
+    assert_eq!(profile::tier(&s), Tier::Off);
+    assert!(profile::custom_enabled(&s));
+    assert!(!s.shadows);
+    assert!(shows(&off, tr!("ui-shadow-profile-off-help")));
+    assert!(!shows(&off, tr!("ui-shadow-profile-distance")));
+
+    press(&mut s, rail.left_center() + egui::vec2(0.26 * rail.width(), 0.0));
+    assert_eq!(profile::tier(&s), Tier::Low);
+    assert!(profile::custom_enabled(&s));
+    assert_eq!(profile::coverage(&s), 0);
+}
+
+#[test]
+fn projector_limit_reset_dot_follows_the_selected_shadow_tier() {
+    use crate::settings::shadow_profile::{self as profile, Tier};
+
+    fn dot(shapes: &[egui::Shape]) -> Option<egui::Pos2> {
+        let label = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("ui-shadow-projector-limit") => {
+                    Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+                }
+                _ => None,
+            })
+            .expect("projector limit label");
+        shapes.iter().find_map(|shape| match shape {
+            egui::Shape::Circle(c)
+                if (c.radius - 3.0).abs() < 0.1
+                    && (c.center.y - label.center().y).abs() < 2.0
+                    && (0.0..20.0).contains(&(label.left() - c.center.x)) =>
+            {
+                Some(c.center)
+            }
+            _ => None,
+        })
+    }
+
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    let mut frame = |s: &mut Settings, events| preference_shapes(&mut frames, s, &mut st, &mut r, (Page::Graphics, 1, 700.0), events);
+    profile::select_tier(&mut s, Tier::High);
+    profile::set_custom_enabled(&mut s, true);
+    s.projector_shadow_limit = 12;
+    profile::commit_edits(&mut s);
+
+    profile::select_tier(&mut s, Tier::Ultra);
+    for _ in 0..3 {
+        frame(&mut s, vec![]);
+    }
+    assert_eq!(s.projector_shadow_limit, 8);
+    assert!(dot(&frame(&mut s, vec![])).is_none(), "stock Ultra is unmodified");
+    s.projector_shadow_limit = 16;
+    profile::commit_edits(&mut s);
+    for (tier, before, after) in [(Tier::Ultra, 16, 8), (Tier::High, 12, 4)] {
+        profile::select_tier(&mut s, tier);
+        assert_eq!(s.projector_shadow_limit, before);
+        let changed = frame(&mut s, vec![egui::Event::PointerGone]);
+        let position = dot(&changed).expect("edited projector limit has a reset dot");
+        for events in click(position) {
+            frame(&mut s, events);
+        }
+        assert_eq!(s.render_settings().projector_shadow_limit, after);
+        assert!(!profile::can_reset(&s));
+    }
+    profile::select_tier(&mut s, Tier::Ultra);
+    assert_eq!(s.projector_shadow_limit, 8);
+}
+
+#[test]
 fn graphics_profile_save_has_a_button_face_to_the_right_of_the_list() {
     for width in [420.0, 700.0, 900.0] {
         let mut frames = Frames::new();
@@ -2517,4 +2674,187 @@ fn the_selected_system_font_stays_in_view() {
         texts = draw(vec![], &mut state, &mut settings);
     }
     assert!(drawn(&texts, "Font 35"), "the list opens on the chosen font");
+}
+
+#[test]
+fn live_projector_occupancy_is_visible_once_in_stock_and_custom() {
+    use crate::settings::shadow_profile::{self as profile, Tier};
+    use aurora_i18n::tr;
+    use aurora_render::ShadowMapStats;
+
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    profile::select_tier(&mut s, Tier::Ultra);
+    let mut occurrences = |settings: &mut Settings, state: &mut OptionsUi, expected: &str| {
+        let mut frame = || preference_shapes(&mut frames, settings, state, &mut r, (Page::Graphics, 1, 700.0), vec![]);
+        frame();
+        frame()
+            .iter()
+            .filter(|shape| matches!(shape, egui::Shape::Text(text) if text.galley.text() == expected))
+            .count()
+    };
+    let pending = tr!("ui-shadow-projector-waiting");
+    assert_eq!(occurrences(&mut s, &mut st, pending), 1);
+    for (custom, active, capacity) in [(false, 4u8, 8u8), (true, 0, 8), (true, 3, 4)] {
+        profile::set_custom_enabled(&mut s, custom);
+        st.shadow_maps = Some(ShadowMapStats {
+            general: [[0.0; 2]; 3],
+            detail: None,
+            sun_resolution: 4096,
+            active_projectors: active,
+            projector_capacity: capacity,
+        });
+        let expected = tr!(
+            "ui-shadow-projector-active",
+            active = active.to_string(),
+            limit = capacity.to_string(),
+            size = "2048"
+        );
+        assert_eq!(occurrences(&mut s, &mut st, &expected), 1);
+    }
+    profile::select_tier(&mut s, Tier::Off);
+    st.shadow_maps = None;
+    assert_eq!(occurrences(&mut s, &mut st, pending), 0);
+}
+
+#[test]
+fn soft_sun_controls_are_available_in_custom_with_advanced_closed() {
+    use crate::settings::shadow_profile::{self as profile, Tier};
+    use aurora_i18n::tr;
+
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    profile::select_tier(&mut s, Tier::High);
+    let mut shown = |settings: &mut Settings| {
+        let mut frame = || page_frame(&mut frames, settings, &mut st, &mut r, Page::Graphics, 1, Vec::new());
+        frame();
+        let labels = frame();
+        [tr!("ui-shadow-contact-hardening"), tr!("ui-shadow-angular-diameter")].map(|label| labels.iter().any(|text| text.source == label))
+    };
+    assert_eq!(shown(&mut s), [false, false]);
+    profile::set_custom_enabled(&mut s, true);
+    assert!(!profile::advanced_enabled(&s));
+    assert_eq!(shown(&mut s), [true, true]);
+    s.sun_shadow_contact_hardening = true;
+    s.sun_shadow_angular_diameter_deg = 1.0;
+    profile::commit_edits(&mut s);
+    assert_eq!(shown(&mut s), [true, true]);
+    profile::select_tier(&mut s, Tier::Off);
+    assert_eq!(shown(&mut s), [false, false]);
+    profile::select_tier(&mut s, Tier::High);
+    assert_eq!(shown(&mut s), [true, true]);
+    assert_eq!(s.render_settings().sun_shadow_angular_diameter_deg, 1.0);
+}
+
+#[test]
+fn soft_sun_toggle_keeps_custom_rows_and_slider_fixed_and_disables_input() {
+    use crate::settings::shadow_profile::{self as profile, Tier};
+    use aurora_i18n::tr;
+
+    fn geometry(shapes: &[egui::Shape]) -> [egui::Rect; 6] {
+        let text = |label: &str| {
+            shapes
+                .iter()
+                .find_map(|shape| match shape {
+                    egui::Shape::Text(t) if t.galley.text() == label => Some(egui::Rect::from_min_size(t.pos, t.galley.size())),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing shadow row text {label}"))
+        };
+        let toggle = text(tr!("ui-shadow-contact-hardening"));
+        let angle = text(tr!("ui-shadow-angular-diameter"));
+        // egui renders the numeric value and unit as separate text atoms.
+        let value = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::Shape::Text(t) if t.galley.text().trim_end_matches('°').trim().replace(',', ".") == "1.25" => {
+                    Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                let nearby: Vec<_> = shapes
+                    .iter()
+                    .filter_map(|shape| match shape {
+                        egui::Shape::Text(t) if (t.pos.y - angle.center().y).abs() < 85.0 => Some((t.galley.text(), t.pos)),
+                        _ => None,
+                    })
+                    .collect();
+                panic!("missing diameter value at {angle:?}; nearby texts: {nearby:?}");
+            });
+        let projectors = text(tr!("ui-options-projector-shadows"));
+        let rail = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::Shape::Rect(r)
+                    if (r.rect.width() - SLIDER_W).abs() < 1.0
+                        && r.rect.height() < 12.0
+                        && (r.rect.center().y - value.center().y).abs() < 3.0
+                        && r.rect.right() < value.left() =>
+                {
+                    Some(r.rect)
+                }
+                _ => None,
+            })
+            .expect("sun diameter slider rail");
+        let switch = shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Rect(r) if r.rect.size() == crate::ui::widgets::SWITCH_SIZE => Some(r.rect),
+                _ => None,
+            })
+            .min_by(|a, b| {
+                (a.center().y - toggle.center().y)
+                    .abs()
+                    .total_cmp(&(b.center().y - toggle.center().y).abs())
+            })
+            .expect("soft shadow switch");
+        [toggle, angle, value, projectors, rail, switch]
+    }
+    for width in [420.0, 700.0] {
+        let mut frames = Frames::new();
+        let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+        profile::select_tier(&mut s, Tier::High);
+        profile::set_custom_enabled(&mut s, true);
+        s.sun_shadow_angular_diameter_deg = 1.25;
+        profile::commit_edits(&mut s);
+        assert!(!profile::advanced_enabled(&s));
+        let mut draw = |frames: &mut Frames, s: &mut Settings, events| {
+            preference_shapes(frames, s, &mut st, &mut r, (Page::Graphics, 1, width), events)
+        };
+        let mut shapes = Vec::new();
+        for _ in 0..4 {
+            shapes = draw(&mut frames, &mut s, vec![]);
+        }
+        let original = geometry(&shapes);
+        let [_, angle, value, _, rail, switch] = original;
+        for expected in [false, true, false] {
+            for events in click(switch.center()) {
+                shapes = draw(&mut frames, &mut s, events);
+                assert_eq!(geometry(&shapes), original, "rows moved at width {width}");
+            }
+            assert_eq!(s.sun_shadow_contact_hardening, expected);
+            if !expected {
+                let prior_focus = frames.ctx.memory(|m| m.focused());
+                for pos in [
+                    rail.left_center() + egui::vec2(2.0, 0.0),
+                    value.center(),
+                    angle.left_center() - egui::vec2(7.0, 0.0),
+                ] {
+                    for events in click(pos) {
+                        draw(&mut frames, &mut s, events);
+                    }
+                }
+                assert_eq!(
+                    s.sun_shadow_angular_diameter_deg, 1.25,
+                    "dormant input or row reset changed the angle"
+                );
+                let after_focus = frames.ctx.memory(|m| m.focused());
+                assert!(
+                    after_focus.is_none() || after_focus == prior_focus,
+                    "disabled value editor took keyboard focus"
+                );
+            }
+        }
+    }
 }

@@ -188,6 +188,7 @@ struct CullFrame {
     // x classify workgroups, y first-person avatar + 1, z index buffer length,
     // w the projector map of the rain's shelter (F_SPOT_SHELTER)
     groups: vec4<u32>,
+    detail_planes: array<vec4<f32>, 6>,
 }
 
 struct OcclParams {
@@ -433,7 +434,9 @@ fn face_mask(i: u32) -> u32 {
         let depth_only = (fp == PASS_OPAQUE || fp == PASS_OPAQUE_2S) && (fl & F_SHADOW_ALPHA_ALL) == 0u;
         let bin = select(BIN_SHADOW_ALPHA, BIN_SHADOW, depth_only);
         for (var k = 0u; k < 3u; k++) {
-            if (in_cascade(frame.cascades[k], c, r) && casts_into(k, c, r) && !(depth_only && merged_from_finer(k, c, r))) {
+            let base = in_cascade(frame.cascades[k], c, r) && casts_into(k, c, r);
+            let detail = k == 0u && any(frame.detail_planes[0] != vec4<f32>(0.0)) && sphere_in(frame.detail_planes, c, r);
+            if ((base || detail) && !(depth_only && merged_from_finer(k, c, r))) {
                 m |= 1u << (bin + k);
                 if ((fl & F_SHADOW_STATS) != 0u) {
                     atomicAdd(&wg_shadow[k], tris);

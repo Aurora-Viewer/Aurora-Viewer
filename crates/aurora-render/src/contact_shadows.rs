@@ -5,7 +5,7 @@
 //! resolution for what touches: feet on the ground, objects resting on a
 //! surface, folds, jewellery; a short march towards the light on screen
 //! finds those occluders and the shading takes the darker of the two
-//! (`contact_shadow` in common.wgsl). Opaque faces of the main view only.
+//! (`contact_shadow` in common.wgsl). The main view reads the mask.
 //!
 //! The dispatches are laid out around the light's point on screen
 //! ([`build_dispatch_list`], a port of Bend's `BuildDispatchList`,
@@ -13,10 +13,9 @@
 //! along a ray towards that point, in up to eight dispatches.
 //!
 //! What casts: the depth prepass (opaque and masked faces, terrain), and,
-//! drawn into a copy of it each frame, the blended faces opaque to the eye
-//! (`SCREEN_BLEND_ALPHA`: the many mesh bodies, shoes and hair whose faces
-//! are blended though they look opaque) and the impostor cards; those
-//! blended faces then also receive them.
+//! drawn into a separate copy, blended texels with at least half coverage
+//! and impostor cards. The same blend cutoff selects receivers. Both tracers
+//! read this depth independently of the opacity-aware AO and DoF surfaces.
 //!
 //! `AURORA_CONTACT_SHADOWS=0|1|alt|prepass|shell` overrides the setting for
 //! a comparison; `alt` switches every second, `prepass`: the prepass alone
@@ -26,6 +25,7 @@
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
+use std::{sync::mpsc, thread::JoinHandle};
 
 /// Pixels per wavefront (one workgroup). Must match the shader's.
 pub(crate) const WAVE_SIZE: i32 = 64;
@@ -51,6 +51,49 @@ pub(crate) fn samples(scale: f32) -> (i32, i32) {
     let count = ((SAMPLE_COUNT * scale).round() as i32).min(MAX_SAMPLE_COUNT);
     let hard = ((HARD_SHADOW_SAMPLES * count as f32 / SAMPLE_COUNT).round() as i32).max(1);
     (count, hard)
+}
+
+/// Optional contact-shadow search reach. Original preserves all existing photo behavior.
+/// Extended modes keep the initial hard contact span at 4 screen pixels in a window:
+/// making the search longer must not also make its first 32 samples hard.
+pub(crate) fn reach_samples(mode: u8, scale: f32) -> (i32, i32) {
+    if mode == 0 || mode > 4 {
+        return samples(scale);
+    }
+    let base = match mode {
+        1 => 120.0_f32,
+        2 => 240.0,
+        _ => 480.0, // 3: fixed 480; 4: adaptive receiver-wise cutoff, upper bound 480
+    };
+    let scale = if scale.is_finite() { scale.max(1.0) } else { 1.0 };
+    let count = ((base * scale).round() as i32).min(MAX_SAMPLE_COUNT);
+    let hard = ((HARD_SHADOW_SAMPLES * scale).round() as i32).clamp(4, 32);
+    (count, hard)
+}
+
+/// Per-fragment cutoff uses infinite reversed-Z depth = near / view_distance.
+/// The coefficient converts a chosen approximate world reach to screen pixels.
+/// It is a ray-search heuristic, not a physical world-space shadow caster lookup.
+pub(crate) fn adaptive_coefficient(mode: u8, metres: f32, near: f32, proj_y: f32, height: u32) -> f32 {
+    if mode != 4 || !near.is_finite() || near <= 1e-5 || !proj_y.is_finite() || !metres.is_finite() {
+        return 0.0;
+    }
+    (0.5 * height as f32 * proj_y.abs() * metres.clamp(0.10, 1.20) / near).clamp(0.0, 1e6)
+}
+
+/// Live viewer controls, independent from any contact-shadow compositor experiment.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Reach {
+    pub mode: u8, // 0 original, 1 120px, 2 240px, 3 480px, 4 adaptive
+    pub metres: f32,
+    pub proj_y: f32,
+    /// Maximum synthetic depth behind a visible contact-shadow caster, in metres.
+    /// The standard Aurora behavior is 0.05 m. 0.0 uses Bend's thin shell.
+    pub occluder_depth_metres: f32,
+    /// Record candidate-hit distance for the experimental debug overlay.
+    pub debug_hits: bool,
+    /// Record close depth misses and ray exhaustion categories for the debug view.
+    pub debug_failures: bool,
 }
 
 /// The shader for `count` samples per pixel, `hard` of them hard
@@ -176,13 +219,17 @@ pub(crate) fn build_dispatch_list(
     out.light[2] = if light[3] == 0.0 { 0.0 } else { light[2] / light[3] };
     out.light[3] = if light[3] > 0.0 { 1.0 } else { -1.0 };
 
-    let light_xy = [(out.light[0] + 0.5) as i32, (out.light[1] + 0.5) as i32];
-    // the bounds, inclusive, relative to the light
+    // The shader builds each wave about the centre of the texel containing
+    // the light (floor(light.xy) + 0.5), including for off-screen lights.
+    let light_xy = [out.light[0].floor() as i32, out.light[1].floor() as i32];
+    // The minor-axis coordinate is rounded independently in each wave.
+    // Cover one extra pixel around the rectangle so a fractional off-screen
+    // light cannot drop its outer row or column at a wave boundary.
     let biased = [
-        min_bounds[0] - light_xy[0],
-        -(max_bounds[1] - light_xy[1]),
-        max_bounds[0] - light_xy[0],
-        -(min_bounds[1] - light_xy[1]),
+        min_bounds[0] - 1 - light_xy[0],
+        -(max_bounds[1] + 1 - light_xy[1]),
+        max_bounds[0] + 1 - light_xy[0],
+        -(min_bounds[1] - 1 - light_xy[1]),
     ];
     // four quadrants around the light, each split in two on its longer axis
     // when it is not square
@@ -498,6 +545,16 @@ pub(crate) fn photo_source(variant: Variant, count: i32, hard: i32) -> String {
     }
 }
 
+/// Must match `ViewRayParams` in shaders/contact_shadows_view.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ViewRayParamsU {
+    proj: [[f32; 4]; 4],
+    inv_proj: [[f32; 4]; 4],
+    light_view: [f32; 4],
+    tuning: [f32; 4],
+}
+
 /// Must match `Params` in contact_shadows.wgsl.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -505,6 +562,8 @@ struct ParamsU {
     light: [f32; 4],
     wave_offset: [i32; 4],
     tuning: [f32; 4],
+    /// x: adaptive pixels per reversed-Z unit (0: fixed/original reach).
+    reach: [f32; 4],
 }
 
 /// The light of the frame as Bend takes it: the direction towards it (w =
@@ -517,10 +576,12 @@ pub(crate) fn light_projection(view_proj: Mat4, towards_light: Vec3) -> [f32; 4]
 pub(crate) struct ContactShadows {
     /// Bend's 60 samples: the window's.
     pipeline: wgpu::ComputePipeline,
-    /// A photo's, for its samples ([`shader_source`]), made with its first
-    /// frame and kept for the next photo of the same scale.
-    photo: Option<((i32, i32), wgpu::ComputePipeline)>,
-    /// This frame's samples: those of `photo` when it is not Bend's.
+    /// Completed reach kernels by (count, hard samples). A refused key uses
+    /// the original kernel and avoids trying the same driver call every frame.
+    kernels: Vec<((i32, i32), Option<wgpu::ComputePipeline>)>,
+    /// At most one live reach compile per backend, even when the user switches presets.
+    pending: Option<ReachBuild>,
+    /// This frame's selected samples (the original pipeline remains 60 / 4).
     samples: (i32, i32),
     pipeline_layout: wgpu::PipelineLayout,
     /// The whole mask lit, for `Variant::Skip` only; the wavefronts write
@@ -531,12 +592,23 @@ pub(crate) struct ContactShadows {
     buffer: wgpu::Buffer,
     /// Bytes between the constants of two dispatches.
     stride: u64,
+    /// Four float controls (currently X: hole repair enabled).
+    integrity_filter_buffer: wgpu::Buffer,
     /// This frame's dispatches (`write`, then `encode`).
     list: DispatchList,
     filter: Filter,
     /// The window's shader ([`Variant::for_adapter`]); `Skip` dispatches no
     /// wavefront, `NoShared` makes the photo's without workgroup memory too.
     variant: Variant,
+    view_ray_pipeline: wgpu::ComputePipeline,
+    view_ray_layout: wgpu::BindGroupLayout,
+    view_ray_buffer: wgpu::Buffer,
+    view_ray_now: bool,
+}
+
+struct ReachBuild {
+    samples: (i32, i32),
+    done: mpsc::Receiver<Option<wgpu::ComputePipeline>>,
 }
 
 /// The softening of the mask before the shading reads it
@@ -579,6 +651,16 @@ impl Filter {
                         access: wgpu::StorageTextureAccess::WriteOnly,
                         format: RESULT_FORMAT,
                         view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(16),
                     },
                     count: None,
                 },
@@ -628,6 +710,8 @@ pub(crate) struct Targets {
     /// The filter's, reading the same depths and the pass's mask.
     filter_group: wgpu::BindGroup,
     filter_group_more: wgpu::BindGroup,
+    view_ray_group: wgpu::BindGroup,
+    view_ray_group_more: wgpu::BindGroup,
     depth_texture: wgpu::Texture,
     depth: wgpu::TextureView,
     /// The shadow in `.r`, 0 lit, 1 in contact shadow, softened; read by the
@@ -722,9 +806,76 @@ impl ContactShadows {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let integrity_filter_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("contact integrity filter options"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // The view-space tracer shares the depth and raw mask textures but
+        // uses its own uniform layout; Bend's params and shader remain intact.
+        let view_ray_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("contact shadows (view-space experimental)"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/contact_shadows_view.wgsl").into()),
+        });
+        let view_ray_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("contact view ray parameters"),
+            size: std::mem::size_of::<ViewRayParamsU>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let view_ray_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("contact shadows view ray"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<ViewRayParamsU>() as u64),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: RESULT_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let view_ray_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("contact shadows view ray"),
+            bind_group_layouts: &[Some(&view_ray_layout)],
+            immediate_size: 0,
+        });
+        let view_ray_pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+            label: Some("contact shadows view ray"),
+            layout: Some(&view_ray_pl),
+            module: &view_ray_module,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         ContactShadows {
             pipeline,
-            photo: None,
+            kernels: Vec::new(),
+            pending: None,
             samples: samples(1.0),
             pipeline_layout: pl,
             clear,
@@ -732,36 +883,108 @@ impl ContactShadows {
             layout,
             buffer,
             stride,
+            integrity_filter_buffer,
             list: DispatchList::default(),
             filter,
             variant,
+            view_ray_pipeline,
+            view_ray_layout,
+            view_ray_buffer,
+            view_ray_now: false,
         }
     }
 
-    /// Choose the pipeline of an image `scale` times taller than the
-    /// viewfinder's view of it ([`samples`]), making a photo's the first
-    /// time its samples are asked (once per photo size: a few milliseconds
-    /// on the photo's first frame, never in the window's).
-    fn prepare(&mut self, device: &wgpu::Device, scale: f32) {
-        self.samples = samples(scale);
-        if self.samples == samples(1.0) || self.photo.as_ref().is_some_and(|(s, _)| *s == self.samples) {
+    /// The live scene draws with the original kernel until its selected kernel
+    /// arrives. A capture needs its exact reach on the very first tile.
+    fn prepare(&mut self, device: &wgpu::Device, wanted: (i32, i32), capture: bool, workers: &mut Vec<JoinHandle<()>>) {
+        self.samples = wanted;
+        if self.view_ray_now || self.variant == Variant::Skip {
             return;
         }
-        let (count, hard) = self.samples;
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("contact shadows (photo)"),
-            source: wgpu::ShaderSource::Wgsl(photo_source(self.variant, count, hard).into()),
-        });
-        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-            label: Some("contact shadows (photo)"),
-            layout: Some(&self.pipeline_layout),
-            module: &module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        log::info!("contact shadows: {count} samples per pixel for the photo");
-        self.photo = Some((self.samples, pipeline));
+        if let Some(build) = &self.pending {
+            let result = if capture && build.samples == wanted {
+                crate::pipeline_cache::waiting_for("contact shadow pipelines", || build.done.recv())
+                    .map_err(|_| mpsc::TryRecvError::Disconnected)
+            } else {
+                build.done.try_recv()
+            };
+            if !matches!(result, Err(mpsc::TryRecvError::Empty)) {
+                let key = build.samples;
+                self.pending = None;
+                self.cache_kernel(key, result.ok().flatten());
+            }
+        }
+        if wanted == samples(1.0) || self.kernels.iter().any(|(key, _)| *key == wanted) {
+            return;
+        }
+        if capture {
+            let pipeline = Self::make_kernel(device, &self.pipeline_layout, self.variant, wanted);
+            self.cache_kernel(wanted, pipeline);
+        } else if self.pending.is_none() {
+            let device = device.clone();
+            let layout = self.pipeline_layout.clone();
+            let variant = self.variant;
+            let (send, done) = mpsc::sync_channel(1);
+            let worker = std::thread::Builder::new().name("aurora-contact-pipelines".into()).spawn(move || {
+                let _ = send.send(Self::make_kernel(&device, &layout, variant, wanted));
+            });
+            match worker {
+                Ok(worker) => {
+                    workers.retain(|w| !w.is_finished());
+                    workers.push(worker);
+                    self.pending = Some(ReachBuild { samples: wanted, done });
+                }
+                Err(e) => {
+                    log::warn!("contact shadows: cannot start the pipeline worker: {e}");
+                    self.cache_kernel(wanted, None);
+                }
+            }
+        }
+    }
+
+    fn make_kernel(
+        device: &wgpu::Device,
+        layout: &wgpu::PipelineLayout,
+        variant: Variant,
+        (count, hard): (i32, i32),
+    ) -> Option<wgpu::ComputePipeline> {
+        crate::gpu_alloc::checked(device, || {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("contact shadows (variable reach)"),
+                source: wgpu::ShaderSource::Wgsl(photo_source(variant, count, hard).into()),
+            });
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                label: Some("contact shadows (variable reach)"),
+                layout: Some(layout),
+                module: &module,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        })
+    }
+
+    fn cache_kernel(&mut self, key: (i32, i32), pipeline: Option<wgpu::ComputePipeline>) {
+        let (count, hard) = key;
+        if pipeline.is_some() {
+            log::info!("contact shadows: cached {count} samples per pixel (hard span {hard})");
+        } else {
+            log::warn!("contact shadows: {count}-sample kernel unavailable (hard span {hard}); using the window kernel");
+        }
+        // Keep the live presets and common photo sizes without growing with
+        // every distinct capture resolution.
+        if self.kernels.len() >= 12 {
+            self.kernels.remove(0);
+        }
+        self.kernels.push((key, pipeline));
+    }
+
+    fn selected_kernel(&self) -> &wgpu::ComputePipeline {
+        self.kernels
+            .iter()
+            .find(|(key, _)| *key == self.samples)
+            .and_then(|(_, pipeline)| pipeline.as_ref())
+            .unwrap_or(&self.pipeline)
     }
 
     /// The mask for a window of `width` x `height` reading `depth` (the
@@ -855,6 +1078,34 @@ impl ContactShadows {
                         binding: 2,
                         resource: wgpu::BindingResource::TextureView(&result),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.integrity_filter_buffer,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(16),
+                        }),
+                    },
+                ],
+            })
+        };
+        let view_ray_group = |depth: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("contact shadows view ray"),
+                layout: &self.view_ray_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.view_ray_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&raw),
+                    },
                 ],
             })
         };
@@ -864,6 +1115,8 @@ impl ContactShadows {
             group_more: group(&own_depth),
             filter_group: filter_group(depth),
             filter_group_more: filter_group(&own_depth),
+            view_ray_group: view_ray_group(depth),
+            view_ray_group_more: view_ray_group(&own_depth),
             depth_texture,
             depth: own_depth,
             result,
@@ -877,17 +1130,60 @@ impl ContactShadows {
     /// plane is `near` metres away, in an image `scale` times taller than
     /// the viewfinder's view of it (its pipeline, [`Self::prepare`]), before
     /// the encoder runs.
-    pub(crate) fn write(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, t: &Targets, light: [f32; 4], near: f32, scale: f32) {
-        self.prepare(device, scale);
+    pub(crate) fn write(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        t: &Targets,
+        light: [f32; 4],
+        near: f32,
+        scale: f32,
+        capture: bool,
+        workers: &mut Vec<JoinHandle<()>>,
+        reach: Reach,
+        adaptive_depth: bool,
+        hole_repair: bool,
+    ) {
+        self.prepare(device, reach_samples(reach.mode, scale), capture, workers);
         let (w, h) = (t.size.0 as i32, t.size.1 as i32);
         self.list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
-        let occluder = occluder_units(Override::from_env().occluder_depth(), near);
+        // Keep AURORA_CONTACT_SHADOWS=shell whenever the live slider is at
+        // its original 0.05 m default. A non-default slider takes priority.
+        let depth_metres = if (reach.occluder_depth_metres - OCCLUDER_DEPTH).abs() < 1e-4 {
+            Override::from_env().occluder_depth()
+        } else {
+            reach.occluder_depth_metres.clamp(0.0, 0.30)
+        };
+        let occluder = occluder_units(depth_metres, near);
+        let adaptive = adaptive_coefficient(reach.mode, reach.metres, near, reach.proj_y, t.size.1);
+        // Vertical pixel footprint at unit view depth, expressed in the
+        // screen-space tracer's original surface-thickness units. Use the
+        // active depth projection, including a tiled photograph's crop.
+        let projection_scale = reach.proj_y.abs() * t.size.1 as f32 * SURFACE_THICKNESS;
+        let pixel_width = if projection_scale.is_finite() && projection_scale > 0.0 {
+            2.0 / projection_scale
+        } else {
+            0.0
+        };
+        // Negative occluder units opt into the adaptive test without
+        // changing the original ParamsU/Variants shader uniform layout.
+        let occluder = if adaptive_depth { -occluder.abs() } else { occluder };
+        let repair_options: [f32; 4] = [if hole_repair { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0];
+        queue.write_buffer(&self.integrity_filter_buffer, 0, bytemuck::cast_slice(&repair_options));
         let mut bytes = vec![0u8; (self.stride as usize) * self.list.count];
         for (i, d) in self.list.dispatches().iter().enumerate() {
             let u = ParamsU {
                 light: self.list.light,
                 wave_offset: [d.wave_offset[0], d.wave_offset[1], 0, 0],
                 tuning: [SURFACE_THICKNESS, BILINEAR_THRESHOLD, SHADOW_CONTRAST, occluder],
+                // x adaptive reach; y collect candidate metadata; z classify
+                // near depth-window misses; w is the projected pixel width.
+                reach: [
+                    adaptive,
+                    if reach.debug_hits || reach.debug_failures { 1.0 } else { 0.0 },
+                    if reach.debug_failures { 1.0 } else { 0.0 },
+                    pixel_width,
+                ],
             };
             let at = i * self.stride as usize;
             bytes[at..at + std::mem::size_of::<ParamsU>()].copy_from_slice(bytemuck::bytes_of(&u));
@@ -904,6 +1200,45 @@ impl ContactShadows {
     /// lit first, so every pixel of the target is written each frame without
     /// emptying it. Then the filter softens the mask into `result`, over the
     /// same depth.
+    /// Configures the alternative tracer for one frame. `proj` and `view`
+    /// must match the jittered depth prepass (also used by Bend's ray setup).
+    /// The normal Bend `write` call remains unchanged.
+    /// Backend selected for this frame, before configure_view_ray updates
+    /// its cached dispatch flag. A skipped contact pass has no diagnostic data.
+    pub(crate) fn diagnostic_backend(&self, enabled: bool, method: u8) -> crate::render_controls::ContactBackend {
+        crate::render_controls::ContactBackend::from_frame(enabled, method, self.variant == Variant::Skip)
+    }
+
+    pub(crate) fn configure_view_ray(
+        &mut self,
+        queue: &wgpu::Queue,
+        proj: Mat4,
+        view: Mat4,
+        sun_world: Vec3,
+        method: u8,
+        reach: f32,
+        thickness: f32,
+        budget: u32,
+    ) {
+        self.view_ray_now = method == 1;
+        if !self.view_ray_now {
+            return;
+        }
+        let sun_view = view.transform_vector3(sun_world).normalize_or(Vec3::Z);
+        let u = ViewRayParamsU {
+            proj: proj.to_cols_array_2d(),
+            inv_proj: proj.inverse().to_cols_array_2d(),
+            light_view: [sun_view.x, sun_view.y, sun_view.z, 0.0],
+            tuning: [
+                reach.clamp(0.10, 2.0),
+                thickness.clamp(0.01, 0.30),
+                budget.clamp(48, 128) as f32,
+                0.0,
+            ],
+        };
+        queue.write_buffer(&self.view_ray_buffer, 0, bytemuck::bytes_of(&u));
+    }
+
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets, more: bool) {
         let (group, filter_group) = if more {
             (&t.group_more, &t.filter_group_more)
@@ -914,27 +1249,31 @@ impl ContactShadows {
             label: Some("contact shadows"),
             timestamp_writes: None,
         });
-        pass.set_bind_group(0, group, &[0]);
-        if self.variant == Variant::Skip {
-            pass.set_pipeline(&self.clear);
+        if self.view_ray_now && self.variant != Variant::Skip {
+            // Each 8x8 invocation independently traces its receiving pixel.
+            // The original Bend passes are skipped, not modified.
+            pass.set_pipeline(&self.view_ray_pipeline);
+            pass.set_bind_group(0, if more { &t.view_ray_group_more } else { &t.view_ray_group }, &[]);
             pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
         } else {
-            pass.set_pipeline(&self.clear_light);
-            pass.dispatch_workgroups(1, 1, 1);
-        }
-        let pipeline = match &self.photo {
-            Some((s, photo)) if *s == self.samples => photo,
-            _ => &self.pipeline,
-        };
-        pass.set_pipeline(pipeline);
-        let list = if self.variant == Variant::Skip {
-            &[][..]
-        } else {
-            self.list.dispatches()
-        };
-        for (i, d) in list.iter().enumerate() {
-            pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
-            pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
+            pass.set_bind_group(0, group, &[0]);
+            if self.variant == Variant::Skip {
+                pass.set_pipeline(&self.clear);
+                pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+            } else {
+                pass.set_pipeline(&self.clear_light);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+            pass.set_pipeline(self.selected_kernel());
+            let list = if self.variant == Variant::Skip {
+                &[][..]
+            } else {
+                self.list.dispatches()
+            };
+            for (i, d) in list.iter().enumerate() {
+                pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
+                pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
+            }
         }
         pass.set_pipeline(if soft_from_env() { &self.filter.soft } else { &self.filter.copy });
         pass.set_bind_group(0, filter_group, &[]);
@@ -945,6 +1284,90 @@ impl ContactShadows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn live_reach_keeps_drawing_while_one_kernel_compiles_and_captures_use_the_exact_kernel() {
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("test requires a GPU");
+        let (device, _) = pollster::block_on(adapter.request_device(&Default::default())).expect("device");
+        let mut cs = ContactShadows::with_variant(&device, Variant::Bend);
+        let mut workers = Vec::new();
+        let high = reach_samples(1, 1.0);
+        let ultra = reach_samples(3, 1.0);
+
+        // Even on a fast driver the scheduling frame uses the ready window
+        // pipeline. Only a later frame may install what the worker makes.
+        cs.prepare(&device, high, false, &mut workers);
+        assert_eq!(cs.selected_kernel(), &cs.pipeline);
+        let build = cs.pending.take().expect("the first 120-sample compile runs off-frame");
+        assert_eq!(build.samples, high);
+        let high_pipeline = build.done.recv().unwrap().expect("the driver accepted the 120-sample shader");
+        workers.pop().unwrap().join().unwrap();
+        assert_ne!(&high_pipeline, &cs.pipeline);
+
+        // Hold that actual driver result. Changing presets must neither wait
+        // for its delivery nor spawn another worker every frame.
+        let (send, done) = mpsc::sync_channel(1);
+        cs.pending = Some(ReachBuild { samples: high, done });
+        cs.prepare(&device, high, false, &mut workers);
+        cs.prepare(&device, ultra, false, &mut workers);
+        assert_eq!(cs.selected_kernel(), &cs.pipeline);
+        assert!(workers.is_empty());
+        send.send(Some(high_pipeline.clone())).unwrap();
+        cs.prepare(&device, ultra, false, &mut workers);
+        assert_eq!(
+            cs.selected_kernel(),
+            &cs.pipeline,
+            "a result for the old tier cannot draw the new tier"
+        );
+        assert_eq!(workers.len(), 1);
+        assert_eq!(cs.pending.as_ref().unwrap().samples, ultra);
+
+        // A one-frame capture consumes the actual 480-sample worker result.
+        cs.prepare(&device, ultra, true, &mut workers);
+        assert!(cs.pending.is_none());
+        assert_ne!(cs.selected_kernel(), &cs.pipeline);
+        assert_ne!(cs.selected_kernel(), &high_pipeline);
+        cs.prepare(&device, high, false, &mut workers);
+        assert_eq!(cs.selected_kernel(), &high_pipeline);
+        assert_eq!(workers.len(), 1, "both kernels are cached");
+        workers.pop().unwrap().join().unwrap();
+
+        // Rejected/disconnected compilation retains the checked window kernel
+        // and does not schedule another driver call for the same key per frame.
+        let medium = reach_samples(2, 1.0);
+        let (send, done) = mpsc::sync_channel(1);
+        drop(send);
+        cs.pending = Some(ReachBuild { samples: medium, done });
+        cs.prepare(&device, medium, false, &mut workers);
+        cs.prepare(&device, medium, false, &mut workers);
+        assert_eq!(cs.selected_kernel(), &cs.pipeline);
+        assert!(cs.pending.is_none() && workers.is_empty());
+    }
+
+    #[test]
+    fn contact_reach_preserves_default_and_extends_without_extra_hardness() {
+        assert_eq!(reach_samples(0, 1.0), (60, 4));
+        assert_eq!(reach_samples(1, 1.0), (120, 4));
+        assert_eq!(reach_samples(2, 1.0), (240, 4));
+        assert_eq!(reach_samples(3, 1.0), (480, 4));
+        assert_eq!(reach_samples(4, 1.0), (480, 4));
+        assert_eq!(reach_samples(0, 2.0), samples(2.0));
+        assert_eq!(reach_samples(1, 2.0), (240, 8));
+        assert_eq!(reach_samples(3, 8.0), (480, 32));
+    }
+
+    #[test]
+    fn adaptive_reach_scales_with_projected_size_and_depth() {
+        let c = adaptive_coefficient(4, 0.5, 0.1, 1.732, 1080);
+        assert!(c > 0.0);
+        // Reversed-Z depth near/z: twice as near => twice the screen reach.
+        let far = c * (0.1 / 4.0);
+        let close = c * (0.1 / 2.0);
+        assert!((close / far - 2.0).abs() < 1e-4);
+        assert_eq!(adaptive_coefficient(0, 0.5, 0.1, 1.732, 1080), 0.0);
+    }
 
     /// The pixel each thread of each wavefront writes, as the shader finds
     /// it (`ComputeWavefrontExtents`, contact_shadows.wgsl): a CPU copy of
@@ -1021,6 +1444,15 @@ mod tests {
             let (missed, list) = coverage(light, w, h);
             assert_eq!(missed, 0, "light {light:?}: {} dispatches", list.count);
             assert!((1..=8).contains(&list.count), "{}", list.count);
+        }
+    }
+
+    #[test]
+    fn fractional_offscreen_lights_cover_the_viewport_edges() {
+        let (w, h) = (384, 288);
+        for (x, y) in [(-1.044, 413.536), (-274.9941, -511.1889)] {
+            let light = [1.0 - 2.0 * x / w as f32, 2.0 * y / h as f32 - 1.0, 0.0, -1.0];
+            assert_eq!(coverage(light, w, h).0, 0, "projected light at ({x}, {y})");
         }
     }
 
@@ -1371,7 +1803,26 @@ mod tests {
                 },
                 extent,
             );
-            cs.write(&device, &queue, &t, light, 0.1, scale);
+            cs.write(
+                &device,
+                &queue,
+                &t,
+                light,
+                0.1,
+                scale,
+                true,
+                &mut Vec::new(),
+                Reach {
+                    mode: 0,
+                    metres: 0.5,
+                    proj_y: 1.732,
+                    occluder_depth_metres: 0.05,
+                    debug_hits: false,
+                    debug_failures: false,
+                },
+                false,
+                false,
+            );
             let mut encoder = device.create_command_encoder(&Default::default());
             cs.encode(&mut encoder, &t, false);
             queue.submit([encoder.finish()]);

@@ -200,9 +200,11 @@ fn fs_blur(in: Out) -> Fields {
         far_w += wf;
         let sn = max(sc, 0.0);
         let wn = clamp(sn - r + 1.0, 0.0, 1.0);
-        // its light spread over its disk: the share that falls here (only
-        // what is really out of focus covers what is behind it)
-        let e = wn / max(sn * sn, 1.0) * smoothstep(1.0, 2.0, sn);
+        // Original Aurora waits until 2-4 full-resolution CoC pixels to
+        // gather near-field colour. The opt-in mode starts more gradually.
+        let entry = mix(smoothstep(1.0, 2.0, sn),
+                        smoothstep(0.1, 2.0, sn), dof.band.y);
+        let e = wn / max(sn * sn, 1.0) * entry;
         near += s.rgb * e;
         near_w += e;
         cover += e * area;
@@ -213,7 +215,11 @@ fn fs_blur(in: Out) -> Fields {
     // behind it is not known), decided here at half resolution so that the
     // upsampling smooths the (not antialiased) depth's staircase.
     // The covering follows the gathered coverage, not the silhouette.
-    let alpha = max(clamp(cover, 0.0, 1.0), smoothstep(1.0, 2.0, c0 * 2.0) * smoothstep(0.25, 0.6, cover));
+    let entry = mix(smoothstep(1.0, 2.0, c0 * 2.0),
+                    smoothstep(0.2, 3.5, c0 * 2.0), dof.band.y);
+    let cover_ramp = mix(smoothstep(0.25, 0.6, cover),
+                         smoothstep(0.12, 0.70, cover), dof.band.y);
+    let alpha = max(clamp(cover, 0.0, 1.0), entry * cover_ramp);
     o.near = vec4<f32>(select(vec3<f32>(0.0), near / near_w, near_w > 0.0) * alpha, alpha);
     return o;
 }
@@ -275,6 +281,31 @@ fn fs_composite(in: Out) -> @location(0) vec4<f32> {
     // the near field over both, spread over its surroundings
     let near_rgb = near.rgb / max(near.a, 1e-4);
     col = mix(col, near_rgb, near.a);
+    // The half-res gather has a small-radius dead zone close to the focus
+    // plane. A subtle full-res, depth-compatible 4-neighbour blur bridges
+    // that zone on near-side pixels without smearing over silhouette edges.
+    if (dof.band.y > 0.001 && c > 0.12 && c < 4.0 && near.a < 0.98) {
+        let last = vec2<i32>(textureDimensions(t_a)) - vec2<i32>(1);
+        let taps = array<vec2<i32>, 8>(
+            vec2<i32>( 1,  0), vec2<i32>(-1,  0),
+            vec2<i32>( 0,  1), vec2<i32>( 0, -1),
+            vec2<i32>( 1,  1), vec2<i32>(-1,  1),
+            vec2<i32>( 1, -1), vec2<i32>(-1, -1));
+        var sum = sharp.rgb * 4.0;
+        var weight = 4.0;
+        for (var i = 0; i < 8; i++) {
+            let q = clamp(px + taps[i], vec2<i32>(0), last);
+            let qc = coc_at(q);
+            let same_side = select(0.0, 1.0, qc >= -0.05);
+            let radial = select(0.5, 1.0, i < 4);
+            let w = radial * same_side * (1.0 - smoothstep(0.25, 2.0, abs(qc - c)));
+            sum += textureLoad(t_a, q, 0).rgb * w;
+            weight += w;
+        }
+        let small = sum / max(weight, 1e-3);
+        let strength = smoothstep(0.12, 3.5, c) * (1.0 - near.a) * dof.band.y;
+        col = mix(col, small, strength);
+    }
     col = peaking(col, sharp.rgb, px, c);
     if (dof.tiles.z > 0.5) {
         // debug: near in red, far in blue, sharp in grey

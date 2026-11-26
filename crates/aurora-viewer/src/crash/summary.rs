@@ -34,7 +34,21 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     let (native_text, panic, freeze_text) = (text("native.txt"), text("panic.txt"), text("freeze.txt"));
     let native = (!native_text.trim().is_empty()).then(|| Stack::parse(&native_text));
     let freeze = threads(&freeze_text);
-    let stall = threads(&text("gpu-stall.txt"));
+    let stall_text = text("gpu-stall.txt");
+    let stall = threads(&stall_text);
+    let mut stall_lines = stall_text.lines();
+    let stalled_seconds = stall_lines.next().and_then(|line| {
+        line.strip_prefix("GPU stall: no frame for ")?
+            .strip_suffix(" s")?
+            .parse::<u64>()
+            .ok()
+    });
+    let pipeline = stalled_seconds.and_then(|_| {
+        stall_lines
+            .next()?
+            .strip_prefix("Render operation: ")
+            .and_then(aurora_render::pipeline_cache::PipelineWork::from_report)
+    });
     let location = panic.lines().next().and_then(panic_location);
     let alive = super::watchdog::read_alive(dir);
     let value = |key: &str| alive.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
@@ -74,6 +88,11 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     } else if dir.join("gpu-lost.txt").exists() {
         // The viewer closed itself after the device loss (app/gpu_stall.rs).
         ("GPU device lost".to_owned(), "GPU device lost".to_owned())
+    } else if pipeline.is_some() {
+        (
+            "Render thread stalled during pipeline preparation".to_owned(),
+            "pipeline preparation stall".to_owned(),
+        )
     } else if !stall.is_empty() {
         // The GPU still had a frame when the session ended (the window
         // answered, the user closed it from the notice or by other means).
@@ -198,16 +217,16 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         let at = rows.iter().position(|(field, _)| *field == "Crash").map_or(rows.len(), |i| i + 1);
         rows.insert(at, ("Risk factors", risk));
     }
-    if let Some(seconds) = text("gpu-stall.txt").lines().next().and_then(|line| {
-        line.strip_prefix("GPU stall: no frame for ")?
-            .strip_suffix(" s")?
-            .parse::<u64>()
-            .ok()
-    }) {
-        rows.push((
-            "GPU not responding",
-            format!("noticed after {seconds} s (how long the GPU hung is unknown), the window still answering"),
-        ));
+    if let Some(seconds) = stalled_seconds {
+        if let Some(work) = pipeline {
+            rows.push(("Render operation at stall snapshot", work.to_string()));
+            rows.push(("Frame stall", format!("sampled after {seconds} s")));
+        } else {
+            rows.push((
+                "GPU not responding",
+                format!("noticed after {seconds} s (how long the GPU hung is unknown), the window still answering"),
+            ));
+        }
     }
     if let Some(recoveries) = gpu_recoveries(&text("gpu-recoveries.txt"), record.started_unix) {
         rows.push(("GPU recoveries", recoveries));
@@ -1756,6 +1775,27 @@ mod tests {
     }
 
     const FREEZE: &str = "Freeze: no answer for 20 s\nThread: main\nNative stack (modules):\n00: ntdll+0x9d0e4\n01: aurora_viewer+0x5000\nModules:\nntdll id=0123456789ABCDEF0123456789ABCDEF1 code=1234ABCD1f8000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nThread: aurora-render\nNative stack (modules):\n00: nvoglv64+0x9abc\n01: aurora_viewer+0x7000\nModules:\nnvoglv64 code=65000000200000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nThread: Private Name\nNative stack (modules):\n00: secret+0x1\n";
+
+    #[test]
+    fn pipeline_stall_keeps_stack_and_only_publishes_known_renderer_work() {
+        let (dir, record) = session();
+        let trace = FREEZE.split_once("Thread: aurora-render").unwrap().1;
+        let stall = |op| format!("GPU stall: no frame for 20 s\nRender operation: {op}\nThread: aurora-render{trace}");
+        std::fs::write(
+            dir.join("gpu-stall.txt"),
+            stall("create compute pipeline / contact shadows (variable reach)"),
+        )
+        .unwrap();
+        let summary = build(&record, &dir);
+        assert!(summary.title.contains("pipeline preparation stall"));
+        assert!(summary.body.contains("contact shadows (variable reach)"));
+        assert!(summary.body.contains("nvoglv64+0x9abc"));
+        std::fs::write(dir.join("gpu-stall.txt"), stall("create compute pipeline / private name")).unwrap();
+        let summary = build(&record, &dir);
+        assert!(summary.title.contains("GPU not responding"));
+        assert!(!summary.body.contains("private name"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn recoveries_are_counted_with_when_and_how_and_nothing_else() {

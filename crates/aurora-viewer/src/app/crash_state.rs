@@ -276,7 +276,7 @@ pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr:
     word(shadows, format_args!("shadows{shadow_quality}"));
     word(shadows && settings.projector_shadows, format_args!("projector-shadows"));
     word(shadows && settings.contact_shadows, format_args!("contact-shadows"));
-    word(shadows && settings.soft_shadows, format_args!("soft-shadows"));
+    word(shadows && settings.sun_shadow_contact_hardening, format_args!("soft-shadows"));
     let traced = shadows && settings.ray_tracing.enabled;
     word(traced, format_args!("ray-tracing"));
     word(traced && settings.ray_tracing.lights, format_args!("rt-lights"));
@@ -608,7 +608,12 @@ mod tests {
         let mut settings = crate::settings::Settings {
             shadow_quality: 3,
             contact_shadows: true,
-            soft_shadows: true,
+            sun_shadow_contact_hardening: true,
+            ray_tracing: crate::settings::RayTracingSettings {
+                reflections: true,
+                ..crate::settings::RayTracingSettings::DELUXE
+            },
+            ssr: true,
             ssao: 2,
             ao_method: 1,
             gtao_quality: 2,
@@ -623,6 +628,10 @@ mod tests {
             "shadows3",
             "contact-shadows",
             "soft-shadows",
+            "ray-tracing",
+            "rt-lights",
+            "rt-indirect",
+            "rt-reflections",
             "ao-gtao2",
             "aa-smaa",
             "bloom",
@@ -637,6 +646,10 @@ mod tests {
         // the photo window's shadows off: the report says what is drawn
         let list = effects(&settings, (0, settings.ssao), false);
         assert!(!list.split(',').any(|w| w.starts_with("shadows")), "{list}");
+        assert!(
+            !list.contains("ray-tracing") && !list.split(',').any(|w| w.starts_with("rt-")),
+            "{list}"
+        );
         // the contact shadows and the indirect light need what they ride on
         settings.shadow_quality = 0;
         settings.ssao = 0;

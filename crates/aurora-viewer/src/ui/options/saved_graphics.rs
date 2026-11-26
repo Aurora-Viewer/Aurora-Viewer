@@ -55,7 +55,7 @@ pub(super) fn controls(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mu
     let current = saved::choices(s);
     let selected = saved::selected(s).map(str::to_owned);
     let label = match selected.as_deref() {
-        Some(name) if s.graphics_saved[name] != Saved::capture(s) => tr!("graphics-saved-modified", name = name.to_owned()),
+        Some(name) if !s.graphics_saved[name].matches_current(s) => tr!("graphics-saved-modified", name = name.to_owned()),
         Some(name) => name.to_owned(),
         None => tr!("ui-options-preset-custom").to_owned(),
     };

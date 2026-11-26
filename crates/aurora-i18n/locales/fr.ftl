@@ -2713,6 +2713,11 @@ app-graphics-start-failed =
     Détails : { $e }
 
     Le journal de ce démarrage : { $log }
+app-gpu-pipeline-stall-title = Aurora Viewer prépare le rendu
+app-gpu-pipeline-stall =
+    Cette image est en préparation depuis { $seconds } secondes. Aurora attend un pipeline graphique. Le pilote peut mettre du temps à le compiler, surtout lors de sa première utilisation.
+
+    Continuer à attendre ? Oui laisse la compilation se poursuivre. Non vous déconnecte et ferme Aurora.
 app-gpu-stall-title = Aurora Viewer : la carte graphique ne répond plus
 app-gpu-stall =
     La carte graphique n'a pas terminé d'image depuis { $seconds } secondes. Aurora fonctionne toujours (le monde, le son, le chat continuent) mais rien ne peut être affiché tant que la carte ne répond pas.
@@ -4880,6 +4885,8 @@ ui-options-dof-enable = Profondeur de champ
 ui-options-dof-enable-help = Floute la vue sauf là où la caméra fait la mise au point, comme un vrai objectif (Legacy Viewer : désactivée).
 ui-options-dof-edit = Aussi en mode édition
 ui-options-dof-edit-help = Garde l'effet quand les outils de construction sont ouverts.
+ui-options-dof-blended-depth = Inclure les surfaces à transparence alpha
+ui-options-dof-blended-depth-help = Utilise la profondeur des mèches de cheveux visibles et des autres surfaces translucides pour la profondeur de champ, dans le monde et sur les photos. Les espaces transparents conservent la profondeur de l’arrière-plan.
 ui-options-dof-focus = Mise au point
 ui-options-dof-focus-help = Le point visé par la caméra (par défaut, comme le Legacy Viewer), le point sous le pointeur, le dernier point cliqué, ou le point visé au moment du verrouillage.
 ui-options-dof-focus-camera = Caméra
@@ -6145,7 +6152,7 @@ ui-options-ray-tracing-unsupported = Cette carte graphique ou son pilote n’a p
 ui-options-ray-tracing-vr = Indisponible dans une session démarrée pour la VR
 ui-options-tab-ray-tracing = Ray tracing
 ui-options-deluxe-rt-warning-title = Activer Deluxe (RT) ?
-ui-options-deluxe-rt-warning-text = Deluxe (RT), c’est High avec les ombres et la lumière indirecte calculées en lancer de rayons par la carte graphique. Il faut une carte avec le ray tracing matériel (NVIDIA RTX, AMD Radeon RX 6000 ou plus récente, Intel Arc) et un pilote à jour, et ça coûte bien plus cher que High : sur une carte milieu de gamme, les images par seconde peuvent beaucoup baisser dans les endroits chargés. Le ray tracing est encore en test : si l’image semble fausse ou si le viewer ralentit, revenez à High. Ses réglages sont dans l’onglet Ray tracing.
+ui-options-deluxe-rt-shadow-warning-text = Deluxe (RT) associe les autres réglages de High aux ombres et à la lumière indirecte calculées en lancer de rayons. Les cartes d’ombres utilisent le niveau Ultra lorsque le lancer de rayons ne les remplace pas. Il faut une carte avec le ray tracing matériel (NVIDIA RTX, AMD Radeon RX 6000 ou plus récente, Intel Arc) et un pilote à jour, et ça coûte bien plus cher que High : sur une carte milieu de gamme, les images par seconde peuvent beaucoup baisser dans les endroits chargés. Le ray tracing est encore en test : si l’image semble fausse ou si le viewer ralentit, revenez à High. Ses réglages sont dans l’onglet Ray tracing.
 ui-options-deluxe-rt-warning-turn-on = Activer
 ui-options-ray-tracing-needs-shadows = Nécessite les ombres
 ui-options-ray-tracing-needs-ssr = Nécessite les reflets écran
@@ -16605,3 +16612,167 @@ phototools-director-lens = L'objectif du Réalisateur est affiché tant que sa f
 phototools-view-angle-viewfinder = Le viseur gère l'angle de vue : le vôtre revient à sa fermeture.
 ui-options-dof-show-focus-point = Afficher le point de mise au point
 ui-options-dof-show-focus-point-help = Une petite croix sur le point où l'objectif fait la mise au point : jaune quand il est libre, rouge quand il est verrouillé.
+
+# Aurora Rendering Baseline v2.0.0
+ui-options-baseline-contact-diagnostic = Diagnostic des ombres de contact
+ui-options-baseline-contact-diagnostic-help = Choisissez une seule vue. Masque filtré : le blanc représente une ombre. Les candidats et échecs Bend utilisent uniquement les données Bend. Résultats du rayon en espace de vue : vert pour un impact, bleu hors écran, rouge sans impact accepté après avoir rencontré une profondeur valide à l'écran ; le rouge ne prouve pas l'épuisement du budget. Un mode enregistré incompatible reste inactif. Les ombres de contact doivent être actives ; l'exposition et le post-traitement affectent ces vues.
+ui-options-baseline-requires-bend = Sélectionnez la méthode d'ombres de contact Original (Bend).
+ui-options-baseline-requires-view-ray = Sélectionnez la méthode d'ombres de contact en espace de vue.
+ui-options-baseline-diagnostic-off = Désactivé
+ui-options-baseline-contact-mask = Masque de contact filtré
+ui-options-baseline-bend-candidates = Bend : candidats du rayon
+ui-options-baseline-bend-failures = Bend : analyse des échecs
+ui-options-baseline-view-ray-outcomes = Rayon en espace de vue : résultats
+ui-options-baseline-diagnostic-inactive = Inactif pour la méthode sélectionnée
+
+# BEGIN AURORA_SHADOW_VISIBILITY_V2_1_0
+# Aurora Shadow Visibility v2.1.0
+ui-options-shadow-visibility-diagnostic = Diagnostic des ombres
+ui-options-shadow-visibility-diagnostic-help = Visibilité de la lumière solaire dans la vue principale : blanc = éclairé, noir = ombre. La carte exclut les ombres de contact ; le contact effectif inclut l’atténuation de cohérence éventuelle ; la combinaison retient la visibilité la plus sombre. L’occlusion de contact filtrée utilise l’échelle inverse : blanc = ombre. Couverture des cascades : rouge = proche, vert = intermédiaire, bleu = lointain, assombris par les ombres combinées. Résultats du rayon de vue : vert = impact, bleu = hors écran, rouge = aucun impact à l’écran accepté après avoir rencontré une profondeur valide ; le rouge ne prouve pas l’épuisement du budget. Les vues de contact nécessitent un rendu de contact actif. Désactivé conserve les vues d’ombres et d’occlusion ambiante de la Dev Toolbox ainsi que les variables d’environnement. L’exposition et le post-traitement affectent toujours ces vues.
+ui-options-shadow-visibility-map = Visibilité de la carte d’ombres
+ui-options-shadow-visibility-contact = Visibilité de contact effective
+ui-options-shadow-visibility-combined = Visibilité des ombres combinées
+ui-options-shadow-visibility-cascades = Couverture des cascades
+ui-options-shadow-visibility-filtered-mask = Occlusion de contact filtrée
+ui-options-shadow-visibility-requires-contact = Activez les ombres de contact pour utiliser cette vue.
+ui-options-shadow-visibility-inactive = Inactif avec les réglages actuels des ombres de contact
+ui-options-shadow-visibility-method-help = Choisissez le traceur de contact Bend d’origine ou le parcours borné des profondeurs dans l’espace de vue. Ce dernier s’arrête lorsque son budget d’échantillons est épuisé. Les deux utilisent le filtre de masque de contact existant.
+ui-options-shadow-visibility-budget-help = Nombre maximal de pixels de profondeur parcourus par rayon de contact. Le rayon s’arrête lorsque le budget est épuisé ; sa portée effective peut donc être plus courte que la portée configurée. Un budget supérieur augmente le coût GPU.
+# END AURORA_SHADOW_VISIBILITY_V2_1_0
+
+# BEGIN AURORA_SHADOW_RECOVERY_V2_1_1
+ui-options-shadow-recovery-diagnostic-help = Visibilité solaire dans la vue principale : blanc = éclairé, noir = ombre. La carte exclut les ombres de contact ; le contact effectif lit le masque filtré selon la profondeur, sans atténuation de cohérence ; la combinaison retient la visibilité la plus sombre. L'occlusion de contact filtrée utilise l'échelle inverse : blanc = ombre. Couverture des cascades : rouge = proche, vert = intermédiaire, bleu = lointain, assombrie par les ombres combinées. Résultats des rayons : vert = impact, bleu = hors écran, rouge = aucun impact accepté après examen d'une profondeur valide ; le rouge ne prouve pas l'épuisement du budget. Les modes de contact nécessitent les ombres de contact actives. Désactivé laisse agir les vues ombres/AO de Dev Toolbox et les variables d'environnement. L'exposition et le post-traitement affectent encore ces vues. Lorsque les quatre niveaux sont actifs, le jaune indique la carte la plus détaillée, avant le rouge, le vert et le bleu. Dans la vue des candidats du rayon Bend, le magenta indique une réduction de l’ombre de contact brute d’environ 3 points de pourcentage ou plus par rapport à la v2.3.4, à partir des mêmes échantillons de profondeur. Un magenta plus vif indique une réduction plus importante.
+ui-options-shadow-recovery-method-help = Choisissez le traceur de contact Bend d'origine ou l'ancien traceur expérimental en espace vue, rétabli dans la version 2.1.1. Celui-ci échantillonne le long de la portée physique demandée et peut manquer une géométrie fine entre les échantillons. Les deux utilisent le filtre existant tenant compte de la profondeur. L'atténuation de cohérence est supprimée.
+ui-options-shadow-recovery-budget-help = Nombre maximal de positions échantillonnées le long du rayon en espace vue. Leur espacement dépend de la portée physique demandée et de la taille des pixels projetés ; chaque pixel de profondeur traversé n'est pas nécessairement échantillonné. Un budget supérieur peut préserver davantage de détails fins, avec un coût GPU accru. La visibilité, les limites de l'écran, le décalage initial et l'espacement limitent toujours la couverture réelle.
+# END AURORA_SHADOW_RECOVERY_V2_1_1
+
+# BEGIN AURORA_NEAR_SHADOW_DETAIL_V2_2_0
+ui-options-near-shadow-detail = Détail des ombres proches
+ui-options-near-shadow-detail-help = Préserve les détails fins des ombres du soleil et de la lune près de la caméra. Une couverture plus étroite favorise les gros plans ; les surfaces plus éloignées utilisent les autres cascades d'ombres. Désactiver rétablit le comportement précédent des cartes d'ombres. Les ombres de contact se règlent séparément.
+ui-options-near-shadow-detail-range = Limite de couverture du détail proche
+ui-options-near-shadow-detail-range-help = Couverture maximale de la cascade d'ombres la plus fine, mesurée depuis la caméra. Commencez à 4 m ; réduisez pour les gros plans ou augmentez pour une scène plus large. Un réglage en pourcentage déjà plus étroit reste prioritaire. La distance totale des ombres ne change pas.
+# END AURORA_NEAR_SHADOW_DETAIL_V2_2_0
+
+ui-options-graded-sun-shadows = Ombres du soleil à quatre niveaux
+ui-options-graded-sun-shadows-help = Réserve une carte aux surfaces proches et répartit les trois autres jusqu’à la distance demandée. Utilise davantage de mémoire vidéo et une passe de rendu supplémentaire. S’applique aussi au clair de lune.
+ui-options-graded-quality-help = Résolution de chaque carte d’ombres : 512, 1024, 2048 ou 4096 pixels de côté. La portée se règle séparément.
+ui-options-graded-detail-range = Portée des ombres fines
+ui-options-graded-detail-range-help = Distance de la caméra jusqu’à la limite de la carte la plus fine. Commencez à 2 m. Augmenter cette distance réduit la finesse des détails.
+ui-options-graded-reach = Portée des ombres
+ui-options-graded-reach-help = Distance maximale des ombres du soleil et de la lune. La distance d’affichage peut limiter leur portée réelle.
+ui-options-graded-measured = Limites actives, de près à loin : { $splits } m. Échantillonnage des cartes : { $texels } mm par texel.
+ui-options-graded-waiting = Aucune passe d’ombres à quatre niveaux dans la dernière vue rendue.
+ui-options-graded-timing = Passe de détail proche : { $ms } ms sur le GPU.
+
+ui-shadow-enable = Activer les ombres
+ui-shadow-enable-help = Active les ombres du soleil, de la lune, de contact et des projecteurs. La résolution choisie est conservée après désactivation.
+ui-shadow-map-resolution = Résolution des cartes d’ombres
+ui-shadow-map-resolution-help = Nombre de pixels par côté pour chaque carte d’ombres du soleil ou de la lune. Un côté de carte de projecteur mesure la moitié. Une résolution supérieure utilise davantage de mémoire vidéo.
+ui-shadow-contact-hardening = Ombres douces du soleil et de la lune
+ui-shadow-contact-hardening-help = Les bords des ombres du soleil et de la lune s’adoucissent quand la distance entre l’objet et la surface qui reçoit son ombre augmente. Ce filtrage augmente la charge du processeur graphique.
+ui-shadow-angular-diameter = Diamètre angulaire de la source
+ui-shadow-angular-diameter-help = Largeur apparente de la source lumineuse en degrés. Depuis la Terre, le Soleil mesure environ 0,53°. Augmentez la valeur pour adoucir les bords.
+ui-shadow-sun = Soleil et lune
+ui-shadow-layout = Répartition des ombres du soleil
+ui-shadow-three = Trois niveaux
+ui-shadow-four = Quatre niveaux
+ui-shadow-reach-three = Distance des ombres à trois niveaux
+ui-shadow-reach-four = Distance des ombres à quatre niveaux
+ui-shadow-saved-three = Réglages conservés du mode à trois niveaux
+ui-shadow-saved-four = Réglages conservés du mode à quatre niveaux
+ui-shadow-saved-help = Modifie les réglages qui s’appliqueront lors du passage à ce mode.
+ui-shadow-smoothing = Lissage des bords
+ui-shadow-smoothing-help = En mode quatre niveaux, Léger adoucit les ombres proches, intermédiaires et lointaines. À 512 ou 1024 px, le filtre intermédiaire et lointain est plus étroit pour préserver les ombres fines. La carte la plus fine possède son propre filtre. Comparez avec Net dans « Visibilité de la carte d’ombres ».
+ui-shadow-sharp = Net
+ui-shadow-mild = Léger
+ui-shadow-first-custom = Personnaliser la première cascade
+ui-shadow-first-custom-help = Choisit la part de la portée effective couverte par la première carte. La part standard est de 8 %.
+ui-shadow-first-share = Couverture de la première cascade
+ui-shadow-first-share-help = La première cascade se termine à ce pourcentage de la portée effective. La limite de détail proche peut la réduire davantage.
+ui-shadow-no-measurement = En attente d’un rendu actif des ombres du soleil ou de la lune.
+ui-shadow-measured = Dernière vue · { $mode } · { $size } px par côté. Limites à { $splits } m. Largeur des texels en mm, du plus proche au plus lointain : { $texels }.
+ui-shadow-contact-section = Détail de contact
+ui-shadow-method = Méthode d’ombre de contact
+ui-shadow-bend = Origine (Bend)
+ui-shadow-view = Espace de vue (expérimental)
+ui-shadow-search-reach = Portée de recherche Bend
+ui-shadow-search-help = Portée maximale de recherche en pixels à l’écran le long du rayon lumineux. Une portée supérieure demande davantage de travail au GPU.
+ui-shadow-adaptive = Adaptative
+ui-shadow-adaptive-reach = Distance de recherche adaptative
+ui-shadow-adaptive-reach-help = Portée approximative dans le monde pour la recherche adaptative de Bend. La limite à l’écran est de 480 pixels.
+ui-shadow-occluder-depth = Épaisseur de l’occulteur
+ui-shadow-occluder-depth-help = Épaisseur que Bend considère comme pleine derrière un objet visible projetant une ombre. Des valeurs élevées peuvent décaler les ombres.
+ui-shadow-contact-advanced = Réglages de contact avancés
+ui-shadow-contact-advanced-help = Ajuste l’acceptation des rayons de contact et le filtrage des petites lacunes.
+ui-shadow-adaptive-depth = Profondeur adaptative des rayons Bend
+ui-shadow-adaptive-depth-help = Élargit la fenêtre de profondeur des rayons Bend qui s’éloignent de la caméra. Peut ajouter des ombres provenant de surfaces sans rapport.
+ui-shadow-hole-repair = Combler les petites lacunes
+ui-shadow-hole-repair-help = Comble les lacunes de un à trois pixels entre des ombres de contact sur la même surface. S’applique aux deux méthodes.
+ui-shadow-ray-reach = Portée des rayons de vue
+ui-shadow-ray-reach-help = Longueur maximale du rayon en mètres. Les bords de l’écran et le nombre d’échantillons peuvent limiter la portée effective.
+ui-shadow-ray-tolerance = Tolérance de profondeur des rayons de vue
+ui-shadow-ray-tolerance-help = Différence de profondeur maximale acceptée à la surface échantillonnée, en mètres.
+ui-shadow-ray-budget = Nombre d’échantillons par rayon de vue
+ui-shadow-projectors-section = Lumières de projecteurs
+ui-shadow-projector-limit = Nombre maximal de projecteurs avec ombres
+ui-shadow-projector-active = Projecteurs projetant des ombres · { $active } / { $limit } emplacements alloués · { $size } × { $size } px par carte.
+ui-shadow-projector-waiting = En attente du rendu des ombres pour mesurer le nombre de projecteurs actifs.
+ui-shadow-diagnostics-section = Diagnostic des ombres
+ui-shadow-legend-visibility = Le blanc indique une surface éclairée. Le noir indique une lumière bloquée.
+ui-shadow-legend-mask = Le blanc indique l’occlusion de contact. Les zones sombres en reçoivent peu ou pas.
+ui-shadow-legend-three = Rouge pour le proche, vert pour l’intermédiaire et bleu pour le lointain. Les couleurs mélangées indiquent les chevauchements.
+ui-shadow-legend-four = Jaune pour le détail proche, rouge pour le proche, vert pour l’intermédiaire et bleu pour le lointain. Les couleurs mélangées indiquent les chevauchements.
+ui-shadow-legend-rays = Vert pour un impact, bleu pour une sortie d’écran et rouge pour une recherche à l’écran sans impact.
+ui-shadow-legend-candidates = Le dégradé du vert à l’orange va des candidats précoces aux candidats tardifs. Le bleu teinte les rayons dont la recherche projetée sort de l’écran. Le magenta indique où l’ombre de contact brute a diminué d’environ 3 points de pourcentage ou plus par rapport à la v2.3.4. Plus le magenta est clair, plus la réduction est importante.
+ui-shadow-legend-failures = Le vert ou le jaune indique une ombre acceptée. Pour les échecs, le bleu marque une sortie d’écran, l’orange une profondeur proche, le violet la limite maximale et le gris foncé une limite plus courte.
+
+ui-shadow-profile-help = Choisissez un niveau de qualité des ombres. Si Personnalisé est coché, chaque niveau conserve ses propres réglages. Décochez-le pour utiliser les valeurs par défaut.
+ui-shadow-profile-distance = Portée des ombres du soleil
+ui-shadow-profile-range = { $name } · { $distance } m
+ui-shadow-profile-manual-range = Manuelle · { $distance } m
+ui-shadow-profile-distance-help = Modifie la portée des ombres du soleil et de la lune pour ce niveau de qualité.
+ui-shadow-profile-near = Proche
+ui-shadow-profile-balanced = Équilibrée
+ui-shadow-profile-far = Lointaine
+ui-shadow-profile-reset = Rétablir les valeurs par défaut des ombres pour le niveau { $tier } uniquement
+ui-shadow-profile-advanced-help = Affiche les réglages individuels des ombres. Vos réglages restent actifs lorsque vous les masquez.
+ui-shadow-profile-warning = Modifier ces réglages peut produire des ombres creuses, décollées ou instables. La flèche à côté de Personnalisé rétablit les valeurs par défaut de ce niveau.
+ui-shadow-profile-off-help = Les ombres sont désactivées. Sélectionnez un niveau de qualité pour en modifier les réglages.
+ui-shadow-profile-paused = Anciens réglages avancés
+ui-shadow-profile-paused-help = Un ancien profil contient des valeurs avancées inactives. Les appliquer remplace les valeurs avancées de ce niveau et conserve vos choix de distance et de projecteurs.
+ui-shadow-profile-apply-paused = Appliquer les anciennes valeurs
+
+## Rendering experiments
+
+ui-options-p3-ao-thin = Expérimental : compensation de l’AO des objets fins
+ui-options-p3-ao-thin-help = Compense les occultants fins dans XeGTAO. Essayez une valeur de 0,25 à 0,75 sur des feuilles, des fils ou des cheveux et vérifiez les creux voisins. Zéro conserve le rendu d’origine.
+ui-options-p3-thin-group = Expérimental : éclairage PBR des surfaces minces
+ui-options-p3-thin-enable = Activer localement l’éclairage PBR des surfaces minces
+ui-options-p3-thin-enable-help = Ajuste dans ce visualiseur l’éclairage des surfaces glTF sélectionnées. Le matériau conserve ses valeurs d’origine.
+ui-options-p3-thin-scope = Surfaces ciblées
+ui-options-p3-thin-scope-help = Ciblez un UUID de matériau ou prévisualisez tous les matériaux PBR double face avec masque alpha.
+ui-options-p3-thin-scope-uuid = UUID de matériau précis
+ui-options-p3-thin-scope-preview = Aperçu PBR double face avec masque alpha
+ui-options-p3-thin-uuid = UUID du matériau PBR
+ui-options-p3-thin-uuid-help = Collez un UUID de matériau depuis l’éditeur d’objet. Le moteur compare ses huit premiers octets. Un UUID vide ou invalide ne sélectionne aucune face.
+ui-options-p3-thin-ao = AO minimale du matériau PBR
+ui-options-p3-thin-ao-help = Fixe un minimum pour le canal d’occlusion ORM des surfaces ciblées. Zéro conserve l’occlusion définie dans le matériau.
+ui-options-p3-thin-transmission = Transmission du contre-jour
+ui-options-p3-thin-transmission-help = Simule la lumière solaire qui traverse une surface mince. Les occultants proches projettent une ombre sur cette lumière. Zéro désactive la transmission.
+ui-options-p3-thin-highlight = Mettre en évidence les matériaux ciblés
+ui-options-p3-thin-highlight-help = Teinte les faces ciblées en magenta pour vérifier où s’applique le réglage d’éclairage.
+ui-options-p3-legacy-group = Expérimental : harmonisation de l’éclairage classique
+ui-options-p3-legacy-enable = Harmoniser l’éclairage classique
+ui-options-p3-legacy-enable-help = Ajuste dans ce visualiseur l’éclairage diffus des matériaux classiques sous les ciels EEP modernes.
+ui-options-p3-legacy-sun = Normaliser la lumière solaire diffuse
+ui-options-p3-legacy-sun-help = Applique une réponse diffuse lambertienne à la lumière solaire classique et conserve le reflet spéculaire du matériau.
+ui-options-p3-legacy-ambient = Atténuer l’occlusion ambiante diffuse
+ui-options-p3-legacy-ambient-help = Rapproche de 18 % la visibilité ambiante des surfaces diffuses classiques de la pleine visibilité.
+ui-options-p3-legacy-local = Éviter les reflets locaux en double
+ui-options-p3-legacy-local-help = Conserve le reflet Blinn–Phong classique et supprime le reflet GGX supplémentaire du calcul de l’éclairage diffus local.
+ui-options-p3-dof-smooth = Expérimental : adoucir le flou proche du point focal
+ui-options-p3-dof-smooth-help = Adoucit au premier plan la transition entre la zone nette et le flou.
+ui-options-p3-dof-strength = Intensité du lissage près du point focal
+ui-options-p3-dof-strength-help = Règle la transition du flou au premier plan, du rendu d’origine à 0 au lissage maximal à 1.
+ui-options-p3-dof-zones = Diagnostic : afficher les zones de mise au point
+ui-options-p3-dof-zones-help = Affiche en rouge le flou proche, en bleu le flou lointain et en gris les zones nettes. Également disponible en mode Photo.

@@ -1111,6 +1111,7 @@ impl Gtao {
         proj: Mat4,
         reproj: Mat4,
         intensity: f32,
+        thin_occluder_compensation: f32,
         frame: Frame,
         normals: Option<Mat4>,
         photo: Option<[f32; 4]>,
@@ -1120,6 +1121,13 @@ impl Gtao {
         t.accumulate = next.map(|(target, _)| target);
         let temporal = next.map(|(_, history)| (frame.index, history));
         let mut u = uniforms(proj, reproj, intensity, t.size, t.quality, temporal, normals);
+        // XeGTAO already reads radius.w as its thin-occluder compensation.
+        // A UI value of zero preserves Aurora's original shader uniform.
+        u.radius[3] = if thin_occluder_compensation.is_finite() {
+            thin_occluder_compensation.clamp(0.0, 1.5)
+        } else {
+            0.0
+        };
         if let Some(part) = photo {
             u.photo = part;
         }

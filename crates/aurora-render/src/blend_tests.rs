@@ -527,7 +527,7 @@ fn evaluate(source: &str, inputs: &[[f32; 4]]) -> Option<Vec<f32>> {
 }
 
 /// A layer that fades out over a skin (a tattoo, a blush, a second skin):
-/// its texels not yet solid take the occlusion and the contact shadow of
+/// its texels not yet solid take the ambient occlusion of
 /// the skin they lie on, whole, as the solid ones do. A step there drew a
 /// line around the layer.
 #[test]
@@ -682,7 +682,7 @@ fn a_blended_fragment_is_measured_against_the_solid_surfaces_only() {
     assert!(solid < copy && copy < rising);
     let rising = &pass[rising..];
     let rising = &rising[..rising
-        .find("draw_sided(&mut pass, &self.pipelines.pre_contact, rg.blend, 0);")
+        .find("draw_sided(&mut pass, &self.pipelines.pre_occlusion, rg.blend, 0);")
         .expect("their pipeline")];
     assert!(rising.contains("color_attachments: &[],"), "no normal written");
     assert!(
@@ -693,7 +693,7 @@ fn a_blended_fragment_is_measured_against_the_solid_surfaces_only() {
     for (name, limit) in [
         ("prepass solid", "SCREEN_SOLID_ALPHA"),
         ("prepass solid normals", "SCREEN_SOLID_ALPHA"),
-        ("prepass contact normals", "SCREEN_BLEND_ALPHA"),
+        ("prepass occlusion normals", "SCREEN_BLEND_ALPHA"),
     ] {
         let at = renderer
             .find(&format!("base(\"{name}\""))
@@ -705,7 +705,7 @@ fn a_blended_fragment_is_measured_against_the_solid_surfaces_only() {
         );
         assert!(described.contains("fs_depth_contact"), "{name}: {described}");
     }
-    assert!(renderer.contains("pre(\"prepass contact\", \"vs_main\", Some(\"fs_depth_occlusion\"), blend_cull(side != 0))"));
+    assert!(renderer.contains("pre(\"prepass occlusion\", \"vs_main\", Some(\"fs_depth_occlusion\"), blend_cull(side != 0))"));
     // one value each for the renderer and the shaders
     for (name, value) in [
         ("SCREEN_BLEND_ALPHA", crate::renderer::SCREEN_BLEND_ALPHA),
@@ -715,7 +715,38 @@ fn a_blended_fragment_is_measured_against_the_solid_surfaces_only() {
     }
 }
 
-/// The screen-space occlusion, indirect light and contact shadows of a
+/// A detached, partially covered frame has no proxy in the AO depth. It
+/// still casts at its own depth and takes the contact estimate there.
+#[test]
+fn contact_depth_and_blend_receivers_share_half_coverage() {
+    let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+    let renderer = include_str!("renderer.rs").replace("\r\n", "\n");
+    assert!(renderer.contains("let contact_blend = self.contact_now && crate::contact_shadows::Override::from_env().all_casters();"));
+    let (_, extra_casters) = renderer
+        .split_once("let more = contact_blend && (n_blend > 0 || n_sprites > 0);")
+        .expect("the contact pass includes eligible blended faces and sprites");
+    let (pass, _) = extra_casters
+        .split_once("self.contact.encode(")
+        .expect("the contact tracer consumes this depth");
+    assert!(pass.contains("self.targets.depth_ss_tex.as_image_copy()"));
+    assert!(!pass.contains("ao_depth"));
+    assert!(pass.contains("self.pipelines.pre_contact, rg.blend"));
+    assert!(renderer.contains("pre(\"prepass contact\", \"vs_main\", Some(\"fs_depth_contact\"), blend_cull(side != 0))"));
+    assert!(object.contains("blend_contact_covered(m.color.a, frame.contact.y > 0.5)"));
+    let source = shader_function(&object, "blend_contact_covered", &["DEPTH_CONTACT_ALPHA"])
+        + "fn rule(v:vec4<f32>)->f32 {return select(0.0,1.0,blend_contact_covered(v.x,v.y>0.5));}";
+    let mut inputs = Vec::new();
+    for enabled in [0.0, 1.0] {
+        for alpha in [0.0, 0.499, 0.5, 0.75, 0.88, 1.0] {
+            inputs.push([alpha, enabled, 0.0, 0.0]);
+        }
+    }
+    if let Some(shares) = evaluate(&source, &inputs) {
+        assert_eq!(shares, [0., 0., 0., 0., 0., 0., 0., 0., 1., 1., 1., 1.]);
+    }
+}
+
+/// The screen-space occlusion and indirect light of a
 /// blended face fade in with its opacity from the one at which it enters
 /// the occlusion's depth: a step there drew a ragged line along the texels
 /// of a glass texture whose opacity crosses it.

@@ -70,6 +70,7 @@ mod preview_mips;
 pub mod probes;
 pub mod projector_shadows;
 mod readback;
+pub mod render_controls;
 mod render_thread;
 mod renderer;
 mod rlva;
@@ -152,7 +153,7 @@ pub use hud::HudView;
 pub use label_depth::{WORLD_OVERLAY_NEAR_W, clip_world_line, world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use outside::{OutsideEvent, OutsideFrame, same_picture};
-pub use renderer::{CASCADES, RenderError};
+pub use renderer::{CASCADES, PORTRAIT_SHADOW_BYTES, RenderError};
 // What a tile of a photo draws around what it keeps for the soft shadows.
 pub use soft_shadows::tile_reach as soft_shadow_tile_reach;
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
@@ -202,8 +203,73 @@ pub(crate) fn water_shader_source(files: &[&str], baked: &'static str) -> std::b
     source.into()
 }
 
-pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
-    water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER)
+/// Group zero uses 26 ordinary sampled textures with the detail map. The
+/// SSR group adds four (the G-buffer and traced reflections), more than the
+/// exact-order blend reader's two. Texture page binding arrays have their
+/// own limit (main_thread::texture_page_limit).
+pub(crate) fn graded_shadow_supported(limits: &wgpu::Limits) -> bool {
+    limits.max_sampled_textures_per_shader_stage >= 30 && limits.max_bindings_per_bind_group >= 34
+}
+
+/// One additional sampled depth texture in the frame group, at binding 34.
+pub fn portrait_shadow_supported(limits: &wgpu::Limits) -> bool {
+    limits.max_sampled_textures_per_shader_stage >= 31 && limits.max_bindings_per_bind_group >= 35
+}
+
+/// SwiftShader's Vulkan CPU driver faults on the ordinary material draw
+/// when the same shader contains both directional-shadow layout traversals.
+/// Keep the three atlas cascades, directional PCSS and contact shadows.
+/// Mesa llvmpipe and hardware drivers retain the combined material shader.
+pub(crate) fn swiftshader_cascade_layout(info: &wgpu::AdapterInfo) -> bool {
+    info.backend == wgpu::Backend::Vulkan
+        && info.device_type == wgpu::DeviceType::Cpu
+        && info.vendor == 0x1ae0
+        && info.device == 0xc0de
+        && info.driver == "SwiftShader driver"
+}
+
+/// Whether this device compiles the graded traversal alongside atlas cascades.
+/// A detail depth texture also needs enough physical binding slots.
+pub fn graded_shadow_layout_available(device: &wgpu::Device) -> bool {
+    !swiftshader_cascade_layout(&device.adapter_info())
+}
+
+const GRADED_LAYOUT_RETURN: &str = "return graded_shadow(world_pos, n, graded_distance(world_pos));";
+
+pub(crate) fn device_common_shader_source(device: &wgpu::Device) -> std::borrow::Cow<'static, str> {
+    material_shadow_layout(
+        common_shader_source(&device.limits()),
+        swiftshader_cascade_layout(&device.adapter_info()),
+    )
+}
+
+fn material_shadow_layout(common: std::borrow::Cow<'static, str>, cascades_only: bool) -> std::borrow::Cow<'static, str> {
+    if cascades_only {
+        // Unlink the graded traversal from mapped_shadow before the driver
+        // compiles the shader. A uniform set to zero still faults at draw.
+        common.replace(GRADED_LAYOUT_RETURN, "").into()
+    } else {
+        common
+    }
+}
+
+pub(crate) fn common_shader_source(limits: &wgpu::Limits) -> std::borrow::Cow<'static, str> {
+    let mut source = water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER);
+    // The renderer clears the corresponding coverage flags for unavailable
+    // maps. Resolve references in those branches against the bound sun atlas.
+    if !portrait_shadow_supported(limits) {
+        source = source
+            .replace("@group(0) @binding(34) var portrait_shadow_map: texture_depth_2d;", "")
+            .replace("portrait_shadow_map", "shadow_map")
+            .into();
+    }
+    if !graded_shadow_supported(limits) {
+        source = source
+            .replace("@group(0) @binding(33) var detail_shadow_map: texture_depth_2d;", "")
+            .replace("detail_shadow_map", "shadow_map")
+            .into();
+    }
+    source
 }
 
 /// object.wgsl as the device takes it: without the attributes of the early
@@ -304,10 +370,140 @@ mod shader_tests {
     }
 
     #[test]
+    fn shadow_display_reuses_surface_maps() {
+        let module = naga::front::wgsl::parse_str(crate::COMMON_SHADER).expect("common shader parses");
+        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+            .validate(&module)
+            .expect("common shader validates");
+        let function = |name| module.functions.iter().find(|(_, f)| f.name.as_deref() == Some(name)).unwrap().0;
+        let surface = &info[function("surface_shadow")];
+        let display = &info[function("debug_view")];
+        // Naga includes transitive calls. The debug view must not pull a second
+        // directional filter into the same fragment program as surface lighting.
+        for name in ["shadow_map", "detail_shadow_map", "portrait_shadow_map"] {
+            let map = module
+                .global_variables
+                .iter()
+                .find(|(_, var)| var.name.as_deref() == Some(name))
+                .unwrap()
+                .0;
+            assert!(!surface[map].is_empty(), "surface lighting lost {name}");
+            assert!(display[map].is_empty(), "shadow display resampled {name}");
+        }
+    }
+
+    #[test]
     fn asset_preview_shader_is_valid() {
         validate(include_str!("shaders/preview.wgsl"));
         validate(include_str!("shaders/preview_outline.wgsl"));
         validate(include_str!("shaders/preview_mips.wgsl"));
+    }
+
+    #[test]
+    fn swiftshader_uses_a_single_directional_shadow_layout() {
+        let mut swift = wgpu::AdapterInfo::new(wgpu::DeviceType::Cpu, wgpu::Backend::Vulkan);
+        swift.vendor = 0x1ae0;
+        swift.device = 0xc0de;
+        swift.driver = "SwiftShader driver".into();
+        assert!(crate::swiftshader_cascade_layout(&swift));
+        for other in [
+            wgpu::AdapterInfo {
+                vendor: 0x10005,
+                device: 0,
+                driver: "llvmpipe".into(),
+                ..swift.clone()
+            },
+            wgpu::AdapterInfo {
+                device_type: wgpu::DeviceType::DiscreteGpu,
+                ..swift.clone()
+            },
+            wgpu::AdapterInfo {
+                backend: wgpu::Backend::Metal,
+                ..swift.clone()
+            },
+            wgpu::AdapterInfo {
+                driver: "another Vulkan driver".into(),
+                ..swift.clone()
+            },
+        ] {
+            assert!(!crate::swiftshader_cascade_layout(&other));
+        }
+
+        let common = crate::COMMON_SHADER;
+        assert_eq!(crate::material_shadow_layout(common.into(), false), common);
+        assert_eq!(common.matches(crate::GRADED_LAYOUT_RETURN).count(), 1);
+        let cascades = crate::material_shadow_layout(common.into(), true);
+        let mapped = cascades
+            .split_once("fn mapped_shadow(")
+            .unwrap()
+            .1
+            .split_once("fn cascade_visibility(")
+            .unwrap()
+            .0;
+        assert!(!mapped.contains("graded_shadow("));
+        assert!(mapped.contains("cascade_visibility(world_pos, n, vertex_depth)"));
+        validate(&format!(
+            "{}\n{}\n{}",
+            cascades,
+            include_str!("shaders/object.wgsl"),
+            include_str!("shaders/env.wgsl")
+        ));
+        validate(&format!("{}\n{}", cascades, include_str!("shaders/ssr.wgsl")));
+    }
+
+    #[test]
+    fn graded_shadow_layout_respects_adapter_descriptor_limits() {
+        let textures_in = |module: &naga::Module, group| {
+            module
+                .global_variables
+                .iter()
+                .filter(|(_, var)| {
+                    var.binding.is_some_and(|binding| binding.group == group)
+                        && matches!(module.types[var.ty].inner, naga::TypeInner::Image { .. })
+                })
+                .count()
+        };
+        for (sampled, bindings, graded, portrait) in [
+            (29, 35, false, false),
+            (31, 33, false, false),
+            (30, 34, true, false),
+            (30, 35, true, false),
+            (31, 34, true, false),
+            (31, 35, true, true),
+        ] {
+            let limits = wgpu::Limits {
+                max_sampled_textures_per_shader_stage: sampled,
+                max_bindings_per_bind_group: bindings,
+                ..Default::default()
+            };
+            assert_eq!(crate::graded_shadow_supported(&limits), graded);
+            assert_eq!(crate::portrait_shadow_supported(&limits), portrait);
+            let common = crate::common_shader_source(&limits);
+            assert_eq!(common.contains("@binding(33)"), graded);
+            assert_eq!(common.contains("detail_shadow_map"), graded);
+            assert_eq!(common.contains("@binding(34)"), portrait);
+            assert_eq!(common.contains("portrait_shadow_map"), portrait);
+            // SSR has the largest non-array texture group beside the frame.
+            // Count the shader declarations too, so adding another traced
+            // reflection input cannot silently outrun these thresholds.
+            // The scene declares four frame textures in env.wgsl; they stay
+            // in the shared layout even though SSR does not read them.
+            let scene = format!(
+                "{}\n{}\n{}",
+                common,
+                include_str!("shaders/object.wgsl"),
+                include_str!("shaders/env.wgsl")
+            );
+            let frame = naga::front::wgsl::parse_str(&scene).expect("scene shader parses");
+            let ssr = format!("{}\n{}", common, include_str!("shaders/ssr.wgsl"));
+            let module = naga::front::wgsl::parse_str(&ssr).expect("SSR shader parses");
+            let sampled_textures = textures_in(&frame, 0) + textures_in(&module, 3);
+            assert!(
+                sampled_textures <= sampled as usize,
+                "{sampled_textures} textures exceed the {sampled} limit"
+            );
+            validate(&scene);
+        }
     }
 
     #[test]
@@ -1173,7 +1369,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     /// false in common.wgsl) are valid too.
     #[test]
     fn scene_and_ssr_shaders_without_the_soft_path_are_valid() {
-        let common = crate::renderer::common_shader_for(false);
+        let common = crate::renderer::common_shader_for(false, crate::common_shader_source(&wgpu::Limits::default()));
         validate(&format!(
             "{}\n{}\n{}",
             common,

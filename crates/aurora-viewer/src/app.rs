@@ -1672,15 +1672,27 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_LOCAL_LIGHTS").ok().and_then(|v| v.parse::<u32>().ok()) {
         settings.local_light_count = v.min(crate::scene::lights::MAX_LIGHTS as u32);
     }
-    if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
-        settings.shadow_quality = v;
+    if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse::<u8>().ok()) {
+        // This diagnostic override keeps the previous tier's meaning in each sun mode.
+        // Clear an explicit pixel choice so an override can actually change the map.
+        settings.shadow_map_resolution = 0;
+        settings.shadow_quality = v.min(4);
+        settings.shadows = settings.shadow_quality != 0;
+    }
+    // An explicit zero softness still selects the hard-shadow comparison.
+    if crate::demo::soft_shadows::enabled() {
+        settings.sun_shadow_contact_hardening = true;
+        settings.shadow_quality = settings.shadow_quality.max(3);
     }
     if let Some(v) = std::env::var("AURORA_SHADOW_SOFTNESS")
         .ok()
         .and_then(|v| v.trim().parse::<f32>().ok())
         .filter(|v| v.is_finite())
     {
-        settings.shadow_softness = v.clamp(0.0, crate::settings::SHADOW_SOFTNESS_MAX);
+        settings.sun_shadow_contact_hardening = v > 0.0;
+        if v > 0.0 {
+            settings.sun_shadow_angular_diameter_deg = Settings::diameter_from_softness(v);
+        }
     }
     if let Some(v) = std::env::var("AURORA_SHADOW_INTENSITY")
         .ok()
@@ -1688,11 +1700,6 @@ fn apply_test_overrides(settings: &mut Settings) {
         .filter(|v| v.is_finite())
     {
         settings.shadow_intensity = v.clamp(0.0, 1.0);
-    }
-    // the soft shadows scenario shows them on, at the Preferences' softness
-    if crate::demo::soft_shadows::enabled() {
-        settings.soft_shadows = true;
-        settings.shadow_quality = settings.shadow_quality.max(3);
     }
     if let Some(v) = std::env::var("AURORA_BLEND_ORDER").ok().and_then(|v| v.parse::<u8>().ok()) {
         settings.blend_order = v.min(crate::graphics_presets::BLEND_ORDER_STOCHASTIC);
@@ -7492,9 +7499,11 @@ impl App {
         // closed while the graphics card still holds a frame, from its
         // notice or not: reported, and the next start offers the safe
         // graphics (app/gpu_stall.rs)
-        if let Some(stalled) = self.gfx.as_ref().and_then(|g| g.renderer.stalled_for()) {
+        if let Some(gfx) = self.gfx.as_ref()
+            && let Some(stalled) = gfx.renderer.stalled_for()
+        {
             // the whole stall and where the render thread is now
-            crate::crash::gpu_stalled(stalled.as_secs());
+            crate::crash::gpu_stalled(stalled.as_secs(), gfx.renderer.stalled_pipeline());
             crate::crash::gpu_closed();
         }
         self.sync_local_picker_bindings();
@@ -12904,6 +12913,8 @@ impl App {
         if let Some(sun) = self.demo.then(crate::demo::sun_override).flatten() {
             env.sun_dir = sun;
         }
+        self.options_ui.shadow_maps = self.last_render.shadow.maps;
+        self.options_ui.graded_detail_gpu_ms = self.last_render.shadow.graded_detail_gpu_ms;
         self.options_ui.sky_tone_mapped = !env.sky.no_post;
         if in_world {
             // what the sky source is: region, day cycle, altitude track, preset
@@ -13018,7 +13029,7 @@ impl App {
                 dt,
                 projector_shadows: self.settings.projector_shadows && self.photo_shadow_quality() > 0,
                 projector_shadow_limit: aurora_render::projector_shadows::effective_limit(
-                    Settings::shadow_params_of(self.photo_shadow_quality()).0,
+                    crate::snapshot::light::shadow_params(&self.settings, self.photo_shadow_quality()).0,
                     self.settings.projector_shadow_limit,
                     gfx.renderer.max_texture_dimension(),
                 ),
@@ -13248,7 +13259,12 @@ impl App {
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
             water_height: self.world.main_water_height(),
             shadows: self.photo_shadow_quality() > 0 && matches!(self.screen, Screen::World),
-            shadow_distance: Settings::shadow_params_of(self.photo_shadow_quality()).1,
+            shadow_distance: crate::snapshot::light::shadow_params(&self.settings, self.photo_shadow_quality()).1,
+            sun_shadow_angular_diameter_deg: crate::snapshot::light::sun_diameter(
+                &self.settings,
+                &self.snapshots.ui.light,
+                self.panels.snapshot,
+            ),
             shadow_softness: photo_shadows.0,
             shadow_intensity: photo_shadows.1,
             lights,

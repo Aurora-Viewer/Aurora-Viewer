@@ -40,10 +40,70 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub const CASCADES: usize = 3;
+const DETAIL_SHADOW_SLOT: usize = CASCADES + SPOT_SHADOWS;
+// Remote sun tiles occupy mip 1: the three normal quadrants, then the detail tile.
+const REMOTE_SHADOW_SLOT: usize = DETAIL_SHADOW_SLOT + 1;
+const PORTRAIT_SHADOW_SLOT: usize = REMOTE_SHADOW_SLOT + CASCADES + 1;
+const PORTRAIT_SIZE: u32 = 1024;
+/// Depth32 payload of the optional camera-close sun shadow texture.
+pub const PORTRAIT_SHADOW_BYTES: u64 = 4 * PORTRAIT_SIZE as u64 * PORTRAIT_SIZE as u64;
+const PORTRAIT_RADIUS: f32 = 0.25;
+/// Extra lightward coverage beyond the local receiver bounding sphere, in metres.
+const SUN_LOCAL_PAD: f32 = 2.0;
+/// Additional light-axis overlap in the distant layer for sloping surfaces.
+const SUN_LAYER_OVERLAP: f32 = 1.0;
+
+struct SunAtlas {
+    sampled: wgpu::TextureView,
+    base: wgpu::TextureView,
+    remote: Option<wgpu::TextureView>,
+}
+
+fn wants_layered_sun(s: &RenderSettings) -> bool {
+    s.shadow_resolution > 0 && s.sun_shadow_angular_diameter_deg.is_finite() && s.sun_shadow_angular_diameter_deg > 0.0
+}
+
+/// Raster projections and their bounds in the original light depth. The viewport
+/// uses those bounds to restore the original depth after clipping. A small shared
+/// interval keeps a continuous sloped caster covered across both raster grids.
+fn sun_depth_layers(vp: Mat4) -> (Mat4, Mat4, [f32; 2]) {
+    let depth_per_metre = vp.row(2).truncate().length();
+    let local_start = (crate::shadow_cull::CASCADE_DEPTH_PAD - SUN_LOCAL_PAD) * depth_per_metre;
+    let remote_end = local_start + SUN_LAYER_OVERLAP * depth_per_metre;
+    let remap = |scale: f32, offset: f32| {
+        let mut m = vp;
+        let z = vp.row(2) * scale + vp.row(3) * offset;
+        m.x_axis.z = z.x;
+        m.y_axis.z = z.y;
+        m.z_axis.z = z.z;
+        m.w_axis.z = z.w;
+        m
+    };
+    let local = remap(1.0 / (1.0 - local_start), -local_start / (1.0 - local_start));
+    let remote = remap(1.0 / remote_end, 0.0);
+    (local, remote, [local_start, remote_end])
+}
+
 const MAX_LIGHTS: usize = 64;
 /// Index in `FrameU::features` of the face-select pattern's texture slot
 /// (common.wgsl FEATURE_FACE_SELECT_SLOT).
 const FEATURE_FACE_SELECT_SLOT: usize = 2;
+
+/// Three equal multiplicative steps from the detail endpoint to the far plane.
+fn graded_shadow_splits(detail: f32, far: f32) -> [f32; CASCADES] {
+    let ratio = (far / detail).cbrt();
+    [detail * ratio, far / ratio, far]
+}
+
+/// Anchor half-coverage caster texels to the projected world origin. Atlas
+/// tile origins and half of each supported tile width are multiples of eight.
+/// Texture Y increases downward.
+fn graded_caster_dither(vp: Mat4, size: u32) -> [u32; 4] {
+    let half = f64::from(size) * 0.5;
+    let phase = |v: f32| ((f64::from(v) * half + 0.5).floor() as i64).rem_euclid(8) as u32;
+    [0, 7, phase(vp.w_axis.x), phase(-vp.w_axis.y)]
+}
+
 /// Tries at setting up the XR session for one VR request, and the wait
 /// between them (`render_xr`).
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -64,7 +124,7 @@ const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[repr(C)]
@@ -220,7 +280,7 @@ struct FrameU {
     /// x: the material textures' mip bias (main view under FSR drawing the
     /// world smaller, [`crate::fsr::mip_bias`]); 0 in every other pass.
     tex_lod: [f32; 4],
-    /// x: 1 when the shading reads the soft shadows' mask (main view only);
+    /// x: unused;
     /// y: the share of the light the sun's shadows let through
     /// (1 - the shadow intensity), in every pass; z: the projectors'
     /// light size in metres for their soft shadows (0 = the 5-tap filter of
@@ -233,6 +293,19 @@ struct FrameU {
     snow_far: [f32; 4],
     /// Planet curvature (`Curvature::uniform`): xy the main camera, z 1 / 2R.
     curvature: [f32; 4],
+
+    /// 64-bit local glTF material key, mode (0 off, 1 UUID, 2 diagnostic
+    /// double-sided alpha-mask scope), and optional diagnostic highlight.
+    pbr_thin_key: [u32; 4],
+    /// x selected-material ORM AO minimum, y back-light transmission.
+    pbr_thin_gain: [f32; 4],
+    // Rendering Baseline v2: display, private flags, active backend, ABI.
+    render_controls: [u32; 4],
+    detail_vp: [[f32; 4]; 4],
+    detail_params: [f32; 4],
+    portrait_vp: [[f32; 4]; 4],
+    /// x: original detail depth at the start of the local caster slab.
+    portrait_depth: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -241,7 +314,7 @@ struct FrameU {
 struct ShadowU {
     vp: [[f32; 4]; 4],
     anim_clock: [u32; 4],
-    /// x: 1 for the rain prototype's shelter map (`fs_shadow`)
+    /// x: shelter-map flag; y: dither row mask; zw: world-origin phase in sun-map texels.
     kind: [u32; 4],
 }
 
@@ -552,6 +625,14 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
     }
 }
 
+impl FrameU {
+    /// Count only the maps bound to real light indices in the submitted view.
+    /// Empty slots and the rain shelter both use negative indices.
+    fn active_projector_maps(&self) -> u8 {
+        self.spot_lights.iter().flatten().filter(|&&light| light >= 0).count() as u8
+    }
+}
+
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none), nor
@@ -854,8 +935,32 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
 /// tips) leave the motion to what is behind them.
 const FSR_BLEND_ALPHA: f64 = 0.1;
 
+/// Source used only by the lens passes. FSR may be unavailable for a frame
+/// (captures, a refused target, disabled motion), regardless of the saved AA.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FocusDepth {
+    Scene,
+    FsrNative,
+    Private,
+}
+
+impl FocusDepth {
+    fn for_frame(blended_focus: bool, blended_faces: u32, fsr_alpha_written: bool, upscaled: bool) -> Self {
+        if !blended_focus || blended_faces == 0 {
+            Self::Scene
+        } else if !fsr_alpha_written {
+            Self::Private
+        } else if upscaled {
+            // FSR already sampled its blended input into display-sized depth.
+            Self::Scene
+        } else {
+            Self::FsrNative
+        }
+    }
+}
+
 /// The opacity from which a blended texel is drawn into the depth the
-/// occlusion and the contact shadows read (`fs_depth_occlusion`): opaque to
+/// occlusion reads (`fs_depth_occlusion`): opaque to
 /// the eye, where the Legacy Viewer's shadows stop treating a face as
 /// semi-transparent (`alpha < 0.88`, shadowAlphaMaskF.glsl). From one
 /// half, as before, what stands behind a pane of glass took the pane's
@@ -868,6 +973,14 @@ pub(crate) const SCREEN_BLEND_ALPHA: f64 = 0.88;
 /// screen-space terms whole (`blend_screen_share`), and it is in the solid
 /// depth a blended fragment is measured against (`Targets::solid_depth`).
 pub(crate) const SCREEN_SOLID_ALPHA: f64 = 0.95;
+
+/// Scene attachments use the largest sample count the device supports at or below the request.
+fn scene_sample_count(aa: AntiAliasing, supported: &[u32]) -> u32 {
+    match aa {
+        AntiAliasing::Msaa(n) => supported.iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
+        _ => 1,
+    }
+}
 
 /// FSR's upscale ratio under `aa`, none without FSR.
 fn fsr_ratio(aa: AntiAliasing) -> Option<f32> {
@@ -1033,9 +1146,6 @@ struct Targets {
     /// The ray-traced shadows' mask (rt_shadows.rs), when the device traces:
     /// bound in the contact mask's place.
     rt: Option<crate::rt_shadows::Targets>,
-    /// The soft sun shadows' mask (soft_shadows.rs), when they are on or
-    /// `AURORA_SOFT_SHADOWS` keeps it ready.
-    soft: Option<crate::soft_shadows::Targets>,
     water_refl: Option<ReflTarget>,
     water_air: Option<ReflTarget>,
     mirror: Option<ReflTarget>,
@@ -1197,23 +1307,26 @@ struct Pipelines {
     /// Opaque normal passes with the finite portal cut; ordinary normals
     /// retain their lean vertex path while no avatar intersects a portal.
     pre_normal_portal: [wgpu::RenderPipeline; 2],
-    /// Blended faces into the depth the contact shadows read
-    /// (contact_shadows.rs) and the occlusion's, once the solid ones are in
+    /// Half-covered blended faces into the independent contact depth.
+    pre_contact: SidedPipelines,
+    /// Visible alpha strands at the FSR motion cutoff, into the private lens depth.
+    pre_focus: SidedPipelines,
+    /// Blended faces into the occlusion depth once the solid ones are in
     /// it: those opaque to the eye (`SCREEN_BLEND_ALPHA`), and the fainter
     /// ones rising out of a solid surface (object.wgsl `risen_depth`).
     /// The depth alone.
-    pre_contact: SidedPipelines,
+    pre_occlusion: SidedPipelines,
     /// Those opaque to the eye with GTAO's mesh normals, into the
     /// occlusion's depth.
-    pre_contact_normal: SidedPipelines,
+    pre_occlusion_normal: SidedPipelines,
     /// The blended texels solid to the eye (`SCREEN_SOLID_ALPHA`), drawn
-    /// first: the solid depth is copied from the result, and `pre_contact`
+    /// first: the solid depth is copied from the result, and `pre_occlusion`
     /// reads it.
     pre_solid: SidedPipelines,
     pre_solid_normal: SidedPipelines,
     /// FSR only (`AURORA_FSR=1`): the blended faces covered from
     /// `FSR_BLEND_ALPHA`, with their motion, into the occlusion's depth
-    /// once the occlusion and the contact shadows have read it.
+    /// after the occlusion pass.
     fsr_blend_normal: SidedPipelines,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
     /// only): ordinary / portal-clipped, each one-sided and two-sided.
@@ -1290,6 +1403,7 @@ struct GpuTimer {
     /// Last breakdown of `GpuElement::ShadowsDepth` (ms), in
     /// [`GPU_SHADOW_PARTS`] order.
     last_shadow_parts: Option<[f32; 5]>,
+    last_shadow_detail: Option<f32>,
     /// Last times of the depth prepasses (ms), in [`GPU_DEPTH`] order.
     last_depth: Option<[f32; 2]>,
     /// Last time of the ambient occlusion (ms).
@@ -1298,8 +1412,6 @@ struct GpuTimer {
     last_contact: Option<f32>,
     /// Last time of the volumetric clouds' compute (ms).
     last_clouds: Option<f32>,
-    /// Last time of the soft sun shadows (ms).
-    last_soft: Option<f32>,
     /// Last time of the bloom levels (ms).
     last_bloom: Option<f32>,
     /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
@@ -1320,6 +1432,7 @@ struct GpuTimer {
     /// its marks are written every frame (empty spans when it did not run),
     /// so their timestamps alone cannot tell.
     slot_st: [std::cell::Cell<bool>; 3],
+    slot_shadow_detail: [std::cell::Cell<bool>; 3],
     compare: PrepassCompare,
 }
 
@@ -1468,17 +1581,15 @@ const MARK_ST_COMPOSITE_END: u32 = 38;
 /// After the volumetric clouds' compute (clouds.rs), which follow
 /// `MARK_DEPTH_MSAA_END`; inside the terrain and sky element's range.
 const MARK_CLOUDS_END: u32 = 39;
-/// After the soft sun shadows, which follow the contact shadows (written
-/// there when they are off); in the effects' range from `MARK_SSAO_END` to
-/// `MARK_WATER_AIR_BEGIN`.
-const MARK_SOFT_END: u32 = 40;
+/// After the additional detail-map caster draws.
+const MARK_SHADOW_DETAIL_END: u32 = 40;
 /// The effects beyond the occlusion, the contact shadows and the soft
 /// shadows (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
 /// filtering; the scene copy, with the cut-out pass and the submerged water
 /// particles before it; the SSR.
 const GPU_EFFECT_PARTS: [&[(u32, u32)]; 4] = [
-    &[(MARK_SOFT_END, MARK_WATER_AIR_BEGIN)],
+    &[(MARK_CONTACT_END, MARK_WATER_AIR_BEGIN)],
     &[(MARK_WATER_AIR_END, MARK_REFL_END)],
     &[
         (MARK_SCENE_A_END, MARK_WEATHER_MEMORY_BEGIN),
@@ -1583,16 +1694,17 @@ impl GpuTimer {
                 .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
             last_elements: None,
             last_shadow_parts: None,
+            last_shadow_detail: None,
             last_depth: None,
             last_ssao: None,
             last_contact: None,
             last_clouds: None,
-            last_soft: None,
             last_bloom: None,
             st_sum: [0.0; 4],
             st_n: 0,
             last_st: None,
             slot_st: Default::default(),
+            slot_shadow_detail: Default::default(),
             last_effects: None,
             last_weather: None,
             slot_prepass: Default::default(),
@@ -1625,12 +1737,14 @@ impl GpuTimer {
                             self.last_elements = Some(e);
                             let sum = |ranges: &[(u32, u32)]| ranges.iter().map(|&(a, b)| ms(a, b)).sum::<f32>();
                             self.last_shadow_parts = Some(GPU_SHADOW_PARTS.map(sum));
+                            self.last_shadow_detail = self.slot_shadow_detail[slot]
+                                .get()
+                                .then(|| ms(MARK_SHADOW_BEGIN, MARK_SHADOW_DETAIL_END));
                             let d = GPU_DEPTH.map(|(a, b)| ms(a, b));
                             self.last_depth = Some(d);
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
                             self.last_clouds = Some(ms(MARK_DEPTH_MSAA_END, MARK_CLOUDS_END));
-                            self.last_soft = Some(ms(MARK_CONTACT_END, MARK_SOFT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
                             self.last_st = None;
                             if self.slot_st[slot].get() {
@@ -1959,6 +2073,7 @@ impl FrameTarget {
 /// in the `Renderer` itself with AURORA_RENDER_THREAD=0.
 /// What the stochastic transparency is made from the first frame it is on
 /// (`Backend::ensure_st`).
+#[derive(Clone)]
 struct StInit {
     adapter: wgpu::Adapter,
     instance_flags: wgpu::InstanceFlags,
@@ -1968,6 +2083,8 @@ struct StInit {
     /// mask route's shader is written against them
     scene_groups: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
 }
+
+type StSet = (crate::oit_stochastic::Stochastic, crate::oit_stochastic::Pipes);
 
 pub(crate) struct Backend {
     device: wgpu::Device,
@@ -2066,11 +2183,10 @@ pub(crate) struct Backend {
     post_layout: wgpu::BindGroupLayout,
     gbuf_layout: wgpu::BindGroupLayout,
     pipelines: Pipelines,
-    /// Order-independent transparency (oit_stochastic.rs): made the first
-    /// frame the method is on, with its pipelines for the scene's samples.
-    st: Option<crate::oit_stochastic::Stochastic>,
-    st_pipes: Option<crate::oit_stochastic::Pipes>,
-    /// What `make_st` needs that the Backend does not keep.
+    /// The first blended view requests these on a worker. Until the full
+    /// set for this sample count is ready, the view draws the sorted order.
+    st: crate::oit_stochastic::PipelineBuild<StSet>,
+    /// Adapter and layouts for the optional transparency pipelines.
     st_init: StInit,
     ssao: Ssao,
     gtao: crate::gtao::Gtao,
@@ -2093,12 +2209,6 @@ pub(crate) struct Backend {
     /// made again until ray tracing is turned off and on.
     rt_failed: bool,
     rt_now: bool,
-    /// The soft sun shadows' pipelines, made with the first frame that
-    /// wants them.
-    soft: Option<crate::soft_shadows::SoftShadows>,
-    /// This frame draws the soft shadows (`AURORA_SOFT_SHADOWS=alt`
-    /// switches it each second).
-    soft_now: bool,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
@@ -2137,7 +2247,10 @@ pub(crate) struct Backend {
     records_bind_group: wgpu::BindGroup,
     records_key: (u64, u64),
     /// Shadow atlas: one tile per cascade (see `make_shadow_atlas`).
-    shadow_view: wgpu::TextureView,
+    sun_atlas: SunAtlas,
+    detail_shadow: Option<wgpu::TextureView>,
+    portrait_shadow: Option<wgpu::TextureView>,
+    detail_supported: bool,
     /// The shadow map of the probe being captured, its matrix for the shaders
     /// (drawn at the capture's first face, read by its six) and its group.
     probe_shadow_view: wgpu::TextureView,
@@ -2147,8 +2260,6 @@ pub(crate) struct Backend {
     shadow_buffers: Vec<wgpu::Buffer>,
     shadow_bind_groups: Vec<wgpu::BindGroup>,
     shadow_size: u32,
-    /// The shadow atlas's real size in texels (the shed one is small).
-    shadow_dims: (u32, u32),
     shadow_count: u8,
     /// The projector map the rain's shelter takes while it is drawn
     /// (`projector_shadows::shelter_slot`): past the projectors' maps.
@@ -2228,7 +2339,7 @@ pub(crate) struct Backend {
     finishers: Helpers<wgpu::CommandEncoder, wgpu::CommandBuffer>,
     msaa_samples: u32,
     /// The scene's pipelines were compiled with the soft shadows' path
-    /// (`soft_path`): the mask is drawn and read only while they were.
+    /// for shadow-casting projectors (`soft_path`).
     soft_pipelines: bool,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
@@ -2712,28 +2823,16 @@ fn begin_scene_b_on<'a>(
     })
 }
 
-/// Whether the scene's pipelines carry the soft shadows' path for `s`: the
-/// setting, or `AURORA_SOFT_SHADOWS` asking for the mask whatever it says.
-/// Off, the shaders are compiled without it (`common_shader_for`), so a frame
-/// that never reads the mask pays nothing for it.
+/// Whether the scene pipelines include the optional projector filter.
 fn soft_path(s: &RenderSettings) -> bool {
-    crate::soft_shadows::Override::from_env().needed(s.soft_shadows)
-}
-
-/// Whether the soft shadows' pipelines and masks are kept: the option (or
-/// `AURORA_SOFT_SHADOWS`) asks for them and the sun casts shadows. Without
-/// sun shadows there is nothing to soften, and the masks take about 33 MB
-/// each at 4K.
-fn soft_wanted(s: &RenderSettings) -> bool {
-    soft_path(s) && s.shadow_resolution > 0
+    crate::soft_shadows::projectors_soft() && crate::soft_shadows::Override::from_env().needed(s.soft_shadows)
 }
 
 const SOFT_PATH_ON: &str = "const SOFT_PATH: bool = true;";
 
 /// The common shader with the soft shadows' path (`SOFT_PATH`, common.wgsl)
 /// when `soft`, else without: the branches are folded away at compile time.
-pub(crate) fn common_shader_for(soft: bool) -> std::borrow::Cow<'static, str> {
-    let common = crate::common_shader_source();
+pub(crate) fn common_shader_for(soft: bool, common: std::borrow::Cow<'static, str>) -> std::borrow::Cow<'static, str> {
     if soft {
         return common;
     }
@@ -3364,16 +3463,17 @@ fn dof_targets(
     device: &wgpu::Device,
     post: &crate::dof::PostInputs,
     size: (u32, u32),
+    private_depth: bool,
     lost: bool,
 ) -> bool {
     let d = dof.get_or_insert_with(|| crate::dof::Dof::new(device, HDR_FORMAT));
-    if d.has_targets(size) {
+    if d.has_targets(size, private_depth) {
         return true;
     }
     if !oom.extras_ready(Instant::now()) {
         return false;
     }
-    let (_, refused) = crate::gpu_alloc::scoped(device, || d.ensure_targets(device, size, HDR_FORMAT, post));
+    let (_, refused) = crate::gpu_alloc::scoped(device, || d.ensure_targets(device, size, HDR_FORMAT, post, private_depth));
     if first_use(oom, "depth of field", false, refused && !lost) {
         d.release();
         return false;
@@ -3650,10 +3750,10 @@ impl Impostors {
 
     /// The pictures are drawn with the scene's own shaders.
     /// `soft`: with the soft shadows' path (`common_shader_for`).
-    fn shader_source(features: wgpu::Features, soft: bool) -> String {
+    fn shader_source(features: wgpu::Features, soft: bool, common: std::borrow::Cow<'static, str>) -> String {
         format!(
             "{}\n{}\n{}",
-            common_shader_for(soft),
+            common_shader_for(soft, common),
             crate::object_shader_source(features),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         )
@@ -3671,7 +3771,9 @@ impl Impostors {
     ) -> ImpostorPipelines {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("impostors"),
-            source: wgpu::ShaderSource::Wgsl(Self::shader_source(device.features(), soft).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                Self::shader_source(device.features(), soft, crate::device_common_shader_source(device)).into(),
+            ),
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("impostors"),
@@ -3751,6 +3853,42 @@ impl Impostors {
     }
 }
 
+/// Enclose the part of a camera-centred sphere visible through the main projection.
+/// The four-level shader selects its active cascade by distance from the camera.
+fn graded_detail_bounds(proj: Mat4, viewport: (u32, u32), end: f32, size: u32, blend_offset: f32) -> (f32, f32) {
+    // For the viewer's perspective projections, including off-axis XR eyes, the
+    // outermost corner gives the smallest cosine to the camera's forward axis.
+    // Otherwise a sphere about the camera includes every eligible receiver.
+    let perspective = proj.z_axis.w == -1.0
+        && proj.w_axis.w == 0.0
+        && proj.x_axis.y == 0.0
+        && proj.y_axis.x == 0.0
+        && proj.x_axis.w == 0.0
+        && proj.y_axis.w == 0.0
+        && proj.w_axis.x == 0.0
+        && proj.w_axis.y == 0.0;
+    let cosine = if perspective {
+        // The frame fits before temporal jitter. Include its half-pixel excursion.
+        let tan_x = (1.0 + 1.0 / viewport.0.max(1) as f32 + proj.z_axis.x.abs()) / proj.x_axis.x.abs();
+        let tan_y = (1.0 + 1.0 / viewport.1.max(1) as f32 + proj.z_axis.y.abs()) / proj.y_axis.y.abs();
+        1.0 / (1.0 + tan_x * tan_x + tan_y * tan_y).sqrt()
+    } else {
+        0.0
+    };
+    // The far rim and eye are the extrema. For a narrow cone the sphere
+    // touches both. For a wide cone its centre lies on the rim's axial plane.
+    let centre = if cosine > std::f32::consts::FRAC_1_SQRT_2 {
+        0.5 * end / cosine
+    } else {
+        end * cosine
+    };
+    let radius = centre.max((end * end + centre * centre - 2.0 * end * centre * cosine).sqrt());
+    // Cover the adjacent cascade's normal bias during the blend, plus
+    // three local texels for this map's bias, filtering and grid snapping.
+    let padded = (radius + blend_offset) / (1.0 - 6.0 / size as f32);
+    (centre, padded)
+}
+
 /// Orthographic projection with reverse Z (1 at `near`, 0 at `far`), framing
 /// a square of half size `half` (impostor pictures).
 /// World point the shadow texel grid of a cascade is anchored on: its
@@ -3758,6 +3896,27 @@ impl Impostors {
 /// `cascade_matrices`).
 fn shadow_anchor(center: Vec3, radius: f32) -> Vec3 {
     (center / radius).floor() * radius
+}
+
+/// A fixed half-metre square for close receivers. Retain the parent's complete
+/// light-depth row, including its local/distant partition. The XY containment
+/// check lets both passes use the same conservative caster bin.
+fn portrait_projection(parent: Mat4, parent_size: u32, view: Mat4) -> Option<Mat4> {
+    let parent_radius = parent.row(0).truncate().length().recip();
+    let half = PORTRAIT_RADIUS / parent_radius;
+    if half >= 1.0 || parent_radius / parent_size as f32 <= PORTRAIT_RADIUS / PORTRAIT_SIZE as f32 {
+        return None;
+    }
+    let center = view.inverse().transform_point3(Vec3::new(0.0, 0.0, -0.16));
+    let anchor = parent.transform_point3(shadow_anchor(center, PORTRAIT_RADIUS)).truncate();
+    let desired = parent.transform_point3(center).truncate();
+    let step = 2.0 * half / PORTRAIT_SIZE as f32;
+    let snapped = anchor + ((desired - anchor) / step).round() * step;
+    if !snapped.is_finite() || snapped.abs().max_element() + half > 1.0 {
+        return None;
+    }
+    let crop = Mat4::from_scale(Vec3::new(half.recip(), half.recip(), 1.0)) * Mat4::from_translation((-snapped).extend(0.0));
+    Some(crop * parent)
 }
 
 /// The projection of the whole image a frame draws with `proj`: the
@@ -3786,6 +3945,9 @@ fn photo_part(photo_tile: Mat4) -> [f32; 4] {
     let (w, h) = (1.0 / sx, 1.0 / sy);
     [(cx + 1.0) * 0.5 - w * 0.5, (1.0 - cy) * 0.5 - h * 0.5, w, h]
 }
+
+// Mirrors and the main view share this WGSL SHADOW_BIAS_LEGACY bit.
+const LEGACY_SHADOW_RECEIVER_BIAS: u32 = 0x2000;
 
 /// Whether this frame uses the receiver bias of before
 /// (`AURORA_SHADOW_BIAS`: 0 the new one, 1 the old one, 2 one second in
@@ -4059,7 +4221,7 @@ impl Backend {
         // ---- layouts
         // (the entries kept: the stochastic transparency's sample mask shader
         // is written against them, oit_stochastic.rs)
-        let frame_entries = vec![
+        let mut frame_entries = vec![
             // snow footprints: how deep the snow is pressed down
             wgpu::BindGroupLayoutEntry {
                 binding: 28,
@@ -4177,8 +4339,7 @@ impl Backend {
             float_tex(6),
             float_tex(7),
             tex_entry(8, wgpu::TextureSampleType::Depth),
-            // the solid surfaces of the depth the occlusion and the contact
-            // shadows were made from (common.wgsl `solid_depth`)
+            // solid surfaces used by the AO depth proxy (common.wgsl `solid_depth`)
             tex_entry(29, wgpu::TextureSampleType::Depth),
             wgpu::BindGroupLayoutEntry {
                 binding: 9,
@@ -4218,6 +4379,10 @@ impl Backend {
             },
             // the contact shadows' mask (contact_shadows.rs)
             float_tex(13),
+            // Reserved for the previous screen-space sun filter. The PCSS
+            // path reads the shadow maps directly; keep the shared binding
+            // slots stable beside the traced sun and indirect light.
+            float_tex(30),
             // what the glass leaves of the traced sun's red, green and blue
             // (rt_shadows.wgsl, common.wgsl `sun_glass`)
             float_tex(31),
@@ -4248,18 +4413,17 @@ impl Backend {
                 },
                 count: None,
             },
-            // the soft shadows' mask (soft_shadows.rs)
-            wgpu::BindGroupLayoutEntry {
-                binding: 30,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Uint,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
         ];
+        // Preserve the physical bind-group layout, including unused dummy views.
+        // The active material shader can sample fewer maps on this driver.
+        let detail_binding = crate::graded_shadow_supported(&device.limits());
+        let detail_supported = detail_binding && crate::graded_shadow_layout_available(&device);
+        if detail_binding {
+            frame_entries.push(tex_entry(33, wgpu::TextureSampleType::Depth));
+        }
+        if crate::portrait_shadow_supported(&device.limits()) {
+            frame_entries.push(tex_entry(34, wgpu::TextureSampleType::Depth));
+        }
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
             entries: &frame_entries,
@@ -4367,9 +4531,9 @@ impl Backend {
         let probes = crate::probes::Probes::new(&device, RenderSettings::default().probe_slots);
 
         let shadow_size = 2048u32;
-        let shadow_view = Self::make_shadow_atlas(&device, shadow_size, crate::projector_shadows::atlas_maps(2, 2));
+        let sun_atlas = Self::make_sun_atlas(&device, shadow_size, crate::projector_shadows::atlas_maps(2, 2), false);
         let probe_shadow_view = Self::make_shadow_atlas(&device, crate::probes::SHADOW_SIZE, 0);
-        let shadow_merge = crate::shadow_merge::ShadowMerge::new(&device, &shadow_view, shadow_size, SHADOW_FORMAT);
+        let shadow_merge = crate::shadow_merge::ShadowMerge::new(&device, &sun_atlas.base, shadow_size, SHADOW_FORMAT);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -4391,7 +4555,7 @@ impl Backend {
             ..Default::default()
         });
         // one per cascade, then one per projector shadow map
-        let shadow_buffers: Vec<wgpu::Buffer> = (0..CASCADES + SPOT_SHADOWS)
+        let shadow_buffers: Vec<wgpu::Buffer> = (0..=PORTRAIT_SHADOW_SLOT)
             .map(|_| {
                 device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("shadow vp"),
@@ -4539,9 +4703,6 @@ impl Backend {
                 &glow.views[1],
                 &gtao,
                 &contact,
-                None,
-                &shadow_view,
-                crate::projector_shadows::atlas_size(shadow_size, crate::projector_shadows::atlas_maps(2, 2)),
                 config.width,
                 config.height,
                 msaa_samples,
@@ -4605,7 +4766,9 @@ impl Backend {
             &frame_layout,
             &frame_buffer,
             &refl_buffers,
-            &shadow_view,
+            &sun_atlas.sampled,
+            None,
+            None,
             &probe_shadow_view,
             &shadow_sampler,
             &lin_clamp,
@@ -4701,8 +4864,7 @@ impl Backend {
             post_layout,
             gbuf_layout,
             pipelines,
-            st: None,
-            st_pipes: None,
+            st: Default::default(),
             st_init,
             ssao,
             gtao,
@@ -4716,8 +4878,6 @@ impl Backend {
             rt_build: None,
             rt_failed: false,
             rt_now: false,
-            soft: None,
-            soft_now: false,
             contact_now: false,
             gtao_normals_now: false,
             motion_now: false,
@@ -4739,7 +4899,10 @@ impl Backend {
             lin_clamp,
             records_bind_group,
             records_key: scene.records_key,
-            shadow_view,
+            sun_atlas,
+            detail_shadow: None,
+            portrait_shadow: None,
+            detail_supported,
             shadow_buffers,
             probe_shadow_view,
             probe_shadow_vp: Mat4::IDENTITY,
@@ -4747,7 +4910,6 @@ impl Backend {
             probe_shadow_group,
             shadow_bind_groups,
             shadow_size,
-            shadow_dims: crate::projector_shadows::atlas_size(shadow_size, crate::projector_shadows::atlas_maps(2, 2)),
             shadow_count: 2,
             shelter_slot: 2,
             shelter_drawn: None,
@@ -4827,21 +4989,45 @@ impl Backend {
     /// additional rows below it (projector_shadows.rs).
     fn make_shadow_atlas(device: &wgpu::Device, size: u32, count: u8) -> wgpu::TextureView {
         let (width, height) = crate::projector_shadows::atlas_size(size, count);
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("shadow atlas"),
+        Self::shadow_depth_view(device, "shadow atlas", width, height)
+    }
+
+    fn make_sun_atlas(device: &wgpu::Device, size: u32, maps: u8, layered: bool) -> SunAtlas {
+        let (width, height) = crate::projector_shadows::atlas_size(size, maps);
+        let texture = Self::shadow_depth_texture(device, "shadow atlas", width, height, if layered { 2 } else { 1 });
+        let mip = |level| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                base_mip_level: level,
+                mip_level_count: Some(1),
+                ..Default::default()
+            })
+        };
+        SunAtlas {
+            sampled: texture.create_view(&Default::default()),
+            base: mip(0),
+            remote: layered.then(|| mip(1)),
+        }
+    }
+
+    fn shadow_depth_view(device: &wgpu::Device, label: &str, width: u32, height: u32) -> wgpu::TextureView {
+        Self::shadow_depth_texture(device, label, width, height, 1).create_view(&Default::default())
+    }
+
+    fn shadow_depth_texture(device: &wgpu::Device, label: &str, width: u32, height: u32, mip_level_count: u32) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
             size: wgpu::Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
             },
-            mip_level_count: 1,
+            mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: SHADOW_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
-        });
-        tex.create_view(&wgpu::TextureViewDescriptor::default())
+        })
     }
 
     fn make_records_bg(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, scene: &SceneGpu) -> wgpu::BindGroup {
@@ -4873,52 +5059,73 @@ impl Backend {
         })
     }
 
-    /// The stochastic transparency's own: made the first frame the method is
-    /// on (`ensure_st`), never while it is off. `Stochastic` (layouts,
-    /// buffers, the resolve's module) once, its pipelines for each count of
-    /// the scene's samples. False when the passes cannot run here.
-    #[allow(clippy::too_many_arguments)]
+    /// A saved setting can request all of these expensive pipelines at
+    /// login. Only start or poll the worker here: the current frame already
+    /// has a swapchain image and must be able to submit the sorted passes.
     fn ensure_st(
-        st: &mut Option<crate::oit_stochastic::Stochastic>,
-        st_pipes: &mut Option<crate::oit_stochastic::Pipes>,
+        build: &mut crate::oit_stochastic::PipelineBuild<StSet>,
+        workers: &mut Vec<std::thread::JoinHandle<()>>,
         init: &StInit,
         device: &wgpu::Device,
-        frame_layout: &wgpu::BindGroupLayout,
-        records_layout: &wgpu::BindGroupLayout,
-        tex_layout: &wgpu::BindGroupLayout,
+        layouts: [&wgpu::BindGroupLayout; 3],
         samples: u32,
     ) -> bool {
-        if st.is_none() {
-            let masks = crate::spirv_fix::SampleMaskShaders::new(&init.adapter, device, init.instance_flags);
-            *st = Some(crate::oit_stochastic::Stochastic::new(
-                device,
-                HDR_FORMAT,
-                DEPTH_FORMAT,
-                init.pass_supported.clone(),
-                masks,
-                init.scene_groups.clone(),
-            ));
-        }
-        let Some(st) = st.as_ref() else { return false };
+        build.request(samples, |previous, done| {
+            let init = init.clone();
+            let device = device.clone();
+            let layouts = layouts.map(Clone::clone);
+            log::info!("oit stochastic: requesting pipeline worker for {samples} scene sample(s)");
+            let worker = std::thread::Builder::new().name("aurora-oit".into()).spawn(move || {
+                let started = Instant::now();
+                let made = Self::make_st(previous, &init, &device, &layouts, samples);
+                log::info!(
+                    "oit stochastic: pipeline worker {} for {samples} scene sample(s) in {} ms",
+                    if made.is_some() { "ready" } else { "declined" },
+                    started.elapsed().as_millis()
+                );
+                let _ = done.send(made);
+            })?;
+            workers.retain(|w| !w.is_finished());
+            workers.push(worker);
+            Ok(())
+        })
+    }
+
+    /// All creation and its nested validation scopes live on the same
+    /// worker thread. Carry the sample-independent resources across a
+    /// change of AA, after releasing the old sample count's targets.
+    fn make_st(
+        previous: Option<StSet>,
+        init: &StInit,
+        device: &wgpu::Device,
+        layouts: &[wgpu::BindGroupLayout; 3],
+        samples: u32,
+    ) -> Option<StSet> {
+        let st = match previous {
+            Some((mut st, _)) => {
+                st.release();
+                st
+            }
+            None => crate::gpu_alloc::checked(device, || {
+                let masks = crate::spirv_fix::SampleMaskShaders::new(&init.adapter, device, init.instance_flags);
+                crate::oit_stochastic::Stochastic::new(
+                    device,
+                    HDR_FORMAT,
+                    DEPTH_FORMAT,
+                    init.pass_supported.clone(),
+                    masks,
+                    init.scene_groups.clone(),
+                )
+            })?,
+        };
         if st.shared().pass_samples(samples) < 2 {
-            return false;
+            return None;
         }
-        if st_pipes.as_ref().is_none_or(|p| p.samples != samples) {
-            let started = std::time::Instant::now();
-            *st_pipes = Some(Self::make_st_pipes(
-                device,
-                frame_layout,
-                records_layout,
-                tex_layout,
-                st.shared(),
-                samples,
-            ));
-            log::info!(
-                "oit stochastic: pipelines for {samples} sample(s) made in {:.0} ms",
-                started.elapsed().as_secs_f32() * 1000.0
-            );
-        }
-        true
+        let [frame, records, textures] = layouts;
+        let pipes = crate::gpu_alloc::checked(device, || {
+            Self::make_st_pipes(device, frame, records, textures, st.shared(), samples)
+        })?;
+        Some((st, pipes))
     }
 
     /// Depth-based stochastic transparency's pipelines (oit_stochastic.rs):
@@ -5013,32 +5220,32 @@ impl Backend {
                 wgpu::CompareFunction::GreaterEqual
             }
         };
-        let build = |mask_module: Option<&wgpu::ShaderModule>| {
+        let alpha = std::array::from_fn(|rigged| {
+            std::array::from_fn(|side| {
+                make_pipeline(
+                    device,
+                    &module,
+                    &layout,
+                    PipeDesc {
+                        cull: blend_cull(side != 0),
+                        format: Some(wgpu::TextureFormat::R16Float),
+                        blend: Some(transmittance),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: false,
+                        depth_compare: compare(rigged),
+                        constants: &[("WATER_CLIP", 1.0)],
+                        samples: alpha_samples,
+                        ..base("stochastic total alpha", "vs_main", "fs_st_alpha")
+                    },
+                )
+            })
+        });
+        let build_depth = |mask_module: Option<&wgpu::ShaderModule>| {
             let (depth_module, route_fs, depth_constants): (&wgpu::ShaderModule, &str, &[(&str, f64)]) = match mask_module {
                 Some(m) => (m, "fs_st_depth_mask", &[]),
                 None => (&module, "fs_st_depth_index", &[("WATER_CLIP", 1.0)]),
             };
-            let alpha = std::array::from_fn(|rigged| {
-                std::array::from_fn(|side| {
-                    make_pipeline(
-                        device,
-                        &module,
-                        &layout,
-                        PipeDesc {
-                            cull: blend_cull(side != 0),
-                            format: Some(wgpu::TextureFormat::R16Float),
-                            blend: Some(transmittance),
-                            write_mask: wgpu::ColorWrites::ALL,
-                            depth_write: false,
-                            depth_compare: compare(rigged),
-                            constants: &[("WATER_CLIP", 1.0)],
-                            samples: alpha_samples,
-                            ..base("stochastic total alpha", "vs_main", "fs_st_alpha")
-                        },
-                    )
-                })
-            });
-            let depth = std::array::from_fn(|rigged| {
+            std::array::from_fn(|rigged| {
                 std::array::from_fn(|side| {
                     make_pipeline(
                         device,
@@ -5057,64 +5264,63 @@ impl Backend {
                         },
                     )
                 })
-            });
-            let accum = std::array::from_fn(|side| {
-                make_pipeline(
-                    device,
-                    &module,
-                    &scene_layout,
-                    PipeDesc {
-                        cull: blend_cull(side != 0),
-                        blend: Some(additive),
-                        write_mask: wgpu::ColorWrites::ALL,
-                        depth_write: false,
-                        depth_compare: wgpu::CompareFunction::GreaterEqual,
-                        constants: &[("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0)],
-                        samples: pass_samples,
-                        ..base("stochastic accumulation", "vs_main", "fs_blend")
-                    },
-                )
-            });
-            // the glowing faces' glow, accumulated as their colour (as
-            // `glow_water`: no culling, fs_glow tests the backs; clipped to
-            // the camera's side of the water)
-            let glow = make_pipeline(
+            })
+        };
+        // Keep mask-specific module and driver errors inside this scope. The
+        // outer scope in make_st checks the index fallback and the shared passes.
+        let mask_depth = crate::gpu_alloc::checked(device, || {
+            let module = st.mask_module(device, &src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")])?;
+            Some(build_depth(Some(&module)))
+        })
+        .flatten();
+        let depth = match mask_depth {
+            Some(depth) => {
+                log::info!("oit stochastic: the sample mask route");
+                depth
+            }
+            None => {
+                log::info!("oit stochastic: the sample index route");
+                build_depth(None)
+            }
+        };
+        let accum = std::array::from_fn(|side| {
+            make_pipeline(
                 device,
                 &module,
                 &scene_layout,
                 PipeDesc {
-                    cull: None,
-                    format: Some(wgpu::TextureFormat::R16Float),
+                    cull: blend_cull(side != 0),
                     blend: Some(additive),
-                    write_mask: wgpu::ColorWrites::RED,
+                    write_mask: wgpu::ColorWrites::ALL,
                     depth_write: false,
                     depth_compare: wgpu::CompareFunction::GreaterEqual,
-                    constants: &[("WATER_CLIP", 1.0)],
+                    constants: &[("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0)],
                     samples: pass_samples,
-                    ..base("stochastic glow", "vs_main", "fs_st_glow")
+                    ..base("stochastic accumulation", "vs_main", "fs_blend")
                 },
-            );
-            crate::oit_stochastic::ScenePipes { alpha, depth, accum, glow }
-        };
-        // the sample mask route (the default): its own module without
-        // overrides, through spirv_fix (oit_stochastic.rs `mask_module`);
-        // the sample index route when that cannot be made, or when its
-        // pipelines are refused
-        let mask_module = st.mask_module(device, &src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")]);
-        let (scene, refused) = crate::gpu_alloc::scoped(device, || build(mask_module.as_ref()));
-        let scene = if refused && mask_module.is_some() {
-            log::warn!("oit stochastic: the sample mask pipelines were refused: the sample index route");
-            build(None)
-        } else {
-            log::info!(
-                "oit stochastic: the {} route",
-                if mask_module.is_some() { "sample mask" } else { "sample index" }
-            );
-            scene
-        };
+            )
+        });
+        // the glowing faces' glow, accumulated as their colour (as
+        // `glow_water`: no culling, fs_glow tests the backs; clipped to
+        // the camera's side of the water)
+        let glow = make_pipeline(
+            device,
+            &module,
+            &scene_layout,
+            PipeDesc {
+                cull: None,
+                format: Some(wgpu::TextureFormat::R16Float),
+                blend: Some(additive),
+                write_mask: wgpu::ColorWrites::RED,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::GreaterEqual,
+                constants: &[("WATER_CLIP", 1.0)],
+                samples: pass_samples,
+                ..base("stochastic glow", "vs_main", "fs_st_glow")
+            },
+        );
         crate::oit_stochastic::Pipes {
-            samples,
-            scene,
+            scene: crate::oit_stochastic::ScenePipes { alpha, depth, accum, glow },
             resolve: crate::oit_stochastic::make_resolve(device, st, samples),
         }
     }
@@ -5137,7 +5343,7 @@ impl Backend {
         // `make_st`, when the method is first on)
         let src = format!(
             "{}\n{}\n{}",
-            common_shader_for(soft),
+            common_shader_for(soft, crate::device_common_shader_source(device)),
             crate::oit_stochastic::without_st(&crate::object_shader_source(device.features())),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
@@ -5900,7 +6106,11 @@ impl Backend {
             ..base("fit lab body coverage", "vs_part_mask", "fs_fit_body")
         });
         let ssr_pipes = ssr.then(|| {
-            let src = format!("{}\n{}", common_shader_for(soft), include_str!("shaders/ssr.wgsl"));
+            let src = format!(
+                "{}\n{}",
+                common_shader_for(soft, crate::device_common_shader_source(device)),
+                include_str!("shaders/ssr.wgsl")
+            );
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("ssr"),
                 source: wgpu::ShaderSource::Wgsl(src.into()),
@@ -5966,7 +6176,16 @@ impl Backend {
         });
         // both sides: a double-sided blended face casts either way, the
         // nearer one keeps the depth
-        let pre_contact = std::array::from_fn(|side| pre("prepass contact", "vs_main", Some("fs_depth_occlusion"), blend_cull(side != 0)));
+        let pre_contact = std::array::from_fn(|side| pre("prepass contact", "vs_main", Some("fs_depth_contact"), blend_cull(side != 0)));
+        let pre_focus = sided_pipe(PipeDesc {
+            samples: 1,
+            format: None,
+            depth_compare: wgpu::CompareFunction::Greater,
+            constants: &[("DEPTH_CONTACT_ALPHA", FSR_BLEND_ALPHA)],
+            ..base("blended focus depth", "vs_main", "fs_depth_contact")
+        });
+        let pre_occlusion =
+            std::array::from_fn(|side| pre("prepass occlusion", "vs_main", Some("fs_depth_occlusion"), blend_cull(side != 0)));
         let pre_solid = std::array::from_fn(|side| {
             pipe(PipeDesc {
                 fs: Some("fs_depth_contact"),
@@ -6041,7 +6260,7 @@ impl Backend {
             ),
             pre_n("prepass portal normals 2s", "vs_depth_mask_normal", "fs_depth_portal_normal", None),
         ];
-        let pre_contact_normal = std::array::from_fn(|side| {
+        let pre_occlusion_normal = std::array::from_fn(|side| {
             pipe(PipeDesc {
                 cull: blend_cull(side != 0),
                 samples: 1,
@@ -6049,7 +6268,7 @@ impl Backend {
                 write_mask: wgpu::ColorWrites::ALL,
                 depth_compare: wgpu::CompareFunction::Greater,
                 constants: &[("DEPTH_CONTACT_ALPHA", SCREEN_BLEND_ALPHA)],
-                ..base("prepass contact normals", "vs_depth_mask_normal", "fs_depth_contact_normal")
+                ..base("prepass occlusion normals", "vs_depth_mask_normal", "fs_depth_contact_normal")
             })
         });
         let pre_solid_normal = std::array::from_fn(|side| {
@@ -6359,7 +6578,9 @@ impl Backend {
             pre_normal: pre_normal.resolve(&mut done),
             pre_normal_portal: pre_normal_portal.resolve(&mut done),
             pre_contact: pre_contact.resolve(&mut done),
-            pre_contact_normal: pre_contact_normal.resolve(&mut done),
+            pre_focus: pre_focus.resolve(&mut done),
+            pre_occlusion: pre_occlusion.resolve(&mut done),
+            pre_occlusion_normal: pre_occlusion_normal.resolve(&mut done),
             pre_solid: pre_solid.resolve(&mut done),
             pre_solid_normal: pre_solid_normal.resolve(&mut done),
             fsr_blend_normal: fsr_blend_normal.resolve(&mut done),
@@ -6459,9 +6680,6 @@ impl Backend {
         glow_view: &wgpu::TextureView,
         gtao: &crate::gtao::Gtao,
         contact: &crate::contact_shadows::ContactShadows,
-        soft: Option<&crate::soft_shadows::SoftShadows>,
-        shadow: &wgpu::TextureView,
-        atlas: (u32, u32),
         width: u32,
         height: u32,
         samples: u32,
@@ -6576,12 +6794,9 @@ impl Backend {
             crate::rt_shadows::traced(device, external, s.ray_tracing),
             s.rt_tuning.gi_step,
         );
-        // the blended faces opaque enough are in the occlusion depth when it
-        // holds them (`blend_in_ao_depth`)
-        let soft = soft
-            .filter(|_| soft_wanted(s))
-            .map(|soft| soft.targets(device, &depth_ss, ao_depth_view, shadow, atlas, w, h));
-        let solid_depth = (ao_depth.is_some() || contact.is_some()).then(|| {
+        // AO and the traced mask distinguish blended texels on a solid
+        // surface. Bend instead traces its own half-coverage depth.
+        let solid_depth = (ao_depth.is_some() || (rt.is_some() && contact.is_some())).then(|| {
             make_view(
                 device,
                 "solid depth",
@@ -6639,7 +6854,6 @@ impl Backend {
             solid_depth,
             contact,
             rt,
-            soft,
             depth_ss_tex,
             water_refl,
             water_air,
@@ -6655,6 +6869,8 @@ impl Backend {
         frame_buffer: &wgpu::Buffer,
         refl_buffers: &[wgpu::Buffer; 9],
         shadow_view: &wgpu::TextureView,
+        detail_shadow: Option<&wgpu::TextureView>,
+        portrait_shadow: Option<&wgpu::TextureView>,
         probe_shadow_view: &wgpu::TextureView,
         shadow_sampler: &wgpu::Sampler,
         lin_clamp: &wgpu::Sampler,
@@ -6665,6 +6881,9 @@ impl Backend {
         stars: &wgpu::Buffer,
         milky_way: &wgpu::TextureView,
     ) -> FrameGroups {
+        // Bindings 34 and 33 are the optional prefix, in descending order.
+        let limits = device.limits();
+        let first_binding = usize::from(!crate::portrait_shadow_supported(&limits)) + usize::from(!crate::graded_shadow_supported(&limits));
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
                   ao: &wgpu::TextureView,
@@ -6678,12 +6897,19 @@ impl Backend {
                   il: &wgpu::TextureView,
                   open: &wgpu::TextureView,
                   sample_water: bool,
-                  sample_mask: bool,
-                  soft: Option<&wgpu::TextureView>| {
+                  sample_mask: bool| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout,
                 entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 34,
+                        resource: wgpu::BindingResource::TextureView(portrait_shadow.unwrap_or(&dummies.depth)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 33,
+                        resource: wgpu::BindingResource::TextureView(detail_shadow.unwrap_or(&dummies.depth)),
+                    },
                     wgpu::BindGroupEntry {
                         binding: 23,
                         resource: wgpu::BindingResource::TextureView(if sample_mask { &t.water_mask } else { &dummies.white }),
@@ -6695,12 +6921,6 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 25,
                         resource: wgpu::BindingResource::TextureView(milky_way),
-                    },
-                    // the soft shadows' mask (main view only; any texture of
-                    // the format elsewhere, never read: `Frame.soft.x` is 0)
-                    wgpu::BindGroupEntry {
-                        binding: 30,
-                        resource: wgpu::BindingResource::TextureView(soft.unwrap_or(milky_way)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 26,
@@ -6782,6 +7002,10 @@ impl Backend {
                         resource: wgpu::BindingResource::TextureView(contact),
                     },
                     wgpu::BindGroupEntry {
+                        binding: 30,
+                        resource: wgpu::BindingResource::TextureView(&dummies.white),
+                    },
+                    wgpu::BindGroupEntry {
                         binding: 31,
                         resource: wgpu::BindingResource::TextureView(glass),
                     },
@@ -6833,7 +7057,7 @@ impl Backend {
                             &dummies.depth
                         }),
                     },
-                ],
+                ][first_binding..],
             })
         };
         let ao = if t.gtao_shown {
@@ -6868,7 +7092,6 @@ impl Backend {
                 .and_then(|r| r.gi.as_ref())
                 .map(|g| &g.points)
                 .unwrap_or(&dummies.white);
-        let soft = t.soft.as_ref().map(|s| s.result());
         // the solid surfaces of the depth the occlusion and the contact
         // shadows read (a dummy without either: nothing reads it)
         let occlusion = t.solid_depth.as_ref().map_or(&dummies.depth, |(_, view)| view);
@@ -6888,7 +7111,6 @@ impl Backend {
                 &dummies.white,
                 false,
                 false,
-                None,
             ),
             a: mk(
                 "frame a",
@@ -6905,7 +7127,6 @@ impl Backend {
                 open,
                 false,
                 true,
-                soft,
             ),
             blend: mk(
                 "frame blend",
@@ -6922,7 +7143,6 @@ impl Backend {
                 open,
                 false,
                 true,
-                soft,
             ),
             b: mk(
                 "frame b",
@@ -6939,7 +7159,6 @@ impl Backend {
                 open,
                 true,
                 true,
-                soft,
             ),
             refl: [
                 mk(
@@ -6957,7 +7176,6 @@ impl Backend {
                     &dummies.white,
                     false,
                     false,
-                    None,
                 ),
                 mk(
                     "frame mirror",
@@ -6974,7 +7192,6 @@ impl Backend {
                     points,
                     false,
                     false,
-                    None,
                 ),
                 mk(
                     "frame probe capture",
@@ -6991,7 +7208,6 @@ impl Backend {
                     points,
                     false,
                     false,
-                    None,
                 ),
                 mk(
                     "frame impostor 0",
@@ -7008,7 +7224,6 @@ impl Backend {
                     &dummies.white,
                     false,
                     false,
-                    None,
                 ),
                 mk(
                     "frame impostor 1",
@@ -7025,7 +7240,6 @@ impl Backend {
                     &dummies.white,
                     false,
                     false,
-                    None,
                 ),
                 mk(
                     "frame HUD",
@@ -7042,7 +7256,6 @@ impl Backend {
                     &dummies.white,
                     false,
                     false,
-                    None,
                 ),
                 mk(
                     "frame drawn pick",
@@ -7059,7 +7272,6 @@ impl Backend {
                     &dummies.white,
                     false,
                     false,
-                    None,
                 ),
                 mk(
                     "frame water exterior",
@@ -7076,7 +7288,6 @@ impl Backend {
                     &dummies.white,
                     false,
                     false,
-                    None,
                 ),
                 mk(
                     "frame probe irradiance capture",
@@ -7093,7 +7304,6 @@ impl Backend {
                     points,
                     false,
                     false,
-                    None,
                 ),
             ],
         }
@@ -7107,22 +7317,6 @@ impl Backend {
         shadows
             && self.targets.contact.is_some()
             && crate::contact_shadows::Override::from_env().on_now(self.settings.contact_shadows, secs)
-    }
-
-    /// Whether this frame draws the soft sun shadows: with the sun shadows,
-    /// the mask ready and the cascades chosen per pixel (the mask has no
-    /// vertex distances), `AURORA_SOFT_SHADOWS=alt` every other second. A
-    /// softness of 0 is the shadows of before: no mask, no cost.
-    fn soft_on(&self, shadows: bool, softness: f32) -> bool {
-        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-        let secs = START.get_or_init(Instant::now).elapsed().as_secs();
-        shadows
-            && softness > 0.0
-            && self.soft_pipelines
-            && self.soft.is_some()
-            && self.targets.soft.is_some()
-            && self.shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0
-            && crate::soft_shadows::Override::from_env().on_now(self.settings.soft_shadows, secs)
     }
 
     /// The occlusion method of this frame: `AURORA_AO=alt` switches it each
@@ -7147,7 +7341,9 @@ impl Backend {
             &self.frame_layout,
             &self.frame_buffer,
             &self.refl_buffers,
-            &self.shadow_view,
+            &self.sun_atlas.sampled,
+            self.detail_shadow.as_ref(),
+            self.portrait_shadow.as_ref(),
             &self.probe_shadow_view,
             &self.shadow_sampler,
             &self.lin_clamp,
@@ -7314,13 +7510,6 @@ impl Backend {
     /// `size` forces a size: the 1x1 set that frees a refused one.
     fn make_targets_now(&mut self, refuse: bool, size: Option<(u32, u32)>) {
         self.occlusion.invalidate();
-        // the soft shadows' pipelines, made when they are wanted and freed
-        // with their masks when they no longer are
-        if !soft_wanted(&self.settings) {
-            self.soft = None;
-        } else if self.soft.is_none() {
-            self.soft = Some(crate::soft_shadows::SoftShadows::new(&self.device));
-        }
         self.depth_pick.scene_changed();
         let scale = if self.snapshot_window.is_some() {
             100
@@ -7354,9 +7543,6 @@ impl Backend {
             &self.glow.views[1],
             &self.gtao,
             &self.contact,
-            self.soft.as_ref(),
-            &self.shadow_view,
-            self.shadow_dims,
             size.0,
             size.1,
             self.msaa_samples,
@@ -7422,10 +7608,7 @@ impl Backend {
     /// Apply quality settings (rebuilds pipelines / targets only when
     /// needed). The anisotropy belongs to the scene's texture table.
     pub fn apply_settings(&mut self, s: RenderSettings) {
-        let samples = match s.aa {
-            AntiAliasing::Msaa(n) => self.msaa_supported.iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
-            _ => 1,
-        };
+        let samples = scene_sample_count(s.aa, &self.msaa_supported);
         let soft = soft_path(&s);
         if (samples, s.gbuffer(), soft) == (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines) {
             // (a set still compiling for other samples is no longer wanted)
@@ -7462,9 +7645,7 @@ impl Backend {
                 self.apply_settings_with(s, Some((samples, scene, impostors)));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // the other settings now, the samples, SSR and soft shadows
-                // with their pipelines (the soft shadows' mask is made
-                // once the pipelines that read it are there)
+                // Apply the shader variant settings when their pipelines are ready.
                 let now = RenderSettings {
                     aa: self.settings.aa,
                     ssr: self.settings.ssr,
@@ -7606,7 +7787,7 @@ impl Backend {
     /// set compiled for other samples or SSR, `None` when they stay.
     fn apply_settings_with(&mut self, s: RenderSettings, rebuilt: Option<(u32, Pipelines, ImpostorPipelines)>) {
         let pipelines_dirty = rebuilt.is_some();
-        let mut targets_dirty = pipelines_dirty
+        let targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
             || fsr_ratio(s.aa) != fsr_ratio(self.settings.aa)
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
@@ -7641,31 +7822,48 @@ impl Backend {
             .min(self.device.limits().max_texture_dimension_2d / 2);
         let max_dimension = self.device.limits().max_texture_dimension_2d;
         let count = crate::projector_shadows::effective_limit(res, s.projector_shadow_limit, max_dimension);
-        let shadows_dirty = (s.shadow_resolution > 0 && res != self.shadow_size) || count != self.shadow_count;
-        // (the soft shadows' mask reads the atlas)
-        targets_dirty |= shadows_dirty && self.targets.soft.is_some();
-        // (`AURORA_SOFT_SHADOWS=1|alt` asks for the mask whatever the setting;
-        // the sun's shadows turned on or off make or free it)
-        targets_dirty |= self.targets.soft.is_none() == soft_wanted(&s);
+        let want_layers = wants_layered_sun(&s);
+        let had_soft = wants_layered_sun(&self.settings);
+        let resize_atlas = (s.shadow_resolution > 0 && res != self.shadow_size) || count != self.shadow_count;
+        let shadows_dirty = resize_atlas || (want_layers != had_soft && want_layers != self.sun_atlas.remote.is_some());
+        let detail_dirty = self.detail_shadow.is_some() && (!s.graded_sun_shadows || s.shadow_resolution == 0 || res != self.shadow_size);
+        if detail_dirty {
+            self.detail_shadow = None;
+            self.portrait_shadow = None;
+        }
         if shadows_dirty {
             // one more map for the rain's shelter where it fits: free up to
             // three projectors (the fourth tile), a row at 4, 8 and 12
             let shelter = crate::projector_shadows::shelter_slot(res, count, max_dimension);
             let maps = crate::projector_shadows::atlas_maps(count, shelter);
-            self.shadow_view = Self::make_shadow_atlas(&self.device, res, maps);
-            self.shadow_dims = crate::projector_shadows::atlas_size(res, maps);
+            let layered = if want_layers {
+                extra(&mut self.oom, &self.device, self.lost.get(), "layered sun shadows", |device| {
+                    Self::make_sun_atlas(device, res, maps, true)
+                })
+            } else {
+                None
+            };
+            if let Some(atlas) = layered {
+                self.sun_atlas = atlas;
+            } else if resize_atlas || self.sun_atlas.remote.is_some() {
+                // Allocation refusal keeps a single full-depth map, including
+                // the existing one when its size and projector layout still fit.
+                self.sun_atlas = Self::make_sun_atlas(&self.device, res, maps, false);
+            }
             self.shadow_size = res;
             self.shadow_count = count;
             self.shelter_slot = shelter;
             self.shelter_drawn = None;
             let (width, height) = crate::projector_shadows::atlas_size(res, maps);
+            let atlas_bytes = u64::from(width) * u64::from(height) * if self.sun_atlas.remote.is_some() { 5 } else { 4 };
             log::info!(
                 "projector shadow budget: requested {}, effective {count}, shelter map {shelter}, map {} px, atlas {width}x{height} ({} MiB)",
                 s.projector_shadow_limit,
                 res / 2,
-                u64::from(width) * u64::from(height) * 4 / (1024 * 1024)
+                atlas_bytes / (1024 * 1024)
             );
-            self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
+            self.shadow_merge
+                .atlas_changed(&self.device, &self.sun_atlas.base, res, SHADOW_FORMAT);
         }
         self.settings = s;
         self.previews.set_anti_aliasing(self.settings.aa);
@@ -7686,7 +7884,7 @@ impl Backend {
         }
         if targets_dirty {
             self.rebuild_targets();
-        } else if shadows_dirty || probes_dirty {
+        } else if shadows_dirty || probes_dirty || detail_dirty {
             self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
         }
     }
@@ -7991,9 +8189,36 @@ impl Backend {
 
     // ---------------------------------------------------------------- frame
 
-    fn cascade_matrices(&self, f: &FrameParams) -> ([Mat4; CASCADES], [f32; CASCADES]) {
+    fn ultra_detail_overlap(&self) -> bool {
+        self.settings.graded_shadow_overlap && self.settings.graded_shadow_edge_smoothing && self.shadow_size >= 4096
+    }
+
+    fn cascade_matrices(&self, f: &FrameParams) -> ([Mat4; CASCADES], [f32; CASCADES], Option<(f32, Mat4)>) {
         let far = f.far.min(f.shadow_distance).max(16.0);
-        let splits = [far * 0.08, far * 0.3, far];
+        // Independent, opt-in first-cascade fit. Both producer (shadow
+        // matrices/culling) and consumer (frame.cascade_splits) use this same
+        // value, so the far/near cascade blend and caster planes remain aligned.
+        // With both near experiments off, use exactly the upstream 0.08 ratio.
+        let first_fraction = if self.settings.near_shadow_precision {
+            f32::from(self.settings.near_shadow_cascade_percent.clamp(3, 12)) * 0.01
+        } else {
+            0.08
+        };
+        let legacy_first_split = far * first_fraction;
+        let first_split = if self.settings.near_shadow_detail {
+            // Cap coverage independently of the far distance; preserve any
+            // existing percentage fit that is already tighter. The shared
+            // splits drive fitting, culling, merging and shader selection.
+            legacy_first_split.min(f32::from(self.settings.near_shadow_detail_metres.clamp(2, 12)))
+        } else {
+            legacy_first_split
+        };
+        let detail_end = (f.shadows && self.settings.graded_sun_shadows && self.detail_shadow.is_some())
+            .then(|| f32::from(self.settings.graded_shadow_detail_metres.clamp(2, 12)));
+        let splits = match detail_end {
+            Some(detail) => graded_shadow_splits(detail, far),
+            None => [first_split, far * 0.3, far],
+        };
         // the whole photo's proportions when a frame draws one of its tiles
         // (the render size is the tile's): cascades fitted to a tile, centred
         // on the view axis and as narrow as the tile, left the receivers of
@@ -8001,21 +8226,54 @@ impl Backend {
         let aspect = (self.config.width as f32 * f.photo_tile.x_axis.x) / (self.config.height.max(1) as f32 * f.photo_tile.y_axis.y);
         let inv_view = f.view.inverse();
         let light_dir = -f.sun_dir.normalize_or(Vec3::Z);
+        let detail_reach = if self.settings.near_shadow_detail || detail_end.is_some() {
+            let pixel_splits = self.shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0;
+            Some(crate::shadow_cull::cascade_reach(splits, pixel_splits).0)
+        } else {
+            None
+        };
         let mut out = [Mat4::IDENTITY; CASCADES];
         let mut near = f.near;
-        for (i, &split) in splits.iter().enumerate() {
+        let mut detail = None;
+        // The first atlas cascade also uses radial distance for lookup. A
+        // frustum-slice fit wastes texels at the corners on lower map sizes.
+        let fit_close_radially = detail_end.is_some()
+            && ((self.shadow_size <= 2048 && self.settings.graded_shadow_edge_smoothing) || self.ultra_detail_overlap());
+        let mut close_texel = 0.0_f32;
+        for (i, &split) in splits.iter().chain(detail_end.iter()).enumerate() {
             // frustum slice corners in view space
             let th = (f.fov_y * 0.5).tan();
-            let mut corners = Vec::with_capacity(8);
-            for &d in &[near, split] {
-                let h = d * th;
-                let w = h * aspect;
-                for &(sx, sy) in &[(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                    corners.push(inv_view.transform_point3(Vec3::new(sx * w, sy * h, -d)));
+            let fit_near = if i == CASCADES {
+                f.near
+            } else if let Some(reach) = detail_reach.filter(|_| i > 0) {
+                // The shader reads the next map from the start of the blend
+                // band, before its nominal split. Convert radial distance to
+                // the nearest view depth at a corner. This matters at narrow
+                // FOVs when the tighter first split widens the middle band.
+                let corner_cos = 1.0 / (1.0 + th * th + (th * aspect).powi(2)).sqrt();
+                (reach[i] * corner_cos).max(f.near)
+            } else {
+                near
+            };
+            let (center, radius) = if i == CASCADES || (i == 0 && fit_close_radially) {
+                let proj = whole_proj(f.proj, f.photo_tile);
+                // The next atlas map may apply up to 10 cm of normal offset.
+                let blend_offset = if i == CASCADES { (0.5 * close_texel).min(0.10) } else { 0.10 };
+                let (axis, radius) = graded_detail_bounds(proj, self.scene_size(), split, self.shadow_size, blend_offset);
+                (inv_view.transform_point3(Vec3::new(0.0, 0.0, -axis)), radius)
+            } else {
+                let mut corners = Vec::with_capacity(8);
+                for &d in &[fit_near, split] {
+                    let h = d * th;
+                    let w = h * aspect;
+                    for &(sx, sy) in &[(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                        corners.push(inv_view.transform_point3(Vec3::new(sx * w, sy * h, -d)));
+                    }
                 }
-            }
-            let center = corners.iter().fold(Vec3::ZERO, |a, c| a + *c) / 8.0;
-            let radius = corners.iter().map(|c| c.distance(center)).fold(0.0f32, f32::max).max(1.0);
+                let center = corners.iter().fold(Vec3::ZERO, |a, c| a + *c) / 8.0;
+                let radius = corners.iter().map(|c| c.distance(center)).fold(0.0f32, f32::max).max(1.0);
+                (center, radius)
+            };
             let radius = (radius * 16.0).ceil() / 16.0;
             let up = if light_dir.z.abs() > 0.99 { Vec3::Y } else { Vec3::Z };
             let eye = center - light_dir * (radius + crate::shadow_cull::CASCADE_DEPTH_PAD);
@@ -8030,16 +8288,23 @@ impl Backend {
             // glide like Firestorm (which does not snap). The anchor only
             // changes when the camera crosses a cell.
             let texel = 2.0 * radius / self.shadow_size as f32;
+            if i == 0 {
+                close_texel = texel;
+            }
             let anchor = shadow_anchor(center, radius);
             let origin = view.transform_point3(anchor);
             let snapped = Vec3::new((origin.x / texel).round() * texel, (origin.y / texel).round() * texel, origin.z);
             view = Mat4::from_translation(snapped - origin) * view;
             let depth = radius * 2.0 + 2.0 * crate::shadow_cull::CASCADE_DEPTH_PAD;
             let proj = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.1, depth);
-            out[i] = proj * view;
+            if i == CASCADES {
+                detail = Some((split, proj * view));
+            } else {
+                out[i] = proj * view;
+            }
             near = split;
         }
-        (out, splits)
+        (out, splits, detail)
     }
 
     /// Fill the uniform block for a camera (main view or a reflection).
@@ -8058,6 +8323,14 @@ impl Backend {
         let inv_view = view.inverse();
         let camera_pos = inv_view.transform_point3(Vec3::ZERO);
         let mut u = FrameU::zeroed();
+        let s = &self.settings;
+        u.pbr_thin_key = [
+            s.pbr_thin_key[0],
+            s.pbr_thin_key[1],
+            u32::from(s.pbr_thin_scope),
+            u32::from(s.pbr_thin_debug),
+        ];
+        u.pbr_thin_gain = [s.pbr_thin_ao_floor, s.pbr_thin_transmission, 0.0, 0.0];
         let area = self.water_effects.rain_area;
         u.rain = [f.rain.clamp(0.0, 1.0), area[0], area[1], area[2]];
         u.rain_wet = self.rain_wet.uniform;
@@ -8360,7 +8633,7 @@ impl Backend {
         let same = held && (self.config.width, self.config.height) == (s.width, s.height);
         // the stochastic transparency's targets go before the photo's memory
         // is taken: its tiles (and the 360° faces) draw the sorted order
-        if let Some(st) = &mut self.st {
+        if let Some((st, _)) = self.st.ready_mut() {
             st.release();
         }
         // the view's last lit frame outlives its targets: the photo's
@@ -8968,9 +9241,10 @@ impl Backend {
         let _ = crate::gpu_alloc::scoped(&device, || {
             // (the size the settings ask for stays recorded: no frame's
             // settings make the full atlas again before the remake)
-            self.shadow_view = Self::make_shadow_atlas(&device, 512, 0);
-            self.shadow_dims = crate::projector_shadows::atlas_size(512, 0);
-            self.shadow_merge.atlas_changed(&device, &self.shadow_view, 512, SHADOW_FORMAT);
+            self.detail_shadow = None;
+            self.portrait_shadow = None;
+            self.sun_atlas = Self::make_sun_atlas(&device, 512, 0, false);
+            self.shadow_merge.atlas_changed(&device, &self.sun_atlas.base, 512, SHADOW_FORMAT);
             self.make_targets_now(false, Some((1, 1)));
         });
     }
@@ -9419,7 +9693,57 @@ impl Backend {
         let textures = f.tex_anim_at.map_or(effects, |at| self.anim_clock.now(at));
         self.anim_now = [effects[0], effects[1], textures[0], textures[1]];
         self.shadow_path = crate::shadow_cull::current_path();
-        let (cascades, splits) = self.cascade_matrices(f);
+        static SOFT_EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let seconds = SOFT_EPOCH.get_or_init(Instant::now).elapsed().as_secs();
+        let use_soft_light = crate::soft_shadows::Override::from_env().on_now(f.sun_shadow_angular_diameter_deg > 0.0, seconds);
+        let diameter = if !use_soft_light {
+            0.0
+        } else if f.sun_shadow_angular_diameter_deg > 0.0 {
+            f.sun_shadow_angular_diameter_deg
+        } else {
+            // The explicit beta diagnostic override can enable a disabled profile.
+            2.0 * (0.02 * f.shadow_softness.clamp(0.0, 2.0)).atan().to_degrees()
+        };
+        let frame_layers = f.shadows && diameter > 0.0;
+        // Retry an optional second mip after an allocation refusal. The
+        // always-valid single-mip atlas is retained until the replacement exists.
+        if frame_layers && self.sun_atlas.remote.is_none() && self.oom.extras_ready(Instant::now()) {
+            let maps = crate::projector_shadows::atlas_maps(self.shadow_count, self.shelter_slot);
+            if let Some(atlas) = extra(&mut self.oom, &self.device, self.lost.get(), "layered sun shadows", |d| {
+                Self::make_sun_atlas(d, self.shadow_size, maps, true)
+            }) {
+                self.sun_atlas = atlas;
+                self.shelter_drawn = None;
+                self.shadow_merge
+                    .atlas_changed(&self.device, &self.sun_atlas.base, self.shadow_size, SHADOW_FORMAT);
+                self.remake_frame_groups();
+            }
+        }
+        if f.shadows && self.detail_supported && self.settings.graded_sun_shadows && self.detail_shadow.is_none() {
+            let size = self.shadow_size;
+            self.detail_shadow = extra(&mut self.oom, &self.device, self.lost.get(), "graded sun detail", |device| {
+                Self::shadow_depth_view(device, "graded sun detail", size, size)
+            });
+            if self.detail_shadow.is_some() {
+                self.remake_frame_groups();
+            }
+        }
+        let (cascades, splits, detail) = self.cascade_matrices(f);
+        // A single-bank allocation fallback can contain blockers hundreds of
+        // metres away. Keep its original physical PCSS footprint in that case.
+        let portrait_depth_ready = !frame_layers || self.sun_atlas.remote.is_some();
+        let crop = detail
+            .filter(|_| portrait_depth_ready)
+            .and_then(|(_, vp)| portrait_projection(vp, self.shadow_size, f.view));
+        if crop.is_some() && self.portrait_shadow.is_none() && crate::portrait_shadow_supported(&self.device.limits()) {
+            self.portrait_shadow = extra(&mut self.oom, &self.device, self.lost.get(), "portrait sun detail", |device| {
+                Self::shadow_depth_view(device, "portrait sun detail", PORTRAIT_SIZE, PORTRAIT_SIZE)
+            });
+            if self.portrait_shadow.is_some() {
+                self.remake_frame_groups();
+            }
+        }
+        let portrait = crop.filter(|_| self.portrait_shadow.is_some());
         let unjittered_vp = f.proj * f.view;
         let jittered;
         // where the scene's depth has a pixel of the image, in pixels (y down)
@@ -9479,8 +9803,6 @@ impl Backend {
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
         self.rt_now = f.shadows && self.rt.is_some() && self.targets.rt.is_some() && rt_faces.is_some();
-        // (the traced shadows take the soft ones' place)
-        self.soft_now = !self.rt_now && self.soft_on(f.shadows, f.shadow_softness);
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
         self.motion_now = self.gtao_normals_now || self.taa.is_some();
         // nothing kept the matrices while nothing read the motion: the
@@ -9559,6 +9881,25 @@ impl Backend {
             }
         }
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
+        // The orthographic shadow lookup multiplies the light-axis gap in metres by tan(angular radius).
+        if diameter.is_finite() && diameter > 0.0 {
+            main.detail_params[3] = (0.5 * diameter.min(5.0).to_radians()).tan();
+        }
+        if let Some((end, vp)) = detail {
+            main.detail_vp = vp.to_cols_array_2d();
+            main.detail_params[0] = end;
+            main.detail_params[1] = if self.settings.graded_shadow_edge_smoothing { 1.0 } else { 0.0 };
+            if self.ultra_detail_overlap() {
+                // Finish the optional fine/close blend before close/middle begins.
+                main.detail_params[2] = (1.5 * end).min(splits[0] - 0.15 * (splits[0] - end));
+            }
+        }
+        if let Some(vp) = portrait {
+            main.portrait_vp = vp.to_cols_array_2d();
+            if self.sun_atlas.remote.is_some() {
+                main.portrait_depth[0] = sun_depth_layers(vp).2[0];
+            }
+        }
         main.cam_up[3] = camera_water_level;
         if f.photo_tile != Mat4::IDENTITY {
             main.photo = photo_part(f.photo_tile);
@@ -9588,13 +9929,18 @@ impl Backend {
             air.clip_plane = [0.0, 0.0, 1.0, -f.water_height];
             self.queue.write_buffer(&self.refl_buffers[7], 0, bytemuck::bytes_of(&air));
         }
+        // The traced mask replaces contact_tex and uses its other channels
+        // for local lights. They cannot be read as Bend/ViewRay diagnostics.
+        let contact_backend = self
+            .contact
+            .diagnostic_backend(self.contact_now && !self.rt_now, self.settings.contact_ray_method);
         if self.rt_now {
             // the traced mask stands for the shadow map where it is read
             main.contact[0] = 1.0;
             main.contact[2] = 1.0;
         }
-        // the blended faces opaque enough are in the depth the contact
-        // shadows read
+        // Blended faces are included in the contact depth, and solid ones
+        // receive the traced mask when ray tracing is active.
         let contact_blend = self.contact_now && crate::contact_shadows::Override::from_env().all_casters();
         if self.contact_now {
             main.contact[0] = 1.0;
@@ -9602,11 +9948,8 @@ impl Backend {
                 main.contact[1] = 1.0;
             }
         }
-        if self.soft_now {
-            main.soft[0] = 1.0;
-            if crate::soft_shadows::projectors_soft() {
-                main.soft[2] = crate::soft_shadows::PROJECTOR_LIGHT_RADIUS * f.shadow_softness;
-            }
+        if self.soft_pipelines && f.shadows && use_soft_light {
+            main.soft[2] = crate::soft_shadows::PROJECTOR_LIGHT_RADIUS * f.shadow_softness;
         }
         main.misc = [
             // 2: GTAO's occlusion, without the normal map part the Legacy
@@ -9686,11 +10029,42 @@ impl Backend {
         // too), or the ambient occlusion
         static SHADOW_VIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let cascades_asked = *SHADOW_VIEW.get_or_init(|| std::env::var_os("AURORA_DEBUG_SHADOWS").is_some());
-        main.light_sets.mode[2] = match (cascades_asked || f.debug.shadows, f.debug.ambient_occlusion) {
+        main.light_sets.mode[2] = match (
+            cascades_asked || f.debug.shadows || self.settings.near_shadow_debug,
+            f.debug.ambient_occlusion,
+        ) {
             (true, _) => 1,
             (false, true) => 2,
             (false, false) => 0,
         };
+        // v1.9 view-ray raw classification (R raw shadow, GBA outcome)
+        // Main-view controls. Lit mirrors copy only the shared shadow-detail
+        // flag below; other auxiliary passes retain zeroed controls.
+        // Lighting cannot select a diagnostic view.
+        main.render_controls = crate::render_controls::pack_frame(
+            crate::render_controls::ContactDiagnostic::from_saved(
+                self.settings.shadow_visibility_debug,
+                crate::render_controls::ContactDiagnosticSwitches {
+                    mask: self.settings.experimental_contact_mask_debug,
+                    candidates: self.settings.experimental_contact_hit_debug,
+                    failures: self.settings.experimental_contact_failure_debug,
+                    view_ray: self.settings.contact_view_debug,
+                },
+                self.settings.near_shadow_debug,
+            ),
+            contact_backend,
+            cascades_asked || f.debug.shadows || self.settings.near_shadow_debug,
+            f.debug.ambient_occlusion,
+            crate::render_controls::FeatureSwitches {
+                integrity_composite: self.settings.contact_integrity_composite,
+                harmonize: self.settings.legacy_light_harmonization,
+                harmonize_sun: self.settings.harmonize_sunlight,
+                harmonize_ambient: self.settings.harmonize_ambient,
+                harmonize_local: self.settings.harmonize_local_lights,
+                near_shadow_detail: self.settings.near_shadow_detail,
+            },
+        );
+
         // AURORA_SHADOW_FILTER, to compare with the shadow lookup of before:
         // `gaps` its filter (4 x 4 taps up to two texels apart: lines along
         // the edges), `mapped` its offset along the normal-mapped normal,
@@ -9712,7 +10086,7 @@ impl Backend {
             _ => 0,
         });
         if shadow_bias_legacy_now(bias, std::time::SystemTime::now()) {
-            main.light_sets.mode[2] |= 0x2000;
+            main.light_sets.mode[2] |= LEGACY_SHADOW_RECEIVER_BIAS;
         }
         // AURORA_BLEND_AO=new|none|old|alt: the blended faces opaque to the
         // eye drawn into the occlusion's depth and taking the
@@ -9722,6 +10096,7 @@ impl Backend {
         // or `none` and `new` one second in two each (common.wgsl
         // BLEND_SCREEN_DEPTH, BLEND_SCREEN_TERMS)
         static BLEND_AO: std::sync::OnceLock<BlendAo> = std::sync::OnceLock::new();
+
         let blend_ao = BLEND_AO
             .get_or_init(|| BlendAo::from_env(std::env::var("AURORA_BLEND_AO").ok().as_deref()))
             .now(std::time::SystemTime::now());
@@ -9759,6 +10134,9 @@ impl Backend {
             BlendAo::Old => 0x4000,
             _ => 0,
         };
+        // The persisted coherence preference is retired. The common
+        // depth-aware filter supplies contact occlusion without attenuation.
+
         // AURORA_TANGENTS=vertex|pixel|derivative|alt (common.wgsl
         // TANGENT_VERTEX, TANGENT_UNIT): the vertices' tangents, the
         // per-pixel frame where a face has none; the per-pixel frame alone;
@@ -9862,6 +10240,10 @@ impl Backend {
             // (env.wgsl, features.w: the sky pass leaves the clouds to clouds.rs)
             main.features[3] = 1;
         }
+
+        // Legacy Lighting Harmonization: free high flags in frame.light_mode.z.
+        // The default OFF path writes none of these flags (pixel-identical to upstream).
+        // No per-face flags, texture data, or simulator state is modified.
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         let fu_sun_color = main.sun_color;
         let fu_sky = [main.sky_zenith, main.sky_horizon, main.ground_color];
@@ -9880,8 +10262,7 @@ impl Backend {
         if let Some((x, y, mode)) = drawn_px {
             let narrow = crate::drawn_pick::narrow(x, y, self.config.width, self.config.height);
             let mut u = main;
-            // (its group binds no soft shadow mask)
-            u.soft[0] = 0.0;
+            u.detail_params = [0.0; 4];
             u.soft[3] = u8::from(mode.through_ignored()) as f32;
             u.view_proj = (narrow * main_vp).to_cols_array_2d();
             u.eye_view_proj = (narrow * Mat4::from_cols_array_2d(&main.eye_view_proj)).to_cols_array_2d();
@@ -9889,8 +10270,7 @@ impl Backend {
         }
         if let Some(view) = lists.hud_view {
             let mut hud = main;
-            // (its group binds no soft shadow mask)
-            hud.soft[0] = 0.0;
+            hud.detail_params = [0.0; 4];
             hud.view_proj = view.matrix().to_cols_array_2d();
             // (HUD records are in screen space: nothing to take away)
             hud.eye_view_proj = hud.view_proj;
@@ -9944,6 +10324,14 @@ impl Backend {
             u.clip_plane = n.extend(d + keep_offset).to_array();
             if lit {
                 u.light_sets.mode[2] |= crate::probes::capture_lighting::LIT;
+                u.light_sets.mode[2] |= main.light_sets.mode[2] & LEGACY_SHADOW_RECEIVER_BIAS;
+                // These shadows use the main cascades, so use the same near
+                // lookup without copying diagnostics or screen-space controls.
+                u.render_controls = crate::render_controls::mirror_shadow_controls(main.render_controls);
+                u.detail_vp = main.detail_vp;
+                u.detail_params = main.detail_params;
+                u.portrait_vp = main.portrait_vp;
+                u.portrait_depth = main.portrait_depth;
             }
             u
         };
@@ -10087,14 +10475,56 @@ impl Backend {
         let shelter_map = self.rain_shelter_map(f);
         let spot_vp: [Option<Mat4>; SPOT_SHADOWS] =
             spot_shadow_views(f, self.shadow_count as usize, shelter_map, self.traced_projectors()).map(|v| v.map(|(_, m)| m));
-        for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
+        // The texture has two depth layers until the allocation changes. Fill both even
+        // during a hard photo override so hard lookup and mirrors cannot read a stale mip.
+        let layered_sun = f.shadows && self.sun_atlas.remote.is_some();
+        let mut sun_ranges = [[0.0, 1.0]; CASCADES + 1];
+        let maps = cascades.iter().copied().map(Some).chain(spot_vp).chain([detail.map(|(_, vp)| vp)]);
+        for (i, m) in maps.enumerate() {
             let Some(m) = m else { continue };
+            let shelter = shelter_map.is_some_and(|(k, _)| i == CASCADES + k);
+            let kind = if detail.is_some() && (i < CASCADES || i == DETAIL_SHADOW_SLOT) {
+                graded_caster_dither(m, self.shadow_size)
+            } else {
+                [u32::from(shelter), 0, 0, 0]
+            };
+            let mut vp = m;
+            if layered_sun && (i < CASCADES || i == DETAIL_SHADOW_SLOT) {
+                let (local, remote, range) = sun_depth_layers(m);
+                vp = local;
+                let tile = if i == DETAIL_SHADOW_SLOT { CASCADES } else { i };
+                sun_ranges[tile] = range;
+                let remote_uniform = ShadowU {
+                    vp: remote.to_cols_array_2d(),
+                    anim_clock: self.anim_now,
+                    kind: if detail.is_some() {
+                        graded_caster_dither(m, self.shadow_size / 2)
+                    } else {
+                        [0; 4]
+                    },
+                };
+                self.queue.write_buffer(
+                    &self.shadow_buffers[REMOTE_SHADOW_SLOT + tile],
+                    0,
+                    bytemuck::bytes_of(&remote_uniform),
+                );
+            }
             let u = ShadowU {
-                vp: m.to_cols_array_2d(),
+                vp: vp.to_cols_array_2d(),
                 anim_clock: self.anim_now,
-                kind: [u32::from(shelter_map.is_some_and(|(k, _)| i == CASCADES + k)), 0, 0, 0],
+                kind,
             };
             self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
+        }
+        if let Some(vp) = portrait {
+            let local = if layered_sun { sun_depth_layers(vp).0 } else { vp };
+            let u = ShadowU {
+                vp: local.to_cols_array_2d(),
+                anim_clock: self.anim_now,
+                kind: graded_caster_dither(vp, PORTRAIT_SIZE),
+            };
+            self.queue
+                .write_buffer(&self.shadow_buffers[PORTRAIT_SHADOW_SLOT], 0, bytemuck::bytes_of(&u));
         }
         // glow passes only when some visible face glows (RenderGlow)
         // (a cut-out photo's alpha holds its coverage instead, cutout.rs)
@@ -10186,11 +10616,43 @@ impl Backend {
             // the light through the projection the depth prepass was drawn
             // with (jittered under TAA)
             let light = crate::contact_shadows::light_projection(fu.proj * fu.view, f.sun_dir);
+            self.contact.configure_view_ray(
+                &self.queue,
+                fu.proj,
+                fu.view,
+                f.sun_dir,
+                self.settings.contact_ray_method,
+                self.settings.contact_view_reach,
+                self.settings.contact_view_thickness,
+                self.settings.contact_view_budget,
+            );
             // an infinite reversed projection keeps its near plane there
             // (centred or not: tiled photos); a photo larger than the
             // viewfinder marches as much further
-            self.contact
-                .write(&self.device, &self.queue, t, light, fu.proj.w_axis.z, f.photo_scale);
+            let reach = crate::contact_shadows::Reach {
+                mode: self.settings.experimental_contact_reach_mode,
+                metres: self.settings.experimental_contact_reach_metres,
+                proj_y: fu.proj.y_axis.y,
+                occluder_depth_metres: self.settings.experimental_contact_occluder_depth_metres,
+                debug_hits: main.render_controls[0] == crate::render_controls::DisplayMode::BendCandidates as u32,
+                debug_failures: main.render_controls[0] == crate::render_controls::DisplayMode::BendFailures as u32,
+            };
+            self.contact.write(
+                &self.device,
+                &self.queue,
+                t,
+                light,
+                fu.proj.w_axis.z,
+                f.photo_scale,
+                snapshot.is_some()
+                    || self.snapshot_window.is_some()
+                    || f.photo_context != crate::types::PhotoContext::None
+                    || f.photo_tile != Mat4::IDENTITY,
+                &mut self.pipeline_workers,
+                reach,
+                self.settings.contact_integrity_depth,
+                self.settings.contact_integrity_hole_repair,
+            );
         }
         // what the traced reflections read after the scene copy
         let rt_clip_from_world = fu.proj * fu.view;
@@ -10220,8 +10682,18 @@ impl Backend {
             let reproj = crate::gtao::reprojection(f.view, prev);
             let photo = (f.photo_tile != Mat4::IDENTITY).then(|| photo_part(f.photo_tile));
             let context = f.photo_context == crate::types::PhotoContext::Use;
-            self.gtao
-                .write(&self.queue, t, f.proj, reproj, intensity, frame, normals, photo, context);
+            self.gtao.write(
+                &self.queue,
+                t,
+                f.proj,
+                reproj,
+                intensity,
+                self.settings.experimental_gtao_thin_compensation,
+                frame,
+                normals,
+                photo,
+                context,
+            );
         } else if self.targets.ao.is_some() {
             let samples = if self.settings.ssao >= 2 { 16.0 } else { 8.0 };
             let u = SsaoU {
@@ -10262,6 +10734,11 @@ impl Backend {
         // and every caster without the GPU lists). Each cascade keeps the
         // casters that can shadow what the view samples in it
         // (shadow_cull.rs); opaque ones are drawn depth only.
+        // Both maps reuse the close indirect bins (the face mask has no free
+        // bits). Union their light volumes at classification, before drawing
+        // the shared lists once into each target. Only rasterization clips the
+        // additional casters out of the map in which they do not occur.
+        let detail_planes = detail.map(|(_, vp)| crate::gpu_cull::view_planes(vp).map(|p| p.to_array()));
         let shadow_path = self.shadow_path;
         let caster_planes = if f.shadows && shadow_path & crate::shadow_cull::path::TIGHT != 0 {
             let (near, far) = crate::shadow_cull::cascade_reach(splits, shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0);
@@ -10282,7 +10759,7 @@ impl Backend {
                 // (orthographic: the first row of a cascade's matrix is the
                 // light's right axis over its half extent)
                 cascades.map(|m| 2.0 / (m.row(0).truncate().length().max(1e-6) * self.shadow_size as f32)),
-                crate::soft_shadows::reach(self.soft_now, f.shadow_softness),
+                if frame_layers { 0.25 } else { 0.0 }, // PCSS_MAX_METRES in common.wgsl
             )
         } else {
             [crate::shadow_cull::CASTER_PLANES_ALL; CASCADES]
@@ -10292,7 +10769,7 @@ impl Backend {
         // cascade, which takes their depth from that finer map
         // (shadow_merge.rs): both pairs of cascades, or none.
         let merges: [Option<crate::shadow_cull::Merge>; crate::shadow_merge::STEPS] =
-            if f.shadows && shadow_depth_only && shadow_path & crate::shadow_cull::path::MERGE != 0 {
+            if f.shadows && !layered_sun && shadow_depth_only && shadow_path & crate::shadow_cull::path::MERGE != 0 {
                 std::array::from_fn(|i| crate::shadow_cull::merge_of(&cascades, i + 1, self.shadow_size, self.shadow_merge.scratch_size()))
             } else {
                 [None; crate::shadow_merge::STEPS]
@@ -10314,8 +10791,13 @@ impl Backend {
             for (ci, m) in cascades.iter().enumerate() {
                 let casters = lists.shadow_casters.iter().map(|c| (false, c));
                 for (terrain, c) in casters.chain(lists.terrain_shadow_casters.iter().map(|c| (true, c))) {
-                    if !crate::gpu_cull::in_cascade(m, c.center, c.radius)
-                        || !crate::shadow_cull::casts_into(&caster_planes[ci], c.center, c.radius)
+                    let base_hit = crate::gpu_cull::in_cascade(m, c.center, c.radius)
+                        && crate::shadow_cull::casts_into(&caster_planes[ci], c.center, c.radius);
+                    let detail_hit = ci == 0
+                        && detail_planes
+                            .as_ref()
+                            .is_some_and(|p| crate::gpu_cull::sphere_in(p, c.center, c.radius));
+                    if !(base_hit || detail_hit)
                         || (!c.alpha
                             && shadow_depth_only
                             && crate::shadow_cull::merged_from_finer(&cascades, &caster_planes, merge_size, ci, c.center, c.radius))
@@ -10466,6 +10948,9 @@ impl Backend {
                 probe_shadow_now,
                 flags,
             );
+            if let Some(planes) = detail_planes {
+                frame.detail_planes = planes;
+            }
             frame.groups[3] = self.shelter_slot as u32;
             if let Some(c) = &capture {
                 frame.probe_eye = c.origin.extend(c.reach).to_array();
@@ -10622,6 +11107,10 @@ impl Backend {
             stats.gpu_cull = true;
         }
 
+        if detail.is_some() {
+            stats.shadow.graded_detail_draws = stats.shadow.draws[0] * (1 + u32::from(portrait.is_some()));
+            stats.shadow_draws += stats.shadow.graded_detail_draws;
+        }
         let mut water_settings = self.settings.water_effects;
         water_settings.enabled &= !f.hide_water;
         water_settings.particle_budget = water_settings.particle_budget.saturating_sub(n_particles);
@@ -10666,6 +11155,7 @@ impl Backend {
         let timer_slot = self.timer.as_mut().and_then(|t| t.slot());
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             t.slot_pixels[slot].set(u64::from(world_size.0) * u64::from(world_size.1));
+            t.slot_shadow_detail[slot].set(detail.is_some());
             let rounds = match (self.rt_now && !rt_still, &self.rt, &self.targets.rt) {
                 (true, Some(rt), Some(targets)) => rt.still_rounds(targets) - 1,
                 _ => 0,
@@ -10878,6 +11368,9 @@ impl Backend {
         };
         // ---- shadows
         mark(&mut encoder, MARK_SHADOW_BEGIN);
+        if detail.is_none() {
+            mark(&mut encoder, MARK_SHADOW_DETAIL_END);
+        }
         if !f.shadows {
             mark(&mut encoder, MARK_SHADOW_C0_END);
             mark(&mut encoder, MARK_SHADOW_C1_END);
@@ -10933,13 +11426,50 @@ impl Backend {
             } else {
                 ONE_PASS
             };
-            for (i, steps) in passes.iter().enumerate() {
+            const DETAIL: &[Step] = &[Opaque(0), Alpha(0)];
+            const REMOTE: &[Step] = &[Opaque(0), Alpha(0), Opaque(1), Alpha(1), Opaque(2), Alpha(2), Opaque(3), Alpha(3)];
+            #[derive(Clone, Copy, PartialEq)]
+            enum Target {
+                Base,
+                Detail,
+                Portrait,
+                Remote,
+            }
+            let portrait_pass = self
+                .portrait_shadow
+                .as_ref()
+                .filter(|_| portrait.is_some())
+                .map(|view| (Target::Portrait, 0, DETAIL, view));
+            let detail_pass = self
+                .detail_shadow
+                .as_ref()
+                .filter(|_| detail.is_some())
+                .map(|view| (Target::Detail, 0, DETAIL, view));
+            let atlas_passes = passes
+                .iter()
+                .enumerate()
+                .map(|(i, &steps)| (Target::Base, i, steps, &self.sun_atlas.base));
+            let remote_pass = self
+                .sun_atlas
+                .remote
+                .as_ref()
+                .filter(|_| layered_sun)
+                .map(|view| (Target::Remote, 0, REMOTE, view));
+            for (target_kind, i, steps, target) in portrait_pass.into_iter().chain(detail_pass).chain(atlas_passes).chain(remote_pass) {
+                let is_detail = target_kind == Target::Detail;
+                let is_portrait = target_kind == Target::Portrait;
+                let is_remote = target_kind == Target::Remote;
                 let ts = if i == 0 && take_first() { ts_begin(&self.timer) } else { None };
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("shadow"),
+                    label: Some(match target_kind {
+                        Target::Detail => "graded sun detail",
+                        Target::Portrait => "portrait sun detail",
+                        Target::Remote => "remote sun depth",
+                        Target::Base => "shadow",
+                    }),
                     color_attachments: &[],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.shadow_view,
+                        view: target,
                         depth_ops: Some(wgpu::Operations {
                             load: if i == 0 { wgpu::LoadOp::Clear(1.0) } else { wgpu::LoadOp::Load },
                             store: wgpu::StoreOp::Store,
@@ -10960,11 +11490,34 @@ impl Backend {
                 }
                 for step in steps.iter().copied() {
                     match step {
-                        Opaque(ci) | Alpha(ci) => {
-                            let (x, y) = ((ci as u32 % 2) * size, (ci as u32 / 2) * size);
-                            pass.set_viewport(x as f32, y as f32, size as f32, size as f32, 0.0, 1.0);
-                            pass.set_scissor_rect(x, y, size, size);
-                            pass.set_bind_group(3, &self.shadow_bind_groups[ci], &[]);
+                        Opaque(tile) | Alpha(tile) => {
+                            if tile == CASCADES && detail.is_none() {
+                                continue;
+                            }
+                            // The fine map shares the complete first cascade's
+                            // caster bin. Its remote half lives in quadrant 3.
+                            let ci = if tile == CASCADES { 0 } else { tile };
+                            let tile_size = if is_portrait {
+                                PORTRAIT_SIZE
+                            } else if is_remote {
+                                half
+                            } else {
+                                size
+                            };
+                            let (x, y) = ((tile as u32 % 2) * tile_size, (tile as u32 / 2) * tile_size);
+                            // Use clip Z to partition geometry, and the viewport to
+                            // restore the original depth encoding and receiver biases.
+                            let [local_start, remote_end] = sun_ranges[if is_detail || is_portrait { CASCADES } else { tile }];
+                            let (lo, hi) = if is_remote { (0.0, remote_end) } else { (local_start, 1.0) };
+                            pass.set_viewport(x as f32, y as f32, tile_size as f32, tile_size as f32, lo, hi);
+                            pass.set_scissor_rect(x, y, tile_size, tile_size);
+                            let slot = match target_kind {
+                                Target::Detail => DETAIL_SHADOW_SLOT,
+                                Target::Portrait => PORTRAIT_SHADOW_SLOT,
+                                Target::Remote => REMOTE_SHADOW_SLOT + tile,
+                                Target::Base => tile,
+                            };
+                            pass.set_bind_group(3, &self.shadow_bind_groups[slot], &[]);
                             // depth only, then alpha tested: the depth kept
                             // is the nearest whatever the order
                             let (pipe, (off, count), bin) = match step {
@@ -10982,7 +11535,11 @@ impl Backend {
                             if let Alpha(_) = step {
                                 draw(&mut pass, &self.pipelines.shadow_terrain, rg.shadow_terrain[ci]);
                             }
+                            if is_remote || is_portrait {
+                                continue;
+                            }
                             match step {
+                                Alpha(0) if is_detail => pass_mark(&mut pass, MARK_SHADOW_DETAIL_END),
                                 Alpha(0) => pass_mark(&mut pass, MARK_SHADOW_C0_END),
                                 Alpha(1) => pass_mark(&mut pass, MARK_SHADOW_C1_END),
                                 _ => {}
@@ -11047,6 +11604,7 @@ impl Backend {
                 drop(pass);
                 // the tile whose opaque casters were just drawn, for the next cascade
                 if let Some(merges) = &merges
+                    && target_kind == Target::Base
                     && i + 1 < passes.len()
                 {
                     self.shadow_merge.extract(&mut encoder, i, &merges[i]);
@@ -11244,8 +11802,8 @@ impl Backend {
                         multiview_mask: None,
                     });
                     bind_mesh(&mut pass, &self.groups.a);
-                    draw_sided(&mut pass, &self.pipelines.pre_contact_normal, rg.blend, 0);
-                    draw_under(&mut pass, &self.pipelines.pre_contact_normal, rg.blend_under);
+                    draw_sided(&mut pass, &self.pipelines.pre_occlusion_normal, rg.blend, 0);
+                    draw_under(&mut pass, &self.pipelines.pre_occlusion_normal, rg.blend_under);
                 }
                 // and the fainter ones that rise out of a solid surface,
                 // which they read (object.wgsl `risen_depth`): the depth
@@ -11267,8 +11825,8 @@ impl Backend {
                     multiview_mask: None,
                 });
                 bind_mesh(&mut pass, &self.groups.blend);
-                draw_sided(&mut pass, &self.pipelines.pre_contact, rg.blend, 0);
-                draw_under(&mut pass, &self.pipelines.pre_contact, rg.blend_under);
+                draw_sided(&mut pass, &self.pipelines.pre_occlusion, rg.blend, 0);
+                draw_under(&mut pass, &self.pipelines.pre_occlusion, rg.blend_under);
             }
         }
         // ---- SSAO
@@ -11306,49 +11864,16 @@ impl Backend {
 
         prof.mark("ssao");
         mark(&mut encoder, MARK_SSAO_END);
-        // ---- contact shadows: what casts them beyond the prepass (the
-        // blended faces opaque enough, the impostor cards) is drawn into a
-        // copy of its depth, which the pass then reads; the occlusion's
-        // depth already holds those blended faces
+        // The contact mask traces true surface depth at half coverage. AO
+        // and DoF can represent a different depth for the same blended texel.
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
             let more = contact_blend && (n_blend > 0 || n_sprites > 0);
             if more {
-                let source = match &self.targets.ao_depth {
-                    Some((tex, _)) if blend_in_ao_depth => tex,
-                    _ => &self.targets.depth_ss_tex,
-                };
                 encoder.copy_texture_to_texture(
-                    source.as_image_copy(),
+                    self.targets.depth_ss_tex.as_image_copy(),
                     t.depth_texture().as_image_copy(),
                     self.targets.depth_ss_tex.size(),
                 );
-                // without the occlusion's depth, the solid depth is made
-                // here: the prepass and the blended texels solid to the eye
-                if let (false, true, Some((solid_tex, solid_view))) = (blend_in_ao_depth, n_blend > 0, &self.targets.solid_depth) {
-                    encoder.copy_texture_to_texture(
-                        self.targets.depth_ss_tex.as_image_copy(),
-                        solid_tex.as_image_copy(),
-                        self.targets.depth_ss_tex.size(),
-                    );
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("solid depth"),
-                        color_attachments: &[],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: solid_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    bind_mesh(&mut pass, &self.groups.a);
-                    draw_sided(&mut pass, &self.pipelines.pre_solid, rg.blend, 0);
-                    draw_under(&mut pass, &self.pipelines.pre_solid, rg.blend_under);
-                }
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("contact shadows depth"),
                     color_attachments: &[],
@@ -11364,12 +11889,9 @@ impl Backend {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                // (with the solid depth, which the blended texels read)
-                bind_mesh(&mut pass, &self.groups.blend);
-                if !blend_in_ao_depth {
-                    draw_sided(&mut pass, &self.pipelines.pre_contact, rg.blend, 0);
-                    draw_under(&mut pass, &self.pipelines.pre_contact, rg.blend_under);
-                }
+                bind_mesh(&mut pass, &self.groups.a);
+                draw_sided(&mut pass, &self.pipelines.pre_contact, rg.blend, 0);
+                draw_under(&mut pass, &self.pipelines.pre_contact, rg.blend_under);
                 if n_sprites > 0 {
                     pass.set_pipeline(&self.impostors.sprite_depth);
                     pass.set_bind_group(3, &self.impostors.bind_group, &[]);
@@ -11384,8 +11906,37 @@ impl Backend {
         // (object.wgsl `contact_share`), it is the solid depth, which holds
         // those faces: traced from the prepass, the mask held there the
         // shadow of what lies behind the face.
+        let rt_blend = self.rt_now && contact_blend && n_blend > 0;
+        // AO may already have populated this texture. Otherwise only the
+        // active tracer needs it: keep its solid coverage separate from
+        // Bend's half-coverage depth above and DoF's finer hair coverage.
+        if let (true, false, Some((solid_tex, solid_view))) = (rt_blend, blend_in_ao_depth, &self.targets.solid_depth) {
+            encoder.copy_texture_to_texture(
+                self.targets.depth_ss_tex.as_image_copy(),
+                solid_tex.as_image_copy(),
+                self.targets.depth_ss_tex.size(),
+            );
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("traced shadow solid depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: solid_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.a);
+            draw_sided(&mut pass, &self.pipelines.pre_solid, rg.blend, 0);
+            draw_under(&mut pass, &self.pipelines.pre_solid, rg.blend_under);
+        }
         let rt_mask_depth = match &self.targets.solid_depth {
-            Some((_, solid)) if contact_blend && n_blend > 0 => solid,
+            Some((_, solid)) if rt_blend => solid,
             _ => &self.targets.depth_ss,
         };
         if let (true, Some(rt), Some(t), Some(faces)) = (self.rt_now, &mut self.rt, &self.targets.rt, &rt_faces) {
@@ -11465,38 +12016,10 @@ impl Backend {
             }
         }
         mark(&mut encoder, MARK_CONTACT_END);
-        // ---- soft sun shadows: the shadow of each pixel of the prepass (or
-        // of the occlusion depth, with the blended faces opaque enough in it)
-        if let (true, Some(soft), Some(t)) = (self.soft_now, &self.soft, &self.targets.soft) {
-            let photo = self.snapshot_window.is_some() || f.photo_scale > 1.0;
-            soft.write(
-                &self.queue,
-                t,
-                &crate::soft_shadows::Frame {
-                    cascades,
-                    splits,
-                    proj: fu.proj,
-                    view: fu.view,
-                    softness: f.shadow_softness,
-                    // the TAA accumulates a new pattern each frame (a photo
-                    // keeps one, which its tiles share)
-                    phase: if self.taa.is_some() && !photo {
-                        (self.frame_index % 16) as u32
-                    } else {
-                        0
-                    },
-                    photo,
-                    tile: photo_part(f.photo_tile),
-                },
-            );
-            soft.encode(&mut encoder, t, blend_in_ao_depth);
-        }
-        mark(&mut encoder, MARK_SOFT_END);
         // ---- FSR: the blended faces drawn over what lies behind them, even
         // faint glass, give their own depth and motion, so their edges keep
-        // their history (the occlusion and the contact shadows have read
-        // that depth; GTAO those normals)
-        if let (pipe, Some((_, view)), true, true) = (
+        // their history, after the AO pass has read the depth and normals.
+        let fsr_alpha_written = if let (pipe, Some((_, view)), true, true) = (
             &self.pipelines.fsr_blend_normal,
             &self.targets.ao_depth,
             normals.is_some() && n_blend > 0,
@@ -11520,7 +12043,10 @@ impl Backend {
             bind_mesh(&mut pass, &self.groups.a);
             draw_sided(&mut pass, pipe, rg.blend, 0);
             draw_under(&mut pass, pipe, rg.blend_under);
-        }
+            true
+        } else {
+            false
+        };
         self.water_effects.encode(&mut encoder);
         // ---- planar reflections
         let refl_passes = [
@@ -12356,6 +12882,9 @@ impl Backend {
         let method = crate::oit_stochastic::method(self.settings.oit);
         let plain_view =
             f.photo_tile == Mat4::IDENTITY && f.photo_context == crate::types::PhotoContext::None && self.snapshot_window.is_none();
+        if method != crate::oit_stochastic::Method::Stochastic && !crate::oit_stochastic::alternates() {
+            self.st.disabled();
+        }
         let want_st = crate::oit_stochastic::frame_wants_method(method, bn, plain_view);
         // the glowing blended faces (their glow accumulated with the
         // method, as `blended` adds it after each face in order)
@@ -12389,19 +12918,20 @@ impl Backend {
             };
             Self::ensure_st(
                 &mut self.st,
-                &mut self.st_pipes,
+                &mut self.pipeline_workers,
                 &self.st_init,
                 &self.device,
-                &self.frame_layout,
-                &self.records_layout,
-                &self.tex_layout,
+                [&self.frame_layout, &self.records_layout, &self.tex_layout],
                 samples,
-            ) && self.st.as_mut().is_some_and(|s| s.prepare(&self.device, &self.queue, &frame))
+            ) && self
+                .st
+                .ready_mut()
+                .is_some_and(|(st, _)| st.prepare(&self.device, &self.queue, &frame))
         };
         // the targets go with the method (as `Bloom::release`), with a photo
         // or a snapshot (its memory is planned without them), and after a
         // while without a blended face
-        if let Some(s) = &mut self.st {
+        if let Some((s, _)) = self.st.ready_mut() {
             if method != crate::oit_stochastic::Method::Stochastic && plain_view && crate::oit_stochastic::alternates() {
                 s.pause();
             } else if method != crate::oit_stochastic::Method::Stochastic || !plain_view {
@@ -12588,7 +13118,7 @@ impl Backend {
                 rest(&mut pass);
             }
         }
-        if let (true, Some(st), Some(st_pipes)) = (st_on, &self.st, &self.st_pipes) {
+        if let (true, Some((st, st_pipes))) = (st_on, self.st.ready()) {
             let (pipes, resolve) = (&st_pipes.scene, &st_pipes.resolve);
             let t = &self.targets;
             let scene_depth_tex = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
@@ -12878,11 +13408,10 @@ impl Backend {
         }
 
         prof.mark("scene_b");
-        let st_ran = st_on && self.st.is_some() && self.st_pipes.is_some();
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
-            t.slot_st[slot].set(st_ran);
+            t.slot_st[slot].set(st_on);
         }
-        if !st_ran {
+        if !st_on {
             // every mark is written each frame (empty spans, after the rain
             // when the stochastic transparency is off), so every timestamp
             // is fresh each frame
@@ -12998,6 +13527,12 @@ impl Backend {
                 post_src = &taa.history[w];
             }
         }
+        let focus_depth = FocusDepth::for_frame(
+            f.dof.is_some() && self.settings.dof_alpha_depth,
+            n_blend,
+            fsr_alpha_written,
+            post_size != world_size,
+        );
         // ---- depth of field, on the resolved (and TAA-steady) image,
         // before the glow and the tone mapping (not in probe captures)
         match &f.dof {
@@ -13013,26 +13548,50 @@ impl Backend {
                         glow: &self.glow.views[1],
                     },
                     post_size,
+                    focus_depth == FocusDepth::Private,
                     self.lost.get(),
                 ) =>
             {
-                let dof = self.dof.as_mut().expect("made by dof_targets");
+                let dof = self.dof.as_ref().expect("made by dof_targets");
+                let lens_depth = match focus_depth {
+                    FocusDepth::Scene => post_depth,
+                    FocusDepth::FsrNative => &self.targets.ao_depth.as_ref().expect("FSR wrote this depth").1,
+                    FocusDepth::Private => {
+                        // The lens sees final scene depth plus visible blended
+                        // texels. Leave temporal history, AO and selection alone.
+                        let depth = dof.alpha_depth().expect("prepared with the lens targets");
+                        let scene_depth = post_depth.texture();
+                        encoder.copy_texture_to_texture(scene_depth.as_image_copy(), depth.texture().as_image_copy(), scene_depth.size());
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("blended focus depth"),
+                            color_attachments: &[],
+                            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                                view: depth,
+                                depth_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: wgpu::StoreOp::Store,
+                                }),
+                                stencil_ops: None,
+                            }),
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                            multiview_mask: None,
+                        });
+                        bind_mesh(&mut pass, &self.groups.a);
+                        draw_sided(&mut pass, &self.pipelines.pre_focus, rg.blend, 0);
+                        draw_under(&mut pass, &self.pipelines.pre_focus, rg.blend_under);
+                        depth
+                    }
+                };
                 post_bg = dof.encode(
                     &self.device,
                     &self.queue,
                     &mut encoder,
                     post_src,
-                    post_depth,
+                    lens_depth,
                     f.proj,
                     post_size,
                     params,
-                    HDR_FORMAT,
-                    &crate::dof::PostInputs {
-                        layout: &self.post_layout,
-                        sampler: &self.post_sampler,
-                        buffer: &self.post_buffer,
-                        glow: &self.glow.views[1],
-                    },
                     f.cutout,
                 );
             }
@@ -13812,7 +14371,7 @@ impl Backend {
         self.occlusion.after_submit();
         self.cull.after_submit();
         self.depth_pick.after_submit();
-        if let Some(st) = &self.st {
+        if let Some((st, _)) = self.st.ready() {
             st.after_submit();
         }
         self.exposure.after_submit();
@@ -13863,12 +14422,25 @@ impl Backend {
             .filter(|&(bytes, pixels)| bytes > 0 && pixels > 0)
             .map(|(bytes, pixels)| (bytes + self.taa_bytes) as f32 / pixels as f32);
         stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
+        if f.shadows {
+            let level = |end, vp: Mat4| [end, 2.0 / (vp.row(0).truncate().length() * self.shadow_size as f32)];
+            stats.shadow.maps = Some(crate::types::ShadowMapStats {
+                general: std::array::from_fn(|i| level(splits[i], cascades[i])),
+                detail: detail.map(|(end, vp)| level(end, vp)),
+                sun_resolution: self.shadow_size,
+                active_projectors: main.active_projector_maps(),
+                projector_capacity: self.shadow_count,
+            });
+        }
         stats.shadow.gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_parts);
+        if detail.is_some() {
+            stats.shadow.graded_detail_gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_detail);
+        }
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
         stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
         stats.gpu_clouds = self.timer.as_ref().and_then(|t| t.last_clouds).filter(|_| self.clouds_now);
-        stats.gpu_soft = self.timer.as_ref().and_then(|t| t.last_soft);
+        stats.gpu_soft = None;
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
         stats.gpu_weather = self.timer.as_ref().and_then(|t| t.last_weather);
@@ -14043,13 +14615,114 @@ mod tests {
     use super::*;
 
     #[test]
+    fn blended_focus_depth_follows_the_active_frame_for_every_aa_mode() {
+        use crate::types::FsrQuality::*;
+        use AntiAliasing::*;
+        for aa in [None, Fxaa, Smaa, Msaa(2), Msaa(4), Msaa(8), Taa] {
+            assert_eq!(fsr_ratio(aa), Option::None);
+            assert_eq!(FocusDepth::for_frame(true, 1, false, false), FocusDepth::Private);
+        }
+        // Both sets feed the same single-sample lens depth after scene colour resolves.
+        for (requested, fallback) in [(2, 1), (4, 4), (8, 4)] {
+            assert_eq!(scene_sample_count(Msaa(requested), &[4]), fallback);
+            assert_eq!(scene_sample_count(Msaa(requested), &[2, 4, 8]), requested);
+        }
+        for quality in [NativeAa, Quality, Balanced, Performance, UltraPerformance] {
+            let upscaled = fsr_ratio(Fsr(quality)).unwrap() > 1.0;
+            let expected = if upscaled { FocusDepth::Scene } else { FocusDepth::FsrNative };
+            assert_eq!(FocusDepth::for_frame(true, 3, true, upscaled), expected);
+            // An FSR frame with blend-motion disabled still protects hair.
+            assert_eq!(FocusDepth::for_frame(true, 3, false, upscaled), FocusDepth::Private);
+        }
+        for upscaled in [false, true] {
+            for fsr_written in [false, true] {
+                assert_eq!(FocusDepth::for_frame(false, 4, fsr_written, upscaled), FocusDepth::Scene);
+                assert_eq!(FocusDepth::for_frame(true, 0, fsr_written, upscaled), FocusDepth::Scene);
+            }
+        }
+    }
+
+    /// Empty scene layouts deliberately refuse both stochastic depth routes.
+    /// The rejected set must leave the sorted draw path available this frame
+    /// and the next frame must skip initialization at the same sample count.
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn stochastic_refused_scene_uses_sorted_frames_on_gpu() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("GPU adapter");
+        let (device, _) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("stochastic test absent bindings"),
+            entries: &[],
+        });
+        let init = StInit {
+            adapter,
+            instance_flags: wgpu::InstanceFlags::empty(),
+            pass_supported: vec![4],
+            scene_groups: vec![Vec::new(); 3],
+        };
+        let mut build = crate::oit_stochastic::PipelineBuild::Idle;
+        let mut workers = Vec::new();
+        let run = |build: &mut _, workers: &mut Vec<_>| Backend::ensure_st(build, workers, &init, &device, [&layout, &layout, &layout], 1);
+        // The first frame returns immediately, even if the worker has
+        // already finished by the time the render thread checks its state.
+        assert!(!run(&mut build, &mut workers));
+        assert_eq!(workers.len(), 1);
+        workers.pop().unwrap().join().expect("stochastic pipeline worker");
+        assert!(!run(&mut build, &mut workers));
+        assert!(matches!(build, crate::oit_stochastic::PipelineBuild::Refused(1)));
+        assert!(!run(&mut build, &mut workers));
+        assert!(workers.is_empty(), "a rejected sample count must not rebuild every frame");
+    }
+
+    #[test]
     fn the_scene_shader_without_soft_shadows_drops_their_path() {
-        let with = common_shader_for(true);
-        let without = common_shader_for(false);
+        let limits = wgpu::Limits::default();
+        let with = common_shader_for(true, crate::common_shader_source(&limits));
+        let without = common_shader_for(false, crate::common_shader_source(&limits));
         assert!(with.contains(SOFT_PATH_ON), "common.wgsl has its SOFT_PATH line");
         assert!(!without.contains(SOFT_PATH_ON));
         assert!(without.contains("const SOFT_PATH: bool = false;"));
         assert_eq!(without.len(), with.len() + 1);
+    }
+
+    #[test]
+    fn sun_depth_slabs_keep_xy_and_preserve_blockers_on_both_sides() {
+        for radius in [2.0, 16.0, 230.0] {
+            let axis = Vec3::new(0.7, 0.1, 0.5).normalize();
+            let center = Vec3::new(250., -170., 30.);
+            let pad = crate::shadow_cull::CASCADE_DEPTH_PAD;
+            let view = glam::camera::rh::view::look_at_mat4(center + axis * (radius + pad), center, Vec3::Z);
+            let proj = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.1, 2.0 * (radius + pad));
+            let original = proj * view;
+            let (local, remote, [local_start, remote_end]) = super::sun_depth_layers(original);
+            for row in [0, 1, 3] {
+                assert_eq!(local.row(row), original.row(row));
+                assert_eq!(remote.row(row), original.row(row));
+            }
+            let boundary = radius + SUN_LOCAL_PAD - 0.1;
+            for (offset, is_local, is_remote) in [
+                (-radius, true, false),
+                (0.0, true, false),
+                (boundary - SUN_LAYER_OVERLAP - 0.5, true, false),
+                (boundary - 0.5 * SUN_LAYER_OVERLAP, true, true),
+                (boundary + 1.0, false, true),
+                (radius + 360.0, false, true),
+            ] {
+                let p = (center + offset * axis).extend(1.);
+                assert!((0.0..=1.0).contains(&(original * p).z));
+                assert_eq!((0.0..=1.0).contains(&(local * p).z), is_local);
+                assert_eq!((0.0..=1.0).contains(&(remote * p).z), is_remote);
+                if is_local {
+                    let stored = (local * p).z * (1.0 - local_start) + local_start;
+                    assert!((stored - (original * p).z).abs() < 2e-6);
+                }
+                if is_remote {
+                    assert!(((remote * p).z * remote_end - (original * p).z).abs() < 2e-6);
+                }
+            }
+        }
     }
 
     #[test]
@@ -14311,6 +14984,7 @@ mod tests {
     const MARK_ORDER: [u32; GPU_TIMESTAMPS as usize] = [
         0,
         MARK_SHADOW_BEGIN,
+        MARK_SHADOW_DETAIL_END,
         MARK_SHADOW_C0_END,
         MARK_SHADOW_C1_END,
         MARK_SHELTER_BEGIN,
@@ -14319,7 +14993,6 @@ mod tests {
         MARK_DEPTH_END,
         MARK_SSAO_END,
         MARK_CONTACT_END,
-        MARK_SOFT_END,
         MARK_WATER_AIR_BEGIN,
         MARK_WATER_AIR_END,
         MARK_REFL_END,
@@ -14407,6 +15080,20 @@ mod tests {
             clouds_wanted(false, false, 19.0, None),
             "hidden water leaves the sky visible below sea level"
         );
+    }
+
+    #[test]
+    fn active_projector_maps_exclude_empty_and_weather_slots() {
+        let mut frame = FrameU::zeroed();
+        frame.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
+        assert_eq!(frame.active_projector_maps(), 0);
+        frame.spot_lights[0] = [0, -1, 11, RAIN_SHELTER_LIGHT];
+        frame.spot_lights[3][3] = 63;
+        assert_eq!(frame.active_projector_maps(), 3);
+        frame.spot_lights = std::array::from_fn(|group| std::array::from_fn(|slot| (4 * group + slot) as i32));
+        assert_eq!(frame.active_projector_maps(), 16);
+        frame.spot_lights[3][3] = RAIN_SHELTER_LIGHT;
+        assert_eq!(frame.active_projector_maps(), 15);
     }
 
     /// The occlusion's table is read by index against the main view's
@@ -14519,11 +15206,27 @@ mod tests {
                 .validate(&module)
                 .map_err(|e| e.emit_to_string(src))
         };
-        if let Err(e) = valid(&Impostors::shader_source(wgpu::Features::empty(), true)) {
+        let limits = wgpu::Limits {
+            max_sampled_textures_per_shader_stage: 31,
+            max_bindings_per_bind_group: 35,
+            ..Default::default()
+        };
+        if let Err(e) = valid(&Impostors::shader_source(
+            wgpu::Features::empty(),
+            true,
+            crate::common_shader_source(&limits),
+        )) {
             panic!("{e}");
         }
         // the source a device with the test takes is refused there
-        assert!(valid(&Impostors::shader_source(crate::blend_exact::EARLY_TEST, true)).is_err());
+        assert!(
+            valid(&Impostors::shader_source(
+                crate::blend_exact::EARLY_TEST,
+                true,
+                crate::common_shader_source(&limits)
+            ))
+            .is_err()
+        );
     }
 
     #[test]
@@ -14719,6 +15422,29 @@ mod tests {
     }
 
     #[test]
+    fn portrait_map_is_a_snapped_crop_of_the_parents_two_depth_layers() {
+        let parent = Mat4::from_scale(Vec3::new(0.5, 0.5, 0.001)) * Mat4::from_rotation_y(0.61);
+        let view = Mat4::from_translation(Vec3::new(-0.09, 0.07, -0.31));
+        let crop = portrait_projection(parent, 2048, view).unwrap();
+        assert_eq!(crop.row(2), parent.row(2));
+        assert_eq!(sun_depth_layers(crop).2, sun_depth_layers(parent).2);
+        assert!((crop.row(0).truncate().length().recip() - PORTRAIT_RADIUS).abs() < 1e-6);
+        for x in [-1.0, 1.0] {
+            for y in [-1.0, 1.0] {
+                let world = crop.inverse().transform_point3(Vec3::new(x, y, 0.5));
+                assert!(parent.transform_point3(world).truncate().abs().max_element() <= 1.0);
+            }
+        }
+        let moved = Mat4::from_translation(Vec3::new(-0.092, 0.071, -0.31));
+        let next = portrait_projection(parent, 2048, moved).unwrap();
+        let shift = (next.w_axis - crop.w_axis).truncate().truncate() * (0.5 * PORTRAIT_SIZE as f32);
+        assert!(shift.abs_diff_eq(shift.round(), 1e-3));
+        // The normal tile already reaches this density, or the crop would lose casters.
+        assert!(portrait_projection(Mat4::from_scale(Vec3::splat(0.5)), 8192, view).is_none());
+        assert!(portrait_projection(parent, 2048, Mat4::from_translation(Vec3::Y * 5.0)).is_none());
+    }
+
+    #[test]
     fn shadow_receiver_bias_is_two_texels_along_the_light() {
         // a cascade as cascade_matrices builds it: a 6 m square, the depth
         // padded by CASCADE_DEPTH_PAD on each side
@@ -14808,8 +15534,173 @@ mod tests {
     }
 
     #[test]
+    fn graded_shadow_reaches_are_ordered_and_have_an_equal_ratio() {
+        for near in 2..=12 {
+            for far in [16.0, 48.0, 96.0, 192.0, 512.0] {
+                let near = near as f32;
+                let [close, mid, end] = graded_shadow_splits(near, far);
+                assert!(near < close && close < mid && mid < end);
+                assert_eq!(end, far);
+                assert!((close / near - mid / close).abs() < 1e-5);
+                assert!((close / near - end / mid).abs() < 1e-5);
+            }
+        }
+    }
+
+    #[test]
     fn frame_uniform_layout_is_16_byte_aligned() {
         assert_eq!(std::mem::size_of::<FrameU>() % 16, 0);
+    }
+
+    #[test]
+    fn baseline_control_frame_layout_matches_wgsl() {
+        let source = include_str!("shaders/common.wgsl");
+        let frame_start = source.find("struct Frame {").expect("Frame declaration");
+        let frame_end = frame_start + source[frame_start..].find("\n};").expect("Frame end") + "\n};".len();
+        // Only declarations through Frame: no unresolved later shader functions.
+        let module =
+            naga::front::wgsl::parse_str(&source[..frame_end]).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source[..frame_end])));
+        let frame_type = module
+            .types
+            .iter()
+            .find_map(|(_, ty)| (ty.name.as_deref() == Some("Frame")).then_some(ty))
+            .expect("parsed Frame");
+        let naga::TypeInner::Struct { members, span } = &frame_type.inner else {
+            panic!("Frame must be a struct");
+        };
+        let offset = |name: &str| {
+            members
+                .iter()
+                .find(|member| member.name.as_deref() == Some(name))
+                .expect("Frame member")
+                .offset as usize
+        };
+        assert_eq!(offset("detail_vp"), std::mem::offset_of!(FrameU, detail_vp));
+        assert_eq!(offset("portrait_depth"), std::mem::offset_of!(FrameU, portrait_depth));
+        assert_eq!(offset("portrait_vp"), std::mem::offset_of!(FrameU, portrait_vp));
+        assert_eq!(offset("detail_params"), std::mem::offset_of!(FrameU, detail_params));
+        assert_eq!(offset("render_controls"), std::mem::offset_of!(FrameU, render_controls));
+        assert_eq!(offset("pbr_thin_key"), std::mem::offset_of!(FrameU, pbr_thin_key));
+        assert_eq!(offset("pbr_thin_gain"), std::mem::offset_of!(FrameU, pbr_thin_gain));
+        assert_eq!(*span as usize, std::mem::size_of::<FrameU>());
+        assert_eq!(std::mem::size_of::<FrameU>() % 16, 0);
+    }
+
+    #[test]
+    fn baseline_control_shader_constants_match_cpu() {
+        let source = include_str!("shaders/common.wgsl").replace("\r\n", "\n");
+        let begin = "// BEGIN AURORA_RENDER_CONTROLS_V2";
+        let end = "// END AURORA_RENDER_CONTROLS_V2";
+        assert_eq!(source.matches(begin).count(), 1);
+        assert_eq!(source.matches(end).count(), 1);
+        let start = source.find(begin).unwrap();
+        let finish = source[start..].find(end).unwrap() + start + end.len();
+        assert_eq!(
+            &source[start..finish],
+            crate::render_controls::wgsl_definitions().trim_end_matches('\n'),
+        );
+    }
+
+    /// Run the production WGSL compositor itself over mapped penumbrae for
+    /// every fixed contact visibility. The retired brightness gate could make
+    /// a darker map sample produce a brighter combined result (a hollow band).
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn gpu_shadow_visibility_is_monotonic_and_preserves_contact_detail() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).expect("GPU adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let common = include_str!("shaders/common.wgsl");
+        let begin = common.find("fn combine_sun_visibility(").expect("production compositor");
+        let end = common[begin..].find("\n}").expect("compositor end") + begin + 2;
+        let source = format!(
+            concat!(
+                "\n{}\n",
+                "@group(0) @binding(0) var<storage, read_write> output: array<f32>;\n",
+                "@compute @workgroup_size(64)\n",
+                "fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{\n",
+                "    if (id.x >= 10201u) {{ return; }}\n",
+                "    let mapped = f32(id.x % 101u) / 100.0;\n",
+                "    let contact = f32(id.x / 101u) / 100.0;\n",
+                "    output[id.x] = combine_sun_visibility(mapped, contact);\n",
+                "}}\n",
+            ),
+            &common[begin..end]
+        );
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("production shadow visibility compositor"),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+            label: Some("shadow visibility monotonicity regression"),
+            layout: None,
+            module: &shader,
+            entry_point: Some("probe"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let size = 10201 * 4;
+        let output = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("visibility samples"),
+            size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("visibility readback"),
+            size: crate::readback::readback_size(size),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("visibility samples"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: output.as_entire_binding(),
+            }],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(160, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, size);
+        queue.submit([encoder.finish()]);
+        readback.map_async(wgpu::MapMode::Read, .., |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU readback");
+        let bytes = readback.get_mapped_range(..).expect("mapped visibility samples");
+        let samples: &[f32] = bytemuck::cast_slice(&bytes);
+        for contact in 0..101 {
+            for mapped in 0..101 {
+                let value = samples[contact * 101 + mapped];
+                let c = contact as f32 / 100.0;
+                let m = mapped as f32 / 100.0;
+                assert!(value.is_finite() && value >= 0.0 && value <= m + 1e-6 && value <= c + 1e-6);
+                if mapped > 0 {
+                    assert!(
+                        value + 1e-6 >= samples[contact * 101 + mapped - 1],
+                        "a darker map must not brighten contact: contact={c}, map={m}"
+                    );
+                }
+                if contact > 0 {
+                    assert!(
+                        value + 1e-6 >= samples[(contact - 1) * 101 + mapped],
+                        "a darker contact must not brighten a map: contact={c}, map={m}"
+                    );
+                }
+                assert!((value - samples[mapped * 101 + contact]).abs() <= 1e-6);
+                if contact == 100 || mapped == contact {
+                    assert!((value - m).abs() <= 1e-6, "no contact or identical estimates cannot double-darken");
+                }
+                if mapped == 100 {
+                    assert!((value - c).abs() <= 1e-6, "contact detail must remain on lit maps");
+                }
+            }
+        }
     }
 
     /// The scene pass tests its vertices against the depth the prepasses
@@ -14853,7 +15744,7 @@ mod tests {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}",
-                    crate::common_shader_source(),
+                    crate::device_common_shader_source(&device),
                     crate::object_shader_source(device.features()),
                     crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
                 )

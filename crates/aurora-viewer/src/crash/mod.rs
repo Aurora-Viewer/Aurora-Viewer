@@ -360,9 +360,9 @@ pub fn failure(message: &str) {
 /// The GPU has kept a frame for `seconds` while the window still answers:
 /// `gpu-stall.txt` (with the render thread's stack on Windows and Linux), so a
 /// session ended now is reported as such. [`gpu_answered`] takes it back.
-pub fn gpu_stalled(seconds: u64) {
+pub fn gpu_stalled(seconds: u64, pipeline: Option<aurora_render::pipeline_cache::PipelineWork>) {
     if let Some(session) = SESSION.get() {
-        watchdog::save_gpu_stall(&session.dir, seconds);
+        watchdog::save_gpu_stall(&session.dir, seconds, pipeline);
     }
 }
 
@@ -523,7 +523,17 @@ pub fn gpu_answered() {
     #[cfg(target_os = "linux")]
     watchdog::gpu_answered();
     if let Some(session) = SESSION.get() {
-        let _ = std::fs::remove_file(session.dir.join("gpu-stall.txt"));
+        archive_answered_stall(&session.dir);
+    }
+}
+
+/// Keep the last recovered sample in this session's private folder. Only
+/// the active marker is used to diagnose a subsequent crash or offer safe
+/// graphics. A failed archive must still clear that marker.
+fn archive_answered_stall(dir: &Path) {
+    let active = dir.join("gpu-stall.txt");
+    if std::fs::rename(&active, dir.join("gpu-stall-recovered.txt")).is_err() {
+        let _ = std::fs::remove_file(active);
     }
 }
 
@@ -814,6 +824,18 @@ mod tests {
         root
     }
 
+    #[test]
+    fn a_recovered_stall_keeps_its_sample_without_marking_a_later_crash() {
+        let dir = scratch_root();
+        for sample in ["first stack", "second stack"] {
+            std::fs::write(dir.join("gpu-stall.txt"), sample).unwrap();
+            archive_answered_stall(&dir);
+            assert!(!gpu_trouble(&dir));
+            assert_eq!(std::fs::read_to_string(dir.join("gpu-stall-recovered.txt")).unwrap(), sample);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// Off Windows no watcher outlives the viewer: a session that ends with
     /// the GPU stalled or lost marks the next start itself, once.
     #[cfg(not(windows))]
@@ -824,7 +846,7 @@ mod tests {
             let dir = root.join(uuid::Uuid::new_v4().to_string());
             std::fs::create_dir(&dir).unwrap();
             if trouble == "stall" {
-                watchdog::save_gpu_stall(&dir, 6);
+                watchdog::save_gpu_stall(&dir, 6, None);
                 let text = std::fs::read_to_string(dir.join("gpu-stall.txt")).unwrap();
                 assert_eq!(text, "GPU stall: no frame for 6 s\n");
             } else {

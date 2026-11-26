@@ -203,11 +203,11 @@ const fn api_version(minor: u32) -> u32 {
 ///
 /// wgpu-hal writes one SPIR-V module per entry point at pipeline creation
 /// (`Workarounds::SEPARATE_ENTRY_POINTS`, unconditionally on in 30.0.1:
-/// "TODO: only enable for particular devices"). This module writes all the
-/// entry points of the WGSL at once (`pipeline_options: None`, the shape
-/// of wgpu-hal's other path), since a passthrough module is one Vulkan
-/// shader module whose entry point the pipeline names: naga keeps the
-/// same options for either, and a module with several entry points is
+/// "TODO: only enable for particular devices"). A passthrough module can
+/// hold several entry points. The stochastic depth pass retains its vertex
+/// and fragment entries together and strips the rest of the scene before
+/// writing SPIR-V. The generic path retains every entry point. Both use
+/// `pipeline_options: None`; a module with several entry points is
 /// ordinary SPIR-V. Pipeline-overridable constants cannot be specialised
 /// through a passthrough module, so a WGSL with `override`s is refused.
 pub fn writer_options<'a>(facts: &VulkanFacts, binding_map: spv::BindingMap, debug_info: Option<spv::DebugInfo<'a>>) -> spv::Options<'a> {
@@ -482,6 +482,20 @@ impl SampleMaskShaders {
         wgsl: &str,
         map: spv::BindingMap,
     ) -> Option<wgpu::ShaderModule> {
+        self.try_create_shader_module_for(device, label, wgsl, map, &[])
+    }
+
+    /// On Vulkan, compile only the named stage/entry pairs and their dependencies.
+    /// An empty selection retains every entry point. Other backends let wgpu
+    /// compile the selected entry when creating the pipeline.
+    pub(crate) fn try_create_shader_module_for(
+        &self,
+        device: &wgpu::Device,
+        label: &str,
+        wgsl: &str,
+        map: spv::BindingMap,
+        entries: &[(naga::ShaderStage, &str)],
+    ) -> Option<wgpu::ShaderModule> {
         if !self.vulkan {
             return Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
@@ -492,7 +506,7 @@ impl SampleMaskShaders {
             log::warn!("sample_mask shader \"{label}\": the Vulkan device could not be queried; not created");
             return None;
         };
-        match self.fixed_words_mapped(facts, label, wgsl, map) {
+        match self.fixed_words_mapped(facts, label, wgsl, map, entries) {
             Ok(Some(words)) => Some(self.passthrough_module(device, label, words)),
             // (no SampleMask in the words, or naga's array already: right as it is)
             Ok(None) => Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -551,7 +565,7 @@ impl SampleMaskShaders {
     /// write a resource without a mapping.
     pub fn create_shader_module_mapped(&self, device: &wgpu::Device, label: &str, wgsl: &str, map: spv::BindingMap) -> wgpu::ShaderModule {
         if let Some(facts) = &self.facts {
-            match self.fixed_words_mapped(facts, label, wgsl, map) {
+            match self.fixed_words_mapped(facts, label, wgsl, map, &[]) {
                 Ok(Some(words)) => return self.passthrough_module(device, label, words),
                 Ok(None) => {}
                 Err(err) => {
@@ -578,7 +592,7 @@ impl SampleMaskShaders {
         wgsl: &str,
         groups: &[&[wgpu::BindGroupLayoutEntry]],
     ) -> Result<Option<FixedWords>, FixError> {
-        self.fixed_words_mapped(facts, label, wgsl, binding_map(groups))
+        self.fixed_words_mapped(facts, label, wgsl, binding_map(groups), &[])
     }
 
     fn fixed_words_mapped(
@@ -587,20 +601,37 @@ impl SampleMaskShaders {
         label: &str,
         wgsl: &str,
         map: spv::BindingMap,
+        entries: &[(naga::ShaderStage, &str)],
     ) -> Result<Option<FixedWords>, FixError> {
         if !self.passthrough {
             return Err(FixError::NoPassthrough);
         }
-        let module = naga::front::wgsl::parse_str(wgsl).map_err(|e| FixError::Parse(e.emit_to_string(wgsl)))?;
+        let mut module = naga::front::wgsl::parse_str(wgsl).map_err(|e| FixError::Parse(e.emit_to_string(wgsl)))?;
         if !module.overrides.is_empty() {
             return Err(FixError::Overrides);
         }
         // Every naga capability: what the device lacks is refused by the
         // writer's capability set (from the device's features), and the
         // fallback through wgpu then reports it the usual way.
-        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-            .validate(&module)
-            .map_err(|e| FixError::Validate(e.emit_to_string(wgsl)))?;
+        let validate = |module: &naga::Module| {
+            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+                .validate(module)
+                .map_err(|e| FixError::Validate(e.emit_to_string(wgsl)))
+        };
+        if !entries.is_empty() {
+            for &(stage, name) in entries {
+                if !module.entry_points.iter().any(|ep| ep.stage == stage && ep.name == name) {
+                    return Err(FixError::Validate(format!("missing {stage:?} entry point {name}")));
+                }
+            }
+            module.entry_points.retain(|ep| entries.contains(&(ep.stage, ep.name.as_str())));
+            // Naga requires validated IR for compaction. Resource binding numbers
+            // stay intact; the original layout's descriptor ranks and array lengths
+            // still come from the caller's binding map.
+            validate(&module)?;
+            naga::compact::compact(&mut module, naga::compact::KeepUnused::No);
+        }
+        let info = validate(&module)?;
         let debug_info = facts.instance_flags.contains(wgpu::InstanceFlags::DEBUG).then_some(spv::DebugInfo {
             source_code: wgsl,
             file_name: label,

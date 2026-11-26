@@ -26,6 +26,8 @@ $ErrorActionPreference = 'Stop'
 
 $pages = @(
     @{ Section = $null; Page = 'Home'; Title = 'Home'; Source = 'README.md' }
+    @{ Section = 'For testers'; Page = 'P3-rendering'; Title = 'P3 rendering settings'; Source = 'docs/p3-rendering/README.md' }
+    @{ Section = 'For testers'; Page = 'Testing-P3-rendering'; Title = 'Testing P3 rendering'; Source = 'docs/p3-rendering/VALIDATION.md' }
     @{ Section = 'For testers'; Page = 'Reporting-bugs'; Title = 'Reporting bugs'; Source = 'docs/BUG_REPORTING.md' }
     @{ Section = 'For testers'; Page = 'Installing-on-Linux'; Title = 'Installing on Linux'; Source = 'docs/LINUX.md' }
     @{ Section = 'For testers'; Page = 'VR'; Title = 'Experimental VR scene viewing'; Source = 'docs/VR.md' }

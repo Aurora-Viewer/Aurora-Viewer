@@ -229,6 +229,16 @@ pub const PORTAL_HALF_WIDTH: f32 = 1.0;
 pub const PORTAL_HALF_HEIGHT: f32 = 1.5;
 pub const PORTAL_SURFACE_SCALE: f32 = 1.16;
 
+/// First eight bytes of a glTF material UUID, retained in identity.yz
+/// of a per-face GPU record. A 64-bit key avoids a material lookup in
+/// the fragment shader; these are local visual settings, never sent to SL.
+pub fn pbr_thin_material_key(bytes: [u8; 16]) -> [u32; 2] {
+    [
+        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+    ]
+}
+
 /// One vector keeps the cut local without growing every world-face record:
 /// center.xyz, and the horizontal entry normal on a signed diamond perimeter.
 /// Decoding needs only normalization, no per-fragment trigonometry.
@@ -340,7 +350,8 @@ pub struct DrawRecord {
     /// x: the face's identity for the order-independent transparency
     /// ([`oit_tie`]: the object's full id and the face's index hashed, the
     /// same on every launch; the stochastic masks are seeded by it and the
-    /// triangle, oit_stochastic.rs). y, z, w: spare.
+    /// triangle, oit_stochastic.rs). y and z hold the material key for
+    /// thin-surface lighting. w is 1 for avatar shadow receivers.
     pub identity: [u32; 4],
 }
 
@@ -418,6 +429,14 @@ impl DrawRecord {
 
     pub fn set_ignore_object_pick(&mut self, ignored: bool) {
         self.flags[3] = (self.flags[3] & !flags::IGNORE_OBJECT_PICK) | if ignored { flags::IGNORE_OBJECT_PICK } else { 0 };
+    }
+
+    /// Mark the system body or a worn world face. Return whether the GPU
+    /// record needs to be uploaded after a change of ownership.
+    pub fn set_avatar_shadow_receiver(&mut self, enabled: bool) -> bool {
+        let previous = self.identity[3];
+        self.identity[3] = u32::from(enabled);
+        self.identity[3] != previous
     }
 
     /// Layer rank (0..=`flags::LAYER_RANK_MAX`) of a face that may lie
@@ -1378,6 +1397,13 @@ pub struct RenderSettings {
     pub vr_vibrancy: f32,
     /// Percentage of the window resolution used by the world; UI stays native.
     pub render_scale_percent: u32,
+    /// Local PBR thin-surface experiment: 0 off, 1 a selected glTF material UUID,
+    /// 2 explicitly test all double-sided alpha-masked PBR faces.
+    pub pbr_thin_scope: u8,
+    pub pbr_thin_key: [u32; 2],
+    pub pbr_thin_ao_floor: f32,
+    pub pbr_thin_transmission: f32,
+    pub pbr_thin_debug: bool,
     pub water_effects: crate::WaterEffects,
     pub aa: AntiAliasing,
     /// With FSR: RCAS's strength (0..1), none without RCAS.
@@ -1391,10 +1417,31 @@ pub struct RenderSettings {
     pub hdr: bool,
     /// Shadow map resolution per cascade (0 = shadows off).
     pub shadow_resolution: u32,
+    /// Four geometric shadow levels with a separate near depth target.
+    pub graded_sun_shadows: bool,
+    pub graded_shadow_edge_smoothing: bool,
+    /// Full apparent diameter of the sun or moon. Zero selects the existing shadow filter.
+    pub sun_shadow_angular_diameter_deg: f32,
+    /// Reuse valid fine-map coverage beyond the nominal split on Ultra.
+    pub graded_shadow_overlap: bool,
+    /// Camera distance of the first transition endpoint, in metres.
+    pub graded_shadow_detail_metres: u8,
+    /// Opt-in nearest-cascade detail: absolute coverage cap and texel-aware lookup.
+    pub near_shadow_detail: bool,
+    /// Maximum first-cascade split in metres (2-12); never widens an existing fit.
+    pub near_shadow_detail_metres: u8,
+    /// Local-only first-cascade experiment. Off reproduces the original 8%.
+    pub near_shadow_precision: bool,
+    /// Percent of the configured shadow distance, clamped to 3-12.
+    pub near_shadow_cascade_percent: u8,
+    /// Existing cascade-view shader debug; bypasses normal scene colors.
+    pub near_shadow_debug: bool,
     /// Maximum simultaneous projector shadow maps (0 disables them).
     pub projector_shadow_limit: u8,
     /// Screen-space ambient occlusion: 0 off, 1 low, 2 high.
     pub ssao: u8,
+    /// Use alpha-blended surface depth when rendering depth of field.
+    pub dof_alpha_depth: bool,
     /// How the occlusion `ssao` turns on is computed.
     pub ao_method: AoMethod,
     /// With GTAO: its occlusion as a visibility bitmask and one bounce of
@@ -1402,17 +1449,49 @@ pub struct RenderSettings {
     pub screen_indirect: bool,
     /// Its strength (1 = one physical bounce of a Lambert surface).
     pub screen_indirect_intensity: f32,
+    /// Experimental XeGTAO thin-occluder compensation, 0=original shader.
+    pub experimental_gtao_thin_compensation: f32,
     /// Screen-space contact shadows of the sun or the moon (contact_shadows.rs),
     /// with the sun shadows only.
     pub contact_shadows: bool,
-    /// Soft sun shadows (soft_shadows.rs, experimental): the penumbra of the
-    /// sun's shadows widens with the distance of the caster, from a
-    /// screen-space mask drawn once per frame. Off: the shadows are exactly
-    /// the ones of before (nothing is created or drawn).
+    /// Compile the optional main-view projector penumbra filter. Directional
+    /// contact hardening is set independently by the per-frame light diameter.
     pub soft_shadows: bool,
+
+    pub contact_ray_method: u8,
+    pub contact_view_reach: f32,
+    pub contact_view_thickness: f32,
+    pub contact_view_budget: u32,
+    pub contact_view_debug: bool,
+    /// 0 reads legacy diagnostic switches; 1 map, 2 contact, 3 combined, 4 cascades.
+    pub shadow_visibility_debug: u8,
+    pub contact_integrity_depth: bool,
+    pub contact_integrity_hole_repair: bool,
+    /// Obsolete persisted option; sunlight always combines visibility with min.
+    pub contact_integrity_composite: bool,
+    /// Experimental contact-ray search: 0 original, 1 120 px, 2 240 px,
+    /// 3 480 px, 4 receiver-depth-adaptive (up to 480 px).
+    pub experimental_contact_reach_mode: u8,
+    /// Approximate target world-space reach in metres for adaptive mode.
+    pub experimental_contact_reach_metres: f32,
+    /// Maximum contact caster depth behind the visible front surface (metres).
+    pub experimental_contact_occluder_depth_metres: f32,
+    /// Opt-in filtered contact hit attenuation.
+    pub experimental_contact_coherence: bool,
+    /// Diagnostic: show screen-space contact mask (rendered filtered mask).
+    pub experimental_contact_mask_debug: bool,
+    /// Show candidate-ray hit distance / screen-edge diagnostics.
+    pub experimental_contact_hit_debug: bool,
+    /// Display missing-contact-ray failure analysis instead of ordinary lighting.
+    pub experimental_contact_failure_debug: bool,
     /// Geometric specular anti-aliasing of the objects' highlights
     /// (common.wgsl `specular_aa_roughness`, AURORA_SPECULAR_AA).
     pub specular_aa: bool,
+    /// Diffuse-only legacy lighting experiment: master and independent switches.
+    pub legacy_light_harmonization: bool,
+    pub harmonize_sunlight: bool,
+    pub harmonize_ambient: bool,
+    pub harmonize_local_lights: bool,
     /// Planar water reflections: fraction of the screen resolution (0 = off).
     pub water_reflection_scale: f32,
     /// Mirrors (reflection probes flagged as mirror): fraction of the screen
@@ -1457,6 +1536,11 @@ impl Default for RenderSettings {
             vr_gamma: 1.0,
             vr_vibrancy: 1.0,
             render_scale_percent: 100,
+            pbr_thin_scope: 0,
+            pbr_thin_key: [0; 2],
+            pbr_thin_ao_floor: 0.35,
+            pbr_thin_transmission: 0.4,
+            pbr_thin_debug: false,
             water_effects: crate::WaterEffects::default(),
             // the state `Renderer::new` builds its pipelines and targets
             // for, not the viewer's default (SMAA, in its own settings)
@@ -1465,14 +1549,47 @@ impl Default for RenderSettings {
             tonemapper: Tonemapper::KhronosNeutral,
             hdr: true,
             shadow_resolution: 2048,
+            graded_sun_shadows: false,
+            graded_shadow_edge_smoothing: false,
+            sun_shadow_angular_diameter_deg: 0.0,
+            graded_shadow_overlap: false,
+            graded_shadow_detail_metres: 2,
+            near_shadow_detail: false,
+            near_shadow_detail_metres: 4,
+            near_shadow_precision: false,
+            near_shadow_cascade_percent: 4,
+            near_shadow_debug: false,
             projector_shadow_limit: 2,
             ssao: 1,
+            dof_alpha_depth: true,
             ao_method: AoMethod::Legacy,
             screen_indirect: false,
             screen_indirect_intensity: 1.0,
+            experimental_gtao_thin_compensation: 0.0,
             contact_shadows: false,
             soft_shadows: false,
+
+            contact_ray_method: 0,
+            contact_view_reach: 0.8,
+            contact_view_thickness: 0.10,
+            contact_view_budget: 96,
+            contact_view_debug: false,
+            shadow_visibility_debug: 0,
+            contact_integrity_depth: false,
+            contact_integrity_hole_repair: false,
+            contact_integrity_composite: false,
+            experimental_contact_reach_mode: 0,
+            experimental_contact_reach_metres: 0.5,
+            experimental_contact_occluder_depth_metres: 0.05,
+            experimental_contact_coherence: false,
+            experimental_contact_mask_debug: false,
+            experimental_contact_hit_debug: false,
+            experimental_contact_failure_debug: false,
             specular_aa: true,
+            legacy_light_harmonization: false,
+            harmonize_sunlight: true,
+            harmonize_ambient: true,
+            harmonize_local_lights: true,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
@@ -1892,6 +2009,8 @@ pub struct FrameParams {
     /// real sun, 0.53 degrees, is a softness of 0.23), 0 = a light with no size, the shadows
     /// of before (the Preferences' value, or the photo's own).
     pub shadow_softness: f32,
+    /// Effective light diameter for this frame, including a photo override. Zero disables contact hardening.
+    pub sun_shadow_angular_diameter_deg: f32,
     /// How dark the sun's shadows are, 1 = as before, 0 = no shadow (the
     /// Preferences' value, or the photo's own).
     pub shadow_intensity: f32,
@@ -2009,6 +2128,8 @@ pub struct DepthOfField {
     pub max_coc: f32,
     /// Samples of the blur's gather.
     pub samples: u32,
+    /// Experimental near-field smooth transition (0=original, 1=max).
+    pub near_smooth_strength: f32,
     /// Debug: near field red, far field blue, sharp grey.
     pub debug: bool,
     /// Focus peaking (the photo viewfinder's manual focus): the sharp
@@ -2104,9 +2225,27 @@ pub struct ProbeFrame {
     pub capture: Option<ProbeCapture>,
 }
 
+/// Light-space map sizes actually allocated for the submitted main view.
+#[derive(Debug, Clone, Copy)]
+pub struct ShadowMapStats {
+    /// Each pair is [camera split in metres, fitted world metres per texel].
+    pub general: [[f32; 2]; 3],
+    pub detail: Option<[f32; 2]>,
+    pub sun_resolution: u32,
+    /// Projector maps assigned to lights in this view, including lights fading in or out.
+    pub active_projectors: u8,
+    pub projector_capacity: u8,
+}
+
 /// The shadow pass of a frame, by cascade (near to far).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ShadowStats {
+    /// Map geometry and allocated projector capacity of the most recent directional shadow pass.
+    pub maps: Option<ShadowMapStats>,
+    /// GPU time for the extra detail draw, when the adapter provides timestamps.
+    pub graded_detail_gpu_ms: Option<f32>,
+    /// CPU and indirect draw count for the extra detail pass, when available.
+    pub graded_detail_draws: u32,
     /// Casters drawn in each cascade.
     pub draws: [u32; 3],
     /// Of which those of the CPU lists (with the GPU lists: the terrain).
@@ -2206,8 +2345,7 @@ pub struct RenderStats {
     /// GPU time of the volumetric clouds' compute passes and weather map
     /// (ms), part of [`GpuElement::TerrainSky`]; None while off.
     pub gpu_clouds: Option<f32>,
-    /// GPU time of the soft sun shadows alone (ms), part of
-    /// [`GpuElement::Effects`] (0 while off).
+    /// Standalone directional mask time (ms). The integrated directional filter has no separate pass.
     pub gpu_soft: Option<f32>,
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
@@ -2878,6 +3016,29 @@ mod tests {
         assert_eq!(flags::IGNORE_OBJECT_PICK & (others | flags::PICK_IGNORES_ALPHA), 0);
         let common = include_str!("shaders/common.wgsl");
         assert!(common.contains(&format!("const FLAG_IGNORE_OBJECT_PICK: u32 = {}u;", flags::IGNORE_OBJECT_PICK)));
+    }
+
+    #[test]
+    fn avatar_shadow_ownership_and_ignore_object_pick_change_independently() {
+        let packed = 0x0033_2211 | flags::WORLD_BLEND_PICK;
+        let mut record = DrawRecord {
+            flags: [0, 0, 0, packed],
+            identity: [10, 11, 12, 0],
+            ..Default::default()
+        };
+        for ignored in [false, true, false] {
+            record.set_ignore_object_pick(ignored);
+            for receiver in [true, false] {
+                assert!(record.set_avatar_shadow_receiver(receiver));
+                assert!(!record.set_avatar_shadow_receiver(receiver));
+                record.set_ignore_object_pick(ignored);
+                assert_eq!(record.identity, [10, 11, 12, u32::from(receiver)]);
+                assert_eq!(record.flags[3], packed | if ignored { flags::IGNORE_OBJECT_PICK } else { 0 });
+            }
+        }
+        let object = include_str!("shaders/object.wgsl");
+        assert!(object.contains("avatar_shadow_receiver = rec.identity.w != 0u;"));
+        assert!(object.contains("(rec.flags.w & FLAG_IGNORE_OBJECT_PICK) != 0u"));
     }
 
     /// The visible-surface pick reads the bit with the same value, in the

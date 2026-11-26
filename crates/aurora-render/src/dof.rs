@@ -39,6 +39,8 @@ struct DofU {
 
 struct Targets {
     size: (u32, u32),
+    /// Allocated on the first lens frame that needs its own blended depth.
+    alpha_depth: Option<wgpu::TextureView>,
     half: wgpu::TextureView,
     tiles: wgpu::TextureView,
     dilated: wgpu::TextureView,
@@ -184,13 +186,26 @@ impl Dof {
 
     /// Whether the targets for `size` are made (`ensure_targets` would
     /// make nothing).
-    pub(crate) fn has_targets(&self, size: (u32, u32)) -> bool {
-        self.targets.as_ref().is_some_and(|t| t.size == size)
+    pub(crate) fn has_targets(&self, size: (u32, u32), private_depth: bool) -> bool {
+        self.targets
+            .as_ref()
+            .is_some_and(|t| t.size == size && (!private_depth || t.alpha_depth.is_some()))
+    }
+
+    pub(crate) fn alpha_depth(&self) -> Option<&wgpu::TextureView> {
+        self.targets.as_ref()?.alpha_depth.as_ref()
     }
 
     /// The targets for `size`, made if needed (the renderer makes them
     /// first, checked: renderer.rs `first_use`).
-    pub(crate) fn ensure_targets(&mut self, device: &wgpu::Device, size: (u32, u32), hdr: wgpu::TextureFormat, post: &PostInputs) {
+    pub(crate) fn ensure_targets(
+        &mut self,
+        device: &wgpu::Device,
+        size: (u32, u32),
+        hdr: wgpu::TextureFormat,
+        post: &PostInputs,
+        private_depth: bool,
+    ) {
         if self.targets.as_ref().is_none_or(|t| t.size != size) {
             let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
             let view = |label: &str, w: u32, h: u32, f: wgpu::TextureFormat| crate::renderer::make_view(device, label, w, h, f, 1, usage).1;
@@ -221,6 +236,7 @@ impl Dof {
             });
             self.targets = Some(Targets {
                 size,
+                alpha_depth: None,
                 half: view("dof half", hw, hh, HALF_FORMAT),
                 tiles: view("dof tiles", tw, th, TILE_FORMAT),
                 dilated: view("dof tiles dilated", tw, th, TILE_FORMAT),
@@ -230,13 +246,30 @@ impl Dof {
                 post_bg,
             });
         }
+        if private_depth
+            && let Some(t) = &mut self.targets
+            && t.alpha_depth.is_none()
+        {
+            t.alpha_depth = Some(
+                crate::renderer::make_view(
+                    device,
+                    "blended focus depth",
+                    size.0,
+                    size.1,
+                    crate::renderer::DEPTH_FORMAT,
+                    1,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                )
+                .1,
+            );
+        }
     }
 
     /// The effect over `input` (the scene, after TAA) with the depth of the
     /// frame; returns the post pass's bind group reading the result.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode(
-        &mut self,
+        &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
@@ -245,8 +278,6 @@ impl Dof {
         proj: Mat4,
         size: (u32, u32),
         params: &DepthOfField,
-        hdr: wgpu::TextureFormat,
-        post: &PostInputs,
         cutout: bool,
     ) -> &wgpu::BindGroup {
         let (hw, hh) = (size.0.div_ceil(2), size.1.div_ceil(2));
@@ -269,10 +300,16 @@ impl Dof {
                 Some([r, g, b]) => [r, g, b, 1.0],
                 None => [0.0; 4],
             },
-            band: [params.focus_far.max(params.focus), 0.0, 0.0, 0.0],
+            // The second band channel is an experimental smoother near-field
+            // compositor, controlled live by Preferences instead of an env var.
+            band: [
+                params.focus_far.max(params.focus),
+                params.near_smooth_strength.clamp(0.0, 1.0),
+                0.0,
+                0.0,
+            ],
         };
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
-        self.ensure_targets(device, size, hdr, post);
         let (layout, sampler, buffer) = (&self.layout, &self.sampler, &self.buffer);
         let (setup, tiles_pipe, dilate, blur, composite) = (&self.setup, &self.tiles, &self.dilate, &self.blur, &self.composite);
         let t = self.targets.as_ref().expect("targets made above");

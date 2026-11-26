@@ -367,11 +367,20 @@ fn save_freeze(dir: &Path, main: Option<&super::native::Thread>, seconds: u64) {
     save_stacks(dir, "freeze", &format!("Freeze: no answer for {seconds} s"), main);
 }
 
+fn stall_header(seconds: u64, pipeline: Option<aurora_render::pipeline_cache::PipelineWork>) -> String {
+    let mut header = format!("GPU stall: no frame for {seconds} s");
+    if let Some(work) = pipeline {
+        use std::fmt::Write;
+        let _ = write!(header, "\nRender operation: {work}");
+    }
+    header
+}
+
 /// The render thread kept a frame in the GPU (the window still answers,
 /// `aurora_render::Renderer::stalled_for`): its stack in `gpu-stall.txt`.
 #[cfg(windows)]
-pub fn save_gpu_stall(dir: &Path, seconds: u64) {
-    save_stacks(dir, "gpu-stall", &format!("GPU stall: no frame for {seconds} s"), None);
+pub fn save_gpu_stall(dir: &Path, seconds: u64, pipeline: Option<aurora_render::pipeline_cache::PipelineWork>) {
+    save_stacks(dir, "gpu-stall", &stall_header(seconds, pipeline), None);
 }
 
 /// On Linux the render thread's stack is asked for by a signal, which a
@@ -382,8 +391,8 @@ pub fn save_gpu_stall(dir: &Path, seconds: u64) {
 /// the stacks replace the header only if it is still there once read, so a
 /// GPU that answered during the reading leaves no stall behind.
 #[cfg(target_os = "linux")]
-pub fn save_gpu_stall(dir: &Path, seconds: u64) {
-    let header = format!("GPU stall: no frame for {seconds} s");
+pub fn save_gpu_stall(dir: &Path, seconds: u64, pipeline: Option<aurora_render::pipeline_cache::PipelineWork>) {
+    let header = stall_header(seconds, pipeline);
     let answers = GPU_ANSWERS.load(Ordering::SeqCst);
     let pending = dir.join("gpu-stall.pending");
     if std::fs::write(&pending, format!("{header}\n")).is_err() || std::fs::rename(&pending, dir.join("gpu-stall.txt")).is_err() {
@@ -418,9 +427,10 @@ pub fn gpu_answered() {
 /// Elsewhere no other thread's stack can be read: the header alone, which
 /// is all the next start's safe graphics offer needs.
 #[cfg(not(any(windows, target_os = "linux")))]
-pub fn save_gpu_stall(dir: &Path, seconds: u64) {
+pub fn save_gpu_stall(dir: &Path, seconds: u64, pipeline: Option<aurora_render::pipeline_cache::PipelineWork>) {
     let pending = dir.join("gpu-stall.pending");
-    if std::fs::write(&pending, format!("GPU stall: no frame for {seconds} s\n")).is_ok() {
+    let header = stall_header(seconds, pipeline);
+    if std::fs::write(&pending, format!("{header}\n")).is_ok() {
         let _ = std::fs::rename(pending, dir.join("gpu-stall.txt"));
     }
 }

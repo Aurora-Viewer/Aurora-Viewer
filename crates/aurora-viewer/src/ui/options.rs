@@ -537,6 +537,10 @@ pub struct OptionsUi {
     /// choice applies at the next start.
     pub gpus: Vec<String>,
     pub gpu_in_use: String,
+    /// Measured maps and projector capacity in the last reported main view.
+    pub shadow_maps: Option<aurora_render::ShadowMapStats>,
+    /// Latest available detail pass timestamp (milliseconds), not whole-frame time.
+    pub graded_detail_gpu_ms: Option<f32>,
     pub gpu_notice: Option<aurora_render::adapter_choice::Notice>,
     /// Whether the GPU device ray-traces; set by the app with the GPUs.
     pub ray_tracing: aurora_render::RayTracingSupport,
@@ -1205,7 +1209,11 @@ fn deluxe_rt_warning(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, id: egui:
                 .color(p.ink),
         );
         ui.add_space(6.0);
-        ui.label(RichText::new(tr!("ui-options-deluxe-rt-warning-text")).size(12.5).color(p.muted));
+        ui.label(
+            RichText::new(tr!("ui-options-deluxe-rt-shadow-warning-text"))
+                .size(12.5)
+                .color(p.muted),
+        );
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let size = Vec2::new(0.0, 26.0);
@@ -1508,12 +1516,20 @@ pub(crate) fn run_ui(ctx: &egui::Context, raw: egui::RawInput, body: impl FnMut(
     output.textures_delta.clear();
 }
 
+/// Use the fresh-install shadow recipe for UI resets and modified indicators.
+/// Serde keeps the historical defaults for fields missing in older files.
+fn preferences_defaults() -> Settings {
+    let mut settings = Settings::default();
+    crate::settings::shadow_profile::reset_all(&mut settings);
+    settings
+}
+
 /// The reset of a page, outside the window (tests of the settings).
 #[cfg(test)]
 pub(crate) fn reset_page_settings(page: Page, s: &mut Settings) {
     let ctx = egui::Context::default();
     let p = crate::theme::Theme::default().palette();
-    let d = Settings::default();
+    let d = preferences_defaults();
     let mut st = OptionsUi::default();
     let mut r = OptionsResult::default();
     run_ui(&ctx, egui::RawInput::default(), |ui| {
@@ -1548,6 +1564,35 @@ pub fn phototools_section(
     r
 }
 
+#[test]
+fn graphics_page_reset_keeps_the_effective_shadow_recipe_and_its_profile_in_sync() {
+    use crate::settings::shadow_profile as profile;
+
+    let defaults = preferences_defaults();
+    let mut s = defaults.clone();
+    profile::set_custom_enabled(&mut s, true);
+    profile::set_advanced_enabled(&mut s, true);
+    s.set_shadow_map_size(512);
+    s.graded_sun_shadows = !defaults.graded_sun_shadows;
+    s.graded_shadow_edge_smoothing = !defaults.graded_shadow_edge_smoothing;
+    s.sun_shadow_contact_hardening = !defaults.sun_shadow_contact_hardening;
+    s.sun_shadow_angular_diameter_deg = 1.0;
+    s.contact_shadows = !defaults.contact_shadows;
+    s.shadow_visibility_debug = 3;
+    profile::commit_edits(&mut s);
+    reset_page_settings(Page::Graphics, &mut s);
+
+    assert_eq!(s.shadow_profile, defaults.shadow_profile);
+    assert_eq!(s.shadow_params(), defaults.shadow_params());
+    assert_eq!(s.shadow_quality, defaults.shadow_quality);
+    assert_eq!(s.graded_sun_shadows, defaults.graded_sun_shadows);
+    assert_eq!(s.graded_shadow_edge_smoothing, defaults.graded_shadow_edge_smoothing);
+    assert_eq!(s.sun_shadow_contact_hardening, defaults.sun_shadow_contact_hardening);
+    assert_eq!(s.sun_shadow_angular_diameter_deg, defaults.sun_shadow_angular_diameter_deg);
+    assert_eq!(s.contact_shadows, defaults.contact_shadows);
+    assert_eq!(s.shadow_visibility_debug, defaults.shadow_visibility_debug);
+}
+
 /// Puts the rows of `page` (every page: `None`) back to their defaults.
 fn reset_rows(
     ui: &mut egui::Ui,
@@ -1573,7 +1618,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     }
     st.focus_search = *open && (st.focus_search || !st.was_open);
     let mut r = OptionsResult::default();
-    let d = st.defaults.take().unwrap_or_else(|| Box::new(Settings::default()));
+    let d = st.defaults.take().unwrap_or_else(|| Box::new(preferences_defaults()));
     let now = ctx.input(|i| i.time);
     if st.undo.as_ref().is_some_and(|u| now - u.shown > UNDO_SECONDS) {
         st.finish_undo(&mut r);

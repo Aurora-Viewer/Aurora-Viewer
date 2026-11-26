@@ -1345,3 +1345,5 @@ Aurora Viewer is not affiliated with Linden Lab or the Firestorm project.
 Second Life® is a trademark of Linden Research, Inc.
 
 Experimental headset viewing: [cross-platform VR setup and limitations](docs/VR.md).
+
+[Rendering controls](docs/p3-rendering/README.md) and [visual test cases](docs/p3-rendering/VALIDATION.md).

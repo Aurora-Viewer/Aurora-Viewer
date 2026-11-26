@@ -291,8 +291,8 @@ pub fn cascade_caster_planes(
 /// What a lookup of cascade `k` reads around its point, in metres: the
 /// filter's taps and the normal offset (0.02 + 0.04 k) of `cascade_shadow`
 /// (common.wgsl), and a little more. `reach`: how far the soft shadows'
-/// blocker search and filter read from the point (soft_shadows.rs
-/// `search_radius`), 0 without them: the planes are then those of before.
+/// blocker search and filter read from the point (PCSS_MAX_METRES
+/// in common.wgsl), zero for hard filtering.
 pub fn lookup_margin(k: usize, texel: f32, reach: f32) -> f32 {
     FILTER_TEXELS * texel + 0.02 + 0.04 * k as f32 + 0.05 + reach
 }

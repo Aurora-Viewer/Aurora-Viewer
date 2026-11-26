@@ -72,6 +72,8 @@ macro_rules! each_value {
             max_complexity,
             max_particles,
             shadow_quality,
+            shadow_map_resolution,
+            shadow_resume_quality,
             projector_shadows,
             projector_shadow_limit,
             ssao,
@@ -153,6 +155,71 @@ impl Held {
     }
 }
 
+// Only this subset of shadow inputs can be overridden by Photo Quality.
+// The shadow recipe owns the remaining raw controls directly.
+fn write_photo_shadow_values(s: &mut Settings, v: Values, shadows: bool) {
+    s.shadows = shadows;
+    s.shadow_quality = v.shadow_quality;
+    s.shadow_map_resolution = v.shadow_map_resolution;
+    s.shadow_resume_quality = v.shadow_resume_quality;
+    s.projector_shadows = v.projector_shadows;
+    s.projector_shadow_limit = v.projector_shadow_limit;
+    s.contact_shadows = v.effects.contact_shadows;
+}
+
+pub(crate) fn begin_shadow_edit(s: &mut Settings) {
+    if let Some(mut held) = s.photo_held.take() {
+        held.sync(s);
+        write_photo_shadow_values(s, held.values, held.shadows);
+        s.photo_held = Some(held);
+    }
+}
+
+pub(crate) fn end_shadow_edit(s: &mut Settings) {
+    if let Some(held) = &s.photo_held {
+        let (values, shadows) = (held.boosted, held.boosted_shadows);
+        write_photo_shadow_values(s, values, shadows);
+    }
+}
+
+/// An explicit recipe may choose the same value as a temporary photo boost.
+/// Comparing against the user's saved values preserves that edit on restore,
+/// while leaving the photo override active on controls the user did not edit.
+pub(crate) fn adopt_shadow_selection(s: &mut Settings) {
+    if s.photo_held.is_none() {
+        return;
+    }
+    let now = Values::read(s);
+    let shadows = s.shadows;
+    let held = s.photo_held.as_mut().expect("photo override is active");
+    macro_rules! adopt_selected {
+        ($($field:ident),+) => {
+            $(if now.$field != held.values.$field {
+                held.values.$field = now.$field;
+                held.boosted.$field = now.$field;
+                held.adopted.insert(stringify!($field));
+            })+
+        };
+    }
+    adopt_selected!(
+        shadow_quality,
+        shadow_map_resolution,
+        shadow_resume_quality,
+        projector_shadows,
+        projector_shadow_limit
+    );
+    if now.effects.contact_shadows != held.values.effects.contact_shadows {
+        held.values.effects.contact_shadows = now.effects.contact_shadows;
+        held.boosted.effects.contact_shadows = now.effects.contact_shadows;
+        held.adopted.insert("effects");
+    }
+    if shadows != held.shadows {
+        held.shadows = shadows;
+        held.boosted_shadows = shadows;
+        held.adopted.insert("shadows");
+    }
+}
+
 /// The most each setting goes to. The draw distance stays at 512 m on
 /// purpose, below Aurora's 1,024 m (the Legacy Viewer's slider): every metre
 /// beyond grows the ground's buffers by area ([`GROUND_BYTES_PER_M2`]), and a
@@ -201,6 +268,8 @@ pub fn boosted(user: Values) -> Values {
         max_avatars: user.max_avatars.max(top.max_avatars),
         max_complexity: top.max_complexity,
         shadow_quality: user.shadow_quality.max(top.shadow_quality),
+        shadow_map_resolution: 4096,
+        shadow_resume_quality: 4,
         projector_shadows: user.projector_shadows || top.projector_shadows,
         ssao: user.ssao.max(top.ssao),
         water_reflections: user.water_reflections.max(top.water_reflections),
@@ -279,10 +348,20 @@ pub fn ladder(user: Values) -> Vec<Values> {
         }
     }
     then(&|v| v.draw_distance = user.draw_distance);
-    if user.shadow_quality < 3 {
-        then(&|v| v.shadow_quality = 3);
+    // A named profile can keep a low legacy tier and an independent 4096
+    // map. Only take this step when its atlas is at least the user's size.
+    if user.shadow_quality < 3 && (user.shadow_quality == 0 || user.shadow_map_resolution <= 2048) {
+        then(&|v| {
+            v.shadow_quality = 3;
+            v.shadow_map_resolution = 2048;
+            v.shadow_resume_quality = 3;
+        });
     }
-    then(&|v| v.shadow_quality = user.shadow_quality);
+    then(&|v| {
+        v.shadow_quality = user.shadow_quality;
+        v.shadow_map_resolution = user.shadow_map_resolution;
+        v.shadow_resume_quality = user.shadow_resume_quality;
+    });
     then(&|v| *v = user);
     steps
 }
@@ -313,10 +392,49 @@ pub struct Screen {
     pub pixels: u64,
     /// The most MSAA samples the GPU supports (the renderer takes no more).
     pub max_samples: u32,
+    /// The requested layout sets the quality resolution schedule.
+    pub graded_shadows: bool,
+    /// The active shader layout can use the additional near depth map.
+    pub detail_supported: bool,
+    /// The adapter can bind the optional camera-close depth map.
+    pub portrait_supported: bool,
+    /// Whether active sun maps use an additional half-resolution blocker layer.
+    pub layered_sun: bool,
+    pub max_texture_dimension: u32,
     /// Bytes a pixel of the render targets takes now
     /// (`RenderStats::target_bytes_per_pixel`): what a step that changes
     /// the MSAA replaces ([`made_bytes`]).
     pub target_bytes: u64,
+}
+
+fn shadow_bytes(v: &Values, screen: Screen) -> u64 {
+    let res = u64::from(Settings::shadow_resolution_for(
+        v.shadow_quality,
+        screen.graded_shadows,
+        v.shadow_map_resolution,
+    ));
+    // Base atlas + merge scratch (17 bytes per tile pixel); a separate Depth32 detail tile adds 4.
+    res * res * if screen.graded_shadows && screen.detail_supported { 21 } else { 17 }
+}
+
+/// The second Depth32 mip occupies one byte per base atlas pixel. Its
+/// actual dimensions also depend on the projector and shelter tiles.
+fn planned_shadow_bytes(v: &Values, screen: Screen) -> u64 {
+    // The crop can become active as the camera moves during capture. Reserve its
+    // fixed texture on eligible adapters for any step that enables graded shadows.
+    let portrait = screen.graded_shadows && screen.detail_supported && screen.portrait_supported && v.shadow_quality > 0;
+    let baseline = shadow_bytes(v, screen) + u64::from(portrait) * aurora_render::PORTRAIT_SHADOW_BYTES;
+    if !screen.layered_sun || v.shadow_quality == 0 {
+        return baseline;
+    }
+    use aurora_render::projector_shadows::{atlas_maps, atlas_size, effective_limit, shelter_slot};
+    let size = Settings::shadow_resolution_for(v.shadow_quality, screen.graded_shadows, v.shadow_map_resolution)
+        .min(screen.max_texture_dimension / 2);
+    let requested = if v.projector_shadows { v.projector_shadow_limit } else { 0 };
+    let count = effective_limit(size, requested, screen.max_texture_dimension);
+    let maps = atlas_maps(count, shelter_slot(size, count, screen.max_texture_dimension));
+    let (w, h) = atlas_size(size, maps);
+    baseline + u64::from(w) * u64::from(h)
 }
 
 /// Estimated video memory the settings `v` hold that grows with the boost.
@@ -330,8 +448,7 @@ fn held_bytes(v: &Values, screen: Screen) -> u64 {
     };
     // the atlas holds four tiles of the resolution, the merge's scratch a
     // quarter of one (Renderer::make_shadow_atlas, ShadowMerge), Depth32Float
-    let res = u64::from(Settings::shadow_params_of(v.shadow_quality).0);
-    let shadows = 17 * res * res;
+    let shadows = planned_shadow_bytes(v, screen);
     let ground = std::f64::consts::PI * f64::from(v.draw_distance).powi(2) * GROUND_BYTES_PER_M2;
     // HDR colour and depth at a fraction of the screen
     let reflection = |step: u8| (px * f64::from(Settings::reflection_scale(step)).powi(2) * 12.0) as u64;
@@ -355,9 +472,9 @@ pub fn made_bytes(from: &Values, to: &Values, screen: Screen) -> u64 {
     let px = screen.pixels as f64;
     let n = |v: &Values| samples(v.antialiasing).min(screen.max_samples.max(1));
     let targets = if n(from) != n(to) { screen.pixels * screen.target_bytes } else { 0 };
-    let shadows = if from.shadow_quality != to.shadow_quality {
-        let res = u64::from(Settings::shadow_params_of(from.shadow_quality).0);
-        17 * res * res
+    let old_shadow_bytes = planned_shadow_bytes(from, screen);
+    let shadows = if old_shadow_bytes != planned_shadow_bytes(to, screen) {
+        old_shadow_bytes
     } else {
         0
     };
@@ -590,6 +707,51 @@ mod tests {
     }
 
     #[test]
+    fn editing_shadow_profiles_during_photo_boost_preserves_unedited_and_explicit_choices() {
+        use crate::settings::shadow_profile::{self as profile, Tier};
+
+        let mut s = Settings::default();
+        profile::select_tier(&mut s, Tier::Low);
+        profile::set_custom_enabled(&mut s, true);
+        profile::set_advanced_enabled(&mut s, true);
+        let low = s.shadow_map_size();
+        let low_diameter = s.sun_shadow_angular_diameter_deg;
+        assert!(low_diameter > 0.0);
+        assert_eq!(s.render_settings().sun_shadow_angular_diameter_deg, low_diameter);
+        s.photo_held = Some(boost(&mut s));
+        assert_eq!(s.render_settings().sun_shadow_angular_diameter_deg, low_diameter);
+        assert_eq!(s.shadow_map_size(), 4096);
+
+        begin_shadow_edit(&mut s);
+        assert_eq!(s.shadow_map_size(), low);
+        s.experimental_contact_occluder_depth_metres = 0.13;
+        s.sun_shadow_contact_hardening = true;
+        s.sun_shadow_angular_diameter_deg = 1.0;
+        profile::commit_edits(&mut s);
+        end_shadow_edit(&mut s);
+        assert_eq!(s.shadow_map_size(), 4096);
+        assert_eq!(s.to_saved().shadow_map_size(), low);
+        assert_eq!(s.render_settings().sun_shadow_angular_diameter_deg, 1.0);
+        assert_eq!(s.to_saved().render_settings().sun_shadow_angular_diameter_deg, 1.0);
+
+        // Ultra's pixel size is already the photo renderer's current value.
+        begin_shadow_edit(&mut s);
+        profile::select_tier(&mut s, Tier::Ultra);
+        end_shadow_edit(&mut s);
+        let held = s.photo_held.take().unwrap();
+        held.restore(&mut s);
+        assert_eq!((profile::tier(&s), s.shadow_map_size(), s.shadow_quality), (Tier::Ultra, 4096, 4));
+        assert!(profile::custom_enabled(&s));
+        assert_eq!(
+            s.render_settings().sun_shadow_angular_diameter_deg,
+            Settings::default().sun_shadow_angular_diameter_deg
+        );
+        profile::select_tier(&mut s, Tier::Low);
+        assert_eq!(s.render_settings().sun_shadow_angular_diameter_deg, 1.0);
+        assert_eq!((s.shadow_map_size(), s.experimental_contact_occluder_depth_metres), (low, 0.13));
+    }
+
+    #[test]
     fn photos_up_to_4k_are_drawn_at_twice_their_size() {
         assert_eq!(supersample((3840, 2160)), 2);
         assert_eq!(supersample((1600, 900)), 2);
@@ -605,6 +767,11 @@ mod tests {
             pixels: w * h,
             max_samples: 8,
             target_bytes: 87,
+            graded_shadows: false,
+            detail_supported: true,
+            portrait_supported: false,
+            layered_sun: false,
+            max_texture_dimension: 16_384,
         }
     }
 
@@ -651,6 +818,118 @@ mod tests {
         assert!(steps.iter().all(|v| v.draw_distance >= 256.0 && v.antialiasing >= MSAA_4X));
         let shadows: Vec<u8> = steps.iter().map(|v| v.shadow_quality).collect();
         assert!(shadows.contains(&3) && shadows.ends_with(&[1]));
+
+        // Named profiles can use a large explicit map at any legacy tier.
+        let manual = Values {
+            shadow_map_resolution: 4096,
+            ..mine
+        };
+        let steps = ladder(manual);
+        assert_eq!(steps.last(), Some(&manual));
+        assert!(steps.iter().all(|v| v.shadow_map_resolution == 4096));
+
+        let off = Values {
+            shadow_quality: 0,
+            shadow_resume_quality: 4,
+            ..manual
+        };
+        let steps = ladder(off);
+        assert!(steps.iter().any(|v| v.shadow_quality == 3 && v.shadow_map_resolution == 2048));
+        assert_eq!(steps.last(), Some(&off));
+    }
+
+    #[test]
+    fn layered_sun_memory_follows_the_actual_atlas_mip_and_adapter_limit() {
+        let settings = Values {
+            shadow_quality: 4,
+            shadow_map_resolution: 4096,
+            projector_shadows: true,
+            projector_shadow_limit: 4,
+            ..user()
+        };
+        let base = screen(1920, 1080);
+        let supported = Screen { layered_sun: true, ..base };
+        let limited = Screen {
+            max_texture_dimension: 8192,
+            ..supported
+        };
+        let baseline = planned_shadow_bytes(&settings, base);
+        // With space for a shelter tile after four projectors the atlas is
+        // 8192 x 10240. On the limited adapter shelter reuses the fourth slot.
+        assert_eq!(planned_shadow_bytes(&settings, supported) - baseline, 8192 * 10240);
+        assert_eq!(planned_shadow_bytes(&settings, limited) - baseline, 8192 * 8192);
+        assert_eq!(
+            planned_shadow_bytes(
+                &Values {
+                    shadow_quality: 0,
+                    ..settings
+                },
+                supported
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn a_cascade_only_device_keeps_the_requested_resolution_without_charging_for_graded_targets() {
+        let requested = Values {
+            shadow_quality: 1,
+            shadow_map_resolution: 0,
+            ..user()
+        };
+        let constrained = Screen {
+            graded_shadows: true,
+            detail_supported: false,
+            portrait_supported: true,
+            ..screen(800, 560)
+        };
+        let requested_size = u64::from(Settings::shadow_resolution_for(1, true, 0));
+        assert_eq!(planned_shadow_bytes(&requested, constrained), 17 * requested_size * requested_size);
+    }
+
+    #[test]
+    fn close_shadow_budget_follows_graded_support_and_quality() {
+        let values = Values {
+            shadow_quality: 2,
+            ..user()
+        };
+        let base = Screen {
+            graded_shadows: true,
+            ..screen(1920, 1080)
+        };
+        for layered in [false, true] {
+            let limited = Screen {
+                layered_sun: layered,
+                ..base
+            };
+            let supported = Screen {
+                portrait_supported: true,
+                ..limited
+            };
+            assert_eq!(
+                planned_shadow_bytes(&values, supported) - planned_shadow_bytes(&values, limited),
+                4 * 1024 * 1024
+            );
+            let off = Values {
+                shadow_quality: 0,
+                ..values
+            };
+            assert_eq!(planned_shadow_bytes(&off, supported), 0);
+            let simple = Screen {
+                graded_shadows: false,
+                ..supported
+            };
+            assert_eq!(
+                planned_shadow_bytes(&values, simple),
+                planned_shadow_bytes(
+                    &values,
+                    Screen {
+                        portrait_supported: false,
+                        ..simple
+                    }
+                )
+            );
+        }
     }
 
     #[test]
@@ -676,8 +955,20 @@ mod tests {
             only_msaa(MSAA_4X)
         );
         // shadows 4 over 3: an atlas four times larger
-        let shadows = extra_bytes(&user, &Values { shadow_quality: 4, ..user }, s);
-        assert_eq!(shadows, 17 * (4096 * 4096 - 2048 * 2048));
+        let higher_tier = Values { shadow_quality: 4, ..user };
+        assert_eq!(
+            extra_bytes(&user, &higher_tier, s),
+            0,
+            "a tier change preserves the explicit 2048 px map"
+        );
+        let larger_map = Values {
+            shadow_map_resolution: 4096,
+            ..higher_tier
+        };
+        let pixel_delta = 4096 * 4096 - 2048 * 2048;
+        assert_eq!(extra_bytes(&user, &larger_map, s), 17 * pixel_delta);
+        let graded = Screen { graded_shadows: true, ..s };
+        assert_eq!(extra_bytes(&user, &larger_map, graded), 21 * pixel_delta);
         // 512 m over 96 m: about 400 MB of ground
         let ground = extra_bytes(
             &user,
