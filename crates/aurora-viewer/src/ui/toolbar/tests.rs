@@ -1927,12 +1927,12 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
     // every command but bar_account and bar_system, which stay out of the catalogue
-    assert_eq!(all.len(), 129);
+    assert_eq!(all.len(), 130);
     assert!(
         !all.iter()
             .any(|button| matches!(button.command.as_str(), "bar_account" | "bar_system"))
     );
-    assert_eq!(COMMANDS.len(), 131);
+    assert_eq!(COMMANDS.len(), 132);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -1954,9 +1954,11 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
             assert_ne!(command.label_in(language), command.key, "{}: no label in {language}", command.id);
         }
         // Speak, Favorites and the AO's toggle have buttons of their own;
-        // "Floating block" becomes a block where it is dropped
-        if matches!(command.id, "speak" | "favorites" | "aurora_menu" | "vr_view" | drawers::FLOATING)
-            || structure::is_separator(command.id)
+        // "Floating block" and "Interfaces" become blocks where they are dropped
+        if matches!(
+            command.id,
+            "speak" | "favorites" | "aurora_menu" | "vr_view" | drawers::FLOATING | drawers::INTERFACES
+        ) || structure::is_separator(command.id)
             || structure::is_divider(command.id)
             || structure::is_block(command.id)
         {
@@ -2587,6 +2589,40 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
     settings.left = vec![button(drawers::FLOATING), button(drawers::IMPORT_BAR)];
     settings.sanitize();
     assert_eq!(commands(&settings.left), [drawers::IMPORT_BAR]);
+}
+
+/// The Interfaces block lists the built-in presets, then the personal
+/// interfaces, less those whose eye is closed (human request, 2026-11-26).
+#[test]
+fn the_interfaces_block_lists_the_presets_then_the_personal_interfaces() {
+    let mine = uuid::Uuid::from_u128(7);
+    let other = uuid::Uuid::from_u128(8);
+    let mut settings = ToolbarSettings::default();
+    let commands = |settings: &ToolbarSettings| {
+        drawers::interface_buttons(settings, [(mine, "Mine"), (other, "Other")])
+            .into_iter()
+            .map(|button| (button.command, button.tooltip))
+            .collect::<Vec<_>>()
+    };
+    let all = commands(&settings);
+    assert_eq!(all.len(), presets::Preset::ALL.len() + 2);
+    assert_eq!(all[0], ("interface:light".into(), presets::Preset::Light.label().into()));
+    assert_eq!(all[presets::Preset::ALL.len()], (format!("interface:{mine}"), "Mine".into()));
+    assert!(drawers::show_interface(&mut settings, "legacy", false));
+    assert!(drawers::show_interface(&mut settings, &mine.to_string(), false));
+    assert!(!drawers::show_interface(&mut settings, "legacy", false), "already hidden");
+    let kept = commands(&settings);
+    assert!(
+        !kept
+            .iter()
+            .any(|(command, _)| command == "interface:legacy" || *command == format!("interface:{mine}"))
+    );
+    assert!(kept.iter().any(|(command, _)| *command == format!("interface:{other}")));
+    settings.locked = true;
+    assert!(!drawers::show_interface(&mut settings, "legacy", true), "locked bars");
+    for preset in presets::Preset::ALL {
+        assert_eq!(presets::Preset::from_key(preset.key()), Some(preset));
+    }
 }
 
 /// The import bar takes its buttons once, out of a drawer included (the

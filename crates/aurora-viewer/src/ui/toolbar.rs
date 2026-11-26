@@ -218,6 +218,11 @@ pub struct ToolbarSettings {
     /// blocks, under one of their buttons (`drawers::BlockProfile`).
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub block_profiles: std::collections::BTreeMap<String, drawers::BlockProfile>,
+    /// The interfaces whose eye is closed: the Interfaces block does not
+    /// show them (`drawers::INTERFACES`; a built-in preset's key or a
+    /// personal interface's item id).
+    #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub hidden_interfaces: std::collections::BTreeSet<String>,
     /// Keyboard shortcuts of buttons, drawers, floating blocks and blocks
     /// (`shortcuts.rs`).
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -643,6 +648,11 @@ impl ToolbarSettings {
                 return false;
             }
             let floating = drawer.floating.is_some();
+            // the Interfaces block's buttons are the interfaces, made as it
+            // is drawn (`drawers::shown_buttons`)
+            if id == drawers::INTERFACES {
+                drawer.buttons.clear();
+            }
             for button in &mut drawer.buttons {
                 if matches!(button.command.as_str(), structure::SEPARATOR | structure::DIVIDER) {
                     *button = structure::instantiate(button.clone());
@@ -711,6 +721,8 @@ enum Edit {
     FloatingNew(Pos2),
     /// A floating block shown or hidden, locked bars included.
     FloatingShown(String, bool),
+    /// An interface's eye opened or closed (`drawers::show_interface`).
+    InterfaceShown(String, bool),
     /// A floating block of the user's deleted, its button with it.
     FloatingDelete(String),
     /// A drawer, or the block of the button, made a floating block there.
@@ -894,6 +906,9 @@ impl ToolbarUi {
 pub fn label(button: &ToolButton) -> &str {
     if button.command == drawers::IMPORT_BAR && button.tooltip.is_empty() {
         return aurora_i18n::tr!("toolbar-import-bar");
+    }
+    if button.command == drawers::INTERFACES && button.tooltip.is_empty() {
+        return aurora_i18n::tr!("toolbar-interfaces");
     }
     if drawers::is_drawer(&button.command) && button.tooltip.is_empty() {
         return aurora_i18n::tr!("toolbar-drawer");
@@ -1217,6 +1232,16 @@ impl ToolbarUi {
     /// While the bars are edited its gaps and separators move like its
     /// buttons (human request, 2026-11-25): only its glass moves the block.
     #[allow(clippy::too_many_arguments)]
+    /// A click on an Interfaces block's button (`drawers::INTERFACE_PREFIX`
+    /// and its key): its preset, or its personal interface, is applied.
+    pub(crate) fn interface_clicked(&mut self, key: &str) {
+        if let Some(preset) = presets::Preset::from_key(key) {
+            self.preset_request = Some(preset);
+        } else if let Ok(item) = key.parse() {
+            self.notecards.request_load(item);
+        }
+    }
+
     pub fn button_in(
         &mut self,
         response: &Response,
@@ -1365,6 +1390,7 @@ impl ToolbarUi {
             }
             Edit::BlockOptions(change) => return block_window::apply(settings, layout, change),
             Edit::FloatingShown(id, shown) => return drawers::show_floating(settings, id, *shown),
+            Edit::InterfaceShown(key, shown) => return drawers::show_interface(settings, key, *shown),
             Edit::FloatingDelete(id) => return drawers::delete_floating(settings, layout, id),
             Edit::Shortcut(key, binding) => return shortcuts::set(settings, key, binding.clone()),
             Edit::Float(bar, command, pos) => {
@@ -1391,6 +1417,16 @@ impl ToolbarUi {
                 let id = drawers::create_floating(settings, aurora_i18n::tr!("toolbar-floating-new"));
                 self.floating_placed = Some((id, *pos));
                 return true;
+            }
+            // "Interfaces" from the catalogue: its block, a drawer, made on
+            // its first drop, then placed as a drawer's button is
+            Edit::Insert(_, button, _) | Edit::InsertGroup(_, button, _)
+                if button.command == drawers::INTERFACES && !settings.drawers.contains_key(drawers::INTERFACES) =>
+            {
+                if settings.locked {
+                    return false;
+                }
+                settings.drawers.insert(drawers::INTERFACES.into(), drawers::Drawer::default());
             }
             // "Floating block" dropped on a bar: a new block, and its button
             // there (a stand-in while it is only previewed)
@@ -1422,6 +1458,7 @@ impl ToolbarUi {
                     provisional,
                 );
             }
+            Edit::DrawerBlock(id, _, _) | Edit::DrawerInsert(id, _, _) if id == drawers::INTERFACES => return false,
             Edit::DrawerBlock(id, members, rank) => {
                 return blocks::move_to(settings, layout, members, blocks::Destination::Drawer(id, *rank), provisional);
             }
@@ -1848,6 +1885,7 @@ impl ToolbarUi {
             | Edit::BlockOptions(..)
             | Edit::FloatingNew(..)
             | Edit::FloatingShown(..)
+            | Edit::InterfaceShown(..)
             | Edit::FloatingDelete(..)
             | Edit::Float(..)
             | Edit::Dock(..)

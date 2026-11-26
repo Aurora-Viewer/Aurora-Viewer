@@ -95,7 +95,8 @@ pub fn show(
         }
         let vertical = floating.vertical;
         let bar = if vertical { Bar::Left } else { Bar::Top };
-        let display = structure::Display::for_drawer(ctx, bar, &drawer.buttons, editing);
+        let contents = drawers::shown_buttons(&settings, toolbar, id, drawer);
+        let display = structure::Display::for_drawer(ctx, bar, &contents, editing);
         // a bar block's buttons, as tall as the dock's (human request,
         // 2026-11-25), like an unfolded drawer's
         let square = bars::dock::button_size(ctx.content_rect());

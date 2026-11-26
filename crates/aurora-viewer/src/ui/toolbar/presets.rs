@@ -45,6 +45,22 @@ impl Preset {
         })
     }
 
+    /// Its key in `ToolbarSettings::hidden_interfaces` and in its button's
+    /// command in an Interfaces block (`drawers::INTERFACES`).
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::OldSchool => "old_school",
+            Self::Build => "build",
+            Self::Photographer => "photographer",
+            Self::Legacy => "legacy",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|preset| preset.key() == key)
+    }
+
     pub fn icon(self) -> &'static str {
         match self {
             Self::Light => "sparkles-filled",

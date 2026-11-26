@@ -89,6 +89,22 @@ impl State {
             || self.message.is_some() && !self.dismissed
     }
 
+    /// The personal interfaces that can be loaded, for the Interfaces block.
+    pub(super) fn interfaces(&self) -> impl Iterator<Item = (Uuid, &str)> {
+        self.catalog
+            .entries
+            .iter()
+            .filter(|entry| entry.available)
+            .map(|entry| (entry.id, entry.name.as_str()))
+    }
+
+    /// Loads the personal interface `item`, as a click on it in the editor.
+    pub(super) fn request_load(&mut self, item: Uuid) {
+        if !self.busy() {
+            self.selected_profile = Some(item);
+        }
+    }
+
     pub(super) fn can_remove(&self, source: &Source) -> bool {
         source
             .personal(self.catalog.owner)
@@ -325,7 +341,17 @@ impl State {
         self.catalog.sync(inv);
     }
 
-    pub(super) fn presets(&mut self, ui: &mut egui::Ui, p: &Palette, locked: bool, active: Option<&Source>) {
+    /// The personal interfaces of the editor, each with its eye
+    /// (`editor::interface_eye`): the eye a click opened or closed, if any.
+    pub(super) fn presets(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        locked: bool,
+        active: Option<&Source>,
+        hidden: &std::collections::BTreeSet<String>,
+    ) -> Option<(String, bool)> {
+        let mut toggled = None;
         widgets::section_header(ui, p, "folder-filled", aurora_i18n::tr!("toolbar-saved-interfaces"));
         if self.catalog.loading {
             ui.label(aurora_i18n::tr!("common-loading"));
@@ -340,6 +366,7 @@ impl State {
                     ui.horizontal_wrapped(|ui| {
                         for entry in &self.catalog.entries {
                             ui.push_id(entry.id, |ui| {
+                                let current = active.and_then(|source| source.personal(self.catalog.owner)) == Some(entry.id);
                                 let response = ui
                                     .add_enabled_ui(enabled && entry.available, |ui| {
                                         widgets::action_button(
@@ -347,7 +374,7 @@ impl State {
                                             p,
                                             "file-text-filled",
                                             &entry.name,
-                                            if active.and_then(|source| source.personal(self.catalog.owner)) == Some(entry.id) {
+                                            if current {
                                                 widgets::ActionKind::Primary
                                             } else {
                                                 widgets::ActionKind::Flat
@@ -356,6 +383,13 @@ impl State {
                                         )
                                     })
                                     .inner;
+                                let key = entry.id.to_string();
+                                let shown = !hidden.contains(&key);
+                                ui.add_enabled_ui(!locked, |ui| {
+                                    if let Some(shown) = super::editor::interface_eye(ui, p, response.rect, &key, shown, current) {
+                                        toggled = Some((key.clone(), shown));
+                                    }
+                                });
                                 #[cfg(test)]
                                 ui.ctx().data_mut(|data| {
                                     data.insert_temp(egui::Id::unique(("toolbar_saved_interface", entry.id)), response.rect)
@@ -368,6 +402,7 @@ impl State {
                     });
                 });
         }
+        toggled
     }
 
     fn load(&mut self, inv: &Inventory, toolbar: &ToolbarSettings, islands: bool, item: Uuid) -> Option<NetCommand> {
@@ -813,7 +848,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        state.presets(ui, &p, locked, None);
+                        state.presets(ui, &p, locked, None, &Default::default());
                         command = state.show(ui.ctx(), &p, &mut inv, &toolbar, &Layout::default(), true);
                     },
                 );

@@ -4837,6 +4837,111 @@ fn a_floating_blocks_close_button_ends_its_buttons_and_hides_it() {
     }
 }
 
+/// The catalogue's "Interfaces" becomes a drawer whose buttons are the
+/// presets its eyes keep; a click applies one, and nothing can be dropped
+/// into it (human request, 2026-11-26).
+#[test]
+fn the_interfaces_block_is_a_drawer_of_the_presets_its_eyes_keep() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1600.0, 900.0),
+        ..Default::default()
+    };
+    bench.settings.composed = true;
+    bench.settings.buttons = Some(Vec::new());
+    bench.settings.top = vec![tests::button("inventory")];
+    let entry = catalogue::find(drawers::INTERFACES).expect("in the catalogue");
+    assert_eq!(entry.label(), aurora_i18n::tr!("toolbar-interfaces"));
+    let toggle = ToolButton {
+        command: drawers::INTERFACES.into(),
+        icon: entry.icon.into(),
+        tooltip: String::new(),
+    };
+    bench.state.pending = Some(Edit::Insert(Bar::Left, toggle.clone(), 0));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(bench.settings.drawers.contains_key(drawers::INTERFACES), "a drawer");
+    assert_eq!(bench.settings.location(drawers::INTERFACES, &Layout::default()), Some(Bar::Left));
+    assert_eq!(label(&toggle), aurora_i18n::tr!("toolbar-interfaces"));
+    bench.settings.hidden_interfaces.insert(presets::Preset::Build.key().into());
+    drawers::set_open(&bench.ctx, drawers::INTERFACES, true);
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let shown = |bench: &Bench, preset: presets::Preset| {
+        bench
+            .ctx
+            .read_response(bars::tool_button_id(&format!("{}{}", drawers::INTERFACE_PREFIX, preset.key())))
+            .is_some_and(|response| response.rect.is_positive())
+    };
+    for preset in presets::Preset::ALL {
+        assert_eq!(shown(&bench, preset), preset != presets::Preset::Build, "{preset:?}");
+    }
+    let old_school = bench
+        .ctx
+        .read_response(bars::tool_button_id(&format!(
+            "{}{}",
+            drawers::INTERFACE_PREFIX,
+            presets::Preset::OldSchool.key()
+        )))
+        .expect("Old School")
+        .rect
+        .center();
+    bench.pointer(old_school, Some(true));
+    bench.pointer(old_school, Some(false));
+    assert_eq!(bench.state.preset_request, Some(presets::Preset::OldSchool), "a click applies it");
+    // it keeps no buttons and takes no drop
+    let drag = Drag {
+        button: tests::button("people"),
+        from: Some(Bar::Top),
+        members: Vec::new(),
+    };
+    assert!(drawers::insertion_edit(drawers::INTERFACES, 0, &drag).is_none());
+    let mut settings = bench.settings.clone();
+    let mut state = ToolbarUi {
+        pending: Some(Edit::DrawerInsert(drawers::INTERFACES.into(), tests::button("people"), 0)),
+        ..Default::default()
+    };
+    assert!(!state.commit(&Layout::default(), &mut settings));
+    settings.drawers.get_mut(drawers::INTERFACES).expect("drawer").buttons = vec![tests::button("people")];
+    settings.sanitize();
+    assert!(settings.drawers[drawers::INTERFACES].buttons.is_empty());
+}
+
+/// Each preset's button in the editor has an eye, open by default: a click
+/// on it hides the preset from the Interfaces block, or shows it again,
+/// without applying it (human request, 2026-11-26).
+#[test]
+fn a_presets_eye_in_the_editor_shows_or_hides_it_in_the_interfaces_block() {
+    let mut bench = Bench {
+        screen: Vec2::new(1600.0, 1000.0),
+        ..Default::default()
+    };
+    bench.state.open = true;
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let key = presets::Preset::Photographer.key();
+    let eye = || {
+        bench
+            .ctx
+            .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_interface_eye_rect", key))))
+            .expect("the eye")
+    };
+    let rect = eye();
+    assert!(bench.settings.hidden_interfaces.is_empty(), "open by default");
+    for hidden in [true, false] {
+        bench.pointer(rect.center(), Some(true));
+        bench.pointer(rect.center(), Some(false));
+        for _ in 0..2 {
+            bench.frame(Vec::new());
+        }
+        assert_eq!(bench.settings.hidden_interfaces.contains(key), hidden);
+        assert_eq!(bench.state.preset_request, None, "the eye does not apply it");
+    }
+}
+
 /// A drawer's window shows its shortcut with Edit and Delete before "Hide
 /// the button while floating", greyed without a shortcut, a click on it
 /// saying why; the shortcut window draws Ctrl, Alt and Shift as keys (human

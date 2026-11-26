@@ -13,7 +13,12 @@ use uuid::Uuid;
 impl App {
     pub(super) fn toolbar_notecard_ui(&mut self, ctx: &egui::Context, p: &Palette) {
         self.demo_toolbar_notecards();
-        if self.toolbar_ui.open || self.toolbar_ui.notecards.active() {
+        let interfaces = self
+            .settings
+            .toolbar
+            .as_ref()
+            .is_some_and(|toolbar| toolbar.drawers.contains_key(ui::toolbar::drawers::INTERFACES));
+        if self.toolbar_ui.open || self.toolbar_ui.notecards.active() || interfaces {
             self.toolbar_ui.notecards.sync_library(&mut self.world.inventory);
         }
         if let Some(command) = self.toolbar_ui.notecards.removal_command(

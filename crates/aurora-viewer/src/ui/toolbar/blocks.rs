@@ -309,8 +309,11 @@ pub(super) fn kind_menu(
         (Kind::Drawer, "folder-filled", "toolbar-block-kind-drawer"),
         (Kind::Floating, drawers::FLOATING_ICON, "toolbar-block-kind-floating"),
     ] {
+        // the Interfaces block keeps no buttons of its own to lay in a bar
+        let interfaces = command == drawers::INTERFACES && choice == Kind::Fixed;
         let allowed = choice == current
             || unlocked
+                && !interfaces
                 && match (current, choice, from) {
                     (Kind::Fixed, Kind::Drawer, Some((bar, _))) => edit_mode::fold_allowed(settings.bar(bar, &layout), command),
                     (Kind::Fixed | Kind::Drawer, Kind::Floating, Some((bar, _))) => drawers::floatable(settings, &layout, bar, command),

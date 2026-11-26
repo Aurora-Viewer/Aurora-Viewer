@@ -263,26 +263,36 @@ impl ToolbarUi {
                     ui.add_enabled_ui(!settings.locked, |ui| {
                         ui.horizontal_wrapped(|ui| {
                             for preset in super::presets::Preset::ALL {
-                                if widgets::action_button(
+                                let active = source == Some(super::selection::Source::Builtin(preset));
+                                let response = widgets::action_button(
                                     ui,
                                     p,
                                     preset.icon(),
                                     preset.label(),
-                                    if source == Some(super::selection::Source::Builtin(preset)) {
+                                    if active {
                                         widgets::ActionKind::Primary
                                     } else {
                                         widgets::ActionKind::Flat
                                     },
                                     Vec2::new(190.0, 30.0),
-                                )
-                                .clicked()
-                                {
+                                );
+                                if response.clicked() {
                                     self.preset_request = Some(preset);
+                                }
+                                let key = preset.key();
+                                let shown = !settings.hidden_interfaces.contains(key);
+                                if let Some(shown) = interface_eye(ui, p, response.rect, key, shown, active) {
+                                    self.pending = Some(Edit::InterfaceShown(key.into(), shown));
                                 }
                             }
                         });
                     });
-                    self.notecards.presets(ui, p, settings.locked, source.as_ref());
+                    if let Some((key, shown)) = self
+                        .notecards
+                        .presets(ui, p, settings.locked, source.as_ref(), &settings.hidden_interfaces)
+                    {
+                        self.pending = Some(Edit::InterfaceShown(key, shown));
+                    }
                 });
             ui.add_space(8.0);
             super::edit_mode::header(ui, p, settings);
@@ -784,6 +794,40 @@ fn ghost_block(ctx: &egui::Context, p: &Palette, drag: &Drag, pointer: egui::Pos
 /// window (`sidemenu`: Radar's right click at frame 650); `right` them in
 /// the right bar; `labels` adds the dock's icons and labels and the left
 /// bar's labels. Never saved.
+/// The eye at the right end of an interface's button in the editor (human
+/// request, 2026-11-26): open, the Interfaces block shows the interface
+/// `key`; a click gives its new state. On the active interface's violet
+/// face it takes the face's ink.
+pub(super) fn interface_eye(ui: &mut egui::Ui, p: &Palette, button: Rect, key: &str, shown: bool, on_accent: bool) -> Option<bool> {
+    let rect = Rect::from_center_size(egui::pos2(button.right() - 16.0, button.center().y), Vec2::splat(22.0));
+    let response = ui.interact(rect, egui::Id::unique(("toolbar_interface_eye", key)), egui::Sense::click());
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("toolbar_interface_eye_rect", key)), rect));
+    let color = if on_accent {
+        p.on_accent
+    } else if response.hovered() {
+        p.ink
+    } else if shown {
+        p.muted
+    } else {
+        p.muted_dim
+    };
+    widgets::paint_glyph(
+        ui.painter(),
+        if shown { "eye-filled" } else { "eye-off" },
+        rect.center(),
+        16.0,
+        color,
+    );
+    let response = response.on_hover_text(if shown {
+        aurora_i18n::tr!("toolbar-interfaces-shown")
+    } else {
+        aurora_i18n::tr!("toolbar-interfaces-hidden")
+    });
+    response.clicked().then_some(!shown)
+}
+
 pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
     let Some(mode) = demo_mode() else { return };
     if mode.starts_with("notecard-") {

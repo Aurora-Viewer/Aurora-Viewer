@@ -4187,6 +4187,14 @@ pub(crate) fn toolbar_row(
             response.flags.insert(egui::response::Flags::FAKE_PRIMARY_CLICKED);
         }
         rects.push(response.rect);
+        // an Interfaces block's interface: applied by a click, never dragged
+        // nor edited alone (`drawers::INTERFACES`)
+        if let Some(key) = b.command.strip_prefix(super::toolbar::drawers::INTERFACE_PREFIX) {
+            if response.clicked() && !row.editing {
+                toolbar.interface_clicked(key);
+            }
+            continue;
+        }
         toolbar.button_in(&response, row.bar, row.style, b, p, row.locked, row.floating);
         if b.command == "location_bar" {
             let settings = super::toolbar::appearance::settings(ui.ctx());

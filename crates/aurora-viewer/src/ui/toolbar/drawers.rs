@@ -23,6 +23,15 @@ pub const PREFIX: &str = "drawer:";
 pub const IMPORT_BAR: &str = "drawer:import_bar";
 /// The import block's button: the import icon (human request, 2026-11-25).
 pub const IMPORT_ICON: &str = "file-upload-filled";
+/// The "Interfaces" block (human request, 2026-11-26): a drawer when it is
+/// placed, whose buttons are the interfaces, the built-in presets then the
+/// personal ones, that their eye keeps shown
+/// (`ToolbarSettings::hidden_interfaces`). Its buttons are made as it is
+/// drawn (`shown_buttons`): it keeps none and takes no drop.
+pub const INTERFACES: &str = "drawer:interfaces";
+/// The command of an Interfaces block's button: this, then a built-in
+/// preset's key (`Preset::key`) or a personal interface's item id.
+pub const INTERFACE_PREFIX: &str = "interface:";
 /// The catalogue's "Floating block": dropped on the screen, or on a bar with
 /// its button there, a new empty floating block.
 pub const FLOATING: &str = "toolbar_floating";
@@ -117,6 +126,57 @@ impl Floating {
             icon: if self.icon.is_empty() { FLOATING_ICON } else { &self.icon }.into(),
             tooltip: self.name.clone(),
         }
+    }
+}
+
+/// The buttons a drawer or a floating block shows: its own, or for the
+/// Interfaces block the interfaces its eyes keep (`interface_buttons`).
+pub(super) fn shown_buttons<'a>(
+    settings: &ToolbarSettings,
+    toolbar: &ToolbarUi,
+    id: &str,
+    drawer: &'a Drawer,
+) -> std::borrow::Cow<'a, [ToolButton]> {
+    if id == INTERFACES {
+        std::borrow::Cow::Owned(interface_buttons(settings, toolbar.notecards.interfaces()))
+    } else {
+        std::borrow::Cow::Borrowed(&drawer.buttons)
+    }
+}
+
+/// The Interfaces block's buttons: the built-in presets, then the personal
+/// interfaces `personal` lists (item id and name), less those whose eye is
+/// closed.
+pub(super) fn interface_buttons<'a>(
+    settings: &ToolbarSettings,
+    personal: impl IntoIterator<Item = (uuid::Uuid, &'a str)>,
+) -> Vec<ToolButton> {
+    let builtin = super::presets::Preset::ALL.into_iter().map(|preset| ToolButton {
+        command: format!("{INTERFACE_PREFIX}{}", preset.key()),
+        icon: preset.icon().into(),
+        tooltip: preset.label().into(),
+    });
+    let personal = personal.into_iter().map(|(id, name)| ToolButton {
+        command: format!("{INTERFACE_PREFIX}{id}"),
+        icon: "file-text-filled".into(),
+        tooltip: name.into(),
+    });
+    builtin
+        .chain(personal)
+        .filter(|button| !settings.hidden_interfaces.contains(&button.command[INTERFACE_PREFIX.len()..]))
+        .collect()
+}
+
+/// Opens or closes the eye of the interface `key` (`Preset::key` or a
+/// personal interface's item id): whether the Interfaces block shows it.
+pub(super) fn show_interface(settings: &mut ToolbarSettings, key: &str, shown: bool) -> bool {
+    if settings.locked {
+        return false;
+    }
+    if shown {
+        settings.hidden_interfaces.remove(key)
+    } else {
+        settings.hidden_interfaces.insert(key.to_owned())
     }
 }
 
@@ -701,7 +761,7 @@ pub(super) fn replace(settings: &mut ToolbarSettings, bar: Bar, drawer: Option<S
 }
 
 pub(super) fn insertion_edit(id: &str, rank: usize, drag: &Drag) -> Option<Edit> {
-    if is_drawer(&drag.button.command) || drag.members.iter().any(|button| is_drawer(&button.command)) {
+    if id == INTERFACES || is_drawer(&drag.button.command) || drag.members.iter().any(|button| is_drawer(&button.command)) {
         return None;
     }
     Some(if drag.members.is_empty() {
@@ -771,7 +831,8 @@ pub fn show(
         return;
     }
     let screen = ctx.content_rect();
-    let display = structure::Display::for_drawer(ctx, row.bar, &drawer.buttons, editing);
+    let contents = shown_buttons(&settings, toolbar, &button.command, drawer);
+    let display = structure::Display::for_drawer(ctx, row.bar, &contents, editing);
     let buttons = display.buttons();
     let vertical = buttons.is_empty() || vertical(row.bar, buttons, drawer.mode, &settings);
     let area = area_id(&button.command);

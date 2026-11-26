@@ -31,6 +31,8 @@ pub const COMMANDS: &[Command] = commands![
     "toolbar_divider", "separator-vertical", "toolbar-separator", true;
     // a new floating block (human request, 2026-11-25; ui/toolbar/floating.rs)
     "toolbar_floating", "app-window-filled", "toolbar-floating-new", true;
+    // the presets in a drawer (human request, 2026-11-26; drawers::INTERFACES)
+    "drawer:interfaces", "layout-dashboard-filled", "toolbar-interfaces", true;
     "edit_interface", "layout-grid-filled", "toolbar-interface-edit", true;
     "bar_navigation", "map-pin-filled", "toolbar-block-navigation", true;
     "bar_account", "user-filled", "toolbar-block-account", true;
