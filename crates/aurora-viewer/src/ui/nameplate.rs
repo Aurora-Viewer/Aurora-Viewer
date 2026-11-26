@@ -72,6 +72,29 @@ pub enum Level {
     Compact,
     /// The display name alone.
     Far,
+    /// "Icon only" plates (`PlateStyle::Icon`): the picture in a round
+    /// plate, with its status dot, up to the far distance.
+    Icon,
+    /// "Name only" plates (`PlateStyle::Name`): the display name and the
+    /// group title in the compact pill, with only the contact sets'
+    /// badges, up to the far distance.
+    Name,
+}
+
+/// The plates' look at close range (Preferences › Aurora › "Plate
+/// style"), the human's request of 2026-11-21: the complete plate, the
+/// picture alone, or the name alone. Beyond the compact distance every
+/// style ends in the far pill, the name alone: a crowd at 60 m is not a
+/// wall of circles, nor dozens of pictures to load. With "Expand a plate on
+/// hover", the hovered one shows the complete plate.
+pub fn styled_level(style: crate::settings::PlateStyle, level: Level) -> Level {
+    use crate::settings::PlateStyle;
+    match style {
+        PlateStyle::Plates => level,
+        _ if level == Level::Far => Level::Far,
+        PlateStyle::Icon => Level::Icon,
+        PlateStyle::Name => Level::Name,
+    }
 }
 
 /// Level of a plate at `distance`, given the level it had: it changes only
@@ -81,7 +104,7 @@ pub fn level_for(distance: f32, previous: Option<Level>) -> Level {
     let (full, compact) = match previous {
         None => (FULL_DISTANCE, COMPACT_DISTANCE),
         Some(Level::Full) => (FULL_DISTANCE + m, COMPACT_DISTANCE + m),
-        Some(Level::Compact) => (FULL_DISTANCE - m, COMPACT_DISTANCE + m),
+        Some(Level::Compact | Level::Icon | Level::Name) => (FULL_DISTANCE - m, COMPACT_DISTANCE + m),
         Some(Level::Far) => (FULL_DISTANCE - m, COMPACT_DISTANCE - m),
     };
     if distance <= full {
@@ -403,9 +426,13 @@ pub enum SubLine<'a> {
     Detail(&'a Detail),
 }
 
-/// The lines under the name: none below the full level; at most two, a
-/// missing one leaving no empty line.
+/// The lines under the name: none below the full level, except the group
+/// title on a name only plate; at most two, a missing one leaving no empty
+/// line.
 pub fn sub_lines(level: Level, c: &Content) -> [Option<SubLine<'_>>; 2] {
+    if level == Level::Name {
+        return [c.title.as_deref().map(SubLine::Title), None];
+    }
     if level != Level::Full {
         return [None, None];
     }
@@ -418,7 +445,9 @@ pub fn sub_lines(level: Level, c: &Content) -> [Option<SubLine<'_>>; 2] {
     }
 }
 
-/// The badges of a plate: none on the far pill; a green microphone in the
+/// The badges of a plate: none on the far pill; only the contact sets'
+/// symbols on the icon and name only plates, where their markers land
+/// (`ui/contact_markers.rs`); a green microphone in the
 /// voice channel, always first, and nothing outside it (the human's choice
 /// of 2026-10-14, replacing the red struck-through microphone).
 pub fn badges(level: Level, c: &Content) -> Badges {
@@ -426,6 +455,7 @@ pub fn badges(level: Level, c: &Content) -> Badges {
     if level == Level::Far {
         return b;
     }
+    let states = !matches!(level, Level::Icon | Level::Name);
     for (on, badge) in [
         (c.in_voice, Badge::Voice),
         (c.typing, Badge::Typing),
@@ -433,7 +463,7 @@ pub fn badges(level: Level, c: &Content) -> Badges {
         (c.too_complex, if c.render_never { Badge::RenderNever } else { Badge::TooComplex }),
         (c.blocked, Badge::Blocked),
     ] {
-        if on {
+        if on && states {
             b.push(badge);
         }
     }
@@ -451,7 +481,7 @@ pub fn badges(level: Level, c: &Content) -> Badges {
 
 /// The status dot: on the picture only, and not for a blocked resident.
 pub fn status_dot(level: Level, c: &Content) -> Option<Presence> {
-    (level == Level::Full && !c.blocked).then_some(c.presence)
+    (matches!(level, Level::Full | Level::Icon) && !c.blocked).then_some(c.presence)
 }
 
 /// Measures of a plate in points, from the mockup's pixels.
@@ -482,6 +512,9 @@ impl Metrics {
             Level::Full => (66.0, 7.0, 23.0, 12.0, MOCKUP_NAME_PX, 54.0, 25.0, 14.0),
             Level::Compact => (40.0, 15.0, 15.0, 8.0, 14.5, 0.0, 21.0, 12.0),
             Level::Far => (26.0, 12.0, 12.0, 0.0, 12.5, 0.0, 0.0, 0.0),
+            // the full plate's picture with the same border around it
+            Level::Icon => (66.0, 6.0, 6.0, 0.0, MOCKUP_NAME_PX, 54.0, 25.0, 14.0),
+            Level::Name => (40.0, 15.0, 15.0, 8.0, 14.5, 0.0, 21.0, 12.0),
         };
         Metrics {
             // an even height: the pill's ends are exact half circles
@@ -544,6 +577,9 @@ pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layo
 /// edge from the text's left (the "Aurora Team" tag): the plate is at
 /// least as wide, and on a full plate its floating badges start past it.
 pub fn layout_with(level: Level, m: &Metrics, text: &TextSize, badges: usize, lead: f32) -> Layout {
+    if level == Level::Icon {
+        return icon_layout(m, badges);
+    }
     let s = m.scale;
     let text_left = if m.photo > 0.0 { m.pad_left + m.photo + m.gap } else { m.pad_left };
     let text_w = text.subs.iter().flatten().map(|v| v.x).fold(text.name.x, f32::max);
@@ -552,7 +588,11 @@ pub fn layout_with(level: Level, m: &Metrics, text: &TextSize, badges: usize, le
     } else {
         0.0
     };
-    let inline = if level == Level::Compact && badges > 0 { m.gap + row } else { 0.0 };
+    let inline = if matches!(level, Level::Compact | Level::Name) && badges > 0 {
+        m.gap + row
+    } else {
+        0.0
+    };
     let mut width = text_left + text_w + inline + m.pad_right;
     if level == Level::Full {
         // room for the floating badges, which start right of the picture
@@ -609,6 +649,42 @@ pub fn layout_with(level: Level, m: &Metrics, text: &TextSize, badges: usize, le
         name,
         subs,
         text_x: (text_left, text_left + text_w),
+        badges: rects,
+    }
+}
+
+/// The icon only plate: a circle (the pill's ends meet) around the picture,
+/// its status dot in the same corner as on the full plate, the contact
+/// sets' badges floating over the top edge as on the full plate.
+fn icon_layout(m: &Metrics, badges: usize) -> Layout {
+    let h = m.height;
+    let photo = Circle {
+        center: Pos2::new(h * 0.5, h * 0.5),
+        radius: (h * 0.5 - m.pad_left).min(m.photo * 0.5),
+    };
+    let dot = Circle {
+        center: photo.center + Vec2::splat(photo.radius - 7.5 * m.scale),
+        radius: 7.5 * m.scale,
+    };
+    let row = if badges > 0 {
+        badges as f32 * m.badge + (badges - 1) as f32 * m.badge_gap
+    } else {
+        0.0
+    };
+    let mut rects = [Rect::NOTHING; 14];
+    let mut x = (h - row) * 0.5;
+    for r in rects.iter_mut().take(badges) {
+        *r = Rect::from_min_size(Pos2::new(x, -14.0 * m.scale), Vec2::splat(m.badge));
+        x += m.badge + m.badge_gap;
+    }
+    Layout {
+        size: Vec2::splat(h),
+        photo: Some(photo),
+        dot: Some(dot),
+        name: photo.center,
+        subs: [None, None],
+        // the loading bar, if any, short enough to stay inside the circle
+        text_x: (photo.center.x - photo.radius * 0.4, photo.center.x + photo.radius * 0.4),
         badges: rects,
     }
 }
@@ -893,6 +969,12 @@ pub struct Plates {
     waiting: Vec<Uuid>,
     /// Preferences › Aurora › "Full plates for friends only".
     pub friends_only_full: bool,
+    /// Preferences › Aurora › "Plate style": complete, icon or name only.
+    pub style: crate::settings::PlateStyle,
+    /// Preferences › Avatars › "Name tag size", 1 for 100 %: every measure
+    /// of the plates follows it (`paint::Env::scale`). 0 reads as 1, for a
+    /// `Plates::default()` the app has not set yet.
+    pub size: f32,
     /// Preferences › Avatars › "Tint friends' plates": the friends' color
     /// of Preferences › Colors, read each frame so a new color shows at once.
     pub friend_tint: bool,
@@ -924,7 +1006,7 @@ pub struct Plates {
 fn grows(from: Level, to: Level) -> bool {
     let rank = |level| match level {
         Level::Far => 0,
-        Level::Compact => 1,
+        Level::Compact | Level::Icon | Level::Name => 1,
         Level::Full => 2,
     };
     rank(to) > rank(from)
@@ -955,6 +1037,9 @@ impl Plates {
     ) {
         let mut env = paint::Env::new(painter, p, icons, now);
         env.friend = self.friend_tint.then(|| crate::ui::colors::c(crate::ui::colors::get().tag_friend));
+        if self.size > 0.0 {
+            env.scale = SCALE * self.size;
+        }
         // nearest first (`tags` ends with them): the level of each plate,
         // the complete ones limited in number, and the blur for the first ones
         let mut glass_left = if p.panel_alpha < 255 { MAX_GLASS } else { 0 };
@@ -979,10 +1064,15 @@ impl Plates {
         let mut rank = 0;
         for (i, tag) in tags.iter().enumerate().rev() {
             let previous = self.entries.get(&tag.id).map(|e| e.level);
-            let mut level = preferred_level(level_for(tag.distance, previous), &tag.content, self.friends_only_full);
-            if level == Level::Full {
-                level = crowd_level(level, rank, previous == Some(Level::Full));
-                rank += 1;
+            let mut level = level_for(tag.distance, previous);
+            if self.style == crate::settings::PlateStyle::Plates {
+                level = preferred_level(level, &tag.content, self.friends_only_full);
+                if level == Level::Full {
+                    level = crowd_level(level, rank, previous == Some(Level::Full));
+                    rank += 1;
+                }
+            } else {
+                level = styled_level(self.style, level);
             }
             level = hover_level(level, hover == Some(tag.id), self.expand_on_hover);
             levels[i] = level;
@@ -1085,7 +1175,7 @@ impl Plates {
             if self.click_combo && entry.combo.busy(now) {
                 combo::paint(&env, surface, &entry.combo, self.tally.get(tag.id), tag.fade, self.still);
             }
-            if entry.level == Level::Full && matches!(tag.picture, Picture::Wanted) {
+            if matches!(entry.level, Level::Full | Level::Icon) && matches!(tag.picture, Picture::Wanted) {
                 waiting.push(tag.id);
             }
         }

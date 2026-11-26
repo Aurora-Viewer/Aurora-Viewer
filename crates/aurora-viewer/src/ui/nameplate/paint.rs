@@ -63,6 +63,9 @@ pub(super) struct Env<'a> {
     pub friend: Option<Color32>,
     /// Changes with the skin's colors: what was built with others is rebuilt.
     skin: u64,
+    /// Mockup pixels to points: `SCALE`, times Preferences › Avatars ›
+    /// "Name tag size".
+    pub scale: f32,
 }
 
 impl<'a> Env<'a> {
@@ -76,6 +79,7 @@ impl<'a> Env<'a> {
             semibold: crate::ui::fonts::semibold(painter.ctx()),
             tint: base_tint(p),
             friend: None,
+            scale: SCALE,
             skin: {
                 use std::hash::{Hash, Hasher};
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -149,6 +153,8 @@ impl<K: PartialEq> Built<K> {
 /// What the surface, its border and its lights are built from.
 #[derive(Clone, Copy, PartialEq)]
 struct SurfaceKey {
+    /// `Env::scale`: the shadow and the voice ring follow the tags' size.
+    scale: f32,
     tint: Color32,
     border: Option<Color32>,
     size: Vec2,
@@ -227,7 +233,7 @@ fn line(env: &Env<'_>, text: &str, format: TextFormat, max_width: f32) -> Arc<Ga
 
 pub(super) fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
     let p = env.p;
-    let m = Metrics::of(level, SCALE);
+    let m = Metrics::of(level, env.scale);
     let colors = crate::ui::colors::get();
     // FSTagShowDistanceColors: unless a contact set or the relation colors
     // the name (the Legacy Viewer's special_color_override)
@@ -256,11 +262,12 @@ pub(super) fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
     // tag gives it a line of its own), and never the part that gets elided
     let name_tail = c
         .distance
-        .filter(|d| d.shown)
+        .filter(|d| d.shown && level != Level::Icon)
         .zip(band)
         .map(|(d, band)| line(env, &format!(" · {}", d.text()), small(readable(band)), m.max_text * 0.6));
     let room = m.max_text - name_tail.as_ref().map_or(0.0, |t| t.size().x);
-    let name = line(env, &c.name, format, room);
+    // the icon only plate has no text: its name shows on hover
+    let name = line(env, if level == Level::Icon { "" } else { &c.name }, format, room);
     let detail_color = |d: &super::Detail| if d.alert { p.amber } else { p.muted };
     let subs = super::sub_lines(level, c).map(|sub| {
         Some(match sub? {
@@ -287,7 +294,7 @@ pub(super) fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
     };
     let badges = super::badges(level, c);
     // the staff's tag, its letters in the mark's colors; not on the far pill
-    let staff = c.mark.filter(|_| level != Level::Far).map(|mark| {
+    let staff = c.mark.filter(|_| !matches!(level, Level::Far | Level::Icon)).map(|mark| {
         let look = Look::new(mark);
         let job = crate::ui::staff::label_job(env.painter.ctx(), p, &look, aurora::TAG_TEXT * m.scale, t);
         (env.painter.layout_job(job), look, t)
@@ -425,14 +432,14 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
     }
     background(env, surface, st, alpha, farness, c, &mut cache.surface);
     if let Some(look) = look {
-        let width = (2.0 * SCALE).max(1.0 / ppp);
-        light(&|mesh| look.border(mesh, env.p, surface, ppp, t, alpha, width, SCALE));
+        let width = (2.0 * env.scale).max(1.0 / ppp);
+        light(&|mesh| look.border(mesh, env.p, surface, ppp, t, alpha, width, env.scale));
     }
     match from {
         None => contents(env, env.painter, rect, &to, tag, alpha, &mut cache.marks),
         Some((_, from)) => {
             // both levels cross-fade inside the plate as it changes size
-            let clip = Rect::from_min_max(Pos2::new(rect.left(), rect.top() - 16.0 * SCALE), rect.max);
+            let clip = Rect::from_min_max(Pos2::new(rect.left(), rect.top() - 16.0 * env.scale), rect.max);
             let painter = env.painter.with_clip_rect(clip.intersect(env.painter.clip_rect()));
             contents(env, &painter, rect, &from, tag, alpha * (1.0 - st.progress), &mut None);
             contents(env, &painter, rect, &to, tag, alpha * st.progress, &mut cache.marks);
@@ -458,7 +465,7 @@ fn marker_slot(level: Level, c: &Content, face: &Face, rect: Rect) -> Option<Rec
 #[allow(clippy::too_many_arguments)]
 fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &Content, cache: &mut Option<Built<SurfaceKey>>) {
     let p = env.p;
-    let s = SCALE;
+    let s = env.scale;
     let (tag_tint, tag_blur) =
         crate::ui::surface_opacity::relative(crate::ui::surface_opacity::name_tags(), crate::ui::surface_opacity::NAME_TAGS);
     if st.glass > 0.0 {
@@ -472,6 +479,7 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &C
         ));
     }
     let key = SurfaceKey {
+        scale: s,
         tint: surface_tint(env, c).unwrap_or(env.tint),
         border: surface_border(env, c),
         size: rect.size(),
@@ -494,7 +502,7 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &C
         let plain = key
             .border
             .unwrap_or_else(|| p.ink.gamma_multiply(lerp(BORDER, far) + HOVER_BORDER * key.hover));
-        let voice = key.halo.map(|halo| voice_light(p, halo, plain, key.size.y));
+        let voice = key.halo.map(|halo| voice_light_at(p, halo, plain, key.size.y, key.scale));
         let mut plate = Mesh::default();
         let at_origin = Rect::from_min_size(Pos2::ZERO, rect.size());
         let fill = key.tint.lerp_to_gamma(p.ink, HOVER_LIGHT * key.hover).gamma_multiply(opacity);
@@ -567,10 +575,16 @@ pub(super) fn loud_ring(p: &Palette, level: f32, heat: f32) -> LoudRing {
 /// The voice's light on a plate `height` points high, whose border is
 /// `plain` when silent: the `loud_ring`, a little tighter around the
 /// smaller plates, closing in on the plate as the voice starts (the gate).
+#[cfg(test)]
 pub(super) fn voice_light(p: &Palette, halo: Halo, plain: Color32, height: f32) -> VoiceLight {
+    voice_light_at(p, halo, plain, height, SCALE)
+}
+
+/// `voice_light` for plates drawn at `scale` (`Env::scale`).
+fn voice_light_at(p: &Palette, halo: Halo, plain: Color32, height: f32, scale: f32) -> VoiceLight {
     let g = halo.gate.clamp(0.0, 1.0);
     // mockup pixels to points
-    let k = SCALE * (height / Metrics::of(Level::Full, SCALE).height).clamp(0.55, 1.0);
+    let k = scale * (height / Metrics::of(Level::Full, scale).height).clamp(0.55, 1.0);
     let r = loud_ring(p, halo.level, halo.heat);
     let gap = r.gap + 4.0 * (1.0 - g);
     VoiceLight {
@@ -586,7 +600,7 @@ pub(super) fn voice_light(p: &Palette, halo: Halo, plain: Color32, height: f32) 
             color: r.color.gamma_multiply(g * r.alpha),
         },
         // the border and one more pixel around it
-        border: Border::Around(plain.lerp_to_gamma(r.color, g * r.edge), SCALE),
+        border: Border::Around(plain.lerp_to_gamma(r.color, g * r.edge), scale),
     }
 }
 
@@ -743,7 +757,7 @@ fn contents(
                 r.center(),
                 egui::Align2::CENTER_CENTER,
                 format!("+{n}"),
-                FontId::proportional(9.0),
+                FontId::proportional(9.0 * s / SCALE),
                 ink(p.ink),
             );
         }

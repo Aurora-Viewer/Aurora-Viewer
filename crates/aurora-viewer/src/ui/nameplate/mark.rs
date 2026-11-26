@@ -77,7 +77,7 @@ impl Look {
     /// The light over a plate's top edge: curtains or rising stars.
     pub fn above(&self, mesh: &mut Mesh, p: &Palette, rect: Rect, ppp: f32, t: f32, alpha: f32) {
         match self.mark {
-            Mark::Aurora => aurora::curtains(mesh, p, rect, ppp, t, alpha),
+            Mark::Aurora => aurora::plate_curtains(mesh, p, rect, ppp, t, alpha),
             Mark::Linden => linden::stars(mesh, p, self.linden, rect, t, alpha),
         }
     }

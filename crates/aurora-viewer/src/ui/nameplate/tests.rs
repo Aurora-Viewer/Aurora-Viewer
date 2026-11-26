@@ -1486,3 +1486,113 @@ fn the_distance_follows_the_name_on_every_level_and_colors_it() {
     });
     assert!(!galley_colors(set).contains(&p.success));
 }
+
+#[test]
+fn plate_styles_pick_their_levels() {
+    use crate::settings::PlateStyle;
+    for level in [Level::Full, Level::Compact, Level::Far] {
+        assert_eq!(styled_level(PlateStyle::Plates, level), level);
+    }
+    assert_eq!(styled_level(PlateStyle::Icon, Level::Full), Level::Icon);
+    assert_eq!(styled_level(PlateStyle::Icon, Level::Compact), Level::Icon);
+    // far away every style is the name alone: no wall of circles to load
+    assert_eq!(styled_level(PlateStyle::Icon, Level::Far), Level::Far);
+    assert_eq!(styled_level(PlateStyle::Name, Level::Full), Level::Name);
+    assert_eq!(styled_level(PlateStyle::Name, Level::Compact), Level::Name);
+    assert_eq!(styled_level(PlateStyle::Name, Level::Far), Level::Far);
+    // hovering shows the complete plate, only with "Expand a plate on hover"
+    assert_eq!(hover_level(Level::Icon, true, true), Level::Full);
+    assert_eq!(hover_level(Level::Name, true, true), Level::Full);
+    assert_eq!(hover_level(Level::Icon, true, false), Level::Icon);
+}
+
+#[test]
+fn icon_and_name_plates_keep_only_the_contact_badges() {
+    use crate::world::contact_sets::Appearance;
+    use crate::world::contact_sets::appearance::SetIcon;
+    let mut c = content();
+    c.in_voice = true;
+    c.typing = true;
+    c.friend = true;
+    for level in [Level::Icon, Level::Name] {
+        assert_eq!(badges(level, &c).len(), 0);
+    }
+    // a contact set's symbol stays: its marker lands on it
+    let with_set = Content {
+        appearance: std::sync::Arc::new(Appearance {
+            icons: vec![SetIcon {
+                set: "Friends".into(),
+                icon: 2,
+                color: [1.0, 0.5, 0.0, 1.0],
+            }],
+            ..Appearance::default()
+        }),
+        ..content()
+    };
+    for level in [Level::Icon, Level::Name] {
+        let b = badges(level, &with_set);
+        assert_eq!(b.len(), 1);
+        assert!(matches!(b.iter().next(), Some(Badge::Contact { icon: 2, .. })));
+    }
+    assert_eq!(sub_lines(Level::Icon, &c), [None, None]);
+    // the name only plate keeps the group title, not the username
+    assert_eq!(sub_lines(Level::Name, &c), [Some(SubLine::Title("Loups du Nord")), None]);
+    c.title = None;
+    assert_eq!(sub_lines(Level::Name, &c), [None, None]);
+    assert_eq!(status_dot(Level::Icon, &c), Some(Presence::Online));
+    assert_eq!(status_dot(Level::Name, &c), None);
+}
+
+#[test]
+fn icon_plate_is_a_circle_around_the_picture() {
+    let m = Metrics::of(Level::Icon, SCALE);
+    let l = layout(Level::Icon, &m, &TextSize::default(), 0);
+    assert_eq!(l.size.x, l.size.y);
+    let photo = l.photo.expect("the icon plate has its picture");
+    assert_eq!(photo.center, Pos2::new(l.size.x * 0.5, l.size.x * 0.5));
+    assert!(photo.radius < l.size.x * 0.5, "the border shows around the picture");
+    assert!(l.dot.is_some());
+    // a contact badge floats over the top edge, centered
+    let l = layout(Level::Icon, &m, &TextSize::default(), 1);
+    assert!(l.badges[0].top() < 0.0);
+    assert!((l.badges[0].center().x - l.size.x * 0.5).abs() < 0.01);
+}
+
+#[test]
+fn the_name_tag_size_scales_every_measure_of_a_plate() {
+    for level in [Level::Full, Level::Compact, Level::Far, Level::Icon, Level::Name] {
+        let (one, big) = (Metrics::of(level, SCALE), Metrics::of(level, SCALE * 1.5));
+        assert!((big.name_pt - one.name_pt * 1.5).abs() < 0.01, "{level:?}");
+        assert!((big.height - one.height * 1.5).abs() <= 2.0, "{level:?}: even heights round");
+        assert!((big.photo - one.photo * 1.5).abs() < 0.01, "{level:?}");
+    }
+}
+
+#[test]
+fn name_tag_size_and_height_are_bounded_like_the_legacy_viewer() {
+    use crate::settings::Settings;
+    let s = Settings::default();
+    assert_eq!((s.name_tag_size, s.name_tag_offset), (100.0, 0.0));
+    let s = Settings {
+        name_tag_size: 400.0,
+        name_tag_offset: -3.0,
+        ..Settings::default()
+    }
+    .sanitized();
+    // FSNameTagZOffsetCorrection's -5..5 tenths of a metre
+    assert_eq!((s.name_tag_size, s.name_tag_offset), (150.0, -0.5));
+    // snapped to the Legacy Viewer's tenths
+    let s = Settings {
+        name_tag_offset: 0.23,
+        ..Settings::default()
+    }
+    .sanitized();
+    assert!((s.name_tag_offset - 0.2).abs() < 1e-6);
+    let s = Settings {
+        name_tag_size: f32::NAN,
+        name_tag_offset: f32::INFINITY,
+        ..Settings::default()
+    }
+    .sanitized();
+    assert_eq!((s.name_tag_size, s.name_tag_offset), (100.0, 0.0));
+}

@@ -13322,6 +13322,9 @@ What the inventory must show with these scenarios:
 | `AURORA_IMPOSTOR_POSES=every` or `alt` | Impostors posed at every frame, as before |
 | `AURORA_ANCHOR_CENTRES=every` | The centre of every worn object recomputed at every frame, as before |
 | `AURORA_NAME_TAGS=classic`, `plate` or `alt` | Style of the avatar name tags for this launch |
+| `AURORA_PLATE_STYLE=plates` (or `full`), `icon` or `name` | Look of the name plates for this launch: complete, icon only or name only |
+| `AURORA_NAME_TAG_SIZE=<percent>` | Size of every name tag for this launch (75 to 150) |
+| `AURORA_NAME_TAG_OFFSET=<metres>` | Height of every name tag for this launch (-0.5 to 0.5) |
 | `AURORA_LABEL_OCCLUSION=0` | Name tags and floating texts drawn over the scene, as before, instead of behind what is in front of them |
 | `AURORA_J2K=openjpeg` | Textures decoded by OpenJPEG, as before `aurora-j2k` |
 | `AURORA_J2K_THREADS=<n>` | Threads a large texture's decode is shared between at most (16; `1` for one thread a texture) |
@@ -13552,6 +13555,23 @@ What the inventory must show with these scenarios:
   `objects=` of `perf summary`, the `avatar … shown after` lines, and the
   `simulator bandwidth:` lines, which tell what is asked at first and at
   each change (losses, or the viewer falling behind).
+- **`AURORA_NAME_TAG_SIZE`** and **`AURORA_NAME_TAG_OFFSET`**: Preferences ›
+  Avatars › "Name tag size" and "Name tag height" for the whole run,
+  bounded like the sliders, without saving them. The size scales the
+  plates in every style and the classic tags; the height raises or lowers
+  every tag and the contact markers above it (FSNameTagZOffsetCorrection).
+  Use with `AURORA_DEMO_TAGS=voice`, and `AURORA_NAME_TAGS=classic` for
+  the classic tags.
+- **`AURORA_PLATE_STYLE`**: `icon` draws every name plate as the profile
+  picture in a round plate with its status dot and voice ring, `name` as
+  the display name and group title in the compact pill, without touching
+  Preferences › Aurora › "Plate style".
+  Both keep only the contact sets' badges, and beyond 40 m both are the
+  far pill. Like `AURORA_NAME_TAGS`, it overrides the setting for the
+  whole run (a change made in Preferences shows only after a launch
+  without it). With "Expand a plate on hover", the hovered plate shows
+  complete. Use with
+  `AURORA_DEMO_TAGS=voice` to see the nine residents in both looks.
 - **`AURORA_NAME_TAGS`**: `classic` or `plate` imposes the style of the
   avatar name tags (classic or name plates) without touching the "Name tag
   style" setting. `alt` alternates within the same session, at each

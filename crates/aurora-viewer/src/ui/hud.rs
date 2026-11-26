@@ -568,6 +568,7 @@ pub fn draw(
             if !chatting && (!rlva_tag || !names || d > settings.name_tag_distance) {
                 continue;
             }
+            // raised or lowered by Preferences › Avatars › "Name tag height"
             let head = scene.name_tag_anchor(&o.full_id, pos);
             if !scene.portal_keeps_point(idx, head) {
                 continue;
@@ -821,6 +822,9 @@ pub fn draw(
     // far first so near tags draw on top
     tags.sort_by(|a, b| b.0.total_cmp(&a.0));
     let opacity = bubbles.as_ref().map_or(0.0, |b| b.opacity);
+    // Preferences › Avatars › "Name tag size": the classic tags' text and
+    // margins, as the plates (`Plates::size`)
+    let k = crate::demo::tags::tag_size().unwrap_or(settings.name_tag_size) / 100.0;
     for (d, sp, lines, in_voice, progress, avatar, at, alpha, bubble) in tags {
         // the scene hides what it has in front of this point
         aurora_render::world_label_at(ctx, Some(at));
@@ -829,17 +833,17 @@ pub fn draw(
         // measure
         let galleys: Vec<_> = lines
             .iter()
-            .map(|(t, c, s)| super::bidi::no_wrap(painter.ctx(), t.clone(), FontId::proportional(*s), c.gamma_multiply(fade)))
+            .map(|(t, c, s)| super::bidi::no_wrap(painter.ctx(), t.clone(), FontId::proportional(*s * k), c.gamma_multiply(fade)))
             .collect();
         let total_h: f32 = galleys.iter().map(|g| g.size().y).sum();
         let max_w = galleys.iter().map(|g| g.size().x).fold(0.0, f32::max);
         y -= total_h;
         let visualizer = audio.world_voice_visualizer(avatar == Some(world.agent_id), world.calls.active.is_some(), false);
         let no_voice = visualizer && in_voice.is_none();
-        let voice_w = if no_voice { super::voice_tag::ICON_WIDTH } else { 0.0 };
+        let voice_w = if no_voice { super::voice_tag::ICON_WIDTH * k } else { 0.0 };
         let text_x = sp.x + voice_w * 0.5;
-        let w = max_w + 12.0 + super::voice_tag::TAG_EXTRA_WIDTH;
-        let r = egui::Rect::from_min_size(Pos2::new(sp.x - w * 0.5, y - 3.0), egui::vec2(w, total_h + 6.0));
+        let w = max_w + (12.0 + super::voice_tag::TAG_EXTRA_WIDTH) * k;
+        let r = egui::Rect::from_min_size(Pos2::new(sp.x - w * 0.5, y - 3.0 * k), egui::vec2(w, total_h + 6.0 * k));
         if let Some(id) = avatar {
             name_tags.push(NameTag::new(id, r, at, proj));
         }
@@ -873,12 +877,17 @@ pub fn draw(
         if let Some(id) = avatar.filter(|_| visualizer) {
             voice_tags.paint(&painter, p, id, r, in_voice, now_s, fade);
             if audio.voice_visualizer_dot && in_voice.is_some() {
-                painter.circle_filled(Pos2::new(r.left() + 12.0, r.center().y), 3.0, p.success.gamma_multiply(fade));
+                painter.circle_filled(
+                    Pos2::new(r.left() + 12.0 * k, r.center().y),
+                    3.0 * k,
+                    p.success.gamma_multiply(fade),
+                );
             }
         }
         if no_voice && let Some(icon) = icons.get("microphone-off") {
-            let center = Pos2::new(r.left() + 6.0 + super::voice_tag::ICON_SIZE * 0.5, r.center().y);
-            let icon_rect = egui::Rect::from_center_size(center, egui::Vec2::splat(super::voice_tag::ICON_SIZE));
+            let icon_size = super::voice_tag::ICON_SIZE * k;
+            let center = Pos2::new(r.left() + 6.0 * k + icon_size * 0.5, r.center().y);
+            let icon_rect = egui::Rect::from_center_size(center, egui::Vec2::splat(icon_size));
             painter.image(
                 icon.id(),
                 icon_rect,
