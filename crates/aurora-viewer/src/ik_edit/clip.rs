@@ -20,6 +20,7 @@ mod together;
 mod ui;
 use document::{Document, FPS, MAX_FRAME};
 pub use files::Prepared;
+pub(crate) use files::write_atomic;
 pub(super) use ui::equal_width;
 
 /// The animation editor's window: its own, narrower than IK contacts'.

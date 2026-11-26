@@ -90,7 +90,7 @@ pub(super) fn load_document(
 }
 /// Write through a temporary file beside the target, then rename it over:
 /// a failed or interrupted save leaves the previous file whole.
-pub(super) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     let temp = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
     let result = std::fs::write(&temp, bytes)
         .and_then(|()| std::fs::rename(&temp, path))

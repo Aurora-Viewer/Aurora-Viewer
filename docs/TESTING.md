@@ -4180,6 +4180,9 @@ To check with these scenarios:
 | `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-derez-closed\|static-repaint\|warnings\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|fit-lab\|fit-lab-walk\|fit-lab-sit\|fit-lab-sit-stand\|fit-lab-clip\|fit-lab-range\|fit-lab-pose-<name>\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_LIVE_TAB=place\|avatar\|import\|plugins\|quick-look\|sweep` | Opens the LiveMesh window of the Blender demo on that tab, Quick look, or a card's update sweep |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
+| `AURORA_DEMO_WEBCAM_VIDEO=<file>` | Replay a local video through webcam tracking in offline demo mode |
+| `AURORA_WEBCAM_DEMOS=<directory>` | Show local face, hand and body clips in the offline webcam input menu |
+| `AURORA_WEBCAM_PYTHON=<executable>` | Python interpreter for webcam tracking |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose and animation editor (IK Edit, Poser, native animation creation) |
 | `AURORA_DEMO_COUPLE=1\|leave\|clip\|hover\|mirror` | The animation editor's couple mode with a partner who accepts (see Details) |
@@ -4196,6 +4199,21 @@ To check with these scenarios:
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
 ### Details
+
+`AURORA_DEMO_WEBCAM_VIDEO` replaces the camera with a local clip for the
+offline demo on initial selection. Open **Build › Webcam Tracking** and
+select **Replay test video**. Select a second video while playing and verify
+it starts on selection, the preview changes and the new subject controls
+the pose. Compare the displayed preview and tracking rates. The preview
+should continue at the clip's rate (up to 30 fps) when inference is slower.
+Disable Loop and check that the end of the clip restores the usual animation.
+`AURORA_WEBCAM_DEMOS` lists local MP4s in its directory by name. Watch the
+preview before starting, while the camera or video opens, and after stopping.
+The preview and Stop button keep their positions. The first source frame can
+appear while the landmark models are still starting.
+Set
+`AURORA_WEBCAM_PYTHON` to the interpreter in the environment described in
+[Webcam tracking](WEBCAM_TRACKING.md).
 
 `AURORA_DEMO_BLENDER_LIVE=1` opens the local bridge and places a purple shell
 on our animated avatar, through the production protocol and GPU skinning.

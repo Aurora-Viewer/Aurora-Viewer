@@ -361,6 +361,58 @@ fn hinge(hip: Vec3, knee: Vec3, ankle: Vec3, target: Vec3, side: Vec3) -> Option
     Some((hip_delta, knee_delta))
 }
 
+/// File mocap contacts are relative to the avatar, independent of terrain
+/// placement and of inferred root translation in the source video.
+#[derive(Default)]
+pub(crate) struct WebcamFeet {
+    anchors: [Option<(u64, Vec3, Quat)>; 2],
+}
+
+impl WebcamFeet {
+    pub(crate) fn apply(
+        &mut self,
+        rig: &Rig,
+        rotations: &mut [Quat],
+        world: &[Mat4],
+        contacts: [Option<crate::webcam::FootContact>; 2],
+    ) -> bool {
+        let mut changed = false;
+        for (side, suffix) in ["Left", "Right"].iter().enumerate() {
+            let Some(contact) = contacts[side] else {
+                self.anchors[side] = None;
+                continue;
+            };
+            let [Some(&hip), Some(&knee), Some(&ankle)] = ["Hip", "Knee", "Ankle"].map(|name| rig.names.get(&format!("m{name}{suffix}")))
+            else {
+                continue;
+            };
+            let p = |joint: usize| world[joint].w_axis.truncate();
+            let r = |joint: usize| orientation(world[joint]);
+            let anchor = &mut self.anchors[side];
+            if anchor.is_none_or(|(id, _, _)| id != contact.id) {
+                *anchor = Some((contact.id, p(ankle), r(ankle)));
+            }
+            let Some((_, position, rotation)) = *anchor else { continue };
+            let weight = contact.weight.clamp(0.0, 1.0);
+            let target = p(ankle).lerp(position, weight);
+            if weight < 0.01 || p(ankle).distance_squared(target) < 1e-8 {
+                continue;
+            }
+            let Some((a, b)) = hinge(p(hip), p(knee), p(ankle), target, r(knee) * Vec3::Y) else {
+                continue;
+            };
+            let hip_rotation = a * r(hip);
+            let knee_rotation = b * a * r(knee);
+            let parent = rig.parent[hip].map_or(Quat::IDENTITY, r);
+            rotations[hip] = (parent.inverse() * hip_rotation).normalize();
+            rotations[knee] = (hip_rotation.inverse() * knee_rotation).normalize();
+            rotations[ankle] = (knee_rotation.inverse() * r(ankle).slerp(rotation, weight)).normalize();
+            changed = true;
+        }
+        changed
+    }
+}
+
 struct Release {
     at: Instant,
     rotations: Vec<Quat>,

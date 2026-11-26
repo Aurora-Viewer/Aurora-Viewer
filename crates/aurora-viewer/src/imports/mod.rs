@@ -702,7 +702,7 @@ impl Imports {
         name: String,
         bytes: Arc<Vec<u8>>,
         animation: Arc<Animation>,
-    ) {
+    ) -> Uuid {
         let mut entry = Entry::new(
             PathBuf::from(format!("{name}.anim")),
             Ok(Source::Animation {
@@ -713,10 +713,20 @@ impl Imports {
             self.load_preferences.texture(),
         );
         entry.folder = Self::default_folder(world, prefs, Kind::Animation);
-        self.active = Some(entry.id);
+        let id = entry.id;
+        self.active = Some(id);
         self.entries.push(entry);
         self.open(Choice::Animation);
+        id
     }
+
+    pub(crate) fn review_webcam_uploads(&mut self, ctx: &egui::Context, ids: &[Uuid]) {
+        for entry in &mut self.entries {
+            entry.selected = ids.contains(&entry.id);
+        }
+        self.open_window(ctx);
+    }
+
     /// Import (Build › Import, its shortcut, the toolbar's "Import"): the
     /// import window. The quick import bar it could open is the import
     /// floating block now, with its own Ctrl+U (human request, 2026-11-25).
