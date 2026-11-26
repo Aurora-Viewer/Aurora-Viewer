@@ -14,12 +14,13 @@ param(
 )
 . "$PSScriptRoot\common.ps1"
 
-# The GitHub repository, from this repository's origin: every gh call names
-# it, so the script never moves the caller's terminal (a terminal left in a
-# task folder keeps it from being deleted).
-$origin = (git -C $PSScriptRoot remote get-url origin).Trim()
-if ($origin -notmatch 'github\.com[:/](?<owner>[^/]+)/(?<name>[^/]+?)(\.git)?$') { throw "Unexpected origin remote: $origin" }
-$owner = $Matches.owner; $name = $Matches.name
+# The main repository on GitHub (Get-MainRepo: origin, or upstream in a
+# clone of a personal fork): every gh call names it, so the script never
+# moves the caller's terminal (a terminal left in a task folder keeps it
+# from being deleted).
+$repo = Get-MainRepo $PSScriptRoot
+if (-not $repo) { throw 'No GitHub remote for the main repository (origin, upstream or gh repo set-default).' }
+$owner, $name = $repo -split '/', 2
 # queue entry and auto-merge request: once both are gone while the PR is
 # still open, the queue has let it go
 $query = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){state mergedAt mergeQueueEntry{state} autoMergeRequest{enabledAt}}}}'

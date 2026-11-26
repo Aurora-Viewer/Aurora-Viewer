@@ -3,6 +3,9 @@ use super::widgets::{self, ActionKind, Floater};
 use crate::theme::Palette;
 use crate::world::hover_height::{self, HoverHeight, Posture};
 
+/// The window id of Hover Height.
+pub const WINDOW: &str = "hover_height";
+
 pub struct HoverHeightOptions<'a> {
     pub camera: &'a mut bool,
     pub automatic: &'a mut bool,
@@ -57,7 +60,7 @@ impl HoverHeightUi {
         let enabled = enabled && height.ready();
         let mut preferences_changed = false;
         Floater::new(
-            "hover_height",
+            WINDOW,
             aurora_i18n::tr!("ui-context-hover-height"),
             egui::pos2(480.0, 100.0),
             egui::vec2(440.0, if neutral_pose_test.is_some() { 368.0 } else { 332.0 }),

@@ -464,6 +464,8 @@ pub enum Action {
     WorldMap,
     /// World › Teleport history (Firestorm Alt+H).
     TeleportHistory,
+    /// Show the current SLURL, including when its address bar is hidden.
+    AddressBar,
     /// World › Teleport Home (the Legacy Viewer's Ctrl+Shift+H).
     TeleportHome,
     /// World › Region / Estate (Firestorm's "Region Details", Alt+R).
@@ -895,6 +897,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
                     (Action::TeleportHistory, aurora_i18n::tr!("common-teleport-history")),
+                    (Action::AddressBar, aurora_i18n::tr!("toolbar-location-bar")),
                     (Action::TeleportHome, aurora_i18n::tr!("keybinds-teleport-home")),
                     (Action::RegionEstate, aurora_i18n::tr!("region-title")),
                     (Action::Search, aurora_i18n::tr!("search-title")),
@@ -1386,6 +1389,7 @@ impl KeyBindings {
             (Action::Gestures, [kmod(K::KeyG, true, false), None]),
             (Action::Minimap, [kmod(K::KeyM, true, true), None]),
             (Action::WorldMap, [kmod(K::KeyM, true, false), None]),
+            (Action::AddressBar, [kmod(K::KeyL, true, false), None]),
             // World.TeleportHome, shortcut="control|shift|H" (menu_viewer.xml)
             (Action::TeleportHome, [kmod(K::KeyH, true, true), None]),
             (
@@ -2640,6 +2644,17 @@ mod tests {
             old.triggered(&Input::key(KeyCode::Escape), m(false, true, false)),
             Some(Action::ResetCameraAngles)
         );
+    }
+
+    #[test]
+    fn address_bar_is_ctrl_l_and_available_while_editing_text() {
+        let kb = KeyBindings::default();
+        let control = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert_eq!(kb.triggered(&Input::key(KeyCode::KeyL), control), Some(Action::AddressBar));
+        assert!(!text_field_keeps(KeyCode::KeyL, control));
     }
 
     #[test]

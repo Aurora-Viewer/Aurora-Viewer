@@ -333,6 +333,8 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
                     aurora: true,
                     ..Default::default()
                 },
+                &mut toolbar,
+                &toolbar_settings,
             );
             let (_, _, bottom_top, _) = bars::bottom_bar(
                 ui,

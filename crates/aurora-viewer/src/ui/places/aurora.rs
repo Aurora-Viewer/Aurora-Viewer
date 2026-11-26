@@ -49,6 +49,9 @@ const MIN_LIST_W: f32 = 220.0;
 const PREVIEW_W: f32 = 316.0;
 const TOOLBAR_H: f32 = 52.0;
 const FOOTER_H: f32 = 38.0;
+/// What `widgets::action_menu_button` adds to `action_button_fit` for its
+/// chevron (13 px of chevron, 5 of gap), in both toolbars.
+const SORT_CHEVRON: f32 = 18.0;
 /// The last visit's column of a wide row.
 const VISIT_W: f32 = 112.0;
 /// FT_TRASH.
@@ -605,7 +608,7 @@ impl PlacesUi {
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         tb.spacing_mut().item_spacing.x = 10.0;
-        let sort_w = widgets::action_button_fit(&tb, "arrows-sort", self.sort_label(env.sort)) + 18.0;
+        let sort_w = widgets::action_button_fit(&tb, "arrows-sort", self.sort_label(env.sort)) + SORT_CHEVRON;
         let w = (tb.available_width() - sort_w - 10.0).max(80.0);
         widgets::clearable_search_box(&mut tb, p, &mut self.filter, aurora_i18n::tr!("ui-places-search"), w);
         self.sort_button(&mut tb, p, c.world, env.sort, actions);
@@ -659,7 +662,28 @@ impl PlacesUi {
     /// The order button and its menu; the history's offers to clear it.
     fn sort_button(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, sort: PlacesSort, actions: &mut Vec<PlacesAction>) {
         let resp = widgets::action_menu_button(ui, p, "arrows-sort", self.sort_label(sort), false, 28.0);
-        menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| match self.aurora.source {
+        self.sort_menu(&resp, p, world, sort, actions);
+    }
+
+    /// The narrow layout's order button (#4976), `height` tall: the icon
+    /// and its chevron, the order shown in its tooltip, the same menu as
+    /// `sort_button`. The Legacy Viewer's Places panel has its sorting in
+    /// the toolbar at every width.
+    fn sort_icon_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        world: &World,
+        sort: PlacesSort,
+        height: f32,
+        actions: &mut Vec<PlacesAction>,
+    ) {
+        let resp = widgets::action_menu_button(ui, p, "arrows-sort", "", false, height).on_hover_text(self.sort_label(sort));
+        self.sort_menu(&resp, p, world, sort, actions);
+    }
+
+    fn sort_menu(&mut self, resp: &egui::Response, p: &Palette, world: &World, sort: PlacesSort, actions: &mut Vec<PlacesAction>) {
+        menu::dropdown(resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| match self.aurora.source {
             Source::Favorites => {
                 menu::check(ui, p, "star-filled", aurora_i18n::tr!("ui-places-sort-bar"), true, false);
             }
@@ -1580,9 +1604,14 @@ impl PlacesUi {
                 .show(ui, |ui| self.preview(ui, c, cat, true, actions));
             return;
         }
-        let w = ui.available_width();
-        // in a row: the field takes the height of its line only
-        ui.horizontal(|ui| widgets::clearable_search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w));
+        // in a row: the field takes the height of its line only, the order
+        // button what is left beside it (#4976), as tall as the field
+        ui.horizontal(|ui| {
+            let sort_w = widgets::action_button_fit(ui, "arrows-sort", "") + SORT_CHEVRON;
+            let w = (ui.available_width() - sort_w - ui.spacing().item_spacing.x).max(80.0);
+            let field = widgets::clearable_search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w);
+            self.sort_icon_button(ui, p, world, env.sort, field.rect.height(), actions);
+        });
         ui.add_space(8.0);
         // the three tabs
         let favorites = model::favorites(cat, env.favorites).len();

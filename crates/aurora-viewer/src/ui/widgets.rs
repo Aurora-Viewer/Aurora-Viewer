@@ -298,6 +298,36 @@ fn fit_in(area: egui::Rect, pos: egui::Pos2, size: Vec2) -> egui::Pos2 {
     pos.clamp(area.min, max)
 }
 
+/// Anchor a popup on the roomier side when it cannot fit below its control.
+/// The returned y belongs to the top pivot, or the bottom pivot when `above`.
+pub fn popup_vertical(screen: egui::Rect, control: egui::Rect, wanted: f32, gap: f32) -> (f32, bool, f32) {
+    let below = (screen.bottom() - control.bottom() - gap).max(0.0);
+    let above = (control.top() - screen.top() - gap).max(0.0);
+    let opens_above = below < wanted && above > below;
+    if opens_above {
+        (control.top() - gap, true, above)
+    } else {
+        (control.bottom() + gap, false, below)
+    }
+}
+
+#[test]
+fn moved_controls_open_popups_towards_available_space() {
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+    for (y, above) in [(8.0, false), (650.0, true), (330.0, false)] {
+        let control = egui::Rect::from_min_size(egui::pos2(8.0, y), egui::vec2(220.0, 36.0));
+        let (anchor, actual, room) = popup_vertical(screen, control, 280.0, 8.0);
+        assert_eq!(actual, above);
+        let height = room.min(280.0);
+        assert!(anchor >= screen.top() && anchor <= screen.bottom());
+        assert!(if above {
+            anchor - height >= screen.top()
+        } else {
+            anchor + height <= screen.bottom()
+        });
+    }
+}
+
 /// Width of a minimized floater: its icon, a title cut short and its
 /// buttons. Firestorm's is fixed (UIMinimizedWidth, 160) for a smaller
 /// title font; a narrower window keeps its own width.
@@ -758,6 +788,9 @@ pub struct Floater<'a> {
     /// Resized in height only: its width is the one it opens with
     /// (Performance's full view, lined up under the system island).
     pub height_only: bool,
+    /// Resized in width only, its height following its content (see
+    /// `width_only`).
+    pub width_only: bool,
     /// Put a toolbar directly beneath the title, without a separator layout row.
     pub compact_header: bool,
     /// Something new waits inside (unread messages): the minimized bar shows
@@ -816,6 +849,7 @@ impl<'a> Floater<'a> {
             min_size: Vec2::new(220.0, 120.0),
             resizable: true,
             height_only: false,
+            width_only: false,
             help: None,
             actions: Vec::new(),
             silent: false,
@@ -912,7 +946,7 @@ impl<'a> Floater<'a> {
     /// window drawn over an overlay of the viewer's (`order`) is a window
     /// of its own outside, over nothing.
     fn goes_outside(&self) -> bool {
-        !STAYS_INSIDE.contains(&self.id) && !self.height_only
+        !STAYS_INSIDE.contains(&self.id) && !self.height_only && !self.width_only
     }
 
     pub fn framed_header(mut self, icon: &'a str) -> Self {
@@ -923,6 +957,16 @@ impl<'a> Floater<'a> {
     pub fn auto_height(mut self) -> Self {
         self.auto_height = true;
         self.resizable = false;
+        self
+    }
+
+    /// As tall as its content, with no scroll bar while the room holds it,
+    /// and resized in width by its left and right edges (the Aurora build
+    /// tools' Create window: its shape grid wraps to the width chosen).
+    pub fn width_only(mut self) -> Self {
+        self.auto_height = true;
+        self.resizable = true;
+        self.width_only = true;
         self
     }
 
@@ -1124,6 +1168,14 @@ impl<'a> Floater<'a> {
         }
         // the toolbar button, a menu entry or a shortcut asked to expand it
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
+        // asked to the front from the body of a window outside, whose
+        // `move_to_top` orders that window's own layers (`bring_floater_front`)
+        if ctx
+            .data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(FRONT)))
+            .unwrap_or(false)
+        {
+            ctx.move_to_top(egui::LayerId::new(self.order, egui::Id::unique(self.id)));
+        }
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut go_outside = false;
         let mut out = None;
@@ -1152,7 +1204,7 @@ impl<'a> Floater<'a> {
         // A window as tall as its content (fixed, or of automatic height)
         // whose content is taller than the room scrolls it, from the frame
         // after the one that showed it too tall, and for as long as it is.
-        let content_sized = !self.resizable && !minimized;
+        let content_sized = (!self.resizable || self.width_only) && !minimized;
         let scroll_id = window_id.with("body_scrolls");
         let scrolls = content_sized && ctx.data(|d| d.get_temp::<bool>(scroll_id)).unwrap_or(false);
         let mut still_too_tall = false;
@@ -1162,7 +1214,7 @@ impl<'a> Floater<'a> {
         // are (LLFloaterView::adjustToFitScreen).
         let shrink = egui::AreaState::load(ctx, window_id)
             .and_then(|s| s.size)
-            .filter(|s| resizable && resize_drag.is_none() && (s.x > work.width() + 0.5 || s.y > work.height() + 0.5))
+            .filter(|s| resizable && !self.width_only && resize_drag.is_none() && (s.x > work.width() + 0.5 || s.y > work.height() + 0.5))
             .map(|s| s.min(work.size()));
         // Our handles clamp both geometry and position at the minimum, while
         // Window retains its normal movement and persisted layout.
@@ -1183,11 +1235,19 @@ impl<'a> Floater<'a> {
         // reports of 2026-11-17 and 2026-11-21). It gets at least the room
         // egui gives a window it opens, which changes nothing until a squeeze.
         if self.auto_height && !minimized {
-            w = w
-                .auto_sized()
-                .min_width(self.default_size.x)
-                .max_width(self.default_size.x)
-                .min_height(work.height());
+            // `width_only`: the width the user left it at, or the one it is
+            // restored to
+            let width = if !self.width_only {
+                self.default_size.x
+            } else if restore {
+                expanded.x
+            } else {
+                egui::AreaState::load(ctx, window_id)
+                    .and_then(|s| s.size)
+                    .map_or(self.default_size.x, |size| size.x)
+            }
+            .clamp(self.min_size.x, work.width());
+            w = w.auto_sized().min_width(width).max_width(width).min_height(work.height());
         } else if self.resizable && !minimized {
             w = w.default_size(self.default_size).min_size(self.min_size);
         } else if !minimized {
@@ -1268,7 +1328,11 @@ impl<'a> Floater<'a> {
             }
         }
         if let Some(rect) = resized {
-            w = w.fixed_size(rect.size());
+            w = if self.width_only {
+                w.min_width(rect.width()).max_width(rect.width())
+            } else {
+                w.fixed_size(rect.size())
+            };
             asked = Some(rect.min);
         }
         // Whatever places the window, its title bar stays in reach: egui
@@ -1278,7 +1342,8 @@ impl<'a> Floater<'a> {
             w = w.current_pos(pos);
         }
         // `steady_size`: once shown, the body in the window's exact rect
-        let held = self.steady_size && resizable && egui::AreaState::load(ctx, window_id).is_some_and(|s| s.size.is_some());
+        let held =
+            self.steady_size && resizable && !self.width_only && egui::AreaState::load(ctx, window_id).is_some_and(|s| s.size.is_some());
         let mut glass_slot = None;
         let response = w.show(ctx, |outer| {
             glass_slot = Some((outer.painter().clone(), outer.painter().add(egui::Shape::Noop)));
@@ -1296,7 +1361,7 @@ impl<'a> Floater<'a> {
             // Reserve the requested content area as a resizable Window would:
             // height-filling scroll areas otherwise shave a few pixels off
             // each restoration even though Resize remembered the right size.
-            if resizable || (restore && !self.auto_height) {
+            if resizable && !self.width_only || (restore && !self.auto_height) {
                 ui.set_min_size(ui.available_size());
             }
             if self.headless {
@@ -1599,10 +1664,28 @@ impl<'a> Floater<'a> {
                 attention_mark(&painter, p, response.response.rect, radius, wash);
             }
             if let (Some(drag), Some(requested)) = (resize_drag, resized) {
-                drag.finish(ctx, window_id, requested, response.response.rect);
+                // `width_only`: its content reflows to the width asked, a
+                // frame late at most, so a frame wider than asked is no
+                // minimum to keep (it stopped the window from narrowing)
+                let actual = if self.width_only {
+                    egui::Rect::from_min_size(
+                        response.response.rect.min,
+                        egui::vec2(requested.width(), response.response.rect.height()),
+                    )
+                } else {
+                    response.response.rect
+                };
+                drag.finish(ctx, window_id, requested, actual);
             }
             if resizable {
-                resize::handles_of(ctx, p, &response.response, self.height_only);
+                let axes = if self.height_only {
+                    resize::Axes::Height
+                } else if self.width_only {
+                    resize::Axes::Width
+                } else {
+                    resize::Axes::Both
+                };
+                resize::handles_of(ctx, p, &response.response, axes);
             }
         }
         title_draft_end(ctx, window_id, self.title_rename.as_ref(), title_draft, title_finished);
@@ -1695,6 +1778,9 @@ impl<'a> Floater<'a> {
         if ctx.data_mut(|d| d.remove_temp::<bool>(window_id.with(EXPAND))).unwrap_or(false) && floater_minimized(ctx, self.id) {
             ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((self.id, "minimized")), false));
         }
+        // its own window is in front of the viewer's layers: an ask to the
+        // front among them (`to_front`) is not kept for its return inside
+        ctx.data_mut(|d| d.remove_temp::<bool>(window_id.with(FRONT)));
         let flush = self.flush_body;
         let framed = self.framed_header.is_some();
         // as tall as its content (fixed, or of automatic height), and for a
@@ -2319,6 +2405,17 @@ pub fn floater_size(ctx: &egui::Context, id: &str) -> Option<Vec2> {
     egui::AreaState::load(ctx, window_id).and_then(|state| state.size)
 }
 
+/// The size of the floater `id` expanded: while it is minimized, the size
+/// it comes back to (LLFloater::setMinimized keeps the expanded geometry),
+/// not its title bar's.
+pub fn floater_expanded_size(ctx: &egui::Context, id: &str) -> Option<Vec2> {
+    let window_id = egui::Id::unique(id);
+    if !floater_outside(ctx, window_id) && floater_minimized(ctx, id) {
+        return ctx.data_mut(|d| d.get_persisted::<Vec2>(window_id.with("expanded_size")));
+    }
+    floater_size(ctx, id)
+}
+
 /// A window without a title bar, dragged by its whole surface (the
 /// mini-map): `frame` around `body`, which fills it. Like a floater it is
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
@@ -2728,8 +2825,16 @@ pub fn bring_floater_front(ctx: &egui::Context, id: &str) {
     } else if floater_minimized(ctx, id) {
         expand_floater(ctx, id);
     } else {
-        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+        to_front(ctx, id);
     }
+}
+
+/// The floater `id` inside comes to the front: now, and again when it is
+/// drawn. A button in a window outside the viewer's runs in that window's
+/// pass, where `move_to_top` orders that window's layers, not the viewer's.
+fn to_front(ctx: &egui::Context, id: &str) {
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(FRONT), true));
 }
 
 /// Is the floater `id` reduced to its title bar?
@@ -2742,8 +2847,11 @@ pub fn floater_minimized(ctx: &egui::Context, id: &str) -> bool {
 /// front, as its title button does (LLFloater::openFloater on a minimized
 /// floater: setMinimized(false), setVisibleAndFrontmost).
 pub fn expand_floater(ctx: &egui::Context, id: &str) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(EXPAND), true));
-    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::unique(id).with(EXPAND), true);
+        d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET));
+    });
+    to_front(ctx, id);
 }
 
 /// Will the floater `id` change its minimized state at its next frame for a
@@ -2751,8 +2859,14 @@ pub fn expand_floater(ctx: &egui::Context, id: &str) {
 /// (`expand_floater`) or a "Reset window positions and sizes" not yet
 /// applied to it.
 pub fn floater_expand_pending(ctx: &egui::Context, id: &str) -> bool {
+    floater_expand_asked(ctx, id) || super::layout::reset_pending(ctx, egui::Id::unique(id))
+}
+
+/// A button, link or shortcut asked the floater `id` to expand
+/// (`expand_floater`) and it has not drawn since: not its title button, not
+/// a window reset.
+pub fn floater_expand_asked(ctx: &egui::Context, id: &str) -> bool {
     ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(id).with(EXPAND))).unwrap_or(false)
-        || super::layout::reset_pending(ctx, egui::Id::unique(id))
 }
 
 /// Drops an expand asked for by `expand_floater` that the floater `id` has
@@ -2781,6 +2895,7 @@ fn outside_behind(ctx: &egui::Context, id: &str) -> bool {
 /// come back as a bar. In its window outside and behind, it comes in front
 /// ([`outside_behind`]).
 pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    shown_with_keyboard(ctx, id);
     if *open && outside_behind(ctx, id) {
         bring_floater_front(ctx, id);
         return;
@@ -2790,6 +2905,9 @@ pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
         return;
     }
     *open = !*open;
+    if !*open {
+        forget_keyboard(ctx, id);
+    }
     unminimize_quietly(ctx, id);
 }
 
@@ -2799,12 +2917,14 @@ pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
 /// true asks the caller to open a closed one.
 #[must_use]
 pub fn toggle_floater_closing(ctx: &egui::Context, id: &str, open: bool) -> bool {
+    shown_with_keyboard(ctx, id);
     if open && outside_behind(ctx, id) {
         bring_floater_front(ctx, id);
     } else if open && floater_minimized(ctx, id) {
         expand_floater(ctx, id);
     } else if open {
         close_floater(ctx, id);
+        forget_keyboard(ctx, id);
     }
     !open
 }
@@ -2850,6 +2970,12 @@ fn close_asked(ctx: &egui::Context, id: &str) -> bool {
 /// Open the floater `id` (LLFloaterReg::showInstance): expanded, whether it
 /// was closed or minimized.
 pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    shown_with_keyboard(ctx, id);
+    open_expanded(ctx, id, open);
+}
+
+/// [`open_floater`] without a word on the keyboard.
+fn open_expanded(ctx: &egui::Context, id: &str, open: &mut bool) {
     if *open {
         if floater_minimized(ctx, id) {
             expand_floater(ctx, id);
@@ -2859,6 +2985,86 @@ pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
         *open = true;
         unminimize_quietly(ctx, id);
     }
+}
+
+/// Show the floater `id` from a button or a link, as
+/// LLFloaterReg::showInstance → LLFloater::openFloater does: a closed one
+/// opens, an open one comes to the front, expanded when it is minimized
+/// (setMinimized(false), setVisibleAndFrontmost). Its own code learns that
+/// it was shown ([`take_floater_shown`]): LLFloater::onOpen runs on every
+/// show, the floater open or not.
+pub fn show_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    let was_open = *open;
+    open_floater(ctx, id, open);
+    if was_open {
+        bring_floater_front(ctx, id);
+    }
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(SHOWN), true));
+}
+
+/// Show the floater `id` for something that must not take the keyboard
+/// (llMapDestination without BEACON_FOCUS_MAP: process_script_teleport_request
+/// sets the floater's auto-focus off before LLFloater::openFloater, whose
+/// setVisibleAndFrontmost then leaves the focus where it is): as
+/// [`show_floater`], but a window outside the viewer's is not raised, the
+/// system giving the focus to the window it raises; it only expands when
+/// minimized. Its own code learns it ([`take_floater_quiet`]) until a show,
+/// open, toggle or expand that is not quiet replaces it.
+pub fn show_floater_quietly(ctx: &egui::Context, id: &str, open: &mut bool) {
+    let was_open = *open;
+    open_expanded(ctx, id, open);
+    // (`open_expanded` has expanded it when minimized)
+    if was_open && !crate::outside::native(ctx, egui::Id::unique(id)) {
+        bring_floater_front(ctx, id);
+    }
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::unique(id).with(SHOWN), true);
+        d.insert_temp(egui::Id::unique(id).with(QUIET), true);
+    });
+}
+
+/// The last show of the floater `id` was quiet ([`show_floater_quietly`]):
+/// true once.
+pub fn take_floater_quiet(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET)))
+        .unwrap_or(false)
+}
+
+/// The last show of the floater `id` was quiet, and it stays known: for an
+/// expand that waits.
+pub fn floater_shown_quietly(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(id).with(QUIET))).unwrap_or(false)
+}
+
+/// A show, open or toggle that may take the keyboard replaces a quiet one,
+/// and its own code learns of it ([`take_floater_keyboard`]).
+fn shown_with_keyboard(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| {
+        d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET));
+        d.insert_temp(egui::Id::unique(id).with(KEYBOARD), true);
+    });
+}
+
+/// A toggle that closes the floater gives it no keyboard: a quiet show
+/// after it stays quiet.
+fn forget_keyboard(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(KEYBOARD)));
+}
+
+/// A show, open or toggle of the floater `id` that may take the keyboard
+/// came since the last call, a quiet show after it or not: true once. Its
+/// keyboard is given at once (LLFloater::openFloater, onOpen), and a quiet
+/// show after it takes nothing back.
+pub fn take_floater_keyboard(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(KEYBOARD)))
+        .unwrap_or(false)
+}
+
+/// The floater `id` was shown by [`show_floater`] or
+/// [`show_floater_quietly`] since the last call: true once.
+pub fn take_floater_shown(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(SHOWN)))
+        .unwrap_or(false)
 }
 
 /// Forget that a floater not on screen was minimized: it opens expanded, at
@@ -2878,6 +3084,20 @@ pub(crate) const EXPAND: &str = "expand";
 
 /// Temporary frame of a floater asked to close (`close_floater`).
 const CLOSE: &str = "close";
+
+/// Temporary flag of a floater shown by a button or a link (`show_floater`).
+const SHOWN: &str = "shown";
+
+/// Temporary flag of a floater shown without the keyboard
+/// (`show_floater_quietly`).
+const QUIET: &str = "quiet";
+
+/// Temporary flag of a floater shown, opened or toggled by the user
+/// (`shown_with_keyboard`).
+const KEYBOARD: &str = "keyboard";
+
+/// Temporary flag of a floater asked to the front (`bring_floater_front`).
+const FRONT: &str = "front";
 
 /// Title-bar minimize / expand icon (#3084). Ordinary floaters: minus while
 /// expanded, square while minimized. Compact bodies (Performance) keep the
@@ -4180,11 +4400,47 @@ pub fn action_button_keyed(
     enabled: bool,
     key: Option<&crate::keybinds::Binding>,
 ) -> egui::Response {
+    action_button_inner(ui, p, icon, label, kind, size, enabled, key, 0.0)
+}
+
+/// `action_button` of a fixed `size` whose right `trailing` points hold a
+/// control of the caller's (an eye): its content is centred in the rest,
+/// and a label too long for it ends with "…", the whole label on hover.
+pub fn action_button_trailing(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    kind: ActionKind,
+    size: Vec2,
+    trailing: f32,
+) -> egui::Response {
+    action_button_inner(ui, p, icon, label, kind, size, true, None, trailing)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn action_button_inner(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    kind: ActionKind,
+    size: Vec2,
+    enabled: bool,
+    key: Option<&crate::keybinds::Binding>,
+    trailing: f32,
+) -> egui::Response {
     const ICON: f32 = KEYED_ICON;
     const GAP: f32 = KEYED_GAP;
     let enabled = enabled && ui.is_enabled();
     let font = control_font(ui, 12.5);
-    let (lead, text_w, caps_w) = keyed_parts(ui, icon, label, key);
+    let (lead, mut text_w, caps_w) = keyed_parts(ui, icon, label, key);
+    // the room the label has beside the caller's control
+    let room = (trailing > 0.0 && size.x > 0.0).then(|| (size.x - trailing - KEYED_PAD / 2.0 - lead - caps_w).max(0.0));
+    let elided = room.is_some_and(|room| text_w > room);
+    if let Some(room) = room {
+        text_w = text_w.min(room);
+    }
     let icon = if key.is_some() && size.x > 0.0 && lead + text_w + caps_w + 2.0 * GAP > size.x {
         ""
     } else {
@@ -4220,8 +4476,12 @@ pub fn action_button_keyed(
             .rect_stroke(rect, radius, Stroke::new(1.0, edge.gamma_multiply(fade)), egui::StrokeKind::Inside);
     }
     let ink = ink.gamma_multiply(fade);
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
-    let left = rect.center().x - content / 2.0;
+    let galley = if elided {
+        elided_galley(ui, RichText::new(label).font(font).color(ink), text_w)
+    } else {
+        ui.painter().layout_no_wrap(label.to_owned(), font, ink)
+    };
+    let left = rect.center().x - trailing / 2.0 - content / 2.0;
     if let Some(texture) = super::icons::global(icon) {
         ui.painter().image(
             texture.id(),
@@ -4242,6 +4502,9 @@ pub fn action_button_keyed(
     }
     if hot {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if elided {
+        resp = resp.on_hover_text(label);
     }
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     resp
