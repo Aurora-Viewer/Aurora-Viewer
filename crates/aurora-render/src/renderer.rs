@@ -2256,7 +2256,8 @@ pub(crate) struct Backend {
     anim_now: [u32; 4],
     /// `shadow_cull::path` bits of the frame being drawn.
     shadow_path: u32,
-    /// Inverse view-projection of the last rendered frame (picking).
+    /// Inverse view-projection the last frame's depth was drawn with, the
+    /// temporal jitter included (picking).
     last_inv_vp: Mat4,
     /// The planet's curvature the last frame was drawn with (picking).
     last_curvature: Curvature,
@@ -12901,7 +12902,10 @@ impl Backend {
         {
             draw_pick(&mut encoder, mode);
         }
-        // depth under the cursor, read back in a later frame
+        // depth under the cursor, read back in a later frame, with the
+        // still camera: the hover's caches compare this point from frame to
+        // frame, and the jitter would move it by up to a texel at each one
+        // (picks take the jittered one, `last_inv_vp`)
         self.depth_pick.encode_hover(
             &self.device,
             &self.queue,
@@ -13042,7 +13046,11 @@ impl Backend {
         }
         self.prev_view_proj = Some(unjittered_vp);
         self.prev_motion_view = Some((f.proj, f.view));
-        self.last_inv_vp = unjittered_vp.inverse();
+        // the camera the depth was drawn with, jitter included: unprojected
+        // with the still one, a texel's depth lands up to half a texel
+        // beside the point drawn there, off the surface of a face seen at
+        // an angle (#4869)
+        self.last_inv_vp = (fu.proj * fu.view).inverse();
         self.last_curvature = Curvature::new(f.camera_pos, f.curvature);
 
         // ---- automatic exposure, from the resolved scene and the glow of

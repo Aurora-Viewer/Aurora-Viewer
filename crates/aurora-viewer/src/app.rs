@@ -5996,7 +5996,7 @@ impl App {
         // a rigged mesh, a worn mesh or a worn prim with an action shown
         // there: what the GPU drew at the click (scene/drawn.rs)
         let shown = (!alt)
-            .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit))
+            .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit, None))
             .flatten();
         let hit = shown.map_or(hit, |d| Some(d.hit.point));
         // Only our displayed body takes the press, not empty space inside
@@ -8652,6 +8652,7 @@ impl App {
             .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
             .flatten();
         let mut face_drawn: Option<crate::scene::drawn::DrawnObject> = None;
+        let mut surface_ray = None;
         let (hit, target, ray) = if let Some((idx, point, ray)) = hud {
             (Some(point), Some(idx), ray)
         } else if self.build.tool == crate::build::Tool::Create && !self.settings.build.copy_selection && !(self.shift || self.ctrl) {
@@ -8682,7 +8683,7 @@ impl App {
                 .first()
                 .copied();
             let cpu_point = cpu_target.and_then(|idx| self.scene.edit_hit_point(&self.world, idx, ray));
-            let drawn = self.designate(crate::scene::drawn::Gesture::Build, &picked, cpu_point);
+            let drawn = self.designate(crate::scene::drawn::Gesture::Build, &picked, cpu_point, None);
             let (hit, target) = match drawn {
                 Some(d) => {
                     face_drawn = Some(d);
@@ -8695,7 +8696,8 @@ impl App {
             let Some(picked) = self.click_pick() else {
                 return false;
             };
-            let (hit, target) = if matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
+            let searched = matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab);
+            let (hit, target) = if searched {
                 self.scene.left_selection_pick(
                     &self.world,
                     picked.ray,
@@ -8710,19 +8712,27 @@ impl App {
                     picked.depth.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())),
                 )
             };
+            let ray = picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y));
             // a rigged mesh is selected where it is shown (Legacy Viewer: with
             // the move tool only, LLToolCompTranslate)
-            let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
+            // a face the search met, not a box around the depth (`pick_at`)
+            let on_face = target.filter(|&idx| searched && self.scene.gpu.get(idx).is_some_and(|g| !g.is_avatar));
+            let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit, on_face) {
                 Some(d) => (Some(d.hit.point), Some(d.idx)),
-                None => (hit, target),
+                None => {
+                    // a far face taken where it is drawn, beside the ray
+                    surface_ray = hit.filter(|_| on_face.is_some()).map(|p| crate::scene::Scene::surface_ray(ray, p));
+                    (hit, target)
+                }
             };
-            (hit, target, picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y)))
+            (hit, target, ray)
         };
         let mods = self.build_mouse_mods();
         // the surface under the cursor: face tool, grab surface info
         let surface = if let Some(d) = face_drawn {
             self.scene.drawn_surface(&self.world, &d)
         } else {
+            let ray = surface_ray.unwrap_or(ray);
             match (self.build.tool, self.build.edit_mode, target) {
                 (crate::build::Tool::Edit, crate::build::EditMode::Face, Some(i)) => self.scene.edit_touch_surface(&self.world, i, ray),
                 (crate::build::Tool::Edit | crate::build::Tool::Grab, _, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
