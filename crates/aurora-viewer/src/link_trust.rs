@@ -109,6 +109,8 @@ const TRUSTED: &[&str] = &[
     "youtu.be",
     "twitch.tv",
     "vimeo.com",
+    "i.vimeocdn.com",
+    "streamable.com",
     "wikipedia.org",
     "reddit.com",
     "bsky.app",

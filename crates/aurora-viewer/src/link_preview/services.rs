@@ -6,8 +6,9 @@
 //! Each page leads to its picture by the cleanest way its service offers:
 //! * Gyazo and Flickr: their oEmbed endpoints (documented, no key); a Gyazo
 //!   video capture leads to its file instead, played in a video card (#983);
-//! * Imgur and Lightshot: the page's `og:image`, read from the first part of
-//!   the page only (Imgur's API needs a registered key, Lightshot has none);
+//! * Imgur and Lightshot: the page's `og:image`, with video metadata preferred
+//!   on an Imgur single post. GIPHY and Tenor use animated image renditions
+//!   on their own CDNs. Only the page head is read and no API key is needed;
 //! * Reddit: the post's Atom feed, its first entry's `media:thumbnail`
 //!   (Reddit's JSON answers 403 to clients without an account, its post
 //!   pages a script challenge; the feed is public). A `reddit.com/media`
@@ -40,6 +41,8 @@ pub enum Service {
     Gyazo,
     Flickr,
     Imgur,
+    Giphy,
+    Tenor,
     Lightshot,
     Reddit,
     Bluesky,
@@ -261,6 +264,26 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
             };
             Some((Service::Imgur, Step::Head(page)))
         }
+        "giphy.com" => {
+            let ["gifs" | "stickers", slug] = segs.as_slice() else {
+                return None;
+            };
+            let id = slug.rsplit('-').next()?;
+            if !alnum(id, 6, 32) || slug.len() > 240 {
+                return None;
+            }
+            Some((Service::Giphy, Step::Head(format!("https://giphy.com/{}/{slug}", segs[0]))))
+        }
+        "tenor.com" => {
+            let ["view", slug] = segs.as_slice() else {
+                return None;
+            };
+            let (_, id) = slug.rsplit_once('-')?;
+            if !(1..=16).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_digit()) || slug.len() > 240 {
+                return None;
+            }
+            Some((Service::Tenor, Step::Head(format!("https://tenor.com/view/{slug}"))))
+        }
         "prnt.sc" | "prntscr.com" => {
             let id = segs.first().filter(|id| segs.len() == 1 && alnum(id, 5, 12))?;
             Some((Service::Lightshot, Step::Head(format!("https://prnt.sc/{}", id.to_lowercase()))))
@@ -331,6 +354,7 @@ fn picture_hosts(service: Service) -> &'static [&'static str] {
         Service::Gyazo => &["i.gyazo.com", "thumb.gyazo.com"],
         Service::Flickr => &["staticflickr.com"],
         Service::Imgur => &["i.imgur.com"],
+        Service::Giphy | Service::Tenor => &[],
         // Lightshot's former screenshots are kept on Imgur
         Service::Lightshot => &["image.prntscr.com", "img.prnt.sc", "i.imgur.com"],
         Service::Reddit => &["i.redd.it", "preview.redd.it", "external-preview.redd.it"],
@@ -352,8 +376,18 @@ pub(super) fn picture_host_ok(service: Service, url: &str) -> bool {
     let Some(host) = parsed.host_str().map(|h| h.trim_end_matches('.').to_lowercase()) else {
         return false;
     };
-    if parsed.scheme() != "https" || !parsed.username().is_empty() {
+    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
         return false;
+    }
+    if matches!(service, Service::Giphy | Service::Tenor) {
+        let domain = if service == Service::Giphy { ".giphy.com" } else { ".tenor.com" };
+        return parsed.port().is_none()
+            && host.strip_suffix(domain).is_some_and(|h| {
+                h.strip_prefix("media").is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit())) || (service == Service::Tenor && h == "c")
+            })
+            && [".gif", ".webp"]
+                .iter()
+                .any(|ext| parsed.path().to_ascii_lowercase().ends_with(ext));
     }
     if service == Service::Site {
         return on_site(&host);
@@ -477,21 +511,29 @@ fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     None
 }
 
+fn head_meta(html: &str) -> impl Iterator<Item = (&str, &str)> {
+    html.split('<')
+        .skip(1)
+        .take_while(|tag| {
+            !tag.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("/head")) && !tag.get(..4).is_some_and(|s| s.eq_ignore_ascii_case("body"))
+        })
+        .filter_map(|tag| {
+            let tag = tag.split('>').next().unwrap_or("");
+            let is_meta =
+                tag.get(..4).is_some_and(|t| t.eq_ignore_ascii_case("meta")) && tag[4..].starts_with(|c: char| c.is_ascii_whitespace());
+            is_meta.then_some(())?;
+            Some((
+                attribute(tag, "property").or_else(|| attribute(tag, "name"))?,
+                attribute(tag, "content")?,
+            ))
+        })
+}
+
 /// The picture a page announces for itself: its `og:image`, or
 /// `twitter:image` when it has none.
 pub(super) fn from_head(service: Service, html: &str) -> Option<String> {
     let mut twitter = None;
-    for tag in html.split('<').skip(1) {
-        let tag = tag.split('>').next().unwrap_or("");
-        let is_meta =
-            tag.get(..4).is_some_and(|t| t.eq_ignore_ascii_case("meta")) && tag[4..].starts_with(|c: char| c.is_ascii_whitespace());
-        if !is_meta {
-            continue;
-        }
-        let key = attribute(tag, "property").or_else(|| attribute(tag, "name")).unwrap_or("");
-        let Some(content) = attribute(tag, "content") else {
-            continue;
-        };
+    for (key, content) in head_meta(html) {
         let url = cleaned(service, unescape(content));
         if !picture_host_ok(service, &url) || (service == Service::Site && site_icon(&url)) {
             continue;
@@ -504,6 +546,57 @@ pub(super) fn from_head(service: Service, html: &str) -> Option<String> {
         }
     }
     twitter
+}
+
+/// Imgur share pages advertise a cover and, for animated posts, a stream.
+/// Keep galleries and albums as cover cards even when their first item moves.
+pub(super) fn clip_from_head(service: Service, page: &str, html: &str) -> Option<FoundClip> {
+    if service != Service::Imgur {
+        return None;
+    }
+    let page = Url::parse(page).ok()?;
+    let parts = segments(&page);
+    let [id] = parts.as_slice() else {
+        return None;
+    };
+    let mut width = None;
+    let mut height = None;
+    let mut stream = None;
+    let mut video = None;
+    for (key, value) in head_meta(html) {
+        match key.to_ascii_lowercase().as_str() {
+            "og:video:width" => width = value.parse().ok(),
+            "og:video:height" => height = value.parse().ok(),
+            "twitter:player:stream" | "og:video" | "og:video:url" | "og:video:secure_url" | "twitter:player" => {
+                let value = unescape(value);
+                let parsed = Url::parse(&value).ok();
+                let Some(clip) = parsed
+                    .filter(|url| {
+                        url.host_str() == Some("i.imgur.com")
+                            && url
+                                .path()
+                                .strip_prefix('/')
+                                .and_then(|path| path.rsplit_once('.'))
+                                .is_some_and(|(stem, _)| stem == *id)
+                    })
+                    .and_then(|_| super::Clip::of(&value))
+                else {
+                    continue;
+                };
+                if key.eq_ignore_ascii_case("twitter:player:stream") {
+                    stream.get_or_insert(clip);
+                } else {
+                    video.get_or_insert(clip);
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(FoundClip {
+        clip: stream.or(video)?,
+        posters: from_head(service, html).into_iter().collect(),
+        size: width.zip(height),
+    })
 }
 
 /// The picture of a Reddit post's feed: its entry's `media:thumbnail`
@@ -643,7 +736,7 @@ pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
 /// answer (`9f8e7d6c…`).
 pub(super) fn demo_clip(url: &str) -> Option<FoundClip> {
     clip_from_oembed(recognize(url)?.0, url, GYAZO_VIDEO.as_bytes())
-        .filter(|found| found.clip.file.contains("9f8e7d6c5b4a39281706f5e4d3c2b1a0"))
+        .filter(|found| found.clip.source().contains("9f8e7d6c5b4a39281706f5e4d3c2b1a0"))
 }
 
 #[cfg(test)]

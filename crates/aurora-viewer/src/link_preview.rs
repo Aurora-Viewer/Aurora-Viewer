@@ -30,6 +30,7 @@ use crate::link_trust::Trust;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
+mod hosted;
 mod services;
 pub use services::{Service, blurred_until_clicked};
 
@@ -206,27 +207,38 @@ pub enum Target {
     Page(Service),
 }
 
-/// A video file the media plugins' browser plays in a video card (#983):
-/// an `.mp4` or `.webm` link, an Imgur `.gifv` (its `.mp4`), a Gyazo video
-/// capture. Only from the trusted sites of `link_trust.rs`: the browser,
+/// A direct file or a hosted video the media plugins' browser plays in a
+/// video card. Only from the trusted sites of `link_trust.rs`: the browser,
 /// unlike the preview downloads, sends a site whatever it sends.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Clip {
-    /// The file's https address.
-    pub file: String,
+pub struct Clip(ClipSource);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ClipSource {
+    File(String),
+    Hosted(hosted::Hosted),
 }
 
 impl Clip {
-    /// The clip a link names: an https video file on a trusted site, without
-    /// credentials or port; an Imgur `.gifv` page leads to its `.mp4`.
+    /// Recognize an HTTPS video link on a trusted site, without credentials
+    /// or a non-default port. Imgur GIFV links use their MP4 rendition.
     pub fn of(url: &str) -> Option<Clip> {
         let mut parsed = reqwest::Url::parse(url).ok()?;
         if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() || parsed.port().is_some() {
             return None;
         }
+        if let Some(video) = hosted::Hosted::of(&parsed) {
+            return (crate::link_trust::classify(url) == Trust::Trusted && crate::link_trust::classify(&video.page()) == Trust::Trusted)
+                .then_some(Self(ClipSource::Hosted(video)));
+        }
         let path = parsed.path().to_lowercase();
-        if path.ends_with(".gifv") && host(url).as_deref() == Some("i.imgur.com") {
+        if path.ends_with(".gifv") && matches!(parsed.host_str(), Some("imgur.com" | "www.imgur.com" | "i.imgur.com")) {
             let mp4 = format!("{}.mp4", &parsed.path()[..parsed.path().len() - ".gifv".len()]);
+            let id = &mp4[1..mp4.len() - ".mp4".len()];
+            if !(5..=8).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                return None;
+            }
+            parsed.set_host(Some("i.imgur.com")).ok()?;
             parsed.set_path(&mp4);
             parsed.set_query(None);
         } else if !(path.ends_with(".mp4") || path.ends_with(".webm")) {
@@ -234,23 +246,50 @@ impl Clip {
         }
         parsed.set_fragment(None);
         let file = String::from(parsed);
-        (crate::link_trust::classify(&file) == Trust::Trusted).then_some(Clip { file })
+        (crate::link_trust::classify(&file) == Trust::Trusted).then_some(Self(ClipSource::File(file)))
+    }
+
+    fn source(&self) -> std::borrow::Cow<'_, str> {
+        match &self.0 {
+            ClipSource::File(file) => std::borrow::Cow::Borrowed(file),
+            ClipSource::Hosted(video) => std::borrow::Cow::Owned(video.page()),
+        }
+    }
+
+    pub fn hosted(&self) -> bool {
+        matches!(self.0, ClipSource::Hosted(_))
     }
 
     /// The page the browser opens to play it, a page of our own served on
     /// this machine (`clip_page`), which reports the clip's shape under
     /// `key`; the file alone when that page cannot be served.
-    pub fn player_page(&self, options: &PlayerOptions, key: u64) -> String {
+    pub fn player_page(&self, options: &PlayerOptions, key: u64, muted: bool) -> String {
         match player_server() {
             Some(port) => {
                 let base = format!("http://127.0.0.1:{port}/clip");
                 let volume = options.volume.min(100).to_string();
                 let key = key.to_string();
-                reqwest::Url::parse_with_params(&base, [("k", key.as_str()), ("vol", volume.as_str()), ("src", self.file.as_str())])
-                    .map(String::from)
-                    .unwrap_or_else(|_| self.file.clone())
+                let muted_param = if muted { "1" } else { "0" };
+                reqwest::Url::parse_with_params(
+                    &base,
+                    [
+                        ("k", key.as_str()),
+                        ("vol", volume.as_str()),
+                        ("src", self.source().as_ref()),
+                        ("mute", muted_param),
+                    ],
+                )
+                .map(String::from)
+                .unwrap_or_else(|_| self.player(muted))
             }
-            None => self.file.clone(),
+            None => self.player(muted),
+        }
+    }
+
+    fn player(&self, muted: bool) -> String {
+        match &self.0 {
+            ClipSource::File(file) => file.clone(),
+            ClipSource::Hosted(video) => video.player(muted),
         }
     }
 }
@@ -270,8 +309,17 @@ fn attribute_text(s: &str) -> String {
 /// player does, #848), and reports the clip's shape once known
 /// (`/aspect`): a link names no size. A browser that refuses to start a
 /// clip with sound starts it muted.
-fn clip_page(clip: &Clip, volume: u8, key: u64) -> String {
-    let src = attribute_text(&clip.file);
+fn clip_page(clip: &Clip, volume: u8, key: u64, muted: bool) -> String {
+    let src = attribute_text(&clip.player(muted));
+    if clip.hosted() {
+        return format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\">\
+             <meta name=\"referrer\" content=\"strict-origin-when-cross-origin\">\
+             <style>html,body{{margin:0;height:100%;background:#000;overflow:hidden}}\
+             iframe{{display:block;border:0;width:100%;height:100%}}</style></head><body>\
+             <iframe src=\"{src}\" allow=\"autoplay; fullscreen; encrypted-media\" allowfullscreen></iframe></body></html>"
+        );
+    }
     let volume = volume.min(100);
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
@@ -300,10 +348,10 @@ fn clip_answer(request: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(&format!("http://127.0.0.1{path}")).ok()?;
     let param = |name: &str| parsed.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned());
     let src = param("src")?;
-    let clip = Clip::of(&src).filter(|c| c.file == src)?;
+    let clip = Clip::of(&src).filter(|c| c.source() == src.as_str())?;
     let key = param("k").and_then(|v| v.parse::<u64>().ok())?;
     let volume = param("vol").and_then(|v| v.parse::<u8>().ok()).unwrap_or(100);
-    Some(clip_page(&clip, volume, key))
+    Some(clip_page(&clip, volume, key, param("mute").as_deref() == Some("1")))
 }
 
 /// A clip's shape its page reports (`GET /aspect?k=<key>&w=<px>&h=<px>`).
@@ -746,6 +794,7 @@ pub struct VideoInfo {
 /// What a clip's card shows before it plays.
 pub struct ClipInfo {
     pub clip: Clip,
+    pub title: String,
     /// The picture its service gives (Gyazo); a file alone has none.
     pub thumbnail: Option<Picture>,
     /// Width over height, when known before it plays.
@@ -985,15 +1034,17 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 .map(|(body, _)| body);
             // a Gyazo video capture plays in a video card (#983)
             if let Some(found) = body.as_deref().and_then(|body| services::clip_from_oembed(service, url, body)) {
-                return Ok(Content::Clip(fetch_clip(client, found).await));
+                return Ok(Content::Clip(fetch_found_clip(client, found).await));
             }
             body.and_then(|body| services::from_oembed(service, &body))
         }
-        Step::Head(page) => text_head(client, &page, "text/html", "</head>")
-            .await
-            .0
-            .ok()
-            .and_then(|html| services::from_head(service, &html)),
+        Step::Head(page) => {
+            let html = text_head(client, &page, "text/html", "</head>").await.0?;
+            if let Some(found) = services::clip_from_head(service, &page, &html) {
+                return Ok(Content::Clip(fetch_found_clip(client, found).await));
+            }
+            services::from_head(service, &html)
+        }
         Step::Post(endpoint) => download(client, &endpoint, "application/json", HEAD_BYTES as u64)
             .await
             .ok()
@@ -1035,7 +1086,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
 /// A clip a service's page leads to, with its thumbnail: the first of its
 /// addresses that gives a picture. Its shape comes from the service, else
 /// from the thumbnail.
-async fn fetch_clip(client: &reqwest::Client, found: services::FoundClip) -> ClipInfo {
+async fn fetch_found_clip(client: &reqwest::Client, found: services::FoundClip) -> ClipInfo {
     let mut thumbnail = None;
     for poster in &found.posters {
         if let Ok(picture) = fetch_picture(client, poster).await {
@@ -1049,9 +1100,35 @@ async fn fetch_clip(client: &reqwest::Client, found: services::FoundClip) -> Cli
         .or_else(|| thumbnail.as_ref().and_then(|t| aspect(f64::from(t.size[0]), f64::from(t.size[1]))));
     ClipInfo {
         clip: found.clip,
+        title: String::new(),
         thumbnail,
         aspect,
     }
+}
+
+pub async fn fetch_clip(client: &reqwest::Client, clip: &Clip) -> ClipInfo {
+    let mut info = ClipInfo {
+        clip: clip.clone(),
+        title: String::new(),
+        thumbnail: None,
+        aspect: None,
+    };
+    let ClipSource::Hosted(video) = &clip.0 else {
+        return info;
+    };
+    if let Some(data) = download(client, &video.oembed(), "application/json", 64 * 1024)
+        .await
+        .ok()
+        .and_then(|(bytes, _)| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .filter(|data| data["type"].as_str() == Some("video"))
+    {
+        info.title = data["title"].as_str().unwrap_or_default().to_owned();
+        info.aspect = data["width"].as_f64().zip(data["height"].as_f64()).and_then(|(w, h)| aspect(w, h));
+        if let Some(poster) = data["thumbnail_url"].as_str().and_then(|url| video.poster(url)) {
+            info.thumbnail = fetch_picture(client, &poster).await.ok();
+        }
+    }
+    info
 }
 
 /// Title, channel and picture of a video.
@@ -1235,6 +1312,7 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
         // a file names no shape; its page reports it once it plays
         Target::Clip(clip) => Ok(Content::Clip(ClipInfo {
             clip: clip.clone(),
+            title: String::new(),
             thumbnail: None,
             aspect: None,
         })),
@@ -1244,6 +1322,7 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
         // Gyazo's video capture to its clip
         Target::Page(_) if let Some(found) = services::demo_clip(url) => Ok(Content::Clip(ClipInfo {
             clip: found.clip,
+            title: String::new(),
             thumbnail: Some(demo_still(640, 360, 1)),
             aspect: Some(16.0 / 9.0),
         })),
@@ -1254,6 +1333,7 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
                 Service::Imgur => demo_still(480, 600, 1),
                 Service::Lightshot | Service::X => demo_still(640, 400, 1),
                 Service::Flickr | Service::Reddit | Service::Site => demo_still(640, 480, 0),
+                Service::Giphy | Service::Tenor => demo_gif(),
             };
             Ok(Content::Page {
                 picture,
@@ -1362,7 +1442,33 @@ mod tests {
     }
 
     fn clip(file: &str) -> Option<Target> {
-        Some(Target::Clip(Clip { file: file.into() }))
+        Some(Target::Clip(Clip(ClipSource::File(file.into()))))
+    }
+
+    #[test]
+    fn hosted_clip_uses_provider_player_and_keeps_vimeo_privacy_hash() {
+        let streamable = Clip::of("https://streamable.com/e/Demo42?loop=0").unwrap();
+        assert_eq!(streamable.source(), "https://streamable.com/Demo42");
+        assert_eq!(streamable.player(true), "https://streamable.com/e/Demo42?autoplay=1&muted=1");
+        assert_eq!(streamable.player(false), "https://streamable.com/e/Demo42?autoplay=1");
+
+        let vimeo = Clip::of("https://vimeo.com/123456789/deadbeef42").unwrap();
+        assert_eq!(
+            Clip::of("https://player.vimeo.com/video/123456789?h=deadbeef42"),
+            Some(vimeo.clone())
+        );
+        let page = clip_answer("GET /clip?k=42&mute=1&src=https%3A%2F%2Fvimeo.com%2F123456789%2Fdeadbeef42 HTTP/1.1").unwrap();
+        assert!(page.contains("https://player.vimeo.com/video/123456789?h=deadbeef42&amp;autoplay=1&amp;muted=1"));
+        assert!(page.contains("allow=\"autoplay; fullscreen; encrypted-media\""));
+        for url in [
+            "https://streamable.com/pricing",
+            "https://streamable.com:444/Demo42",
+            "https://streamable.com@elsewhere.example/Demo42",
+            "https://notvimeo.com/123456789",
+            "https://vimeo.com/123456789/%22%3E",
+        ] {
+            assert_eq!(target(url), None, "{url}");
+        }
     }
 
     /// A video file is a clip on a trusted site only, over https, without
@@ -1407,7 +1513,7 @@ mod tests {
     fn a_gyazo_video_capture_leads_to_its_clip() {
         let page = "https://gyazo.com/9F8E7D6C5B4A39281706F5E4D3C2B1A0";
         let found = services::clip_from_oembed(Service::Gyazo, page, include_bytes!("link_preview/fixtures/gyazo_video.json")).unwrap();
-        assert_eq!(found.clip.file, "https://i.gyazo.com/9f8e7d6c5b4a39281706f5e4d3c2b1a0.mp4");
+        assert_eq!(found.clip.source(), "https://i.gyazo.com/9f8e7d6c5b4a39281706f5e4d3c2b1a0.mp4");
         assert_eq!(found.posters.len(), 2);
         assert!(found.posters[0].starts_with("https://thumb.gyazo.com/thumb/640_w/"));
         assert!(found.posters[1].starts_with("https://thumb.gyazo.com/thumb/116_w/"));
@@ -1424,7 +1530,7 @@ mod tests {
         assert_eq!(found.size, Some((640.0, 360.0)));
         assert!(matches!(
             demo(&Target::Page(Service::Gyazo), page),
-            Ok(Content::Clip(c)) if c.clip.file.ends_with("9f8e7d6c5b4a39281706f5e4d3c2b1a0.mp4") && c.thumbnail.is_some()
+            Ok(Content::Clip(c)) if c.clip.source().ends_with("9f8e7d6c5b4a39281706f5e4d3c2b1a0.mp4") && c.thumbnail.is_some()
         ));
     }
 
@@ -1820,8 +1926,8 @@ mod tests {
                 .contains("l=100;")
         );
         // the address the card opens leads to the same page
-        let clip = Clip { file: file.into() };
-        let opened = clip.player_page(&PlayerOptions::default(), 7);
+        let clip = Clip(ClipSource::File(file.into()));
+        let opened = clip.player_page(&PlayerOptions::default(), 7, false);
         let path = opened
             .split_once("127.0.0.1:")
             .and_then(|(_, rest)| rest.split_once('/'))

@@ -1314,7 +1314,7 @@ pub fn snooze_message(agent: Uuid) -> Option<NetEvent> {
 /// the real sites; otherwise the demo makes them (`link_preview::demo`).
 pub fn previews_offline() -> bool {
     static NET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    !*NET.get_or_init(|| std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok_and(|v| v == "net"))
+    !*NET.get_or_init(|| std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok_and(|v| v == "net" || v.starts_with("hosted:")))
 }
 
 /// AURORA_DEMO_CONV_PREVIEWS=services: the made-up Nextcloud of the demo's
@@ -1769,6 +1769,16 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             "https://www.youtube.com/watch?v=jNQXAC9IVRw&t=5s",
                         ),
                     ]
+                } else if let Some(provider) = mode.strip_prefix("hosted:") {
+                    let url = match provider {
+                        "streamable" => "https://streamable.com/hn8hq",
+                        "vimeo" => "https://vimeo.com/76979871",
+                        "imgur" => "https://imgur.com/A61SaA1",
+                        "giphy" => "https://giphy.com/gifs/dance-happy-cute-l0HU3vwj7M52g35Be",
+                        "tenor" => "https://tenor.com/view/happy-dance-dan%C3%A7ando-gif-25925999",
+                        _ => return Vec::new(),
+                    };
+                    vec![line(ago(1), name, friend, ChatKind::Im, url)]
                 } else if let Some(only) = mode.strip_prefix("links") {
                     let only = only.trim_start_matches(':');
                     [
