@@ -1813,7 +1813,14 @@ impl Scene {
             if world.ground_height(p).is_some_and(|z| p.z <= z) {
                 return Some(p);
             }
-            t += 1.0;
+            // from 2^24 m on a step of 1 m no longer moves `t` (f32), and
+            // `from` is as far as the drawn face under the cursor: the
+            // window froze there (#5021)
+            let next = t + 1.0;
+            if next <= t {
+                break;
+            }
+            t = next;
         }
         found.then_some(ray.0 + ray.1 * nearest)
     }
@@ -5397,5 +5404,16 @@ pub(crate) mod tests {
             Some(front),
             "hidden faces included"
         );
+    }
+
+    #[test]
+    fn ground_march_behind_a_far_avatar_face_ends() {
+        // #5021: from 2^24 m on, `t + 1.0 == t` in f32, while the avatar
+        // branch's limit (drawn.rs, `(at + 0.1).next_up()`) stays above `t`
+        let (world, scene, _, _) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        for at in [16_777_216.0_f32, 1.0e9, f32::MAX / 2.0] {
+            assert_eq!(scene.point_behind_rigged(&world, ray, at, (at + 0.1).next_up(), None, None), None);
+        }
     }
 }
