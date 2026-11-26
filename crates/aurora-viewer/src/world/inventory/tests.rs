@@ -683,6 +683,45 @@ fn offers_are_bounded_and_include_the_folder_as_the_first_tuple() {
 }
 
 #[test]
+fn an_unworn_transferable_object_can_be_given_after_take_returns_it_to_received_items() {
+    let mut inv = fixture();
+    demo::seed_received(&mut inv, id(2));
+    let inbox = id(8_300_000);
+    let purchase = id(8_300_001);
+    let template = id(8_300_002);
+    let trash = system(&inv, 14).unwrap_or_default();
+    let folder = crate::build::take_folder(&inv, [purchase], trash).expect("Take returns to the purchase folder");
+    let mut taken = inv.items[&template].clone();
+    taken.id = id(8_300_004);
+    taken.parent = folder;
+    taken.next_owner_mask = COPY | MODIFY;
+    let item = taken.id;
+    inv.add_items(vec![taken]);
+
+    let unworn = HashSet::new();
+    assert!(!renameable(&inv, item));
+    assert!(!destination(&inv, purchase));
+    assert!(!mutable(&inv, item), "the receipt stays read-only for edits");
+    assert!(relocatable(&inv, item, &HashSet::new()), "the item can be moved out");
+    assert!(offer(&inv, inbox, &unworn).is_err(), "the system inbox is not offered");
+    assert!(offer(&inv, purchase, &unworn).is_ok(), "an eligible purchase folder can be offered");
+
+    let expected = offer_for_residents(&inv, item, &unworn, 1).expect("can give from the inbox");
+    assert_eq!(expected[0], 6);
+    assert_eq!(&expected[1..], item.as_bytes());
+    assert!(offer_for_residents(&inv, item, &HashSet::from([item]), 1).is_err());
+
+    let record = inv.items.get_mut(&item).expect("taken item");
+    record.owner_mask &= !TRANSFER;
+    assert!(offer_for_residents(&inv, item, &unworn, 1).is_err());
+    assert!(offer(&inv, purchase, &unworn).is_err(), "a folder cannot hide a no-transfer item");
+    let record = inv.items.get_mut(&item).expect("taken item");
+    record.owner_mask |= TRANSFER;
+    record.parent = inv.root;
+    assert_eq!(offer_for_residents(&inv, item, &unworn, 1).unwrap(), expected);
+}
+
+#[test]
 fn a_multi_resident_gift_rechecks_permissions_when_it_is_sent() {
     let mut inv = fixture();
     let worn = HashSet::new();

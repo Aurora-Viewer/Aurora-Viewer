@@ -320,8 +320,8 @@ pub fn restorable(it: &aurora_net::inventory::InvItem, opensim: bool) -> bool {
 pub fn next_owner_editable(it: &aurora_net::inventory::InvItem) -> bool {
     it.owner_mask & TRANSFER != 0 && !matches!(it.inv_type, 2 | 3) && !matches!(it.asset_type, 2 | 3)
 }
-/// Can be edited (renamed, created in, shared…): not in the Library, the
-/// current outfit nor Received Items, which only lets its contents leave.
+/// Can be edited (renamed or created in): not in the Library, the current
+/// outfit nor Received Items, which only lets its contents leave.
 /// The locked folders do not count: they only hold themselves in place
 /// (`movable`).
 pub fn mutable(inv: &Inventory, id: Uuid) -> bool {
@@ -1139,7 +1139,10 @@ pub fn offer(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>) -> Result<Vec<u8>,
         if !seen.insert(id) || seen.len() > 42 {
             return Err(aurora_i18n::tr!("world-inventory-actions-sharing-is-limited-to-42-items-per-folder").into());
         }
-        if !mutable(inv, id) || in_type(inv, id, 14) || worn.contains(&id) {
+        // The inbox is read-only for edits. LLGiveInventory::isInventoryGiveAcceptable
+        // and LLInvFVBridge::canShare allow offering its transferable contents.
+        // The folder check below still excludes the system inbox itself.
+        if !mutable_content(inv, id, None) || in_type(inv, id, 14) || worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-a-protected-trashed-or-worn-item-cannot-be-shared").into());
         }
         if let Some(f) = inv.folders.get(&id) {
