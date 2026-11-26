@@ -904,8 +904,10 @@ pub struct ToolbarUi {
 }
 
 impl ToolbarUi {
+    /// A personal interface was loaded. Like a preset, it leaves the editor
+    /// as it was: the Interfaces block loads one with the editor closed
+    /// (human report, 2026-11-26: it opened the editor).
     pub(crate) fn profile_applied(&mut self, ctx: &egui::Context) {
-        self.open = true;
         self.pending = None;
         self.confirm = None;
         self.preset_request = None;

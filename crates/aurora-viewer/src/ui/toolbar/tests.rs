@@ -3160,3 +3160,22 @@ fn gaps_that_follow_one_another_are_one() {
     );
     assert!(!settings.single_gaps(), "nothing left to merge");
 }
+
+/// A personal interface chosen in the Interfaces block loads like a preset:
+/// the editor stays closed, and an open editor stays open (human report,
+/// 2026-11-26: the editor opened).
+#[test]
+fn a_loaded_personal_interface_leaves_the_editor_as_it_was() {
+    let ctx = egui::Context::default();
+    for open in [false, true] {
+        let mut state = ToolbarUi {
+            open,
+            pending: Some(Edit::Lock),
+            ..Default::default()
+        };
+        state.interface_clicked(&uuid::Uuid::from_u128(7).to_string());
+        state.profile_applied(&ctx);
+        assert_eq!(state.open, open);
+        assert!(state.pending.is_none());
+    }
+}
