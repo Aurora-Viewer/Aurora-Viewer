@@ -441,6 +441,7 @@ impl App {
             }),
             "N2" => Some(self.region_text()),
             "J10" => Some(self.contacts_text()),
+            "N4" => Some(self.world.inventory_loading_report()),
             "L1" => Some(self.cursor_text(renderer)),
             "L2" => Some(self.worn_text()),
             "L3" => Some(warnings_text(20, &AssetIds::diagnostics(&self.world))),

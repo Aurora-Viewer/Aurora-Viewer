@@ -1,7 +1,7 @@
 //! Inventory actions: execute network mutations only after the UI returns.
 
 use super::*;
-use crate::ui::inventory::InvAction;
+use crate::ui::inventory::{InvAction, plays};
 use crate::world::inventory::actions as rules;
 use std::collections::{HashSet, VecDeque};
 use uuid::Uuid;
@@ -428,20 +428,18 @@ impl App {
         }
     }
 
-    /// An animation preview's Play buttons (LLPreviewAnim::play): whatever
-    /// a preview played stops first, then `asset` plays for everyone or
-    /// locally. An object's contents use it without opening the inventory's
-    /// own animation window.
+    /// An animation preview's Play buttons (LLPreviewAnim::play): `asset`
+    /// plays for everyone or locally, or stops, whatever the other previews
+    /// play. An object's contents use it without opening the inventory's own
+    /// animation window.
     pub(super) fn play_preview_animation(&mut self, asset: Uuid, local: bool, start: bool) {
-        if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
-            if was_local || self.demo {
-                self.world.preview_animation(playing, false);
+        // (one that plays already starts over)
+        if let Some(play) = plays::take(&mut self.inventory_ui.plays, asset).filter(|play| !start || !play.over) {
+            if play.local || self.demo {
+                self.world.preview_animation(asset, false);
             }
-            if !was_local {
-                self.send(NetCommand::AgentAnimation {
-                    anim: playing,
-                    start: false,
-                });
+            if !play.local {
+                self.send(NetCommand::AgentAnimation { anim: asset, start: false });
             }
         }
         if start {
@@ -452,7 +450,34 @@ impl App {
             if !local {
                 self.send(NetCommand::AgentAnimation { anim: asset, start: true });
             }
-            self.inventory_ui.playing = Some((asset, local));
+            self.inventory_ui.plays.push(plays::PreviewPlay::new(asset, local));
+        }
+    }
+
+    /// A motion of ours played to its end: its preview's Play buttons come
+    /// back (LLPreviewAnim::draw, cleanup).
+    pub(super) fn preview_animation_finished(&mut self, asset: Uuid) {
+        plays::take(&mut self.inventory_ui.plays, asset);
+        self.world.preview_finished(asset);
+    }
+
+    /// LLPreviewAnim::draw: the Play buttons of a preview come back once its
+    /// animation, seen playing, no longer does (a script or the simulator
+    /// stopped it).
+    pub(super) fn poll_preview_animations(&mut self) {
+        if self.inventory_ui.plays.is_empty() {
+            return;
+        }
+        let motions = self.world.animations.get(&self.world.agent_id).map_or(&[][..], Vec::as_slice);
+        plays::follow(&mut self.inventory_ui.plays, |asset| motions.iter().any(|m| m.id == asset));
+    }
+
+    /// "Stop animations" ends the local previews too. Deliberate difference:
+    /// LLAgent::stopCurrentAnimations only stops what the simulator signals
+    /// (mPlayingAnimations), and leaves a local preview playing.
+    pub(super) fn stop_preview_animations(&mut self) {
+        for play in std::mem::take(&mut self.inventory_ui.plays) {
+            self.world.preview_animation(play.asset, false);
         }
     }
 

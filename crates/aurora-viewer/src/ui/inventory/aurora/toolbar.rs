@@ -255,13 +255,7 @@ fn quick_search(
         field.request_focus();
     }
     if layout == Layout::Wide && st.search.is_empty() && !field.has_focus() {
-        let binding = crate::keybinds::Binding {
-            input: crate::keybinds::Input::Key("KeyF".into()),
-            ctrl: true,
-            shift: false,
-            alt: false,
-        };
-        let caps = widgets::keycap::caps(ui, &binding, p.field);
+        let caps = widgets::keycap::find_caps(ui, p);
         let left = field.rect.right() - 8.0 - widgets::keycap::row_width(&caps);
         widgets::keycap::paint_row(ui, p, &caps, Pos2::new(left, field.rect.center().y), p.field);
     }

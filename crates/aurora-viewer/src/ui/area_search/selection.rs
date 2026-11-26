@@ -3,6 +3,11 @@
 //! A click selects one row, Ctrl adds or removes one, Shift selects the rows
 //! from the last clicked one. A right click keeps a selection of several rows
 //! and otherwise selects its row (FSScrollListCtrl::handleRightMouseDown).
+//! Until the user selects something, the top row is picked for them (human
+//! request, 2026-11-25; the Legacy Viewer's list starts with none): their
+//! first click replaces it, with Ctrl and Shift too, so that a pick is never
+//! mixed into what they chose; once they chose, a row that goes leaves the
+//! selection empty, as in the Legacy Viewer, until another search.
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -11,6 +16,8 @@ pub(crate) struct Selection {
     /// In click order; the menu's single-object entries use the only one.
     pub ids: Vec<Uuid>,
     anchor: Option<Uuid>,
+    /// The user chose what is selected, or that nothing is.
+    chosen: bool,
 }
 
 impl Selection {
@@ -30,8 +37,36 @@ impl Selection {
         }
     }
 
+    /// What is selected may be picked for the user.
+    pub fn automatic(&self) -> bool {
+        !self.chosen
+    }
+
+    /// Select `id` for the user.
+    pub fn pick(&mut self, id: Uuid) {
+        if self.ids != [id] {
+            self.ids = vec![id];
+        }
+        self.anchor = None;
+    }
+
+    /// Nothing selected, and nothing chosen.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// The user chooses: what was picked for them goes.
+    fn choose(&mut self) {
+        if !self.chosen {
+            self.ids.clear();
+            self.anchor = None;
+            self.chosen = true;
+        }
+    }
+
     /// A click on row `id`; `order` is the visible rows, top to bottom.
     pub fn click(&mut self, id: Uuid, ctrl: bool, shift: bool, order: impl Fn() -> Vec<Uuid>) {
+        self.choose();
         if shift && let Some(anchor) = self.anchor {
             let order = order();
             if let (Some(a), Some(b)) = (order.iter().position(|i| *i == anchor), order.iter().position(|i| *i == id)) {
@@ -61,6 +96,7 @@ impl Selection {
 
     /// A right click on row `id`.
     pub fn context_click(&mut self, id: Uuid) {
+        self.choose();
         if self.ids.len() < 2 {
             self.ids = vec![id];
             self.anchor = Some(id);
@@ -68,6 +104,7 @@ impl Selection {
     }
 
     pub fn select_all(&mut self, ids: Vec<Uuid>) {
+        self.chosen = true;
         self.anchor = ids.first().copied();
         self.ids = ids;
     }
@@ -75,9 +112,11 @@ impl Selection {
     pub fn clear(&mut self) {
         self.ids.clear();
         self.anchor = None;
+        self.chosen = true;
     }
 
-    /// Rows filtered out or gone cannot be acted on.
+    /// Rows filtered out or gone cannot be acted on. What the user chose
+    /// stays theirs: the next object is never put in its place.
     pub fn retain(&mut self, visible: &HashSet<Uuid>) {
         self.ids.retain(|id| visible.contains(id));
         if self.anchor.is_some_and(|a| !visible.contains(&a)) {
