@@ -26,6 +26,19 @@ Mac profile also starts from the Legacy Viewer's Mac Mid-High values (no
 shadows or ambient occlusion, FXAA, manual reflection probes), shown as
 "Mid-High (recommended for this Mac)" under the quality levels.
 
+## Fonts
+
+Aurora draws the interface with its embedded fonts and looks for every other
+character in the fonts installed on the Mac: `/System/Library/Fonts` (its
+`Supplemental` folder included), `/Library/Fonts`, `/Network/Library/Fonts`
+and your own `~/Library/Fonts` — where a font installed with a double click
+lands. A character none of those can draw is looked for on demand in every
+installed font, so a display name, group title or chat message that the Legacy Viewer
+shows is shown here too. macOS ships fonts for most scripts (including
+Canadian syllabics and Cuneiform); if a script still shows a square, install
+a font that covers it (for example Noto Sans for that script) in
+`~/Library/Fonts` and restart the viewer.
+
 ## 1. Download and install
 
 1. On the [latest release](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest),

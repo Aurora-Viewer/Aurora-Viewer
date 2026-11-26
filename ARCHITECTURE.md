@@ -2582,6 +2582,16 @@ saved window state before the theme and fonts so the scale survives reopening.
 Inline emoji images follow the same scale; menus and name plates allow scaled
 row heights.
 
+`ui/fonts/fallback.rs` installs the curated system faces for the usual scripts
+up front, and `ui/fonts/provider.rs` completes them on demand: a background
+index records the Unicode scripts of every installed face (the macOS font
+directories include `~/Library/Fonts`, `/Network/Library/Fonts` and the
+downloadable `AssetsV2` fonts), and egui's `FontProvider` returns the first
+face with an outline for a character none of the configured faces draws. The
+file is memory-mapped, aligned to the primary font's baseline and scaled like
+the faces installed at startup; faces are appended to the family, so existing
+text does not change.
+
 `ui/floating_text.rs` shares llSetText layout between world objects and HUD
 attachments. It anchors the last type baseline using LLHUDText's padding
 and hud_render_text's draw offset, rather than a galley's bottom. Cached

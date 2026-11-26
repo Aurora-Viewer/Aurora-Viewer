@@ -92,7 +92,7 @@ pub const CANDIDATES: &[Candidate] = &[
     // the upstream file Debian and Fedora ship too). Every face has every
     // character: without an index each line would find face 0 again, the
     // Japanese one, drop it as already taken and never reach the next file.
-    candidate("Japanese", 'あ', "meiryo.ttc#2|YuGothM.ttc#1|msgothic.ttc#1|meiryo.ttc|YuGothR.ttc|YuGothM.ttc|msgothic.ttc|ヒラギノ角ゴシック W3.ttc|NotoSansCJK-Regular.ttc#0|NotoSansCJKjp-Regular.otf"),
+    candidate("Japanese", 'あ', "meiryo.ttc#2|YuGothM.ttc#1|msgothic.ttc#1|meiryo.ttc|YuGothR.ttc|YuGothM.ttc|msgothic.ttc|ヒラギノ角ゴシック W3.ttc|\u{30d2}\u{30e9}\u{30ad}\u{3099}\u{30ce}\u{89d2}\u{30b3}\u{3099}\u{30b7}\u{30c3}\u{30af} W3.ttc|NotoSansCJK-Regular.ttc#0|NotoSansCJKjp-Regular.otf"),
     candidate("Korean", '한', "malgun.ttf|gulim.ttc|AppleSDGothicNeo.ttc|NotoSansCJK-Regular.ttc#1|NotoSansCJKkr-Regular.otf"),
     candidate("Chinese (simplified)", '们', "msyh.ttc|simsun.ttc|simhei.ttf|PingFang.ttc|NotoSansCJK-Regular.ttc#2|NotoSansCJKsc-Regular.otf"),
     candidate("Chinese (traditional)", '們', "msjh.ttc|mingliub.ttc|PingFang.ttc|NotoSansCJK-Regular.ttc#3|NotoSansCJKtc-Regular.otf"),
@@ -252,7 +252,7 @@ pub fn wait() -> &'static [SystemFace] {
 }
 
 /// `AURORA_FONT_FALLBACK=0`: embedded fonts only (comparisons, diagnostics).
-fn enabled() -> bool {
+pub(super) fn enabled() -> bool {
     std::env::var("AURORA_FONT_FALLBACK").map_or(true, |v| v.trim() != "0")
 }
 
@@ -270,7 +270,7 @@ fn scan() -> Vec<SystemFace> {
     let chosen = select(CANDIDATES, |spec, probe| {
         let (file, face) = face_spec(spec);
         if !maps.contains_key(file) {
-            maps.insert(file, map_file(files.get(&file.to_lowercase())?)?);
+            maps.insert(file, map_file(lookup_file(&files, file, face.is_some())?)?);
         }
         face_with(maps.get(file)?, probe, face)
     });
@@ -342,9 +342,44 @@ fn select(candidates: &[Candidate], mut probe: impl FnMut(&'static str, char) ->
     out
 }
 
+/// A file name without its extension.
+fn font_stem(name: &str) -> &str {
+    name.rsplit_once('.').map_or(name, |(stem, _)| stem)
+}
+
+/// The installed file a candidate name asks for: its exact name, whatever
+/// its case; else a file of the same stem with another extension, since
+/// macOS ships `NotoSansCanadianAboriginal-Regular.otf` for the `.ttf`
+/// name, Javanese as `.otf`, and Kannada, Oriya or Myanmar as `.ttc`. A
+/// candidate that asks for a face of a collection (`#n`) keeps its name.
+fn lookup_file<'a>(files: &'a HashMap<String, PathBuf>, name: &str, face: bool) -> Option<&'a PathBuf> {
+    let lower = name.to_lowercase();
+    if let Some(path) = files.get(&lower) {
+        return Some(path);
+    }
+    if face {
+        return None;
+    }
+    let wanted = font_stem(&lower);
+    files
+        .iter()
+        .filter(|(file, _)| font_stem(file) == wanted)
+        .min_by_key(|(file, _)| {
+            let extension = if file.ends_with(".ttf") {
+                0
+            } else if file.ends_with(".ttc") {
+                1
+            } else {
+                2
+            };
+            (extension, *file)
+        })
+        .map(|(_, path)| path)
+}
+
 /// Font files of the directories (and their subdirectories), by lowercase
 /// file name; the first directory wins.
-fn index_files(dirs: &[PathBuf]) -> HashMap<String, PathBuf> {
+pub(super) fn index_files(dirs: &[PathBuf]) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
     let mut stack: Vec<PathBuf> = dirs.iter().rev().cloned().collect();
     let mut visited = 0;
@@ -381,7 +416,7 @@ fn index_files(dirs: &[PathBuf]) -> HashMap<String, PathBuf> {
     out
 }
 
-fn map_file(path: &Path) -> Option<memmap2::Mmap> {
+pub(super) fn map_file(path: &Path) -> Option<memmap2::Mmap> {
     let file = std::fs::File::open(path).ok()?;
     // SAFETY: the font file is opened read-only and never written by the
     // viewer. Windows refuses to truncate or delete a mapped file; elsewhere
@@ -408,7 +443,7 @@ fn face_with(data: &[u8], c: char, only: Option<u32>) -> Option<u32> {
 
 /// A glyph with an outline: egui draws outlines only, so a face that has
 /// just a bitmap or a color layer for `c` would show nothing.
-fn draws(face: &ttf_parser::Face<'_>, c: char) -> bool {
+pub(super) fn draws(face: &ttf_parser::Face<'_>, c: char) -> bool {
     struct Sink;
     impl ttf_parser::OutlineBuilder for Sink {
         fn move_to(&mut self, _: f32, _: f32) {}
@@ -441,6 +476,30 @@ mod tests {
             chosen.iter().map(|c| (c.0, c.1)).collect::<Vec<_>>(),
             [("one.ttf", 0), ("two.ttf", 0)]
         );
+    }
+
+    #[test]
+    fn a_candidate_finds_the_same_file_with_another_extension() {
+        let files = HashMap::from([
+            (
+                "notosanscanadianaboriginal-regular.otf".to_owned(),
+                PathBuf::from("/System/NotoSansCanadianAboriginal-Regular.otf"),
+            ),
+            (
+                "notosansmyanmar-regular.ttc".to_owned(),
+                PathBuf::from("/System/NotoSansMyanmar-Regular.ttc"),
+            ),
+        ]);
+        assert_eq!(
+            lookup_file(&files, "NotoSansCanadianAboriginal-Regular.ttf", false),
+            Some(&PathBuf::from("/System/NotoSansCanadianAboriginal-Regular.otf"))
+        );
+        assert_eq!(
+            lookup_file(&files, "NotoSansMyanmar-Regular.ttf", false),
+            Some(&PathBuf::from("/System/NotoSansMyanmar-Regular.ttc"))
+        );
+        // a candidate that asks for a face of a collection keeps its exact name
+        assert_eq!(lookup_file(&files, "NotoSansMyanmar-Regular.ttf", true), None);
     }
 
     #[test]

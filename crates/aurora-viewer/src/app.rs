@@ -1836,6 +1836,7 @@ impl App {
     pub fn new() -> anyhow::Result<Box<App>> {
         // found on a background thread while the rest starts
         ui::fonts::fallback::start();
+        ui::fonts::provider::start();
         // the regional 12 / 24 hours and time zone of the bars' clock, read once
         ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
@@ -13515,6 +13516,7 @@ impl App {
         if self.system_fonts_pending && ui::fonts::fallback::ready().is_some() {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
         }
+        ui::fonts::provider::install(&self.egui_ctx);
         ui::fonts::preview::release_unused(&self.egui_ctx);
         self.outside_frame_start(event_loop, &gfx.window, &mut gfx.renderer);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);

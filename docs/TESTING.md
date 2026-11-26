@@ -9000,9 +9000,10 @@ failure. Grid validation and any paid upload are performed by the human.
   Armenian (the title "ღAurora Friendღ" of issue #127), mathematical
   letters (bold, script, fraktur, double-struck), symbols and
   enclosed characters, Cyrillic and Greek, Japanese / Korean / Chinese, Arabic
-  and Hebrew, other scripts (Canadian syllabics, Cherokee, Devanagari,
-  Thai, Tamil, Tibetan…), emojis. `2`: same messages in reverse
-  order (the default chat window shows the last four).
+  and Hebrew, other scripts (Canadian syllabics and `ᐰ`, Cherokee,
+  Cuneiform `𒀭`, Sinhala, Myanmar, Javanese, Devanagari, Thai, Tamil,
+  Tibetan…), emojis. `2`: same messages in reverse order (the default chat
+  window shows the last four).
   What to see: no square in the labels, the floating text,
   the chat and its list; all the characters of a line sitting on the same
   baseline. One name is small capitals (`ᴄᴅᴇꜰᴊᴋᴏᴘꜱᴜᴠᴡᴢ` and `ᴥ`); the
@@ -9014,10 +9015,14 @@ failure. Grid validation and any paid upload are performed by the human.
   also lacks: Georgian, CJK, Arabic, the rare scripts; the small capitals
   stay, because that Noto face is now always in the family). Visible limits: flags,
   skin tones and ZWJ sequences not composed; emojis
-  monochrome outside the chat. On a system without the expected fonts
-  (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
-  remain for the missing scripts; the log lists the fonts
-  found (`system fallback fonts: …`).
+  monochrome outside the chat. On a system without the expected fonts,
+  the squares remain: the configured files are listed by
+  `ui/fonts/fallback.rs` (verified on Windows 11), and a character none of
+  them draws is looked for on demand in every installed font
+  (`ui/fonts/provider.rs`, `~/Library/Fonts` included on macOS). Cuneiform
+  needs an installed Cuneiform font: macOS ships Noto Sans Cuneiform,
+  Windows does not. The log lists the faces found (`system fallback fonts: …`,
+  `system fallback on demand …`).
 - **`AURORA_DEMO_GLYPHS=rtl`**: the same scene in right-to-left text
   (`ui/bidi.rs`): an Arabic sentence with an emoji, a Hebrew one, an English
   sentence with Arabic in it, Arabic with times, numbers and brackets,
@@ -13610,7 +13615,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEBUG_GLOW=1` | Glow diagnostics |
 | `AURORA_GLOW_SKIP=<mask>` | Removes a family of faces from the glow |
 | `AURORA_MEDIA_DEBUG=1` | Media diagnostics |
-| `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
+| `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts, configured and on demand |
 | `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
 | `AURORA_TEXT_SIZE=<size>` | Text size for this launch, without changing the Preferences |
 | `AURORA_CHAT_TEXT_SIZE=<size>` | Chat text size for this launch, without changing the Preferences |
@@ -14815,9 +14820,11 @@ What the inventory must show with these scenarios:
   occlusion, as a face lying on a surface does, see `AURORA_BLEND_AO`.)
 - **`AURORA_FONT_FALLBACK=0`**: uses only the embedded fonts, as before the
   system fallback fonts were added: the characters they lack (Georgian,
-  CJK, Arabic, mathematical letters…) become squares again. To compare with
+  CJK, Arabic, mathematical letters…) become squares again. Also turns off
+  the on-demand font found in every installed font, so a square stays one
+  even when `~/Library/Fonts` has a face for it. To compare with
   `AURORA_DEMO_GLYPHS=1` or to isolate a font problem. The log says
-  `system fallback fonts: off`.
+  `system fallback fonts: off` and `system fallback index: off`.
 - **`AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>`**: the interface
   font (`Inter`, `Noto Sans`, `Roboto`, `OpenDyslexic` or
   `system:<path of a .ttf>`) and
