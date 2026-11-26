@@ -38,7 +38,7 @@ pub(super) fn claim(ctx: &egui::Context, layer: LayerId, owner: Id) {
 /// pointer claim from the click still belongs to the previous tab that frame.
 pub(super) fn activate(ctx: &egui::Context, owner: Id) {
     let keyboard = ctx.memory(|memory| memory.focused());
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         let state = data.get_temp_mut_or_default::<State>(state_id());
         state.active = Some(owner);
