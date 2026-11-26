@@ -388,7 +388,7 @@ fn roomy_row(
             let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width());
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
-                if let Some((sender, action)) = super::emote_parts(env.world, line) {
+                if let Some(action) = super::emote_action(line) {
                     let action = super::previews::text(env.previews.as_deref(), line, action, ui.available_width());
                     super::emote_text_marked(
                         ui,
@@ -397,8 +397,12 @@ fn roomy_row(
                         env.world,
                         line.wording(env.names),
                         env.want_names,
-                        sender,
-                        super::shown_name(line, name),
+                        super::EmoteName {
+                            name: super::shown_name(line, name),
+                            line,
+                            names: env.names,
+                            menu: env.menu,
+                        },
                         &action,
                         size,
                         color,
@@ -474,7 +478,7 @@ fn compact_row(
             ui.add_space(1.0);
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
-                if let Some((sender, action)) = super::emote_parts(env.world, line) {
+                if let Some(action) = super::emote_action(line) {
                     let action = super::previews::text(env.previews.as_deref(), line, action, ui.available_width() - RIGHT);
                     super::emote_text_marked(
                         ui,
@@ -483,8 +487,12 @@ fn compact_row(
                         env.world,
                         line.wording(env.names),
                         env.want_names,
-                        sender,
-                        super::shown_name(line, name),
+                        super::EmoteName {
+                            name: super::shown_name(line, name),
+                            line,
+                            names: env.names,
+                            menu: env.menu,
+                        },
                         &action,
                         size,
                         color,

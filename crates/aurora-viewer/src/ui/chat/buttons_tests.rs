@@ -3167,3 +3167,49 @@ fn an_emotes_sender_opens_their_profile_in_every_style() {
         );
     }
 }
+
+/// The emote's sender leads where its header's name does and no further.
+/// In the nearby chat the profile is asked for as the world names people,
+/// the scope `@shownames` rules (`ProfileUi::open_in` refuses a resident it
+/// hides, as for the header's name); an object's emote asks for no profile.
+#[test]
+fn an_emotes_sender_follows_its_headers_link_in_the_nearby_chat() {
+    const THING: Uuid = Uuid::from_u128(0x0b1ec7);
+    for style in ALL {
+        for (from, source, kind) in [
+            ("Jane", JANE, ChatKind::Local(aurora_net::ChatType::Normal)),
+            ("Worn Thing", THING, ChatKind::Object(aurora_net::ChatType::Normal)),
+        ] {
+            let mut h = H::new(style);
+            h.world.chat.push_back(line(from, source, kind, "/me waves at everyone"));
+            h.open(None);
+            h.settle();
+            let body = h
+                .texts
+                .iter()
+                .rfind(|t| t.rect.left() > 150.0 && t.source.ends_with("waves at everyone"))
+                .unwrap_or_else(|| panic!("{style:?} {from}: the emote's action is painted"))
+                .rect;
+            // the name before the action, on its line (the action's rows
+            // start at the line's left, as the name does)
+            let name = h
+                .texts
+                .iter()
+                .filter(|t| t.source == from && (t.rect.center().y - body.center().y).abs() <= 3.0 && t.rect.left() <= body.left())
+                .max_by(|a, b| a.rect.left().total_cmp(&b.rect.left()))
+                .unwrap_or_else(|| panic!("{style:?} {from}: the emote's sender sits on its line"))
+                .rect;
+            h.at(name.center());
+            let asked = crate::ui::profile::take_open_request_in(&h.frames.ctx);
+            if source == JANE {
+                assert_eq!(
+                    asked,
+                    Some((crate::world::names::NameScope::World, JANE)),
+                    "{style:?}: the nearby chat asks as the world names people"
+                );
+            } else {
+                assert_eq!(asked, None, "{style:?}: an object has no profile");
+            }
+        }
+    }
+}

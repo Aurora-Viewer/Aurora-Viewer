@@ -315,7 +315,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 if !visible.is_empty() {
-                    if let Some((sender, action)) = super::emote_parts(world, line) {
+                    if let Some(action) = super::emote_action(line) {
                         let action = super::previews::text(env.previews.as_deref(), line, action, width);
                         super::emote_text_marked(
                             ui,
@@ -324,8 +324,12 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                             world,
                             line.wording(env.names),
                             env.want_names,
-                            sender,
-                            &name,
+                            super::EmoteName {
+                                name: &name,
+                                line,
+                                names: env.names,
+                                menu: env.menu,
+                            },
                             &action,
                             size,
                             text_color,
