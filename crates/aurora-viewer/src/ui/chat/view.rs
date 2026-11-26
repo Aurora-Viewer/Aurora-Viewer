@@ -390,6 +390,31 @@ fn estimate(line: &ChatLine, look: Look, width: f32) -> f32 {
     rows * 18.0 + if look.header { 36.0 } else { 0.0 } + if look.marker.is_some() { 22.0 } else { 0.0 } + GAP
 }
 
+/// The viewport's top on screen. The scroll area rounds its content's
+/// origin (`rect`, egui's `content_max_rect`) to the pixel, not its offset:
+/// `rect.top() + viewport.top()` is up to half a pixel off the area's top,
+/// by an amount that changes with every fractional offset. Rows placed from
+/// it bobbed by a pixel on each frame that measured rows out of sight (a
+/// conversation just opened: the human's report of 2026-11-17). The area
+/// clips its content to its exact top; that one is used when it is the
+/// same place (a window pushed past the screen's top clips higher).
+fn exact_top(ui: &egui::Ui, rect: egui::Rect, viewport: egui::Rect) -> f32 {
+    let rounded = rect.top() + viewport.top();
+    let clip = ui.clip_rect().top();
+    if (clip - rounded).abs() <= 0.5 / ui.pixels_per_point() + 0.01 {
+        clip
+    } else {
+        rounded
+    }
+}
+
+/// `y` on the nearest physical pixel: a row stands on whole pixels, like
+/// the scroll area's own content, and on the same one as long as its exact
+/// place does not move.
+fn snap(y: f32, pixels_per_point: f32) -> f32 {
+    (y * pixels_per_point).round() / pixels_per_point
+}
+
 impl View {
     /// Rows matching the find text (indices for `row` and `scroll_to`).
     pub fn hits(&self) -> &[usize] {
@@ -786,16 +811,19 @@ impl View {
                 self.left_end.get_or_insert(first + self.len as u64);
             }
         }
+        // the content's top on screen, unrounded: rows are placed from it
+        let origin = exact_top(ui, rect, viewport) - viewport.top();
         let (base, view_top) = if anchored {
             // the viewport's top once at the end, where the scroll area
             // will be at the next frame
             let top = height - viewport.height();
             self.anchored_top = Some(top);
-            (rect.top() + lift + viewport.top() - top, self.total - viewport.height())
+            (origin + lift + viewport.top() - top, self.total - viewport.height())
         } else {
             self.anchored_top = None;
-            (rect.top() + lift - correction, viewport.top() + correction)
+            (origin + lift - correction, viewport.top() + correction)
         };
+        let ppp = ui.pixels_per_point();
         let view_bottom = view_top + viewport.height();
         if let Some(r) = target.and_then(|t| self.rows.get(t)) {
             // at once: an animated scroll would run over the corrections of
@@ -814,9 +842,10 @@ impl View {
         positions.clear();
         while i < self.rows.len() && self.rows[i].y < view_bottom {
             let row = self.rows[i];
-            let row_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), base + row.y), egui::vec2(width, row.h));
+            let top = base + row.y;
+            let row_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), snap(top, ppp)), egui::vec2(width, row.h));
             if real_pass && row_rect.intersects(ui.clip_rect()) {
-                positions.push((first + row.line as u64, row_rect.top() - rect.top() - viewport.top()));
+                positions.push((first + row.line as u64, top - origin - viewport.top()));
             }
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
@@ -1266,6 +1295,67 @@ mod tests {
         }
         let first = bottoms[1];
         assert!(bottoms[1..].iter().all(|b| (b - first).abs() < 0.5), "{bottoms:?}");
+    }
+
+    /// A conversation just opened measures its rows out of sight a few per
+    /// frame, each a fraction of a point off its estimate, and the scroll
+    /// area follows the end by as much: the messages in sight must stay on
+    /// the same pixels, at the end as away from it. They bobbed by one pixel
+    /// for about a second, the scroll area rounding its content's origin at
+    /// each new fractional offset (the human's report of 2026-11-17).
+    #[test]
+    fn rows_measured_out_of_sight_leave_those_in_sight_on_their_pixels() {
+        measure_rows_per_frame(Some(2));
+        let lines: VecDeque<ChatLine> = (0..120).map(|i| line("Jane", &format!("line {i}"), i * 600)).collect();
+        let clock = LineClock::default();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        // (`scroll_to`: away from the end, row 60 brought in sight)
+        for scroll_to in [None, Some(60)] {
+            let mut view = View::default();
+            if let Some(row) = scroll_to {
+                view.scroll_to(row);
+            }
+            let mut tops = Vec::new();
+            for _ in 0..100 {
+                let mut watched = None;
+                frames.run(Vec::new(), |ui| {
+                    ui.set_max_width(400.0);
+                    crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("measure", scroll_to))
+                        .stick_to_bottom(true)
+                        .animated(false)
+                        .auto_shrink([false, false])
+                        .max_height(300.0)
+                        .min_scrolled_height(300.0)
+                        .show_viewport(ui, |ui, viewport| {
+                            let source = Source {
+                                lines: &lines,
+                                clock,
+                                filter: "",
+                                find: "",
+                                layout: Layout::Classic,
+                                first_unread: None,
+                                blocked: Blocked::default(),
+                            };
+                            view.sync(&source, 400.0);
+                            view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+                                // a text line's height, between two pixels
+                                let h = 20.0 + (row.line % 7) as f32 * 0.13;
+                                let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.max_rect().width(), h), egui::Sense::hover());
+                                if painted && row.line == scroll_to.unwrap_or(119) {
+                                    watched = Some(rect.top());
+                                }
+                            });
+                        });
+                });
+                tops.push(watched);
+            }
+            assert!(view.unmeasured == 0, "every row measured within the frames");
+            // (from the second frame: the first brings the row in sight)
+            let settled = tops[2];
+            assert!(settled.is_some());
+            assert!(tops[2..].iter().all(|t| *t == settled), "{scroll_to:?}: {tops:?}");
+        }
+        measure_rows_per_frame(None);
     }
 
     /// Away from the end, the view says how far it is and counts the lines
