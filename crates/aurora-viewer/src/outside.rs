@@ -357,6 +357,13 @@ fn publish_front(ctx: &egui::Context, front: Option<egui::Id>) {
     });
 }
 
+/// The window outside `front` takes the system's focus, as the host
+/// says at a frame.
+#[cfg(test)]
+pub(crate) fn focus_for_test(ctx: &egui::Context, front: Option<egui::Id>) {
+    publish_front(ctx, front);
+}
+
 /// Asks the system to bring the window outside of `window` in front, at
 /// the next frame: what brings a window inside to the top (a click on a
 /// notification, its toolbar button). The system may only signal it where

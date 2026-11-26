@@ -12,7 +12,10 @@ impl App {
     pub(super) fn open_history(&mut self, resident: Option<uuid::Uuid>, title: String, file: Option<std::path::PathBuf>) {
         match resident {
             Some(id) if self.world.open_direct_preview(id) => self.history_ui.show_stitched(title, id, file),
-            _ => self.history_ui.show_file(title, file),
+            _ => {
+                let peer = resident.and_then(|id| self.world.private_peer(id));
+                self.history_ui.show_file(title, peer, file)
+            }
         }
     }
 

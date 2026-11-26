@@ -55,6 +55,7 @@ pub use markdown::View as NotecardView;
 mod move_to;
 pub use document::document_demo_events;
 pub(crate) mod permissions;
+pub mod plays;
 mod progress;
 pub(crate) mod properties;
 mod received;
@@ -622,8 +623,9 @@ pub const DUAL_ICON: &str = "columns-2-filled";
 /// The size the window takes when it turns to two panes: twice its width
 /// (each pane keeps the width of the single one), at least `DUAL_SIZE`;
 /// back to one pane, half of it. A size the user sets afterwards stays.
+/// A minimized window's is the size it expands to, not its title bar's.
 pub fn resize_for_dual(ctx: &egui::Context, dual: bool) {
-    let size = super::widgets::floater_size(ctx, "inventory").unwrap_or(DEFAULT_SIZE);
+    let size = super::widgets::floater_expanded_size(ctx, "inventory").unwrap_or(DEFAULT_SIZE);
     let size = if dual {
         Vec2::new((size.x * 2.0).max(DUAL_SIZE.x), size.y.max(DUAL_SIZE.y))
     } else {
@@ -904,7 +906,11 @@ pub struct InventoryUi {
     pub wanted_hover_images: HashSet<Uuid>,
     /// Residents whose profile picture the give confirmation wants.
     pub wanted_pics: HashSet<Uuid>,
-    pub playing: Option<(Uuid, bool)>,
+    /// The animations the previews' Play buttons started (the main state's
+    /// list, mirrored to every pane and window).
+    pub plays: Vec<plays::PreviewPlay>,
+    /// The animation the open preview shows, to stop if its item goes.
+    animation_asset: Option<Uuid>,
     pub animation_stats: Option<(Uuid, AnimationStats)>,
     pub animation_description: Option<(Uuid, String)>,
     pub animation_details: bool,
@@ -3311,7 +3317,7 @@ pub fn show(
         dual.thumbnail_notice.clone_from(&st.thumbnail_notice);
         dual.merchant = st.merchant;
         dual.marketplace_commands.clone_from(&st.marketplace_commands);
-        dual.playing = st.playing;
+        dual.plays.clone_from(&st.plays);
         clipboard::prepare(dual);
         context_catalog::process_deferred(inv, dual, prefs, &facts, &mut dual_actions);
         bulk_permissions::show(ctx, p, inv, dual, world.agent_id, &mut dual_actions);
@@ -3587,7 +3593,7 @@ pub fn show(
         w.state.thumbnail_notice.clone_from(&st.thumbnail_notice);
         w.state.merchant = st.merchant;
         w.state.marketplace_commands.clone_from(&st.marketplace_commands);
-        w.state.playing = st.playing;
+        w.state.plays.clone_from(&st.plays);
         let before = (w.state.clipboard.clone(), w.state.cut);
         let window_id = floater_id(w.id);
         let floater = if w.additional {
@@ -7582,5 +7588,51 @@ mod tests {
         assert!(frame(pos, vec![]).is_none(), "no duplicate drop next frame");
         egui::DragAndDrop::set_payload(&ctx, InvDrag(id));
         assert!(frame(pos, vec![key(egui::Key::Escape)]).is_none());
+    }
+}
+
+#[cfg(test)]
+mod dual_size_tests {
+    use super::*;
+    use crate::ui::widgets;
+
+    /// The dual-panel button on a minimized Inventory expands it at twice
+    /// the width it had expanded, and back to one pane at that width and
+    /// height again, not from its title bar's size.
+    #[test]
+    fn a_minimized_inventory_turns_dual_from_its_expanded_size() {
+        let mut frames = widgets::elide_tests::Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let ctx = frames.ctx.clone();
+        let mut open = true;
+        let draw = |frames: &mut widgets::elide_tests::Frames, open: &mut bool| {
+            frames.run(Vec::new(), |ui| {
+                widgets::Floater::new("inventory", "Inventory", egui::pos2(10.0, 10.0), Vec2::new(400.0, 500.0))
+                    .silent()
+                    .show(ui.ctx(), &p, open, |ui| {
+                        ui.label("body");
+                    });
+            });
+        };
+        draw(&mut frames, &mut open);
+        draw(&mut frames, &mut open);
+        let single = widgets::floater_size(&ctx, "inventory").expect("drawn");
+        for dual in [true, false] {
+            widgets::minimize_floater(&ctx, "inventory");
+            draw(&mut frames, &mut open);
+            assert!(widgets::floater_minimized(&ctx, "inventory"));
+            widgets::open_floater(&ctx, "inventory", &mut open);
+            resize_for_dual(&ctx, dual);
+            draw(&mut frames, &mut open);
+            draw(&mut frames, &mut open);
+            assert!(!widgets::floater_minimized(&ctx, "inventory"));
+            let size = widgets::floater_size(&ctx, "inventory").expect("drawn");
+            let want = if dual {
+                Vec2::new((single.x * 2.0).max(DUAL_SIZE.x), single.y.max(DUAL_SIZE.y))
+            } else {
+                Vec2::new((single.x * 2.0).max(DUAL_SIZE.x) * 0.5, single.y.max(DUAL_SIZE.y))
+            };
+            assert!((size - want).length() < 1.0, "dual {dual}: {size:?}, want {want:?}");
+        }
     }
 }

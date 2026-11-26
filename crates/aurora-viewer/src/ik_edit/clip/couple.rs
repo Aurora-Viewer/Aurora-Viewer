@@ -17,7 +17,7 @@ pub(in crate::ik_edit) struct Person {
     document: Option<Arc<Document>>,
     undo: Vec<Arc<Document>>,
     redo: Vec<Arc<Document>>,
-    selected_keys: BTreeSet<(usize, u32)>,
+    selected_keys: BTreeSet<document::KeyPick>,
     /// Current for `document` (switching waits for it).
     preview: Option<Preview>,
     modified: HashSet<usize>,
@@ -92,13 +92,15 @@ pub(super) fn lanes_of(document: &Document) -> Vec<TimelineTrack> {
         .tracks
         .iter()
         .map(|track| {
-            let mut keys: Vec<_> = track
-                .motion
-                .rot_keys
-                .iter()
-                .map(|key| (key.time * fps).round() as u32)
-                .chain(track.motion.pos_keys.iter().map(|key| (key.time * fps).round() as u32))
-                .collect();
+            let frames = |times: &mut dyn Iterator<Item = f32>| {
+                let mut frames: Vec<u32> = times.map(|time| (time * fps).round() as u32).collect();
+                frames.sort_unstable();
+                frames.dedup();
+                frames
+            };
+            let rotation = frames(&mut track.motion.rot_keys.iter().map(|key| key.time));
+            let location = frames(&mut track.motion.pos_keys.iter().map(|key| key.time));
+            let mut keys: Vec<u32> = rotation.iter().chain(&location).copied().collect();
             keys.sort_unstable();
             keys.dedup();
             TimelineTrack {
@@ -107,6 +109,8 @@ pub(super) fn lanes_of(document: &Document) -> Vec<TimelineTrack> {
                 enabled: track.enabled,
                 authored: track.authored,
                 keys,
+                rotation,
+                location,
             }
         })
         .collect()
@@ -747,7 +751,7 @@ mod tests {
             mode: Mode::Direct,
         }];
         editor.selected = Some(elbow);
-        editor.clip.selected_keys.insert((elbow, 0));
+        editor.clip.selected_keys.insert((elbow, document::Channel::Both, 0));
         editor.clip.undo.push(editor.clip.document.clone().expect("A"));
 
         editor.switch_person();
@@ -770,7 +774,7 @@ mod tests {
         assert_eq!(editor.clip.document.as_ref().map(|d| d.name.as_str()), Some("Hug"));
         assert_eq!(editor.goals.len(), 1);
         assert_eq!(editor.selected, Some(elbow));
-        assert!(editor.clip.selected_keys.contains(&(elbow, 0)));
+        assert!(editor.clip.selected_keys.contains(&(elbow, document::Channel::Both, 0)));
         assert_eq!(editor.clip.undo.len(), 1);
     }
 

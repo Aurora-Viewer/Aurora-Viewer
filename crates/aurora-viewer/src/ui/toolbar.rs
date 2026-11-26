@@ -499,7 +499,8 @@ impl ToolbarUi {
                 menu::separator(ui, p);
             }
             if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-edit")) {
-                self.open = true;
+                // shown again, a minimized window expands
+                super::widgets::open_floater(ui.ctx(), EDITOR_WINDOW, &mut self.open);
             }
             if button.is_some_and(|b| b.command == "speak")
                 && menu::item(ui, p, "microphone-filled", aurora_i18n::tr!("ui-bars-microphone-options"))
@@ -759,6 +760,7 @@ fn sizing_rows() -> [(Sizing, &'static str, &'static str); 3] {
     ]
 }
 
+pub(crate) use editor::WINDOW as EDITOR_WINDOW;
 pub use editor::{demo_events, demo_settings};
 
 #[cfg(test)]
