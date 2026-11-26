@@ -108,7 +108,7 @@ fn each_service_s_page_links_are_recognized() {
     for url in ["https://prnt.sc/demo42", "https://prntscr.com/Demo42"] {
         assert_eq!(step(url), Some(Step::Head("https://prnt.sc/demo42".into())), "{url}");
     }
-    let feed = Some(Step::Feed("https://www.reddit.com/comments/demo01/.rss?limit=1".into()));
+    let expected_feed = "https://www.reddit.com/comments/demo01/.rss?limit=1";
     for url in [
         "https://www.reddit.com/r/AuroraDemo/comments/demo01/a_new_build/",
         "https://old.reddit.com/r/AuroraDemo/comments/demo01/a_new_build/?utm_source=share",
@@ -117,7 +117,20 @@ fn each_service_s_page_links_are_recognized() {
         "https://reddit.com/comments/demo01",
         "https://redd.it/demo01",
     ] {
-        assert_eq!(step(url), feed, "{url}");
+        let path = Url::parse(url).unwrap();
+        let path = if path.host_str() == Some("redd.it") {
+            "/comments/demo01/"
+        } else {
+            path.path()
+        };
+        assert_eq!(
+            step(url),
+            Some(Step::Feed {
+                feed: expected_feed.into(),
+                page: format!("https://www.reddit.com{path}")
+            }),
+            "{url}",
+        );
     }
     // Reddit's picture viewer names its picture: no request
     assert_eq!(
