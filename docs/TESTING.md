@@ -3933,7 +3933,14 @@ grid.
   new place and size at once (#3369). A linkset's root prim instead shows a
   report at once. Capture at 719, 723 and 760.
 - `zoom`: scales down to 50%; `hidden`: hides the HUDs; `media`: shows the
-  local test page on the centre HUD.
+  local test page on the centre HUD. `media-scale`: the same page, the HUD
+  enlarged with the HUD key + wheel at frame 720 (161%), then its Click
+  button clicked where it is drawn at frames 880–900 (#4111). Capture at
+  frame 950: the page has the focus and its button reads "Clicked!". The
+  log line `demo HUD media-scale click` gives the page's coordinates under
+  the cursor and the object's own pick there: they must be the same
+  (before the fix the page was clicked as if the HUD had kept its size,
+  and the button missed). Needs the media plugins.
 - `scale`: five wheel notches with the HUD key (frame 720), on a
   HUD without Modify / Move permissions; outline and percentage until frame
   840. `scale-ctrl`, `scale-key`, `scale-secondary` use Ctrl, B or the

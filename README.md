@@ -1247,7 +1247,7 @@ The compact build inspector also accepts `AURORA_DEMO_BUILD_TAB=transform|shape`
 scenarios use the existing inventory, appearance, land, profile, environment
 and preferences switches listed in [docs/TESTING.md](docs/TESTING.md).
 
-Local and editing HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary|edit-scroll`)
+Local and editing HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary|media-scale|edit-scroll`)
 are described in [the testing guide](docs/TESTING.md#huds).
 
 The script editor demos (`AURORA_DEMO_SCRIPTS`): `close-brace` /

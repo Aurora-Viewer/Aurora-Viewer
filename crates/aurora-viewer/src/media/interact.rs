@@ -149,7 +149,11 @@ impl MediaManager {
             let Some((pos, rot, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            let model = Mat4::from_scale_rotation_translation(o.scale, rot, pos);
+            // the size drawn, as the object picking takes it
+            // (`Scene::face_hit_in`): a HUD resized on this screen only (the
+            // HUD key + wheel) or a size still easing in (#4111: its links
+            // were clicked off the cursor, sized as the simulator has it)
+            let model = Mat4::from_scale_rotation_translation(world.visual_scale_at(idx, now), rot, pos);
             let Some(faces) = self.cpu_faces(world, scene, idx) else {
                 continue;
             };
@@ -584,6 +588,84 @@ mod tests {
         // A touch script makes the transparent front face a deliberate clicker.
         world.objects.get_mut(front).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
         assert_eq!(press(&mut media, &world, &scene), front);
+    }
+
+    /// A HUD resized on this screen only (the HUD key + wheel): a click on
+    /// its page lands where the page is drawn under the cursor (#4111).
+    #[test]
+    fn a_locally_resized_hud_takes_media_clicks_where_it_is_drawn() {
+        let (mut world, mut scene, front, _) = crate::scene::picking::tests::scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let parent = world.objects.get(own).unwrap().key.local_id;
+        let o = world.objects.get_mut(front).unwrap();
+        o.parent_id = parent;
+        o.state = 31u8.rotate_left(4);
+        o.position = Vec3::new(3.0, 0.0, 0.0);
+        o.rotation = glam::Quat::IDENTITY;
+        o.scale = Vec3::splat(0.4);
+        o.click_action = crate::interaction::code::NONE;
+        o.update_flags = 0;
+        let id = o.full_id;
+        let cache_key = o.visual_volume().cache_key() ^ (3u64 << 60);
+        let face = &mut Arc::make_mut(o.te.as_mut().unwrap()).faces[0];
+        face.color[3] = 1.0;
+        // the server marks a face with prim media (TEM_MEDIA_MASK); its
+        // texture not repeated, offset or turned: st is the face's uv
+        face.media_flags |= 1;
+        (face.scale_s, face.scale_t, face.offset_s, face.offset_t, face.rotation) = (1.0, 1.0, 0.0, 0.0, 0.0);
+        let mut media = MediaManager::default();
+        media.objects.insert(
+            id,
+            ObjMedia {
+                idx: front,
+                data: Some(ObjectMediaData {
+                    faces: vec![Some(MediaEntry {
+                        current_url: "https://example.invalid/media".into(),
+                        ..Default::default()
+                    })],
+                    ..Default::default()
+                }),
+                hud: true,
+                ..Default::default()
+            },
+        );
+        media.pick_cache.insert(
+            id,
+            (
+                cache_key,
+                Arc::new(vec![Some(CpuFace {
+                    positions: vec![[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5]],
+                    uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                    indices: vec![0, 2, 1, 0, 3, 2],
+                })]),
+            ),
+        );
+        let g = &mut scene.gpu[front];
+        g.hud = true;
+        g.lod = 3;
+        g.owner_avatar = Some(own);
+        g.center = Vec3::new(3.0, 0.0, 0.0);
+        g.radius = 1.0;
+        crate::scene::picking::tests::index_test_objects(&mut scene);
+        // twice its size on this screen; the simulator's stays 40 cm
+        world.hud_scales.set(id, 2.0);
+        world.dirty_hud(front);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
+        let now = Instant::now();
+        assert_eq!(world.visual_scale_at(front, now), Vec3::splat(0.8));
+        // the cursor over the page drawn at uv (0.7, 0.3) (sized as the
+        // simulator has it, the page under it was at uv (0.9, 0.1))
+        let (pos, rot, _) = Scene::object_transform(&world, front, now, 0).unwrap();
+        let drawn = pos + rot * (Vec3::new(-0.5, 0.2, -0.2) * 0.8);
+        let view = scene.lists.hud_view.expect("a HUD view");
+        let [x, y] = view.pixel(drawn);
+        let (picked, point, ray) = scene.hud_click_pick(&world, (x, y)).expect("the HUD under the cursor");
+        assert_eq!(picked, front);
+        let distance = (point - ray.0).dot(ray.1);
+        let hit = media
+            .hit_test(&world, &scene, ray.0, ray.1, Some(distance), true, Some(picked))
+            .expect("the page takes the click");
+        assert!((hit.st - Vec2::new(0.7, 0.3)).length() < 1e-3, "clicked st {:?}", hit.st);
     }
 
     #[test]
