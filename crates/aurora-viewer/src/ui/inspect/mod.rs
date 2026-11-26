@@ -1006,7 +1006,8 @@ mod tests {
             for subject in [Subject::Avatar(Uuid::from_u128(99)), Subject::Objects] {
                 crate::ui::widgets::steady_tests::assert_window_steady(
                     "inspect",
-                    &[Vec2::new(800.0, 760.0)],
+                    // and as short as it goes: the tiles beside a grown one scroll (#5027)
+                    &[Vec2::new(800.0, 760.0), Vec2::new(800.0, 380.0)],
                     aurora_i18n::tr!("inspect-creator-button"),
                     || {
                         let mut ui = InspectUi {
