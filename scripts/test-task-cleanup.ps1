@@ -155,6 +155,11 @@ try {
         git init -q $forkClone
         git -C $forkClone remote add origin git@github.com:Me/Aurora-Viewer.git
         Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Me/Aurora-Viewer') 'Only origin: origin.'
+        # gh repo set-default with no remote for the chosen repository writes
+        # its owner/name on origin
+        git -C $forkClone config remote.origin.gh-resolved Upstream/Aurora-Viewer
+        Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Upstream/Aurora-Viewer') 'Only origin, gh repo set-default chose the main repository.'
+        git -C $forkClone config --unset remote.origin.gh-resolved
         git -C $forkClone remote add upstream https://github.com/Upstream/Aurora-Viewer.git
         Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Upstream/Aurora-Viewer') 'Clone of a fork: upstream.'
         # gh repo set-default marks its choice, which wins over the names

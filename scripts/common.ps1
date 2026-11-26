@@ -375,12 +375,19 @@ function Get-GitHubSlug([string]$Url) {
 # owner/name of the main repository on GitHub, the one that holds the PRs,
 # issues, project board and merge queue, or nothing. In a clone whose origin
 # is a personal fork, it is another remote: the one `gh repo set-default`
-# chose (it marks it gh-resolved = base), else the one named upstream (as
-# `gh repo fork --clone` names it); otherwise origin. A remote that is not
-# on GitHub is skipped.
+# chose, else the one named upstream (as `gh repo fork --clone` names it);
+# otherwise origin. A remote that is not on GitHub is skipped. gh marks its
+# choice on a remote's gh-resolved: "base" when the chosen repository is that
+# remote, its owner/name when it is none of them (a fork clone with only
+# origin, where gh writes it on origin).
 function Get-MainRepo([string]$Dir) {
     $remotes = @(git -C $Dir remote 2>$null)
-    $chosen = @($remotes | Where-Object { (git -C $Dir config "remote.$_.gh-resolved" 2>$null) -eq 'base' })
+    $chosen = @()
+    foreach ($r in $remotes) {
+        $resolved = "$(git -C $Dir config "remote.$r.gh-resolved" 2>$null)".Trim()
+        if ($resolved -match '^[\w.-]+/[\w.-]+$') { return $resolved }
+        if ($resolved -eq 'base') { $chosen += $r }
+    }
     foreach ($r in $chosen + @('upstream', 'origin')) {
         if ($remotes -notcontains $r) { continue }
         $slug = Get-GitHubSlug (git -C $Dir remote get-url $r 2>$null)
