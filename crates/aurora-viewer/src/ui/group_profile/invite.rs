@@ -778,8 +778,7 @@ mod tests {
         let (texts, _) = settle_picker(&mut ui, &ctx, &p, &world, &mut time);
         let ok_rect = find(&texts, aurora_i18n::tr!("common-ok"));
         click_at(&mut ui, &ctx, &p, &world, &mut time, ok_rect.center());
-        assert_eq!(ui.target(), Some(club));
-        assert_eq!(ui.invitees, [resident]);
+        assert_eq!(ui.invitation(club).expect("club window").invitees, [resident]);
 
         // Filtering out a selected group disables OK until the filter is cleared.
         let mut ui = InviteUi::default();
@@ -801,7 +800,7 @@ mod tests {
         );
         let ok_rect = find(&texts, aurora_i18n::tr!("common-ok"));
         click_at(&mut ui, &ctx, &p, &world, &mut time, ok_rect.center());
-        assert_eq!(ui.target(), None);
+        assert!(ui.invitation(builders).is_none());
 
         // Clearing the search restores the selected group and re-enables OK.
         let clear = clear_rect.expect("clear button");
@@ -810,7 +809,7 @@ mod tests {
         assert!(texts.iter().any(|(t, _)| t == "Aurora Builders"));
         let ok_rect = find(&texts, aurora_i18n::tr!("common-ok"));
         click_at(&mut ui, &ctx, &p, &world, &mut time, ok_rect.center());
-        assert_eq!(ui.target(), Some(builders));
+        assert_eq!(ui.invitation(builders).expect("builders window").invitees, [resident]);
     }
 
     #[test]
