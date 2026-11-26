@@ -160,6 +160,8 @@ pub struct Display {
     editing: bool,
     visibility: [bool; BLOCKS.len()],
     separators: std::collections::BTreeMap<String, SeparatorStyle>,
+    /// The floating blocks' buttons left out (`drawers::button_hidden`).
+    hidden: Vec<String>,
 }
 
 impl Display {
@@ -179,6 +181,15 @@ impl Display {
         let commands = BLOCKS;
         let visibility = commands.map(|command| crate::ui::bars::chrome::width(ctx, command) != Some(0.0));
         let settings = super::appearance::settings(ctx);
+        let hidden: Vec<String> = if editing {
+            Vec::new()
+        } else {
+            buttons
+                .iter()
+                .filter(|button| super::drawers::button_hidden(&settings, &button.command))
+                .map(|button| button.command.clone())
+                .collect()
+        };
         let id = egui::Id::unique(("toolbar_display", bar, root));
         if let Some(cached) = ctx.data(|data| data.get_temp::<std::sync::Arc<Self>>(id))
             && cached.original == original
@@ -186,6 +197,7 @@ impl Display {
             && cached.editing == editing
             && cached.visibility == visibility
             && cached.separators == settings.separators
+            && cached.hidden == hidden
         {
             return cached;
         }
@@ -198,6 +210,9 @@ impl Display {
                     .position(|command| *command == button.command)
                     .is_some_and(|i| !visibility[i])
             {
+                continue;
+            }
+            if hidden.contains(&button.command) {
                 continue;
             }
             if !editing
@@ -226,6 +241,7 @@ impl Display {
             editing,
             visibility,
             separators: settings.separators.clone(),
+            hidden,
         });
         ctx.data_mut(|data| data.insert_temp(id, display.clone()));
         display

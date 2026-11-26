@@ -702,6 +702,8 @@ enum Edit {
     DrawerOptions(String, String, ButtonMode, appearance::Appearance),
     /// A drawer's "Close after a click".
     DrawerCloses(String, bool),
+    /// A drawer's "Hide the button while floating".
+    DrawerHidesButton(String, bool),
     MenuInsert(String, String, usize),
     /// A new floating block, dropped there on the screen.
     FloatingNew(Pos2),
@@ -837,6 +839,9 @@ pub struct ToolbarUi {
     menu_row_context: Option<appearance::MenuRowContext>,
     pub(crate) selected: Option<String>,
     drawer_editor: Option<String>,
+    /// A fixed block's settings window, while open: its bar, one of its
+    /// buttons and its bar's style.
+    block_editor: Option<(Bar, String, Style)>,
     pub(crate) drawer_action: Option<crate::ui::bars::BarAction>,
     /// A floating block just made, and where it was dropped.
     floating_placed: Option<(String, Pos2)>,
@@ -856,6 +861,7 @@ impl ToolbarUi {
         self.inferred_preset = None;
         self.selected = None;
         self.drawer_editor = None;
+        self.block_editor = None;
         self.drawer_action = None;
         self.floating_placed = None;
         self.shortcut_editor = None;
@@ -865,6 +871,20 @@ impl ToolbarUi {
         self.menu_row_context = None;
         egui::DragAndDrop::clear_payload(ctx);
         egui::Popup::close_all(ctx);
+    }
+
+    /// Opens a drawer's or a floating block's settings ("Edit block…"), in
+    /// place of a fixed block's.
+    fn edit_drawer(&mut self, id: &str) {
+        self.block_editor = None;
+        self.drawer_editor = Some(id.into());
+    }
+
+    /// Opens the settings of the fixed block of `command` in `bar`, in place
+    /// of a drawer's.
+    fn edit_block(&mut self, bar: Bar, command: &str, base: Style) {
+        self.drawer_editor = None;
+        self.block_editor = Some((bar, command.into(), base));
     }
 }
 
@@ -1056,13 +1076,8 @@ impl ToolbarUi {
                 section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
                 blocks::kind_menu(ui, p, self, &settings, &button.command, Some((bar, response.rect)));
                 self.block_shortcut_item(ui, p, &settings, &button.command);
-                let key = if drawers::is_floating(&settings, &button.command) {
-                    "toolbar-floating-settings"
-                } else {
-                    "toolbar-drawer-settings"
-                };
-                if menu::item_if(ui, p, "pencil-filled", aurora_i18n::text(key), !locked) {
-                    self.drawer_editor = Some(button.command.clone());
+                if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), !locked) {
+                    self.edit_drawer(&button.command);
                 }
                 native_context::start_group(ui, p);
                 self.interface_edit_menu(ui, p, Some(&button.command));
@@ -1095,6 +1110,11 @@ impl ToolbarUi {
                 }) {
                     section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
                     blocks::kind_menu(ui, p, self, &settings, &button.command, Some((bar, response.rect)));
+                    // a fixed block's settings, as a drawer's (human request,
+                    // 2026-11-26)
+                    if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), !locked) {
+                        self.edit_block(bar, &button.command, style);
+                    }
                 }
                 native_context::start_group(ui, p);
                 self.interface_edit_menu(ui, p, button.map(|button| button.command.as_str()));
@@ -1346,6 +1366,7 @@ impl ToolbarUi {
                 return drawers::update_options(settings, layout, id, name, *mode, value);
             }
             Edit::DrawerCloses(id, closes) => return drawers::update_closes(settings, id, *closes),
+            Edit::DrawerHidesButton(id, hides) => return drawers::update_hides_button(settings, id, *hides),
             Edit::FloatingShown(id, shown) => return drawers::show_floating(settings, id, *shown),
             Edit::FloatingOptions(id, options) => return drawers::update_floating(settings, layout, id, options),
             Edit::FloatingDelete(id) => return drawers::delete_floating(settings, layout, id),
@@ -1814,6 +1835,7 @@ impl ToolbarUi {
             | Edit::DrawerFromDrop(..)
             | Edit::DrawerOptions(..)
             | Edit::DrawerCloses(..)
+            | Edit::DrawerHidesButton(..)
             | Edit::FloatingNew(..)
             | Edit::FloatingOptions(..)
             | Edit::FloatingShown(..)

@@ -51,6 +51,10 @@ pub struct Drawer {
     /// The drawer folds once one of its buttons is used (human request,
     /// 2026-11-25; on by default, and for the drawers saved before).
     pub closes: bool,
+    /// Its button leaves its bar while it is a floating block that has a
+    /// shortcut, outside interface editing (human request, 2026-11-26).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hides_button: bool,
     /// A floating block rather than a drawer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub floating: Option<Floating>,
@@ -62,6 +66,7 @@ impl Default for Drawer {
             buttons: Vec::new(),
             mode: ButtonMode::IconsWithText,
             closes: true,
+            hides_button: false,
             floating: None,
         }
     }
@@ -109,6 +114,17 @@ pub fn floating_toggle(id: &str, name: &str) -> ToolButton {
 
 pub fn is_floating(settings: &ToolbarSettings, id: &str) -> bool {
     settings.drawers.get(id).is_some_and(|drawer| drawer.floating.is_some())
+}
+
+/// Whether the button of the floating block `id` leaves its bar outside
+/// interface editing: asked for, and its shortcut still shows the block
+/// (human request, 2026-11-26).
+pub fn button_hidden(settings: &ToolbarSettings, id: &str) -> bool {
+    settings
+        .drawers
+        .get(id)
+        .is_some_and(|drawer| drawer.hides_button && drawer.floating.is_some())
+        && settings.shortcuts.contains_key(id)
 }
 
 /// The import block, once, with its buttons (human request, 2026-11-25):
@@ -330,6 +346,7 @@ pub(super) fn update_floating(settings: &mut ToolbarSettings, layout: &Layout, i
     if floating.name == name
         && floating.vertical == options.vertical
         && floating.closes == options.closes
+        && drawer.hides_button == options.hides_button
         && drawer.mode == options.mode
         && own == options.look
     {
@@ -338,6 +355,7 @@ pub(super) fn update_floating(settings: &mut ToolbarSettings, layout: &Layout, i
     floating.name = name.clone();
     floating.vertical = options.vertical;
     floating.closes = options.closes;
+    drawer.hides_button = options.hides_button;
     drawer.mode = options.mode;
     if options.look == Default::default() {
         settings.appearance.remove(id);
@@ -361,6 +379,7 @@ pub(super) struct FloatingOptions {
     pub mode: ButtonMode,
     pub vertical: bool,
     pub closes: bool,
+    pub hides_button: bool,
     pub look: super::appearance::Appearance,
 }
 
@@ -415,11 +434,12 @@ pub(super) fn show_settings(ctx: &egui::Context, p: &Palette, toolbar: &mut Tool
     let mut name = button.tooltip.clone();
     let mut mode = drawer.mode;
     let mut closes = drawer.closes;
+    let mut hides = drawer.hides_button;
     let mut own = settings.appearance.get(&id).cloned().unwrap_or_default();
     let before = (name.clone(), mode, own.clone());
     let mut window = widgets::Floater::new(
         "toolbar_drawer_settings",
-        aurora_i18n::tr!("toolbar-drawer-settings"),
+        aurora_i18n::tr!("toolbar-block-edit-title"),
         ctx.content_rect().center() - Vec2::new(220.0, 230.0),
         Vec2::new(440.0, 460.0),
     );
@@ -432,35 +452,21 @@ pub(super) fn show_settings(ctx: &egui::Context, p: &Palette, toolbar: &mut Tool
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 ui.add_enabled_ui(!settings.locked, |ui| {
-                    ui.label(aurora_i18n::tr!("toolbar-drawer-name"));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut name)
-                            .id(Id::unique(("drawer_name", &id)))
-                            .hint_text(super::label(button))
-                            .char_limit(80)
-                            .desired_width(f32::INFINITY),
+                    block_fields(
+                        ui,
+                        p,
+                        toolbar,
+                        &id,
+                        button,
+                        BlockFields {
+                            name: &mut name,
+                            hint: super::label(button),
+                            look: &mut own,
+                            closes: &mut closes,
+                            hides: &mut hides,
+                            mode: &mut mode,
+                        },
                     );
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-button-mode")).strong());
-                    super::appearance::Editor::modes(ui, p, &mut own);
-                    ui.add_space(8.0);
-                    toolbar.drawer_appearance_editor.icon_button(ui, p, button, &own);
-                    ui.add_space(12.0);
-                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-default-mode")).strong());
-                    for (value, _, label) in super::mode_rows() {
-                        widgets::radio_value(ui, p, &mut mode, value, label);
-                    }
-                    ui.label(
-                        egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-default-help"))
-                            .small()
-                            .color(p.muted),
-                    );
-                    ui.add_space(12.0);
-                    let check = widgets::checkbox(ui, p, &mut closes, aurora_i18n::tr!("toolbar-drawer-closes"));
-                    #[cfg(test)]
-                    ui.ctx()
-                        .data_mut(|data| data.insert_temp(Id::unique(("drawer_closes_check", &id)), check.rect));
-                    let _ = check;
                 });
             });
     });
@@ -473,6 +479,8 @@ pub(super) fn show_settings(ctx: &egui::Context, p: &Palette, toolbar: &mut Tool
         toolbar.pending = Some(Edit::DrawerOptions(id.clone(), name, mode, own));
     } else if closes != drawer.closes {
         toolbar.pending = Some(Edit::DrawerCloses(id.clone(), closes));
+    } else if hides != drawer.hides_button {
+        toolbar.pending = Some(Edit::DrawerHidesButton(id.clone(), hides));
     }
     if !open {
         toolbar.drawer_editor = None;
@@ -501,12 +509,13 @@ fn floating_settings(
         mode: drawer.mode,
         vertical: floating.vertical,
         closes: floating.closes,
+        hides_button: drawer.hides_button,
         look: settings.appearance.get(id).cloned().unwrap_or_default(),
     };
     let before = options.clone();
     let mut window = widgets::Floater::new(
         "toolbar_drawer_settings",
-        aurora_i18n::tr!("toolbar-floating-settings"),
+        aurora_i18n::tr!("toolbar-block-edit-title"),
         ctx.content_rect().center() - Vec2::new(220.0, 230.0),
         Vec2::new(440.0, 460.0),
     );
@@ -519,34 +528,25 @@ fn floating_settings(
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 ui.add_enabled_ui(!settings.locked, |ui| {
-                    ui.label(aurora_i18n::tr!("toolbar-floating-name"));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut options.name)
-                            .id(Id::unique(("floating_name", id)))
-                            .hint_text(if own {
+                    block_fields(
+                        ui,
+                        p,
+                        toolbar,
+                        id,
+                        &button,
+                        BlockFields {
+                            name: &mut options.name,
+                            hint: if own {
                                 aurora_i18n::tr!("toolbar-floating-new")
                             } else {
                                 aurora_i18n::tr!("toolbar-import-bar")
-                            })
-                            .char_limit(80)
-                            .desired_width(f32::INFINITY),
+                            },
+                            look: &mut options.look,
+                            closes: &mut options.closes,
+                            hides: &mut options.hides_button,
+                            mode: &mut options.mode,
+                        },
                     );
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-button-mode")).strong());
-                    super::appearance::Editor::modes(ui, p, &mut options.look);
-                    ui.add_space(8.0);
-                    toolbar.drawer_appearance_editor.icon_button(ui, p, &button, &options.look);
-                    ui.add_space(12.0);
-                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-default-mode")).strong());
-                    for (value, _, label) in super::mode_rows() {
-                        widgets::radio_value(ui, p, &mut options.mode, value, label);
-                    }
-                    ui.add_space(12.0);
-                    let check = widgets::checkbox(ui, p, &mut options.closes, aurora_i18n::tr!("toolbar-drawer-closes"));
-                    #[cfg(test)]
-                    ui.ctx()
-                        .data_mut(|data| data.insert_temp(Id::unique(("drawer_closes_check", id)), check.rect));
-                    let _ = check;
                     ui.add_space(12.0);
                     ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-floating-orientation")).strong());
                     widgets::radio_value(ui, p, &mut options.vertical, false, aurora_i18n::tr!("toolbar-floating-horizontal"));
@@ -581,6 +581,71 @@ fn floating_settings(
         toolbar.drawer_editor = None;
         toolbar.drawer_appearance_editor.close_picker();
     }
+}
+
+/// What a drawer's and a floating block's windows share.
+struct BlockFields<'a> {
+    name: &'a mut String,
+    hint: &'a str,
+    look: &'a mut super::appearance::Appearance,
+    closes: &'a mut bool,
+    hides: &'a mut bool,
+    mode: &'a mut ButtonMode,
+}
+
+/// The fields of a drawer's or a floating block's settings, in the human's
+/// order (2026-11-26): its name on one line, its icon, whether it closes
+/// after a click and hides its button while floating, then its own button's
+/// display and its buttons' default display.
+fn block_fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &str, button: &ToolButton, fields: BlockFields<'_>) {
+    ui.horizontal(|ui| {
+        ui.label(aurora_i18n::tr!("toolbar-block-name"));
+        ui.add(
+            egui::TextEdit::singleline(fields.name)
+                .id(Id::unique(("drawer_name", id)))
+                .hint_text(fields.hint)
+                .char_limit(80)
+                .desired_width(f32::INFINITY),
+        );
+    });
+    ui.add_space(8.0);
+    toolbar.drawer_appearance_editor.icon_button(ui, p, button, fields.look);
+    ui.add_space(12.0);
+    let check = widgets::checkbox(ui, p, fields.closes, aurora_i18n::tr!("toolbar-drawer-closes"));
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(Id::unique(("drawer_closes_check", id)), check.rect));
+    let _ = check;
+    let check = widgets::checkbox(ui, p, fields.hides, aurora_i18n::tr!("toolbar-drawer-hides-button"));
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(Id::unique(("drawer_hides_check", id)), check.rect));
+    let _ = check;
+    ui.label(
+        egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-hides-button-help"))
+            .small()
+            .color(p.muted),
+    );
+    ui.add_space(12.0);
+    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-block-button-mode")).strong());
+    super::appearance::Editor::block_button_modes(ui, p, fields.look);
+    ui.add_space(12.0);
+    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-default-mode")).strong());
+    for (value, _, label) in default_mode_rows() {
+        widgets::radio_value(ui, p, fields.mode, value, label);
+    }
+    ui.label(
+        egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-default-help"))
+            .small()
+            .color(p.muted),
+    );
+}
+
+/// The buttons' default display, in the human's order (2026-11-26): icons
+/// only, labels only, then both.
+pub(super) fn default_mode_rows() -> [(ButtonMode, &'static str, &'static str); 3] {
+    let [both, icons, labels] = super::mode_rows();
+    [icons, labels, both]
 }
 
 pub fn is_drawer(command: &str) -> bool {
@@ -782,6 +847,17 @@ pub(super) fn contents(settings: &ToolbarSettings, bar: Bar, anchor: &str, layou
 }
 
 /// "Close after a click" of the drawer `id`.
+/// A drawer's "Hide the button while floating".
+pub(super) fn update_hides_button(settings: &mut ToolbarSettings, id: &str, hides: bool) -> bool {
+    match settings.drawers.get_mut(id) {
+        Some(drawer) if !settings.locked && drawer.hides_button != hides => {
+            drawer.hides_button = hides;
+            true
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn update_closes(settings: &mut ToolbarSettings, id: &str, closes: bool) -> bool {
     match settings.drawers.get_mut(id) {
         Some(drawer) if !settings.locked && drawer.closes != closes => {

@@ -35,18 +35,15 @@ pub(crate) fn window_id(id: &str) -> String {
 
 /// The right click of a floating block, on its glass or its button (its
 /// button and its shortcut show and hide it: no Show/Hide here, human
-/// request, 2026-11-25).
+/// request, 2026-11-25; its settings window keeps Delete, the menu does not,
+/// 2026-11-26).
 pub(super) fn context(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &str, locked: bool) {
     let settings = super::appearance::settings(ui.ctx());
     super::section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
     super::blocks::kind_menu(ui, p, toolbar, &settings, id, None);
     toolbar.block_shortcut_item(ui, p, &settings, id);
-    if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-floating-settings"), !locked) {
-        toolbar.drawer_editor = Some(id.into());
-    }
-    // the import block is one like the others (human request, 2026-11-25)
-    if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-floating-delete"), !locked) {
-        toolbar.pending = Some(Edit::FloatingDelete(id.into()));
+    if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), !locked) {
+        toolbar.edit_drawer(id);
     }
 }
 

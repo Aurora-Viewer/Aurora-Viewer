@@ -409,14 +409,11 @@ fn settings_menu(
             toolbar.pending = Some(Edit::Merge(bar, command.into(), before));
         }
     }
-    if let Some(id) = single {
-        let key = if drawers::is_floating(settings, id) {
-            "toolbar-floating-settings"
-        } else {
-            "toolbar-drawer-settings"
-        };
-        if menu::item_if(ui, p, "pencil-filled", aurora_i18n::text(key), unlocked) {
-            toolbar.drawer_editor = Some(id.to_owned());
+    // one entry for the three types (human request, 2026-11-26)
+    if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), unlocked) {
+        match single {
+            Some(id) => toolbar.edit_drawer(id),
+            None => toolbar.edit_block(bar, command, base),
         }
     }
     // the block's shortcut: a drawer's or a floating block's is its own; a
@@ -436,6 +433,73 @@ fn settings_menu(
     }
     super::native_context::start_group(ui, p);
     toolbar.interface_edit_menu(ui, p, Some(command));
+}
+
+/// A fixed block's settings, in the window of a drawer's (human request,
+/// 2026-11-26): its buttons' default display, their alignment and their size,
+/// the rows of its gear.
+pub(super) fn show_editor(ctx: &egui::Context, p: &Palette, toolbar: &mut ToolbarUi, settings: &ToolbarSettings, layout: &Layout) {
+    let Some((bar, command, base)) = toolbar.block_editor.clone() else {
+        return;
+    };
+    if settings.drawer_of(&command).is_some() || edit_mode::group(settings.bar(bar, layout), &command).is_none() {
+        toolbar.block_editor = None;
+        return;
+    }
+    let saved = settings.block_styles.get(&command).copied().unwrap_or_default();
+    let before = Style {
+        mode: saved.mode.unwrap_or(base.mode),
+        align: saved.align.unwrap_or(base.align),
+        sizing: saved.sizing.unwrap_or(base.sizing),
+    };
+    let mut style = before;
+    let mut open = true;
+    let mut window = widgets::Floater::new(
+        "toolbar_drawer_settings",
+        aurora_i18n::tr!("toolbar-block-edit-title"),
+        ctx.content_rect().center() - Vec2::new(220.0, 230.0),
+        Vec2::new(440.0, 460.0),
+    );
+    window.order = egui::Order::Foreground;
+    window.show(ctx, p, &mut open, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("block_settings_fields")
+            .max_height(ui.available_height())
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!settings.locked, |ui| {
+                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-default-mode")).strong());
+                    for (value, _, label) in drawers::default_mode_rows() {
+                        widgets::radio_value(ui, p, &mut style.mode, value, label);
+                    }
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-block-alignment")).strong());
+                    for (value, _, label) in super::align_rows(bar) {
+                        widgets::radio_value(ui, p, &mut style.align, value, label);
+                    }
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-block-sizing")).strong());
+                    for (value, _, label) in super::sizing_rows() {
+                        widgets::radio_value(ui, p, &mut style.sizing, value, label);
+                    }
+                });
+            });
+    });
+    if style != before {
+        toolbar.pending = Some(Edit::BlockStyle(
+            bar,
+            command,
+            BarStyle {
+                mode: (style.mode != before.mode).then_some(style.mode),
+                align: (style.align != before.align).then_some(style.align),
+                sizing: (style.sizing != before.sizing).then_some(style.sizing),
+            },
+        ));
+    }
+    if !open {
+        toolbar.block_editor = None;
+    }
 }
 
 pub(super) fn show(ctx: &egui::Context, p: &Palette, toolbar: &mut ToolbarUi, settings: &ToolbarSettings, layout: &Layout) {

@@ -492,6 +492,7 @@ impl ToolbarUi {
         self.show_context_appearance(ctx, p, settings);
         self.show_menu_row_context(ctx, p, settings);
         super::drawers::show_settings(ctx, p, self, settings, layout);
+        super::blocks::show_editor(ctx, p, self, settings, layout);
         self.show_shortcut_editor(ctx, p, settings, layout);
         super::surface_drop::show(ctx, p, self, settings, layout);
         super::drop_preview::show(ctx, p, self, settings, layout);

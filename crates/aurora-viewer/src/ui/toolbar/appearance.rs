@@ -191,6 +191,26 @@ impl Editor {
         }
     }
 
+    /// A drawer's or a floating block's button: its bar's rule, or one of
+    /// its own (human request, 2026-11-26).
+    pub(super) fn block_button_modes(ui: &mut egui::Ui, p: &Palette, value: &mut Appearance) {
+        for (mode, label) in [
+            None,
+            Some(ButtonMode::IconsOnly),
+            Some(ButtonMode::TextOnly),
+            Some(ButtonMode::IconsWithText),
+        ]
+        .into_iter()
+        .zip([
+            aurora_i18n::tr!("toolbar-button-inherited"),
+            aurora_i18n::tr!("toolbar-button-icons"),
+            aurora_i18n::tr!("toolbar-button-text"),
+            aurora_i18n::tr!("toolbar-button-icons-text"),
+        ]) {
+            widgets::radio_value(ui, p, &mut value.mode, mode, label);
+        }
+    }
+
     fn prepare_picker(&mut self, button: &ToolButton) {
         if self.picker_key != button.command {
             self.picker_key = button.command.clone();
@@ -210,20 +230,24 @@ impl Editor {
             return;
         }
         self.prepare_picker(button);
-        let response = widgets::action_button(
-            ui,
-            p,
-            value.icon.as_deref().unwrap_or(&button.icon),
-            "",
-            widgets::ActionKind::Flat,
-            Vec2::splat(32.0),
-        )
-        .on_hover_text(aurora_i18n::tr!("toolbar-icon-choose"));
-        ui.ctx()
-            .data_mut(|data| data.insert_temp(Id::unique(("toolbar_icon_button_rect", &button.command)), response.rect));
-        if response.clicked() {
-            self.picker_open = !self.picker_open;
-        }
+        // the icon, then "Change icon" beside it (human request, 2026-11-26)
+        ui.horizontal(|ui| {
+            let response = widgets::action_button(
+                ui,
+                p,
+                value.icon.as_deref().unwrap_or(&button.icon),
+                "",
+                widgets::ActionKind::Flat,
+                Vec2::splat(32.0),
+            )
+            .on_hover_text(aurora_i18n::tr!("toolbar-icon-choose"));
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(Id::unique(("toolbar_icon_button_rect", &button.command)), response.rect));
+            let label = ui.add(egui::Label::new(aurora_i18n::tr!("toolbar-icon-change")).sense(egui::Sense::click()));
+            if response.clicked() || label.clicked() {
+                self.picker_open = !self.picker_open;
+            }
+        });
     }
 
     pub(super) fn side_picker(

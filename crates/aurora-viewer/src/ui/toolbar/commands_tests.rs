@@ -443,7 +443,9 @@ fn normal_native_contexts_share_one_customization_entry_and_select_the_clicked_c
                         // its shortcut after its icon (human request, 2026-11-25)
                         let shortcut = menu_point(&bench, aurora_i18n::tr!("toolbar-shortcut"));
                         assert!(shortcut.y > icon.bottom() && shortcut.y < floating.y, "{shortcut:?} {icon:?}");
-                        assert!(entries[0].1.top() - floating.y < 30.0);
+                        // then "Edit block…" (human request, 2026-11-26)
+                        let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-block-edit"));
+                        assert!(edit.y > floating.y && entries[0].1.top() - edit.y < 30.0);
                     }
                     if command == "report_bug" {
                         let copy = menu_point(&bench, aurora_i18n::tr!("bug-copy-version"));
@@ -1175,7 +1177,7 @@ fn customization_contexts_share_one_final_edit_interface_action_and_preserve_set
                     bench.frame(Vec::new());
                 }
                 let preceding = aurora_i18n::text(match source {
-                    "drawer" => "toolbar-drawer-settings",
+                    "drawer" => "toolbar-block-edit",
                     "menu" => "toolbar-icon-change",
                     _ => "toolbar-button-inherit",
                 });
@@ -2463,15 +2465,17 @@ fn drawer_settings_put_own_properties_first_and_flip_the_icon_picker_beside_the_
     for _ in 0..4 {
         bench.frame(Vec::new());
     }
-    let own = menu_point(&bench, aurora_i18n::tr!("toolbar-drawer-button-mode"));
+    let own = menu_point(&bench, aurora_i18n::tr!("toolbar-block-button-mode"));
     let contents = menu_point(&bench, aurora_i18n::tr!("toolbar-drawer-default-mode"));
     let icon = bench
         .ctx
         .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_icon_button_rect", &id))))
         .expect("icon button");
+    // its icon, then its button's display, then its buttons' (human
+    // request, 2026-11-26)
     assert!(
-        own.y < icon.center().y && icon.bottom() < contents.y,
-        "own display and icon precede content defaults"
+        icon.bottom() < own.y && own.y < contents.y,
+        "icon, own display, then content defaults"
     );
     assert!(
         bench
@@ -3269,7 +3273,7 @@ fn compact_drawer_settings_stay_above_the_panel_and_edit_name_and_inherited_disp
     for _ in 0..3 {
         bench.frame(Vec::new());
     }
-    for key in ["toolbar-drawer-settings", "toolbar-interface-edit"] {
+    for key in ["toolbar-block-edit", "toolbar-interface-edit"] {
         assert!(
             bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)),
             "context entry {key}"
@@ -3278,7 +3282,7 @@ fn compact_drawer_settings_stay_above_the_panel_and_edit_name_and_inherited_disp
     let edit = bench
         .text
         .iter()
-        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-drawer-settings"))
+        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-block-edit"))
         .expect("edit drawer")
         .1
         .center();
@@ -4539,5 +4543,186 @@ fn a_floating_block_reaches_the_rooms_top_and_bottom_in_both_orientations() {
                 assert_eq!(at.bottom(), room.bottom(), "vertical={vertical}");
             }
         }
+    }
+}
+
+fn right_click_at(bench: &mut Bench, point: Pos2) {
+    for pressed in [true, false] {
+        bench.frame(vec![
+            egui::Event::PointerMoved(point),
+            egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            },
+        ]);
+    }
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+}
+
+/// "Edit block…" opens a fixed block's settings too, as a drawer's: its
+/// display, its alignment and its size (human request, 2026-11-26).
+#[test]
+fn a_fixed_blocks_edit_entry_opens_its_settings_window() {
+    let mut bench = Bench {
+        native_top: true,
+        menu_open: false,
+        screen: Vec2::new(1920.0, 1080.0),
+        ..Default::default()
+    };
+    bench.settings.compose_top();
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let point = bench
+        .ctx
+        .read_response(bars::tool_button_id("inventory"))
+        .expect("inventory button")
+        .rect
+        .center();
+    right_click_at(&mut bench, point);
+    let kinds = menu_point(&bench, aurora_i18n::tr!("toolbar-block-kind-floating"));
+    let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-block-edit"));
+    assert!(edit.y > kinds.y, "after the block's type");
+    bench.pointer(edit, Some(true));
+    bench.pointer(edit, Some(false));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    let (_, command, base) = bench.state.block_editor.clone().expect("the block's window");
+    assert_eq!(command, "inventory");
+    assert!(bench.state.drawer_editor.is_none());
+    for key in [
+        "toolbar-block-edit-title",
+        "toolbar-drawer-default-mode",
+        "toolbar-block-alignment",
+        "toolbar-block-sizing",
+    ] {
+        assert!(bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)), "{key}");
+    }
+    let current = blocks::style(&bench.ctx, "inventory", base).sizing;
+    let (value, _, label) = super::sizing_rows()
+        .into_iter()
+        .find(|(value, _, _)| *value != current)
+        .expect("another size");
+    let heading = menu_point(&bench, aurora_i18n::tr!("toolbar-block-sizing"));
+    let choice = bench
+        .text
+        .iter()
+        .find(|(text, rect)| text == label && rect.center().y > heading.y)
+        .expect("size radio")
+        .1
+        .center();
+    bench.pointer(choice, Some(true));
+    bench.pointer(choice, Some(false));
+    for _ in 0..2 {
+        bench.frame(Vec::new());
+    }
+    let saved = bench.settings.block_styles["inventory"];
+    assert_eq!(saved.sizing, Some(value));
+    assert!(saved.mode.is_none() && saved.align.is_none(), "only what changed: {saved:?}");
+    // the drawer's entry takes the window over
+    bench.state.edit_drawer("drawer:none");
+    assert!(bench.state.block_editor.is_none());
+}
+
+/// A floating block's right click has "Edit block…" and no Delete: its
+/// window keeps it (human request, 2026-11-26).
+#[test]
+fn a_floating_blocks_right_click_edits_it_and_does_not_delete_it() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1920.0, 1080.0),
+        ..Default::default()
+    };
+    bench.settings.compose_top();
+    let id = drawers::create_floating(&mut bench.settings, "Tools");
+    bench.settings.drawers.get_mut(&id).expect("floating block").buttons = vec![tests::button("inventory")];
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let glass = bench
+        .ctx
+        .memory(|memory| memory.area_rect(Id::unique(floating::window_id(&id))))
+        .expect("floating block drawn");
+    let button = bench.ctx.read_response(bars::tool_button_id("inventory")).expect("its button").rect;
+    right_click_at(&mut bench, egui::pos2((glass.left() + button.left()) / 2.0, button.center().y));
+    assert!(
+        bench
+            .text
+            .iter()
+            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-block-kind-floating"))
+    );
+    assert!(
+        !bench
+            .text
+            .iter()
+            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-floating-delete"))
+    );
+    let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-block-edit"));
+    bench.pointer(edit, Some(true));
+    bench.pointer(edit, Some(false));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert_eq!(bench.state.drawer_editor.as_deref(), Some(id.as_str()));
+    assert!(
+        bench
+            .text
+            .iter()
+            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-block-edit-title"))
+    );
+    assert!(
+        bench
+            .text
+            .iter()
+            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-floating-delete"))
+    );
+}
+
+/// "Hide the button while floating" leaves a floating block's button out of
+/// its bar outside interface editing, once the block has a shortcut (human
+/// request, 2026-11-26).
+#[test]
+fn a_floating_blocks_button_hides_once_asked_and_its_block_has_a_shortcut() {
+    for (hides, shortcut, editing) in [(true, true, false), (true, true, true), (true, false, false), (false, true, false)] {
+        let mut bench = Bench {
+            native_top: true,
+            screen: Vec2::new(1920.0, 1080.0),
+            ..Default::default()
+        };
+        bench.settings.compose_top();
+        bench
+            .settings
+            .set_bar(Bar::Top, vec![tests::button("inventory"), tests::button("people")]);
+        let id = drawers::float(&mut bench.settings, &crate::ui::skin::Layout::default(), Bar::Top, "inventory").expect("floated");
+        bench.settings.drawers.get_mut(&id).expect("floating block").hides_button = hides;
+        if shortcut {
+            bench.settings.shortcuts.insert(
+                id.clone(),
+                crate::keybinds::Binding {
+                    input: crate::keybinds::Input::Key("KeyJ".into()),
+                    ctrl: true,
+                    shift: false,
+                    alt: false,
+                },
+            );
+        }
+        bench.state.open = editing;
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let shown = bench
+            .ctx
+            .read_response(bars::tool_button_id(&id))
+            .is_some_and(|response| response.rect.is_positive());
+        assert_eq!(
+            shown,
+            !(hides && shortcut && !editing),
+            "hides={hides}, shortcut={shortcut}, editing={editing}"
+        );
     }
 }

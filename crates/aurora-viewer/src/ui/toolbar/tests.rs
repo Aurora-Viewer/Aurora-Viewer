@@ -1442,11 +1442,9 @@ fn favorites_left_grid_and_normal_customization_menu_stay_separate_on_every_bar(
             );
             // the block's settings between (human request, 2026-11-25)
             let floating = bench.text(aurora_i18n::tr!("toolbar-block-kind-floating"));
-            assert!(appearance.y < floating.y && floating.y < customize.y);
-            assert!(
-                customize.y - floating.y < 40.0,
-                "shared customization group has no internal separator"
-            );
+            let edit = bench.text(aurora_i18n::tr!("toolbar-block-edit"));
+            assert!(appearance.y < floating.y && floating.y < edit.y && edit.y < customize.y);
+            assert!(customize.y - edit.y < 40.0, "shared customization group has no internal separator");
             bench.pointer(customize, true, false);
             bench.pointer(customize, false, false);
             assert!(bench.state.open);
@@ -2467,6 +2465,7 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
         mode: ButtonMode::TextOnly,
         vertical: true,
         closes: true,
+        hides_button: true,
         look: appearance::Appearance {
             mode: None,
             icon: Some("star-filled".into()),
