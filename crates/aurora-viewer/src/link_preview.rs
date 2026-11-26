@@ -1126,6 +1126,9 @@ async fn fetch_picture_sized(client: &reqwest::Client, url: &str, side: u32) -> 
     if !(kind.starts_with("image/") || kind.is_empty() || kind.starts_with("application/octet-stream")) {
         return Err(Failure::NotPicture);
     }
+    if url.starts_with("https://share.redd.it/preview/post/") && reddit_default_share_image(&body) {
+        return Err(Failure::Unavailable);
+    }
     tokio::task::spawn_blocking(move || {
         if side == MAX_SIDE {
             decode(&body)
@@ -1135,6 +1138,18 @@ async fn fetch_picture_sized(client: &reqwest::Client, url: &str, side: u32) -> 
     })
     .await
     .unwrap_or(Err(Failure::NotPicture))
+}
+
+/// Reddit currently returns this exact branding image when no post-specific
+/// poster is available. Other sharing images still go through the decoder.
+fn reddit_default_share_image(bytes: &[u8]) -> bool {
+    use sha2::{Digest, Sha256};
+    bytes.len() == 54_014
+        && Sha256::digest(bytes)[..]
+            == [
+                0x70, 0xcf, 0xf6, 0x67, 0x8c, 0xc4, 0x6e, 0x8c, 0xe8, 0x95, 0x2f, 0x45, 0x87, 0x12, 0x85, 0xdf, 0xf8, 0xad, 0xbd, 0x10,
+                0x7c, 0x0f, 0xc1, 0xca, 0x77, 0x2e, 0x83, 0xec, 0xbc, 0x0a, 0x85, 0x17,
+            ]
 }
 
 /// The most of a page or a feed read for the picture it names: the tags
@@ -1270,17 +1285,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                         return Ok(Content::Clip(fetch_found_clip(client, found).await));
                     }
                     if let Some(post) = services::reddit_feed(&xml) {
-                        let mut picture = None;
-                        let sources = services::reddit_animation(&xml)
-                            .into_iter()
-                            .chain([share_image])
-                            .chain(services::from_feed(&xml));
-                        for source in sources {
-                            picture = post_picture(client, source).await;
-                            if picture.is_some() {
-                                break;
-                            }
-                        }
+                        let picture = reddit_post_picture(client, &page, &share_image, Some(&xml)).await;
                         return Ok(Content::Post(post, picture));
                     }
                 }
@@ -1300,7 +1305,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                             channel: reddit_permalink_channel(&page, data["author_name"].as_str()),
                             summary: String::new(),
                         },
-                        post_picture(client, share_image).await,
+                        reddit_post_picture(client, &page, &share_image, None).await,
                     ));
                 }
             }
@@ -1323,6 +1328,24 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
         source,
         sensitive,
     })
+}
+
+async fn reddit_post_picture(client: &reqwest::Client, page: &str, share_image: &str, feed: Option<&str>) -> Option<(Picture, String)> {
+    // Prefer the original Reddit animation, then the official share card.
+    let sources = feed
+        .and_then(services::reddit_animation)
+        .into_iter()
+        .chain([share_image.to_owned()])
+        .chain(feed.and_then(services::from_feed));
+    for source in sources {
+        if let Some(picture) = post_picture(client, source).await {
+            return Some(picture);
+        }
+    }
+
+    // Some posts only publish a real poster on their public permalink.
+    let head = text_head(client, page, "text/html", "</head>").await.0.ok()?;
+    post_picture(client, services::from_head(Service::Reddit, &head)?).await
 }
 
 async fn post_picture(client: &reqwest::Client, source: String) -> Option<(Picture, String)> {
@@ -1650,6 +1673,9 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
             thumbnail: Some(demo_still(640, 360, 1)),
             aspect: Some(16.0 / 9.0),
         })),
+        Target::Page(Service::Reddit) if let Some((post, source)) = services::demo_reddit_post(url) => {
+            Ok(Content::Post(post, source.map(|url| (demo_still(640, 480, 0), url))))
+        }
         Target::Page(service) => {
             let (source, sensitive) = services::demo_source(url).ok_or(Failure::Unavailable)?;
             let picture = match service {

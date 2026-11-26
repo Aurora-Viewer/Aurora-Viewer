@@ -350,12 +350,12 @@ impl Previews {
     /// Before the conversation's editor and shortcuts receive keys.
     pub(super) fn lightbox_keys(&mut self, ctx: &egui::Context) {
         let owner = egui::Id::unique("conversations");
+        let lightbox = owner.with("image_enlargement");
         if self.enlarged()
             && ctx.memory(|m| m.top_modal_layer()).is_none()
             && (crate::ui::close_key::take(ctx, egui::Id::unique("conversations"))
-                || (ctx
-                    .top_layer_id()
-                    .is_none_or(|layer| layer.id == owner || layer.id == owner.with("image_enlargement"))
+                || ((ctx.top_layer_id().is_none_or(|layer| layer.id == owner || layer.id == lightbox)
+                    || ctx.memory(|m| m.has_focus(lightbox.with("canvas"))))
                     && ctx.input_mut(|i| {
                         i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::W)
                     })))
@@ -899,7 +899,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
             placeholder(ui, p, Vec2::new(width, (width * 9.0 / 16.0).round()))
         }
         (Entry::Picture(shown), _) => {
-            let out = picture(ui, p, shown, url, width, blur);
+            let out = picture(ui, p, shown, url, width, blur, false);
             if !blur && pv.demo && pv.demo_zoom.as_deref() == Some("links") {
                 let button = BUTTON.min((out.resp.rect.width() - 32.0) / 5.0);
                 note_link_hover(
@@ -946,13 +946,15 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
         }
         (Entry::Post(post, image), _) => {
             let mut reveal = false;
+            let reddit = matches!(target, Target::Page(lp::Service::Reddit));
+            let mut reddit_picture = None;
             let frame = egui::Frame::new()
                 .fill(p.raised)
                 .corner_radius(ui.visuals().window_corner_radius)
                 .inner_margin(10)
                 .show(ui, |ui| {
                     ui.set_max_width(width);
-                    if matches!(target, Target::Page(lp::Service::Reddit)) {
+                    if reddit {
                         if !post.channel.is_empty() {
                             ui.label(RichText::new(&post.channel).size(11.5).color(p.muted));
                         }
@@ -972,12 +974,15 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
                             ui.label(RichText::new(&post.summary).color(p.ink));
                         }
                     }
-                    if crate::ui::widgets::icon_button(ui, p, "external-link-filled", &link_tip(url, false), true) {
+                    if !reddit && crate::ui::widgets::icon_button(ui, p, "external-link-filled", &link_tip(url, false), true) {
                         super::open_web_link(ui.ctx(), url);
+                    }
+                    if reddit && let Some(image) = image {
+                        reddit_picture = Some(picture(ui, p, image, url, width, blur, !image.animated()));
                     }
                 });
             if let Some(image) = image {
-                let out = picture(ui, p, image, url, width, blur);
+                let out = reddit_picture.unwrap_or_else(|| picture(ui, p, image, url, width, blur, false));
                 match out.action {
                     Some(Action::Reveal) => reveal = true,
                     Some(Action::Copy) => clipboard::request(ui.ctx(), &image.copy),
@@ -1141,7 +1146,7 @@ fn overlay_button(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, 
 
 /// A picture's card: the picture (or its blur), the GIF mark, and the
 /// buttons while hovered.
-fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, url: &str, width: f32, blur: bool) -> PictureOut {
+fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, url: &str, width: f32, blur: bool, opens_post: bool) -> PictureOut {
     let size = shown.fit(width);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let radius = ui.visuals().window_corner_radius;
@@ -1206,6 +1211,9 @@ fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, url: &str, width: f32,
             ("external-link-filled", link_tip(url, false), Action::Open),
             ("link-filled", link_tip(url, true), Action::CopyLink),
         ] {
+            if opens_post && matches!(act, Action::Window) {
+                continue;
+            }
             let b = egui::Rect::from_min_size(egui::pos2(x, y), Vec2::splat(button));
             if overlay_button(ui, p, b, icon, &tip) {
                 action = Some(act);
@@ -1214,11 +1222,15 @@ fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, url: &str, width: f32,
         }
     }
     if action.is_none() && resp.clicked() {
-        action = Some(Action::Enlarge);
+        action = Some(if opens_post { Action::Open } else { Action::Enlarge });
     }
-    let resp = resp
-        .on_hover_cursor(egui::CursorIcon::ZoomIn)
-        .on_hover_text(aurora_i18n::tr!("ui-chat-preview-enlarge"));
+    let resp = if opens_post {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(link_tip(url, false))
+    } else {
+        resp.on_hover_cursor(egui::CursorIcon::ZoomIn)
+            .on_hover_text(aurora_i18n::tr!("ui-chat-preview-enlarge"))
+    };
     PictureOut { resp, action }
 }
 

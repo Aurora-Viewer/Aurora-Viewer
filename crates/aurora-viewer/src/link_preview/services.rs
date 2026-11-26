@@ -886,6 +886,16 @@ pub(super) fn from_head(service: Service, html: &str) -> Option<String> {
     twitter
 }
 
+#[test]
+fn reddit_permalink_can_supply_its_own_poster() {
+    let page = r#"<meta property="og:image" content="https://external-preview.redd.it/post.png?width=640&amp;format=pjpg">"#;
+    assert_eq!(
+        from_head(Service::Reddit, page).as_deref(),
+        Some("https://external-preview.redd.it/post.png?width=640&format=pjpg")
+    );
+    assert!(from_head(Service::Reddit, &page.replace("external-preview.redd.it", "other.example")).is_none());
+}
+
 /// Imgur share pages advertise a cover and, for animated posts, a stream.
 /// Keep galleries and albums as cover cards even when their first item moves.
 pub(super) fn clip_from_head(service: Service, page: &str, html: &str) -> Option<FoundClip> {
@@ -1296,6 +1306,14 @@ pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
             if url.contains("labelled") { BLUESKY_LABELLED } else { BLUESKY_POST }.as_bytes(),
         ),
     }
+}
+
+pub(super) fn demo_reddit_post(url: &str) -> Option<(super::PostInfo, Option<String>)> {
+    let (_, Step::Feed { .. }) = recognize(url)? else {
+        return None;
+    };
+    let xml = if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST };
+    Some((reddit_feed(xml)?, from_feed(xml)))
 }
 
 /// Demo mode: the clip of a Gyazo link to the video capture of the saved

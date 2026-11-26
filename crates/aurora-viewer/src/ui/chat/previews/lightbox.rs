@@ -27,6 +27,15 @@ impl View {
         self.zoom = next;
     }
 
+    fn keep_in_canvas(&mut self, source: Vec2, canvas: Rect) {
+        if self.zoom <= 1.0 {
+            self.offset = Vec2::ZERO;
+        } else {
+            let overflow = ((self.rect(source, canvas).size() - canvas.size()) * 0.5).max(Vec2::ZERO);
+            self.offset = self.offset.clamp(-overflow, overflow);
+        }
+    }
+
     fn rect(&self, source: Vec2, canvas: Rect) -> Rect {
         let scale = (canvas.width() / source.x).min(canvas.height() / source.y);
         Rect::from_center_size(canvas.center() + self.offset, source * scale * self.zoom)
@@ -135,8 +144,14 @@ impl Lightbox {
         if dim {
             ui.painter().rect_filled(bounds, 0.0, p.navy.gamma_multiply(0.90));
         }
+        let mut toolbar_room = bounds.shrink(8.0);
+        let close_area = dim.then(|| {
+            let button = Rect::from_min_size(Pos2::new(toolbar_room.right() - 24.0, toolbar_room.top()), Vec2::splat(24.0));
+            toolbar_room.max.x = button.left() - 6.0;
+            button
+        });
         let toolbar = ui
-            .scope_builder(egui::UiBuilder::new().max_rect(bounds.shrink(8.0)), |ui| {
+            .scope_builder(egui::UiBuilder::new().max_rect(toolbar_room), |ui| {
                 widgets::overlay_frame(&ctx, p)
                     .inner_margin(6)
                     .show(ui, |ui| {
@@ -172,7 +187,6 @@ impl Lightbox {
                             if widgets::icon_button(ui, p, "link-filled", &super::link_tip(&self.url, true), true) {
                                 ctx.copy_text(self.url.clone());
                             }
-                            close = dim && widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-close"), true);
                             if self.pending.is_some() {
                                 ui.spinner();
                             } else if self.failed {
@@ -184,6 +198,9 @@ impl Lightbox {
                     .rect
             })
             .inner;
+        if let Some(area) = close_area {
+            close = super::overlay_button(ui, p, area, "x", aurora_i18n::tr!("common-close"));
+        }
         let hint = aurora_i18n::tr!("ui-chat-preview-enlarge-help");
         let font = egui::TextStyle::Small.resolve(ui.style());
         let galley = ui
@@ -198,8 +215,7 @@ impl Lightbox {
         if self.focus {
             response.request_focus();
             self.focus = false;
-        }
-        if response.hovered() {
+        } else if response.hovered() {
             let (wheel, pinch) = ui.input_mut(|i| {
                 let wheel = i.smooth_scroll_delta.y;
                 i.smooth_scroll_delta = Vec2::ZERO;
@@ -223,10 +239,9 @@ impl Lightbox {
             egui::CursorIcon::Grab
         };
         response.on_hover_cursor(cursor);
-        let image = self.view.rect(
-            Vec2::new(self.shown.size[0].max(1) as f32, self.shown.size[1].max(1) as f32),
-            canvas,
-        );
+        let source = Vec2::new(self.shown.size[0].max(1) as f32, self.shown.size[1].max(1) as f32);
+        self.view.keep_in_canvas(source, canvas);
+        let image = self.view.rect(source, canvas);
         let (texture, next) = self.shown.frame(ui.input(|i| i.time));
         let mut image_ui = ui.new_child(egui::UiBuilder::new().max_rect(canvas));
         image_ui.set_clip_rect(canvas.intersect(bounds));
@@ -240,7 +255,7 @@ impl Lightbox {
             background.clicked()
                 && background
                     .interact_pointer_pos()
-                    .is_some_and(|at| !image.contains(at) && !toolbar.contains(at))
+                    .is_some_and(|at| !image.contains(at) && !toolbar.contains(at) && !close_area.is_some_and(|area| area.contains(at)))
         });
         close |= dim && clicked && clicked_at.is_some_and(|at| !image.contains(at));
         close

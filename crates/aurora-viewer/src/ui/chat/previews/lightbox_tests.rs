@@ -1,5 +1,5 @@
 use super::*;
-use crate::ui::chat::previews::{Entry, Previews, card};
+use crate::ui::chat::previews::{Action, Entry, Previews, card, picture};
 use std::time::Duration;
 
 fn shown(ctx: &Context) -> Shown {
@@ -32,6 +32,68 @@ fn fitted_picture_keeps_its_ratio_on_resize_and_zoom_keeps_the_anchor() {
     assert_eq!(view.zoom, 0.1);
     let resized = Rect::from_min_size(Pos2::ZERO, Vec2::new(240.0, 600.0));
     assert_eq!(View::fitted().rect(source, resized).size(), Vec2::new(240.0, 180.0));
+}
+
+#[test]
+fn zooming_out_recenters_a_panned_image_and_drag_cannot_hide_it() {
+    let canvas = Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, 400.0));
+    let source = Vec2::new(1120.0, 584.0);
+    let mut view = View::fitted();
+    view.zoom_at(6.0, Vec2::ZERO);
+    view.offset = Vec2::splat(100_000.0);
+    view.keep_in_canvas(source, canvas);
+    assert!(view.rect(source, canvas).contains_rect(canvas));
+    view.zoom_at(1.0 / 6.0, Vec2::new(100.0, 50.0));
+    view.keep_in_canvas(source, canvas);
+    let fitted = view.rect(source, canvas);
+    assert_eq!(fitted.center(), canvas.center());
+    assert!(canvas.expand(0.01).contains_rect(fitted));
+}
+
+#[test]
+fn a_reddit_poster_click_opens_the_post_and_a_regular_picture_still_enlarges() {
+    for opens_post in [false, true] {
+        let ctx = Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let image = shown(&ctx);
+        let frame = |events| {
+            let mut result = None;
+            let _ = run_ui(&ctx, input(events), |ui| {
+                let out = picture(ui, &p, &image, "https://www.reddit.com/comments/demo01/", 240.0, false, opens_post);
+                result = Some((out.resp.rect.center(), out.action));
+            });
+            result.unwrap()
+        };
+        let (target, _) = frame(vec![]);
+        frame(vec![egui::Event::PointerMoved(target)]);
+        frame(vec![pointer(target, true)]);
+        let (_, action) = frame(vec![pointer(target, false)]);
+        assert!(matches!(
+            (opens_post, action),
+            (true, Some(Action::Open)) | (false, Some(Action::Enlarge))
+        ));
+    }
+}
+
+#[test]
+fn zoomed_image_can_be_closed_from_the_fixed_corner_button() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let bounds = Rect::from_min_size(Pos2::new(50.0, 60.0), Vec2::new(600.0, 420.0));
+    let mut pv = Previews::default();
+    let mut image = Lightbox::new(&ctx, "https://i.redd.it/example.png".into(), shown(&ctx));
+    image.view.zoom = 8.0;
+    image.view.offset = Vec2::splat(10_000.0);
+    pv.lightbox = Some(image);
+    let target = Pos2::new(bounds.right() - 22.0, bounds.top() + 18.0);
+    let mut frame = |events| {
+        let _ = run_pass(&ctx, input(events), |ctx| pv.lightbox(ctx, &p, Some(bounds)));
+    };
+    frame(vec![]);
+    frame(vec![egui::Event::PointerMoved(target)]);
+    frame(vec![pointer(target, true)]);
+    frame(vec![pointer(target, false)]);
+    assert!(!pv.enlarged());
 }
 
 fn input(events: Vec<egui::Event>) -> egui::RawInput {
