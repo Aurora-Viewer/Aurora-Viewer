@@ -4726,3 +4726,89 @@ fn a_floating_blocks_button_hides_once_asked_and_its_block_has_a_shortcut() {
         );
     }
 }
+
+/// A drawer's window shows its shortcut with Edit and Delete before "Hide
+/// the button while floating", greyed without a shortcut, a click on it
+/// saying why; the shortcut window draws Ctrl, Alt and Shift as keys (human
+/// request, 2026-11-26).
+#[test]
+fn a_blocks_window_edits_its_shortcut_and_greys_hiding_without_one() {
+    let (mut bench, id) = drawer_target(false, Bar::Left, false, false);
+    bench.screen = Vec2::new(1920.0, 1080.0);
+    bench.state.drawer_editor = Some(id.clone());
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let rect = |bench: &Bench, key: &str| {
+        bench
+            .ctx
+            .data(|data| data.get_temp::<Rect>(Id::unique((key, &id))))
+            .unwrap_or_else(|| panic!("{key}"))
+    };
+    let closes = rect(&bench, "drawer_closes_check");
+    let edit = rect(&bench, "drawer_shortcut_edit");
+    let hides = rect(&bench, "drawer_hides_check");
+    assert!(
+        closes.bottom() <= edit.top() && edit.bottom() <= hides.top(),
+        "closes, shortcut, then hiding"
+    );
+    assert!(bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-shortcut-none")));
+    // greyed: a click changes nothing and says why
+    bench.pointer(hides.center(), Some(true));
+    bench.pointer(hides.center(), Some(false));
+    for _ in 0..2 {
+        bench.frame(Vec::new());
+    }
+    assert!(!bench.settings.drawers[&id].hides_button);
+    assert!(
+        bench
+            .text
+            .iter()
+            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-drawer-hides-needs-shortcut"))
+    );
+    // Edit opens the shortcut window, its modifiers drawn as keys
+    bench.pointer(edit.center(), Some(true));
+    bench.pointer(edit.center(), Some(false));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    let editor = bench.state.shortcut_editor.clone().expect("the shortcut window");
+    assert_eq!(editor.key, id);
+    assert!(editor.capturing, "it waits for the key");
+    assert!(bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-shortcut-esc")));
+    let alt = bench
+        .ctx
+        .data(|data| data.get_temp::<Rect>(Id::unique(("shortcut_modifier", "AltLeft"))))
+        .expect("Alt key");
+    bench.pointer(alt.center(), Some(true));
+    bench.pointer(alt.center(), Some(false));
+    assert!(bench.state.shortcut_editor.as_ref().is_some_and(|editor| editor.alt));
+    bench.state.shortcut_editor = None;
+    bench.state.pending = Some(Edit::Shortcut(
+        id.clone(),
+        Some(crate::keybinds::Binding {
+            input: crate::keybinds::Input::Key("KeyJ".into()),
+            ctrl: true,
+            shift: false,
+            alt: false,
+        }),
+    ));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(bench.settings.shortcuts.contains_key(&id));
+    let hides = rect(&bench, "drawer_hides_check");
+    bench.pointer(hides.center(), Some(true));
+    bench.pointer(hides.center(), Some(false));
+    for _ in 0..2 {
+        bench.frame(Vec::new());
+    }
+    assert!(bench.settings.drawers[&id].hides_button, "with a shortcut, it is set");
+    let delete = menu_point(&bench, aurora_i18n::tr!("common-delete"));
+    bench.pointer(delete, Some(true));
+    bench.pointer(delete, Some(false));
+    for _ in 0..2 {
+        bench.frame(Vec::new());
+    }
+    assert!(!bench.settings.shortcuts.contains_key(&id));
+}

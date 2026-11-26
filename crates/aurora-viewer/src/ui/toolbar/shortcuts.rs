@@ -463,6 +463,11 @@ impl ToolbarUi {
         }
     }
 
+    /// Opens the shortcut window of `key` (a block's "Edit" button).
+    pub(super) fn edit_shortcut(&mut self, key: &str, current: Option<&Binding>) {
+        self.shortcut_editor = Some(Editor::new(key, current));
+    }
+
     /// Whether the shortcut window is open: the app then gives it the
     /// Preferences shortcuts (`keybinds`), for its warnings.
     pub fn shortcut_editing(&self) -> bool {
@@ -507,7 +512,7 @@ impl ToolbarUi {
             WINDOW,
             aurora_i18n::tr!("toolbar-shortcut-title"),
             ctx.content_rect().center() - Vec2::new(200.0, 130.0),
-            Vec2::new(400.0, 260.0),
+            Vec2::new(420.0, 300.0),
         );
         window.order = egui::Order::Foreground;
         window.show(ctx, p, &mut open, |ui| {
@@ -515,17 +520,29 @@ impl ToolbarUi {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 // the modifiers, turned on and off by a click
-                for (on, label) in [
-                    (&mut editor.ctrl, Input::Key("ControlLeft".into()).label()),
-                    (&mut editor.alt, Input::Key("AltLeft".into()).label()),
-                    (&mut editor.shift, Input::Key("ShiftLeft".into()).label()),
+                // the modifiers, keys as Preferences draws them (human
+                // request, 2026-11-26), on in the accent
+                for (on, code) in [
+                    (&mut editor.ctrl, "ControlLeft"),
+                    (&mut editor.alt, "AltLeft"),
+                    (&mut editor.shift, "ShiftLeft"),
                 ] {
-                    let kind = if *on {
-                        widgets::ActionKind::Primary
-                    } else {
-                        widgets::ActionKind::Flat
+                    let fill = if *on { p.violet } else { p.raised };
+                    let cap = Binding {
+                        input: Input::Key(code.into()),
+                        ctrl: false,
+                        shift: false,
+                        alt: false,
                     };
-                    if widgets::action_button(ui, p, "", &label, kind, Vec2::new(56.0, 28.0)).clicked() {
+                    let caps = widgets::keycap::caps(ui, &cap, fill);
+                    let width = widgets::keycap::row_width(&caps);
+                    let response = ui.add(egui::Button::new("").fill(fill).min_size(Vec2::new((width + 16.0).max(56.0), 28.0)));
+                    let left = egui::pos2(response.rect.center().x - width / 2.0, response.rect.center().y);
+                    widgets::keycap::paint_row(ui, p, &caps, left, fill);
+                    #[cfg(test)]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(Id::unique(("shortcut_modifier", code)), response.rect));
+                    if response.clicked() {
                         *on = !*on;
                     }
                 }
@@ -543,7 +560,7 @@ impl ToolbarUi {
                     _ => Vec::new(),
                 };
                 let (text, color) = if editor.capturing {
-                    (aurora_i18n::tr!("toolbar-shortcut-press"), p.on_accent)
+                    (aurora_i18n::tr!("toolbar-shortcut-press-key"), p.on_accent)
                 } else if key.is_some() {
                     ("", p.ink)
                 } else {
@@ -562,6 +579,10 @@ impl ToolbarUi {
                 }
             });
             ui.add_space(6.0);
+            // while it waits for the key (human request, 2026-11-26)
+            if editor.capturing {
+                ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-shortcut-esc")).color(p.muted));
+            }
             if let Some(refusal) = refused {
                 ui.label(egui::RichText::new(refusal.message()).color(p.danger));
             } else if let Some(conflict) = &conflict {
@@ -593,7 +614,7 @@ impl ToolbarUi {
             });
             ui.add_space(8.0);
             let note = |ui: &mut egui::Ui, text: &str| {
-                ui.label(egui::RichText::new(text).small().color(p.muted));
+                ui.label(egui::RichText::new(text).color(p.muted));
             };
             note(ui, aurora_i18n::tr!("toolbar-shortcut-help"));
             if editor.key.starts_with(BLOCK) {

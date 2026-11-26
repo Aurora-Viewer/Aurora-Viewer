@@ -465,6 +465,7 @@ pub(super) fn show_settings(ctx: &egui::Context, p: &Palette, toolbar: &mut Tool
                             closes: &mut closes,
                             hides: &mut hides,
                             mode: &mut mode,
+                            shortcut: settings.shortcuts.get(&id),
                         },
                     );
                 });
@@ -545,6 +546,7 @@ fn floating_settings(
                             closes: &mut options.closes,
                             hides: &mut options.hides_button,
                             mode: &mut options.mode,
+                            shortcut: settings.shortcuts.get(id),
                         },
                     );
                     ui.add_space(12.0);
@@ -591,12 +593,14 @@ struct BlockFields<'a> {
     closes: &'a mut bool,
     hides: &'a mut bool,
     mode: &'a mut ButtonMode,
+    shortcut: Option<&'a crate::keybinds::Binding>,
 }
 
 /// The fields of a drawer's or a floating block's settings, in the human's
 /// order (2026-11-26): its name on one line, its icon, whether it closes
-/// after a click and hides its button while floating, then its own button's
-/// display and its buttons' default display.
+/// after a click, its shortcut, whether it hides its button while floating
+/// (greyed without a shortcut), then its own button's display and its
+/// buttons' default display.
 fn block_fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &str, button: &ToolButton, fields: BlockFields<'_>) {
     ui.horizontal(|ui| {
         ui.label(aurora_i18n::tr!("toolbar-block-name"));
@@ -616,16 +620,79 @@ fn block_fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &st
     ui.ctx()
         .data_mut(|data| data.insert_temp(Id::unique(("drawer_closes_check", id)), check.rect));
     let _ = check;
-    let check = widgets::checkbox(ui, p, fields.hides, aurora_i18n::tr!("toolbar-drawer-hides-button"));
+    ui.add_space(8.0);
+    // its shortcut as Preferences shows one, with Edit and Delete
+    ui.horizontal(|ui| {
+        ui.label(aurora_i18n::tr!("toolbar-block-shortcut"));
+        match fields.shortcut {
+            Some(b) => {
+                let behind = p.panel;
+                let caps = widgets::keycap::caps(ui, b, behind);
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(widgets::keycap::row_width(&caps), widgets::keycap::HEIGHT),
+                    egui::Sense::hover(),
+                );
+                widgets::keycap::paint_row(ui, p, &caps, rect.left_center(), behind);
+            }
+            None => {
+                ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-shortcut-none")).color(p.muted));
+            }
+        }
+        let edit = widgets::action_button(
+            ui,
+            p,
+            "keyboard",
+            aurora_i18n::tr!("common-edit"),
+            widgets::ActionKind::Flat,
+            Vec2::new(0.0, 28.0),
+        );
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(Id::unique(("drawer_shortcut_edit", id)), edit.rect));
+        if edit.clicked() {
+            toolbar.edit_shortcut(id, fields.shortcut);
+        }
+        if fields.shortcut.is_some()
+            && widgets::action_button(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("common-delete"),
+                widgets::ActionKind::Flat,
+                Vec2::new(0.0, 28.0),
+            )
+            .clicked()
+        {
+            toolbar.pending = Some(Edit::Shortcut(id.into(), None));
+        }
+    });
+    ui.add_space(8.0);
+    // greyed without a shortcut: a click on it says why (human request,
+    // 2026-11-26)
+    let has_shortcut = fields.shortcut.is_some();
+    let check = ui
+        .add_enabled_ui(has_shortcut, |ui| {
+            widgets::checkbox(ui, p, fields.hides, aurora_i18n::tr!("toolbar-drawer-hides-button"))
+        })
+        .inner;
     #[cfg(test)]
     ui.ctx()
         .data_mut(|data| data.insert_temp(Id::unique(("drawer_hides_check", id)), check.rect));
-    let _ = check;
-    ui.label(
-        egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-hides-button-help"))
-            .small()
-            .color(p.muted),
-    );
+    let tip = Id::unique(("drawer_hides_tip", id));
+    let now = ui.input(|input| input.time);
+    if !has_shortcut
+        && ui.input(|input| input.pointer.primary_clicked() && input.pointer.interact_pos().is_some_and(|pos| check.rect.contains(pos)))
+    {
+        ui.ctx().data_mut(|data| data.insert_temp(tip, now + 2.0));
+    }
+    if let Some(until) = ui.ctx().data(|data| data.get_temp::<f64>(tip)) {
+        if has_shortcut || now >= until {
+            ui.ctx().data_mut(|data| data.remove::<f64>(tip));
+        } else {
+            check.show_tooltip_text(aurora_i18n::tr!("toolbar-drawer-hides-needs-shortcut"));
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(until - now));
+        }
+    }
     ui.add_space(12.0);
     ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-block-button-mode")).strong());
     super::appearance::Editor::block_button_modes(ui, p, fields.look);
@@ -634,11 +701,6 @@ fn block_fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &st
     for (value, _, label) in default_mode_rows() {
         widgets::radio_value(ui, p, fields.mode, value, label);
     }
-    ui.label(
-        egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-default-help"))
-            .small()
-            .color(p.muted),
-    );
 }
 
 /// The buttons' default display, in the human's order (2026-11-26): icons
