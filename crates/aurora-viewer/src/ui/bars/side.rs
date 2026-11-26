@@ -359,6 +359,8 @@ fn classic(
         )
         .exact_size(panel_w)
         .resizable(false)
+        // no line along the world: the background stops at the buttons
+        .show_separator_line(false)
         .show(ui, |ui| {
             glass = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
             let zone = ui.available_rect_before_wrap();

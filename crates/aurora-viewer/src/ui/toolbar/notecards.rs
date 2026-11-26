@@ -358,7 +358,9 @@ impl State {
         } else if self.catalog.entries.is_empty() {
             ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-saved-interfaces-empty")).color(p.muted));
         } else {
-            let enabled = !locked && !self.busy() && self.catalog.can_preview;
+            // the interface lock never stops a change of interface (human
+            // request, 2026-11-26): only the eyes keep to it
+            let enabled = !self.busy() && self.catalog.can_preview;
             egui::ScrollArea::vertical()
                 .id_salt("toolbar_saved_interfaces")
                 .max_height(100.0)
@@ -407,7 +409,7 @@ impl State {
     }
 
     fn load(&mut self, inv: &Inventory, toolbar: &ToolbarSettings, islands: bool, item: Uuid) -> Option<NetCommand> {
-        if self.busy() || toolbar.locked || !inv.can_preview(7) {
+        if self.busy() || !inv.can_preview(7) {
             return None;
         }
         let Some(item) = context_notecards::available(inv, item).cloned() else {
@@ -506,7 +508,7 @@ impl State {
         }
         let pending = self.loading.take()?;
         self.dismissed = false;
-        let decoded = if current.locked || *current != pending.before || profile::Base::from_islands(islands) != pending.base {
+        let decoded = if *current != pending.before || profile::Base::from_islands(islands) != pending.base {
             Err(aurora_i18n::tr!("toolbar-notecard-layout-changed").into())
         } else if !inv.can_preview(7)
             || asset != pending.asset
@@ -573,14 +575,9 @@ impl State {
             command = self.load(inv, toolbar, islands, item);
         }
         if self.mode == Some(Mode::Load) {
-            let (close, selected) = self.picker.show(
-                ctx,
-                p,
-                inv,
-                &mut self.filter,
-                &mut self.selected,
-                !toolbar.locked && inv.can_preview(7),
-            );
+            let (close, selected) = self
+                .picker
+                .show(ctx, p, inv, &mut self.filter, &mut self.selected, inv.can_preview(7));
             if let Some(item) = selected {
                 command = self.load(inv, toolbar, islands, item);
             }
@@ -822,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn interface_notecard_saved_preset_click_loads_the_card_and_honors_locks() {
+    fn interface_notecard_saved_preset_click_loads_the_card_even_locked() {
         for locked in [false, true] {
             let (mut inv, mut item) = inventory();
             let library::Path::Ready(folder) = library::resolve(&mut inv).expect("path") else {
@@ -864,9 +861,11 @@ mod tests {
                 .center();
             assert!(frame(click_events(point, true)).is_none());
             let command = frame(click_events(point, false));
-            assert_eq!(
+            // the interface lock never stops a change of interface (human
+            // request, 2026-11-26)
+            assert!(
                 matches!(command,Some(NetCommand::PreviewInventoryItem(chosen)) if chosen.id == item.id),
-                !locked
+                "locked={locked}"
             );
         }
     }

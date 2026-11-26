@@ -165,10 +165,9 @@ impl Preset {
         }
     }
 
+    /// The interface lock never stops a change of interface (human request,
+    /// 2026-11-26): the new one keeps it (`keep_interface_choices`).
     pub fn apply(self, settings: &mut Settings, skin: &Layout) -> bool {
-        if settings.toolbar.as_ref().is_some_and(|toolbar| toolbar.locked) {
-            return false;
-        }
         crate::ui::options::set_look(
             settings,
             if self == Self::Legacy {
@@ -327,10 +326,13 @@ mod tests {
             }),
             ..Default::default()
         };
-        let before = settings.toolbar.clone();
-        assert!(!Preset::Legacy.apply(&mut settings, &Layout::default()));
-        assert_eq!(settings.toolbar, before);
-        assert!(!settings.classic_bars);
+        // the lock never stops a change of interface, which keeps it (human
+        // request, 2026-11-26)
+        assert!(Preset::Legacy.apply(&mut settings, &Layout::default()));
+        assert!(settings.classic_bars);
+        let toolbar = settings.toolbar.as_ref().expect("the Legacy layout");
+        assert!(toolbar.locked, "still locked");
+        assert_eq!(toolbar.left, Preset::Legacy.layout(&Layout::default()).left);
     }
 
     #[test]

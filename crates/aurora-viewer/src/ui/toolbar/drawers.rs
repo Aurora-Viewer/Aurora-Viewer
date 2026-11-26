@@ -262,11 +262,12 @@ pub(super) fn migrate_interfaces(settings: &mut ToolbarSettings) -> bool {
     true
 }
 
-/// The interfaces' eyes and their shortcuts belong to no interface: a
-/// preset, a personal interface or the defaults chosen, `next` keeps those
-/// of `previous` (human request, 2026-11-26).
+/// The interfaces' eyes, their shortcuts and the interface lock belong to
+/// no interface: a preset, a personal interface or the defaults chosen,
+/// `next` keeps those of `previous` (human requests, 2026-11-26).
 pub(super) fn keep_interface_choices(next: &mut ToolbarSettings, previous: &ToolbarSettings) {
     next.hidden_interfaces = previous.hidden_interfaces.clone();
+    next.locked = previous.locked;
     next.shortcuts.retain(|key, _| !key.starts_with(INTERFACE_PREFIX));
     next.shortcuts.extend(
         previous
