@@ -690,7 +690,7 @@ fn system(
                 );
                 if fps.clicked() {
                     crate::ui::perf::place_under(ui.ctx(), island);
-                    panels.perf = !panels.perf;
+                    crate::ui::widgets::toggle_floater(ui.ctx(), "perf", &mut panels.perf);
                 }
                 super::graphics::hover(&fps, p, st, action);
                 fps_hovered = fps.hovered();

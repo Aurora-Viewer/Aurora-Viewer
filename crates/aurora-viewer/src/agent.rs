@@ -95,6 +95,10 @@ pub struct AgentState {
     pub velocity: Vec3,
     pub yaw: f32,
     pub pitch: f32,
+    /// A script took yaw left or right outright (LLAgent::rotateGrabbed,
+    /// indra/newview/llagent.cpp): [`Self::yaw_by`] leaves the heading
+    /// alone. Mirrors `World::script_controls`, which sets it.
+    pub rotate_grabbed: bool,
     pub flying: bool,
     pub seated: bool,
     /// Sitting on the ground: ANIM_AGENT_SIT_GROUND_CONSTRAINED plays on us
@@ -165,6 +169,7 @@ impl Default for AgentState {
             velocity: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
+            rotate_grabbed: false,
             flying: false,
             seated: false,
             ground_sit: false,
@@ -706,12 +711,32 @@ impl AgentState {
         self.has_server = true;
     }
 
-    /// Advance smoothing and turning.
+    /// LLAgent::yaw (indra/newview/llagent.cpp): turn the agent frame,
+    /// unless a script took yaw outright. The turns the Legacy Viewer makes
+    /// with LLAgent::rotate instead (the mouse in mouselook, the joystick in
+    /// mouselook without "mouselook yaw") add to `yaw` directly.
+    pub fn yaw_by(&mut self, radians: f32) {
+        if !self.rotate_grabbed {
+            self.yaw += radians;
+        }
+    }
+
+    /// Advance smoothing and turning. The yaw flags are sent whether or not
+    /// a script took yaw (`control_flags`).
     pub fn update(&mut self, input: &MoveInput, mouselook: bool, dt: f32, camera_distance: f32) {
-        self.yaw += input.joystick_yaw * dt.clamp(0.0, 0.2);
+        // LLViewerJoystick::agentYaw: "Cannot steer some vehicles in
+        // mouselook if the script grabs the controls", so in mouselook
+        // without mouselook yaw the stick rotates the frame (no YAW flag);
+        // otherwise it goes through LLAgent::yaw.
+        let stick = input.joystick_yaw * dt.clamp(0.0, 0.2);
+        if mouselook && !input.joystick_mouselook_yaw {
+            self.yaw += stick;
+        } else {
+            self.yaw_by(stick);
+        }
         self.pitch = clamp_pitch(self.pitch + input.joystick_pitch * dt.clamp(0.0, 0.2));
         if !mouselook {
-            self.yaw += input.keyboard_yaw() * dt;
+            self.yaw_by(input.keyboard_yaw() * dt);
         }
         self.yaw = (self.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
         if !self.has_local_control() {
@@ -934,6 +959,64 @@ mod tests {
         keys.vr_lateral_keys(true);
         assert!(!keys.turn_left && keys.strafe_left && keys.up);
         assert_eq!(keys.keyboard_yaw(), 0.0);
+    }
+
+    /// A script that took yaw outright leaves the heading where it is, for
+    /// the keys and for the joystick out of mouselook. The yaw flag is still
+    /// set (LLAgent::moveYaw keeps sending it).
+    #[test]
+    fn a_grabbed_turn_leaves_the_heading_and_still_sends_the_flag() {
+        let input = MoveInput {
+            turn_left: true,
+            turn_held: 1.0,
+            joystick_yaw: 0.4,
+            ..MoveInput::default()
+        };
+        let mut agent = AgentState {
+            rotate_grabbed: true,
+            ..AgentState::default()
+        };
+        let before = agent.yaw;
+        agent.update(&input, false, 0.1, 5.0);
+        assert_eq!(agent.yaw, before, "rotateGrabbed: the agent frame stays");
+        agent.yaw_by(0.3);
+        assert_eq!(agent.yaw, before, "LLAgent::yaw is blocked too");
+        assert_ne!(
+            agent.control_flags(&input, false) & control::YAW_POS,
+            0,
+            "the script still sees the key"
+        );
+        agent.rotate_grabbed = false;
+        agent.update(&input, false, 0.1, 5.0);
+        assert_ne!(agent.yaw, before, "not grabbed: left still turns");
+    }
+
+    /// LLViewerJoystick::agentYaw: in mouselook without "mouselook yaw" the
+    /// stick turns with LLAgent::rotate (no YAW flag, not blocked by a
+    /// script's hold); with it (the default for a gamepad and for Game
+    /// Control) it goes through LLAgent::yaw and the hold stops it.
+    #[test]
+    fn a_grabbed_yaw_still_lets_the_stick_turn_in_mouselook_without_mouselook_yaw() {
+        let mut input = MoveInput {
+            joystick_yaw: 0.4,
+            ..MoveInput::default()
+        };
+        let mut agent = AgentState {
+            rotate_grabbed: true,
+            ..AgentState::default()
+        };
+        agent.update(&input, true, 0.1, 5.0);
+        assert!((agent.yaw - 0.04).abs() < 1e-5, "rotate, not yaw: {}", agent.yaw);
+        assert_eq!(agent.control_flags(&input, true) & (control::YAW_POS | control::YAW_NEG), 0);
+
+        input.joystick_mouselook_yaw = true;
+        let before = agent.yaw;
+        agent.update(&input, true, 0.1, 5.0);
+        assert_eq!(agent.yaw, before, "mouselook yaw goes through LLAgent::yaw");
+        assert_ne!(agent.control_flags(&input, true) & control::YAW_POS, 0);
+        agent.rotate_grabbed = false;
+        agent.update(&input, true, 0.1, 5.0);
+        assert!(agent.yaw > before, "not grabbed: the stick turns");
     }
 
     use std::time::Duration;

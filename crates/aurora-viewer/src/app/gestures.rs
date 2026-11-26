@@ -409,7 +409,7 @@ impl App {
                     kind: aurora_net::inventory::operations::NewItem::Gesture,
                     name: aurora_i18n::tr!("gesture-new-name").into(),
                 });
-                self.panels.inventory = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             Action::Delete(ids) => {
                 // LLFloaterGesture::onDeleteSelected moves the gestures to the
@@ -426,7 +426,7 @@ impl App {
                     &mut actions,
                     ids,
                 ) {
-                    self.panels.inventory = true;
+                    crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                 }
                 for action in actions {
                     self.apply_inventory_action(action);
@@ -434,7 +434,7 @@ impl App {
             }
             Action::ShowInventory(id) => {
                 self.inventory_ui.show_original(&self.world.inventory, id);
-                self.panels.inventory = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             Action::AddToOutfit(ids) => {
                 if let Some(cof) = crate::world::appearance::cof(&self.world.inventory) {
