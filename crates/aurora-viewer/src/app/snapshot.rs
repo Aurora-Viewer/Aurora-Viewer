@@ -2875,7 +2875,7 @@ LUT_3D_SIZE {n}
         use crate::camera::free::{CLEARANCE, collide};
         let (world, scene) = (&self.world, &self.scene);
         let moved = collide(from, delta, |at, dir, length| {
-            let (hit, _) = scene.selection_pick(world, Some((at, dir)), None, true, false, length);
+            let hit = scene.photo_probe(world, (at, dir), length);
             let mut room = hit.map_or(length, |p| (p - at).dot(dir).clamp(0.0, length));
             if dir.z < 0.0
                 && let Some(land) = world.ground_height(at)

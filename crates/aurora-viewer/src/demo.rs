@@ -188,6 +188,9 @@ pub mod hud;
 /// the window title (AURORA_DEMO_IM_ANNOUNCE).
 #[path = "demo_im_announce.rs"]
 pub mod im_announce;
+/// Violet Wolf's outfit for Inspect (AURORA_DEMO_INSPECT).
+#[path = "demo_inspect.rs"]
+pub mod inspect;
 /// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
 #[path = "demo_keywords.rs"]
 pub mod keywords;
@@ -201,8 +204,15 @@ pub mod land;
 /// (AURORA_DEMO_LEGACY_BUMP).
 #[path = "demo_legacy_bump.rs"]
 pub mod legacy_bump;
+/// A Legacy Viewer's lists to import (AURORA_DEMO_LEGACY_LISTS).
+#[path = "demo_legacy_lists.rs"]
+pub mod legacy_lists;
 #[path = "demo_link.rs"]
 pub mod link;
+/// A market for Area Search and Inspect (`market` of AURORA_DEMO_AREA_SEARCH
+/// and AURORA_DEMO_INSPECT).
+#[path = "demo_market.rs"]
+pub mod market;
 /// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
 #[path = "demo_mask_255.rs"]
 pub mod mask_255;
@@ -1705,6 +1715,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     };
     match view {
         Bubbles::Friend | Bubbles::Legacy => {
@@ -1945,6 +1956,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1969,6 +1981,7 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -2133,6 +2146,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     };
     let names = |id: Uuid| world_name(id);
     let group = [
@@ -6916,8 +6930,14 @@ pub fn events() -> Vec<NetEvent> {
     // (AURORA_DEMO_AVATAR_CACHE sends them later, demo_avatar_cache.rs)
     if !avatar_cache::enabled() {
         avatars.extend(wolf_attachments(false));
+        if inspect::enabled() {
+            avatars.extend(inspect::outfit());
+        }
     }
     let start = Vec3::new(132.0, 126.0, height(140.0, 130.0) + 0.35 + 0.84);
+    if market::enabled() {
+        avatars.extend(market::objects(start, &height));
+    }
     // AURORA_DEMO_POS="x,y" moves the start position (captures)
     let start = match std::env::var("AURORA_DEMO_POS")
         .ok()

@@ -416,6 +416,11 @@ fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFol
     });
 }
 
+/// A `FetchInventory2` item read's timeout: the Legacy Viewer's
+/// `initHttpRequest` (llinventorymodel.cpp, `setTransferTimeout(300)`).
+/// Deliberate difference: one try, where llcorehttp retries on top.
+const LEGACY_ITEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Items read, items the server says do not exist, and failed reads.
 fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool) {
     if !reads.items.is_empty() {
@@ -426,11 +431,17 @@ fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::It
         });
     }
     if !reads.missing.is_empty() {
-        let _ = events.send(NetEvent::InventoryItemsMissing { items: reads.missing });
+        let _ = events.send(NetEvent::InventoryItemsMissing {
+            items: reads.missing,
+            attachment,
+        });
     }
     if !reads.failed.is_empty() {
         log::warn!("{} inventory item reads failed", reads.failed.len());
-        let _ = events.send(NetEvent::InventoryItemsFailed { items: reads.failed });
+        let _ = events.send(NetEvent::InventoryItemsFailed {
+            items: reads.failed,
+            attachment,
+        });
     }
 }
 
@@ -3938,13 +3949,18 @@ impl Session<'_> {
                 }
             };
             if let Some(cap) = ais {
-                for chunk in items.chunks(16) {
+                for chunk in items.chunks(crate::inventory::ais::ITEM_CHUNK) {
                     receive(crate::inventory::ais::read_items(&http, &cap, owner, chunk).await);
                 }
             } else if let Some(url) = legacy {
                 for chunk in items.chunks(50) {
                     let body = crate::inventory::fetch_items_body(chunk, owner);
-                    let reads = match caps::post_llsd(&http, &url, &body).await {
+                    // (each chunk answers within LEGACY_ITEM_TIMEOUT, so the
+                    // viewer's one-read-at-a-time claim outlasts it)
+                    let posted = tokio::time::timeout(LEGACY_ITEM_TIMEOUT, caps::post_llsd(&http, &url, &body))
+                        .await
+                        .unwrap_or_else(|_| Err(caps::CapsError::Http("timed out".to_owned())));
+                    let reads = match posted {
                         Ok(doc) => crate::inventory::item_reads(&doc, chunk),
                         Err(e) => {
                             log::warn!("item fetch failed: {e}");

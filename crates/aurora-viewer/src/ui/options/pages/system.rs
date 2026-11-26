@@ -162,7 +162,7 @@ pub fn page(cx: &mut Cx) {
     // settings, so outside the page's reset
     let p = cx.p;
     cx.group(tr!("ui-options-backup"), |cx| {
-        use crate::ui::widgets::{ActionKind, action_button};
+        use crate::ui::widgets::{ActionKind, action_button, action_button_if};
         let size = Vec2::new(0.0, 26.0);
         cx.row_with(
             tr!("ui-options-backup-save"),
@@ -209,6 +209,36 @@ pub fn page(cx: &mut Cx) {
                     }
                     if !st.restore_status.is_empty() {
                         ui.add(egui::Label::new(RichText::new(&st.restore_status).size(11.5).color(p.muted)).wrap());
+                    }
+                });
+                false
+            },
+        );
+        cx.row_with(
+            tr!("ui-options-legacy-lists"),
+            tr!("ui-options-legacy-lists-help"),
+            &Nothing,
+            |ui, _, st, r| {
+                ui.vertical(|ui| {
+                    let ready = st.legacy_lists_ready;
+                    if action_button_if(
+                        ui,
+                        &p,
+                        "file-import",
+                        tr!("ui-options-legacy-lists-button"),
+                        ActionKind::Flat,
+                        size,
+                        ready,
+                    )
+                    .clicked()
+                    {
+                        r.find_legacy_lists = true;
+                    }
+                    if !ready {
+                        ui.label(RichText::new(tr!("ui-options-legacy-lists-no-account")).size(11.5).color(p.muted));
+                    }
+                    if !st.legacy_lists_status.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(&st.legacy_lists_status).size(11.5).color(p.muted)).wrap());
                     }
                 });
                 false
