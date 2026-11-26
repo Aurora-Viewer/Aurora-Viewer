@@ -467,7 +467,7 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
             } else {
                 let h = (ui.available_height() - 6.0).max(140.0);
                 ui.vertical(|ui| {
-                    super::classic_pane(ui, p, icons, emoji, pics, gestures, world, st, actions, h, &own_name);
+                    super::classic_pane(ui, p, icons, emoji, pics, images, gestures, world, st, actions, h, &own_name);
                 });
             }
             if !minimized {

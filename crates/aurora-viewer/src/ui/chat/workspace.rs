@@ -362,6 +362,7 @@ pub(super) fn pane(
                 icons,
                 emoji,
                 pics,
+                images,
                 world: w,
                 own_name: &own_name,
                 height: lines_h,
@@ -467,9 +468,7 @@ pub(super) fn drops(
         && let Some(items) = crate::ui::inventory::drag::carried_ids(ui.ctx())
         && zone.contains_pointer()
     {
-        let asset = (items.len() == 1)
-            .then(|| shareable_texture(world, items[0]))
-            .flatten();
+        let asset = (items.len() == 1).then(|| shareable_texture(world, items[0])).flatten();
         crate::ui::inventory::drag::feedback(
             ui.ctx(),
             if asset.is_some() {
@@ -503,7 +502,7 @@ fn shareable_texture(world: &World, dragged: Uuid) -> Option<Uuid> {
         && !item.asset_id.is_nil()
         && permissions::held(&world.inventory, item) & permissions::FULL == permissions::FULL
         && permissions::asset_uuid_shown(&world.inventory, item.asset_id))
-        .then_some(item.asset_id)
+    .then_some(item.asset_id)
 }
 
 /// `AURORA_DEMO_CONV_GIVE=away|over|many|drop|give` (with `AURORA_DEMO_CONV=aurora`).

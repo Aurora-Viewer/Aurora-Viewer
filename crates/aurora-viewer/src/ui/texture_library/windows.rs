@@ -412,8 +412,8 @@ impl LibraryUi {
         let size = prefs.preview_size(false).unwrap_or(Vec2::new(460.0, 520.0));
         let mut open = true;
         let title = format!("{} · {asset}", aurora_i18n::tr!("texture-library-preview"));
-        let mut floater = Floater::new(&id, title, ctx.content_rect().center() - size * 0.5, size)
-            .cascade(widgets::CascadeGroup::inventory(0));
+        let mut floater =
+            Floater::new(&id, title, ctx.content_rect().center() - size * 0.5, size).cascade(widgets::CascadeGroup::inventory(0));
         floater.min_size = Vec2::new(220.0, 260.0);
         floater.show(ctx, p, &mut open, |ui| {
             self.wanted_images.insert(asset);

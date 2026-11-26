@@ -329,6 +329,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                         mark,
                     );
                 }
+                super::shared_texture_thumbnail(ui, env, line);
                 super::previews::cards(ui, env, line, &text);
             });
         });
@@ -528,6 +529,9 @@ mod tests {
                     icons: &icons,
                     emoji: &mut emoji,
                     pics: &pics,
+                    images: None,
+                    wanted_images: None,
+                    share_texture_previews: false,
                     world: &world,
                     names: crate::world::names::NameScope::World,
                     want_names: &mut names,

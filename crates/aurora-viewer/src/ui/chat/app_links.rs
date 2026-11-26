@@ -318,13 +318,15 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
         if !matches!(link, AppLink::Experience(_) | AppLink::Texture(_)) {
             menu::separator(ui, p);
         }
-        if !matches!(link, AppLink::Texture(_)) && menu::item_if(
-            ui,
-            p,
-            "link-filled",
-            aurora_i18n::tr!("common-copy-slurl"),
-            world.rlva_filter_text(url) == url,
-        ) {
+        if !matches!(link, AppLink::Texture(_))
+            && menu::item_if(
+                ui,
+                p,
+                "link-filled",
+                aurora_i18n::tr!("common-copy-slurl"),
+                world.rlva_filter_text(url) == url,
+            )
+        {
             ui.ctx().copy_text(url.to_owned());
         }
     });

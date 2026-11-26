@@ -402,6 +402,7 @@ fn roomy_row(
                     mark,
                 );
             }
+            super::shared_texture_thumbnail(ui, env, line);
             super::previews::cards(ui, env, line, &text);
         });
     });
@@ -469,6 +470,7 @@ fn compact_row(
                     mark,
                 );
             }
+            super::shared_texture_thumbnail(ui, env, line);
             super::previews::cards(ui, env, line, &text);
         });
     });
