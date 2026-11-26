@@ -91,6 +91,7 @@ pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geo
         Style::default(),
         |square| (0..buttons).map(|i| if mic && i == 0 { DOCK_MIC_W } else { square }).collect(),
         |_, _, _| 0.0,
+        |_, _, _| 0.0,
     )
 }
 
@@ -103,9 +104,10 @@ pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geo
 /// reduced size (`MIN_BUTTON`) and their labels are cut, and a chat island
 /// that would still push the dock out shrinks. Both islands are as high as
 /// the buttons and their margins. The conversations' thumbnails take
-/// `thumbs(room, button, height)` after the chat island, within the room
-/// the dock leaves at its size: the dock keeps its place unless it would
-/// cover them, then stands right after them.
+/// `thumbs(room, button, height)` after the chat island. A centred dock
+/// keeps its place when `centred_gap` finds a strip with at least one face
+/// in the gap (#3552); if not, the strip stays left of the dock (lone "+N"
+/// kept in the bar). Blocks and stretch follow the dock's room after the strip.
 #[cfg(test)]
 pub fn geometry_styled(
     screen: Rect,
@@ -113,8 +115,10 @@ pub fn geometry_styled(
     style: Style,
     natural: impl Fn(f32) -> Vec<f32>,
     thumbs: impl Fn(f32, f32, f32) -> f32,
+    // centred-gap probe only: 0 when a lone "+N" should shove instead
+    centred_gap: impl Fn(f32, f32, f32) -> f32,
 ) -> Geometry {
-    geometry_fixed(screen, chat_width, style, natural, thumbs, &[], &[], false, &[], true)
+    geometry_fixed(screen, chat_width, style, natural, thumbs, centred_gap, &[], &[], false, &[], true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -124,6 +128,7 @@ fn geometry_fixed(
     style: Style,
     natural: impl Fn(f32) -> Vec<f32>,
     thumbs: impl Fn(f32, f32, f32) -> f32,
+    centred_gap: impl Fn(f32, f32, f32) -> f32,
     fixed: &[bool],
     stretch: &[bool],
     blocks: bool,
@@ -181,7 +186,20 @@ fn geometry_fixed(
     }
     let width = row_width(&widths, button);
     let height = button.max(if blocks { super::islands::HEIGHT } else { 0.0 }) + V_PAD * 2.0;
-    let thumbs_w = thumbs(right - start - width - AFTER_CHAT, button, height).max(0.0);
+    // centred gap probe (#3552): keep the dock put when the gap holds a face;
+    // otherwise (and for start/end) the strip stands left of the dock
+    let thumbs_w = if style.align == Align::Center {
+        let centred = (left + ((right - left - width) / 2.0).round()).max(start);
+        let gap = (centred - start - AFTER_CHAT).max(0.0);
+        let gap_w = centred_gap(gap, button, height).max(0.0);
+        if gap_w > 0.0 {
+            gap_w
+        } else {
+            thumbs((right - start - width - AFTER_CHAT).max(0.0), button, height).max(0.0)
+        }
+    } else {
+        thumbs((right - start - width - AFTER_CHAT).max(0.0), button, height).max(0.0)
+    };
     let available = room - if thumbs_w > 0.0 { thumbs_w + AFTER_CHAT } else { 0.0 };
     crate::ui::toolbar::structure::distribute(&mut widths, stretch, available - PAD * 2.0, GAP);
     let aligned = sizing::align_blocks(&mut widths, scopes, available - PAD * 2.0, GAP, style.align);
@@ -254,6 +272,10 @@ pub fn bottom(
                 .collect()
         },
         |room, button, height| chat.thumbnails.bar_width(thumb(button), (height - thumb(button)) / 2.0, room),
+        |room, button, height| {
+            chat.thumbnails
+                .centred_gap_width(thumb(button), (height - thumb(button)) / 2.0, room)
+        },
         &fixed,
         &crate::ui::toolbar::structure::stretch(&ctx, buttons),
         blocks,
@@ -726,6 +748,7 @@ mod tests {
             Style::default(),
             |_| vec![34.0, 12.0, 34.0],
             |room, _, _| room.clamp(0.0, 80.0),
+            |_, _, _| 0.0,
             &[false, true, false],
             &[false, true, false],
             false,
@@ -1462,6 +1485,53 @@ mod tests {
         assert!(!has(dock.of(&skin, false)));
         assert!(has(dock.of(&skin, true)));
         assert!(!has(dock.of(&skin, false)));
+    }
+
+    /// #3552: conversation thumbnails fill only the gap before a centred
+    /// dock; they never shove it off centre (LLChicletPanel keeps its strip
+    /// and scrolls instead).
+    #[test]
+    fn many_conversation_thumbnails_do_not_move_a_centred_dock() {
+        let s = screen(1920.0);
+        let style = Style::default();
+        assert_eq!(style.align, Align::Center);
+        let natural = |square: f32| vec![square; 12];
+        let empty = geometry_styled(s, 0.0, style, natural, |_, _, _| 0.0, |_, _, _| 0.0);
+        let full = geometry_styled(s, 0.0, style, natural, |room, _, _| room, |room, _, _| room);
+        assert!((empty.dock.center().x - s.center().x).abs() <= 1.0, "{:?}", empty.dock);
+        assert_eq!(empty.dock.left(), full.dock.left());
+        assert!(full.thumbs.width() > 0.0, "{:?}", full.thumbs);
+        assert!(
+            full.thumbs.right() + AFTER_CHAT <= full.dock.left() + 0.5,
+            "thumbs {:?} dock {:?}",
+            full.thumbs,
+            full.dock
+        );
+        // start-aligned: thumbnails stay beside the chat, dock after them
+        let left = Style {
+            align: Align::Start,
+            ..style
+        };
+        let left = geometry_styled(s, 0.0, left, natural, |room, _, _| room.min(80.0), |_, _, _| 0.0);
+        assert!(left.thumbs.width() > 0.0, "{:?}", left.thumbs);
+        assert!(
+            (left.dock.left() - (left.thumbs.right() + AFTER_CHAT)).abs() < 0.5,
+            "thumbs {:?} dock {:?}",
+            left.thumbs,
+            left.dock
+        );
+        // narrow centred: gap before the dock holds no square, so the strip
+        // stays left of the dock and the dock moves after it
+        let narrow = screen(1280.0);
+        let room_thumbs = |room: f32, _: f32, _: f32| if room < 30.0 { 0.0 } else { 28.0 };
+        let crowded = geometry_styled(narrow, 0.0, style, |square| vec![square; 21], room_thumbs, room_thumbs);
+        assert!(crowded.thumbs.width() > 0.0, "{:?}", crowded.thumbs);
+        assert!(
+            crowded.thumbs.right() + AFTER_CHAT <= crowded.dock.left() + 0.5,
+            "thumbs {:?} dock {:?}",
+            crowded.thumbs,
+            crowded.dock
+        );
     }
 
     /// The handle on the island's right edge sets its width, saved on
