@@ -411,11 +411,59 @@ pub(crate) fn seen(ctx: &egui::Context, window: egui::Id) {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<egui::Id>>(seen_id()).push(window));
 }
 
-/// The window `window` drew in its window outside at this pass, so far:
-/// what is drawn for it after it (`widgets::dialog_here`) was drawn there.
-pub(crate) fn drawn(ctx: &egui::Context, window: egui::Id) -> bool {
-    ctx.data(|d| d.get_temp::<Vec<egui::Id>>(seen_id()))
-        .is_some_and(|seen| seen.contains(&window))
+fn overlays_id() -> egui::Id {
+    egui::Id::unique("aurora outside overlays")
+}
+
+fn modal_owner_id(modal: egui::Id) -> egui::Id {
+    modal.with("aurora outside modal owner")
+}
+
+/// The viewport of a dialog's pass over the window outside of `window`
+/// ([`modal_window`]): drawn in that window, over its own pass, and
+/// answered by its events while it is there.
+pub(crate) fn overlay(ctx: &egui::Context, window: egui::Id) -> egui::ViewportId {
+    let id = egui::ViewportId(window.with("aurora outside overlay"));
+    ctx.data_mut(|d| {
+        let overlays = d.get_temp_mut_or_default::<Vec<(egui::ViewportId, egui::Id)>>(overlays_id());
+        if !overlays.iter().any(|(overlay, _)| *overlay == id) {
+            overlays.push((id, window));
+        }
+    });
+    id
+}
+
+/// The window a dialog's pass `id` is over ([`overlay`]).
+fn overlay_of(ctx: &egui::Context, id: egui::ViewportId) -> Option<egui::Id> {
+    ctx.data(|d| d.get_temp::<Vec<(egui::ViewportId, egui::Id)>>(overlays_id()))?
+        .into_iter()
+        .find_map(|(overlay, window)| (overlay == id).then_some(window))
+}
+
+/// The window outside a modal dialog of the interface (`widgets::Modal`,
+/// its id `modal`) is drawn over, when it is asked in the viewer's pass:
+/// the window outside that had the system's focus when the dialog opened,
+/// the one the click or the key that asked for it went to (Delete in the
+/// Inventory outside, a resident's Eject in a conversation outside). It
+/// stays with that window until it closes, and goes back to the viewer's
+/// window if that window does (closed, brought back inside). A dialog
+/// opened while the viewer's own window has the focus, and one asked in a
+/// window's own pass, is drawn where it is asked. Not in the Legacy
+/// Viewer, whose windows all stay inside its own.
+pub(crate) fn modal_window(ctx: &egui::Context, modal: egui::Id) -> Option<egui::Id> {
+    if ctx.viewport_id() != egui::ViewportId::ROOT || ctx.embed_viewports() {
+        return None;
+    }
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    let key = modal_owner_id(modal);
+    let owner = match ctx.data(|d| d.get_temp::<(u64, Option<egui::Id>)>(key)) {
+        // still open since the last frame: the window it opened over
+        Some((at, owner)) if at + 1 >= frame => owner,
+        _ => ctx.data(|d| d.get_temp::<egui::Id>(front_id())),
+    };
+    let owner = owner.filter(|window| wanted(ctx, *window) && native(ctx, *window));
+    ctx.data_mut(|d| d.insert_temp(key, (frame, owner)));
+    owner
 }
 
 /// A window of a Wayland session, where no program takes the focus by
@@ -553,6 +601,13 @@ struct Native {
     /// shown earlier has the system count the window without its title
     /// bar, then shrink it by that height.
     asked_for: bool,
+    /// What the pass of a dialog over it ([`modal_window`]) left this
+    /// frame, drawn over the window's own.
+    overlay: Option<Pass>,
+    /// A dialog was over it at the last frame: the window's events are its
+    /// (`held` for its pass), and the window under it gets none.
+    overlaid: bool,
+    held: Option<egui::RawInput>,
 }
 
 struct Pass {
@@ -641,6 +696,19 @@ fn shown_again(kept: bool, asked_for: bool, redraw: bool, shown: &[ClippedShape]
     kept && asked_for && redraw && !shown.is_empty()
 }
 
+/// The events `raw` of a window outside, for its own pass and for the pass
+/// of a dialog over it (`overlaid`: one was drawn at the last frame). Under
+/// a dialog the window still shows but takes nothing, as under a modal
+/// inside: the pointer leaves it, and every event is held for the dialog.
+fn under_dialog(mut raw: egui::RawInput, overlaid: bool) -> (egui::RawInput, Option<egui::RawInput>) {
+    if !overlaid {
+        return (raw, None);
+    }
+    let held = raw.clone();
+    raw.events = vec![egui::Event::PointerGone];
+    (raw, Some(held))
+}
+
 /// egui's function for the passes outside: the pass of `viewport`, run at
 /// once inside the pass that asked for it.
 fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::ImmediateViewport<'_>) {
@@ -651,14 +719,25 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
     } = viewport;
     let clock = ctx.input(|i| (i.time, i.predicted_dt, i.max_texture_side));
     let zoom = ctx.zoom_factor();
-    let input = shared.borrow_mut().windows.get_mut(&ids.this).map(|native| {
-        if builder.title.is_some() && builder.title != native.title {
-            native.window.set_title(builder.title.as_deref().unwrap_or_default());
-            native.title = builder.title;
-        }
+    // a dialog's pass over a window ([`modal_window`]) is drawn in that
+    // window, after the window's own pass, and reads its events
+    let over = overlay_of(ctx, ids.this);
+    let target = over.map_or(ids.this, egui::ViewportId);
+    let input = shared.borrow_mut().windows.get_mut(&target).map(|native| {
+        let raw = if over.is_some() {
+            native.held.take().unwrap_or_else(|| native.input.take_egui_input(&native.window))
+        } else {
+            if builder.title.is_some() && builder.title != native.title {
+                native.window.set_title(builder.title.as_deref().unwrap_or_default());
+                native.title = builder.title;
+            }
+            let (raw, held) = under_dialog(native.input.take_egui_input(&native.window), native.overlaid);
+            native.held = held;
+            raw
+        };
         let size = native.window.inner_size();
         pass_input(
-            native.input.take_egui_input(&native.window),
+            raw,
             ids,
             (size.width, size.height),
             native.window.scale_factor() as f32,
@@ -687,15 +766,29 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
     let mut shared = shared.borrow_mut();
     shared.textures.append(out.textures_delta);
     shared.commands.append(&mut out.platform_output.commands);
-    if let Some(native) = shared.windows.get_mut(&ids.this) {
-        native.reads_keys = keys;
-        native.output = Some(out.platform_output);
-        native.pass = Some(Pass {
+    let Some(native) = shared.windows.get_mut(&target) else {
+        return;
+    };
+    if over.is_some() {
+        native.reads_keys |= keys;
+        match &mut native.output {
+            Some(output) => output.append(out.platform_output),
+            None => native.output = Some(out.platform_output),
+        }
+        native.overlay = Some(Pass {
             shapes: out.shapes,
             pixels_per_point: out.pixels_per_point,
-            notice,
+            notice: false,
         });
+        return;
     }
+    native.reads_keys = keys;
+    native.output = Some(out.platform_output);
+    native.pass = Some(Pass {
+        shapes: out.shapes,
+        pixels_per_point: out.pixels_per_point,
+        notice,
+    });
 }
 
 impl Outside {
@@ -967,6 +1060,9 @@ impl Outside {
                 drawn: false,
                 redraw: true,
                 asked_for: false,
+                overlay: None,
+                overlaid: false,
+                held: None,
             },
         );
         Ok(())
@@ -1173,7 +1269,7 @@ impl Outside {
     /// handed to the renderer (`hand`).
     pub fn passes(&self, mut each: impl FnMut(&[ClippedShape])) {
         for native in self.shared.borrow().windows.values() {
-            if let Some(pass) = &native.pass {
+            for pass in native.pass.iter().chain(&native.overlay) {
                 each(&pass.shapes);
             }
         }
@@ -1199,6 +1295,10 @@ impl Outside {
     ) {
         let kept = kept(ctx);
         for native in self.shared.borrow_mut().windows.values_mut() {
+            // a dialog over it at this frame takes its events at the next
+            let overlay = native.overlay.take();
+            native.overlaid = overlay.is_some();
+            native.held = None;
             let size = native.window.inner_size();
             let size = (size.width, size.height);
             // (a minimized window has no picture)
@@ -1206,7 +1306,7 @@ impl Outside {
                 native.pass = None;
                 continue;
             }
-            let Some(pass) = native.pass.take() else {
+            let Some(mut pass) = native.pass.take() else {
                 // left as it is (`keep`), and uncovered or resized by the
                 // system meanwhile: its last picture again
                 if shown_again(kept, native.asked_for, native.redraw, &native.shown) {
@@ -1224,6 +1324,11 @@ impl Outside {
                 }
                 continue;
             };
+            if let Some(overlay) = overlay
+                && !pass.notice
+            {
+                pass.shapes.extend(overlay.shapes);
+            }
             if pass.notice {
                 native.notice = under_notice(&mut native.shown, native.notice, pass.shapes);
                 native.told = Some(size);
@@ -1726,6 +1831,58 @@ mod tests {
         // a new window: nothing shown yet, everything to draw
         assert!(!drawn_again(false, true, true, size, (0, 0), &[], &[]));
         assert!(drawn_again(true, true, true, size, (0, 0), &[], &[]));
+    }
+
+    /// Under a dialog, a window outside takes no event: the pointer leaves
+    /// it, and the dialog's pass gets them all.
+    #[test]
+    fn a_window_under_a_dialog_gives_its_events_to_the_dialog() {
+        let raw = egui::RawInput {
+            events: vec![egui::Event::PointerMoved(egui::pos2(10.0, 20.0)), egui::Event::Text("a".into())],
+            ..Default::default()
+        };
+        let (own, held) = under_dialog(raw.clone(), false);
+        assert_eq!(own.events, raw.events, "no dialog: the window's own");
+        assert!(held.is_none());
+        let (own, held) = under_dialog(raw.clone(), true);
+        assert_eq!(own.events, [egui::Event::PointerGone]);
+        assert_eq!(held.expect("held for the dialog").events, raw.events);
+    }
+
+    /// A modal opens over the window outside that has the focus, stays
+    /// there while it is shown, and goes back to the viewer's window when
+    /// that window does; asked in a window's own pass, or with the focus in
+    /// the viewer's window, it is drawn where it is asked.
+    #[test]
+    fn a_modal_opens_over_the_window_outside_with_the_focus() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let (window, modal) = (egui::Id::unique("modal owner"), egui::Id::unique("a modal"));
+        want(&ctx, window, true);
+        set_native(&ctx, window, true);
+        let run = |front: Option<egui::Id>| {
+            let mut owner = None;
+            focus_for_test(&ctx, front);
+            crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
+                owner = modal_window(ui.ctx(), modal);
+            }));
+            owner
+        };
+        assert_eq!(run(Some(window)), Some(window), "opened over the window with the focus");
+        assert_eq!(run(None), Some(window), "kept while shown");
+        set_native(&ctx, window, false);
+        assert_eq!(run(Some(window)), None, "the window went: in the viewer's");
+        set_native(&ctx, window, true);
+        assert_eq!(run(Some(window)), None, "and stays there until it closes");
+        // closed (not shown at a frame), then opened with the focus inside
+        crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |_| {}));
+        assert_eq!(run(None), None, "the viewer's window has the focus");
+        crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |_| {}));
+        assert_eq!(run(Some(window)), Some(window), "opened again from the window outside");
+        // the overlay's pass is known as the window's
+        let overlay = overlay(&ctx, window);
+        assert_eq!(overlay_of(&ctx, overlay), Some(window));
+        assert_eq!(overlay_of(&ctx, viewport(window)), None);
     }
 
     /// The pass of a window outside, as egui runs it inside the viewer's:

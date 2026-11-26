@@ -2320,33 +2320,6 @@ pub(crate) fn floater_outside(ctx: &egui::Context, window_id: egui::Id) -> bool 
     crate::outside::wanted(ctx, window_id) && crate::outside::native(ctx, window_id)
 }
 
-/// Where a dialog that a window asked for is drawn ([`dialog_here`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DialogCall {
-    /// At the end of the window's body, in the window's own pass.
-    InWindow,
-    /// After the window, in the viewer's pass.
-    After,
-}
-
-/// Whether the dialog that the window `window` asked for is drawn at this
-/// call. A modal one (`Modal`: a confirmation such as the Inventory's
-/// "Delete selection") is drawn in that window's own pass while it is
-/// outside the viewer's window, so that it is centred on the window that
-/// asked and blocks it, not the viewer's window behind: the call at the
-/// end of its body. Any other dialog (a window of its own), and every
-/// dialog of a window inside, is drawn after the window, in the viewer's
-/// pass. (Not in the Legacy Viewer, whose windows all stay inside its own.)
-pub(crate) fn dialog_here(ctx: &egui::Context, window: egui::Id, modal: bool, call: DialogCall) -> bool {
-    let viewport = ctx.viewport_id();
-    match call {
-        DialogCall::InWindow => modal && viewport != egui::ViewportId::ROOT && viewport == crate::outside::viewport(window),
-        // (a window outside embedded in the viewer's, as in a test, is
-        // drawn in the viewer's pass: so are its dialogs)
-        DialogCall::After => viewport == egui::ViewportId::ROOT && !(modal && !ctx.embed_viewports() && crate::outside::drawn(ctx, window)),
-    }
-}
-
 /// The size the window `id` was last drawn at, in the viewer's window or
 /// in its own outside.
 pub fn floater_size(ctx: &egui::Context, id: &str) -> Option<Vec2> {

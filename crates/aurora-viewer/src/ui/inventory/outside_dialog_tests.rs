@@ -1,14 +1,20 @@
 //! A confirmation asked from an Inventory window outside the viewer's
-//! window is drawn in that window's own pass, over the window that asked
-//! (`widgets::dialog_here`); a window of its own (Properties) still opens
-//! in the viewer's window, and a window inside keeps its dialogs there.
+//! window is drawn over that window, in a pass of its own on its events
+//! (`outside::modal_window`, `widgets::Modal::show`); one asked from the
+//! viewer's own window stays there, and a window of its own (Properties)
+//! opens in the viewer's window as before.
 
 use super::*;
-use crate::ui::widgets::{DialogCall, Floater};
+use crate::ui::widgets::Floater;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 const WINDOW: &str = "test outside inventory dialogs";
+
+fn window() -> egui::Id {
+    egui::Id::unique(WINDOW)
+}
 
 fn texts(shapes: &[egui::epaint::ClippedShape]) -> Vec<String> {
     fn collect(shape: &egui::Shape, out: &mut Vec<String>) {
@@ -33,19 +39,21 @@ fn escape() -> egui::Event {
     }
 }
 
-/// The viewer's window and, when the Inventory window is outside, its
-/// window there, whose pass runs inside the viewer's as `outside::pass`
-/// runs it (no native window in a test).
+type Drawn = Rc<RefCell<HashMap<egui::ViewportId, Vec<String>>>>;
+type Events = Rc<RefCell<HashMap<egui::ViewportId, Vec<egui::Event>>>>;
+
+/// The viewer's window and the passes outside it, run inside its own as
+/// `outside::pass` runs them (no native window in a test): the
+/// Inventory window's, and a dialog's over it.
 struct Viewer {
     ctx: egui::Context,
     inv: Inventory,
     st: InventoryUi,
     actions: Vec<InvAction>,
-    /// The texts the window outside drew at the last pass.
-    outside: Rc<RefCell<Option<Vec<String>>>>,
-    /// The events of the window outside at its next pass.
-    outside_events: Rc<RefCell<Vec<egui::Event>>>,
-    /// The viewer's frames, for its clock (a window fades in).
+    /// The texts each pass outside drew at the last frame.
+    drawn: Drawn,
+    /// The events of a pass outside at the next frame.
+    events: Events,
     frames: u32,
 }
 
@@ -53,8 +61,7 @@ impl Viewer {
     fn new(dialog: EditDialog, outside: bool) -> Self {
         let ctx = egui::Context::default();
         ctx.set_embed_viewports(false);
-        let drawn: Rc<RefCell<Option<Vec<String>>>> = Rc::default();
-        let events: Rc<RefCell<Vec<egui::Event>>> = Rc::default();
+        let (drawn, events): (Drawn, Events) = Default::default();
         let (for_pass, events_for_pass) = (drawn.clone(), events.clone());
         egui::Context::set_immediate_viewport_renderer(move |ctx, viewport| {
             let egui::ImmediateViewport {
@@ -68,17 +75,15 @@ impl Viewer {
                 viewport_id: ids.this,
                 viewports: std::iter::once((ids.this, info)).collect(),
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 600.0))),
-                events: std::mem::take(&mut *events_for_pass.borrow_mut()),
-                // (the viewer's clock, as `outside::pass_input` gives it)
+                events: events_for_pass.borrow_mut().remove(&ids.this).unwrap_or_default(),
                 time: Some(ctx.input(|i| i.time)),
                 ..Default::default()
             };
             let out = headless_output(ctx.run_ui(input, |ui| viewport_ui_cb(ui)));
-            *for_pass.borrow_mut() = Some(texts(&out.shapes));
+            for_pass.borrow_mut().insert(ids.this, texts(&out.shapes));
         });
-        let window = egui::Id::unique(WINDOW);
-        crate::outside::want(&ctx, window, outside);
-        crate::outside::set_native(&ctx, window, outside);
+        crate::outside::want(&ctx, window(), outside);
+        crate::outside::set_native(&ctx, window(), outside);
         let mut inv = Inventory::default();
         crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
         Self {
@@ -89,23 +94,21 @@ impl Viewer {
                 ..Default::default()
             },
             actions: Vec::new(),
-            outside: drawn,
-            outside_events: events,
+            drawn,
+            events,
             frames: 0,
         }
     }
 
-    /// A pass of the viewer's window, with the Inventory window `open` or
-    /// closed: what the viewer's window drew.
-    fn frame(&mut self, open: bool, events: Vec<egui::Event>) -> Vec<String> {
+    /// A frame of the viewer, the Inventory window open, its dialogs after
+    /// it as `inventory::show` draws them: what the viewer's window drew.
+    fn frame(&mut self, events: Vec<egui::Event>) -> Vec<String> {
         let p = crate::theme::Theme::default().palette();
         let (prefs, facts) = (InventoryPreferences::default(), Facts::default());
-        let window = egui::Id::unique(WINDOW);
         self.frames += 1;
+        self.drawn.borrow_mut().clear();
         let time = Some(f64::from(self.frames) / 60.0);
         let Self { ctx, inv, st, actions, .. } = self;
-        let mut open = open;
-        *self.outside.borrow_mut() = None;
         let out = headless_output(ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))),
@@ -115,24 +118,31 @@ impl Viewer {
             },
             |ui| {
                 let ctx = ui.ctx().clone();
-                let icons = Icons::default();
-                let images = Default::default();
+                let mut open = true;
                 Floater::new(WINDOW, "Inventory", egui::pos2(20.0, 20.0), egui::vec2(400.0, 500.0))
                     .silent()
                     .show(&ctx, &p, &mut open, |ui| {
                         ui.label("the window's body");
-                        let here = Some((window, DialogCall::InWindow));
-                        dialogs::show(ui.ctx(), &p, &icons, inv, st, &prefs, &facts, &images, actions, here);
                     });
-                let after = Some((window, DialogCall::After));
-                dialogs::show(&ctx, &p, &icons, inv, st, &prefs, &facts, &images, actions, after);
+                dialogs::show(&ctx, &p, &Icons::default(), inv, st, &prefs, &facts, &Default::default(), actions);
             },
         ));
         texts(&out.shapes)
     }
 
-    fn drawn_outside(&self) -> Vec<String> {
-        self.outside.borrow().clone().unwrap_or_default()
+    /// What the window outside drew, and what the dialog over it drew.
+    fn outside(&self) -> (Vec<String>, Vec<String>) {
+        let drawn = self.drawn.borrow();
+        let of = |id| drawn.get(&id).cloned().unwrap_or_default();
+        (
+            of(crate::outside::viewport(window())),
+            of(crate::outside::overlay(&self.ctx, window())),
+        )
+    }
+
+    fn press_over_window(&self, event: egui::Event) {
+        let overlay = crate::outside::overlay(&self.ctx, window());
+        self.events.borrow_mut().entry(overlay).or_default().push(event);
     }
 }
 
@@ -140,92 +150,105 @@ fn delete() -> EditDialog {
     EditDialog::Delete(vec![Uuid::from_u128(8100)], false)
 }
 
+fn delete_title() -> String {
+    aurora_i18n::tr!("ui-inventory-dialogs-delete-selection").to_string()
+}
+
 fn count(texts: &[String], text: &str) -> usize {
     texts.iter().filter(|t| *t == text).count()
 }
 
-/// The bug of 2026-11-26: Delete asked from an Inventory window outside
-/// showed its confirmation over the 3D view of the viewer's window.
+/// The bug of 2026-11-26 (#4998): Delete asked from an Inventory window
+/// outside showed its confirmation over the 3D view of the viewer's
+/// window.
 #[test]
-fn a_delete_confirmation_asked_outside_shows_in_that_window() {
-    let title = aurora_i18n::tr!("ui-inventory-dialogs-delete-selection").to_string();
+fn a_delete_confirmation_asked_outside_shows_over_that_window() {
+    let title = delete_title();
     let mut viewer = Viewer::new(delete(), true);
-    for frame in 0..30 {
-        let inside = viewer.frame(true, Vec::new());
+    // the click on Delete went to the window outside
+    crate::outside::focus_for_test(&viewer.ctx, Some(window()));
+    for _ in 0..30 {
+        let inside = viewer.frame(Vec::new());
         assert_eq!(count(&inside, &title), 0, "never in the viewer's window: {inside:?}");
-        if frame < 29 {
-            continue;
-        }
-        // (once it has faded in)
-        let outside = viewer.drawn_outside();
-        assert!(
-            outside.iter().any(|t| t == "the window's body"),
-            "the window is outside: {outside:?}"
-        );
-        assert_eq!(count(&outside, &title), 1, "once, over the window that asked: {outside:?}");
     }
+    let (body, over) = viewer.outside();
+    assert!(body.iter().any(|t| t == "the window's body"), "the window is outside: {body:?}");
+    assert_eq!(count(&body, &title), 0, "{body:?}");
+    assert_eq!(count(&over, &title), 1, "over the window that asked: {over:?}");
+    // the focus going elsewhere leaves it where it opened
+    crate::outside::focus_for_test(&viewer.ctx, None);
+    viewer.frame(Vec::new());
+    assert_eq!(count(&viewer.outside().1, &title), 1);
     assert!(matches!(viewer.st.dialog, Some(EditDialog::Delete(..))), "it waits for an answer");
-    // the keys of the viewer's window do not answer it: it is the other
-    // window's
-    viewer.frame(true, vec![escape()]);
+    // the keys of the viewer's window do not answer it
+    viewer.frame(vec![escape()]);
     assert!(viewer.st.dialog.is_some(), "Escape in the viewer's window leaves it");
-    // Escape in its window cancels it, as inside
-    viewer.outside_events.borrow_mut().push(escape());
-    viewer.frame(true, Vec::new());
+    // Escape over the window cancels it, as inside
+    viewer.press_over_window(escape());
+    viewer.frame(Vec::new());
     assert!(viewer.st.dialog.is_none(), "Escape in its window cancels it");
     assert!(viewer.actions.is_empty(), "cancelling deletes nothing");
 }
 
 /// A give's confirmation is a modal too: it follows the window outside.
 #[test]
-fn a_give_confirmation_asked_outside_shows_in_that_window() {
+fn a_give_confirmation_asked_outside_shows_over_that_window() {
     let title = aurora_i18n::tr!("ui-inventory-dialogs-give-to").to_string();
     let share = EditDialog::Share(vec![Uuid::from_u128(8100)], vec![Uuid::from_u128(0x5e)]);
     let mut viewer = Viewer::new(share, true);
+    crate::outside::focus_for_test(&viewer.ctx, Some(window()));
     let mut inside = Vec::new();
     for _ in 0..30 {
-        inside = viewer.frame(true, Vec::new());
+        inside = viewer.frame(Vec::new());
     }
-    let outside = viewer.drawn_outside();
+    let (_, over) = viewer.outside();
     assert!(!inside.iter().any(|t| t.contains(&title)), "not in the viewer's window: {inside:?}");
-    assert!(
-        outside.iter().any(|t| t.contains(&title)),
-        "over the window that asked: {outside:?}"
-    );
-    assert!(viewer.st.dialog.is_some());
+    assert!(over.iter().any(|t| t.contains(&title)), "over the window that asked: {over:?}");
 }
 
-/// A window inside keeps its confirmation in the viewer's window, drawn
-/// once (the call in its body draws nothing there).
+/// Asked while the viewer's own window has the focus (its menu, a key
+/// there), a confirmation stays in the viewer's window, the window
+/// outside or not.
 #[test]
-fn a_delete_confirmation_asked_inside_shows_once_in_the_viewer_s_window() {
-    let title = aurora_i18n::tr!("ui-inventory-dialogs-delete-selection").to_string();
-    let mut viewer = Viewer::new(delete(), false);
-    let mut last = Vec::new();
-    for _ in 0..30 {
-        let inside = viewer.frame(true, Vec::new());
-        assert!(count(&inside, &title) <= 1, "never twice: {inside:?}");
-        last = inside;
-        assert!(viewer.outside.borrow().is_none(), "no window outside");
+fn a_confirmation_asked_from_the_viewer_s_window_stays_there() {
+    let title = delete_title();
+    for outside in [true, false] {
+        let mut viewer = Viewer::new(delete(), outside);
+        let mut inside = Vec::new();
+        for _ in 0..30 {
+            inside = viewer.frame(Vec::new());
+            assert!(count(&inside, &title) <= 1, "never twice: {inside:?}");
+        }
+        assert_eq!(count(&inside, &title), 1, "{inside:?}");
+        assert_eq!(count(&viewer.outside().1, &title), 0);
+        viewer.frame(vec![escape()]);
+        assert!(viewer.st.dialog.is_none(), "Escape cancels it");
     }
-    assert_eq!(count(&last, &title), 1, "{last:?}");
-    viewer.frame(true, vec![escape()]);
-    assert!(viewer.st.dialog.is_none(), "Escape cancels it");
 }
 
-/// The window outside closed with its confirmation waiting: nothing draws
-/// there, and the confirmation is not lost, it shows in the viewer's
-/// window (as it does for a window inside that closed).
+/// The window outside closed or brought back inside with its confirmation
+/// waiting: the confirmation is not lost, it goes to the viewer's window.
 #[test]
-fn a_confirmation_of_a_closed_window_outside_shows_in_the_viewer_s_window() {
-    let title = aurora_i18n::tr!("ui-inventory-dialogs-delete-selection").to_string();
+fn a_confirmation_whose_window_leaves_goes_to_the_viewer_s_window() {
+    let title = delete_title();
     let mut viewer = Viewer::new(delete(), true);
+    crate::outside::focus_for_test(&viewer.ctx, Some(window()));
+    for _ in 0..30 {
+        viewer.frame(Vec::new());
+    }
+    assert_eq!(count(&viewer.outside().1, &title), 1);
+    crate::outside::want(&viewer.ctx, window(), false);
+    crate::outside::set_native(&viewer.ctx, window(), false);
     let mut inside = Vec::new();
     for _ in 0..30 {
-        inside = viewer.frame(false, Vec::new());
+        inside = viewer.frame(Vec::new());
     }
-    assert!(viewer.outside.borrow().is_none(), "the closed window is drawn nowhere");
     assert_eq!(count(&inside, &title), 1, "{inside:?}");
+    // and stays there, the window outside again
+    crate::outside::want(&viewer.ctx, window(), true);
+    crate::outside::set_native(&viewer.ctx, window(), true);
+    viewer.frame(Vec::new());
+    assert_eq!(count(&viewer.outside().1, &title), 0);
 }
 
 /// Properties is a window of its own, not a modal: it opens in the
@@ -234,12 +257,12 @@ fn a_confirmation_of_a_closed_window_outside_shows_in_the_viewer_s_window() {
 fn properties_asked_from_a_window_outside_open_in_the_viewer_s_window() {
     let title = aurora_i18n::tr!("ui-inventory-dialogs-object-properties").to_string();
     let mut viewer = Viewer::new(EditDialog::Properties(Uuid::from_u128(8100)), true);
+    crate::outside::focus_for_test(&viewer.ctx, Some(window()));
     let mut inside = Vec::new();
     for _ in 0..30 {
-        inside = viewer.frame(true, Vec::new());
+        inside = viewer.frame(Vec::new());
     }
-    let outside = viewer.drawn_outside();
-    assert!(!outside.iter().any(|t| t.contains(&title)), "{outside:?}");
-    assert!(matches!(viewer.st.dialog, Some(EditDialog::Properties(_))), "it stays open");
+    let (body, over) = viewer.outside();
+    assert!(!body.iter().chain(&over).any(|t| t.contains(&title)), "{body:?} {over:?}");
     assert!(inside.iter().any(|t| t.contains(&title)), "in the viewer's window: {inside:?}");
 }

@@ -605,7 +605,6 @@ mod tests {
                         &facts,
                         &Default::default(),
                         &mut Vec::new(),
-                        None,
                     );
                 },
             );
@@ -664,7 +663,6 @@ mod tests {
                         &facts,
                         &Default::default(),
                         &mut actions,
-                        None,
                     );
                 },
             );

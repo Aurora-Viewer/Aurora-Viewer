@@ -6,11 +6,6 @@ use crate::ui::widgets::{self, Floater, Modal, flat_button};
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::Operation;
 
-/// The dialog `st` asks for. `owner` is the window that asked and the call
-/// it is drawn from (`widgets::dialog_here`): a confirmation asked from an
-/// Inventory window outside the viewer's is drawn in that window's own
-/// pass, over it, and the call after the window leaves it alone. Without
-/// an owner (a document's window), it is drawn where it is called.
 pub(super) fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -21,17 +16,10 @@ pub(super) fn show(
     facts: &Facts,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     actions: &mut Vec<InvAction>,
-    owner: Option<(egui::Id, widgets::DialogCall)>,
 ) {
     let Some(mut dialog) = st.dialog.take() else {
         return;
     };
-    if let Some((window, call)) = owner
-        && !widgets::dialog_here(ctx, window, is_modal(&dialog), call)
-    {
-        st.dialog = Some(dialog);
-        return;
-    }
     if let EditDialog::Share(ids, residents) = &dialog {
         let picture = residents.first().and_then(|id| facts.pictures.get(id));
         if !share(ctx, p, icons, inv, prefs, facts, picture, st.ui_id, ids, residents, actions) {
@@ -378,16 +366,6 @@ pub(super) fn show(
     } else if matches!(dialog, EditDialog::Delete(..)) {
         st.delete_dont_ask = false;
     }
-}
-
-/// The dialogs `show` draws as a `Modal` (the confirmations of Delete,
-/// Purge, Detach and Delete, Empty Trash, and a give): the others are
-/// windows of their own.
-fn is_modal(dialog: &EditDialog) -> bool {
-    matches!(
-        dialog,
-        EditDialog::Delete(..) | EditDialog::DetachDelete(_) | EditDialog::Empty(_) | EditDialog::Share(..)
-    )
 }
 
 /// Entries listed by the give confirmation; the rest are counted.
@@ -1309,7 +1287,6 @@ mod tests {
                     },
                     &Default::default(),
                     &mut actions,
-                    None,
                 );
                 preview(
                     ctx,
@@ -2372,7 +2349,6 @@ mod tests {
                     &Facts::default(),
                     &Default::default(),
                     &mut actions,
-                    None,
                 );
             },
         ));
@@ -2426,7 +2402,6 @@ mod tests {
                         },
                         &Default::default(),
                         &mut Vec::new(),
-                        None,
                     );
                 },
             )));
@@ -2492,7 +2467,6 @@ mod tests {
                     &Facts::default(),
                     &Default::default(),
                     &mut actions,
-                    None,
                 );
             },
         ));
@@ -2798,7 +2772,6 @@ mod tests {
                         &facts,
                         &Default::default(),
                         &mut actions,
-                        None,
                     )
                 },
             ));
