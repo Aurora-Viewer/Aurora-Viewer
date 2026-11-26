@@ -195,20 +195,26 @@ fn not_on_this_grid() -> String {
 }
 
 /// Whether an item field of an AIS patch fits in `UpdateInventoryItem`
-/// (LLViewerInventoryItem::packMessage, llviewerinventory.cpp): the
-/// permission masks the properties change (LLSidepanelItemInfo::
+/// (LLViewerInventoryItem::packMessage, indra/newview/llviewerinventory.cpp):
+/// the permission masks the properties change (LLSidepanelItemInfo::
 /// updatePermissions), the sale info (updateSaleInfo) and the flags they set.
+/// Numbers must be integers: `as_u32` / `as_i32` read anything else as 0,
+/// which would clear every flag or put the item off sale.
 fn udp_item_field(key: &str, value: &Llsd) -> bool {
+    let integer = |value: &Llsd| matches!(value, Llsd::Integer(_));
     let only = |keys: &[&str]| {
         value
             .as_map()
             .is_some_and(|fields| fields.keys().all(|key| keys.contains(&key.as_str())))
     };
     match key {
-        "flags" => true,
+        "flags" => integer(value),
         "permissions" => only(&["next_owner_mask", "group_mask", "everyone_mask"]),
         // LLSaleInfo::EForSale: FS_NOT, FS_ORIGINAL, FS_COPY, FS_CONTENTS
-        "sale_info" => only(&["sale_type", "sale_price"]) && (!value.has("sale_type") || (0..=3).contains(&value["sale_type"].as_i32())),
+        "sale_info" => {
+            only(&["sale_type", "sale_price"])
+                && (!value.has("sale_type") || integer(&value["sale_type"]) && (0..=3).contains(&value["sale_type"].as_i32()))
+        }
         _ => false,
     }
 }
@@ -873,6 +879,7 @@ fn confirmed(operations: &[Operation], created: &HashMap<Uuid, Uuid>, contents: 
             };
             llsd_map! { "name" => it.name.clone(), "desc" => it.desc.clone(), "parent_id" => it.parent, "linked_id" => it.asset_id,
             "favorite" => metadata_favorite(it.favorite)["favorite"].clone(), "thumbnail" => metadata_thumbnail(it.thumbnail)["thumbnail"].clone(),
+            "flags" => it.flags as i32,
             "permissions" => llsd_map! { "next_owner_mask" => it.next_owner_mask as i32, "group_mask" => it.group_mask as i32, "everyone_mask" => it.everyone_mask as i32 },
             "sale_info" => llsd_map! { "sale_type" => i32::from(it.sale_type), "sale_price" => it.sale_price } }
         };
@@ -888,6 +895,13 @@ fn confirmed(operations: &[Operation], created: &HashMap<Uuid, Uuid>, contents: 
                     .flatten()
                     .all(|(key, value)| observed["permissions"][key.as_str()] == *value)
                 {
+                    return false;
+                }
+            } else if key == "flags" {
+                // the sent bits are set: the server may add its own (an
+                // object's slam and overwrite flags, llinventorydefines.h)
+                let (sent, held) = (value.as_u32(), observed["flags"].as_u32());
+                if held & sent != sent {
                     return false;
                 }
             } else if observed[key.as_str()] != *value {
@@ -2726,6 +2740,50 @@ mod udp_tests {
         // UpdateInventoryFolder has no permissions
         let masks = llsd_map! { "permissions" => llsd_map! { "group_mask" => 0 } };
         assert!(udp_edits(&patch(id(4), true, masks), &known()).is_err());
+    }
+
+    #[test]
+    fn a_flag_or_sale_type_that_is_not_an_integer_fails() {
+        // `as_u32` / `as_i32` read these as 0: every flag cleared, or off sale
+        for body in [
+            llsd_map! { "flags" => "1048576" },
+            llsd_map! { "flags" => llsd_map! { "slam" => true } },
+            llsd_map! { "flags" => 1048576.0 },
+            llsd_map! { "sale_info" => llsd_map! { "sale_type" => "2" } },
+            llsd_map! { "sale_info" => llsd_map! { "sale_type" => 2.0 } },
+        ] {
+            assert!(udp_edits(&patch(id(1), false, body.clone()), &known()).is_err(), "{body:?}");
+        }
+        let body = llsd_map! { "flags" => 0x0010_0000, "sale_info" => llsd_map! { "sale_type" => 2 } };
+        assert!(udp_edits(&patch(id(1), false, body), &known()).is_ok());
+    }
+
+    #[test]
+    fn a_permissions_and_flags_change_is_confirmed_by_its_read_back() {
+        // bulk permissions on an object: masks and the slam flags it sets
+        let masks = llsd_map! { "next_owner_mask" => 0x0008_2000, "group_mask" => 0, "everyone_mask" => 0x0000_8000 };
+        let operations = [patch(id(1), false, llsd_map! { "permissions" => masks, "flags" => 0x0010_0000 })];
+        let read = |flags: u32, everyone_mask: u32| {
+            vec![FolderContents {
+                folder_id: id(2),
+                owner_id: id(9),
+                version: 4,
+                folders: Vec::new(),
+                items: vec![InvItem {
+                    flags,
+                    next_owner_mask: 0x0008_2000,
+                    everyone_mask,
+                    ..known().items[&id(1)].clone()
+                }],
+            }]
+        };
+        let created = HashMap::new();
+        assert!(confirmed(&operations, &created, &read(0x0010_0000, 0x0000_8000)));
+        // the server adds a bit of its own: the sent ones are still set
+        assert!(confirmed(&operations, &created, &read(0x0030_0000, 0x0000_8000)));
+        // a sent flag missing, or a mask not taken, is not confirmed
+        assert!(!confirmed(&operations, &created, &read(0, 0x0000_8000)));
+        assert!(!confirmed(&operations, &created, &read(0x0010_0000, 0)));
     }
 
     #[test]
