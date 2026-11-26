@@ -327,7 +327,13 @@ server stay as they are.
 `cargo test --workspace` (`crates/aurora-i18n/tests/catalogs.rs`) checks the syntax, the uniqueness of the keys and
 the parity of the keys and variables with English, as well as selection,
 fallback and plurals. `scripts/check.ps1` also runs the viewer and network
-tests.
+tests. Every pull request runs the catalogue tests in its CI (the
+`fmt, clippy (Windows)` check), so a catalogue the change breaks shows on
+the PR itself:
+
+```text
+cargo test --workspace --test catalogs --test user_catalog --test user_catalog_regional
+```
 
 ## Trying a translation without building
 

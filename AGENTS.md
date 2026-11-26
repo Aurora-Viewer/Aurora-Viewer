@@ -597,7 +597,8 @@ change to the interface:
    never for intermediate changes.
 8. **Carry on right away, without handing back**: `gh pr checks <n> --watch`
    (the command waits for the end of the PR's CI: formatting, clippy,
-   secrets; the tests, you ran them with `check.ps1`), then the full review
+   secrets, the translation catalogues' tests; the other tests, you ran
+   them with `check.ps1`), then the full review
    (section 11) and the review comment. **Never count on a notification**
    that CI has finished: if you hand back "while waiting for CI", the review
    never happens. If CI fails, fix, push, and start this step again.
@@ -809,7 +810,7 @@ them):
 | Check | Result |
 |---|---|
 | No conflict with main | ✅ |
-| PR CI (fmt, clippy, secrets) | ✅ |
+| PR CI (fmt, clippy, secrets, catalogues) | ✅ |
 | Demo scenarios (before / after) | ✅ screenshots below |
 | Non-regression of neighbouring features | ✅ … |
 | Legacy Viewer fidelity | ✅ files checked: … |
