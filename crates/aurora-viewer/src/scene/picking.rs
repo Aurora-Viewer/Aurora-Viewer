@@ -428,7 +428,7 @@ impl Scene {
         select_probes: bool,
         far: f32,
     ) -> (Option<Vec3>, Option<usize>) {
-        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Surface)
+        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Surface, false)
     }
 
     pub fn left_selection_pick(
@@ -440,10 +440,18 @@ impl Scene {
         select_probes: bool,
         far: f32,
     ) -> (Option<Vec3>, Option<usize>) {
-        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Left)
+        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Left, false)
     }
 
-    #[allow(clippy::too_many_arguments)] // Selection inputs plus the button's alpha policy.
+    /// The photo camera's probe: the first object face within `far` m along
+    /// `ray`, as Build's search finds it, what is not drawn included (a wall
+    /// left out of the picture still stops the camera).
+    pub fn photo_probe(&self, world: &World, ray: (Vec3, Vec3), far: f32) -> Option<Vec3> {
+        self.selection_pick_mode(world, Some(ray), None, true, false, far, FacePick::Surface, true)
+            .0
+    }
+
+    #[allow(clippy::too_many_arguments)] // Selection inputs, the button's alpha policy and the probe's.
     fn selection_pick_mode(
         &self,
         world: &World,
@@ -453,6 +461,7 @@ impl Scene {
         select_probes: bool,
         far: f32,
         mode: FacePick,
+        meets_hidden: bool,
     ) -> (Option<Vec3>, Option<usize>) {
         let now = Instant::now();
         let mut candidates = Vec::new();
@@ -474,10 +483,11 @@ impl Scene {
             // farther than `DEPTH_NEAR` behind the depth is taken only when
             // it is the surface drawn there (`drawn_at`), at the depth's
             // point (read its surface on `surface_ray`). What is not drawn is
-            // not clicked where a depth is drawn: a hidden rendering type, or
-            // what the photo or RLVa leaves out, as `pick_objects` skips
-            // them. The photo camera's probe still meets them: a wall left
-            // out of the picture stops it as before. The Legacy Viewer casts
+            // not clicked, with a depth or only the sky behind it: a hidden
+            // rendering type, or what the photo or RLVa leaves out, as
+            // `pick_objects` skips them. The photo camera's probe still meets
+            // them (`photo_probe`): a wall left out of the picture stops it
+            // as before. The Legacy Viewer casts
             // a CPU ray: LLPickInfo::fetchResults (llviewerwindow.cpp) 512 m
             // whatever the draw distance, over what LLOctreeIntersect::check
             // (llspatialpartition.cpp) finds drawn (its rendering type on,
@@ -488,7 +498,7 @@ impl Scene {
                 let g = self.gpu.get(idx)?;
                 let o = world.objects.get(idx)?;
                 if g.hud
-                    || (point.is_some() && (g.hidden || g.unseen || g.rlva_hidden))
+                    || (!meets_hidden && (g.hidden || g.unseen || g.rlva_hidden))
                     || g.is_avatar
                     || g.rigged
                     || (g.owner_avatar.is_some() && o.visual_volume().is_mesh() && !worn_unrigged_mesh(o, g))
@@ -3242,12 +3252,19 @@ pub(crate) mod tests {
             for far in [2.4, 256.0] {
                 assert_eq!(pick(&scene, far), (Some(back), Some(back)), "flag {n}, far {far}");
             }
-            // the photo camera's probe (no depth) still meets it
+            // with only the sky behind (no depth) as well, as the Legacy
+            // Viewer's ray skips it with or without a surface behind
             assert_eq!(
-                scene.selection_pick(&world, Some(ray), None, true, false, 256.0).1,
-                Some(front),
-                "flag {n}, probe"
+                (
+                    scene.left_selection_pick(&world, Some(ray), None, true, false, 256.0).1,
+                    scene.selection_pick(&world, Some(ray), None, false, false, 256.0).1,
+                ),
+                (Some(back), Some(back)),
+                "flag {n}, no depth"
             );
+            // the photo camera's probe still meets it, at the front cube
+            let probe = scene.photo_probe(&world, ray, 256.0);
+            assert!(probe.is_some_and(|p| p.x < 3.0), "flag {n}, probe {probe:?}");
             hide(&mut scene.gpu[front], false);
         }
         // The front cube's bounds start at 2.134 m from the ray's origin on
