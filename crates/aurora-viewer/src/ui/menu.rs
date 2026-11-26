@@ -286,11 +286,7 @@ fn context_menu_popup(popup: Popup<'_>, p: &Palette, requested: bool, body: impl
     }
     let id = popup.get_id();
     let was_open = Popup::is_id_open(&ctx, id);
-    let close = if super::toolbar::appearance::context_picker_contains_pointer(&ctx) {
-        PopupCloseBehavior::IgnoreClicks
-    } else {
-        PopupCloseBehavior::CloseOnClickOutside
-    };
+    let close = PopupCloseBehavior::CloseOnClickOutside;
     // below-right of the pointer like the world menu, pushed back into the
     // window by the area's constraint instead of flipping above it
     let shown = popup
@@ -369,12 +365,6 @@ fn placed(
     body: impl FnOnce(&mut Ui),
 ) -> bool {
     use egui::containers::menu::MenuConfig;
-    // The icon flyout belongs to its menu tree, including a main-menu ancestor.
-    let close = if super::toolbar::appearance::context_picker_contains_pointer(popup.ctx()) {
-        PopupCloseBehavior::IgnoreClicks
-    } else {
-        close
-    };
     // the tag hands the same style and rule to the sub-menus
     let config = MenuConfig::new().close_behavior(close).style(style(p));
     let mut popup = popup;

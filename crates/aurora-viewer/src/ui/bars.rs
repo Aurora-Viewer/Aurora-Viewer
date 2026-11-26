@@ -617,7 +617,7 @@ pub(super) fn bug_menu(
         // the menu island's: no block of a bar, no block settings
         let button = top::button("report_bug", "bug-filled");
         super::toolbar::section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
-        toolbar.button_appearance_option(ui, p, Some(&button), locked);
+        toolbar.button_edit_option(ui, p, &button, locked);
         super::toolbar::native_context::start_group(ui, p);
         toolbar.interface_edit_menu(ui, p, Some("report_bug"));
     });
@@ -2052,12 +2052,66 @@ fn build_menu(
         build_options_menu(ui, p, action, options);
     });
     menu::separator(ui, p);
-    // the toolbar's "Import" is this entry: the import window
-    if menu::command(ui, p, "import-menu").toolbar_command_keys_if("import", aurora_i18n::tr!("import-menu"), true, "") {
-        *action = BarAction::Import;
-    }
+    // Build › Import: the quick import bar's imports in its order, then the
+    // advanced import, the local files and the import options (human
+    // request, 2026-11-26)
+    menu::command(ui, p, "import-types").submenu("file-upload-filled", aurora_i18n::tr!("import-menu"), true, |ui| {
+        import_menu(ui, p, action);
+    });
     if menu::command(ui, p, "blender-live-title").toolbar_command("blender_live") {
         *action = BarAction::BlenderLive;
+    }
+}
+
+/// Build › Import's entries, each its toolbar command.
+fn import_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction) {
+    let types = [
+        ("import_texture", "import-menu-textures", aurora_i18n::tr!("import-menu-textures")),
+        (
+            "import_animation",
+            "import-menu-animations",
+            aurora_i18n::tr!("import-menu-animations"),
+        ),
+        ("import_sound", "import-menu-sounds", aurora_i18n::tr!("import-menu-sounds")),
+        (
+            "import_material",
+            "import-menu-materials",
+            aurora_i18n::tr!("import-menu-materials"),
+        ),
+        ("import_mesh", "import-menu-meshes", aurora_i18n::tr!("import-menu-meshes")),
+    ];
+    for (id, key, label) in types {
+        if menu::command(ui, p, key).toolbar_command_keys_if(id, label, true, "")
+            && let Some(choice) = super::toolbar::presets::import_choice(id)
+        {
+            *action = BarAction::ImportType(choice);
+        }
+    }
+    menu::separator(ui, p);
+    if menu::command(ui, p, "toolbar-import-advanced").toolbar_command_keys_if(
+        "import_advanced",
+        aurora_i18n::tr!("toolbar-import-advanced"),
+        true,
+        "",
+    ) {
+        *action = BarAction::ImportAdvanced;
+    }
+    if menu::command(ui, p, "toolbar-import-local").toolbar_command_keys_if(
+        "import_local",
+        aurora_i18n::tr!("toolbar-import-local"),
+        true,
+        "",
+    ) && let Some(choice) = super::toolbar::presets::import_choice("import_local")
+    {
+        *action = BarAction::ImportType(choice);
+    }
+    if menu::command(ui, p, "import-menu-options").toolbar_command_keys_if(
+        "import_settings",
+        aurora_i18n::tr!("import-menu-options"),
+        true,
+        "",
+    ) {
+        *action = BarAction::ImportSettings;
     }
 }
 
@@ -4189,7 +4243,7 @@ pub(crate) fn toolbar_row(
         // an Interfaces block's interface: applied by a click, never dragged
         // nor edited alone (`drawers::INTERFACES`)
         if let Some(key) = b.command.strip_prefix(super::toolbar::drawers::INTERFACE_PREFIX) {
-            toolbar.interface_context(&response, p, &b.command);
+            toolbar.interface_context(&response, p, b);
             if response.clicked() && !row.editing {
                 if key == super::toolbar::drawers::INTERFACE_CUSTOMIZE {
                     *action = BarAction::CustomizeBars;

@@ -265,8 +265,13 @@ fn stationary_right_click_closes_and_reopens_bar_contexts_without_executing_acti
     }
 }
 
+/// "Edit button…" of a right click, the bars not edited (human request,
+/// 2026-11-26): its window gives the button a name, a display and an icon,
+/// the icon picker beside the window, without entering customization nor
+/// moving the button.
 #[test]
-fn direct_button_presentation_and_side_icon_picker_apply_without_entering_customization() {
+fn the_edit_button_window_names_shows_and_draws_a_button_without_customization() {
+    let layout = Layout::default();
     for classic in [false, true] {
         for bar in [Bar::Left, Bar::Right] {
             let mut bench = Bench {
@@ -279,74 +284,85 @@ fn direct_button_presentation_and_side_icon_picker_apply_without_entering_custom
             let _icons = Icons::load(&bench.ctx, None);
             bench.settings.composed = true;
             bench.settings.buttons = Some(Vec::new());
-            bench.settings.set_bar(bar, vec![tests::button("inventory")]);
+            // a button saved with no name of its own
+            bench.settings.set_bar(
+                bar,
+                vec![ToolButton {
+                    tooltip: String::new(),
+                    ..tests::button("inventory")
+                }],
+            );
             for _ in 0..4 {
                 bench.frame(Vec::new());
             }
             let placement = bench.settings.command_placement("inventory", &Layout::default());
-            for phase in 0..2 {
-                let point = bench
-                    .ctx
-                    .read_response(bars::tool_button_id("inventory"))
-                    .expect("inventory")
-                    .rect
-                    .center();
-                for pressed in [true, false] {
-                    bench.frame(vec![
-                        egui::Event::PointerMoved(point),
-                        egui::Event::PointerButton {
-                            pos: point,
-                            button: egui::PointerButton::Secondary,
-                            pressed,
-                            modifiers: Default::default(),
-                        },
-                    ]);
-                }
-                for _ in 0..3 {
-                    bench.frame(Vec::new());
-                }
-                if phase == 0 {
-                    let choice = menu_point(&bench, aurora_i18n::tr!("toolbar-button-text"));
-                    bench.pointer(choice, Some(true));
-                    bench.pointer(choice, Some(false));
-                    assert_eq!(bench.settings.appearance["inventory"].mode, Some(ButtonMode::TextOnly));
-                    for _ in 0..3 {
-                        bench.frame(Vec::new());
-                    }
-                } else {
-                    let icon = bench
-                        .ctx
-                        .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_icon_button_rect", "inventory"))))
-                        .expect("icon button");
-                    assert_eq!(
-                        bench.ctx.layer_id_at(icon.center()).map(|layer| layer.id),
-                        Some(bars::tool_button_id("inventory").with("context_menu")),
-                        "icon button must be exposed: {bar:?}, classic={classic}, {icon:?}"
-                    );
-                    bench.pointer(icon.center(), Some(true));
-                    bench.pointer(icon.center(), Some(false));
-                }
-            }
-            for _ in 0..4 {
+            let point = bench
+                .ctx
+                .read_response(bars::tool_button_id("inventory"))
+                .expect("inventory")
+                .rect
+                .center();
+            right_click_at(&mut bench, point);
+            for _ in 0..3 {
                 bench.frame(Vec::new());
             }
-            let parent = bars::tool_button_id("inventory").with("context_menu");
-            let menu = bench.ctx.memory(|memory| memory.area_rect(parent)).expect("context menu");
-            let picker_id = Id::unique(("toolbar_icon_side_picker", "inventory"));
-            let picker = bench.ctx.memory(|memory| memory.area_rect(picker_id)).unwrap_or_else(|| {
-                panic!(
-                    "side picker: {bar:?}, classic={classic}, parent open={}",
-                    egui::Popup::is_id_open(&bench.ctx, parent)
-                )
-            });
+            // no display choice nor icon row in the right click any more
+            for key in ["toolbar-button-text", "toolbar-icon-change"] {
+                assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)), "{key}");
+            }
+            let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-button-edit"));
+            bench.pointer(edit, Some(true));
+            bench.pointer(edit, Some(false));
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            let title = aurora_i18n::tr!("toolbar-button-edit-title");
+            assert!(bench.text.iter().any(|(text, _)| text == title), "its window");
+            // its display, "Inherited" first
+            let inherited = menu_point(&bench, aurora_i18n::tr!("toolbar-button-inherited"));
+            let text = menu_point(&bench, aurora_i18n::tr!("toolbar-button-text"));
+            assert!(inherited.y < text.y);
+            bench.pointer(text, Some(true));
+            bench.pointer(text, Some(false));
+            assert_eq!(bench.settings.appearance["inventory"].mode, Some(ButtonMode::TextOnly));
+            // its name
+            let name = bench
+                .ctx
+                .read_response(Id::unique(("button_name", "inventory")))
+                .expect("its name field")
+                .rect
+                .center();
+            bench.pointer(name, Some(true));
+            bench.pointer(name, Some(false));
+            bench.frame(vec![egui::Event::Text("Bag".into())]);
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            let placed = bench.settings.placed_button("inventory", &layout).cloned().expect("placed");
+            assert_eq!(placed.tooltip, "Bag");
+            assert_eq!(super::label(&placed), "Bag");
+            // its icon, the picker beside the window
+            let icon = bench
+                .ctx
+                .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_icon_button_rect", "inventory"))))
+                .expect("icon button");
+            bench.pointer(icon.center(), Some(true));
+            bench.pointer(icon.center(), Some(false));
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            let window = bench
+                .ctx
+                .memory(|memory| memory.area_rect(Id::unique("toolbar_button_appearance")))
+                .expect("the window");
+            let picker = bench
+                .ctx
+                .memory(|memory| memory.area_rect(Id::unique(("toolbar_icon_side_picker", "inventory"))))
+                .expect("side picker");
             assert!(picker.width() <= 365.0 && bench.ctx.content_rect().contains_rect(picker));
             assert!(
-                if bar == Bar::Left {
-                    picker.left() >= menu.right()
-                } else {
-                    picker.right() <= menu.left()
-                },
-                "picker follows the available side: {bar:?}, {menu:?}, {picker:?}"
+                picker.left() >= window.right() || picker.right() <= window.left(),
+                "the picker beside the window: {window:?}, {picker:?}"
             );
             let search = menu_point(&bench, aurora_i18n::tr!("toolbar-icon-search"));
             bench.pointer(search, Some(true));
@@ -355,10 +371,6 @@ fn direct_button_presentation_and_side_icon_picker_apply_without_entering_custom
             for _ in 0..3 {
                 bench.frame(Vec::new());
             }
-            assert!(
-                egui::Popup::is_id_open(&bench.ctx, parent),
-                "interacting with the picker retains its parent menu"
-            );
             let choice = bench
                 .ctx
                 .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_icon_choice", "inventory", "star-filled"))))
@@ -370,10 +382,32 @@ fn direct_button_presentation_and_side_icon_picker_apply_without_entering_custom
             }
             assert_eq!(bench.settings.appearance["inventory"].icon.as_deref(), Some("star-filled"));
             assert_eq!(bench.settings.appearance["inventory"].mode, Some(ButtonMode::TextOnly));
-            assert!(egui::Popup::is_id_open(&bench.ctx, parent));
             assert_eq!(bench.settings.command_placement("inventory", &Layout::default()), placement);
             assert!(!bench.state.open);
             assert!(matches!(bench.action, bars::BarAction::None));
+            // emptied, the name is the default one again
+            let name = bench
+                .ctx
+                .read_response(Id::unique(("button_name", "inventory")))
+                .expect("its name field")
+                .rect
+                .center();
+            bench.pointer(name, Some(true));
+            bench.pointer(name, Some(false));
+            for _ in 0..3 {
+                bench.frame(vec![egui::Event::Key {
+                    key: egui::Key::Backspace,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }]);
+            }
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            let placed = bench.settings.placed_button("inventory", &layout).cloned().expect("placed");
+            assert!(placed.tooltip.is_empty(), "{:?}", placed.tooltip);
         }
     }
 }
@@ -445,82 +479,38 @@ fn normal_native_contexts_share_one_customization_entry_and_select_the_clicked_c
                     .filter(|(text, _)| text == aurora_i18n::tr!("toolbar-interface-edit"))
                     .collect();
                 assert_eq!(entries.len(), 1, "one shared entry: {command}, classic={classic}, locked={locked}");
+                // every right click has the same sections (human request,
+                // 2026-11-26): a button's "Edit button…", no display choice
+                // nor icon row of its own
+                let heading = aurora_i18n::tr!("toolbar-button-settings").to_uppercase();
+                let button_heading = menu_point(&bench, &heading);
+                for key in ["toolbar-button-text", "toolbar-icon-change"] {
+                    assert!(
+                        !bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)),
+                        "{command}: {key}"
+                    );
+                }
                 if matches!(command, "inventory" | "aurora_menu" | "report_bug") {
+                    let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-button-edit"));
+                    assert!(edit.y > button_heading.y && entries[0].1.top() > edit.y, "{command}");
+                }
+                // a bar's button and a bar's own control: its removal, then
+                // its block's settings (the main menu's and the bug
+                // report's are islands of their own in the Aurora style)
+                if command == "inventory" || command.starts_with("bar_") {
+                    let remove = menu_point(&bench, aurora_i18n::tr!("toolbar-remove"));
+                    let block = menu_point(&bench, &aurora_i18n::tr!("toolbar-block-settings").to_uppercase());
+                    let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-block-edit"));
+                    let removal = menu_point(&bench, aurora_i18n::tr!("toolbar-block-remove"));
                     assert!(
-                        !bench
-                            .text
-                            .iter()
-                            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-button-appearance"))
+                        button_heading.y < remove.y && remove.y < block.y && block.y < edit.y && edit.y < removal.y,
+                        "{command}, classic={classic}, locked={locked}"
                     );
-                    let choices = [
-                        "toolbar-button-icons",
-                        "toolbar-button-text",
-                        "toolbar-button-icons-text",
-                        "toolbar-button-inherit",
-                    ]
-                    .map(|key| menu_point(&bench, aurora_i18n::text(key)));
-                    for pair in choices.windows(2) {
-                        assert!(
-                            pair[0].y < pair[1].y && pair[1].y - pair[0].y < 26.0,
-                            "direct display choices stay together: {command}"
-                        );
-                    }
-                    let icon = bench
-                        .ctx
-                        .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_icon_button_rect", command))))
-                        .expect("icon button");
-                    assert!(icon.height() <= 24.0, "changing the icon uses a normal menu row");
-                    assert!(bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-icon-change")));
-                    fn divider_between(shape: &egui::Shape, from: Pos2, to: Pos2) -> bool {
-                        match shape {
-                            egui::Shape::LineSegment { points, .. } => {
-                                (points[0].y - points[1].y).abs() < 0.5
-                                    && points[0].y > from.y
-                                    && points[0].y < to.y
-                                    && points[0].x < from.x
-                                    && points[1].x > from.x
-                            }
-                            egui::Shape::Vec(shapes) => shapes.iter().any(|shape| divider_between(shape, from, to)),
-                            _ => false,
-                        }
-                    }
-                    assert!(
-                        bench
-                            .shapes
-                            .iter()
-                            .any(|shape| divider_between(&shape.shape, choices[3], icon.center())),
-                        "a separator follows the four presentation choices: {command}"
-                    );
-                    // the button's settings, then its block's, then the
-                    // shared entry (human request, 2026-11-25); the main
-                    // menu's and the bug report's buttons have menus of
-                    // their own, blocks of no bar in the Aurora style
-                    if command == "inventory" {
-                        let floating = bench
-                            .text
-                            .iter()
-                            .rev()
-                            .find(|(text, _)| text == aurora_i18n::tr!("toolbar-block-kind-floating"))
-                            .unwrap_or_else(|| panic!("block type row: {command}, classic={classic}, locked={locked}"))
-                            .1
-                            .center();
-                        assert!(floating.y > icon.bottom() && entries[0].1.top() > floating.y);
-                        // its shortcut after its icon (human request, 2026-11-25)
-                        let shortcut = menu_point(&bench, aurora_i18n::tr!("toolbar-shortcut"));
-                        assert!(shortcut.y > icon.bottom() && shortcut.y < floating.y, "{shortcut:?} {icon:?}");
-                        // then "Edit block…" (human request, 2026-11-26)
-                        // then its removal, before the shared entry
-                        let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-block-edit"));
-                        let remove = menu_point(&bench, aurora_i18n::tr!("toolbar-block-remove"));
-                        assert!(edit.y > floating.y && remove.y > edit.y && entries[0].1.top() > remove.y);
-                    }
-                    if command == "report_bug" {
-                        let copy = menu_point(&bench, aurora_i18n::tr!("bug-copy-version"));
-                        assert!(
-                            choices[0].y - copy.y > choices[1].y - choices[0].y + 4.0,
-                            "button-specific action is separated above the group"
-                        );
-                    }
+                    assert!(entries[0].1.top() > removal.y, "the shared entry last: {command}");
+                }
+                if command == "report_bug" {
+                    let copy = menu_point(&bench, aurora_i18n::tr!("bug-copy-version"));
+                    assert!(copy.y < button_heading.y, "its own action first");
                 }
                 for key in [
                     "toolbar-locked",
@@ -768,7 +758,7 @@ fn old_school_text_menus_open_the_native_groups_and_dispatch_build_import() {
         if menu.command == "menu:common-build" {
             let import = bench
                 .ctx
-                .data(|data| data.get_temp::<Rect>(Id::unique(("main_menu_entry", "menu:common-build/import-menu"))))
+                .data(|data| data.get_temp::<Rect>(Id::unique(("main_menu_entry", "menu:common-build/blender-live-title"))))
                 .expect("native import action")
                 .center();
             bench.pointer(import, Some(true));
@@ -781,7 +771,7 @@ fn old_school_text_menus_open_the_native_groups_and_dispatch_build_import() {
             let _ = ctx.run_ui(Default::default(), |ui| {
                 action = bars::dispatch_menu(ui, &p, &mut bench.panels, &bars::islands::tests::status(true, false));
             });
-            assert!(matches!(action, bars::BarAction::Import));
+            assert!(matches!(action, bars::BarAction::BlenderLive));
             assert!(commands::take_request(&ctx).is_none(), "the native request is consumed once");
         }
     }
@@ -892,7 +882,7 @@ fn editor_presets_queue_all_choices_and_selection_keeps_the_catalogue_stable() {
         let after = bench.ctx.data(|data| data.get_temp::<Rect>(divider)).expect("structural tile");
         assert_eq!(before, after, "selecting a control does not insert an action panel");
         for key in [
-            "toolbar-button-appearance",
+            "toolbar-button-edit",
             "toolbar-remove",
             "toolbar-edit-split-before",
             "toolbar-edit-split-after",
@@ -905,8 +895,10 @@ fn editor_presets_queue_all_choices_and_selection_keeps_the_catalogue_stable() {
     }
 }
 
+/// The microphone's "Edit button" has its display, never an icon editor:
+/// its glyph shows the voice's state.
 #[test]
-fn microphone_context_keeps_display_modes_and_hides_icon_editors() {
+fn the_microphones_edit_button_keeps_its_display_and_no_icon_editor() {
     for classic in [false, true] {
         let mut bench = Bench {
             native_top: true,
@@ -932,29 +924,21 @@ fn microphone_context_keeps_display_modes_and_hides_icon_editors() {
             .expect("microphone bar")
             .rect
             .center();
-        for pressed in [true, false] {
-            bench.frame(vec![
-                egui::Event::PointerMoved(point),
-                egui::Event::PointerButton {
-                    pos: point,
-                    button: egui::PointerButton::Secondary,
-                    pressed,
-                    modifiers: Default::default(),
-                },
-            ]);
-        }
+        right_click_at(&mut bench, point);
         for _ in 0..3 {
             bench.frame(Vec::new());
         }
         assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-icon-change")));
+        let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-button-edit"));
+        bench.pointer(edit, Some(true));
+        bench.pointer(edit, Some(false));
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
         let text = menu_point(&bench, aurora_i18n::tr!("toolbar-button-text"));
         bench.pointer(text, Some(true));
         bench.pointer(text, Some(false));
         assert_eq!(bench.settings.appearance["speak"].mode, Some(ButtonMode::TextOnly));
-        bench.state.edit_button(&tests::button("speak"));
-        for _ in 0..3 {
-            bench.frame(Vec::new());
-        }
         for key in ["toolbar-icon-search", "toolbar-icon-default", "toolbar-icon-change"] {
             assert!(
                 !bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)),
@@ -1180,7 +1164,7 @@ fn customization_contexts_share_one_final_edit_interface_action_and_preserve_set
                     bench.frame(Vec::new());
                 }
                 let command = drawer.as_deref().unwrap_or(if source == "menu" {
-                    "menu:common-build/import-menu"
+                    "menu:common-build/blender-live-title"
                 } else {
                     source
                 });
@@ -1215,8 +1199,7 @@ fn customization_contexts_share_one_final_edit_interface_action_and_preserve_set
                 }
                 let preceding = aurora_i18n::text(match source {
                     "drawer" => "toolbar-block-edit",
-                    "menu" => "toolbar-icon-change",
-                    _ => "toolbar-button-inherit",
+                    _ => "toolbar-button-edit",
                 });
                 let preceding = bench.text.iter().rev().find(|(text, _)| text == preceding).expect("context row").1;
                 // The Aurora menu remains behind its context menu and also owns
@@ -1554,7 +1537,7 @@ fn button_faces_create_drawers_with_the_targets_effective_display_on_every_edge(
 
 #[test]
 fn drawer_faces_and_grouping_accept_menu_sources_and_last_children() {
-    const IMPORT: &str = "menu:common-build/import-menu";
+    const IMPORT: &str = "menu:common-build/blender-live-title";
     for group in [false, true] {
         for source in ["menu", "drawer", "catalogue"] {
             let (mut bench, id) = drawer_target(false, Bar::Right, false, false);
@@ -2086,7 +2069,7 @@ impl Default for Bench {
         crate::theme::Theme::default().apply(&ctx, 1.0);
         let settings = ToolbarSettings {
             top: Vec::new(),
-            menu_layout: [(String::new(), vec!["menu:common-build/import-menu".into()])].into(),
+            menu_layout: [(String::new(), vec!["menu:common-build/blender-live-title".into()])].into(),
             ..Default::default()
         };
         Self {
@@ -3859,7 +3842,7 @@ fn composed_native_buttons_can_be_removed_by_dragging_back_to_the_editor() {
 
 #[test]
 fn the_composed_top_accepts_a_command_dragged_from_the_native_aurora_menu() {
-    const IMPORT: &str = "menu:common-build/import-menu";
+    const IMPORT: &str = "menu:common-build/blender-live-title";
     for classic in [false, true] {
         let mut bench = Bench {
             native_top: true,
@@ -3973,7 +3956,7 @@ fn overflowing_top_blocks_keep_their_full_height_and_click_area() {
 
 #[test]
 fn a_real_menu_drag_places_the_command_on_each_edge_and_keeps_its_menu_source() {
-    const IMPORT: &str = "menu:common-build/import-menu";
+    const IMPORT: &str = "menu:common-build/blender-live-title";
     for bar in Bar::ALL {
         let mut bench = Bench::default();
         for _ in 0..3 {
@@ -4018,7 +4001,7 @@ fn a_real_menu_drag_places_the_command_on_each_edge_and_keeps_its_menu_source() 
 
 #[test]
 fn native_aurora_menu_drags_append_beyond_existing_top_buttons() {
-    const IMPORT: &str = "menu:common-build/import-menu";
+    const IMPORT: &str = "menu:common-build/blender-live-title";
     for classic in [false, true] {
         for (parent, command) in [("", IMPORT), ("menu:common-build", IMPORT), ("", "menu:common-world")] {
             let mut bench = Bench {
@@ -4120,7 +4103,7 @@ fn locked_menu_rows_do_not_start_a_layout_drag() {
     }
     let source = bench
         .ctx
-        .data(|data| data.get_temp::<Rect>(egui::Id::unique(("main_menu_entry", "menu:common-build/import-menu"))))
+        .data(|data| data.get_temp::<Rect>(egui::Id::unique(("main_menu_entry", "menu:common-build/blender-live-title"))))
         .expect("menu row")
         .center();
     bench.pointer(source, Some(true));
@@ -4130,7 +4113,7 @@ fn locked_menu_rows_do_not_start_a_layout_drag() {
 
 #[test]
 fn a_menu_entry_right_click_has_no_display_choices_and_no_label_tooltip() {
-    const IMPORT: &str = "menu:common-build/import-menu";
+    const IMPORT: &str = "menu:common-build/blender-live-title";
     let mut bench = Bench::default();
     // a mode saved before the choice was removed is ignored
     bench.settings.appearance.insert(
@@ -4155,7 +4138,7 @@ fn a_menu_entry_right_click_has_no_display_choices_and_no_label_tooltip() {
     let labels = bench
         .text
         .iter()
-        .filter(|(text, _)| text == aurora_i18n::tr!("import-menu"))
+        .filter(|(text, _)| text == aurora_i18n::tr!("blender-live-title"))
         .count();
     assert_eq!(labels, 1, "the row shows its label and no tooltip repeats it");
     for pressed in [true, false] {
@@ -4180,27 +4163,22 @@ fn a_menu_entry_right_click_has_no_display_choices_and_no_label_tooltip() {
         "normal context choices do not open an appearance floater"
     );
     // the Aurora menu's rows always show icon and label: no display choice
-    for key in [
-        "toolbar-button-icons",
-        "toolbar-button-text",
-        "toolbar-button-icons-text",
-        "toolbar-button-inherit",
-    ] {
+    for key in ["toolbar-button-icons", "toolbar-button-text", "toolbar-button-icons-text"] {
         assert!(
             !bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)),
             "menu row offers {key}"
         );
     }
     assert!(
-        bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-icon-change")),
-        "its icon stays editable"
+        bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-button-edit")),
+        "its icon stays editable, in its window"
     );
-    assert!(commands::take_request(&bench.ctx).is_none(), "customizing never activates Import");
+    assert!(commands::take_request(&bench.ctx).is_none(), "customizing never activates LiveMesh");
 }
 
 #[test]
 fn a_real_menu_drag_can_return_an_entry_to_another_submenu() {
-    const IMPORT: &str = "menu:common-build/import-menu";
+    const IMPORT: &str = "menu:common-build/blender-live-title";
     let mut bench = Bench::default();
     for _ in 0..3 {
         bench.frame(Vec::new());
@@ -4281,14 +4259,14 @@ fn menu_row_right_click_adds_and_removes_its_toolbar_command_without_running_it(
     bench
         .settings
         .menu_layout
-        .insert(String::new(), vec!["menu:common-build/import-menu".into(), plain.into()]);
+        .insert(String::new(), vec!["menu:common-build/blender-live-title".into(), plain.into()]);
     for _ in 0..4 {
         bench.frame(Vec::new());
     }
-    assert_eq!(bench.settings.location("import", &layout), None);
+    assert_eq!(bench.settings.location("blender_live", &layout), None);
     for remove in [false, true] {
         open_wolf(&mut bench);
-        let import = menu_point(&bench, aurora_i18n::tr!("import-menu"));
+        let import = menu_point(&bench, aurora_i18n::tr!("blender-live-title"));
         click(&mut bench, import, egui::PointerButton::Secondary);
         let (key, other) = if remove {
             ("toolbar-remove-from-menu", "toolbar-add-from-menu")
@@ -4298,22 +4276,22 @@ fn menu_row_right_click_adds_and_removes_its_toolbar_command_without_running_it(
         assert!(shown(&bench, key), "remove={remove}");
         assert!(!shown(&bench, other), "remove={remove}");
         assert!(
-            shown(&bench, "import-menu"),
+            shown(&bench, "blender-live-title"),
             "the wolf menu stays open behind its row's context, remove={remove}"
         );
         let entry = menu_point(&bench, aurora_i18n::text(key));
         click(&mut bench, entry, egui::PointerButton::Primary);
         assert!(!shown(&bench, key), "the context closes after its choice");
-        assert!(!shown(&bench, "import-menu"), "and the wolf menu with it");
-        assert_eq!(commands::take_request(&bench.ctx), None, "a toolbar edit never runs Import");
+        assert!(!shown(&bench, "blender-live-title"), "and the wolf menu with it");
+        assert_eq!(commands::take_request(&bench.ctx), None, "a toolbar edit never runs LiveMesh");
         assert!(matches!(bench.action, bars::BarAction::None));
         assert_eq!(
-            bench.settings.location("import", &layout),
+            bench.settings.location("blender_live", &layout),
             if remove { None } else { Some(Bar::Bottom) }
         );
         if !remove {
             let button = bench.settings.bar(Bar::Bottom, &layout).last().expect("added button");
-            assert_eq!(button.command, "import", "the command, never its menu path");
+            assert_eq!(button.command, "blender_live", "the command, never its menu path");
             assert!(button.tooltip.is_empty());
         }
     }
@@ -4325,21 +4303,21 @@ fn menu_row_right_click_adds_and_removes_its_toolbar_command_without_running_it(
         .center();
     click(&mut bench, row, egui::PointerButton::Secondary);
     assert!(!shown(&bench, "toolbar-add-from-menu"));
-    assert!(shown(&bench, "toolbar-icon-change"), "its context still opens");
+    assert!(shown(&bench, "toolbar-button-edit"), "its context still opens");
     // hovering another row of the menu closes the context, the menu stays
-    let import = menu_point(&bench, aurora_i18n::tr!("import-menu"));
+    let import = menu_point(&bench, aurora_i18n::tr!("blender-live-title"));
     for _ in 0..3 {
         bench.frame(vec![egui::Event::PointerMoved(import)]);
     }
-    assert!(!shown(&bench, "toolbar-icon-change"), "the context closes on another row");
-    assert!(shown(&bench, "import-menu"), "the wolf menu stays open");
+    assert!(!shown(&bench, "toolbar-button-edit"), "the context closes on another row");
+    assert!(shown(&bench, "blender-live-title"), "the wolf menu stays open");
     // locked bars keep the entry, greyed out, and ignore it
     bench.settings.locked = true;
-    let import = menu_point(&bench, aurora_i18n::tr!("import-menu"));
+    let import = menu_point(&bench, aurora_i18n::tr!("blender-live-title"));
     click(&mut bench, import, egui::PointerButton::Secondary);
     let entry = menu_point(&bench, aurora_i18n::tr!("toolbar-add-from-menu"));
     click(&mut bench, entry, egui::PointerButton::Primary);
-    assert_eq!(bench.settings.location("import", &layout), None);
+    assert_eq!(bench.settings.location("blender_live", &layout), None);
 }
 
 /// A toolbar shortcut clicks its button where it is drawn: a drawer's
@@ -5001,9 +4979,10 @@ fn the_interfaces_block_stays_and_only_its_name_and_icon_change() {
     );
 }
 
-/// Each interface takes a shortcut from its right click, which applies it
-/// even with the block closed, while the block is placed and its eye open
-/// (human request, 2026-11-26).
+/// Each interface takes a shortcut from its right click's "Edit button…",
+/// which applies it even with the block closed, while the block is placed
+/// and its eye open; its right click has the sections of any button's, its
+/// block's included (human request, 2026-11-26).
 #[test]
 fn an_interfaces_shortcut_applies_it_from_its_right_click_even_closed() {
     let mut bench = Bench {
@@ -5032,9 +5011,23 @@ fn an_interfaces_shortcut_applies_it_from_its_right_click_even_closed() {
         .center();
     right_click_at(&mut bench, point);
     assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-remove")));
-    let row = menu_point(&bench, aurora_i18n::tr!("toolbar-shortcut"));
+    let block = aurora_i18n::tr!("toolbar-block-settings").to_uppercase();
+    assert!(bench.text.iter().any(|(text, _)| *text == block), "its block's settings");
+    let row = menu_point(&bench, aurora_i18n::tr!("toolbar-button-edit"));
     bench.pointer(row, Some(true));
     bench.pointer(row, Some(false));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    // its window: its shortcut only, its name and icon its interface's
+    assert!(bench.ctx.read_response(Id::unique(("button_name", key.as_str()))).is_none());
+    let edit = bench
+        .ctx
+        .data(|data| data.get_temp::<Rect>(Id::unique(("drawer_shortcut_edit", key.as_str()))))
+        .expect("its shortcut row")
+        .center();
+    bench.pointer(edit, Some(true));
+    bench.pointer(edit, Some(false));
     assert_eq!(
         bench.state.shortcut_editor.as_ref().map(|editor| editor.key.as_str()),
         Some(key.as_str())
@@ -5140,6 +5133,239 @@ fn a_right_click_shows_the_button_its_block_and_the_parent_block_edited_or_not()
                 assert_eq!(button, None, "a drawer's button is its block");
             }
         }
+    }
+}
+
+/// A bar's own control (the clock, the address bar…) has a button's right
+/// click, its own actions first (human request, 2026-11-26): its code draws
+/// its menu, whose choices the bars take on the next frame.
+#[test]
+fn a_native_controls_right_click_hands_its_choices_to_the_bars() {
+    let layout = Layout::default();
+    for editing in [false, true] {
+        let mut bench = Bench {
+            native_top: true,
+            menu_open: false,
+            screen: Vec2::new(1920.0, 1080.0),
+            net_stats: true,
+            ..Default::default()
+        };
+        bench.settings.compose_top();
+        bench.settings.locked = false;
+        bench.state.open = editing;
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let point = bench
+            .ctx
+            .read_response(bars::tool_button_id("bar_clock"))
+            .expect("the clock")
+            .rect
+            .center();
+        right_click_at(&mut bench, point);
+        let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-block-edit"));
+        bench.pointer(edit, Some(true));
+        bench.pointer(edit, Some(false));
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+        assert!(
+            bench
+                .state
+                .block_editor
+                .as_ref()
+                .is_some_and(|(_, command, _)| command == "bar_clock")
+                || bench.state.drawer_editor.is_some(),
+            "editing={editing}: its block's window"
+        );
+        bench.state.block_editor = None;
+        bench.state.drawer_editor = None;
+        for _ in 0..2 {
+            bench.frame(Vec::new());
+        }
+        right_click_at(&mut bench, point);
+        let remove = menu_point(&bench, aurora_i18n::tr!("toolbar-remove"));
+        bench.pointer(remove, Some(true));
+        bench.pointer(remove, Some(false));
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+        assert_eq!(bench.settings.location("bar_clock", &layout), None, "editing={editing}: removed");
+    }
+}
+
+/// A fixed block's shortcut shows and hides it in its bar; editing the
+/// interface shows it, and it shows again once its shortcut is gone (human
+/// request, 2026-11-26).
+#[test]
+fn a_fixed_blocks_shortcut_hides_and_shows_it_outside_interface_editing() {
+    let layout = Layout::default();
+    let mut bench = block_controls_fixture(Bar::Bottom, false, false);
+    bench.state.open = false;
+    let drawn = |bench: &Bench, command: &str| {
+        bench
+            .ctx
+            .read_response(bars::tool_button_id(command))
+            .is_some_and(|response| response.rect.is_positive())
+    };
+    let key = shortcuts::block_of(&bench.settings, bench.settings.bar(Bar::Bottom, &layout), "people").expect("its key");
+    let binding = crate::keybinds::Binding {
+        input: crate::keybinds::Input::Key("KeyJ".into()),
+        ctrl: true,
+        shift: true,
+        alt: false,
+    };
+    bench.state.pending = Some(Edit::Shortcut(key.clone(), Some(binding.clone())));
+    assert!(bench.state.commit(&layout, &mut bench.settings));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(drawn(&bench, "inventory") && drawn(&bench, "people"));
+    assert_eq!(shortcuts::target(&bench.settings, &layout, &binding), Some(key.clone()));
+    shortcuts::press(&bench.ctx, key.clone());
+    bench.frame(Vec::new());
+    assert_eq!(shortcuts::fallback(&bench.ctx, &mut bench.settings), shortcuts::Fallback::Changed);
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(!drawn(&bench, "inventory") && !drawn(&bench, "people"), "the whole block hidden");
+    assert!(drawn(&bench, "preferences"), "the next block stays");
+    // editing the interface shows it
+    bench.state.open = true;
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(drawn(&bench, "inventory") && drawn(&bench, "people"), "shown while editing");
+    bench.state.open = false;
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(!drawn(&bench, "inventory"), "hidden again after editing");
+    // again: shown
+    shortcuts::press(&bench.ctx, key.clone());
+    bench.frame(Vec::new());
+    assert_eq!(shortcuts::fallback(&bench.ctx, &mut bench.settings), shortcuts::Fallback::Changed);
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(drawn(&bench, "inventory") && drawn(&bench, "people"));
+    // hidden, then its shortcut removed: shown
+    shortcuts::press(&bench.ctx, key.clone());
+    bench.frame(Vec::new());
+    shortcuts::fallback(&bench.ctx, &mut bench.settings);
+    assert!(bench.settings.hidden_blocks.contains(&key));
+    bench.state.pending = Some(Edit::Shortcut(key.clone(), None));
+    assert!(bench.state.commit(&layout, &mut bench.settings));
+    assert!(bench.settings.hidden_blocks.is_empty());
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(drawn(&bench, "inventory") && drawn(&bench, "people"));
+}
+
+/// A shortcut another has: a block can replace it or join other blocks
+/// that have it, a button or a block a button's key only replace it, and
+/// Cancel leaves it (human request, 2026-11-26).
+#[test]
+fn the_shortcut_window_replaces_adds_or_cancels_a_taken_shortcut() {
+    let layout = Layout::default();
+    let mut bench = block_controls_fixture(Bar::Bottom, false, false);
+    bench.state.open = false;
+    let bottom = bench.settings.bar(Bar::Bottom, &layout).to_vec();
+    let one = shortcuts::block_of(&bench.settings, &bottom, "inventory").expect("a block");
+    let two = shortcuts::block_of(&bench.settings, &bottom, "preferences").expect("another block");
+    assert_ne!(one, two);
+    let k = crate::keybinds::Binding {
+        input: crate::keybinds::Input::Key("KeyJ".into()),
+        ctrl: true,
+        shift: true,
+        alt: false,
+    };
+    let open = |bench: &mut Bench, key: &str| {
+        bench
+            .ctx
+            .data_mut(|data| ["shortcut_add", "shortcut_replace"].map(|id| data.remove::<Rect>(Id::unique(id))));
+        bench.state.edit_shortcut(key, Some(&k));
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+    };
+    let rect = |bench: &Bench, id: &str| bench.ctx.data(|data| data.get_temp::<Rect>(Id::unique(id)));
+    bench.state.pending = Some(Edit::Shortcut(one.clone(), Some(k.clone())));
+    assert!(bench.state.commit(&layout, &mut bench.settings));
+    // a block beside a block: Add
+    open(&mut bench, &two);
+    let add = rect(&bench, "shortcut_add").expect("Add").center();
+    assert!(rect(&bench, "shortcut_replace").is_some());
+    bench.pointer(add, Some(true));
+    bench.pointer(add, Some(false));
+    assert_eq!(bench.settings.shortcuts.get(&one), Some(&k));
+    assert_eq!(bench.settings.shortcuts.get(&two), Some(&k));
+    let mut both = shortcuts::targets(&bench.settings, &layout, &k);
+    both.sort();
+    let mut expected = vec![one.clone(), two.clone()];
+    expected.sort();
+    assert_eq!(both, expected, "one press for both");
+    shortcuts::press_all(&bench.ctx, both);
+    bench.frame(Vec::new());
+    assert_eq!(shortcuts::fallback(&bench.ctx, &mut bench.settings), shortcuts::Fallback::Changed);
+    assert!(bench.settings.hidden_blocks.contains(&one) && bench.settings.hidden_blocks.contains(&two));
+    bench.settings.hidden_blocks.clear();
+    // a button: Replace only, the blocks lose it
+    bench.state.shortcut_editor = None;
+    open(&mut bench, "people");
+    assert!(rect(&bench, "shortcut_add").is_none(), "a button never shares");
+    let replace = rect(&bench, "shortcut_replace").expect("Replace").center();
+    bench.pointer(replace, Some(true));
+    bench.pointer(replace, Some(false));
+    assert_eq!(bench.settings.shortcuts.keys().collect::<Vec<_>>(), ["people"]);
+    // a block on a button's key: Replace or Cancel
+    bench.state.shortcut_editor = None;
+    open(&mut bench, &one);
+    assert!(rect(&bench, "shortcut_add").is_none());
+    assert!(rect(&bench, "shortcut_replace").is_some());
+    let cancel = menu_point(&bench, aurora_i18n::tr!("common-cancel"));
+    bench.pointer(cancel, Some(true));
+    bench.pointer(cancel, Some(false));
+    assert!(bench.state.shortcut_editor.is_none(), "Cancel closes the window");
+    assert_eq!(bench.settings.shortcuts.keys().collect::<Vec<_>>(), ["people"], "unchanged");
+}
+
+/// Build › Import: the quick imports in the human's order, then the
+/// advanced import, the local files and the import options, each its
+/// toolbar command (human request, 2026-11-26).
+#[test]
+fn build_import_lists_the_quick_imports_then_the_advanced_import_local_files_and_options() {
+    let mut bench = Bench::default();
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    let catalogue = commands::catalogue(&bench.ctx);
+    let parent = "menu:common-build/import-types";
+    assert!(catalogue.find(parent).is_some(), "the Import submenu");
+    let children: Vec<String> = catalogue
+        .entries
+        .iter()
+        .filter(|entry| entry.parent == parent && !entry.separator && !entry.info)
+        .map(|entry| entry.button.command.clone())
+        .collect();
+    let expected = [
+        ("import-menu-textures", "import_texture"),
+        ("import-menu-animations", "import_animation"),
+        ("import-menu-sounds", "import_sound"),
+        ("import-menu-materials", "import_material"),
+        ("import-menu-meshes", "import_mesh"),
+        ("toolbar-import-advanced", "import_advanced"),
+        ("toolbar-import-local", "import_local"),
+        ("import-menu-options", "import_settings"),
+    ];
+    assert_eq!(
+        children,
+        expected.map(|(key, _)| format!("{parent}/{key}")).to_vec(),
+        "its entries in order"
+    );
+    for (key, command) in expected {
+        assert_eq!(catalogue_view::alias(&format!("{parent}/{key}")), Some(command), "{key}");
     }
 }
 

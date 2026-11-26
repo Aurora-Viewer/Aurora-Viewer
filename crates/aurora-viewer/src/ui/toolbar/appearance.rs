@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{ButtonMode, Edit, ToolbarSettings, ToolbarUi};
 use crate::theme::Palette;
+use crate::ui::skin::Layout;
 use crate::ui::{icons, menu, skin::ToolButton, widgets};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,168 +33,10 @@ pub(super) struct Editor {
     picker_open: bool,
 }
 
-#[derive(Clone)]
-struct ContextSource {
-    button: ToolButton,
-    key: String,
-    parent: Id,
-    owner: egui::Rect,
-}
-
-#[derive(Clone)]
-struct PickerProtection {
-    parent: Id,
-    rect: egui::Rect,
-    frame: u64,
-}
-
-fn protection_id() -> Id {
-    Id::unique("toolbar_context_icon_picker_protection")
-}
-
-pub(crate) fn context_picker_contains_pointer(ctx: &egui::Context) -> bool {
-    let protection = ctx.data(|data| data.get_temp::<PickerProtection>(protection_id()));
-    protection.is_some_and(|protection| {
-        egui::Popup::is_id_open(ctx, protection.parent)
-            && protection.frame.saturating_add(1) >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
-            && ctx.pointer_interact_pos().is_some_and(|pos| protection.rect.contains(pos))
-    })
-}
-
-#[derive(Default)]
-pub(super) struct ContextPicker {
-    editor: Editor,
-    source: Option<ContextSource>,
-}
-
-impl ContextPicker {
-    pub(super) fn filter(&mut self, query: &str) {
-        self.editor.filter(query);
-    }
-
-    fn close(&mut self, ctx: &egui::Context) {
-        self.source = None;
-        self.editor.close_picker();
-        ctx.data_mut(|data| data.remove::<PickerProtection>(protection_id()));
-    }
-
-    pub(super) fn options(
-        &mut self,
-        ui: &mut egui::Ui,
-        p: &Palette,
-        button: &ToolButton,
-        key: &str,
-        settings: &ToolbarSettings,
-        locked: bool,
-    ) -> Option<Appearance> {
-        let parent = ui.layer_id().id;
-        if self.editor.key != key || self.source.as_ref().is_some_and(|source| source.parent != parent) {
-            self.close(ui.ctx());
-            self.editor.select_as(button, key);
-        }
-        let mut value = settings.appearance.get(key).cloned().unwrap_or_default();
-        let before = value.clone();
-        // the Aurora menu's rows always show their icon and label
-        let modes = if is_menu_key(key) { &[][..] } else { &MODES[..] };
-        for &(mode, icon, label) in modes {
-            if menu::check(ui, p, icon, aurora_i18n::text(label), value.mode == mode, !locked) {
-                value.mode = mode;
-            }
-        }
-        if !modes.is_empty() {
-            menu::separator(ui, p);
-        }
-        if icon_editable(&button.command) {
-            let response = ui
-                .add_enabled_ui(!locked, |ui| {
-                    menu::suggestion_row(
-                        ui,
-                        p,
-                        "pencil-filled",
-                        aurora_i18n::tr!("toolbar-icon-change"),
-                        "",
-                        self.editor.picker_open,
-                    )
-                })
-                .inner;
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(Id::unique(("toolbar_icon_button_rect", &button.command)), response.rect));
-            if response.clicked() {
-                self.editor.picker_open = !self.editor.picker_open;
-            }
-        } else {
-            self.close(ui.ctx());
-        }
-        if self.editor.picker_open {
-            self.source = Some(ContextSource {
-                button: button.clone(),
-                key: key.into(),
-                parent,
-                owner: ui.ctx().memory(|memory| memory.area_rect(parent)).unwrap_or_else(|| ui.min_rect()),
-            });
-        } else {
-            self.source = None;
-            ui.ctx().data_mut(|data| data.remove::<PickerProtection>(protection_id()));
-        }
-        (value != before).then_some(value)
-    }
-
-    pub(super) fn show(&mut self, ctx: &egui::Context, p: &Palette, settings: &ToolbarSettings) -> Option<(String, Appearance)> {
-        let Some(source) = self.source.clone() else {
-            ctx.data_mut(|data| data.remove::<PickerProtection>(protection_id()));
-            return None;
-        };
-        if !self.editor.picker_open || !egui::Popup::is_id_open(ctx, source.parent) {
-            self.close(ctx);
-            return None;
-        }
-        let owner = ctx.memory(|memory| memory.area_rect(source.parent)).unwrap_or(source.owner);
-        let mut value = settings.appearance.get(&source.key).cloned().unwrap_or_default();
-        let before = value.clone();
-        self.editor.side_picker(ctx, p, &source.button, &mut value, owner, settings.locked);
-        if self.editor.picker_open {
-            if let Some(rect) = ctx.memory(|memory| memory.area_rect(Id::unique(("toolbar_icon_side_picker", &source.button.command)))) {
-                let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
-                ctx.data_mut(|data| {
-                    data.insert_temp(
-                        protection_id(),
-                        PickerProtection {
-                            parent: source.parent,
-                            rect,
-                            frame,
-                        },
-                    )
-                });
-            }
-        } else {
-            self.close(ctx);
-        }
-        (value != before).then_some((source.key, value))
-    }
-}
-
 impl Editor {
-    pub(super) fn modes(ui: &mut egui::Ui, p: &Palette, value: &mut Appearance) {
-        for (mode, label) in [
-            None,
-            Some(ButtonMode::IconsOnly),
-            Some(ButtonMode::TextOnly),
-            Some(ButtonMode::IconsWithText),
-        ]
-        .into_iter()
-        .zip([
-            aurora_i18n::tr!("toolbar-button-default"),
-            aurora_i18n::tr!("toolbar-mode-icons"),
-            aurora_i18n::tr!("toolbar-mode-text"),
-            aurora_i18n::tr!("toolbar-mode-icons-text"),
-        ]) {
-            widgets::radio_value(ui, p, &mut value.mode, mode, label);
-        }
-    }
-
-    /// A drawer's or a floating block's button: its bar's rule, or one of
-    /// its own (human request, 2026-11-26).
-    pub(super) fn block_button_modes(ui: &mut egui::Ui, p: &Palette, value: &mut Appearance) {
+    /// A button's display, a block's button's included: its block's rule
+    /// ("Inherited"), or one of its own (human request, 2026-11-26).
+    pub(super) fn button_modes(ui: &mut egui::Ui, p: &Palette, value: &mut Appearance) {
         for (mode, label) in [
             None,
             Some(ButtonMode::IconsOnly),
@@ -366,7 +209,12 @@ impl Editor {
         };
     }
 
-    fn select_as(&mut self, button: &ToolButton, key: &str) {
+    /// The button and the key "Edit button" opened on, if any.
+    pub(super) fn selected(&self) -> Option<(ToolButton, String)> {
+        self.button.clone().map(|button| (button, self.key.clone()))
+    }
+
+    pub(super) fn select_as(&mut self, button: &ToolButton, key: &str) {
         self.select(button);
         self.key = key.to_owned();
     }
@@ -378,17 +226,12 @@ pub fn menu_key(command: &str) -> String {
 
 const MENU_KEY: &str = "menu-entry:";
 
+/// The "Edit button" window.
+const WINDOW: &str = "toolbar_button_appearance";
+
 fn is_menu_key(key: &str) -> bool {
     key.starts_with(MENU_KEY)
 }
-
-/// The display choices of a toolbar button's right click.
-const MODES: [(Option<ButtonMode>, &str, &str); 4] = [
-    (Some(ButtonMode::IconsOnly), "layout-grid-filled", "toolbar-button-icons"),
-    (Some(ButtonMode::TextOnly), "typography", "toolbar-button-text"),
-    (Some(ButtonMode::IconsWithText), "list-details-filled", "toolbar-button-icons-text"),
-    (None, "layers-subtract", "toolbar-button-inherit"),
-];
 
 pub fn publish(ctx: &egui::Context, settings: &ToolbarSettings) {
     ctx.data_mut(|data| {
@@ -425,6 +268,8 @@ impl ToolbarUi {
         crate::ui::bars::location_popup::prepare(ctx, self.open);
         let editing = self.open;
         ctx.data_mut(|data| data.insert_temp(Id::unique("toolbar_interface_editing"), editing));
+        let islands = self.islands;
+        ctx.data_mut(|data| data.insert_temp(super::islands_id(), islands));
         ctx.data_mut(|data| data.insert_temp(Id::unique("toolbar_drop_handled"), false));
     }
 
@@ -437,6 +282,8 @@ impl ToolbarUi {
         Self::editing(ctx) || Self::dragging(ctx)
     }
 
+    /// A catalogue tile's right click, for a button placed nowhere: its
+    /// settings, as a placed button's (human request, 2026-11-26).
     pub fn appearance_context(&mut self, response: &egui::Response, p: &Palette, button: &ToolButton, locked: bool) {
         if super::structure::is_separator(&button.command)
             || super::structure::is_divider(&button.command)
@@ -444,7 +291,20 @@ impl ToolbarUi {
         {
             return;
         }
-        self.appearance_context_for(response, p, button, locked, &button.command);
+        menu::context_menu_of_button(response, p, |ui| {
+            super::section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
+            self.edit_button_item(ui, p, button, &button.command, locked);
+            super::native_context::start_group(ui, p);
+            self.interface_edit_menu(ui, p, Some(&button.command));
+        });
+    }
+
+    /// "Edit button…": its window, the same for every button, a menu row's
+    /// and an interface's included (human request, 2026-11-26).
+    pub(super) fn edit_button_item(&mut self, ui: &mut egui::Ui, p: &Palette, button: &ToolButton, key: &str, locked: bool) {
+        if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-edit"), !locked) {
+            self.appearance_editor.select_as(button, key);
+        }
     }
 
     /// A menu row's right click opens a popup of its own: egui keeps one
@@ -478,11 +338,13 @@ impl ToolbarUi {
         };
         let key = menu_key(&context.button.command);
         let mut open = true;
+        // its toolbar button, then its settings, as any button's
         menu::popup_at(ctx, egui::Id::unique("toolbar_menu_row_context"), context.pos, &mut open, p, |ui| {
-            if super::menu_membership_item(ui, p, &context.button.command, settings) {
-                menu::separator(ui, p);
-            }
-            self.appearance_items(ui, p, &context.button, settings.locked, &key);
+            super::menu_membership_item(ui, p, &context.button.command, settings);
+            super::section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
+            self.edit_button_item(ui, p, &context.button, &key, settings.locked);
+            super::native_context::start_group(ui, p);
+            self.interface_edit_menu(ui, p, Some(&context.button.command));
         });
         // the right click on another row that closed it opened that row's
         if !open && context.frame != ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) {
@@ -490,32 +352,8 @@ impl ToolbarUi {
         }
     }
 
-    fn appearance_context_for(&mut self, response: &egui::Response, p: &Palette, button: &ToolButton, locked: bool, key: &str) {
-        menu::context_menu_of_button(response, p, |ui| self.appearance_items(ui, p, button, locked, key));
-    }
-
-    fn appearance_items(&mut self, ui: &mut egui::Ui, p: &Palette, button: &ToolButton, locked: bool, key: &str) {
-        if self.open {
-            if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-appearance"), !locked) {
-                self.appearance_editor.select_as(button, key);
-            }
-        } else {
-            let settings = settings(ui.ctx());
-            if let Some(value) = self.context_icon_picker.options(ui, p, button, key, &settings, locked) {
-                self.pending = Some(Edit::Appearance(key.into(), value));
-            }
-        }
-        self.interface_edit_menu(ui, p, Some(&button.command));
-    }
-
     pub fn edit_button(&mut self, button: &ToolButton) {
         self.appearance_editor.select(button);
-    }
-
-    pub(super) fn show_context_appearance(&mut self, ctx: &egui::Context, p: &Palette, settings: &ToolbarSettings) {
-        if let Some((key, value)) = self.context_icon_picker.show(ctx, p, settings) {
-            self.pending = Some(Edit::Appearance(key, value));
-        }
     }
 
     pub fn source(&mut self, response: &egui::Response, p: &Palette, button: &ToolButton, locked: bool) {
@@ -529,7 +367,12 @@ impl ToolbarUi {
         }
     }
 
-    pub(super) fn show_appearance(&mut self, ctx: &egui::Context, p: &Palette, settings: &ToolbarSettings) {
+    /// "Edit button" (human request, 2026-11-26), as "Edit block": its name,
+    /// its icon, its shortcut and its display, "Inherited" taking its
+    /// block's. A menu row has no name nor display of its own; an
+    /// interface's button has its shortcut only, its name and its icon
+    /// being its interface's.
+    pub(super) fn show_appearance(&mut self, ctx: &egui::Context, p: &Palette, settings: &ToolbarSettings, layout: &Layout) {
         let Some(button) = self.appearance_editor.button.clone() else {
             return;
         };
@@ -538,31 +381,80 @@ impl ToolbarUi {
             return;
         }
         let key = self.appearance_editor.key.clone();
-        let mut open = true;
+        let menu_row = is_menu_key(&key);
+        let interface = button.command.starts_with(super::drawers::INTERFACE_PREFIX);
+        let placed = settings.placed_button(&button.command, layout).cloned();
+        let shown = placed.clone().unwrap_or_else(|| button.clone());
+        // a catalogue command placed somewhere takes a name of its own
+        let named = !menu_row && !interface && placed.is_some() && super::catalogue::find(&button.command).is_some();
+        let hint = super::label(&ToolButton {
+            tooltip: String::new(),
+            ..button.clone()
+        })
+        .to_owned();
+        let saved = Some(super::label(&shown))
+            .filter(|name| *name != hint)
+            .unwrap_or_default()
+            .to_owned();
+        let mut name = saved.clone();
+        let shortcut = (!menu_row && super::shortcuts::takes(&button.command)).then(|| button.command.clone());
         let mut value = settings.appearance.get(&key).cloned().unwrap_or_default();
         let before = value.clone();
-        widgets::Floater::new(
-            "toolbar_button_appearance",
-            aurora_i18n::tr!("toolbar-button-appearance"),
-            ctx.content_rect().center() - Vec2::new(210.0, 250.0),
-            Vec2::new(420.0, 500.0),
-        )
-        .show(ctx, p, &mut open, |ui| {
-            ui.label(egui::RichText::new(super::label(&button)).strong());
+        let mut open = true;
+        let mut window = widgets::Floater::new(
+            WINDOW,
+            aurora_i18n::tr!("toolbar-button-edit-title"),
+            ctx.content_rect().center() - Vec2::new(220.0, 260.0),
+            Vec2::new(440.0, 520.0),
+        );
+        window.order = egui::Order::Foreground;
+        window.show(ctx, p, &mut open, |ui| {
+            ui.label(egui::RichText::new(super::label(&shown)).strong());
             ui.add_space(8.0);
             ui.add_enabled_ui(!settings.locked, |ui| {
-                if !is_menu_key(&key) {
-                    Editor::modes(ui, p, &mut value);
-                    ui.add_space(10.0);
+                if named {
+                    ui.horizontal(|ui| {
+                        ui.label(aurora_i18n::tr!("toolbar-button-name"));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut name)
+                                .id(Id::unique(("button_name", button.command.as_str())))
+                                .hint_text(hint.as_str())
+                                .char_limit(80)
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                    ui.add_space(8.0);
                 }
-                self.appearance_editor.picker(ui, p, &button, &mut value);
+                if !interface {
+                    self.appearance_editor.icon_button(ui, p, &shown, &value);
+                    ui.add_space(12.0);
+                }
+                if let Some(shortcut) = shortcut.as_deref() {
+                    let current = settings.shortcuts.get(shortcut);
+                    super::block_window::shortcut_row(ui, p, self, Some(shortcut), &button.command, current);
+                    ui.add_space(12.0);
+                }
+                if !menu_row && !interface {
+                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-button-display")).strong());
+                    Editor::button_modes(ui, p, &mut value);
+                }
             });
         });
+        if open
+            && !interface
+            && let Some(rect) = ctx.memory(|memory| memory.area_rect(Id::unique(WINDOW)))
+        {
+            self.appearance_editor
+                .side_picker(ctx, p, &shown, &mut value, rect, settings.locked);
+        }
         if value != before {
             self.pending = Some(Edit::Appearance(key, value));
+        } else if name != saved {
+            self.pending = Some(Edit::ButtonName(button.command.clone(), name));
         }
         if !open {
             self.appearance_editor.button = None;
+            self.appearance_editor.close_picker();
         }
     }
 

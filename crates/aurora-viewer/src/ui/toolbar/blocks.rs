@@ -305,7 +305,7 @@ fn float_position(bar: Bar, rect: Rect) -> egui::Pos2 {
 /// A fixed block's part of a right click (human request, 2026-11-26: the
 /// gear gave way to the right click's sections): its type, unless it holds
 /// a drawer, which stays one, its splits and merges, "Edit block…" (its
-/// alignment, sizing and displays are there), its shortcut and its removal.
+/// alignment, sizing, displays and shortcut are there) and its removal.
 /// It acts on the complete canonical block, including temporarily hidden
 /// native controls; every mutation uses the same guarded commit path.
 #[allow(clippy::too_many_arguments)]
@@ -372,11 +372,6 @@ pub(super) fn group_items(
     }
     if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), unlocked) {
         toolbar.edit_block(bar, command, base);
-    }
-    // a fixed block's shortcut, which works once it is a drawer or a
-    // floating block; theirs is in "Edit block…" (human request, 2026-11-26)
-    if let Some(key) = super::shortcuts::block_of(settings, buttons, command) {
-        toolbar.block_shortcut_item(ui, p, settings, &key);
     }
     if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-block-remove"), unlocked) {
         toolbar.pending = Some(Edit::RemoveBlock(members.iter().map(|button| button.command.clone()).collect()));

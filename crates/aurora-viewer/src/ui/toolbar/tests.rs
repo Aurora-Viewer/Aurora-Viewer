@@ -642,7 +642,7 @@ fn drawer_contents_participate_in_live_menu_refresh_and_bug_visibility() {
     settings.drawers.insert(
         "drawer:tools".into(),
         drawers::Drawer {
-            buttons: vec![button("report_bug"), button("menu:common-build/import-menu")],
+            buttons: vec![button("report_bug"), button("menu:common-build/blender-live-title")],
             ..Default::default()
         },
     );
@@ -655,7 +655,7 @@ fn drawer_contents_participate_in_live_menu_refresh_and_bug_visibility() {
         &ctx,
         commands::Catalogue {
             entries: vec![commands::Entry {
-                button: button("menu:common-build/import-menu"),
+                button: button("menu:common-build/blender-live-title"),
                 parent: String::new(),
                 group: false,
                 info: false,
@@ -1502,11 +1502,13 @@ fn favorites_left_grid_and_normal_customization_menu_stay_separate_on_every_bar(
                 !bars::favorites::take_shown(&bench.ctx),
                 "right click only opens the toolbar menu: {bar:?}, islands={islands}"
             );
-            let appearance = bench.text(aurora_i18n::tr!("toolbar-button-inherit"));
+            // where its favourites live, then "Edit button…" (human
+            // request, 2026-11-26)
+            let appearance = bench.text(aurora_i18n::tr!("toolbar-button-edit"));
             let customize = bench.text(aurora_i18n::tr!("toolbar-interface-edit"));
             assert!(
                 appearance.y < customize.y,
-                "appearance precedes customization: {bar:?}, islands={islands}"
+                "its settings precede customization: {bar:?}, islands={islands}"
             );
             // the block's settings between (human request, 2026-11-25)
             let floating = bench.text(aurora_i18n::tr!("toolbar-block-kind-floating"));
@@ -2930,7 +2932,11 @@ fn a_blocks_shortcut_follows_it_through_drawers_and_floating_blocks() {
     state.pending = Some(Edit::Unfold(Bar::Top, id.clone()));
     assert!(state.commit(&layout(), &mut settings));
     assert_eq!(settings.shortcuts.keys().collect::<Vec<_>>(), ["block:inventory"]);
-    assert_eq!(shortcuts::target(&settings, &layout(), &binding), None, "a plain block's waits");
+    // a plain block's shows and hides it (human request, 2026-11-26)
+    assert_eq!(
+        shortcuts::target(&settings, &layout(), &binding).as_deref(),
+        Some("block:inventory")
+    );
     state.pending = Some(Edit::Float(Bar::Top, "people".into(), egui::pos2(10.0, 60.0)));
     assert!(state.commit(&layout(), &mut settings));
     let floating = settings.top[0].command.clone();

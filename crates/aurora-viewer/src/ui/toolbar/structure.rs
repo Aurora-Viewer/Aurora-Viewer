@@ -181,14 +181,20 @@ impl Display {
         let commands = BLOCKS;
         let visibility = commands.map(|command| crate::ui::bars::chrome::width(ctx, command) != Some(0.0));
         let settings = super::appearance::settings(ctx);
+        // what a shortcut hid: a floating block's button, a fixed block of a
+        // bar; editing shows them
         let hidden: Vec<String> = if editing {
             Vec::new()
         } else {
-            buttons
+            let mut hidden: Vec<String> = buttons
                 .iter()
                 .filter(|button| super::drawers::button_hidden(&settings, &button.command))
                 .map(|button| button.command.clone())
-                .collect()
+                .collect();
+            if root {
+                hidden.extend(super::shortcuts::hidden_members(&settings, buttons));
+            }
+            hidden
         };
         let id = egui::Id::unique(("toolbar_display", bar, root));
         if let Some(cached) = ctx.data(|data| data.get_temp::<std::sync::Arc<Self>>(id))

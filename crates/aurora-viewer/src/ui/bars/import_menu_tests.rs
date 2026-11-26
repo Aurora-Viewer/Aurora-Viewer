@@ -31,8 +31,10 @@ fn click_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
     ]
 }
 
+/// Build › Import is a submenu of the imports (human request, 2026-11-26):
+/// hovering it lists them, and a click on one asks for its import.
 #[test]
-fn import_menu_is_in_build_and_requests_the_chooser_toggle_without_a_type_submenu() {
+fn import_menu_is_in_build_and_lists_the_imports_in_its_submenu() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
     theme.apply(&ctx, 1.0);
@@ -93,14 +95,30 @@ fn import_menu_is_in_build_and_requests_the_chooser_toggle_without_a_type_submen
         }
         let (output, _) = frame(Vec::new());
         let import = text_position(&output, aurora_i18n::tr!("import-menu"));
-        for _ in 0..3 {
-            let (output, action) = frame(vec![egui::Event::PointerMoved(import)]);
+        let mut output = output;
+        for _ in 0..4 {
+            let (shown, action) = frame(vec![egui::Event::PointerMoved(import)]);
             assert!(matches!(action, BarAction::None));
-            assert!(!has_text(&output, crate::imports::Choice::Texture.label()));
+            output = shown;
         }
-        frame(click_events(import, true));
-        let (_, action) = frame(click_events(import, false));
-        assert!(matches!(action, BarAction::Import));
+        for label in [
+            aurora_i18n::tr!("import-menu-textures"),
+            aurora_i18n::tr!("import-menu-animations"),
+            aurora_i18n::tr!("import-menu-sounds"),
+            aurora_i18n::tr!("import-menu-materials"),
+            aurora_i18n::tr!("import-menu-meshes"),
+            aurora_i18n::tr!("toolbar-import-advanced"),
+            aurora_i18n::tr!("toolbar-import-local"),
+            aurora_i18n::tr!("import-menu-options"),
+        ] {
+            assert!(has_text(&output, label), "{label}");
+        }
+        let textures = text_position(&output, aurora_i18n::tr!("import-menu-textures"));
+        // along the submenu's row first, so the pointer keeps it open
+        frame(vec![egui::Event::PointerMoved(egui::pos2(textures.x, import.y))]);
+        frame(click_events(textures, true));
+        let (_, action) = frame(click_events(textures, false));
+        assert!(matches!(action, BarAction::ImportType(crate::imports::Choice::Texture)));
         assert!(!has_text(&frame(Vec::new()).0, aurora_i18n::tr!("import-menu")));
     }
 }

@@ -148,6 +148,7 @@ impl ToolbarUi {
             self.open = true;
             self.selected = request.command.filter(|command| settings.placed(command, layout));
         }
+        self.take_native(ctx, settings, layout);
         self.preset_view.refresh(settings, layout, self.islands);
         let source = self.preset_view.source(selected_preset);
         if selected_preset.is_none()
@@ -453,11 +454,10 @@ impl ToolbarUi {
                                 state
                             };
                             let response = tile(ui, p, rect, button, &entry.label(), state, !settings.locked);
-                            if (super::structure::is_block(&button.command)
-                                || super::structure::is_separator(&button.command)
-                                || super::structure::is_divider(&button.command))
-                                && let Some(bar) = placed
-                            {
+                            // a placed button's tile has its right click on a
+                            // bar, its block's settings included (human
+                            // request, 2026-11-26)
+                            if let Some(bar) = placed {
                                 self.context(
                                     &response,
                                     p,
@@ -502,8 +502,7 @@ impl ToolbarUi {
         if !self.open {
             self.selected = None;
         }
-        self.show_appearance(ctx, p, settings);
-        self.show_context_appearance(ctx, p, settings);
+        self.show_appearance(ctx, p, settings, layout);
         self.show_menu_row_context(ctx, p, settings);
         super::block_window::show(ctx, p, self, settings, layout);
         self.show_shortcut_editor(ctx, p, settings, layout);
@@ -1595,6 +1594,11 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
                 },
             ];
         }
+        // "Edit button…", as chosen in the right click opened at 400
+        if icons && frame == 450 {
+            egui::Popup::close_all(ctx);
+            state.edit_button(&crate::ui::bars::top::button(command, ""));
+        }
         if icons
             && matches!(frame, 500 | 501)
             && let Some(rect) = ctx.data(|data| data.get_temp::<Rect>(egui::Id::unique(("toolbar_icon_button_rect", command))))
@@ -1611,7 +1615,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
             ];
         }
         if icons && frame == 520 {
-            state.context_icon_picker.filter("star");
+            state.appearance_editor.filter("star");
         }
         return Vec::new();
     }

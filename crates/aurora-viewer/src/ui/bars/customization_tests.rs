@@ -22,7 +22,8 @@ fn menu_catalogue_collection_has_no_actions_and_contains_stable_distinct_command
             .count()
             > 100
     );
-    assert!(entries.find("menu:common-build/import-menu").is_some());
+    assert!(entries.find("menu:common-build/import-types").is_some());
+    assert!(entries.find("menu:common-build/import-types/import-menu-textures").is_some());
     assert!(entries.find("menu:common-world/common-environment/time-of-day-2").is_some());
     assert!(!panels.inventory && !panels.settings && !panels.appearance);
     assert_eq!(panels.time_of_day, 0);
@@ -50,7 +51,14 @@ fn moved_menu_commands_use_their_native_handlers_and_current_enabled_guards() {
         });
         std::mem::take(&mut action)
     };
-    assert!(matches!(invoke("menu:common-build/import-menu", &st), BarAction::Import));
+    assert!(matches!(
+        invoke("menu:common-build/import-types/import-menu-textures", &st),
+        BarAction::ImportType(crate::imports::Choice::Texture)
+    ));
+    assert!(matches!(
+        invoke("menu:common-build/import-types/import-menu-options", &st),
+        BarAction::ImportSettings
+    ));
     st.home_entry = false;
     assert!(matches!(invoke("menu:common-me/common-go-home", &st), BarAction::None));
     st.home_entry = true;

@@ -223,6 +223,12 @@ pub struct ToolbarSettings {
     /// personal interface's item id).
     #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub hidden_interfaces: std::collections::BTreeSet<String>,
+    /// The fixed blocks their shortcut hid, by its key
+    /// (`shortcuts::block_key`): their bar leaves them out outside interface
+    /// editing (human request, 2026-11-26), and they show again once their
+    /// shortcut is gone.
+    #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub hidden_blocks: std::collections::BTreeSet<String>,
     /// Keyboard shortcuts of buttons, drawers, floating blocks and blocks
     /// (`shortcuts.rs`).
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -599,6 +605,16 @@ impl ToolbarSettings {
                 .any(|drawer| drawer.floating.is_some() && drawer.buttons.iter().any(|b| b.command == command))
     }
 
+    /// The button of `command` where it stands: a bar, a drawer or a
+    /// floating block.
+    pub fn placed_button<'a>(&'a self, command: &str, layout: &'a Layout) -> Option<&'a ToolButton> {
+        let bars: Vec<&[ToolButton]> = Bar::ALL.into_iter().map(|bar| self.bar(bar, layout)).collect();
+        bars.into_iter()
+            .flatten()
+            .chain(self.drawers.values().flat_map(|drawer| &drawer.buttons))
+            .find(|button| button.command == command)
+    }
+
     /// The quick import bar's floating block, once (`drawers::IMPORT_BAR`).
     pub fn ensure_import_bar(&mut self, layout: &Layout) -> bool {
         drawers::ensure_import_bar(self, layout)
@@ -688,6 +704,12 @@ impl ToolbarSettings {
     }
 }
 
+/// Whether the bars are drawn as islands (given by the app), for the
+/// native controls' right click.
+fn islands_id() -> egui::Id {
+    egui::Id::unique("toolbar_islands")
+}
+
 /// A titled part of a right click, under a line when something is above it.
 pub(crate) fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
     native_context::start_group(ui, p);
@@ -722,6 +744,8 @@ enum Edit {
     Style(Bar, BarStyle),
     BlockStyle(Bar, String, BarStyle),
     Appearance(String, appearance::Appearance),
+    /// A button's own name ("Edit button"), empty for its default one.
+    ButtonName(String, String),
     Separator(String, structure::SeparatorStyle),
     Split(Bar, String, bool),
     Merge(Bar, String, bool),
@@ -744,6 +768,8 @@ enum Edit {
     Dock(String, bool),
     /// A shortcut set or removed, locked bars included.
     Shortcut(String, Option<crate::keybinds::Binding>),
+    /// A block's shortcut shared with the other blocks that have it.
+    ShortcutShared(String, crate::keybinds::Binding),
 }
 
 /// Windows whose toolbar button lights while they are open
@@ -861,7 +887,6 @@ pub struct ToolbarUi {
     advanced_catalogue: bool,
     appearance_editor: appearance::Editor,
     drawer_appearance_editor: appearance::Editor,
-    context_icon_picker: appearance::ContextPicker,
     menu_row_context: Option<appearance::MenuRowContext>,
     pub(crate) selected: Option<String>,
     drawer_editor: Option<String>,
@@ -893,7 +918,6 @@ impl ToolbarUi {
         self.shortcut_editor = None;
         self.appearance_editor = Default::default();
         self.drawer_appearance_editor = Default::default();
-        self.context_icon_picker = Default::default();
         self.menu_row_context = None;
         egui::DragAndDrop::clear_payload(ctx);
         egui::Popup::close_all(ctx);
@@ -904,6 +928,29 @@ impl ToolbarUi {
     fn edit_drawer(&mut self, id: &str) {
         self.block_editor = None;
         self.drawer_editor = Some(id.into());
+    }
+
+    /// What a native control's right click chose (`native_context::sections`).
+    fn take_native(&mut self, ctx: &egui::Context, settings: &ToolbarSettings, layout: &Layout) {
+        let Some(chosen) = native_context::take_hand_over(ctx) else {
+            return;
+        };
+        if let Some(edit) = chosen.pending {
+            self.pending = Some(edit);
+        }
+        if let Some((bar, command, base)) = chosen.block_editor {
+            self.edit_block(bar, &command, base);
+        }
+        if let Some(id) = chosen.drawer_editor {
+            self.edit_drawer(&id);
+        }
+        if let Some((button, key)) = chosen.button {
+            self.appearance_editor.select_as(&button, &key);
+        }
+        if let Some(command) = chosen.customize {
+            self.open = true;
+            self.selected = command.filter(|command| settings.placed(command, layout));
+        }
     }
 
     /// Opens the settings of the fixed block of `command` in `bar`, in place
@@ -1032,29 +1079,16 @@ impl ToolbarUi {
             })
     }
 
-    /// Individual properties stay available without exposing layout operations.
-    pub(crate) fn button_appearance_option(&mut self, ui: &mut egui::Ui, p: &Palette, button: Option<&ToolButton>, locked: bool) {
-        if let Some(button) = button
-            && structure::is_separator(&button.command)
-            && menu::item_if(ui, p, "arrows-horizontal", aurora_i18n::tr!("toolbar-separator-settings"), !locked)
-        {
-            self.appearance_editor.select(button);
-        }
-        if let Some(button) = button
-            && !structure::is_separator(&button.command)
-            && !structure::is_divider(&button.command)
-            && !structure::is_block(&button.command)
-        {
-            if self.open {
-                if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-appearance"), !locked) {
-                    self.appearance_editor.select(button);
-                }
-            } else {
-                let settings = appearance::settings(ui.ctx());
-                if let Some(value) = self.context_icon_picker.options(ui, p, button, &button.command, &settings, locked) {
-                    self.pending = Some(Edit::Appearance(button.command.clone(), value));
-                }
+    /// A button's first setting, the bars edited or not (human request,
+    /// 2026-11-26): "Edit button…", or a spacer's settings; a separator and
+    /// a bar's own block have none.
+    pub(crate) fn button_edit_option(&mut self, ui: &mut egui::Ui, p: &Palette, button: &ToolButton, locked: bool) {
+        if structure::is_separator(&button.command) {
+            if menu::item_if(ui, p, "arrows-horizontal", aurora_i18n::tr!("toolbar-separator-settings"), !locked) {
+                self.appearance_editor.select(button);
             }
+        } else if !structure::is_divider(&button.command) && !structure::is_block(&button.command) {
+            self.edit_button_item(ui, p, button, &button.command, locked);
         }
     }
 
@@ -1091,14 +1125,32 @@ impl ToolbarUi {
     /// "Parent block settings" for the fixed block holding that block's
     /// button; a block's alignment, sizing and displays are in its window.
     pub fn context(&mut self, response: &Response, p: &Palette, bar: Bar, style: Style, button: Option<&ToolButton>, locked: bool) {
-        let settings = appearance::settings(&response.ctx);
+        // Buttons such as Favorites also own a left-click dropdown.
+        menu::context_menu_of_button(response, p, |ui| {
+            self.context_body(ui, p, bar, style, button, response.rect, locked);
+        });
+    }
+
+    /// What `context` shows: also a native control's right click, whose
+    /// menu its own code draws (`native_context::append`).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn context_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        bar: Bar,
+        style: Style,
+        button: Option<&ToolButton>,
+        rect: Rect,
+        locked: bool,
+    ) {
+        let settings = appearance::settings(ui.ctx());
         let bar = button
             .and_then(|b| settings.location(&b.command, &Layout::default()))
             .unwrap_or(bar);
-        // Buttons such as Favorites also own a left-click dropdown.
-        menu::context_menu_of_button(response, p, |ui| {
+        {
             match button {
-                Some(button) => self.button_sections(ui, p, &settings, bar, style, button, response.rect, locked),
+                Some(button) => self.button_sections(ui, p, &settings, bar, style, button, rect, locked),
                 // the bar's own background, while the bars are edited
                 None if self.open => {
                     let mut next = None;
@@ -1126,7 +1178,7 @@ impl ToolbarUi {
             }
             native_context::start_group(ui, p);
             self.interface_edit_menu(ui, p, button.map(|button| button.command.as_str()));
-        });
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1144,23 +1196,24 @@ impl ToolbarUi {
         let layout = Layout::default();
         let command = button.command.as_str();
         let separator = structure::is_separator(command);
-        // the button's own: a drawer's or a floating block's is its block
+        // an interface's button stands in the Interfaces block, which makes
+        // it: it is not removed alone
+        let interface = command.starts_with(drawers::INTERFACE_PREFIX);
+        // the button's own: a drawer's or a floating block's is its block;
+        // its shortcut is in "Edit button…" (human request, 2026-11-26)
         if !drawers::is_drawer(command) {
             section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
             self.action_options(ui, p, Some(button));
-            self.button_appearance_option(ui, p, Some(button), locked);
-            // its shortcut after its look and its icon (human request,
-            // 2026-11-25)
-            if shortcuts::takes(command) {
-                self.shortcut_item(ui, p, settings, command);
-            }
-            if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-remove"), !locked) {
+            self.button_edit_option(ui, p, button, locked);
+            if !interface && menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-remove"), !locked) {
                 self.pending = Some(Edit::Remove(command.into()));
             }
         }
         // the block it is, or stands in
         let block = if drawers::is_drawer(command) {
             Some(command)
+        } else if interface {
+            Some(drawers::INTERFACES)
         } else {
             settings.drawer_of(command)
         };
@@ -1240,13 +1293,14 @@ impl ToolbarUi {
         }
     }
 
-    /// An Interfaces block's button's right click: its shortcut only, its
-    /// block's content being its own (human request, 2026-11-26).
-    pub(crate) fn interface_context(&mut self, response: &Response, p: &Palette, command: &str) {
+    /// An Interfaces block's button's right click, as any button's (human
+    /// request, 2026-11-26): "Edit button…" holds its shortcut, its block's
+    /// content being automatic.
+    pub(crate) fn interface_context(&mut self, response: &Response, p: &Palette, button: &ToolButton) {
         let settings = appearance::settings(&response.ctx);
-        menu::context_menu_of_button(response, p, |ui| {
-            self.shortcut_item(ui, p, &settings, command);
-        });
+        let bar = settings.location(drawers::INTERFACES, &Layout::default()).unwrap_or(Bar::Top);
+        let style = settings.style(bar).resolve(bar, self.islands);
+        self.context(response, p, bar, style, Some(button), settings.locked);
     }
 
     /// A click on an Interfaces block's button (`drawers::INTERFACE_PREFIX`
@@ -1426,6 +1480,7 @@ impl ToolbarUi {
             Edit::FloatingShown(id, shown) => return drawers::show_floating(settings, id, *shown),
             Edit::InterfaceShown(key, shown) => return drawers::show_interface(settings, key, *shown),
             Edit::Shortcut(key, binding) => return shortcuts::set(settings, key, binding.clone()),
+            Edit::ShortcutShared(key, binding) => return shortcuts::set_shared(settings, key, binding.clone()),
             Edit::Float(bar, command, pos) => {
                 let Some(id) = drawers::float(settings, layout, *bar, command) else {
                     return false;
@@ -1647,6 +1702,43 @@ impl ToolbarUi {
                     settings.appearance.insert(command, appearance);
                 }
                 return true;
+            }
+            Edit::ButtonName(command, name) => {
+                if settings.locked || drawers::is_drawer(&command) {
+                    return false;
+                }
+                let name: String = if name.trim().is_empty() {
+                    String::new()
+                } else {
+                    name.chars().take(80).collect()
+                };
+                let mut changed = false;
+                for bar in Bar::ALL {
+                    let mut buttons = settings.bar(bar, layout).to_vec();
+                    let mut renamed = false;
+                    for button in buttons
+                        .iter_mut()
+                        .filter(|button| button.command == command && button.tooltip != name)
+                    {
+                        button.tooltip = name.clone();
+                        renamed = true;
+                    }
+                    if renamed {
+                        settings.set_bar(bar, buttons);
+                        changed = true;
+                    }
+                }
+                for drawer in settings.drawers.values_mut() {
+                    for button in drawer
+                        .buttons
+                        .iter_mut()
+                        .filter(|button| button.command == command && button.tooltip != name)
+                    {
+                        button.tooltip = name.clone();
+                        changed = true;
+                    }
+                }
+                return changed;
             }
             Edit::MenuInsert(parent, command, rank) => {
                 if settings.locked {
@@ -1906,6 +1998,7 @@ impl ToolbarUi {
             | Edit::Style(..)
             | Edit::BlockStyle(..)
             | Edit::Appearance(..)
+            | Edit::ButtonName(..)
             | Edit::Separator(..)
             | Edit::MenuInsert(..) => {
                 unreachable!()
@@ -1923,7 +2016,8 @@ impl ToolbarUi {
             | Edit::InterfaceShown(..)
             | Edit::Float(..)
             | Edit::Dock(..)
-            | Edit::Shortcut(..) => unreachable!(),
+            | Edit::Shortcut(..)
+            | Edit::ShortcutShared(..) => unreachable!(),
         }
         if next == old && next_drawers == old_drawers {
             return false;

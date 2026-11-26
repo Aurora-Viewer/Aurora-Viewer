@@ -5614,9 +5614,9 @@ impl App {
         }
     }
 
-    /// The toolbar shortcut a key press is, if any: never while the bars are
-    /// edited.
-    fn toolbar_shortcut(&self, input: &Input, mods: Mods) -> Option<String> {
+    /// The toolbar shortcuts a key press is, if any (one button's, or the
+    /// blocks sharing it): never while the bars are edited.
+    fn toolbar_shortcut(&self, input: &Input, mods: Mods) -> Option<Vec<String>> {
         if self.toolbar_ui.open || !matches!(input, Input::Key(_)) {
             return None;
         }
@@ -5627,7 +5627,8 @@ impl App {
             shift: mods.shift,
             alt: mods.alt,
         };
-        ui::toolbar::shortcuts::target(toolbar, &ui::skin::Layout::default(), &binding)
+        let keys = ui::toolbar::shortcuts::targets(toolbar, &ui::skin::Layout::default(), &binding);
+        (!keys.is_empty()).then_some(keys)
     }
 
     /// A key or a bindable mouse button changed state.
@@ -5663,8 +5664,8 @@ impl App {
         }
         // a toolbar button's, drawer's or floating block's shortcut, before
         // a Preferences action a modifier-less binding would fall back to
-        if let Some(key) = self.toolbar_shortcut(&input, mods) {
-            ui::toolbar::shortcuts::press(&self.egui_ctx, key);
+        if let Some(keys) = self.toolbar_shortcut(&input, mods) {
+            ui::toolbar::shortcuts::press_all(&self.egui_ctx, keys);
             return;
         }
         // push-to-talk key in toggle mode: each press switches the microphone

@@ -6457,14 +6457,15 @@ Keep a Build/Inspect selection while requests are arriving: it must stay selecte
 Objects outside the viewer's received scene cannot be enumerated by this window.
 
 `AURORA_DEMO_TOOLBAR=contexts-bug|contexts-menu|contexts-navigation|contexts-status|contexts-balance|contexts-clock|contexts-fps|contexts-media|contexts-music|contexts-volume|contexts-notifications|contexts-inventory`
-right-clicks the actual control at frame 400. Each normal context must end with
-Customize interface; bug version copying and bell DND must only run when chosen.
-Ordinary buttons expose their four presentation choices directly, followed by
-the Change icon row with a fixed small glyph: Icon only, Label only, Icon and label, Default, then a
-horizontal separator. `contexts-icons-inventory` clicks that row at frame
-500 and filters the adjacent icon picker to stars at frame 520. The context must
-remain open while searching and choosing an icon; the picker flips to the left
-when needed. Compare a narrow window and both bar styles.
+right-clicks the actual control at frame 400. Every context has the same
+sections, the bars edited or not: the control's own actions, Button settings
+(Edit button…, Remove this button), Block settings, Parent block settings for a
+block's button standing in a block, then Customize interface last; a bar's own
+control (address bar, clock, volume…) included. Bug version copying and bell
+DND must only run when chosen. `contexts-icons-inventory` opens the Edit button
+window at frame 450 (name, icon, shortcut, display with Inherited first),
+clicks its icon at frame 500 and filters the icon picker beside the window to
+stars at frame 520. Compare a narrow window and both bar styles.
 `contexts-icons-inventory-left|contexts-icons-inventory-right` repeat that scenario
 from a side bar with a text-only button.
 `contexts-edit-inventory|contexts-edit-bug` show the layout choices in customization

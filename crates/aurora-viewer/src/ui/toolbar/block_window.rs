@@ -221,7 +221,7 @@ fn fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, settings: &To
     // the Interfaces block: its name, its icon and its shortcut only
     // (human request, 2026-11-26)
     if key == drawers::INTERFACES {
-        shortcut_row(ui, p, toolbar, view, shortcut);
+        shortcut_row(ui, p, toolbar, view.shortcut.as_deref(), key, shortcut);
         return;
     }
     let check = widgets::checkbox(ui, p, &mut options.closes, aurora_i18n::tr!("toolbar-drawer-closes"));
@@ -230,10 +230,10 @@ fn fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, settings: &To
         .data_mut(|data| data.insert_temp(Id::unique(("drawer_closes_check", key)), check.rect));
     let _ = check;
     ui.add_space(8.0);
-    shortcut_row(ui, p, toolbar, view, shortcut);
+    shortcut_row(ui, p, toolbar, view.shortcut.as_deref(), key, shortcut);
     ui.add_space(12.0);
     ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-block-button-mode")).strong());
-    super::appearance::Editor::block_button_modes(ui, p, &mut options.look);
+    super::appearance::Editor::button_modes(ui, p, &mut options.look);
     ui.add_space(12.0);
     ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-drawer-default-mode")).strong());
     for (value, _, label) in drawers::default_mode_rows() {
@@ -272,9 +272,18 @@ fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
     ui.add_space(4.0);
 }
 
-/// Its shortcut as Preferences shows one, with Edit and Delete; greyed for a
-/// block that cannot have one (a bar's own block in it).
-fn shortcut_row(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, view: &View, shortcut: Option<&crate::keybinds::Binding>) {
+/// Its shortcut as Preferences shows one, with Edit and Delete, under `key`;
+/// without one for a block that cannot have one (a bar's own block in it).
+/// The "Edit button" window shows a button's the same way (human request,
+/// 2026-11-26); `id` names its widgets for the tests.
+pub(super) fn shortcut_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    toolbar: &mut ToolbarUi,
+    key: Option<&str>,
+    id: &str,
+    shortcut: Option<&crate::keybinds::Binding>,
+) {
     ui.horizontal(|ui| {
         ui.label(aurora_i18n::tr!("toolbar-block-shortcut"));
         match shortcut {
@@ -291,7 +300,9 @@ fn shortcut_row(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, view: &
                 ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-shortcut-none")).color(p.muted));
             }
         }
-        let Some(key) = view.shortcut.as_deref() else { return };
+        #[cfg(not(test))]
+        let _ = id;
+        let Some(key) = key else { return };
         let edit = widgets::action_button(
             ui,
             p,
@@ -302,7 +313,7 @@ fn shortcut_row(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, view: &
         );
         #[cfg(test)]
         ui.ctx()
-            .data_mut(|data| data.insert_temp(Id::unique(("drawer_shortcut_edit", view.key.as_str())), edit.rect));
+            .data_mut(|data| data.insert_temp(Id::unique(("drawer_shortcut_edit", id)), edit.rect));
         if edit.clicked() {
             toolbar.edit_shortcut(key, shortcut);
         }

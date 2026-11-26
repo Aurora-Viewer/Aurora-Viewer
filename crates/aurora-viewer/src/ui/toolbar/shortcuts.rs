@@ -3,8 +3,14 @@
 //! key, or a function key alone or with Shift, saved with the toolbar
 //! (`ToolbarSettings::shortcuts`): a button's under its command, a drawer's
 //! or a floating block's under its id, a plain block's under
-//! `block:<one of its buttons>`, which works once the block is a drawer or a
-//! floating block (the key follows it through Fold, Float, Unfold and Dock).
+//! `block:<one of its buttons>`, which shows and hides it in its bar (human
+//! request, 2026-11-26; `ToolbarSettings::hidden_blocks`), and opens it once
+//! it is a drawer or a floating block (the key follows it through Fold,
+//! Float, Unfold and Dock).
+//!
+//! Several blocks may share a shortcut, which then shows, hides or opens
+//! them all; a button's is its own (human request, 2026-11-26: the shortcut
+//! window asks to replace, add or cancel, `Taken`).
 //!
 //! A shortcut does what a click does: the button drawn this frame is
 //! clicked (`claim`), RLVa's locks and a dimmed button's rules included;
@@ -17,7 +23,7 @@
 use super::{Bar, Edit, ToolbarSettings, ToolbarUi, drawers, structure};
 use crate::keybinds::{Binding, Input, KeyBindings};
 use crate::theme::Palette;
-use crate::ui::{menu, skin::Layout, skin::ToolButton, widgets};
+use crate::ui::{skin::Layout, skin::ToolButton, widgets};
 use egui::{Id, Vec2};
 
 /// The key of a plain block's shortcut.
@@ -225,27 +231,56 @@ pub fn refusal(b: &Binding) -> Option<Refusal> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Conflict {
     Overrides(String),
-    Moves(String),
+    /// Other toolbar shortcuts have it: their names, and what saving it may
+    /// do (`Taken`).
+    Used(Vec<String>, Taken),
+}
+
+/// What a shortcut another has lets the window do (human request,
+/// 2026-11-26): a button replaces it, a block too when a button has it,
+/// and a block can also add itself beside other blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Taken {
+    Replace,
+    ReplaceOrAdd,
 }
 
 impl Conflict {
     pub fn message(&self) -> String {
         match self {
             Conflict::Overrides(name) => aurora_i18n::tr!("toolbar-shortcut-overrides", name = name.clone()),
-            Conflict::Moves(name) => aurora_i18n::tr!("toolbar-shortcut-moves", name = name.clone()),
+            Conflict::Used(names, _) => aurora_i18n::tr!("toolbar-shortcut-used", names = names.join(", ")),
         }
     }
 }
 
+/// Whether `key` is a block's shortcut, a plain block's, a drawer's or a
+/// floating block's, which may share its keys with other blocks.
+pub fn is_block(key: &str) -> bool {
+    key.starts_with(BLOCK) || drawers::is_drawer(key)
+}
+
 pub fn conflict(b: &Binding, keybinds: Option<&KeyBindings>, settings: &ToolbarSettings, layout: &Layout, own: &str) -> Option<Conflict> {
-    if let Some(action) = keybinds.and_then(|keybinds| keybinds.users(b).first().copied()) {
-        return Some(Conflict::Overrides(crate::keybinds::label(action).to_owned()));
-    }
-    settings
+    let others: Vec<&String> = settings
         .shortcuts
         .iter()
-        .find(|(key, bound)| *bound == b && key.as_str() != own)
-        .map(|(key, _)| Conflict::Moves(name(settings, layout, key)))
+        .filter(|(key, bound)| *bound == b && key.as_str() != own)
+        .map(|(key, _)| key)
+        .collect();
+    if !others.is_empty() {
+        let taken = if is_block(own) && others.iter().all(|key| is_block(key)) {
+            Taken::ReplaceOrAdd
+        } else {
+            Taken::Replace
+        };
+        return Some(Conflict::Used(
+            others.iter().map(|key| name(settings, layout, key)).collect(),
+            taken,
+        ));
+    }
+    keybinds
+        .and_then(|keybinds| keybinds.users(b).first().copied())
+        .map(|action| Conflict::Overrides(crate::keybinds::label(action).to_owned()))
 }
 
 /// The button saved under `command`, wherever it stands.
@@ -281,10 +316,13 @@ pub fn name(settings: &ToolbarSettings, layout: &Layout, key: &str) -> String {
 }
 
 /// Whether the shortcut saved under `key` works now: its button stands in
-/// a bar or a block, its drawer has its button in a bar, or its floating
-/// block exists. A plain block's never does.
+/// a bar or a block, its drawer has its button in a bar, its floating block
+/// exists, or its plain block stands in a bar.
 pub fn active(settings: &ToolbarSettings, layout: &Layout, key: &str) -> bool {
-    if key.starts_with(BLOCK) || structure::is_separator(key) || structure::is_divider(key) {
+    if let Some(command) = key.strip_prefix(BLOCK) {
+        return fixed_block(settings, layout, key, command).is_some();
+    }
+    if structure::is_separator(key) || structure::is_divider(key) {
         return false;
     }
     if drawers::is_drawer(key) {
@@ -297,13 +335,46 @@ pub fn active(settings: &ToolbarSettings, layout: &Layout, key: &str) -> bool {
     settings.placed(key, layout)
 }
 
+/// The bar of the plain block whose shortcut is `key`, saved under its
+/// button `command`.
+fn fixed_block(settings: &ToolbarSettings, layout: &Layout, key: &str, command: &str) -> Option<Bar> {
+    Bar::ALL.into_iter().find(|&bar| {
+        let buttons = settings.bar(bar, layout);
+        buttons.iter().any(|button| button.command == command) && block_of(settings, buttons, command).as_deref() == Some(key)
+    })
+}
+
+/// The buttons, gaps and separators of `buttons` whose block its shortcut
+/// hid (`ToolbarSettings::hidden_blocks`), while it has one.
+pub fn hidden_members(settings: &ToolbarSettings, buttons: &[ToolButton]) -> Vec<String> {
+    let mut hidden = Vec::new();
+    for key in &settings.hidden_blocks {
+        let Some(command) = key.strip_prefix(BLOCK) else { continue };
+        if !settings.shortcuts.contains_key(key) || block_of(settings, buttons, command).as_deref() != Some(key.as_str()) {
+            continue;
+        }
+        if let Some(range) = super::edit_mode::group(buttons, command) {
+            hidden.extend(buttons[range].iter().map(|button| button.command.clone()));
+        }
+    }
+    hidden
+}
+
 /// The target of a key press, if a working toolbar shortcut is exactly it.
+#[cfg(test)]
 pub fn target(settings: &ToolbarSettings, layout: &Layout, b: &Binding) -> Option<String> {
+    targets(settings, layout, b).into_iter().next()
+}
+
+/// Every working toolbar shortcut a key press is: one button's, or the
+/// blocks sharing it.
+pub fn targets(settings: &ToolbarSettings, layout: &Layout, b: &Binding) -> Vec<String> {
     settings
         .shortcuts
         .iter()
-        .find(|(key, bound)| *bound == b && active(settings, layout, key))
+        .filter(|(key, bound)| *bound == b && active(settings, layout, key))
         .map(|(key, _)| key.clone())
+        .collect()
 }
 
 /// A plain block's shortcut goes to the drawer or floating block `id` it
@@ -311,7 +382,9 @@ pub fn target(settings: &ToolbarSettings, layout: &Layout, b: &Binding) -> Optio
 pub(super) fn into_drawer(settings: &mut ToolbarSettings, members: &[ToolButton], id: &str) {
     let mut found = None;
     for member in members {
-        if let Some(b) = settings.shortcuts.remove(&block_key(&member.command)) {
+        let key = block_key(&member.command);
+        settings.hidden_blocks.remove(&key);
+        if let Some(b) = settings.shortcuts.remove(&key) {
             found.get_or_insert(b);
         }
     }
@@ -340,6 +413,9 @@ pub(super) fn forget_removed(settings: &mut ToolbarSettings) {
     settings
         .shortcuts
         .retain(|key, _| !drawers::is_drawer(key) || drawers.contains_key(key));
+    // a block hidden by a shortcut it no longer has shows again
+    let shortcuts = &settings.shortcuts;
+    settings.hidden_blocks.retain(|key| shortcuts.contains_key(key));
 }
 
 fn press_id() -> Id {
@@ -348,20 +424,26 @@ fn press_id() -> Id {
 
 /// A shortcut was pressed for `key`: its button is clicked when drawn
 /// (`claim`), else `fallback` runs it after the frame.
+#[cfg(test)]
 pub fn press(ctx: &egui::Context, key: String) {
-    ctx.data_mut(|data| data.insert_temp(press_id(), key));
+    press_all(ctx, vec![key]);
+}
+
+/// A shortcut shared by blocks was pressed: each, as `press`.
+pub fn press_all(ctx: &egui::Context, keys: Vec<String>) {
+    ctx.data_mut(|data| data.insert_temp(press_id(), keys));
     ctx.request_repaint();
 }
 
 /// Whether the button `command`, being drawn, takes the pressed shortcut.
 pub fn claim(ctx: &egui::Context, command: &str) -> bool {
     ctx.data_mut(|data| {
-        if data.get_temp::<String>(press_id()).as_deref() == Some(command) {
-            data.remove_temp::<String>(press_id());
-            true
-        } else {
-            false
-        }
+        let keys = data.get_temp_mut_or_default::<Vec<String>>(press_id());
+        let Some(at) = keys.iter().position(|key| key == command) else {
+            return false;
+        };
+        keys.remove(at);
+        true
     })
 }
 
@@ -369,7 +451,8 @@ pub fn claim(ctx: &egui::Context, command: &str) -> bool {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Fallback {
     None,
-    /// The settings changed (a floating block shown or hidden).
+    /// The settings changed (a floating block or a fixed block shown or
+    /// hidden).
     Changed,
     /// The import bar, shown by the import preference.
     ImportBar,
@@ -379,9 +462,21 @@ pub enum Fallback {
 }
 
 pub fn fallback(ctx: &egui::Context, settings: &mut ToolbarSettings) -> Fallback {
-    let Some(key) = ctx.data_mut(|data| data.remove_temp::<String>(press_id())) else {
-        return Fallback::None;
-    };
+    let keys = ctx.data_mut(|data| data.remove_temp::<Vec<String>>(press_id())).unwrap_or_default();
+    // the blocks sharing a shortcut each do theirs; the settings changed if
+    // one changed them
+    let mut result = Fallback::None;
+    for key in keys {
+        match fallback_one(ctx, settings, key) {
+            Fallback::None => {}
+            Fallback::Changed if result != Fallback::None => {}
+            other => result = other,
+        }
+    }
+    result
+}
+
+fn fallback_one(ctx: &egui::Context, settings: &mut ToolbarSettings, key: String) -> Fallback {
     if key == drawers::IMPORT_BAR && drawers::is_floating(settings, &key) {
         return Fallback::ImportBar;
     }
@@ -401,6 +496,14 @@ pub fn fallback(ctx: &egui::Context, settings: &mut ToolbarSettings) -> Fallback
         let open = drawers::is_open(ctx, &key);
         drawers::set_open(ctx, &key, !open);
         return Fallback::None;
+    }
+    // a fixed block: shown or hidden in its bar
+    if key.starts_with(BLOCK) {
+        if !settings.hidden_blocks.remove(&key) {
+            settings.hidden_blocks.insert(key);
+        }
+        ctx.request_repaint();
+        return Fallback::Changed;
     }
     if let Some(interface) = key.strip_prefix(drawers::INTERFACE_PREFIX) {
         return Fallback::Interface(interface.to_owned());
@@ -455,31 +558,8 @@ impl Editor {
 const WINDOW: &str = "toolbar_shortcut";
 
 impl ToolbarUi {
-    /// The "Shortcut…" entry of a right click, its keys beside it.
-    pub(super) fn shortcut_item(&mut self, ui: &mut egui::Ui, p: &Palette, settings: &ToolbarSettings, key: &str) {
-        let label = if key.starts_with(BLOCK) {
-            aurora_i18n::tr!("toolbar-shortcut-block")
-        } else {
-            aurora_i18n::tr!("toolbar-shortcut")
-        };
-        self.shortcut_row(ui, p, settings, key, label);
-    }
-
-    /// "Block shortcut…", in a block's menu: a drawer's and a floating
-    /// block's own shortcut included.
-    pub(super) fn block_shortcut_item(&mut self, ui: &mut egui::Ui, p: &Palette, settings: &ToolbarSettings, key: &str) {
-        self.shortcut_row(ui, p, settings, key, aurora_i18n::tr!("toolbar-shortcut-block"));
-    }
-
-    fn shortcut_row(&mut self, ui: &mut egui::Ui, p: &Palette, settings: &ToolbarSettings, key: &str, label: &str) {
-        let current = settings.shortcuts.get(key);
-        let keys = current.map(Binding::label).unwrap_or_default();
-        if menu::item_keys(ui, p, "keyboard", label, &keys) {
-            self.shortcut_editor = Some(Editor::new(key, current));
-        }
-    }
-
-    /// Opens the shortcut window of `key` (a block's "Edit" button).
+    /// Opens the shortcut window of `key`: the "Edit" button of "Edit block"
+    /// and "Edit button" (human request, 2026-11-26).
     pub(super) fn edit_shortcut(&mut self, key: &str, current: Option<&Binding>) {
         self.shortcut_editor = Some(Editor::new(key, current));
     }
@@ -523,6 +603,8 @@ impl ToolbarUi {
             .and_then(|b| conflict(b, self.keybinds.as_ref(), settings, layout, &editor.key));
         let mut open = true;
         let mut save = false;
+        let mut add_it = false;
+        let mut cancel = false;
         let mut clear = false;
         let mut window = widgets::Floater::new(
             WINDOW,
@@ -605,8 +687,51 @@ impl ToolbarUi {
                 ui.label(egui::RichText::new(conflict.message()).color(p.amber));
             }
             ui.add_space(8.0);
+            let taken = match &conflict {
+                Some(Conflict::Used(_, taken)) => Some(*taken),
+                _ => None,
+            };
             ui.horizontal(|ui| {
                 let ready = draft.is_some() && refused.is_none() && draft != current;
+                // a shortcut another has: replace it there, add this block
+                // beside other blocks, or cancel (human request, 2026-11-26)
+                if let Some(taken) = taken.filter(|_| ready) {
+                    let replace = widgets::action_button(
+                        ui,
+                        p,
+                        "replace-filled",
+                        aurora_i18n::tr!("toolbar-shortcut-replace"),
+                        widgets::ActionKind::Primary,
+                        Vec2::new(0.0, 28.0),
+                    );
+                    #[cfg(test)]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(Id::unique("shortcut_replace"), replace.rect));
+                    save = replace.clicked();
+                    if taken == Taken::ReplaceOrAdd {
+                        let add = widgets::action_button(
+                            ui,
+                            p,
+                            "plus",
+                            aurora_i18n::tr!("toolbar-shortcut-add"),
+                            widgets::ActionKind::Flat,
+                            Vec2::new(0.0, 28.0),
+                        );
+                        #[cfg(test)]
+                        ui.ctx().data_mut(|data| data.insert_temp(Id::unique("shortcut_add"), add.rect));
+                        add_it = add.clicked();
+                    }
+                    cancel = widgets::action_button(
+                        ui,
+                        p,
+                        "x",
+                        aurora_i18n::tr!("common-cancel"),
+                        widgets::ActionKind::Flat,
+                        Vec2::new(0.0, 28.0),
+                    )
+                    .clicked();
+                    return;
+                }
                 save = widgets::action_button_if(
                     ui,
                     p,
@@ -634,13 +759,17 @@ impl ToolbarUi {
             };
             note(ui, aurora_i18n::tr!("toolbar-shortcut-help"));
             if editor.key.starts_with(BLOCK) {
-                note(ui, aurora_i18n::tr!("toolbar-shortcut-block-help"));
+                note(ui, aurora_i18n::tr!("toolbar-shortcut-fixed-block-help"));
             } else if !active(settings, layout, &editor.key) {
                 note(ui, aurora_i18n::tr!("toolbar-shortcut-inactive"));
             }
         });
         if save && let Some(b) = draft {
             self.pending = Some(Edit::Shortcut(editor.key.clone(), Some(b)));
+        } else if add_it && let Some(b) = draft {
+            self.pending = Some(Edit::ShortcutShared(editor.key.clone(), b));
+        } else if cancel {
+            open = false;
         } else if clear {
             self.pending = Some(Edit::Shortcut(editor.key.clone(), None));
             editor.input = None;
@@ -652,12 +781,27 @@ impl ToolbarUi {
     }
 }
 
+/// Applies `Edit::ShortcutShared`: `key`, a block's, takes `b` beside the
+/// other blocks that have it.
+pub(super) fn set_shared(settings: &mut ToolbarSettings, key: &str, b: Binding) -> bool {
+    if !is_block(key)
+        || refusal(&b).is_some()
+        || settings.shortcuts.get(key) == Some(&b)
+        || settings.shortcuts.iter().any(|(other, bound)| *bound == b && !is_block(other))
+    {
+        return false;
+    }
+    settings.shortcuts.insert(key.into(), b);
+    true
+}
+
 /// Applies `Edit::Shortcut`: locked bars included, the shortcut is not
-/// their layout.
+/// their layout. Whoever had it loses it.
 pub(super) fn set(settings: &mut ToolbarSettings, key: &str, binding: Option<Binding>) -> bool {
     match binding {
         Some(b) => {
-            if refusal(&b).is_some() || settings.shortcuts.get(key) == Some(&b) {
+            let shared = settings.shortcuts.iter().any(|(other, bound)| other != key && *bound == b);
+            if refusal(&b).is_some() || (settings.shortcuts.get(key) == Some(&b) && !shared) {
                 return false;
             }
             settings.shortcuts.retain(|other, bound| other == key || *bound != b);
@@ -768,13 +912,52 @@ mod tests {
         assert!(conflict(&k, Some(&keybinds), &settings, &layout, "inventory").is_none(), "its own");
         assert!(matches!(
             conflict(&k, Some(&keybinds), &settings, &layout, "people"),
-            Some(Conflict::Moves(_))
+            Some(Conflict::Used(_, Taken::Replace))
         ));
         assert!(set(&mut settings, "people", Some(k.clone())));
         assert_eq!(settings.shortcuts.keys().collect::<Vec<_>>(), ["people"], "moved, not doubled");
         assert!(!set(&mut settings, "people", Some(keys("KeyC", true, false, false))), "refused");
         assert!(set(&mut settings, "people", None));
         assert!(settings.shortcuts.is_empty());
+    }
+
+    /// Blocks may share a shortcut, buttons not (human request,
+    /// 2026-11-26): a block whose key a button has replaces it, one whose
+    /// key other blocks have replaces them or joins them, and a button
+    /// always replaces, the blocks that had it included.
+    #[test]
+    fn blocks_share_a_shortcut_buttons_do_not() {
+        let layout = Layout::default();
+        let k = keys("KeyK", true, true, false);
+        let mut settings = ToolbarSettings::default();
+        let (one, two, three) = (block_key("inventory"), "drawer:demo".to_owned(), block_key("search"));
+        assert!(set(&mut settings, "people", Some(k.clone())));
+        assert!(matches!(
+            conflict(&k, None, &settings, &layout, &one),
+            Some(Conflict::Used(_, Taken::Replace))
+        ));
+        assert!(!set_shared(&mut settings, &one, k.clone()), "a button's is its own");
+        assert!(set(&mut settings, &one, Some(k.clone())));
+        assert_eq!(settings.shortcuts.keys().collect::<Vec<_>>(), [one.as_str()]);
+        assert!(matches!(
+            conflict(&k, None, &settings, &layout, &two),
+            Some(Conflict::Used(_, Taken::ReplaceOrAdd))
+        ));
+        assert!(set_shared(&mut settings, &two, k.clone()));
+        assert!(set_shared(&mut settings, &three, k.clone()));
+        assert_eq!(settings.shortcuts.len(), 3, "shared");
+        assert!(!set_shared(&mut settings, "people", k.clone()), "never a button");
+        // a block replacing them takes it alone
+        assert!(set(&mut settings, &two, Some(k.clone())));
+        assert_eq!(settings.shortcuts.keys().collect::<Vec<_>>(), [two.as_str()]);
+        assert!(set_shared(&mut settings, &one, k.clone()));
+        // a button replaces every block
+        assert!(matches!(
+            conflict(&k, None, &settings, &layout, "people"),
+            Some(Conflict::Used(names, Taken::Replace)) if names.len() == 2
+        ));
+        assert!(set(&mut settings, "people", Some(k.clone())));
+        assert_eq!(settings.shortcuts.keys().collect::<Vec<_>>(), ["people"]);
     }
 
     /// A shortcut works only for a button in a bar or a block, a drawer
@@ -795,7 +978,11 @@ mod tests {
         settings.shortcuts.insert(block_key("inventory"), b.clone());
         assert_eq!(target(&settings, &layout, &k).as_deref(), Some("inventory"));
         assert_eq!(target(&settings, &layout, &f), None, "in no bar");
-        assert_eq!(target(&settings, &layout, &b), None, "a plain block's waits");
+        assert_eq!(
+            target(&settings, &layout, &b).as_deref(),
+            Some(block_key("inventory").as_str()),
+            "a plain block's shows and hides it"
+        );
         let id = drawers::create_floating(&mut settings, "Tools");
         settings.shortcuts.insert(id.clone(), f.clone());
         settings.shortcuts.remove("people");
