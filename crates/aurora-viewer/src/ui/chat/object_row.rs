@@ -271,6 +271,7 @@ pub(super) mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         }
     }
 

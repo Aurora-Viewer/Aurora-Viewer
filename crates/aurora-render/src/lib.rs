@@ -64,7 +64,9 @@ pub mod pipeline_cache;
 mod portal_tests;
 pub mod present;
 pub mod preview;
+mod preview_blend;
 mod preview_mesh;
+mod preview_mips;
 pub mod probes;
 pub mod projector_shadows;
 mod readback;
@@ -304,6 +306,8 @@ mod shader_tests {
     #[test]
     fn asset_preview_shader_is_valid() {
         validate(include_str!("shaders/preview.wgsl"));
+        validate(include_str!("shaders/preview_outline.wgsl"));
+        validate(include_str!("shaders/preview_mips.wgsl"));
     }
 
     #[test]

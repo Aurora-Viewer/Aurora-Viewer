@@ -41,6 +41,16 @@ anim-timeline-mirror = Miroir : modifier et enregistrer aussi le côté opposé
 anim-timeline-limb-handles = Afficher les poignées des mains, des pieds, des coudes et des genoux
 anim-timeline-key = Clé
 anim-timeline-key-hint = Enregistrer une clé de l’os sélectionné à cette frame (K)
+anim-timeline-channels-hint = Afficher les clés de rotation et de position de cet os sur des lignes à part
+anim-timeline-channel-rotation = Rotation
+anim-timeline-channel-location = Position
+anim-timeline-keying-hint = Ce qu’une clé enregistre. Avec Position, Déplacer prend l’articulation seule, hors de sa chaîne IK. Les animations Second Life n’ont pas de clés d’échelle.
+anim-timeline-keying-auto = Auto : rotation, et position pour le bassin et les articulations déplacées
+anim-timeline-keying-auto-short = Auto
+anim-timeline-keying-loc-rot = Position et rotation
+anim-timeline-keying-loc-rot-short = Pos + Rot
+anim-timeline-keying-rot-short = Rot
+anim-timeline-keying-loc-short = Pos
 anim-timeline-zoom-out = Dézoomer (Ctrl+molette)
 anim-timeline-zoom-in = Zoomer (Ctrl+molette)
 anim-timeline-fit = Afficher toute l’animation (Maj+molette pour défiler)
@@ -77,7 +87,7 @@ anim-timeline-keys-selected = { $count ->
     [one] { $count } clé choisie : faites-la glisser pour la déplacer, Suppr la supprime, clic droit ou Échap la désélectionne
    *[other] { $count } clés choisies : faites-en glisser une pour toutes les déplacer, Ctrl+C les copie, Suppr les supprime, clic droit ou Échap les désélectionne
     }
-anim-edit-shortcut-play = Lire ou mettre en pause (Espace)
+anim-edit-shortcut-play = Lire ou mettre en pause
 anim-edit-shortcut-rewind = Revenir au début (Début)
 anim-edit-shortcut-undo = Annuler (Ctrl+Z)
 anim-edit-shortcut-redo = Rétablir (Ctrl+Y ou Ctrl+Maj+Z)
@@ -362,18 +372,18 @@ toolbar-command-chat-bar = Barre de chat
 toolbar-command-area-search = Recherche d’objets
 
 # Area Search (issue #930).
-area-search-hint = Objets, descriptions, propriétaires, créateurs ou UUID…
 area-search-refresh = Actualiser
-area-search-parcel = Parcelle actuelle uniquement
-area-search-children = Inclure les prims liés
+area-search-scope-heading = Où
+area-search-scope-parcel = Parcelle
+area-search-scope-region = Région
+area-search-scope-neighbours = Voisines
+area-search-objects-heading = Quels objets
 area-search-mine = Mes objets
 area-search-filters = Filtres
 area-search-sale = À vendre
 area-search-physical = Physique
 area-search-phantom = Fantôme
 area-search-temporary = Temporaire
-area-search-distance = Distance maximale
-area-search-reset = Réinitialiser les filtres
 area-search-count = { $shown } / { $total } objets · { $pending } en attente de détails
 area-search-parcel-pending = En attente des limites de la parcelle actuelle…
 area-search-scope = Seuls les objets reçus par le visualiseur sont listés.
@@ -382,7 +392,6 @@ area-search-price = Prix
 area-search-inspect = Inspecter
 area-search-zoom = Zoomer
 area-search-copy = Copier l’UUID
-area-search-neighbors = Inclure les régions voisines
 area-search-demo-description = Objet hors ligne pour tester la recherche et les filtres
 area-search-empty = Aucun objet ne correspond à ces filtres.
 area-search-sit = S'asseoir
@@ -4127,6 +4136,7 @@ dev-toolbox-l1 = Sous le curseur
 dev-toolbox-l2 = Objets portés de la cible
 dev-toolbox-l3 = Problèmes en direct
 dev-toolbox-n3 = Chargements
+dev-toolbox-n4 = Chargement de l’inventaire
 dev-toolbox-r1 = Afficher la transparence
 dev-toolbox-r2 = … objets riggés aussi
 dev-toolbox-r3 = Passe et alpha par face
@@ -4195,6 +4205,7 @@ dev-toolbox-what-l2 = Les objets portés de la cible, faces dessinées et écart
 dev-toolbox-what-l3 = Les 20 derniers avertissements, mis à jour
 dev-toolbox-what-n2 = Sans nom de lieu ni adresse
 dev-toolbox-what-n3 = Mémoire des textures, téléchargements, meshes et matériaux
+dev-toolbox-what-n4 = Dossiers lus, en échec et restants, lectures en cours et nouvelles tentatives ; aucun nom
 dev-toolbox-hide-names = Masquer les noms des résidents
 dev-toolbox-hide-names-hint = Avatar 1, Avatar 2… dans le texte copié. Conseillé pour un ticket public.
 dev-toolbox-with-system = Joindre la config système (J4)
@@ -5030,7 +5041,7 @@ world-profiles-joined-today = Inscrit aujourd'hui
 keybinds-insert = Inser
 ui-context-inspect-2 = Inspecter
 ui-context-inspect-all-attachments = Inspecter tous les accessoires
-inspect-title = Inspecter les objets
+inspect-window = Inspecter
 inspect-col-name = Nom de l'objet
 inspect-col-description = Description
 inspect-col-owner = Propriétaire
@@ -5049,17 +5060,152 @@ inspect-owner-profile-tip = Profil du propriétaire de l'objet en surbrillance
 inspect-creator-profile = Voir le profil du créateur…
 inspect-creator-profile-tip = Profil du créateur d'origine de l'objet en surbrillance
 inspect-options = Colonnes affichées
-inspect-totals = Totaux
-inspect-totals-objects = { $objects ->
-    [one] { $objects } objet
-   *[other] { $objects } objets
-    }, { $prims ->
-    [one] { $prims } prim
-   *[other] { $prims } prims
-    }
 inspect-totals-visible = Faces visibles
 inspect-totals-complexity = Complexité
 inspect-totals-textures = Textures
+inspect-tab-outfit = Tenue
+inspect-tab-objects = Objets
+inspect-tab-creators = Créateurs
+inspect-tab-details = Détails
+inspect-objects-title = { $count ->
+    [one] { $count } objet
+   *[other] { $count } objets
+    }
+inspect-summary-items = { $count ->
+    [one] { $count } élément
+   *[other] { $count } éléments
+    }
+inspect-open-profile = Ouvrir le profil
+inspect-within-limit = Dans votre limite
+inspect-over-limit = Au-dessus de votre limite
+inspect-limit-tip = Votre limite de complexité : { $limit }
+inspect-view = Affichage
+inspect-view-count = Affichage · { $count }
+inspect-view-tip = Ordre, créateur et ce que montrent les lignes
+inspect-search = Chercher un élément ou un créateur
+inspect-search-prims = Chercher une prim ou un créateur
+inspect-view-sort = Trier par
+inspect-sort-area = Corps
+inspect-sort-listed = Tel quel
+inspect-sort-name = Nom
+inspect-sort-heaviest = Plus lourds
+inspect-sort-newest = Plus récents
+inspect-view-creator = Créateur sur les lignes
+inspect-creator-picture = Photo
+inspect-creator-name = Nom
+inspect-creator-hidden = Masqué
+inspect-view-show = Montrer aussi
+inspect-show-worn-on = Porté sur
+inspect-show-complexity = Complexité
+inspect-view-done = Terminé
+inspect-hint-right = Cliquez un élément pour ses détails, clic droit pour le regarder
+inspect-hint-details = Cliquez une prim pour la souligner
+inspect-outlined = { $name } est souligné dans le monde
+inspect-area-head = Tête
+inspect-area-body = Corps
+inspect-area-arms = Bras et mains
+inspect-area-legs = Jambes et pieds
+inspect-area-hud = HUD
+inspect-area-other = Autre
+inspect-area-world = Objets
+inspect-own-eyes = Yeux système
+inspect-own-body = Corps système
+inspect-own-description = Partie de l’avatar lui-même, pas un accessoire
+inspect-own-maker = Avatar Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n } k
+inspect-megabytes = { $n } Mo
+inspect-section-complexity = complexité { $value }
+inspect-no-match = Rien ne correspond à « { $query } ».
+inspect-spoken-worn = { $name }, porté sur { $point }, complexité { $complexity }, créé par { $creator }
+inspect-spoken-object = { $name }, appartenant à { $owner }, complexité { $complexity }, créé par { $creator }
+inspect-made-by-tip = Créé par { $name }
+inspect-look-at-tip = Amener la caméra dessus
+inspect-profile-tip = Ouvrir le profil du créateur
+inspect-made-by = Créé par
+inspect-owned-by = Appartient à
+inspect-worn-on = Porté sur
+inspect-technical = Détails techniques
+inspect-prims-count = { $count ->
+    [one] { $count } prim
+   *[other] { $count } prims
+    }
+inspect-prims-hint = Cliquez une prim pour la souligner dans le monde
+inspect-share-outfit = { $percent } % de la tenue
+inspect-share-selection = { $percent } % de la sélection
+inspect-percent = { $percent } %
+inspect-tile-tmem = Mémoire des textures
+inspect-tile-vram = VRAM
+inspect-tile-prims = Prims
+board-close = Fermer { $title }
+board-grow = Agrandir { $title }
+board-remove = Retirer { $name }
+board-more = et { $count } de plus
+board-more-short = +{ $count }
+board-some-of = { $shown } sur { $all }
+board-of-all = sur { $all }
+stage-turn-left = Tourner à gauche
+stage-turn-right = Tourner à droite
+stage-higher = Regarder de plus haut
+stage-lower = Regarder de plus bas
+stage-nearer = Plus près
+stage-further = Plus loin
+stage-reset = Revenir au début
+stage-hint = Glisser pour tourner, clic droit pour déplacer
+stage-light = Fond clair
+stage-dark = Fond sombre
+stage-playing = AO
+stage-paused = En pause
+stage-pause-tip = Mettre leur animation en pause
+stage-play-tip = Reprendre leur animation
+stage-loading = Préparation de la vue 3D…
+stage-nothing = Rien à montrer en 3D pour l’instant.
+stage-refused = La vue 3D est coupée tant que RLVa limite ce que vous pouvez voir.
+inspect-your-limit = Votre limite : { $limit }
+inspect-without-it = { $value } sans lui
+inspect-you = Vous
+inspect-person = Personne
+inspect-difference = Écart
+inspect-drawn-in-full = Affiché en entier
+inspect-nobody = La complexité de personne n’est encore connue.
+inspect-aside-count = { $count } mis de côté
+inspect-is-aside = mis de côté
+inspect-set-aside = Mettre de côté
+inspect-set-aside-tip = Voir la complexité sans cet objet. Dans cette fenêtre seulement : rien ne change dans le monde.
+inspect-put-back = Remettre
+inspect-put-back-tip = Compter de nouveau cet objet
+inspect-complexity-spoken = Complexité { $value }, numéro { $rank } sur { $count } personnes ici
+inspect-stage-outfit = La tenue
+inspect-stage-objects = Les objets
+inspect-stage-back = Revenir à l’ensemble
+inspect-place-made-by = { $place } · créé par { $name }
+inspect-owned-by-name = Appartient à { $name }
+inspect-tile-items = Objets
+inspect-tile-figures = Chiffres
+inspect-col-item = Nom
+inspect-point = Point
+inspect-look-at = Regarder
+inspect-selected-count = { $count } sélectionnés
+inspect-worn-count = { $count } portés
+inspect-creators-word = créateurs
+inspect-areas-word = zones du corps
+inspect-owners-word = propriétaires
+inspect-triangles-word = triangles
+inspect-made-of = { $count } objets sur { $all }
+inspect-kilobytes = { $n } Ko
+inspect-linkset-order = { $count }, dans l’ordre de liaison
+inspect-reset-columns = Rétablir les colonnes
+inspect-by-creators = { $count ->
+    [one] { $items } d’un seul créateur
+   *[other] { $items } de { $count } créateurs
+}
+inspect-owner-button = Profil du propriétaire
+inspect-group-button = Profil du groupe
+inspect-creator-button = Profil du créateur
+inspect-land-others = Autres { $n }
+inspect-land-these = Ceux-ci { $n }
+inspect-land-free = Libre { $n }
+inspect-land-unknown = La place de la parcelle s’affiche quand les objets sont tous sur la parcelle où vous êtes.
 ui-login-installed = Installée
 world-inventory-demo-instructions = Instructions
 build-ui-features-intensity = Intensité
@@ -15644,25 +15790,12 @@ area-search-last-owner = Dernier propriétaire
 area-search-land-impact = Impact sur le terrain
 area-search-prim-count = Nombre de primitives
 
-area-search-search = Rechercher
-area-search-columns = Colonnes
-area-search-regex = Utiliser les expressions régulières
 area-search-regex-error = Expression régulière : { $error }
 
-area-search-required = Ne lister que les objets qui sont
-area-search-excluded = Exclure les objets qui sont
-area-search-ranges = Distance et prix de vente
-area-search-attachment = Pièces jointes
 area-search-media = Média partagé
 area-search-copy-perm = Copie
 area-search-modify-perm = Modification
 area-search-transfer-perm = Transfert
-area-search-probes = Sondes de réflexion
-area-search-child-prim = Prims enfants
-area-search-neighbor-regions = Dans les régions voisines
-area-search-distance-range = Distance
-area-search-min = Min
-area-search-max = Max
 area-search-click-action = Action au clic de souris
 area-search-click-unrestricted = Sans restriction
 area-search-click-any = Toute action
@@ -15676,15 +15809,91 @@ area-search-reset-columns = Réinitialiser les colonnes
 
 area-search-regex-limit = Limite de recherche dépassée. Simplifiez l'expression.
 
-area-search-reset-all-tip = Réinitialiser toute la recherche.
-area-search-reset-search-tip = Effacer les champs de recherche et les expressions régulières.
-area-search-reset-options-tip = Rétablir les options de filtrage d’origine.
 area-search-reset-columns-tip = Rétablir les colonnes par défaut.
 
-area-search-range-options = Plages
-area-search-reset-ranges-tip = Rétablir les plages de distance et de prix par défaut.
 
-area-search-results = Résultats
+area-search-metres = { $n } m
+area-search-band-reach = À portée
+area-search-band-close = Tout près
+area-search-band-around = Autour de vous
+area-search-band-further = Plus loin
+area-search-band-far = Loin
+area-search-band = Zone
+area-search-within = À moins de { $distance }
+area-search-within-across = À moins de { $distance } à l’horizontale
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Montrer toutes les distances
+area-search-from = Distance à partir de
+area-search-to = Distance jusqu’à
+area-search-bar-tip = { $count ->
+    [one] Un objet, de { $from } à { $to }
+   *[other] { $count } objets, de { $from } à { $to }
+}
+area-search-of-objects = sur { $total } objets
+area-search-li = { $value } IS
+area-search-li-count = { $value } d’impact sur le terrain
+area-search-owner-count = { $count ->
+    [one] un propriétaire
+   *[other] { $count } propriétaires
+}
+area-search-object-count = { $count ->
+    [one] un objet
+   *[other] { $count } objets
+}
+area-search-objects-word = objets
+area-search-in-reach = ici
+area-search-tab-objects = Objets
+area-search-tab-owners = Propriétaires
+area-search-hint-wide = Objets, propriétaires, créateurs ou UUID
+area-search-kind-heading = Genre d’objet
+area-search-kind-tip = Un clic : seulement ceux-ci. Encore : masqués.
+area-search-kind-any = tous
+area-search-kind-only = seulement ceux-ci
+area-search-kind-hidden = Masqués
+area-search-kind-attached = Attachés
+area-search-kind-probes = Sondes
+area-search-click-all = Tout
+area-search-click-any-short = Toute
+area-search-permissions = Permissions
+area-search-price-heading = Prix, pour les objets à vendre
+area-search-price-to = à
+area-search-price-tip = Choisissez d’abord « À vendre »
+area-search-linked = Prims liés
+area-search-one-field = Chercher dans un champ
+area-search-regex-switch = Expressions régulières
+area-search-regex-invalid = Expression régulière non valide
+area-search-reset-filters-tip = Rétablir tous les filtres ; le texte cherché reste
+area-search-save-defaults-tip = Ouvrir désormais avec ces filtres
+area-search-reset-search = Vider les textes cherchés
+area-search-reset-filters = Rétablir les options de filtre
+area-search-reset-ranges = Rétablir distance et prix
+area-search-reset-all = Tout rétablir
+area-search-more = Plus
+area-search-several = En choisir plusieurs
+area-search-several-tip = Les clics ajoutent à la sélection (aussi Ctrl ou Maj + clic, Ctrl+A)
+area-search-actions = Actions
+area-search-nothing = Aucun objet reçu pour l’instant.
+area-search-nothing-for-sale = Rien à vendre ici.
+area-search-not-for-sale = Pas à vendre
+area-search-from-price = dès { $price }
+area-search-nearest = Les plus proches
+area-search-heaviest = Les plus lourds
+area-search-order-tip = Changer l’ordre : les plus proches ou les plus lourds d’abord
+area-search-rank = n° { $rank } sur { $all }
+area-search-rank-here = n° { $rank } ici
+area-search-card-more = Montrer tous les chiffres
+area-search-card-less = En montrer moins
+area-search-open-group = Ouvrir le groupe
+area-search-spoken = { $name }, { $distance }, impact { $li }, appartient à { $owner }
+area-search-owner-spoken = { $name }, { $count } objets, impact { $li }
+area-search-stage-line = À { $distance } · impact { $li } · { $owner }
+area-search-tile-3d = Vue 3D
+area-search-on = { $count } actifs
+area-search-on-word = actifs
+area-search-more-on = { $count ->
+    [one] un autre filtre actif
+   *[other] { $count } autres filtres actifs
+}
 
 # Applied local textures and materials (#1375).
 local-appearance-warning = { $count ->
@@ -15904,6 +16113,25 @@ ui-weather-now-off = Météo désactivée
 ui-weather-precipitation-on-tip = La pluie ou la neige tombe comme réglée dessous ; désactivé, rien ne tombe et il n’y a pas d’orage
 ui-weather-wind-on-tip = Le vent de la météo pousse la pluie et la neige, et s’entend dehors ; désactivé, l’air est calme
 ui-weather-wind-follow-region = Vent de la région
+
+ui-options-legacy-lists = Importer les listes du Legacy Viewer
+ui-options-legacy-lists-help = Ajoute l'historique des téléportations, la liste noire des ressources, la liste du filtre média et les cercles de ce compte. Les fichiers du Legacy Viewer sont seulement lus.
+ui-options-legacy-lists-button = Importer depuis le Legacy Viewer…
+ui-options-legacy-lists-no-account = Connectez-vous pour importer les listes de ce compte.
+ui-options-legacy-lists-title = Importer depuis le Legacy Viewer
+ui-options-legacy-lists-text = Tout est ajouté aux listes de ce compte et rien n'est retiré ici. Ce que nomme la liste noire des ressources quitte le monde aussitôt. Importer à nouveau ramène ce que vous avez retiré ici.
+ui-options-legacy-lists-searching = Recherche des dossiers du Legacy Viewer…
+ui-options-legacy-lists-none = Aucun dossier du Legacy Viewer contenant des listes n'a été trouvé pour ce compte.
+ui-options-legacy-lists-teleports = Historique des téléportations ({ $count })
+ui-options-legacy-lists-derender = Liste noire des ressources ({ $count })
+ui-options-legacy-lists-media = Liste du filtre média ({ $count })
+ui-options-legacy-lists-contact-set-entries = Entrées des cercles ({ $count })
+ui-options-legacy-lists-confirm = Importer
+ui-options-legacy-lists-added = Ajouté ou mis à jour. Historique des téléportations : { $teleports }, liste noire : { $derender }, filtre média : { $media }, entrées des cercles : { $sets }.
+ui-options-legacy-lists-nothing = Rien de nouveau : ce compte a déjà ces listes.
+ui-options-legacy-lists-failed = Illisible : { $files }.
+ui-options-legacy-lists-unsaved = Enregistrement impossible, inchangé : { $files }.
+ui-options-legacy-lists-other-grid = Sur cette grille, un dossier du même nom peut appartenir à une autre grille : vérifiez que c'est le bon.
 
 picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son matériau dans votre inventaire.
 

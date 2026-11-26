@@ -77,7 +77,7 @@ impl App {
         if let Some((idx, point, _)) = self.scene.hud_edit_pick(&self.world, (x, y)) {
             // (a HUD does not need the depth of the world behind it)
             let ray = self.gfx.as_ref().and_then(|g| g.renderer.cursor_ray(x, y));
-            self.object_menu_pick(Some(idx), ray, Vec::new(), false);
+            self.object_menu_pick(Some(idx), ray, None, Vec::new(), false);
             return Some((Some(idx), point));
         }
         let picked = self.click_pick()?;
@@ -90,6 +90,12 @@ impl App {
             self.settings.build.select_probes,
             self.settings.draw_distance,
         );
+        // the ray its touch is read on: to a far face taken where it is
+        // drawn, beside the cursor's (`Scene::surface_ray`); Sit keeps the
+        // cursor's
+        let mut touch_ray = None;
+        // (an object's face, not an avatar's point)
+        let on_face = target.filter(|&idx| self.scene.gpu.get(idx).is_some_and(|g| !g.is_avatar));
         let surface = match self.pick_name_tag(hit, ray) {
             Some((idx, p)) => Some((
                 Some(idx),
@@ -99,9 +105,14 @@ impl App {
             // poses it, an attachment in front of its wearer
             // (LLToolPie::handleRightMouseDown picks rigged meshes and
             // transparent faces)
-            None => match self.designate(crate::scene::drawn::Gesture::Menu, &picked, hit) {
+            None => match self.designate(crate::scene::drawn::Gesture::Menu, &picked, hit, on_face) {
                 Some(d) => Some((Some(d.idx), d.hit.point)),
-                None => hit.map(|p| (target, p)),
+                None => {
+                    if on_face.is_some() {
+                        touch_ray = ray.zip(hit).map(|(r, p)| Scene::surface_ray(r, p));
+                    }
+                    hit.map(|p| (target, p))
+                }
             },
         };
         let particles: Vec<_> = picked
@@ -114,7 +125,7 @@ impl App {
             .collect();
         let particle_only = surface.is_none();
         let (object, point) = surface.or_else(|| particles.first().map(|p| (None, p.point)))?;
-        self.object_menu_pick(object, ray, particles, particle_only);
+        self.object_menu_pick(object, ray, touch_ray, particles, particle_only);
         self.object_menu.near = object
             .filter(|_| point.is_finite() && point.distance(self.world.agent.position) <= 1.5)
             .and_then(|idx| self.world.objects.get(linkset_root(&self.world, idx)))
