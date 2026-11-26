@@ -580,22 +580,20 @@ fn pick_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView) {
     };
     field(ui, p, aurora_i18n::tr!("common-name"), |ui| {
         ui.add(
-            egui::TextEdit::singleline(&mut e.name)
+            egui::TextEdit::singleline(&mut super::super::ByteLimited::new(&mut e.name, super::super::PICK_NAME_MAX_BYTES))
                 .desired_width(ui.available_width())
                 .char_limit(PICK_NAME_MAX)
                 .font(semibold(ui, 12.5)),
         );
-        super::super::fit_utf8(&mut e.name, super::super::PICK_NAME_MAX_BYTES);
     });
     field(ui, p, aurora_i18n::tr!("ui-profile-aurora-description"), |ui| {
         ui.add(
-            egui::TextEdit::multiline(&mut e.desc)
+            egui::TextEdit::multiline(&mut super::super::ByteLimited::new(&mut e.desc, super::super::PICK_DESC_MAX_BYTES))
                 .desired_width(ui.available_width())
                 .desired_rows(2)
                 .char_limit(PICK_DESC_MAX)
                 .font(FontId::proportional(12.5)),
         );
-        super::super::fit_utf8(&mut e.desc, super::super::PICK_DESC_MAX_BYTES);
         // in bytes, the limit the simulator keeps: a styled letter counts 4
         counter(
             ui,
