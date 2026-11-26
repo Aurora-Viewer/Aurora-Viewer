@@ -4777,6 +4777,66 @@ fn a_floating_blocks_button_hides_once_asked_and_its_block_has_a_shortcut() {
     }
 }
 
+/// "Add a close button" ends a floating block with a Close button, an X,
+/// "Close" or both as its buttons show, that hides the block; not while the
+/// bars are edited (human request, 2026-11-26).
+#[test]
+fn a_floating_blocks_close_button_ends_its_buttons_and_hides_it() {
+    let close = aurora_i18n::tr!("common-close");
+    for (mode, editing) in [
+        (ButtonMode::IconsOnly, false),
+        (ButtonMode::TextOnly, false),
+        (ButtonMode::IconsWithText, false),
+        (ButtonMode::IconsWithText, true),
+    ] {
+        let mut bench = Bench {
+            native_top: true,
+            screen: Vec2::new(1920.0, 1080.0),
+            ..Default::default()
+        };
+        bench.settings.compose_top();
+        bench
+            .settings
+            .set_bar(Bar::Top, vec![tests::button("inventory"), tests::button("people")]);
+        let id = drawers::float(&mut bench.settings, &crate::ui::skin::Layout::default(), Bar::Top, "inventory").expect("floated");
+        let drawer = bench.settings.drawers.get_mut(&id).expect("floating block");
+        drawer.close_button = true;
+        drawer.mode = mode;
+        bench.state.open = editing;
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let command = drawers::close_button(&id).command;
+        let button = bench.ctx.read_response(bars::tool_button_id(&command));
+        assert_eq!(button.is_some(), !editing, "{mode:?}, editing={editing}");
+        let Some(button) = button else { continue };
+        let last = bench
+            .ctx
+            .read_response(bars::tool_button_id("inventory"))
+            .expect("the block's button")
+            .rect;
+        assert!(button.rect.left() >= last.right(), "after the others: {:?} {last:?}", button.rect);
+        let labelled = bench
+            .text
+            .iter()
+            .any(|(text, rect)| text == close && button.rect.contains(rect.center()));
+        assert_eq!(labelled, mode != ButtonMode::IconsOnly, "{mode:?}");
+        assert!(bench.settings.drawers[&id].floating.as_ref().is_some_and(|floating| floating.shown));
+        bench.pointer(button.rect.center(), Some(true));
+        bench.pointer(button.rect.center(), Some(false));
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+        assert!(
+            bench.settings.drawers[&id]
+                .floating
+                .as_ref()
+                .is_some_and(|floating| !floating.shown),
+            "{mode:?}: the click hides the block"
+        );
+    }
+}
+
 /// A drawer's window shows its shortcut with Edit and Delete before "Hide
 /// the button while floating", greyed without a shortcut, a click on it
 /// saying why; the shortcut window draws Ctrl, Alt and Shift as keys (human

@@ -1497,6 +1497,7 @@ impl ToolbarUi {
                         mode,
                         closes: profile.closes.unwrap_or(true),
                         hides_button: profile.hides_button,
+                        close_button: profile.close_button,
                         vertical: profile.vertical.unwrap_or(false),
                         align: block_style.align,
                         sizing: block_style.sizing,

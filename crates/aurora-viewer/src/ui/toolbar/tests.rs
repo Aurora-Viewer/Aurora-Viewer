@@ -2534,6 +2534,7 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
         vertical: true,
         closes: true,
         hides_button: true,
+        close_button: true,
         look: appearance::Appearance {
             mode: None,
             icon: Some("star-filled".into()),
@@ -2551,6 +2552,7 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
             o.vertical = options.clone().vertical;
             o.closes = options.clone().closes;
             o.hides_button = options.clone().hides_button;
+            o.close_button = options.clone().close_button;
             o.look = options.clone().look.clone();
         },
     ));
@@ -2559,6 +2561,7 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
     let floating = settings.drawers[&id].floating.clone().expect("floating");
     assert!(floating.vertical && floating.closes && floating.name == "Tools");
     assert_eq!(settings.drawers[&id].mode, ButtonMode::TextOnly);
+    assert!(settings.drawers[&id].close_button);
     assert_eq!(settings.appearance[&id], options.look);
     state.pending = Some(block_window::edit_of(
         &settings,
@@ -2570,6 +2573,7 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
             o.vertical = options.vertical;
             o.closes = options.closes;
             o.hides_button = options.hides_button;
+            o.close_button = options.close_button;
             o.look = options.look.clone();
         },
     ));

@@ -15785,6 +15785,7 @@ toolbar-drawer-default-mode = ボタンの既定の表示
 toolbar-drawer-closes = ボタンをクリックしたら閉じる
 toolbar-block-shortcut = ショートカット：
 toolbar-drawer-hides-needs-shortcut = ショートカットが必要です
+toolbar-floating-close-button = 閉じるボタンを追加
 toolbar-block-name = ブロック名：
 toolbar-block-button-mode = ブロックボタンの表示
 toolbar-button-inherited = 継承

@@ -33,6 +33,7 @@ pub(super) struct Options {
     pub sizing: Sizing,
     pub vertical: bool,
     pub hides_button: bool,
+    pub close_button: bool,
 }
 
 /// One change of the window: its block, and its fields before and after.
@@ -90,6 +91,7 @@ fn view(settings: &ToolbarSettings, layout: &Layout, target: &Target) -> Option<
                     sizing: drawer.sizing.or(saved.sizing).unwrap_or(base.sizing),
                     vertical: drawer.floating.as_ref().map_or(drawer.vertical, |floating| floating.vertical),
                     hides_button: drawer.hides_button,
+                    close_button: drawer.close_button,
                 },
                 button,
                 hint,
@@ -123,6 +125,7 @@ fn view(settings: &ToolbarSettings, layout: &Layout, target: &Target) -> Option<
                     sizing: saved.sizing.unwrap_or(base.sizing),
                     vertical: profile.vertical.unwrap_or(bar.vertical()),
                     hides_button: profile.hides_button,
+                    close_button: profile.close_button,
                 },
                 button: ToolButton {
                     command: shortcuts::block_key(&first.command),
@@ -252,6 +255,13 @@ fn fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, settings: &To
     widgets::radio_value(ui, p, &mut options.vertical, true, aurora_i18n::tr!("toolbar-floating-vertical"));
     ui.add_space(8.0);
     hides_check(ui, p, key, shortcut.is_some(), &mut options.hides_button);
+    ui.add_space(4.0);
+    let close = widgets::checkbox(ui, p, &mut options.close_button, aurora_i18n::tr!("toolbar-floating-close-button"));
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(Id::unique(("drawer_close_button_check", key)), close.rect));
+    #[cfg(not(test))]
+    let _ = close;
     if !view.floating {
         return false;
     }
@@ -375,6 +385,7 @@ pub(super) fn apply(settings: &mut ToolbarSettings, layout: &Layout, change: &Ch
             }
             drawer.vertical = after.vertical;
             drawer.hides_button = after.hides_button;
+            drawer.close_button = after.close_button;
             match &mut drawer.floating {
                 Some(floating) => {
                     floating.name = name.clone();
@@ -436,6 +447,7 @@ pub(super) fn apply(settings: &mut ToolbarSettings, layout: &Layout, change: &Ch
                 profile.vertical = Some(after.vertical);
             }
             profile.hides_button = after.hides_button;
+            profile.close_button = after.close_button;
             drawers::put_profile(settings, members, profile);
         }
     }

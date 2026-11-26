@@ -105,6 +105,12 @@ pub fn show(
             .iter()
             .map(|button| bars::natural_width(ctx, button, drawer.mode, square, ICON, square + 8.0))
             .collect();
+        // its Close button, after the others (human request, 2026-11-26);
+        // not while the bars are edited, where the block takes drops
+        let close_button = (drawer.close_button && !editing).then(|| drawers::close_button(id));
+        let close_width = close_button
+            .as_ref()
+            .map(|button| bars::natural_width(ctx, button, drawer.mode, square, ICON, square + 8.0));
         let heights: Vec<_> = buttons
             .iter()
             .map(|button| {
@@ -125,7 +131,22 @@ pub fn show(
             .zip(&widths)
             .filter(|(button, _)| !structure::is_separator(&button.command) && !structure::is_divider(&button.command))
             .map(|(_, width)| *width)
+            .chain(close_width)
             .fold(square, f32::max);
+        let close_look = |width: f32| bars::ButtonLook {
+            size: Vec2::new(width, square),
+            icon: ICON,
+            dock: true,
+            mode: drawer.mode,
+            left: vertical,
+            opens: if vertical {
+                egui::RectAlign::RIGHT
+            } else {
+                egui::RectAlign::BOTTOM_START
+            },
+            editing,
+        };
+        let mut closed = false;
         let looks: Vec<_> = buttons
             .iter()
             .zip(widths.iter().zip(&heights))
@@ -230,6 +251,26 @@ pub fn show(
                             &nested,
                             &mut action,
                         );
+                        if let (Some(button), Some(width)) = (&close_button, close_width) {
+                            let label = super::label(button);
+                            let look = close_look(if vertical { column } else { width });
+                            closed = bars::tool_button(
+                                ui,
+                                p,
+                                icons,
+                                &button.command,
+                                &button.icon,
+                                label,
+                                label,
+                                false,
+                                true,
+                                look,
+                                0,
+                                0.0,
+                                false,
+                            )
+                            .clicked();
+                        }
                     });
                     let zone = ui.min_rect();
                     let target = ui.interact(zone, Id::unique(("floating_drop", id)), egui::Sense::hover());
@@ -255,6 +296,13 @@ pub fn show(
                     }
                 });
         });
+        if closed {
+            if import {
+                *import_shown = false;
+            } else {
+                toolbar.pending = Some(Edit::FloatingShown(id.clone(), false));
+            }
+        }
         // a drag on one of its buttons moves the whole block
         if let Some(command) = ctx.data(|data| data.get_temp::<String>(drag_id()))
             && drawer.buttons.iter().any(|button| button.command == command)

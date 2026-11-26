@@ -15948,6 +15948,7 @@ toolbar-drawer-default-mode = Default display of buttons
 toolbar-drawer-closes = Close after a click on a button
 toolbar-block-shortcut = Shortcut:
 toolbar-drawer-hides-needs-shortcut = Requires a shortcut
+toolbar-floating-close-button = Add a close button
 toolbar-block-name = Block name:
 toolbar-block-button-mode = Block button display
 toolbar-button-inherited = Inherited

@@ -15957,6 +15957,7 @@ toolbar-drawer-default-mode = Affichage par défaut des boutons
 toolbar-drawer-closes = Fermer après un clic sur un bouton
 toolbar-block-shortcut = Raccourci :
 toolbar-drawer-hides-needs-shortcut = Nécessite un raccourci
+toolbar-floating-close-button = Ajouter un bouton Fermer
 toolbar-block-name = Nom du bloc :
 toolbar-block-button-mode = Affichage du bouton du bloc
 toolbar-button-inherited = Hérité

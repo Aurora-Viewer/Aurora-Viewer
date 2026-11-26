@@ -55,6 +55,10 @@ pub struct Drawer {
     /// shortcut, outside interface editing (human request, 2026-11-26).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub hides_button: bool,
+    /// A Close button after its buttons while it is a floating block, which
+    /// hides it (human request, 2026-11-26; `close_button`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub close_button: bool,
     /// Its orientation as a floating block, kept while it is a drawer.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub vertical: bool,
@@ -76,6 +80,7 @@ impl Default for Drawer {
             mode: ButtonMode::IconsWithText,
             closes: true,
             hides_button: false,
+            close_button: false,
             vertical: false,
             align: None,
             sizing: None,
@@ -112,6 +117,16 @@ impl Floating {
             icon: if self.icon.is_empty() { FLOATING_ICON } else { &self.icon }.into(),
             tooltip: self.name.clone(),
         }
+    }
+}
+
+/// The Close button a floating block `id` ends with when it asks for one
+/// (`Drawer::close_button`): an X, "Close" or both, as its buttons show.
+pub(super) fn close_button(id: &str) -> ToolButton {
+    ToolButton {
+        command: format!("floating_close:{id}"),
+        icon: "x".into(),
+        tooltip: aurora_i18n::tr!("common-close").into(),
     }
 }
 
@@ -300,6 +315,7 @@ pub(super) fn float(settings: &mut ToolbarSettings, layout: &Layout, bar: Bar, c
             mode,
             closes: profile.closes.unwrap_or(true),
             hides_button: profile.hides_button,
+            close_button: profile.close_button,
             vertical,
             align: block_style.align,
             sizing: block_style.sizing,
@@ -361,6 +377,8 @@ pub struct BlockProfile {
     pub vertical: Option<bool>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub hides_button: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub close_button: bool,
 }
 
 /// The profile of the fixed block of `members`: the first one saved under
@@ -404,6 +422,7 @@ pub(super) fn drawer_profile(settings: &mut ToolbarSettings, id: &str, drawer: &
         closes: Some(drawer.closes),
         vertical: Some(drawer.vertical),
         hides_button: drawer.hides_button,
+        close_button: drawer.close_button,
     }
 }
 
