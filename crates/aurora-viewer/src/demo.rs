@@ -1772,7 +1772,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                 } else if let Some(provider) = mode.strip_prefix("hosted:") {
                     let url = match provider {
                         "streamable" => "https://streamable.com/hn8hq",
-                        "vimeo" => "https://vimeo.com/76979871",
+                        "vimeo" => "https://vimeo.com/1084537",
                         "imgur" => "https://imgur.com/A61SaA1",
                         "giphy" => "https://giphy.com/gifs/dance-happy-cute-l0HU3vwj7M52g35Be",
                         "tenor" => "https://tenor.com/view/happy-dance-dan%C3%A7ando-gif-25925999",
