@@ -3636,7 +3636,7 @@ fn rlva_killed_attachment_clears_the_rules_rooted_on_it_but_not_during_a_telepor
     assert!(world.objects.index_of_uuid(&root).is_some(), "a kill during a teleport is ignored");
     assert!(world.rlva.has("fly") && world.rlva.has("jump") && world.rlva.has("alwaysrun"));
     assert!(parity_replies(&mut world.rlva).iter().all(|(channel, _)| *channel != 123));
-    world.apply(NetEvent::TeleportFailed { reason: "no".into() });
+    world.apply(NetEvent::viewer_teleport_failed("no"));
 
     // a child prim killed on its own, before its root: nothing is cleared yet
     world.apply(NetEvent::ObjectsKilled {

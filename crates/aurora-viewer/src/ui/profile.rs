@@ -1902,7 +1902,7 @@ fn feed_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, web: &WebContext) {
 
 /// LLAvatarName::getAccountName ("first.last"), else
 /// LLCacheName::buildUsername from the legacy name.
-fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
+pub(crate) fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
     let names = &world.social.avatar_names;
     if let Some(u) = names.get_in(scope, id).map(|n| n.username.clone()).filter(|u| !u.is_empty()) {
         return Some(u.replace(' ', "."));

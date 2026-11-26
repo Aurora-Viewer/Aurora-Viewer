@@ -39,10 +39,11 @@ if ($Todo) { $List = 'Todo' }
 if (-not $List -and -not $Issue) { throw 'Give -Issue <n> (with -Status to move it), -Todo or -List <status>.' }
 if ($Status -and -not $Issue) { throw '-Status needs -Issue <n>.' }
 
-# The GitHub repository, from this repository's origin (like merge-pr.ps1).
-$origin = (git -C $PSScriptRoot remote get-url origin).Trim()
-if ($origin -notmatch 'github\.com[:/](?<owner>[^/]+)/(?<name>[^/]+?)(\.git)?$') { throw "Unexpected origin remote: $origin" }
-$owner = $Matches.owner; $name = $Matches.name
+# The main repository on GitHub (Get-MainRepo, like merge-pr.ps1): origin,
+# or upstream in a clone of a personal fork.
+$repo = Get-MainRepo $PSScriptRoot
+if (-not $repo) { throw 'No GitHub remote for the main repository (origin, upstream or gh repo set-default).' }
+$owner, $name = $repo -split '/', 2
 
 # Every string goes in a GraphQL variable, none in the query: Windows
 # PowerShell 5.1 drops the double quotes of an argument given to a native

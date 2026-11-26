@@ -62,6 +62,7 @@ pub mod land;
 pub mod land_buy;
 pub mod land_moderation;
 pub mod landmarks;
+pub mod legacy_lists;
 pub mod lookat;
 pub mod lsl_syntax;
 pub mod lslbridge;
@@ -117,6 +118,7 @@ pub mod suitcase;
 pub mod system_messages;
 pub mod teleport_access;
 pub mod teleport_cancel;
+pub mod teleport_failure;
 pub mod teleport_invites;
 pub mod temp_attachments;
 pub mod terrain;
@@ -378,6 +380,17 @@ pub struct ChatLine {
     /// How RLVa's `@shownames` left the resident who wrote the line when it
     /// arrived (`World::rlva_freeze_line`).
     pub speaker: Speaker,
+    /// Read back into a private conversation, in the conversation or on a
+    /// page of its History window, decided when the history loads, where
+    /// the other resident is known (`peer` of `World::history_lines` and
+    /// `World::service_lines`, `World::private_peer`): its sender's name,
+    /// ours included, is looked up each time it is drawn, as a live line's,
+    /// when the name the file gives is that resident's
+    /// (`ui::chat::log_names_resolve`, `cached_line_sender`, #4261). False
+    /// for every other line: the nearby chat's, a group's or a conference's
+    /// history keep the name the file gives, in the conversation and in the
+    /// History window.
+    pub private_history: bool,
 }
 
 impl ChatLine {
@@ -657,6 +670,8 @@ pub struct World {
     pub tp_progress: f32,
     pub tp_status: String,
     pub tp_failed: bool,
+    /// The simulator's last teleport failure, for its popup (`teleport_failure`).
+    pub tp_failure: Option<teleport_failure::Failure>,
     /// Whether the teleport screen offers Cancel, and a cancel sent.
     pub tp_cancel: teleport_cancel::TeleportCancel,
     /// Outfit restore at login (Current Outfit folder).
@@ -1161,6 +1176,7 @@ impl World {
             tp_progress: 0.0,
             tp_status: String::new(),
             tp_failed: false,
+            tp_failure: None,
             tp_cancel: Default::default(),
             own_animations_awaited: None,
             outfit: Default::default(),
@@ -1899,7 +1915,15 @@ impl World {
         // OpenSim has no AIS: FetchInventoryDescendents2 reads one level
         self.inventory_background
             .set_legacy(!self.main_has_cap("InventoryAPIv3"), !self.main_has_cap("LibraryAPIv3"));
+        // (items a busy server would not give are asked again after their
+        // pause, whether or not another read comes)
+        self.inventory.expire_given_up(std::time::Instant::now());
         self.inventory_background.pump(&mut self.inventory, self.agent_id)
+    }
+
+    /// The background inventory walk's state (Dev Toolbox N4).
+    pub fn inventory_loading_report(&self) -> String {
+        self.inventory_background.report(&self.inventory, std::time::Instant::now())
     }
 
     /// Persist the fetched inventory (next login skips unchanged folders).
@@ -2687,6 +2711,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
@@ -2705,6 +2730,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.notice_topics.note(&line, topic);
         self.conversation_push(session, line, false);
@@ -3333,6 +3359,7 @@ impl World {
                 self.anti_spam.reset();
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
+                self.agent.rotate_grabbed = false;
                 // the account is known: its transcripts open
                 self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
                 // LLChatServiceHistory::start, in the account's own folder
@@ -4075,7 +4102,7 @@ impl World {
                 );
                 None
             }
-            NetEvent::TeleportFailed { reason } => {
+            NetEvent::TeleportFailed { reason, code, region } => {
                 self.cancel_friend_join_flight();
                 self.cancel_friend_join();
                 self.tp_history.failed();
@@ -4084,13 +4111,23 @@ impl World {
                 self.teleporting = false;
                 self.tp_failed = true;
                 self.teleport_access_ended(false);
-                // handle_teleport_access_blocked: a refusal for the rating
-                // gets its prompt instead of the reason
-                if !self.teleport_access_failed() {
+                // handle_teleport_access_blocked: a refusal for the rating gets
+                // its prompt instead of the reason, and process_teleport_failed
+                // returns before CouldNotTeleportReason (the call takes the
+                // refusal: once only)
+                let prompted = self.teleport_access_failed();
+                if !prompted {
+                    let said = teleport_failure::text(code.as_deref().unwrap_or_default(), &reason, &region);
                     self.system_notice(
-                        aurora_i18n::tr!("world-mod-teleport-failed", reason = reason.to_string()),
+                        aurora_i18n::tr!("world-mod-teleport-failed", reason = said.clone()),
                         crate::world::notice_topics::Topic::Teleport,
                     );
+                    // CouldNotTeleportReason: the simulator's failures only,
+                    // the viewer's own ones stay a notice
+                    if let Some(code) = code {
+                        log::warn!("teleport failed: '{reason}' (code '{code}')");
+                        self.tp_failure = Some(teleport_failure::Failure { text: said, reason });
+                    }
                 }
                 None
             }
@@ -4098,6 +4135,8 @@ impl World {
                 for (take, controls, pass_on) in blocks {
                     self.script_controls.apply(take, controls, pass_on);
                 }
+                // LLAgent::rotateGrabbed, read by AgentState::yaw_by
+                self.agent.rotate_grabbed = self.script_controls.rotate_grabbed();
                 None
             }
             NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
@@ -5013,10 +5052,14 @@ impl World {
                 None
             }
             NetEvent::InventoryItems(items) => {
+                let ids: Vec<_> = items.iter().map(|item| item.id).collect();
+                self.inventory.items_answered(&ids, false);
                 self.inventory.add_items(items);
                 None
             }
             NetEvent::AttachmentInventoryItems(items) => {
+                let ids: Vec<_> = items.iter().map(|item| item.id).collect();
+                self.inventory.items_answered(&ids, true);
                 self.inventory.add_attachment_items(items);
                 None
             }
@@ -5074,13 +5117,17 @@ impl World {
                 }
                 None
             }
-            NetEvent::InventoryItemsFailed { items } => {
+            NetEvent::InventoryItemsFailed { items, attachment } => {
                 log::warn!("{} inventory items could not be fetched", items.len());
+                // (only this kind's claim: the other kind's read of the same
+                // item may still be on its way)
+                self.inventory.items_answered(&items, attachment);
                 self.inventory.items_failed(&items);
                 None
             }
-            NetEvent::InventoryItemsMissing { items } => {
+            NetEvent::InventoryItemsMissing { items, attachment } => {
                 log::warn!("{} inventory items do not exist (broken links)", items.len());
+                self.inventory.items_answered(&items, attachment);
                 self.inventory.items_missing(items);
                 None
             }
@@ -5462,6 +5509,7 @@ impl World {
             blocked: false,
             beyond_range,
             speaker,
+            private_history: false,
         });
     }
 
@@ -5558,6 +5606,7 @@ impl World {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             };
             let opened = !self.chat_log.conversations.known.contains(&im.from_agent_id);
             let (line_time, line_text) = (line.time, line.text.clone());
@@ -5676,6 +5725,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         });
     }
 
@@ -6781,6 +6831,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let (line_time, line_text) = (line.time, line.text.clone());
         self.conversation_push(to, line, false);
@@ -8579,6 +8630,45 @@ mod motion_tests {
         assert!(!world.arrived_by_local_teleport, "another region: the camera comes back");
     }
 
+    /// CouldNotTeleportReason: a simulator's refusal keeps its popup, worded
+    /// as the Legacy Viewer words its code; the viewer's own failures stay a
+    /// notice.
+    #[test]
+    fn a_simulator_teleport_failure_gets_the_popup() {
+        let (mut world, _) = teleport_fixture();
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
+        world.apply(NetEvent::TeleportFailed {
+            reason: "You cannot go there".into(),
+            code: Some("noaccess_tport".into()),
+            region: String::new(),
+        });
+        let failure = world.tp_failure.clone().expect("popup kept");
+        assert_eq!(failure.text, aurora_i18n::tr!("teleport-error-noaccess-tport"));
+        assert_eq!(failure.reason, "You cannot go there");
+        let said = aurora_i18n::tr!(
+            "world-mod-teleport-failed",
+            reason = aurora_i18n::tr!("teleport-error-noaccess-tport").to_owned()
+        );
+        assert!(world.chat.iter().any(|line| line.text == said), "the notice uses the same wording");
+
+        world.tp_failure = None;
+        world.begin_teleport(true);
+        world.apply(NetEvent::viewer_teleport_failed(aurora_i18n::tr!("rlva-blocked")));
+        assert!(world.tp_failure.is_none());
+
+        // OpenSim's EntityTransferModule: an empty reason and no AlertInfo is
+        // still the simulator's failure (the Legacy Viewer's popup, empty)
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportFailed {
+            reason: String::new(),
+            code: Some(String::new()),
+            region: String::new(),
+        });
+        let failure = world.tp_failure.clone().expect("popup kept for an empty reason");
+        assert!(failure.text.is_empty() && failure.reason.is_empty());
+    }
+
     #[test]
     fn known_remote_destination_shows_progress_and_failure_ends_the_teleport() {
         let (mut world, handle) = teleport_fixture();
@@ -8590,9 +8680,9 @@ mod motion_tests {
             flying: false,
         });
         assert_eq!(world.ui_sounds.iter().filter(|s| **s == UiSound::TeleportOut).count(), 1);
-        world.apply(NetEvent::TeleportFailed {
-            reason: aurora_i18n::tr!("world-mod-destination-unavailable").into(),
-        });
+        world.apply(NetEvent::viewer_teleport_failed(aurora_i18n::tr!(
+            "world-mod-destination-unavailable"
+        )));
         assert!(!world.teleporting && world.tp_failed);
         // The screen remains eligible for its failure fade-out.
         assert!(world.tp_show_progress);
@@ -8632,7 +8722,7 @@ mod motion_tests {
             world.apply(NetEvent::TeleportStarted { flags: 0 });
             world.apply(NetEvent::TeleportFinished { handle: to, flying: false });
             if fail {
-                world.apply(NetEvent::TeleportFailed { reason: "no".into() });
+                world.apply(NetEvent::viewer_teleport_failed("no"));
                 return from;
             }
             world.apply(NetEvent::MainRegionChanged { handle: to });

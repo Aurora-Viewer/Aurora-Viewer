@@ -95,6 +95,7 @@ mod movement;
 mod natural_order;
 mod net_adapters;
 mod net_profile;
+mod object_stage;
 mod oiia;
 mod omnifilter;
 mod open_path;

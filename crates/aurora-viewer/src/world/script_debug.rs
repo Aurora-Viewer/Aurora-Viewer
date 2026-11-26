@@ -64,6 +64,7 @@ impl Messages {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         });
         let error = message.chat_type == ChatType::Debug;
         if error && let Some(channel) = self.channel {

@@ -43,6 +43,16 @@ anim-timeline-mirror = Зеркально редактировать и доба
 anim-timeline-limb-handles = Показать манипуляторы кистей, стоп, локтей и коленей
 anim-timeline-key = Добавить ключ
 anim-timeline-key-hint = Добавить ключ выбранной кости в текущем кадре (K)
+anim-timeline-channels-hint = Показать ключи вращения и положения этой кости в отдельных строках
+anim-timeline-channel-rotation = Вращение
+anim-timeline-channel-location = Положение
+anim-timeline-keying-hint = Что записывает ключ. С Положением перемещение берёт один сустав, вне его цепочки IK. В анимациях Second Life нет ключей масштаба.
+anim-timeline-keying-auto = Авто: вращение и положение таза и сдвинутых суставов
+anim-timeline-keying-auto-short = Авто
+anim-timeline-keying-loc-rot = Положение и вращение
+anim-timeline-keying-loc-rot-short = Пол. + Вращ.
+anim-timeline-keying-rot-short = Вращ.
+anim-timeline-keying-loc-short = Пол.
 anim-timeline-zoom-out = Уменьшить масштаб (Ctrl+колёсико)
 anim-timeline-zoom-in = Увеличить масштаб (Ctrl+колёсико)
 anim-timeline-fit = Показать анимацию целиком (Shift+колёсико прокручивает шкалу)
@@ -362,18 +372,13 @@ toolbar-command-quickprefs = Быстрые настройки
 toolbar-command-web-browser = Веб-браузер
 toolbar-command-chat-bar = Строка чата
 toolbar-command-area-search = Поиск объектов поблизости
-area-search-hint = Поиск по названию объекта, описанию, владельцу, создателю или UUID…
 area-search-refresh = Обновить
-area-search-parcel = Только текущий участок
-area-search-children = Включить связанные примы
 area-search-mine = Мои объекты
 area-search-filters = Фильтры
 area-search-sale = Продаётся
 area-search-physical = Физический
 area-search-phantom = Фантомный
 area-search-temporary = Временный
-area-search-distance = Максимальное расстояние
-area-search-reset = Сбросить фильтры
 area-search-count = Показано объектов: { $shown } из { $total } · ожидают сведений: { $pending }
 area-search-parcel-pending = Ожидание границ текущего участка…
 area-search-scope = В списке только объекты, полученные вьюером.
@@ -382,7 +387,6 @@ area-search-price = Цена
 area-search-inspect = Осмотреть
 area-search-zoom = Приблизить
 area-search-copy = Копировать UUID
-area-search-neighbors = Включить соседние регионы
 area-search-demo-description = Тестовый объект для проверки поиска и фильтров без подключения
 area-search-empty = По этим фильтрам ничего не найдено.
 area-search-sit = Сесть
@@ -4950,7 +4954,6 @@ world-profiles-joined-today = Аккаунт создан сегодня
 keybinds-insert = Insert
 ui-context-inspect-2 = Осмотреть
 ui-context-inspect-all-attachments = Осмотреть все прикреплённые объекты
-inspect-title = Осмотр объектов
 inspect-col-name = Название объекта
 inspect-col-description = Описание
 inspect-col-owner = Владелец
@@ -4969,19 +4972,6 @@ inspect-owner-profile-tip = Профиль владельца выделенно
 inspect-creator-profile = Открыть профиль создателя…
 inspect-creator-profile-tip = Профиль первоначального создателя выделенного объекта
 inspect-options = Отображаемые столбцы
-inspect-totals = Сводная статистика
-inspect-totals-objects =
-    { $objects ->
-        [one] { $objects } объект
-        [few] { $objects } объекта
-        [many] { $objects } объектов
-       *[other] { $objects } объекта
-    }, { $prims ->
-        [one] { $prims } прим
-        [few] { $prims } прима
-        [many] { $prims } примов
-       *[other] { $prims } прима
-    }
 inspect-totals-visible = Видимые грани
 inspect-totals-complexity = Сложность
 inspect-totals-textures = Текстуры
@@ -5645,7 +5635,6 @@ ui-appearance-show-current-outfit = Показать текущий компле
 ui-appearance-current-outfit-not-in-my-outfits = Текущий комплект не сохранён в папке «Мои комплекты»
 build-ui-tools-edit-parcel = Редактировать участок
 ui-context-edit-shape = Редактировать фигуру
-ui-context-export-shape-xml = Экспортировать фигуру в XML
 ui-context-edit-outfit = Редактировать комплект
 ui-context-edit-pbr-material = Редактировать PBR-материал
 ui-context-edit-land = Редактировать землю
@@ -15506,24 +15495,11 @@ area-search-group = Группа
 area-search-last-owner = Предыдущий владелец
 area-search-land-impact = Нагрузка на участок
 area-search-prim-count = Число примов
-area-search-search = Поиск
-area-search-columns = Столбцы
-area-search-regex = Использовать регулярные выражения
 area-search-regex-error = Регулярное выражение: { $error }
-area-search-required = Показывать только объекты со следующими признаками
-area-search-excluded = Исключать объекты со следующими признаками
-area-search-ranges = Расстояние и цена продажи
-area-search-attachment = Вложения
 area-search-media = Общие медиа
 area-search-copy-perm = Копирование
 area-search-modify-perm = Изменение
 area-search-transfer-perm = Передача
-area-search-probes = Датчики отражений
-area-search-child-prim = Дочерние примы
-area-search-neighbor-regions = В соседних регионах
-area-search-distance-range = Расстояние
-area-search-min = Мин.
-area-search-max = Макс.
 area-search-click-action = Действие по щелчку
 area-search-click-unrestricted = Без ограничений
 area-search-click-any = Любое действие
@@ -15535,13 +15511,7 @@ area-search-save-defaults = Сохранить по умолчанию
 area-search-copy-link = Скопировать как ссылку
 area-search-reset-columns = Восстановить столбцы
 area-search-regex-limit = Превышен предел поиска совпадений. Упростите выражение.
-area-search-reset-all-tip = Сбросить весь поиск.
-area-search-reset-search-tip = Очистить поля поиска и регулярные выражения.
-area-search-reset-options-tip = Восстановить исходные настройки фильтров.
 area-search-reset-columns-tip = Восстановить стандартные столбцы.
-area-search-range-options = Диапазоны
-area-search-reset-ranges-tip = Восстановить стандартные диапазоны расстояния и цены продажи.
-area-search-results = Результаты
 local-appearance-warning =
     { $count ->
         [one] Локальные текстуры и материалы · { $count } объект

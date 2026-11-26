@@ -165,8 +165,12 @@ fn pages_to_destroy(waiting: usize, since_last: Duration) -> usize {
 /// A page made for the streamed uploads and not used after this long is
 /// destroyed (the textures that asked for it were freed meanwhile).
 const SPARE_TTL: Duration = Duration::from_secs(2);
-/// A page asked from the page thread and not there after this long is
-/// created by the caller instead (one takes about a millisecond).
+/// A page asked from the page thread and not there after this long is late
+/// (one takes about a millisecond): the driver is slow to hand out video
+/// memory, usually because it is full. The uploads of that size keep
+/// waiting for it; only a page thread that is gone hands the page back to
+/// the caller (#4612, #4683: the main thread making it instead waited on
+/// the same allocation, 175 s with NVIDIA's Linux driver, the window frozen).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 
 type DeadPage = (wgpu::Texture, wgpu::TextureView);
@@ -184,6 +188,13 @@ struct MadePage {
 enum PageJob {
     Make { key: PageKey, layers: u32 },
     Destroy(DeadPage),
+}
+
+/// The page thread's answer to a `Make`: the page, or why video memory
+/// could not hold it (the table then waits as if it had failed itself).
+enum PageReply {
+    Made(MadePage),
+    Failed { key: PageKey, layers: u32, error: String },
 }
 
 /// Creates the pages of the streamed uploads and destroys the emptied ones
@@ -206,13 +217,20 @@ struct PageWorker {
     /// None when the thread could not start: pages are then created and
     /// dropped by the caller.
     tx: Option<std::sync::mpsc::Sender<PageJob>>,
-    made: std::sync::mpsc::Receiver<MadePage>,
+    made: std::sync::mpsc::Receiver<PageReply>,
+    /// The thread, to know whether a late page may still come.
+    thread: Option<std::thread::JoinHandle<()>>,
+    /// What the thread answers with, for the tests to answer in its place.
+    #[cfg(test)]
+    reply_tx: std::sync::mpsc::Sender<PageReply>,
 }
 
 impl PageWorker {
     fn new(device: &wgpu::Device, integrated: bool) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<PageJob>();
-        let (made_tx, made) = std::sync::mpsc::channel::<MadePage>();
+        let (made_tx, made) = std::sync::mpsc::channel::<PageReply>();
+        #[cfg(test)]
+        let reply_tx = made_tx.clone();
         let device = device.clone();
         let spawned = std::thread::Builder::new().name("aurora-pages".into()).spawn(move || {
             for job in rx {
@@ -221,23 +239,16 @@ impl PageWorker {
                 match job {
                     PageJob::Make { key, layers } => {
                         let t0 = Instant::now();
-                        let (texture, view) = match make_page(&device, key, layers, integrated) {
-                            Ok(page) => page,
-                            Err(e) => {
-                                // (nothing comes back: once the request times
-                                // out, the frame's thread tries again itself)
-                                log::debug!("texture page not made by the page thread: {e}");
-                                continue;
-                            }
-                        };
-                        let ms = t0.elapsed().as_secs_f32() * 1000.0;
                         // (the table is gone: the page is dropped here)
-                        let _ = made_tx.send(MadePage {
-                            key,
-                            layers,
-                            texture,
-                            view,
-                            ms,
+                        let _ = made_tx.send(match make_page(&device, key, layers, integrated) {
+                            Ok((texture, view)) => PageReply::Made(MadePage {
+                                key,
+                                layers,
+                                texture,
+                                view,
+                                ms: t0.elapsed().as_secs_f32() * 1000.0,
+                            }),
+                            Err(error) => PageReply::Failed { key, layers, error },
                         });
                     }
                     PageJob::Destroy(page) => drop(page),
@@ -245,12 +256,29 @@ impl PageWorker {
             }
         });
         match spawned {
-            Ok(_) => PageWorker { tx: Some(tx), made },
+            Ok(thread) => PageWorker {
+                tx: Some(tx),
+                made,
+                thread: Some(thread),
+                #[cfg(test)]
+                reply_tx,
+            },
             Err(e) => {
                 log::warn!("texture pages: page thread not started ({e}); pages are created and destroyed by the frame's threads");
-                PageWorker { tx: None, made }
+                PageWorker {
+                    tx: None,
+                    made,
+                    thread: None,
+                    #[cfg(test)]
+                    reply_tx,
+                }
             }
         }
+    }
+
+    /// The thread runs: a page asked from it comes back, made or failed.
+    fn alive(&self) -> bool {
+        self.thread.as_ref().is_some_and(|t| !t.is_finished())
     }
 
     /// Ask for a page; false when the thread is not there to make it.
@@ -274,34 +302,53 @@ enum Ask {
     Send,
     /// Already asked: wait.
     Wait,
-    /// Asked too long ago: the caller creates it.
-    GiveUp,
+    /// Asked more than `REQUEST_TIMEOUT` ago and not there yet; `first`
+    /// the first time it is seen late (for the log).
+    Late { first: bool },
 }
 
-/// Pages asked from the page thread and not received yet, one per size.
+/// Pages asked from the page thread and not received yet, one per size:
+/// when each was asked, and whether it was seen late already; and the
+/// sizes whose page the page thread could not make (video memory full),
+/// with when it said so.
 #[derive(Default)]
 struct PageRequests {
-    asked: HashMap<PageKey, Instant>,
+    asked: HashMap<PageKey, (Instant, bool)>,
+    failed: HashMap<PageKey, Instant>,
 }
 
 impl PageRequests {
     fn ask(&mut self, key: PageKey, now: Instant) -> Ask {
-        match self.asked.get(&key) {
+        // a page that could not be made is asked again after a while, as
+        // often as the main thread used to try it (once per
+        // `REQUEST_TIMEOUT`): the uploads of that size wait meanwhile
+        if let Some(&at) = self.failed.get(&key) {
+            if now.saturating_duration_since(at) < REQUEST_TIMEOUT {
+                return Ask::Wait;
+            }
+            self.failed.remove(&key);
+        }
+        match self.asked.get_mut(&key) {
             None => {
-                self.asked.insert(key, now);
+                self.asked.insert(key, (now, false));
                 Ask::Send
             }
-            Some(&since) if now.saturating_duration_since(since) < REQUEST_TIMEOUT => Ask::Wait,
-            Some(_) => {
-                // (if it still comes, it is a spare page like another)
-                self.asked.remove(&key);
-                Ask::GiveUp
-            }
+            Some((since, _)) if now.saturating_duration_since(*since) < REQUEST_TIMEOUT => Ask::Wait,
+            Some((_, late)) => Ask::Late {
+                first: !std::mem::replace(late, true),
+            },
         }
     }
 
     fn done(&mut self, key: PageKey) {
         self.asked.remove(&key);
+    }
+
+    /// The page thread could not make it: asked again `REQUEST_TIMEOUT`
+    /// after `now`.
+    fn failed(&mut self, key: PageKey, now: Instant) {
+        self.asked.remove(&key);
+        self.failed.insert(key, now);
     }
 }
 
@@ -788,6 +835,23 @@ impl PageStore {
         out
     }
 
+    /// A page video memory could not hold, made here or by the page thread.
+    /// The wait before the caller tries a page itself again (`new_page`,
+    /// `page_backoff`) lengthens only for a failure once it was due: the
+    /// page thread's own tries, one per `REQUEST_TIMEOUT` while a shortage
+    /// lasts, would otherwise push it back for good. Logged once per wait.
+    fn page_failed(&mut self, key: PageKey, layers: u32, error: &str, now: Instant) {
+        if !self.page_backoff.waiting() {
+            log::warn!(
+                "texture page {}×{} ({} MB) not made ({error}): video memory is full, the textures that need it wait",
+                key.width,
+                key.height,
+                (layers as u64 * key.layer_bytes()) >> 20
+            );
+        }
+        self.page_backoff.failed_try(now);
+    }
+
     /// A new page of that size in the table: the spare one the page thread
     /// made if there is one, else created here.
     fn new_page(&mut self, device: &wgpu::Device, key: PageKey) -> Option<u32> {
@@ -815,15 +879,7 @@ impl PageStore {
                         Some((layers, texture, view))
                     }
                     Err(e) => {
-                        if !self.page_backoff.waiting() {
-                            log::warn!(
-                                "texture page {}×{} ({} MB) not made ({e}): video memory is full, the textures that need it wait",
-                                key.width,
-                                key.height,
-                                (layers as u64 * key.layer_bytes()) >> 20
-                            );
-                        }
-                        self.page_backoff.failed(now);
+                        self.page_failed(key, layers, &e, now);
                         self.refused_for_memory = true;
                         return None;
                     }
@@ -1549,9 +1605,13 @@ impl TextureTable {
     /// page would slow the uploads of the large sizes down at 60 frames a
     /// second (a 2048² texture fills a page).
     ///
-    /// True as well when the page thread cannot make the page (not started,
-    /// no answer in `REQUEST_TIMEOUT`, table full): the upload then creates
-    /// it or is refused, as before.
+    /// True as well when the page thread cannot make the page (not started
+    /// or gone, table full): the upload then creates it or is refused, as
+    /// before. A page that is late is waited for: the driver is slow to
+    /// allocate it, and the main thread would wait on the same allocation
+    /// (#4612). One the page thread could not make (video memory full) is
+    /// asked from it again a little later (`PageRequests::failed`); the
+    /// uploads wait meanwhile, with their texels.
     pub fn prepare_page(&mut self, slot: u32, (format, width, height, levels): (TexelFormat, u32, u32, u32), queued: u32) -> bool {
         self.receive_pages();
         let key = PageKey::of_chain(format, width, height, levels);
@@ -1571,7 +1631,8 @@ impl TextureTable {
     }
 
     /// Have the page thread make the next page of a size, unless it is at
-    /// it already. False when it cannot: the caller creates the page.
+    /// it already. False when it cannot (not started, or gone): the caller
+    /// creates the page.
     fn ask_for_page(&mut self, key: PageKey) -> bool {
         match self.requests.ask(key, Instant::now()) {
             Ask::Send => {
@@ -1582,19 +1643,53 @@ impl TextureTable {
                     false
                 }
             }
+            // a size the page thread could not make, asked again a little
+            // later; with the thread gone meanwhile, the caller makes it now
+            Ask::Wait if !self.worker.alive() && self.requests.failed.contains_key(&key) => {
+                self.requests.failed.remove(&key);
+                false
+            }
             Ask::Wait => true,
-            Ask::GiveUp => {
-                log::warn!("texture pages: no page from the page thread in {REQUEST_TIMEOUT:?}; created by the main thread");
+            // the driver is slow to allocate it (video memory full): the
+            // page thread is still at it, and the main thread would only
+            // freeze the window on the same allocation
+            Ask::Late { first } if self.worker.alive() => {
+                if first {
+                    log::warn!(
+                        "texture pages: a {}×{} page takes the driver over {REQUEST_TIMEOUT:?} (video memory full?); its textures wait for it",
+                        key.width,
+                        key.height
+                    );
+                }
+                true
+            }
+            Ask::Late { .. } => {
+                self.requests.done(key);
+                log::warn!("texture pages: the page thread is gone; pages are created by the main thread");
                 false
             }
         }
     }
 
-    /// Take the pages the page thread finished.
+    /// Take the pages the page thread finished, and its failures (video
+    /// memory full): the uploads of that size wait, and the page is asked
+    /// again a little later.
     fn receive_pages(&mut self) {
-        while let Ok(page) = self.worker.made.try_recv() {
-            self.requests.done(page.key);
-            self.store.add_spare(page);
+        while let Ok(reply) = self.worker.made.try_recv() {
+            match reply {
+                // (`page_backoff` is left as it is: a page carved out of a
+                // block the device already holds says nothing of whether a
+                // new one fits; only the caller's own success ends the wait)
+                PageReply::Made(page) => {
+                    self.requests.done(page.key);
+                    self.store.add_spare(page);
+                }
+                PageReply::Failed { key, layers, error } => {
+                    let now = Instant::now();
+                    self.requests.failed(key, now);
+                    self.store.page_failed(key, layers, &error, now);
+                }
+            }
         }
     }
 
@@ -2447,10 +2542,13 @@ mod tests {
         // received: the next page of that size is a new request
         requests.done(key(64));
         assert_eq!(requests.ask(key(64), t0 + ms(20)), Ask::Send);
-        // no answer: the caller creates the page, and may ask again later
+        // no answer yet: late, once for the log, then late still (never
+        // asked again while it is out), until it comes
         assert_eq!(requests.ask(key(64), t0 + ms(19) + REQUEST_TIMEOUT), Ask::Wait);
-        assert_eq!(requests.ask(key(64), t0 + ms(20) + REQUEST_TIMEOUT), Ask::GiveUp);
-        assert_eq!(requests.ask(key(64), t0 + ms(21) + REQUEST_TIMEOUT), Ask::Send);
+        assert_eq!(requests.ask(key(64), t0 + ms(20) + REQUEST_TIMEOUT), Ask::Late { first: true });
+        assert_eq!(requests.ask(key(64), t0 + ms(500) + REQUEST_TIMEOUT), Ask::Late { first: false });
+        requests.done(key(64));
+        assert_eq!(requests.ask(key(64), t0 + ms(600) + REQUEST_TIMEOUT), Ask::Send);
         assert_eq!(requests.ask(key(128), t0 + ms(30)), Ask::Wait);
     }
 
@@ -3419,6 +3517,155 @@ mod tests {
         assert_eq!(table.pages_made().unused, 1);
         // asked again when an upload does come
         assert!(!table.prepare_page(extra, (TexelFormat::Rgba8, 32, 32, 6), 0));
+    }
+
+    /// #4612, #4683: a page the page thread is late with (the driver slow
+    /// to allocate it, video memory full) is waited for, never made by the
+    /// main thread, which froze the window on the same allocation; after a
+    /// failure the page thread reports, the upload waits with its texels
+    /// (not refused: nothing to decode again) and the page is asked from the
+    /// page thread again, again without a page made here. A second failure
+    /// within the caller's wait does not push that wait back.
+    #[test]
+    fn a_late_or_failed_page_is_never_made_by_the_main_thread() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let features = wgpu::Features::TEXTURE_BINDING_ARRAY
+            | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+            | (adapter.features() & wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY);
+        let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: features,
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let mut writes = GpuWrites::default();
+        let mut table = TextureTable::new(&device, &mut writes, SLOTS, 512, 8);
+        let (inline, pages) = (table.pages_made().inline, table.pages());
+        let chain = (TexelFormat::Rgba8, 64, 64, 7);
+        let key = PageKey::of_chain(chain.0, chain.1, chain.2, chain.3);
+        let slot = table.create_placeholder().expect("slot");
+        // asked from the page thread long ago, no answer yet
+        let long_ago = Instant::now() - REQUEST_TIMEOUT - Duration::from_millis(1);
+        table.requests.asked.insert(key, (long_ago, false));
+        for _ in 0..3 {
+            assert!(!table.prepare_page(slot, chain, 0), "a late page is waited for");
+        }
+        assert_eq!((table.pages_made().inline, table.pages()), (inline, pages));
+        // the page thread answers that video memory could not hold it
+        table
+            .worker
+            .reply_tx
+            .send(PageReply::Failed {
+                key,
+                layers: 96,
+                error: "out of device memory".into(),
+            })
+            .expect("reply");
+        // the upload waits with its texels, with no page tried here, and
+        // the page thread is not asked again at once
+        for _ in 0..3 {
+            assert!(!table.prepare_page(slot, chain, 0), "the upload waits after a failure");
+        }
+        assert!(table.requests.failed.contains_key(&key));
+        assert!(!table.requests.asked.contains_key(&key));
+        assert_eq!((table.pages_made().inline, table.pages()), (inline, pages));
+        // the caller's own tries wait (`page_backoff`), but the upload is
+        // only waiting, not refused: nothing to decode again
+        assert!(table.store.page_backoff.waiting());
+        assert_eq!(table.retry_after_refusal(), None);
+        // another failure while that wait runs: its deadline stays put
+        let deadline = table.store.page_backoff.next_try();
+        table
+            .worker
+            .reply_tx
+            .send(PageReply::Failed {
+                key,
+                layers: 96,
+                error: "out of device memory".into(),
+            })
+            .expect("reply");
+        assert!(!table.prepare_page(slot, chain, 0));
+        assert_eq!(table.store.page_backoff.next_try(), deadline);
+        // a little later (video memory free again): the page thread is asked
+        // again, makes the page, and the upload goes
+        table.requests.failed.insert(key, long_ago);
+        let t0 = Instant::now();
+        while !table.prepare_page(slot, chain, 0) {
+            assert!(t0.elapsed() < Duration::from_secs(5), "no page from the page thread");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let levels: Vec<Vec<u8>> = (0..7).map(|l| texels(0, 64, 64, l)).collect();
+        let mips: Vec<MipLevel> = levels
+            .iter()
+            .enumerate()
+            .map(|(l, d)| MipLevel {
+                width: level_dim(64, l as u32),
+                height: level_dim(64, l as u32),
+                data: d,
+            })
+            .collect();
+        assert!(table.replace(&device, &mut writes, slot, &mips));
+        let made = table.pages_made();
+        assert_eq!((made.inline, made.threaded, table.pages()), (inline, 1, pages + 1));
+        // a page the page thread made says nothing of whether the caller's
+        // own new page fits: its wait goes on
+        assert!(table.store.page_backoff.waiting());
+    }
+
+    /// A page thread that is gone makes no page: a late one is then made by
+    /// the caller, as before the page thread existed.
+    #[test]
+    fn a_late_page_is_made_by_the_caller_once_the_page_thread_is_gone() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let features = wgpu::Features::TEXTURE_BINDING_ARRAY
+            | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+            | (adapter.features() & wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY);
+        let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: features,
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let mut writes = GpuWrites::default();
+        let mut table = TextureTable::new(&device, &mut writes, SLOTS, 512, 8);
+        let (inline, pages) = (table.pages_made().inline, table.pages());
+        let chain = (TexelFormat::Rgba8, 64, 64, 7);
+        let key = PageKey::of_chain(chain.0, chain.1, chain.2, chain.3);
+        let slot = table.create_placeholder().expect("slot");
+        // the page thread ends once nothing can send it work
+        table.worker.tx = None;
+        let t0 = Instant::now();
+        while table.worker.alive() {
+            assert!(t0.elapsed() < Duration::from_secs(5), "the page thread did not end");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // a page asked from it long ago: the caller makes it now
+        let long_ago = Instant::now() - REQUEST_TIMEOUT - Duration::from_millis(1);
+        table.requests.asked.insert(key, (long_ago, false));
+        assert!(table.prepare_page(slot, chain, 0), "with no page thread the upload goes");
+        assert!(!table.requests.asked.contains_key(&key));
+        let levels: Vec<Vec<u8>> = (0..7).map(|l| texels(0, 64, 64, l)).collect();
+        let mips: Vec<MipLevel> = levels
+            .iter()
+            .enumerate()
+            .map(|(l, d)| MipLevel {
+                width: level_dim(64, l as u32),
+                height: level_dim(64, l as u32),
+                data: d,
+            })
+            .collect();
+        assert!(table.replace(&device, &mut writes, slot, &mips));
+        assert_eq!((table.pages_made().inline, table.pages()), (inline + 1, pages + 1));
     }
 
     /// The whole table on the GPU as the renderer uses it: random creations,
