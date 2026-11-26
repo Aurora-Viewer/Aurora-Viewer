@@ -1263,6 +1263,23 @@ impl InventoryUi {
         self.show_original_in(inv, id, 0);
     }
 
+    /// A file just uploaded, selected where the upload callback of
+    /// LLViewerAssetUpload (indra/newview/llviewerassetupload.cpp) selects
+    /// it through openInventoryPanelAndSetSelection: on Recent Items, with
+    /// its filters kept, when the window `shown` is on that tab; otherwise on
+    /// the main tab, its search and filters cleared.
+    pub fn show_uploaded(&mut self, inv: &Inventory, id: Uuid, shown: bool) {
+        if !(shown && self.tab == RECENT_TAB) {
+            self.show_original(inv, id);
+            return;
+        }
+        self.keyboard_selection = false;
+        self.selected = Some(id);
+        self.selection.clear();
+        self.selection.insert(id);
+        self.reveal_item(inv, id);
+    }
+
     /// Toolbar and keyboard use the same destination and reveal policy.
     /// In single-folder mode the displayed folder owns the new one even
     /// when the window is narrow or another row is selected.
@@ -3819,6 +3836,38 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_upload_is_selected_on_recent_items_only_while_that_tab_is_shown() {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(1),
+            ..Default::default()
+        };
+        let item = aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(2),
+            parent: inv.root,
+            asset_type: 0,
+            ..Default::default()
+        };
+        inv.add_items(vec![item.clone()]);
+        for (shown, tab, kept) in [
+            (true, RECENT_TAB, RECENT_TAB),
+            (false, RECENT_TAB, 0),
+            (true, RECEIVED_TAB, 0),
+            (true, 0, 0),
+        ] {
+            let mut st = InventoryUi::default();
+            st.switch_filter_tab(tab);
+            st.search = "other".into();
+            st.show_uploaded(&inv, item.id, shown);
+            assert_eq!(st.tab, kept, "shown={shown}, tab={tab}");
+            assert_eq!(st.selected, Some(item.id));
+            assert!(st.selection.contains(&item.id) && st.selection.len() == 1);
+            assert_eq!(st.reveal, Some(item.id));
+            // the main tab is cleared to show it; Recent Items keeps its own
+            assert_eq!(st.search.is_empty(), kept == 0);
+        }
+    }
 
     #[test]
     fn creator_keys_follow_the_items_written() {

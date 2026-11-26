@@ -420,6 +420,38 @@ pub fn available_languages() -> impl Iterator<Item = (&'static str, &'static str
     })
 }
 
+/// Resolve a persisted semantic message key without allocating a fallback.
+pub fn lookup(key: &str) -> Option<&'static str> {
+    current()
+        .plain
+        .get(key)
+        .or_else(|| bundled(english()).plain.get(key))
+        .map(|text| wrap(text))
+}
+
+/// Recover the key of a borrowed plain label for command metadata. Exact string
+/// addresses disambiguate equal translations belonging to different messages.
+/// Labels come from the catalog in use or its English fallback, so only those
+/// two are indexed: the other languages stay unloaded.
+pub fn key_of(text: &str) -> Option<&'static str> {
+    type Keys = HashMap<(usize, usize), &'static str>;
+    fn keys(catalog: &'static Catalog) -> Keys {
+        catalog
+            .plain
+            .iter()
+            .map(|(key, value)| ((value.as_ptr() as usize, value.len()), key.as_str()))
+            .collect()
+    }
+    static SELECTED: Localized<Keys> = Localized::new();
+    static ENGLISH: OnceLock<Keys> = OnceLock::new();
+    let address = (text.as_ptr() as usize, text.len());
+    SELECTED
+        .get(|| keys(current()))
+        .get(&address)
+        .or_else(|| ENGLISH.get_or_init(|| keys(bundled(english()))).get(&address))
+        .copied()
+}
+
 /// The system's closest bundled language first, then commonly requested
 /// languages and the remaining entries in language-code order.
 pub fn language_menu_order(items: &mut [(&str, &str)], system: &str) {
