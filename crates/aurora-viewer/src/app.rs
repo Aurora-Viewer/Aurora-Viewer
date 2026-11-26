@@ -3255,9 +3255,10 @@ impl App {
                 name,
                 description,
                 source,
+                permissions,
             } = &cmd
             {
-                self.demo_create_script(*request, *parent, name, description, source);
+                self.demo_create_script(*request, *parent, name, description, source, *permissions);
                 return;
             }
             if let NetCommand::CreateInventoryItem {
@@ -4130,8 +4131,16 @@ impl App {
             }
             return;
         }
+        if let NetEvent::ScriptCompileErrors { request, errors } = ev {
+            self.imports.script_compile_errors(request, errors);
+            return;
+        }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
             if self.script_recovery_saved(request, item, &result) {
+                return;
+            }
+            if self.imports.owns_script(request) {
+                self.import_script_saved(request, item, result);
                 return;
             }
             if ui::inventory::context_notecards::saved(&mut self.inventory_ui, request, &result) {

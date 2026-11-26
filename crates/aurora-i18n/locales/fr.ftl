@@ -1900,6 +1900,7 @@ script-saving = Enregistrement et compilation en cours…
 script-saved = Script enregistré et compilé.
 script-saved-not-compiled = Script enregistré. Cette grille compile les scripts quand ils sont placés dans un objet.
 script-compile-failed = Source enregistrée, mais compilation échouée. Corrigez les erreurs ci-dessous.
+script-compile-failed-no-details = La grille indique que le script ne compile pas, sans donner de message.
 script-save-hint = Enregistrer et compiler le script (Ctrl+S).
 script-running = En cours d’exécution
 script-target-mono = LSL sur Mono
@@ -15937,6 +15938,22 @@ import-folders-animations = Animations
 import-folders-materials = Materiaux
 import-folders-meshes = Maillages
 import-folders-other = Autres
+import-script-unreadable = Le fichier du script n’a pas pu être lu.
+import-script-not-utf8 = Le fichier du script n’est pas du texte UTF-8 valide.
+import-script-empty = Le fichier du script est vide.
+import-scripts-saved = { $count } { $count ->
+    [one] script enregistré
+    *[other] scripts enregistrés
+    }.
+import-script-compile-errors = Le script « { $name } » a été enregistré, mais il ne compile pas :
+import-script-failed = Le script « { $name } » n’a pas été enregistré : { $reason }
+import-script-source = Source du script
+import-script-info = { $lines } { $lines ->
+    [one] ligne
+    *[other] lignes
+    } · { $size }
+import-script-truncated = Affichage des { $lines } premières lignes.
+import-folders-scripts = Scripts
 
 # Unified import window
 import-window-title = Importer

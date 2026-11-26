@@ -1897,6 +1897,7 @@ script-saving = Saving and compiling…
 script-saved = Script saved and compiled.
 script-saved-not-compiled = Script saved. This grid compiles scripts when they are placed in an object.
 script-compile-failed = Source saved, but compilation failed. Correct the errors below.
+script-compile-failed-no-details = The grid reported that the script did not compile, without giving a message.
 script-save-hint = Save and compile the script (Ctrl+S).
 script-running = Running
 script-target-mono = LSL on Mono
@@ -15929,6 +15930,22 @@ import-folders-animations = Animations
 import-folders-materials = Materials
 import-folders-meshes = Meshes
 import-folders-other = Other
+import-script-unreadable = The script file could not be read.
+import-script-not-utf8 = The script file is not valid UTF-8 text.
+import-script-empty = The script file is empty.
+import-scripts-saved = { $count } { $count ->
+    [one] script
+    *[other] scripts
+    } saved.
+import-script-compile-errors = Script “{ $name }” was saved, but it did not compile:
+import-script-failed = Script “{ $name }” was not saved: { $reason }
+import-script-source = Script source
+import-script-info = { $lines } { $lines ->
+    [one] line
+    *[other] lines
+    } · { $size }
+import-script-truncated = Showing the first { $lines } lines.
+import-folders-scripts = Scripts
 
 # Unified import window
 import-window-title = Import

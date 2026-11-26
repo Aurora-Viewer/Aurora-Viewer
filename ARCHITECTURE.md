@@ -581,6 +581,7 @@ destination behind the displayed text; choosing default folders
 ignores this grouping. The confirmation's shared-texture note is separate from
 the price and appears only when selected material dependencies reuse an upload
 key (including a previously acknowledged upload).
+`imports/script.rs` loads `.lsl` files into script rows of the unified queue (BOM and line-end cleanup, size and UTF-8 checks, the inventory name, the receipts); they are free, sit outside the upload `Kind`s, and go one at a time through `NetCommand::CreateScriptItem`, whose creation callback names the item; `imports/ui/script_panel.rs` shows a script's size, lines and the start of its source.
 `imports/stage.rs` snapshots checked local previews into fresh upload drafts,
 retaining decoded sources and user edits without disk reads or image rescans.
 It preserves local identities/attachments, isolates mesh job controls and fee

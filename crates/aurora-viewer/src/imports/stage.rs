@@ -39,7 +39,7 @@ impl Imports {
                 draft.pending = None;
                 draft.discarded_quotes.clear();
             }
-            let kind = source.kind();
+            let folder = Self::source_folder(world, inventory, &source);
             let mut copy = Entry::with_cached_alpha(original.path.clone(), Ok(source), original.options, Some(original.empty_alpha));
             copy.image_size_limit = original.image_size_limit;
             copy.name.clone_from(&original.name);
@@ -47,7 +47,7 @@ impl Imports {
             copy.source_folders.clone_from(&original.source_folders);
             copy.material_index = original.material_index;
             copy.folder = if prefs.use_default_folders {
-                Self::default_folder(world, inventory, kind)
+                folder
             } else {
                 Self::batch_folder(world, prefs.batch_folder)
             };

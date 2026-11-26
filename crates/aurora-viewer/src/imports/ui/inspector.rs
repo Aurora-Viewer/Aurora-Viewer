@@ -455,6 +455,7 @@ pub(super) fn show(
                                                             entry.preview_error = None;
                                                         }
                                                     }
+                                                    Source::Script(draft) => script_panel::show(ui, p, entry.id, draft),
                                                     Source::Mesh(_) => {}
                                                 }
                                             }
@@ -475,7 +476,10 @@ pub(super) fn show(
                                         if entry.local && matches!(entry.source, Some(Source::Mesh(_))) {
                                             local_settings(ui, p, prefs);
                                         }
-                                        if !matches!(entry.source, Some(Source::Sound(_) | Source::Mesh(_) | Source::Material { .. })) {
+                                        if !matches!(
+                                            entry.source,
+                                            Some(Source::Sound(_) | Source::Mesh(_) | Source::Material { .. } | Source::Script(_))
+                                        ) {
                                             preview_colors(ui, p, prefs);
                                         }
                                     } else {

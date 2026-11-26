@@ -29,7 +29,7 @@ fn failed_free_material_does_not_cancel_the_rest_of_the_batch() {
     let step = |entry: Uuid| Step {
         key: entry,
         entry: Some(entry),
-        kind: Kind::Material,
+        kind: Some(Kind::Material),
         folder: Uuid::nil(),
         name: "material".into(),
         description: String::new(),
@@ -62,7 +62,7 @@ fn material_step(entry: &Entry, options: import_texture::Options, images: Box<[O
     Step {
         key: entry.id,
         entry: Some(entry.id),
-        kind: Kind::Material,
+        kind: Some(Kind::Material),
         folder: Uuid::nil(),
         name: entry.name.clone(),
         description: String::new(),
@@ -81,7 +81,7 @@ fn map_step(map: &LocalImage, options: import_texture::Options, cost: i32) -> St
     Step {
         key: map.upload_key(options),
         entry: None,
-        kind: Kind::Texture,
+        kind: Some(Kind::Texture),
         folder: Uuid::nil(),
         name: map.name.clone(),
         description: String::new(),
@@ -399,7 +399,7 @@ fn protected_upload_defaults_survive_loading_locking_and_queueing_every_asset_ty
         imports.poll(&ctx, &jobs, &world, &inventory);
         assert_eq!(imports.entries.len(), kinds.len());
         for entry in &imports.entries {
-            let kind = entry.source.as_ref().expect("source").kind();
+            let kind = entry.source.as_ref().expect("source").kind().expect("upload kind");
             assert_eq!(entry.folder, inventory.upload_folders[kind.folder_slot()]);
         }
         let quote = Uuid::new_v4();
@@ -431,9 +431,10 @@ fn protected_upload_defaults_survive_loading_locking_and_queueing_every_asset_ty
         imports.start(&world, &inventory, &Preferences::default(), &prices());
         assert_eq!(imports.queue.len(), 6, "five assets and the material map: {}", imports.message);
         for step in &imports.queue {
-            let expected = inventory.upload_folders[step.kind.folder_slot()];
-            assert_eq!(step.folder, expected, "{:?}, locked parent: {lock_parent}", step.kind);
-            assert_ne!(Some(step.folder), actions::system(&world.inventory, step.kind.asset_type()));
+            let kind = step.kind.expect("upload kind");
+            let expected = inventory.upload_folders[kind.folder_slot()];
+            assert_eq!(step.folder, expected, "{kind:?}, locked parent: {lock_parent}");
+            assert_ne!(Some(step.folder), actions::system(&world.inventory, kind.asset_type()));
         }
     }
 }
@@ -1024,7 +1025,7 @@ fn material_image_overrides_control_encoded_upload_dimensions_deduplication_and_
     assert!(imports.has_shared_textures());
     imports.start(&world, &Default::default(), &prefs, &prices());
     assert!(imports.message.is_empty(), "{}", imports.message);
-    let maps: Vec<_> = imports.queue.iter().filter(|step| step.kind == Kind::Texture).collect();
+    let maps: Vec<_> = imports.queue.iter().filter(|step| step.kind == Some(Kind::Texture)).collect();
     assert_eq!(
         maps.len(),
         2,
@@ -1036,7 +1037,7 @@ fn material_image_overrides_control_encoded_upload_dimensions_deduplication_and_
         let image = aurora_assets::decode_j2k(&bytes, 0).expect("decode uploaded map");
         assert_eq!((image.width, image.height), expected);
     }
-    assert_eq!(imports.queue.iter().filter(|step| step.kind == Kind::Material).count(), 3);
+    assert_eq!(imports.queue.iter().filter(|step| step.kind == Some(Kind::Material)).count(), 3);
 }
 
 #[test]
@@ -1223,20 +1224,23 @@ fn mixed_uploads_freeze_each_type_and_material_textures_use_texture_permissions(
     for step in &imports.queue {
         assert_eq!(
             step.permissions.group,
-            if step.kind == Kind::Material {
+            if step.kind == Some(Kind::Material) {
                 0
             } else {
                 perm::COPY | perm::MOVE | perm::MODIFY
             }
         );
-        assert_eq!(step.permissions.everyone, if step.kind == Kind::Material { 0 } else { perm::COPY });
+        assert_eq!(
+            step.permissions.everyone,
+            if step.kind == Some(Kind::Material) { 0 } else { perm::COPY }
+        );
         if let Source::Sound(source) = &step.source {
             let edited = step.sound_options.render(source).expect("frozen sound edit");
             assert_eq!(edited.duration(), 0.5);
             assert_eq!(edited.mono[0], 0.4);
             assert_eq!(source.mono.len(), 44100);
         }
-        let expected = match step.kind {
+        let expected = match step.kind.expect("upload kind") {
             Kind::Texture => perm::MOVE | perm::COPY,
             Kind::Material => perm::MOVE | perm::COPY | perm::MODIFY,
             Kind::Mesh | Kind::Sound => perm::MOVE | perm::TRANSFER,
@@ -1978,7 +1982,7 @@ fn cancelling_future_uploads_retains_the_in_flight_receipt() {
     let step = Step {
         key: entry.id,
         entry: Some(entry.id),
-        kind: Kind::Texture,
+        kind: Some(Kind::Texture),
         folder: Uuid::new_v4(),
         name: entry.name.clone(),
         description: String::new(),
@@ -2080,7 +2084,7 @@ fn acknowledged_uploads_leave_local_previews_and_unfinished_drafts_untouched() {
             Step {
                 key: id,
                 entry: Some(id),
-                kind: Kind::Texture,
+                kind: Some(Kind::Texture),
                 folder: entry.folder,
                 name: entry.name.clone(),
                 description: entry.description.clone(),
@@ -2143,7 +2147,7 @@ fn retiring_material_rows_keeps_texture_receipts_for_the_rest_of_the_batch() {
         imports.queue.push_back(Step {
             key: entry.id,
             entry: Some(entry.id),
-            kind: Kind::Material,
+            kind: Some(Kind::Material),
             folder: Uuid::new_v4(),
             name: entry.name.clone(),
             description: String::new(),
@@ -2162,7 +2166,7 @@ fn retiring_material_rows_keeps_texture_receipts_for_the_rest_of_the_batch() {
         Step {
             key,
             entry: None,
-            kind: Kind::Texture,
+            kind: Some(Kind::Texture),
             folder: Uuid::new_v4(),
             name: map.name.clone(),
             description: String::new(),

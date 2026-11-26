@@ -143,6 +143,8 @@ impl App {
                         name: creation_name(&name),
                         description: description.clone(),
                         source: row.source,
+                        // the recovery rule: move and transfer for the next owner
+                        permissions: None,
                     });
                 }
             }
@@ -186,19 +188,7 @@ impl App {
                 // onSavedScript: the empty item goes to the Trash, the copy
                 // stays for the next login
                 log::warn!("script recovery: not recovered: {reason}");
-                if !item.is_nil()
-                    && self.world.inventory.items.contains_key(&item)
-                    && let Some(trash) = crate::world::inventory::actions::system(&self.world.inventory, 14)
-                    && let Ok(change) = crate::world::inventory::actions::move_selection(
-                        &self.world.inventory,
-                        &[item],
-                        trash,
-                        &self.settings.inventory.protected,
-                        &HashSet::new(),
-                    )
-                {
-                    self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change));
-                }
+                self.trash_orphan_script(item);
                 self.world.system_notice(
                     aurora_i18n::tr!("script-recovery-failed", name = name.as_str(), reason = reason.as_str()),
                     crate::world::notice_topics::Topic::Warning,
@@ -215,8 +205,24 @@ impl App {
         true
     }
 
+    /// onSavedScript: the empty item of a script whose text was not saved goes
+    /// to the Trash. Shared with the importer.
+    pub(super) fn trash_orphan_script(&mut self, item: Uuid) {
+        if let Some(change) = orphan_to_trash(&self.world.inventory, &self.settings.inventory.protected, item) {
+            self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change));
+        }
+    }
+
     /// The demo's simulator for a recovered script: the item, at once.
-    pub(super) fn demo_create_script(&mut self, request: Uuid, parent: Uuid, name: &str, description: &str, source: &str) {
+    pub(super) fn demo_create_script(
+        &mut self,
+        request: Uuid,
+        parent: Uuid,
+        name: &str,
+        description: &str,
+        source: &str,
+        permissions: Option<aurora_net::inventory::upload::Permissions>,
+    ) {
         let item = aurora_net::inventory::InvItem {
             id: Uuid::new_v4(),
             parent,
@@ -229,7 +235,9 @@ impl App {
             creator: self.world.agent_id,
             base_mask: 0x7fff_ffff,
             owner_mask: 0x7fff_ffff,
-            next_owner_mask: 0x0008_2000,
+            next_owner_mask: permissions.map_or(0x0008_2000, |rights| rights.next_owner),
+            group_mask: permissions.map_or(0, |rights| rights.group),
+            everyone_mask: permissions.map_or(0, |rights| rights.everyone),
             ..Default::default()
         };
         self.demo_script_sources.insert(
@@ -240,6 +248,10 @@ impl App {
             source.to_owned(),
         );
         self.world.inventory.add_items(vec![item.clone()]);
+        let errors = crate::imports::demo::compile_errors(source);
+        if !errors.is_empty() {
+            self.on_app_event(NetEvent::ScriptCompileErrors { request, errors });
+        }
         self.on_app_event(NetEvent::InventoryContentSaved {
             request,
             item: item.id,
@@ -278,9 +290,80 @@ impl App {
     }
 }
 
+/// The move of an orphan script item to the Trash (system folder 14), None
+/// for a nil id, an item the inventory does not hold, or no Trash.
+pub(super) fn orphan_to_trash(
+    inventory: &crate::world::inventory::Inventory,
+    protected: &HashSet<Uuid>,
+    item: Uuid,
+) -> Option<aurora_net::inventory::operations::Mutation> {
+    if item.is_nil() || !inventory.items.contains_key(&item) {
+        return None;
+    }
+    let trash = crate::world::inventory::actions::system(inventory, 14)?;
+    crate::world::inventory::actions::move_selection(inventory, &[item], trash, protected, &HashSet::new()).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_orphan_script_goes_to_the_trash_only_when_there_is_one() {
+        use aurora_net::inventory::{InvFolder, InvItem};
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let root = Uuid::from_u128(1);
+        let scripts = Uuid::from_u128(2);
+        let trash = Uuid::from_u128(3);
+        world.inventory.root = root;
+        world.inventory.created_folders(vec![
+            InvFolder {
+                id: root,
+                name: "Inventory".into(),
+                type_default: 8,
+                ..Default::default()
+            },
+            InvFolder {
+                id: scripts,
+                parent: root,
+                name: "Scripts".into(),
+                type_default: 10,
+                ..Default::default()
+            },
+            InvFolder {
+                id: trash,
+                parent: root,
+                name: "Trash".into(),
+                type_default: 14,
+                ..Default::default()
+            },
+        ]);
+        let item = Uuid::from_u128(9);
+        world.inventory.add_items(vec![InvItem {
+            id: item,
+            parent: scripts,
+            name: "Door".into(),
+            asset_type: 10,
+            inv_type: 10,
+            owner: world.agent_id,
+            base_mask: 0x7fff_ffff,
+            owner_mask: 0x7fff_ffff,
+            ..Default::default()
+        }]);
+        let protected = HashSet::new();
+        assert!(
+            orphan_to_trash(&world.inventory, &protected, item).is_some(),
+            "an empty item is trashed"
+        );
+        assert!(
+            orphan_to_trash(&world.inventory, &protected, Uuid::nil()).is_none(),
+            "no item, no move"
+        );
+        assert!(
+            orphan_to_trash(&world.inventory, &protected, Uuid::from_u128(77)).is_none(),
+            "an item we do not hold"
+        );
+    }
 
     #[test]
     fn a_recovered_script_keeps_its_name_except_the_default_one() {

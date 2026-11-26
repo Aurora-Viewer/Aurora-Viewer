@@ -86,6 +86,22 @@ pub struct ScriptSaved {
     pub errors: Vec<String>,
 }
 
+impl ScriptSaved {
+    /// The compile errors, None when the script compiled (or the grid did not
+    /// compile it). A failure the grid reports without any line still gets
+    /// one, so that it is never shown as a success.
+    pub fn compile_errors(&self) -> Option<Vec<String>> {
+        if self.compiled && self.errors.is_empty() {
+            return None;
+        }
+        Some(if self.errors.is_empty() {
+            vec![aurora_i18n::tr!("script-compile-failed-no-details").to_owned()]
+        } else {
+            self.errors.clone()
+        })
+    }
+}
+
 /// A save's reply holds no compile failure: `compiled` is true, or absent
 /// with no `errors` (a grid that did not compile the script, see
 /// [`ScriptSaved::checked`]). A reply that lists errors is a failure even
@@ -175,6 +191,23 @@ pub async fn save(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compile_errors_are_reported_even_when_the_grid_lists_none() {
+        let saved = |compiled, errors: &[&str]| ScriptSaved {
+            asset: Uuid::nil(),
+            compiled,
+            checked: true,
+            errors: errors.iter().map(|e| (*e).to_owned()).collect(),
+        };
+        assert_eq!(saved(true, &[]).compile_errors(), None);
+        assert_eq!(
+            saved(false, &["(2, 3) ERROR"]).compile_errors(),
+            Some(vec!["(2, 3) ERROR".to_owned()])
+        );
+        assert_eq!(saved(false, &[]).compile_errors().map(|e| e.len()), Some(1));
+        assert_eq!(saved(true, &["warning"]).compile_errors().map(|e| e.len()), Some(1));
+    }
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]

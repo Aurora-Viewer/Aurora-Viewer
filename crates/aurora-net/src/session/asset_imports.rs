@@ -552,7 +552,15 @@ impl Session<'_> {
     /// llfloaterscriptrecover.cpp): a script item under `parent` with
     /// PERM_MOVE | PERM_TRANSFER for the next owner and no transaction, its
     /// text uploaded once the callback names it (onCreateScript).
-    pub(super) fn create_script_item(&mut self, request: Uuid, parent: Uuid, name: String, description: String, source: String) {
+    pub(super) fn create_script_item(
+        &mut self,
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        description: String,
+        source: String,
+        permissions: Option<crate::inventory::upload::Permissions>,
+    ) {
         let cap = self.main_cap("UpdateScriptAgent");
         let valid = !parent.is_nil() && !name.trim().is_empty() && name.len() <= 255 && source.len() <= crate::scripts::MAX_SOURCE;
         let Some(cap) = cap.filter(|_| valid && self.asset_imports.settings.len() < 8) else {
@@ -572,7 +580,10 @@ impl Session<'_> {
         message.agent_data.session_id = self.session_id();
         message.inventory_block.folder_id = parent;
         message.inventory_block.callback_id = callback;
-        message.inventory_block.next_owner_mask = SCRIPT_RECOVERY_NEXT_OWNER;
+        message.inventory_block.next_owner_mask = permissions.map_or(SCRIPT_RECOVERY_NEXT_OWNER, |rights| rights.next_owner);
+        if let Some(rights) = permissions {
+            self.remember_creation_permissions(callback, parent, 10, rights);
+        }
         // AT_LSL_TEXT, IT_LSL, NO_INV_SUBTYPE
         message.inventory_block.type_ = 10;
         message.inventory_block.inv_type = 10;
@@ -596,7 +607,8 @@ impl Session<'_> {
 
     /// onCreateScript / onSavedScript: the recovered text, compiled for Mono.
     /// A script that does not compile is saved all the same, as the Legacy
-    /// Viewer does (only an HTTP failure fails the recovery).
+    /// Viewer does (only an HTTP failure fails the recovery); its errors are
+    /// reported first, for the callers that show them.
     fn recovered_script_created(&mut self, pending: SettingsCreate, item: &InvItem) {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
@@ -612,12 +624,17 @@ impl Session<'_> {
                 experience: Uuid::nil(),
             };
             let source = String::from_utf8_lossy(&pending.data).into_owned();
-            let result = crate::scripts::save(&http, &pending.caps.0, target, options, source)
-                .await
-                .map(|saved| {
-                    item.asset_id = saved.asset;
-                    item.clone()
-                });
+            let result = crate::scripts::save(&http, &pending.caps.0, target, options, source).await;
+            let result = result.map(|saved| {
+                item.asset_id = saved.asset;
+                if let Some(errors) = saved.compile_errors() {
+                    let _ = events.send(NetEvent::ScriptCompileErrors {
+                        request: pending.request,
+                        errors,
+                    });
+                }
+                item.clone()
+            });
             let _ = events.send(NetEvent::InventoryContentSaved {
                 request: pending.request,
                 item: item.id,
