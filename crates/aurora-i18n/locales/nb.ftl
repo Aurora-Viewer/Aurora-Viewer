@@ -14043,7 +14043,6 @@ rlva-hidden-region = (Skjult region)
 rlva-hidden-parcel = (Skjult parsell)
 rlva-enable = Slå på RLVa
 rlva-enable-hint = La objekter styre handlinger i vieweren via RestrainedLove-kommandoer. En låst økt kan kreve pålogging på siste posisjon. Av som standard.
-rlva-session-hint = Når du slår av RLVa, oppheves alle begrensninger umiddelbart, og kravet for neste pålogging fjernes.
 rlva-blocked = Denne handlingen er begrenset av RLVa.
 rlva-active = Aktive begrensninger
 rlva-none = Ingen aktive begrensninger

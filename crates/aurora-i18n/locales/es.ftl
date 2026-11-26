@@ -14118,7 +14118,6 @@ rlva-hidden-region = (Región oculta)
 rlva-hidden-parcel = (Parcela oculta)
 rlva-enable = Activar RLVa
 rlva-enable-hint = Permite que los objetos controlen acciones del visor mediante comandos RestrainedLove. Una sesión bloqueada puede exigir iniciar sesión en la última posición. Desactivado de forma predeterminada.
-rlva-session-hint = Desactivar RLVa retira todas las restricciones de inmediato y quita la condición para el próximo inicio de sesión.
 rlva-blocked = Esta acción está restringida por RLVa.
 rlva-active = Restricciones activas
 rlva-none = Sin restricciones activas

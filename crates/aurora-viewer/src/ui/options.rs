@@ -437,6 +437,9 @@ pub struct OptionsUi {
     pub selected_parcel: Option<crate::world::parcel_visibility::Entry>,
     pub rlva_tools: super::rlva::Tools,
     pub rlva_restrictions: Vec<(uuid::Uuid, String)>,
+    /// RLVa's switch differs from what runs and waits for the next start
+    /// (world/rlva/switch.rs): its row says so.
+    pub rlva_waits: bool,
     pub rlva_camera_preset_locked: bool,
     pub rlva_camera_fov_locked: bool,
     /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
