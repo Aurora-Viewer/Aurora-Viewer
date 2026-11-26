@@ -18,7 +18,8 @@ const RUSH: Duration = Duration::from_secs(30);
 /// What a frame gives the network's messages during the rush.
 const RUSH_BUDGET: Duration = Duration::from_millis(2);
 /// A message that waited this long is a queue the eased budget does not
-/// empty: back to the usual one, so that moves and chat are never late.
+/// empty: back to the usual one, so that moves and chat are never more than
+/// about this late (they may be that late during the rush).
 const RUSH_LAG: Duration = Duration::from_millis(150);
 
 #[derive(Default)]

@@ -32,6 +32,8 @@ pub const WINDOW: &str = "area_search";
 /// takes (it had a small view too: gone, human request, 2026-11-25).
 const SIZE: Vec2 = Vec2::new(800.0, 760.0);
 const MIN_SIZE: Vec2 = Vec2::new(680.0, 520.0);
+/// How long after a search the pick follows a list that fills, in seconds.
+const FILLING: f64 = 10.0;
 
 #[derive(Default)]
 pub struct AreaSearchUi {
@@ -70,6 +72,16 @@ pub struct AreaSearchUi {
     asked: Option<(Filters, Column, bool, Option<Uuid>)>,
     /// The pointer is over the window.
     pointed: bool,
+    /// A pointer button or a key is used this frame: what is selected does
+    /// not change under a click or a key press.
+    busy: bool,
+    /// The top row is to be looked at again once nothing is used.
+    due: bool,
+    /// When that list was asked for (egui's time): the pick follows the list
+    /// while it fills only for a while after.
+    asked_at: f64,
+    /// egui's time this frame.
+    now: f64,
     /// AURORA_DEMO_AREA_SEARCH=menu: right click the second row once shown.
     pub(crate) demo_menu: bool,
     /// `select`: take the third row once shown.
@@ -170,6 +182,9 @@ impl AreaSearchUi {
         self.digest = None;
         self.several = false;
         self.asked = None;
+        self.menu_at = None;
+        self.prim = None;
+        self.table.owner = None;
     }
 
     /// The objects the 3D view shows: the selected ones, a few at most.
@@ -191,6 +206,10 @@ impl AreaSearchUi {
         window.show(ctx, p, open, |ui| {
             let pointer = ui.ctx().pointer_latest_pos();
             self.pointed = pointer.and_then(|at| ui.ctx().layer_id_at(at)) == Some(ui.layer_id());
+            (self.busy, self.now) = ui.input(|i| {
+                let keys = i.events.iter().any(|e| matches!(e, egui::Event::Key { .. } | egui::Event::Text(_)));
+                (keys || i.pointer.any_down() || i.pointer.any_released(), i.time)
+            });
             let d = self.digest();
             let (mut body, footer) = widgets::above_footer(ui);
             action = wide::show(self, &mut body, p, env, &d);
@@ -432,27 +451,30 @@ impl AreaSearchUi {
     }
 
     /// Selected rows that were filtered out or left the list cannot be
-    /// acted on, and the top row is picked while the user chose none; checked
-    /// once per new result list.
+    /// acted on (checked once per new result list), and the top row is
+    /// picked while the user chose none.
     fn check_selection(&mut self) {
-        if self.checked == self.table.generation {
+        if self.checked != self.table.generation {
+            self.checked = self.table.generation;
+            if !self.selection.is_empty() {
+                let visible: HashSet<_> = self.table.visible.iter().map(|i| self.table.rows[*i].id).collect();
+                self.selection.retain(&visible);
+            }
+            self.due = true;
+        }
+        // never under a click or a key, nor an open menu: waits for a frame
+        // with neither
+        if !self.due || self.busy || self.menu_at.is_some() {
             return;
         }
-        self.checked = self.table.generation;
-        if !self.selection.is_empty() {
-            let visible: HashSet<_> = self.table.visible.iter().map(|i| self.table.rows[*i].id).collect();
-            self.selection.retain(&visible);
-        }
-        // (an open menu never moves to another object)
-        if self.menu_at.is_some() {
-            return;
-        }
+        self.due = false;
         let t = &self.table;
         let asked = self.asked.as_ref().is_none_or(|(filters, sort, descending, owner)| {
             *filters != t.filters || *sort != t.sort || *descending != t.descending || *owner != t.owner
         });
         if asked {
             self.asked = Some((t.filters.clone(), t.sort, t.descending, t.owner));
+            self.asked_at = self.now;
             // a selection cleared by hand stays so until then
             if self.selection.is_empty() {
                 self.selection.reset();
@@ -460,8 +482,9 @@ impl AreaSearchUi {
         }
         // Kept while the list only moves (walking, a pet passing by): the top
         // row is taken again for another search or order, and while the list
-        // fills, never under the pointer.
-        let again = self.selection.is_empty() || asked || (t.pending > 0 && !self.pointed);
+        // fills in the first seconds, never under the pointer.
+        let filling = t.pending > 0 && self.now - self.asked_at < FILLING && !self.pointed;
+        let again = self.selection.is_empty() || asked || filling;
         if self.selection.automatic()
             && again
             && let Some(top) = t.visible.first()

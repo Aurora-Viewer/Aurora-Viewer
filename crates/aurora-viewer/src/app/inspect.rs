@@ -108,7 +108,18 @@ impl App {
             self.build.highlighted(&self.world).into_iter().map(|(i, _)| i).collect()
         };
         let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
-        for (idx, _) in self.inspect_prims() {
+        let prims = self.inspect_prims();
+        if select {
+            // an object killed and sent again (a teleport there and back) is
+            // selected again: its properties come anew
+            let here: HashSet<Uuid> = prims
+                .iter()
+                .filter_map(|(i, _)| self.world.objects.get(*i))
+                .map(|o| o.full_id)
+                .collect();
+            self.inspect_ui.asked.retain(|id| here.contains(id));
+        }
+        for (idx, _) in prims {
             if let Some(o) = self.world.objects.get(idx).filter(|_| !kept.contains(&idx))
                 && (!select || self.inspect_ui.asked.insert(o.full_id))
             {
@@ -252,7 +263,6 @@ impl App {
 impl App {
     /// The Inspect window this frame, and what it asks for.
     pub(super) fn inspect_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        self.scene.watched.clear();
         if !self.inspect_ui.open {
             return;
         }

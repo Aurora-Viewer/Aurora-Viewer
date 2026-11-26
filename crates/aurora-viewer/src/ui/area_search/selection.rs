@@ -5,8 +5,9 @@
 //! and otherwise selects its row (FSScrollListCtrl::handleRightMouseDown).
 //! Until the user selects something, the top row is picked for them (human
 //! request, 2026-11-25; the Legacy Viewer's list starts with none): their
-//! first click replaces it, with Ctrl and Shift too, so that nothing they did
-//! not choose is ever acted on with what they chose.
+//! first click replaces it, with Ctrl and Shift too, so that a pick is never
+//! mixed into what they chose; once they chose, a row that goes leaves the
+//! selection empty, as in the Legacy Viewer, until another search.
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -114,14 +115,10 @@ impl Selection {
         self.chosen = true;
     }
 
-    /// Rows filtered out or gone cannot be acted on; once none is left, one
-    /// may be picked again.
+    /// Rows filtered out or gone cannot be acted on. What the user chose
+    /// stays theirs: the next object is never put in its place.
     pub fn retain(&mut self, visible: &HashSet<Uuid>) {
-        let any = !self.ids.is_empty();
         self.ids.retain(|id| visible.contains(id));
-        if any && self.ids.is_empty() {
-            self.chosen = false;
-        }
         if self.anchor.is_some_and(|a| !visible.contains(&a)) {
             self.anchor = None;
         }

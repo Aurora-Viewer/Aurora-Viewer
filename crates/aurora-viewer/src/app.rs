@@ -18697,6 +18697,9 @@ impl App {
             self.video_memory_notice(&ctx, &p);
             self.media_pack_card(&ctx, &p);
         }
+        // the far avatars posed for Inspect's 3D view, named again while it
+        // is drawn (not with the interface off)
+        self.scene.watched.clear();
         match self.screen {
             Screen::Login => {
                 if let Some(demo) = &mut self.update_demo {

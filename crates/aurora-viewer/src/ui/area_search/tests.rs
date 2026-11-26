@@ -779,7 +779,59 @@ fn area_search_open_menu_never_moves_to_another_object() {
         egui::Popup::close_all(&h.ctx);
         h.settle();
         again(&mut h, |_| ());
-        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(2)));
+        assert!(h.ui.selection.is_empty(), "chosen: the next object never takes its place");
+    });
+}
+
+#[test]
+fn area_search_a_chosen_row_that_goes_leaves_nothing_to_act_on() {
+    both(|mut h| {
+        // Delete on a chosen row, the object gone: a second Delete has nothing
+        h.click("Object 3");
+        again(&mut h, |rows| rows.retain(|r| r.id != Uuid::from_u128(3)));
+        assert!(h.ui.selection.is_empty());
+        assert!(!h.shown(aurora_i18n::tr!("area-search-actions")), "no Actions without a selection");
+        assert!(
+            h.menu("Object 1", aurora_i18n::tr!("common-delete"))
+                .is_some_and(|a| matches!(a, Action::Delete(ids) if ids == [Uuid::from_u128(1)])),
+            "a right click chooses its row"
+        );
+    });
+}
+
+#[test]
+fn area_search_pick_never_changes_under_a_click_or_a_key() {
+    both(|mut h| {
+        // another order, its list in a frame with a key: the pick waits
+        h.ui.table.sort_by(Column::Distance);
+        h.frame(vec![egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
+        h.frame(Vec::new());
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(40)), "taken in the next quiet frame");
+    });
+}
+
+#[test]
+fn area_search_pick_stops_following_a_list_still_filling_after_a_while() {
+    let nearest = |n: usize| move |rows: &mut Vec<Row>| rows[n].distance = 0.1 / (n as f32);
+    both(|mut h| {
+        h.ui.table.pending = 3;
+        // 10 s after the list was asked for (0.1 s a frame)
+        for _ in 0..110 {
+            h.frame(Vec::new());
+        }
+        again(&mut h, nearest(7));
+        assert_eq!(
+            h.ui.selection.single(),
+            Some(Uuid::from_u128(1)),
+            "names that never come do not move it"
+        );
     });
 }
 
