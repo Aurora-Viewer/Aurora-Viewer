@@ -127,7 +127,7 @@ pub fn geometry_styled(
         button = MIN_BUTTON;
         widths = row(button);
     }
-    let width = row_width(&widths, button);
+    let width = row_width(&widths, button).min((right - start).max(PAD * 2.0 + button));
     let height = button + V_PAD * 2.0;
     let thumbs_w = thumbs(right - start - width - AFTER_CHAT, button, height).max(0.0);
     let dock_start = if thumbs_w > 0.0 { start + thumbs_w + AFTER_CHAT } else { start };
@@ -252,12 +252,6 @@ pub fn bottom(
         let target = ui.interact(geo.dock, Id::unique("toolbar_background"), Sense::click());
         toolbar.context(&target, p, row.bar, style, None, row.locked);
         let inner = geo.dock.shrink2(Vec2::new(PAD, V_PAD));
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(inner)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        );
-        child.spacing_mut().item_spacing.x = GAP;
         // Speak keeps its width for its arrow, within the common height
         let look = |b: &crate::ui::skin::ToolButton| {
             let at = buttons.iter().position(|x| x.command == b.command).unwrap_or(0);
@@ -271,7 +265,26 @@ pub fn bottom(
                 editing: row.editing,
             }
         };
-        let rects = toolbar_row(&mut child, p, icons, buttons, look, toolbar, panels, mic, row, &mut action);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+        // the dock takes the room the chat island leaves; a narrow window
+        // scrolls its buttons like Aurora's Legacy-style bar (#2737), the
+        // wheel moving it without Shift, as the chip rows do (#3872)
+        child.style_mut().always_scroll_the_only_direction = true;
+        let scroll = egui::ScrollArea::horizontal()
+            .id_salt("dock_scroll")
+            .auto_shrink([false, false])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .max_width(inner.width())
+            .show(&mut child, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = GAP;
+                    toolbar_row(ui, p, icons, buttons, look, toolbar, panels, mic, row, &mut action)
+                })
+                .inner
+            });
+        let rects = scroll.inner;
+        #[cfg(test)]
+        ctx.data_mut(|d| d.insert_temp(Id::unique("dock_scroll_offset"), scroll.state.clamped_offset().x));
         if cfg!(test)
             && let Some(speak) = buttons.iter().position(|b| b.command == "speak").and_then(|i| rects.get(i))
         {
@@ -629,6 +642,46 @@ mod tests {
         }
     }
 
+    /// A narrow screen keeps the chat island's least width and caps the
+    /// dock to the room it leaves; its buttons scroll inside it (#2737).
+    #[test]
+    fn a_narrow_screen_caps_the_dock_and_scrolls_its_buttons() {
+        let s = screen(480.0);
+        let g = geometry(s, 0.0, 17, true);
+        assert_eq!(g.chat.width(), MIN_CHAT);
+        assert!(g.dock.right() <= s.right() - MARGIN + 0.5, "{g:?}");
+        assert!(g.chat.right() + AFTER_CHAT <= g.dock.left() + 0.5, "{g:?}");
+        let buttons = g.widths.iter().sum::<f32>() + GAP * (g.widths.len() - 1) as f32;
+        assert!(buttons > g.dock.width() - PAD * 2.0, "{g:?}");
+    }
+
+    /// A plain mouse wheel scrolls the dock's buttons in a narrow window,
+    /// without Shift (#4001).
+    #[test]
+    fn a_plain_wheel_scrolls_the_dock() {
+        let mut bench = Bench::new();
+        bench.screen_width = 480.0;
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        let at = geometry(screen(480.0), 0.0, 17, true).dock.center();
+        bench.frame(vec![egui::Event::PointerMoved(at)]);
+        bench.frame(vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -80.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: Default::default(),
+        }]);
+        for _ in 0..4 {
+            bench.frame(vec![]);
+        }
+        let offset = bench
+            .ctx
+            .data(|d| d.get_temp::<f32>(Id::unique("dock_scroll_offset")))
+            .unwrap_or(0.0);
+        assert!(offset > 0.0, "the wheel moved the dock: {offset}");
+    }
+
     /// A wide chat island pushes the dock right; the dock never leaves the
     /// screen: its buttons narrow, then the chat island gives way.
     #[test]
@@ -734,6 +787,8 @@ mod tests {
         panels: Panels,
         chat: crate::ui::chat::ChatUi,
         width: f32,
+        /// The screen the frame is drawn on (1536 × 864 unless a test asks).
+        screen_width: f32,
         toolbar: crate::ui::toolbar::ToolbarUi,
         unread: usize,
         latest: Option<uuid::Uuid>,
@@ -756,6 +811,7 @@ mod tests {
                 panels: Panels::from_settings(&crate::settings::Settings::default()),
                 chat: Default::default(),
                 width: 0.0,
+                screen_width: 1536.0,
                 toolbar: Default::default(),
                 unread: 0,
                 latest: None,
@@ -805,7 +861,7 @@ mod tests {
             let mut result = (None, 0.0, false);
             let mut output = self.ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(screen(1536.0)),
+                    screen_rect: Some(screen(self.screen_width)),
                     events,
                     ..Default::default()
                 },

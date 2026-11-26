@@ -79,7 +79,7 @@ pub(super) fn arrow(
 /// order, just like in Firefox"), then the full Teleport history.
 /// `released_held`: the held button was released this frame, over the
 /// place to go to if any.
-fn body(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, released_held: bool) -> Option<BarAction> {
+pub(super) fn body(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, released_held: bool) -> Option<BarAction> {
     let session = st.tp_session;
     let mut action = None;
     menu::heading(ui, p, aurora_i18n::tr!("ui-bars-tp-list-heading"));

@@ -21983,7 +21983,10 @@ fn forced_window_size() -> Option<(u32, u32)> {
     *SIZE.get_or_init(|| {
         let v = std::env::var("AURORA_WINDOW_SIZE").ok()?;
         let (w, h) = v.split_once(',')?;
-        Some((w.trim().parse::<u32>().ok()?.max(800), h.trim().parse::<u32>().ok()?.max(560)))
+        Some((
+            w.trim().parse::<u32>().ok()?.max(gpu_recovery::MIN_WINDOW_SIZE.0),
+            h.trim().parse::<u32>().ok()?.max(gpu_recovery::MIN_WINDOW_SIZE.1),
+        ))
     })
 }
 
@@ -22086,7 +22089,10 @@ impl ApplicationHandler for App {
         }
         // captures keep a fixed, predictable window
         let capture = self.capture.is_some();
-        let (mut w, mut h) = (self.settings.window_width.max(800), self.settings.window_height.max(600));
+        let (mut w, mut h) = (
+            self.settings.window_width.max(gpu_recovery::MIN_WINDOW_SIZE.0),
+            self.settings.window_height.max(gpu_recovery::MIN_WINDOW_SIZE.1),
+        );
         // (a forced size is placed like a capture's window: not where the
         // last session was, not maximized)
         let forced = forced_window_size();
