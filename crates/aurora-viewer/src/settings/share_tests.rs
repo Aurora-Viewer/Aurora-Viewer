@@ -181,6 +181,45 @@ fn values_out_of_bounds_take_the_settings_own_bounds() {
 }
 
 #[test]
+fn the_preview_shows_the_value_apply_stores() {
+    let text = format!("{HEADER}\ndraw_distance = 999999.0\n");
+    let code = Code::parse(&text).unwrap();
+    let plan = Plan::new(&code, &Settings::default(), &catalog(), &Locks::default(), false);
+    let mut theirs = Settings::default();
+    apply(&plan, &mut theirs, &["graphics"]);
+    assert_eq!(plan.changes.len(), 1, "{plan:?}");
+    assert_eq!(plan.changes[0].to.as_f64(), Some(f64::from(theirs.draw_distance)));
+    assert_ne!(plan.changes[0].to, json!(999999.0));
+
+    // a value that clamps to what the user already has changes nothing
+    let plan = Plan::new(&code, &theirs, &catalog(), &Locks::default(), false);
+    assert!(plan.changes.is_empty(), "{plan:?}");
+    assert_eq!((plan.same, plan.refused), (1, 0));
+}
+
+#[test]
+fn invisible_format_characters_never_travel() {
+    // a bidi override, a zero-width space, an isolate, a byte order mark
+    for c in ['\u{202E}', '\u{200B}', '\u{2067}', '\u{FEFF}'] {
+        let text = export(&mine(), &catalog(), &["graphics"], &format!("Cozy{c} evening"));
+        assert!(text.contains("name: Cozy evening\n"), "{c:?}: {text}");
+        let code = Code::parse(&format!("{HEADER}\nname: Cozy{c} evening\n")).unwrap();
+        assert_eq!(code.name, "Cozy evening");
+
+        let catalog = Catalog::new([("appearance", "font".to_owned())]);
+        let value = json!(format!("Noto{c} Sans"));
+        let code = Code::parse(&format!("{HEADER}\nfont = {value}\n")).unwrap();
+        let plan = Plan::new(&code, &Settings::default(), &catalog, &Locks::default(), false);
+        assert_eq!((plan.changes.len(), plan.refused), (0, 1), "{c:?}");
+        let mine = Settings {
+            font: format!("Noto{c} Sans"),
+            ..Settings::default()
+        };
+        assert!(!export(&mine, &catalog, &["appearance"], "").contains("font"), "{c:?}");
+    }
+}
+
+#[test]
 fn a_setting_rlva_holds_is_refused() {
     let text = format!("{HEADER}\ncamera.fov = 1.2\n");
     let locks = Locks {

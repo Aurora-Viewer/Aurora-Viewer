@@ -37,8 +37,9 @@
 //!   protection nor redirects the network;
 //! - a setting no page of Preferences shows (Debug Settings only);
 //! - a value holding a UUID (someone's asset, AGENTS.md "Creators'
-//!   permissions"), a web address, a path, an e-mail address, a line break
-//!   or a long text;
+//!   permissions"), a web address, a path, an e-mail address, a line break,
+//!   an invisible format character (bidi override, zero-width space) or a
+//!   long text; a name loses its format characters;
 //! - lists and per-account maps (the registry lists single values only).
 //!
 //! Reading is defensive: the text and its lines are capped, unknown or
@@ -210,6 +211,16 @@ fn kept_out(key: &str) -> bool {
     listed(PERSONAL, key) || listed(PROTECTIVE, key)
 }
 
+/// An invisible character that changes how the text around it reads: the
+/// bidirectional embeddings, overrides and isolates (U+202A–U+202E,
+/// U+2066–U+2069), the zero-width spaces, joiners and direction marks
+/// (U+200B–U+200F), the word joiner and invisible operators (U+2060–U+2064)
+/// and the byte order mark (U+FEFF). In a code's name or text value they
+/// could make the preview read differently from what is applied.
+fn format_char(c: char) -> bool {
+    matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+}
+
 /// A value that may travel in a code (both ways).
 fn safe_value(value: &Value) -> bool {
     match value {
@@ -218,6 +229,7 @@ fn safe_value(value: &Value) -> bool {
                 && !registry::holds_uuid(text)
                 && !text.contains("://")
                 && !text.contains(['/', '\\', '@', '\n', '\r'])
+                && !text.chars().any(format_char)
         }
         Value::Bool(_) | Value::Number(_) => true,
         Value::Array(items) => items.iter().all(Value::is_number),
@@ -248,9 +260,14 @@ pub fn counts(settings: &Settings, catalog: &Catalog) -> BTreeMap<&'static str, 
     out
 }
 
-/// A name as one short line.
+/// A name as one short line, without the invisible characters that would
+/// make it read otherwise ([`format_char`]).
 fn clean_name(name: &str) -> String {
-    let one_line: String = name.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let one_line: String = name
+        .chars()
+        .filter(|c| !format_char(*c))
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
     one_line.trim().chars().take(MAX_NAME).collect()
 }
 
@@ -408,6 +425,7 @@ impl Plan {
                 reset: false,
             });
         }
+        plan.settle(settings, &defaults);
         if reset_others {
             for entry in entries.values() {
                 let Some(page) = catalog.shared_page(&entry.key) else {
@@ -432,6 +450,30 @@ impl Plan {
         // the Import window lists them by page, in the order of the sidebar
         plan.changes.sort_by_key(|c| SHARED_PAGES.iter().position(|p| *p == c.page));
         plan
+    }
+
+    /// Each change of the code as Apply stores it: the settings' bounds
+    /// (`Settings::sanitized`) clamp a value out of range, so the preview
+    /// shows the clamped value, and a change that clamps to what the user
+    /// already has is no change.
+    fn settle(&mut self, settings: &Settings, defaults: &Value) {
+        let mut applied = settings.clone();
+        let values: Vec<(&str, Value)> = self.changes.iter().map(|c| (c.key.as_str(), c.to.clone())).collect();
+        registry::set_many(&mut applied, &values);
+        let stored: HashMap<String, Value> = registry::entries(&applied, defaults)
+            .into_iter()
+            .map(|e| (e.key, e.value))
+            .collect();
+        let mut same = 0;
+        self.changes.retain_mut(|change| {
+            if let Some(value) = stored.get(&change.key) {
+                change.to = value.clone();
+            }
+            let kept = change.from != change.to && !same_number(&change.from, &change.to);
+            same += usize::from(!kept);
+            kept
+        });
+        self.same += same;
     }
 
     /// The pages the plan changes, in the order of the sidebar.
