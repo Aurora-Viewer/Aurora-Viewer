@@ -49,7 +49,8 @@ impl App {
         let Some(root) = mp::root(&self.world.inventory) else { return };
         let worn = self.worn_items();
         let mut actions = Vec::new();
-        self.listings_ui.open = true;
+        // shown again, a minimized window expands (LLFloaterReg::showInstance)
+        ui::widgets::open_floater(&self.egui_ctx, ui::marketplace_listings::WINDOW, &mut self.listings_ui.open);
         self.listings_ui
             .inventory_command(&self.world.inventory, &worn, root, item, command, &mut actions);
         for action in actions {
@@ -66,7 +67,7 @@ impl App {
     }
     /// Me › Marketplace listings (LLFloaterMarketplaceListings::onOpen).
     pub(super) fn open_marketplace_listings(&mut self) {
-        if self.listings_ui.open() {
+        if self.listings_ui.open(&self.egui_ctx) {
             self.send(NetCommand::RequestMerchantStatus);
         }
     }

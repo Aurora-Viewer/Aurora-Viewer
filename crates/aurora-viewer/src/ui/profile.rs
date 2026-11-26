@@ -79,6 +79,9 @@ pub enum ProfileAction {
     },
     /// Chat of one of our groups (double-click in the group list).
     GroupChat(Uuid),
+    /// "Invite to group" (LLAvatarActions::inviteToGroup,
+    /// indra/newview/llavataractions.cpp): group picker then invitation.
+    InviteToGroup(Uuid),
     /// Picks and classifieds: "Show on map" / "Teleport"
     /// (LLFloaterWorldMap::trackLocation, gAgent.teleportViaLocation).
     ShowOnMap(DVec3),
@@ -1543,13 +1546,9 @@ fn second_life_tab(
                 if !own {
                     ui.horizontal(|ui| {
                         ui.add_space(LABEL_W - 22.0);
-                        widgets::icon_button(
-                            ui,
-                            p,
-                            "users-plus",
-                            aurora_i18n::tr!("ui-profile-invite-to-group-coming-soon"),
-                            false,
-                        );
+                        if widgets::icon_button(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group"), true) {
+                            actions.push(ProfileAction::InviteToGroup(id));
+                        }
                     });
                 }
             });
@@ -1764,6 +1763,13 @@ fn overflow_menu(
         ) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::Call(id));
         }
+        // menu_profile_other.xml's invite_to_group (LLPanelProfileSecondLife::
+        // onCommitMenu → LLAvatarActions::inviteToGroup, llpanelprofile.cpp):
+        // no enable callback, and never on our own profile (menu_profile_self.xml
+        // has none, mGroupInviteButton->setVisible(!own_profile))
+        if id != world.agent_id && menu::item(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group")) {
+            actions.push(ProfileAction::InviteToGroup(id));
+        }
         let block = if blocked {
             aurora_i18n::tr!("common-unblock")
         } else {
@@ -1896,7 +1902,7 @@ fn feed_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, web: &WebContext) {
 
 /// LLAvatarName::getAccountName ("first.last"), else
 /// LLCacheName::buildUsername from the legacy name.
-fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
+pub(crate) fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
     let names = &world.social.avatar_names;
     if let Some(u) = names.get_in(scope, id).map(|n| n.username.clone()).filter(|u| !u.is_empty()) {
         return Some(u.replace(' ', "."));
