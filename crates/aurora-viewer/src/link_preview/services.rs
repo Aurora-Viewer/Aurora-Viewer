@@ -92,6 +92,8 @@ pub(super) enum Step {
     OEmbed(String),
     /// The page itself, its `og:image`.
     Head(String),
+    /// Public sharing metadata from a recognized video publisher.
+    Publisher(String),
     /// Reddit's Atom feed of a post.
     Feed(String),
     /// A Bluesky or X post as JSON (`from_post`).
@@ -343,8 +345,53 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
                 )),
             ))
         }
-        _ => site_page(&parsed),
+        _ => publisher_page(&parsed).or_else(|| site_page(&parsed)),
     }
+}
+
+fn publisher_page(url: &Url) -> Option<(Service, Step)> {
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+        return None;
+    }
+    let host = bare_host(url)?;
+    let parts = segments(url);
+    let safe = match (host.as_str(), parts.as_slice()) {
+        ("snapchat.com", ["spotlight", id] | [_, "spotlight", id]) => {
+            (8..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        }
+        _ => false,
+    };
+    safe.then(|| {
+        let mut page = url.clone();
+        page.set_query(None);
+        page.set_fragment(None);
+        (Service::Site, Step::Publisher(page.into()))
+    })
+}
+
+/// A public poster at the publisher or one of its own media hosts.
+pub(super) fn publisher_poster(page: &str, html: &str) -> Option<String> {
+    let page = Url::parse(page).ok()?;
+    let owner = bare_host(&page)?;
+    let allowed: &[&str] = match owner.as_str() {
+        "snapchat.com" => &["sc-cdn.net", "snapcdn.com"],
+        _ => &[],
+    };
+    head_meta(html).find_map(|(key, value)| {
+        if !matches!(key.to_ascii_lowercase().as_str(), "og:image" | "og:image:url" | "twitter:image") || value.len() > 2048 {
+            return None;
+        }
+        let url = page.join(&unescape(value)).ok()?;
+        if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+            return None;
+        }
+        let host = url.host_str()?;
+        (bare_host(&url).as_deref() == Some(owner.as_str())
+            || allowed
+                .iter()
+                .any(|domain| host == *domain || host.strip_suffix(domain).is_some_and(|prefix| prefix.ends_with('.'))))
+        .then(|| url.into())
+    })
 }
 
 /// The servers each service keeps its pictures on.
@@ -894,6 +941,7 @@ pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
             },
         )),
         Step::Head(_) => plain(from_head(service, IMGUR_ALBUM)),
+        Step::Publisher(_) => None,
         Step::Feed(_) => plain(from_feed(if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST })),
         Step::Post(_) if service == Service::X => from_post(service, X_POST.as_bytes()),
         Step::Post(_) => from_post(

@@ -1198,6 +1198,19 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
             }
             services::from_head(service, &html)
         }
+        Step::Publisher(page) => {
+            let html = text_head(client, &page, "text/html", "</head>").await.0?;
+            let title = services::metadata(&html, &["og:title", "twitter:title"]).ok_or(Failure::Unavailable)?;
+            let channel = services::metadata(&html, &["author", "og:site_name"])
+                .or_else(|| host(&page))
+                .unwrap_or_default();
+            let summary = services::metadata(&html, &["og:description", "twitter:description"]).unwrap_or_default();
+            let picture = match services::publisher_poster(&page, &html) {
+                Some(source) => fetch_picture(client, &source).await.ok(),
+                None => None,
+            };
+            return Ok(Content::Post(PostInfo { title, channel, summary }, picture));
+        }
         Step::Post(endpoint) => {
             let body = download(client, &endpoint, "application/json", HEAD_BYTES as u64)
                 .await
