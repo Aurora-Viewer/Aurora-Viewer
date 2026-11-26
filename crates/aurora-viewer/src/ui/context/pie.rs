@@ -506,6 +506,34 @@ mod tests {
     }
 
     #[test]
+    fn the_whole_appearance_export_is_on_the_appearance_ring_after_edit_shape() {
+        let target = Target::Avatar {
+            id: uuid::Uuid::nil(),
+            own: true,
+            attachment: None,
+        };
+        let facts = Facts {
+            worn_shape: Some(uuid::Uuid::from_u128(43)),
+            appearance_xml_export: true,
+            ..Default::default()
+        };
+        let entries = super::super::entries::world_menu(&target, &facts, Vec3::ZERO);
+        let root = layout(&target, &entries);
+        let Kind::Submenu(slices) = &root.iter().find(|e| e.icon == "man-filled").expect("Appearance").kind else {
+            panic!("Appearance is a submenu");
+        };
+        assert_eq!(slices.len(), SLICES);
+        let at = slices[..SLICES - 1]
+            .iter()
+            .position(|e| matches!(e.kind, Kind::Action(CtxAction::ExportAppearanceXml)))
+            .expect("on the ring, not in More");
+        assert!(
+            matches!(slices[at - 1].kind, Kind::Action(CtxAction::EditWorn(_))),
+            "after Edit shape"
+        );
+    }
+
+    #[test]
     fn the_pie_takes_the_pointer_on_its_square_only() {
         let ctx = egui::Context::default();
         let facts = Facts::default();

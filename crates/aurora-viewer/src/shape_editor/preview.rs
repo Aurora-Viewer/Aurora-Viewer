@@ -637,6 +637,8 @@ mod tests {
                 textures: [Uuid::nil(); 4],
                 material: Material::default(),
                 alpha_explicit: false,
+                gloss: None,
+                fullbright: false,
             }],
         });
         let unknown = snapshot.model(&library, &[], &BTreeMap::new(), 1, 0.0);
@@ -964,6 +966,8 @@ mod tests {
                     textures: [id, Uuid::nil(), Uuid::nil(), Uuid::nil()],
                     material: Material::default(),
                     alpha_explicit: false,
+                    gloss: None,
+                    fullbright: false,
                 }],
             }],
             pose: (vec![Quat::IDENTITY], vec![Vec3::ZERO]),
@@ -996,6 +1000,8 @@ mod tests {
                         ..Default::default()
                     },
                     alpha_explicit: false,
+                    gloss: None,
+                    fullbright: false,
                 }],
             }],
             pose: (vec![Quat::from_rotation_z(1.0)], vec![Vec3::ONE]),
@@ -1075,6 +1081,8 @@ mod tests {
                         ..Default::default()
                     },
                     alpha_explicit: false,
+                    gloss: None,
+                    fullbright: false,
                 }],
             }],
             pose: Default::default(),

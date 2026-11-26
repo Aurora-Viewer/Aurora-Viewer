@@ -609,7 +609,13 @@ impl World {
     /// of the one before. `keep_all`: one line per entry, the empty ones
     /// too (the History window counts them). `peer`: the other resident of
     /// a private conversation, the sender of its lines whose name is not
-    /// cached (a group's or the nearby chat's stay unknown then).
+    /// cached, for their picture and their profile (a group's or the nearby
+    /// chat's stay unknown then); its lines are `ChatLine::private_history`,
+    /// whose names are looked up when they are drawn, a line's only when
+    /// the name it was written with is its sender's
+    /// (`ui::chat::cached_line_sender`): one we wrote under an earlier
+    /// account name falls to `peer` here and keeps that name. Every line
+    /// keeps the name the file gives in `from`.
     pub fn history_lines(&self, entries: Vec<Entry>, nearby: bool, keep_all: bool, peer: Option<Uuid>) -> Vec<ChatLine> {
         let own = self.own_log_names();
         let names = &self.social.avatar_names;
@@ -648,15 +654,25 @@ impl World {
                     blocked: false,
                     beyond_range: false,
                     speaker: Default::default(),
+                    private_history: peer.is_some(),
                 }
             })
             .collect()
     }
 
+    /// The other resident of a conversation when it is a private one: a
+    /// private conversation is keyed by the other resident; a group's or a
+    /// conference's is not one, by its session or by our membership (as
+    /// `transcript_stem` names its file), nor the nearby chat (nil). Its
+    /// history lines resolve their names when drawn (`history_lines`).
+    pub fn private_peer(&self, conversation: Uuid) -> Option<Uuid> {
+        let id = conversation;
+        (!id.is_nil() && !self.is_group_session(&id) && self.groups.group(&id).is_none()).then_some(id)
+    }
+
     fn apply_history(&mut self, loaded: Loaded) {
         let nearby = loaded.conversation.is_nil();
-        // a private conversation is keyed by the other resident
-        let peer = (!nearby && !self.is_group_session(&loaded.conversation)).then_some(loaded.conversation);
+        let peer = self.private_peer(loaded.conversation);
         let lines = self.history_lines(loaded.entries, nearby, false, peer);
         if nearby {
             self.nearby_history = HistoryState::Done;
@@ -768,6 +784,7 @@ impl World {
                     blocked: false,
                     beyond_range: false,
                     speaker: Default::default(),
+                    private_history: false,
                 }
             })
             .collect();
@@ -937,6 +954,9 @@ mod tests {
         // other resident of the conversation), ours names nobody, as live
         let sources: Vec<Uuid> = s.lines.iter().take(2).map(|l| l.source).collect();
         assert_eq!(sources, [jane, Uuid::nil()]);
+        // a private conversation's history, its names looked up when drawn
+        let private: Vec<bool> = s.lines.iter().map(|l| l.private_history).collect();
+        assert_eq!(private, [true, true, false]);
         assert_eq!(s.unread, 1);
         assert_eq!(file_texts(&w, "Jane Doe").len(), 3);
         clean(&w, &root);
@@ -1020,6 +1040,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         });
         // ours, as the simulator echoes it, keeps its volume and its verb
         // (#1323)
@@ -1137,6 +1158,8 @@ mod tests {
                 ("later", Origin::ServerLog),
             ]
         );
+        // a group's history keeps the names it was written with
+        assert!(w.social.ims[0].lines.iter().all(|l| !l.private_history));
         // opened by us: the server's lines are now in the file too
         assert!(w.chat_log.flush(WAIT));
         assert_eq!(file_texts(&w, &stem).len(), 4);
@@ -1573,16 +1596,70 @@ mod tests {
                 entry(chat_log::format::SYSTEM_FROM, "a notice"),
             ]
         };
-        // a group or the nearby chat: the cached name only
-        let sources: Vec<Uuid> = w.history_lines(entries(), false, false, None).iter().map(|l| l.source).collect();
+        // a group or the nearby chat: the cached name only, and every line
+        // keeps the file's names (Bob's cached one included)
+        let lines = w.history_lines(entries(), false, false, None);
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
         assert_eq!(sources, [bob, Uuid::nil(), Uuid::nil()]);
-        // a private conversation: its other resident when the name is unknown
-        let sources: Vec<Uuid> = w
-            .history_lines(entries(), false, false, Some(jane))
-            .iter()
-            .map(|l| l.source)
-            .collect();
+        assert!(lines.iter().all(|l| !l.private_history));
+        // a private conversation: its other resident when the name is
+        // unknown, and its names looked up when drawn
+        let lines = w.history_lines(entries(), false, false, Some(jane));
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
         assert_eq!(sources, [bob, jane, Uuid::nil()]);
+        assert!(lines.iter().all(|l| l.private_history));
+        clean(&w, &root);
+    }
+
+    /// A private conversation's line whose name is not recognised takes the
+    /// other resident for its picture and its profile, never for its name:
+    /// one we wrote under an earlier account name keeps it, whether the
+    /// other resident's name was cached when the history loaded or later.
+    #[test]
+    fn a_private_history_line_under_another_name_keeps_it() {
+        let root = temp();
+        let (me, near) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut w = world(&root, me);
+        let entry = |from: &str| Entry {
+            stamp: String::new(),
+            time: None,
+            from: from.into(),
+            text: "hello".into(),
+        };
+        // theirs, then one of ours from before an account rename
+        let entries = || vec![entry("Near Tester"), entry("Myold Name")];
+        let senders =
+            |w: &World, lines: &[ChatLine]| -> Vec<String> { lines.iter().map(|l| crate::ui::chat::sender_name(w, "Me", l)).collect() };
+        let nova = aurora_net::AvatarNameData {
+            id: near,
+            username: "near.tester".into(),
+            display_name: "Nova".into(),
+            legacy_first: "Near".into(),
+            legacy_last: "Tester".into(),
+            ..Default::default()
+        };
+        // their name not cached yet when the history loads: both lines fall
+        // to them, and show the file's names
+        let late = w.history_lines(entries(), false, false, Some(near));
+        let sources: Vec<Uuid> = late.iter().map(|l| l.source).collect();
+        assert_eq!(sources, [near, near]);
+        assert_eq!(senders(&w, &late), ["Near Tester", "Myold Name"]);
+        // their name arrives: their line resolves, ours keeps its name
+        w.social.avatar_names.on_display_names(std::slice::from_ref(&nova), &[], Some(3600));
+        assert_eq!(senders(&w, &late), ["Nova", "Myold Name"]);
+        // cached when it loads: the same
+        let lines = w.history_lines(entries(), false, false, Some(near));
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
+        assert_eq!(sources, [near, near]);
+        assert_eq!(senders(&w, &lines), ["Nova", "Myold Name"]);
+        // their name written in another form is still theirs, and follows
+        // the name options as the live lines do
+        let forms = || vec![entry("Nova (near.tester)"), entry("near tester")];
+        let lines = w.history_lines(forms(), false, false, Some(near));
+        assert_eq!(senders(&w, &lines), ["Nova", "Nova"]);
+        w.social.avatar_names.options.use_display_names = false;
+        assert_eq!(senders(&w, &lines), ["Near Tester", "Near Tester"]);
+        assert_eq!(senders(&w, &late), ["Near Tester", "Myold Name"]);
         clean(&w, &root);
     }
 

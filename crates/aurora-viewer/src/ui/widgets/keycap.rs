@@ -80,6 +80,17 @@ pub(crate) fn caps(ui: &egui::Ui, binding: &crate::keybinds::Binding, behind: Co
         .collect()
 }
 
+/// The caps of Ctrl+F, for a search field that takes it (`find_shortcut`).
+pub(crate) fn find_caps(ui: &egui::Ui, p: &Palette) -> Vec<Keycap> {
+    let binding = crate::keybinds::Binding {
+        input: crate::keybinds::Input::Key("KeyF".into()),
+        ctrl: true,
+        shift: false,
+        alt: false,
+    };
+    caps(ui, &binding, p.field)
+}
+
 /// Width of `caps` drawn side by side.
 pub(crate) fn row_width(caps: &[Keycap]) -> f32 {
     caps.iter().map(Keycap::width).sum::<f32>() + GAP * caps.len().saturating_sub(1) as f32

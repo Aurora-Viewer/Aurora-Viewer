@@ -529,7 +529,7 @@ impl App {
             Action::AllLandmarks => {
                 self.world.place_details.close_panel();
                 self.places_ui.open_tab(crate::ui::places::TAB_LANDMARKS);
-                self.panels.places = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
             }
             Action::Minimize => self.world.region_restart.minimize(true),
             Action::Expand => self.world.region_restart.minimize(false),

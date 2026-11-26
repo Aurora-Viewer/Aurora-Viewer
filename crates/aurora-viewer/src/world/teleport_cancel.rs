@@ -225,7 +225,7 @@ mod tests {
         let mut world = world();
         world.tp_cancel.lock_for_rlva();
         started(&mut world, 0);
-        world.apply(NetEvent::TeleportFailed { reason: String::new() });
+        world.apply(NetEvent::viewer_teleport_failed(String::new()));
         assert!(!world.tp_cancel.rlva_locked && !world.tp_cancel.offered(true));
         world.tp_cancel.lock_for_rlva();
         started(&mut world, 0);

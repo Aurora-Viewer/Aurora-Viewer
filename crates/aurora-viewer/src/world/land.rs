@@ -22,6 +22,8 @@ pub mod powers {
     pub const LAND_DEED: u64 = 1 << 12;
     pub const LAND_RELEASE: u64 = 1 << 13;
     pub const LAND_SET_SALE_INFO: u64 = 1 << 14;
+    /// Divide and join parcels (roles_constants.h GP_LAND_DIVIDE_JOIN).
+    pub const LAND_DIVIDE_JOIN: u64 = 1 << 15;
     pub const LAND_FIND_PLACES: u64 = 1 << 17;
     pub const LAND_CHANGE_IDENTITY: u64 = 1 << 18;
     pub const LAND_SET_LANDING_POINT: u64 = 1 << 19;
@@ -1242,6 +1244,56 @@ mod tests {
             list_in_profile: true,
             contribution: 0,
         }
+    }
+
+    /// Build › Land's Subdivide and Abandon land on group-owned land follow
+    /// "Divide and join parcels" (1 << 15) and "Release land" (1 << 13)
+    /// through the shared rule (LLPanelLandInfo::refresh with
+    /// isParcelOwnedByAgent), not Set Landing Point and Change Media.
+    #[test]
+    fn group_land_subdivide_and_abandon_follow_their_powers() {
+        assert_eq!(powers::LAND_DIVIDE_JOIN, 1 << 15);
+        assert_eq!(powers::LAND_RELEASE, 1 << 13);
+        let land = Uuid::from_u128(50);
+        let p = ParcelInfo {
+            owner_id: land,
+            group_id: land,
+            is_group_owned: true,
+            ..Default::default()
+        };
+        let check = |powers_held: u64, god: bool| {
+            let groups = [group(50, powers_held)];
+            let a = AgentRights {
+                id: me(),
+                groups: &groups,
+                god,
+            };
+            (
+                owned_by_agent(&p, &a, powers::LAND_DIVIDE_JOIN),
+                owned_by_agent(&p, &a, powers::LAND_RELEASE),
+            )
+        };
+        assert_eq!(check(powers::LAND_DIVIDE_JOIN, false), (true, false));
+        assert_eq!(check(powers::LAND_RELEASE, false), (false, true));
+        assert_eq!(check(powers::LAND_DIVIDE_JOIN | powers::LAND_RELEASE, false), (true, true));
+        // the powers the panel followed before do not count
+        assert_eq!(
+            check(powers::LAND_SET_LANDING_POINT | powers::LAND_CHANGE_MEDIA, false),
+            (false, false)
+        );
+        // a god has both
+        assert_eq!(check(powers::NONE, true), (true, true));
+        // our own land keeps both
+        let mine = ParcelInfo {
+            owner_id: me(),
+            ..Default::default()
+        };
+        let a = AgentRights {
+            id: me(),
+            groups: &[],
+            god: false,
+        };
+        assert!(owned_by_agent(&mine, &a, powers::LAND_DIVIDE_JOIN) && owned_by_agent(&mine, &a, powers::LAND_RELEASE));
     }
 
     #[test]
