@@ -84,6 +84,7 @@ pub mod keyboard_focus;
 pub mod land;
 pub mod landmark_create;
 pub mod layout;
+pub mod lens_flare;
 pub mod link_health;
 pub mod loading;
 pub mod login;

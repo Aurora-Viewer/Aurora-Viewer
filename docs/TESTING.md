@@ -483,6 +483,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_SNAPSHOT_360=<folder>[:preview\|medium\|high\|maximum][:hide][:inventory][:panel\|:classic]` | The photo window opened in 360° at frame 600 and its shutter pressed, the panorama written to the folder |
+| `AURORA_DEMO_LENS_FLARE=<look>[:<options>]` | Lens flare on a dark stage with an HDR emitter and a polished sphere |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
 | `AURORA_DEMO_PHOTO_GAZE=look[:<percent>]\|turn\|orbit\|others` | With the photo window open: "Look at camera" on (at a "Look intensity"), "Turn to camera" pressed, the camera going round the avatar while it looks at it, or the nearby avatars allowing posing and looking at the camera |
 | `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
@@ -724,6 +725,36 @@ avatar, and the capture would show the avatar instead of the sky (#3964); the
 log then says `demo sky view: the camera was moved before the capture; put
 back`. Without `AURORA_CAPTURE`, or once the last frame is captured, the
 camera is free.
+
+`AURORA_DEMO_LENS_FLARE` accepts `subtle`, `golden`, `blue`, `star`,
+`off`, `occluded`, and `dark`. Use `performance`, `balanced` (default),
+or `high` for the working resolution. `panel` opens the floater, `advanced`
+opens it with the advanced controls visible, and
+`sweep` moves the camera so the specular reflection travels across the
+sphere and the emitter approaches the edge of the frame. The fixed camera
+gives repeatable comparisons with `AURORA_BLOOM=0` and `AURORA_BLOOM=1`.
+With `aurora_render::lens_flare=debug` in `RUST_LOG`, compare fresh runs of
+`off` and `blue:sweep`. The first produces no pipeline build message. The
+second logs the worker's build time once, and the streak follows the emitter
+after the pipelines arrive.
+Compare `blue:taper=0`, `blue:taper=0.5`, and `blue:taper=1` with the camera fixed.
+The streak tips fade more strongly as taper increases.
+Compare `golden:threshold=0` and `golden:threshold=32` to check highlight
+selection across its full range. Compare `golden:blur=0` and
+`golden:blur=1` to check the softening of the ghosts and halos. In the
+floater Advanced and Preferences › Graphics › Light, both Bloom rows
+control the same live values.
+With `golden:advanced` and `AURORA_DEMO_RESIZE=sweep,screen_space_lens_flare`,
+drag the corner in and back out. The controls scroll within the chosen size.
+Try `AURORA_DEMO_SNAPSHOT=viewfinder-shoot` with and without
+`AURORA_DEMO_SNAPSHOT_TILE=512` to check the ghost on the opposite side of
+the image from its source. With `AURORA_PROFILE=1`, compare
+`g_lens_flare` at the actual render sizes reported by the profiler.
+With `blue:high:fail-tile` and a snapshot spanning three or more tiles, the
+second readback fails. Enable `aurora_render::renderer=debug` in `RUST_LOG`
+to see the abandoned photo map released when live drawing resumes.
+`AURORA_GPU_OOM_FIRST_USE=3` exercises allocation refusal and automatic
+recovery without filling video memory.
 
 `AURORA_DEMO_SNAPSHOT`: `viewfinder` opens the photo mode in its
 viewfinder at frame 600 (whatever Preferences › Aurora › Photo window
@@ -5728,7 +5759,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
 | `AURORA_GPU_OOM_START=<seconds>` | Video memory full while the renderer is made, that long after the start |
 | `AURORA_GPU_OOM_UI=1` | Video memory too full even for the interface's buffers at the start |
-| `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
+| `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, lens flare, photo look, RLVa, TAA history), that long |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
@@ -6161,7 +6192,9 @@ both open states and the selection count. Capture at frame 620.
   left out and tried again after 2 s, then twice as long each time up to
   30 s: the selection outline (`AURORA_DEMO_BUILD`), the depth of field
   (`AURORA_DEMO_DOF`), a photo look, the volumetric clouds (the Legacy
-  layer stays; `AURORA_DEMO_CLOUDS`); the log says once `<what>: out of
+  layer stays; `AURORA_DEMO_CLOUDS`). Lens flare also checks `first_use_refused`
+  when allocating targets. Live drawing retries with backoff. If the tiled
+  photo context cannot make its flare map, every tile omits the effect. For the other effects, the log says once `<what>: out of
   video memory, drawn without it for now`. One the frame cannot go without
   shows the interface alone, as `AURORA_GPU_OOM_TARGETS` does: RLVa's
   vision spheres and reduced scene (`AURORA_DEMO_RLVA`), the TAA history
@@ -15340,6 +15373,8 @@ parts, against the scene without weather. `--scenes` picks some,
     layers;
   - `g_bloom`: the bloom levels alone (`AURORA_BLOOM`, 0 while off), also
     counted in `g_post`;
+  - `g_lens_flare`: highlight extraction and optics filtering, also counted in
+    `g_post`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn

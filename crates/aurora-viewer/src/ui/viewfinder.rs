@@ -216,6 +216,7 @@ pub enum Out {
     Preset(Preset),
     /// The poser's window opened or closed (#1389).
     Poser,
+    LensFlare,
     /// The reel's stack or quick view.
     Reel(crate::ui::photo_reel::ReelAction),
     /// Out of the photo mode.
@@ -1719,6 +1720,9 @@ impl Viewfinder {
                             self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));
                         }
+                    }
+                    if dock_button(ui, p, Face::Icon("flare-filled"), aurora_i18n::tr!("lens-flare-title"), false) {
+                        out.push(Out::LensFlare);
                     }
                     if dock_button(
                         ui,

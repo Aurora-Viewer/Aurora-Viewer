@@ -1185,6 +1185,7 @@ impl App {
                     }
                 }
                 Out::Reel(a) => self.photo_reel_action(a, renderer),
+                Out::LensFlare => self.lens_flare_ui.open(ctx),
                 Out::Exit => self.panels.snapshot = false,
             }
         }

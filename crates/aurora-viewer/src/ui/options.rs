@@ -975,6 +975,13 @@ fn swatch(ui: &mut egui::Ui, p: &Palette, id: impl egui::AsIdSalt, v: &mut crate
     super::widgets::color_button(ui, p, id, v, false).changed()
 }
 
+pub(crate) fn bloom_strength_slider(value: &mut f32) -> egui::Slider<'_> {
+    egui::Slider::new(value, 0.05..=1.0)
+        .custom_parser(aurora_i18n::parse_number)
+        .step_by(0.05)
+        .trailing_fill(true)
+}
+
 fn toggle(ui: &mut egui::Ui, p: &Palette, v: &mut bool) -> bool {
     super::widgets::switch(ui, p, v).changed()
 }
