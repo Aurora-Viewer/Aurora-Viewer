@@ -306,12 +306,41 @@ fn attribute_text(s: &str) -> String {
 fn clip_page(clip: &Clip, volume: u8, key: u64) -> String {
     let src = attribute_text(&clip.player());
     if clip.hosted() {
+        // Streamable remembers its mute state across loads. This page is
+        // opened by Play, so request audio once through its Player.js adapter.
+        let audio = if matches!(&clip.0, ClipSource::Hosted(hosted::Hosted::Streamable(_))) {
+            r#"<script>(function(){
+                var origin='https://streamable.com', ready=false, played=false;
+                window.addEventListener('message',function(e){
+                    var frame=document.querySelector('iframe'), data;
+                    if(!frame||e.origin!==origin||e.source!==frame.contentWindow)return;
+                    try{data=JSON.parse(e.data);}catch(_){return;}
+                    if(!data||data.context!=='player.js')return;
+                    function send(method,value){
+                        frame.contentWindow.postMessage(JSON.stringify({
+                            context:'player.js',version:'0.1.0',method:method,value:value,listener:'aurora-first-play'
+                        }),origin);
+                    }
+                    if(data.event==='ready'&&!ready&&data.value&&Array.isArray(data.value.methods)&&data.value.methods.includes('unmute')){
+                        ready=true;
+                        send('addEventListener','play');
+                        send('unmute');
+                    }else if(ready&&!played&&data.event==='play'&&data.listener==='aurora-first-play'){
+                        played=true;
+                        send('removeEventListener','play');
+                        send('unmute');
+                    }
+                });
+            })();</script>"#
+        } else {
+            ""
+        };
         return format!(
             "<!doctype html><html><head><meta charset=\"utf-8\">\
              <meta name=\"referrer\" content=\"strict-origin-when-cross-origin\">\
              <style>html,body{{margin:0;height:100%;background:#000;overflow:hidden}}\
              iframe{{display:block;border:0;width:100%;height:100%}}</style></head><body>\
-             <iframe src=\"{src}\" allow=\"autoplay; fullscreen; encrypted-media\" allowfullscreen></iframe></body></html>"
+             {audio}<iframe src=\"{src}\" allow=\"autoplay; fullscreen; encrypted-media\" allowfullscreen></iframe></body></html>"
         );
     }
     let volume = volume.min(100);
@@ -1444,6 +1473,9 @@ mod tests {
         let streamable = Clip::of("https://streamable.com/e/Demo42?loop=0").unwrap();
         assert_eq!(streamable.source(), "https://streamable.com/Demo42");
         assert_eq!(streamable.player(), "https://streamable.com/e/Demo42?autoplay=1");
+        let streamable_page = clip_page(&streamable, 100, 42);
+        assert!(streamable_page.contains("send('unmute')"));
+        assert!(streamable_page.contains("e.origin!==origin||e.source!==frame.contentWindow"));
 
         let vimeo = Clip::of("https://vimeo.com/123456789/deadbeef42").unwrap();
         assert_eq!(
