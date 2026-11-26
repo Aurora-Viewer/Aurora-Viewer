@@ -11905,9 +11905,16 @@ impl App {
             let step_back = self.settings.walk_backwards_without_turning;
             // (Body::update turns a little even without time: held apart)
             if !frozen {
-                self.world.agent.body_turn = self
-                    .world
-                    .update_bodies(world_now(), dt, at, ml, step_back, self.settings.avatar_turn_speed);
+                self.world.agent.body_turn = self.world.update_bodies(
+                    world_now(),
+                    dt,
+                    at,
+                    ml,
+                    step_back,
+                    self.settings.avatar_turn_speed,
+                    self.settings.avatar_rotate_threshold_slow,
+                    self.settings.avatar_rotate_threshold_fast,
+                );
             }
             self.revoke_on_sit();
             self.trace_own_motion();
@@ -25977,6 +25984,28 @@ impl ApplicationHandler for App {
         } = &event
             && synthetic_press(*is_synthetic, ke.state)
         {
+            return;
+        }
+        // egui-winit drops text while Ctrl is held. Preserve a real Windows
+        // layout character (Ctrl+Alt+2 -> @) for its focused text field. A
+        // key a window outside hands on is not typed in this one: its own
+        // fields are read in `outside_ctrl_alt_text`.
+        #[cfg(target_os = "windows")]
+        if !from_outside
+            && let WindowEvent::KeyboardInput { event: key, .. } = &event
+            && let Some(text) = self.ctrl_alt_text(key)
+        {
+            // typing like any other: activity for auto-away, and the pointer
+            // hidden over the field
+            self.last_input = Instant::now();
+            let held = self.cursor_hold.held() || self.clicks.scripted();
+            if let Some(graphics) = &mut self.gfx {
+                let events = &mut graphics.egui_state.egui_input_mut().events;
+                events.push(egui::Event::Text(text));
+                if !held {
+                    self.typing_pointer.on_text(&self.egui_ctx, self.cursor_pos, events);
+                }
+            }
             return;
         }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
