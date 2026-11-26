@@ -309,6 +309,9 @@ pub(crate) struct WaterGpu {
     flags: u32,
     quality: u8,
     pub particles: u32,
+    /// The effect bits the shaders read now (`counts[2]` of the last uniform
+    /// written, `water_fx_on`): none lets the scene pass draw lean.
+    pub shown_flags: u32,
 }
 
 impl WaterGpu {
@@ -599,6 +602,7 @@ impl WaterGpu {
             last_time: None,
             region: 0,
             flags: 0,
+            shown_flags: 0,
             quality: 0,
             particles: 0,
         }
@@ -683,6 +687,7 @@ impl WaterGpu {
             ],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        self.shown_flags = u.counts[2];
         if valid_ground
             && flags != 0
             && self

@@ -1117,6 +1117,25 @@ fn blend_runs(sided: &[bool], range: std::ops::Range<u32>) -> impl Iterator<Item
     })
 }
 
+/// `range` of the blended faces in runs of one material class
+/// (`DrawLists::blend_material`; class 0 past its end), in order.
+fn material_runs(classes: &[u8], range: std::ops::Range<u32>) -> impl Iterator<Item = (std::ops::Range<u32>, u8)> + '_ {
+    let class = |i: u32| classes.get(i as usize).copied().unwrap_or(0);
+    let mut start = range.start;
+    std::iter::from_fn(move || {
+        if start >= range.end {
+            return None;
+        }
+        let c = class(start);
+        let from = start;
+        start += 1;
+        while start < range.end && class(start) == c {
+            start += 1;
+        }
+        Some((from..start, c))
+    })
+}
+
 struct Pipelines {
     hud_opaque: wgpu::RenderPipeline,
     hud_blend: wgpu::RenderPipeline,
@@ -1135,6 +1154,22 @@ struct Pipelines {
     opaque_2s: wgpu::RenderPipeline,
     mask: wgpu::RenderPipeline,
     mask_2s: wgpu::RenderPipeline,
+    /// The four above in their lean variants (`SCENE_VARIANT` 1 to 4,
+    /// scene_variant.rs): opaque, opaque 2s, mask, mask 2s in each. This and
+    /// the other `lean_*` are made on Metal only (`scene_variant::
+    /// specialised`), all or none.
+    lean: Option<[[wgpu::RenderPipeline; 4]; 4]>,
+    /// `blend`, `blend_depth` and `blend_depth_color` in the same lean
+    /// variants.
+    lean_blend: Option<[[SidedPipelines; 3]; 4]>,
+    /// `blend` lean, specialised to a material class
+    /// (`scene_variant::material_class`): [legacy material, PBR, neither] in
+    /// each variant.
+    lean_blend_material: Option<[[SidedPipelines; 3]; 4]>,
+    /// `lean` specialised to the material classes 1 to 3 (as
+    /// `lean_blend_material`): [variant][class - 1][opaque, opaque 2s, mask,
+    /// mask 2s].
+    lean_material: Option<[[[wgpu::RenderPipeline; 4]; 3]; 4]>,
     water: wgpu::RenderPipeline,
     water_unclipped: Option<wgpu::RenderPipeline>,
     water_mask: wgpu::RenderPipeline,
@@ -2066,6 +2101,10 @@ pub(crate) struct Backend {
     /// What the renderer was made from, kept until its start is over: made,
     /// then the user's settings applied by a frame, with nothing refused.
     seed: Option<Box<BackendInit>>,
+    /// The scene pipelines are specialised (Metal: `scene_variant::
+    /// specialised`): their lean variants are compiled after the start
+    /// (`start_lean_build`) and with every later set.
+    specialise: bool,
     /// Video memory refused part of what the start makes outside the render
     /// targets (the placeholders, probes, shadow atlases, culling and
     /// particle buffers…, or the atlases the settings make again): the
@@ -2292,6 +2331,13 @@ pub(crate) struct Backend {
     /// The pipelines being compiled for other samples, SSR or another
     /// G-buffer format, if any.
     pipeline_build: Option<PipelineBuild>,
+    /// The lean scene pipelines being compiled after the start (Metal,
+    /// `start_lean_build`), if any.
+    lean_build: Option<LeanBuild>,
+    /// The samples, G-buffer and soft shadows a lean build failed for (its worker
+    /// not started, or stopped without the pipelines): not tried again until
+    /// they change, so a build that always fails is not started every frame.
+    lean_failed: Option<(u32, Option<wgpu::TextureFormat>, bool)>,
     /// The pipeline workers still running, a set no longer wanted included:
     /// waited for when the renderer is dropped (`wait_pipeline_workers`).
     pipeline_workers: Vec<std::thread::JoinHandle<()>>,
@@ -3523,6 +3569,22 @@ struct PipelineBuild {
     done: std::sync::mpsc::Receiver<(Pipelines, ImpostorPipelines)>,
 }
 
+/// The lean scene pipelines (Metal, `scene_variant::specialised`) compiled
+/// on a worker thread once the renderer has started: made with the others,
+/// the 112 of them took the first start after an update (an empty Metal
+/// shader cache) from 6.7 to 27.7 s on an M2 Pro. The frames draw with the
+/// full shader meanwhile, the same image. Taken only if the samples, G-buffer
+/// and soft shadows are still those it was made for; a set compiled for new ones
+/// (`PipelineBuild`) carries its own.
+struct LeanBuild {
+    samples: u32,
+    /// The G-buffer's format, none without it (`gbuf_pipelines`).
+    gbuf: Option<wgpu::TextureFormat>,
+    soft: bool,
+    started: std::time::Instant,
+    done: std::sync::mpsc::Receiver<Pipelines>,
+}
+
 /// What a worker thread made for ray tracing: the ray tracer, or the parts
 /// of it an effect turned on later needs.
 enum RtMade {
@@ -4032,6 +4094,7 @@ impl Backend {
     }
 
     fn make(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
+        let specialise = crate::scene_variant::specialised(init.adapter.get_info().backend);
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
         let second_seed = (!init.external).then(|| Box::new(init.clone()));
@@ -4590,6 +4653,7 @@ impl Backend {
             format,
             gbuf_pipelines,
             soft_path(&settings),
+            false,
         );
         let ssao = Self::make_ssao(&device);
         let gtao = crate::gtao::Gtao::new(&device);
@@ -4749,6 +4813,7 @@ impl Backend {
             ui_blur: None,
             oom,
             seed: None,
+            specialise,
             remake: false,
             targets_shrunk: false,
             ui_targets_backoff: crate::gpu_alloc::Backoff::default(),
@@ -4866,6 +4931,8 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            lean_build: None,
+            lean_failed: None,
             soft_pipelines: soft_path(&settings),
             gbuf_pipelines,
             gbuf_wide,
@@ -5207,6 +5274,7 @@ impl Backend {
         surface_format: wgpu::TextureFormat,
         gbuf: Option<wgpu::TextureFormat>,
         soft: bool,
+        lean: bool,
     ) -> Pipelines {
         let ssr = gbuf.is_some();
         // (without the stochastic transparency's passes: its own module,
@@ -5344,6 +5412,75 @@ impl Backend {
             constants: &a2c,
             ..base("mask 2s", "vs_main", g("fs_mask", "fs_mask_g"))
         });
+        // their lean variants (SCENE_VARIANT 1 to 4, scene_variant.rs)
+        let lean_opaque = [1.0, 2.0, 3.0, 4.0].map(|v| [("SCENE_VARIANT", v)]);
+        let lean_mask = [1.0, 2.0, 3.0, 4.0].map(|v| [a2c[0], ("SCENE_VARIANT", v)]);
+        let lean_scene = lean.then(|| {
+            [0, 1, 2, 3].map(|v| {
+                [
+                    pipe(PipeDesc {
+                        gbuf,
+                        constants: &lean_opaque[v],
+                        ..base("opaque lean", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                    }),
+                    pipe(PipeDesc {
+                        cull: None,
+                        gbuf,
+                        constants: &lean_opaque[v],
+                        ..base("opaque 2s lean", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                    }),
+                    pipe(PipeDesc {
+                        a2c: samples > 1,
+                        gbuf,
+                        constants: &lean_mask[v],
+                        ..base("mask lean", "vs_main", g("fs_mask", "fs_mask_g"))
+                    }),
+                    pipe(PipeDesc {
+                        a2c: samples > 1,
+                        cull: None,
+                        gbuf,
+                        constants: &lean_mask[v],
+                        ..base("mask 2s lean", "vs_main", g("fs_mask", "fs_mask_g"))
+                    }),
+                ]
+            })
+        });
+        // and specialised to the material classes 1 to 3
+        let lean_opaque_material = [1.0, 2.0, 3.0, 4.0].map(|v| [1.0, 2.0, 3.0].map(|c| [("SCENE_VARIANT", v), ("MATERIAL_CLASS", c)]));
+        let lean_mask_material =
+            [1.0, 2.0, 3.0, 4.0].map(|v| [1.0, 2.0, 3.0].map(|c| [a2c[0], ("SCENE_VARIANT", v), ("MATERIAL_CLASS", c)]));
+        let lean_material = lean.then(|| {
+            [0, 1, 2, 3].map(|v| {
+                [0, 1, 2].map(|c| {
+                    [
+                        pipe(PipeDesc {
+                            gbuf,
+                            constants: &lean_opaque_material[v][c],
+                            ..base("opaque lean material", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                        }),
+                        pipe(PipeDesc {
+                            cull: None,
+                            gbuf,
+                            constants: &lean_opaque_material[v][c],
+                            ..base("opaque 2s lean material", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                        }),
+                        pipe(PipeDesc {
+                            a2c: samples > 1,
+                            gbuf,
+                            constants: &lean_mask_material[v][c],
+                            ..base("mask lean material", "vs_main", g("fs_mask", "fs_mask_g"))
+                        }),
+                        pipe(PipeDesc {
+                            a2c: samples > 1,
+                            cull: None,
+                            gbuf,
+                            constants: &lean_mask_material[v][c],
+                            ..base("mask 2s lean material", "vs_main", g("fs_mask", "fs_mask_g"))
+                        }),
+                    ]
+                })
+            })
+        });
         // pass B
         let hardware_water_depth = device.features().contains(wgpu::Features::DEPTH_CLIP_CONTROL);
         log::info!(
@@ -5469,6 +5606,73 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::GreaterEqual,
             constants: &[("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0)],
             ..base("blend rigged colour", "vs_main", "fs_blend")
+        });
+        // their lean variants (SCENE_VARIANT 1 to 4, scene_variant.rs)
+        let lean_blend_constants = [1.0, 2.0, 3.0, 4.0].map(|v| {
+            [
+                [
+                    ("BLEND_EARLY_DISCARD", if blend_discard != BlendDiscard::Late { 1.0 } else { 0.0 }),
+                    ("WATER_CLIP", 1.0),
+                    ("SCENE_VARIANT", v),
+                ],
+                [("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0), ("SCENE_VARIANT", v)],
+            ]
+        });
+        let lean_blend = lean.then(|| {
+            [0, 1, 2, 3].map(|v| {
+                let [plain, early] = &lean_blend_constants[v];
+                [
+                    sided_pipe(PipeDesc {
+                        blend: Some(suppress),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: false,
+                        depth_compare: static_compare,
+                        constants: plain,
+                        ..base("blend lean", "vs_main", "fs_blend")
+                    }),
+                    sided_pipe(PipeDesc {
+                        blend: Some(suppress),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: true,
+                        depth_compare: wgpu::CompareFunction::Greater,
+                        constants: early,
+                        ..base("blend rigged lean", "vs_main", "fs_blend")
+                    }),
+                    sided_pipe(PipeDesc {
+                        blend: Some(suppress),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: false,
+                        depth_compare: wgpu::CompareFunction::GreaterEqual,
+                        constants: early,
+                        ..base("blend rigged colour lean", "vs_main", "fs_blend")
+                    }),
+                ]
+            })
+        });
+        // and the plain one specialised to the material classes 1 to 3
+        let lean_blend_material_constants = [1.0, 2.0, 3.0, 4.0].map(|v| {
+            [1.0, 2.0, 3.0].map(|class| {
+                [
+                    ("BLEND_EARLY_DISCARD", if blend_discard != BlendDiscard::Late { 1.0 } else { 0.0 }),
+                    ("WATER_CLIP", 1.0),
+                    ("SCENE_VARIANT", v),
+                    ("MATERIAL_CLASS", class),
+                ]
+            })
+        });
+        let lean_blend_material = lean.then(|| {
+            [0, 1, 2, 3].map(|v| {
+                [0, 1, 2].map(|class| {
+                    sided_pipe(PipeDesc {
+                        blend: Some(suppress),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: false,
+                        depth_compare: static_compare,
+                        constants: &lean_blend_material_constants[v][class],
+                        ..base("blend lean material", "vs_main", "fs_blend")
+                    })
+                })
+            })
         });
         // `RiggedBlendDepth::Split` (#935): first the texels at least half
         // covered, each writing its depth as it is drawn, as the Legacy
@@ -6373,6 +6577,10 @@ impl Backend {
             opaque_2s: opaque_2s.resolve(&mut done),
             mask: mask.resolve(&mut done),
             mask_2s: mask_2s.resolve(&mut done),
+            lean: lean_scene.resolve(&mut done),
+            lean_blend: lean_blend.resolve(&mut done),
+            lean_blend_material: lean_blend_material.resolve(&mut done),
+            lean_material: lean_material.resolve(&mut done),
             water: water.resolve(&mut done),
             water_unclipped: water_unclipped.resolve(&mut done),
             water_mask: water_mask.resolve(&mut done),
@@ -7582,6 +7790,7 @@ impl Backend {
                     self.config.format,
                     gbuf,
                     soft,
+                    false,
                 );
                 let impostors = Impostors::make_pipelines(
                     &self.device,
@@ -7596,6 +7805,114 @@ impl Backend {
                 self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
         }
+    }
+
+    /// Start compiling the lean scene pipelines for the current samples,
+    /// G-buffer and soft shadows on a worker thread (`LeanBuild`), where they are
+    /// wanted and missing.
+    fn start_lean_build(&mut self) {
+        if !self.specialise || self.pipelines.lean.is_some() {
+            return;
+        }
+        let (samples, gbuf, soft) = (self.msaa_samples, self.gbuf_pipelines, self.soft_pipelines);
+        if self.lean_failed == Some((samples, gbuf, soft)) {
+            return;
+        }
+        if self
+            .lean_build
+            .as_ref()
+            .is_some_and(|b| (b.samples, b.gbuf, b.soft) == (samples, gbuf, soft))
+        {
+            return;
+        }
+        let (tx, done) = std::sync::mpsc::sync_channel(1);
+        let device = self.device.clone();
+        let layouts = [
+            self.frame_layout.clone(),
+            self.records_layout.clone(),
+            self.tex_layout.clone(),
+            self.shadow_layout.clone(),
+            self.post_layout.clone(),
+            self.bloom.post_layout.clone(),
+            self.gbuf_layout.clone(),
+        ];
+        let format = self.config.format;
+        // (the whole set is described again: the pipelines the frames
+        // already draw with come from the driver's cache)
+        let spawned = std::thread::Builder::new().name("aurora-pipelines-lean".into()).spawn(move || {
+            let [frame, records, tex, shadow, post, bloom, gbuf_layout] = &layouts;
+            let scene = Self::make_pipelines(
+                &device,
+                frame,
+                records,
+                tex,
+                shadow,
+                [post, bloom],
+                gbuf_layout,
+                samples,
+                format,
+                gbuf,
+                soft,
+                true,
+            );
+            // (refused once no longer wanted: dropped)
+            let _ = tx.send(scene);
+        });
+        match spawned {
+            Ok(worker) => {
+                self.pipeline_workers.retain(|w| !w.is_finished());
+                self.pipeline_workers.push(worker);
+                self.lean_build = Some(LeanBuild {
+                    samples,
+                    gbuf,
+                    soft,
+                    started: std::time::Instant::now(),
+                    done,
+                });
+            }
+            // the frames keep the full shader
+            Err(e) => {
+                log::error!("cannot start the lean pipelines' worker: {e}");
+                self.lean_failed = Some((samples, gbuf, soft));
+            }
+        }
+    }
+
+    /// Take the lean scene pipelines once their worker made them, if the
+    /// samples, G-buffer and soft shadows are still theirs.
+    /// Started once the start is over (the user's settings applied, `seed`
+    /// gone) and no other set is compiling: a set compiled for the user's
+    /// samples or G-buffer carries its own lean pipelines, and the ray tracer's
+    /// worker (`RtBuild`) is left the driver's compiler to itself.
+    fn take_lean_build(&mut self) {
+        let Some(build) = &self.lean_build else {
+            if self.seed.is_none() && self.pipeline_build.is_none() && self.rt_build.is_none() {
+                self.start_lean_build();
+            }
+            return;
+        };
+        let scene = match build.done.try_recv() {
+            Ok(scene) => scene,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                log::error!("the lean pipelines' worker stopped: the full scene shader stays");
+                self.lean_failed = Some((build.samples, build.gbuf, build.soft));
+                self.lean_build = None;
+                return;
+            }
+        };
+        let current = (self.msaa_samples, self.gbuf_pipelines, self.soft_pipelines);
+        if (build.samples, build.gbuf, build.soft) == current && self.pipelines.lean.is_none() {
+            log::info!("lean scene pipelines ready in {} ms", build.started.elapsed().as_millis());
+            let p = &mut self.pipelines;
+            p.lean = scene.lean;
+            p.lean_blend = scene.lean_blend;
+            p.lean_blend_material = scene.lean_blend_material;
+            p.lean_material = scene.lean_material;
+        }
+        // (made for samples or a G-buffer gone meanwhile: again for the current
+        // ones, at the next frame)
+        self.lean_build = None;
     }
 
     /// Compile the pipelines for `samples`, the G-buffer `gbuf` and the
@@ -7619,6 +7936,7 @@ impl Backend {
             self.impostors.layout.clone(),
         ];
         let format = self.config.format;
+        let specialise = self.specialise;
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
             let [frame, records, tex, shadow, post, bloom, gbuf_layout, impostor] = &layouts;
             let scene = Self::make_pipelines(
@@ -7633,6 +7951,7 @@ impl Backend {
                 format,
                 gbuf,
                 soft,
+                specialise,
             );
             let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, gbuf, soft);
             // (refused when other settings came meanwhile: the set is dropped)
@@ -8730,6 +9049,9 @@ impl Backend {
             // (moved above, every renderer once)
             world_shift: [0.0; 2],
             input_at: None,
+            rez_records: packet.rez_records,
+            portal_records: packet.portal_records,
+            textures_loading: packet.textures_loading,
             rt: None,
         };
         let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
@@ -9078,6 +9400,7 @@ impl Backend {
     }
 
     fn render_view(&mut self, packet: FramePacket) -> FrameResult {
+        self.take_lean_build();
         // (here, not in `render`: the eyes' backends of VR are made, and
         // can be refused, like the window's)
         if self.remake && self.oom.targets_due(Instant::now()) {
@@ -9110,6 +9433,9 @@ impl Backend {
             motion_cut,
             world_shift,
             input_at,
+            rez_records,
+            portal_records,
+            textures_loading,
             rt: rt_faces,
         } = packet;
         let external_output = output.is_some();
@@ -9969,6 +10295,8 @@ impl Backend {
             main.features[3] = 1;
         }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
+        // what the scene pass's variant depends on, as the shaders read it
+        let (scene_light_mode, scene_classic) = (main.light_sets.mode[2], main.sky_ll[0] > 0.5);
         let fu_sun_color = main.sun_color;
         let fu_sky = [main.sky_zenith, main.sky_horizon, main.ground_color];
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
@@ -12026,6 +12354,22 @@ impl Backend {
             clouds.skipped(still.is_some());
         }
         mark(&mut encoder, MARK_CLOUDS_END);
+        // the variant of the scene shader's pipelines this frame, opaque and
+        // blended alike: a lean one when no face can take a path it leaves
+        // out (scene_variant.rs)
+        // (always the full one where they are not specialised: Vulkan)
+        let variant = if self.pipelines.lean.is_some() {
+            crate::scene_variant::choose(crate::scene_variant::FrameState {
+                light_mode: scene_light_mode,
+                classic: scene_classic,
+                water_effects: self.water_effects.shown_flags,
+                rez: rez_records || (f.rez_gradient[1][3] >= 0.5 && textures_loading),
+                portal_records,
+            })
+        } else {
+            0
+        };
+        stats.scene_variant = variant;
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -12114,14 +12458,42 @@ impl Backend {
             draw(&mut pass, &self.pipelines.terrain_pbr, rg.terrain_pbr);
             draw(&mut pass, &self.pipelines.terrain_pbr, rg.terrain_mask);
             pass_mark(&mut pass, MARK_TERRAIN_END);
+            let [opaque, opaque_2s, mask, mask_2s] = match (variant, &self.pipelines.lean) {
+                (v @ 1.., Some(lean)) => {
+                    let l = &lean[v as usize - 1];
+                    [&l[0], &l[1], &l[2], &l[3]]
+                }
+                _ => [
+                    &self.pipelines.opaque,
+                    &self.pipelines.opaque_2s,
+                    &self.pipelines.mask,
+                    &self.pipelines.mask_2s,
+                ],
+            };
             let scene_pipes = [
-                (&self.pipelines.opaque, rg.opaque),
-                (&self.pipelines.opaque_2s, rg.opaque_2s),
-                (&self.pipelines.mask, rg.mask),
-                (&self.pipelines.mask_2s, rg.mask_2s),
+                (opaque, rg.opaque),
+                (opaque_2s, rg.opaque_2s),
+                (mask, rg.mask),
+                (mask_2s, rg.mask_2s),
             ];
+            let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
             for (b, (pipe, r)) in scene_pipes.into_iter().enumerate() {
-                draw(&mut pass, pipe, r);
+                // the CPU lists in runs of one material class, each with its
+                // class's pipeline (`scene_variant::material_class`); the GPU
+                // bins stay generic
+                let lean_material = self.pipelines.lean_material.as_ref().filter(|_| variant != 0 && r.1 != 0);
+                if let Some(lean_material) = lean_material {
+                    let mats = &lean_material[variant as usize - 1];
+                    for (run, class) in material_runs(&lists.scene_material[b], 0..r.1) {
+                        let p = match class {
+                            1..=3 => &mats[usize::from(class - 1)][b],
+                            _ => pipe,
+                        };
+                        draw(&mut pass, p, (r.0 + u64::from(run.start) * stride, run.end - run.start));
+                    }
+                } else {
+                    draw(&mut pass, pipe, r);
+                }
                 draw_bin(&mut pass, Some(pipe), b, b);
             }
             pass_mark(&mut pass, MARK_OBJECTS_END);
@@ -12529,12 +12901,51 @@ impl Backend {
         let split = (n_depth > 0 || exact.is_some()) && !st_on;
         // the first blended face the last part still draws over the others
         let rest_from = if exact.is_some() { bn } else { n_depth };
-        let blend_pipe = self
-            .pipelines
-            .blend_late
-            .as_ref()
-            .filter(|_| f.blend_late_discard)
-            .unwrap_or(&self.pipelines.blend);
+        // the blended faces' pipelines in this frame's variant of the scene
+        // shader (scene_variant.rs; `blend_late` is a comparison, full only)
+        let [blend_lean, blend_depth_pipe, blend_depth_color_pipe] = match (variant, &self.pipelines.lean_blend) {
+            (v @ 1.., Some(lean)) => {
+                let l = &lean[v as usize - 1];
+                [&l[0], &l[1], &l[2]]
+            }
+            _ => [
+                &self.pipelines.blend,
+                &self.pipelines.blend_depth,
+                &self.pipelines.blend_depth_color,
+            ],
+        };
+        let late = self.pipelines.blend_late.as_ref().filter(|_| f.blend_late_discard);
+        let blend_pipe = late.unwrap_or(blend_lean);
+        // the lean pipelines specialised to the faces' material classes
+        // (`scene_variant::material_class`; not the comparison of `late`)
+        let blend_material = match (variant, &self.pipelines.lean_blend_material) {
+            (v @ 1.., Some(lean)) if late.is_none() => Some(&lean[v as usize - 1]),
+            _ => None,
+        };
+        // a range of blended faces in runs of one material class, each with
+        // its class's pipelines (the generic `pipe` for class 0). Only the
+        // plain blended pass (`blend_lean`) is specialised: the rigged
+        // passes' pipelines (`blend_depth_*`) write depth, compare otherwise
+        // or split the texels (BLEND_SPLIT), which the material pipelines
+        // do not, so they keep their own
+        let draw_classes = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, r: (u64, u32), first: u32| {
+            let Some(mats) = blend_material.filter(|_| std::ptr::eq(pipe, blend_lean)) else {
+                draw_sided(pass, pipe, r, first);
+                return;
+            };
+            for (run, class) in material_runs(&lists.blend_material, first..first + r.1) {
+                let pipes = match class {
+                    1..=3 => &mats[usize::from(class - 1)],
+                    _ => pipe,
+                };
+                draw_sided(
+                    pass,
+                    pipes,
+                    (r.0 + u64::from(run.start - first) * stride, run.end - run.start),
+                    run.start,
+                );
+            }
+        };
         // blended faces `from..to`, back to front; a glowing one adds its glow
         // right after itself, so later layers in front dim it (LLDrawPoolAlpha)
         let blended = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, from: u32, to: u32| {
@@ -12543,11 +12954,11 @@ impl Backend {
                 if !(glow_on && glow_skip & 8 == 0 && lists.blend_glow.get(i as usize).copied().unwrap_or(false)) {
                     continue;
                 }
-                draw_sided(pass, pipe, (b0 + start as u64 * stride, i + 1 - start), start);
+                draw_classes(pass, pipe, (b0 + start as u64 * stride, i + 1 - start), start);
                 draw(pass, &self.pipelines.glow_water, (b0 + i as u64 * stride, 1));
                 start = i + 1;
             }
-            draw_sided(pass, pipe, (b0 + start as u64 * stride, to - start), start);
+            draw_classes(pass, pipe, (b0 + start as u64 * stride, to - start), start);
         };
         // the other blended faces, the overlays and the particles
         let rest = |pass: &mut wgpu::RenderPass| {
@@ -12847,13 +13258,13 @@ impl Backend {
                 RiggedBlendDepth::Write | RiggedBlendDepth::Exact => {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.blend);
-                    blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
+                    blended(&mut pass, blend_depth_pipe, 0, n_depth);
                 }
                 RiggedBlendDepth::HalfCovered => {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.blend);
                     draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
-                    blended(&mut pass, &self.pipelines.blend_depth_color, 0, n_depth);
+                    blended(&mut pass, blend_depth_color_pipe, 0, n_depth);
                 }
                 RiggedBlendDepth::Layered => {
                     // their colour as the Legacy Viewer draws it, each
@@ -12865,7 +13276,7 @@ impl Backend {
                         encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size());
                         let mut pass = begin_scene_b_on(&mut encoder, t, "scene b rigged blend", false, true, layers);
                         bind_mesh(&mut pass, &self.groups.blend);
-                        blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
+                        blended(&mut pass, blend_depth_pipe, 0, n_depth);
                     }
                     // ...and in the scene depth only where at least half
                     // covered, for what is drawn after them (#556)
@@ -12921,7 +13332,7 @@ impl Backend {
                                 // the hair drawn after them in straight
                                 // edges (#2121)
                                 draw_sided(&mut pass, &self.pipelines.blend_depth_opaque, run, from);
-                                blended(&mut pass, &self.pipelines.blend_depth_color, from, end);
+                                blended(&mut pass, blend_depth_color_pipe, from, end);
                             } else {
                                 blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
                                 draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
@@ -12947,7 +13358,7 @@ impl Backend {
                         if end <= from {
                             continue;
                         }
-                        blended(&mut pass, &self.pipelines.blend_depth_color, from, end);
+                        blended(&mut pass, blend_depth_color_pipe, from, end);
                         draw_sided(
                             &mut pass,
                             &self.pipelines.blend_depth_mask,
@@ -14606,6 +15017,19 @@ mod tests {
         // the lights of the frame's list, their falloff kept
         assert_eq!(u.lights[0].color_falloff, [0.1, 0.05, 0.025, 0.75]);
         assert_eq!(u.lights[1].color_falloff, [1.0, 1.0, 1.0, 0.5]);
+    }
+
+    #[test]
+    fn material_runs_keep_the_order_of_the_blended_faces() {
+        let classes = [1, 1, 2, 0, 0, 1];
+        assert_eq!(
+            material_runs(&classes, 0..6).collect::<Vec<_>>(),
+            [(0..2, 1), (2..3, 2), (3..5, 0), (5..6, 1)]
+        );
+        assert_eq!(material_runs(&classes, 1..4).collect::<Vec<_>>(), [(1..2, 1), (2..3, 2), (3..4, 0)]);
+        // past the list: the generic pipeline
+        assert_eq!(material_runs(&[], 0..2).collect::<Vec<_>>(), [(0..2, 0)]);
+        assert_eq!(material_runs(&classes, 3..3).count(), 0);
     }
 
     #[test]

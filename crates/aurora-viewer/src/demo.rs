@@ -6610,6 +6610,14 @@ pub fn events() -> Vec<NetEvent> {
         }
         id += mirror::COUNT;
     }
+    // AURORA_DEMO_MIRROR=plaza: a mirror ahead of the start view, facing
+    // it, that reflects the plaza and what the other scenarios put in it
+    if mirror::plaza_enabled() {
+        for o in mirror::plaza(id) {
+            add(o);
+        }
+        id += 2;
+    }
     if neon_room::enabled() {
         for o in neon_room::objects(id) {
             add(o);

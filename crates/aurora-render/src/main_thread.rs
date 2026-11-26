@@ -189,6 +189,10 @@ pub struct Renderer {
     _xr_graphics: Option<crate::xr_device::Graphics>,
     pub device: wgpu::Device,
     pub info: GpuInfo,
+    /// The scene pipelines are specialised to the faces' material classes
+    /// (Metal: `scene_variant::specialised`); elsewhere the classes are not
+    /// sorted out.
+    scene_specialised: bool,
     pub geometry: GeometryArena,
     /// Copies of the streamed data staged by background jobs (upload.rs),
     /// submitted first in the frame's submit.
@@ -651,6 +655,7 @@ impl Renderer {
                 log::error!("GPU work at the loss: {}", on_lost.work_at_loss());
             }
         });
+        let scene_specialised = crate::scene_variant::specialised(ainfo.backend);
         let info = GpuInfo {
             name: ainfo.name.clone(),
             backend: format!("{:?}", ainfo.backend),
@@ -798,6 +803,7 @@ impl Renderer {
             _xr_graphics: xr_graphics,
             device,
             info,
+            scene_specialised,
             geometry,
             uploads,
             records,
@@ -1715,6 +1721,22 @@ impl Renderer {
         let mut spent = self.spare.pop().unwrap_or_default();
         std::mem::swap(&mut self.writes, &mut spent.writes);
         spent.lists.copy_from(lists);
+        if self.scene_specialised {
+            crate::scene_variant::material_classes(&spent.lists.blend, &self.records, &mut spent.lists.blend_material);
+            let l = &mut spent.lists;
+            let [opaque, opaque_2s, mask, mask_2s] = &mut l.scene_material;
+            for (list, out) in [
+                (&l.opaque, opaque),
+                (&l.opaque_two_sided, opaque_2s),
+                (&l.mask, mask),
+                (&l.mask_two_sided, mask_2s),
+            ] {
+                crate::scene_variant::material_classes(list, &self.records, out);
+            }
+        } else {
+            spent.lists.blend_material.clear();
+            spent.lists.scene_material.iter_mut().for_each(Vec::clear);
+        }
         // a photo first: the other captures wait for the next frame (and
         // for the answer of a photo still on the GPU)
         let capture = match self.snapshot_request {
@@ -1794,6 +1816,9 @@ impl Renderer {
             motion_cut: std::mem::take(&mut self.motion_cut),
             world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
+            rez_records: self.records.scene_needs()[0] > 0,
+            portal_records: self.records.scene_needs()[1] > 0,
+            textures_loading: self.textures.loading() > 0,
             rt: rt_on.then(|| {
                 let mut faces = crate::rt_shadows::Faces::default();
                 crate::rt_shadows::gather(

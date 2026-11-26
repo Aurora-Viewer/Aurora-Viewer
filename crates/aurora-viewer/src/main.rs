@@ -341,6 +341,13 @@ fn run_viewer() -> anyhow::Result<()> {
     // and their emoji typed as two halves were lost (wide_chars.rs)
     #[cfg(windows)]
     raw_mouse::install(&mut event_loop);
+    // AURORA_BACKGROUND=1 (a measurement behind the user's work, app.rs
+    // `draws_hidden`): macOS does not bring the viewer to the front at launch
+    #[cfg(target_os = "macos")]
+    if std::env::var("AURORA_BACKGROUND").is_ok_and(|v| v.trim() == "1") {
+        use winit::platform::macos::EventLoopBuilderExtMacOS;
+        event_loop.with_activate_ignoring_other_apps(false);
+    }
     let event_loop = event_loop.build()?;
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
     // the cache clear an update could not do while the cache was held

@@ -180,6 +180,7 @@ Actual grid login and teleporting are performed by the human.
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (0: uncapped; 10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
+| `AURORA_BACKGROUND=1` | The window keeps drawing behind other windows and does not come to the front at launch (measurements) |
 | `AURORA_RENDER_SCALE=50..100` | World resolution percentage; turns "Match the display" off for the launch |
 | `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
 | `AURORA_MAX_TEXTURE_RES=512\|1024\|2048` | Overrides "Maximum texture resolution" (Graphics › Distance and detail) |
@@ -460,6 +461,15 @@ that was closed, whichever agent launched it. The window is placed like that
 of a screenshot (neither position nor maximised state saved) and its size is
 not remembered for the next launch. The actual size is at the start of the
 `perf settings` line.
+
+`AURORA_BACKGROUND=1`: for a measurement that runs while the human works.
+macOS stops sending redraws to a window other windows cover entirely, and
+the demo's frame rate then drops to nothing (`draws=0` in the perf summary);
+with the variable the viewer draws such a window all the same, and on macOS
+it does not bring itself to the front at launch. Combine it with
+`AURORA_WINDOW_SIZE` (which also keeps the keyboard focus where it is) so
+that the measured size does not depend on the last session. A covered
+window then costs the GPU as much as a shown one: measurement only.
 
 `AURORA_FPS_LIMIT`: user cap for tests (0 disables the user cap; positive
 values are brought back into 10–500 fps, an invalid value is ignored). The lower cap in
@@ -5699,6 +5709,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SOFT_BLEND=1` | A glass desk top and a pane of streaked glass over shelves, left of the start view: glass whose opacity varies within a face, under things that occlude it |
 | `AURORA_DEMO_WET_LAYER=1` | Three spheres under transparent shells, two with a shiny blended legacy material: the wet layers of mesh bodies (#1420) |
 | `AURORA_DEMO_MIRROR=1` | A closed room with a mirror, our avatar facing it, lace, red glass and a black shiny ball between them (#3479) |
+| `AURORA_DEMO_MIRROR=plaza` | A mirror 12 m ahead of the start view, facing it, reflecting the plaza: a busy place drawn twice (#3218) |
 | `AURORA_DEMO_MIRROR_METAL=1` | With `AURORA_DEMO_MIRROR`: the mirror's panel in polished PBR metal, 5 cm thin (its face 2.5 cm off the probe's plane); with SSR on, the mirror must still show our avatar's front, not SSR's copy of its back (#3375) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
@@ -13305,6 +13316,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PRESENT_MODE=<mode>` | Forces the present mode of the swapchain |
 | `AURORA_WINDOW_HOLD=0` | No frames while a mouse button is held on the window frame or the system menu is open, as before (Windows) |
 | `AURORA_CPU_CULL=1` | Draw lists built on the CPU |
+| `AURORA_SCENE_VARIANT=full` | Metal: the scene pass's full shader and generic pipelines, as on Vulkan, instead of the specialised ones |
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
@@ -13433,6 +13445,24 @@ What the inventory must show with these scenarios:
 
 ### Details
 
+- **`AURORA_SCENE_VARIANT=full`** (`aurora-render/src/scene_variant.rs`):
+  on Metal the scene pass draws with pipelines specialised to the frame
+  (lean variants without the paths no face can take: portal clip, debug
+  views, NaN check, water effects, the other sky's branch, the rez effect
+  while nothing rezzes and, with the rez grid on, no texture still loads) and to the faces' material class (legacy material,
+  PBR, neither). With the variable the lean pipelines are not made and every
+  frame draws with the full shader, as Vulkan always does: for a comparison
+  of the image (captures of both at the same frame, with
+  `AURORA_FPS_LIMIT=8` so that both are at the same scene time), of the
+  frame rate (`gpu_frame=` and `scene_lean=` of the perf summary) and of the
+  start (`pipelines: … made … in … ms` in the log). The lean pipelines are
+  compiled after the start, with the set for the user's settings or by a
+  worker of their own (`lean scene pipelines ready in … ms`); until then the
+  frames draw with the full shader (`scene_lean=0%`). For a start with an
+  empty Metal shader cache, as after an update, change a constant of
+  `object.wgsl` on disk and launch with `AURORA_DEMO_WATER_SHADERS=1`. The
+  log also says when the variant changes, and why (`scene variant …`). No
+  effect on Vulkan.
 - **`AURORA_DEMO_VIEWER_STATS=1`** (`aurora_net::viewer_stats`,
   `app/viewer_stats.rs`): on the grid the session posts Linden Lab's viewer
   statistics to the region's `ViewerStats` capability once the agent has
@@ -14522,6 +14552,17 @@ What the inventory must show with these scenarios:
   #3479 the mirror had neither the lace nor the glass, and lit its image
   by the sky and the sun through the roof: a pale grey avatar and a navy
   blue ball.
+- **`AURORA_DEMO_MIRROR=plaza`**: a dark mirror 3 m wide, its center
+  12 m ahead of the start view (or of `AURORA_DEMO_POS`) and 2.5 m over the
+  ground, facing the camera. It reflects the plaza and whatever the other
+  scenarios put there, so that the mirror pass draws a busy place a second
+  time, as a mirror in a store on the grid does (#3218). The load of such a
+  store: `AURORA_DEMO_CROWD=40`, `AURORA_DEMO_LIGHTS=64`, this mirror and
+  `AURORA_DEMO_VEILS=12,12` (blended layers between the camera and the
+  mirror), with the Graphics settings of the session to compare (mirrors on)
+  and `AURORA_BACKGROUND=1` to measure behind other windows. Look at the
+  `mirror`, `scene a` and `scene b` passes of a Metal System Trace and at
+  `gpu_frame=` in the perf summary.
 - **`AURORA_DEMO_BLEND_AO=1`**: a flat face 4 m ahead of the start
   position (`AURORA_DEMO_POS`) and 1.6 m to its left, above our avatar's
   head, turned towards the camera: two halves alike, the left one blended
@@ -15307,6 +15348,11 @@ parts, against the scene without weather. `--scenes` picks some,
     frame, 64 at most), `light_tiles` (share of the frames where it only
     walks those of its screen tile and of its depth) and `probes`
     (reflection probes);
+  - `gpu_frame`: the GPU time of the whole frame, from timestamps at its
+    first and last pass, the only GPU figure on Apple GPUs (which time
+    pass boundaries only: the `g_*` stay at 0 there); `scene_lean`: the
+    share of the frames drawn with a lean variant of the scene pipelines
+    (Metal, `AURORA_SCENE_VARIANT`; 0 % on Vulkan);
   - the detail of `g_shadows_depth`: `g_cull` (GPU culling of all the
     views), `g_shadow0` to `g_shadow2` (the shadow cascades, from the
     nearest to the farthest) and `g_depth` (depth prepass and occlusion).

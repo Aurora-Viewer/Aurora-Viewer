@@ -443,6 +443,14 @@ struct Period {
     /// g_weather in parts: shelter map, memories, wet ground, drops.
     gpu_weather: [f32; 4],
     gpu_frames: u32,
+    /// Whole-frame GPU time (`RenderStats::gpu_ms`, timestamps at the
+    /// frame's first and last pass): measured where the per-element marks
+    /// are not (Apple GPUs time pass boundaries only).
+    gpu_frame: f32,
+    gpu_frame_n: u32,
+    /// Frames drawn with a lean scene variant (`RenderStats::scene_variant`).
+    lean_frames: u32,
+    frames_seen: u32,
     /// Parts of the shadows and depth GPU time (`ShadowStats::gpu_ms`).
     gpu_shadow: [f32; 5],
     gpu_shadow_frames: u32,
@@ -730,6 +738,12 @@ impl FrameProfile {
             add(&mut p.gpu, &g);
             p.gpu_frames += 1;
         }
+        if let Some(ms) = render.gpu_ms {
+            p.gpu_frame += ms;
+            p.gpu_frame_n += 1;
+        }
+        p.frames_seen += 1;
+        p.lean_frames += u32::from(render.scene_variant != 0);
         if let Some(d) = render.gpu_depth {
             add(&mut p.gpu_depth, &d);
         }
@@ -1050,6 +1064,12 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     out.push_str(&outside_text(p.outside_draws, p.outside_ms, p.outside_ms_max, n));
     let gpu_n = p.gpu_frames.max(1) as f32;
     let _ = write!(out, " | gpu={:.2}", p.gpu.iter().sum::<f32>() / gpu_n);
+    if p.gpu_frame_n > 0 {
+        let _ = write!(out, " gpu_frame={:.2}", p.gpu_frame / p.gpu_frame_n as f32);
+    }
+    if p.frames_seen > 0 {
+        let _ = write!(out, " scene_lean={:.0}%", 100.0 * p.lean_frames as f32 / p.frames_seen as f32);
+    }
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
         let _ = write!(out, " g_{}={:.3}", el.key(), ms / gpu_n);
     }
