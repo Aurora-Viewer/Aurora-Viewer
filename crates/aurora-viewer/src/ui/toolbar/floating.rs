@@ -41,7 +41,6 @@ pub(super) fn context(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, i
     let settings = super::appearance::settings(ui.ctx());
     super::section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
     super::blocks::kind_menu(ui, p, toolbar, &settings, id, None);
-    toolbar.block_shortcut_item(ui, p, &settings, id);
     if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), !locked) {
         toolbar.edit_drawer(id);
     }

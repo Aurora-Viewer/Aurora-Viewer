@@ -627,9 +627,9 @@ fn block_fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &st
         match fields.shortcut {
             Some(b) => {
                 let behind = p.panel;
-                let caps = widgets::keycap::caps(ui, b, behind);
+                let caps = widgets::keycap::caps_sized(ui, b, behind, widgets::keycap::LARGE);
                 let (rect, _) = ui.allocate_exact_size(
-                    Vec2::new(widgets::keycap::row_width(&caps), widgets::keycap::HEIGHT),
+                    Vec2::new(widgets::keycap::row_width(&caps), widgets::keycap::LARGE),
                     egui::Sense::hover(),
                 );
                 widgets::keycap::paint_row(ui, p, &caps, rect.left_center(), behind);
@@ -641,7 +641,7 @@ fn block_fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &st
         let edit = widgets::action_button(
             ui,
             p,
-            "keyboard",
+            "pencil-filled",
             aurora_i18n::tr!("common-edit"),
             widgets::ActionKind::Flat,
             Vec2::new(0.0, 28.0),

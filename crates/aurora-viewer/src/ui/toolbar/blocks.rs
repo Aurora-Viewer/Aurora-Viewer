@@ -416,11 +416,10 @@ fn settings_menu(
             None => toolbar.edit_block(bar, command, base),
         }
     }
-    // the block's shortcut: a drawer's or a floating block's is its own; a
-    // fixed block's works once it is one of them
-    if let Some(key) = single
-        .map(str::to_owned)
-        .or_else(|| super::shortcuts::block_of(settings, buttons, command))
+    // a fixed block's shortcut, which works once it is a drawer or a
+    // floating block; theirs is in "Edit block…" (human request, 2026-11-26)
+    if single.is_none()
+        && let Some(key) = super::shortcuts::block_of(settings, buttons, command)
     {
         toolbar.block_shortcut_item(ui, p, settings, &key);
     }

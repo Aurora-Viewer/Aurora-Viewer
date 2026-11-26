@@ -398,7 +398,8 @@ pub fn fallback(ctx: &egui::Context, settings: &mut ToolbarSettings) -> Fallback
 }
 
 /// The shortcut window's state: the modifiers turned on, the key chosen,
-/// and whether the next key press is the key.
+/// and whether the next key press is the key (once "Choose a key" is
+/// clicked).
 #[derive(Debug, Clone, Default)]
 pub struct Editor {
     pub key: String,
@@ -420,7 +421,9 @@ impl Editor {
             ctrl: current.is_none_or(|b| b.ctrl),
             shift: current.is_some_and(|b| b.shift),
             alt: current.is_some_and(|b| b.alt),
-            capturing: input.is_none(),
+            // it waits once "Choose a key" is clicked, not on opening
+            // (human request, 2026-11-26)
+            capturing: false,
             input,
         }
     }
@@ -534,7 +537,7 @@ impl ToolbarUi {
                         shift: false,
                         alt: false,
                     };
-                    let caps = widgets::keycap::caps(ui, &cap, fill);
+                    let caps = widgets::keycap::caps_sized(ui, &cap, fill, widgets::keycap::LARGE);
                     let width = widgets::keycap::row_width(&caps);
                     let response = ui.add(egui::Button::new("").fill(fill).min_size(Vec2::new((width + 16.0).max(56.0), 28.0)));
                     let left = egui::pos2(response.rect.center().x - width / 2.0, response.rect.center().y);
@@ -556,7 +559,7 @@ impl ToolbarUi {
                     alt: false,
                 });
                 let caps = match &key {
-                    Some(b) if !editor.capturing => widgets::keycap::caps(ui, b, fill),
+                    Some(b) if !editor.capturing => widgets::keycap::caps_sized(ui, b, fill, widgets::keycap::LARGE),
                     _ => Vec::new(),
                 };
                 let (text, color) = if editor.capturing {
@@ -798,7 +801,10 @@ mod tests {
             shortcut_editor: Some(Editor::new("inventory", None)),
             ..Default::default()
         };
-        assert!(ui.shortcut_capturing(), "no key yet: it waits");
+        assert!(!ui.shortcut_capturing(), "it waits only once asked");
+        if let Some(editor) = ui.shortcut_editor.as_mut() {
+            editor.capturing = true;
+        }
         ui.shortcut_captured(keys("Escape", false, false, false), true);
         assert!(!ui.shortcut_capturing());
         assert_eq!(ui.shortcut_editor.as_ref().and_then(Editor::binding), None);

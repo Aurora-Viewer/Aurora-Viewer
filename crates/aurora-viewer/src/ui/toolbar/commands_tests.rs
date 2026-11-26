@@ -4774,7 +4774,15 @@ fn a_blocks_window_edits_its_shortcut_and_greys_hiding_without_one() {
     }
     let editor = bench.state.shortcut_editor.clone().expect("the shortcut window");
     assert_eq!(editor.key, id);
-    assert!(editor.capturing, "it waits for the key");
+    assert!(!editor.capturing, "it waits only once asked");
+    assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-shortcut-esc")));
+    let choose = menu_point(&bench, aurora_i18n::tr!("toolbar-shortcut-choose-key"));
+    bench.pointer(choose, Some(true));
+    bench.pointer(choose, Some(false));
+    for _ in 0..2 {
+        bench.frame(Vec::new());
+    }
+    assert!(bench.state.shortcut_capturing(), "Choose a key waits for it");
     assert!(bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-shortcut-esc")));
     let alt = bench
         .ctx

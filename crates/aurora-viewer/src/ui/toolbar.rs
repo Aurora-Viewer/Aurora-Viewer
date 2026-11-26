@@ -1071,11 +1071,11 @@ impl ToolbarUi {
                 return;
             }
             // a drawer's button (a floating block's while the bars are
-            // edited) is its block: its type, its shortcut, its settings
+            // edited) is its block: its type and its settings (its shortcut
+            // is in "Edit block…", human request, 2026-11-26)
             if let Some(button) = button.filter(|button| drawers::is_drawer(&button.command)) {
                 section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
                 blocks::kind_menu(ui, p, self, &settings, &button.command, Some((bar, response.rect)));
-                self.block_shortcut_item(ui, p, &settings, &button.command);
                 if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), !locked) {
                     self.edit_drawer(&button.command);
                 }
