@@ -366,6 +366,9 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         ("bbc.com" | "bbc.co.uk", ["iplayer", "episode", id, ..]) => slug(id),
         ("tver.jp", ["episodes", id]) => slug(id),
         ("nicovideo.jp", ["watch", id]) => ["sm", "so", "nm"].iter().any(|prefix| id.strip_prefix(prefix).is_some_and(digits)),
+        ("tv.naver.com", ["v", id]) | ("chzzk.naver.com", ["video", id]) => digits(id),
+        ("vod.sooplive.co.kr", ["player", id]) => digits(id),
+        ("tv.kakao.com", ["channel", channel, "cliplink", id]) => digits(channel) && digits(id),
         _ => false,
     };
     safe.then(|| {
@@ -386,6 +389,9 @@ pub(super) fn publisher_poster(page: &str, html: &str) -> Option<String> {
         "bbc.com" | "bbc.co.uk" => &["bbci.co.uk"],
         "tver.jp" => &["tver.jp", "tver-static.com"],
         "nicovideo.jp" => &["nimg.jp", "nicovideo.jp"],
+        "tv.naver.com" | "chzzk.naver.com" => &["pstatic.net"],
+        "vod.sooplive.co.kr" => &["sooplive.co.kr", "afreecatv.com"],
+        "tv.kakao.com" => &["kakaocdn.net"],
         _ => &[],
     };
     head_meta(html).find_map(|(key, value)| {
