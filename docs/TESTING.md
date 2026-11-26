@@ -557,9 +557,9 @@ enabled and preserves free roll when disabled. The Flycam mapping list includes 
 and speedup triggers;
 `axes` filters the axis mapping rows in preference search; `avatar` walks and turns;
 `flycam` starts at frame 630 and moves after 650; with
-`AURORA_DEMO_KEY=up` the avatar walks on below it, the flycam keeping the
-camera (#4613; the log gives `demo flycam: frame=…, flycam=…, avatar=…` at
-640 and 900);
+`AURORA_DEMO_KEY=up` the key flies the flycam too and the avatar stays put,
+as in the Legacy Viewer (#4613; the log gives `demo flycam: frame=…
+flycam=… avatar=…` at 640 and 900, the avatar's position unchanged);
 `roll` also enables roll and disables auto-level. Capture after frame 900.
 `avatar-camera` (add `AURORA_DEMO_CROWD=6` for several targets) pans the player view down during frames 620–699, cycles to the
 nearest loaded avatar at 720, moves that avatar at 800, cycles forward at 900

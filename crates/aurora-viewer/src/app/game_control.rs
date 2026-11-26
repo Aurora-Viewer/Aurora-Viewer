@@ -555,15 +555,7 @@ impl App {
             self.game_control_reset_to_avatar();
             return;
         }
-        let key = |pos: bool, neg: bool| f32::from(u8::from(pos)) - f32::from(u8::from(neg));
-        let ch = &mut inputs.channels;
-        ch[flycam::DOLLY] += key(keys.forward, keys.back);
-        ch[flycam::TRUCK] += key(keys.strafe_left, keys.strafe_right);
-        ch[flycam::BOOM] += key(keys.up, keys.down);
-        ch[flycam::PAN] += key(keys.turn_left, keys.turn_right);
-        for v in ch.iter_mut() {
-            *v = v.clamp(-1.0, 1.0);
-        }
+        flycam::add_keys(&mut inputs.channels, keys);
         let orbit = (inputs.modifiers & actions::FLYCAM_ORBIT != 0).then(|| self.game_control_orbit_distance());
         let input = flycam::Input {
             channels: inputs.channels,
@@ -580,6 +572,29 @@ impl App {
         self.lr_since = None;
         self.up_since = None;
         self.turn_since = None;
+    }
+
+    /// The movement keys under the joystick flycam, on a screen: they fly it
+    /// through the same key path and rates as this controller's flycam
+    /// (`flycam::add_keys`, LLAgentCamera::updateFlycam), the device flying
+    /// it by its own rules beside them. `allow_roll`: the joystick flycam's
+    /// roll is kept (its "Keep the flycam level" off).
+    pub(super) fn flycam_keys_step(&mut self, keys: &MoveInput, allow_roll: bool, dt: f32) {
+        let mut channels = [0.0; 7];
+        flycam::add_keys(&mut channels, keys);
+        if channels.iter().all(|v| *v == 0.0) {
+            return;
+        }
+        let input = flycam::Input {
+            channels,
+            unroll: false,
+            orbit: None,
+            speed_factor: self.settings.game_control.speed_factor(Mode::Flycam),
+            allow_roll,
+        };
+        if let Some(cam) = self.camera.flycam.as_mut() {
+            self.game_control.flycam_state.step(cam, input, dt);
+        }
     }
 
     /// The orbit's focal distance: the first surface ahead, 20 m when none.

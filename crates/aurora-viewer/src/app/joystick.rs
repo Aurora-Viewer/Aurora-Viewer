@@ -467,8 +467,11 @@ impl App {
         }
     }
 
-    /// The flycam's camera, flown by the device, and by the keys too in VR;
-    /// on a screen the caller leaves the keys to the avatar (#4613).
+    /// The joystick flycam's frame: the device flies it, and so do the
+    /// movement keys, in VR through the device's axes, on a screen through
+    /// the Game Control flycam's key path (`flycam_keys_step`), as the Legacy
+    /// Viewer's MODE_FLYCAM bindings fly its single flycam (#4613). The
+    /// avatar gets no input meanwhile.
     pub(super) fn joystick_flycam_step(&mut self, keys: &MoveInput, dt: f32) {
         if self.joystick_input_focused()
             && !self.options_ui.joystick_capturing()
@@ -504,6 +507,22 @@ impl App {
             } else {
                 cam.step(axes, profile, dt);
             }
+        }
+        if self.vr_camera.is_none() {
+            let profile = if self.joystick.flycam_gamepad {
+                &self.settings.gamepad
+            } else {
+                &self.settings.joystick
+            };
+            let allow_roll = !profile.auto_level;
+            self.flycam_keys_step(keys, allow_roll, dt);
+        }
+        self.input = MoveInput::default();
+        self.fb_since = None;
+        self.lr_since = None;
+        self.up_since = None;
+        if self.vr_camera.is_none() {
+            self.turn_since = None;
         }
     }
 
@@ -1020,12 +1039,13 @@ impl App {
         {
             self.toggle_joystick_flycam();
         }
-        // with AURORA_DEMO_KEY=up, the avatar walks on under the flycam (#4613)
+        // with AURORA_DEMO_KEY=up, the key flies the flycam and the avatar
+        // stays put (#4613)
         if mode == "flycam" && matches!(self.frame_count, 640 | 900) {
             log::info!(
-                "demo flycam: frame={} flycam={} avatar={:?}",
+                "demo flycam: frame={} flycam={:?} avatar={:?}",
                 self.frame_count,
-                self.joystick.active,
+                self.camera.flycam.as_ref().map(|c| c.position),
                 self.world.agent.position
             );
         }

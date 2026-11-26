@@ -201,9 +201,66 @@ fn nlerp(a: Quat, b: Quat, t: f32) -> Quat {
     (a * (1.0 - t) + b * t).normalize()
 }
 
+/// The movement keys added to the channels, then each clamped to -1..1:
+/// forward and back dolly, the strafe keys truck, up and down boom, the turn
+/// keys pan. The keyboard part of updateFlycam's input (the <flycam> block
+/// of app_settings/key_bindings.xml: flycam_move_*, flycam_truck_*), the one
+/// key path of the Game Control flycam and the joystick flycam, which are a
+/// single flycam in the Legacy Viewer.
+pub fn add_keys(channels: &mut [f32; 7], keys: &crate::agent::MoveInput) {
+    let key = |pos: bool, neg: bool| f32::from(u8::from(pos)) - f32::from(u8::from(neg));
+    channels[DOLLY] += key(keys.forward, keys.back);
+    channels[TRUCK] += key(keys.strafe_left, keys.strafe_right);
+    channels[BOOM] += key(keys.up, keys.down);
+    channels[PAN] += key(keys.turn_left, keys.turn_right);
+    for v in channels.iter_mut() {
+        *v = v.clamp(-1.0, 1.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #4613: the keys fly the flycam as the controller's channels do.
+    #[test]
+    fn the_keys_fly_the_flycam_through_its_channels() {
+        let keys = crate::agent::MoveInput {
+            forward: true,
+            strafe_left: true,
+            up: true,
+            turn_right: true,
+            ..Default::default()
+        };
+        let mut channels = [0.0; 7];
+        channels[DOLLY] = 0.6;
+        add_keys(&mut channels, &keys);
+        assert_eq!(channels[DOLLY], 1.0, "summed with the controller's, then clamped");
+        assert_eq!((channels[TRUCK], channels[BOOM], channels[PAN]), (1.0, 1.0, -1.0));
+        assert_eq!((channels[TILT], channels[ROLL], channels[ZOOM]), (0.0, 0.0, 0.0));
+        // W alone: 10 m/s straight ahead, the view unturned
+        let mut only_w = [0.0; 7];
+        add_keys(
+            &mut only_w,
+            &crate::agent::MoveInput {
+                forward: true,
+                ..Default::default()
+            },
+        );
+        let (mut c, mut s) = (cam(), State::default());
+        let start = c.rotation;
+        s.step(
+            &mut c,
+            Input {
+                channels: only_w,
+                speed_factor: 1.0,
+                ..Default::default()
+            },
+            0.1,
+        );
+        assert!((c.position - Vec3::new(129.0, 128.0, 30.0)).length() < 1e-4, "{:?}", c.position);
+        assert!(c.rotation.dot(start).abs() > 1.0 - 1e-6);
+    }
 
     fn cam() -> Flycam {
         Flycam::from_direction(Vec3::new(128.0, 128.0, 30.0), Vec3::X, Vec3::Z, DEFAULT_VIEW)
