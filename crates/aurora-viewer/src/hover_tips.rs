@@ -126,14 +126,53 @@ const CELL: f32 = 4.0;
 #[derive(Default)]
 pub struct HoverParcels {
     parcels: Vec<(RegionHandle, Arc<ParcelInfo>)>,
-    /// The cell last asked, and when.
-    asked: Option<(RegionHandle, u32, u32, Instant)>,
+    asked: ParcelCellAsk,
 }
 
 /// Parcels kept: those under the pointer lately.
 const KEPT_PARCELS: usize = 16;
 /// A cell asked again after this long without an answer.
-const PARCEL_RETRY: Duration = Duration::from_secs(5);
+pub(crate) const PARCEL_RETRY: Duration = Duration::from_secs(5);
+
+/// The 4 m parcel cell last asked about under the pointer, and when: the
+/// request side of LLViewerParcelMgr::setHoverParcel
+/// (indra/newview/llviewerparcelmgr.cpp), shared by the hover tips and the
+/// land brush. A cell is asked once, then again after `PARCEL_RETRY`
+/// without an answer.
+#[derive(Default, Clone, Copy, Debug)]
+pub(crate) struct ParcelCellAsk(Option<(RegionHandle, u32, u32, Instant)>);
+
+impl ParcelCellAsk {
+    /// The ParcelPropertiesRequest (HOVERED_PARCEL_SEQ_ID) for the cell
+    /// holding `local` of region `handle`, unless that cell was just asked.
+    /// The caller checks first that the parcel is not already known.
+    pub(crate) fn request(&mut self, handle: RegionHandle, local: Vec3, now: Instant) -> Option<aurora_net::build::BuildCmd> {
+        let (cx, cy) = ((local.x / CELL).max(0.0) as u32, (local.y / CELL).max(0.0) as u32);
+        if self
+            .0
+            .is_some_and(|(h, x, y, at)| h == handle && x == cx && y == cy && now.duration_since(at) < PARCEL_RETRY)
+        {
+            return None;
+        }
+        self.0 = Some((handle, cx, cy, now));
+        // a rectangle around the point: the parcel sent back holds it
+        let (west, south) = (cx as f32 * CELL, cy as f32 * CELL);
+        Some(aurora_net::build::BuildCmd::ParcelRequest {
+            handle,
+            sequence: aurora_net::land::HOVERED_PARCEL_SEQ_ID,
+            snap: false,
+            west,
+            south,
+            east: west + CELL,
+            north: south + CELL,
+        })
+    }
+
+    /// An answer came: the next cell is asked at once.
+    pub(crate) fn answered(&mut self) {
+        self.0 = None;
+    }
+}
 
 impl HoverParcels {
     /// The known parcel holding `local` of region `handle`.
@@ -156,25 +195,7 @@ impl HoverParcels {
         if self.at(handle, local, origin).is_some() {
             return None;
         }
-        let (cx, cy) = ((local.x / CELL).max(0.0) as u32, (local.y / CELL).max(0.0) as u32);
-        if self
-            .asked
-            .is_some_and(|(h, x, y, at)| h == handle && x == cx && y == cy && now.duration_since(at) < PARCEL_RETRY)
-        {
-            return None;
-        }
-        self.asked = Some((handle, cx, cy, now));
-        // a rectangle around the point: the parcel sent back holds it
-        let (west, south) = (cx as f32 * CELL, cy as f32 * CELL);
-        Some(aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::ParcelRequest {
-            handle,
-            sequence: aurora_net::land::HOVERED_PARCEL_SEQ_ID,
-            snap: false,
-            west,
-            south,
-            east: west + CELL,
-            north: south + CELL,
-        }))
+        self.asked.request(handle, local, now).map(aurora_net::NetCommand::Build)
     }
 
     /// ParcelProperties of the hovered parcel (LLViewerParcelMgr::
@@ -185,7 +206,7 @@ impl HoverParcels {
         if self.parcels.len() > KEPT_PARCELS {
             self.parcels.remove(0);
         }
-        self.asked = None;
+        self.asked.answered();
     }
 }
 
