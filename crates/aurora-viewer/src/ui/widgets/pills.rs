@@ -416,36 +416,53 @@ pub fn select_on_focus(ui: &egui::Ui, response: &egui::Response, text: &str) {
     if ui.is_sizing_pass() {
         return;
     }
+    let ctx = ui.ctx();
     let key = response.id.with("select_on_focus");
     // The viewer's own window's frame, also in a window drawn outside it,
     // whose pass runs inside the viewer's and shares its numbers (outside.rs).
-    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
-    let focused = response.has_focus();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    let last = ctx.data(|d| d.get_temp::<Hold>(key)).filter(|last| last.frame + 1 >= frame);
+    // The hold is egui's keyboard focus, as LLLineEditor::hasFocus is the
+    // keyboard focus alone (`Response::has_focus` also asks for the
+    // system's): another program in front and gone again (Alt+Tab, a click
+    // on the title bar) leaves the hold and the caret, as
+    // LLFocusMgr::setAppHasFocus leaves the keyboard focus
+    // (indra/llui/llfocusmgr.cpp). Another window of the viewer that takes
+    // the system's focus (the viewer's own, for a field in a window outside)
+    // ends the hold until the field's window has the focus back, as a click
+    // into another floater takes the Legacy Viewer's keyboard focus: egui
+    // keeps each window's focus apart, and the field selects again when its
+    // window comes back.
+    let away = match crate::outside::focused_window(ctx) {
+        Some(window) => window != ctx.viewport_id(),
+        None => last.is_some_and(|last| last.away),
+    };
+    let focused = !away && ui.memory(|m| m.has_focus(response.id));
     let held = focused || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-    let last = ui.ctx().data(|d| d.get_temp::<Hold>(key)).filter(|last| last.frame + 1 >= frame);
     let had = last.is_some_and(|last| last.held);
     // The press that gave the field the keyboard, until its release: egui
     // puts the caret at the pointer on the press and moves the selection
     // with its drag, where the Legacy Viewer leaves the whole text selected.
     let gained = focused && !had;
     let pressing = gained || (focused && last.is_some_and(|last| last.pressing));
-    ui.ctx().data_mut(|d| {
+    ctx.data_mut(|d| {
         d.insert_temp(
             key,
             Hold {
                 frame,
                 held,
                 pressing: pressing && response.is_pointer_button_down_on(),
+                away,
             },
         );
     });
     if !pressing || text.is_empty() {
         return;
     }
-    let mut state = egui::TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
+    let mut state = egui::TextEdit::load_state(ctx, response.id).unwrap_or_default();
     state.cursor.set_char_range(Some(egui::text::CCursorRange::select_all_str(text)));
-    state.store(ui.ctx(), response.id);
-    ui.ctx().request_repaint();
+    state.store(ctx, response.id);
+    ctx.request_repaint();
 }
 
 /// What `select_on_focus` keeps of a field's last frame.
@@ -456,6 +473,8 @@ struct Hold {
     held: bool,
     /// The press that gave it the keyboard was still down.
     pressing: bool,
+    /// Another window of the viewer had the system's focus.
+    away: bool,
 }
 
 fn note_search_clear(ui: &egui::Ui, response: &egui::Response, emptied: bool) {
@@ -955,6 +974,8 @@ mod search_tests {
     struct Lone {
         ctx: egui::Context,
         time: f64,
+        /// The viewer's window has the system's focus.
+        in_front: bool,
     }
 
     impl Lone {
@@ -965,7 +986,11 @@ mod search_tests {
         fn new() -> Self {
             let ctx = egui::Context::default();
             crate::theme::Theme::default().apply(&ctx, 1.0);
-            Self { ctx, time: 0.0 }
+            Self {
+                ctx,
+                time: 0.0,
+                in_front: true,
+            }
         }
 
         /// One frame; `after` runs after the field, with its response, as
@@ -979,6 +1004,7 @@ mod search_tests {
                     screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 240.0))),
                     events,
                     time: Some(self.time),
+                    focused: self.in_front,
                     ..Default::default()
                 },
                 |ui| {
@@ -1002,6 +1028,16 @@ mod search_tests {
 
         fn focused(&self) -> bool {
             self.ctx.memory(|m| m.has_focus(Self::id()))
+        }
+
+        /// Puts the field's caret after its `at`th character, as the user's
+        /// arrows or a click would.
+        fn place_caret(&self, at: usize) -> egui::text::CCursorRange {
+            let caret = egui::text::CCursorRange::one(egui::text::CCursor::new(at));
+            let mut state = egui::TextEdit::load_state(&self.ctx, Self::id()).expect("the field's state");
+            state.cursor.set_char_range(Some(caret));
+            state.store(&self.ctx, Self::id());
+            caret
         }
     }
 
@@ -1048,6 +1084,173 @@ mod search_tests {
         f.frame(&mut text, vec![egui::Event::Text("x".into())], |_, _| {});
         assert_eq!(text.chars().count(), 11, "typing goes in at the caret: {text}");
         assert!(!text.ends_with('x'), "the caret is where the click landed, not at the end: {text}");
+    }
+
+    #[test]
+    fn coming_back_from_another_program_keeps_the_caret_of_a_search() {
+        // LLLineEditor::hasFocus is the keyboard focus alone, which
+        // LLFocusMgr::setAppHasFocus leaves as it is (indra/llui/llfocusmgr.cpp)
+        let mut f = Lone::new();
+        let mut text = "old search".to_owned();
+        f.idle(&mut text);
+        f.frame(&mut text, Vec::new(), |_, field| field.request_focus());
+        f.idle(&mut text);
+        let caret = f.place_caret(3);
+        f.idle(&mut text);
+        // Alt+Tab to another program: the viewer goes on drawing behind it
+        f.in_front = false;
+        for _ in 0..3 {
+            f.idle(&mut text);
+        }
+        // and back, by Alt+Tab or a click on the title bar
+        f.in_front = true;
+        f.idle(&mut text);
+        f.idle(&mut text);
+        assert!(f.focused(), "the search kept the keyboard");
+        let range = f.range().expect("the field has a caret");
+        assert_eq!(range.as_sorted_char_range(), caret.as_sorted_char_range(), "the caret stays");
+        f.frame(&mut text, vec![egui::Event::Text("-".into())], |_, _| {});
+        assert_eq!(text, "old- search", "the next character goes in at the caret");
+    }
+
+    /// Which window has the system's focus.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Front {
+        /// The window outside that holds the search.
+        Outside,
+        /// The viewer's own window.
+        Viewer,
+        /// Another program.
+        Other,
+    }
+
+    /// A search in a window outside the viewer's (outside.rs): its pass runs
+    /// inside each of the viewer's, with its own input and system focus.
+    struct Apart {
+        ctx: egui::Context,
+        time: f64,
+        /// What the window outside reads at its next pass, and its focus.
+        input: std::rc::Rc<std::cell::RefCell<(Vec<egui::Event>, bool)>>,
+    }
+
+    impl Apart {
+        fn window() -> egui::Id {
+            egui::Id::unique("apart_window")
+        }
+
+        fn id() -> egui::Id {
+            egui::Id::unique("apart_search")
+        }
+
+        fn new() -> Self {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let input: std::rc::Rc<std::cell::RefCell<(Vec<egui::Event>, bool)>> = std::rc::Rc::default();
+            let for_pass = input.clone();
+            // (no native window in a test: the pass is run as outside.rs runs it)
+            ctx.set_embed_viewports(false);
+            egui::Context::set_immediate_viewport_renderer(move |ctx, viewport| {
+                let egui::ImmediateViewport {
+                    ids, mut viewport_ui_cb, ..
+                } = viewport;
+                let (events, focused) = {
+                    let mut input = for_pass.borrow_mut();
+                    (std::mem::take(&mut input.0), input.1)
+                };
+                let screen = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 240.0));
+                let info = egui::ViewportInfo {
+                    parent: Some(ids.parent),
+                    native_pixels_per_point: Some(1.0),
+                    inner_rect: Some(screen),
+                    focused: Some(focused),
+                    ..Default::default()
+                };
+                let raw = egui::RawInput {
+                    viewport_id: ids.this,
+                    viewports: std::iter::once((ids.this, info)).collect(),
+                    screen_rect: Some(screen),
+                    time: Some(ctx.input(|i| i.time)),
+                    focused,
+                    events,
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(raw, |ui| viewport_ui_cb(ui));
+                output.textures_delta.clear();
+            });
+            Self { ctx, time: 0.0, input }
+        }
+
+        /// One frame of the viewer, with `front` in front and `events` for
+        /// the window outside; whether the search held egui's keyboard.
+        fn frame(&mut self, text: &mut String, front: Front, events: Vec<egui::Event>) -> (egui::Response, bool) {
+            let p = crate::theme::Theme::default().palette();
+            self.time += 1.0 / 60.0;
+            crate::outside::focus_for_test(&self.ctx, (front == Front::Outside).then(Self::window));
+            *self.input.borrow_mut() = (events, front == Front::Outside);
+            let mut field = None;
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                    time: Some(self.time),
+                    focused: front == Front::Viewer,
+                    ..Default::default()
+                },
+                |ui| {
+                    let outside = crate::outside::viewport(Self::window());
+                    ui.ctx()
+                        .show_viewport_immediate(outside, egui::ViewportBuilder::default(), |ui, _| {
+                            let response = search_text_edit(ui, &p, text, |edit| edit.id(Self::id()).desired_width(240.0));
+                            let held = ui.memory(|m| m.has_focus(Self::id()));
+                            field = Some((response, held));
+                        });
+                },
+            );
+            output.textures_delta.clear();
+            field.expect("the search is drawn in its window outside")
+        }
+
+        fn range(&self) -> Option<egui::text::CCursorRange> {
+            egui::TextEdit::load_state(&self.ctx, Self::id()).and_then(|s| s.cursor.char_range())
+        }
+
+        fn click_at(&mut self, text: &mut String, front: Front, at: egui::Pos2) {
+            self.time += 1.0;
+            self.frame(text, front, click(at, true));
+            self.frame(text, front, click(at, false));
+            self.frame(text, front, Vec::new());
+        }
+    }
+
+    #[test]
+    fn a_search_outside_selects_again_once_another_window_of_the_viewer_had_the_focus() {
+        let mut f = Apart::new();
+        let mut text = "old search".to_owned();
+        let all = Some(egui::text::CCursorRange::select_all_str("old search"));
+        let (field, _) = f.frame(&mut text, Front::Outside, Vec::new());
+        let start = field.rect.left_center() + egui::vec2(12.0, 0.0);
+        f.click_at(&mut text, Front::Outside, start);
+        assert_eq!(f.range(), all, "the first click selects the whole search");
+        f.click_at(&mut text, Front::Outside, start);
+        let caret = f.range().expect("the search has a caret");
+        assert!(caret.is_empty(), "a second click places the caret: {caret:?}");
+        // another program comes in front and goes: the caret stays
+        for _ in 0..3 {
+            f.frame(&mut text, Front::Other, Vec::new());
+        }
+        let (_, held) = f.frame(&mut text, Front::Outside, Vec::new());
+        f.frame(&mut text, Front::Outside, Vec::new());
+        assert!(held, "the search kept the keyboard");
+        assert_eq!(f.range(), Some(caret), "coming back from another program keeps the caret");
+        // a click in the viewer's own window takes the system's focus; the
+        // search outside keeps egui's keyboard, which nothing there takes
+        for _ in 0..3 {
+            let (_, held) = f.frame(&mut text, Front::Viewer, Vec::new());
+            assert!(held);
+        }
+        // as a click into another floater moves the Legacy Viewer's keyboard
+        // focus (LLFloater::setFocus gives it back to the field on return)
+        f.click_at(&mut text, Front::Outside, start);
+        assert_eq!(f.range(), all, "the next click into the search selects it again");
     }
 
     #[test]
