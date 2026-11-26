@@ -11,6 +11,7 @@
 //! unlike the Legacy Viewer's per-account toolbar persistence.
 
 pub(crate) mod appearance;
+mod block_window;
 pub(crate) mod blocks;
 mod catalogue;
 pub(crate) mod catalogue_view;
@@ -213,6 +214,10 @@ pub struct ToolbarSettings {
     pub separators: std::collections::BTreeMap<String, structure::SeparatorStyle>,
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub drawers: std::collections::BTreeMap<String, drawers::Drawer>,
+    /// What fixed blocks keep for when they become drawers or floating
+    /// blocks, under one of their buttons (`drawers::BlockProfile`).
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub block_profiles: std::collections::BTreeMap<String, drawers::BlockProfile>,
     /// Keyboard shortcuts of buttons, drawers, floating blocks and blocks
     /// (`shortcuts.rs`).
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -699,15 +704,11 @@ enum Edit {
     Unfold(Bar, String),
     DrawerInsert(String, ToolButton, usize),
     DrawerFromDrop(Bar, String, Vec<ToolButton>, ButtonMode),
-    DrawerOptions(String, String, ButtonMode, appearance::Appearance),
-    /// A drawer's "Close after a click".
-    DrawerCloses(String, bool),
-    /// A drawer's "Hide the button while floating".
-    DrawerHidesButton(String, bool),
+    /// The fields of "Edit block", for any type of block.
+    BlockOptions(Box<block_window::Change>),
     MenuInsert(String, String, usize),
     /// A new floating block, dropped there on the screen.
     FloatingNew(Pos2),
-    FloatingOptions(String, drawers::FloatingOptions),
     /// A floating block shown or hidden, locked bars included.
     FloatingShown(String, bool),
     /// A floating block of the user's deleted, its button with it.
@@ -1362,13 +1363,8 @@ impl ToolbarUi {
             Edit::DrawerFromDrop(bar, target, sources, mode) => {
                 return drawers::group_drop(settings, layout, *bar, target, sources, *mode);
             }
-            Edit::DrawerOptions(id, name, mode, value) => {
-                return drawers::update_options(settings, layout, id, name, *mode, value);
-            }
-            Edit::DrawerCloses(id, closes) => return drawers::update_closes(settings, id, *closes),
-            Edit::DrawerHidesButton(id, hides) => return drawers::update_hides_button(settings, id, *hides),
+            Edit::BlockOptions(change) => return block_window::apply(settings, layout, change),
             Edit::FloatingShown(id, shown) => return drawers::show_floating(settings, id, *shown),
-            Edit::FloatingOptions(id, options) => return drawers::update_floating(settings, layout, id, options),
             Edit::FloatingDelete(id) => return drawers::delete_floating(settings, layout, id),
             Edit::Shortcut(key, binding) => return shortcuts::set(settings, key, binding.clone()),
             Edit::Float(bar, command, pos) => {
@@ -1484,15 +1480,26 @@ impl ToolbarUi {
                 let id = format!("{}{}", drawers::PREFIX, uuid::Uuid::new_v4());
                 let block_style = settings.block_styles.get(&command).copied().unwrap_or_default();
                 let mode = block_style.mode.or(settings.style(bar).mode).unwrap_or_default();
-                let contents: Vec<ToolButton> = buttons
-                    .splice(range, [crate::ui::bars::top::button(&id, "folder-filled")])
-                    .collect();
+                let profile = drawers::take_profile(settings, &buttons[range.clone()]).unwrap_or_default();
+                let mut toggle = crate::ui::bars::top::button(&id, "folder-filled");
+                if !profile.name.is_empty() {
+                    toggle.tooltip = profile.name.clone();
+                }
+                if profile.look != Default::default() {
+                    settings.appearance.insert(id.clone(), profile.look.clone());
+                }
+                let contents: Vec<ToolButton> = buttons.splice(range, [toggle]).collect();
                 shortcuts::into_drawer(settings, &contents, &id);
                 settings.drawers.insert(
                     id.clone(),
                     drawers::Drawer {
                         buttons: contents,
                         mode,
+                        closes: profile.closes.unwrap_or(true),
+                        hides_button: profile.hides_button,
+                        vertical: profile.vertical.unwrap_or(false),
+                        align: block_style.align,
+                        sizing: block_style.sizing,
                         ..Default::default()
                     },
                 );
@@ -1513,8 +1520,12 @@ impl ToolbarUi {
                     return false;
                 };
                 shortcuts::out_of_drawer(settings, &command, &drawer.buttons);
+                let profile = drawers::drawer_profile(settings, &command, &drawer, &buttons[at].tooltip);
+                drawers::put_profile(settings, &drawer.buttons, profile);
                 let mut block_style = settings.block_styles.get(&command).copied().unwrap_or_default();
                 block_style.mode = Some(drawer.mode);
+                block_style.align = drawer.align.or(block_style.align);
+                block_style.sizing = drawer.sizing.or(block_style.sizing);
                 for child in &drawer.buttons {
                     settings.block_styles.insert(child.command.clone(), block_style);
                 }
@@ -1833,11 +1844,8 @@ impl ToolbarUi {
             | Edit::DrawerBlock(..)
             | Edit::RemoveBlock(..)
             | Edit::DrawerFromDrop(..)
-            | Edit::DrawerOptions(..)
-            | Edit::DrawerCloses(..)
-            | Edit::DrawerHidesButton(..)
+            | Edit::BlockOptions(..)
             | Edit::FloatingNew(..)
-            | Edit::FloatingOptions(..)
             | Edit::FloatingShown(..)
             | Edit::FloatingDelete(..)
             | Edit::Float(..)

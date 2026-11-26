@@ -362,18 +362,26 @@ fn drawers_preserve_children_locations_and_support_move_insert_reorder_rename_an
     assert!(drawers::is_drawer(&id));
     assert_eq!(settings.location("people", &layout()), Some(Bar::Top));
     assert_eq!(settings.drawer_of("people"), Some(id.as_str()));
-    state.pending = Some(Edit::DrawerOptions(
-        id.clone(),
-        "Tools".into(),
-        settings.drawers[&id].mode,
-        Default::default(),
+    state.pending = Some(block_window::edit_of(
+        &settings,
+        &layout(),
+        block_window::Target::Drawer(id.clone()),
+        |o| {
+            o.name = "Tools".into();
+            o.mode = settings.drawers[&id].mode;
+            o.look = Default::default();
+        },
     ));
     assert!(state.commit(&layout(), &mut settings));
-    state.pending = Some(Edit::DrawerOptions(
-        id.clone(),
-        "Tools".into(),
-        ButtonMode::TextOnly,
-        Default::default(),
+    state.pending = Some(block_window::edit_of(
+        &settings,
+        &layout(),
+        block_window::Target::Drawer(id.clone()),
+        |o| {
+            o.name = "Tools".into();
+            o.mode = ButtonMode::TextOnly;
+            o.look = Default::default();
+        },
     ));
     assert!(state.commit(&layout(), &mut settings));
     state.pending = Some(Edit::Insert(Bar::Right, settings.top[0].clone(), 0));
@@ -424,34 +432,81 @@ fn drawer_defaults_load_older_settings_and_mode_edits_respect_lock_and_identity(
     let first = drawers::create(&mut settings, Bar::Left, &layout());
     let second = drawers::create(&mut settings, Bar::Right, &layout());
     for mode in [ButtonMode::IconsOnly, ButtonMode::TextOnly, ButtonMode::IconsWithText] {
-        state.pending = Some(Edit::DrawerOptions(first.clone(), String::new(), mode, Default::default()));
+        state.pending = Some(block_window::edit_of(
+            &settings,
+            &layout(),
+            block_window::Target::Drawer(first.clone()),
+            |o| {
+                o.name = String::new();
+                o.mode = mode;
+                o.look = Default::default();
+            },
+        ));
         assert!(state.commit(&layout(), &mut settings));
         assert_eq!(settings.drawers[&first].mode, mode);
         assert_eq!(settings.drawers[&second].mode, ButtonMode::IconsWithText);
-        state.pending = Some(Edit::DrawerOptions(first.clone(), String::new(), mode, Default::default()));
+        state.pending = Some(block_window::edit_of(
+            &settings,
+            &layout(),
+            block_window::Target::Drawer(first.clone()),
+            |o| {
+                o.name = String::new();
+                o.mode = mode;
+                o.look = Default::default();
+            },
+        ));
         assert!(!state.commit(&layout(), &mut settings));
     }
-    state.pending = Some(Edit::DrawerCloses(first.clone(), false));
+    state.pending = Some(block_window::edit_of(
+        &settings,
+        &layout(),
+        block_window::Target::Drawer(first.clone()),
+        |o| {
+            o.closes = false;
+        },
+    ));
     assert!(state.commit(&layout(), &mut settings));
     assert!(!settings.drawers[&first].closes && settings.drawers[&second].closes);
-    state.pending = Some(Edit::DrawerCloses(first.clone(), false));
+    state.pending = Some(block_window::edit_of(
+        &settings,
+        &layout(),
+        block_window::Target::Drawer(first.clone()),
+        |o| {
+            o.closes = false;
+        },
+    ));
     assert!(!state.commit(&layout(), &mut settings));
     settings.locked = true;
     let before = settings.clone();
-    state.pending = Some(Edit::DrawerCloses(first.clone(), true));
-    assert!(!state.commit(&layout(), &mut settings));
-    state.pending = Some(Edit::DrawerOptions(
-        first.clone(),
-        String::new(),
-        ButtonMode::IconsOnly,
-        Default::default(),
+    state.pending = Some(block_window::edit_of(
+        &settings,
+        &layout(),
+        block_window::Target::Drawer(first.clone()),
+        |o| {
+            o.closes = true;
+        },
     ));
     assert!(!state.commit(&layout(), &mut settings));
-    state.pending = Some(Edit::DrawerOptions(
-        first,
-        "Blocked".into(),
-        ButtonMode::IconsOnly,
-        Default::default(),
+    state.pending = Some(block_window::edit_of(
+        &settings,
+        &layout(),
+        block_window::Target::Drawer(first.clone()),
+        |o| {
+            o.name = String::new();
+            o.mode = ButtonMode::IconsOnly;
+            o.look = Default::default();
+        },
+    ));
+    assert!(!state.commit(&layout(), &mut settings));
+    state.pending = Some(block_window::edit_of(
+        &settings,
+        &layout(),
+        block_window::Target::Drawer(first),
+        |o| {
+            o.name = "Blocked".into();
+            o.mode = ButtonMode::IconsOnly;
+            o.look = Default::default();
+        },
     ));
     assert!(!state.commit(&layout(), &mut settings));
     assert_eq!(settings, before);
@@ -477,7 +532,16 @@ fn drawer_options_are_atomic_persisted_and_empty_drawers_are_pruned_on_removal()
             mode: Some(ButtonMode::TextOnly),
             icon: Some("star-filled".into()),
         };
-        state.pending = Some(Edit::DrawerOptions(id.clone(), "Tools".into(), ButtonMode::IconsOnly, own.clone()));
+        state.pending = Some(block_window::edit_of(
+            &settings,
+            &layout(),
+            block_window::Target::Drawer(id.clone()),
+            |o| {
+                o.name = "Tools".into();
+                o.mode = ButtonMode::IconsOnly;
+                o.look = own.clone();
+            },
+        ));
         assert!(state.commit(&layout(), &mut settings));
         assert_eq!(settings.left[0].tooltip, "Tools");
         assert_eq!(settings.drawers[&id].mode, ButtonMode::IconsOnly);
@@ -488,11 +552,15 @@ fn drawer_options_are_atomic_persisted_and_empty_drawers_are_pruned_on_removal()
         );
         settings.locked = true;
         let before = settings.clone();
-        state.pending = Some(Edit::DrawerOptions(
-            id.clone(),
-            "Blocked".into(),
-            ButtonMode::IconsWithText,
-            Default::default(),
+        state.pending = Some(block_window::edit_of(
+            &settings,
+            &layout(),
+            block_window::Target::Drawer(id.clone()),
+            |o| {
+                o.name = "Blocked".into();
+                o.mode = ButtonMode::IconsWithText;
+                o.look = Default::default();
+            },
         ));
         assert!(!state.commit(&layout(), &mut settings));
         assert_eq!(settings, before);
@@ -2460,7 +2528,7 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
 
     state.pending = Some(Edit::Insert(Bar::Top, drawers::floating_toggle(&id, "x"), 0));
     assert!(state.commit(&layout(), &mut settings));
-    let options = drawers::FloatingOptions {
+    let options = block_window::Options {
         name: "Tools".into(),
         mode: ButtonMode::TextOnly,
         vertical: true,
@@ -2470,15 +2538,41 @@ fn a_floating_block_dropped_on_the_screen_takes_its_place_and_its_options() {
             mode: None,
             icon: Some("star-filled".into()),
         },
+        align: Align::Center,
+        sizing: Sizing::Fixed,
     };
-    state.pending = Some(Edit::FloatingOptions(id.clone(), options.clone()));
+    state.pending = Some(block_window::edit_of(
+        &settings,
+        &layout(),
+        block_window::Target::Drawer(id.clone()),
+        |o| {
+            o.name = options.clone().name.clone();
+            o.mode = options.clone().mode;
+            o.vertical = options.clone().vertical;
+            o.closes = options.clone().closes;
+            o.hides_button = options.clone().hides_button;
+            o.look = options.clone().look.clone();
+        },
+    ));
     assert!(state.commit(&layout(), &mut settings));
     assert_eq!(settings.top[0].tooltip, "Tools", "its placed button takes the name");
     let floating = settings.drawers[&id].floating.clone().expect("floating");
     assert!(floating.vertical && floating.closes && floating.name == "Tools");
     assert_eq!(settings.drawers[&id].mode, ButtonMode::TextOnly);
     assert_eq!(settings.appearance[&id], options.look);
-    state.pending = Some(Edit::FloatingOptions(id.clone(), options));
+    state.pending = Some(block_window::edit_of(
+        &settings,
+        &layout(),
+        block_window::Target::Drawer(id.clone()),
+        |o| {
+            o.name = options.name.clone();
+            o.mode = options.mode;
+            o.vertical = options.vertical;
+            o.closes = options.closes;
+            o.hides_button = options.hides_button;
+            o.look = options.look.clone();
+        },
+    ));
     assert!(!state.commit(&layout(), &mut settings), "no change, no save");
 
     // the catalogue's entry never stays on a bar; the import block's button

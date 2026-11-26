@@ -51,6 +51,52 @@ fn open_block_settings(bench: &mut Bench, bar: Bar, command: &str) {
     );
 }
 
+/// Scrolls the block window until the row `label` shows, and returns its
+/// centre.
+fn scroll_window_to(bench: &mut Bench, label: &str) -> Pos2 {
+    let window = bench
+        .ctx
+        .memory(|memory| memory.area_rect(Id::unique("toolbar_drawer_settings")))
+        .expect("the block window");
+    // below the title bar, where the rows are not hidden under it
+    let inside = Rect::from_min_max(window.min + Vec2::new(8.0, 56.0), window.max - Vec2::splat(8.0));
+    let find = |bench: &Bench| {
+        bench
+            .text
+            .iter()
+            .rev()
+            .find(|(text, rect)| text == label && inside.contains(rect.center()))
+            .map(|(_, rect)| rect.center())
+    };
+    for delta in std::iter::repeat_n(-60.0, 30).chain(std::iter::repeat_n(60.0, 60)) {
+        if let Some(mut point) = find(bench) {
+            // the scroll eases in: wait until the row stops moving
+            for _ in 0..60 {
+                bench.frame(Vec::new());
+                match find(bench) {
+                    Some(next) if next == point => return point,
+                    Some(next) => point = next,
+                    None => break,
+                }
+            }
+        }
+        bench.frame(vec![
+            egui::Event::PointerMoved(window.center()),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: Vec2::new(0.0, delta),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
+                modifiers: Default::default(),
+            },
+        ]);
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+    }
+    panic!("{label} not reached in the block window");
+}
+
 fn menu_point(bench: &Bench, label: &str) -> Pos2 {
     bench
         .text
@@ -2838,7 +2884,14 @@ fn drawers_open_toggle_and_run_the_original_commands_on_each_edge_in_both_styles
             assert!(bench.settings.drawers[&id].closes, "on by default");
             bench.state.pending = Some(Edit::DrawerInsert(id.clone(), bars::top::button("inventory", "folder-filled"), 0));
             assert!(bench.state.commit(&Layout::default(), &mut bench.settings));
-            bench.state.pending = Some(Edit::DrawerCloses(id.clone(), closes));
+            bench.state.pending = Some(block_window::edit_of(
+                &bench.settings,
+                &Layout::default(),
+                block_window::Target::Drawer(id.clone()),
+                |o| {
+                    o.closes = closes;
+                },
+            ));
             assert_eq!(bench.state.commit(&Layout::default(), &mut bench.settings), !closes);
             for _ in 0..4 {
                 bench.frame(Vec::new());
@@ -3302,24 +3355,8 @@ fn compact_drawer_settings_stay_above_the_panel_and_edit_name_and_inherited_disp
     bench.pointer(name, Some(false));
     bench.frame(vec![egui::Event::Text("Tools".into())]);
     assert_eq!(bench.settings.left[0].tooltip, "Tools");
-    let window = bench
-        .ctx
-        .memory(|memory| memory.area_rect(Id::unique("toolbar_drawer_settings")))
-        .expect("settings");
-    bench.frame(vec![
-        egui::Event::PointerMoved(window.center()),
-        egui::Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Point,
-            delta: Vec2::new(0.0, -400.0),
-            phase: egui::TouchPhase::Move,
-            source: egui::MouseWheelSource::Wheel,
-            modifiers: Default::default(),
-        },
-    ]);
-    for _ in 0..20 {
-        bench.frame(Vec::new());
-    }
     let mode_label = super::mode_rows()[1].2;
+    scroll_window_to(&mut bench, mode_label);
     let contents = menu_point(&bench, aurora_i18n::tr!("toolbar-drawer-default-mode"));
     let choice = bench
         .text
@@ -3340,11 +3377,15 @@ fn compact_drawer_settings_stay_above_the_panel_and_edit_name_and_inherited_disp
         },
     );
     for mode in [ButtonMode::IconsOnly, ButtonMode::TextOnly, ButtonMode::IconsWithText] {
-        bench.state.pending = Some(Edit::DrawerOptions(
-            id.clone(),
-            "Tools".into(),
-            mode,
-            appearance::get(&bench.ctx, &id),
+        bench.state.pending = Some(block_window::edit_of(
+            &bench.settings,
+            &Layout::default(),
+            block_window::Target::Drawer(id.clone()),
+            |o| {
+                o.name = "Tools".into();
+                o.mode = mode;
+                o.look = appearance::get(&bench.ctx, &id);
+            },
         ));
         bench.state.commit(&Layout::default(), &mut bench.settings);
         for _ in 0..3 {
@@ -4595,19 +4636,28 @@ fn a_fixed_blocks_edit_entry_opens_its_settings_window() {
     let (_, command, base) = bench.state.block_editor.clone().expect("the block's window");
     assert_eq!(command, "inventory");
     assert!(bench.state.drawer_editor.is_none());
+    // the same fields as a drawer's: name, icon, shortcut, then the fixed
+    // and the floating modes' options (human request, 2026-11-26)
     for key in [
-        "toolbar-block-edit-title",
+        "toolbar-block-name",
+        "toolbar-icon-change",
+        "toolbar-block-shortcut",
         "toolbar-drawer-default-mode",
+        "toolbar-block-fixed-options",
         "toolbar-block-alignment",
         "toolbar-block-sizing",
+        "toolbar-block-floating-options",
+        "toolbar-floating-orientation",
+        "toolbar-drawer-hides-button",
     ] {
-        assert!(bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)), "{key}");
+        scroll_window_to(&mut bench, aurora_i18n::text(key));
     }
     let current = blocks::style(&bench.ctx, "inventory", base).sizing;
     let (value, _, label) = super::sizing_rows()
         .into_iter()
         .find(|(value, _, _)| *value != current)
         .expect("another size");
+    scroll_window_to(&mut bench, label);
     let heading = menu_point(&bench, aurora_i18n::tr!("toolbar-block-sizing"));
     let choice = bench
         .text
@@ -4754,8 +4804,9 @@ fn a_blocks_window_edits_its_shortcut_and_greys_hiding_without_one() {
     );
     assert!(bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-shortcut-none")));
     // greyed: a click changes nothing and says why
-    bench.pointer(hides.center(), Some(true));
-    bench.pointer(hides.center(), Some(false));
+    let hides = scroll_window_to(&mut bench, aurora_i18n::tr!("toolbar-drawer-hides-button"));
+    bench.pointer(hides, Some(true));
+    bench.pointer(hides, Some(false));
     for _ in 0..2 {
         bench.frame(Vec::new());
     }
@@ -4767,8 +4818,9 @@ fn a_blocks_window_edits_its_shortcut_and_greys_hiding_without_one() {
             .any(|(text, _)| text == aurora_i18n::tr!("toolbar-drawer-hides-needs-shortcut"))
     );
     // Edit opens the shortcut window, its modifiers drawn as keys
-    bench.pointer(edit.center(), Some(true));
-    bench.pointer(edit.center(), Some(false));
+    let edit = scroll_window_to(&mut bench, aurora_i18n::tr!("common-edit"));
+    bench.pointer(edit, Some(true));
+    bench.pointer(edit, Some(false));
     for _ in 0..3 {
         bench.frame(Vec::new());
     }
@@ -4805,6 +4857,7 @@ fn a_blocks_window_edits_its_shortcut_and_greys_hiding_without_one() {
         bench.frame(Vec::new());
     }
     assert!(bench.settings.shortcuts.contains_key(&id));
+    scroll_window_to(&mut bench, aurora_i18n::tr!("toolbar-drawer-hides-button"));
     let hides = rect(&bench, "drawer_hides_check");
     bench.pointer(hides.center(), Some(true));
     bench.pointer(hides.center(), Some(false));
@@ -4812,7 +4865,7 @@ fn a_blocks_window_edits_its_shortcut_and_greys_hiding_without_one() {
         bench.frame(Vec::new());
     }
     assert!(bench.settings.drawers[&id].hides_button, "with a shortcut, it is set");
-    let delete = menu_point(&bench, aurora_i18n::tr!("common-delete"));
+    let delete = scroll_window_to(&mut bench, aurora_i18n::tr!("common-delete"));
     bench.pointer(delete, Some(true));
     bench.pointer(delete, Some(false));
     for _ in 0..2 {

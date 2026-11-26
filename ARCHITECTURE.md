@@ -131,6 +131,10 @@ privacy guards without changing integrated navigation placement or visibility.
 `ui/toolbar/drawers.rs` anchors collapsible glass panels to toolbar buttons.
 `ui/toolbar/floating.rs` draws the floating blocks, drawers of their own on
 the screen that the quick import bar is one of.
+`ui/toolbar/block_window.rs` is the one "Edit block…" window of every block,
+drawer, floating or fixed: the same fields whatever its type, read from and
+applied to where that type keeps them (a fixed block's name, icon, closing,
+orientation and hiding live in `block_profiles` until it becomes a drawer).
 `ui/toolbar/shortcuts.rs` holds the keyboard shortcuts of toolbar buttons,
 drawers and blocks: the keys refused at capture, the target of a press, and the
 click it gives the drawn button (or the menu's way when it is not drawn).
