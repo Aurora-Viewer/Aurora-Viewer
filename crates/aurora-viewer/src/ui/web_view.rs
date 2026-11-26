@@ -116,6 +116,8 @@ pub struct WebView {
     url: String,
     nav_pending: bool,
     native_video: bool,
+    /// A host control drawn over the page on this pass.
+    pointer_exclusion: Option<egui::Rect>,
     size: (i32, i32),
     failed: Option<String>,
     /// The page has the keyboard (clicked; a click elsewhere releases it).
@@ -231,6 +233,11 @@ impl WebView {
         self.navigate(url);
     }
 
+    /// Keep the next draw's host control click out of the web page.
+    pub fn exclude_pointer_over(&mut self, rect: egui::Rect) {
+        self.pointer_exclusion = Some(rect);
+    }
+
     /// Stop the browser (window closed).
     pub fn close(&mut self) {
         self.plugin = None;
@@ -298,6 +305,7 @@ impl WebView {
         cookie: Option<&Cookie>,
         size: Vec2,
     ) -> egui::Response {
+        let pointer_exclusion = self.pointer_exclusion.take();
         let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         let ppp = ui.ctx().pixels_per_point();
         let px = ((size.x * ppp).round().max(16.0) as i32, (size.y * ppp).round().max(16.0) as i32);
@@ -559,7 +567,7 @@ impl WebView {
         if self.token == 0 {
             self.token = next_token();
         }
-        let pointer = read_web_pointer(ui, &resp, rect, ui.is_enabled(), self.captured, self.token);
+        let pointer = read_web_pointer(ui, &resp, rect, ui.is_enabled(), self.captured, self.token, pointer_exclusion);
         self.captured = pointer.captured;
         // where the page last saw the pointer, before this frame's move
         let seen = self.last_pos;
@@ -700,7 +708,15 @@ fn next_token() -> u64 {
 /// button up. The page then gets a release where it last saw the pointer:
 /// that mouseup is Aurora's own, the Legacy Viewer only drops the capture
 /// and the page never hears the button go up.
-fn read_web_pointer(ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, enabled: bool, captured: bool, token: u64) -> WebPointer {
+fn read_web_pointer(
+    ui: &egui::Ui,
+    resp: &egui::Response,
+    rect: egui::Rect,
+    enabled: bool,
+    captured: bool,
+    token: u64,
+    pointer_exclusion: Option<egui::Rect>,
+) -> WebPointer {
     let owner_id = owner_id();
     // (the main viewport's count: a page in a window drawn outside the
     // viewer counts the same frames, outside.rs)
@@ -719,7 +735,9 @@ fn read_web_pointer(ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, enab
             i.events.iter().any(|e| matches!(e, egui::Event::WindowFocused(false))),
         )
     });
-    let hit = |pos: egui::Pos2| enabled && pointer_hits_web_view(ui, resp, rect, pos);
+    let hit = |pos: egui::Pos2| {
+        enabled && !pointer_exclusion.is_some_and(|area| area.contains(pos)) && pointer_hits_web_view(ui, resp, rect, pos)
+    };
     let on_view = interact.is_some_and(hit);
     // a press anywhere decides the focus, even one another page takes: a
     // page drawn after it that had the keyboard loses it, as there is one
@@ -979,7 +997,7 @@ mod tests {
                 // the page's capture from one frame to the next, as `WebView` keeps it
                 let capture = egui::Id::unique("covered-web-view-capture");
                 let captured = ui.data(|d| d.get_temp::<bool>(capture).unwrap_or(false));
-                let pointer = read_web_pointer(ui, &resp, rect, true, captured, 1);
+                let pointer = read_web_pointer(ui, &resp, rect, true, captured, 1, None);
                 ui.data_mut(|d| d.insert_temp(capture, pointer.captured));
                 let (contains_pointer, layer_ok) = ui.input(|i| i.pointer.interact_pos()).map_or((false, false), |pos| {
                     (resp.contains_pointer(), ui.ctx().layer_id_at(pos) == Some(ui.layer_id()))
@@ -1045,6 +1063,26 @@ mod tests {
         ys.into_iter()
             .flat_map(|y| xs.map(|x| egui::pos2(x, y)))
             .find(|pos| page.contains(*pos) && !cover.contains(*pos))
+    }
+
+    #[test]
+    fn the_host_speaker_keeps_both_halves_of_its_click_out_of_the_page() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let mut button = egui::Rect::NOTHING;
+        let size = egui::vec2(360.0, 220.0);
+        frames.run(Vec::new(), |ui| {
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+            button = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(26.0));
+        });
+        for pressed in [true, false] {
+            let pos = button.center();
+            frames.run(vec![egui::Event::PointerMoved(pos), pointer_button(pos, pressed)], |ui| {
+                let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+                assert!(pointer_hits_web_view(ui, &resp, rect, pos));
+                let pointer = read_web_pointer(ui, &resp, rect, true, false, 22, Some(button));
+                assert!(!pointer.hover && !pointer.press && !pointer.release && !pointer.captured);
+            });
+        }
     }
 
     #[test]
@@ -1199,7 +1237,7 @@ mod tests {
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(360.0, 220.0), egui::Sense::click_and_drag());
                         let key = egui::Id::unique(("two-pages-capture", token));
                         let captured = ui.data(|d| d.get_temp::<bool>(key).unwrap_or(false));
-                        let pointer = read_web_pointer(ui, &resp, rect, true, captured, token);
+                        let pointer = read_web_pointer(ui, &resp, rect, true, captured, token, None);
                         ui.data_mut(|d| d.insert_temp(key, pointer.captured));
                         (rect, pointer)
                     });
@@ -1387,7 +1425,7 @@ mod tests {
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(360.0, 220.0), egui::Sense::click_and_drag());
                         let key = egui::Id::unique(("two-pages-capture", 12u64));
                         let captured = ui.data(|d| d.get_temp::<bool>(key).unwrap_or(false));
-                        got = read_web_pointer(ui, &resp, rect, true, captured, 12);
+                        got = read_web_pointer(ui, &resp, rect, true, captured, 12, None);
                         ui.data_mut(|d| d.insert_temp(key, got.captured));
                     });
             });
@@ -1444,7 +1482,7 @@ mod tests {
                             let (rect, resp) = ui.allocate_exact_size(egui::vec2(360.0, 220.0), egui::Sense::click_and_drag());
                             let key = egui::Id::unique(("wheel-page", 11u64));
                             let captured = ui.data(|d| d.get_temp::<bool>(key).unwrap_or(false));
-                            pointer = read_web_pointer(ui, &resp, rect, true, captured, 11);
+                            pointer = read_web_pointer(ui, &resp, rect, true, captured, 11, None);
                             ui.data_mut(|d| d.insert_temp(key, pointer.captured));
                             page = rect;
                         });

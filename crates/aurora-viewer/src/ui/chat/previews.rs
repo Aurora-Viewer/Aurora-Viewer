@@ -1341,11 +1341,18 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                     if visible || !v.automatic {
                         v.drawn = pass;
                     }
+                    let button = egui::Rect::from_min_size(visible_area.right_top() + Vec2::new(-32.0, 6.0), Vec2::splat(26.0));
+                    let speaker = !provider_click
+                        && video.is_none()
+                        && (v.muted || ui.rect_contains_pointer(visible_area))
+                        && visible_area.contains_rect(button);
+                    if speaker {
+                        v.web.exclude_pointer_over(button);
+                    }
                     web.show(v, &mut child, p, size);
-                    if !provider_click && video.is_none() && (v.muted || ui.rect_contains_pointer(visible_area)) {
-                        let button = egui::Rect::from_min_size(visible_area.right_top() + Vec2::new(-32.0, 6.0), Vec2::splat(26.0));
+                    if speaker {
                         let icon = if v.muted { "volume-off" } else { "volume" };
-                        if visible_area.contains_rect(button) && overlay_button(ui, p, button, icon, sound_action(v.muted)) {
+                        if overlay_button(ui, p, button, icon, sound_action(v.muted)) {
                             v.muted = !v.muted;
                             v.automatic = false;
                         }
