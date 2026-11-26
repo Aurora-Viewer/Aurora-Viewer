@@ -1062,10 +1062,14 @@ fn abilities_card(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &V
     });
 }
 
+/// The classic list's least height: what it always had.
+const CLASSIC_LIST_MIN_H: f32 = 260.0;
+
 /// The members in the classic look: name, title, status, as the members
-/// list of Firestorm's "Members and roles".
-pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View) {
+/// list of Firestorm's "Members and roles", in `fit` of height at the most.
+pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, fit: f32) {
     let p = c.p;
+    let top = ui.cursor().top();
     widgets::search_field(
         ui,
         p,
@@ -1096,9 +1100,14 @@ pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: 
     }
     let today = today();
     let width = widgets::scrolled_width(ui);
+    // what the filter and the headings above it took
+    let fit = (fit - (ui.cursor().top() - top)).max(CLASSIC_LIST_MIN_H);
     egui::ScrollArea::vertical()
         .id_salt("group_members_classic")
-        .max_height(260.0)
+        // the window's height, as the managed list has (`part(ui, fit)`) and
+        // as panel_group_roles.xml's member_list follows its panel; it stopped
+        // at 260 px for a group one does not manage
+        .max_height(fit)
         .auto_shrink([false, true])
         .show_rows(ui, 22.0, rows.len(), |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;

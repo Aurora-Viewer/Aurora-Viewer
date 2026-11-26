@@ -105,6 +105,12 @@ What each part tells the one who fixes it:
   to) and the card was lost again, each later loss in the same words,
   numbered (`loss 2: …`). "nothing submitted yet (lost while starting)"
   there is a recovery whose new device was lost before its first frame.
+- **Open files at the loss** (Linux): how many files the viewer had open
+  when the card was lost, against its open-file limit, and what held them
+  (`812 of 1024 (sockets 690, sync files 3, files 119)`). At the limit,
+  Mesa reports the descriptor it could not get as "out of memory" and the
+  card is lost, so the row tells that apart from video memory that ran out
+  (#2970). Counts only, never a file name.
 - **GPU recoveries**: the graphics card resets the viewer recovered from
   during the session (Preferences › Graphics, on by default), how many, and for the first
   five when in the session, how long the recovery took and whether it came

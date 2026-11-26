@@ -464,6 +464,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let day = 86_400;
         // yesterday's two lines, then today's
@@ -514,6 +515,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let mut list_top = 0.0;
         let mut output = ctx.run_ui(

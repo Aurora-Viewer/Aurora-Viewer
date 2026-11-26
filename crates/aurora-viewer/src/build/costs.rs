@@ -64,7 +64,20 @@ impl Costs {
     }
 }
 
+impl Costs {
+    /// Whether an object's cost is still to be asked for: true once each.
+    pub fn ask_once(&mut self, root: Uuid) -> bool {
+        !self.objects.contains_key(&root) && self.hover_asked.insert(root)
+    }
+}
+
 impl BuildTool {
+    /// GetObjectCost for several objects of a region.
+    pub fn ask_costs(&mut self, handle: RegionHandle, ids: Vec<Uuid>) {
+        let body = llsd_map! { "object_ids" => Llsd::Array(ids.iter().map(|u| Llsd::from(*u)).collect()) };
+        self.cap(handle, "GetObjectCost", false, body, CapPurpose::ObjectCost(ids));
+    }
+
     /// Land impact of the selection: the linkset cost of each distinct root
     /// (LLSelectMgr::getSelectedLinksetCost, attachments excluded), or
     /// None while one is unknown.

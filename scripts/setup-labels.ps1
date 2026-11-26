@@ -18,9 +18,11 @@ param([switch]$DryRun)
 # (the accents of the former names would not match)
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
-$origin = git -C $PSScriptRoot remote get-url origin
-if ($LASTEXITCODE -ne 0 -or -not $origin) { throw 'Remote origin not found: no label changed.' }
-$repo = gh repo view $origin.Trim() --json nameWithOwner --jq .nameWithOwner
+# The main repository (Get-MainRepo: origin, or upstream in a clone of a
+# personal fork), as GitHub names it now.
+$main = Get-MainRepo $PSScriptRoot
+if (-not $main) { throw 'No GitHub remote for the main repository (origin, upstream or gh repo set-default): no label changed.' }
+$repo = gh repo view $main --json nameWithOwner --jq .nameWithOwner
 if ($LASTEXITCODE -ne 0 -or -not $repo) { throw 'Could not determine the GitHub repository: no label changed.' }
 
 $labels = @(

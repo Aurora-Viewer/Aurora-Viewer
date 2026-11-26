@@ -41,7 +41,8 @@ the avatar definition files (`crates/aurora-viewer/assets/character/`) come from
 the Second Life viewer sources (originally LGPL 2.1).
 The `character/bake/` subdirectory contains the same sources' TGA skin,
 clothing and visibility masks, used by the local wearable preview.
-The Blender extension bundles the same `avatar_skeleton.xml` and retains its
+The Maya plug-in's ZIP bundles the same `avatar_skeleton.xml`, as does the
+Blender extension, which retains its
 provenance in `blender/aurora_live/SKELETON-NOTICE.txt`.
 
 The terrain alpha ramp (`crates/aurora-render/src/terrain_alpha_ramp.r8`) is the
@@ -54,7 +55,10 @@ The RLVa command parser, restriction rules, inventory conventions and camera
 behaviors in `crates/aurora-viewer/src/world/rlva/` and `world/rlva.rs` follow
 the Legacy Viewer's `indra/newview/rlv*.cpp` and `rlv*.h`, and
 `world/rlva/legacy_strings.rs` the texts of its
-`skins/default/xui/*/rlva_strings.xml`: Copyright © 2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
+`skins/default/xui/*/rlva_strings.xml`; the outfit link comparison in
+`crates/aurora-net/src/outfits.rs` follows its `sync_inventory_folder`
+(`indra/newview/llviewerinventory.cpp`) and `RlvPredIsEqualOrLinkedItem`
+(`rlvcommon.cpp`): Copyright © 2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
 GPL-3.0-or-later as described above.
 
 ## Authors of the ported code
@@ -95,7 +99,7 @@ GPL-3.0-or-later as described above.
 | Object export, `newview/daeexport.cpp` — Copyright © 2013 Latif Khalifa, with Cinder Biscuits; `fsexportperms.cpp` — Copyright © 2013 Cinder Biscuits | `aurora-viewer/src/build/export/`, `build/ui/export.rs`, `app/object_export.rs`, `world/inventory/actions.rs` | Originally LGPL 2.1 |
 | Contact sets, `newview/lggcontactsets.cpp` — Copyright © 2011 Greg Hendrickson (LordGregGreg Back); `fspanelcontactsets.cpp`, `fsfloatercontactsetconfiguration.cpp` — Copyright © 2013 Cinder Roxley | `aurora-viewer/src/world/contact_sets.rs`, `world/contact_sets/`, `ui/contacts.rs`, `ui/people/sets.rs`, `ui/colors.rs` | Originally LGPL 2.1 |
 | Poser, `newview/fsfloaterposer.cpp`, `fsposeranimator.cpp`, `fsjointpose.h` — Copyright © 2024 Angeldark Raymaker | `aurora-viewer/src/ik_edit/poser.rs`, `ik_edit/poser/`, `scene/avatar_studio.rs` | Originally LGPL 2.1 |
-| Area search, `newview/fsareasearch.cpp` — Copyright © 2012 Techwolf Lupindo | `aurora-viewer/src/app/area_search.rs`, `ui/area_search.rs`, `ui/area_search/`, `settings/area_search.rs`, `build/property_query.rs` | Originally LGPL 2.1 |
+| Area search, `newview/fsareasearch.cpp` — Copyright © 2012 Techwolf Lupindo | `aurora-viewer/src/app/area_search.rs`, `app/interest_list.rs`, `ui/area_search.rs`, `ui/area_search/`, `settings/area_search.rs`, `build/property_query.rs` | Originally LGPL 2.1 |
 | Local mesh, `newview/vjlocalmesh.cpp` — Copyright © 2022 Vaalith Jinn | `aurora-viewer/src/blender_live/protocol.rs`, `aurora-viewer/src/imports/local.rs`, `aurora-viewer/src/imports/local/scene.rs`, `aurora-viewer/src/app/imports.rs` | Originally LGPL 2.1 |
 | Grids and SLURLs, `newview/fsgridhandler.cpp`, `fsslurl.cpp` — with modifications Copyright © 2012 arminweatherwax | `aurora-viewer/src/grids.rs`, `slurl.rs` | Originally LGPL 2.1 |
 | Media lists, `newview/floatermedialists.cpp` — Copyright © 2011 Sione Lomu | `aurora-viewer/src/media/filter.rs` | Originally LGPL 2.1 |
@@ -123,7 +127,8 @@ written anew for Aurora, without its code. Their authors are thanked here.
 
 | Asset | Location | License |
 |---|---|---|
-| Tabler Icons — Copyright © 2020-2026 Paweł Kuna | `assets/tabler-icons/`, `crates/aurora-viewer/assets/icons/tabler/` | MIT ([LICENSE](assets/tabler-icons/LICENSE)) |
+| Tabler Icons — Copyright © 2020-2026 Paweł Kuna | `assets/tabler-icons/`, `crates/aurora-viewer/assets/icons/tabler/`, `assets/icons/aurora/folders/` and `assets/icons/aurora/links/` (Tabler icons combined by `scripts/generate-inventory-icons.py`) | MIT ([LICENSE](assets/tabler-icons/LICENSE)) |
+| Pants, skirt, underpants and undershirt icons, drawn for Aurora by Zakka in the Tabler filled style and dedicated by them to the public domain on 2026-11-20 ("I Zakka approve the use of the pants, skirt, and undies icons that I designed for the Aurora Viewer to the public domain under CC0 1.0"; "undies" came as one drawing of a set, split afterwards into the underpants and the undershirt icons); their link icons add the shortcut corner (`scripts/generate-inventory-icons.py`) | `assets/icons/aurora/clothing/`, `assets/icons/aurora/links/{pants,skirt,underpants,undershirt}-link.svg` | CC0 1.0 |
 | Inter typeface, Regular and SemiBold, version 4.001 | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-Inter.txt](crates/aurora-viewer/assets/fonts/LICENSE-Inter.txt)) |
 | Noto Sans, Regular and SemiBold, version 2.015 (notofonts/latin-greek-cyrillic, hinted) | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-NotoSans.txt](crates/aurora-viewer/assets/fonts/LICENSE-NotoSans.txt)) |
 | Roboto, Regular and Medium, version 3.011 (googlefonts/roboto-3-classic, hinted) | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-Roboto.txt](crates/aurora-viewer/assets/fonts/LICENSE-Roboto.txt)) |
