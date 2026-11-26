@@ -10,7 +10,7 @@ use uuid::Uuid;
 #[path = "appearance.rs"]
 mod appearance;
 pub use super::geometry::PackedGeometry;
-pub use appearance::{Image, Material, PreparedImage, STAGING_BUSY};
+pub use appearance::{CachedImage, Image, Material, PreparedImage, STAGING_BUSY};
 
 pub const VERSION: u32 = 1;
 pub const MAX_BYTES: usize = 64 * 1024 * 1024;
@@ -151,8 +151,9 @@ pub struct PreparedSource {
     /// Immutable import input, shared with a draft when Upload is selected.
     pub scene: Arc<Scene>,
     /// A hash of what Blender sent for this source (its encoded batches,
-    /// colours, name and link), made on the transport thread: the window
-    /// tells which object a revision changed (`Live::changed`).
+    /// colours, materials and texture ids, name and link), made on the
+    /// transport thread: the window tells which object a revision changed
+    /// (`Live::changed`).
     pub digest: u64,
 }
 
@@ -185,6 +186,44 @@ pub struct PreparedMesh {
     pub materials: Vec<Option<(Uuid, aurora_assets::material::PbrMaterial)>>,
 }
 
+/// Hashes every value of a surface's material into a source's digest.
+/// Destructured in full: a field added to `PbrMaterial` fails to build here
+/// until it is hashed too.
+fn hash_material(material: Option<&aurora_assets::material::PbrMaterial>, hasher: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+    let Some(aurora_assets::material::PbrMaterial {
+        base_color_factor,
+        base_color_texture,
+        metallic_factor,
+        roughness_factor,
+        metallic_roughness_texture,
+        normal_texture,
+        emissive_factor,
+        emissive_texture,
+        alpha_mode,
+        alpha_cutoff,
+        double_sided,
+        transforms,
+    }) = material
+    else {
+        false.hash(hasher);
+        return;
+    };
+    true.hash(hasher);
+    base_color_factor.map(f32::to_bits).hash(hasher);
+    [metallic_factor, roughness_factor, alpha_cutoff].map(|f| f.to_bits()).hash(hasher);
+    emissive_factor.map(f32::to_bits).hash(hasher);
+    [base_color_texture, normal_texture, metallic_roughness_texture, emissive_texture].hash(hasher);
+    (*alpha_mode as u8).hash(hasher);
+    double_sided.hash(hasher);
+    for transform in transforms {
+        let aurora_assets::material::TextureTransform { offset, scale, rotation } = transform;
+        offset.map(f32::to_bits).hash(hasher);
+        scale.map(f32::to_bits).hash(hasher);
+        rotation.to_bits().hash(hasher);
+    }
+}
+
 pub fn prepare(bytes: &[u8], supported: &HashSet<String>) -> Result<Prepared, String> {
     prepare_staged(bytes, supported, None, &Default::default())
 }
@@ -193,7 +232,7 @@ pub fn prepare_staged(
     bytes: &[u8],
     supported: &HashSet<String>,
     pool: Option<&aurora_render::StagingPool>,
-    cache: &std::collections::HashMap<Uuid, PreparedImage>,
+    cache: &std::collections::HashMap<Uuid, CachedImage>,
 ) -> Result<Prepared, String> {
     if bytes.is_empty() || bytes.len() > MAX_BYTES {
         return Err(aurora_i18n::tr!("blender-live-invalid-size").into());
@@ -207,6 +246,16 @@ pub fn prepare_staged(
     };
     let snapshot: Snapshot = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     prepare_snapshot(snapshot, supported, pool, cache)
+}
+
+/// The JSON of a LODS frame: as sent, or inflated when it starts with
+/// "ZLIB" (the "compressed-lods" feature), bounded like a compressed
+/// snapshot.
+pub(super) fn lods_body(bytes: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+    match bytes.strip_prefix(b"ZLIB") {
+        Some(compressed) => inflate(compressed, MAX_DECODED_BYTES).map(std::borrow::Cow::Owned),
+        None => Ok(std::borrow::Cow::Borrowed(bytes)),
+    }
 }
 
 pub(super) fn inflate(bytes: &[u8], limit: usize) -> Result<Vec<u8>, String> {
@@ -243,7 +292,7 @@ pub(super) fn prepare_snapshot(
     snapshot: Snapshot,
     supported: &HashSet<String>,
     pool: Option<&aurora_render::StagingPool>,
-    cache: &std::collections::HashMap<Uuid, PreparedImage>,
+    cache: &std::collections::HashMap<Uuid, CachedImage>,
 ) -> Result<Prepared, String> {
     if snapshot.protocol != VERSION || snapshot.meshes.len() > MAX_OBJECTS {
         return Err(aurora_i18n::tr!("blender-live-invalid-protocol").into());
@@ -459,6 +508,12 @@ pub(super) fn prepare_snapshot(
             mesh.data.hash(&mut hasher);
             for color in &mesh.colors {
                 color.map(f32::to_bits).hash(&mut hasher);
+            }
+            // A repaint changes only an image id (a content hash) and a
+            // factor change only the material, so both are hashed; the
+            // material's own uuid is new on every snapshot and is left out.
+            for material in &mesh.materials {
+                hash_material(material.as_ref().map(|(_, value)| value), &mut hasher);
             }
         }
         source.digest = hasher.finish();

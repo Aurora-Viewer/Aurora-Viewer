@@ -308,7 +308,7 @@ impl EnvironmentUi {
                     .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
                     .clicked()
                 {
-                    *lighting = !*lighting;
+                    widgets::toggle_floater(ui.ctx(), "personal_lighting", lighting);
                 }
             });
             // each arrow right after its own button: this one the sky's,
@@ -357,7 +357,7 @@ impl EnvironmentUi {
                     .on_hover_text(aurora_i18n::tr!("ui-weather-window-tip"))
                     .clicked()
                 {
-                    *open = !*open;
+                    widgets::toggle_floater(ui.ctx(), "aurora_weather", open);
                 }
             }
         });

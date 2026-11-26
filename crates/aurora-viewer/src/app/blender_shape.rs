@@ -143,7 +143,7 @@ impl App {
         let failure = if key.is_some_and(|key| !key.valid(&self.world)) {
             Some(aurora_i18n::tr!("blender-shape-changed").to_owned())
         } else if state.started.is_some_and(|start| start.elapsed() > Duration::from_secs(45)) {
-            Some(aurora_i18n::tr!("blender-shape-timeout").to_owned())
+            Some(aurora_i18n::tr!("livemesh-shape-timeout").to_owned())
         } else {
             shared.as_ref().err().cloned()
         };
@@ -167,8 +167,8 @@ impl App {
             state.error = error.is_some();
             state.message = error.map_or_else(
                 || match state.action {
-                    Action::Create => aurora_i18n::tr!("blender-shape-success").to_owned(),
-                    Action::Apply => aurora_i18n::tr!("blender-shape-applied").to_owned(),
+                    Action::Create => aurora_i18n::tr!("livemesh-shape-success").to_owned(),
+                    Action::Apply => aurora_i18n::tr!("livemesh-shape-applied").to_owned(),
                 },
                 |error| aurora_i18n::tr!("blender-shape-failed", error = error),
             );
@@ -188,7 +188,7 @@ impl App {
                 }
                 Ok(Err(error)) => state.fail(aurora_i18n::tr!("blender-shape-failed", error = error)),
                 Err(mpsc::TryRecvError::Empty) => state.pending = Some(pending),
-                Err(mpsc::TryRecvError::Disconnected) => state.fail(aurora_i18n::tr!("blender-shape-timeout").into()),
+                Err(mpsc::TryRecvError::Disconnected) => state.fail(aurora_i18n::tr!("livemesh-shape-timeout").into()),
             }
         }
     }
