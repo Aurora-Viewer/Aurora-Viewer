@@ -1436,11 +1436,11 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
         note_link_hover(ui, resp.rect, egui::pos2(resp.rect.right() - 18.0, resp.rect.bottom() - 26.0));
     }
     let demo = pv.playing.is_none().then(|| pv.demo_play.take()).flatten();
+    // The app prepares the browser environment on the frame after playback starts.
     let autoplay = autoplay_ready
         && start == Start::Load
         && pv.settings.player == lp::Player::InCard
         && (pv.place != Place::Group || !pv.settings.blur_groups)
-        && pv.web.is_some()
         && ui.is_enabled()
         && ui.is_rect_visible(resp.rect)
         && pv.autoplay_seen.insert(k)
@@ -1471,6 +1471,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             fitted: false,
             chrome: Vec2::new(0.0, TITLE_BAR),
         });
+        ui.ctx().request_repaint();
     }
     if detach && let Some(v) = pv.playing.as_mut() {
         v.window = true;

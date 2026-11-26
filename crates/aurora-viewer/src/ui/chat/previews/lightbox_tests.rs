@@ -242,6 +242,40 @@ fn close_accelerator_dismisses_the_image_before_its_conversation() {
 }
 
 #[test]
+fn hosted_video_starts_before_the_browser_exists_and_only_once() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let url = "https://streamable.com/Demo42";
+    let (target, start) = lp::decide(&lp::Settings::default(), lp::Place::Im, lp::Sender::Resident, url).unwrap();
+    let lp::Target::Clip(clip) = &target else {
+        panic!("a hosted video should resolve to a clip");
+    };
+    let mut pv = Previews::default();
+    pv.cache.insert(
+        url.into(),
+        crate::ui::chat::previews::Cached {
+            entry: Entry::Video {
+                title: "Hosted video".into(),
+                channel: String::new(),
+                thumbnail: None,
+                aspect: 16.0 / 9.0,
+                autoplay_ready: true,
+                clip: Some(clip.clone()),
+            },
+            used: 0,
+        },
+    );
+    assert!(pv.web.is_none());
+    for already_played in [false, true] {
+        let _ = run_ui(&ctx, input(vec![]), |ui| {
+            card(ui, &p, &mut pv, 7, url, &target, start);
+        });
+        assert_eq!(pv.playing(), !already_played);
+        pv.playing = None;
+    }
+}
+
+#[test]
 fn video_hover_actions_copy_the_original_url_and_use_the_browser_confirmation_path() {
     let ctx = Context::default();
     let p = crate::theme::Theme::default().palette();
