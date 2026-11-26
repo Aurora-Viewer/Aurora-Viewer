@@ -136,19 +136,26 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
   manager sets each issue's Priority and milestone, which say what to work on
   first. Even when you ask for a task directly, the agent first looks for an
   open issue that already covers it (often the sub-issue of an epic) and
-  takes it. An agent that takes an issue assigns it to you and moves it to
-  `In progress`; at the end it replies on the issue with the PR link and
-  moves it to `Done`, to `Waiting Review` when the fix waits for your test or
-  the QA's, or to `Waiting for user response` when it asked the reporter for
-  something. `On hold` marks an issue paused on purpose, with a comment
-  saying what unblocks it. Each PR names its issues (`Closes #<n>` or
-  `Refs #<n>`), or says `No issue`. The agents move the Status with
-  `scripts/issue-board.ps1`, which
+  takes it when there is one. An agent that takes an issue **claims** it
+  first: a comment beginning `Work started: <branch>`, then it assigns the
+  issue to you and moves it to `In progress`. Two agents never take the same
+  issue — the claim is what they look for before starting, and the second
+  one stops and tells you. At the end it replies on the issue with the PR
+  link and moves it to `Done`, to `Waiting Review` when the fix waits for
+  your test or the QA's, or to `Waiting for user response` when it asked the
+  reporter for something. `On hold` marks an issue paused on purpose, with a
+  comment saying what unblocks it. Each PR names its issues (`Closes #<n>` or
+  `Refs #<n>`, plus `Part of #<epic>` when the issue belongs to one), or says
+  `No issue` — which a bug fix never does: a `fix` PR always names its Bug,
+  and a missing one is filed before the work starts. The agents move the
+  Status with `scripts/issue-board.ps1`, which
   needs the `project` right on your `gh` account, once per machine:
   `gh auth refresh -s project`. Every new issue lands on the board in the
   `Triage` Status (the board's "Auto-add to project" and "Item added to
   project" workflows): the QA sorts it (type, areas, Priority) and moves it
-  to `Todo`. The agents never take an issue out of `Triage` on their own.
+  to `Todo`. The agents never take an issue out of `Triage` on their own,
+  except the issue they filed for their own work, which they claim as soon
+  as it exists.
 - **Dependabot** opens dependency update PRs every week; an agent can check
   them for you, and merges them if you agree.
 - **The wiki** is generated: after each merge that touches a guide, a

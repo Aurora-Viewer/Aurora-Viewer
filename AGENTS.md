@@ -566,13 +566,22 @@ change to the interface:
    - **issues**: look at the open issues and the new comments on the issues
      linked to your task (section 15), then check their type and reply. To
      choose what to take next, follow the Priority the project manager set
-     on the project board (`issue-board.ps1 -Todo`, section 15).
+     on the project board (`issue-board.ps1 -Todo`, section 15);
+   - **claims**: an issue you claimed and are not working on any more is
+     released before you hand back — edit its `Work started` comment, and
+     put its Status back to `Todo` (section 15) — so that it does not look
+     taken.
 1. **Read** AGENTS.md, ARCHITECTURE.md, TASKS.md; study Firestorm.
 2. **Create the worktree** (`new-task.ps1`), set the task to 🔧 in TASKS.md;
-   then **look for an issue that already covers the task**, even when your
-   human asked for it directly (section 15, "Find the issue of your task"),
-   and take it on the board right away: assigned to your human, area
-   labels, Status `In progress`.
+   then, **before any code, get the task's issue** (section 15, "Find the
+   issue of your task"): search for one that already covers the task, even
+   when your human asked for it directly. **A bug fix always has one**: file
+   it when the search finds none. **Then claim it, before the first commit**:
+   a comment on the issue saying you have started, then your human assigned,
+   the area labels and Status `In progress` (section 15, "At the very start
+   of the work on an issue"). A feature (or a performance or refactoring
+   change) may go without an issue; when it has one, claim it the same way.
+   Another agent's claim means the work is taken: stop and tell your human.
 3. **Develop** in small local commits (clear messages, section 10).
 4. **Test in demo mode**, `check.ps1` green.
 5. **Human validation (mandatory, before the PR)**:
@@ -718,8 +727,16 @@ The link goes both ways: the issue shows its PR, the PR names its issue.
     reporter's confirmation, another PR to come).
 
   A PR covering several issues has one line each (`Refs #475`, then
-  `Refs #741`). A PR with no issue says `No issue`, so that a reviewer does
-  not look for one.
+  `Refs #741`). These lines are written in the `gh pr create` body, not added
+  later: a PR that names neither its issue nor `No issue` is not reviewed.
+- **A bug fix always names its issue.** A feature (or a performance or
+  refactoring change) may say `No issue` (an issue is still recommended: it
+  is where the claim comment goes), and so does a PR with no effect on the
+  viewer. Section 15 says what each kind of PR needs.
+- **An epic**: when the issue is a sub-issue of one, the PR body also says
+  `Part of #<epic>`, as plain text. Never `Refs #<epic>`: that puts the epic
+  in the Development panel and invites the close that only the project
+  manager makes, once every sub-issue is closed.
 - **On the issue**: `Refs` does not fill the Development panel, so the reply
   posted on the issue after the merge always contains the PR link (`#<PR>`).
   GitHub then shows the PR in the issue's timeline: check that it does.
@@ -803,6 +820,7 @@ them):
 | Check | Result |
 |---|---|
 | No conflict with main | ✅ |
+| Issue line in the PR; issue claimed before the work when it has one | ✅ |
 | PR CI (fmt, clippy, secrets) | ✅ |
 | Demo scenarios (before / after) | ✅ screenshots below |
 | Non-regression of neighbouring features | ✅ … |
@@ -991,11 +1009,33 @@ gh issue edit <n> --repo Aurora-Viewer/Aurora-Viewer --add-label chat
   blocker, frequent crash, data loss) is explained in a comment too, for the
   project manager.
 
-Do not change the type set by a human without a reason. Before taking an
-issue, check the assignments, comments and PRs to avoid duplicating another
-agent's work. Link the issue number in `TASKS.md` and the PR; keep the work
-in your own worktree. Read the thread again just before a mutation, to
-preserve the changes made in the meantime by others.
+Do not change the type set by a human without a reason. Link the issue
+number in `TASKS.md` and the PR; keep the work in your own worktree. Read the
+thread again just before a mutation, to preserve the changes made in the
+meantime by others.
+
+**Before taking an issue, check that nobody is already on it** — a duplicate
+costs two agents a whole task. Three places:
+
+```powershell
+gh issue view <n> --repo Aurora-Viewer/Aurora-Viewer --json comments,assignees,labels   # a Work started claim
+gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n>/timeline --paginate                 # the PRs that name it
+git worktree list                                                                       # work in progress here
+git branch -a --list "*<word of the feature>*"
+```
+
+- **the thread**: the comments (a `Work started` claim, below) and the
+  timeline, whose `cross-referenced` events show the open PRs that name the
+  issue;
+- **the board and the assignment**: `./scripts/issue-board.ps1 -Issue <n>`
+  (with the `project` right: an account that works from a fork has neither
+  the right nor the access);
+- **the work in progress on this PC**: `../work` keeps the other agents'
+  tasks, and `git worktree list` with `git branch -a` names their branches.
+
+A 🔧 line in `TASKS.md` is a fourth hint, but only once it is on
+`origin/main`: until its PR is merged it lives in the other agent's worktree.
+When one of them shows the work is taken, do not take it: tell your human.
 
 ### The project board
 
@@ -1032,7 +1072,10 @@ The **Priority**
 (Urgent, High, Medium, Low; an issue field of the organisation, like the
 type) and the milestone are set by the **project manager**:
 they tell the team what to work on first. **Never change the Priority, the
-milestone or the parent issue**; if one looks wrong, tell your human. When
+milestone or the parent issue**; if one looks wrong, tell your human. The one
+exception is the parent of an issue you are creating: an agent that files an
+issue for its own task attaches it to the epic it belongs to, at creation
+(below). When
 your human asks what to take next, propose from the board, highest priority
 first, the `1.0 Release` milestone before the rest:
 
@@ -1058,6 +1101,9 @@ QA (and the project manager) sort it: type, areas and Priority, then
 
 - **Never move an issue out of `Triage` on your own**, and never set a
   Priority to get it out: the list is the QA's.
+- **An issue you created for your own task** (below) is not triage material:
+  it is claimed as soon as it exists, so set it `In progress` directly. Its
+  Priority stays the project manager's to set.
 - An issue in `Triage` can still be read, typed, labelled and answered
   (the rules above). Do not propose it as the next work; when your human
   asks you to work on it directly, take it as usual (`In progress`).
@@ -1067,11 +1113,12 @@ QA (and the project manager) sort it: type, areas and Priority, then
 **Find the issue of your task.** A task does not have to start from an issue
 for one to exist: the gap may already be filed, alone or as the sub-issue of
 an epic (for example #655, "Legacy Viewer parity"). At the start of every
-task, before the code, search the open issues with a few words of the
-feature and its Legacy Viewer name:
+task, before the code, search the open **and closed** issues with a few words
+of the feature and its Legacy Viewer name (a closed issue that matches is
+usually a regression: reopen it, or reference it from the new one):
 
 ```powershell
-gh issue list --repo Aurora-Viewer/Aurora-Viewer --state open --search "<words> in:title,body"
+gh issue list --repo Aurora-Viewer/Aurora-Viewer --state all --search "<words> in:title,body"
 ```
 
 - One matches: it is your task's issue. Take it as below, link it in your
@@ -1083,13 +1130,60 @@ gh issue list --repo Aurora-Viewer/Aurora-Viewer --state open --search "<words> 
   without `--paginate` the list stops at 30).
   An epic is closed by the project manager, once all its sub-issues are
   closed: when your PR closes the last open one, tell your human.
-- None matches: carry on without an issue. Do not create one for your own
-  task unless your human asks you to.
+- None matches: **what to do depends on the kind of PR**:
+  - **a bug fix always has one**: file it before any code, with the bug's
+    title, what happens and how to reproduce it, then claim it (below);
+  - **a feature** (or a performance or refactoring change) **may go without
+    one**: an issue is recommended as soon as another agent could pick the
+    work up (its claim comment is then the only lock), and especially when
+    the work belongs to an epic, where the sub-issue is what the epic's
+    progress counts;
+  - **a PR with no effect on the viewer** (documentation, CI, scripts,
+    dependency updates) needs none: its description says `No issue`.
+
+  When you file one, search first: the search above misses an issue worded
+  differently, so read the epic's sub-issues too when the work belongs to
+  one, every page.
+
+  ```powershell
+  gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<epic>/sub_issues --paginate
+  ```
+
+  File it with a title and a body that say what the work is about and why it
+  matters, then set its type and area (an account that works from a fork
+  cannot: it leaves them to the QA):
+
+  ```powershell
+  gh issue create --repo Aurora-Viewer/Aurora-Viewer --title "<title>" --body-file .scratch/issue.md
+  gh issue edit <n> --repo Aurora-Viewer/Aurora-Viewer --add-label <area>
+  gh api -X PATCH repos/Aurora-Viewer/Aurora-Viewer/issues/<n> -f type=Bug
+  ```
+
+  When it belongs to an epic, attach it as a sub-issue, not only with a
+  sentence: that is what the epic's progress counts, and the one moment an
+  agent writes a parent issue. An account that works from a fork cannot: it
+  writes `Part of #<epic>` in the body, which links it in the timeline.
+
+  ```powershell
+  gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n> --jq .id
+  gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<epic>/sub_issues -F sub_issue_id=<that .id>
+  ```
+
+  Do not file an issue for an idea you are not starting: `Todo` is the
+  project manager's list, not a notebook.
 
 **At the very start of the work on an issue**, before the code, in this
 order:
 
-1. **Assign it to your human** (their `gh` account):
+0. **Check that nobody is on it** (above). Tell your human and stop when an
+   open PR names it, when a `Work started` comment is there for another
+   branch, or when a worktree and a branch of the same name exist.
+1. **Say that you start**, in one comment whose first line is
+   ``Work started: `<branch>` `` then a sentence on what you are about to do.
+   That comment is the lock the next agent looks for, not a bookmark: claim
+   nothing you will not work on now, and when the work pauses or ends, edit
+   the comment to say so.
+2. **Assign it to your human** (their `gh` account):
 
    ```powershell
    gh issue edit <n> --repo Aurora-Viewer/Aurora-Viewer --add-assignee @me
@@ -1097,10 +1191,19 @@ order:
 
    If the issue is already assigned to someone else, do not take it: it is
    someone else's work. Tell your human.
-2. **Tag it**: check its type and its area labels (above), fix them if
+3. **Tag it**: check its type and its area labels (above), fix them if
    needed.
-3. **Status `In progress`**: `./scripts/issue-board.ps1 -Issue <n> -Status
+4. **Status `In progress`**: `./scripts/issue-board.ps1 -Issue <n> -Status
    'In progress'`.
+
+Steps 2 to 4 need `triage` on the repository and the `project` right, which an
+agent working from a contributor's fork does not have: it does what needs
+none — the comment of step 1, reading the thread, filing the issue — and says
+on the issue which of the others are left for the team. The board is read
+only with the `project` right.
+
+The comment of step 1 goes through `--body-file`, like every other comment
+(below, "Reply and close").
 
 **End of the work.** Before handing back on a task that has an issue
 (whether it came from the issue or you found the issue for it), check that
@@ -1123,8 +1226,9 @@ both are done:
   Then read it back with `issue-board.ps1 -Issue <n>`.
 
 - If you drop or hand back the task unfinished, remove the assignment
-  (`--remove-assignee @me`), put the Status back to `Todo` and say where the
-  work stands in a comment.
+  (`--remove-assignee @me`), put the Status back to `Todo`, edit the
+  `Work started` comment so that it no longer claims the issue, and say where
+  the work stands in a comment.
 - On closing, the assignment stays: it records who did the work.
 - Run each command alone, with no `cd` or `;`, like the other `gh issue`
   commands. If your tool refuses one, do not work around it: give it to your

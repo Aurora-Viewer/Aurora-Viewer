@@ -3,7 +3,13 @@
      What changes and Tests ("No" or "Not applicable" is enough where it
      fits); a pull request is reviewed once they are there.
      One line per issue: "Closes #<n>" if this PR resolves it, "Refs #<n>"
-     if a part or a validation stays pending; "No issue" if there is none. -->
+     if a part or a validation stays pending; "Part of #<epic>" in plain
+     text when the issue belongs to an epic (a "Refs #<epic>" line invites
+     the close of the epic, which only the project manager closes).
+     "No issue" is for a feature, a performance or refactoring change whose
+     work has no issue, or for a PR with no effect on the viewer
+     (documentation, CI, scripts, dependency updates); a "fix" PR always
+     names its Bug. -->
 Closes #
 
 ## What it is for
