@@ -3303,14 +3303,18 @@ fn water_surface_z(p:vec2<f32>,level:f32)->f32 {
 // open wide: the jagged facets that break the sun into glints. `slope`
 // both cascades' slopes (the short one's replaces the CPU's, read with it
 // in water_fx_ocean), `foam` the short cascade's lingering foam, `kept`
-// how much of the finest ripples the pixel still resolves.
-struct WaterFine { slope: vec2<f32>, foam: f32, kept: f32 };
+// how much of the finest ripples the pixel still resolves, `fold` how much
+// the short cascade alone pinches the surface together here (1 - its
+// displacement's Jacobian, filtered over the pixel: the crests of the small
+// wind waves, steep however small they are, where the sea's whole fold
+// takes the long swell with it and seldom shows them).
+struct WaterFine { slope: vec2<f32>, foam: f32, kept: f32, fold: f32 };
 fn water_fine_on() -> bool { return water_fx.fine.x > 0.5; }
 // (`p` where the water lies before the waves move it: water_pixel's
 // `flow`. The short cascade is in the surface's shape already, read there
 // as it is; the finest, not in it, through its own displacement.)
 fn water_fx_fine(p:vec2<f32>,gx:vec2<f32>,gy:vec2<f32>,chop:f32)->WaterFine {
-    var o=WaterFine(vec2<f32>(0.0),0.0,0.0);
+    var o=WaterFine(vec2<f32>(0.0),0.0,0.0,0.0);
     if(!water_fine_on()){return o;}
     for(var c=0;c<2;c++){
         let tile=select(water_fx.fine.y,water_fx.fine.z,c==1);
@@ -3319,6 +3323,13 @@ fn water_fx_fine(p:vec2<f32>,gx:vec2<f32>,gy:vec2<f32>,chop:f32)->WaterFine {
         if(c==1){at=uv-textureSampleGrad(water_fine,tex_sampler,uv,2,du,dv).xy*chop/tile;}
         let s=textureSampleGrad(water_fine,tex_sampler,at,2*c+1,du,dv);
         o.slope+=s.xy;
+        if(c==0){
+            // its Jacobian (∂Dx/∂x, ∂Dy/∂y in the slopes' zw, ∂Dx/∂y in the
+            // displacement's w), as water_ocean.wgsl's foam takes it; the
+            // finest ripples are capillary and do not break white
+            let dxy=textureSampleGrad(water_fine,tex_sampler,at,0,du,dv).w*chop;
+            o.fold=1.0-((1.0+s.z*chop)*(1.0+s.w*chop)-dxy*dxy);
+        }
     }
     o.slope*=chop;
     o.foam=textureSampleGrad(water_fine,tex_sampler,p/water_fx.fine.y,4,gx/water_fx.fine.y,gy/water_fx.fine.y).x*chop;

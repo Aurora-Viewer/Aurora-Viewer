@@ -1481,6 +1481,20 @@ fn water_broad_glint(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, alpha: f32) -> ve
 // The sun's angular radius as enhanced water's sea sees it (rad): twice
 // the disc's, for its aureole (water_pixel).
 const WATER_SUN_RADIUS: f32 = 0.0093;
+// The sea's light through its crests (fs_water): seawater's scattering
+// coefficient (1/m; clear ocean some 0.04, coastal water 0.2 to 0.5,
+// Petzold's harbour 1.6), and a factor over the physical glow (1: as water
+// scatters). 2.5: chosen by eye on 2026-11-26 against 1 and the thin
+// crest's physical glow, a lift the crests show against a low sun without
+// the old neon (to be checked on the grid).
+const WATER_SCATTERING: f32 = 0.3;
+const WATER_CREST_GLOW: f32 = 2.5;
+// The Henyey-Greenstein phase function (sr⁻¹) at the scattering angle's
+// cosine `c`, of asymmetry `g`: how much light a particle scatters that way.
+fn water_hg_phase(c: f32, g: f32) -> f32 {
+    let d = 1.0 + g * g - 2.0 * g * c;
+    return (1.0 - g * g) / (4.0 * PI * d * sqrt(d));
+}
 fn legacy_water_punctual(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, specular: vec3<f32>) -> vec3<f32> {
     let perceptual = max(roughness, 8.0 / 255.0);
     let a = perceptual * perceptual;
@@ -1583,7 +1597,11 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     let wake=water_wake_at(in.world_pos.xy,in.level,bed.y);
     let furrow=1.0-smoothstep(0.003,0.035,-wake.z)*0.7;
     // the GPU's finer maps of the wind sea, when on (water_fx_fine)
-    var fine=WaterFine(vec2<f32>(0.0),0.0,0.0);
+    var fine=WaterFine(vec2<f32>(0.0),0.0,0.0,0.0);
+    // the gradient of its fold on the water (per metre), for the small
+    // crests' lips below: taken here, while the control flow is uniform
+    // (screen derivatives are not allowed after the underwater return)
+    var fold_grad=vec2<f32>(0.0);
     if(water_fx_on(1u)) {
         let micro=water_micro(flow,frame.camera_pos.w,water_fx.counts.w,footprint);
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
@@ -1607,6 +1625,10 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // their folds leave joins the long chop's
         fine=water_fx_fine(flow,fine_dx,fine_dy,swell.chop*shelter);
         swell.linger=max(swell.linger,fine.foam);
+        // (dpdx = g·∂p/∂x and dpdy = g·∂p/∂y, solved for g)
+        let fold_x=dpdx(fine.fold);let fold_y=dpdy(fine.fold);
+        let fold_det=fine_dx.x*fine_dy.y-fine_dx.y*fine_dy.x;
+        if(abs(fold_det)>1e-12){fold_grad=vec2<f32>(fine_dy.y*fold_x-fine_dx.y*fold_y,fine_dx.x*fold_y-fine_dy.x*fold_x)/fold_det;}
         // (the rain's slope keeps its own strength: scaled with the waves
         // (x 0.18), a downpour hardly showed on enhanced water)
         n=normalize(vec3<f32>((n.xy*0.18*(1.0-0.8*spectral)-micro.xy*detail*ripple*(1.0-0.8*spectral))*furrow+rain.xy*0.3,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy*stir,swell.gradient+fine.slope*furrow,bed.x));
@@ -1736,6 +1758,42 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
             // crest into a grey haze)
             foam+=(core*(0.5+0.35*rough)*water_fx.sea.look.x+veil*0.28*min(water_fx.sea.look.x,1.0))*gusty;
         }
+        // The crests of the small wind waves: a young wind sea's short waves
+        // are steep however small, and from a gentle breeze on (Beaufort 3,
+        // some 4 m/s: "crests begin to break") their tips spill over in thin
+        // white lips, long before whole whitecaps (above) form. Where the
+        // GPU's short cascade alone pinches the surface together (its own
+        // fold, `fine.fold`: the sea's whole fold takes the long swell with
+        // it and seldom reaches the threshold on a small crest), a crisp
+        // sliver along the crest, more of them the harder it blows, torn
+        // into dashes a metre or two long that run with the short waves.
+        // Read through the maps' mips, it fades far out before it aliases.
+        // (On a 7 m/s sea the fold passes 0.2 only along the small crests'
+        // tops, in slivers a few centimetres to decimetres wide and up to a
+        // couple of metres long, and seldom passes 0.3 (seen in the demo
+        // with the fold drawn in colour): those slivers are the lips. A
+        // lower threshold drew the fold's broad patches, soft white smudges
+        // a metre or two wide. A crest spills forward, so the side of the
+        // sliver the fold falls downwind from takes the lip.)
+        // (`fold_grad`: the fold's gradient on the water, read with `fine`)
+        // (drawn after the foam texture's lace, below, as it is: the lace,
+        // made to tear whitecaps, tore a thin lip into a faint grey veil)
+        var lip_foam=0.0;
+        if(water_fx_on(8u) && water_fine_on() && fine.fold>0.12) {
+            let u=water_fx.sea.wind.z;
+            let start=mix(0.27,0.14,smoothstep(4.0,12.0,u));
+            let toward=water_fx.sea.wind.xy;
+            let steep=length(fold_grad);
+            let leading=smoothstep(-0.2,0.5,-dot(fold_grad,toward)/max(steep,1e-6));
+            let lip=smoothstep(start,start+0.06,fine.fold)*leading;
+            // (the short waves' phase speed, some 1.5 to 3 m/s)
+            let run=rest-toward*frame.camera_pos.w*clamp(0.8+0.12*u,1.2,3.0);
+            let crest_way=vec2<f32>(dot(run,toward),dot(run,vec2<f32>(-toward.y,toward.x)));
+            let dash=smoothstep(0.32,0.62,water_fx_noise(crest_way*vec2<f32>(0.35,0.7)+vec2<f32>(0.0,frame.camera_pos.w*0.06)));
+            // (the shelter is in the fold already: the maps are read at the
+            // chop it leaves)
+            lip_foam=lip*dash*smoothstep(3.5,7.0,u)*0.9*min(water_fx.sea.look.x,1.5);
+        }
         // Fine breaking filaments already have a narrow, resolved footprint.
         // Applying the coarse accumulation threshold twice erased slow swimmers.
         // The torn pattern is the costly part: one for both, and none where
@@ -1757,6 +1815,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         } else {
             foam=0.0;
         }
+        foam=max(foam,lip_foam);
         // (over the swash's sheet the water stands above the still level)
         // (the swash is a sheet of a few centimetres: its foam stays on it
         // until it is gone, instead of fading with the thin water)
@@ -1976,17 +2035,28 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         glitter = hit * spec_color * sunlit_linear * atm.atten * shadow * (0.3 + 0.7 * seed.y) * 2.5 * (1.0 - fine.kept);
     }
     // Light through the waves (enhanced water's sea): the sun's light
-    // scattered in the water comes back out through the thin crests, most
-    // looking toward the sun at their backs, in the hue of the region's
-    // water (its fog colour); and the sky's light scattered under the
-    // surface lifts the deep water from black, more in the crests. Into
-    // what the surface transmits: the reflection still covers it at
-    // grazing angles, and shallow water shows its bed instead. The crests
-    // are where the waves stand high or the chop pinches the surface
-    // together (Sea of Thieves' wave-peak mask, from its chop: Ang et al.,
-    // "The Technical Art of Sea of Thieves", SIGGRAPH 2018), and the
-    // falloffs toward the sun and through the crest's back are Atlas's
-    // (Mihelich, "Wakes, Explosions and Lighting", GDC 2019).
+    // scattered in the water comes back out through the thin crests; and
+    // the sky's light scattered under the surface lifts the deep water from
+    // black, more in the crests. Into what the surface transmits: the
+    // reflection still covers it at grazing angles, and shallow water shows
+    // its bed instead. The crests are where the waves stand high or the
+    // chop pinches the surface together (Sea of Thieves' wave-peak mask,
+    // from its chop: Ang et al., "The Technical Art of Sea of Thieves",
+    // SIGGRAPH 2018).
+    //
+    // The sun's share is single scattering, as water does it: sunlight
+    // enters through the crest's back face; a part of it, by the water's
+    // scattering over the crest's thickness, is turned toward the eye, by
+    // the phase function of seawater's particles (strongly forward:
+    // Henyey-Greenstein, g 0.9 for the particles with a broad tenth, close
+    // to Petzold's measurements), and leaves through the front face; the
+    // water takes its red on the way. A sheet of white paper in the same
+    // sun is the scale: physically, a thin crest seen against a low sun
+    // gives some 10 to 25 % of it, a few % 30° off the sun's way, next to
+    // nothing beyond; drawn at WATER_CREST_GLOW times that. (It was the
+    // sun's whole light x 4/π by the view's bearing to the sun squared:
+    // some 1.3 times the paper over half the sea, in the fog's colour at
+    // full strength, a neon cyan.)
     if (water_fx_on(1u) && (water_fx.counts.z & 11u) != 0u) {
         // (its green held back a little: the light that comes back out of
         // a crest has crossed less water than the fog's colour stands for,
@@ -1994,25 +2064,46 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         let fog_hue = frame.water_fog.rgb * vec3<f32>(1.0, 0.8, 1.0);
         let tint = fog_hue / max(max(fog_hue.r, fog_hue.g), max(fog_hue.b, 0.001));
         let behind = smoothstep(1.0, 8.0, refr_dist - surf_dist);
-        let crest = max(smoothstep(-0.1, 1.2, swell.offset.z), smoothstep(-0.05, 0.4, swell.compression)) * shelter;
-        // (looking toward the sun across the water, by the sun's bearing,
-        // softer as it climbs; and through the crest's back. Atlas's own
-        // powers, 4 on the view against the sun and 3 on the back, left
-        // next to nothing but low suns behind steep crests: the crests'
-        // glow was gone on the grid)
-        let toward_sun = pow(max(dot(normalize(view_vec.xy + vec2<f32>(1e-5)), normalize(l.xy + vec2<f32>(1e-5))), 0.0), 2.0)
-            * (1.0 - smoothstep(0.45, 0.95, l.z));
-        let through = pow(clamp(0.5 - 0.5 * dot(l, n), 0.0, 1.0), 1.5);
+        // (and the small wind waves' crests, by their own fold: a 30 cm
+        // wave's crest is thin, and lets the light through as a metre's
+        // does, where its height alone gave it a tenth of the glow)
+        let big_crest = max(smoothstep(-0.1, 1.2, swell.offset.z), smoothstep(-0.05, 0.4, swell.compression));
+        let small_crest = smoothstep(0.04, 0.45, fine.fold) * 0.85;
+        let crest = max(big_crest, small_crest) * shelter;
+        // the crest's thickness the light crosses (m): a big wave's some
+        // 0.8 m, a small one's 0.3 m (fewer particles on the way: a small
+        // crest glows less, as it does)
+        let thick = max(big_crest * 0.8, small_crest * 0.3);
         let up = smoothstep(-0.02, 0.12, l.z);
-        var sun_in = frame.sun_color.rgb * up / PI;
+        // the sun's light on a surface facing it, and the sky's: the paper's
+        // scale is `sun_e / PI` (classic skies keep their own units)
+        var sun_e = frame.sun_color.rgb * up;
         var sky_in = frame.sky_horizon.rgb * 0.3;
         if (is_classic_sky()) {
-            sun_in = frame.sun_color.rgb * up * 0.6;
+            sun_e = frame.sun_color.rgb * up * 0.6 * PI;
             sky_in = frame.sky_horizon.rgb * 0.32;
         }
+        // The scattering angle is the one between the sun's light and the
+        // way to the eye as they are in the air: a thin, steep crest is a
+        // sheet of water the light crosses nearly straight, in at its back
+        // and out at its front. (Each ray refracted at the mean surface
+        // instead, both bent down into the water some 45° and met near
+        // 90°, where water scatters next to nothing: on a 7 to 9 m/s sea
+        // the glow was gone, only the steepest crests kept a trace.)
+        let cos_s = dot(-l, vv);
+        let phase = mix(water_hg_phase(cos_s, 0.3), water_hg_phase(cos_s, 0.9), 0.9);
+        // scattered over the thickness, the water's own red taken over the
+        // path in and out (its fog colour as what 4 m of it lets through)
+        let scattered = 1.0 - exp(-WATER_SCATTERING * thick);
+        let path = 0.6 + 1.5 * thick;
+        let kept = pow(max(tint, vec3<f32>(0.02)), vec3<f32>(path / 4.0));
+        // (the phase function is held under 3 sr⁻¹: in the sun's very line
+        // the crest passes the sun's own disc, refracted, which the glint
+        // and the bloom draw)
+        let sun_out = sun_e * crest * scattered * min(phase, 3.0) * kept * WATER_CREST_GLOW;
         let facing = max(dot(vv, n), 0.0);
-        let scatter = sun_in * crest * toward_sun * through * 4.0 + sky_in * (0.04 + 0.12 * crest) * facing * facing;
-        fb += tint * max(scatter, vec3<f32>(0.0)) * behind;
+        let sky_out = tint * sky_in * (0.04 + 0.12 * crest) * facing * facing;
+        fb += max(sun_out + sky_out, vec3<f32>(0.0)) * behind;
     }
     var reflectance = min(1.0,df2.x);
     var glint = punctual + glitter;
