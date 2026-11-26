@@ -298,6 +298,11 @@ pub fn page(cx: &mut Cx) {
             &field!(ignored_update),
             |ui, s| show_again(ui, &p, &mut s.ignored_update),
         );
+        cx.toggle(
+            tr!("ui-options-warn-live-preview"),
+            tr!("ui-options-warn-live-preview-help"),
+            &field!(build.warn_live_preview),
+        );
     });
     // the rest of these two, as the former Interface page reset them whole
     cx.track(&fields!(region_restart, collisions));

@@ -215,6 +215,14 @@ pub mod flags {
     /// Bit of flags[3], above packed texture animation: local studio scenery
     /// is excluded from the avatar's temporary white reveal.
     pub const STUDIO_STAGE: u32 = 1 << 29;
+    /// Bit of flags[3], above the layer rank: the visible-surface pick
+    /// (Alt-focus, `fs_pick_visible`) keeps the face's clear texels. Set
+    /// for a legacy material in emissive mask mode whatever the face's
+    /// alpha, as LLVOVolume::lineSegmentIntersect ignores texture alpha
+    /// there, also where `EMISSIVE_MASK` is dropped for a transparent face.
+    pub const PICK_IGNORES_ALPHA: u32 = 1 << 28;
+    /// Bit 27 of flags[3]. World clicks skip this volume outside Build.
+    pub const IGNORE_OBJECT_PICK: u32 = 1 << 27;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -406,6 +414,10 @@ impl DrawRecord {
     /// flags[3]'s texture-animation mode and dimensions.
     pub fn set_world_blend_pick(&mut self, enabled: bool) {
         self.flags[3] = (self.flags[3] & !flags::WORLD_BLEND_PICK) | if enabled { flags::WORLD_BLEND_PICK } else { 0 };
+    }
+
+    pub fn set_ignore_object_pick(&mut self, ignored: bool) {
+        self.flags[3] = (self.flags[3] & !flags::IGNORE_OBJECT_PICK) | if ignored { flags::IGNORE_OBJECT_PICK } else { 0 };
     }
 
     /// Layer rank (0..=`flags::LAYER_RANK_MAX`) of a face that may lie
@@ -762,6 +774,10 @@ pub struct DrawLists {
     /// The poser subject's skinned faces, while a part is hovered: the part
     /// is kept on them by its joints (`FrameParams::part_joints`).
     pub part_faces: Vec<DrawCmd>,
+    /// LiveMesh's Fit lab (fit_clip.rs): the garment's faces, and the
+    /// faces of the bodies that wear it, on the avatars it is checked on.
+    pub fit_garment: Vec<DrawCmd>,
+    pub fit_body: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -837,6 +853,8 @@ impl DrawLists {
         self.select_pattern.clear();
         self.hud_select_pattern.clear();
         self.part_faces.clear();
+        self.fit_garment.clear();
+        self.fit_body.clear();
     }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
@@ -896,6 +914,8 @@ impl DrawLists {
         self.select_pattern.clone_from(&src.select_pattern);
         self.hud_select_pattern.clone_from(&src.hud_select_pattern);
         self.part_faces.clone_from(&src.part_faces);
+        self.fit_garment.clone_from(&src.fit_garment);
+        self.fit_body.clone_from(&src.fit_body);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -957,6 +977,8 @@ impl DrawLists {
         self.select_pattern.clear();
         self.hud_select_pattern.clear();
         self.part_faces.clear();
+        self.fit_garment.clear();
+        self.fit_body.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -1798,6 +1820,9 @@ pub struct FrameParams {
     /// as a selection's halo with a light tint inside.
     pub part_joints: [u32; 8],
     pub part_color: [f32; 4],
+    /// LiveMesh's Fit lab clipping map on `fit_body` (fit_clip.rs): off
+    /// when None.
+    pub fit_clip: Option<crate::FitClipParams>,
     /// Palette-joint part classes (0 occluder, 1 body, 2 face, 3/4 hands,
     /// 5 wings, 6 tail), eight four-bit classes per word. The shader sums
     /// each part's weights and interpolates them before picking a part.
@@ -2844,6 +2869,28 @@ mod tests {
         assert_eq!(flags::STUDIO_STAGE & flags::WORLD_BLEND_PICK, 0);
         assert_eq!(flags::OBJECT_MASK_PICK & flags::WORLD_BLEND_PICK, 0);
         assert_eq!(flags::STUDIO_STAGE & (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT), 0);
+        let others = flags::STUDIO_STAGE
+            | flags::OBJECT_MASK_PICK
+            | flags::WORLD_BLEND_PICK
+            | (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT)
+            | 0x00ff_ffff;
+        assert_eq!(flags::PICK_IGNORES_ALPHA & others, 0);
+        assert_eq!(flags::IGNORE_OBJECT_PICK & (others | flags::PICK_IGNORES_ALPHA), 0);
+        let common = include_str!("shaders/common.wgsl");
+        assert!(common.contains(&format!("const FLAG_IGNORE_OBJECT_PICK: u32 = {}u;", flags::IGNORE_OBJECT_PICK)));
+    }
+
+    /// The visible-surface pick reads the bit with the same value, in the
+    /// same flags word, instead of the emissive mask flag.
+    #[test]
+    fn pick_ignores_alpha_bit_matches_wgsl() {
+        let common = include_str!("shaders/common.wgsl");
+        assert!(common.contains(&format!("const FLAG_PICK_IGNORES_ALPHA: u32 = {}u;", flags::PICK_IGNORES_ALPHA)));
+        let object = include_str!("shaders/object.wgsl");
+        let start = object.find("fn fs_pick_visible(").expect("fs_pick_visible");
+        let body = &object[start..start + object[start..].find("\n}").expect("end")];
+        assert!(body.contains("(rec.flags.w & FLAG_PICK_IGNORES_ALPHA) == 0u"));
+        assert!(!body.contains("FLAG_EMISSIVE_MASK"));
     }
 
     /// The flags the shaders test in `frame.light_mode.z`, by name, with

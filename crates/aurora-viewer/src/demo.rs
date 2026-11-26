@@ -51,6 +51,9 @@ pub mod about;
 pub mod alpha_mask_ab;
 #[path = "demo_alpha_sort.rs"]
 pub mod alpha_sort;
+/// Two inventory animations at once (AURORA_DEMO_INVENTORY=animation-play-two).
+#[path = "demo_animation_layers.rs"]
+pub mod animation_layers;
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
 #[path = "demo_arrival.rs"]
 pub mod arrival;
@@ -142,6 +145,10 @@ pub mod env;
 pub mod experience;
 #[path = "demo_floating_text.rs"]
 pub mod floating_text;
+/// A trail of footprints in the snow, then Footprints turned off
+/// (AURORA_DEMO_FOOTPRINTS_OFF, #4019).
+#[path = "demo_footprints.rs"]
+pub mod footprints;
 /// A prop derezzed and particles started while the photo mode holds the
 /// world still (AURORA_DEMO_FREEZE_WORLD).
 #[path = "demo_freeze_world.rs"]
@@ -181,6 +188,9 @@ pub mod hud;
 /// the window title (AURORA_DEMO_IM_ANNOUNCE).
 #[path = "demo_im_announce.rs"]
 pub mod im_announce;
+/// Violet Wolf's outfit for Inspect (AURORA_DEMO_INSPECT).
+#[path = "demo_inspect.rs"]
+pub mod inspect;
 /// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
 #[path = "demo_keywords.rs"]
 pub mod keywords;
@@ -194,8 +204,15 @@ pub mod land;
 /// (AURORA_DEMO_LEGACY_BUMP).
 #[path = "demo_legacy_bump.rs"]
 pub mod legacy_bump;
+/// A Legacy Viewer's lists to import (AURORA_DEMO_LEGACY_LISTS).
+#[path = "demo_legacy_lists.rs"]
+pub mod legacy_lists;
 #[path = "demo_link.rs"]
 pub mod link;
+/// A market for Area Search and Inspect (`market` of AURORA_DEMO_AREA_SEARCH
+/// and AURORA_DEMO_INSPECT).
+#[path = "demo_market.rs"]
+pub mod market;
 /// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
 #[path = "demo_mask_255.rs"]
 pub mod mask_255;
@@ -2463,6 +2480,42 @@ pub fn lure_scene() -> Option<LureScene> {
     }
 }
 
+/// `AURORA_DEMO_TELEPORT_FAILED=<reason>[,hypergrid]`: every teleport is
+/// refused with that reason (a code of teleport_strings.xml or a simulator's
+/// text), as a region's TeleportFailed; `,hypergrid` puts the agent on
+/// another OpenSim grid for the explanation line. `empty` sends an empty
+/// reason, as OpenSim's EntityTransferModule does.
+pub fn teleport_failure() -> Option<(String, bool)> {
+    let value = std::env::var("AURORA_DEMO_TELEPORT_FAILED").ok()?;
+    teleport_failure_value(&value)
+}
+
+fn teleport_failure_value(value: &str) -> Option<(String, bool)> {
+    let value = value.trim();
+    let (reason, hypergrid) = match value.rsplit_once(',') {
+        Some((reason, "hypergrid")) => (reason.trim(), true),
+        _ => (value, false),
+    };
+    match reason {
+        "" => None,
+        "empty" => Some((String::new(), hypergrid)),
+        _ => Some((reason.to_owned(), hypergrid)),
+    }
+}
+
+#[cfg(test)]
+mod teleport_failure_tests {
+    #[test]
+    fn the_demo_teleport_failure_reads_its_reason_and_hypergrid() {
+        use super::teleport_failure_value as read;
+        assert_eq!(read("no_host"), Some(("no_host".into(), false)));
+        assert_eq!(read("Unauthorized,hypergrid"), Some(("Unauthorized".into(), true)));
+        assert_eq!(read("empty"), Some((String::new(), false)));
+        assert_eq!(read("empty,hypergrid"), Some((String::new(), true)));
+        assert_eq!(read("  "), None);
+    }
+}
+
 /// AURORA_DEMO_SLURLS=1: place links in every form, in Tess Touch's
 /// conversation, in the chat console and in a notification: the plaza
 /// (General, connected), the lagoon (Moderate) and Nordheim (Adult) known
@@ -3435,9 +3488,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // a lure accepted offline: the teleport starts, then has nowhere to go
         aurora_net::NetCommand::AcceptLure { .. } => vec![
             NetEvent::TeleportStarted { flags: 0 },
-            NetEvent::TeleportFailed {
-                reason: aurora_i18n::tr!("demo-no-teleport-offline").into(),
-            },
+            NetEvent::viewer_teleport_failed(aurora_i18n::tr!("demo-no-teleport-offline")),
         ],
         aurora_net::NetCommand::AgentAnimation { anim, start: false }
             if *anim == SEAT_ANIM
@@ -5179,12 +5230,13 @@ pub fn events() -> Vec<NetEvent> {
         let across = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
         let center = Vec3::new(138.5, 125.5, 0.0);
         let floor = height(cx, cy) + 0.35;
+        let alpha = panel_alpha(std::env::var("AURORA_DEMO_PANEL_ALPHA").ok().as_deref());
         for (k, (tex, mat, label)) in alpha_panels().iter().enumerate() {
             let p = center + across * ((k as f32 - 2.5) * 2.1);
             let mut t = TextureEntry::default();
             for f in t.faces.iter_mut() {
                 f.texture = *tex;
-                f.color = [1.0, 1.0, 1.0, 1.0];
+                f.color = [1.0, 1.0, 1.0, alpha];
                 f.material_id = mat.unwrap_or(Uuid::nil());
             }
             add(prim(
@@ -6867,8 +6919,14 @@ pub fn events() -> Vec<NetEvent> {
     // (AURORA_DEMO_AVATAR_CACHE sends them later, demo_avatar_cache.rs)
     if !avatar_cache::enabled() {
         avatars.extend(wolf_attachments(false));
+        if inspect::enabled() {
+            avatars.extend(inspect::outfit());
+        }
     }
     let start = Vec3::new(132.0, 126.0, height(140.0, 130.0) + 0.35 + 0.84);
+    if market::enabled() {
+        avatars.extend(market::objects(start, &height));
+    }
     // AURORA_DEMO_POS="x,y" moves the start position (captures)
     let start = match std::env::var("AURORA_DEMO_POS")
         .ok()
@@ -9956,6 +10014,31 @@ fn panel_scale(k: usize, label: &str) -> Vec3 {
         Ok("tall") if bumpy => Vec3::new(0.06, 0.45, 1.8),
         Ok("wide") if bumpy => Vec3::new(0.06, 1.8, 0.45),
         _ => Vec3::new(0.06, 1.8, 1.8),
+    }
+}
+
+/// Face alpha of the alpha-mode test panels: AURORA_DEMO_PANEL_ALPHA=<0..1>
+/// (0.98 is the build floater's 2 % transparency, #4517); opaque without it
+/// or with a value that does not parse.
+fn panel_alpha(spec: Option<&str>) -> f32 {
+    spec.and_then(|s| s.trim().parse::<f32>().ok())
+        .filter(|a| a.is_finite())
+        .map_or(1.0, |a| a.clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod panel_alpha_tests {
+    use super::panel_alpha;
+
+    #[test]
+    fn the_panel_alpha_is_opaque_unless_a_valid_value_is_given() {
+        assert_eq!(panel_alpha(None), 1.0);
+        assert_eq!(panel_alpha(Some("0.98")), 0.98);
+        assert_eq!(panel_alpha(Some(" 0.5 ")), 0.5);
+        assert_eq!(panel_alpha(Some("2")), 1.0);
+        assert_eq!(panel_alpha(Some("-1")), 0.0);
+        assert_eq!(panel_alpha(Some("NaN")), 1.0);
+        assert_eq!(panel_alpha(Some("half")), 1.0);
     }
 }
 

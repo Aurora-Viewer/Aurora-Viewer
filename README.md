@@ -111,38 +111,38 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.12 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.13 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Fifteen languages</h3>
-      German, Spanish, Italian, Polish, Turkish, Russian, Ukrainian,
-      Norwegian, Brazilian and European Portuguese, Simplified and
-      Traditional Chinese join English, French and Japanese, built on the
-      community's translations. Translators can load a language file of
-      their own.
+      <h3>Ray tracing: Deluxe (RT)</h3>
+      On cards with ray tracing, the Deluxe (RT) level traces the shadows
+      of the sun, the moon and the lamps, exact where things touch, with
+      coloured glass tinting the light, and lets the light bounce into
+      rooms. A ray tracing quality fits it to smaller cards.
     </td>
     <td width="50%" valign="top">
-      <h3>Like the LL viewer 26.5</h3>
-      Game Controls drive the avatar, the camera and scripts with a game
-      controller; direct messages sent from another device show up in the
-      conversation; a Second Life account is created from the login
-      screen; the microphone closes while you are muted.
+      <h3>Windows outside the viewer</h3>
+      Send Conversations, the inventory or any other window to a screen
+      of its own and bring it back; drag and drop still works between
+      them. Voice chat can play on its own output device.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>A look for the world</h3>
-      Keep a photo look or a LUT on the world every day, with JuicyBomb's
-      30 new looks. A redesigned Aurora Weather window holds every weather
-      setting, and a second camera window keeps your avatar in view.
+      <h3>A new LiveMesh and photo filters</h3>
+      LiveMesh is rebuilt with live thumbnails, Quick look, a weight bend
+      test and an Undo button. Photo filters become cards you drag, with
+      a catalogue that previews each effect, and Phototools gets its
+      Light and DoF &amp; glow tabs.
     </td>
     <td valign="top">
-      <h3>Faster arrivals, richer inventory</h3>
-      Avatars you have already seen show at once from a local copy while
-      the region sends them. The inventory gets a gallery view, notecards
-      get find and replace, and Linux installs its updates in place.
+      <h3>Faster textures, a rounder world</h3>
+      aurora-j2k, a JPEG 2000 decoder written in Rust, decodes textures
+      faster. Soft sun shadows and planet curvature are new options, a
+      Mini AO window stays open, and updates install only when signed by
+      the Release workflow.
     </td>
   </tr>
 </table>
@@ -361,7 +361,7 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Creator tools
 
-- **LiveMesh**: see your Blender mesh in the viewer while you edit it, with
+- **LiveMesh**: see your Blender or Maya mesh in the viewer while you edit it, with
   nothing uploaded. Rigged meshes follow your own avatar, with their weights,
   shape keys and materials; static meshes and linksets become local objects
   you can place on the ground, move, rotate, resize, attach to your body or
@@ -1107,7 +1107,9 @@ git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
 The tools check the environment and offer to **repair** it: they install
 whatever is missing (GitHub CLI, the Visual Studio C++ tools, Rust), clone
 the Legacy Viewer sources next to the repository, and download the Rust
-toolchain and the crates. Then, driven by the keyboard: release /
+toolchain and the crates. On Linux, `aurora-tools.sh` is the same tool (see
+[Installing on Linux](docs/LINUX.md#development-environment)). Then, driven by
+the keyboard: release /
 dev / debug viewers, demo, agents' tasks, disk, logs, live pull requests with
 Windows notifications, releases (see
 [HUMANS.md](HUMANS.md)).

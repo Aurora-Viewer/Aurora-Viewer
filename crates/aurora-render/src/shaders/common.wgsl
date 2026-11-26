@@ -131,7 +131,7 @@ struct Frame {
     aurora: vec4<f32>,          // the aurora: x how bright (0: none), y its heading (rad, clockwise from north), z its foot's height (0..1), w colours (0 green, 1 violet, 2 red)
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
-    soft: vec4<f32>,            // x: 1 = the soft shadows' mask is read (main view), y: share of the light the sun's shadows let through (1 - intensity), z: projectors' light size in metres (0: the 5-tap filter), main view only
+    soft: vec4<f32>,            // x: 1 = the soft shadows' mask is read (main view), y: share of the light the sun's shadows let through (1 - intensity), z: projectors' light size in metres (0: the 5-tap filter), main view only; w: skip Ignore Object in the narrowed pick view
     snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
     snow_far: vec4<f32>,        // x how far the snow lying is drawn (m), whatever falls (while it snows and while it melts); yzw unused
     curvature: vec4<f32>,       // planet curvature (apply_curvature): xy the main camera (region m), z 1 / 2R (0: flat), w unused
@@ -221,11 +221,13 @@ const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_PORTAL_EFFECT: u32 = 32768u;
 const FLAG_WORLD_BLEND_PICK: u32 = 2147483648u; // flags.w, above texture animation
 const FLAG_OBJECT_MASK_PICK: u32 = 1073741824u; // flags.w, world/worn objects only
+const FLAG_IGNORE_OBJECT_PICK: u32 = 134217728u; // flags.w bit 27, Ignore Object click action
 // flags.w bits 24..26: layer rank of a rigged face (types.rs flags, object.wgsl eye_clip)
 const LAYER_RANK_SHIFT: u32 = 24u;
 const LAYER_RANK_MAX: u32 = 7u;
 const LAYER_DEPTH_STEP: f32 = 9.5367431640625e-7; // 2^-20
 const FLAG_STUDIO_STAGE: u32 = 536870912u; // flags.w bit 29, local scenery, not the avatar reveal
+const FLAG_PICK_IGNORES_ALPHA: u32 = 268435456u; // flags.w bit 28, Alt-focus keeps clear texels (emissive mask mode)
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
 const PORTAL_SURFACE_SCALE: f32 = 1.16;

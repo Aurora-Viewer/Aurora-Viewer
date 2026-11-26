@@ -47,7 +47,11 @@ pub struct State {
 impl World {
     /// Whether this avatar's update is dropped (isNonFriendDerendered).
     pub(super) fn hides_non_friend(&self, u: &aurora_net::objects::ObjectUpdate) -> bool {
-        self.derender.friends_only() && u.is_avatar() && u.full_id != self.agent_id && !self.social.is_friend(&u.full_id)
+        self.derender.friends_only()
+            && u.is_avatar()
+            && u.full_id != self.agent_id
+            && !self.is_local_copy(&u.full_id)
+            && !self.social.is_friend(&u.full_id)
     }
 
     pub fn friends_only(&self) -> bool {
@@ -83,13 +87,14 @@ impl World {
         }
     }
 
-    /// Avatars present that are neither us nor friends leave the world.
+    /// Avatars present that are neither us, our copies (the mirror, the Fit
+    /// lab's mannequins) nor friends leave the world.
     fn take_out_non_friends(&mut self) {
         let me = self.agent_id;
         let strangers: Vec<_> = self
             .objects
             .iter()
-            .filter(|(_, o)| o.is_avatar() && o.full_id != me && !self.social.is_friend(&o.full_id))
+            .filter(|(_, o)| o.is_avatar() && o.full_id != me && !self.is_local_copy(&o.full_id) && !self.social.is_friend(&o.full_id))
             .map(|(_, o)| o.full_id)
             .collect();
         for id in strangers {

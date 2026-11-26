@@ -626,8 +626,38 @@ impl Seam {
     }
 }
 
+/// Consume from `candidates` the service rows of every part a line longer
+/// than one IM was sent as (`aurora_net::message_split`, one row per part),
+/// all or none; false when the line left whole or a part has no row.
+/// Aurora sends a long IM in parts like the Legacy Viewer
+/// (LLIMModel::sendMessage, indra/newview/llimview.cpp), while its
+/// transcript keeps the line whole.
+fn consume_parts(line: &HistoryMessage, candidates: &mut Vec<&HistoryMessage>) -> bool {
+    let parts = aurora_net::message_split::message_parts(&line.message);
+    if parts.len() < 2 {
+        return false;
+    }
+    let mut found: Vec<usize> = Vec::with_capacity(parts.len());
+    for part in parts {
+        let piece = HistoryMessage {
+            message: part.to_owned(),
+            ..line.clone()
+        };
+        let Some(pos) = (0..candidates.len()).find(|i| !found.contains(i) && same_direct_history_occurrence(&piece, candidates[*i])) else {
+            return false;
+        };
+        found.push(pos);
+    }
+    found.sort_unstable();
+    for pos in found.into_iter().rev() {
+        candidates.remove(pos);
+    }
+    true
+}
+
 /// Drop the plaintext lines of one side that the other side's new service
-/// rows cover, one line per row; the rows are indexed by minute so that a
+/// rows cover, one line per row, or a long sent line per the rows of its
+/// parts ([`consume_parts`]); the rows are indexed by minute so that a
 /// whole transcript is not compared pair by pair.
 fn reconcile(legacy: &mut Messages, own: &BTreeMap<TimeUuidKey, HistoryMessage>, other: &BTreeMap<TimeUuidKey, HistoryMessage>) {
     let mut added: BTreeMap<i64, Vec<&HistoryMessage>> = BTreeMap::new();
@@ -642,11 +672,14 @@ fn reconcile(legacy: &mut Messages, own: &BTreeMap<TimeUuidKey, HistoryMessage>,
         };
         for offset in SLT_OFFSETS {
             let minute = (wall as i64 + offset) / 60;
-            if let Some(candidates) = added.get_mut(&minute)
-                && let Some(found) = candidates.iter().position(|row| same_direct_history_occurrence(line, row))
-            {
-                candidates.remove(found);
-                return false;
+            if let Some(candidates) = added.get_mut(&minute) {
+                if let Some(found) = candidates.iter().position(|row| same_direct_history_occurrence(line, row)) {
+                    candidates.remove(found);
+                    return false;
+                }
+                if consume_parts(line, candidates) {
+                    return false;
+                }
             }
         }
         true

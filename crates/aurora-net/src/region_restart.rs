@@ -84,6 +84,10 @@ pub(crate) fn parse_extra(extra: &[u8]) -> Llsd {
     let end = extra.iter().rposition(|b| *b != 0).map_or(0, |i| i + 1);
     let start = extra[..end].iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(end);
     let data = &extra[start..end];
+    // if (llsd_raw.length()): no parameters is not an unreadable block
+    if data.is_empty() {
+        return Llsd::Undef;
+    }
     let parsed = if let Some(rest) = data.strip_prefix(BINARY) {
         let skip = rest.iter().take_while(|b| matches!(b, b'\r' | b'\n')).count();
         aurora_llsd::from_binary(&rest[skip..]).map(|(v, _)| v)

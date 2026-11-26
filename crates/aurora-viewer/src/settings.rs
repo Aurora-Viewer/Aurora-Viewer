@@ -731,6 +731,10 @@ pub struct Settings {
     pub custom_login_uri: String,
     /// Saved grid metadata, independent of the account catalogue.
     pub grids: Vec<crate::grids::Grid>,
+    /// The login servers (`aurora_net::login::unencrypted_server`) the user
+    /// agreed to log in to over plain http, asked once each. "Reset
+    /// everything" forgets them: the question comes back.
+    pub unencrypted_logins: Vec<String>,
     pub start_location: String,
     pub start_region: String,
     pub draw_distance: f32,
@@ -864,8 +868,18 @@ pub struct Settings {
     /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history
     /// entries open in their own window instead of the Places window.
     pub standalone_place_details: bool,
-    /// FSInspectColumnConfig: columns of the Inspect window (ui/inspect.rs).
+    /// FSInspectColumnConfig: columns of the Inspect window's Details table (ui/inspect).
     pub inspect_columns: u32,
+    /// The same for what an avatar wears.
+    pub inspect_avatar_columns: u32,
+    /// Inspect opens on its wide view (a board of tiles); Area Search has
+    /// only that one.
+    pub inspect_wide: bool,
+    /// The 3D views have a light ground.
+    pub stage_light: bool,
+    /// The Inspect window's View panel: order, creator on the rows, what
+    /// else the rows show (Aurora's own).
+    pub inspect_view: crate::ui::inspect::InspectView,
     /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
     pub landmarks_by_date: bool,
     /// FSTPHistoryTZ: the time zone of the teleport history's days, chosen
@@ -2521,6 +2535,7 @@ impl Default for Settings {
             grid: GridChoice::SecondLife,
             custom_login_uri: "http://127.0.0.1:9000/".into(),
             grids: Vec::new(),
+            unencrypted_logins: Vec::new(),
             start_location: "last".into(),
             start_region: String::new(),
             draw_distance: 96.0,
@@ -2581,6 +2596,10 @@ impl Default for Settings {
             show_movement_controls: false,
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
+            inspect_avatar_columns: crate::ui::inspect::AVATAR_COLUMNS,
+            inspect_wide: false,
+            stage_light: false,
+            inspect_view: Default::default(),
             landmarks_by_date: true,
             tp_history_zone: HistoryZone::Slt,
             confirm_teleports: true,
@@ -3671,6 +3690,7 @@ impl Settings {
                 by_date: true,
                 folders_by_name: false,
                 system_first: true,
+                ..Default::default()
             };
             if self.inventory.recent_sort == former {
                 self.inventory.recent_sort.system_first = false;
@@ -5722,6 +5742,7 @@ mod tests {
             by_date: true,
             folders_by_name: false,
             system_first: true,
+            ..Default::default()
         };
         for version in [39, 40] {
             for by_date in [false, true] {
@@ -5731,6 +5752,7 @@ mod tests {
                             by_date,
                             folders_by_name,
                             system_first,
+                            ..Default::default()
                         };
                         let mut saved = Settings {
                             settings_version: version,
