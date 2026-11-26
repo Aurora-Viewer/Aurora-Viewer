@@ -480,7 +480,7 @@ impl GroupProfileUi {
                     if members::manages(v) {
                         members::show(self, &mut part(ui, fit), c, env, v, actions);
                     } else {
-                        members::classic_list(self, ui, c, v);
+                        members::classic_list(self, ui, c, v, fit);
                     }
                 });
                 if administration::visible(v) {

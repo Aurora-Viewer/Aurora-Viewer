@@ -31,7 +31,16 @@ impl Harness {
             },
             |_| {
                 let locks = self.locks;
-                action = self.ui.show(&self.ctx, &self.p, &mut true, true, self.draw_distance, &|_| locks);
+                let env = Env {
+                    parcel_known: false,
+                    parcel_part: true,
+                    neighbours: true,
+                    draw_distance: self.draw_distance,
+                    locks: &|_| locks,
+                    pics: &HashMap::new(),
+                    facts: None,
+                };
+                action = self.ui.show(&self.ctx, &self.p, &mut true, &env);
             },
         );
         (crate::ui::login::test_output(output), action)
@@ -44,12 +53,14 @@ impl Harness {
             .find_map(|s| text_rect(&s.shape, label))
             .unwrap_or_else(|| panic!("missing painted text: {label}"))
     }
-    fn inline_reset(&mut self) -> egui::Rect {
+    fn shown(&mut self, label: &str) -> bool {
         let (out, _) = self.frame(Vec::new());
-        out.shapes
-            .iter()
-            .find_map(|s| text_rect(&s.shape, aurora_i18n::tr!("common-reset")))
-            .expect("expanded form Reset before the table footer")
+        out.shapes.iter().any(|s| text_rect(&s.shape, label).is_some())
+    }
+    fn settle(&mut self) {
+        for _ in 0..8 {
+            self.frame(Vec::new());
+        }
     }
     fn click(&mut self, label: &str) -> (egui::FullOutput, Option<Action>) {
         let pos = self.find(label).center();
@@ -93,6 +104,9 @@ impl Harness {
                 r.name = format!("Object {i}");
                 r.description = "Searchable object".into();
                 r.owner = "Demo owner".into();
+                r.owner_id = Uuid::from_u128(0xAA);
+                r.creator = "Demo maker".into();
+                r.creator_id = Uuid::from_u128(0xBB);
                 r.loaded = true;
                 r.distance = i as f32;
                 r
@@ -115,114 +129,176 @@ impl Harness {
     }
 }
 
+/// The window as the checks of the rows and the menu want it.
+fn both(check: impl Fn(Harness)) {
+    check(Harness::new(1.0, Vec2::new(1280.0, 900.0), 40));
+}
+
 #[test]
-fn area_search_native_rows_select_and_dispatch_inspect_zoom_and_copy() {
-    let mut h = Harness::new(1.0, Vec2::new(1280.0, 800.0), 2000);
+fn area_search_rows_select_and_dispatch_inspect_zoom_and_copy() {
+    both(|mut h| {
+        h.click("Object 1");
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
+        assert!(matches!(h.click(aurora_i18n::tr!("area-search-inspect")).1, Some(Action::Inspect(ids)) if ids == [Uuid::from_u128(1)]));
+        assert!(matches!(h.click(aurora_i18n::tr!("area-search-zoom")).1, Some(Action::Zoom(id)) if id == Uuid::from_u128(1)));
+        let (out, _) = h.click(aurora_i18n::tr!("area-search-copy"));
+        assert!(
+            out.platform_output
+                .commands
+                .iter()
+                .any(|c| matches!(c, egui::OutputCommand::CopyText(s) if *s == Uuid::from_u128(1).to_string()))
+        );
+        h.ui.table.filters.query = "does not match".into();
+        h.frame(Vec::new());
+        assert!(h.ui.selection.is_empty(), "a filtered-out selection cannot trigger an action");
+        assert!(
+            !h.shown(aurora_i18n::tr!("area-search-inspect")),
+            "nothing selected, nothing to act on"
+        );
+        h.ui.table.filters.query.clear();
+        h.settle();
+        assert_eq!(h.ui.table.visible.len(), 40);
+    });
+}
+
+#[test]
+fn area_search_select_several_makes_clicks_add() {
+    both(|mut h| {
+        // the row picked for the user is no part of what they choose
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
+        h.click(aurora_i18n::tr!("area-search-several"));
+        h.click("Object 2");
+        assert_eq!(h.ui.selection.ids, [Uuid::from_u128(2)]);
+        h.click("Object 2");
+        h.settle();
+        assert!(h.ui.selection.is_empty(), "taken out by hand, none is picked");
+        h.click("Object 1");
+        h.click("Object 3");
+        assert_eq!(h.ui.selection.ids, [Uuid::from_u128(1), Uuid::from_u128(3)]);
+        h.click("Object 1");
+        assert_eq!(h.ui.selection.ids, [Uuid::from_u128(3)]);
+    });
+}
+
+#[test]
+fn area_search_keyboard_moves_in_the_list_and_selects() {
+    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 2000);
+    let key = |key, modifiers| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
     h.click("Object 1");
-    assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
-    assert!(matches!(h.click(aurora_i18n::tr!("area-search-inspect")).1, Some(Action::Inspect(ids)) if ids == [Uuid::from_u128(1)]));
-    assert!(matches!(h.click(aurora_i18n::tr!("area-search-zoom")).1, Some(Action::Zoom(id)) if id == Uuid::from_u128(1)));
-    let (out, _) = h.click(aurora_i18n::tr!("area-search-copy"));
-    assert!(
-        out.platform_output
-            .commands
-            .iter()
-            .any(|c| matches!(c, egui::OutputCommand::CopyText(s) if *s == Uuid::from_u128(1).to_string()))
+    // the list has one stop for Tab: the row last used
+    let id = egui::Id::unique((
+        "board_nav",
+        h.ctx.memory(|m| m.layer_ids().find(|l| l.id == egui::Id::unique(WINDOW))).unwrap(),
+        egui::Id::unique("area_search_objects"),
+    ));
+    let at = h.ctx.data(|d| d.get_temp::<usize>(id)).expect("the list's place");
+    h.ctx.memory_mut(|m| m.request_focus(id.with(at)));
+    h.frame(Vec::new());
+    h.frame(vec![key(egui::Key::ArrowDown, Default::default())]);
+    h.frame(Vec::new());
+    h.frame(vec![key(egui::Key::Enter, Default::default())]);
+    assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(2)));
+    h.frame(vec![key(egui::Key::End, Default::default())]);
+    h.settle();
+    h.frame(vec![key(egui::Key::Enter, Default::default())]);
+    assert_eq!(
+        h.ui.selection.single(),
+        Some(Uuid::from_u128(2000)),
+        "the last row of a long list is reached"
     );
-    h.ui.table.filters.query = "does not match".into();
-    h.frame(Vec::new());
-    assert!(h.ui.selection.is_empty(), "a filtered-out selection cannot trigger an action");
-    h.click(aurora_i18n::tr!("area-search-refresh"));
-    assert!(h.ui.refresh);
-    assert_eq!(h.ui.table.filters.query, "does not match");
-    h.click("does not match");
-    let query_id = h.ctx.memory(|m| m.focused()).expect("search field focus");
-    let clear = h.ctx.read_response(query_id.with("clear")).expect("search clear button");
-    h.click_at(clear.rect.center());
-    assert!(h.ui.table.filters.query.is_empty());
-    assert_eq!(h.ui.table.visible.len(), 2000);
-    assert_eq!(h.ctx.memory(|m| m.focused()), Some(query_id));
-    h.frame(Vec::new());
-    h.frame(Vec::new());
-    assert!(h.ctx.read_response(query_id.with("clear")).is_none());
+    h.frame(vec![
+        egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+        key(egui::Key::A, egui::Modifiers::COMMAND),
+    ]);
+    assert_eq!(h.ui.selection.ids.len(), 2000);
 }
 
 #[test]
 fn area_search_menu_acts_on_the_selected_rows_like_the_legacy_viewer() {
     let id = |n| Uuid::from_u128(n);
-    let mut h = Harness::new(1.0, Vec2::new(1280.0, 800.0), 40);
-    h.click("Object 1");
-    let third = h.find("Object 3").center();
-    h.press(third, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
-    assert_eq!(h.ui.selection.ids, [id(1), id(3)]);
-    let fifth = h.find("Object 5").center();
-    h.press(fifth, egui::PointerButton::Primary, egui::Modifiers::SHIFT);
-    assert_eq!(h.ui.selection.ids, [id(3), id(4), id(5)], "Shift selects from the last clicked row");
-    h.press(fifth, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
-    h.press(third, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
-    h.click("Object 1");
-    h.press(third, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
+    {
+        let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
+        h.ui.card_open = false;
+        h.click("Object 1");
+        h.settle();
+        let third = h.find("Object 3").center();
+        h.press(third, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
+        assert_eq!(h.ui.selection.ids, [id(1), id(3)]);
+        let fifth = h.find("Object 5").center();
+        h.press(fifth, egui::PointerButton::Primary, egui::Modifiers::SHIFT);
+        assert_eq!(h.ui.selection.ids, [id(3), id(4), id(5)], "Shift selects from the last clicked row");
+        h.press(fifth, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
+        h.press(third, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
+        h.click("Object 1");
+        h.press(third, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
 
-    // several rows: every one, and the single-object entries greyed
-    let edit = h.menu("Object 3", aurora_i18n::tr!("common-edit"));
-    assert!(
-        matches!(edit, Some(Action::Edit(ids)) if ids == [id(1), id(3)]),
-        "a right click in the selection keeps it"
-    );
-    assert!(h.ui.menu_at.is_none(), "the menu closes on its entry");
-    for (entry, check) in [
-        (
-            aurora_i18n::tr!("ui-context-touch"),
-            (|a: &Action| matches!(a, Action::Touch(ids) if ids.len() == 2)) as fn(&Action) -> bool,
-        ),
-        (
-            aurora_i18n::tr!("common-delete"),
-            |a| matches!(a, Action::Delete(ids) if ids.len() == 2),
-        ),
-        (
-            aurora_i18n::tr!("ui-context-return"),
-            |a| matches!(a, Action::Return(ids) if ids.len() == 2),
-        ),
-        (
-            aurora_i18n::tr!("ui-context-derender-blacklist"),
-            |a| matches!(a, Action::Blacklist(ids) if ids.len() == 2),
-        ),
-        (
-            aurora_i18n::tr!("ui-context-script-information"),
-            |a| matches!(a, Action::ScriptInfo(ids) if ids.len() == 2),
-        ),
-        (aurora_i18n::tr!("area-search-filter-mine"), |a| matches!(a, Action::FilterMine)),
-    ] {
-        let action = h.menu("Object 1", entry);
-        assert!(action.as_ref().is_some_and(check), "{entry}");
-    }
-    for entry in [aurora_i18n::tr!("area-search-sit"), aurora_i18n::tr!("common-teleport-to")] {
-        assert!(h.menu("Object 1", entry).is_none(), "{entry} needs one row");
+        // several rows: every one, and the single-object entries greyed
+        let edit = h.menu("Object 3", aurora_i18n::tr!("common-edit"));
+        assert!(
+            matches!(edit, Some(Action::Edit(ids)) if ids == [id(1), id(3)]),
+            "a right click in the selection keeps it"
+        );
+        assert!(h.ui.menu_at.is_none(), "the menu closes on its entry");
+        for (entry, check) in [
+            (
+                aurora_i18n::tr!("ui-context-touch"),
+                (|a: &Action| matches!(a, Action::Touch(ids) if ids.len() == 2)) as fn(&Action) -> bool,
+            ),
+            (
+                aurora_i18n::tr!("common-delete"),
+                |a| matches!(a, Action::Delete(ids) if ids.len() == 2),
+            ),
+            (
+                aurora_i18n::tr!("ui-context-return"),
+                |a| matches!(a, Action::Return(ids) if ids.len() == 2),
+            ),
+            (
+                aurora_i18n::tr!("ui-context-derender-blacklist"),
+                |a| matches!(a, Action::Blacklist(ids) if ids.len() == 2),
+            ),
+            (
+                aurora_i18n::tr!("ui-context-script-information"),
+                |a| matches!(a, Action::ScriptInfo(ids) if ids.len() == 2),
+            ),
+            (aurora_i18n::tr!("area-search-filter-mine"), |a| matches!(a, Action::FilterMine)),
+        ] {
+            let action = h.menu("Object 1", entry);
+            assert!(action.as_ref().is_some_and(check), "{entry}");
+        }
+        for entry in [aurora_i18n::tr!("area-search-sit"), aurora_i18n::tr!("common-teleport-to")] {
+            assert!(h.menu("Object 1", entry).is_none(), "{entry} needs one row");
+            egui::Popup::close_all(&h.ctx);
+            h.frame(Vec::new());
+        }
+
+        assert!(h.menu("Object 5", aurora_i18n::tr!("common-teleport-to")).is_none());
+        assert_eq!(h.ui.selection.ids, [id(1), id(3)], "a right click keeps several selected rows");
         egui::Popup::close_all(&h.ctx);
         h.frame(Vec::new());
+
+        // one selected row: a right click on another selects it instead
+        h.click("Object 2");
+        let teleport = h.menu("Object 5", aurora_i18n::tr!("common-teleport-to"));
+        assert!(matches!(teleport, Some(Action::Teleport(i)) if i == id(5)));
+        assert_eq!(h.ui.selection.ids, [id(5)]);
+        assert!(matches!(h.menu("Object 5", aurora_i18n::tr!("area-search-sit")), Some(Action::Sit(i)) if i == id(5)));
+        assert!(h.menu("Object 5", aurora_i18n::tr!("common-buy-object")).is_none(), "not for sale");
+        egui::Popup::close_all(&h.ctx);
+        h.ui.table.rows[4].price = Some(10);
+        h.ui.table.dirty = true;
+        assert!(matches!(h.menu("Object 5", aurora_i18n::tr!("common-buy-object")), Some(Action::Buy(i)) if i == id(5)));
+
+        assert!(h.menu("Object 2", aurora_i18n::tr!("common-select-all")).is_none());
+        assert_eq!(h.ui.selection.ids.len(), 40);
+        assert!(h.menu("Object 2", aurora_i18n::tr!("area-search-clear-selection")).is_none());
+        assert!(h.ui.selection.is_empty());
     }
-
-    assert!(h.menu("Object 5", aurora_i18n::tr!("common-teleport-to")).is_none());
-    assert_eq!(h.ui.selection.ids, [id(1), id(3)], "a right click keeps several selected rows");
-    egui::Popup::close_all(&h.ctx);
-    h.frame(Vec::new());
-
-    // one selected row: a right click on another selects it instead
-    h.click("Object 2");
-    let teleport = h.menu("Object 5", aurora_i18n::tr!("common-teleport-to"));
-    assert!(matches!(teleport, Some(Action::Teleport(i)) if i == id(5)));
-    assert_eq!(h.ui.selection.ids, [id(5)]);
-    assert!(matches!(h.menu("Object 5", aurora_i18n::tr!("area-search-sit")), Some(Action::Sit(i)) if i == id(5)));
-    assert!(h.menu("Object 5", aurora_i18n::tr!("common-buy-object")).is_none(), "not for sale");
-    egui::Popup::close_all(&h.ctx);
-    h.ui.table.rows[4].price = Some(10);
-    h.ui.table.dirty = true;
-    assert!(matches!(h.menu("Object 5", aurora_i18n::tr!("common-buy-object")), Some(Action::Buy(i)) if i == id(5)));
-
-    assert!(h.menu("Object 2", aurora_i18n::tr!("common-select-all")).is_none());
-    assert_eq!(h.ui.selection.ids.len(), 40);
-    assert!(h.menu("Object 2", aurora_i18n::tr!("area-search-clear-selection")).is_none());
-    assert!(h.ui.selection.is_empty());
 }
 
 #[test]
@@ -257,312 +333,285 @@ fn area_search_menu_zoom_needs_the_object_within_draw_distance() {
 }
 
 #[test]
-fn area_search_native_filter_crosses_clear_only_their_field_and_restore_results() {
-    for scale in [1.0, 1.5] {
-        let mut h = Harness::new(scale, Vec2::new(1280.0, 900.0), 40);
-        h.click(aurora_i18n::tr!("area-search-search"));
-        h.ui.table.filters.query = "Object 1".into();
+fn area_search_filter_crosses_clear_only_their_field() {
+    {
+        let mut h = Harness::new(1.0, Vec2::new(1280.0, 1100.0), 40);
+        h.ui.demo_controls("filters");
         h.ui.table.filters.name = "no match".into();
-        h.ui.table.filters.description = "no match".into();
-        h.ui.table.filters.owner = "no match".into();
-        h.ui.table.filters.group = "no match".into();
-        h.ui.table.filters.last_owner = "no match".into();
         h.ui.table.filters.creator = "no match".into();
-        for _ in 0..10 {
-            h.frame(Vec::new());
-        }
-        let fields = |h: &Harness| {
-            [
-                h.ui.table.filters.name.clone(),
-                h.ui.table.filters.description.clone(),
-                h.ui.table.filters.owner.clone(),
-                h.ui.table.filters.group.clone(),
-                h.ui.table.filters.creator.clone(),
-                h.ui.table.filters.last_owner.clone(),
-            ]
-        };
-        for i in 0usize..6 {
+        h.settle();
+        for i in [0usize, 4] {
             let id = egui::Id::unique(("area_search_field", i));
-            let field = h.ctx.read_response(id).expect("filter input");
             let clear = h.ctx.read_response(id.with("clear")).expect("filled filter's clear button");
-            assert!(field.rect.contains_rect(clear.rect), "clear button stays inside the input");
-            assert_eq!(clear.rect.right(), field.rect.right());
-            let mut expected = fields(&h);
-            expected[i].clear();
             h.click_at(clear.rect.center());
-            assert_eq!(fields(&h), expected);
-            assert_eq!(h.ui.table.filters.query, "Object 1");
-            assert_eq!(h.ctx.memory(|m| m.focused()), Some(id));
-            h.frame(Vec::new());
-            h.frame(Vec::new());
-            assert!(h.ctx.read_response(id.with("clear")).is_none(), "empty inputs have no clear button");
+            h.settle();
         }
-        assert_eq!(
-            h.ui.table.visible.len(),
-            11,
-            "clearing individual filters immediately reapplies the remaining query"
-        );
-    }
-}
-
-#[test]
-fn area_search_native_table_virtualizes_long_results_and_keeps_footer_in_the_window() {
-    for (scale, size) in [(1.0, Vec2::new(1280.0, 720.0)), (1.5, Vec2::new(1280.0, 900.0))] {
-        let mut h = Harness::new(scale, size, 2000);
-        let window_size = |ctx: &egui::Context| {
-            ctx.data_mut(|d| d.get_persisted::<Vec2>(egui::Id::unique(WINDOW).with("expanded_size")))
-                .expect("shown window size")
-        };
-        let initial = window_size(&h.ctx);
-        for _ in 0..60 {
-            h.frame(Vec::new());
-        }
-        let settled = window_size(&h.ctx);
-        assert!(
-            (settled.x - initial.x).abs() < 1.0,
-            "window grew at scale {scale} from {initial:?} to {settled:?}"
-        );
-        assert!(
-            settled.x < 950.0,
-            "default window should leave room for other floaters: {settled:?}"
-        );
-        let (out, _) = h.frame(Vec::new());
-        let mut painted = 0;
-        for i in 1..=2000 {
-            if out.shapes.iter().any(|s| text_rect(&s.shape, &format!("Object {i}")).is_some()) {
-                painted += 1;
-            }
-        }
-        assert!((1..40).contains(&painted), "only the viewport's rows should be drawn: {painted}");
-        for label in [aurora_i18n::tr!("area-search-copy"), aurora_i18n::tr!("area-search-inspect")] {
-            let rect = h.find(label);
-            assert!(
-                egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect),
-                "footer left the screen at scale {scale}: {rect:?}"
-            );
-        }
-        h.click(aurora_i18n::tr!("area-search-filters"));
-        for _ in 0..6 {
-            h.frame(Vec::new());
-        }
-        for label in [aurora_i18n::tr!("common-reset"), aurora_i18n::tr!("area-search-save-defaults")] {
-            let rect = h.find(label);
-            assert!(
-                egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect),
-                "filter footer at scale {scale}: {rect:?}"
-            );
-        }
-        egui::Popup::close_all(&h.ctx);
-        h.frame(Vec::new());
-        assert!(h.find(aurora_i18n::tr!("area-search-copy")).is_positive());
-    }
-}
-
-#[test]
-fn area_search_inline_filters_apply_immediately_and_preserve_column_choices() {
-    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
-    h.ui.table.rows[0].flags = 1 << 10;
-    h.ui.table.dirty = true;
-    h.click(aurora_i18n::tr!("area-search-filters"));
-    h.click(aurora_i18n::tr!("area-search-phantom"));
-    assert!(h.ui.table.filters.phantom, "no Apply button is required");
-    assert_eq!(h.ui.table.visible.len(), 1);
-    assert!(
-        h.find(aurora_i18n::tr!("area-search-save-defaults")).is_positive(),
-        "the form stays open"
-    );
-    h.click(aurora_i18n::tr!("area-search-save-defaults"));
-    assert!(h.ui.save_defaults);
-    egui::Popup::close_all(&h.ctx);
-    h.frame(Vec::new());
-    h.click(aurora_i18n::tr!("area-search-columns"));
-    h.click(aurora_i18n::tr!("area-search-last-owner"));
-    let columns = h.ui.saved_columns();
-    assert!(columns[9]);
-    let saved = crate::settings::area_search::AreaSearch {
-        filters: h.ui.table.filters.without_search(),
-        columns,
-    };
-    let restored = AreaSearchUi::from_saved(&serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap());
-    assert!(restored.table.filters.phantom && restored.saved_columns()[9]);
-}
-
-#[test]
-fn area_search_column_popout_is_right_aligned_stays_open_and_preserves_selection() {
-    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
-    h.click("Object 1");
-    let search = h.find(aurora_i18n::tr!("area-search-search"));
-    let button = h.find(aurora_i18n::tr!("area-search-columns"));
-    assert!(button.left() > search.right());
-    h.click(aurora_i18n::tr!("area-search-columns"));
-    h.click(aurora_i18n::tr!("area-search-last-owner"));
-    assert!(h.ui.saved_columns()[9]);
-    assert!(
-        h.find(aurora_i18n::tr!("common-reset")).is_positive(),
-        "multiple choices keep the popout open"
-    );
-    assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
-    h.click(aurora_i18n::tr!("common-reset"));
-    assert_eq!(h.ui.saved_columns(), crate::settings::area_search::DEFAULT_COLUMNS);
-    assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
-}
-
-#[test]
-fn area_search_resets_are_immediate_scoped_and_at_the_right_of_each_section() {
-    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
-    h.ui.table.rows[0].flags = 1 << 10;
-    h.ui.table.dirty = true;
-    h.ui.table.filters.phantom = true;
-    h.ui.table.filters.query = "Object".into();
-    h.ui.table.filters.owner = "Demo owner".into();
-    h.click(aurora_i18n::tr!("area-search-search"));
-    let copy = h.find(aurora_i18n::tr!("area-search-copy-link"));
-    let search_reset = h.inline_reset();
-    assert!(search_reset.left() > copy.right());
-    h.click_at(search_reset.center());
-    assert!(h.ui.table.filters.query.is_empty() && h.ui.table.filters.owner.is_empty());
-    assert!(h.ui.table.filters.phantom, "Search Reset retains filter options");
-    assert_eq!(h.ui.table.visible.len(), 1);
-    egui::Popup::close_all(&h.ctx);
-    h.frame(Vec::new());
-    h.ui.table.filters.owner = "Demo owner".into();
-    h.click(aurora_i18n::tr!("area-search-filters"));
-    let save = h.find(aurora_i18n::tr!("area-search-save-defaults"));
-    let reset = h.inline_reset();
-    assert!(reset.left() > save.right());
-    h.click_at(reset.center());
-    assert!(!h.ui.table.filters.phantom);
-    assert_eq!(h.ui.table.filters.owner, "Demo owner", "Filters Reset retains search text");
-    assert_eq!(h.ui.table.visible.len(), 40);
-    egui::Popup::close_all(&h.ctx);
-    h.frame(Vec::new());
-    let global_reset = h.find(aurora_i18n::tr!("common-reset"));
-    assert!(global_reset.left() > h.find(aurora_i18n::tr!("area-search-copy")).right());
-    let columns = h.find(aurora_i18n::tr!("area-search-columns"));
-    assert!(
-        (global_reset.right() - columns.right()).abs() < 2.0,
-        "Reset stays at the content right right edge"
-    );
-    h.click(aurora_i18n::tr!("common-reset"));
-    assert_eq!(h.ui.table.filters, Filters::default());
-}
-#[test]
-fn area_search_regex_error_is_visible_on_results_and_recovers_when_corrected() {
-    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
-    h.ui.table.filters.regex = true;
-    h.ui.table.filters.name = "(".into();
-    h.frame(Vec::new());
-    let error = h.ui.table.regex_error.clone().expect("invalid pattern reported");
-    let label = aurora_i18n::tr!("area-search-regex-error", error = error.as_str());
-    assert!(
-        h.find(&label).is_positive(),
-        "Results explains an empty list caused by regex failure"
-    );
-    h.ui.table.filters.name = "Object .*".into();
-    h.frame(Vec::new());
-    assert!(h.ui.table.regex_error.is_none());
-    assert_eq!(h.ui.table.visible.len(), 40);
-}
-
-#[test]
-fn area_search_requested_inline_search_survives_sizing_and_regex_errors_keep_toolbar_fixed() {
-    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
-    h.ui.demo_controls("fields");
-    for _ in 0..6 {
-        h.frame(Vec::new());
-    }
-    assert!(h.find(aurora_i18n::tr!("area-search-regex")).is_positive());
-    let before = h.find(aurora_i18n::tr!("area-search-search"));
-    h.ui.table.filters.regex = true;
-    h.ui.table.filters.name = "(".into();
-    h.frame(Vec::new());
-    assert!(h.ui.table.regex_error.is_some());
-    let after = h.find(aurora_i18n::tr!("area-search-search"));
-    assert!(
-        (before.top() - after.top()).abs() < 1.0,
-        "typing a partial expression cannot move the toolbar"
-    );
-    assert!(h.ctx.read_response(egui::Id::unique(("area_search_field", 0))).is_some());
-}
-
-#[test]
-fn area_search_tabs_keep_inline_forms_and_result_rows_accessible() {
-    for (scale, size) in [
-        (1.0, Vec2::new(1280.0, 900.0)),
-        (1.5, Vec2::new(1280.0, 900.0)),
-        (1.0, Vec2::new(600.0, 466.0)),
-    ] {
-        let mut h = Harness::new(scale, size, 40);
-        let search = h.find(aurora_i18n::tr!("area-search-search"));
-        let filters = h.find(aurora_i18n::tr!("area-search-filters"));
-        let columns = h.find(aurora_i18n::tr!("area-search-columns"));
-        assert!(search.right() < filters.left() && filters.right() < columns.left());
-        h.click(aurora_i18n::tr!("area-search-search"));
-        let field = h
-            .ctx
-            .read_response(egui::Id::unique(("area_search_field", 0)))
-            .expect("inline search field");
-        assert!(field.rect.top() > search.bottom());
-        assert!(h.find("Object 1").top() > h.inline_reset().bottom());
-        h.click(aurora_i18n::tr!("area-search-filters"));
-        assert_eq!(h.ui.expanded, Some(super::controls::Section::Filters));
-        let header = h.find(aurora_i18n::tr!("area-search-required"));
-        assert!(header.top() > filters.bottom());
-        assert!(h.find("Object 1").top() > h.inline_reset().bottom());
-        h.click(aurora_i18n::tr!("area-search-results"));
-        assert!(h.ui.expanded.is_none());
-        assert!(h.find("Object 1").top() < header.top() + 100.0);
-    }
-}
-
-#[test]
-fn area_search_filter_and_range_resets_preserve_other_sections() {
-    use super::controls::Section;
-    for (section, label) in [
-        (Section::Filters, aurora_i18n::tr!("area-search-filters")),
-        (Section::Ranges, aurora_i18n::tr!("area-search-range-options")),
-    ] {
-        let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
-        h.ui.table.filters = Filters {
-            query: "Object".into(),
-            owner: "Demo owner".into(),
-            phantom: true,
-            click_action: 2,
-            sale: true,
-            min_price: 2,
-            max_price: 3,
-            distance_on: true,
-            min_distance: 1.0,
-            max_distance: 8.0,
-            parcel_only: true,
-            children: true,
-            exclude_physical: true,
-            ..Default::default()
-        };
-        h.click(label);
-        let save = h.find(aurora_i18n::tr!("area-search-save-defaults"));
-        let reset = h.inline_reset();
-        assert!(reset.left() > save.right());
-        h.click_at(reset.center());
         let f = &h.ui.table.filters;
-        assert_eq!((&*f.query, &*f.owner), ("Object", "Demo owner"));
-        match section {
-            Section::Filters => {
-                assert!(!f.phantom && f.click_action == 0);
-                assert!(!f.parcel_only && !f.children && !f.exclude_physical);
-                assert!(f.sale && f.distance_on);
-                assert_eq!((f.min_price, f.max_price), (2, 3));
-                assert_eq!((f.min_distance, f.max_distance), (1.0, 8.0));
-            }
-            Section::Ranges => {
-                assert!(!f.sale && !f.distance_on);
-                assert_eq!((f.min_distance, f.max_distance), (0.0, 96.0));
-                assert!(f.phantom && f.parcel_only && f.children && f.exclude_physical);
-                assert_eq!(f.click_action, 2);
-            }
-            _ => unreachable!(),
+        assert!(f.name.is_empty() && f.creator.is_empty());
+        assert_eq!(h.ui.table.visible.len(), 40, "the results come back at once");
+    }
+}
+
+#[test]
+fn area_search_long_results_draw_only_what_shows_and_keep_the_footer_in_the_window() {
+    for (scale, size) in [(1.0, Vec2::new(1280.0, 900.0)), (1.5, Vec2::new(1280.0, 900.0))] {
+        {
+            let mut h = Harness::new(scale, size, 2000);
+            h.settle();
+            let (out, _) = h.frame(Vec::new());
+            let painted = (1..=2000)
+                .filter(|i| out.shapes.iter().any(|s| text_rect(&s.shape, &format!("Object {i}")).is_some()))
+                .count();
+            assert!((1..60).contains(&painted), "only the viewport's rows: {painted} ({scale})");
+            // (a row is picked for the user: the footer has its buttons)
+            let rect = h.find(aurora_i18n::tr!("area-search-actions"));
+            assert!(
+                egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect),
+                "the footer left the screen at {scale}: {rect:?}"
+            );
         }
-        assert_eq!(h.ui.expanded, Some(section), "Reset keeps the current section open");
+    }
+}
+
+#[test]
+fn area_search_kind_tiles_go_from_only_to_hidden_to_any() {
+    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
+    h.ui.table.rows[0].flags = 1 << 10;
+    h.ui.table.dirty = true;
+    let phantom = aurora_i18n::tr!("area-search-phantom");
+    h.click(phantom);
+    assert!(h.ui.table.filters.phantom);
+    h.settle();
+    assert_eq!(h.ui.table.visible.len(), 1);
+    h.click(phantom);
+    assert!(h.ui.table.filters.exclude_phantom && !h.ui.table.filters.phantom);
+    h.settle();
+    assert_eq!(h.ui.table.visible.len(), 39);
+    h.click(phantom);
+    h.settle();
+    assert_eq!(h.ui.table.visible.len(), 40);
+}
+
+#[test]
+fn area_search_sheet_saves_resets_and_copies_the_link() {
+    {
+        let mut h = Harness::new(1.0, Vec2::new(1280.0, 1000.0), 40);
+        h.ui.table.filters.query = "Object".into();
+        h.ui.table.filters.sale = true;
+        h.ui.demo_controls("filters");
+        h.settle();
+        h.click(aurora_i18n::tr!("area-search-save-defaults"));
+        assert!(h.ui.save_defaults);
+        let (out, _) = h.click(aurora_i18n::tr!("area-search-copy-link"));
+        assert!(
+            out.platform_output
+                .commands
+                .iter()
+                .any(|c| matches!(c, egui::OutputCommand::CopyText(s) if s.starts_with("secondlife:///app/openfloater/area_search")))
+        );
+        h.click(aurora_i18n::tr!("common-reset"));
+        assert!(!h.ui.table.filters.sale);
+        assert_eq!(h.ui.table.filters.query, "Object", "the search text stays");
+    }
+}
+
+#[test]
+fn area_search_separate_resets_preserve_the_other_sections() {
+    let filled = Filters {
+        query: "Object".into(),
+        owner: "Demo owner".into(),
+        phantom: true,
+        click_action: 2,
+        sale: true,
+        min_price: 2,
+        max_price: 3,
+        distance_on: true,
+        min_distance: 1.0,
+        max_distance: 8.0,
+        parcel_only: true,
+        children: true,
+        exclude_physical: true,
+        ..Default::default()
+    };
+    let after = |section| {
+        let mut ui = AreaSearchUi::default();
+        ui.table.filters = filled.clone();
+        ui.visible_columns = Some([true; 10]);
+        ui.reset_section(section);
+        ui
+    };
+    let f = after(Section::Search).table.filters;
+    assert!(f.query.is_empty() && f.owner.is_empty() && f.phantom && f.sale && f.distance_on);
+    let f = after(Section::Filters).table.filters;
+    assert_eq!((&*f.query, &*f.owner), ("Object", "Demo owner"));
+    assert!(!f.phantom && f.click_action == 0 && !f.parcel_only && !f.children && !f.exclude_physical);
+    assert!(f.sale && f.distance_on && (f.min_price, f.max_price) == (2, 3));
+    let f = after(Section::Ranges).table.filters;
+    assert!(!f.sale && !f.distance_on && f.phantom && f.parcel_only && f.click_action == 2);
+    let ui = after(Section::Columns);
+    assert_eq!(ui.saved_columns(), DEFAULT_COLUMNS);
+    assert!(ui.table.filters.phantom);
+    assert_eq!(after(Section::All).table.filters, Filters::default());
+}
+
+#[test]
+fn area_search_columns_are_chosen_kept_and_the_name_stays_first() {
+    {
+        let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
+        assert_eq!(
+            h.ui.shown_columns(),
+            [Column::Name, Column::Distance, Column::LandImpact, Column::Owner]
+        );
+        h.ui.demo_controls("table");
+        h.settle();
+        h.click(aurora_i18n::tr!("area-search-last-owner"));
+        h.settle();
+        let columns = h.ui.saved_columns();
+        assert!(columns[Column::LastOwner.index()]);
+        let saved = AreaSearch {
+            filters: h.ui.table.filters.without_search(),
+            columns,
+        };
+        let restored = AreaSearchUi::from_saved(&serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap());
+        assert!(restored.saved_columns()[Column::LastOwner.index()]);
+        h.click(aurora_i18n::tr!("area-search-reset-columns"));
+        assert_eq!(h.ui.saved_columns(), DEFAULT_COLUMNS);
+        h.ui.visible_columns = Some([false; 10]);
+        assert_eq!(h.ui.shown_columns(), [Column::Name]);
+    }
+}
+
+#[test]
+fn area_search_regex_error_is_said_and_recovers_when_corrected() {
+    both(|mut h| {
+        h.ui.table.filters.regex = true;
+        h.ui.table.filters.name = "(".into();
+        h.frame(Vec::new());
+        assert!(h.ui.table.regex_error.is_some());
+        assert!(h.find(aurora_i18n::tr!("area-search-regex-invalid")).is_positive());
+        h.ui.table.filters.name = "Object .*".into();
+        h.frame(Vec::new());
+        assert!(h.ui.table.regex_error.is_none());
+        assert!(!h.shown(aurora_i18n::tr!("area-search-regex-invalid")));
+    });
+}
+
+#[test]
+fn area_search_where_to_look_is_one_click() {
+    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 10);
+    for (n, row) in h.ui.table.rows.iter_mut().enumerate() {
+        row.on_parcel = n < 4;
+    }
+    h.ui.table.dirty = true;
+    h.settle();
+    h.click(aurora_i18n::tr!("area-search-scope-parcel"));
+    h.settle();
+    assert!(h.ui.table.filters.parcel_only);
+    assert_eq!(h.ui.table.visible.len(), 4);
+    h.click(aurora_i18n::tr!("area-search-scope-neighbours"));
+    h.settle();
+    assert!(!h.ui.table.filters.parcel_only && h.ui.table.filters.neighbors);
+    h.click(aurora_i18n::tr!("area-search-scope-region"));
+    h.settle();
+    assert!(!h.ui.table.filters.neighbors);
+    assert_eq!(h.ui.table.visible.len(), 10);
+}
+
+#[test]
+fn area_search_waits_for_the_parcel_aloud() {
+    both(|mut h| {
+        h.ui.table.filters.parcel_only = true;
+        h.frame(Vec::new());
+        assert!(h.find(aurora_i18n::tr!("area-search-parcel-pending")).is_positive());
+    });
+}
+
+#[test]
+fn area_search_an_owner_narrows_everything_and_lets_go() {
+    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
+    for row in &mut h.ui.table.rows[..5] {
+        row.owner_id = Uuid::from_u128(0xCC);
+        row.owner = "Other owner".into();
+    }
+    h.ui.table.dirty = true;
+    h.settle();
+    h.click("Other owner");
+    h.settle();
+    assert_eq!(h.ui.table.visible.len(), 5);
+    h.click("Other owner");
+    h.settle();
+    assert_eq!(h.ui.table.visible.len(), 40);
+    // an owner whose objects all left holds nothing back
+    h.ui.table.owner = Some(Uuid::from_u128(0xDD));
+    h.settle();
+    assert_eq!(h.ui.table.visible.len(), 40);
+}
+
+#[test]
+fn area_search_card_opens_profiles_but_not_under_shownames() {
+    let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
+    h.ui.card_open = true;
+    h.click("Object 1");
+    h.settle();
+    assert!(matches!(h.click("Demo maker").1, Some(Action::Profile(id)) if id == Uuid::from_u128(0xBB)));
+    for row in &mut h.ui.table.rows {
+        row.names_hidden = true;
+    }
+    h.settle();
+    assert!(h.click("Demo maker").1.is_none());
+    // a group that owns opens its own profile
+    for row in &mut h.ui.table.rows {
+        row.names_hidden = false;
+        row.group_id = row.owner_id;
+    }
+    h.ui.table.dirty = true;
+    h.settle();
+    let at = h.find(aurora_i18n::tr!("inspect-owned-by")).center();
+    assert!(matches!(h.click_at(at).1, Some(Action::Group(id)) if id == Uuid::from_u128(0xAA)));
+    for row in &mut h.ui.table.rows {
+        row.names_hidden = true;
+    }
+    h.settle();
+    assert!(h.click_at(at).1.is_none(), "a hidden group stays closed");
+}
+
+#[test]
+fn area_search_windows_keep_their_size() {
+    {
+        let rows: Vec<Row> = (1..=60u128)
+            .map(|i| {
+                let mut r = Row::default();
+                r.id = Uuid::from_u128(i);
+                r.name = format!("Object {i}");
+                r.loaded = true;
+                r.distance = i as f32;
+                r
+            })
+            .collect();
+        // as it opens, and the least it can be
+        let sizes = &[SIZE, MIN_SIZE];
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            sizes,
+            aurora_i18n::tr!("area-search-actions"),
+            || {
+                let mut ui = AreaSearchUi::default();
+                ui.table.replace(rows.clone());
+                ui
+            },
+            |ui, ctx, p| {
+                let env = Env {
+                    parcel_known: true,
+                    parcel_part: true,
+                    neighbours: true,
+                    draw_distance: 64.0,
+                    locks: &|_| MenuLocks::default(),
+                    pics: &HashMap::new(),
+                    facts: None,
+                };
+                ui.show(ctx, p, &mut true, &env);
+            },
+        );
     }
 }
 
@@ -641,4 +690,165 @@ fn area_search_menu_hides_the_entries_rlva_refuses() {
     // nothing refused any more: the entries are back and answer
     h.locks = MenuLocks::default();
     assert!(matches!(h.menu("Object 5", touch), Some(Action::Touch(ids)) if ids == [Uuid::from_u128(5)]));
+}
+
+/// A result list that came anew, as the app makes one every half second.
+fn again(h: &mut Harness, change: impl Fn(&mut Vec<Row>)) {
+    let mut rows = h.ui.table.rows.clone();
+    change(&mut rows);
+    h.ui.table.replace(rows);
+    h.settle();
+}
+
+#[test]
+fn area_search_picks_the_top_row_until_the_user_chooses() {
+    let id = |n| Some(Uuid::from_u128(n));
+    both(|mut h| {
+        assert_eq!(h.ui.selection.single(), id(1), "as it opens");
+        // another search, another order
+        h.ui.table.filters.query = "object 3".into();
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(3));
+        h.ui.table.filters.query.clear();
+        h.settle();
+        assert_eq!(
+            h.ui.selection.single(),
+            id(1),
+            "a search cleared: the top row, though 3 still shows"
+        );
+        h.ui.table.sort_by(Column::Distance);
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(40));
+        h.ui.table.sort_by(Column::Distance);
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(1));
+        // nothing found, nothing picked
+        h.ui.table.filters.query = "does not match".into();
+        h.settle();
+        assert!(h.ui.selection.is_empty());
+        h.ui.table.filters.query.clear();
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(1));
+        // the one picked goes: the next top row
+        again(&mut h, |rows| rows.retain(|r| r.id != Uuid::from_u128(1)));
+        assert_eq!(h.ui.selection.single(), id(2));
+        // chosen: kept through searches that still show it
+        h.click("Object 5");
+        h.ui.table.filters.query = "object".into();
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(5));
+        h.ui.table.sort_by(Column::Distance);
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(5));
+        // and the top row once it does not
+        h.ui.table.filters.query = "object 7".into();
+        h.settle();
+        assert_eq!(h.ui.selection.single(), id(7));
+    });
+}
+
+#[test]
+fn area_search_pick_follows_a_filling_list_but_not_a_moving_one_nor_under_the_pointer() {
+    let id = |n| Some(Uuid::from_u128(n));
+    let nearest = |n: usize| move |rows: &mut Vec<Row>| rows[n].distance = 0.1 / (n as f32);
+    both(|mut h| {
+        again(&mut h, nearest(7));
+        assert_eq!(h.ui.table.rows[h.ui.table.visible[0]].id, Uuid::from_u128(8));
+        assert_eq!(h.ui.selection.single(), id(1), "passing by changes nothing");
+        h.ui.table.pending = 3;
+        again(&mut h, |_| ());
+        assert_eq!(h.ui.selection.single(), id(8), "the list fills");
+        let over = h.find("Object 5").center();
+        h.frame(vec![egui::Event::PointerMoved(over)]);
+        again(&mut h, nearest(9));
+        assert_eq!(h.ui.selection.single(), id(8), "never under the pointer");
+        h.frame(vec![egui::Event::PointerGone]);
+        again(&mut h, |_| ());
+        assert_eq!(h.ui.selection.single(), id(10));
+    });
+}
+
+#[test]
+fn area_search_open_menu_never_moves_to_another_object() {
+    both(|mut h| {
+        let at = h.find("Object 1").center();
+        h.press(at, egui::PointerButton::Secondary, Default::default());
+        assert!(h.ui.menu_at.is_some());
+        again(&mut h, |rows| rows.retain(|r| r.id != Uuid::from_u128(1)));
+        assert!(h.ui.selection.is_empty(), "its object is gone: nothing to delete");
+        egui::Popup::close_all(&h.ctx);
+        h.settle();
+        again(&mut h, |_| ());
+        assert!(h.ui.selection.is_empty(), "chosen: the next object never takes its place");
+    });
+}
+
+#[test]
+fn area_search_a_chosen_row_that_goes_leaves_nothing_to_act_on() {
+    both(|mut h| {
+        // Delete on a chosen row, the object gone: a second Delete has nothing
+        h.click("Object 3");
+        again(&mut h, |rows| rows.retain(|r| r.id != Uuid::from_u128(3)));
+        assert!(h.ui.selection.is_empty());
+        assert!(!h.shown(aurora_i18n::tr!("area-search-actions")), "no Actions without a selection");
+        assert!(
+            h.menu("Object 1", aurora_i18n::tr!("common-delete"))
+                .is_some_and(|a| matches!(a, Action::Delete(ids) if ids == [Uuid::from_u128(1)])),
+            "a right click chooses its row"
+        );
+    });
+}
+
+#[test]
+fn area_search_pick_never_changes_under_a_click_or_a_key() {
+    both(|mut h| {
+        // another order, its list in a frame with a key: the pick waits
+        h.ui.table.sort_by(Column::Distance);
+        h.frame(vec![egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
+        h.frame(Vec::new());
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(40)), "taken in the next quiet frame");
+    });
+}
+
+#[test]
+fn area_search_pick_stops_following_a_list_still_filling_after_a_while() {
+    let nearest = |n: usize| move |rows: &mut Vec<Row>| rows[n].distance = 0.1 / (n as f32);
+    both(|mut h| {
+        h.ui.table.pending = 3;
+        // 10 s after the list was asked for (0.1 s a frame)
+        for _ in 0..110 {
+            h.frame(Vec::new());
+        }
+        again(&mut h, nearest(7));
+        assert_eq!(
+            h.ui.selection.single(),
+            Some(Uuid::from_u128(1)),
+            "names that never come do not move it"
+        );
+    });
+}
+
+#[test]
+fn area_search_cleared_selection_stays_so_until_another_search() {
+    both(|mut h| {
+        h.menu("Object 2", aurora_i18n::tr!("area-search-clear-selection"));
+        again(&mut h, |_| ());
+        assert!(h.ui.selection.is_empty());
+        h.ui.table.filters.query = "object 2".into();
+        h.settle();
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(2)));
+        // closed, then opened again
+        h.menu("Object 2", aurora_i18n::tr!("area-search-clear-selection"));
+        h.ui.closed();
+        h.ui.selection.reset();
+        again(&mut h, |_| ());
+        assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(2)));
+    });
 }

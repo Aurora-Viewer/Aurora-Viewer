@@ -190,8 +190,12 @@ pub fn my_powers() -> u64 {
         Scenario::Officer => DEFAULT_OFFICER,
         // AURORA_DEMO_CONV_MODERATE: every ability, to moderate its chat
         _ if crate::ui::chat::moderation::demo_mode().is_some() => u64::MAX,
-        // AURORA_DEMO_SOCIAL_MENU: someone to invite into it
-        _ if super::social_menu::step().is_some() => DEFAULT_OFFICER,
+        // AURORA_DEMO_SOCIAL_MENU / AURORA_DEMO_PROFILE: someone to invite into it
+        _ if super::social_menu::step().is_some()
+            || (std::env::var_os("AURORA_DEMO_GROUP_PROFILE").is_none() && std::env::var_os("AURORA_DEMO_PROFILE").is_some()) =>
+        {
+            DEFAULT_OFFICER
+        }
         _ => DEFAULT_MEMBER,
     }
 }

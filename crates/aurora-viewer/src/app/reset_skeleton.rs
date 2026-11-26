@@ -65,6 +65,7 @@ impl App {
     /// Tools.StopAllAnimations "stop"), the scripts keep their animation
     /// permissions and a seated avatar stays seated.
     pub(super) fn stop_animations(&mut self, revoke: bool) {
+        self.stop_preview_animations();
         let me = self.world.agent_id;
         let playing: Vec<Uuid> = self
             .world

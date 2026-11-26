@@ -1669,7 +1669,7 @@ impl App {
                 self.world.inventory.add_items(vec![item]);
                 // the inventory shows the new photo (upload_done_callback,
                 // openInventoryPanelAndSetSelection)
-                self.panels.inventory = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                 self.inventory_ui.show_original(&self.world.inventory, id);
                 self.snapshots.message = Some((aurora_i18n::tr!("photo-uploaded").to_owned(), false));
                 self.snapshots.message_item = Some(id);
@@ -2033,7 +2033,9 @@ impl App {
                     self.settings.save();
                 }
             }
-            Action::PersonalLighting => self.panels.personal_lighting = true,
+            Action::PersonalLighting => {
+                crate::ui::widgets::open_floater(&self.egui_ctx, "personal_lighting", &mut self.panels.personal_lighting)
+            }
             Action::KeepLight => self.keep_photo_light(),
             Action::Controls => {
                 if !self.panels.camera_controls && !self.panels.movement_controls {
@@ -2045,7 +2047,7 @@ impl App {
             }
             Action::ShowItem => {
                 if let Some(id) = self.snapshots.message_item {
-                    self.panels.inventory = true;
+                    crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                     self.inventory_ui.show_original(&self.world.inventory, id);
                 }
             }
@@ -2873,7 +2875,7 @@ LUT_3D_SIZE {n}
         use crate::camera::free::{CLEARANCE, collide};
         let (world, scene) = (&self.world, &self.scene);
         let moved = collide(from, delta, |at, dir, length| {
-            let (hit, _) = scene.selection_pick(world, Some((at, dir)), None, true, false, length);
+            let hit = scene.photo_probe(world, (at, dir), length);
             let mut room = hit.map_or(length, |p| (p - at).dot(dir).clamp(0.0, length));
             if dir.z < 0.0
                 && let Some(land) = world.ground_height(at)
@@ -3167,6 +3169,7 @@ LUT_3D_SIZE {n}
             max_samples: renderer.msaa_supported().iter().copied().filter(|&n| n <= 8).max().unwrap_or(1),
             // (the renderer's measure, else the photo plan's fallback)
             target_bytes: snapshot::pass_bytes_per_pixel(self.snapshots.target_bytes, samples) - snapshot::PASS_OUTPUT_BYTES,
+            wide_normals: self.settings.normals_high(),
         };
         let memory = self.photo_memory(renderer);
         snapshot::quality::plan(memory, user, screen, current, may_raise)

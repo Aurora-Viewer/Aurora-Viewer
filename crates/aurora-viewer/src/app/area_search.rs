@@ -2,7 +2,8 @@
 //! FSAreaSearch::findObjects / processRequestQueue / requestObjectProperties
 //! (indra/newview/fsareasearch.cpp). Avatars are excluded; attachments are opt-in.
 use super::*;
-use crate::ui::area_search::{Action, MenuLocks, Row};
+use crate::object_stage::Place;
+use crate::ui::area_search::{Action, Env, Facts, MenuLocks, Row};
 use crate::world::objects::{ObjKey, Object, ObjectStore};
 use aurora_net::build::{BuildCmd, ObjectProps};
 use rayon::prelude::*;
@@ -266,10 +267,12 @@ impl App {
         self.panels.minimap = false;
         self.area_search_ui.table.filters = Default::default();
         self.area_search_ui.demo_controls(mode);
-        self.area_search_ui.demo_menu = mode == "menu";
-        self.area_search_ui.table.filters.parcel_only = mode == "parcel";
-        self.area_search_ui.table.filters.sale = mode == "sale";
-        if mode == "search" {
+        let has = |option: &str| mode.split(',').any(|o| o == option);
+        self.area_search_ui.demo_menu = has("menu");
+        self.area_search_ui.demo_select = has("select") || has("card");
+        self.area_search_ui.table.filters.parcel_only = has("parcel");
+        self.area_search_ui.table.filters.sale = has("sale");
+        if has("search") {
             self.area_search_ui.table.filters.query = aurora_i18n::tr!("demo-fountain").into();
         }
         let keys: Vec<_> = self
@@ -312,10 +315,12 @@ impl App {
         // touches already asked for go on once the window is closed
         self.area_search_touches(Instant::now());
         if !self.panels.area_search {
+            self.area_search_ui.closed();
             if self.area_search_feed.seeded {
                 self.area_search_feed.reset();
                 self.area_search_ui.table.replace(Vec::new());
-                self.area_search_ui.selection.clear();
+                self.area_search_ui.selection.reset();
+                self.area_search_ui.stage.stage.clear(&self.scene);
             }
             if self
                 .area_search_feed
@@ -333,7 +338,7 @@ impl App {
         if self.area_search_feed.region != self.world.main_region {
             self.area_search_feed.reset();
             self.area_search_feed.region = self.world.main_region;
-            self.area_search_ui.selection.clear();
+            self.area_search_ui.selection.reset();
         }
         if !self.area_search_feed.seeded {
             self.area_search_feed
@@ -364,15 +369,34 @@ impl App {
             self.area_search_feed.next = Some(now + Duration::from_millis(500));
             self.area_search_snapshot(now);
         }
+        let parcel_part = self
+            .world
+            .parcel
+            .as_ref()
+            .is_none_or(|p| p.bitmap.iter().any(|cells| *cells != 0xff) || p.bitmap.is_empty());
+        let neighbours = self.world.regions.len() > 1;
         let parcel_known = self.world.parcel.as_ref().is_some_and(|p| !p.bitmap.is_empty());
         let draw_distance = self.settings.draw_distance;
+        self.area_search_stage(ctx, now);
+        let facts = self.area_search_facts();
         let world = &self.world;
-        let locks = |ids: &[Uuid]| menu_locks(world, ids, now);
-        if let Some(action) = self
-            .area_search_ui
-            .show(ctx, p, &mut self.panels.area_search, parcel_known, draw_distance, &locks)
-        {
+        let env = Env {
+            parcel_known,
+            parcel_part,
+            neighbours,
+            draw_distance,
+            locks: &|ids: &[Uuid]| menu_locks(world, ids, now),
+            pics: &self.avatar_pics,
+            facts,
+        };
+        let action = self.area_search_ui.show(ctx, p, &mut self.panels.area_search, &env);
+        if let Some(action) = action {
             self.area_search_action(action, now);
+        }
+        let light = self.area_search_ui.stage.light;
+        if light != self.settings.stage_light {
+            self.settings.stage_light = light;
+            self.settings.save();
         }
         let columns = self.area_search_ui.saved_columns();
         let defaults = std::mem::take(&mut self.area_search_ui.save_defaults);
@@ -383,6 +407,34 @@ impl App {
             }
             self.settings.save();
         }
+    }
+
+    /// Keep the 3D view of the wide window up to date with the selection.
+    fn area_search_stage(&mut self, ctx: &egui::Context, now: Instant) {
+        let w = &self.world;
+        let group = |root: &Uuid| super::inspect::stage_group(w, root);
+        let ui = &mut self.area_search_ui;
+        let roots = ui.staged().to_vec();
+        ui.stage.stage.update(w, &self.scene, &roots, group, Place::World, ctx, now);
+        ui.stage.light = self.settings.stage_light;
+    }
+
+    /// Figures of the one selected object, for its card.
+    fn area_search_facts(&self) -> Option<Facts> {
+        let id = self.area_search_ui.selection.single()?;
+        let idx = self.world.objects.index_of_uuid(&id)?;
+        let mut facts = Facts::default();
+        let mut textures = HashSet::new();
+        for prim in crate::build::family(&self.world, idx) {
+            if self.world.objects.get(prim).is_none_or(Object::is_avatar) {
+                continue;
+            }
+            let stats = self.scene.prim_stats(&self.world, prim);
+            facts.triangles += stats.triangles;
+            textures.extend(stats.textures);
+        }
+        facts.texture_memory = textures.iter().map(|id| self.scene.texture_memory(id).0).sum();
+        Some(facts)
     }
 
     /// FSPanelAreaSearchList::onContextMenuItemClick, through the actions
@@ -463,6 +515,8 @@ impl App {
                 }
             }
             Action::Buy(id) => self.on_ctx_action(CtxAction::Buy(id)),
+            Action::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            Action::Group(id) => self.group_profile_ui.open(&mut self.world, id),
             // setFindOwnerText(gAgentUsername), then the search
             // (under RLVa's `@shownames` the owner column shows the stand-in
             // of our own name too, which is then what finds our objects)
@@ -585,6 +639,9 @@ impl App {
                 }
                 let mut row = Row::default();
                 row.id = o.full_id;
+                if !crate::ui::area_search::model::within_reach(global, agent) {
+                    return None;
+                }
                 row.distance = global.distance(agent) as f32;
                 row.on_parcel = on_parcel;
                 row.child = place.child;
@@ -615,7 +672,7 @@ impl App {
                 Some((row, o.key))
             })
             .collect();
-        let candidates: Vec<_> = rows.iter().map(|(r, key)| (r.id, *key)).collect();
+        let candidates = nearest_first(&rows);
         let packets = self.area_search_feed.requests(&candidates, now);
         self.area_search_ui.table.pending = rows.iter().filter(|(r, _)| !r.loaded).count();
         // Name services are requested once per distinct identity per snapshot,
@@ -672,20 +729,12 @@ impl App {
             })
             .collect();
         self.area_search_ui.table.replace(rows);
-        let cost_batches = if self.area_search_ui.needs_costs() {
-            self.area_search_ui.table.prepare();
-            let visible: HashSet<_> = self
-                .area_search_ui
-                .table
-                .visible
-                .iter()
-                .map(|i| self.area_search_ui.table.rows[*i].id)
-                .collect();
-            let candidates: Vec<_> = candidates.into_iter().filter(|(id, _)| visible.contains(id)).collect();
-            self.area_search_feed.cost_batches(&candidates, now)
-        } else {
-            HashMap::new()
-        };
+        // the land impact is always shown (the badges, the totals)
+        self.area_search_ui.table.prepare();
+        let table = &self.area_search_ui.table;
+        let visible: HashSet<_> = table.visible.iter().map(|i| table.rows[*i].id).collect();
+        let candidates: Vec<_> = candidates.into_iter().filter(|(id, _)| visible.contains(id)).collect();
+        let cost_batches = self.area_search_feed.cost_batches(&candidates, now);
         let kept: HashSet<_> = self
             .build
             .highlighted(&self.world)
@@ -708,6 +757,20 @@ impl App {
             self.send(command);
         }
     }
+}
+
+/// What still waits for its name or its land impact, the nearest first. The
+/// Legacy Viewer asks in the order of its object list (FSAreaSearch::
+/// findObjects); with everything around on its way, what is close is read
+/// before the far end of the region.
+fn nearest_first(rows: &[(Row, ObjKey)]) -> Vec<(Uuid, ObjKey)> {
+    let mut waiting: Vec<_> = rows
+        .iter()
+        .filter(|(r, _)| !r.loaded || r.land_impact.is_none())
+        .map(|(r, key)| (r.distance, r.id, *key))
+        .collect();
+    waiting.par_sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    waiting.into_iter().map(|(_, id, key)| (id, key)).collect()
 }
 
 fn property_commands(packets: HashMap<aurora_net::RegionHandle, Vec<u32>>, kept: &HashSet<ObjKey>) -> Vec<NetCommand> {
@@ -752,6 +815,35 @@ fn for_build(
 mod tests {
     use super::*;
     use glam::Quat;
+
+    #[test]
+    fn area_search_asks_for_the_nearest_first_and_only_for_what_is_missing() {
+        let row = |id: u128, distance: f32, loaded: bool, land_impact: Option<f32>| {
+            let mut r = Row::default();
+            r.id = Uuid::from_u128(id);
+            r.distance = distance;
+            r.loaded = loaded;
+            r.land_impact = land_impact;
+            (
+                r,
+                ObjKey {
+                    region: 1,
+                    local_id: id as u32,
+                },
+            )
+        };
+        let mut rows: Vec<_> = (1..=600).map(|i| row(i, 700.0 - i as f32, false, None)).collect();
+        rows.push(row(601, 1.0, true, Some(2.0)));
+        rows.push(row(602, 2.0, true, None));
+        let order = nearest_first(&rows);
+        assert_eq!(order[0].0, Uuid::from_u128(602), "its land impact is missing");
+        assert_eq!(order[1].0, Uuid::from_u128(600));
+        assert!(order.iter().all(|(id, _)| *id != Uuid::from_u128(601)), "nothing left to ask");
+        let mut feed = Feed::default();
+        let asked = feed.requests(&order[1..], Instant::now());
+        assert_eq!(asked[&1].len(), PACKET);
+        assert!(asked[&1].iter().all(|id| *id > 600 - PACKET as u32), "the nearest fill the packet");
+    }
 
     #[test]
     fn area_search_cost_requests_are_bounded_and_late_invalid_or_partial_replies_stay_unknown() {

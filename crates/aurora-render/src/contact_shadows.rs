@@ -174,7 +174,12 @@ pub(crate) fn build_dispatch_list(
     out.light[0] = ((light[0] / xy_light_w) * 0.5 + 0.5) * viewport[0] as f32;
     out.light[1] = ((light[1] / xy_light_w) * -0.5 + 0.5) * viewport[1] as f32;
     out.light[2] = if light[3] == 0.0 { 0.0 } else { light[2] / light[3] };
-    out.light[3] = if light[3] > 0.0 { 1.0 } else { -1.0 };
+    // the side its point was just put on. Bend takes the sign of `light[3]`
+    // itself, which calls a light exactly at right angles to the view
+    // (w = 0: the sun overhead, a level view) behind the camera while its
+    // point is the one in front: the rays then march away from the light,
+    // down a ground that rises into them, and the whole ground is in shadow
+    out.light[3] = if xy_light_w > 0.0 { 1.0 } else { -1.0 };
 
     let light_xy = [(out.light[0] + 0.5) as i32, (out.light[1] + 0.5) as i32];
     // the bounds, inclusive, relative to the light
@@ -971,9 +976,17 @@ mod tests {
                         if major > 0.0 {
                             ma = -ma;
                         }
-                        let start = [f[0] + light_xy[0], f[1] + light_xy[1]];
+                        let mut start = [f[0] + light_xy[0], f[1] + light_xy[1]];
                         let t = (end_m + ma) / (start_m + ma);
-                        let end = [light[0] + (start[0] - light[0]) * t, light[1] + (start[1] - light[1]) * t];
+                        let mut end = [light[0] + (start[0] - light[0]) * t, light[1] + (start[1] - light[1]) * t];
+                        if light[0].abs() > FAR_LIGHT || light[1].abs() > FAR_LIGHT {
+                            start = [
+                                (xy[0] + light[0].floor() as i32) as f32 + 0.5,
+                                (xy[1] + light[1].floor() as i32) as f32 + 0.5,
+                            ];
+                            let per_wave = wave as f32 / (start_m + ma);
+                            end = [start[0] - (f[0] - frac[0]) * per_wave, start[1] - (f[1] - frac[1]) * per_wave];
+                        }
                         for tid in 0..wave {
                             let step = (tid ^ if reverse { 0 } else { wave - 1 }) as f32;
                             let p = [
@@ -987,6 +1000,14 @@ mod tests {
             }
         }
     }
+
+    /// FAR_LIGHT of contact_shadows.wgsl: beyond it, in pixels, a light's
+    /// point no longer goes through Bend's lerp.
+    const FAR_LIGHT: f32 = 1_048_576.0;
+
+    /// The clip height of the direction straight up through a level view of
+    /// 60° (cot 30°): the sun overhead as mouselook starts.
+    const STRAIGHT_UP: f32 = 1.732_050_8;
 
     fn coverage(light: [f32; 4], w: i32, h: i32) -> (usize, DispatchList) {
         let list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
@@ -1024,17 +1045,48 @@ mod tests {
         }
     }
 
-    /// The light's point on screen and its side of the camera, as Bend
-    /// computes them.
+    /// The sun overhead for a camera that looks level (mouselook as it
+    /// starts): its point is as far off screen as it gets, further than
+    /// f32 holds half a pixel in a window more than some 1240 pixels high.
+    /// Every pixel is still written; an unwritten one keeps an earlier
+    /// frame's shadow (the target is never emptied).
+    #[test]
+    fn a_light_far_off_screen_covers_every_pixel_of_a_tall_window() {
+        assert!(
+            include_str!("shaders/contact_shadows.wgsl").contains("const FAR_LIGHT: f32 = 1048576.0;"),
+            "FAR_LIGHT of the shader and of these tests"
+        );
+        for (w, h) in [(1920, 1080), (2560, 1440), (3840, 2048), (3840, 2160), (5120, 2880)] {
+            // the last ones on either side of FAR_LIGHT in the windows 2048 high
+            for light_w in [
+                0.0, -0.0, 1e-7, -1e-7, 1e-5, -1e-5, 1e-4, -1e-4, 1e-3, -1e-3, 1.6e-3, 1.7e-3, -1.7e-3, 1e-2,
+            ] {
+                let (missed, list) = coverage([0.0, STRAIGHT_UP, 0.0, light_w], w, h);
+                assert_eq!(missed, 0, "{w}x{h}, w {light_w}: the light at {:?}", list.light);
+            }
+        }
+    }
+
+    /// The light's point on screen and its side of the camera: Bend's, but
+    /// for a light exactly at right angles to the view.
     #[test]
     fn the_light_lands_on_its_pixel() {
         let list = build_dispatch_list([0.5, 0.5, 0.25, 1.0], [800, 600], [0, 0], [800, 600], WAVE_SIZE);
         assert_eq!(list.light, [600.0, 150.0, 0.25, 1.0]);
         let behind = build_dispatch_list([0.5, 0.5, 0.25, -1.0], [800, 600], [0, 0], [800, 600], WAVE_SIZE);
         assert_eq!(behind.light[3], -1.0);
-        // a direction (w = 0): far off along its axis, depth 0
-        let sun = build_dispatch_list([1.0, 0.0, 0.0, 0.0], [800, 600], [0, 0], [800, 600], WAVE_SIZE);
-        assert!(sun.light[0] > 1e6 && sun.light[2] == 0.0 && sun.light[3] == -1.0);
+        // a direction at right angles to the view (w = 0): far off along its
+        // axis, depth 0, and in front of the camera like the point it is
+        // given (Bend says behind, and marches away from the light)
+        for w in [0.0, -0.0] {
+            let sun = build_dispatch_list([1.0, 0.0, 0.0, w], [800, 600], [0, 0], [800, 600], WAVE_SIZE);
+            assert!(sun.light[0] > 1e6 && sun.light[2] == 0.0 && sun.light[3] == 1.0, "{:?}", sun.light);
+        }
+        // either side of it, the point and its side agree as well
+        let ahead = build_dispatch_list([1.0, 0.0, 0.0, 1e-7], [800, 600], [0, 0], [800, 600], WAVE_SIZE);
+        assert!(ahead.light[0] > 1e6 && ahead.light[3] == 1.0);
+        let behind = build_dispatch_list([1.0, 0.0, 0.0, -1e-7], [800, 600], [0, 0], [800, 600], WAVE_SIZE);
+        assert!(behind.light[0] < -1e6 && behind.light[3] == -1.0);
     }
 
     /// The sun in front of the camera lands where a far point along it
@@ -1223,111 +1275,129 @@ mod tests {
         assert!(variant_source(Variant::Short).contains("const SAMPLE_COUNT: i32 = 16;"));
     }
 
-    /// The mask each variant draws over a ground with a box on it, read
-    /// back: `no-early-out` and `no-shared` must draw Bend's exactly, or
-    /// the tester's answers would compare different work.
-    #[test]
-    #[ignore = "requires a GPU"]
-    fn the_variants_that_keep_the_image_draw_bends_mask() {
-        let instance = wgpu::Instance::default();
-        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
-            return;
-        };
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("device");
-        let (w, h) = (320u32, 192u32);
-        let format = wgpu::TextureFormat::Depth32Float;
-        let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("test depth"),
-            size: wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        // reversed depth drawn by a full-screen triangle (a depth texture
-        // takes no copy): a ground rising towards the camera, a box nearer,
-        // sky along the top
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("test depth"),
-            source: wgpu::ShaderSource::Wgsl(
-                "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
-                    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
-                    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
-                }
-                @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @builtin(frag_depth) f32 {
-                    let ground = 0.0005 * (pos.y + 96.0);
-                    let in_box = pos.x >= 120.0 && pos.x < 170.0 && pos.y >= 90.0 && pos.y < 130.0;
-                    return select(select(ground, ground * 1.02, in_box), 0.0, pos.y < 20.0);
-                }"
-                .into(),
-            ),
-        });
-        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
-            label: Some("test depth"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: Default::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+    /// A device and a reversed depth of its own, for the tests that run the
+    /// pass on the GPU.
+    struct Rig {
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        _depth: wgpu::Texture,
+        depth_view: wgpu::TextureView,
+        w: u32,
+        h: u32,
+    }
+
+    const RIG_DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+    impl Rig {
+        /// `None` without a GPU. `depth` is the body of a fragment shader
+        /// that returns the reversed depth at `pos`: a full-screen triangle
+        /// draws it (a depth texture takes no copy).
+        fn new(w: u32, h: u32, depth: &str) -> Option<Self> {
+            let instance = wgpu::Instance::default();
+            let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+            let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("device");
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("test depth"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: RIG_DEPTH,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
             });
-            pass.set_pipeline(&pipeline);
-            pass.draw(0..3, 0..1);
-        }
-        queue.submit([encoder.finish()]);
-        // the sun ahead and high, its point on screen above the image
-        let light = [0.2, 1.6, 0.0, 0.8];
-        let extent = wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        };
-        let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        let read = |texture: &wgpu::Texture| -> Vec<u8> {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("test depth"),
+                source: wgpu::ShaderSource::Wgsl(
+                    format!(
+                        "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{
+                            let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+                            return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+                        }}
+                        @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @builtin(frag_depth) f32 {{
+                            {depth}
+                        }}"
+                    )
+                    .into(),
+                ),
+            });
+            let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+                label: Some("test depth"),
+                layout: None,
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: Default::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: RIG_DEPTH,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+            let depth_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             let mut encoder = device.create_command_encoder(&Default::default());
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("test depth"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&pipeline);
+                pass.draw(0..3, 0..1);
+            }
+            queue.submit([encoder.finish()]);
+            Some(Self {
+                device,
+                queue,
+                _depth: texture,
+                depth_view,
+                w,
+                h,
+            })
+        }
+
+        fn extent(&self) -> wgpu::Extent3d {
+            wgpu::Extent3d {
+                width: self.w,
+                height: self.h,
+                depth_or_array_layers: 1,
+            }
+        }
+
+        /// The red channel of `texture`, row by row.
+        fn read(&self, texture: &wgpu::Texture) -> Vec<u8> {
+            let (w, h) = (self.w, self.h);
+            let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
                 size: crate::readback::readback_size((row * h) as u64),
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -1343,25 +1413,27 @@ mod tests {
                         rows_per_image: Some(h),
                     },
                 },
-                extent,
+                self.extent(),
             );
-            queue.submit([encoder.finish()]);
+            self.queue.submit([encoder.finish()]);
             buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
-            device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            self.device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
             let data = buffer.slice(..).get_mapped_range().expect("mapped");
             data.chunks(row as usize)
                 .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
                 .collect()
-        };
-        // The pass's mask and the filter's result for `light`, the mask
-        // filled with `fill` first (the target is not emptied each frame:
-        // every pixel must be written whatever it held), and the result
-        // checked against the filter's without its skip of the tiles with no
-        // shadow, over the same mask.
-        let run = |variant: Variant, scale: f32, light: [f32; 4], fill: u8| -> (Vec<u8>, Vec<u8>) {
-            let mut cs = ContactShadows::with_variant(&device, variant);
-            let t = cs.targets(&device, &depth_view, format, w, h);
-            queue.write_texture(
+        }
+
+        /// The pass's mask and the filter's result for `light`, the mask
+        /// filled with `fill` first (the target is not emptied each frame:
+        /// every pixel must be written whatever it held), and the result
+        /// checked against the filter's without its skip of the tiles with no
+        /// shadow, over the same mask.
+        fn run(&self, variant: Variant, scale: f32, light: [f32; 4], fill: u8) -> (Vec<u8>, Vec<u8>) {
+            let (w, h) = (self.w, self.h);
+            let mut cs = ContactShadows::with_variant(&self.device, variant);
+            let t = cs.targets(&self.device, &self.depth_view, RIG_DEPTH, w, h);
+            self.queue.write_texture(
                 t.raw.texture().as_image_copy(),
                 &vec![fill; (w * h * 4) as usize],
                 wgpu::TexelCopyBufferLayout {
@@ -1369,27 +1441,48 @@ mod tests {
                     bytes_per_row: Some(w * 4),
                     rows_per_image: Some(h),
                 },
-                extent,
+                self.extent(),
             );
-            cs.write(&device, &queue, &t, light, 0.1, scale);
-            let mut encoder = device.create_command_encoder(&Default::default());
+            cs.write(&self.device, &self.queue, &t, light, 0.1, scale);
+            let mut encoder = self.device.create_command_encoder(&Default::default());
             cs.encode(&mut encoder, &t, false);
-            queue.submit([encoder.finish()]);
-            let (raw, result) = (read(t.raw.texture()), read(t.result.texture()));
-            let full = Filter::new(&device, false);
-            let mut encoder = device.create_command_encoder(&Default::default());
+            self.queue.submit([encoder.finish()]);
+            let (raw, result) = (self.read(t.raw.texture()), self.read(t.result.texture()));
+            let full = Filter::new(&self.device, false);
+            let mut encoder = self.device.create_command_encoder(&Default::default());
             {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.set_pipeline(&full.soft);
                 pass.set_bind_group(0, &t.filter_group, &[]);
                 pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
             }
-            queue.submit([encoder.finish()]);
-            let differ = result.iter().zip(read(t.result.texture())).filter(|(a, b)| **a != *b).count();
+            self.queue.submit([encoder.finish()]);
+            let differ = result.iter().zip(self.read(t.result.texture())).filter(|(a, b)| **a != *b).count();
             assert_eq!(differ, 0, "{variant:?}: the filter's skip changed {differ} pixels");
             (raw, result)
+        }
+    }
+
+    /// The mask each variant draws over a ground with a box on it, read
+    /// back: `no-early-out` and `no-shared` must draw Bend's exactly, or
+    /// the tester's answers would compare different work.
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn the_variants_that_keep_the_image_draw_bends_mask() {
+        let (w, h) = (320u32, 192u32);
+        // a ground rising towards the camera, a box nearer, sky along the top
+        let Some(rig) = Rig::new(
+            w,
+            h,
+            "let ground = 0.0005 * (pos.y + 96.0);
+            let in_box = pos.x >= 120.0 && pos.x < 170.0 && pos.y >= 90.0 && pos.y < 130.0;
+            return select(select(ground, ground * 1.02, in_box), 0.0, pos.y < 20.0);",
+        ) else {
+            return;
         };
-        let mask_at = |variant: Variant, scale: f32| run(variant, scale, light, 0).0;
+        // the sun ahead and high, its point on screen above the image
+        let light = [0.2, 1.6, 0.0, 0.8];
+        let mask_at = |variant: Variant, scale: f32| rig.run(variant, scale, light, 0).0;
         let mask = |variant: Variant| mask_at(variant, 1.0);
         let bend = mask(Variant::Bend);
         let shadowed = bend.iter().filter(|&&v| v > 128).count();
@@ -1449,9 +1542,34 @@ mod tests {
                 }
             });
             for variant in [Variant::Bend, Variant::NoShared] {
-                let (a, b) = (run(variant, 1.0, light, 0).0, run(variant, 1.0, light, 77).0);
+                let (a, b) = (rig.run(variant, 1.0, light, 0).0, rig.run(variant, 1.0, light, 77).0);
                 let left = a.iter().zip(&b).enumerate().filter(|(i, (a, b))| a != b && writes[*i] < 2).count();
                 assert_eq!(left, 0, "{variant:?}, light {light:?}: {left} pixels keep what the mask held");
+            }
+        }
+    }
+
+    /// A level view under a sun straight overhead, as mouselook starts at
+    /// midday: the light's point is as far off screen as it gets, some 1e7
+    /// pixels in a window 2048 high. A bare ground must come out lit
+    /// whatever the mask held. Bend's arithmetic left one row in 64
+    /// unwritten there, and marched away from a light exactly at right
+    /// angles to the view, which put the whole ground in shadow.
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn a_ground_seen_level_under_an_overhead_sun_stays_lit() {
+        let (w, h) = (256u32, 2048u32);
+        // the ground from the horizon at mid height down, sky above
+        let Some(rig) = Rig::new(w, h, "return max(0.00005 * (pos.y - 1024.0), 0.0);") else {
+            return;
+        };
+        // the last four on either side of FAR_LIGHT: Bend's lerp just under it
+        for light_w in [0.0, -0.0, 1e-7, -1e-7, 1e-5, -1e-5, 1e-3, -1e-3, 1.6e-3, -1.6e-3, 1.7e-3, -1.7e-3] {
+            for variant in [Variant::Bend, Variant::NoShared] {
+                let (raw, _) = rig.run(variant, 1.0, [0.0, STRAIGHT_UP, 0.0, light_w], 77);
+                let wrong = raw.iter().filter(|&&v| v != 0).count();
+                let rows = raw.chunks(w as usize).filter(|r| r.iter().any(|&v| v != 0)).count();
+                assert_eq!(wrong, 0, "{variant:?}, w {light_w}: {wrong} pixels in {rows} rows are not lit");
             }
         }
     }
