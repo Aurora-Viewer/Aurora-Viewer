@@ -126,18 +126,30 @@ pub(super) fn follow(
             if !offset.is_finite() {
                 return;
             }
-            // parents before their children: a follower's target is a world
-            // place, and a parent moved later would carry the child off it
+            // parents before their children: a target is a world place, and
+            // a parent moved later would carry the child off it. `only` is the
+            // Position tab's "Move this joint only": every selected joint moves
+            // the same way (setSelectedJointsPosition), so the leader takes
+            // its place in the same pass, back on the spot it was dragged to
+            // after a follower above it carried it along, and before the
+            // followers below it, which it carries in turn.
             let mut order = followers.clone();
+            if only {
+                order.push(lead);
+            }
             order.sort_by_key(|b| depth(rig, *b));
             for &bone in &order {
-                // `only` is the Position tab's "Move this joint only": every
-                // selected joint moves the same way (setSelectedJointsPosition).
-                after.move_joint(rig, bone, was[bone].w_axis.truncate() + offset, only);
+                let target = if bone == lead {
+                    now[lead].w_axis.truncate()
+                } else {
+                    was[bone].w_axis.truncate() + offset
+                };
+                after.move_joint(rig, bone, target, only);
             }
-            // a follower above the leader (the shoulder following the elbow)
-            // carried the leader along: it goes back to where it was dragged
-            if order.iter().any(|f| is_ancestor(rig, *f, lead)) {
+            // bending: one chain, and the dragged joint wins. It goes back on
+            // its target after a follower above it carried it along; a
+            // follower below it may then be carried off its own.
+            if !only && order.iter().any(|f| is_ancestor(rig, *f, lead)) {
                 after.move_joint(rig, lead, now[lead].w_axis.truncate(), only);
             }
         }
@@ -318,6 +330,27 @@ mod tests {
                 // one chain: the elbow's bend wins over the shoulder's offset
                 assert!(moved.length() > 1e-3, "the shoulder did not follow");
             }
+        }
+    }
+
+    #[test]
+    fn move_this_joint_only_moves_every_joint_of_a_chain_by_the_drag() {
+        // shoulder, elbow and wrist selected, the elbow dragged: the shoulder
+        // carries the elbow and the wrist, the elbow carries the wrist back
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let rig = &lib.rig;
+        let (above, lead, below) = (rig.names["mShoulderLeft"], rig.names["mElbowLeft"], rig.names["mWristLeft"]);
+        assert!(is_ancestor(rig, above, lead) && is_ancestor(rig, lead, below));
+        let offset = Vec3::new(0.0, 0.03, 0.04);
+        let before = rest(rig);
+        let was = rig.world_with(&before.rotations, Vec3::ZERO, &before.positions, &before.scales);
+        let mut after = before.clone();
+        assert!(after.move_joint(rig, lead, was[lead].w_axis.truncate() + offset, true));
+        follow(rig, &before, &mut after, lead, &[above, below], Change::Move, true);
+        let now = rig.world_with(&after.rotations, Vec3::ZERO, &after.positions, &after.scales);
+        for (bone, name) in [(above, "shoulder"), (lead, "elbow"), (below, "wrist")] {
+            let moved = now[bone].w_axis.truncate() - was[bone].w_axis.truncate();
+            assert!(moved.distance(offset) < 1e-3, "the {name} moved {moved}, not {offset}");
         }
     }
 
