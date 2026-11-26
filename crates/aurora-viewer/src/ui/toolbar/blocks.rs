@@ -328,33 +328,23 @@ pub(super) fn group_items(
         kind_menu(ui, p, toolbar, settings, command, Some((bar, rect)));
         menu::separator(ui, p);
     }
-    let splits: Vec<_> = members
-        .iter()
-        .enumerate()
-        .filter(|(index, button)| {
-            !structure::is_divider(&button.command) && members[..*index].iter().any(|previous| !structure::is_divider(&previous.command))
-        })
-        .map(|(_, button)| button)
-        .collect();
-    menu::submenu(
-        ui,
-        p,
-        "separator-vertical",
-        aurora_i18n::tr!("toolbar-block-split"),
-        unlocked && !splits.is_empty(),
-        |ui| {
-            for button in splits {
-                if menu::item(
-                    ui,
-                    p,
-                    "separator-vertical",
-                    &aurora_i18n::tr!("toolbar-block-split-before", button = super::label(button)),
-                ) {
-                    toolbar.pending = Some(Edit::Split(bar, button.command.clone(), true));
-                }
-            }
-        },
-    );
+    // The block splits at the right-clicked button, before or after it
+    // (human request, 2026-11-26: no submenu listing every button).
+    for before in [true, false] {
+        if menu::item_if(
+            ui,
+            p,
+            "separator-vertical",
+            aurora_i18n::text(if before {
+                "toolbar-edit-split-before"
+            } else {
+                "toolbar-edit-split-after"
+            }),
+            unlocked && edit_mode::split_allowed(buttons, command, before),
+        ) {
+            toolbar.pending = Some(Edit::Split(bar, command.into(), before));
+        }
+    }
     for before in [true, false] {
         if menu::item_if(
             ui,

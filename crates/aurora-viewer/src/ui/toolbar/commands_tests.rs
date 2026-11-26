@@ -1057,14 +1057,16 @@ fn block_right_clicks_leave_display_to_the_block_window_and_split_at_the_chosen_
     }
     {
         let mut bench = block_controls_fixture(Bar::Top, false, false);
-        open_block_settings(&mut bench, Bar::Top, "inventory");
-        let point = menu_point(&bench, aurora_i18n::tr!("toolbar-block-split"));
-        for _ in 0..4 {
-            bench.pointer(point, None);
-        }
-        let split_button = tests::button("people");
-        let label = aurora_i18n::tr!("toolbar-block-split-before", button = label(&split_button));
-        let choice = menu_point(&bench, &label);
+        // The right-clicked button is where the block splits: no submenu
+        // lists the block's buttons.
+        open_block_settings(&mut bench, Bar::Top, "people");
+        assert!(
+            bench
+                .text
+                .iter()
+                .any(|(text, _)| text == aurora_i18n::tr!("toolbar-edit-split-after"))
+        );
+        let choice = menu_point(&bench, aurora_i18n::tr!("toolbar-edit-split-before"));
         bench.pointer(choice, Some(true));
         bench.pointer(choice, Some(false));
         assert_eq!(edit_mode::group(&bench.settings.top, "inventory"), Some(0..2));
