@@ -500,34 +500,33 @@ fn tom_has_a_display_name(w: &mut World) {
     });
 }
 
-/// #3538: a group or conference toast names its sender by the complete
-/// name, as a private one does (on_avatar_name_cache_toast,
-/// llimview.cpp), not by the legacy name the server put on the line; the
-/// emote too, and the names settings still apply.
+/// #3538: a toast names its sender as LLToastIMPanel does
+/// (indra/newview/lltoastimpanel.cpp), not by the legacy name the server
+/// put on a group or conference line: a group line is headed with the
+/// display name alone ("[From " + getDisplayName() + "]"), a conference
+/// line and every emote with the complete name (on_avatar_name_cache_toast,
+/// llimview.cpp); the names settings still apply.
 #[test]
-fn group_and_conference_toasts_name_the_sender_by_the_complete_name() {
-    for kind in [ImKind::Group, ImKind::Conference] {
+fn toasts_name_the_sender_as_the_legacy_toast_panel_does() {
+    for (kind, written) in [(ImKind::Group, "Captain Tom"), (ImKind::Conference, "Captain Tom (Tom Smith)")] {
         let session = if kind == ImKind::Group { GROUP } else { Uuid::from_u128(0x6300) };
         let mut w = world();
         w.notifications.toasts.group_im = true;
         tom_has_a_display_name(&mut w);
         receive_named(&mut w, session, TOM, "Tom Smith", "meeting at 9", kind, false);
-        assert_eq!(
-            messages(&w),
-            vec![(session, 1, "Captain Tom (Tom Smith): meeting at 9".into())],
-            "{kind:?}"
-        );
+        assert_eq!(messages(&w), vec![(session, 1, format!("{written}: meeting at 9"))], "{kind:?}");
         let n = w.notifications.list.last().expect("the toast");
         assert_eq!(n.title, w.session_title(&session), "{kind:?}: the session keeps the title");
         // the name written is the one that opens Tom's profile
         assert!(
             n.name_links
                 .iter()
-                .any(|l| l.name == "Captain Tom (Tom Smith)" && l.target == super::notifications::NameTarget::Avatar(TOM)),
+                .any(|l| l.name == written && l.target == super::notifications::NameTarget::Avatar(TOM)),
             "{kind:?}: {:?}",
             n.name_links
         );
 
+        // an emote: the complete name in every session
         let mut w = world();
         w.notifications.toasts.group_im = true;
         tom_has_a_display_name(&mut w);
@@ -541,14 +540,20 @@ fn group_and_conference_toasts_name_the_sender_by_the_complete_name() {
         w.social.avatar_names.options.use_display_names = false;
         receive_named(&mut w, session, TOM, "Tom Smith", "meeting at 9", kind, false);
         assert_eq!(messages(&w), vec![(session, 1, "Tom Smith: meeting at 9".into())], "{kind:?}");
+
+        // the name not known yet: the one the server sent stands in
+        let mut w = world();
+        w.notifications.toasts.group_im = true;
+        receive_named(&mut w, session, TOM, "Tom Smith", "meeting at 9", kind, false);
+        assert_eq!(messages(&w), vec![(session, 1, "Tom Smith: meeting at 9".into())], "{kind:?}");
     }
 }
 
 /// #3538: a group or conference line that mentions us is told to the
 /// system with the sender named as on its toast.
 #[test]
-fn a_mention_in_a_group_or_conference_is_told_with_the_complete_name() {
-    for kind in [ImKind::Group, ImKind::Conference] {
+fn a_mention_in_a_group_or_conference_names_the_sender_as_its_toast() {
+    for (kind, written) in [(ImKind::Group, "Captain Tom"), (ImKind::Conference, "Captain Tom (Tom Smith)")] {
         let session = if kind == ImKind::Group { GROUP } else { Uuid::from_u128(0x6300) };
         let mut w = world();
         tom_has_a_display_name(&mut w);
@@ -567,6 +572,30 @@ fn a_mention_in_a_group_or_conference_is_told_with_the_complete_name() {
             .and_then(|a| a.notice.clone())
             .expect("the mention is told to the system");
         assert_eq!(notice.title, w.session_title(&session), "{kind:?}");
-        assert_eq!(notice.body, format!("Captain Tom (Tom Smith): {text}"), "{kind:?}");
+        assert_eq!(notice.body, format!("{written}: {text}"), "{kind:?}");
     }
+}
+
+/// A private IM's system notification names its sender as its toast does
+/// (GrowlManager::onAvatarNameCache, indra/newview/growlmanager.cpp), not
+/// by the name the line was stored with when the display name came later.
+#[test]
+fn a_private_message_is_told_to_the_system_with_its_toasts_name() {
+    let mut w = world();
+    receive_named(&mut w, TOM, TOM, "Tom Smith", "hi", ImKind::Private, false);
+    tom_has_a_display_name(&mut w);
+    w.message_attention(&ImMessage {
+        kind: ImKind::Private,
+        session: TOM,
+        new_session: false,
+        mention: false,
+    });
+    let notice = w
+        .attention
+        .iter()
+        .find(|a| a.cause == attention::Cause::Message)
+        .and_then(|a| a.notice.clone())
+        .expect("the message is told to the system");
+    assert_eq!(notice.title, "Captain Tom (Tom Smith)");
+    assert_eq!(notice.body, "hi");
 }

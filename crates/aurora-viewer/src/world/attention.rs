@@ -93,7 +93,10 @@ impl World {
             Some(l) if m.kind == ImKind::Private => (
                 Cause::Message,
                 Some(Notice {
-                    title: l.from.clone(),
+                    // named as its toast names it: GrowlManager::
+                    // onAvatarNameCache looks the name up as the toast does
+                    // (indra/newview/growlmanager.cpp)
+                    title: self.sender_name(l),
                     body: strip_me(&l.text).to_owned(),
                     open,
                 }),
@@ -102,8 +105,8 @@ impl World {
                 Cause::Mention,
                 Some(Notice {
                     title: self.session_title(&m.session),
-                    // named as its toast names it (`World::sender_name`)
-                    body: format!("{}: {}", self.sender_name(l), strip_me(&l.text)),
+                    // named as its toast names it (`World::notice_sender`)
+                    body: format!("{}: {}", self.notice_sender(m.kind, l), strip_me(&l.text)),
                     open,
                 }),
             ),

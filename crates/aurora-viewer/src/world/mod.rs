@@ -6589,15 +6589,34 @@ impl World {
             .then_some(line)
     }
 
-    /// The name a message's notice gives its sender: the complete name in
-    /// every kind of session, as on_avatar_name_cache_toast writes FROM
-    /// (indra/newview/llimview.cpp). A group or conference line keeps the
-    /// legacy name the server sent (#3538); that name stands in until the
-    /// display name is known.
+    /// The complete name of a line's sender, as on_avatar_name_cache_toast
+    /// writes FROM in every kind of session (indra/newview/llimview.cpp);
+    /// what a group line's text is headed with is `notice_sender`. A group
+    /// or conference line keeps the legacy name the server sent (#3538);
+    /// that name stands in until the display name is known.
     pub(crate) fn sender_name(&self, line: &ChatLine) -> String {
         self.social
             .avatar_names
             .complete_in(names::NameScope::Roster, &line.source)
+            .unwrap_or_else(|| line.from.clone())
+    }
+
+    /// The name a notice writes before a line's text. LLToastIMPanel
+    /// (indra/newview/lltoastimpanel.cpp) shows the FROM of
+    /// on_avatar_name_cache_toast as it is in the title of a private or
+    /// conference toast and before an emote, but heads a group session's
+    /// line with the display name alone ("[From " + getDisplayName() + "]",
+    /// the user name with display names off): so a group line that is not
+    /// an emote takes the display name, every other one `sender_name`.
+    /// The legacy name the server sent stands in until the name is known.
+    pub(crate) fn notice_sender(&self, kind: ImKind, line: &ChatLine) -> String {
+        if kind != ImKind::Group || attention::emote_line("", &line.text).is_some() {
+            return self.sender_name(line);
+        }
+        let names = &self.social.avatar_names;
+        names
+            .get_in(names::NameScope::Roster, &line.source)
+            .map(|n| n.display(&names.options))
             .unwrap_or_else(|| line.from.clone())
     }
 
@@ -6631,7 +6650,7 @@ impl World {
         };
         let (from, text) = (line.source, line.text.clone());
         let group = m.kind != ImKind::Private;
-        let name = self.sender_name(line);
+        let name = self.notice_sender(m.kind, line);
         // an emote reads "Jane waves", as LLToastIMPanel writes it
         let emote = attention::emote_line(&name, &text);
         let (title, body) = if group {
