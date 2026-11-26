@@ -370,6 +370,7 @@ fn publisher_shares_use_public_pages_and_publisher_images() {
         "https://tv.naver.com/v/12345678",
         "https://chzzk.naver.com/video/12345",
         "https://vod.sooplive.co.kr/player/12345",
+        "https://vod.sooplive.com/player/12345",
         "https://tv.kakao.com/channel/123/cliplink/456",
         "https://www.douyin.com/video/12345678",
         "https://www.kuaishou.com/short-video/Abc_123",
@@ -490,9 +491,11 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         }
         ("bbc.com" | "bbc.co.uk", ["iplayer", "episode", id, ..]) => slug(id),
         ("tver.jp", ["episodes", id]) => slug(id),
-        ("nicovideo.jp", ["watch", id]) => ["sm", "so", "nm"].iter().any(|prefix| id.strip_prefix(prefix).is_some_and(digits)),
+        ("nicovideo.jp" | "sp.nicovideo.jp", ["watch", id]) | ("nico.ms", [id]) => {
+            ["sm", "so", "nm"].iter().any(|prefix| id.strip_prefix(prefix).is_some_and(digits))
+        }
         ("tv.naver.com", ["v", id]) | ("chzzk.naver.com", ["video", id]) => digits(id),
-        ("vod.sooplive.co.kr", ["player", id]) => digits(id),
+        ("vod.sooplive.co.kr" | "vod.sooplive.com", ["player", id]) => digits(id),
         ("tv.kakao.com", ["channel", channel, "cliplink", id]) => digits(channel) && digits(id),
         ("douyin.com", ["video", id]) | ("iesdouyin.com", ["share", "video", id]) => digits(id),
         ("kuaishou.com", ["short-video", id]) => slug(id),
@@ -512,6 +515,7 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     }
     let mut page = match (host.as_str(), parts.as_slice()) {
         ("dai.ly", [id]) => Url::parse(&format!("https://www.dailymotion.com/video/{id}")).ok()?,
+        ("nico.ms", [id]) | ("sp.nicovideo.jp", ["watch", id]) => Url::parse(&format!("https://www.nicovideo.jp/watch/{id}")).ok()?,
         ("iesdouyin.com", ["share", "video", id]) => Url::parse(&format!("https://www.douyin.com/video/{id}")).ok()?,
         ("v.qq.com", ["x", "m", "play"]) => Url::parse(&format!("https://v.qq.com/x/page/{}.html", video_id?)).ok()?,
         ("v.youku.com", ["video"]) => Url::parse(&format!("https://v.youku.com/v_show/id_{}.html", video_id?)).ok()?,
@@ -578,7 +582,7 @@ pub(super) fn publisher_poster(page: &str, html: &str) -> Option<String> {
         "tver.jp" => &["tver.jp", "tver-static.com"],
         "nicovideo.jp" => &["nimg.jp", "nicovideo.jp"],
         "tv.naver.com" | "chzzk.naver.com" => &["pstatic.net"],
-        "vod.sooplive.co.kr" => &["sooplive.co.kr", "afreecatv.com"],
+        "vod.sooplive.co.kr" | "vod.sooplive.com" => &["sooplive.co.kr", "sooplive.com", "afreecatv.com"],
         "tv.kakao.com" => &["kakaocdn.net"],
         "douyin.com" => &["douyinpic.com", "pstatp.com"],
         "kuaishou.com" => &["kwaicdn.com", "gifshow.com"],
