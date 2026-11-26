@@ -340,6 +340,9 @@ pub struct ChatUi {
     main_was_minimized: bool,
     /// The window whose emoji picker is open (`popout::one_picker`).
     picker_window: Option<popout::WindowKey>,
+    /// The conversation shown, and the Contacts tab, last frame
+    /// (`popout::pickers_follow_view`).
+    picker_view: Option<(Option<uuid::Uuid>, bool)>,
 }
 
 /// What the column's resident picker starts.
@@ -549,6 +552,11 @@ impl ChatUi {
         }
         if self.picker_window == Some(Some(old)) {
             self.picker_window = Some(Some(new));
+        }
+        if let Some((selected, contacts)) = self.picker_view
+            && selected == old
+        {
+            self.picker_view = Some((new, contacts));
         }
         self.popped.rekey(from, to);
         if let Some(draft) = self.drafts.remove(&old) {
@@ -2943,10 +2951,26 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
     }
 }
 
+/// A line read back whose sender's name is looked up each time it is drawn,
+/// as a live line's (`cached_line_sender`): one of a private conversation's
+/// history, in the conversation or in its History window
+/// (`ChatLine::private_history`, decided when the history loads, where the
+/// other resident is known: `World::private_peer`), the other resident's or
+/// ours. Both sides resolve when drawn, so a name option changed while the
+/// conversation is open renames them together. Every other history line
+/// keeps the file's name: the nearby chat's, a group's or a conference's
+/// (whose members' names may be cached too, so the line alone cannot
+/// tell), in the conversation and in the History window.
+pub(crate) fn log_names_resolve(line: &crate::world::ChatLine) -> bool {
+    line.origin == Origin::Log && line.private_history
+}
+
 /// The name a line gives its sender
 /// (FSChatHistoryHeader): the display name looked up, mine, else the name
 /// the line came with. A line read back from a transcript keeps the name
-/// the file gives it, under RLVa's `@shownames` and `@showloc` too:
+/// the file gives it (but for a private conversation's, whose names are
+/// looked up as the live lines': `cached_line_sender`), under RLVa's
+/// `@shownames` and `@showloc` too:
 /// FSChatHistory::appendMessage (indra/newview/fschathistory.cpp) writes
 /// `mFromName` as it is for a `message_from_log`, and nothing sets
 /// `mRlvNamesFiltered` on it (`ChatLine::wording`).
@@ -2957,22 +2981,52 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
 /// and an object the name it was given then, whatever the restriction
 /// became since (FSChatHistory::appendMessage writes `chat.mFromName` once).
 pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
-    if line.origin != Origin::Live || line.anonymous() {
+    if line.anonymous() {
         return line.from.clone();
     }
-    match cached_chat_sender(world, line) {
+    match cached_line_sender(world, line) {
         Some(n) => n.display(&world.social.avatar_names.options),
-        None if line.kind.is_own() => own_name.to_owned(),
+        // (one of our history lines: the file's name, as `draw_line`)
+        None if line.kind.is_own() && line.origin == Origin::Live => own_name.to_owned(),
         None => line.from.clone(),
     }
 }
 
-fn cached_chat_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
-    if line.origin != Origin::Live || line.anonymous() || matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
+/// The cached name of a line's sender, which its header and its text show
+/// (`sender_name`, `draw_line`), in `NameScope::Roster`, which `@shownames`
+/// never hides: a live line's, ours or the other resident's (#4675), and a
+/// private conversation's history line's (`log_names_resolve`). None for an
+/// object, a speaker `@shownames` hid and every other history line: they
+/// keep the name they came with. A name not cached yet is queued by
+/// `get_in`, and the line shows the name it came with until it arrives.
+///
+/// The other resident's history line takes the cached name only when the
+/// name the file gives is theirs (`AvatarName::has_user_name` of its legacy
+/// form, the test that finds a transcript's sender by name): a line whose
+/// name was not recognised took the conversation's other resident as its
+/// source, for its picture and its profile (`World::history_lines`,
+/// `World::service_lines`), and one we wrote under an earlier account name
+/// would show theirs. Ours were told by their name when they loaded
+/// (`World::is_own_log_name`, which also knows "You" and our display name).
+fn cached_line_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
+    let live = line.origin == Origin::Live;
+    if (!live && !log_names_resolve(line)) || line.anonymous() || matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
         return None;
     }
-    let id = if line.kind.is_own() { &world.agent_id } else { &line.source };
-    world.social.avatar_names.get_in(NameScope::Roster, id)
+    let own = line.kind.is_own();
+    let names = &world.social.avatar_names;
+    let cached = names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })?;
+    let written = || cached.has_user_name(&crate::world::names::build_legacy_name(&line.from, names.options.trim_resident));
+    (live || own || written()).then_some(cached)
+}
+
+/// `cached_line_sender` for a live line only: the username a header adds
+/// (`chat_header_name`), which a history line's leaves out (`draw_line`).
+fn cached_chat_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
+    if line.origin != Origin::Live {
+        return None;
+    }
+    cached_line_sender(world, line)
 }
 
 /// Visible header label in Aurora, Compact and Bubbles. Preserve the text
@@ -3632,8 +3686,10 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let (p, world) = (env.p, env.world);
     ui.spacing_mut().item_spacing.y = 2.0;
     let w = ui.available_width();
-    // history lines: greyed, their name as written (message_from_log); their
-    // sender, when its name was cached, gives the picture and the profile
+    // history lines: greyed, their name as written (message_from_log) but
+    // in a private conversation, where it is the resident's
+    // (`cached_line_sender`); their sender, when its name was cached or as
+    // that conversation's other resident, gives the picture and the profile
     let logged = line.origin != Origin::Live;
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     if let Some((year, month, day)) = look.marker {
@@ -3696,7 +3752,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
-    let cached = cached_chat_sender(world, line);
+    let cached = cached_line_sender(world, line);
     let name = match cached {
         Some(n) => n.display(&names.options),
         None if own && !logged => env.own_name.to_owned(),
@@ -3704,7 +3760,13 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     };
     if look.header {
         ui.add_space(6.0);
-        let username = cached.and_then(|n| n.chat_username(&names.options));
+        // A history line's header names its sender without the " - username"
+        // a live header adds, a private conversation's resolved name too:
+        // history is a record, and the short form keeps it readable. The
+        // Legacy Viewer's history header shows no user name either
+        // (FSChatHistoryHeader::setup cuts " (username)" from a
+        // CHAT_STYLE_HISTORY line's name, fschathistory.cpp).
+        let username = cached.filter(|_| !logged).and_then(|n| n.chat_username(&names.options));
         egui::Frame::new()
             .fill(p.raised.gamma_multiply(0.55))
             .corner_radius(ui.visuals().window_corner_radius)
@@ -4114,6 +4176,7 @@ pub fn show(
         st.contacts = false;
     }
     let style = st.demo_style.unwrap_or(st.style);
+    popout::pickers_follow_view(st);
     popout::one_picker(st);
     st.gifs.close_if_hidden(ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
     // every entry of the window, whatever the column's search: it never
@@ -4471,6 +4534,8 @@ fn classic_pane(
     h: f32,
     own_name: &str,
 ) {
+    // the conversation may have changed since the pass began (Ctrl+W, a tab)
+    popout::pickers_follow_view(st);
     let pane = ui.available_rect_before_wrap();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     workspace::drops(ui, p, pane, st, kind, actions);
@@ -4580,6 +4645,7 @@ fn classic_pane(
         Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
     };
     let mut emoji_btn = None;
+    let mut gif_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
     // the recent emojis, over the field (under it with the Legacy chat style)
@@ -4602,6 +4668,7 @@ fn classic_pane(
             // shown once a key is entered (Preferences › Chat › GIFs)
             if st.gifs.usable() {
                 let b = tool_resp(ui, p, icons, "gif", st.gif_open).on_hover_text(aurora_i18n::tr!("ui-chat-gif"));
+                gif_btn = Some(b.rect);
                 gif_picker::button(&b, p, st);
             }
             // leave exactly the send button + spacing (else the row overflows
@@ -4665,11 +4732,12 @@ fn classic_pane(
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
+    let picker_buttons: Vec<egui::Rect> = emoji_btn.into_iter().chain(gif_btn).collect();
     if st.emoji_open && popout::claim_picker(ui.ctx()) {
         let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
         let mut close = false;
         // one per conversation: one in each window (`popout.rs`)
-        egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
+        let shown = egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
             .fade_in(false)
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::LEFT_BOTTOM)
@@ -4691,10 +4759,24 @@ fn classic_pane(
         if close {
             st.emoji_open = false;
             ui.ctx().memory_mut(|m| m.request_focus(conv_input));
+        } else if popout::pressed_away(ui.ctx(), &shown.response, &picker_buttons) {
+            // the click goes where it landed, the keyboard with it
+            st.emoji_open = false;
         }
     }
     let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
-    gif_picker::popup(ui.ctx(), p, icons, st, anchor, 4.0, conv_input, ChatType::Normal, actions);
+    gif_picker::popup(
+        ui.ctx(),
+        p,
+        icons,
+        st,
+        anchor,
+        4.0,
+        &picker_buttons,
+        conv_input,
+        ChatType::Normal,
+        actions,
+    );
     // the Enter that asked for the keyboard (start_chat) is not one typed in
     // the field (compose.rs, Aurora's style, does the same)
     let focusing = std::mem::take(&mut st.conv_focus_request);
@@ -6860,6 +6942,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
             line_job(
@@ -6909,6 +6992,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let mine = message_color(&line, &p, &world);
         for text in ["/me waves", "/me's hat"] {
@@ -6946,6 +7030,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let id = uuid::Uuid::from_u128;
         assert_eq!(
@@ -6983,6 +7068,7 @@ mod tests {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             });
         }
         let ctx = egui::Context::default();
@@ -7671,6 +7757,7 @@ mod tests {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             });
             world.chat_clock.pushed_back();
         }
@@ -7773,6 +7860,7 @@ mod tests {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             });
             world.chat_clock.pushed_back();
         }

@@ -66,6 +66,9 @@ impl App {
         if std::mem::take(&mut self.blender_live.save_addon) {
             self.blender_live.addon.save(&self.scene.jobs, ctx);
         }
+        if std::mem::take(&mut self.blender_live.save_maya_addon) {
+            self.blender_live.maya_addon.save(&self.scene.jobs, ctx);
+        }
         if let Some(action) = self.blender_live.shape.requested.take() {
             self.send_blender_shape(action);
         }
@@ -294,6 +297,8 @@ impl App {
                 crate::blender_live::demo_sleeves_fixture(&self.world.avatar_lib.rig)
             } else if mode == "warnings" {
                 crate::blender_live::demo_warnings_fixture(&self.world.avatar_lib.rig)
+            } else if mode == "static-repaint" {
+                crate::blender_live::demo_repaint_fixture(&self.world.avatar_lib.rig, false)
             } else if mode.starts_with("static") {
                 crate::blender_live::demo_static_fixture(&self.world.avatar_lib.rig, mode.starts_with("static-linked"))
             } else {
@@ -363,6 +368,18 @@ impl App {
                 self.scene.jobs.discard(old);
             }
         }
+        // `static-repaint`: Blender repaints the object's texture, nothing
+        // else, so its card's thumbnail and time follow the new pixels
+        if self.demo && self.frame_count == 600 && std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "static-repaint") {
+            match crate::blender_live::demo_repaint_fixture(&self.world.avatar_lib.rig, true) {
+                Ok(snapshot) => {
+                    if let Some(old) = self.blender_live.receive(snapshot) {
+                        self.scene.jobs.discard(old);
+                    }
+                }
+                Err(error) => self.blender_live.error = Some(error),
+            }
+        }
         // `static-derez-closed`: the window closes, then the world's menu
         // derezzes the object, through the same command as the pie menu
         if self.demo
@@ -412,7 +429,7 @@ impl App {
             };
             if matches!(
                 mode.as_str(),
-                "static" | "static-linked" | "static-linked-child" | "static-linked-menu" | "static-derez-closed"
+                "static" | "static-linked" | "static-linked-child" | "static-linked-menu" | "static-derez-closed" | "static-repaint"
             ) && let Some(placement) = self.blender_live.placements.get(&source)
             {
                 let position = if let Some(parent) = placement.parent.and_then(|id| self.blender_live.placements.get(&id)) {
