@@ -608,6 +608,11 @@ struct Native {
     /// (`held` for its pass), and the window under it gets none.
     overlaid: bool,
     held: Option<egui::RawInput>,
+    /// A field or a menu of the dialog over it read the keyboard at the
+    /// dialog's last pass: kept apart from `reads_keys`, the dialog's pass
+    /// running before or after the window's own in a frame, as the
+    /// viewer's pass asks for them.
+    dialog_keys: bool,
 }
 
 struct Pass {
@@ -770,7 +775,7 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
         return;
     };
     if over.is_some() {
-        native.reads_keys |= keys;
+        native.dialog_keys = keys;
         match &mut native.output {
             Some(output) => output.append(out.platform_output),
             None => native.output = Some(out.platform_output),
@@ -783,7 +788,15 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
         return;
     }
     native.reads_keys = keys;
-    native.output = Some(out.platform_output);
+    // (a dialog asked earlier in the viewer's pass ran its own before this
+    // one: what it asks of the window, its cursor over the window's, stays)
+    let mut output = out.platform_output;
+    if native.overlay.is_some()
+        && let Some(dialog) = native.output.take()
+    {
+        output.append(dialog);
+    }
+    native.output = Some(output);
     native.pass = Some(Pass {
         shapes: out.shapes,
         pixels_per_point: out.pixels_per_point,
@@ -1063,6 +1076,7 @@ impl Outside {
                 overlay: None,
                 overlaid: false,
                 held: None,
+                dialog_keys: false,
             },
         );
         Ok(())
@@ -1133,7 +1147,7 @@ impl Outside {
             .borrow()
             .windows
             .values()
-            .any(|native| native.window.id() == id && native.reads_keys)
+            .any(|native| native.window.id() == id && (native.reads_keys || native.dialog_keys))
     }
 
     /// Text for the window outside `id`, read by its next pass as typed in
@@ -1221,7 +1235,10 @@ impl Outside {
             }
             WindowEvent::ModifiersChanged(_) => Asked::Viewer,
             WindowEvent::KeyboardInput { event: key, .. }
-                if key_goes_on(key.state == winit::event::ElementState::Pressed, native.reads_keys) =>
+                if key_goes_on(
+                    key.state == winit::event::ElementState::Pressed,
+                    native.reads_keys || native.dialog_keys,
+                ) =>
             {
                 Asked::Viewer
             }
@@ -1298,6 +1315,7 @@ impl Outside {
             // a dialog over it at this frame takes its events at the next
             let overlay = native.overlay.take();
             native.overlaid = overlay.is_some();
+            native.dialog_keys &= native.overlaid;
             native.held = None;
             let size = native.window.inner_size();
             let size = (size.width, size.height);
