@@ -2454,6 +2454,10 @@ fn toolbar_group_glass_keeps_its_end_padding_around_the_last_native_button() {
 
 #[test]
 fn native_readouts_keep_their_live_content_during_interface_customization() {
+    // the clock can tick between the two looks: its digits are not compared
+    fn shape(text: &str) -> String {
+        text.chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect()
+    }
     for classic in [false, true] {
         let mut bench = Bench {
             native_top: true,
@@ -2475,7 +2479,7 @@ fn native_readouts_keep_their_live_content_during_interface_customization() {
                     .text
                     .iter()
                     .filter(|(_, text_rect)| rect.contains(text_rect.center()))
-                    .map(|(text, _)| text.clone())
+                    .map(|(text, _)| shape(text))
                     .collect();
                 assert!(!texts.is_empty(), "live content: {command}");
                 texts
@@ -2496,7 +2500,7 @@ fn native_readouts_keep_their_live_content_during_interface_customization() {
                     bench
                         .text
                         .iter()
-                        .any(|(actual, text_rect)| *actual == text && rect.contains(text_rect.center())),
+                        .any(|(actual, text_rect)| shape(actual) == text && rect.contains(text_rect.center())),
                     "{command} retains {text}, classic={classic}"
                 );
             }
