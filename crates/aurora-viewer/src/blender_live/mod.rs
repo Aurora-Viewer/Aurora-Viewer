@@ -21,6 +21,7 @@ mod transport;
 mod ui;
 
 pub use demo::fixture as demo_fixture;
+pub use demo::repaint_fixture as demo_repaint_fixture;
 pub use demo::sleeves_fixture as demo_sleeves_fixture;
 pub use demo::static_fixture as demo_static_fixture;
 pub use demo::warnings_fixture as demo_warnings_fixture;
