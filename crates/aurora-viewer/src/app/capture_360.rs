@@ -27,7 +27,6 @@ use super::App;
 use super::snapshot::PhotoFrame;
 use crate::camera::FixedView;
 use crate::snapshot::capture_360::{self as rules, Meta, Quality};
-use aurora_net::{InterestListMode, NetCommand};
 use aurora_render::preview::Image;
 use aurora_render::{CAPTURE_CAMERAS, EquirectJob, Renderer, SnapshotSpec};
 use std::path::PathBuf;
@@ -160,8 +159,6 @@ pub(super) struct Capture360 {
     epoch: u64,
     /// A shutter pressed, waiting for the world to be ready.
     wanted: Option<Shutter>,
-    /// The photo window was open in 360° last frame.
-    interest: bool,
     /// The picture shown in the photo window, being made on a worker.
     display_work: Option<crossbeam_channel::Receiver<Arc<Image>>>,
     display_yaw: f32,
@@ -258,8 +255,7 @@ impl Capture360 {
 
 impl App {
     /// Every frame, before the photo frame is chosen: the camera of the
-    /// last face put back, the window's opening and closing told to the
-    /// simulator, the panorama taken in, the next face set up.
+    /// last face put back, the panorama taken in, the next face set up.
     pub(super) fn capture_360_frame(&mut self, renderer: &mut Renderer) {
         self.capture_360_demo(renderer);
         self.panels.snapshot_pano = self.snapshots.ui.pano;
@@ -269,18 +265,6 @@ impl App {
             renderer.cut_motion_history();
         }
         let open = self.pano_open() && self.in_world();
-        if open != self.capture_360.interest {
-            self.capture_360.interest = open;
-            // LLFloater360Capture's constructor and destructor: everything
-            // around while the 360° window is open, the camera's view after
-            let mode = if open {
-                InterestListMode::Capture360
-            } else {
-                InterestListMode::Default
-            };
-            log::info!("360 capture: interest list mode {} asked of the regions", mode.as_str());
-            self.send(NetCommand::SetInterestListMode(mode));
-        }
         if !open && (self.capture_360.stage.is_some() || self.capture_360.wanted.is_some()) {
             self.capture_360_abandon(renderer, "the 360° format was left");
         }

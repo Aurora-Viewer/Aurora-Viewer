@@ -1231,6 +1231,39 @@ pub enum AoMethod {
     Gtao { quality: u8 },
 }
 
+/// How finely the G-buffer keeps the normals the reflections read
+/// (Preferences › Graphics › Reflections; renderer.rs `gbuf_format`). The
+/// Legacy Viewer keeps its deferred normals in 16 bits whatever is drawn
+/// (LLPipeline::addDeferredAttachments, indra/newview/pipeline.cpp); Aurora
+/// keeps them so where it shows, and lets the user decide.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NormalPrecision {
+    /// High while the reflections are traced, Standard otherwise: a traced
+    /// ray shows the steps of 8 bits as terraces on a smooth face, where
+    /// the screen-space reflections' own march hides them (measured: little
+    /// to see between the two).
+    #[default]
+    Auto,
+    /// 8 bits per channel.
+    Standard,
+    /// 16 bits per channel: 4 bytes more per pixel and per sample.
+    High,
+}
+
+impl NormalPrecision {
+    /// Whether the G-buffer keeps 16 bits per channel. `ssr`: the
+    /// reflections are on (a G-buffer the rain alone asks for wets the
+    /// ground and mirrors nothing: 8 bits); `traced`: they are traced on
+    /// this device.
+    pub fn high(self, ssr: bool, traced: bool) -> bool {
+        ssr && match self {
+            NormalPrecision::Auto => traced,
+            NormalPrecision::Standard => false,
+            NormalPrecision::High => true,
+        }
+    }
+}
+
 /// What is ray-traced (rt_shadows.rs), on a device opened with ray
 /// queries ([`RayTracingSupport`]): Preferences › Graphics › Ray tracing,
 /// experimental and off by default.
@@ -1420,6 +1453,8 @@ pub struct RenderSettings {
     pub mirror_scale: f32,
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
+    /// The precision of the normals they read.
+    pub normal_precision: NormalPrecision,
     pub ray_tracing: RayTracing,
     /// The traced shadows' softness and lamps.
     pub rt_tuning: RtTuning,
@@ -1476,6 +1511,7 @@ impl Default for RenderSettings {
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
+            normal_precision: NormalPrecision::default(),
             ray_tracing: RayTracing::default(),
             rt_tuning: RtTuning::default(),
             rain_surfaces: false,
@@ -2132,7 +2168,8 @@ pub struct RenderStats {
     pub present_mode: Option<wgpu::PresentMode>,
     /// The settings the frame was drawn with: the MSAA samples and SSR of
     /// the previous ones while the pipelines for new ones compile (#1746).
-    /// None until the backend has answered a frame.
+    /// None until the backend has answered a frame, and while pipelines
+    /// compile (a set for another G-buffer format leaves them as asked).
     pub settings: Option<RenderSettings>,
     /// Aurora Weather: snow lies on the ground (local or the region's), as
     /// the footprints' map and the snow cover read it.
@@ -2351,6 +2388,22 @@ impl GpuElement {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_normals_keep_16_bits_for_the_reflections_that_show_it() {
+        use super::NormalPrecision::{Auto, High, Standard};
+        assert_eq!(super::NormalPrecision::default(), Auto);
+        // Automatic: with the traced reflections only
+        assert!(Auto.high(true, true));
+        assert!(!Auto.high(true, false));
+        // the user's choice holds either way
+        assert!(High.high(true, false) && High.high(true, true));
+        assert!(!Standard.high(true, true) && !Standard.high(true, false));
+        // without the reflections (the G-buffer of the rain alone), 8 bits
+        for precision in [Auto, Standard, High] {
+            assert!(!precision.high(false, true) && !precision.high(false, false), "{precision:?}");
+        }
+    }
+
     /// High is the default (the image before the qualities); each quality
     /// is cheaper than the one above.
     #[test]

@@ -701,3 +701,312 @@ fn profile_photo_controls_change_ratio_and_use_full_dimensions_for_native_pixels
         "photos are not inventory cargo"
     );
 }
+
+#[test]
+fn invite_to_group_works_in_both_profile_styles_and_is_hidden_on_own_profile() {
+    let find_shape = |output: &egui::FullOutput, find: &dyn Fn(&egui::Shape) -> Option<Rect>| -> Option<Rect> {
+        fn visit(shape: &egui::Shape, find: &dyn Fn(&egui::Shape) -> Option<Rect>) -> Option<Rect> {
+            find(shape).or_else(|| match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| visit(s, find)),
+                _ => None,
+            })
+        }
+        output.shapes.iter().find_map(|s| visit(&s.shape, find))
+    };
+    let text_rect = |output: &egui::FullOutput, target: &str| {
+        find_shape(output, &|shape| match shape {
+            egui::Shape::Text(text) if text.galley.text() == target => Some(text.galley.rect.translate(text.pos.to_vec2())),
+            _ => None,
+        })
+    };
+    let click = |f: &mut PhotoFixture, point: Pos2| {
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(
+                f.frame_actions(vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ])
+                .1,
+            );
+        }
+        actions
+    };
+    for (classic, compact) in [(false, false), (false, true), (true, false)] {
+        let mut f = PhotoFixture::new(classic, compact);
+        f.profiles.windows[0].tab = TAB_SL;
+        let out = f.settle();
+        let target = if classic {
+            if let Some(t) = crate::ui::icons::global("users-plus") {
+                let tex = t.id();
+                find_shape(&out, &|shape| match shape {
+                    egui::Shape::Mesh(m) if m.texture_id == tex => Some(m.calc_bounds()),
+                    _ => None,
+                })
+                .expect("classic invite button")
+            } else {
+                text_rect(&out, "users-plus").expect("classic invite fallback icon")
+            }
+        } else {
+            let label = text_rect(&out, aurora_i18n::tr!("ui-profile-aurora-invite")).expect("aurora invite link");
+            // its leading users-plus icon is clickable too
+            let icon_point = Pos2::new(label.left() - 9.0, label.center().y);
+            let icon_actions = click(&mut f, icon_point);
+            assert!(
+                matches!(&icon_actions[..], [ProfileAction::InviteToGroup(id)] if *id == f.id),
+                "classic {classic}, compact {compact}: icon click ({})",
+                icon_actions.len()
+            );
+            f.time += 1.0;
+            label
+        };
+        let actions = click(&mut f, target.center());
+        assert!(
+            matches!(&actions[..], [ProfileAction::InviteToGroup(id)] if *id == f.id),
+            "classic {classic}, compact {compact}"
+        );
+
+        // own profile: no Invite link or button
+        f.world.agent_id = f.id;
+        f.world.social.friends.clear();
+        let out = f.settle();
+        if classic {
+            assert!(text_rect(&out, "users-plus").is_none());
+            if let Some(t) = crate::ui::icons::global("users-plus") {
+                let tex = t.id();
+                assert!(
+                    find_shape(&out, &|shape| match shape {
+                        egui::Shape::Mesh(m) if m.texture_id == tex => Some(m.calc_bounds()),
+                        _ => None,
+                    })
+                    .is_none()
+                );
+            }
+        } else {
+            assert!(text_rect(&out, aurora_i18n::tr!("ui-profile-aurora-invite")).is_none());
+        }
+    }
+}
+
+/// The buttons of a frame, as a screen reader gets them: label and rect.
+fn frame_buttons(output: &egui::FullOutput) -> Vec<(Option<String>, Rect)> {
+    let Some(update) = &output.platform_output.accesskit_update else {
+        return Vec::new();
+    };
+    update
+        .nodes
+        .iter()
+        .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+        .filter_map(|(_, n)| {
+            let b = n.bounds()?;
+            let rect = Rect::from_min_max(Pos2::new(b.x0 as f32, b.y0 as f32), Pos2::new(b.x1 as f32, b.y1 as f32));
+            Some((n.label().map(str::to_owned), rect))
+        })
+        .collect()
+}
+
+/// Where `target` is written in a frame, its popups included.
+fn text_at(output: &egui::FullOutput, target: &str) -> Option<Rect> {
+    fn visit(shape: &egui::Shape, target: &str) -> Option<Rect> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == target => Some(t.galley.rect.translate(t.pos.to_vec2())),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| visit(s, target)),
+            _ => None,
+        }
+    }
+    output.shapes.iter().find_map(|s| visit(&s.shape, target))
+}
+
+/// The texts of a frame, its popups included.
+fn frame_texts(output: &egui::FullOutput) -> Vec<String> {
+    fn visit(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| visit(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    output.shapes.iter().for_each(|s| visit(&s.shape, &mut out));
+    out
+}
+
+/// The press, then the release, of a click at `point`.
+fn click_at(point: Pos2) -> [Vec<egui::Event>; 2] {
+    [true, false].map(|pressed| {
+        vec![
+            egui::Event::PointerMoved(point),
+            egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            },
+        ]
+    })
+}
+
+/// The button that opens the profile's menu: "…" (named for a screen
+/// reader) in the Aurora window, the ☰ just right of Block in the classic one.
+fn menu_button(output: &egui::FullOutput, classic: bool) -> Option<Rect> {
+    let buttons = frame_buttons(output);
+    if !classic {
+        let more = aurora_i18n::tr!("ui-profile-more");
+        return buttons.iter().find(|(l, _)| l.as_deref() == Some(more)).map(|(_, r)| *r);
+    }
+    let block = aurora_i18n::tr!("common-block");
+    let (_, b) = buttons.iter().find(|(l, _)| l.as_deref() == Some(block))?;
+    buttons
+        .iter()
+        .map(|(_, r)| *r)
+        .filter(|r| r.left() >= b.right() && (r.center().y - b.center().y).abs() < 6.0)
+        .min_by(|x, y| x.left().total_cmp(&y.left()))
+}
+
+#[test]
+fn invite_to_group_is_in_both_profile_menus_and_not_on_our_own_profile() {
+    let invite = aurora_i18n::tr!("ui-context-invite-to-group");
+    for (classic, compact) in [(false, false), (false, true), (true, false)] {
+        let case = format!("classic {classic}, compact {compact}");
+        let mut f = PhotoFixture::new(classic, compact);
+        f.ctx.enable_accesskit();
+        f.profiles.windows[0].tab = TAB_SL;
+        let out = f.settle();
+        let button = menu_button(&out, classic).unwrap_or_else(|| panic!("{case}: the menu button"));
+        assert!(text_at(&out, invite).is_none(), "{case}: only in the menu");
+        f.click(button.center());
+        let out = f.settle();
+        let entry = text_at(&out, invite).unwrap_or_else(|| panic!("{case}: Invite to group in {:?}", frame_texts(&out)));
+        let mut actions = Vec::new();
+        for events in click_at(entry.center()) {
+            actions.extend(f.frame_actions(events).1);
+        }
+        assert!(
+            matches!(&actions[..], [ProfileAction::InviteToGroup(id)] if *id == f.id),
+            "{case}: {} actions",
+            actions.len()
+        );
+
+        // our own profile has no such menu
+        f.world.agent_id = f.id;
+        f.world.social.friends.clear();
+        let out = f.settle();
+        assert!(menu_button(&out, classic).is_none(), "{case}: a menu on our own profile");
+        assert!(text_at(&out, invite).is_none(), "{case}");
+    }
+}
+
+/// Draws `draw` alone: clicks the frame's only button (the menu's), then
+/// the entry `entry` if the menu has it. Returns the menu's texts and what
+/// the entry's click did.
+fn menu_alone(draw: &mut dyn FnMut(&mut egui::Ui, &mut Vec<ProfileAction>), entry: &str) -> (Vec<String>, Vec<ProfileAction>) {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut time = 0.0;
+    let mut frame = |events: Vec<egui::Event>| {
+        time += 1.0 / 60.0;
+        let mut actions = Vec::new();
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 900.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            // a discarded pass draws again: keep the last one's
+            |ui| {
+                actions.clear();
+                draw(ui, &mut actions);
+            },
+        );
+        out.textures_delta.clear();
+        (out, actions)
+    };
+    let (out, _) = frame(Vec::new());
+    let buttons = frame_buttons(&out);
+    assert_eq!(buttons.len(), 1, "only the menu's button");
+    for events in click_at(buttons[0].1.center()) {
+        assert!(frame(events).1.is_empty(), "opening the menu does nothing");
+    }
+    let (out, _) = frame(Vec::new());
+    let texts = frame_texts(&out);
+    let mut actions = Vec::new();
+    if let Some(at) = text_at(&out, entry) {
+        for events in click_at(at.center()) {
+            actions.extend(frame(events).1);
+        }
+    }
+    (texts, actions)
+}
+
+#[test]
+fn the_profile_menus_never_invite_ourselves() {
+    let invite = aurora_i18n::tr!("ui-context-invite-to-group");
+    let copy = aurora_i18n::tr!("ui-profile-copy-uri");
+    let (mut world, id) = friend_world();
+    let p = crate::theme::Theme::default().palette();
+    let mut emoji = Emoji::load();
+    let browser = crate::media::browser_settings(std::path::Path::new("."), "en", &Default::default());
+    let web = WebContext {
+        paths: None,
+        browser: &browser,
+        cookie: None,
+        profile_base: None,
+    };
+    let (pics, images, banners) = (HashMap::new(), HashMap::new(), HashMap::new());
+    let w = Window::new(id);
+    for own in [false, true] {
+        if own {
+            world.agent_id = id;
+        }
+        // the classic window's ☰
+        let (texts, actions) = menu_alone(
+            &mut |ui, actions| super::super::overflow_menu(ui, &p, &world, w.scope, id, false, actions),
+            invite,
+        );
+        // the Aurora window's "…"
+        let f = super::facts(&world, &id, own, None);
+        let (aurora_texts, aurora_actions) = menu_alone(
+            &mut |ui, actions| {
+                let resp = ui.add(egui::Button::new("…"));
+                let (mut want_names, mut wanted_pics, mut wanted_images) = (HashSet::new(), HashSet::new(), HashSet::new());
+                let mut pick_picture = None;
+                let mut env = Env {
+                    p: &p,
+                    emoji: &mut emoji,
+                    pics: &pics,
+                    images: &images,
+                    banners: &banners,
+                    world: &world,
+                    want_names: &mut want_names,
+                    web: &web,
+                    wanted_pics: &mut wanted_pics,
+                    wanted_images: &mut wanted_images,
+                    actions,
+                    pick_picture: &mut pick_picture,
+                    friend_rights: true,
+                };
+                more_menu(&resp, &mut env, &w, &f, false);
+            },
+            invite,
+        );
+        for (style, texts, actions) in [("classic", texts, actions), ("aurora", aurora_texts, aurora_actions)] {
+            assert!(texts.iter().any(|t| t == copy), "{style}, own {own}: the menu is open: {texts:?}");
+            if own {
+                assert!(!texts.iter().any(|t| t == invite), "{style}: {texts:?}");
+                assert!(actions.is_empty(), "{style}: {} actions", actions.len());
+            } else {
+                assert!(
+                    matches!(&actions[..], [ProfileAction::InviteToGroup(i)] if *i == id),
+                    "{style}: {} actions",
+                    actions.len()
+                );
+            }
+        }
+    }
+}

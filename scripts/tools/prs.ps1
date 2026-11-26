@@ -48,11 +48,14 @@ $GitHubWatch = $null
 $PrSeen = $null       # last snapshot, to notice what changed (notifications)
 $PrSeenVersion = 0
 
-# owner/name of the repository, from its origin remote
+# owner/name of the main repository (Get-MainRepo, scripts/common.ps1:
+# origin, or upstream in a clone of a personal fork)
 function Get-RepoSlug {
-    $origin = (git -C $Paths.Repo remote get-url origin 2>$null)
-    if ($origin -match 'github\.com[:/](?<owner>[^/]+)/(?<name>[^/]+?)(\.git)?$') {
-        [pscustomobject]@{ Owner = $Matches.owner; Name = $Matches.name; Slug = "$($Matches.owner)/$($Matches.name)" }
+    . (Join-Path (Split-Path $PSScriptRoot -Parent) 'common.ps1')
+    $slug = Get-MainRepo $Paths.Repo
+    if ($slug) {
+        $owner, $name = $slug -split '/', 2
+        [pscustomobject]@{ Owner = $owner; Name = $name; Slug = $slug }
     }
 }
 

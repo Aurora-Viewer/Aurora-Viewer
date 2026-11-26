@@ -387,6 +387,11 @@ pub fn show(
     let (presence, peek) = (&nui.center.presence, &nui.center.peek);
     list.list
         .retain(|n| !n.transient || presence.iter().any(|t| t.id == n.id) || peek.iter().any(|p| p.id == n.id));
+    let listed_now = list.listed().next().is_some();
+    if nui.open && super::notifications::list_emptied(nui.was_listed, listed_now, nui.center.tab) {
+        nui.open = false;
+    }
+    nui.was_listed = listed_now;
     let Some(bell) = nui.bell else {
         return (answers, asks);
     };

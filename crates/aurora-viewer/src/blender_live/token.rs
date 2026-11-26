@@ -1,4 +1,4 @@
-//! The secret a Blender add-on must send before the preview accepts it.
+//! The secret a Blender or Maya add-on must send before the preview accepts it.
 //!
 //! An Aurora addition (the Legacy Viewer has no live link): the loopback port
 //! alone let any local program, another user's included, push meshes while

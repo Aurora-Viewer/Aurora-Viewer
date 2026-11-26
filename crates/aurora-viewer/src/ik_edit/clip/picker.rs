@@ -432,6 +432,8 @@ mod tests {
             enabled: true,
             authored,
             keys: keys.to_vec(),
+            rotation: keys.to_vec(),
+            location: Vec::new(),
         };
         let tracks = [track(1, false, &[0]), track(2, true, &[0, 30]), track(3, true, &[15])];
         assert_eq!(keyed_at(&tracks, 0), HashSet::from([2]), "not the rest baseline of bone 1");
