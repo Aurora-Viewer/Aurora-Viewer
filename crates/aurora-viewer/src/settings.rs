@@ -1997,6 +1997,13 @@ pub struct Settings {
     /// None delays migration until the first account enters the world.
     #[serde(rename = "toolbar_common", default)]
     pub toolbar: Option<crate::ui::toolbar::ToolbarSettings>,
+    /// Preset identity and its last confirmed snapshot; never exported in a notecard.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::ui::toolbar::selection::or_none"
+    )]
+    pub(crate) toolbar_selection: Option<crate::ui::toolbar::selection::Selection>,
     /// Keep the earlier per-account layouts through saves made before login.
     #[serde(rename = "toolbar", default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub(crate) legacy_toolbars: std::collections::HashMap<uuid::Uuid, crate::ui::toolbar::ToolbarSettings>,
@@ -2981,6 +2988,7 @@ impl Default for Settings {
             chat_bar_width: 0.0,
             chat_island_width: 0.0,
             toolbar: Default::default(),
+            toolbar_selection: None,
             legacy_toolbars: Default::default(),
             audio: AudioSettings::default(),
             media: Default::default(),
@@ -3980,6 +3988,7 @@ impl Settings {
         if let Some(toolbar) = &mut self.toolbar {
             changed |= toolbar.migrate_vr_button();
             changed |= toolbar.migrate_director_button();
+            changed |= toolbar.migrate_build_icons();
         }
         if !self.legacy_toolbars.is_empty() {
             self.legacy_toolbars.clear();

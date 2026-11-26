@@ -176,6 +176,7 @@ mod teleport_lookup;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
+mod toolbar_notecards;
 mod ui_image_cache;
 mod uninstall;
 mod update_notice;
@@ -1636,6 +1637,20 @@ fn wanted_opacity(settings: &Settings) -> ui::surface_opacity::Opacity {
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
 fn apply_test_overrides(settings: &mut Settings) {
+    if std::env::var_os("AURORA_DEMO").is_some()
+        && let Some(preset) = std::env::var("AURORA_DEMO_TOOLBAR")
+            .ok()
+            .and_then(|mode| ui::toolbar::presets::demo_mode(&mode))
+    {
+        ui::options::set_look(
+            settings,
+            if preset == ui::toolbar::presets::Preset::Legacy {
+                ui::options::Look::Legacy
+            } else {
+                ui::options::Look::Aurora
+            },
+        );
+    }
     settings.volumetric_clouds = clouds_choice(
         std::env::var("AURORA_CLOUDS").ok().as_deref(),
         crate::demo::clouds::scenario().is_some(),
@@ -3326,7 +3341,9 @@ impl App {
                     ),
                     _ => aurora_i18n::tr!("app-demo-content", value0 = it.name.to_string()).into_bytes(),
                 });
-                self.inventory_preview(it.id, it.asset_id, Ok(bytes));
+                let result = Ok(bytes);
+                self.toolbar_notecard_preview(it.id, it.asset_id, &result);
+                self.inventory_preview(it.id, it.asset_id, result);
                 return;
             }
             if let NetCommand::UpdateOutfit { request, change } = &cmd {
@@ -3495,6 +3512,16 @@ impl App {
     /// Director's playback or the full-frame photo view.
     fn windows_drawn(&self) -> bool {
         !(self.interface.ui_off || self.director_playing() || self.photo_full_frame())
+    }
+
+    /// Whether the build tools run this key press, as the key handler
+    /// decides it (`build_keyboard` there; `Shortcut::takes_press`).
+    fn build_takes_press(&self, key: &winit::keyboard::Key, code: KeyCode, mods: Mods) -> bool {
+        let build_keyboard = self.in_world()
+            && self.windows_drawn()
+            && !self.egui_ctx.egui_wants_keyboard_input()
+            && !egui::Popup::is_any_open(&self.egui_ctx);
+        crate::build::ui::Shortcut::takes_press(key, code, mods, self.build.open, build_keyboard)
     }
 
     /// Nearby chat in bubbles above the heads (#673); AURORA_DEMO_CHAT_BUBBLES
@@ -3854,6 +3881,7 @@ impl App {
         self.listings_ui = Default::default();
         self.demo_slm = None;
         self.task_notecards.clear();
+        self.toolbar_ui.notecards = Default::default();
         self.script_editors.disconnected();
         // the editor sync's server ends with the session
         self.editor_sync.stop();
@@ -4104,13 +4132,14 @@ impl App {
                 return;
             }
             let material_map = self.imports.uploading_entry(request);
+            let cost = result.as_ref().map_or(0, |receipt| receipt.cost);
             if let Some(item) = self.imports.uploaded(request, result) {
                 if let Some(entry) = material_map {
                     self.texture_library.map_uploaded(entry, &item);
                 }
                 let id = item.id;
                 self.world.inventory.add_items(vec![item]);
-                self.inventory_ui.show_original(&self.world.inventory, id);
+                self.show_uploaded(id, cost);
             }
             return;
         }
@@ -4154,6 +4183,16 @@ impl App {
             if ui::inventory::context_notecards::saved(&mut self.inventory_ui, request, &result) {
                 if let Ok(item) = result {
                     self.world.inventory.add_items(vec![item]);
+                }
+                return;
+            }
+            if self.toolbar_ui.notecards.saved(request, &result) {
+                if let Ok(item) = result {
+                    self.world.inventory.add_items(vec![item]);
+                }
+                if let Some(selection) = self.toolbar_ui.notecards.take_selection() {
+                    self.settings.toolbar_selection = Some(selection);
+                    self.settings.save();
                 }
                 return;
             }
@@ -4223,6 +4262,28 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.toolbar_ui.notecards.removed(request, &result) {
+                if let Ok(reply) = result {
+                    self.world.inventory.remove(&reply.removed);
+                    self.world.inventory.apply(reply.contents);
+                    self.world.inventory.created_folders(reply.folders);
+                }
+                if let Some((owner, item)) = self.toolbar_ui.notecards.take_removed()
+                    && let Some(selection) = self.settings.toolbar_selection.as_mut()
+                    && selection.removed(owner, item)
+                {
+                    self.settings.save();
+                }
+                return;
+            }
+            if self.toolbar_ui.notecards.folders_created(request, &result) {
+                if let Ok(reply) = result {
+                    self.world.inventory.remove(&reply.removed);
+                    self.world.inventory.apply(reply.contents);
+                    self.world.inventory.created_folders(reply.folders);
+                }
+                return;
+            }
             if self.world.attachment_inventory.owns(request) {
                 self.world.attachment_inventory_result(request, result);
                 if self.appearance_ui.pending.is_some_and(|(id, _)| id == request) {
@@ -4303,6 +4364,7 @@ impl App {
             self.local_bakes.loaded(*item, *asset, result);
         }
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
+            self.toolbar_notecard_preview(item, asset, &result);
             if ui::inventory::context_notecards::loaded(&mut self.inventory_ui, &mut self.settings.inventory, item, &result) {
                 self.settings.save();
             }
@@ -5641,6 +5703,23 @@ impl App {
         }
     }
 
+    /// The toolbar shortcuts a key press is, if any (one button's, or the
+    /// blocks sharing it): never while the bars are edited.
+    fn toolbar_shortcut(&self, input: &Input, mods: Mods) -> Option<Vec<String>> {
+        if self.toolbar_ui.open || !matches!(input, Input::Key(_)) {
+            return None;
+        }
+        let toolbar = self.settings.toolbar.as_ref()?;
+        let binding = crate::keybinds::Binding {
+            input: input.clone(),
+            ctrl: mods.ctrl,
+            shift: mods.shift,
+            alt: mods.alt,
+        };
+        let keys = ui::toolbar::shortcuts::targets(toolbar, &ui::skin::Layout::default(), &binding);
+        (!keys.is_empty()).then_some(keys)
+    }
+
     /// A key or a bindable mouse button changed state.
     fn on_input(&mut self, input: Input, pressed: bool) {
         // the Director's playback (or a held playhead) ends on Escape,
@@ -5670,6 +5749,12 @@ impl App {
             return;
         }
         if !pressed || !self.in_world() {
+            return;
+        }
+        // a toolbar button's, drawer's or floating block's shortcut, before
+        // a Preferences action a modifier-less binding would fall back to
+        if let Some(keys) = self.toolbar_shortcut(&input, mods) {
+            ui::toolbar::shortcuts::press_all(&self.egui_ctx, keys);
             return;
         }
         // push-to-talk key in toggle mode: each press switches the microphone
@@ -5775,6 +5860,7 @@ impl App {
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
             Action::TeleportHistory => self.toggle_teleport_history(),
+            Action::AddressBar => self.set_address_bar_visible(true),
             // World.TeleportHome: the bar's Home, with its confirmation
             Action::TeleportHome => {
                 self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
@@ -5796,7 +5882,7 @@ impl App {
             Action::ToggleUiFeature => self.toggle_ui_feature(),
             Action::HoverTips => self.toggle_hover_tips(),
             Action::ShowHuds => self.set_show_huds(!self.settings.show_huds),
-            Action::Import => self.imports.toggle_import(&self.egui_ctx, &self.settings.imports),
+            Action::Import => self.imports.toggle_import(&self.egui_ctx),
             Action::Beacons => ui::widgets::toggle_floater(&self.egui_ctx, ui::beacons::WINDOW, &mut self.panels.beacons),
             Action::ContactMarkers => {
                 self.settings.contact_markers = !self.settings.contact_markers;
@@ -8615,6 +8701,24 @@ impl App {
     /// Left press while building: handles, selection, create, terraform.
     /// Run by `click`; false also when it stopped to ask for the depth under
     /// the cursor (`ClickWait::waiting`), to run again when it has come.
+    /// The Create window's shape picker's click: the prim under it gives its
+    /// shape, which becomes the chosen shape and makes Create the tool in
+    /// use (`BuildTool::capture_shape`). Nothing yet while the depth under
+    /// the cursor is asked for (the press is run again with it).
+    fn capture_shape_pick(&mut self) {
+        let picked = self.menu_pick();
+        if picked.is_none() && self.clicks.waiting() {
+            return;
+        }
+        self.build.shape_capture = false;
+        if let Some((Some(idx), _)) = picked
+            && self.build.capture_shape(&self.world, &mut self.settings.build, idx)
+        {
+            self.build.activate(crate::build::Tool::Create);
+            self.settings.save();
+        }
+    }
+
     fn build_mouse_down(&mut self) -> bool {
         if self.texture_pipette() {
             self.left_down = true;
@@ -8651,6 +8755,11 @@ impl App {
             self.particle_target_pick();
             return true;
         }
+        if self.build.capturing_shape() {
+            self.left_down = true;
+            self.capture_shape_pick();
+            return true;
+        }
         // Object view takes the camera tool even while Build is open, as
         // activate_camera_tool / LLToolMgr::getCurrentTool give the transient
         // LLToolCamera priority (llfloatercamera.cpp / lltoolmgr.cpp, LGPL 2.1).
@@ -8684,6 +8793,9 @@ impl App {
                 .scene
                 .creation_surface(&self.world, ray, self.settings.draw_distance, &mut candidates);
             self.scene.creation_preview.candidates = candidates;
+            self.build.creation_hit = surface.map(|(point, target)| {
+                crate::build::place::creation_hit(&self.world, &self.scene, &self.settings.build, ray, point, target)
+            });
             (surface.map(|s| s.0), surface.and_then(|s| s.1), ray)
         } else if self.build.tool == crate::build::Tool::Edit && self.build.edit_mode == crate::build::EditMode::Face {
             // LLToolFace: CPU ray for ordinary prims, then the drawn-face pick
@@ -12619,7 +12731,10 @@ impl App {
                     .scene
                     .creation_surface(&self.world, ray, self.settings.draw_distance, &mut candidates);
                 self.scene.creation_preview.candidates = candidates;
-                surface.and_then(|(point, _)| crate::scene::creation_preview::Placement::new(&self.world, &self.settings.build, point))
+                surface.and_then(|(point, target)| {
+                    let hit = crate::build::place::creation_hit(&self.world, &self.scene, &self.settings.build, ray, point, target);
+                    crate::scene::creation_preview::Placement::new(&self.world, &self.settings.build, hit)
+                })
             } else {
                 None
             };
@@ -13456,6 +13571,7 @@ impl App {
                 || self.chat_ui.demo_reorder.is_some()
                 || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var_os("AURORA_DEMO_CHAT_INPUT").is_some()
+                || std::env::var("AURORA_DEMO_TOOLBAR").is_ok_and(|mode| mode.starts_with("notecard-"))
                 || std::env::var("AURORA_DEMO_OBJECT_MENU").is_ok_and(|mode| mode.starts_with("customize"))
                 || std::env::var("AURORA_DEMO_MARKETPLACE_LISTINGS").is_ok_and(|mode| mode.starts_with("menu-"))
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
@@ -14002,7 +14118,11 @@ impl App {
             full.platform_output.cursor_icon = cursor;
             full.platform_output.cursor_image = self.cursors.inventory_drag(cursor);
         }
-        if (self.color_pipette() || self.texture_pipette() || self.report_abuse.picking || self.particle_editor.picking)
+        if (self.color_pipette()
+            || self.texture_pipette()
+            || self.report_abuse.picking
+            || self.particle_editor.picking
+            || self.build.capturing_shape())
             && !ctx.is_pointer_over_egui()
         {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
@@ -16947,7 +17067,26 @@ impl App {
             // FSCommon::report_to_nearby_chat(gAgent.mMOTD)
             BarAction::MessageOfTheDay => self.world.system_message(self.world.motd.clone()),
             BarAction::Import => {
-                self.imports.toggle_import(&self.egui_ctx, &self.settings.imports);
+                self.imports.toggle_import(&self.egui_ctx);
+                self.egui_ctx.request_repaint();
+            }
+            BarAction::ImportType(choice) => {
+                // the file chooser at once (human request, 2026-11-25)
+                self.imports
+                    .import_type(&self.scene.jobs, &self.egui_ctx, self.settings.imports.texture(), choice);
+                self.egui_ctx.request_repaint();
+            }
+            BarAction::ImportBar => {
+                self.imports.toggle_bar(&self.egui_ctx);
+                self.egui_ctx.request_repaint();
+            }
+            BarAction::ImportAdvanced => {
+                // its options first: the window's own buttons pick the files
+                self.imports.open_folder_import(&self.egui_ctx);
+                self.egui_ctx.request_repaint();
+            }
+            BarAction::ImportSettings => {
+                self.imports.open_import_settings(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
             }
             BarAction::BlenderLive => {
@@ -16997,18 +17136,19 @@ impl App {
             BarAction::Portals => {
                 ui::widgets::open_floater(&self.egui_ctx, "portals", &mut self.portal_ui.open);
             }
-            BarAction::Build(t) => {
-                match t {
-                    // LLToolMgr::buildEnabledOrActive: under @edit and @rez
-                    // the window does not open; an open one still closes
-                    _ if !self.build.open && !self.world.rlva_can_build() => {}
-                    1 => self.build.open_build(crate::build::Tool::Edit),
-                    2 => self.build.open_build(crate::build::Tool::Create),
-                    3 => self.build.open_build(crate::build::Tool::Land),
-                    _ if self.build.open => self.build.close(&mut self.world, &mut self.settings.build),
-                    // LLToolMgr::enterBuildMode: the Create tool
-                    _ => self.build.open_build(crate::build::Tool::Create),
-                }
+            BarAction::Build(t) | BarAction::BuildButton(t) => {
+                let button = matches!(a.bar, BarAction::BuildButton(_));
+                let mode = match t {
+                    1 => Some(crate::build::Tool::Edit),
+                    2 => Some(crate::build::Tool::Create),
+                    3 => Some(crate::build::Tool::Land),
+                    4 => Some(crate::build::Tool::Focus),
+                    5 => Some(crate::build::Tool::Grab),
+                    _ => None,
+                };
+                let can_build = self.world.rlva_can_build();
+                self.build
+                    .bar_click(mode, button || mode.is_none(), can_build, &mut self.world, &mut self.settings.build);
                 self.flush_build();
             }
             BarAction::Logout => {
@@ -17098,6 +17238,9 @@ impl App {
                     .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
             }
             BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
+            BarAction::ToggleAddressBar => {
+                ui::bars::location_popup::toggle(&self.egui_ctx);
+            }
             BarAction::ToggleFriendsOnly => {
                 let on = !self.world.friends_only();
                 self.world.set_friends_only(on);
@@ -19494,7 +19637,7 @@ impl App {
                 // brings the islands back) and in mouselook, like Firestorm's
                 let screen_rect = ctx.content_rect();
                 let demo_hidden = if self.demo { ui::bars::demo::get().hidden } else { None };
-                let chrome = self.interface.bars(&ui::interface::Frame {
+                let mut chrome = self.interface.bars(&ui::interface::Frame {
                     classic: classic_bars,
                     mouselook: self.camera.mouselook(),
                     show_in_mouselook: self.settings.camera.show_interface_in_mouselook,
@@ -19517,37 +19660,16 @@ impl App {
                 self.toolbar_ui.edit_particles = status.edit_particles;
                 self.toolbar_ui.fly_override_active = status.fly_override;
                 self.toolbar_ui.quickjump_active = status.quickjump;
-                if chrome.top {
-                    let (bar, audio_action) = ui::bars::top_bars(
-                        ui,
-                        &p,
-                        icons,
-                        layout,
-                        &mut self.panels,
-                        &status,
-                        &mut self.settings.audio,
-                        &mut self.audio_ui,
-                        media,
-                        &mut self.notif_ui,
-                        bell,
-                    );
-                    a.bar = bar;
-                    a.audio = Some(audio_action);
-                    a.nearby_media = nearby_media::panel(
-                        &ctx,
-                        &p,
-                        &mut self.nearby_media,
-                        &mut self.audio_ui,
-                        nearby_media::Inputs {
-                            media: &self.media,
-                            world: &self.world,
-                            settings: &self.settings.media,
-                            camera: &self.camera,
-                            demo: self.demo,
-                        },
-                    );
-                } else {
-                    ui::bars::islands::set_favorites_row_bottom(&ctx, None);
+                self.audio_ui.media_button = None;
+                self.audio_ui.media_button_hovered = false;
+                if self.toolbar_ui.open || ui::toolbar::ToolbarUi::dragging(&ctx) {
+                    chrome.top = true;
+                    chrome.bottom = true;
+                }
+                if self.toolbar_ui.needs_commands(&ctx, self.settings.toolbar.as_ref())
+                    || (self.demo && std::env::var_os("AURORA_DEMO_TOOLBAR").is_some())
+                {
+                    ui::bars::collect_menu(ui, &p, &mut self.panels, &status);
                 }
                 // AURORA_DEMO_BARS: the mockup's voice (connected; talking
                 // with `voice`) and chat island width, for this run only and
@@ -19605,7 +19727,14 @@ impl App {
                 self.chat_ui.flash_nearby = self.flash_nearby();
                 self.chat_ui.has_open_ims = !self.world.social.ims.is_empty();
                 self.toolbar_ui.has_open_ims = self.chat_ui.has_open_ims;
-                let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
+                let mut toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
+                let current_toolbar = self.settings.toolbar.get_or_insert_default();
+                let composed_now = current_toolbar.compose_top();
+                toolbar_migrated |= composed_now;
+                if composed_now && !self.settings.show_bug_report {
+                    current_toolbar.top.retain(|button| button.command != "report_bug");
+                }
+                toolbar_migrated |= current_toolbar.set_bug_visible(layout, self.settings.show_bug_report);
                 let mut demo_toolbar = None;
                 // AURORA_DEMO_TOOLBAR=custom|side|labels|right: the mockup's
                 // side bar, for this run only
@@ -19617,6 +19746,7 @@ impl App {
                     };
                     let mut t = self.settings.toolbar.clone().unwrap_or_default();
                     ui::toolbar::demo_settings(&mut t, layout);
+                    t.compose_top();
                     demo_toolbar = Some(t);
                 }
                 if self.demo && ui::bars::demo::get().access == Some(crate::settings::FavoritesAccess::Dock) {
@@ -19691,6 +19821,7 @@ impl App {
                     t.buttons = Some(buttons);
                     demo_toolbar = Some(t);
                 }
+                let synthetic_toolbar = demo_toolbar.is_some();
                 let toolbar_settings = match demo_toolbar.as_mut() {
                     Some(t) => t,
                     None => self.settings.toolbar.get_or_insert_default(),
@@ -19701,10 +19832,58 @@ impl App {
                 } else {
                     self.dock_layout.of(layout, autohide_chat_bar)
                 };
+                if !synthetic_toolbar {
+                    toolbar_migrated |= toolbar_settings.compose_chat(bar_layout);
+                    toolbar_migrated |= toolbar_settings.ensure_import_bar(bar_layout);
+                    toolbar_migrated |= toolbar_settings.single_gaps();
+                }
+                // the interface edited: its lock set aside for this frame,
+                // put back below before anything is saved
+                let lock_suspended = self.toolbar_ui.suspend_lock(&ctx, toolbar_settings);
+                let chat_edge = toolbar_settings.location("bar_chat", bar_layout);
+                if self.chat_ui.in_use() && chat_edge == Some(ui::toolbar::Bar::Top) {
+                    chrome.top = true;
+                }
+                if self.chat_ui.focus_request
+                    && let Some(drawer) = toolbar_settings.drawer_of("bar_chat")
+                {
+                    ui::toolbar::drawers::set_open(&ctx, drawer, true);
+                }
+                self.toolbar_ui.prepare(&ctx, toolbar_settings);
+                ui::bars::chrome::prepare(ui, &p, &status, toolbar_settings, self.toolbar_ui.open);
+                ui::bars::chrome::prepare_chat(
+                    &ctx,
+                    &self.chat_ui,
+                    if classic_bars {
+                        self.settings.chat_bar_width
+                    } else {
+                        self.settings.chat_island_width
+                    },
+                );
+                if chrome.top && !toolbar_settings.composed {
+                    let (bar, audio_action) = ui::bars::top_bars(
+                        ui,
+                        &p,
+                        icons,
+                        layout,
+                        &mut self.panels,
+                        &status,
+                        &mut self.settings.audio,
+                        &mut self.audio_ui,
+                        media,
+                        &mut self.notif_ui,
+                        bell,
+                        &mut self.toolbar_ui,
+                        toolbar_settings,
+                    );
+                    a.bar = bar;
+                    a.audio = Some(audio_action);
+                }
                 // the feed is polled while its button stands on a toolbar
                 // (LLFloaterGridStatus::checkGridStatusRSS, hasCommand)
-                self.grid_status_listed = toolbar_settings.location("gridstatus", bar_layout).is_some();
+                self.grid_status_listed = toolbar_settings.placed("gridstatus", bar_layout);
                 self.toolbar_ui.islands = !classic_bars;
+                self.toolbar_ui.keybinds = self.toolbar_ui.shortcut_editing().then(|| self.settings.keybinds.clone());
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
                 self.chat_ui.hide_latest = !self.settings.chat_latest_button;
                 self.chat_ui.enter_toggles = self.settings.chat_enter_toggles;
@@ -19723,7 +19902,7 @@ impl App {
                     suggest.set_nearby(ui::chat::suggest::nearby(&self.world), now);
                 }
                 let ao_active = self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused;
-                let (chat, bar2, bottom_top, chat_width_set) = if !chrome.bottom {
+                let (mut chat, bar2, bottom_top, mut chat_width_set) = if !chrome.bottom {
                     // hidden: the chat lines go down to the screen's bottom
                     (None, BarAction::None, screen_rect.bottom() - ui::bars::islands::MARGIN, false)
                 } else {
@@ -19793,8 +19972,37 @@ impl App {
                     favorites: &favorites,
                     bar: ui::toolbar::Bar::Left,
                     style: Default::default(),
-                    editing: self.toolbar_ui.open && !toolbar_settings.locked,
+                    editing: self.toolbar_ui.open,
+                    floating: false,
                 };
+                if chrome.top {
+                    let top_action = ui::bars::top::show(
+                        ui,
+                        &p,
+                        icons,
+                        bar_layout,
+                        &mut self.toolbar_ui,
+                        toolbar_settings,
+                        &mut self.panels,
+                        &mut mic,
+                        &side_row,
+                        classic_bars,
+                    );
+                    if !matches!(top_action, BarAction::None) {
+                        a.bar = top_action;
+                    }
+                    if classic_bars {
+                        area.min.y = area.min.y.max(ui.available_rect_before_wrap().top());
+                    }
+                }
+                let mut shown_sides = if self.toolbar_ui.open { [true, true] } else { sides };
+                if self.chat_ui.in_use() {
+                    match chat_edge {
+                        Some(ui::toolbar::Bar::Left) => shown_sides[0] = true,
+                        Some(ui::toolbar::Bar::Right) => shown_sides[1] = true,
+                        _ => {}
+                    }
+                }
                 let (room, side_action) = ui::bars::side::bars(
                     ui,
                     &p,
@@ -19807,9 +20015,87 @@ impl App {
                     &side_row,
                     area,
                     !classic_bars,
-                    sides,
+                    shown_sides,
                 );
                 area = room;
+                if toolbar_settings.composed {
+                    let (bar, audio_action) = ui::bars::chrome::show(
+                        ui,
+                        &p,
+                        icons,
+                        &mut self.panels,
+                        &status,
+                        &mut self.settings.audio,
+                        &mut self.audio_ui,
+                        media,
+                        &mut self.notif_ui,
+                        bell,
+                        &mut self.toolbar_ui,
+                        toolbar_settings,
+                    );
+                    if !matches!(bar, BarAction::None) {
+                        a.bar = bar;
+                    }
+                    if !matches!(audio_action, ui::audio::AudioAction::None) {
+                        a.audio = Some(audio_action);
+                    }
+                    let (out, resized) = ui::bars::chrome::show_chat(
+                        ui,
+                        &p,
+                        icons,
+                        &mut self.panels,
+                        &mut self.chat_ui,
+                        &self.gesture_state.manager,
+                        Some(&mut self.emoji),
+                        &side_row,
+                        match demo_chat_width.as_mut() {
+                            Some(width) => width,
+                            None if classic_bars => &mut self.settings.chat_bar_width,
+                            None => &mut self.settings.chat_island_width,
+                        },
+                    );
+                    if out.is_some() {
+                        chat = out;
+                    }
+                    chat_width_set |= resized;
+                    if let Some(bottom) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
+                        area.min.y = area.top().max(bottom + ui::bars::islands::MARGIN);
+                    }
+                }
+                // the floating blocks, the quick import bar's included
+                let floating_action = ui::toolbar::floating::show(
+                    &ctx,
+                    &p,
+                    icons,
+                    &mut self.toolbar_ui,
+                    &mut self.panels,
+                    &mut mic,
+                    &side_row,
+                    &mut self.imports.launcher_open,
+                );
+                if !matches!(floating_action, BarAction::None) {
+                    a.bar = floating_action;
+                }
+                if ui::toolbar::ToolbarUi::intercepting(&ctx) {
+                    self.audio_ui.media_button = None;
+                    self.audio_ui.media_button_hovered = false;
+                }
+                a.nearby_media = nearby_media::panel(
+                    &ctx,
+                    &p,
+                    &mut self.nearby_media,
+                    &mut self.audio_ui,
+                    nearby_media::Inputs {
+                        media: &self.media,
+                        world: &self.world,
+                        settings: &self.settings.media,
+                        camera: &self.camera,
+                        demo: self.demo,
+                    },
+                );
+                if let Some(action) = ui::bars::location_popup::show(ui, &p, &mut self.panels, &status) {
+                    a.bar = action;
+                }
                 // a bar's button or menu entry opens its window this very frame
                 rlva::keep_windows_closed(&self.world.rlva, &mut self.panels);
                 // without the bars, the windows keep the room they left
@@ -19819,6 +20105,10 @@ impl App {
                     area = room;
                 }
                 ui::layout::set_work_area(ui.ctx(), area);
+                let menu_action = ui::bars::dispatch_menu(ui, &p, &mut self.panels, &status);
+                if !matches!(menu_action, BarAction::None) {
+                    a.bar = menu_action;
+                }
                 ui::chat::thumbnails::show(
                     ui,
                     &p,
@@ -19828,7 +20118,7 @@ impl App {
                     &self.avatar_pics,
                     &self.ui_images,
                     area,
-                    chrome.top,
+                    chrome.top && (!toolbar_settings.composed || toolbar_settings.location("bar_conversations", bar_layout).is_some()),
                 );
                 // the islands leave room between them, above and below: the
                 // windows move over the whole screen; the Legacy Viewer's
@@ -19850,9 +20140,37 @@ impl App {
                 }
                 ui::layout::set_window_edges(ui.ctx(), edges);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
-                ui::toolbar::show_command_context(ui.ctx(), &p, bar_layout, toolbar_settings);
-                self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
-                if self.toolbar_ui.commit_with_menus(ui.ctx(), bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
+                self.toolbar_ui
+                    .show(ui.ctx(), &p, bar_layout, toolbar_settings, self.settings.toolbar_selection.as_ref());
+                let conversation_slot =
+                    |settings: &ui::toolbar::ToolbarSettings| settings.command_placement("bar_conversations", bar_layout);
+                let previous_conversations = conversation_slot(toolbar_settings);
+                let mut toolbar_changed = self.toolbar_ui.commit_with_menus(ui.ctx(), bar_layout, toolbar_settings);
+                // a shortcut whose button was not drawn this frame
+                match ui::toolbar::shortcuts::fallback(ui.ctx(), toolbar_settings) {
+                    ui::toolbar::shortcuts::Fallback::None => {}
+                    ui::toolbar::shortcuts::Fallback::Changed => toolbar_changed = true,
+                    ui::toolbar::shortcuts::Fallback::ImportBar => a.bar = BarAction::ImportBar,
+                    ui::toolbar::shortcuts::Fallback::Interface(key) => {
+                        if key == ui::toolbar::drawers::INTERFACE_CUSTOMIZE {
+                            a.bar = BarAction::CustomizeBars;
+                        } else {
+                            self.toolbar_ui.interface_clicked(&key);
+                        }
+                    }
+                }
+                if toolbar_changed && previous_conversations != conversation_slot(toolbar_settings) {
+                    self.settings.chat_thumbnails = if conversation_slot(toolbar_settings).is_some() {
+                        crate::settings::ChatThumbnails::TopRight
+                    } else {
+                        crate::settings::ChatThumbnails::Off
+                    };
+                }
+                ui::toolbar::ToolbarUi::restore_lock(toolbar_settings, lock_suspended);
+                if toolbar_changed || chat_width_set || toolbar_migrated {
+                    if toolbar_settings.composed {
+                        self.settings.show_bug_report = toolbar_settings.placed("report_bug", bar_layout);
+                    }
                     self.settings.save();
                 }
                 // the Favorites button's right click: where the favourites live
@@ -20917,6 +21235,7 @@ impl App {
                 {
                     self.send(command);
                 }
+                self.toolbar_notecard_ui(&ctx, &p);
                 self.object_menu_ui(&ctx, &p);
                 self.avatar_textures.show(&ctx, &p, &self.world, &self.ui_images);
                 self.object_profile_window(&ctx, &p);
@@ -21558,7 +21877,15 @@ impl App {
                 self.toolbar_ui.gaming_mode_active = self.gaming_mode.on;
                 self.toolbar_ui.shown = ui::toolbar::Shown {
                     profile: self.profile_ui.mine_shown(self.world.agent_id),
-                    build: self.build.open,
+                    build: self.build.lit(None),
+                    build_tools: [
+                        crate::build::Tool::Focus,
+                        crate::build::Tool::Grab,
+                        crate::build::Tool::Edit,
+                        crate::build::Tool::Create,
+                        crate::build::Tool::Land,
+                    ]
+                    .map(|tool| self.build.lit(Some(tool))),
                     poser: self.ik_editor.open && self.ik_editor.posing(),
                     report_abuse: self.report_abuse.open,
                     marketplace_listings: self.listings_ui.open,
@@ -22035,6 +22362,23 @@ impl App {
             self.net.runtime(),
         );
         a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+        if let Some(preset) = self.toolbar_ui.preset_request.take() {
+            let layout = self.dock_layout.of(&self.skin.layout, self.settings.chat_bar.hides()).clone();
+            if preset.apply(&mut self.settings, &layout) {
+                self.toolbar_ui.notecards.selection_changed();
+                self.toolbar_ui.selected = None;
+                egui::Popup::close_all(&ctx);
+                self.settings.save();
+                a.settings_changed = true;
+            }
+        }
+        if let Some(preset) = self.toolbar_ui.inferred_preset.take()
+            && self.settings.toolbar_selection.is_none()
+        {
+            let layout = self.dock_layout.of(&self.skin.layout, self.settings.chat_bar.hides());
+            self.settings.toolbar_selection = Some(ui::toolbar::selection::Selection::builtin(preset, layout));
+            self.settings.save();
+        }
         // The spinning cat: its warning first, then Stop while it plays.
         if self.oiia.warning() && !self.spinning_cat_video() {
             // No video, no show: the code's window says why.
@@ -25717,7 +26061,9 @@ impl ApplicationHandler for App {
         let altgr_shortcut = matches!(&event, WindowEvent::KeyboardInput { event: ke, .. }
             if self.altgr_native_key(ke));
         // People is Command/Ctrl+Shift+A. A focused widget otherwise keeps
-        // the key, and egui selects all on any Command+A.
+        // the key, and egui selects all on any Command+A. A press the build
+        // tools run goes to egui, where they read it (Ctrl+L: Link while
+        // building, the address bar otherwise).
         let claim_over_focus = matches!(
             &event,
             WindowEvent::KeyboardInput { event: ke, .. }
@@ -25725,6 +26071,7 @@ impl ApplicationHandler for App {
                     && !ke.repeat
                     && !self.exit_prompt.open
                     && self.options_ui.capture.is_none()
+                    && !matches!(bound_key, Some(code) if self.build_takes_press(&ke.logical_key, code, key_mods))
                     && matches!(bound_key, Some(code)
                         if shortcut_claims_focus(
                             &self.egui_ctx,
@@ -25733,7 +26080,8 @@ impl ApplicationHandler for App {
                             key_mods,
                             self.shift,
                             self.alt,
-                            self.settings.keybinds.triggered(&Input::key(code), key_mods).is_some(),
+                            self.settings.keybinds.triggered(&Input::key(code), key_mods).is_some()
+                                || self.toolbar_shortcut(&Input::key(code), key_mods).is_some(),
                         ))
         );
         let fullscreen_toggle = matches!(
@@ -25964,6 +26312,15 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
+                    // a toolbar shortcut being chosen (ui/toolbar/shortcuts.rs)
+                    if self.toolbar_ui.shortcut_capturing() {
+                        if pressed && !ke.repeat && !Input::is_modifier(code) {
+                            let binding = crate::keybinds::Binding::captured(Input::key(code), mods);
+                            self.toolbar_ui.shortcut_captured(binding, code == KeyCode::Escape);
+                            self.egui_ctx.request_repaint();
+                        }
+                        return;
+                    }
                     // The animation editor owns its accelerators before the
                     // global keybind table (Home=Fly, Ctrl+S=Resync). egui
                     // already received this event above; only route it when
@@ -26172,7 +26529,7 @@ impl ApplicationHandler for App {
                             mods,
                             code,
                             Some(&ke.logical_key),
-                            self.settings.keybinds.triggered(&input, mods).is_some(),
+                            self.settings.keybinds.triggered(&input, mods).is_some() || self.toolbar_shortcut(&input, mods).is_some(),
                         );
                     // Ctrl+F belongs to the window with its own find when the
                     // script editor is active, the keyboard is in a conversation, or the
