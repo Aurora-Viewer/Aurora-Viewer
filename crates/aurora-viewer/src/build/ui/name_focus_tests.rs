@@ -235,7 +235,7 @@ fn object_profile_rows_are_not_the_build_windows_rows() {
     let profile_layer = egui::Id::unique("object_profile");
     for which in [Which::Name, Which::Desc] {
         let ours = name_focus::inspector_field(which);
-        let theirs = name_focus::field_id_on(profile_layer, which);
+        let theirs = name_focus::field_id_on(profile_layer, egui::ViewportId::ROOT, which);
         assert_ne!(ours, theirs);
         let ours = inspector.ctx.read_response(ours).expect("build window field");
         let theirs = inspector.ctx.read_response(theirs).expect("profile field");
@@ -243,7 +243,7 @@ fn object_profile_rows_are_not_the_build_windows_rows() {
         assert_eq!(theirs.layer_id.id, profile_layer);
     }
 
-    let theirs = name_focus::field_id_on(profile_layer, Which::Desc);
+    let theirs = name_focus::field_id_on(profile_layer, egui::ViewportId::ROOT, Which::Desc);
     let rect = inspector.ctx.read_response(theirs).unwrap().rect;
     press(&mut inspector, rect.center(), egui::PointerButton::Primary);
     assert_eq!(focused(&inspector), Some(theirs));
@@ -262,6 +262,38 @@ fn object_profile_rows_are_not_the_build_windows_rows() {
         "the profile's Description is not the build window's last field"
     );
     assert_eq!(selection(&inspector, Which::Name), Some((0, "Presentation test".chars().count())));
+}
+
+/// A window moved outside the viewer is drawn on its viewport's background
+/// layer, the same layer id in every viewport: the Build window and an
+/// Object > Profile both outside must still not share a field's edit state.
+#[test]
+fn windows_outside_the_viewer_keep_their_own_field_ids() {
+    let ctx = egui::Context::default();
+    let mut seen = Vec::new();
+    for window in ["aurora build outside", "aurora profile outside"] {
+        let viewport = crate::outside::viewport(egui::Id::unique(window));
+        let mut input = egui::RawInput {
+            viewport_id: viewport,
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 400.0))),
+            ..Default::default()
+        };
+        input.viewports.insert(viewport, Default::default());
+        let _ = ctx.run_ui(input, |ui| {
+            assert_eq!(ui.ctx().viewport_id(), viewport);
+            assert_eq!(ui.layer_id(), egui::LayerId::background());
+            seen.push([name_focus::field_id(ui, Which::Name), name_focus::field_id(ui, Which::Desc)]);
+        });
+    }
+    let [build, profile] = [seen[0], seen[1]];
+    for i in 0..2 {
+        assert_ne!(build[i], profile[i], "two windows outside share a field id");
+    }
+    for ids in [build, profile] {
+        for (id, which) in ids.into_iter().zip([Which::Name, Which::Desc]) {
+            assert_ne!(id, name_focus::inspector_field(which));
+        }
+    }
 }
 
 /// One pass of a build-window layer holding Name in a short scroll area.

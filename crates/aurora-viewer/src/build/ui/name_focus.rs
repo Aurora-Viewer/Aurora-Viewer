@@ -27,7 +27,11 @@
 //!
 //! General is also drawn by Object > Profile, a window of its own: the field
 //! ids are scoped to the window that draws them, and only the build window's
-//! fields are remembered and focused.
+//! fields are remembered and focused. Inside the viewer each window has its
+//! own layer; a window moved outside is drawn on its viewport's background
+//! layer, the same id in every viewport, so the viewport is part of the id
+//! too: two windows outside never share a field's edit state (cursor,
+//! selection, undo), which egui keeps in data shared by all viewports.
 
 use egui::text::{CCursor, CCursorRange};
 use egui::text_edit::TextEditState;
@@ -67,20 +71,21 @@ fn window() -> egui::Id {
     egui::Id::unique(INSPECTOR_ID)
 }
 
-/// The row's id in the window (layer) `layer`.
-pub(super) fn field_id_on(layer: egui::Id, which: Which) -> egui::Id {
-    layer.with(("select-on-focus", which.salt()))
+/// The row's id in the window drawn on `layer` of `viewport`.
+pub(super) fn field_id_on(layer: egui::Id, viewport: egui::ViewportId, which: Which) -> egui::Id {
+    layer.with(viewport).with(("select-on-focus", which.salt()))
 }
 
 /// The row's id in the window that draws it: Object > Profile's General gets
-/// its own, so the two fields never share focus, keys or commits.
+/// its own, so the two fields never share focus, keys or commits, inside the
+/// viewer (one layer per window) and outside it (one viewport per window).
 pub(super) fn field_id(ui: &egui::Ui, which: Which) -> egui::Id {
-    field_id_on(ui.layer_id().id, which)
+    field_id_on(ui.layer_id().id, ui.ctx().viewport_id(), which)
 }
 
-/// The build window's row.
+/// The build window's row, inside the viewer.
 pub(super) fn inspector_field(which: Which) -> egui::Id {
-    field_id_on(window(), which)
+    field_id_on(window(), egui::ViewportId::ROOT, which)
 }
 
 fn last_key() -> egui::Id {
