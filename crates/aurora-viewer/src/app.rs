@@ -7671,6 +7671,21 @@ impl App {
         if window.fullscreen().is_some() == entering {
             return;
         }
+        // (a screen Windows no longer describes would panic in winit: the
+        // window stays windowed, screen_info.rs, #4851)
+        let fullscreen = if entering {
+            match crate::screen_info::borderless(window.current_monitor()) {
+                Some(fullscreen) => Some(fullscreen),
+                None => {
+                    log::warn!("fullscreen: the screen under the window is not described by the system; the window stays windowed");
+                    self.settings.window_fullscreen = false;
+                    self.fullscreen_applied = false;
+                    return;
+                }
+            }
+        } else {
+            None
+        };
 
         if entering {
             // a maximized window keeps the normal size and position already
@@ -7685,7 +7700,7 @@ impl App {
             };
             restore.save(&mut self.settings);
             self.fullscreen_restore = Some(restore);
-            window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(window.current_monitor())));
+            window.set_fullscreen(fullscreen);
         } else {
             let restore = self
                 .fullscreen_restore
@@ -22169,7 +22184,12 @@ impl ApplicationHandler for App {
         // last position, only if it is still on a connected screen
         if let (Some(x), Some(y), false) = (self.settings.window_x, self.settings.window_y, capture) {
             let on = event_loop.available_monitors().find(|m| {
-                let (p, s) = (m.position(), m.size());
+                // (a screen the system no longer describes is not one to
+                // open on: screen_info.rs)
+                let Some(s) = crate::screen_info::size(m) else {
+                    return false;
+                };
+                let p = m.position();
                 // the title bar (top-left corner area) must be reachable
                 x + 40 >= p.x && x + 40 < p.x + s.width as i32 && y + 10 >= p.y && y + 10 < p.y + s.height as i32
             });
@@ -22180,16 +22200,16 @@ impl ApplicationHandler for App {
         }
         // a "normal" size covering the whole screen is a maximized window
         // recorded as normal (older versions): restore to 80 % of the screen
-        if let (Some(m), false) = (&monitor, capture) {
+        if let (Some(m), Some(size), false) = (&monitor, monitor.as_ref().and_then(crate::screen_info::size), capture) {
             let sf = m.scale_factor();
-            let (mw, mh) = (m.size().width as f64 / sf, m.size().height as f64 / sf);
+            let (mw, mh) = (size.width as f64 / sf, size.height as f64 / sf);
             if w as f64 >= mw * 0.95 && h as f64 >= mh * 0.9 {
                 w = (mw * 0.8) as u32;
                 h = (mh * 0.8) as u32;
                 let p = m.position();
                 pos = Some((
-                    p.x + ((m.size().width as f64 - w as f64 * sf) / 2.0) as i32,
-                    p.y + ((m.size().height as f64 - h as f64 * sf) / 2.0) as i32,
+                    p.x + ((size.width as f64 - w as f64 * sf) / 2.0) as i32,
+                    p.y + ((size.height as f64 - h as f64 * sf) / 2.0) as i32,
                 ));
             }
         }
@@ -22198,8 +22218,12 @@ impl ApplicationHandler for App {
             position: pos.map(|(x, y)| winit::dpi::PhysicalPosition::new(x, y)),
             // Automated captures must not steal the user's keyboard focus.
             active: !capture,
-            fullscreen: (!capture && forced_window_size().is_none() && self.settings.window_fullscreen)
-                .then(|| winit::window::Fullscreen::Borderless(monitor.clone())),
+            // (none on a screen the system no longer describes: screen_info.rs)
+            fullscreen: if !capture && forced_window_size().is_none() && self.settings.window_fullscreen {
+                crate::screen_info::borderless(monitor.clone())
+            } else {
+                None
+            },
         };
         self.fullscreen_applied = plan.fullscreen.is_some();
         let window = match self.open_window(event_loop, &plan) {

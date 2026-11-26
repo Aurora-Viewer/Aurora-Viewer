@@ -80,7 +80,12 @@ impl ScreenRate {
         let monitor = window.current_monitor();
         let hz = rate_hz(monitor.as_ref().and_then(|m| m.refresh_rate_millihertz()));
         if monitor != self.monitor || hz != self.hz {
-            let name = monitor.as_ref().and_then(|m| m.name()).unwrap_or_else(|| "unknown".into());
+            // (never winit's `name`, which panics on Windows for a screen the
+            // system no longer describes: screen_info.rs, #4851)
+            let name = monitor
+                .as_ref()
+                .and_then(crate::screen_info::name)
+                .unwrap_or_else(|| "unknown".into());
             log::info!("screen under the window: {name}, {hz:.0} Hz");
             self.monitor = monitor;
             self.hz = hz;
