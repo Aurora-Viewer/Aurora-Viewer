@@ -2175,7 +2175,7 @@ context holds the flare map for every tile, including a tile with no visible
 source of its own, so each tile samples the same image coordinates. The
 render thread releases this map after the last tile or on the first frame
 that no longer has a snapshot job using it.
-The offline demonstration in `demo/lens_flare.rs` uses scene geometry and
+The offline demonstration in `demo_lens_flare.rs` uses scene geometry and
 materials.
 
 ### Experimental VR render output

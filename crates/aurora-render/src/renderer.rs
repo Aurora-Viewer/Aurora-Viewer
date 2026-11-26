@@ -10145,6 +10145,7 @@ impl Backend {
         let flare = f
             .lens_flare
             .filter(|frame| frame.settings.active() && !debug_view && !f.cutout && !cube_face && !external_output);
+        let photo_flare = flare.is_some_and(|frame| frame.photo_size.is_some());
         if record_flare {
             self.lens_flare.release_photo();
         }
@@ -10153,14 +10154,20 @@ impl Backend {
         }
         let generate_flare = flare.filter(|_| !use_photo_flare).and_then(|frame| {
             let extent = frame.photo_size.unwrap_or(post_size);
-            let size = frame.settings.quality.size(extent);
+            let (w, h) = frame.settings.quality.size(extent);
+            // The context covers the whole photo at reduced resolution.
+            let size = if record_flare {
+                (w.min(post_size.0), h.min(post_size.1))
+            } else {
+                (w, h)
+            };
             self.lens_flare
                 .prepare(
                     &self.device,
                     &self.post_layout,
                     &mut self.pipeline_workers,
                     size,
-                    record_flare,
+                    photo_flare,
                     frame.settings,
                 )
                 .then_some((frame, extent, size))
@@ -13135,7 +13142,7 @@ impl Backend {
         mark(&mut encoder, MARK_LENS_FLARE_BEGIN);
         if let Some((frame, extent, _)) = generate_flare {
             self.lens_flare
-                .encode(&self.queue, &mut encoder, flare_source, frame, extent, record_flare);
+                .encode(&self.queue, &mut encoder, flare_source, frame, extent, photo_flare);
         }
         mark(&mut encoder, MARK_LENS_FLARE_END);
         // the viewfinder's histogram, of the live view only
@@ -13321,7 +13328,7 @@ impl Backend {
                 pass.set_pipeline(post_pipe);
                 pass.set_bind_group(0, post_bg, &[]);
                 pass.set_bind_group(1, self.bloom.post_bg(), &[]);
-                pass.set_bind_group(2, self.lens_flare.post_group(composite_flare, use_photo_flare), &[]);
+                pass.set_bind_group(2, self.lens_flare.post_group(composite_flare, photo_flare), &[]);
                 pass.draw(0..3, 0..1);
             }
             if let Some(st) = &self.smaa_targets {

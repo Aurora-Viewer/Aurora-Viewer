@@ -16611,7 +16611,7 @@ ui-options-dof-show-focus-point = Show focus point
 ui-options-dof-show-focus-point-help = A small crosshair on the point the lens focuses on: yellow when it is free, red when it is locked.
 
 # Screen Space Lens Flare
-lens-flare-title = Screen Space Lens Flare
+lens-flare-title = Lens flare
 lens-flare-enable = Enable lens flare
 lens-flare-preset = Preset
 lens-flare-intensity = Intensity

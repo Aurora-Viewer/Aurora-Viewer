@@ -5759,7 +5759,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
 | `AURORA_GPU_OOM_START=<seconds>` | Video memory full while the renderer is made, that long after the start |
 | `AURORA_GPU_OOM_UI=1` | Video memory too full even for the interface's buffers at the start |
-| `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
+| `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, lens flare, photo look, RLVa, TAA history), that long |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
@@ -6192,7 +6192,9 @@ both open states and the selection count. Capture at frame 620.
   left out and tried again after 2 s, then twice as long each time up to
   30 s: the selection outline (`AURORA_DEMO_BUILD`), the depth of field
   (`AURORA_DEMO_DOF`), a photo look, the volumetric clouds (the Legacy
-  layer stays; `AURORA_DEMO_CLOUDS`); the log says once `<what>: out of
+  layer stays; `AURORA_DEMO_CLOUDS`). Lens flare also checks `first_use_refused`
+  when allocating targets. Live drawing retries with backoff. If the tiled
+  photo context cannot make its flare map, every tile omits the effect. For the other effects, the log says once `<what>: out of
   video memory, drawn without it for now`. One the frame cannot go without
   shows the interface alone, as `AURORA_GPU_OOM_TARGETS` does: RLVa's
   vision spheres and reduced scene (`AURORA_DEMO_RLVA`), the TAA history

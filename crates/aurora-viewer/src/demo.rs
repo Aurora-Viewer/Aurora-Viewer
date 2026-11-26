@@ -207,6 +207,8 @@ pub mod legacy_bump;
 /// A Legacy Viewer's lists to import (AURORA_DEMO_LEGACY_LISTS).
 #[path = "demo_legacy_lists.rs"]
 pub mod legacy_lists;
+/// Bright sources and moving reflections (AURORA_DEMO_LENS_FLARE).
+#[path = "demo_lens_flare.rs"]
 pub mod lens_flare;
 #[path = "demo_link.rs"]
 pub mod link;

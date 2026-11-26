@@ -15,7 +15,7 @@ enum StoredQuality {
 }
 
 #[derive(Deserialize, Serialize)]
-#[serde(remote = "LensFlare")]
+#[serde(remote = "LensFlare", default = "LensFlare::default")]
 struct StoredValues {
     intensity: f32,
     threshold: f32,
@@ -277,6 +277,31 @@ mod tests {
         assert_eq!(read.selection, Selection::Custom);
         assert_eq!(read.current.threshold, 4.0);
         assert!(read.named.is_empty());
+    }
+
+    #[test]
+    fn missing_fields_preserve_current_and_named_presets() {
+        let file = serde_json::json!({"lens_flare": {
+            "current": {"intensity": 0.7, "future_field": true},
+            "named": {"Studio": {"intensity": 0.3}}
+        }});
+        let read = crate::tolerant::from_value::<crate::settings::Settings>(file, "settings.json").expect("read settings");
+        assert!(read.dropped.is_empty());
+        let flare = read.value.lens_flare;
+        assert_eq!(
+            flare.current,
+            LensFlare {
+                intensity: 0.7,
+                ..LensFlare::default()
+            }
+        );
+        assert_eq!(
+            flare.named["Studio"].0,
+            LensFlare {
+                intensity: 0.3,
+                ..LensFlare::default()
+            }
+        );
     }
 
     #[test]

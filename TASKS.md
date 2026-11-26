@@ -2004,6 +2004,7 @@ Suggested order (1, 2, 5, 7, 8, 10, 11, 13 and 15 are done): 17 and 19, then the
   - ⬜ Later: the recovery holds the event loop while it makes the new renderer (seconds), and now 2 s more before a second start; making it wait in the event loop would keep the window answering meanwhile.
 - ✅ Screen Space Lens Flare (task `screen-space-lens-flare-editor`, 2026-11-22; no issue; [PR #4388](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4388)): opt-in desktop effect with a live, resizable floater, four built-in looks, named local presets and a full-frame flare map shared by photo tiles. Quality is in the main floater. Advanced mirrors the Graphics Bloom controls and shows flare threshold, threshold smoothness, blur and streak taper. Offline Vulkan captures show continuous rays and consistent reflections across tile boundaries. Star Filter on an RTX 5070, Performance / Balanced / High: 0.041 / 0.099 / 0.177 ms at 1080p, 0.103 / 0.321 / 0.614 ms at 4K. The human accepted the offline Dev viewer after the resize fix.
   - First enable compiles the flare pipelines on a renderer worker. Later toggles reuse the compiled set.
+  - Saved presets fill missing fields from the renderer defaults. A single-pass photo uses its own targets, and a tiled photo caps the shared flare map at the resolution of its source.
   - The human validated the Dev viewer on the grid on 2026-11-22, took screenshots and saved a larger photo with the viewer.
   - ⬜ Measure Balanced quality on an integrated or older GPU when hardware is available.
 
