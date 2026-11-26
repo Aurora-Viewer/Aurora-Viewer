@@ -810,7 +810,7 @@ them):
 | Check | Result |
 |---|---|
 | No conflict with main | ✅ |
-| PR CI (fmt, clippy, secrets) | ✅ |
+| PR CI (fmt, clippy, secrets, catalogues) | ✅ |
 | Demo scenarios (before / after) | ✅ screenshots below |
 | Non-regression of neighbouring features | ✅ … |
 | Legacy Viewer fidelity | ✅ files checked: … |
