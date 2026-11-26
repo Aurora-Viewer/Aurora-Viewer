@@ -781,7 +781,7 @@ mod address_tests {
         panels.nav_edit_new = true;
         let rect = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(600.0, SLOT));
         for frame in 0..5 {
-            let _ = ctx.run_ui(
+            ctx.run_ui(
                 egui::RawInput {
                     time: Some(f64::from(frame) * 0.1),
                     ..Default::default()
@@ -789,7 +789,9 @@ mod address_tests {
                 |ui| {
                     place(ui, &p, &Icons::default(), &mut panels, &st, rect, Detail::Bare);
                 },
-            );
+            )
+            .textures_delta
+            .clear();
         }
         let id = Id::unique("nav_location_edit");
         assert!(ctx.read_response(id).is_some(), "the SLURL is an actual editable field");
@@ -797,9 +799,11 @@ mod address_tests {
         assert_eq!(panels.nav_edit.as_deref(), Some(st.slurl.as_str()));
         assert!(!panels.nav_edit_new);
         st.location_hidden = true;
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        ctx.run_ui(Default::default(), |ui| {
             place(ui, &p, &Icons::default(), &mut panels, &st, rect, Detail::Bare);
-        });
+        })
+        .textures_delta
+        .clear();
         // like the navigation bar (LLLocationInputCtrl): the field stays open
         assert!(panels.nav_edit.is_some(), "@showloc keeps the field open");
     }

@@ -858,7 +858,7 @@ mod tests {
             };
             let mut frame = |events| {
                 let mut command = None;
-                let _ = ctx.run_ui(
+                ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 720.0))),
                         events,
@@ -868,7 +868,9 @@ mod tests {
                         state.presets(ui, &p, locked, None, &Default::default());
                         command = state.show(ui.ctx(), &p, &mut inv, &toolbar, &Layout::default(), true);
                     },
-                );
+                )
+                .textures_delta
+                .clear();
                 command
             };
             for _ in 0..4 {
@@ -927,7 +929,7 @@ mod tests {
     ) -> Option<NetCommand> {
         let p = crate::theme::Theme::default().palette();
         let mut command = None;
-        let _ = ctx.run_ui(
+        ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 720.0))),
                 time: Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) as f64 * 0.1),
@@ -949,7 +951,9 @@ mod tests {
                     command = Some(value);
                 }
             },
-        );
+        )
+        .textures_delta
+        .clear();
         command
     }
 

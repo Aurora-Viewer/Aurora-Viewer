@@ -10,7 +10,9 @@ fn menu_catalogue_collection_has_no_actions_and_contains_stable_distinct_command
     st.marketplace = true;
     st.region_console = true;
     st.release_notes = true;
-    let _ = ctx.run_ui(Default::default(), |ui| collect_menu(ui, &p, &mut panels, &st));
+    ctx.run_ui(Default::default(), |ui| collect_menu(ui, &p, &mut panels, &st))
+        .textures_delta
+        .clear();
     let entries = commands::catalogue(&ctx);
     let ids: std::collections::HashSet<_> = entries.entries.iter().map(|entry| &entry.button.command).collect();
     assert_eq!(ids.len(), entries.entries.len());
@@ -30,7 +32,9 @@ fn menu_catalogue_collection_has_no_actions_and_contains_stable_distinct_command
     assert!(crate::ui::context::take_requests(&ctx).is_empty());
     assert!(commands::take_request(&ctx).is_none());
     st.flying = true;
-    let _ = ctx.run_ui(Default::default(), |ui| collect_menu(ui, &p, &mut panels, &st));
+    ctx.run_ui(Default::default(), |ui| collect_menu(ui, &p, &mut panels, &st))
+        .textures_delta
+        .clear();
     let next = commands::catalogue(&ctx);
     let next_ids: std::collections::HashSet<_> = next.entries.iter().map(|entry| &entry.button.command).collect();
     assert_eq!(ids, next_ids, "flight changes a label, never a saved command identity");
@@ -44,11 +48,13 @@ fn moved_menu_commands_use_their_native_handlers_and_current_enabled_guards() {
     let mut st = super::islands::tests::status(true, true);
     let mut action = BarAction::None;
     let mut invoke = |command: &str, st: &StatusInfo| {
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        ctx.run_ui(Default::default(), |ui| {
             collect_menu(ui, &p, &mut panels, st);
             commands::request(ui.ctx(), command);
             action = dispatch_menu(ui, &p, &mut panels, st);
-        });
+        })
+        .textures_delta
+        .clear();
         std::mem::take(&mut action)
     };
     assert!(matches!(
@@ -79,7 +85,9 @@ fn menu_layout_reparents_groups_preserves_new_entries_and_rejects_cycles() {
     let p = crate::theme::Theme::default().palette();
     let mut panels = Panels::from_settings(&crate::settings::Settings::default());
     let st = super::islands::tests::status(true, true);
-    let _ = ctx.run_ui(Default::default(), |ui| collect_menu(ui, &p, &mut panels, &st));
+    ctx.run_ui(Default::default(), |ui| collect_menu(ui, &p, &mut panels, &st))
+        .textures_delta
+        .clear();
     let catalogue = commands::catalogue(&ctx);
     let mut layout = std::collections::BTreeMap::new();
     let world = "menu:common-world";
@@ -125,7 +133,7 @@ fn aurora_menu_hover_shows_one_tooltip() {
         let pointer = ctx
             .read_response(egui::Id::unique("bars_island_menu"))
             .map_or(egui::pos2(26.0, 26.0), |response| response.rect.center());
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 700.0))),
                 time: Some(frame as f64 * 0.3),
@@ -154,6 +162,7 @@ fn aurora_menu_hover_shows_one_tooltip() {
                 );
             },
         );
+        output.textures_delta.clear();
         count = output
             .shapes
             .iter()
@@ -175,7 +184,9 @@ fn categorized_catalogue_merges_about_land_and_preserves_a_saved_menu_copy() {
     let layout = Layout::default();
     let mut panels = Panels::from_settings(&crate::settings::Settings::default());
     let st = islands::tests::status(true, true);
-    let _ = ctx.run_ui(Default::default(), |ui| collect_menu(ui, &p, &mut panels, &st));
+    ctx.run_ui(Default::default(), |ui| collect_menu(ui, &p, &mut panels, &st))
+        .textures_delta
+        .clear();
     let catalogue = commands::catalogue(&ctx);
     let mut settings = ToolbarSettings::default();
     let about = "menu:common-world/common-about-land";
@@ -223,7 +234,7 @@ fn mixed_button_modes_inherit_only_when_requested_and_round_trip_with_icons() {
         },
     );
     let mut widths = (0.0, 0.0);
-    let _ = ctx.run_ui(Default::default(), |ui| {
+    ctx.run_ui(Default::default(), |ui| {
         let state = ToolbarUi::default();
         state.prepare(ui.ctx(), &settings);
         widths.0 = natural_width(ui.ctx(), inventory, ButtonMode::IconsOnly, 28.0, 16.0, 38.0);
@@ -231,7 +242,9 @@ fn mixed_button_modes_inherit_only_when_requested_and_round_trip_with_icons() {
         state.prepare(ui.ctx(), &settings);
         widths.1 = natural_width(ui.ctx(), inventory, ButtonMode::IconsOnly, 28.0, 16.0, 38.0);
         let _ = p;
-    });
+    })
+    .textures_delta
+    .clear();
     assert!(widths.0 > widths.1);
     assert_eq!(widths.1, 28.0);
     let saved: ToolbarSettings = serde_json::from_str(&serde_json::to_string(&settings).expect("settings")).expect("round trip");
@@ -270,7 +283,7 @@ fn top_toolbar_keeps_a_labelled_override_wide_beside_icon_only_buttons() {
     let mut state = ToolbarUi::default();
     let mut panels = Panels::from_settings(&crate::settings::Settings::default());
     let mut expected = 0.0;
-    let _ = ctx.run_ui(
+    ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 700.0))),
             ..Default::default()
@@ -320,7 +333,9 @@ fn top_toolbar_keeps_a_labelled_override_wide_beside_icon_only_buttons() {
                 false,
             );
         },
-    );
+    )
+    .textures_delta
+    .clear();
     let response = ctx.read_response(tool_button_id("preferences")).expect("top preferences");
     assert!(expected > islands::SLOT);
     assert!(response.rect.width() >= expected - 0.5, "{} < {expected}", response.rect.width());
@@ -356,7 +371,7 @@ fn a_crowded_top_toolbar_preserves_the_address_and_status_islands() {
     let mut toolbar = ToolbarUi::default();
     let mut minimum = 0.0;
     for _ in 0..4 {
-        let _ = ctx.run_ui(
+        ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1000.0, 700.0))),
                 ..Default::default()
@@ -379,7 +394,9 @@ fn a_crowded_top_toolbar_preserves_the_address_and_status_islands() {
                     &settings,
                 );
             },
-        );
+        )
+        .textures_delta
+        .clear();
     }
     let rect = |name| {
         ctx.memory(|memory| memory.area_rect(egui::Id::unique(("bars_island", name))))

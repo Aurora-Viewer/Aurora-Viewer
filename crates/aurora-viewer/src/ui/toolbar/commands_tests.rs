@@ -206,9 +206,11 @@ fn stationary_right_click_closes_and_reopens_bar_contexts_without_executing_acti
                 bench.settings.compose_top();
                 let command = if source == "gap" {
                     let gap = structure::separator("context-toggle");
+                    take_out(&mut bench.settings, &["inventory", "preferences"]);
                     bench.settings.top = vec![tests::button("inventory"), gap.clone(), tests::button("preferences")];
                     gap.command
                 } else if source == "drawer" {
+                    take_out(&mut bench.settings, &["preferences"]);
                     let id = drawers::create(&mut bench.settings, Bar::Top, &Layout::default());
                     bench.settings.drawers.get_mut(&id).expect("drawer").buttons = vec![tests::button("preferences")];
                     id
@@ -771,9 +773,11 @@ fn old_school_text_menus_open_the_native_groups_and_dispatch_build_import() {
             let p = crate::theme::Theme::default().palette();
             // The app dispatches queued menu requests after drawing. This
             // focused toolbar fixture normally leaves them for its caller.
-            let _ = ctx.run_ui(Default::default(), |ui| {
+            ctx.run_ui(Default::default(), |ui| {
                 action = bars::dispatch_menu(ui, &p, &mut bench.panels, &bars::islands::tests::status(true, false));
-            });
+            })
+            .textures_delta
+            .clear();
             assert!(matches!(action, bars::BarAction::BlenderLive));
             assert!(commands::take_request(&ctx).is_none(), "the native request is consumed once");
         }
@@ -827,9 +831,11 @@ fn photographer_controls_render_and_personal_lighting_uses_the_native_handler() 
     bench.pointer(point, Some(false));
     let ctx = bench.ctx.clone();
     let p = crate::theme::Theme::default().palette();
-    let _ = ctx.run_ui(Default::default(), |ui| {
+    ctx.run_ui(Default::default(), |ui| {
         bars::dispatch_menu(ui, &p, &mut bench.panels, &bars::islands::tests::status(true, false));
-    });
+    })
+    .textures_delta
+    .clear();
     assert!(bench.panels.personal_lighting);
     assert!(commands::take_request(&ctx).is_none());
 }
@@ -2043,12 +2049,30 @@ fn save_back_button_uses_the_native_action_and_rechecks_selection_on_dispatch() 
             let mut status = bars::islands::tests::status(true, false);
             status.save_to_contents = dispatch_enabled;
             let mut action = bars::BarAction::None;
-            let _ = ctx.run_ui(Default::default(), |ui| {
+            ctx.run_ui(Default::default(), |ui| {
                 action = bars::dispatch_menu(ui, &p, &mut bench.panels, &status);
-            });
+            })
+            .textures_delta
+            .clear();
             assert_eq!(matches!(action, bars::BarAction::SaveToObjectContents), enabled && dispatch_enabled);
             assert!(matches!(action, bars::BarAction::None | bars::BarAction::SaveToObjectContents));
         }
+    }
+}
+
+/// Takes `commands` out of the bars before a test places them elsewhere, as
+/// an edit does: each command is drawn once a frame, and one drawn in two
+/// layers trips egui's debug check (the CI builds with debug assertions).
+fn take_out(settings: &mut ToolbarSettings, commands: &[&str]) {
+    let layout = Layout::default();
+    for bar in Bar::ALL {
+        let kept = settings
+            .bar(bar, &layout)
+            .iter()
+            .filter(|button| !commands.contains(&button.command.as_str()))
+            .cloned()
+            .collect();
+        settings.set_bar(bar, kept);
     }
 }
 
@@ -4430,6 +4454,7 @@ fn an_edited_floating_blocks_separators_move_like_its_buttons() {
             ..Default::default()
         };
         bench.settings.compose_top();
+        take_out(&mut bench.settings, &["inventory", "people"]);
         let id = drawers::create_floating(&mut bench.settings, "Tools");
         let middle = if gap == "separator" {
             structure::separator("gap")
@@ -4473,6 +4498,7 @@ fn a_floating_block_that_closes_hides_after_a_click_on_its_button() {
             ..Default::default()
         };
         bench.settings.compose_top();
+        take_out(&mut bench.settings, &["inventory"]);
         let id = drawers::create_floating(&mut bench.settings, "Tools");
         let drawer = bench.settings.drawers.get_mut(&id).expect("floating block");
         drawer.buttons = vec![tests::button("inventory")];
@@ -4510,6 +4536,7 @@ fn a_floating_block_reaches_the_rooms_top_and_bottom_in_both_orientations() {
             ..Default::default()
         };
         bench.settings.compose_top();
+        take_out(&mut bench.settings, &["inventory", "people", "preferences"]);
         let id = drawers::create_floating(&mut bench.settings, "Tools");
         let drawer = bench.settings.drawers.get_mut(&id).expect("floating block");
         drawer.buttons = vec![tests::button("inventory"), tests::button("people"), tests::button("preferences")];
@@ -4661,6 +4688,7 @@ fn a_floating_blocks_right_click_edits_it_and_does_not_delete_it() {
         ..Default::default()
     };
     bench.settings.compose_top();
+    take_out(&mut bench.settings, &["inventory"]);
     let id = drawers::create_floating(&mut bench.settings, "Tools");
     bench.settings.drawers.get_mut(&id).expect("floating block").buttons = vec![tests::button("inventory")];
     for _ in 0..4 {
@@ -4705,6 +4733,7 @@ fn a_floating_blocks_button_hides_once_asked_and_its_block_has_a_shortcut() {
             ..Default::default()
         };
         bench.settings.compose_top();
+        take_out(&mut bench.settings, &["inventory", "people"]);
         bench
             .settings
             .set_bar(Bar::Top, vec![tests::button("inventory"), tests::button("people")]);
@@ -4755,6 +4784,7 @@ fn a_floating_blocks_close_button_ends_its_buttons_and_hides_it() {
             ..Default::default()
         };
         bench.settings.compose_top();
+        take_out(&mut bench.settings, &["inventory", "people"]);
         bench
             .settings
             .set_bar(Bar::Top, vec![tests::button("inventory"), tests::button("people")]);
@@ -5391,7 +5421,7 @@ fn a_long_interface_name_ends_with_an_ellipsis_before_its_eye() {
     let p = crate::theme::Theme::default().palette();
     let long = "Interface Aurora Builder with a very long name";
     let mut rects = Vec::new();
-    let output = ctx.run_ui(Default::default(), |ui| {
+    let mut output = ctx.run_ui(Default::default(), |ui| {
         for label in [long, "Mine"] {
             let response = crate::ui::widgets::action_button_trailing(
                 ui,
@@ -5405,6 +5435,7 @@ fn a_long_interface_name_ends_with_an_ellipsis_before_its_eye() {
             rects.push(response.rect);
         }
     });
+    output.textures_delta.clear();
     let mut texts = Vec::new();
     fn gather(shape: &egui::Shape, texts: &mut Vec<(String, Rect, bool)>) {
         match shape {

@@ -79,7 +79,7 @@ mod tests {
         let mut frame = |bar: Bar, events, editing: bool, chat: &mut crate::ui::chat::ChatUi| {
             let mut sent = None;
             toolbar.open = editing;
-            let _ = ctx.run_ui(
+            ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))),
                     events,
@@ -122,7 +122,9 @@ mod tests {
                     );
                     sent = chrome::show_chat(ui, &p, &icons, &mut panels, chat, &gestures, None, &row, &mut width).0;
                 },
-            );
+            )
+            .textures_delta
+            .clear();
             sent
         };
         for bar in Bar::ALL {

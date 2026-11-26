@@ -545,7 +545,7 @@ mod tests {
             let mut state = AudioUi::default();
             let mut audio = AudioSettings::default();
             let icons = Icons::default();
-            let _ = ctx.run_ui(Default::default(), |ui| {
+            ctx.run_ui(Default::default(), |ui| {
                 if !enabled {
                     ui.disable();
                 }
@@ -573,7 +573,9 @@ mod tests {
                     );
                     assert_eq!(state.media_button, media, "other audio controls retain the media anchor");
                 }
-            });
+            })
+            .textures_delta
+            .clear();
             assert_eq!(state.media_button.is_some(), enabled);
             if let Some(rect) = state.media_button {
                 assert!(rect.is_positive());

@@ -172,7 +172,7 @@ mod tests {
         };
         let ctx = egui::Context::default();
         let p = crate::theme::Theme::default().palette();
-        let _ = ctx.run_ui(
+        ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))),
                 ..Default::default()
@@ -180,7 +180,9 @@ mod tests {
             |ui| {
                 state.show(ui.ctx(), &p, &layout, &toolbar, None);
             },
-        );
+        )
+        .textures_delta
+        .clear();
         let inferred = state.inferred_preset.take().expect("persist the initial identity");
         assert_eq!(inferred, Preset::OldSchool);
         let mut selected = Selection::builtin(inferred, &layout);
@@ -258,7 +260,7 @@ mod tests {
                 }
                 let mut visible = false;
                 for _ in 0..4 {
-                    let output = ctx.run_ui(
+                    let mut output = ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))),
                             ..Default::default()
@@ -267,6 +269,7 @@ mod tests {
                             state.show(ui.ctx(), &p, &layout, &toolbar, Some(&selected));
                         },
                     );
+                    output.textures_delta.clear();
                     visible = output
                         .shapes
                         .iter()

@@ -192,7 +192,7 @@ mod tests {
         panels.nav_edit_new = true;
         toggle(&ctx);
         for _ in 0..3 {
-            let _ = ctx.run_ui(
+            ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1000.0, 700.0))),
                     ..Default::default()
@@ -205,7 +205,9 @@ mod tests {
                         &super::super::islands::tests::status(true, false),
                     );
                 },
-            );
+            )
+            .textures_delta
+            .clear();
             assert_eq!(panels.nav_edit.as_deref(), Some("independent integrated edit"));
             assert!(panels.nav_edit_new);
             assert!(ctx.read_response(field_id()).is_some());

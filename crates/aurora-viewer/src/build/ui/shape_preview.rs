@@ -258,11 +258,12 @@ mod tests {
         ];
         let mut meshes = Vec::new();
         for _ in 0..2 {
-            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 for rect in cells {
                     preview.paint(ui, rect, Color32::WHITE);
                 }
             });
+            output.textures_delta.clear();
             let callbacks: Vec<_> = output
                 .shapes
                 .iter()
