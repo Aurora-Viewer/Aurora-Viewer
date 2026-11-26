@@ -340,6 +340,7 @@ fn board_tiles(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &mu
         for tile in placed {
             let id = egui::Id::unique(("inspect_tile", tile.id));
             let rect = board::slide(ui, id, tile.rect);
+            let rect = board::in_sight(ui, rect, tile.form);
             let toggled = one_tile(state, ui, p, frame, view, actions, id, rect, tile.id, tile.form, pointed);
             if toggled {
                 state.wide.grown = (state.wide.grown != Some(tile.id)).then_some(tile.id);
@@ -349,8 +350,10 @@ fn board_tiles(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, frame: &mu
     };
     if height > area.height() + 1.0 {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            let area = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), height.max(area.height())));
-            let height = draw(ui, area.with_max_y(area.top() + 1.0));
+            // the area in sight: the rows take their least height, a grown
+            // tile the area's
+            let area = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), area.height()));
+            let height = draw(ui, area);
             ui.allocate_space(Vec2::new(area.width(), height));
         });
     } else {

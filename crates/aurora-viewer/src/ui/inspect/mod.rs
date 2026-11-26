@@ -443,6 +443,7 @@ mod tests {
             for subject in [Subject::Avatar(Uuid::from_u128(99)), Subject::Objects] {
                 crate::ui::widgets::steady_tests::assert_window_steady(
                     "inspect",
+                    // as short as it goes too: the tiles beside a grown one scroll (#5027)
                     &[SIZE, MIN_SIZE],
                     aurora_i18n::tr!("inspect-creator-button"),
                     || {
