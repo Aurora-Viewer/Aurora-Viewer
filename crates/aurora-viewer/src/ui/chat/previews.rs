@@ -1353,6 +1353,8 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     let minimum_width = clip.as_ref().map_or(0.0, lp::Clip::minimum_width);
     let provider_click = clip.as_ref().is_some_and(lp::Clip::requires_player_click);
     let native_video = clip.as_ref().is_some_and(lp::Clip::native_video);
+    let download = clip.as_ref().and_then(lp::Clip::download_url);
+    let save_id = egui::Id::unique(("save_chat_video", k));
     if clip.is_none() && video.is_none() {
         return;
     }
@@ -1507,7 +1509,8 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                     ui.horizontal(|ui| {
                         // room kept for the buttons while it plays here, so
                         // the title does not move when they appear
-                        let buttons = if here == Some(false) { 5.0 } else { 2.0 } * (20.0 + 6.0);
+                        let buttons =
+                            (if here == Some(false) { 5.0 } else { 2.0 } + if download.is_some() { 1.0 } else { 0.0 }) * (20.0 + 6.0);
                         ui.vertical(|ui| {
                             ui.set_width((ui.available_width() - buttons).max(60.0));
                             ui.spacing_mut().item_spacing.y = 2.0;
@@ -1522,6 +1525,23 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                                 }
                                 if crate::ui::widgets::icon_button(ui, p, "link-filled", &link_tip(url, true), true) {
                                     ui.ctx().copy_text(url.to_owned());
+                                }
+                                if let Some(source) = download {
+                                    let (saving, saved) = ui.ctx().data(|data| {
+                                        (
+                                            data.get_temp::<bool>(save_id.with("saving")) == Some(true),
+                                            data.get_temp::<bool>(save_id),
+                                        )
+                                    });
+                                    let tip = match (saving, saved) {
+                                        (true, _) => aurora_i18n::tr!("ui-chat-preview-saving-video"),
+                                        (_, Some(true)) => aurora_i18n::tr!("ui-chat-preview-video-saved"),
+                                        (_, Some(false)) => aurora_i18n::tr!("ui-chat-preview-video-save-failed"),
+                                        _ => aurora_i18n::tr!("ui-chat-preview-save-video"),
+                                    };
+                                    if crate::ui::widgets::icon_button(ui, p, "download-filled", tip, !saving) {
+                                        save_video(ui.ctx().clone(), save_id, source.to_owned());
+                                    }
                                 }
                                 if here != Some(false) {
                                     return;

@@ -357,6 +357,48 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
     }
 }
 
+#[test]
+fn publisher_shares_use_public_pages_and_publisher_images() {
+    for url in [
+        "https://www.snapchat.com/spotlight/1234aBcDe",
+        "https://www.dailymotion.com/video/x84sh87",
+        "https://www.arte.tv/en/videos/123456-000-A/example/",
+        "https://www.bbc.co.uk/iplayer/episode/m001jjq0/example",
+        "https://tver.jp/episodes/ep12345",
+        "https://www.nicovideo.jp/watch/sm9",
+        "https://tv.naver.com/v/12345678",
+        "https://chzzk.naver.com/video/12345",
+        "https://vod.sooplive.co.kr/player/12345",
+        "https://tv.kakao.com/channel/123/cliplink/456",
+        "https://www.douyin.com/video/12345678",
+        "https://www.kuaishou.com/short-video/Abc_123",
+        "https://www.xiaohongshu.com/explore/123abc",
+        "https://v.qq.com/x/cover/series123/video456.html",
+        "https://www.iqiyi.com/v_example.html",
+        "https://v.youku.com/v_show/id_XYZ=.html",
+        "https://www.mgtv.com/b/123456/7890123.html",
+    ] {
+        let input = format!("{url}?tracking=example#fragment");
+        assert!(
+            matches!(recognize(&input), Some((Service::Site, Step::Publisher(page))) if page == url),
+            "{url}"
+        );
+    }
+    for url in [
+        "https://www.dailymotion.com/",
+        "https://dailymotion.com.example.org/video/x84sh87",
+        "https://www.dailymotion.com/video/x84sh87%2Fextra",
+        "http://www.nicovideo.jp/watch/sm9",
+    ] {
+        assert!(!matches!(recognize(url), Some((_, Step::Publisher(_)))), "{url}");
+    }
+    let html = r#"<meta property="og:image" content="https://dmcdn.net.example.org/bad"><meta name="twitter:image" content="https://s1.dmcdn.net/good">"#;
+    assert_eq!(
+        publisher_poster("https://www.dailymotion.com/video/x84sh87", html).as_deref(),
+        Some("https://s1.dmcdn.net/good"),
+    );
+}
+
 fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
         return None;
@@ -420,20 +462,53 @@ pub(super) fn publisher_poster(page: &str, html: &str) -> Option<String> {
         _ => &[],
     };
     head_meta(html).find_map(|(key, value)| {
-        if !matches!(key.to_ascii_lowercase().as_str(), "og:image" | "og:image:url" | "twitter:image") || value.len() > 2048 {
-            return None;
-        }
-        let url = page.join(&unescape(value)).ok()?;
-        if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
-            return None;
-        }
-        let host = url.host_str()?;
-        (bare_host(&url).as_deref() == Some(owner.as_str())
-            || allowed
-                .iter()
-                .any(|domain| host == *domain || host.strip_suffix(domain).is_some_and(|prefix| prefix.ends_with('.'))))
-        .then(|| url.into())
+        matches!(key.to_ascii_lowercase().as_str(), "og:image" | "og:image:url" | "twitter:image")
+            .then(|| publisher_image(&page, &owner, allowed, &unescape(value)))
+            .flatten()
     })
+}
+
+fn publisher_image(page: &Url, owner: &str, allowed: &[&str], value: &str) -> Option<String> {
+    if value.len() > 2048 {
+        return None;
+    }
+    let url = page.join(value).ok()?;
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+        return None;
+    }
+    let host = url.host_str()?;
+    (bare_host(&url).as_deref() == Some(owner)
+        || allowed
+            .iter()
+            .any(|domain| host == *domain || host.strip_suffix(domain).is_some_and(|prefix| prefix.ends_with('.'))))
+    .then(|| url.into())
+}
+
+pub(super) fn dailymotion_oembed(page: &str) -> Option<Url> {
+    let parsed = Url::parse(page).ok()?;
+    (bare_host(&parsed).as_deref() == Some("dailymotion.com")).then_some(())?;
+    Url::parse_with_params("https://www.dailymotion.com/services/oembed", [("url", page)]).ok()
+}
+
+pub(super) fn from_dailymotion_oembed(page: &str, body: &[u8]) -> Option<(super::PostInfo, Option<String>)> {
+    let parsed = Url::parse(page).ok()?;
+    let data: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let title: String = data["title"].as_str()?.trim().chars().take(200).collect();
+    if title.is_empty() {
+        return None;
+    }
+    let channel = data["author_name"].as_str().unwrap_or("Dailymotion").chars().take(80).collect();
+    let poster = data["thumbnail_url"]
+        .as_str()
+        .and_then(|url| publisher_image(&parsed, "dailymotion.com", &["dmcdn.net"], url));
+    Some((
+        super::PostInfo {
+            title,
+            channel,
+            summary: String::new(),
+        },
+        poster,
+    ))
 }
 
 /// The servers each service keeps its pictures on.

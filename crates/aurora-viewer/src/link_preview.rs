@@ -1199,6 +1199,16 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
             services::from_head(service, &html)
         }
         Step::Publisher(page) => {
+            if let Some(endpoint) = services::dailymotion_oembed(&page)
+                && let Ok((body, _)) = download(client, endpoint.as_str(), "application/json", 64 * 1024).await
+                && let Some((post, poster)) = services::from_dailymotion_oembed(&page, &body)
+            {
+                let picture = match poster {
+                    Some(source) => fetch_picture(client, &source).await.ok(),
+                    None => None,
+                };
+                return Ok(Content::Post(post, picture));
+            }
             let html = text_head(client, &page, "text/html", "</head>").await.0?;
             let title = services::metadata(&html, &["og:title", "twitter:title"]).ok_or(Failure::Unavailable)?;
             let channel = services::metadata(&html, &["author", "og:site_name"])
