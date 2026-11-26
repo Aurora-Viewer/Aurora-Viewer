@@ -494,9 +494,6 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     });
 }
 
-/// GP_LAND_DIVIDE_JOIN, GP_LAND_RELEASE (llagent / roles_constants.h).
-const GP_LAND_DIVIDE_JOIN: u64 = 1 << 19;
-const GP_LAND_RELEASE: u64 = 1 << 20;
 /// REGION_FLAGS_ALLOW_PARCEL_CHANGES.
 const REGION_FLAGS_ALLOW_PARCEL_CHANGES: u32 = 1 << 26;
 
@@ -576,19 +573,21 @@ pub fn parcel_panel(
     // who may do what (LLPanelLandInfo::refresh)
     let (mine, owner_divide, owner_release, can_buy) = match parcel.as_ref() {
         Some(pi) => {
-            let group_power = |power: u64| pi.is_group_owned && world.groups.group(&pi.group_id).is_some_and(|g| g.powers & power != 0);
             let mine = pi.owner_id == world.agent_id;
+            // LLPanelLandInfo::refresh: LLViewerParcelMgr::isParcelOwnedByAgent
+            // with GP_LAND_DIVIDE_JOIN for Subdivide and GP_LAND_RELEASE for
+            // Abandon land, the rule About Land uses too (`owned_by_agent`:
+            // our land, a god, or the owning group's power)
+            use crate::world::land::{owned_by_agent, powers};
+            let rights = world.agent_rights();
+            let owner_divide = owned_by_agent(pi, &rights, powers::LAND_DIVIDE_JOIN);
+            let owner_release = owned_by_agent(pi, &rights, powers::LAND_RELEASE);
             let for_sale = pi.flags & aurora_net::parcel_flags::FOR_SALE != 0;
             let can_buy = for_sale
                 && !mine
                 && (pi.sale_price > 0 || !pi.auth_buyer.is_nil())
                 && (pi.auth_buyer.is_nil() || pi.auth_buyer == world.agent_id);
-            (
-                mine,
-                mine || group_power(GP_LAND_DIVIDE_JOIN),
-                mine || group_power(GP_LAND_RELEASE),
-                can_buy || pi.owner_id.is_nil(),
-            )
+            (mine, owner_divide, owner_release, can_buy || pi.owner_id.is_nil())
         }
         None => (false, false, false, false),
     };

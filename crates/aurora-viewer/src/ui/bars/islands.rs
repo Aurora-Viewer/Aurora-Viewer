@@ -818,7 +818,7 @@ pub(super) fn system_parts(
                 );
                 if fps.clicked() {
                     crate::ui::perf::place_under(ui.ctx(), island);
-                    panels.perf = !panels.perf;
+                    crate::ui::widgets::toggle_floater(ui.ctx(), "perf", &mut panels.perf);
                 }
                 if ui.is_enabled() {
                     super::graphics::hover(&fps, p, st, action);

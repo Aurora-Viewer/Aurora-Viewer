@@ -16,6 +16,13 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
     let explorer = st.lists_flat();
     st.shown_order = order_kind(st, filtered);
     let selected_after_delete = delete::reconcile_selection(inv, st);
+    // A click starts a new prefix, as LLFolderView::handleMouseDown does for a
+    // press on the folder view. Aurora also clears it when the click gives the
+    // keyboard to another field (harmless: the prefix only counts while the
+    // list has the keyboard).
+    if ui.input(|i| i.pointer.any_pressed()) {
+        st.type_ahead.clear();
+    }
     if !clipboard::list_has_focus(ui, st) || st.rename.is_some() {
         return selected_after_delete;
     }
@@ -95,22 +102,11 @@ pub(super) fn commands(
     for command in shortcuts::take(ui, wanted) {
         match command {
             shortcuts::Command::NewFolder => {
-                let explorer = st.aurora.is_some_and(|frame| frame.layout != aurora::Layout::Compact) && st.tab == 0;
-                let to = if explorer {
-                    root
-                } else {
-                    st.selected
-                        .filter(|id| inv.folders.contains_key(id))
-                        .or_else(|| st.selected.and_then(|id| rules::parent(inv, id)))
-                        .unwrap_or(root)
-                };
+                let (to, in_all) = st.new_folder_target(inv, root, st.aurora.map(|frame| frame.layout));
                 if st.pending.is_some() || !rules::destination(inv, to) {
                     continue;
                 }
-                match rules::create_folder(to, crate::text_validation::default_name("common-new-folder")) {
-                    Ok(plan) => actions.push(InvAction::Edit(plan)),
-                    Err(reason) => st.message = reason,
-                }
+                context::new_folder(st, actions, to, in_all);
             }
             // Explorer's Alt+Enter: the item's properties in a window of
             // its own, as many as asked for, the list free behind them

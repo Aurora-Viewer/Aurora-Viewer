@@ -10,6 +10,9 @@ pub(super) struct Appearance {
 pub(super) struct ImageSlot {
     slot: u32,
     refs: usize,
+    /// The snapshot shown has it: kept on the GPU even when no object
+    /// draws it (a hidden one), since its staged copy is given up.
+    kept: bool,
 }
 
 impl Scene {
@@ -51,11 +54,33 @@ impl Scene {
     pub fn preview_appearance_counts(&self) -> (usize, usize) {
         (self.preview_appearances.len(), self.preview_images.len())
     }
+    /// Whether a preview image is on the GPU.
+    pub fn has_preview_image(&self, id: &Uuid) -> bool {
+        self.preview_images.contains_key(id)
+    }
+
+    /// Uploads the images of the snapshot shown, `images`: all of them, those
+    /// of hidden objects too, which then stay on the GPU while the snapshot
+    /// has them. False while one not uploaded yet has no staged copy ready.
+    ///
+    /// Once uploaded, an image needs its staged copy no more, and
+    /// `Live::release_staged` gives it up: a staged region kept alive held
+    /// every upload of the viewer back by up to 9 frames
+    /// (`StagingPool::prepare`).
     pub fn install_preview_images(&mut self, images: &[crate::blender_live::protocol::PreparedImage], renderer: &mut Renderer) -> bool {
-        if images
-            .iter()
-            .any(|image| image.staged.as_ref().is_none_or(|staged| !staged.data.ready()))
-        {
+        for (id, entry) in &mut self.preview_images {
+            entry.kept = images.iter().any(|image| image.id == *id);
+        }
+        // (never from a pool of another device, lost since: its chunks are
+        // not unmapped any more, and this device cannot copy from them)
+        let pool = renderer.staging_pool();
+        if images.iter().any(|image| {
+            !self.preview_images.contains_key(&image.id)
+                && image
+                    .staged
+                    .as_ref()
+                    .is_none_or(|staged| !staged.data.is_from(&pool) || !staged.data.ready())
+        }) {
             return false;
         }
         for image in images {
@@ -71,9 +96,16 @@ impl Scene {
                 return false;
             }
             self.textures.register_local_image(image.id, slot, image.alpha, image.has_alpha);
-            self.preview_images.insert(image.id, ImageSlot { slot, refs: 0 });
+            self.preview_images.insert(image.id, ImageSlot { slot, refs: 0, kept: true });
         }
         true
+    }
+
+    /// The preview stopped: its images go once no object draws them.
+    pub fn release_preview_images(&mut self) {
+        for entry in self.preview_images.values_mut() {
+            entry.kept = false;
+        }
     }
 
     pub fn install_preview_materials(&mut self, mesh: Uuid, materials: &[Option<(Uuid, aurora_assets::material::PbrMaterial)>]) {
@@ -157,7 +189,7 @@ impl Scene {
         let unused: Vec<_> = self
             .preview_images
             .iter()
-            .filter(|(_, entry)| entry.refs == 0)
+            .filter(|(_, entry)| entry.refs == 0 && !entry.kept)
             .map(|(id, _)| *id)
             .collect();
         for id in unused {

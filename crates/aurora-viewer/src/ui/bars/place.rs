@@ -522,7 +522,8 @@ fn place(
         if r.on_hover_text(aurora_i18n::tr!("ui-parcel-icons-click-about-land", value0 = it.tip.to_string()))
             .clicked()
         {
-            panels.about_land = !panels.about_land;
+            let id = crate::ui::land::window_id(panels.about_land_classic);
+            crate::ui::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
         }
     }
 
@@ -627,7 +628,8 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     )
     .clicked()
     {
-        panels.about_land = !panels.about_land;
+        let id = crate::ui::land::window_id(panels.about_land_classic);
+        crate::ui::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
         ui.close();
     }
     ui.add_space(6.0);

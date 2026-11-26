@@ -1166,7 +1166,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         health_menu(ui, p, &st.health);
         menu::separator(ui, p);
         if menu::command(ui, p, "ui-bars-preferences").item("settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
-            super::widgets::open_floater(ui.ctx(), "options", &mut panels.settings);
+            super::widgets::open_floater(ui.ctx(), super::options::WINDOW, &mut panels.settings);
         }
         // menu_viewer.xml: Show User Interface (alt|shift|U), after
         // Preferences, Toolbar Buttons and Show HUD Attachments
@@ -1304,18 +1304,20 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         // menu_viewer.xml: Parcel Details (About Land), then Region Details
         // (Region / Estate, Alt+R)
-        // (About Land's floater has an id per layout: the flag alone)
+        // (About Land's floater has an id per layout: `about_land_classic`)
         if menu::command(ui, p, "common-about-land").check(
             "info-circle-filled",
             aurora_i18n::tr!("common-about-land"),
             panels.about_land,
             true,
         ) {
-            panels.about_land = !panels.about_land;
+            let id = super::land::window_id(panels.about_land_classic);
+            super::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
         }
         let region = crate::keybinds::chord_label("KeyR", false, true, false);
         if menu::command(ui, p, "region-title").item_keys("building-castle", aurora_i18n::tr!("region-title"), &region) {
-            super::widgets::toggle_floater(ui.ctx(), super::region::WINDOW, &mut panels.region_estate);
+            let id = super::region::window_id(panels.region_estate_classic);
+            super::widgets::toggle_floater(ui.ctx(), id, &mut panels.region_estate);
         }
         // menu_viewer.xml: Set Home to Here, after Region Details
         if menu::command(ui, p, "world-set-home-here").item_if("home-check", aurora_i18n::tr!("world-set-home-here"), st.can_set_home) {
@@ -1535,14 +1537,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 aurora_i18n::tr!("ui-bars-environment-picker"),
                 free,
             ) {
-                panels.environment = true;
+                super::widgets::open_floater(ui.ctx(), "environment_selector", &mut panels.environment);
             }
             if menu::command(ui, p, "common-personal-lighting").item_if(
                 "adjustments-filled",
                 aurora_i18n::tr!("common-personal-lighting"),
                 free,
             ) {
-                panels.personal_lighting = true;
+                super::widgets::open_floater(ui.ctx(), "personal_lighting", &mut panels.personal_lighting);
             }
             // Aurora's own: the weather beside the lighting it rides on; it
             // lights the scene, so @setenv holds it like the rest
@@ -1705,7 +1707,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             menu::identified(ui, "perf", |ui| flip_window(ui, p, "gauge-filled", perf, "perf", &mut panels.perf));
             let graphics = aurora_i18n::tr!("ui-bars-graphics-preferences");
             menu::identified(ui, "graphics", |ui| {
-                flip_window(ui, p, "settings-filled", graphics, "options", &mut panels.settings)
+                flip_window(ui, p, "settings-filled", graphics, super::options::WINDOW, &mut panels.settings)
             });
             let toolbox = aurora_i18n::tr!("dev-toolbox-menu");
             menu::identified(ui, "toolbox", |ui| {
@@ -2810,7 +2812,7 @@ pub fn top_bars(
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
                     graphics::hover(&fps, p, st, &mut action);
                     if fps.clicked() {
-                        panels.perf = !panels.perf;
+                        super::widgets::toggle_floater(ui.ctx(), "perf", &mut panels.perf);
                     }
                     audio_action = super::audio::top_controls(ui, p, icons, audio, audio_ui, media, super::audio::BAR_SLOT);
                     if voice_light(ui, p, icons, st.voice.0, &st.voice.1) {
@@ -2929,7 +2931,8 @@ pub fn top_bars(
                                 }
                                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     if info_button(ui, p, icons) {
-                                        panels.about_land = !panels.about_land;
+                                        let id = super::land::window_id(panels.about_land_classic);
+                                        super::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
                                     }
                                     // keep the maturity badge and the parcel icons visible when
                                     // the field is narrow; the icons go first in a very narrow
@@ -2957,7 +2960,8 @@ pub fn top_bars(
                                         ui.add_space((ui.available_width() - icons_w + 8.0 - STAR_W).max(0.0));
                                         ui.scope(|ui| {
                                             if super::parcel_icons::show(ui, p, icons, &st.parcel_icons, p.field) {
-                                                panels.about_land = !panels.about_land;
+                                                let id = super::land::window_id(panels.about_land_classic);
+                                                super::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
                                             }
                                         });
                                     } else {
@@ -3015,7 +3019,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         }
         "inventory" => toggle("inventory", &mut panels.inventory),
         "inventory_dual" => {
-            panels.inventory = true;
+            super::widgets::open_floater(ctx, "inventory", &mut panels.inventory);
             panels.inventory_dual = !panels.inventory_dual;
             super::inventory::resize_for_dual(ctx, panels.inventory_dual);
         }
@@ -3084,7 +3088,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // View › Show User Interface and World › HUDs › Show HUDs as buttons
         "hide_interface" => return BarAction::ToggleInterface,
         "huds" => return BarAction::ToggleHuds,
-        "preferences" => toggle("options", &mut panels.settings),
+        "preferences" => toggle(super::options::WINDOW, &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
             return BarAction::Controls {
@@ -3106,9 +3110,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "sit" => return BarAction::SitGround,
         "home" => return BarAction::TeleportHome,
         // Firestorm's commands on what Aurora already does (commands.xml)
-        "aboutland" => panels.about_land = !panels.about_land,
-        "regioninfo" => panels.region_estate = !panels.region_estate,
-        "myenvironments" => panels.environment = !panels.environment,
+        "aboutland" => toggle(super::land::window_id(panels.about_land_classic), &mut panels.about_land),
+        "regioninfo" => toggle(super::region::window_id(panels.region_estate_classic), &mut panels.region_estate),
+        "myenvironments" => toggle("environment_selector", &mut panels.environment),
         "radar" | "block_list" | "contact_sets" => {
             let tab = match cmd {
                 "radar" => super::people::TAB_NEARBY,
@@ -5146,7 +5150,7 @@ mod tests {
             ("inventory", "inventory", |p| p.inventory),
             ("gestures", "gestures", |p| p.gestures),
             ("people", "people", |p| p.people),
-            ("preferences", "options", |p| p.settings),
+            ("preferences", super::super::options::WINDOW, |p| p.settings),
             ("areasearch", super::super::area_search::WINDOW, |p| p.area_search),
             ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
@@ -5167,6 +5171,9 @@ mod tests {
             ("statistics", "perf", |p| p.perf),
             ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),
             ("omnifilter", super::super::omnifilter::WINDOW, |p| p.omnifilter),
+            ("aboutland", super::super::land::window_id(false), |p| p.about_land),
+            ("regioninfo", super::super::region::WINDOW, |p| p.region_estate),
+            ("myenvironments", "environment_selector", |p| p.environment),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {
@@ -5181,6 +5188,31 @@ mod tests {
         ctx.data_mut(|d| d.insert_persisted(egui::Id::unique(("conversations", "minimized")), false));
         run_command(&ctx, "conversations", &mut panels);
         assert!(!panels.chat);
+    }
+
+    #[test]
+    fn a_toolbar_button_expands_the_legacy_layout_window() {
+        // About Land and Region / Estate draw a floater of their own in
+        // the Legacy layout: the button expands that one
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.about_land_classic = true;
+        panels.region_estate_classic = true;
+        for (cmd, id, open) in [
+            (
+                "aboutland",
+                super::super::land::window_id(true),
+                (|p| p.about_land) as fn(&Panels) -> bool,
+            ),
+            ("regioninfo", super::super::region::CLASSIC_WINDOW, |p| p.region_estate),
+        ] {
+            run_command(&ctx, cmd, &mut panels);
+            assert!(open(&panels), "{cmd} opens");
+            super::super::widgets::minimize_floater(&ctx, id);
+            run_command(&ctx, cmd, &mut panels);
+            assert!(open(&panels), "{cmd}: a minimized window stays open, to expand");
+            assert!(super::super::widgets::floater_expand_pending(&ctx, id), "{cmd} expands {id}");
+        }
     }
 
     #[test]

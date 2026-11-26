@@ -176,6 +176,7 @@ pub fn affected_bakes(kind: u8) -> &'static [usize] {
 #[derive(Default)]
 pub struct State {
     pub open: bool,
+    pub suspended_for_shape: bool,
     pub draft: Option<Draft>,
     pub loading: Option<(Uuid, Uuid)>,
     pub message: String,
@@ -289,7 +290,9 @@ impl State {
 
     pub fn changed(&mut self, world: &mut World) {
         self.preview.invalidate();
-        if let Some(draft) = &self.draft {
+        if self.open
+            && let Some(draft) = &self.draft
+        {
             // Only this wearable's editable controls may affect the avatar.
             // Preserve every other parameter and unknown asset field on disk.
             let values: BTreeMap<_, _> = catalog::PARAMS
@@ -316,7 +319,15 @@ impl State {
 
     pub fn close(&mut self, world: &mut World) {
         self.preview.cancel(world);
+        self.close_controls(world);
+    }
+
+    pub fn close_controls(&mut self, world: &mut World) {
+        if self.open {
+            world.preview_shape(None);
+        }
         self.open = false;
+        self.suspended_for_shape = false;
         self.loading = None;
         self.draft = None;
         self.close_confirmation = false;
@@ -328,7 +339,34 @@ impl State {
         self.wanted_images.clear();
         self.alpha_previous.clear();
         self.local_textures.clear();
-        world.preview_shape(None);
+    }
+
+    /// Keep the layer draft and its bake while Shape owns the sliders.
+    /// Returning to the layer lets the user save or discard the edit.
+    pub fn suspend_for_shape(&mut self, world: &World) -> bool {
+        if !self.open
+            || self.close_confirmation
+            || self.copy_name.is_some()
+            || !self
+                .draft
+                .as_ref()
+                .is_some_and(|d| d.pending.is_none() && d.dirty() && has_local_textures(world, d))
+        {
+            return false;
+        }
+        self.dismiss_picker();
+        self.open = false;
+        self.suspended_for_shape = true;
+        true
+    }
+
+    pub fn resume_layer(&mut self, world: &mut World) {
+        if self.suspended_for_shape {
+            self.suspended_for_shape = false;
+            self.open = true;
+            self.camera_pending = true;
+            self.changed(world);
+        }
     }
 
     pub fn update(&mut self, world: &mut World) {
@@ -379,7 +417,7 @@ impl State {
         if changed {
             self.changed(world);
         }
-        if self.open
+        if (self.open || self.suspended_for_shape)
             && self.draft.as_ref().is_some_and(|draft| {
                 draft.pending.is_none()
                     && (!worn(world, draft.item.id)
@@ -390,9 +428,10 @@ impl State {
                             .is_none_or(|item| item.asset_id != draft.item.asset_id))
             })
         {
+            let show_message = self.open;
             self.close(world);
             self.message = aurora_i18n::tr!("wearable-changed").into();
-            self.open = true;
+            self.open = show_message;
         }
     }
 

@@ -275,6 +275,8 @@ pub(super) fn pane(
     narrow: bool,
     h: f32,
 ) {
+    // the conversation may have changed since the pass began (Ctrl+W, a tab)
+    super::popout::pickers_follow_view(st);
     let pane = ui.available_rect_before_wrap();
     let pane = egui::Rect::from_min_size(pane.min, egui::vec2(pane.width(), h));
     // the mockup's `.main`: the field's colour at 55 %, its bottom right

@@ -1168,6 +1168,14 @@ impl<'a> Floater<'a> {
         }
         // the toolbar button, a menu entry or a shortcut asked to expand it
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
+        // asked to the front from the body of a window outside, whose
+        // `move_to_top` orders that window's own layers (`bring_floater_front`)
+        if ctx
+            .data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(FRONT)))
+            .unwrap_or(false)
+        {
+            ctx.move_to_top(egui::LayerId::new(self.order, egui::Id::unique(self.id)));
+        }
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut go_outside = false;
         let mut out = None;
@@ -1770,6 +1778,9 @@ impl<'a> Floater<'a> {
         if ctx.data_mut(|d| d.remove_temp::<bool>(window_id.with(EXPAND))).unwrap_or(false) && floater_minimized(ctx, self.id) {
             ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((self.id, "minimized")), false));
         }
+        // its own window is in front of the viewer's layers: an ask to the
+        // front among them (`to_front`) is not kept for its return inside
+        ctx.data_mut(|d| d.remove_temp::<bool>(window_id.with(FRONT)));
         let flush = self.flush_body;
         let framed = self.framed_header.is_some();
         // as tall as its content (fixed, or of automatic height), and for a
@@ -2394,6 +2405,17 @@ pub fn floater_size(ctx: &egui::Context, id: &str) -> Option<Vec2> {
     egui::AreaState::load(ctx, window_id).and_then(|state| state.size)
 }
 
+/// The size of the floater `id` expanded: while it is minimized, the size
+/// it comes back to (LLFloater::setMinimized keeps the expanded geometry),
+/// not its title bar's.
+pub fn floater_expanded_size(ctx: &egui::Context, id: &str) -> Option<Vec2> {
+    let window_id = egui::Id::unique(id);
+    if !floater_outside(ctx, window_id) && floater_minimized(ctx, id) {
+        return ctx.data_mut(|d| d.get_persisted::<Vec2>(window_id.with("expanded_size")));
+    }
+    floater_size(ctx, id)
+}
+
 /// A window without a title bar, dragged by its whole surface (the
 /// mini-map): `frame` around `body`, which fills it. Like a floater it is
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
@@ -2803,8 +2825,16 @@ pub fn bring_floater_front(ctx: &egui::Context, id: &str) {
     } else if floater_minimized(ctx, id) {
         expand_floater(ctx, id);
     } else {
-        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+        to_front(ctx, id);
     }
+}
+
+/// The floater `id` inside comes to the front: now, and again when it is
+/// drawn. A button in a window outside the viewer's runs in that window's
+/// pass, where `move_to_top` orders that window's layers, not the viewer's.
+fn to_front(ctx: &egui::Context, id: &str) {
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(FRONT), true));
 }
 
 /// Is the floater `id` reduced to its title bar?
@@ -2817,8 +2847,11 @@ pub fn floater_minimized(ctx: &egui::Context, id: &str) -> bool {
 /// front, as its title button does (LLFloater::openFloater on a minimized
 /// floater: setMinimized(false), setVisibleAndFrontmost).
 pub fn expand_floater(ctx: &egui::Context, id: &str) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(EXPAND), true));
-    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::unique(id).with(EXPAND), true);
+        d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET));
+    });
+    to_front(ctx, id);
 }
 
 /// Will the floater `id` change its minimized state at its next frame for a
@@ -2826,8 +2859,14 @@ pub fn expand_floater(ctx: &egui::Context, id: &str) {
 /// (`expand_floater`) or a "Reset window positions and sizes" not yet
 /// applied to it.
 pub fn floater_expand_pending(ctx: &egui::Context, id: &str) -> bool {
+    floater_expand_asked(ctx, id) || super::layout::reset_pending(ctx, egui::Id::unique(id))
+}
+
+/// A button, link or shortcut asked the floater `id` to expand
+/// (`expand_floater`) and it has not drawn since: not its title button, not
+/// a window reset.
+pub fn floater_expand_asked(ctx: &egui::Context, id: &str) -> bool {
     ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(id).with(EXPAND))).unwrap_or(false)
-        || super::layout::reset_pending(ctx, egui::Id::unique(id))
 }
 
 /// Drops an expand asked for by `expand_floater` that the floater `id` has
@@ -2856,6 +2895,7 @@ fn outside_behind(ctx: &egui::Context, id: &str) -> bool {
 /// come back as a bar. In its window outside and behind, it comes in front
 /// ([`outside_behind`]).
 pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    shown_with_keyboard(ctx, id);
     if *open && outside_behind(ctx, id) {
         bring_floater_front(ctx, id);
         return;
@@ -2865,6 +2905,9 @@ pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
         return;
     }
     *open = !*open;
+    if !*open {
+        forget_keyboard(ctx, id);
+    }
     unminimize_quietly(ctx, id);
 }
 
@@ -2874,12 +2917,14 @@ pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
 /// true asks the caller to open a closed one.
 #[must_use]
 pub fn toggle_floater_closing(ctx: &egui::Context, id: &str, open: bool) -> bool {
+    shown_with_keyboard(ctx, id);
     if open && outside_behind(ctx, id) {
         bring_floater_front(ctx, id);
     } else if open && floater_minimized(ctx, id) {
         expand_floater(ctx, id);
     } else if open {
         close_floater(ctx, id);
+        forget_keyboard(ctx, id);
     }
     !open
 }
@@ -2925,6 +2970,12 @@ fn close_asked(ctx: &egui::Context, id: &str) -> bool {
 /// Open the floater `id` (LLFloaterReg::showInstance): expanded, whether it
 /// was closed or minimized.
 pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    shown_with_keyboard(ctx, id);
+    open_expanded(ctx, id, open);
+}
+
+/// [`open_floater`] without a word on the keyboard.
+fn open_expanded(ctx: &egui::Context, id: &str, open: &mut bool) {
     if *open {
         if floater_minimized(ctx, id) {
             expand_floater(ctx, id);
@@ -2934,6 +2985,86 @@ pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
         *open = true;
         unminimize_quietly(ctx, id);
     }
+}
+
+/// Show the floater `id` from a button or a link, as
+/// LLFloaterReg::showInstance → LLFloater::openFloater does: a closed one
+/// opens, an open one comes to the front, expanded when it is minimized
+/// (setMinimized(false), setVisibleAndFrontmost). Its own code learns that
+/// it was shown ([`take_floater_shown`]): LLFloater::onOpen runs on every
+/// show, the floater open or not.
+pub fn show_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    let was_open = *open;
+    open_floater(ctx, id, open);
+    if was_open {
+        bring_floater_front(ctx, id);
+    }
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(SHOWN), true));
+}
+
+/// Show the floater `id` for something that must not take the keyboard
+/// (llMapDestination without BEACON_FOCUS_MAP: process_script_teleport_request
+/// sets the floater's auto-focus off before LLFloater::openFloater, whose
+/// setVisibleAndFrontmost then leaves the focus where it is): as
+/// [`show_floater`], but a window outside the viewer's is not raised, the
+/// system giving the focus to the window it raises; it only expands when
+/// minimized. Its own code learns it ([`take_floater_quiet`]) until a show,
+/// open, toggle or expand that is not quiet replaces it.
+pub fn show_floater_quietly(ctx: &egui::Context, id: &str, open: &mut bool) {
+    let was_open = *open;
+    open_expanded(ctx, id, open);
+    // (`open_expanded` has expanded it when minimized)
+    if was_open && !crate::outside::native(ctx, egui::Id::unique(id)) {
+        bring_floater_front(ctx, id);
+    }
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::unique(id).with(SHOWN), true);
+        d.insert_temp(egui::Id::unique(id).with(QUIET), true);
+    });
+}
+
+/// The last show of the floater `id` was quiet ([`show_floater_quietly`]):
+/// true once.
+pub fn take_floater_quiet(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET)))
+        .unwrap_or(false)
+}
+
+/// The last show of the floater `id` was quiet, and it stays known: for an
+/// expand that waits.
+pub fn floater_shown_quietly(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(id).with(QUIET))).unwrap_or(false)
+}
+
+/// A show, open or toggle that may take the keyboard replaces a quiet one,
+/// and its own code learns of it ([`take_floater_keyboard`]).
+fn shown_with_keyboard(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| {
+        d.remove_temp::<bool>(egui::Id::unique(id).with(QUIET));
+        d.insert_temp(egui::Id::unique(id).with(KEYBOARD), true);
+    });
+}
+
+/// A toggle that closes the floater gives it no keyboard: a quiet show
+/// after it stays quiet.
+fn forget_keyboard(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(KEYBOARD)));
+}
+
+/// A show, open or toggle of the floater `id` that may take the keyboard
+/// came since the last call, a quiet show after it or not: true once. Its
+/// keyboard is given at once (LLFloater::openFloater, onOpen), and a quiet
+/// show after it takes nothing back.
+pub fn take_floater_keyboard(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(KEYBOARD)))
+        .unwrap_or(false)
+}
+
+/// The floater `id` was shown by [`show_floater`] or
+/// [`show_floater_quietly`] since the last call: true once.
+pub fn take_floater_shown(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(SHOWN)))
+        .unwrap_or(false)
 }
 
 /// Forget that a floater not on screen was minimized: it opens expanded, at
@@ -2953,6 +3084,20 @@ pub(crate) const EXPAND: &str = "expand";
 
 /// Temporary frame of a floater asked to close (`close_floater`).
 const CLOSE: &str = "close";
+
+/// Temporary flag of a floater shown by a button or a link (`show_floater`).
+const SHOWN: &str = "shown";
+
+/// Temporary flag of a floater shown without the keyboard
+/// (`show_floater_quietly`).
+const QUIET: &str = "quiet";
+
+/// Temporary flag of a floater shown, opened or toggled by the user
+/// (`shown_with_keyboard`).
+const KEYBOARD: &str = "keyboard";
+
+/// Temporary flag of a floater asked to the front (`bring_floater_front`).
+const FRONT: &str = "front";
 
 /// Title-bar minimize / expand icon (#3084). Ordinary floaters: minus while
 /// expanded, square while minimized. Compact bodies (Performance) keep the

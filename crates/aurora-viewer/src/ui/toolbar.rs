@@ -1088,7 +1088,8 @@ impl ToolbarUi {
         }
         native_context::start_group(ui, p);
         if native_context::item(ui, p) {
-            self.open = true;
+            // shown again, a minimized window expands
+            super::widgets::open_floater(ui.ctx(), EDITOR_WINDOW, &mut self.open);
             let settings = appearance::settings(ui.ctx());
             self.selected = command
                 .filter(|command| settings.placed(command, &Layout::default()))
@@ -2122,6 +2123,7 @@ fn sizing_rows() -> [(Sizing, &'static str, &'static str); 3] {
     ]
 }
 
+pub(crate) use editor::WINDOW as EDITOR_WINDOW;
 pub use editor::{demo_events, demo_settings};
 
 #[cfg(test)]

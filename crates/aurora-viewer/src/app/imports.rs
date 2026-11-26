@@ -726,7 +726,9 @@ impl App {
                             draft.invalidate();
                             self.imports.discarded_quotes.append(&mut draft.discarded_quotes);
                         }
-                        self.world.local_assets.remove(&id);
+                        if let Some((_, false)) = self.world.local_assets.remove(&id) {
+                            self.wearable_ui.preview.forget_local_texture(id);
+                        }
                         self.ui_images.remove(&id);
                         if entry.local_published {
                             self.scene.materials.remove_local(&id);
