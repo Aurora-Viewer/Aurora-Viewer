@@ -756,32 +756,41 @@ fn await_frame(child: &mut Child, work: &Path, token: &str, version: &str, hande
 /// says that the update did not complete (`failed_update`). That is no
 /// crash to report. Waits up to `wait` for `failure.txt` (the restoration
 /// comes first); a first frame seen, the update committed or a folder that
-/// is not this version's transaction says no.
+/// is not this version's transaction says no. So does a rollback whose
+/// restoration failed: `backup` is kept, the previous viewer is not
+/// relaunched (`run_helper`'s condition) and no notice shows, so the crash
+/// window is the only thing the user sees.
 pub fn ended_by_update(wait: Duration) -> bool {
     let Some(path) = std::env::var_os(ACK_ENV) else { return false };
     ended_by_update_at(Path::new(&path), aurora_version::version(), wait)
 }
 
 fn ended_by_update_at(work: &Path, version: &str, wait: Duration) -> bool {
-    let framed = (|| -> Result<bool> {
+    let framed = (|| -> Result<(bool, Plan)> {
         let plan: Plan = serde_json::from_slice(&fs::read(work.join("plan.json"))?)?;
         validate_work(work, &plan)?;
         ensure!(plan.version == version, "another version's update");
         let expected = format!("{}\n{}", plan.token, plan.version);
-        Ok(fs::read_to_string(work.join("first-frame")).is_ok_and(|s| s == expected))
+        Ok((fs::read_to_string(work.join("first-frame")).is_ok_and(|s| s == expected), plan))
     })();
-    if !matches!(framed, Ok(false)) {
-        return false;
-    }
+    let plan = match framed {
+        Ok((false, plan)) => plan,
+        _ => return false,
+    };
     let deadline = Instant::now() + wait;
     loop {
         if work.join(FAILURE).exists() {
-            return true;
+            // written after `apply` returned, so `backup` is final: the
+            // previous version came back with its notice only as `run_helper`
+            // relaunches it
+            return plan.install.join(EXE).is_file() && !work.join("backup").exists();
         }
         if work.join("committed").exists() || !work.exists() || Instant::now() >= deadline {
             return false;
         }
-        std::thread::sleep(Duration::from_millis(100));
+        // short: the restored viewer, started right after `failure.txt`,
+        // must not find the session folder before this watcher removes it
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -1064,6 +1073,7 @@ mod tests {
         let root = root.canonicalize().expect("canonical root");
         let install = root.join("Aurora Viewer");
         fs::create_dir_all(&install).expect("install");
+        fs::write(install.join(EXE), b"previous").expect("restored viewer");
         let token = uuid::Uuid::new_v4().to_string();
         let work = root.join(format!(".aurora-update-{token}"));
         fs::create_dir_all(&work).expect("work");
@@ -1088,6 +1098,22 @@ mod tests {
         assert!(ended_by_update_at(&work, "1.2.3", wait));
         // another version's transaction: not ours to say
         assert!(!ended_by_update_at(&work, "1.2.4", wait));
+        // the restoration failed: `backup` kept, no viewer relaunched and no
+        // notice, so the crash window is reported
+        fs::create_dir_all(work.join("backup")).expect("backup");
+        assert!(!ended_by_update_at(&work, "1.2.3", wait));
+        fs::remove_dir_all(work.join("backup")).expect("no backup");
+        // no viewer in the installation: nothing was relaunched either
+        let plan: Plan = serde_json::from_slice(&fs::read(work.join("plan.json")).expect("plan")).expect("parse");
+        fs::remove_file(plan.install.join(EXE)).expect("no viewer");
+        assert!(!ended_by_update_at(&work, "1.2.3", wait));
+        fs::write(plan.install.join(EXE), b"previous").expect("viewer back");
+        assert!(ended_by_update_at(&work, "1.2.3", wait));
+        // a missing or unreadable plan: report
+        fs::write(work.join("plan.json"), b"{ not json").expect("bad plan");
+        assert!(!ended_by_update_at(&work, "1.2.3", wait));
+        fs::remove_file(work.join("plan.json")).expect("no plan");
+        assert!(!ended_by_update_at(&work, "1.2.3", wait));
         fs::remove_dir_all(&root).expect("cleanup");
         // a first frame was presented: the helper did not end it
         let (root, work) = transaction("1.2.3");
@@ -1102,6 +1128,18 @@ mod tests {
         assert!(!ended_by_update_at(&work, "1.2.3", wait));
         fs::remove_file(work.join("committed")).expect("uncommit");
         assert!(!ended_by_update_at(&work, "1.2.3", wait));
+        fs::remove_dir_all(&root).expect("cleanup");
+        // the transaction folder removed during the wait: report
+        let (root, work) = transaction("1.2.3");
+        let gone = work.clone();
+        let remover = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            fs::remove_dir_all(gone).expect("remove");
+        });
+        let start = Instant::now();
+        assert!(!ended_by_update_at(&work, "1.2.3", Duration::from_secs(5)));
+        assert!(start.elapsed() < Duration::from_secs(4), "it waited for the deadline");
+        remover.join().expect("remover");
         fs::remove_dir_all(&root).expect("cleanup");
     }
 

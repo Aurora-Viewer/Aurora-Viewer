@@ -82,7 +82,10 @@ What each part tells the one who fixes it:
   (system crash, power loss). A shutdown or restart of Windows itself is
   heard by the watcher and never reported. On Linux, a viewer stopped by
   SIGTERM, SIGHUP or SIGINT (log out, shutdown, a closed terminal, Ctrl+C)
-  is not reported either.
+  is not reported either. Nor is a new version that an update's helper
+  ended before its first frame and rolled back, the previous version
+  coming back with its "did not complete" notice; a rollback that could
+  not restore the previous version is still reported.
 - **Window**: answering until the end, or not answering for the last N s.
 - **GPU device lost**: the renderer's device-lost callback fired (driver
   reset, GPU removed).
