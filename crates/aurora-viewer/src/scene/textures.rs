@@ -4666,8 +4666,6 @@ mod tests {
         (TexelFormat::Rgba8, width, height, levels)
     }
 
-    /// A 1024 × 1024 texture in use, loaded at `decoded`, covering `need_px`
-    /// pixels in view.
     /// At exit the textures' bytes are let go, not freed on the main thread.
     #[test]
     fn the_texture_bytes_are_let_go_at_exit() {
@@ -4685,6 +4683,8 @@ mod tests {
         assert_eq!(Arc::strong_count(&bytes), 2, "left behind, not freed");
     }
 
+    /// A 1024 × 1024 texture in use, loaded at `decoded`, covering `need_px`
+    /// pixels in view.
     pub(super) fn entry(decoded: Option<u8>, need_px: f32) -> Entry {
         Entry {
             slot: 9,

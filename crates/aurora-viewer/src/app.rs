@@ -7541,12 +7541,13 @@ impl App {
         self.restart_into_vr.then_some(self.vr_requested_mode)
     }
 
-    /// Just before the app is dropped at exit: leaves the world's objects
-    /// and the scene's meshes to the system instead of freeing them one by
-    /// one on the main thread (`ObjectStore::leak_at_exit`).
+    /// Just before the app is dropped at exit: leaves the world's objects,
+    /// the scene's meshes and egui's texture copies to the system instead of
+    /// freeing them one by one on the main thread (`ObjectStore::leak_at_exit`).
     pub fn leak_session_at_exit(&mut self) {
         self.world.leak_at_exit();
         self.scene.leak_at_exit();
+        self.egui_shadow.leak_at_exit();
     }
 
     fn record_inventory_logout(&mut self) {
