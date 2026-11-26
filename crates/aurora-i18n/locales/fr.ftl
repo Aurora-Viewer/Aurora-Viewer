@@ -306,14 +306,14 @@ owned-land-area = { $actual } m² · { $billable } m² facturables
 owned-land-total = Total : { $actual } m² · { $billable } m² facturables
 owned-land-contributions = Contributions foncières aux groupes
 owned-land-contribution = { $area } m²
-toolbar-edit = Boutons de la barre…
-toolbar-title = Boutons de la barre
+toolbar-edit = Personnaliser les boutons et menus…
+toolbar-title = Boutons et menus
 toolbar-remove = Retirer ce bouton
-toolbar-locked = Verrouiller
+toolbar-interface-locked = Interface verrouillée
 toolbar-locked-bars = Verrouiller les barres
-toolbar-help = Glissez un bouton vers le dock ou une barre latérale ; déposez-le ici pour le retirer. Clic droit sur une barre : mêmes réglages.
-toolbar-help-classic = Glissez un bouton vers la barre du bas ou une barre latérale ; déposez-le ici pour le retirer. Clic droit sur une barre : mêmes réglages.
-toolbar-help-modes = Les boutons s’affichent comme ici, ou en icônes seules, selon les réglages de chaque barre.
+toolbar-help = Glissez les boutons ou les options du menu vers les barres du haut, du bas ou des côtés. Ramenez un bouton ici pour le retirer. Clic droit sur un bouton pour changer son apparence.
+toolbar-help-classic = Glissez les boutons ou les options du menu vers les barres du haut, du bas ou des côtés. Ramenez un bouton ici pour le retirer. Clic droit sur un bouton pour changer son apparence.
+toolbar-help-modes = Choisissez une icône, un libellé, les deux ou le défaut de la barre pour chaque bouton. Glissez les options dans le menu Aurora pour le réorganiser.
 toolbar-search = Chercher une commande ({ $count })
 toolbar-in-dock = Dans le dock
 toolbar-in-bottom = Dans la barre du bas
@@ -1057,11 +1057,6 @@ login-accounts-remove = Retirer le compte
 login-accounts-confirm = Cette action concerne uniquement { $name }. Confirmer ?
 
 import-title = Importer des assets
-import-entry-point = Ouvrir les imports avec
-import-entry-point-help = Choisir ce qu’ouvrent le raccourci Importer (Ctrl+U par défaut) et Construire > Importer. La barre d’import rapide donne aussi accès à la fenêtre d’upload complète.
-import-entry-window = Fenêtre d’upload
-import-launcher-folder = Dossier
-import-icon-bar = Barre d’import rapide
 import-type-title = Importer — { $type }
 import-open-inventory = Voir dans l’inventaire
 import-lod-high = Haut
@@ -1249,7 +1244,12 @@ import-hands-salute = Salut de la main droite
 import-hands-typing = Saisie au clavier
 import-hands-peace = Signe de paix à droite
 import-menu = Importer
-import-launcher-settings = Settings
+import-menu-textures = Textures
+import-menu-animations = Animations
+import-menu-sounds = Sons
+import-menu-materials = Matériaux
+import-menu-meshes = Meshes
+import-menu-options = Options d'import
 import-settings-title = Paramètres d’import
 import-texture = Texture
 import-sound = Son
@@ -1302,6 +1302,31 @@ import-confirm-price = Ces imports coûteront { $cost } L$.
 import-confirm-shared-textures = Les textures partagées ne seront chargées qu’une fois.
 import-price-unavailable = Tarif indisponible ; connectez-vous avant l’import.
 import-insufficient-balance = Le solde ne permet pas cet import.
+import-upload-payment-title = Import
+import-upload-payment = L’import a coûté { $cost } L$.
+import-quick-textures = { $count ->
+    [one] Importer 1 texture pour { $cost } L$ ?
+   *[other] Importer { $count } textures pour { $cost } L$ ?
+}
+import-quick-materials = { $count ->
+    [one] Importer 1 matériau pour { $cost } L$ ?
+   *[other] Importer { $count } matériaux pour { $cost } L$ ?
+}
+import-quick-sounds = { $count ->
+    [one] Importer 1 son pour { $cost } L$ ?
+   *[other] Importer { $count } sons pour { $cost } L$ ?
+}
+import-quick-textures-size = { $count ->
+    [one] Cette texture peut être importée en 2048 × 2048. Choisissez sa taille :
+   *[other] Certaines de ces { $count } textures peuvent être importées en 2048 × 2048. Choisissez leur taille :
+}
+import-quick-materials-size = { $count ->
+    [one] Ce matériau a des images qui peuvent être importées en 2048 × 2048. Choisissez leur taille :
+   *[other] Ces { $count } matériaux ont des images qui peuvent être importées en 2048 × 2048. Choisissez leur taille :
+}
+import-quick-size-choice = { $size } px · { $cost } L$
+import-quick-free-full-size = Envoyer les images gratuites en 2048 × 2048 sans demander
+import-quick-free-full-size-help = « Importer des textures » et « Importer des matériaux » ne demandent alors 1024 ou 2048 que si l’envoi coûte des L$.
 import-invalid-request = Vérifiez le nom, le dossier et les paramètres du fichier.
 import-service-unavailable = Cette région ne propose pas le service d’import nécessaire.
 import-rejected = Le serveur a refusé l’import. Le brouillon est conservé.
@@ -5416,7 +5441,7 @@ ui-bars-immersive-hide-tags = Masquer les étiquettes des avatars
 toolbar-use-name-tag-preferences = Utiliser les préférences des étiquettes des avatars
 ui-bars-immersive-show-huds = Afficher les HUDs
 ui-bars-immersive-hide-huds = Masquer les HUDs
-ui-bars-customize-bars = Personnaliser les barres…
+ui-bars-customize-bars = Personnaliser l’interface
 session-inventory-upload-the-clothing-upload-timed-out-reload-inventory-before-trying = Le chargement du vêtement a expiré. Rechargez l’inventaire avant de réessayer.
 session-inventory-upload-the-clothing-upload-was-interrupted = Le chargement du vêtement a été interrompu.
 ui-place-details-could-not-find-the-region-s-location-it-may = Le client n'a pas pu obtenir l'emplacement de la région. La région est peut-être temporairement indisponible ou a été supprimée.
@@ -10826,6 +10851,20 @@ build-compact-paste-system = Coller depuis le presse-papiers système
 build-compact-paste-vector = Coller le vecteur copié
 build-compact-copy-vector = Copier le vecteur
 build-compact-camera = Caméra
+build-tool-in-use = En cours
+build-create-options-toggle = Afficher / masquer les options
+build-create-keep-creating = Continuer à créer
+build-create-center-on-prim = Centrer sur le prim
+build-create-copy-prim-rotation = Copier la rotation du prim
+build-create-align-to-surface = Aligner sur la surface
+build-capture-shape-button = Copier la forme d’une prim : cliquez ici, puis sur une prim dans le monde
+build-capture-shape-armed = Cliquez sur une prim pour copier sa forme (Échap annule)
+build-capture-shape-full = 20 formes sont gardées. Retirez-en une pour en copier une autre
+build-capture-shape-remove = Retirer cette forme
+build-capture-shape-tooltip = Forme copiée ({ $kind })
+build-capture-shape-not-a-prim = Seule la forme d’une prim peut être copiée
+build-capture-shape-mesh-or-sculpt = La forme d’un mesh ou d’une prim sculptée ne peut pas être copiée
+build-capture-shape-no-modify = Il faut la permission de modifier cette prim pour copier sa forme
 build-compact-move-tool = Déplacer
 build-compact-edit = Modifier
 build-compact-create = Créer
@@ -13108,7 +13147,7 @@ demo-buy-land-bought = Achat de terrain simulé : la parcelle est à vous (démo
 import-permissions-tab = Permissions
 import-permissions-help = Ces réglages s’appliquent aux textures, sons, animations, matériaux et meshes importés.
 import-permissions-sharing = Partage
-import-permissions-payment = Paiement
+import-other-options = Autres options
 import-preview-enlarge = Agrandir l’aperçu
 import-preview-enlarged = Aperçu agrandi — { $name }
 import-preview-gestures = Glisser : tourner · Maj + glisser : déplacer · Molette : zoomer
@@ -16117,6 +16156,148 @@ picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventa
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
 
+# Main menu and toolbar customization
+toolbar-button-icons = Icône seulement
+toolbar-button-text = Libellé seulement
+toolbar-button-icons-text = Icône et libellé
+toolbar-icon-default = Rétablir l’icône par défaut
+toolbar-icon-choose = Choisir une icône
+toolbar-icon-change = Changer d’icône
+toolbar-presets = Presets
+toolbar-interfaces = Interfaces
+toolbar-interfaces-shown = Affiché dans le bloc Interfaces
+toolbar-interfaces-hidden = Masqué dans le bloc Interfaces
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora OldSchool
+toolbar-preset-photographer = Aurora Photographer
+toolbar-preset-legacy = Legacy
+toolbar-import-textures = Importer des textures
+toolbar-import-sounds = Importer des sons
+toolbar-import-animations = Importer des animations
+toolbar-import-materials = Importer des matériaux
+toolbar-import-meshes = Importer des maillages
+toolbar-import-local = Fichiers locaux
+toolbar-import-advanced = Import avancé
+toolbar-import-settings = Paramètres d’import
+toolbar-import-bar = Barre d’import
+toolbar-icon-search = Rechercher une icône…
+toolbar-in-top = Dans la barre du haut
+toolbar-bar-top = Barre du haut
+toolbar-drop-here = Déposer ici
+toolbar-separator = Séparateur
+toolbar-interface-edit = Personnaliser l’interface
+toolbar-edit-done = Terminer
+toolbar-edit-top = Haut
+toolbar-edit-bottom = Bas
+toolbar-edit-left = Gauche
+toolbar-edit-right = Droite
+toolbar-edit-help = Cliquez sur un élément pour le sélectionner, glissez-le pour le déplacer ou faites un clic droit pour le modifier. Fermez cette fenêtre pour terminer.
+toolbar-edit-locked = Les barres sont verrouillées. Déverrouillez-les ci-dessous pour modifier l’interface.
+toolbar-edit-move = Déplacer vers
+toolbar-edit-split-before = Couper avant
+toolbar-edit-split-after = Couper après
+toolbar-edit-merge-before = Fusionner avec le bloc précédent
+toolbar-edit-merge-after = Fusionner avec le bloc suivant
+toolbar-edit-merge-groups = Fusionner ces blocs
+toolbar-drawer = Tiroir
+toolbar-drawer-default-mode = Affichage par défaut des boutons
+toolbar-drawer-closes = Fermer après un clic sur un bouton
+toolbar-block-shortcut = Raccourci :
+toolbar-drawer-hides-needs-shortcut = Nécessite un raccourci
+toolbar-floating-close-button = Ajouter un bouton Fermer
+toolbar-block-name = Nom du bloc :
+toolbar-block-button-mode = Affichage du bouton du bloc
+toolbar-button-inherited = Hérité
+toolbar-drawer-hides-button = Masquer le bouton en mode flottant
+toolbar-floating-new = Bloc flottant
+toolbar-floating-orientation = Orientation
+toolbar-floating-horizontal = Horizontale
+toolbar-floating-vertical = Verticale
+toolbar-floating-empty = Déposez des boutons ici
+toolbar-shortcut-title = Raccourci
+toolbar-shortcut-block-name = Bloc : { $name }
+toolbar-shortcut-none = Aucun raccourci
+toolbar-shortcut-press-key = Appuyez sur une touche
+toolbar-shortcut-esc = Échap pour annuler
+toolbar-shortcut-clear = Retirer
+toolbar-shortcut-overrides = Court-circuite { $name } : ce raccourci lance celui de la barre au lieu de son usage par défaut.
+toolbar-shortcut-used = Déjà le raccourci de { $names }.
+toolbar-shortcut-replace = Remplacer
+toolbar-shortcut-add = Ajouter
+toolbar-shortcut-save = Enregistrer
+toolbar-shortcut-choose-key = Choisir une touche
+toolbar-shortcut-help = Activez ou désactivez Ctrl, Alt et Maj, puis cliquez sur la touche pour la changer. Ctrl ou Alt est nécessaire, sauf avec F1 à F24.
+toolbar-shortcut-inactive = Ce bouton n'est dans aucune barre : son raccourci fonctionnera quand il y sera replacé.
+toolbar-shortcut-refused-keyboard = Seules les touches du clavier peuvent servir de raccourci.
+toolbar-shortcut-refused-modifier = Une touche de modification seule ne peut pas être un raccourci.
+toolbar-shortcut-refused-needs-modifier = Ajoutez Ctrl ou Alt : une touche seule, ou avec Maj seulement, écrit dans les champs de texte.
+toolbar-shortcut-refused-altgr = Ctrl+Alt avec cette touche est AltGr, qui écrit des caractères sur beaucoup de claviers.
+toolbar-shortcut-refused-editing = Les champs de texte utilisent ce raccourci (tout sélectionner, copier, couper, coller, annuler, rétablir).
+toolbar-shortcut-refused-navigation = Les champs de texte se déplacent et effacent avec cette touche.
+toolbar-shortcut-refused-typing = Le chat et les fenêtres de dialogue utilisent cette touche.
+toolbar-shortcut-refused-system = Le système garde ce raccourci.
+toolbar-shortcut-refused-window = Ce raccourci ferme ou change de fenêtre.
+toolbar-shortcut-refused-zoom = Ce raccourci zoome l'interface.
+toolbar-spacer = Espacement entre blocs
+toolbar-add-spacer = Ajouter un espacement entre blocs
+toolbar-button-settings = Réglages du bouton
+toolbar-button-edit = Modifier le bouton…
+toolbar-button-edit-title = Modifier le bouton
+toolbar-button-name = Nom du bouton :
+toolbar-button-display = Affichage du bouton
+toolbar-shortcut-fixed-block-help = Le raccourci d'un bloc fixe l'affiche et le masque ; pendant l'édition de l'interface, il reste affiché.
+toolbar-block-settings = Réglages du bloc
+toolbar-parent-block-settings = Réglages du bloc parent
+toolbar-block-edit = Modifier le bloc…
+toolbar-block-edit-title = Modifier le bloc
+toolbar-block-alignment = Alignement
+toolbar-block-sizing = Taille des boutons
+toolbar-block-fixed-options = Options en mode fixe
+toolbar-block-floating-options = Options en mode flottant
+toolbar-block-kind-fixed = Bloc fixe
+toolbar-block-kind-drawer = Tiroir
+toolbar-block-kind-floating = Bloc flottant
+toolbar-block-remove = Retirer le bloc
+toolbar-move-block = Glissez pour déplacer tout le bloc
+toolbar-remove-block = Retirer le bloc
+toolbar-drawer-empty = Ce tiroir est vide.
+toolbar-drawer-drop = Glissez des boutons ici pour les ajouter ou les réorganiser.
+toolbar-separator-settings = Espacement entre blocs
+toolbar-separator-size = Taille / minimum (px)
+toolbar-separator-stretch = Occuper l’espace libre
+toolbar-separator-help = Les espaces extensibles se partagent la place laissée par les blocs. La taille est leur largeur minimale, ou leur hauteur dans une barre latérale.
+toolbar-block-navigation = Navigation et SLURL
+toolbar-block-account = Compte et solde
+toolbar-block-system = Heure, indicateurs et son
+toolbar-block-status = Statut de présence
+toolbar-block-balance = Argent (solde)
+toolbar-block-clock = Heure
+toolbar-block-ping = Latence de la région
+toolbar-block-fps = Images par seconde (FPS)
+toolbar-block-network = Trafic réseau
+toolbar-block-media = Médias
+toolbar-block-music = Musique
+toolbar-block-volume = Volume
+toolbar-block-notifications = Notifications
+toolbar-block-conversations = Icônes des conversations
+toolbar-block-chat = Barre de chat local
+toolbar-category-all = Toutes les catégories
+toolbar-section-main = Principaux
+toolbar-section-advanced = Avancés
+toolbar-search-all = La recherche inclut aussi les boutons avancés.
+toolbar-category-avatar = Personnage et déplacements
+toolbar-category-communication = Communication
+toolbar-category-world = Monde et destinations
+toolbar-category-creation = Construction et contenu
+toolbar-category-interface = Interface et caméra
+toolbar-category-advanced = Outils avancés
+toolbar-category-help = Aide
+toolbar-category-custom = Commandes personnalisées
+toolbar-bar-settings = Réglages des barres
+toolbar-menu-group = Menu : { $name }
+toolbar-location-bar = Barre d’adresse SLURL
+
+
 # Menu commands can be added to or removed from a toolbar.
 toolbar-add-from-menu = Ajouter à la barre d’outils
 toolbar-remove-from-menu = Retirer de la barre d’outils
@@ -16124,6 +16305,11 @@ toolbar-remove-from-menu = Retirer de la barre d’outils
 toolbar-command-build-edit = Modifier des objets
 toolbar-command-build-create = Créer des prims
 toolbar-command-build-land = Modifier le terrain
+toolbar-command-build-tool-focus = Construire - Caméra
+toolbar-command-build-tool-grab = Construire - Déplacer
+toolbar-command-build-tool-edit = Construire - Modifier
+toolbar-command-build-tool-create = Construire - Créer
+toolbar-command-build-tool-land = Construire - Terrain
 
 # La fenêtre Photo 360° (LLFloater360Capture, floater_360capture.xml)
 capture-360-quality-preview = Aperçu (rapide)
@@ -16336,6 +16522,39 @@ joystick-layout-positional = Positionnelle
 joystick-layout-auto = Automatique
 joystick-layout-xinput = XInput
 
+bug-copy-version = Copier la version du viewer
+
+
+toolbar-notecard-save = Enregistrer dans une notecard…
+toolbar-notecard-load = Charger depuis une notecard…
+toolbar-notecard-name = Interface Aurora
+toolbar-notecard-help = Disposition et apparence des barres, boutons, tiroirs et menus.
+toolbar-notecard-saved = Configuration de l’interface enregistrée dans votre inventaire.
+toolbar-notecard-invalid = Cette notecard ne contient pas de configuration d’interface compatible.
+toolbar-notecard-unavailable = Cette notecard n’est plus disponible ou ne peut pas être copiée.
+toolbar-notecard-layout-changed = L’interface a changé pendant le chargement de la notecard. Rechargez-la pour appliquer sa configuration.
+toolbar-notecard-demo-valid = Interface Photographer
+toolbar-notecard-demo-invalid = Autre notecard
+
+toolbar-notecard-too-large = Cette configuration d’interface est trop volumineuse pour une notecard.
+
+toolbar-saved-interfaces = Interfaces enregistrées
+toolbar-saved-interfaces-empty = Aucune interface enregistrée pour le moment.
+toolbar-notecard-destination = Dossier : { $path }
+toolbar-notecard-folder-error = Le dossier des interfaces n’a pas pu être chargé ou créé. Réessayez.
+
+toolbar-current-preset = Interface sélectionnée : { $name }
+toolbar-preset-custom = Interface personnalisée
+toolbar-preset-unsaved = Modifications non enregistrées
+toolbar-preset-save-title = Enregistrer l’interface
+toolbar-preset-save-name = Nom de l’interface
+toolbar-preset-save-new = Nouvelle interface personnelle
+toolbar-preset-save-replace = Remplacer cette interface personnelle
+toolbar-preset-save-unavailable = Cette interface ne peut pas être enregistrée ici. Choisissez un autre nom ou une interface personnelle disponible et modifiable.
+
+toolbar-interface-delete-unavailable = Cette interface personnelle ne peut pas être supprimée.
+
+toolbar-interface-delete-confirm = Placer l’interface personnelle « { $name } » dans la corbeille ?
 ## Teleport failures (world/teleport_failure.rs; teleport_strings.xml "errors")
 teleport-failed-title = Échec de la téléportation.
 teleport-error-invalid-tport = Les tentatives de téléportation sont limitées à 6 par minute. En cas de difficulté, attendez une minute et réessayez. Si le problème persiste, déconnectez-vous puis reconnectez-vous.

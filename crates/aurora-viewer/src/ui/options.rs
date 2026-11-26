@@ -16,6 +16,7 @@ pub use phototools::{PhotoLayer, PhotoState, Section as PhotoSection};
 mod saved_graphics;
 mod scale;
 
+pub(crate) use pages::aurora::{Look, set_all as set_look};
 pub use pages::privacy;
 pub(crate) use pages::sound::{ear_choice, noise_choice};
 pub(crate) use scale::keyboard as scale_keyboard;
