@@ -1247,18 +1247,16 @@ geometry, expires after 30 seconds, and cancels on failure, manual movement,
 Escape, Stop or closing the controller. A recovered pilot requires at least
 one metre of actual travel before another automatic recovery can be requested.
 
-`ui/inspect/` draws Inspect: `mod.rs` the window (summary card, search with
-its View panel, the Outfit / Creators / Details switch), `model.rs` the prims
-gathered into objects (body areas, sort orders, badge tiers, shares),
-`list.rs` the one-line object cards and the Creators tab, `details.rs` the
-Legacy prim table with its totals. `app/inspect.rs` selects the prims, builds
-their rows and answers the window's actions (profiles, Look at).
-Wide, the window is a board of tiles: `wide.rs` the tiles (the objects in 3D,
-items, complexity or land impact, Made by, Worn on / Owned by, figures, prims)
-and what one narrows in the others, `people.rs` the complexity among the people
-here. `ui/board.rs` is the board both wide windows share: packing on four, two
-or one columns, a tile that grows, rows with one Tab stop, virtual lists, table
-headings, the small / wide view of a window.
+`ui/inspect/` draws Inspect, a board of tiles: `mod.rs` the window and its
+rows, `wide.rs` the tiles (the objects in 3D, items, complexity or land
+impact, Made by, Worn on / Owned by, figures, prims) and what one narrows in
+the others, `model.rs` the prims gathered into objects (body areas, badge
+tiers, shares), `details.rs` the Legacy prim table of the grown Prims tile,
+`people.rs` the complexity among the people here. `app/inspect.rs` selects
+the prims, builds their rows and answers the window's actions (profiles, Look
+at). `ui/board.rs` is the board Inspect and Area Search share: packing on
+four, two or one columns, a tile that grows, rows with one Tab stop, virtual
+lists, table headings.
 
 `object_stage/` is their 3D view: `mod.rs` keeps one model per window up to
 date (refused under RLVa's `second_camera_blocked`), `build.rs` takes the

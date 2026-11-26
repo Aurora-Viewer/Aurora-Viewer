@@ -1,35 +1,11 @@
-//! The Details tab of Inspect: the Legacy table of every prim, with the
-//! totals as figure tiles above it (LLFloaterInspect::refresh, the "Total
-//! stats" of floater_inspect.xml). The columns are FSInspectColumnConfig's;
-//! those that do not fit the window's width leave it, and an opened row
-//! shows every figure of its prim with the profile buttons.
+//! The Prims table of Inspect's grown Prims tile: the Legacy table of every
+//! prim (LLFloaterInspect::refresh, floater_inspect.xml). The columns are
+//! FSInspectColumnConfig's, scrolled sideways when they do not fit.
 
-use super::model::Item;
-use super::{Action, Column, Frame, InspectUi, Row, kilobytes, megabytes, profile_route, shown, slt_datetime};
+use super::{Column, InspectUi, Row, kilobytes, shown, slt_datetime};
 use crate::theme::Palette;
 use crate::ui::widgets;
 use egui::{Rect, RichText, Sense, Stroke, Vec2};
-
-/// Narrowest the name column gets before a column of figures leaves.
-const MIN_NAME: f32 = 120.0;
-
-/// The columns shown after the name: the chosen ones, as many as fit `width`.
-fn visible(columns: u32, width: f32) -> Vec<Column> {
-    let mut list = vec![Column::Name];
-    let mut room = width - MIN_NAME;
-    for column in Column::ALL.into_iter().skip(1) {
-        if !shown(columns, column) {
-            continue;
-        }
-        let w = column.fixed_width().unwrap_or(110.0);
-        if room < w {
-            break;
-        }
-        room -= w;
-        list.push(column);
-    }
-    list
-}
 
 /// The cells of `columns` over `row`: figures at their width, the columns of
 /// text sharing the rest, the name a little wider.
@@ -99,38 +75,9 @@ fn text_right(ui: &egui::Ui, text: String, cell: Rect, color: egui::Color32) {
     widgets::paint_ink_left(ui.painter(), galley, left, color);
 }
 
-pub(super) fn show(
-    state: &mut InspectUi,
-    ui: &mut egui::Ui,
-    p: &Palette,
-    frame: &mut Frame<'_>,
-    _items: &[Item],
-    actions: &mut Vec<Action>,
-) {
-    let t = frame.totals;
-    let n = |v: u32| aurora_i18n::integer(i64::from(v));
-    let tiles = [
-        (n(t.faces), aurora_i18n::tr!("inspect-col-faces"), None),
-        (n(t.visible_faces), aurora_i18n::tr!("inspect-totals-visible"), None),
-        (n(t.vertices), aurora_i18n::tr!("inspect-col-vertices"), None),
-        (n(t.triangles), aurora_i18n::tr!("inspect-col-triangles"), None),
-        (n(t.complexity), aurora_i18n::tr!("inspect-totals-complexity"), None),
-        (n(t.textures), aurora_i18n::tr!("inspect-totals-textures"), None),
-        (megabytes(t.texture_memory), aurora_i18n::tr!("inspect-tile-tmem"), None),
-        (megabytes(t.vram), aurora_i18n::tr!("inspect-tile-vram"), None),
-        (n(t.prims), aurora_i18n::tr!("inspect-tile-prims"), None),
-    ];
-    super::list::tiles(ui, p, &tiles, 3);
-    let avatar = state.avatar();
-    let width = widgets::header_width(ui, ui.scope_id().with("inspect_rows")) - 26.0;
-    let columns = visible(*frame.columns, width);
-    header(state, ui, p, &columns, Some(frame.columns));
-    rows(state, ui, p, frame.rows.iter().collect(), &columns, true, avatar, actions);
-}
-
 /// The whole table in a grown tile: every chosen column, scrolled sideways
 /// when they do not fit.
-pub(super) fn table(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, list: Vec<&Row>, chosen: u32, actions: &mut Vec<Action>) {
+pub(super) fn table(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, list: Vec<&Row>, chosen: u32) {
     let columns: Vec<Column> = Column::ALL
         .into_iter()
         .filter(|c| *c == Column::Name || shown(chosen, *c))
@@ -140,25 +87,21 @@ pub(super) fn table(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, list:
         .map(|c| c.fixed_width().unwrap_or(if *c == Column::Name { 170.0 } else { 130.0 }))
         .sum();
     let width = ui.available_width().max(least + 30.0);
-    let avatar = state.avatar();
     egui::ScrollArea::horizontal()
         .id_salt("inspect_prims_across")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.set_width(width);
-            header(state, ui, p, &columns, None);
-            rows(state, ui, p, list, &columns, false, avatar, actions);
+            header(state, ui, p, &columns);
+            rows(state, ui, p, list, &columns);
         });
 }
 
-fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, columns: &[Column], chosen: Option<&mut u32>) {
+fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, columns: &[Column]) {
     let width = widgets::header_width(ui, ui.scope_id().with("inspect_rows"));
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
-    let menu_at = Rect::from_min_max(
-        egui::pos2(rect.left() + width - 24.0, rect.top()),
-        egui::pos2(rect.left() + width, rect.bottom()),
-    );
-    let line = rect.with_max_x(menu_at.left());
+    // over the rows' own width, the scroll bar left out
+    let line = rect.with_max_x(rect.left() + width);
     for (column, cell) in cells(columns, line) {
         let resp = ui.interact(cell, ui.scope_id().with(("inspect_header", column.bit())), Sense::click());
         let sorted = state.sort.filter(|(c, _)| *c == column);
@@ -194,40 +137,11 @@ fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, columns: &[Colu
     }
     let stroke = widgets::divider_stroke(p);
     ui.painter().hline(rect.x_range(), rect.bottom(), stroke);
-    let Some(chosen) = chosen else { return };
-    // menu_fs_inspect_options.xml: the columns shown
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(menu_at)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    widgets::icon_menu(&mut child, p, "adjustments-filled", aurora_i18n::tr!("inspect-options"), |ui| {
-        for column in Column::ALL.into_iter().skip(1) {
-            let mut on = shown(*chosen, column);
-            if crate::ui::menu::toggle(ui, p, "", column.title(), &mut on) {
-                *chosen ^= column.bit();
-            }
-        }
-    });
 }
 
-#[allow(clippy::too_many_arguments)]
-fn rows(
-    state: &mut InspectUi,
-    ui: &mut egui::Ui,
-    p: &Palette,
-    rows: Vec<&Row>,
-    columns: &[Column],
-    opens: bool,
-    avatar: bool,
-    actions: &mut Vec<Action>,
-) {
-    // (a grown tile's rows are already those the search keeps)
-    let query = if opens { state.query.trim().to_lowercase() } else { String::new() };
-    let list: Vec<&Row> = sorted(rows, state.sort)
-        .into_iter()
-        .filter(|r| query.is_empty() || r.name.to_lowercase().contains(&query) || r.creator_name.to_lowercase().contains(&query))
-        .collect();
+/// The rows, already those the search keeps.
+fn rows(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, rows: Vec<&Row>, columns: &[Column]) {
+    let list = sorted(rows, state.sort);
     let grouped = state.sort.is_none();
     let out = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 1.0;
@@ -236,12 +150,11 @@ fn rows(
             ui.label(RichText::new(aurora_i18n::tr!("inspect-empty")).size(12.0).color(p.muted));
         }
         let radius = ui.visuals().widgets.inactive.corner_radius;
-        let nav = crate::ui::board::Nav::begin(ui, ("inspect_prims", opens), list.len(), 10);
+        let nav = crate::ui::board::Nav::begin(ui, "inspect_prims", list.len(), 10);
         for (i, row) in list.into_iter().enumerate() {
             let (_, rect) = ui.allocate_space(Vec2::new(ui.available_width(), 24.0));
-            let open = opens && state.detail_open == Some(row.id);
             // what is out of sight is neither drawn nor sensed
-            if !ui.is_rect_visible(rect) && !open && i != nav.at() {
+            if !ui.is_rect_visible(rect) && i != nav.at() {
                 continue;
             }
             let resp = nav.row(ui, rect, i);
@@ -283,96 +196,17 @@ fn rows(
                 aurora_i18n::integer(i64::from(row.triangles)),
                 aurora_i18n::tr!("inspect-col-triangles")
             );
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, open, &label));
-            if resp.clicked() && !opens {
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+            if resp.clicked() {
                 state.selected = Some(row.id);
-            } else if resp.clicked() {
-                state.selected = Some(row.id);
-                state.detail_open = if open { None } else { Some(row.id) };
-            }
-            if open {
-                facts(ui, p, row, avatar, actions);
             }
         }
     });
     widgets::remember_scroll_bar(ui, ui.scope_id().with("inspect_rows"), &out);
 }
 
-/// Every figure of an opened prim, and the Legacy profile buttons
-/// (LLFloaterInspect::onClickOwnerProfile / onClickCreatorProfile).
-fn facts(ui: &mut egui::Ui, p: &Palette, row: &Row, avatar: bool, actions: &mut Vec<Action>) {
-    let radius = ui.visuals().window_corner_radius;
-    egui::Frame::new()
-        .fill(p.bar)
-        .corner_radius(radius)
-        .inner_margin(egui::Margin::symmetric(10, 8))
-        .outer_margin(egui::Margin {
-            left: 18,
-            right: 0,
-            top: 2,
-            bottom: 6,
-        })
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 2.0;
-            for column in Column::ALL.into_iter().skip(1) {
-                let value = cell_text(row, column);
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        Vec2::new(96.0, 18.0),
-                        egui::Label::new(RichText::new(column.title()).size(12.0).color(p.muted)),
-                    );
-                    let value = if value.trim().is_empty() { "—".to_owned() } else { value };
-                    ui.add(egui::Label::new(RichText::new(value).size(12.0).color(p.ink)).truncate());
-                });
-            }
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let size = Vec2::new(0.0, 26.0);
-                if !avatar {
-                    let b = widgets::action_button_if(
-                        ui,
-                        p,
-                        "user-filled",
-                        aurora_i18n::tr!("inspect-owner-profile"),
-                        widgets::ActionKind::Flat,
-                        size,
-                        row.owner.is_some(),
-                    );
-                    if b.on_hover_text(aurora_i18n::tr!("inspect-owner-profile-tip")).clicked()
-                        && let Some(who) = row.owner
-                    {
-                        actions.push(Action::Profile {
-                            who,
-                            named_here_alone: false,
-                        });
-                    }
-                }
-                let b = widgets::action_button_if(
-                    ui,
-                    p,
-                    "user-filled",
-                    aurora_i18n::tr!("inspect-creator-profile"),
-                    widgets::ActionKind::Flat,
-                    size,
-                    row.creator.is_some(),
-                );
-                if b.on_hover_text(aurora_i18n::tr!("inspect-creator-profile-tip")).clicked() {
-                    let (as_world, as_named) = profile_route(row.creator, row.creator_named_here_alone);
-                    if let Some(who) = as_world.or(as_named) {
-                        actions.push(Action::Profile {
-                            who,
-                            named_here_alone: as_named.is_some(),
-                        });
-                    }
-                }
-            });
-        });
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::ALL_COLUMNS;
     use super::*;
     use uuid::Uuid;
 
@@ -399,16 +233,6 @@ mod tests {
         // names without regard to case, figures as numbers
         assert_eq!(names(Some((Column::Name, false))), ["Anneau", "bras", "Racine"]);
         assert_eq!(names(Some((Column::Triangles, true))), ["bras", "Anneau", "Racine"]);
-    }
-
-    #[test]
-    fn columns_that_do_not_fit_leave() {
-        // wide: every chosen column of figures fits
-        let wide = visible(ALL_COLUMNS, 1200.0);
-        assert!(wide.contains(&Column::Owner) && wide.contains(&Column::Created));
-        // narrow: the name and the first chosen column only
-        let narrow = visible(Column::Name.bit() | Column::Triangles.bit() | Column::Faces.bit(), 200.0);
-        assert_eq!(narrow, [Column::Name, Column::Faces]);
     }
 
     #[test]

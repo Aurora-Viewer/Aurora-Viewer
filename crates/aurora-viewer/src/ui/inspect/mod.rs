@@ -7,22 +7,18 @@
 //! "Improved Object Inspect" figures, complexity, sorting, columns chosen in
 //! the options menu (FSInspectColumnConfig).
 //!
-//! The Outfit and Creators lists, the summary card and the View panel are
-//! Aurora's own presentation of the same data (human request, 2026-11-23):
-//! the Legacy Viewer only has the table, kept as the Details tab. Wide, the
-//! window is a board of tiles (`wide.rs`).
+//! The window is a board of tiles (`wide.rs`), Aurora's own presentation of
+//! the same data (human request, 2026-11-23; one view only since
+//! 2026-11-26): the Legacy Viewer only has the table, kept as the Prims tile.
 
 mod details;
-mod list;
 pub(crate) mod model;
 mod people;
 pub(crate) mod wide;
 
-use super::board;
-use super::widgets::{self, Floater};
+use super::widgets::Floater;
 use crate::theme::Palette;
-use egui::{RichText, Sense, TextureHandle, Vec2};
-use model::Sort;
+use egui::{TextureHandle, Vec2};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -180,52 +176,6 @@ pub enum Subject {
     Objects,
 }
 
-/// How the creator shows on the rows of the lists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum CreatorShown {
-    #[default]
-    Picture,
-    Name,
-    Hidden,
-}
-
-/// The View panel's choices, kept in the settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
-pub struct InspectView {
-    pub sort: Sort,
-    pub creator: CreatorShown,
-    pub worn_on: bool,
-    pub complexity: bool,
-}
-
-impl Default for InspectView {
-    fn default() -> Self {
-        InspectView {
-            sort: Sort::Area,
-            creator: CreatorShown::Picture,
-            worn_on: false,
-            complexity: true,
-        }
-    }
-}
-
-impl InspectView {
-    /// How many choices differ from the defaults (the View button's count).
-    fn changes(&self) -> usize {
-        let d = InspectView::default();
-        [
-            self.sort != d.sort,
-            self.creator != d.creator,
-            self.worn_on != d.worn_on,
-            self.complexity != d.complexity,
-        ]
-        .into_iter()
-        .filter(|c| *c)
-        .count()
-    }
-}
-
 /// Someone here, for the complexity strip.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Person {
@@ -270,12 +220,11 @@ pub struct Frame<'a> {
     pub point_names: &'a HashMap<u8, String>,
     /// RenderAvatarMaxComplexity; 0: no limit.
     pub max_complexity: u32,
-    /// The people here with their complexity (the wide window, for an avatar).
+    /// The people here with their complexity, for an avatar.
     pub people: &'a [Person],
     /// Land impact used and allowed on the parcel the objects are on.
     pub parcel: Option<(i32, i32)>,
     pub columns: &'a mut u32,
-    pub view: &'a mut InspectView,
 }
 
 /// What the window asks the app to do.
@@ -291,13 +240,10 @@ pub enum Action {
     Group(Uuid),
 }
 
-/// The compact window and the wide one.
-const VIEWS: board::Views = board::Views {
-    window: "inspect",
-    small: Vec2::new(420.0, 600.0),
-    wide: Vec2::new(800.0, 760.0),
-    from: 700.0,
-};
+/// The window's size when it opens, as much of it as the screen has room
+/// for, and the least it shrinks to (the board's tiles need it).
+const SIZE: Vec2 = Vec2::new(800.0, 760.0);
+const MIN_SIZE: Vec2 = Vec2::new(680.0, 520.0);
 
 #[derive(Default)]
 pub struct InspectUi {
@@ -314,34 +260,23 @@ pub struct InspectUi {
     /// The highlighted prim, outlined in the world (LLFloaterInspect::getSelectedUUID).
     pub selected: Option<Uuid>,
     pub subject: Subject,
-    /// Outfit (Objects), Creators, Details.
-    tab: usize,
     query: String,
-    view_open: bool,
     /// The object opened in the lists, by its root.
     opened: Option<Uuid>,
-    /// Column sorted on in Details and whether descending; None keeps the
+    /// Column the prims are sorted on and whether descending; None keeps the
     /// linksets together, their root first.
     sort: Option<(Column, bool)>,
-    /// The prim opened in Details.
-    detail_open: Option<Uuid>,
     /// Profile pictures the window shows, for the app to fetch.
     pub wanted_pics: HashSet<Uuid>,
     /// AURORA_DEMO_INSPECT has opened the window (or is not set).
     pub demo_done: bool,
-    /// The 3D view of the wide window.
+    /// The 3D view.
     pub stage: super::object_stage::StageUi,
     wide: wide::Wide,
     /// AURORA_DEMO_INSPECT's `hover`.
     demo_hover: bool,
     demo_paused: bool,
     demo_light: bool,
-    /// AURORA_DEMO_INSPECT's view; None: the one chosen last.
-    pub forced_wide: Option<bool>,
-    /// The window opens this frame: it takes the view chosen last.
-    opening: bool,
-    /// One object was inspected: the window opens wide, on its 3D view.
-    single: bool,
 }
 
 /// Date and time in SLT (the timeStamp of floater_inspect.xml, kept short).
@@ -375,14 +310,10 @@ impl InspectUi {
         self.open = true;
         self.selected = roots.first().copied();
         self.opened = (roots.len() == 1).then(|| roots[0]);
-        self.detail_open = None;
         self.query.clear();
-        self.tab = 0;
-        self.opening = true;
-        self.single = roots.len() == 1;
         self.wide.restart();
         // one object: its 3D view, large
-        self.wide.grown = self.single.then_some(wide::Tile::Stage);
+        self.wide.grown = (roots.len() == 1).then_some(wide::Tile::Stage);
         self.stage.restart();
         self.subject = subject;
         self.roots = roots;
@@ -390,23 +321,11 @@ impl InspectUi {
         self.own_body = false;
     }
 
-    /// AURORA_DEMO_INSPECT's options: `wide` or `small` the view; small, `open`
-    /// the third object's card, `creators` or `details` that tab, `view` the
-    /// View panel; wide, `item` the third object, `grow-…` a tile grown,
-    /// `hover` its 3D view with the fourth pointed at,
-    /// `paused` and `light` its animation and its ground.
+    /// AURORA_DEMO_INSPECT's options: `item` the third object, `grow-…` a
+    /// tile grown, `hover` its 3D view with the fourth pointed at, `paused`
+    /// and `light` its animation and its ground.
     pub fn demo(&mut self, option: &str) {
         match option {
-            "open" => {
-                // the third: the wolf's head, with its linked prims
-                self.opened = self.roots.get(2).or(self.roots.first()).copied();
-                self.selected = self.opened;
-            }
-            "creators" => self.tab = 1,
-            "details" => self.tab = 2,
-            "view" => self.view_open = true,
-            "wide" => self.forced_wide = Some(true),
-            "small" => self.forced_wide = Some(false),
             "item" => {
                 let root = self.roots.get(2).or(self.roots.first()).copied();
                 self.open_item(root);
@@ -433,9 +352,9 @@ impl InspectUi {
         }
     }
 
-    /// The demo chose the window's view: its choices are not kept.
-    pub fn demo_forced(&self) -> bool {
-        self.forced_wide.is_some()
+    /// The demo chose the 3D view's ground: it is not kept.
+    pub fn demo_light(&self) -> bool {
+        self.demo_light
     }
 
     /// AURORA_DEMO_INSPECT's pause and ground.
@@ -450,25 +369,12 @@ impl InspectUi {
         matches!(self.subject, Subject::Avatar(_))
     }
 
-    /// Whether the window shows its board of tiles this frame.
-    pub fn is_wide(&self, ctx: &egui::Context, saved: bool) -> bool {
-        self.open && board::is_wide(ctx, &VIEWS, self.starts_wide(saved), self.opening)
-    }
-
-    /// The view the window opens on: the one chosen last, the wide one for one
-    /// object (a demo's own view always).
-    fn starts_wide(&self, saved: bool) -> bool {
-        saved || (self.single && self.forced_wide.is_none())
-    }
-
     /// Draw the window. Returns what the window asks of the app.
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, frame: Frame<'_>, saved_wide: &mut bool) -> Vec<Action> {
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, frame: Frame<'_>) -> Vec<Action> {
         let mut actions = Vec::new();
         if !self.open {
             return actions;
         }
-        let wide = self.is_wide(ctx, *saved_wide);
-        self.opening = false;
         let rows = frame.rows;
         // the highlighted prim is gone: the first one (refresh's selectNthItem(0))
         if !rows.iter().any(|r| Some(r.id) == self.selected) {
@@ -483,492 +389,28 @@ impl InspectUi {
             "inspect",
             aurora_i18n::tr!("inspect-window"),
             egui::pos2(240.0, 60.0),
-            VIEWS.size(ctx, self.starts_wide(*saved_wide)),
+            SIZE.min(super::layout::work_area(ctx).size() - Vec2::splat(2.0 * super::layout::GAP)),
         );
-        floater.min_size = Vec2::new(360.0, 380.0);
-        let mut resize = false;
-        let (icon, tip) = board::size_button(wide);
-        let floater = floater.action(icon, tip, &mut resize);
+        floater.min_size = MIN_SIZE;
         let mut frame = frame;
         floater.show(ctx, p, &mut open, |ui| {
-            if wide {
-                wide::show(self, ui, p, &mut frame, &items, &mut actions);
-                return;
-            }
-            self.summary(ui, p, &frame, &items, &mut actions);
-            ui.add_space(8.0);
-            self.search_row(ui, p, frame.view);
-            if self.view_open {
-                ui.add_space(6.0);
-                self.view_panel(ui, p, frame.view);
-            }
-            ui.add_space(8.0);
-            let creators = items.iter().filter_map(|i| rows[i.first].creator).collect::<HashSet<_>>().len();
-            let first = if self.avatar() {
-                aurora_i18n::tr!("inspect-tab-outfit")
-            } else {
-                aurora_i18n::tr!("inspect-tab-objects")
-            };
-            let tabs = [
-                (first, model::objects(&items)),
-                (aurora_i18n::tr!("inspect-tab-creators"), creators),
-                (aurora_i18n::tr!("inspect-tab-details"), model::prims(&items)),
-            ];
-            widgets::count_tabs(ui, p, "inspect_tabs", &mut self.tab, &tabs);
-            ui.add_space(6.0);
-            let (mut body, foot) = widgets::above_footer(ui);
-            match self.tab {
-                0 | 1 => list::show(self, &mut body, p, &frame, &items, &mut actions),
-                _ => details::show(self, &mut body, p, &mut frame, &items, &mut actions),
-            }
-            foot.show(ui, |ui| self.footer(ui, p, rows));
+            wide::show(self, ui, p, &mut frame, &items, &mut actions);
         });
-        board::after(ctx, &VIEWS, resize, wide, saved_wide);
         if !open {
             self.open = false;
         }
         actions
     }
-
-    /// The summary card: who or what is inspected, how much, and the
-    /// complexity against the user's limit.
-    fn summary(&mut self, ui: &mut egui::Ui, p: &Palette, frame: &Frame<'_>, items: &[model::Item], actions: &mut Vec<Action>) {
-        let radius = ui.visuals().window_corner_radius;
-        egui::Frame::new()
-            .fill(p.bar)
-            .corner_radius(radius)
-            .inner_margin(10)
-            .show(ui, |ui| {
-                let m = SummaryMetrics::new(ui);
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), m.height), Sense::hover());
-                let limit = self.avatar().then_some(frame.max_complexity);
-                // the box takes the card's whole height, so its edges, the
-                // picture's and the two text blocks' share one middle line
-                let boxed = complexity_box(ui, p, rect, &m, frame.totals.complexity, limit);
-                let pic = egui::Rect::from_center_size(
-                    egui::pos2(rect.left() + SUMMARY_PICTURE / 2.0, rect.center().y),
-                    Vec2::splat(SUMMARY_PICTURE),
-                );
-                let title = match self.subject {
-                    Subject::Avatar(id) => {
-                        self.wanted_pics.insert(id);
-                        let tex = frame.pics.get(&id);
-                        widgets::avatar_disc(ui, p, pic, tex, "", false);
-                        if tex.is_none() {
-                            initials_at(ui, p, pic, frame.subject_name);
-                        }
-                        frame.subject_name.to_owned()
-                    }
-                    Subject::Objects => {
-                        ui.painter().rect_filled(pic, radius, p.raised);
-                        crate::ui::sheet::icon_at(ui, "cube", pic.center(), 20.0, p.violet_light);
-                        aurora_i18n::tr!("inspect-objects-title", count = items.len())
-                    }
-                };
-                // one line each, cut short with "…" (the counts are on the
-                // tabs below)
-                let left = pic.right() + 12.0;
-                let right = boxed.left() - 10.0;
-                let base = if frame.subject_username.is_some() {
-                    m.top(rect) + m.name.cap
-                } else {
-                    rect.center().y + m.name.cap / 2.0
-                };
-                let link_w = if frame.subject_profile.is_some() { 24.0 } else { 0.0 };
-                let room = (right - left - link_w).max(20.0);
-                let name = RichText::new(&title).font(m.name.font.clone()).color(p.ink);
-                let drawn = text_on(ui, &m.name, egui::pos2(left, base), room, name);
-                if let Some(id) = frame.subject_profile {
-                    let middle = egui::pos2(drawn.right() + 14.0, base - m.name.cap / 2.0);
-                    if profile_link(ui, p, middle) {
-                        actions.push(Action::Profile {
-                            who: id,
-                            named_here_alone: false,
-                        });
-                    }
-                }
-                if let Some(username) = frame.subject_username {
-                    let text = RichText::new(username).font(m.username.font.clone()).color(p.muted);
-                    let at = egui::pos2(left, m.bottom(rect));
-                    text_on(ui, &m.username, at, (right - left).max(20.0), text);
-                }
-            });
-    }
-
-    fn search_row(&mut self, ui: &mut egui::Ui, p: &Palette, view: &InspectView) {
-        ui.horizontal(|ui| {
-            let changes = view.changes();
-            let label = if changes > 0 {
-                aurora_i18n::tr!("inspect-view-count", count = changes)
-            } else {
-                aurora_i18n::tr!("inspect-view").to_owned()
-            };
-            let button_w = widgets::action_button_fit(ui, "adjustments-horizontal-filled", &label);
-            let hint = if self.tab == 2 {
-                aurora_i18n::tr!("inspect-search-prims")
-            } else {
-                aurora_i18n::tr!("inspect-search")
-            };
-            let width = (ui.available_width() - button_w - ui.spacing().item_spacing.x).max(80.0);
-            // as tall as the button beside it, its capitals in its middle
-            let mut margin = widgets::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
-            margin.left += 8;
-            margin.right += 4;
-            widgets::search_text_edit_with_margin(ui, p, &mut self.query, margin, |edit| {
-                edit.hint_text(hint)
-                    .align(egui::Align2::LEFT_CENTER)
-                    .desired_width(width)
-                    .min_size(Vec2::new(0.0, SEARCH_HEIGHT))
-            });
-            let kind = if self.view_open {
-                widgets::ActionKind::Primary
-            } else {
-                widgets::ActionKind::Flat
-            };
-            if widgets::action_button(ui, p, "adjustments-horizontal-filled", &label, kind, Vec2::new(0.0, SEARCH_HEIGHT))
-                .on_hover_text(aurora_i18n::tr!("inspect-view-tip"))
-                .clicked()
-            {
-                self.view_open = !self.view_open;
-            }
-        });
-    }
-
-    /// The View panel: order, how the creator shows, what else the rows say.
-    fn view_panel(&mut self, ui: &mut egui::Ui, p: &Palette, view: &mut InspectView) {
-        let radius = ui.visuals().window_corner_radius;
-        egui::Frame::new()
-            .fill(p.bar)
-            .corner_radius(radius)
-            .inner_margin(10)
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                let heading = |ui: &mut egui::Ui, text: &str| {
-                    ui.label(
-                        RichText::new(text)
-                            .size(11.5)
-                            .family(crate::ui::fonts::semibold(ui.ctx()))
-                            .color(p.muted),
-                    );
-                };
-                heading(ui, aurora_i18n::tr!("inspect-view-sort"));
-                let first = if self.avatar() {
-                    aurora_i18n::tr!("inspect-sort-area")
-                } else {
-                    aurora_i18n::tr!("inspect-sort-listed")
-                };
-                let sorts = [Sort::Area, Sort::Name, Sort::Heaviest, Sort::Newest];
-                let mut at = sorts.iter().position(|s| *s == view.sort).unwrap_or(0);
-                let labels = [
-                    (first, true),
-                    (aurora_i18n::tr!("inspect-sort-name"), true),
-                    (aurora_i18n::tr!("inspect-sort-heaviest"), true),
-                    (aurora_i18n::tr!("inspect-sort-newest"), true),
-                ];
-                if widgets::segmented(ui, p, &mut at, &labels) {
-                    view.sort = sorts[at];
-                }
-                ui.add_space(8.0);
-                heading(ui, aurora_i18n::tr!("inspect-view-creator"));
-                let shows = [CreatorShown::Picture, CreatorShown::Name, CreatorShown::Hidden];
-                let mut at = shows.iter().position(|s| *s == view.creator).unwrap_or(0);
-                let labels = [
-                    (aurora_i18n::tr!("inspect-creator-picture"), true),
-                    (aurora_i18n::tr!("inspect-creator-name"), true),
-                    (aurora_i18n::tr!("inspect-creator-hidden"), true),
-                ];
-                if widgets::segmented(ui, p, &mut at, &labels) {
-                    view.creator = shows[at];
-                }
-                ui.add_space(8.0);
-                heading(ui, aurora_i18n::tr!("inspect-view-show"));
-                ui.horizontal(|ui| {
-                    if self.avatar() {
-                        widgets::checkbox(ui, p, &mut view.worn_on, aurora_i18n::tr!("inspect-show-worn-on"));
-                    }
-                    widgets::checkbox(ui, p, &mut view.complexity, aurora_i18n::tr!("inspect-show-complexity"));
-                });
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if widgets::action_button(
-                        ui,
-                        p,
-                        "refresh",
-                        aurora_i18n::tr!("common-reset"),
-                        widgets::ActionKind::Flat,
-                        Vec2::new(0.0, 26.0),
-                    )
-                    .clicked()
-                    {
-                        *view = InspectView::default();
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if widgets::action_button(
-                            ui,
-                            p,
-                            "check",
-                            aurora_i18n::tr!("inspect-view-done"),
-                            widgets::ActionKind::Primary,
-                            Vec2::new(0.0, 26.0),
-                        )
-                        .clicked()
-                        {
-                            self.view_open = false;
-                        }
-                    });
-                });
-            });
-    }
-
-    fn footer(&self, ui: &mut egui::Ui, p: &Palette, rows: &[Row]) {
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let selected = rows.iter().find(|r| Some(r.id) == self.selected);
-            let open = if self.tab == 2 {
-                self.detail_open.is_some()
-            } else {
-                self.opened.is_some()
-            };
-            let text = match selected {
-                Some(row) if open => aurora_i18n::tr!("inspect-outlined", name = row.name.trim()),
-                _ if self.tab == 2 => aurora_i18n::tr!("inspect-hint-details").to_owned(),
-                _ => aurora_i18n::tr!("inspect-hint-right").to_owned(),
-            };
-            widgets::status_dot(ui, p.violet);
-            ui.label(RichText::new(text).size(11.5).color(p.muted));
-        });
-    }
-}
-
-/// Height of the search field and of the View button beside it.
-const SEARCH_HEIGHT: f32 = 26.0;
-
-/// Side of the picture in the summary card.
-const SUMMARY_PICTURE: f32 = 38.0;
-
-/// A font and where its capitals stand in a line, as drawn: a line's box
-/// leaves more room under the letters than above, and the face is drawn a
-/// fraction of a pixel off its baseline, so texts of different sizes centred
-/// by their boxes do not look centred.
-struct Ink {
-    font: egui::FontId,
-    /// From the line's top to the foot of the capitals, on a whole pixel.
-    base: f32,
-    /// Height of a capital.
-    cap: f32,
-}
-
-impl Ink {
-    fn new(ui: &egui::Ui, font: egui::FontId) -> Self {
-        let galley = ui
-            .painter()
-            .layout_no_wrap("H".to_owned(), font.clone(), egui::Color32::PLACEHOLDER);
-        let glyph = galley
-            .rows
-            .first()
-            .and_then(|row| row.glyphs.first().map(|g| (row.pos.y + g.pos.y, g.uv_rect)));
-        let (base, cap) = match glyph {
-            Some((line, uv)) if uv.size.y > 0.0 => (line + uv.offset.y + uv.size.y, uv.size.y),
-            _ => (font.size, font.size * 0.7),
-        };
-        let px = ui.ctx().pixels_per_point();
-        let base = (base * px).round() / px;
-        Self { font, base, cap }
-    }
-}
-
-/// The summary card's lines: the name over the username on the left, the
-/// label over the figure in the complexity box. Both blocks have the same
-/// height, from the top of their capitals to their last baseline, and so the
-/// same top, middle and bottom.
-struct SummaryMetrics {
-    name: Ink,
-    username: Ink,
-    label: Ink,
-    figure: Ink,
-    /// Height of a text block.
-    block: f32,
-    /// Height of the card's inside, and of the complexity box.
-    height: f32,
-}
-
-impl SummaryMetrics {
-    fn new(ui: &egui::Ui) -> Self {
-        let bold = crate::ui::fonts::semibold(ui.ctx());
-        let name = Ink::new(ui, egui::FontId::new(15.0, bold.clone()));
-        let username = Ink::new(ui, egui::FontId::proportional(12.0));
-        let label = Ink::new(ui, egui::FontId::new(10.5, bold.clone()));
-        let figure = Ink::new(ui, egui::FontId::new(14.0, bold));
-        let gap = 6.0 * crate::ui::fonts::scale(ui.ctx());
-        let block = (name.cap + username.cap).max(label.cap + figure.cap) + gap;
-        Self {
-            name,
-            username,
-            label,
-            figure,
-            block,
-            height: (block + 12.0).max(SUMMARY_PICTURE),
-        }
-    }
-
-    /// Top of the blocks' capitals.
-    fn top(&self, card: egui::Rect) -> f32 {
-        card.center().y - self.block / 2.0
-    }
-
-    /// Last baseline of the blocks.
-    fn bottom(&self, card: egui::Rect) -> f32 {
-        card.center().y + self.block / 2.0
-    }
-}
-
-/// A line of text with its baseline at `at`, at most `width` wide.
-fn text_on(ui: &mut egui::Ui, ink: &Ink, at: egui::Pos2, width: f32, text: impl Into<egui::WidgetText>) -> egui::Rect {
-    let line = egui::Rect::from_min_size(egui::pos2(at.x, at.y - ink.base), Vec2::new(width, ink.base + ink.cap));
-    let layout = egui::Layout::top_down(egui::Align::Min);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(line).layout(layout));
-    child.add(egui::Label::new(text).truncate()).rect
-}
-
-/// The initials of `name` in the disc of a resident without a picture, their
-/// capitals in its middle.
-fn initials_at(ui: &egui::Ui, p: &Palette, disc: egui::Rect, name: &str) {
-    let size = disc.height() * 0.42 / crate::ui::fonts::scale(ui.ctx());
-    let ink = Ink::new(ui, egui::FontId::proportional(size));
-    let galley = ui.painter().layout_no_wrap(widgets::initials(name), ink.font, p.violet_pale);
-    let at = egui::pos2(disc.center().x - galley.size().x / 2.0, disc.center().y + ink.cap / 2.0 - ink.base);
-    ui.painter().galley(at, galley, p.violet_pale);
-}
-
-/// The complexity of the inspected objects. For an avatar above the user's
-/// RenderAvatarMaxComplexity (0: no limit), beyond which the Legacy Viewer
-/// draws them as a jelly doll, the figure turns orange; the tooltip says
-/// which side of the limit it is.
-fn complexity_box(ui: &mut egui::Ui, p: &Palette, card: egui::Rect, m: &SummaryMetrics, complexity: u32, limit: Option<u32>) -> egui::Rect {
-    const SPACING: f32 = 0.7;
-    let above = limit.is_some_and(|limit| limit != 0 && complexity > limit);
-    let mut format = egui::TextFormat::simple(m.label.font.clone(), p.muted);
-    format.extra_letter_spacing = SPACING;
-    let label = aurora_i18n::tr!("inspect-totals-complexity").to_uppercase();
-    let label = ui.painter().layout_job(egui::text::LayoutJob::single_section(label, format));
-    let ink = if above { p.warn } else { p.ink };
-    let figure = ui
-        .painter()
-        .layout_no_wrap(aurora_i18n::integer(i64::from(complexity)), m.figure.font.clone(), ink);
-    // the last letter's spacing is not part of the word
-    let label_w = label.size().x - SPACING;
-    let width = label_w.max(figure.size().x) + 18.0;
-    let rect = egui::Rect::from_min_max(egui::pos2(card.right() - width, card.top()), card.right_bottom());
-    ui.painter()
-        .rect_filled(rect, ui.visuals().window_corner_radius, p.raised.gamma_multiply(0.5));
-    let right = rect.right() - 9.0;
-    let (label_room, figure_w) = (label.size().x, figure.size().x);
-    text_on(
-        ui,
-        &m.label,
-        egui::pos2(right - label_w, m.top(card) + m.label.cap),
-        label_room,
-        label,
-    );
-    text_on(ui, &m.figure, egui::pos2(right - figure_w, m.bottom(card)), figure_w, figure);
-    if let Some(limit) = limit.filter(|limit| *limit != 0) {
-        let side = if above {
-            aurora_i18n::tr!("inspect-over-limit")
-        } else {
-            aurora_i18n::tr!("inspect-within-limit")
-        };
-        let tip = format!(
-            "{side}\n{}",
-            aurora_i18n::tr!("inspect-limit-tip", limit = aurora_i18n::integer(i64::from(limit)))
-        );
-        ui.interact(rect, ui.scope_id().with("inspect_complexity"), Sense::hover())
-            .on_hover_text(tip);
-    }
-    rect
-}
-
-/// The quiet link beside the name in the summary card, 20 px around
-/// `middle`: a small icon, a face only when pointed at.
-fn profile_link(ui: &mut egui::Ui, p: &Palette, middle: egui::Pos2) -> bool {
-    let r = egui::Rect::from_center_size(middle, Vec2::splat(20.0));
-    let resp = ui.interact(r, ui.scope_id().with("inspect_profile_link"), Sense::click());
-    let hovered = resp.hovered();
-    if hovered {
-        ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, p.raised);
-    }
-    let ink = if hovered { p.ink } else { p.muted };
-    crate::ui::sheet::icon_at(ui, "external-link-filled", r.center(), 14.0, ink);
-    let tip = aurora_i18n::tr!("inspect-open-profile");
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, tip));
-    resp.on_hover_text(tip).clicked()
-}
-
-/// How a profile button opens `who`: handed back to the app, which opens it
-/// as the world names people, or asked as a place that names its people asks
-/// (`profile::request_open_in`) for the creator this window names while the
-/// world hides them, whom the first way would refuse.
-pub fn profile_route(who: Option<Uuid>, named_here_alone: bool) -> (Option<Uuid>, Option<Uuid>) {
-    if named_here_alone { (None, who) } else { (who, None) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The window keeps its size, its footer inside it.
+    /// The window keeps its size, its footer inside it, every tile grown in
+    /// turn, at its first size and at the least it shrinks to.
     #[test]
     fn the_window_keeps_its_size() {
-        let rows: Vec<Row> = (0..40)
-            .map(|i| Row {
-                id: Uuid::from_u128(i),
-                root: i % 4 == 0,
-                name: format!("Prim {i}"),
-                point: (i % 12) as u8 + 1,
-                complexity: if i % 4 == 0 { 1_000 * i as u32 } else { 0 },
-                ..Default::default()
-            })
-            .collect();
-        let pics = HashMap::new();
-        let names = HashMap::new();
-        crate::ui::widgets::steady_tests::assert_window_steady(
-            "inspect",
-            &[Vec2::new(420.0, 600.0), Vec2::new(360.0, 380.0)],
-            aurora_i18n::tr!("inspect-hint-right"),
-            || InspectUi {
-                open: true,
-                subject: Subject::Avatar(Uuid::from_u128(99)),
-                ..Default::default()
-            },
-            |ui, ctx, p| {
-                let mut columns = ALL_COLUMNS;
-                let mut view = InspectView::default();
-                let mut saved = false;
-                ui.show(
-                    ctx,
-                    p,
-                    Frame {
-                        rows: &rows,
-                        totals: &Totals::default(),
-                        subject_name: "Mira Solvane",
-                        subject_username: Some("mira.solvane"),
-                        subject_profile: Some(Uuid::from_u128(99)),
-                        pics: &pics,
-                        point_names: &names,
-                        max_complexity: 350_000,
-                        people: &[],
-                        parcel: None,
-                        columns: &mut columns,
-                        view: &mut view,
-                    },
-                    &mut saved,
-                );
-            },
-        );
-    }
-
-    /// The board of tiles too, every tile grown in turn.
-    #[test]
-    fn the_wide_window_keeps_its_size() {
         let rows: Vec<Row> = (0..40)
             .map(|i| Row {
                 id: Uuid::from_u128(i),
@@ -1006,7 +448,7 @@ mod tests {
             for subject in [Subject::Avatar(Uuid::from_u128(99)), Subject::Objects] {
                 crate::ui::widgets::steady_tests::assert_window_steady(
                     "inspect",
-                    &[Vec2::new(800.0, 760.0)],
+                    &[SIZE, MIN_SIZE],
                     aurora_i18n::tr!("inspect-creator-button"),
                     || {
                         let mut ui = InspectUi {
@@ -1020,7 +462,7 @@ mod tests {
                         ui
                     },
                     |ui, ctx, p| {
-                        let (mut columns, mut view, mut saved) = (ALL_COLUMNS, InspectView::default(), true);
+                        let mut columns = ALL_COLUMNS;
                         ui.show(
                             ctx,
                             p,
@@ -1036,35 +478,12 @@ mod tests {
                                 people: &people,
                                 parcel: Some((900, 1_000)),
                                 columns: &mut columns,
-                                view: &mut view,
                             },
-                            &mut saved,
                         );
                     },
                 );
             }
         }
-    }
-
-    #[test]
-    fn the_creator_the_window_alone_names_opens_as_a_named_resident() {
-        let id = Uuid::from_u128(7);
-        // the owner, or a creator the world names: handed back to the app
-        assert_eq!(profile_route(Some(id), false), (Some(id), None));
-        // a creator `@shownames` hides in the world and this window names
-        assert_eq!(profile_route(Some(id), true), (None, Some(id)));
-        // a disabled button opens nothing either way
-        assert_eq!(profile_route(None, false), (None, None));
-        assert_eq!(profile_route(None, true), (None, None));
-    }
-
-    #[test]
-    fn the_view_button_counts_the_choices_changed() {
-        let mut view = InspectView::default();
-        assert_eq!(view.changes(), 0);
-        view.sort = Sort::Heaviest;
-        view.creator = CreatorShown::Name;
-        assert_eq!(view.changes(), 2);
     }
 
     #[test]

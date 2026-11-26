@@ -6863,7 +6863,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_LINE_MENU=1\|object` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`), or an object line's in any style (with `AURORA_DEMO_OBJECT_CHAT`) |
 | `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|classic\|form\|publish\|new-pick]` | An avatar's profile window |
-| `AURORA_DEMO_INSPECT=wolf\|self\|crowd\|objects\|glass\|market[:wide\|small,item\|open\|grow-…\|…]` | Inspect on what someone wears, or on objects, small or wide; options separated by commas |
+| `AURORA_DEMO_INSPECT=wolf\|self\|crowd\|objects\|glass\|market[:item,grow-…\|…]` | Inspect on what someone wears, or on objects; options separated by commas |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
 | `AURORA_DEMO_SHARE=multi[:n=<count>]` | Dozens of Orion-like friends (default 80) for inventory Share multi-select (#3074) |
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
@@ -6928,21 +6928,17 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 - **`AURORA_DEMO_INSPECT=wolf|self|objects|glass[:option]`** (`glass`: objects with see-through faces) opens Inspect once the objects
   are in view: `wolf` (default) on Violet Wolf's hat and orb, `self` on the
   demo agent's chest, facial and skull attachments, `objects` on the first six
-  objects of the plaza (Objects tab, Owned by on the cards, Owner and Created in
-  Details). Check the summary card, the body-area sections, an opened card
-  (grey outline, Made by, Worn on, the figure tiles with their share, the prims,
-  the outlined one in violet), the Profile button on the line pointed at, a
-  right click that looks at the item, the View panel and the Details table. `:open` opens the
-  third object's card, `:creators` and `:details` show those tabs, `:view` the
-  View panel. `worn` inspects one worn object and `piece` one object of the market (both open
-  wide), `crowd` takes someone of `AURORA_DEMO_CROWD`, `pbr` the objects with a PBR material
+  objects of the plaza (Owned by instead of Worn on, Owner and Created among
+  the prims' columns). `worn` inspects one worn object and `piece` one object
+  of the market (both open on the 3D view, grown), `crowd` takes someone of
+  `AURORA_DEMO_CROWD`, `pbr` the objects with a PBR material
   (`AURORA_DEMO_PBR_METAL=1`, `AURORA_DEMO_PBR_OVERRIDE=1`), `market` eight pieces
-  of the market below, of several owners. `:small` and `:wide` force a view (never
-  kept in the settings). In the wide one: `item` opens the third object, `hover`
+  of the market below, of several owners. Inspect has one view, the board of
+  tiles: `item` opens the third object, `hover`
   outlines the fourth in 3D, `paused` and `light` its
-  animation and ground, `grow-3d`, `grow-items`, `grow-complexity`,
+  animation and ground (`light` is never kept in the settings), `grow-3d`, `grow-items`, `grow-complexity`,
   `grow-makers`, `grow-places`, `grow-figures` and `grow-prims` grow that tile.
-  Options go together, separated by commas (`wolf:wide,item,grow-prims`). Check
+  Options go together, separated by commas (`wolf:item,grow-prims`). Check
   that nothing spins by itself, dragging, a right drag, the arrow keys and each button, the outline
   and the name of what is pointed at, the shadows and the reflections, a click on an item in
   3D, the violet on what is outlined in the world (the item, then a prim of it),

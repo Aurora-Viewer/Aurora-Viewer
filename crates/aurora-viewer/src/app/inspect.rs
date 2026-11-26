@@ -269,20 +269,12 @@ impl App {
         self.inspect_arrivals();
         let (mut rows, totals) = self.inspect_rows();
         rows.extend(self.inspect_own_body());
-        // (a demo's view is never kept in the settings)
-        let forced = self.inspect_ui.forced_wide;
-        let mut wide = forced.unwrap_or(self.settings.inspect_wide);
-        let board = self.inspect_ui.is_wide(ctx, wide);
         let objects = self.inspect_ui.subject == Subject::Objects;
-        let people = if board && !objects { self.inspect_people() } else { Vec::new() };
-        let parcel = (board && objects).then(|| self.inspect_parcel(&rows)).flatten();
-        if board {
-            self.inspect_stage(ctx);
-            if objects {
-                self.inspect_costs();
-            }
-        } else {
-            self.inspect_ui.stage.stage.clear(&self.scene);
+        let people = if objects { Vec::new() } else { self.inspect_people() };
+        let parcel = objects.then(|| self.inspect_parcel(&rows)).flatten();
+        self.inspect_stage(ctx);
+        if objects {
+            self.inspect_costs();
         }
         let (name, username, profile) = match self.inspect_ui.subject {
             Subject::Avatar(id) => {
@@ -303,7 +295,6 @@ impl App {
         } else {
             self.settings.inspect_avatar_columns
         };
-        let mut view = self.settings.inspect_view;
         let actions = self.inspect_ui.show(
             ctx,
             p,
@@ -319,12 +310,11 @@ impl App {
                 people: &people,
                 parcel,
                 columns: &mut columns,
-                view: &mut view,
             },
-            &mut wide,
         );
+        // (a demo's ground is never kept in the settings)
         let light = self.inspect_ui.stage.light;
-        let stage = board && !self.inspect_ui.demo_forced() && light != self.settings.stage_light;
+        let stage = !self.inspect_ui.demo_light() && light != self.settings.stage_light;
         if stage {
             self.settings.stage_light = light;
         }
@@ -333,12 +323,8 @@ impl App {
         } else {
             &mut self.settings.inspect_avatar_columns
         };
-        if stage || columns != *kept || view != self.settings.inspect_view || (forced.is_none() && wide != self.settings.inspect_wide) {
+        if stage || columns != *kept {
             *kept = columns;
-            self.settings.inspect_view = view;
-            if forced.is_none() {
-                self.settings.inspect_wide = wide;
-            }
             self.settings.save();
         }
         for action in actions {
@@ -540,7 +526,7 @@ impl App {
     }
 
     /// AURORA_DEMO_INSPECT=wolf|self|objects[:options], the options separated
-    /// by commas (`InspectUi::demo`: wide, small, open, creators, details, view…):
+    /// by commas (`InspectUi::demo`: item, grow-…, hover, paused, light):
     /// Inspect on what Violet Wolf or the demo agent wears, or on objects of
     /// the plaza, once they are in view.
     pub(super) fn demo_inspect(&mut self) {

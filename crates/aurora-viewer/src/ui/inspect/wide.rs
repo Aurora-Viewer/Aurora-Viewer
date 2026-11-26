@@ -1,8 +1,7 @@
 //! The wide Inspect: a board of tiles that answer each other (the objects in
 //! 3D, their list, the complexity among the people here or the land impact on
 //! the parcel, who made them, where they are worn or who owns them, figures,
-//! prims). Any tile grows, the others staying beside it. Aurora's own
-//! presentation of the compact window's data.
+//! prims). Any tile grows, the others staying beside it.
 
 use super::model::{self, Area, Item, Tier, Whole};
 use super::{Action, Column, Frame, InspectUi, Row, Subject, details, kilobytes, megabytes, people};
@@ -117,7 +116,7 @@ pub(super) fn show(
     actions: &mut Vec<Action>,
 ) {
     let rows = frame.rows;
-    let found = model::shown(rows, items, &state.query, frame.view.sort);
+    let found = model::shown(rows, items, &state.query);
     if let Some(pick) = &state.wide.pick
         && !items.iter().any(|i| pick.keeps(rows, i))
     {
@@ -352,7 +351,7 @@ fn one_tile(
         Tile::Makers => makers(state, ui, p, frame, view, actions, id, rect, form),
         Tile::Places => places(state, ui, p, frame, view, actions, id, rect, form),
         Tile::Figures => figures(state, ui, p, frame, view, id, rect, form),
-        Tile::Prims => prims(state, ui, p, frame, view, actions, id, rect, form),
+        Tile::Prims => prims(state, ui, p, frame, view, id, rect, form),
     }
 }
 
@@ -547,11 +546,6 @@ fn corner_button(ui: &mut egui::Ui, p: &Palette, id: egui::Id, center: egui::Pos
     crate::ui::sheet::icon_at(ui, icon, rect.center(), 15.0, ink);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     resp.on_hover_text(tip).clicked()
-}
-
-/// The attachment point's name (avatar_lad.xml).
-fn point_label(frame: &Frame<'_>, point: u8) -> String {
-    super::list::point_label(frame, point)
 }
 
 // ---- the items ----
@@ -1775,7 +1769,7 @@ fn figures(
                 (kb(t.texture_memory), aurora_i18n::tr!("inspect-tile-tmem"), None),
                 (kb(t.vram), aurora_i18n::tr!("inspect-tile-vram"), None),
             ];
-            super::list::tiles(ui, p, &tiles, if ui.available_width() > 480.0 { 5 } else { 3 });
+            figure_tiles(ui, p, &tiles, if ui.available_width() > 480.0 { 5 } else { 3 });
             let cols = [
                 board::Col::text(aurora_i18n::tr!("inspect-col-item"), 1.0),
                 board::Col::figure(aurora_i18n::tr!("inspect-col-triangles"), 84.0),
@@ -1832,7 +1826,6 @@ fn prims(
     p: &Palette,
     frame: &mut Frame<'_>,
     view: &View<'_>,
-    actions: &mut Vec<Action>,
     id: egui::Id,
     rect: Rect,
     form: Form,
@@ -1916,7 +1909,7 @@ fn prims(
                 Some(item) => item.prims.iter().map(|i| &view.rows[*i]).collect(),
                 None => view.shown.iter().flat_map(|i| i.prims.iter().map(|r| &view.rows[*r])).collect(),
             };
-            details::table(state, ui, p, kept, *frame.columns, actions);
+            details::table(state, ui, p, kept, *frame.columns);
         }
     })
     .0
@@ -2014,6 +2007,67 @@ fn footer(state: &InspectUi, ui: &mut egui::Ui, p: &Palette, _frame: &Frame<'_>,
             });
         }
     });
+}
+
+/// The attachment point's name (avatar_lad.xml), as the Appearance window
+/// names it.
+fn point_label(frame: &Frame<'_>, point: u8) -> String {
+    if matches!(point, model::OWN_EYES | model::OWN_BODY) {
+        return aurora_i18n::tr!("inspect-own-place").to_owned();
+    }
+    frame
+        .point_names
+        .get(&point)
+        .map(|name| crate::ui::appearance::items::point_name(name).to_owned())
+        .unwrap_or_else(|| aurora_i18n::tr!("inspect-area-other").to_owned())
+}
+
+/// Figure tiles in `columns` columns: the value with its share on the
+/// right, then its label. The share's sentence ("14% of the outfit") is the
+/// tile's tooltip and what a screen reader says.
+fn figure_tiles(ui: &mut egui::Ui, p: &Palette, list: &[(String, &str, Option<(u32, String)>)], columns: usize) {
+    let radius = ui.visuals().window_corner_radius;
+    let gap = 6.0;
+    let width = ((ui.available_width() - gap * (columns as f32 - 1.0)) / columns as f32).floor();
+    for chunk in list.chunks(columns) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (value, label, share) in chunk {
+                let tile = egui::Frame::new()
+                    .fill(p.bar)
+                    .corner_radius(radius)
+                    .inner_margin(egui::Margin::symmetric(8, 6))
+                    .show(ui, |ui| {
+                        ui.set_width(width - 16.0);
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(value)
+                                        .size(13.5)
+                                        .family(crate::ui::fonts::semibold(ui.ctx()))
+                                        .color(p.ink),
+                                );
+                                if let Some((percent, _)) = share {
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let percent = aurora_i18n::tr!("inspect-percent", percent = *percent);
+                                        ui.label(RichText::new(percent).size(11.5).color(p.muted));
+                                    });
+                                }
+                            });
+                            ui.add(egui::Label::new(RichText::new(*label).size(11.0).color(p.muted)).truncate());
+                        });
+                    });
+                if let Some((_, sentence)) = share {
+                    let spoken = format!("{value} {label}, {sentence}");
+                    tile.response
+                        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &spoken));
+                    tile.response.on_hover_text(sentence);
+                }
+            }
+        });
+        ui.add_space(gap);
+    }
 }
 
 #[cfg(test)]
