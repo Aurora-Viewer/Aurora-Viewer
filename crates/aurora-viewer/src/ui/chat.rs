@@ -1218,9 +1218,7 @@ fn message_emphasis(kind: ChatKind, italics: bool) -> super::fonts::TextEmphasis
 /// a history line keeps its tone unless its contact set colours it.
 fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> Color32 {
     let tone = history_tone(p, line.origin);
-    let keyword = tone.is_none().then(|| super::colors::keyword_color(line)).flatten();
-    keyword
-        .or_else(|| super::colors::contact_chat_color(line, world))
+    super::colors::keyword_or_contact_color_toned(line, world, tone.is_some())
         .or(tone)
         .unwrap_or_else(|| match line.kind.volume() {
             Some(ChatType::Whisper) => p.muted,
@@ -1663,7 +1661,8 @@ fn line_job(
     };
     let body_only = matches!(look, JobLook::Body);
     let compact = matches!(look, JobLook::Compact);
-    // a line that holds a keyword takes its colour, name included
+    // a line that holds a keyword takes its colour, name included unless
+    // its contact set colours names (`contact_sender_color` below)
     let col = if body_only {
         message_color(line, p, world)
     } else {
@@ -7011,6 +7010,29 @@ mod tests {
             line.text = text.into();
             assert_eq!(message_color(&line, &p, &world), theirs);
         }
+    }
+
+    /// The thread's and the nearby cards' body colour of a contact set's
+    /// member: a live keyword line takes the keyword colour, the same line
+    /// without the keyword the set's, and the keyword line from the history
+    /// the set's, not the keyword's (#3879).
+    #[test]
+    fn a_keyword_wins_over_a_set_in_the_thread_but_not_on_a_history_line() {
+        use crate::ui::colors::{self, tests as fixture};
+        let p = crate::theme::Theme::default().palette();
+        let world = fixture::world();
+        let keyword = colors::text(fixture::keyword_fixture());
+        let mut line = fixture::rlva_line(ChatKind::Local(ChatType::Normal));
+        let set = colors::contact_chat_color(&line, &world).expect("the set colours chat");
+        assert_eq!(message_color(&line, &p, &world), set, "no keyword: the set's colour");
+        line.text = "meet at the Zephyr3879 stage".into();
+        assert_eq!(message_color(&line, &p, &world), keyword, "a live keyword line");
+        line.origin = Origin::Log;
+        assert_eq!(
+            message_color(&line, &p, &world),
+            set,
+            "a history line: the set's, not the keyword's"
+        );
     }
 
     /// The pills' sender names: a resident's profile (ours for our own

@@ -156,6 +156,17 @@ pub fn keyword_or_contact_color(line: &ChatLine, world: &World) -> Option<Color3
     keyword_color(line).or_else(|| contact_chat_color(line, world))
 }
 
+/// `keyword_or_contact_color` for a line drawn with a history tone or not
+/// (the conversation thread, its nearby cards and the bubbles): a history
+/// line (`toned`) shows no keyword, and its contact set's colour still wins
+/// over the tone; a live line takes the keyword first, then the set's.
+pub fn keyword_or_contact_color_toned(line: &ChatLine, world: &World, toned: bool) -> Option<Color32> {
+    (!toned)
+        .then(|| keyword_color(line))
+        .flatten()
+        .or_else(|| contact_chat_color(line, world))
+}
+
 /// Text color of a chat line (LLViewerChat::getChatColor): the keyword
 /// colour for a line that holds a keyword, else its contact set's, else the
 /// sender's.
@@ -328,7 +339,7 @@ pub fn map_color(world: &World, id: &Uuid, name: &str) -> Color32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::world::Origin;
 
@@ -370,7 +381,7 @@ mod tests {
     use crate::world::contact_sets::Visuals;
 
     const ME: Uuid = Uuid::from_u128(1);
-    const FRIEND: Uuid = Uuid::from_u128(7);
+    pub(crate) const FRIEND: Uuid = Uuid::from_u128(7);
 
     fn rlva(world: &mut World, command: &str) {
         assert!(world.rlva.receive(&aurora_net::ChatMessage {
@@ -386,7 +397,7 @@ mod tests {
     }
 
     /// A friend in a contact set that colours everything.
-    fn world() -> World {
+    pub(crate) fn world() -> World {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.agent_id = ME;
         world.social.friends.push(crate::world::social::Friend {
@@ -413,7 +424,7 @@ mod tests {
         world
     }
 
-    fn rlva_line(kind: ChatKind) -> ChatLine {
+    pub(crate) fn rlva_line(kind: ChatKind) -> ChatLine {
         ChatLine {
             time: std::time::SystemTime::now(),
             from: "Teagan Linden".into(),
@@ -512,17 +523,7 @@ mod tests {
     #[test]
     fn a_keyword_colour_wins_over_a_contact_set_colour() {
         let world = world();
-        let keyword = [255, 128, 0, 255];
-        // a word no other test says: the matcher is global
-        crate::keywords::set(&crate::keywords::KeywordSettings {
-            on: true,
-            in_chat: true,
-            in_im: true,
-            words: "zephyr3879".into(),
-            change_color: true,
-            color: keyword,
-            ..Default::default()
-        });
+        let keyword = keyword_fixture();
         let set = contact_chat_color(&rlva_line(ChatKind::Local(ChatType::Normal)), &world).expect("the set colours chat");
         for kind in [ChatKind::Local(ChatType::Normal), ChatKind::Local(ChatType::Shout), ChatKind::Im] {
             let mut line = rlva_line(kind);
@@ -535,6 +536,39 @@ mod tests {
         let mut own = rlva_line(ChatKind::Own(ChatType::Normal));
         own.text = "zephyr3879".into();
         assert_eq!(keyword_or_contact_color(&own, &world), contact_chat_color(&own, &world));
+    }
+
+    /// The keyword matcher of the colour tests, and its colour. The matcher
+    /// is global: every test that needs it sets these same settings, with a
+    /// word no other test says, so tests running at once agree.
+    pub(crate) fn keyword_fixture() -> [u8; 4] {
+        let keyword = [255, 128, 0, 255];
+        crate::keywords::set(&crate::keywords::KeywordSettings {
+            on: true,
+            in_chat: true,
+            in_im: true,
+            words: "zephyr3879".into(),
+            change_color: true,
+            color: keyword,
+            ..Default::default()
+        });
+        keyword
+    }
+
+    /// The thread and the bubbles (`keyword_or_contact_color_toned`): a live
+    /// keyword line of a set's member takes the keyword colour, the same
+    /// line without the keyword the set's, and a history line the set's,
+    /// never the keyword's.
+    #[test]
+    fn a_toned_line_keeps_its_set_colour_and_a_live_one_takes_the_keyword() {
+        let world = world();
+        let keyword = text(keyword_fixture());
+        let mut line = rlva_line(ChatKind::Local(ChatType::Normal));
+        let set = contact_chat_color(&line, &world).expect("the set colours chat");
+        assert_eq!(keyword_or_contact_color_toned(&line, &world, false), Some(set));
+        line.text = "meet at the Zephyr3879 stage".into();
+        assert_eq!(keyword_or_contact_color_toned(&line, &world, false), Some(keyword));
+        assert_eq!(keyword_or_contact_color_toned(&line, &world, true), Some(set));
     }
 
     /// LLVOAvatar::getNameTagColor ends with the mark whatever RLVa hides,

@@ -293,10 +293,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
 
     // a contact set's colour, unless a keyword's wins (getChatColor applies
     // it last); a history line keeps its tone over a keyword
-    let keyword = tone.is_none().then(|| super::super::colors::keyword_color(line)).flatten();
-    let text_color = keyword
-        .or_else(|| super::super::colors::contact_chat_color(line, world))
-        .unwrap_or(text_color);
+    let text_color = super::super::colors::keyword_or_contact_color_toned(line, world, tone.is_some()).unwrap_or(text_color);
 
     // top-aligned rows: a row aligned to its bottom would take the whole
     // height it is given; the picture is placed against the bubble after it
