@@ -307,7 +307,7 @@ impl App {
         };
         // (past RLVa's attachment locks, as LLViewerObject::saveScript asks
         // nothing of it; with RLVa off an actor's command is not sent)
-        let actor = if self.settings.rlva_enabled {
+        let actor = if self.rlva_switch.running() {
             crate::world::rlva::policy::PARTICLE_EDITOR
         } else {
             Uuid::nil()

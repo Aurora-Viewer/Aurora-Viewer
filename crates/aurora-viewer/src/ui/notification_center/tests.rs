@@ -488,6 +488,17 @@ fn a_scripted_window_kept_in_comes_out_afterwards() {
     }
 }
 
+#[test]
+fn notification_list_closes_only_after_becoming_empty() {
+    use super::super::notifications::list_emptied;
+
+    assert!(list_emptied(true, false, Tab::ToDo));
+    assert!(!list_emptied(true, true, Tab::ToDo));
+    assert!(!list_emptied(false, false, Tab::ToDo));
+    assert!(!list_emptied(false, true, Tab::ToDo));
+    assert!(!list_emptied(true, false, Tab::History));
+}
+
 /// #4363: in mouselook what a scripted object waits an answer to stays
 /// rolled out, the permission question included, and one arriving then
 /// unrolls there and then (Alt frees the mouse to answer it); the

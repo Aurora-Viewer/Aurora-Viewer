@@ -181,8 +181,11 @@ impl App {
             self.world.agent.yaw = previous_body_yaw;
             return;
         }
-        let key_yaw = self.input.keyboard_yaw();
-        let yaw_rate = std::mem::take(&mut self.input.joystick_yaw) + key_yaw;
+        let (key_yaw, yaw_rate, orbit_rate, consume_turn_keys) = vr_turn_input(
+            self.world.agent.rotate_grabbed,
+            self.input.keyboard_yaw(),
+            std::mem::take(&mut self.input.joystick_yaw),
+        );
         let turn = yaw_rate * dt.clamp(0.0, 0.2);
         let avatar = self.vr_mode == Some(crate::camera::VrView::Avatar);
         self.vr_rig_yaw = self.world.agent.yaw;
@@ -190,13 +193,16 @@ impl App {
             // Desktop Avatar steers with the right stick while walking. Route
             // the same yaw into the VR boom, even when focus is unlocked.
             self.camera.vr_request_orbit_framing(key_yaw != 0.0);
-            self.camera.joystick_orbit_yaw(yaw_rate, dt, &mut self.world.agent);
+            self.camera.joystick_orbit_yaw(orbit_rate, dt, &mut self.world.agent);
         } else {
             self.vr_rig_yaw += turn;
         }
-        // VR consumes turn keys as rig yaw before desktop mouselook can strafe.
-        self.input.turn_left = false;
-        self.input.turn_right = false;
+        // VR consumes turn keys as rig yaw before desktop mouselook can strafe
+        // (not those a script took: they reach it as control flags)
+        if consume_turn_keys {
+            self.input.turn_left = false;
+            self.input.turn_right = false;
+        }
         let translating = self.input.forward || self.input.back || self.input.strafe_left || self.input.strafe_right;
         self.world.agent.yaw = if translating || key_yaw != 0.0 {
             crate::camera::vr_walk_yaw(self.camera.vr_view(self.vr_rig_yaw), self.vr_head_rotation) + if avatar { turn } else { 0.0 }
@@ -1054,9 +1060,65 @@ fn avatar_cycle_index(current: Option<usize>, count: usize, direction: i8) -> Op
     }
 }
 
+/// Standing VR's turn: the turn keys' yaw, the yaw rate that turns the
+/// body or the rig (keys and stick), the rate that orbits the Avatar view's
+/// camera, and whether VR consumes the turn keys. While a script holds left
+/// and right (`rotate_grabbed`, #3450) the turn keys and the stick turn
+/// neither the body nor the rig; the stick still orbits the camera, as the
+/// desktop orbit stays free under a take, and the keys are left to reach the
+/// script (`vr_sends_digital_turns`).
+fn vr_turn_input(grabbed: bool, key_yaw: f32, stick_yaw: f32) -> (f32, f32, f32, bool) {
+    if grabbed {
+        (0.0, 0.0, stick_yaw, false)
+    } else {
+        (key_yaw, stick_yaw + key_yaw, stick_yaw + key_yaw, true)
+    }
+}
+
+/// Whether VR sends the turn keys as turns (`YAW_*`), not as mouselook's
+/// turn-to-strafe: seated (a vehicle script needs the digital turn
+/// controls) and standing while a script holds left and right, which then
+/// gets them as the turns it took. VR first person is in mouselook, where
+/// `AgentState::control_flags` makes the turn keys strafe.
+pub(super) fn vr_sends_digital_turns(vr: bool, sitting: bool, grabbed: bool) -> bool {
+    vr && (sitting || grabbed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #3450: a script that took left and right also holds them in standing
+    /// VR: the keys and the stick turn neither the body nor the rig, the
+    /// stick still orbits the camera, and the keys are not consumed.
+    #[test]
+    fn vr_turn_input_leaves_a_grabbed_turn_to_the_script() {
+        assert_eq!(vr_turn_input(false, 1.0, 0.5), (1.0, 1.5, 1.5, true));
+        assert_eq!(vr_turn_input(true, 1.0, 0.5), (0.0, 0.0, 0.5, false));
+    }
+
+    /// #3450, review of PR #3529: in VR first person (in mouselook) a turn key
+    /// left unconsumed under a take reached the simulator as a strafe
+    /// (`LEFT_POS`), never as the turn the script took. It is sent as one.
+    #[test]
+    fn a_grabbed_turn_key_in_vr_reaches_the_script_as_a_turn() {
+        let (_, _, _, consumed) = vr_turn_input(true, 1.0, 0.0);
+        assert!(!consumed);
+        let input = crate::agent::MoveInput {
+            turn_left: true,
+            ..Default::default()
+        };
+        let agent = crate::agent::AgentState::default();
+        let mouselook = agent.control_flags(&input, true);
+        assert!(mouselook & aurora_net::control::LEFT_POS != 0, "mouselook strafes");
+        assert!(vr_sends_digital_turns(true, false, true));
+        let sent = agent.control_flags(&input, false);
+        assert!(sent & aurora_net::control::YAW_POS != 0 && sent & aurora_net::control::LEFT_POS == 0);
+        // standing without a take, and outside VR, as before
+        assert!(!vr_sends_digital_turns(true, false, false));
+        assert!(!vr_sends_digital_turns(false, false, true));
+        assert!(vr_sends_digital_turns(true, true, false));
+    }
 
     #[test]
     fn flycam_status_goes_with_the_hidden_interface() {

@@ -6,6 +6,7 @@
 
 pub mod backup;
 pub(crate) mod cx;
+pub mod legacy_lists;
 mod pages;
 /// The rows of the Phototools window, borrowed from the pages.
 mod phototools;
@@ -436,6 +437,9 @@ pub struct OptionsUi {
     pub selected_parcel: Option<crate::world::parcel_visibility::Entry>,
     pub rlva_tools: super::rlva::Tools,
     pub rlva_restrictions: Vec<(uuid::Uuid, String)>,
+    /// RLVa's switch differs from what runs and waits for the next start
+    /// (world/rlva/switch.rs): its row says so.
+    pub rlva_waits: bool,
     pub rlva_camera_preset_locked: bool,
     pub rlva_camera_fov_locked: bool,
     /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
@@ -605,6 +609,12 @@ pub struct OptionsUi {
     reset_confirmed: Option<ResetAsk>,
     /// The import of a Legacy Viewer's chat history (set by the app).
     pub chat_import: ChatImportUi,
+    /// The import of a Legacy Viewer's lists (set by the app).
+    pub legacy_lists: legacy_lists::State,
+    /// What the last one did.
+    pub legacy_lists_status: String,
+    /// An account is logged in: its lists can be imported (set by the app).
+    pub legacy_lists_ready: bool,
     /// Files done and files to do of the import under way (set by the app).
     pub chat_log_importing: Option<(usize, usize)>,
     pub restart_voice: bool,
@@ -814,6 +824,10 @@ pub struct OptionsResult {
     pub find_legacy_logs: bool,
     /// Import from these folders.
     pub import_legacy_logs: Option<Vec<std::path::PathBuf>>,
+    /// The lists' import window opened: read the Legacy Viewers' folders.
+    pub find_legacy_lists: bool,
+    /// Import these lists from the folder found at this index.
+    pub import_legacy_lists: Option<(usize, crate::world::legacy_lists::Parts)>,
     /// The content rating chosen (SIM_ACCESS_*), to send to the server.
     pub maturity: Option<u8>,
     /// An account setting of Privacy changed, to send to the server.
@@ -1600,6 +1614,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     clear_conversation_log_modal(ctx, p, st, &mut r, *open);
     reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
+    legacy_lists::modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
     saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
     st.defaults = Some(d);
@@ -2212,7 +2227,9 @@ fn page_area(
     ui.add_space(10.0);
     if !searching && !modified_view && tabs.len() > 1 {
         let labels: Vec<(&str, bool)> = tabs.iter().map(|t| (*t, true)).collect();
-        if super::widgets::tabs(&mut ui, p, &mut st.tab, &labels) {
+        // whole names on a second row in a narrow window, where the strip
+        // cut them down to "…" (#4935)
+        if super::widgets::wrapping_tabs(&mut ui, p, &mut st.tab, &labels) {
             st.cancel_capture();
             st.flash = None;
         }
@@ -2244,7 +2261,11 @@ fn page_area(
     // Its animated appearance otherwise changes the cells' width, invalidates
     // their control measurements and can alternate short/tall rows forever.
     let rows_width = (super::widgets::scrolled_width(&ui) - 6.0).max(0.0);
-    egui::ScrollArea::vertical()
+    // The rows are laid out at the window's width; a control wider than
+    // that (a row of fixed buttons, a long translation) scrolls into view
+    // sideways instead of being cut off under the scrollbar in a narrow
+    // window (#4935).
+    egui::ScrollArea::both()
         .id_salt(scroll_id)
         .auto_shrink([false, false])
         .max_height(rows_h)
