@@ -384,6 +384,8 @@ pub(super) struct Preferences {
 }
 
 impl Preferences {
+    pub(super) const WINDOW: &str = "script_preferences";
+
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, settings: &mut ScriptSettings) -> bool {
         if !self.open {
             return false;
@@ -395,7 +397,7 @@ impl Preferences {
                 settings.include_directory = path;
             }
         }
-        Floater::new("script_preferences", aurora_i18n::tr!("script-preferences-title"),
+        Floater::new(Self::WINDOW, aurora_i18n::tr!("script-preferences-title"),
             ctx.content_rect().center() - Vec2::new(255.0, 330.0), Vec2::new(510.0, 660.0))
             .show(ctx, p, &mut self.open, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {

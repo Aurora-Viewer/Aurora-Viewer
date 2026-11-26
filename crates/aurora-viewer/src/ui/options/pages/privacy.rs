@@ -200,6 +200,11 @@ pub(super) fn page(cx: &mut Cx) {
             &field!(lookat.private_point_at),
         );
         cx.toggle(
+            tr!("ui-options-private-edit-beam"),
+            tr!("ui-options-private-edit-beam-help"),
+            &field!(lookat.private_edit_beam),
+        );
+        cx.toggle(
             tr!("ui-options-limit-look-at-distance"),
             tr!("ui-options-more-distant-targets-are-limited-to-this-distance-from"),
             &field!(lookat.limit_distance),

@@ -1106,7 +1106,7 @@ fn select_only_my_objects_filters_clicks_lists_and_wheel_but_not_the_menu() {
     let click = |tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, idx: usize, shift: bool| {
         let mods = Mods { shift, ..Mods::default() };
         tool.mouse_down(world, s, None, Some(idx), None, (0.0, 0.0), mods);
-        tool.mouse_up(world, s, None);
+        tool.mouse_up(world, s, None, (0.0, 0.0), Mods::default());
     };
     // off by default: anything editable is selected
     assert!(!settings.select_owned_only);
@@ -1308,6 +1308,21 @@ fn camera_on(target: Vec3) -> geom::Cam {
     geom::Cam::new(eye, target, projection * view, 1.0, 800.0, 800.0, 1.0)
 }
 
+/// The screen rectangle around prim `idx`, as the selection rectangle sees
+/// it without the scene (its box); none when it is behind the camera.
+fn screen_footprint(tool: &BuildTool, world: &World, idx: usize) -> Option<egui::Rect> {
+    let now = Instant::now();
+    let (position, rot, _) = Scene::object_transform(world, idx, now, 0)?;
+    let model = glam::Mat4::from_scale_rotation_translation(world.visual_scale_at(idx, now), rot, position);
+    let mut rect = egui::Rect::NOTHING;
+    for i in 0..8 {
+        let corner = Vec3::new([-0.5, 0.5][i & 1], [-0.5, 0.5][(i >> 1) & 1], [-0.5, 0.5][(i >> 2) & 1]);
+        let (x, y) = tool.cam.project_px(model.transform_point3(corner))?;
+        rect.extend_with(egui::pos2(x, y));
+    }
+    Some(rect)
+}
+
 #[test]
 fn rectangle_cover_of_a_box_and_its_vertices() {
     use geom::RectCover;
@@ -1337,18 +1352,10 @@ fn select_by_surrounding_takes_only_what_the_rectangle_surrounds() {
     let (mut world, mut tool, mut settings) = fixture();
     assert!(settings.select_surrounding, "on by default, as RectangleSelectInclusive");
     let target = object(&world, 99614);
-    let now = Instant::now();
-    let (position, rot, _) = Scene::object_transform(&world, target, now, 0).unwrap();
+    let (position, _, _) = Scene::object_transform(&world, target, Instant::now(), 0).unwrap();
     tool.cam = camera_on(position);
     world.agent.position = tool.cam.eye;
-    // the prim's footprint on screen
-    let model = glam::Mat4::from_scale_rotation_translation(world.visual_scale_at(target, now), rot, position);
-    let mut footprint = egui::Rect::NOTHING;
-    for i in 0..8 {
-        let corner = Vec3::new([-0.5, 0.5][i & 1], [-0.5, 0.5][(i >> 1) & 1], [-0.5, 0.5][(i >> 2) & 1]);
-        let (x, y) = tool.cam.project_px(model.transform_point3(corner)).unwrap();
-        footprint.extend_with(egui::pos2(x, y));
-    }
+    let footprint = screen_footprint(&tool, &world, target).unwrap();
     let around = footprint.expand(2.0);
     let half = egui::Rect::from_min_max(around.min, footprint.center());
     for (surround, rect, taken) in [
@@ -1400,7 +1407,7 @@ fn a_hand_that_moves_a_little_still_clicks_with_any_keys() {
         tool.update(&mut world, &settings, None, (112.0, 112.0), false, mods);
         assert_eq!(selected(&tool), [other_id], "{mods:?}: a wobble deselects nothing");
         tool.update(&mut world, &settings, None, (101.0, 99.0), false, mods);
-        tool.mouse_up(&mut world, &settings, None);
+        tool.mouse_up(&mut world, &settings, None, (101.0, 99.0), Mods::default());
         let want: &[u32] = if mods.shift || mods.ctrl {
             &[first_id, other_id]
         } else {
@@ -1420,7 +1427,7 @@ fn a_hand_that_moves_a_little_still_clicks_with_any_keys() {
     tool.update(&mut world, &settings, None, (121.0, 100.0), false, Mods::default());
     assert!(tool.selection.is_empty(), "10 points out, the rectangle starts");
     tool.update(&mut world, &settings, None, (100.0, 100.0), false, Mods::default());
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (100.0, 100.0), Mods::default());
     assert!(
         !selected(&tool).contains(&first_id),
         "back on the press it stays a rectangle, not a click"
@@ -1447,7 +1454,7 @@ fn a_rectangle_started_on_an_object_takes_it_only_if_the_rectangle_does() {
     press(&mut tool, &mut world, &mut settings, Mods::default());
     assert!(tool.selection.is_empty(), "the press alone selects nothing");
     hover(&mut tool, &mut world, &settings, (11.0, 11.0), Mods::default());
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (11.0, 11.0), Mods::default());
     assert_eq!(selected(&tool), [first_id], "a movement inside the slop is still a click");
 
     // a drag starts over: nothing is left of the press or of the selection
@@ -1458,7 +1465,7 @@ fn a_rectangle_started_on_an_object_takes_it_only_if_the_rectangle_does() {
         tool.selection.is_empty(),
         "a drag clears the selection, as LLToolSelectRect::handleHover"
     );
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (30.0, 30.0), Mods::default());
     assert!(
         !selected(&tool).contains(&first_id),
         "the object under the press is not taken for being there"
@@ -1473,12 +1480,12 @@ fn a_rectangle_started_on_an_object_takes_it_only_if_the_rectangle_does() {
     };
     press(&mut tool, &mut world, &mut settings, shift);
     hover(&mut tool, &mut world, &settings, (30.0, 30.0), shift);
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (30.0, 30.0), Mods::default());
     assert_eq!(selected(&tool), [other_id]);
 
     // a click with Shift still adds
     press(&mut tool, &mut world, &mut settings, shift);
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (10.0, 10.0), Mods::default());
     assert!(selected(&tool).contains(&first_id));
 }
 
@@ -1488,8 +1495,282 @@ fn a_press_ends_with_the_build_tools() {
     let idx = object(&world, 99610);
     tool.mouse_down(&mut world, &mut settings, None, Some(idx), None, (10.0, 10.0), Mods::default());
     tool.close(&mut world, &mut settings);
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (10.0, 10.0), Mods::default());
     assert!(tool.selection.is_empty(), "the release does not select after the tools closed");
+}
+
+/// #4876: a Ctrl+drag takes the selected prims its rectangle surrounds out of
+/// the selection (LLToolSelectRect's deselect mode) and leaves the rest.
+#[test]
+fn a_ctrl_rectangle_takes_only_the_selected_prims_it_surrounds() {
+    let (mut world, mut tool, mut settings) = fixture();
+    // C is a small prim inside the screen footprint of the larger linkset A
+    let boxed = object(&world, 99614);
+    let kept = object(&world, 99610);
+    let (position, _, _) = Scene::object_transform(&world, boxed, Instant::now(), 0).unwrap();
+    tool.cam = camera_on(position);
+    world.agent.position = tool.cam.eye;
+    let rect = screen_footprint(&tool, &world, boxed).unwrap().expand(2.0);
+    let (boxed_key, kept_key) = (
+        world.objects.get(root_of(&world, boxed)).unwrap().key,
+        world.objects.get(root_of(&world, kept)).unwrap().key,
+    );
+    let (boxed_idx, kept_idx) = (
+        world.objects.index_of(&boxed_key).unwrap(),
+        world.objects.index_of(&kept_key).unwrap(),
+    );
+    tool.click_select(&mut world, &settings, Some(boxed_idx), false);
+    tool.click_select(&mut world, &settings, Some(kept_idx), true);
+    assert_eq!(tool.selection.len(), 2);
+    tool.out.clear();
+
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    tool.mouse_down(&mut world, &mut settings, None, None, None, (rect.min.x, rect.min.y), ctrl);
+    tool.update(&mut world, &settings, None, (rect.max.x, rect.max.y), false, ctrl);
+    tool.mouse_up(&mut world, &settings, None, (rect.max.x, rect.max.y), ctrl);
+
+    assert_eq!(tool.selection, [kept_key], "the boxed prim leaves, the larger one stays");
+    assert!(
+        tool.out
+            .iter()
+            .any(|c| matches!(c, NetCommand::Build(BuildCmd::Deselect { local_ids, .. }) if local_ids == &[boxed_key.local_id])),
+        "the simulator hears the Deselect: {:?}",
+        tool.out
+    );
+    assert!(
+        !tool
+            .out
+            .iter()
+            .any(|c| matches!(c, NetCommand::Build(BuildCmd::Select { local_ids, .. }) if local_ids.contains(&boxed_key.local_id))),
+        "a deselect rectangle selects nothing: {:?}",
+        tool.out
+    );
+}
+
+/// Three independent prims, with room for a drag around just the middle one.
+fn three_prims_in_a_row(world: &mut World, tool: &mut BuildTool) -> [usize; 3] {
+    let center = Vec3::new(128.0, 128.0, 300.0);
+    let prims = [(99891, -3.0), (99892, 0.0), (99893, 3.0)].map(|(id, offset)| {
+        world.apply(crate::demo::action_overlay(id, center + offset * Vec3::Y, glam::Quat::IDENTITY));
+        object(world, id)
+    });
+    let (middle, _, _) = Scene::object_transform(world, prims[1], Instant::now(), 0).unwrap();
+    tool.cam = camera_on(middle);
+    world.agent.position = tool.cam.eye;
+    prims
+}
+
+#[test]
+fn a_rectangle_uses_ctrl_at_the_drag_threshold_to_keep_the_existing_selection() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let prims = three_prims_in_a_row(&mut world, &mut tool);
+    let rect = screen_footprint(&tool, &world, prims[1]).unwrap().expand(20.0);
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    let plain = Mods::default();
+    for (press, threshold) in [(plain, ctrl), (ctrl, plain)] {
+        tool.select_many(&mut world, &settings, &prims);
+        assert_eq!(selected(&tool), [99891, 99892, 99893]);
+        tool.mouse_down(&mut world, &mut settings, None, None, None, (rect.min.x, rect.min.y), press);
+        tool.update(&mut world, &settings, None, (rect.max.x, rect.max.y), false, threshold);
+        tool.mouse_up(&mut world, &settings, None, (rect.max.x, rect.max.y), threshold);
+        if threshold.ctrl {
+            assert_eq!(selected(&tool), [99891, 99893]);
+        } else {
+            assert_eq!(selected(&tool), [99892]);
+        }
+    }
+}
+
+#[test]
+fn a_fast_ctrl_rectangle_uses_the_button_up_position() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let prims = three_prims_in_a_row(&mut world, &mut tool);
+    let rect = screen_footprint(&tool, &world, prims[1]).unwrap().expand(20.0);
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    for partial_frame in [false, true] {
+        tool.select_many(&mut world, &settings, &prims);
+        tool.mouse_down(&mut world, &mut settings, None, None, None, (rect.min.x, rect.min.y), ctrl);
+        if partial_frame {
+            // The last frame drew only a strip above the middle prim.
+            tool.update(&mut world, &settings, None, (rect.max.x, rect.min.y + 12.0), false, ctrl);
+        }
+        tool.mouse_up(&mut world, &settings, None, (rect.max.x, rect.max.y), ctrl);
+        assert_eq!(selected(&tool), [99891, 99893], "partial frame: {partial_frame}");
+    }
+}
+
+#[test]
+fn losing_capture_during_a_ctrl_rectangle_keeps_the_selection() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let [left, middle, right] = three_prims_in_a_row(&mut world, &mut tool);
+    tool.select_many(&mut world, &settings, &[left, right]);
+    tool.out.clear();
+    let rect = screen_footprint(&tool, &world, left)
+        .unwrap()
+        .union(screen_footprint(&tool, &world, middle).unwrap())
+        .expand(20.0);
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    tool.mouse_down(&mut world, &mut settings, None, None, None, (rect.min.x, rect.min.y), ctrl);
+    tool.update(&mut world, &settings, None, (rect.max.x, rect.max.y), false, ctrl);
+    assert!(tool.rect_walked);
+    // Focus loss cancels capture and synthesizes a release with all keys up.
+    tool.drop_press();
+    tool.mouse_up(&mut world, &settings, None, (rect.max.x, rect.max.y), Mods::default());
+    assert_eq!(selected(&tool), [99891, 99893]);
+    assert!(
+        !tool
+            .out
+            .iter()
+            .any(|cmd| matches!(cmd, NetCommand::Build(BuildCmd::Select { .. } | BuildCmd::Deselect { .. })))
+    );
+}
+
+/// LLToolSelectRect::handleMouseUp: `mask == MASK_CONTROL` at the release
+/// decides, not the press (#4876).
+#[test]
+fn a_rectangle_deselects_only_with_ctrl_at_its_release() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let target = object(&world, 99614);
+    let (position, _, _) = Scene::object_transform(&world, target, Instant::now(), 0).unwrap();
+    tool.cam = camera_on(position);
+    world.agent.position = tool.cam.eye;
+    let rect = screen_footprint(&tool, &world, target).unwrap().expand(2.0);
+    let key = world.objects.get(root_of(&world, target)).unwrap().key;
+    let idx = world.objects.index_of(&key).unwrap();
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    let both = Mods {
+        shift: true,
+        ctrl: true,
+        ..Mods::default()
+    };
+    let drag = |tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, at: Mods, release: Mods| {
+        tool.click_select(world, s, Some(idx), false);
+        tool.mouse_down(world, s, None, None, None, (rect.min.x, rect.min.y), at);
+        tool.update(world, s, None, (rect.max.x, rect.max.y), false, at);
+        tool.mouse_up(world, s, None, (rect.max.x, rect.max.y), release);
+    };
+
+    // Ctrl at the press but not at the release: the rectangle selects, it
+    // does not take the prim it surrounds out
+    drag(&mut tool, &mut world, &mut settings, ctrl, Mods::default());
+    assert!(tool.is_selected(&key), "the release has no Ctrl: nothing leaves");
+
+    // Ctrl at the release alone: the drag started from an empty selection,
+    // which stays empty
+    drag(&mut tool, &mut world, &mut settings, Mods::default(), ctrl);
+    assert!(tool.selection.is_empty(), "the press had no Ctrl: the drag cleared the selection");
+
+    // Ctrl with Shift is not `mask == MASK_CONTROL`: it adds
+    drag(&mut tool, &mut world, &mut settings, both, both);
+    assert!(tool.is_selected(&key), "Shift with Ctrl still adds");
+}
+
+#[test]
+fn a_ctrl_rectangle_never_selects_what_it_was_not_given() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let target = object(&world, 99614);
+    let (position, _, _) = Scene::object_transform(&world, target, Instant::now(), 0).unwrap();
+    tool.cam = camera_on(position);
+    world.agent.position = tool.cam.eye;
+    tool.click_select(&mut world, &settings, Some(target), false);
+    tool.out.clear();
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    tool.mouse_down(&mut world, &mut settings, None, None, None, (0.0, 0.0), ctrl);
+    tool.update(&mut world, &settings, None, (800.0, 800.0), false, ctrl);
+    tool.mouse_up(&mut world, &settings, None, (800.0, 800.0), ctrl);
+    assert!(tool.selection.is_empty(), "the whole view takes only the selected prim");
+    assert!(
+        !tool.out.iter().any(|c| matches!(c, NetCommand::Build(BuildCmd::Select { .. }))),
+        "a deselect rectangle selects nothing: {:?}",
+        tool.out
+    );
+}
+
+#[test]
+fn a_ctrl_rectangle_in_linked_editing_takes_only_the_prim_it_surrounds() {
+    // a two-prim linkset with the parts 3 m apart, so a box can surround
+    // the upper one from empty space above it
+    let (mut world, mut tool, mut settings) = fixture();
+    for event in crate::demo::face_selection_events(false) {
+        world.apply(event);
+    }
+    let root = object(&world, 99620);
+    let child = object(&world, 99621);
+    assert_eq!(root_of(&world, child), root);
+    let (root_key, child_key) = (world.objects.get(root).unwrap().key, world.objects.get(child).unwrap().key);
+    tool.click_select(&mut world, &settings, Some(child), false);
+    tool.set_edit_linked(&mut world, &mut settings, true);
+    assert_eq!(tool.selection.len(), 2);
+    let (position, _, _) = Scene::object_transform(&world, child, Instant::now(), 0).unwrap();
+    tool.cam = camera_on(position);
+    world.agent.position = tool.cam.eye;
+    // 20 px outside the part: outside the rotate handles of the pair
+    let rect = screen_footprint(&tool, &world, child).unwrap().expand(20.0);
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    tool.mouse_down(&mut world, &mut settings, None, None, None, (rect.min.x, rect.min.y), ctrl);
+    tool.update(&mut world, &settings, None, (rect.max.x, rect.max.y), false, ctrl);
+    tool.mouse_up(&mut world, &settings, None, (rect.max.x, rect.max.y), ctrl);
+    assert_eq!(tool.selection, [root_key], "only the part the rectangle surrounds leaves");
+    assert!(
+        tool.out
+            .iter()
+            .any(|c| matches!(c, NetCommand::Build(BuildCmd::Deselect { local_ids, .. }) if local_ids == &[child_key.local_id]))
+    );
+}
+
+#[test]
+fn a_ctrl_rectangle_leaves_a_selection_its_picking_filters_refuse() {
+    use crate::ui::context::flags::OBJECT_GROUP_OWNED;
+    let (mut world, mut tool, mut settings) = fixture();
+    let target = object(&world, 99614);
+    let (position, _, _) = Scene::object_transform(&world, target, Instant::now(), 0).unwrap();
+    tool.cam = camera_on(position);
+    world.agent.position = tool.cam.eye;
+    let key = world.objects.get(root_of(&world, target)).unwrap().key;
+    tool.click_select(&mut world, &settings, Some(target), false);
+    // neither ours nor group-owned-selected
+    set_root_flags(&mut world, target, OBJECT_GROUP_OWNED);
+    settings.select_owned_only = true;
+    settings.select_group_owned = false;
+    tool.out.clear();
+    let rect = screen_footprint(&tool, &world, target).unwrap().expand(2.0);
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    tool.mouse_down(&mut world, &mut settings, None, None, None, (rect.min.x, rect.min.y), ctrl);
+    tool.update(&mut world, &settings, None, (rect.max.x, rect.max.y), false, ctrl);
+    tool.mouse_up(&mut world, &settings, None, (rect.max.x, rect.max.y), ctrl);
+    // LLSelectMgr::highlightObjectOnly applies the picking filters in the
+    // deselect mode too (llselectmgr.cpp)
+    assert!(tool.is_selected(&key), "a picking filter keeps it in: {:?}", tool.out);
+    assert!(
+        !tool
+            .out
+            .iter()
+            .any(|c| matches!(c, NetCommand::Build(BuildCmd::Deselect { local_ids, .. }) if local_ids.contains(&key.local_id)))
+    );
 }
 
 #[test]
@@ -1502,7 +1783,7 @@ fn a_rectangle_from_a_hud_stays_in_hud_space_after_clearing_the_selection() {
     tool.update(&mut world, &settings, None, (40.0, 40.0), false, Mods::default());
     assert!(tool.selection.is_empty(), "the drag cleared it");
     assert!(tool.hud_selected(&world), "the rectangle is still drawn over the HUD");
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (40.0, 40.0), Mods::default());
     assert!(!tool.hud_selected(&world), "it was only for the drag");
 }
 
@@ -1528,7 +1809,7 @@ fn a_rectangle_keeps_to_the_space_of_its_press_and_never_mixes_two() {
         tool.update(&mut world, &settings, None, (40.0, 40.0), false, Mods::default());
         assert!(tool.selection.is_empty());
         assert!(!tool.hud_selected(&world), "the rectangle is drawn in the world");
-        tool.mouse_up(&mut world, &settings, None);
+        tool.mouse_up(&mut world, &settings, None, (40.0, 40.0), Mods::default());
     }
 
     // Shift from the HUD drops a world selection instead of adding to it
@@ -1537,7 +1818,7 @@ fn a_rectangle_keeps_to_the_space_of_its_press_and_never_mixes_two() {
     tool.update(&mut world, &settings, None, (40.0, 40.0), false, shift);
     assert!(tool.selection.is_empty());
     assert!(tool.hud_selected(&world), "the rectangle is drawn over the HUD");
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (40.0, 40.0), Mods::default());
 
     // Shift from the world drops a HUD selection the same way
     tool.click_select(&mut world, &settings, Some(hud), false);
@@ -1545,7 +1826,30 @@ fn a_rectangle_keeps_to_the_space_of_its_press_and_never_mixes_two() {
     tool.update(&mut world, &settings, None, (40.0, 40.0), false, shift);
     assert!(tool.selection.is_empty());
     assert!(!tool.hud_selected(&world));
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (40.0, 40.0), Mods::default());
+
+    // A Ctrl rectangle can only remove selected objects in its own space.
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    for (selected_idx, pressed_idx) in [(hud, floor), (floor, hud)] {
+        tool.click_select(&mut world, &settings, Some(selected_idx), false);
+        let before = tool.selection.clone();
+        tool.out.clear();
+        tool.mouse_down(&mut world, &mut settings, None, Some(pressed_idx), None, (10.0, 10.0), ctrl);
+        tool.update(&mut world, &settings, None, (40.0, 40.0), false, ctrl);
+        assert!(tool.rect_walked);
+        assert_eq!(tool.selection, before);
+        tool.mouse_up(&mut world, &settings, None, (40.0, 40.0), ctrl);
+        assert_eq!(tool.selection, before);
+        assert!(
+            !tool
+                .out
+                .iter()
+                .any(|cmd| matches!(cmd, NetCommand::Build(BuildCmd::Select { .. } | BuildCmd::Deselect { .. })))
+        );
+    }
 
     // Shift from nothing keeps the selection and its space
     tool.click_select(&mut world, &settings, Some(hud), false);
@@ -1562,12 +1866,12 @@ fn a_press_ended_without_its_release_selects_nothing() {
     // the focus goes with the button down: the release that follows is the app's own
     tool.mouse_down(&mut world, &mut settings, None, Some(idx), None, (10.0, 10.0), Mods::default());
     tool.drop_press();
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (10.0, 10.0), Mods::default());
     assert!(tool.selection.is_empty());
     // the tool changes with the button down
     tool.mouse_down(&mut world, &mut settings, None, Some(idx), None, (10.0, 10.0), Mods::default());
     tool.set_tool(Tool::Grab);
-    tool.mouse_up(&mut world, &settings, None);
+    tool.mouse_up(&mut world, &settings, None, (10.0, 10.0), Mods::default());
     assert!(tool.selection.is_empty());
     assert!(tool.rect.is_none());
 }
