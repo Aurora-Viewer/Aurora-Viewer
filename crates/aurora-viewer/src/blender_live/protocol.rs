@@ -10,7 +10,7 @@ use uuid::Uuid;
 #[path = "appearance.rs"]
 mod appearance;
 pub use super::geometry::PackedGeometry;
-pub use appearance::{Image, Material, PreparedImage, STAGING_BUSY};
+pub use appearance::{CachedImage, Image, Material, PreparedImage, STAGING_BUSY};
 
 pub const VERSION: u32 = 1;
 pub const MAX_BYTES: usize = 64 * 1024 * 1024;
@@ -232,7 +232,7 @@ pub fn prepare_staged(
     bytes: &[u8],
     supported: &HashSet<String>,
     pool: Option<&aurora_render::StagingPool>,
-    cache: &std::collections::HashMap<Uuid, PreparedImage>,
+    cache: &std::collections::HashMap<Uuid, CachedImage>,
 ) -> Result<Prepared, String> {
     if bytes.is_empty() || bytes.len() > MAX_BYTES {
         return Err(aurora_i18n::tr!("blender-live-invalid-size").into());
@@ -292,7 +292,7 @@ pub(super) fn prepare_snapshot(
     snapshot: Snapshot,
     supported: &HashSet<String>,
     pool: Option<&aurora_render::StagingPool>,
-    cache: &std::collections::HashMap<Uuid, PreparedImage>,
+    cache: &std::collections::HashMap<Uuid, CachedImage>,
 ) -> Result<Prepared, String> {
     if snapshot.protocol != VERSION || snapshot.meshes.len() > MAX_OBJECTS {
         return Err(aurora_i18n::tr!("blender-live-invalid-protocol").into());
