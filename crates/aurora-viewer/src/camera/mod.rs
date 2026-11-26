@@ -25,7 +25,8 @@ pub mod vr;
 pub use focus::FocusObject;
 pub use free::FreeCamera;
 pub use settings::{
-    CameraFollowJoint, CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE, SavedViews, VrView, zoom_lens,
+    CameraFollowJoint, CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, OTS_DISTANCE_RANGE, OTS_FOCUS_RANGE,
+    OTS_HEIGHT_RANGE, OTS_SIDE_RANGE, SMOOTHING_RANGE, SavedViews, VrView, zoom_lens,
 };
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
@@ -325,6 +326,10 @@ struct Tool {
 pub struct Camera {
     pub mode: CameraMode,
     last_mode: CameraMode,
+    /// Mouselook entered as the over-the-shoulder view
+    /// (`CameraSettings::over_the_shoulder`): mouselook's controls, the
+    /// camera behind the shoulder and the avatar shown.
+    shoulder: bool,
     /// Final camera position and point looked at (render space).
     pub position: Vec3,
     pub target: Vec3,
@@ -480,6 +485,7 @@ impl Default for Camera {
         Camera {
             mode: CameraMode::ThirdPerson,
             last_mode: CameraMode::ThirdPerson,
+            shoulder: false,
             position: Vec3::new(120.0, 128.0, 30.0),
             target: Vec3::new(128.0, 128.0, 28.0),
             fov_y: DEFAULT_FOV,
@@ -626,10 +632,18 @@ impl Camera {
         self.mode == CameraMode::Mouselook
     }
 
+    /// Mouselook seen over the shoulder (Megapahit's CAMERA_MODE_OTS): the
+    /// controls are mouselook's, the camera is behind the avatar.
+    pub fn shoulder_view(&self) -> bool {
+        self.mouselook() && self.shoulder
+    }
+
     /// LLAgentCamera::cameraMouselook: visibility changes only once the
     /// incoming transition reaches the head buffer, not on the mode request.
+    /// Over the shoulder the avatar stays shown (Megapahit's
+    /// LLAgent::needsRenderAvatar / needsRenderHead for CAMERA_MODE_OTS).
     pub fn first_person_view(&self) -> bool {
-        self.mouselook() && self.last_mode == CameraMode::Mouselook
+        self.mouselook() && !self.shoulder && self.last_mode == CameraMode::Mouselook
     }
 
     pub fn needs_animated_eyes(&self, agent: &AgentState, s: &CameraSettings) -> bool {
@@ -733,11 +747,17 @@ impl Camera {
         }
     }
 
+    /// LLViewMouselook (View › Mouselook, M). With the over-the-shoulder
+    /// setting it enters and leaves that view instead (Megapahit's
+    /// LLViewMouselook: changeCameraToOTS / changeCameraFromOTS); the other
+    /// ways into mouselook stay first person, as there.
     pub fn toggle_mouselook(&mut self, agent: &mut AgentState, s: &CameraSettings) {
         if self.mouselook() {
             self.change_to_default(agent, s);
-        } else {
-            self.change_to_mouselook(agent, s, true);
+        } else if s.enable_mouselook && !self.rlva.no_mouselook {
+            // (RLVa's refusal holds for the shoulder view too: it is
+            // mouselook's input, RlvActions::canChangeToMouselook, #3357)
+            self.enter_mouselook(agent, s, true, s.over_the_shoulder);
         }
     }
 
@@ -772,7 +792,9 @@ impl Camera {
         (self.offset_initial(s).length() * self.offset_scale(s)).max(0.001)
     }
 
-    /// LLAgentCamera::changeCameraToMouselook: refused up front where RLVa
+    /// LLAgentCamera::changeCameraToMouselook: the first-person view, also
+    /// out of the over-the-shoulder one (an RLVa `@setcam_mode=mouselook`
+    /// asks for the first person). Refused up front where RLVa
     /// forbids mouselook (RlvActions::canChangeToMouselook), so that the
     /// view never enters it to be thrown out a frame later, the cursor taken
     /// in between (#3357). The wheel then stops at the closest zoom.
@@ -780,11 +802,17 @@ impl Camera {
         if !s.enable_mouselook || self.rlva.no_mouselook {
             return;
         }
-        self.enter_mouselook(agent, s, animate);
+        self.enter_mouselook(agent, s, animate, false);
     }
 
-    fn enter_mouselook(&mut self, agent: &mut AgentState, s: &CameraSettings, animate: bool) {
+    fn enter_mouselook(&mut self, agent: &mut AgentState, s: &CameraSettings, animate: bool, shoulder: bool) {
         if self.mouselook() {
+            if self.shoulder && !shoulder {
+                self.shoulder = false;
+                if animate {
+                    self.start_animation(s);
+                }
+            }
             return;
         }
         self.clear_avatar_pan();
@@ -803,6 +831,10 @@ impl Camera {
         self.pitch = 0.0;
         self.last_mode = self.mode;
         self.mode = CameraMode::Mouselook;
+        // LLAgentCamera::changeCameraToOTS (Megapahit viewer): mouselook's
+        // input with the camera at the shoulder, reached through the same
+        // ZoomTime transition as mouselook
+        self.shoulder = shoulder;
         if animate {
             self.start_animation(s);
         } else {
@@ -2344,6 +2376,18 @@ impl Camera {
             // indra/newview/rlvhandler.cpp)
             self.change_to_default(&mut world.agent, &settings);
         }
+        // a camera held closer to the avatar than the shoulder offset
+        // (`@setcam_avdistmax`, `@camdistmax`) is the first-person view
+        // those restrictions ask for, not a shoulder camera pulled inwards.
+        // RLVa measures from the head (as `limit_rlva_distance`), and the
+        // offset turns with the pitch, so the bound is the offset's length
+        // plus the head's distance from the root (the triangle inequality):
+        // never closer than the camera can get at any pitch, so the shoulder
+        // view never stays past the limit (stricter, never looser)
+        let reach = Vec3::new(s.ots_distance, s.ots_side, s.ots_height).length() + self.posed_head(f).distance(self.avatar.root);
+        if self.shoulder_view() && world.rlva.camera_limit("setcam_avdistmax", f32::INFINITY, false) < reach {
+            self.shoulder = false;
+        }
         if world.rlva.camera_value("setcam_unlock").is_some() && !self.focus_on_avatar {
             self.set_focus_on_avatar(true, false, false, &mut world.agent, &settings);
         }
@@ -2568,7 +2612,7 @@ impl Camera {
                 } else {
                     HEAD_BUFFER_SIZE / a.start_camera.distance(camera_target)
                 };
-                let finish = if self.mouselook() { 1.0 - skip } else { 1.0 };
+                let finish = if self.mouselook() && !self.shoulder { 1.0 - skip } else { 1.0 };
                 if fraction < finish {
                     self.anim = Some(a);
                     let k = smoothstep(fraction);
@@ -2767,6 +2811,7 @@ impl Camera {
     fn calc_camera_target(&mut self, world: &World, s: &CameraSettings, f: &FrameInput) -> Vec3 {
         let agent = &world.agent;
         let mut camera = match self.mode {
+            CameraMode::Mouselook if self.shoulder => self.shoulder_eye(agent, s),
             CameraMode::Mouselook => self.mouselook_eye(agent, s, f.eye_offset),
             CameraMode::Follow if self.focus_on_avatar => self.follow.eye,
             CameraMode::ThirdPerson if self.focus_on_avatar => match self.sit_camera_point(world, f.now, true) {
@@ -2785,7 +2830,7 @@ impl Camera {
             }
         }
         // not underground (getCameraMinOffGround)
-        let min_off_ground = if self.mouselook() {
+        let min_off_ground = if self.mouselook() && !self.shoulder {
             0.0
         } else if s.disable_constraints {
             -1000.0
@@ -2898,6 +2943,34 @@ impl Camera {
         }
     }
 
+    /// The mouselook aim as a rotation: X along the aim, Z up, no roll.
+    fn aim_rotation(&self, agent: &AgentState) -> Quat {
+        let aim = self.mouselook_aim(agent).normalize_or(Vec3::X);
+        let yaw = aim.y.atan2(aim.x);
+        let pitch = aim.z.clamp(-1.0, 1.0).asin();
+        Quat::from_rotation_z(yaw) * Quat::from_rotation_y(-pitch)
+    }
+
+    /// The over-the-shoulder camera. Port of the CAMERA_MODE_OTS branch of
+    /// LLAgentCamera::calcCameraPositionTargetGlobal (Megapahit viewer,
+    /// indra/newview/llagentcamera.cpp, originally LGPL 2.1): the offset
+    /// (back, side, up) in the aim's frame from the avatar's root, so the
+    /// camera swings round the avatar as the mouse turns and pitches it.
+    fn shoulder_eye(&self, agent: &AgentState, s: &CameraSettings) -> Vec3 {
+        let offset = Vec3::new(-s.ots_distance, s.ots_side, s.ots_height);
+        self.avatar.root + self.aim_rotation(agent) * offset
+    }
+
+    /// The point the over-the-shoulder camera looks at, the
+    /// CAMERA_MODE_OTS branch of LLAgentCamera::calcFocusPositionTargetGlobal
+    /// (Megapahit viewer): ahead of the avatar along the aim, a little
+    /// towards the camera's side and above the root, so the view converges
+    /// on what the avatar aims at.
+    fn shoulder_focus(&self, agent: &AgentState, s: &CameraSettings) -> Vec3 {
+        let offset = Vec3::new(s.ots_focus_distance, s.ots_side * 0.3, s.ots_height * 0.5);
+        self.avatar.root + self.aim_rotation(agent) * offset
+    }
+
     /// LLAgentCamera::calcFocusPositionTargetGlobal.
     fn calc_focus_target(&self, world: &World, s: &CameraSettings, f: &FrameInput, camera_target: Vec3) -> Vec3 {
         let agent = &world.agent;
@@ -2905,6 +2978,7 @@ impl Camera {
             CameraMode::Follow if self.focus_on_avatar => self.follow.at,
             // Keep the mouse's aim even if terrain or range constraints
             // move the eye away from its requested position.
+            CameraMode::Mouselook if self.shoulder => self.shoulder_focus(agent, s),
             CameraMode::Mouselook => camera_target + self.mouselook_aim(agent),
             CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => {
                 self.focus_target + self.third_person_joint_delta(s, f.follow_joint_offset)
@@ -3053,7 +3127,7 @@ impl Camera {
         let was_mouselook = self.mouselook();
         agent.pitch = 0.0;
         match mode {
-            VrView::FirstPerson => self.enter_mouselook(agent, settings, false),
+            VrView::FirstPerson => self.enter_mouselook(agent, settings, false, false),
             VrView::Avatar => self.change_to_third_person(agent, settings, false),
             VrView::Flycam => {
                 self.change_to_default(agent, settings);
@@ -6534,6 +6608,106 @@ mod tests {
         camera.change_to_mouselook(&mut world.agent, &s, false);
         camera.update(&mut world, &s, &frame(1.0 / 60.0));
         assert!(camera.first_person_view(), "instant entry has no approach to wait for");
+    }
+
+    /// Megapahit's CAMERA_MODE_OTS: mouselook entered with the
+    /// over-the-shoulder setting keeps mouselook's controls, puts the camera
+    /// behind the shoulder in the aim's frame and keeps the avatar shown;
+    /// without the setting, mouselook is the first-person view again.
+    #[test]
+    fn over_the_shoulder_mouselook_sits_behind_the_shoulder_and_keeps_the_avatar() {
+        let s = CameraSettings {
+            over_the_shoulder: true,
+            zoom_time: 0.5,
+            ..Default::default()
+        };
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &s);
+        // the wheel's zoom into the head (and RLVa) stays first person
+        camera.change_to_mouselook(&mut world.agent, &s, false);
+        assert!(camera.mouselook() && !camera.shoulder_view());
+        camera.change_to_default(&mut world.agent, &s);
+        settle(&mut camera, &mut world, &s);
+        // M
+        camera.toggle_mouselook(&mut world.agent, &s);
+        assert!(camera.mouselook() && camera.shoulder_view());
+        for _ in 0..120 {
+            camera.update(&mut world, &s, &frame(1.0 / 60.0));
+            if camera.anim.is_none() {
+                break;
+            }
+        }
+        assert!(camera.anim.is_none(), "the transition ends");
+        assert!(!camera.first_person_view(), "the avatar stays shown");
+        let expect = |camera: &Camera, world: &World| {
+            let aim = camera.aim_rotation(&world.agent);
+            (
+                camera.avatar.root + aim * Vec3::new(-s.ots_distance, s.ots_side, s.ots_height),
+                camera.avatar.root + aim * Vec3::new(s.ots_focus_distance, s.ots_side * 0.3, s.ots_height * 0.5),
+            )
+        };
+        let (eye, focus) = expect(&camera, &world);
+        assert!(camera.position.abs_diff_eq(eye, 1e-3), "{:?} {eye:?}", camera.position);
+        assert!(camera.target.abs_diff_eq(focus, 1e-3), "{:?} {focus:?}", camera.target);
+        // behind the avatar's aim and over its right shoulder
+        let back = camera.position - camera.avatar.root;
+        assert!(back.dot(world.agent.forward()) < -2.0, "{back:?}");
+        assert!(back.dot(world.agent.forward().cross(Vec3::Z)) > 0.4, "right shoulder: {back:?}");
+
+        // the camera swings round the avatar with the aim
+        world.agent.yaw += std::f32::consts::FRAC_PI_2;
+        world.agent.pitch = 0.3;
+        camera.update(&mut world, &s, &frame(1.0 / 60.0));
+        let (eye, focus) = expect(&camera, &world);
+        assert!(camera.position.abs_diff_eq(eye, 1e-3), "{:?} {eye:?}", camera.position);
+        assert!(camera.target.abs_diff_eq(focus, 1e-3), "{:?} {focus:?}", camera.target);
+        assert!(
+            camera.position.z < camera.avatar.root.z + s.ots_height,
+            "looking up lowers the camera"
+        );
+
+        // a forced first person (RLVa @setcam_mode=mouselook) leaves the shoulder
+        camera.change_to_mouselook(&mut world.agent, &s, false);
+        assert!(camera.mouselook() && !camera.shoulder_view());
+        camera.update(&mut world, &s, &frame(1.0 / 60.0));
+        assert!(camera.first_person_view());
+
+        camera.toggle_mouselook(&mut world.agent, &s);
+        assert!(!camera.mouselook() && !camera.shoulder_view());
+        let plain = CameraSettings {
+            over_the_shoulder: false,
+            ..s.clone()
+        };
+        camera.toggle_mouselook(&mut world.agent, &plain);
+        camera.update(&mut world, &plain, &frame(1.0 / 60.0));
+        assert!(
+            camera.mouselook() && !camera.shoulder_view(),
+            "the switch off: M is first person again"
+        );
+    }
+
+    /// RLVa holding the camera nearer than the shoulder offset asks for the
+    /// first-person view; a looser limit leaves the shoulder alone.
+    #[test]
+    fn rlva_distance_limits_shorter_than_the_shoulder_give_the_first_person_view() {
+        let s = CameraSettings {
+            over_the_shoulder: true,
+            ..Default::default()
+        };
+        // with the defaults the offset is 3.08 m and the head 0.65 m above
+        // the root: 3.3 m is past the offset but short of the reach at
+        // some pitch, so it gives the first person too
+        for (limit, shoulder) in [(10.0, true), (3.3, false), (1.0, false)] {
+            let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+            let mut camera = Camera::default();
+            settle(&mut camera, &mut world, &s);
+            camera.toggle_mouselook(&mut world.agent, &s);
+            rlva_command(&mut world, &format!("@setcam_avdistmax:{limit}=n"));
+            camera.update(&mut world, &s, &frame(1.0 / 60.0));
+            assert!(camera.mouselook());
+            assert_eq!(camera.shoulder_view(), shoulder, "limit {limit}");
+        }
     }
 
     #[test]

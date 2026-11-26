@@ -836,13 +836,29 @@ impl App {
         ])
     }
 
-    /// The first person view (mouselook) on or off.
+    /// The viewfinder's first person: mouselook at the eyes. The
+    /// over-the-shoulder view is mouselook too, but its camera is behind
+    /// the avatar, so it is not the photo tool's first person.
+    fn vf_eyes(&self) -> bool {
+        self.camera.mouselook() && !self.camera.shoulder_view()
+    }
+
+    /// The first person view (mouselook at the eyes) on or off. Turned on,
+    /// it enters the first person even with the over-the-shoulder setting,
+    /// and out of the shoulder view (`Camera::change_to_mouselook`), where
+    /// M would enter the shoulder view.
     fn vf_first_person(&mut self, on: bool) {
-        if on != self.camera.mouselook() {
-            if on && self.camera.free().is_some() {
-                self.snapshots.ui.free.on = false;
-                self.photo_free_camera();
-            }
+        if on == self.vf_eyes() {
+            return;
+        }
+        if on && self.camera.free().is_some() {
+            self.snapshots.ui.free.on = false;
+            self.photo_free_camera();
+        }
+        if on && self.vr_mode.is_none() {
+            self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, true);
+            self.set_mouselook_grab(self.camera.mouselook());
+        } else {
             self.toggle_mouselook();
         }
     }
@@ -1105,7 +1121,7 @@ impl App {
             histogram: renderer.histogram.as_deref(),
             still: self.settings.reduce_motion,
             review: review.as_ref(),
-            first_person: self.camera.mouselook(),
+            first_person: self.vf_eyes(),
             first_person_allowed: first_allowed,
             base_exposure: self.settings.exposure,
             roll: self.camera.roll.to_degrees(),
