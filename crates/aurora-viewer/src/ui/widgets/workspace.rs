@@ -538,6 +538,9 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         return "photo-filled";
     }
     // the tools of a script editor carry its egui id and their own suffix
+    if id == super::super::area_search::WINDOW {
+        return "radar-2";
+    }
     if id.ends_with("_search") {
         return "search-filled";
     }
@@ -594,6 +597,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
         "beacons" => "radar-filled",
+        "inspect" => "scan-eye",
         "environment_selector" | "personal_lighting" => "sun-filled",
         "perf" | "performance" => "gauge-filled",
         "photo" | "photo_classic" => "camera-filled",

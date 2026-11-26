@@ -1247,19 +1247,46 @@ geometry, expires after 30 seconds, and cancels on failure, manual movement,
 Escape, Stop or closing the controller. A recovered pilot requires at least
 one metre of actual travel before another automatic recovery can be requested.
 
+`ui/inspect/` draws Inspect: `mod.rs` the window (summary card, search with
+its View panel, the Outfit / Creators / Details switch), `model.rs` the prims
+gathered into objects (body areas, sort orders, badge tiers, shares),
+`list.rs` the one-line object cards and the Creators tab, `details.rs` the
+Legacy prim table with its totals. `app/inspect.rs` selects the prims, builds
+their rows and answers the window's actions (profiles, Look at).
+Wide, the window is a board of tiles: `wide.rs` the tiles (the objects in 3D,
+items, complexity or land impact, Made by, Worn on / Owned by, figures, prims)
+and what one narrows in the others, `people.rs` the complexity among the people
+here. `ui/board.rs` is the board both wide windows share: packing on four, two
+or one columns, a tile that grows, rows with one Tab stop, virtual lists, table
+headings, the small / wide view of a window.
+
+`object_stage/` is their 3D view: `mod.rs` keeps one model per window up to
+date (refused under RLVa's `second_camera_blocked`), `build.rs` takes the
+objects from the caches on the main thread and makes the model on a worker
+(every prim owns its bones, so moving and isolating are a new palette; what is worn
+follows its wearer's joints, and what is pointed at is found in
+the bones' own space, without skinning), `layout.rs` where the objects stand, `own.rs`
+what has a skeleton of its own: an animesh, and the parts of the avatar's own body that show. `ui/object_stage.rs` draws it with
+`aurora_render::preview::paint_stage` and its controls. `View::studio` lights it
+(`preview.wgsl`: analytic lamps that a rough surface blurs, a key light with a
+shadow map, a floor, Khronos PBR Neutral tone mapping), `Highlight` outlines
+parts (`preview_outline.wgsl`), `preview_blend.rs` sorts a studio's see-through faces pixel by pixel with the
+lists and shader functions of the world's exact order (`blend_exact.rs`),
+`preview_mips.rs` makes the smaller sizes of every preview's textures. It asks nothing of the
+network and shows no asset id.
+
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
 window and cache its filtered, sorted, virtualized object rows.
-`ui/area_search/controls.rs` places Results, Search, Filters and Ranges in shared tabs on the left, showing
-one inline form above the virtualized table; Filters pairs required properties
-with exclusions/parcel/ownership (side by side when wide), while Ranges holds
-distance and price. Columns stays in a right-aligned
-popout. Forms scroll independently to reserve result rows below them; selecting
-Results hides the form to give the table more room. All edits apply immediately.
-Reset sits at the bottom right of each section and restores only its own options or
-column choices; the result footer resets the entire search. Save as default
+`ui/area_search/model.rs` counts what the window shows once per result list
+(distance bars and bands, owners, kinds, what is for sale, ranks) and names the
+filters that are on. `chart.rs` is the distance chart with its two handles,
+`sheet.rs` the filters (three-state kinds, click action, permissions, price,
+scope, the six fields), `list.rs` the lists (bands, owners, for sale, the whole
+table with the name kept in view, the card of the selected object), `wide.rs`
+the window's board of tiles (its only view). All edits apply immediately. Save as default
 persists filter options without search text. Compiled regex filters survive
 live snapshots; one matching-limit failure cancels the rest of that batch,
-with diagnostics visible above the table.
+with diagnostics in the footer.
 `settings/area_search.rs` owns typed defaults and Legacy-compatible
 `openfloater/area_search` link encoding/decoding, routed by `slapp.rs`.
 Aurora retains its broader physical/temporary defaults, live text search,
@@ -4460,6 +4487,8 @@ GPU had queued (`Renderer::pick_world`), is now only used for comparison
 (`AURORA_CLICK_PICK=wait` or `check`). If the render thread disappears
 (panic), every wait ends, the pending clicks receive an empty reply and the
 viewer closes cleanly.
+
+What the regions send of themselves (`app/interest_list.rs`, LLAgent::changeInterestListMode): the camera's view, or everything around while the 360° photo or Area Search is open; the mode is asked once for both. For the first 30 s of Area Search a frame applies less of the network's messages, unless they wait.
 
 The 360° snapshot is a format of the photo window (`SnapshotUi::pano`, the "360°" chip after the proportions; the toolbar's `360capture` opens the window in it). The engine is `app/capture_360.rs` (LLFloater360Capture), its rules `snapshot/capture_360.rs` (qualities, output sizes, the heading roll, the XMP block, the item name and its marker). For each face the camera is swapped for a flycam looking along the face, 90° high and wide (`PhotoFrame::cube_face`, put back at the next frame); the world holds still through the photo mode's freeze, and "Hide all avatars" flags every avatar and what it wears through the photo isolation's `hide_avatars`. The photo window's colour looks apply to each face (`LookOp::is_pointwise`: the others, which would differ from face to face, stay greyed in the stack). The faces never leave the GPU: each photo frame carries `SnapshotSpec::cube` and is copied into its layer of a cube texture (`equirect::CubeTarget`), the main thread does not wait for it, the six frames share one set of render targets (`Backend::cube_hold`: made for the first face, again after the last, with the history of the temporal passes cleared at each face), and a compute pass (`shaders/equirect.wgsl`) projects the cube, whose faces are mirrored by the cube map layout (the +X and -X captures swap layers and the cube is sampled at (-x, y, z), `aurora-render/src/equirect.rs`, proven against the cube face formulas). Only the panorama is read back, asynchronously (`equirect::Readbacks`: the map is polled by later frames, the rows are copied on a worker thread, the answer comes in a later `FrameResult`). The panorama is four faces wide (512 to 8192 pixels, the card's limit with a fallback to 4096); a JPEG carries the GPano XMP block as an APP1 segment (`sl360_<region>_<w>x<h>_<face>_<stamp>.jpg`); for the inventory the panorama is rolled so that the camera's heading is its middle column (the XMP does not survive the upload) and uploaded as a 2048 x 1024 texture named `360 Snapshot : <place>` (ASCII: the grid replaces every other byte of a name) to the Photo Album. The panorama viewer is `aurora-render/src/panorama.rs` (a paint-callback region of `preview::Cache`: a mip chain built by 2x2 blits, `textureSampleGrad` with gradients from the view direction so that the longitude wrap leaves no seam, redrawn only when the view or the image changes) with its controls in `ui/panorama.rs` (drag, wheel zoom 30° to 100°, double-click reset, slow auto-rotate, arrows and `+` / `-` while focused, enlarge). The inventory's texture preview offers it for any 2:1 texture of 256 pixels or more (a "360°" switch; a texture named for the marker opens as a panorama), under the same Copy UUID and Save As gates as the flat preview (`texture_view::gates`). While the window is open in 360° the session posts `{"mode":"360"}` to the InterestList capability of every region (`NetCommand::SetInterestListMode`), again to the agent's region when its capabilities arrive, and `default` when it closes or the format is left, and the textures treat every direction as in view.
 

@@ -361,18 +361,13 @@ toolbar-command-quickprefs = Preferências rápidas
 toolbar-command-web-browser = Navegador da Web
 toolbar-command-chat-bar = Barra de chat
 toolbar-command-area-search = Busca de área
-area-search-hint = Busque objetos, descrições, proprietários, criadores ou UUIDs…
 area-search-refresh = Atualizar
-area-search-parcel = Apenas a parcela atual
-area-search-children = Incluir prims vinculados
 area-search-mine = Meus objetos
 area-search-filters = Filtros
 area-search-sale = À venda
 area-search-physical = Físico
 area-search-phantom = Fantasma
 area-search-temporary = Temporário
-area-search-distance = Distância máxima
-area-search-reset = Redefinir filtros
 area-search-count = { $shown } / { $total } objetos · { $pending } aguardando detalhes
 area-search-parcel-pending = Aguardando os limites atuais da parcela…
 area-search-scope = Somente os objetos recebidos pelo viewer são listados.
@@ -381,7 +376,6 @@ area-search-price = Preço
 area-search-inspect = Inspecionar
 area-search-zoom = Zoom
 area-search-copy = Copiar UUID
-area-search-neighbors = Incluir regiões vizinhas
 area-search-demo-description = Objeto offline para testar buscas e filtros
 area-search-empty = Nenhum objeto corresponde a esses filtros.
 area-search-sit = Sentar
@@ -4858,7 +4852,6 @@ world-profiles-joined-today = Inscreveu-se hoje
 keybinds-insert = Inserir
 ui-context-inspect-2 = Inspecionar
 ui-context-inspect-all-attachments = Inspecionar todos os anexos
-inspect-title = Inspecionar objetos
 inspect-col-name = Nome do objeto
 inspect-col-description = Descrição
 inspect-col-owner = Proprietário
@@ -4877,15 +4870,6 @@ inspect-owner-profile-tip = Perfil do proprietário do objeto destacado
 inspect-creator-profile = Ver perfil do criador…
 inspect-creator-profile-tip = Perfil do criador original do objeto destacado
 inspect-options = Colunas mostradas
-inspect-totals = Estatísticas totais
-inspect-totals-objects =
-    { $objects ->
-        [one] { $objects } objeto
-       *[other] { $objects } objetos
-    }, { $prims ->
-        [one] { $prims } prim
-       *[other] { $prims } prims
-    }
 inspect-totals-visible = Faces visíveis
 inspect-totals-complexity = Complexidade
 inspect-totals-textures = Texturas
@@ -15153,24 +15137,11 @@ area-search-group = Grupo
 area-search-last-owner = Último proprietário
 area-search-land-impact = Impacto no terreno
 area-search-prim-count = Contagem de prims
-area-search-search = Buscar
-area-search-columns = Colunas
-area-search-regex = Usar expressões regulares
 area-search-regex-error = Expressão regular: { $error }
-area-search-required = Listar apenas objetos que são
-area-search-excluded = Excluir objetos que são
-area-search-ranges = Distância e preço de venda
-area-search-attachment = Anexos
 area-search-media = Mídia compartilhada
 area-search-copy-perm = Copiar
 area-search-modify-perm = Modificar
 area-search-transfer-perm = Transferir
-area-search-probes = Sondas de reflexão
-area-search-child-prim = Prims filhos
-area-search-neighbor-regions = Em regiões vizinhas
-area-search-distance-range = Distância
-area-search-min = Mín.
-area-search-max = Máx.
 area-search-click-action = Ação de clique do mouse
 area-search-click-unrestricted = Irrestrito
 area-search-click-any = Qualquer ação
@@ -15182,13 +15153,7 @@ area-search-save-defaults = Salvar como padrão
 area-search-copy-link = Copiar como link
 area-search-reset-columns = Redefinir colunas
 area-search-regex-limit = Limite de correspondência excedido. Simplifique a expressão.
-area-search-reset-all-tip = Redefina toda a busca.
-area-search-reset-search-tip = Limpe campos de busca e expressões regulares.
-area-search-reset-options-tip = Restaure as opções de filtro originais.
 area-search-reset-columns-tip = Restaure colunas padrão.
-area-search-range-options = Intervalos
-area-search-reset-ranges-tip = Restaure as faixas padrão de distância e preço de venda.
-area-search-results = Resultados
 local-appearance-warning =
     { $count ->
         [1] Texturas / materiais locais: { $count } objeto

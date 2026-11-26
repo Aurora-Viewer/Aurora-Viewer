@@ -361,18 +361,13 @@ toolbar-command-quickprefs = Швидкі налаштування
 toolbar-command-web-browser = Веббраузер
 toolbar-command-chat-bar = Рядок чату
 toolbar-command-area-search = Пошук об'єктів поблизу
-area-search-hint = Шукати об'єкти, описи, власників, авторів або UUID…
 area-search-refresh = Оновити
-area-search-parcel = Лише поточна ділянка
-area-search-children = Включати зв'язані прими
 area-search-mine = Мої об'єкти
 area-search-filters = Фільтри
 area-search-sale = На продаж
 area-search-physical = Фізичні
 area-search-phantom = Фантомні
 area-search-temporary = Тимчасові
-area-search-distance = Максимальна відстань
-area-search-reset = Скинути фільтри
 area-search-count = Об'єктів: { $shown } / { $total } · очікують на подробиці: { $pending }
 area-search-parcel-pending = Очікування меж поточної ділянки…
 area-search-scope = Показано лише об'єкти, отримані переглядачем.
@@ -381,7 +376,6 @@ area-search-price = Ціна
 area-search-inspect = Перевірити
 area-search-zoom = Наблизити
 area-search-copy = Копіювати UUID
-area-search-neighbors = Включати сусідні регіони
 area-search-demo-description = Офлайн-об'єкт для перевірки пошуку й фільтрів
 area-search-empty = Жоден об'єкт не відповідає цим фільтрам.
 area-search-sit = Сісти
@@ -4906,7 +4900,6 @@ world-profiles-joined-today = Зареєстровано сьогодні
 keybinds-insert = Insert
 ui-context-inspect-2 = Оглянути
 ui-context-inspect-all-attachments = Оглянути всі приєднані об'єкти
-inspect-title = Огляд об'єктів
 inspect-col-name = Назва об'єкта
 inspect-col-description = Опис
 inspect-col-owner = Власник
@@ -4925,18 +4918,6 @@ inspect-owner-profile-tip = Профіль власника виділеного
 inspect-creator-profile = Профіль автора…
 inspect-creator-profile-tip = Профіль первісного автора виділеного об'єкта
 inspect-options = Показані стовпці
-inspect-totals = Загальна статистика
-inspect-totals-objects = { $objects ->
-    [one] { $objects } об'єкт
-    [few] { $objects } об'єкти
-    [many] { $objects } об'єктів
-   *[other] { $objects } об'єкта
-    }, { $prims ->
-    [one] { $prims } прим
-    [few] { $prims } прими
-    [many] { $prims } примів
-   *[other] { $prims } прима
-    }
 inspect-totals-visible = Видимі грані
 inspect-totals-complexity = Складність
 inspect-totals-textures = Текстури
@@ -15333,24 +15314,11 @@ area-search-group = Група
 area-search-last-owner = Останній власник
 area-search-land-impact = Навантаження на ділянку
 area-search-prim-count = Кількість примів
-area-search-search = Шукати
-area-search-columns = Стовпці
-area-search-regex = Використовувати регулярні вирази
 area-search-regex-error = Регулярний вираз: { $error }
-area-search-required = Показувати лише такі об'єкти
-area-search-excluded = Виключити такі об'єкти
-area-search-ranges = Відстань і ціна продажу
-area-search-attachment = Приєднані об'єкти
 area-search-media = Спільні медіа
 area-search-copy-perm = Копіювати
 area-search-modify-perm = Змінювати
 area-search-transfer-perm = Передавати
-area-search-probes = Зонди відбиття
-area-search-child-prim = Дочірні прими
-area-search-neighbor-regions = У сусідніх регіонах
-area-search-distance-range = Відстань
-area-search-min = Мін.
-area-search-max = Макс.
 area-search-click-action = Дія при клацанні
 area-search-click-unrestricted = Без обмежень
 area-search-click-any = Будь-яка дія
@@ -15362,13 +15330,7 @@ area-search-save-defaults = Зберегти як стандартні
 area-search-copy-link = Копіювати як посилання
 area-search-reset-columns = Скинути стовпці
 area-search-regex-limit = Перевищено ліміт зіставлення. Спростіть вираз.
-area-search-reset-all-tip = Скинути весь пошук.
-area-search-reset-search-tip = Очистити поля пошуку й регулярні вирази.
-area-search-reset-options-tip = Відновити початкові параметри фільтра.
 area-search-reset-columns-tip = Відновити стандартні стовпці.
-area-search-range-options = Діапазони
-area-search-reset-ranges-tip = Відновити стандартні діапазони відстані й ціни продажу.
-area-search-results = Результати
 local-appearance-warning = { $count ->
     [one] Локальні текстури / матеріали: { $count } об'єкт
     [few] Локальні текстури / матеріали: { $count } об'єкти

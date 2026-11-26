@@ -109,6 +109,7 @@ mod hover_tips;
 mod hud_drag;
 mod imports;
 mod inspect;
+mod interest_list;
 mod inventory;
 mod inventory_drag;
 mod inventory_hover;
@@ -976,6 +977,8 @@ pub struct App {
     animation_explorer: animation_explorer::ExplorerState,
     avatar_render_settings_ui: ui::avatar_render_settings::AvatarRenderSettings,
     area_search_feed: area_search::Feed,
+    /// What the regions send (app/interest_list.rs).
+    interest_list: interest_list::InterestList,
     /// "Asset blacklist" (World menu).
     blacklist_ui: ui::blacklist::BlacklistUi,
     group_titles_ui: ui::group_titles::GroupTitlesUi,
@@ -2265,6 +2268,7 @@ impl App {
             animation_explorer: Default::default(),
             avatar_render_settings_ui: Default::default(),
             area_search_feed: Default::default(),
+            interest_list: Default::default(),
             blacklist_ui: Default::default(),
             group_titles_ui: Default::default(),
             bumps_ui: Default::default(),
@@ -3899,6 +3903,8 @@ impl App {
         self.avatar_reloads = Default::default();
         self.interactions = Default::default();
         self.screen = Screen::Login;
+        // (the next session starts in the default mode: asked again there)
+        self.interest_list = Default::default();
         self.login_form.busy = false;
         self.login_form.transition = None;
         self.login_form.pending_connect = None;
@@ -7438,14 +7444,18 @@ impl App {
     }
 
     fn pump_network_events(&mut self, t_ev: Instant) {
+        let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
         while let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
             self.receive_event(ev, self.director_render_stamp(sent));
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
-            // (more per frame in gaming mode's slow loop, app/gaming_mode.rs)
-            if now.duration_since(t_ev) > gaming_mode::event_budget(self.gaming_mode.on, self.outside.focused()) {
+            // (more per frame in gaming mode's slow loop, app/gaming_mode.rs;
+            // less while everything around arrives, app/interest_list.rs)
+            let usual = gaming_mode::event_budget(self.gaming_mode.on, self.outside.focused());
+            let lag = now.saturating_duration_since(sent);
+            if now.duration_since(t_ev) > self.interest_list.event_budget(usual, lag, covered, now) {
                 break;
             }
         }
@@ -10101,6 +10111,8 @@ impl App {
         wanted.extend(self.pay_ui.wanted_pics.drain());
         wanted.extend(self.inventory_ui.wanted_pics.drain());
         wanted.extend(self.conversation_log_ui.wanted_pics.drain());
+        wanted.extend(self.inspect_ui.wanted_pics.drain());
+        wanted.extend(self.area_search_ui.wanted_pics.get_mut().drain());
         let portrait = self.appearance_ui.wanted_outfit_portrait.take();
         self.scene.textures.show_outfit_portrait(portrait);
         if let Some(image) = portrait
@@ -11535,6 +11547,7 @@ impl App {
         // part of it this frame draws, the height its details are chosen for
         // a 360° snapshot's face this frame: its camera swapped in, the
         // square photo frame asked (app/capture_360.rs)
+        self.interest_list_frame();
         self.capture_360_frame(&mut gfx.renderer);
         self.outfit_batch_frame();
         self.outfit_portrait_frame(&gfx.renderer);
@@ -18688,6 +18701,9 @@ impl App {
             self.video_memory_notice(&ctx, &p);
             self.media_pack_card(&ctx, &p);
         }
+        // the far avatars posed for Inspect's 3D view, named again while it
+        // is drawn (not with the interface off)
+        self.scene.watched.clear();
         match self.screen {
             Screen::Login => {
                 if let Some(demo) = &mut self.update_demo {
@@ -21278,20 +21294,8 @@ impl App {
                 ) {
                     self.settings.save();
                 }
-                if self.inspect_ui.open {
-                    let (rows, totals) = self.inspect_rows();
-                    let mut columns = self.settings.inspect_columns;
-                    if let Some(id) = self.inspect_ui.show(&ctx, &p, &rows, &totals, &mut columns) {
-                        self.profile_ui.open(&mut self.world, id);
-                    }
-                    if columns != self.settings.inspect_columns {
-                        self.settings.inspect_columns = columns;
-                        self.settings.save();
-                    }
-                    if !self.inspect_ui.open {
-                        self.inspect_closed();
-                    }
-                }
+                self.demo_inspect();
+                self.inspect_window(&ctx, &p);
                 self.blacklist_window(&ctx, &p);
                 self.group_titles_window(&ctx, &p);
                 self.world_look_window(&ctx, &p);

@@ -1464,7 +1464,7 @@ impl PreviewSource {
         self.image_at_size(id, 256)
     }
 
-    pub(super) fn image_at_size(self, id: Uuid, side: u32) -> Option<Arc<aurora_render::preview::Image>> {
+    pub(crate) fn image_at_size(self, id: Uuid, side: u32) -> Option<Arc<aurora_render::preview::Image>> {
         if let Some(image) = self.local {
             return Some(image);
         }

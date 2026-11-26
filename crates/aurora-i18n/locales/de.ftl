@@ -360,18 +360,13 @@ toolbar-command-quickprefs = Schnelleinstellungen
 toolbar-command-web-browser = Webbrowser
 toolbar-command-chat-bar = Chat-Leiste
 toolbar-command-area-search = Gebietssuche
-area-search-hint = Suchen Sie nach Objekten, Beschreibungen, Eigentümern, Erstellern oder UUIDs ...
 area-search-refresh = Aktualisieren
-area-search-parcel = Nur aktuelle Parzelle
-area-search-children = Verknüpfte Prims einbeziehen
 area-search-mine = Meine Objekte
 area-search-filters = Filter
 area-search-sale = Zum Verkauf
 area-search-physical = Physisch
 area-search-phantom = Phantom
 area-search-temporary = Temporär
-area-search-distance = Maximale Entfernung
-area-search-reset = Filter zurücksetzen
 area-search-count = { $shown } / { $total } Objekte · { $pending } warten auf Details
 area-search-parcel-pending = Warten auf die aktuellen Parzellengrenzen…
 area-search-scope = Es werden nur Objekte aufgelistet, die der Viewer empfangen hat.
@@ -380,7 +375,6 @@ area-search-price = Preis
 area-search-inspect = Untersuchen
 area-search-zoom = Zoomen
 area-search-copy = UUID kopieren
-area-search-neighbors = Benachbarte Regionen einbeziehen
 area-search-demo-description = Offline-Objekt zum Testen von Suche und Filtern
 area-search-empty = Keine Objekte entsprechen diesen Filtern.
 area-search-sit = Sitzen
@@ -4858,7 +4852,6 @@ world-profiles-joined-today = Heute beigetreten
 keybinds-insert = Einfügen
 ui-context-inspect-2 = Untersuchen
 ui-context-inspect-all-attachments = Alle Anhänge untersuchen
-inspect-title = Objekte untersuchen
 inspect-col-name = Objektname
 inspect-col-description = Beschreibung
 inspect-col-owner = Eigentümer
@@ -4877,15 +4870,6 @@ inspect-owner-profile-tip = Profil des Eigentümers des hervorgehobenen Objekts
 inspect-creator-profile = Erstellerprofil anzeigen…
 inspect-creator-profile-tip = Profil des ursprünglichen Erstellers des hervorgehobenen Objekts
 inspect-options = Angezeigte Spalten
-inspect-totals = Gesamtstatistik
-inspect-totals-objects =
-    { $objects ->
-        [one] { $objects } Objekt
-       *[other] { $objects } Objekte
-    }, { $prims ->
-        [one] { $prims } Prim
-       *[other] { $prims } Prims
-    }
 inspect-totals-visible = Sichtbare Flächen
 inspect-totals-complexity = Komplexität
 inspect-totals-textures = Texturen
@@ -15154,24 +15138,11 @@ area-search-group = Gruppe
 area-search-last-owner = Letzter Eigentümer
 area-search-land-impact = Land Impact
 area-search-prim-count = Prim-Anzahl
-area-search-search = Suchen
-area-search-columns = Spalten
-area-search-regex = Reguläre Ausdrücke verwenden
 area-search-regex-error = Regulärer Ausdruck: { $error }
-area-search-required = Nur Objekte auflisten, die
-area-search-excluded = Objekte ausschließen, die
-area-search-ranges = Entfernung und Verkaufspreis
-area-search-attachment = Anhänge
 area-search-media = Geteilte Medien
 area-search-copy-perm = Kopieren
 area-search-modify-perm = Bearbeiten
 area-search-transfer-perm = Transferieren
-area-search-probes = Reflexionssonden
-area-search-child-prim = Untergeordnete Prims
-area-search-neighbor-regions = In benachbarten Regionen
-area-search-distance-range = Entfernung
-area-search-min = Min
-area-search-max = Max
 area-search-click-action = Mausklick-Aktion
 area-search-click-unrestricted = Uneingeschränkt
 area-search-click-any = Jede Aktion
@@ -15183,13 +15154,7 @@ area-search-save-defaults = Als Standard speichern
 area-search-copy-link = Als Link kopieren
 area-search-reset-columns = Spalten zurücksetzen
 area-search-regex-limit = Übereinstimmungsgrenze überschritten. Vereinfachen Sie den Ausdruck.
-area-search-reset-all-tip = Setzen Sie die gesamte Suche zurück.
-area-search-reset-search-tip = Löschen Sie Suchfelder und reguläre Ausdrücke.
-area-search-reset-options-tip = Stellen Sie die ursprünglichen Filteroptionen wieder her.
 area-search-reset-columns-tip = Standardspalten wiederherstellen.
-area-search-range-options = Bereiche
-area-search-reset-ranges-tip = Stellen Sie die Standardentfernungs- und Verkaufspreisbereiche wieder her.
-area-search-results = Ergebnisse
 local-appearance-warning =
     { $count ->
         [one] Lokale Texturen/Materialien: { $count } Objekt

@@ -77,7 +77,7 @@ anim-timeline-keys-selected = { $count ->
     [one] { $count } key picked: drag it to move it, Delete removes it, right-click or Esc drops it
    *[other] { $count } keys picked: drag one to move them all, Ctrl+C copies them, Delete removes them, right-click or Esc drops them
     }
-anim-edit-shortcut-play = Play or pause (Space)
+anim-edit-shortcut-play = Play or pause
 anim-edit-shortcut-rewind = Rewind to the start (Home)
 anim-edit-shortcut-undo = Undo (Ctrl+Z)
 anim-edit-shortcut-redo = Redo (Ctrl+Y or Ctrl+Shift+Z)
@@ -362,18 +362,18 @@ toolbar-command-chat-bar = Chat bar
 toolbar-command-area-search = Area search
 
 # Area Search (issue #930).
-area-search-hint = Search objects, descriptions, owners, creators or UUIDs…
 area-search-refresh = Refresh
-area-search-parcel = Current parcel only
-area-search-children = Include linked prims
+area-search-scope-heading = Where
+area-search-scope-parcel = Parcel
+area-search-scope-region = Region
+area-search-scope-neighbours = Neighbours
+area-search-objects-heading = Which objects
 area-search-mine = My objects
 area-search-filters = Filters
 area-search-sale = For sale
 area-search-physical = Physical
 area-search-phantom = Phantom
 area-search-temporary = Temporary
-area-search-distance = Maximum distance
-area-search-reset = Reset filters
 area-search-count = { $shown } / { $total } objects · { $pending } waiting for details
 area-search-parcel-pending = Waiting for the current parcel boundaries…
 area-search-scope = Only objects received by the viewer are listed.
@@ -382,7 +382,6 @@ area-search-price = Price
 area-search-inspect = Inspect
 area-search-zoom = Zoom
 area-search-copy = Copy UUID
-area-search-neighbors = Include neighboring regions
 area-search-demo-description = Offline object for testing search and filters
 area-search-empty = No objects match these filters.
 area-search-sit = Sit
@@ -5026,7 +5025,7 @@ world-profiles-joined-today = Joined today
 keybinds-insert = Insert
 ui-context-inspect-2 = Inspect
 ui-context-inspect-all-attachments = Inspect all attachments
-inspect-title = Inspect Objects
+inspect-window = Inspect
 inspect-col-name = Object Name
 inspect-col-description = Description
 inspect-col-owner = Owner
@@ -5045,17 +5044,152 @@ inspect-owner-profile-tip = Profile of the highlighted object's owner
 inspect-creator-profile = See Creator Profile…
 inspect-creator-profile-tip = Profile of the highlighted object's original creator
 inspect-options = Columns shown
-inspect-totals = Total stats
-inspect-totals-objects = { $objects ->
-    [one] { $objects } object
-   *[other] { $objects } objects
-    }, { $prims ->
-    [one] { $prims } prim
-   *[other] { $prims } prims
-    }
 inspect-totals-visible = Visible faces
 inspect-totals-complexity = Complexity
 inspect-totals-textures = Textures
+inspect-tab-outfit = Outfit
+inspect-tab-objects = Objects
+inspect-tab-creators = Creators
+inspect-tab-details = Details
+inspect-objects-title = { $count ->
+    [one] { $count } object
+   *[other] { $count } objects
+    }
+inspect-summary-items = { $count ->
+    [one] { $count } item
+   *[other] { $count } items
+    }
+inspect-open-profile = Open the profile
+inspect-within-limit = Within your limit
+inspect-over-limit = Above your limit
+inspect-limit-tip = Your complexity limit: { $limit }
+inspect-view = View
+inspect-view-count = View · { $count }
+inspect-view-tip = Order, creator and what the rows show
+inspect-search = Search items or creators
+inspect-search-prims = Search prims or creators
+inspect-view-sort = Sort by
+inspect-sort-area = Body
+inspect-sort-listed = As listed
+inspect-sort-name = Name
+inspect-sort-heaviest = Heaviest
+inspect-sort-newest = Newest
+inspect-view-creator = Creator on the rows
+inspect-creator-picture = Picture
+inspect-creator-name = Name
+inspect-creator-hidden = Hidden
+inspect-view-show = Also show
+inspect-show-worn-on = Worn on
+inspect-show-complexity = Complexity
+inspect-view-done = Done
+inspect-hint-right = Click an item for its details, right-click it to look at it
+inspect-hint-details = Click a prim to outline it
+inspect-outlined = { $name } is outlined in the world
+inspect-area-head = Head
+inspect-area-body = Body
+inspect-area-arms = Arms and hands
+inspect-area-legs = Legs and feet
+inspect-area-hud = HUD
+inspect-area-other = Other
+inspect-area-world = Objects
+inspect-own-eyes = System eyes
+inspect-own-body = System body
+inspect-own-description = Part of the avatar itself, not an attachment
+inspect-own-maker = Second Life avatar
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } complexity
+inspect-no-match = Nothing matches “{ $query }”.
+inspect-spoken-worn = { $name }, worn on { $point }, complexity { $complexity }, made by { $creator }
+inspect-spoken-object = { $name }, owned by { $owner }, complexity { $complexity }, made by { $creator }
+inspect-made-by-tip = Made by { $name }
+inspect-look-at-tip = Move the camera to it
+inspect-profile-tip = Open the creator's profile
+inspect-made-by = Made by
+inspect-owned-by = Owned by
+inspect-worn-on = Worn on
+inspect-technical = Technical details
+inspect-prims-count = { $count ->
+    [one] { $count } prim
+   *[other] { $count } prims
+    }
+inspect-prims-hint = Click a prim to outline it in the world
+inspect-share-outfit = { $percent }% of the outfit
+inspect-share-selection = { $percent }% of the selection
+inspect-percent = { $percent }%
+inspect-tile-tmem = Texture memory
+inspect-tile-vram = VRAM
+inspect-tile-prims = Prims
+board-close = Close { $title }
+board-grow = Enlarge { $title }
+board-remove = Remove { $name }
+board-more = and { $count } more
+board-more-short = +{ $count }
+board-some-of = { $shown } of { $all }
+board-of-all = of { $all }
+stage-turn-left = Turn left
+stage-turn-right = Turn right
+stage-higher = Look from higher
+stage-lower = Look from lower
+stage-nearer = Closer
+stage-further = Further away
+stage-reset = Back to the start
+stage-hint = Drag to turn, right-drag to move
+stage-light = Light background
+stage-dark = Dark background
+stage-playing = AO
+stage-paused = Paused
+stage-pause-tip = Pause their animation
+stage-play-tip = Play their animation
+stage-loading = Preparing the 3D view…
+stage-nothing = Nothing to show in 3D yet.
+stage-refused = The 3D view is off while RLVa limits what you may see.
+inspect-your-limit = Your limit: { $limit }
+inspect-without-it = { $value } without it
+inspect-you = You
+inspect-person = Person
+inspect-difference = Difference
+inspect-drawn-in-full = Drawn in full
+inspect-nobody = Nobody’s complexity is known yet.
+inspect-aside-count = { $count } set aside
+inspect-is-aside = set aside
+inspect-set-aside = Set aside
+inspect-set-aside-tip = See the complexity without this item. Only in this window: nothing changes in the world.
+inspect-put-back = Put back
+inspect-put-back-tip = Count this item again
+inspect-complexity-spoken = Complexity { $value }, number { $rank } of { $count } people here
+inspect-stage-outfit = The outfit
+inspect-stage-objects = The objects
+inspect-stage-back = Back to everything
+inspect-place-made-by = { $place } · made by { $name }
+inspect-owned-by-name = Owned by { $name }
+inspect-tile-items = Items
+inspect-tile-figures = Figures
+inspect-col-item = Name
+inspect-point = Point
+inspect-look-at = Look at
+inspect-selected-count = { $count } selected
+inspect-worn-count = { $count } worn
+inspect-creators-word = creators
+inspect-areas-word = body areas
+inspect-owners-word = owners
+inspect-triangles-word = triangles
+inspect-made-of = { $count } of { $all } items
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, in linkset order
+inspect-reset-columns = Reset columns
+inspect-by-creators = { $count ->
+    [one] { $items } by one creator
+   *[other] { $items } by { $count } creators
+}
+inspect-owner-button = Owner profile
+inspect-group-button = Group profile
+inspect-creator-button = Creator profile
+inspect-land-others = Others { $n }
+inspect-land-these = These { $n }
+inspect-land-free = Free { $n }
+inspect-land-unknown = The parcel’s room shows when the objects are all on the parcel you are on.
 ui-login-installed = Installed
 world-inventory-demo-instructions = Instructions
 build-ui-features-intensity = Intensity
@@ -15638,25 +15772,12 @@ area-search-last-owner = Last owner
 area-search-land-impact = Land impact
 area-search-prim-count = Prim count
 
-area-search-search = Search
-area-search-columns = Columns
-area-search-regex = Use regular expressions
 area-search-regex-error = Regular expression: { $error }
 
-area-search-required = Only list objects that are
-area-search-excluded = Exclude objects that are
-area-search-ranges = Distance and sale price
-area-search-attachment = Attachments
 area-search-media = Shared media
 area-search-copy-perm = Copy
 area-search-modify-perm = Modify
 area-search-transfer-perm = Transfer
-area-search-probes = Reflection probes
-area-search-child-prim = Child prims
-area-search-neighbor-regions = In neighboring regions
-area-search-distance-range = Distance
-area-search-min = Min
-area-search-max = Max
 area-search-click-action = Mouse click action
 area-search-click-unrestricted = Unrestricted
 area-search-click-any = Any action
@@ -15670,15 +15791,91 @@ area-search-reset-columns = Reset columns
 
 area-search-regex-limit = Matching limit exceeded. Simplify the expression.
 
-area-search-reset-all-tip = Reset the entire search.
-area-search-reset-search-tip = Clear search fields and regular expressions.
-area-search-reset-options-tip = Restore original filter options.
 area-search-reset-columns-tip = Restore default columns.
 
-area-search-range-options = Ranges
-area-search-reset-ranges-tip = Restore default distance and sale price ranges.
 
-area-search-results = Results
+area-search-metres = { $n } m
+area-search-band-reach = Within reach
+area-search-band-close = Close by
+area-search-band-around = Around you
+area-search-band-further = Further
+area-search-band-far = Far
+area-search-band = Area
+area-search-within = Within { $distance }
+area-search-within-across = Within { $distance } across
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Show every distance
+area-search-from = Distance from
+area-search-to = Distance to
+area-search-bar-tip = { $count ->
+    [one] One object, { $from } to { $to }
+   *[other] { $count } objects, { $from } to { $to }
+}
+area-search-of-objects = of { $total } objects
+area-search-li = { $value } LI
+area-search-li-count = { $value } land impact
+area-search-owner-count = { $count ->
+    [one] one owner
+   *[other] { $count } owners
+}
+area-search-object-count = { $count ->
+    [one] one object
+   *[other] { $count } objects
+}
+area-search-objects-word = objects
+area-search-in-reach = here
+area-search-tab-objects = Objects
+area-search-tab-owners = Owners
+area-search-hint-wide = Objects, owners, creators or UUIDs
+area-search-kind-heading = Kind of object
+area-search-kind-tip = Click: only these. Again: hidden.
+area-search-kind-any = any
+area-search-kind-only = only these
+area-search-kind-hidden = Hidden
+area-search-kind-attached = Attached
+area-search-kind-probes = Probes
+area-search-click-all = All
+area-search-click-any-short = Any
+area-search-permissions = Permissions
+area-search-price-heading = Sale price, for objects for sale
+area-search-price-to = to
+area-search-price-tip = Pick “For sale” first
+area-search-linked = Linked prims
+area-search-one-field = Search in one field
+area-search-regex-switch = Regular expressions
+area-search-regex-invalid = Not a valid regular expression
+area-search-reset-filters-tip = Restore every filter; the search text stays
+area-search-save-defaults-tip = Open with these filters from now on
+area-search-reset-search = Reset the search texts
+area-search-reset-filters = Reset the filter options
+area-search-reset-ranges = Reset distance and price
+area-search-reset-all = Reset everything
+area-search-more = More
+area-search-several = Select several
+area-search-several-tip = Clicks add to the selection (also Ctrl or Shift + click, Ctrl+A)
+area-search-actions = Actions
+area-search-nothing = No objects received yet.
+area-search-nothing-for-sale = Nothing for sale here.
+area-search-not-for-sale = Not for sale
+area-search-from-price = from { $price }
+area-search-nearest = Nearest first
+area-search-heaviest = Heaviest first
+area-search-order-tip = Change the order: nearest or heaviest first
+area-search-rank = #{ $rank } of { $all }
+area-search-rank-here = #{ $rank } here
+area-search-card-more = Show every figure
+area-search-card-less = Show less
+area-search-open-group = Open the group
+area-search-spoken = { $name }, { $distance }, land impact { $li }, owned by { $owner }
+area-search-owner-spoken = { $name }, { $count } objects, land impact { $li }
+area-search-stage-line = { $distance } away · { $li } land impact · { $owner }
+area-search-tile-3d = 3D view
+area-search-on = { $count } on
+area-search-on-word = on
+area-search-more-on = { $count ->
+    [one] one more filter on
+   *[other] { $count } more filters on
+}
 
 # Applied local textures and materials (#1375).
 local-appearance-warning = { $count ->

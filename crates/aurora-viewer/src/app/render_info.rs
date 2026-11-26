@@ -85,7 +85,7 @@ impl App {
     /// (getRezzedStatus() >= 2), ours included, with their complexity and
     /// whether we draw them as silhouettes. (Animated objects are no avatars
     /// here.)
-    fn seen_avatars(&self) -> Vec<SeenAvatar> {
+    pub(super) fn seen_avatars(&self) -> Vec<SeenAvatar> {
         self.world
             .objects
             .avatars()
