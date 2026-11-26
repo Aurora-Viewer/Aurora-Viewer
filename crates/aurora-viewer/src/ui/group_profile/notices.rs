@@ -284,7 +284,9 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
     // (the row of one sent from here, gone with Refresh, which brings the
     // grid's copy under its own id) gives way to the first notice. The list
     // arrives a packet at a time: a notice not listed yet but shown, or a
-    // sent one still kept, stays chosen.
+    // sent one still kept, stays chosen. The price of that: a shown notice
+    // the whole list then leaves out (older than the 14 days it covers)
+    // stays chosen, where updateSelected would fall back to the first.
     let gone = |id: Uuid| {
         !list.iter().any(|n| n.id == id)
             && v.data

@@ -13,9 +13,10 @@
 //! `:members` after the scenario opens the Members tab, a builder selected;
 //! `:invite` the invitation window with three residents (one already in);
 //! `:notices` the Notices tab, its two latest notices unread (`:compose`
-//! with a new notice open, `:sent` right after one was sent); `:land` the "Land and L$" tab (`:land-details`,
-//! `:land-sales` on those pages): two parcels, our 512 m² given out of the
-//! 1 024 we may give, and eight weeks of accounts; `:experiences` the
+//! with a new notice open, `:sent` right after one was sent); `:land` the
+//! "Land and L$" tab (`:land-details`, `:land-sales` on those pages): two
+//! parcels, our 512 m² given out of the 1 024 we may give, and eight weeks
+//! of accounts; `:experiences` the
 //! Experiences tab: the group owns the sandbox's doors, whose profile reads
 //! and changes our permission. `:classic` anywhere after the scenario shows
 //! the classic window (Preferences › Aurora › Profiles), the section of the
