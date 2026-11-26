@@ -3124,3 +3124,46 @@ fn ooc_shortcut_keeps_bar_channel_focus_and_event_volume() {
         }
     }
 }
+
+/// An emote's sender is clickable like a header's name in every style
+/// (#4757): clicking the name in "/me waves" opens their profile.
+#[test]
+fn an_emotes_sender_opens_their_profile_in_every_style() {
+    for style in ALL {
+        let mut h = H::new(style);
+        h.world
+            .conversation_line(GROUP, line("Jane", JANE, ChatKind::Im, "/me waves at everyone"));
+        h.open(Some(GROUP));
+        h.settle();
+        // the conversation's line, not the sidebar's preview of it
+        let body = h
+            .texts
+            .iter()
+            .rfind(|t| t.rect.left() > 150.0 && t.source.ends_with("waves at everyone"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{style:?}: the emote's action is painted: {:?}",
+                    h.texts.iter().map(|t| &t.source).collect::<Vec<_>>()
+                )
+            });
+        // the sender's name, drawn on the action's own line
+        let name = h
+            .texts
+            .iter()
+            .filter(|t| t.source == "Jane")
+            .min_by(|a, b| {
+                (a.rect.center().y - body.rect.center().y)
+                    .abs()
+                    .total_cmp(&(b.rect.center().y - body.rect.center().y).abs())
+            })
+            .filter(|t| (t.rect.center().y - body.rect.center().y).abs() <= 3.0);
+        assert!(name.is_some(), "{style:?}: the emote's sender sits on its line");
+        let at = name.map_or(egui::pos2(body.rect.left() + 4.0, body.rect.center().y), |t| t.rect.center());
+        h.at(at);
+        assert_eq!(
+            crate::ui::profile::take_open_request(&h.frames.ctx),
+            Some(JANE),
+            "{style:?}: clicking the emote's sender opens the profile"
+        );
+    }
+}

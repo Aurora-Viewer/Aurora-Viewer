@@ -388,19 +388,38 @@ fn roomy_row(
             let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width());
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
-                chat_text_marked(
-                    ui,
-                    p,
-                    env.emoji,
-                    env.world,
-                    line.wording(env.names),
-                    env.want_names,
-                    &visible,
-                    size,
-                    color,
-                    emphasis,
-                    mark,
-                );
+                if let Some((sender, action)) = super::emote_parts(env.world, line) {
+                    let action = super::previews::text(env.previews.as_deref(), line, action, ui.available_width());
+                    super::emote_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        env.world,
+                        line.wording(env.names),
+                        env.want_names,
+                        sender,
+                        super::shown_name(line, name),
+                        &action,
+                        size,
+                        color,
+                        emphasis,
+                        mark,
+                    );
+                } else {
+                    chat_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        env.world,
+                        line.wording(env.names),
+                        env.want_names,
+                        &visible,
+                        size,
+                        color,
+                        emphasis,
+                        mark,
+                    );
+                }
             }
             super::previews::cards(ui, env, line, &text);
         });
@@ -455,19 +474,38 @@ fn compact_row(
             ui.add_space(1.0);
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
-                chat_text_marked(
-                    ui,
-                    p,
-                    env.emoji,
-                    env.world,
-                    line.wording(env.names),
-                    env.want_names,
-                    &visible,
-                    size,
-                    color,
-                    emphasis,
-                    mark,
-                );
+                if let Some((sender, action)) = super::emote_parts(env.world, line) {
+                    let action = super::previews::text(env.previews.as_deref(), line, action, ui.available_width() - RIGHT);
+                    super::emote_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        env.world,
+                        line.wording(env.names),
+                        env.want_names,
+                        sender,
+                        super::shown_name(line, name),
+                        &action,
+                        size,
+                        color,
+                        emphasis,
+                        mark,
+                    );
+                } else {
+                    chat_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        env.world,
+                        line.wording(env.names),
+                        env.want_names,
+                        &visible,
+                        size,
+                        color,
+                        emphasis,
+                        mark,
+                    );
+                }
             }
             super::previews::cards(ui, env, line, &text);
         });

@@ -2610,6 +2610,7 @@ pub(crate) fn chat_text_marked(
         world,
         scope,
         want_names,
+        None,
         text,
         size,
         color,
@@ -2617,6 +2618,62 @@ pub(crate) fn chat_text_marked(
         mark,
         false,
     );
+}
+
+/// An emote's action with its sender's name before it, clickable to their
+/// profile and right-click menu like a header's name (`name_label`).
+/// `appendMessage` (indra/newview/llchathistory.cpp) writes that name as
+/// plain text, so the Legacy Viewer links an emote's name only in its
+/// header; Aurora links the name in the text too (#4757). A sender we may
+/// not name keeps a plain name.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emote_text_marked(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    scope: TextScope,
+    want_names: &mut HashSet<uuid::Uuid>,
+    sender: uuid::Uuid,
+    name: &str,
+    action: &str,
+    size: f32,
+    color: Color32,
+    emphasis: impl Into<super::fonts::TextEmphasis>,
+    mark: Option<Mark>,
+) {
+    chat_text_all(
+        ui,
+        p,
+        emoji,
+        world,
+        scope,
+        want_names,
+        Some((sender, name)),
+        action,
+        size,
+        color,
+        emphasis.into(),
+        mark,
+        false,
+    );
+}
+
+/// The sender and the action of an emote ("/me smiles"): the name the line
+/// shows, and the action after it. None for another line.
+pub(crate) fn emote_parts<'a>(world: &World, line: &'a crate::world::ChatLine) -> Option<(uuid::Uuid, &'a str)> {
+    let action = line
+        .text
+        .strip_prefix("/me")
+        .filter(|rest| rest.starts_with(' ') || rest.starts_with('\''))?;
+    let sender = if line.anonymous() {
+        uuid::Uuid::nil()
+    } else if line.kind.is_own() {
+        world.agent_id
+    } else {
+        line.source
+    };
+    Some((sender, action))
 }
 
 /// `chat_text_marked` for a system line, in brackets around it when
@@ -2646,6 +2703,7 @@ pub(crate) fn chat_text_bracketed(
         world,
         scope,
         want_names,
+        None,
         text,
         size,
         color,
@@ -2674,6 +2732,7 @@ fn chat_text_all(
     world: &World,
     scope: TextScope,
     want_names: &mut HashSet<uuid::Uuid>,
+    emote: Option<(uuid::Uuid, &str)>,
     text: &str,
     size: f32,
     color: Color32,
@@ -2694,7 +2753,7 @@ fn chat_text_all(
     let segs = segments(text);
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(filtered.as_ref(), m.needle).is_empty());
-    if !brackets && mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
+    if emote.is_none() && !brackets && mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
         emoji.rich_text(ui, filtered.as_ref(), size, color, emphasis);
         return;
     }
@@ -2704,6 +2763,22 @@ fn chat_text_all(
     super::emoji::text_rows_in(ui, size, rtl, |ui| {
         if !open.is_empty() {
             emoji.inline(ui, open, size, color, emphasis);
+        }
+        if let Some((sender, name)) = emote {
+            let text = emphasis.rich_text(ui.ctx(), name, size, color);
+            if sender.is_nil() {
+                // a sender we may not name keeps the plain name
+                select::label(ui, text);
+            } else {
+                let r = select::label_with_sense(ui, text.into(), egui::Sense::click());
+                name_menu(&r, p, world, sender, NameScope::Roster);
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(aurora_i18n::tr!("common-view-profile"))
+                    .clicked()
+                {
+                    super::profile::request_open_in(ui.ctx(), NameScope::Roster, sender);
+                }
+            }
         }
         for s in segs {
             match s {
@@ -3842,19 +3917,41 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
         })
         .show(ui, |ui| {
             if !visible.is_empty() {
-                chat_text_marked(
-                    ui,
-                    p,
-                    env.emoji,
-                    world,
-                    line.wording(env.names),
-                    env.want_names,
-                    &visible,
-                    super::fonts::chat_size(ui.ctx(), 13.5),
-                    tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
-                    line_emphasis(env, line, italics),
-                    mark,
-                );
+                let size = super::fonts::chat_size(ui.ctx(), 13.5);
+                let color = tone.unwrap_or_else(|| super::colors::chat_color(line, world));
+                let emphasis = line_emphasis(env, line, italics);
+                if let Some((sender, action)) = emote_parts(world, line) {
+                    let action = previews::text(env.previews.as_deref(), line, action, ui.available_width() - 8.0);
+                    emote_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        world,
+                        line.wording(env.names),
+                        env.want_names,
+                        sender,
+                        shown_name(line, &name),
+                        &action,
+                        size,
+                        color,
+                        emphasis,
+                        mark,
+                    );
+                } else {
+                    chat_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        world,
+                        line.wording(env.names),
+                        env.want_names,
+                        &visible,
+                        size,
+                        color,
+                        emphasis,
+                        mark,
+                    );
+                }
             }
             // Aurora also offers its previews in Lines (#976), extending
             // LLChatHistory::appendMessage (indra/newview/llchathistory.cpp).

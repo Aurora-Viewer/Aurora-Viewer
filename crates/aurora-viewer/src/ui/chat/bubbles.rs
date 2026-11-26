@@ -315,19 +315,38 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 if !visible.is_empty() {
-                    chat_text_marked(
-                        ui,
-                        p,
-                        env.emoji,
-                        world,
-                        line.wording(env.names),
-                        env.want_names,
-                        &visible,
-                        size,
-                        text_color,
-                        emphasis,
-                        mark,
-                    );
+                    if let Some((sender, action)) = super::emote_parts(world, line) {
+                        let action = super::previews::text(env.previews.as_deref(), line, action, width);
+                        super::emote_text_marked(
+                            ui,
+                            p,
+                            env.emoji,
+                            world,
+                            line.wording(env.names),
+                            env.want_names,
+                            sender,
+                            &name,
+                            &action,
+                            size,
+                            text_color,
+                            emphasis,
+                            mark,
+                        );
+                    } else {
+                        chat_text_marked(
+                            ui,
+                            p,
+                            env.emoji,
+                            world,
+                            line.wording(env.names),
+                            env.want_names,
+                            &visible,
+                            size,
+                            text_color,
+                            emphasis,
+                            mark,
+                        );
+                    }
                 }
                 super::previews::cards(ui, env, line, &text);
             });
