@@ -7522,6 +7522,17 @@ impl Backend {
                 gbuf.map_or_else(|| "off".to_owned(), |f| format!("{f:?}")),
                 if soft { "on" } else { "off" }
             );
+            if gbuf.is_some() && self.gbuf_pipelines.is_some() && gbuf != self.gbuf_pipelines {
+                // (what `gbuf_wanted` read, when the precision changes
+                // between two sets: which of them moved tells why)
+                log::info!(
+                    "G-buffer precision {:?}: sun shadows {} px, ray tracing asked {:?}, traced {:?}",
+                    s.normal_precision,
+                    s.shadow_resolution,
+                    s.ray_tracing,
+                    crate::rt_shadows::traced(&self.device, self.external, s.ray_tracing)
+                );
+            }
             let (build, worker) = self.start_pipeline_build(samples, gbuf, soft);
             self.pipeline_workers.retain(|w| !w.is_finished());
             self.pipeline_workers.extend(worker);
