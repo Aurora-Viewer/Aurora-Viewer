@@ -4,9 +4,9 @@
 
 pub fn control_rate(held: f32, precision: bool) -> f32 {
     if precision {
-        if held < 0.25 { 0.01 } else { 0.25 }
+        if held < crate::app::NUDGE_TIME { 0.01 } else { 0.25 }
     } else {
-        0.05 + (held / 0.25).clamp(0.0, 1.0) * 0.95
+        0.05 + (held / crate::app::NUDGE_TIME).clamp(0.0, 1.0) * 0.95
     }
 }
 

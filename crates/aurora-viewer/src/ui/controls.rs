@@ -606,7 +606,12 @@ impl ControlsUi {
                                     }
                                 });
                                 ui.add_enabled_ui(saved.is_some(), |ui| {
-                                    if square_button(ui, p, "camera-filled", aurora_i18n::tr!("camera-quick-load")) {
+                                    if square_button(
+                                        ui,
+                                        p,
+                                        saved.map_or("map-pin-filled", |shot| super::viewfinder::anchor_icon(shot.anchor.as_ref())),
+                                        aurora_i18n::tr!("camera-quick-load"),
+                                    ) {
                                         out.actions.push(ControlAction::QuickLoad(slot));
                                     }
                                 });
@@ -615,7 +620,16 @@ impl ControlsUi {
                     }
                 });
                 ui.add_enabled_ui(ready, |ui| {
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("camera-aperture-import")).clicked() {
+                    if widgets::action_button(
+                        ui,
+                        p,
+                        "file-import",
+                        aurora_i18n::tr!("camera-aperture-import"),
+                        widgets::ActionKind::Flat,
+                        Vec2::new(ui.available_width(), BUTTON_H),
+                    )
+                    .clicked()
+                    {
                         out.actions.push(ControlAction::QuickImport);
                     }
                 });
@@ -1045,7 +1059,7 @@ fn roll_controls(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) 
                     .interact(Sense::click_and_drag())
                     .on_hover_text(label);
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-                roll_held(ui, &response, direction, out);
+                roll_held(ui, &response, direction, view.precision, out);
             }
         });
     });
@@ -1053,12 +1067,12 @@ fn roll_controls(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) 
 
 /// A roll button held: the camera rolls `direction` (-1 left, 1 right),
 /// slowly at first, at full speed after 250 ms (`roll_controls`).
-fn roll_held(ui: &egui::Ui, response: &egui::Response, direction: f32, out: &mut Output) {
+fn roll_held(ui: &egui::Ui, response: &egui::Response, direction: f32, precision: bool, out: &mut Output) {
     let id = response.id.with("roll-start");
     let now = ui.input(|i| i.time);
     if ui.is_enabled() && response.is_pointer_button_down_on() {
         let start = ui.ctx().data_mut(|d| *d.get_temp_mut_or_insert_with(id, || now));
-        let rate = 0.05 + ((now - start) as f32 / 0.25).clamp(0.0, 1.0) * 0.95;
+        let rate = crate::camera::control_rate((now - start) as f32, precision);
         let dt = ui.input(|i| i.stable_dt).min(0.1);
         out.actions
             .push(ControlAction::RollBy(direction * rate * 45.0_f32.to_radians() * dt));
@@ -1618,7 +1632,7 @@ fn small_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
     ] {
         let response = small_hold(ui, p, rect, icon, label, !view.mouselook);
         if !view.mouselook {
-            roll_held(ui, &response, direction, out);
+            roll_held(ui, &response, direction, view.precision, out);
         }
     }
 }
@@ -2693,6 +2707,9 @@ mod tests {
         let view = View {
             zoom: 0.5,
             roll: 0.0,
+            precision: false,
+            quick_state: crate::camera::account_slots::State::Ready,
+            quick_write_failed: false,
             preset: CameraPreset::Rear,
             shots: &[],
             views: &views,
@@ -2844,6 +2861,9 @@ mod tests {
             let view = View {
                 zoom: 0.5,
                 roll: 0.0,
+                precision: false,
+                quick_state: crate::camera::account_slots::State::Ready,
+                quick_write_failed: false,
                 preset: CameraPreset::Rear,
                 shots: &[],
                 views: &self.views,
@@ -3267,6 +3287,9 @@ mod tests {
         let view = View {
             zoom: 0.5,
             roll: 0.0,
+            precision: false,
+            quick_state: crate::camera::account_slots::State::Ready,
+            quick_write_failed: false,
             preset: CameraPreset::Rear,
             shots: &[],
             views: &views,

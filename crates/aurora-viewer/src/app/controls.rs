@@ -313,11 +313,16 @@ impl App {
         if let Ok(mode @ ("quick" | "classic-quick")) = std::env::var("AURORA_DEMO_CONTROLS").as_deref() {
             match self.frame_count {
                 600 => {
+                    self.settings.quick_demo_original = Some((
+                        self.settings.camera.precision,
+                        self.settings.camera.fov,
+                        self.settings.classic_controls,
+                    ));
                     self.settings.classic_controls = mode == "classic-quick";
                     self.panels.camera_controls = true;
                     self.panels.chat = false;
                     self.panels.people = false;
-                    self.control_action(ControlAction::Precision(true));
+                    self.settings.camera.precision = true;
                     self.camera.roll = 0.4;
                     self.settings.camera.fov =
                         crate::camera::zoom_lens(crate::camera::DEFAULT_FOV, Some(1.0 / 1.2), self.view_aspect(), None);
@@ -455,7 +460,7 @@ fn demo_compact() -> Option<bool> {
     static ON: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
     *ON.get_or_init(|| match std::env::var("AURORA_DEMO_CONTROLS").as_deref() {
         Ok("compact" | "compact-move" | "compact-move-back" | "compact-close" | "classic-compact") => Some(true),
-        Ok("movement-compact") => Some(false),
+        Ok("movement-compact" | "quick" | "classic-quick") => Some(false),
         _ => None,
     })
 }

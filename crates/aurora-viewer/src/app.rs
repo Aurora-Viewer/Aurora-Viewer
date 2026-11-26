@@ -362,7 +362,7 @@ impl RightGesture {
 }
 
 /// SL timings (llviewerinput.cpp): double-tap window / nudge phase, auto-fly.
-const NUDGE_TIME: f32 = 0.25;
+pub(crate) const NUDGE_TIME: f32 = 0.25;
 const FLY_TIME: f32 = 0.5;
 /// Radians: a change of the viewing angle below this is not sent in AgentFOV
 /// (an eased FOV zoom creeps toward its target for ever).

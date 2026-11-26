@@ -589,7 +589,7 @@ impl Default for CameraSettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CameraShot {
     pub name: String,
-    /// Optional quick-access slot (zero-based), sharing ordinary preset storage.
+    /// Optional quick-access slot (zero-based), kept in the separate account store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quick_slot: Option<u8>,
     /// Numbered quick views keep roll; ordinary presets use only their photo lens tilt.
@@ -599,7 +599,7 @@ pub struct CameraShot {
     /// Missing in older slots: leave the current lens unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quick_fov: Option<f32>,
-    /// The focus object saved with a Legacy Viewer world-positioned quick view.
+    /// The focus object saved with an Aperture world-positioned quick view.
     /// Its global camera and focus cannot be converted to an Object anchor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quick_focus_object: Option<uuid::Uuid>,

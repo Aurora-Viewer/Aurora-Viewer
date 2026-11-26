@@ -1047,7 +1047,10 @@ the settings. The log gives `world look demo: <looks> (window <bool>)`.
 Capture from frame 620.
 
 `AURORA_DEMO_CONTROLS=quick|classic-quick` opens the eight quick-view rows in
-the corresponding Controls layout with precision enabled. It saves slot 1
+the corresponding expanded Controls layout with precision enabled. Precision,
+lens zoom and layout changes are for this run only, even when loading a view
+or exiting saves settings; subsequent demos keep their previous settings.
+Quick-view files use an owned temporary directory, removed on exit. It saves slot 1
 ("Portrait") at frame 600 with roll 0.4 radians and the lens zoomed in one
 Ctrl-0 step, changes the view and zooms out one Ctrl-8 step at 620,
 then enables a simulated hardware flycam and loads it at 660. The log confirms

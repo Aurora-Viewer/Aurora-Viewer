@@ -16823,6 +16823,6 @@ camera-legacy-done = このアカウントにカメラスロット { $count } �
 camera-aperture-import = Apertureのカメラビューをインポート…
 camera-aperture-help = APStoredCameraのビューを含むAperture互換アカウントのsettings_per_account.xmlを選択してください。このAuroraアカウントにコピーするビューを選択します。元のファイルは変更されず、現在のAuroraのビューはインポート前にバックアップされます。
 camera-aperture-none = このファイルには保存されたApertureのカメラビューがありません。
-camera-aperture-xml = ＸＭＬ設定
+camera-aperture-xml = XML設定
 camera-account-not-ready = カメラビューの準備ができていません。カメラ操作を開いて読み込みを再試行してください。
 camera-account-retry-open = カメラビューの保存・読み込みを再試行

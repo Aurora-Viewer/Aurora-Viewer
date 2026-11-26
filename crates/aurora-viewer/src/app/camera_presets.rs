@@ -47,7 +47,8 @@ impl App {
         });
         if account != self.camera_slots.account {
             self.slot_import.reset();
-            if let Some(id) = account.filter(|_| demo_mode.is_some()) {
+            // Every offline demo owns its slots, including the quick-view layout captures.
+            if let Some(id) = account.filter(|_| self.demo) {
                 let path = match self.camera_slots.demo_path(id) {
                     Ok(path) => path,
                     Err(error) => {
