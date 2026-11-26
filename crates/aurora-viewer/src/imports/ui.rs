@@ -118,6 +118,8 @@ pub enum Action {
     Folder,
     Start,
     StartFor(Choice),
+    StartWebcam(Vec<Uuid>, i32),
+    CancelWebcam,
     Cancel,
     Preview(Uuid),
     Play(Uuid, bool),
@@ -404,6 +406,67 @@ pub fn show(
         });
         if !imports.confirm {
             imports.confirm_choice = None;
+        }
+    }
+    if !imports.confirm
+        && !imports.busy()
+        && imports.quick.is_none()
+        && let Some(ids) = imports.webcam_confirm.clone()
+    {
+        let count = ids
+            .iter()
+            .filter(|id| {
+                imports
+                    .entries
+                    .iter()
+                    .any(|entry| entry.id == **id && entry.selected && matches!(entry.status, super::Status::Ready))
+            })
+            .count();
+        let cost = if count == ids.len() {
+            imports.with_choice(Choice::Bulk, |imports| imports.with_only(&ids, |imports| imports.total(&prices)))
+        } else {
+            None
+        };
+        let mut submitted = false;
+        let mut canceled = false;
+        let modal = widgets::Modal::new(egui::Id::unique("webcam_gesture_upload")).show(ctx, |ui| {
+            ui.set_width(380.0_f32.min(ctx.content_rect().width() - 60.0).max(180.0));
+            widgets::section_header(ui, p, "file-upload-filled", &aurora_i18n::tr!("webcam-gesture-confirm-title"));
+            ui.label(aurora_i18n::tr!("webcam-gesture-confirm-skip", count = ids.len()));
+            if let Some(cost) = cost {
+                ui.label(if cost == 0 {
+                    aurora_i18n::tr!("webcam-gesture-confirm-free").to_string()
+                } else {
+                    aurora_i18n::tr!("import-confirm-price", cost = cost).to_string()
+                });
+                if cost > 0 && world.balance.is_none_or(|balance| balance < cost) {
+                    ui.label(aurora_i18n::tr!("import-insufficient-balance"));
+                }
+            } else {
+                ui.label(aurora_i18n::tr!("import-price-unavailable"));
+            }
+            ui.horizontal_wrapped(|ui| {
+                if let Some(cost) = cost
+                    && ui
+                        .add_enabled(
+                            cost == 0 || world.balance.is_some_and(|balance| balance >= cost),
+                            egui::Button::new(aurora_i18n::tr!("webcam-gesture-confirm-upload")),
+                        )
+                        .clicked()
+                {
+                    actions.push(Action::StartWebcam(ids.clone(), cost));
+                    submitted = true;
+                }
+                canceled = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
+            });
+        });
+        if submitted || canceled || modal.should_close() {
+            imports.webcam_confirm = None;
+        }
+        if !submitted && (canceled || modal.should_close()) {
+            imports.entries.retain(|entry| !ids.contains(&entry.id));
+            imports.reconcile_active();
+            actions.push(Action::CancelWebcam);
         }
     }
     quick_question(ctx, p, imports, prefs, world, &mut actions);

@@ -590,6 +590,12 @@ impl Webcam {
         self.gesture_upload.as_ref()?.assets()
     }
 
+    pub(crate) fn owns_gesture_asset(&self, entry: Uuid) -> bool {
+        self.gesture_upload
+            .as_ref()
+            .is_some_and(|upload| entry == upload.animation || upload.sounds.iter().any(|(_, sound)| *sound == entry))
+    }
+
     pub(crate) fn clear_gesture_upload(&mut self) {
         self.gesture_upload = None;
     }

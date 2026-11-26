@@ -231,7 +231,8 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     jobs.execute(move || {
         let root = PathBuf::from(".scratch").join("import-demo").join(request.to_string());
         let external = std::env::var_os("AURORA_DEMO_IMPORT_FILE").map(PathBuf::from);
-        let fixture_result = if external.is_some() && mode != "animation-custom" {
+        let external_model = std::env::var_os("AURORA_DEMO_IMPORT_MODEL").map(PathBuf::from);
+        let fixture_result = if external.is_some() && (mode != "animation-custom" || external_model.is_some()) {
             Ok(())
         } else {
             fixtures(&root)
@@ -306,7 +307,8 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                                 let avatars = crate::scene::avatar::AvatarLibrary::load();
                                 for entry in &mut loaded {
                                     wake.data_mut(|data| data.insert_temp(egui::Id::unique(("animation_model_list_open", entry.id)), true));
-                                    match animation_model::load(root.join("tail-preview.dae"), prefs.mesh_model_limit, &avatars) {
+                                    let model = external_model.clone().unwrap_or_else(|| root.join("tail-preview.dae"));
+                                    match animation_model::load(model, prefs.mesh_model_limit, &avatars) {
                                         Ok(model) => {
                                             // Feed the ordinary completion path after Loaded so the
                                             // synthetic source exercises the saved model selector too.

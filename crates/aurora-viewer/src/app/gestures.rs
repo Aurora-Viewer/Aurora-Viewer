@@ -188,7 +188,9 @@ impl App {
         if let Some(editor) = self.gesture_state.ui.editors.get_mut(&id) {
             editor.loaded(Gesture::default());
             editor.step = Some(0);
-            editor.definition = Some(definition);
+            editor.definition = Some(definition.clone());
+            let description = editor.description.clone();
+            self.gesture_save(id, definition, description, false);
         }
         self.webcam.clear_gesture_upload();
         true

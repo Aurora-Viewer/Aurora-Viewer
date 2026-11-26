@@ -20,6 +20,57 @@ use std::{
 
 const INTERVAL: f32 = 1.0 / 30.0;
 const ASSET_BYTES: usize = 250_000;
+const INVENTORY_NAME_BYTES: usize = 63;
+const NAME_PREFIX: &str = "Webcam Tracking";
+const LONGEST_ASSET_SUFFIX: &str = " Audio 999";
+
+fn take_name(source: &str, stamp: &str, id: uuid::Uuid) -> String {
+    let clean: String = source
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect();
+    let source = clean.split_ascii_whitespace().collect::<Vec<_>>().join(" ");
+    let source = if source.is_empty() { "Source" } else { &source };
+    let id = id.simple().to_string();
+    let tail = format!(" {stamp} {}", &id[..10]);
+    let available = INVENTORY_NAME_BYTES - NAME_PREFIX.len() - 1 - tail.len() - LONGEST_ASSET_SUFFIX.len();
+    let source = source[..source.len().min(available)].trim_end();
+    format!("{NAME_PREFIX} {source}{tail}")
+}
+
+pub(super) fn link_label(raw: &str) -> String {
+    let Ok(url) = reqwest::Url::parse(raw) else {
+        return "Video link".into();
+    };
+    let host = url.host_str().unwrap_or_default();
+    let platform = match host.trim_start_matches("www.").trim_start_matches("m.") {
+        "youtube.com" | "youtu.be" => "YouTube",
+        "tiktok.com" | "vm.tiktok.com" | "vt.tiktok.com" => "TikTok",
+        "instagram.com" => "Instagram",
+        "facebook.com" | "fb.watch" | "web.facebook.com" => "Facebook",
+        "x.com" | "twitter.com" | "mobile.twitter.com" => "X",
+        _ => return host.trim_start_matches("www.").to_owned(),
+    };
+    let path_id = url
+        .path_segments()
+        .and_then(|parts| parts.filter(|part| !part.is_empty()).next_back());
+    let video_id = if matches!(platform, "YouTube" | "Facebook") {
+        url.query_pairs().find(|(key, _)| key == "v").map(|(_, value)| value.into_owned())
+    } else {
+        None
+    };
+    let id = video_id.as_deref().or(path_id).unwrap_or_default();
+    if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')) {
+        return platform.to_owned();
+    }
+    format!("{platform} {}", &id[..id.len().min(6)])
+}
 
 struct Sample {
     time: f32,
@@ -27,6 +78,7 @@ struct Sample {
 }
 
 struct Capture {
+    name: String,
     starts: Instant,
     paused: Option<Instant>,
     audio_clock: Option<Instant>,
@@ -41,6 +93,7 @@ struct Capture {
 }
 
 struct TakeData {
+    name: String,
     names: Vec<String>,
     timed: Vec<(f32, RotationFrame)>,
     feet: Vec<(f32, [bool; 2])>,
@@ -74,6 +127,7 @@ enum Export {
     Pose,
     Segments,
     SoundFile,
+    TakeFiles,
     SoundUpload,
     Gesture,
 }
@@ -82,6 +136,7 @@ pub(crate) struct PreparedMedia {
     pub(crate) animation: Option<PreparedAnimation>,
     pub(crate) sounds: Vec<(f32, aurora_assets::import_sound::Sound)>,
     pub(crate) name: String,
+    pub(crate) direct: bool,
 }
 
 pub(super) struct Recorder {
@@ -105,6 +160,7 @@ pub(super) struct Recorder {
     repair_joint: Option<usize>,
     repair_width: f32,
     include_sound: bool,
+    review_gesture: bool,
     beats_per_clip: usize,
     job: Option<mpsc::Receiver<Result<Output, Failure>>>,
     saved: usize,
@@ -136,6 +192,7 @@ impl Default for Recorder {
             repair_joint: None,
             repair_width: 0.22,
             include_sound: true,
+            review_gesture: false,
             beats_per_clip: 4,
             job: None,
             saved: 0,
@@ -162,12 +219,17 @@ impl Recorder {
         self.media.take()
     }
 
-    fn start(&mut self, now: Instant) {
+    fn start(&mut self, now: Instant, source: &str) {
         self.hide_preview();
         self.failure = None;
         self.saved = 0;
         let delay = if self.countdown { Duration::from_secs(3) } else { Duration::ZERO };
         self.active = Some(Capture {
+            name: take_name(
+                source,
+                &chrono::Local::now().format("%y%m%d-%H%M%S").to_string(),
+                uuid::Uuid::new_v4(),
+            ),
             starts: now + delay,
             paused: None,
             audio_clock: None,
@@ -270,6 +332,7 @@ impl Recorder {
         self.beats.clear();
         self.dropouts = take_tools::dropout_marks(&timed, &capture.names);
         self.take = Some(Arc::new(TakeData {
+            name: capture.name,
             names: capture.names,
             timed,
             feet: capture.foot_phases,
@@ -315,16 +378,13 @@ impl Recorder {
         let cursor = self.cursor;
         let segments = take_tools::segments(range, &self.beats, self.beats_per_clip);
         let title = tr!("webcam-record-save").to_string();
-        let name = if matches!(mode, Export::Gesture) {
-            let suffix = uuid::Uuid::new_v4().simple().to_string();
-            format!("{} {}", tr!("webcam-record-name"), &suffix[..8])
-        } else {
-            tr!("webcam-record-name").to_string()
-        };
+        let Some(take) = self.take.clone() else { return };
+        let name = take.name.clone();
         let pose_name = tr!("webcam-take-pose-name").to_string();
         let sound_title = tr!("webcam-sound-save").to_string();
-        let take = self.take.clone();
-        let include_sound = self.include_sound && take.as_ref().is_some_and(|take| !take.audio.is_empty());
+        let bundle_title = tr!("webcam-take-save-pair").to_string();
+        let include_sound = self.include_sound && !take.audio.is_empty();
+        let direct = matches!(mode, Export::Gesture) && !self.review_gesture;
         self.spawn(ctx, move || match mode {
             Export::Segments => save_segments(&clip, &segments, &name),
             Export::Upload => {
@@ -340,6 +400,24 @@ impl Recorder {
                 let prepared = prepare(&clip, range, looping, name)?;
                 save_file(prepared, title)
             }
+            Export::TakeFiles => {
+                let Some(folder) = rfd::FileDialog::new().set_title(bundle_title).pick_folder() else {
+                    return Ok(Output::Cancelled);
+                };
+                let prepared = prepare(&clip, range, looping, name.clone())?;
+                let animation_path = folder.join(format!("{name}.anim"));
+                let sound_path = folder.join(format!("{name} Audio.wav"));
+                let pcm = soundtrack::render(&take.audio, range).ok_or(Failure::NoSound)?;
+                if animation_path.exists() || sound_path.exists() {
+                    return Err(Failure::Write);
+                }
+                write_animation_atomic(&animation_path, &prepared.bytes).map_err(|_| Failure::Write)?;
+                if write_animation_atomic(&sound_path, &soundtrack::to_wav(&pcm)).is_err() {
+                    let _ = std::fs::remove_file(animation_path);
+                    return Err(Failure::Write);
+                }
+                Ok(Output::Saved(2))
+            }
             Export::SoundFile | Export::SoundUpload | Export::Gesture => {
                 let animation = if matches!(mode, Export::Gesture) {
                     Some(prepare(&clip, range, false, name.clone())?)
@@ -347,15 +425,14 @@ impl Recorder {
                     None
                 };
                 let pcm = if !matches!(mode, Export::Gesture) || include_sound {
-                    let passes = take.as_ref().map_or(&[][..], |take| take.audio.as_slice());
-                    soundtrack::render(passes, range).ok_or(Failure::NoSound)?
+                    soundtrack::render(&take.audio, range).ok_or(Failure::NoSound)?
                 } else {
                     Vec::new()
                 };
                 if matches!(mode, Export::SoundFile) {
                     let Some(mut path) = rfd::FileDialog::new()
                         .set_title(sound_title)
-                        .set_file_name(format!("{name}.wav"))
+                        .set_file_name(format!("{name} Audio.wav"))
                         .add_filter("WAV", &["wav"])
                         .save_file()
                     else {
@@ -371,6 +448,7 @@ impl Recorder {
                         animation,
                         sounds: soundtrack::upload_pieces(&pcm),
                         name,
+                        direct,
                     }))
                 }
             }
@@ -618,7 +696,14 @@ impl Recorder {
     }
 
     /// Returns true when the take has taken over the local avatar preview.
-    pub(super) fn ui(&mut self, ui: &mut egui::Ui, palette: &Palette, can_record: bool, rig: &Arc<Rig>) -> bool {
+    pub(super) fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: &Palette,
+        can_record: bool,
+        source: impl FnOnce() -> String,
+        rig: &Arc<Rig>,
+    ) -> bool {
         self.poll();
         let now = Instant::now();
         let was_visible = self.visible;
@@ -662,7 +747,7 @@ impl Recorder {
                     .add_enabled(can_record && self.job.is_none(), egui::Button::new(tr!("webcam-record-start")))
                     .clicked()
                 {
-                    self.start(now);
+                    self.start(now, &source());
                 }
                 widgets::checkbox(ui, palette, &mut self.countdown, tr!("webcam-record-countdown"));
                 ui.label(tr!("webcam-record-limit"));
@@ -751,56 +836,47 @@ impl Recorder {
                     self.playing = Some((now, self.cursor));
                 }
             });
-            ui.add_enabled_ui(self.job.is_none(), |ui| {
-                if widgets::primary_button_sized(
-                    ui,
-                    palette,
-                    tr!("webcam-record-review-upload"),
-                    egui::vec2(ui.available_width(), 30.0),
-                )
-                .clicked()
-                {
-                    self.hide_preview();
-                    self.export(Export::Upload, ui.ctx());
-                }
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button(tr!("webcam-record-save")).clicked() {
-                        self.export(Export::Save, ui.ctx());
-                    }
-                });
-            });
             let has_sound = self.take.as_ref().is_some_and(|take| !take.audio.is_empty());
+            widgets::divider(ui, palette);
             ui.add_enabled_ui(self.job.is_none(), |ui| {
-                egui::CollapsingHeader::new(tr!("webcam-sound-gesture")).show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_enabled_ui(has_sound, |ui| {
+                        widgets::checkbox(ui, palette, &mut self.include_sound, tr!("webcam-gesture-with-sound"));
+                    });
+                    widgets::checkbox(ui, palette, &mut self.review_gesture, tr!("webcam-gesture-review-first"));
+                });
+                egui::CollapsingHeader::new(tr!("webcam-take-export")).show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        if ui.add_enabled(has_sound, egui::Button::new(tr!("webcam-sound-save"))).clicked() {
-                            self.export(Export::SoundFile, ui.ctx());
+                        if ui.button(tr!("webcam-record-review-upload")).clicked() {
+                            self.hide_preview();
+                            self.export(Export::Upload, ui.ctx());
                         }
+                        if ui.button(tr!("webcam-record-save")).clicked() {
+                            self.export(Export::Save, ui.ctx());
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
                         if ui
                             .add_enabled(has_sound, egui::Button::new(tr!("webcam-sound-review-upload")))
                             .clicked()
                         {
                             self.export(Export::SoundUpload, ui.ctx());
                         }
-                    });
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add_enabled_ui(has_sound, |ui| {
-                            widgets::checkbox(ui, palette, &mut self.include_sound, tr!("webcam-gesture-with-sound"));
-                        });
-                        if ui.button(tr!("webcam-gesture-build")).clicked() {
-                            self.hide_preview();
-                            self.export(Export::Gesture, ui.ctx());
+                        if ui.add_enabled(has_sound, egui::Button::new(tr!("webcam-sound-save"))).clicked() {
+                            self.export(Export::SoundFile, ui.ctx());
+                        }
+                        if ui.add_enabled(has_sound, egui::Button::new(tr!("webcam-take-save-pair"))).clicked() {
+                            self.export(Export::TakeFiles, ui.ctx());
                         }
                     });
-                    ui.colored_label(palette.muted, tr!("webcam-gesture-review"));
                 });
             });
             self.edit_tools(ui, palette, duration, rig);
         }
         if self.saved == 1 {
-            ui.colored_label(palette.success, tr!("webcam-record-saved"));
+            ui.colored_label(palette.success, tr!("webcam-export-saved-file"));
         } else if self.saved > 1 {
-            ui.colored_label(palette.success, tr!("webcam-take-saved-clips", count = self.saved.to_string()));
+            ui.colored_label(palette.success, tr!("webcam-export-saved-files", count = self.saved.to_string()));
         }
         if let Some(failure) = self.failure {
             ui.colored_label(
@@ -816,6 +892,26 @@ impl Recorder {
             );
         }
         !was_visible && self.visible
+    }
+
+    pub(super) fn gesture_available(&self) -> bool {
+        self.active.is_none() && self.clip.is_some()
+    }
+
+    pub(super) fn gesture_button(&mut self, ui: &mut egui::Ui, palette: &Palette) {
+        ui.add_enabled_ui(self.job.is_none(), |ui| {
+            let label = tr!(
+                "webcam-gesture-one-click",
+                seconds = format!("{:.1}", self.range[1] - self.range[0])
+            );
+            if widgets::primary_button_sized(ui, palette, &label, egui::vec2(ui.available_width(), 32.0))
+                .on_hover_text(tr!("webcam-gesture-one-click-tip"))
+                .clicked()
+            {
+                self.hide_preview();
+                self.export(Export::Gesture, ui.ctx());
+            }
+        });
     }
 
     fn scrub_take(&mut self, time: f32) {
@@ -1064,5 +1160,45 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(simplify(&keys, 0.75), keys);
+    }
+}
+
+#[cfg(test)]
+mod take_names {
+    use super::*;
+
+    #[test]
+    fn generated_names_reserve_inventory_space_for_sound_segments() {
+        let stamp = "261126-130500";
+        let id = uuid::Uuid::from_u128(0x1234567890aabbcc);
+        let base = take_name(
+            "Very long source | with ⚠ é and controls
+",
+            stamp,
+            id,
+        );
+        let sound = format!("{base} Audio 003");
+        assert!(sound.len() <= INVENTORY_NAME_BYTES);
+        assert!(sound.bytes().all(|b| matches!(b, b' '..=b'~') && b != b'|'));
+        assert!(base.starts_with("Webcam Tracking Very long"));
+        assert!(base.contains(stamp));
+        assert_ne!(
+            base,
+            take_name("Very long source | with ⚠ é and controls", stamp, uuid::Uuid::new_v4())
+        );
+        assert!(take_name("舞踊🎵", stamp, id).starts_with("Webcam Tracking Source "));
+    }
+
+    #[test]
+    fn links_use_public_ids_and_never_copy_other_query_fields_or_credentials() {
+        assert_eq!(
+            link_label("https://www.youtube.com/watch?v=abc123_def&auth=secret"),
+            "YouTube abc123"
+        );
+        assert_eq!(link_label("https://vm.tiktok.com/abc1234/"), "TikTok abc123");
+        assert_eq!(
+            link_label("https://username:password@example.com/signed/video.mp4?token=secret"),
+            "example.com"
+        );
     }
 }

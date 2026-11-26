@@ -1,6 +1,6 @@
 # Webcam tracking prototype
 
-Build › Webcam Tracking animates your own avatar in the viewer. The camera
+Build › Webcam and Video Motion Tracking animates your own avatar in the viewer. The camera
 starts on request and stops when you close the window, log out or quit. The
 companion runs inference on this computer and sends landmarks and small
 preview frames to Aurora over its private stdout pipe. Camera frames stay in memory. The viewer sends
@@ -22,7 +22,7 @@ its normal avatar animations to the grid.
    Launch the viewer from the same shell so it inherits the interpreter
    path. With the dependencies installed in the default `python` interpreter
    on your PATH, the environment variable is optional.
-2. Open **Build › Webcam Tracking**, choose a camera from **Input source**,
+2. Open **Build › Webcam and Video Motion Tracking**, choose a camera from **Input source**,
    and select **Start camera**. **Refresh cameras** lists attached devices,
    including OBS Virtual Camera on Windows. **Next camera** cycles through
    the devices. Switching inputs during capture restarts tracking on the new
@@ -126,21 +126,33 @@ further if it exceeds that limit.
 
 ### Export the soundtrack or assemble a gesture
 
-**Sound & gesture** uses FFmpeg on PATH to read the source audio. It
-uses the same trim, playback speeds and captured sections as the take.
-Muting the video affects monitoring. A WAV export contains the aligned
-mono, 44.1 kHz, 16-bit soundtrack. Webcams do not capture microphone audio.
+File-backed takes use FFmpeg on PATH to read the source audio. The
+soundtrack follows the take's trim, playback speeds and recorded sections.
+Muting playback affects monitoring. A WAV export is aligned mono,
+44.1 kHz, 16-bit audio. Camera input records motion only.
 
-**Preview & upload soundtrack…** stages sound assets in Import and auditions the first piece. It
-splits long selections into uploadable chunks of up to 29 seconds.
-**Create gesture from take…** stages a non-looping animation and, if
-selected, the corresponding sounds. Confirm the uploads through the
-existing Import window. When those entries finish, the viewer
-opens a new gesture with the animation, sounds and required waits in
-order. The regular editor lets you preview, assign a trigger and save.
-Gesture assets are separate inventory items and require the usual asset
-permissions. The grid plays clips as separate sound events, so later
-chunks can be affected by asset loading or timing on the receiving viewer.
+**Create Gesture in one step** shows the current selection duration. It
+prepares a non-looping animation and the soundtrack if **Include soundtrack**
+is selected. The confirmation displays the total for the whole batch,
+including L$0 when the grid quotes a free upload. Enable **Preview assets
+before upload** to review the same batch in Import first. After the selected
+uploads succeed, Aurora saves the Gesture with the animation, sound pieces
+and required waits, and opens the editor to let you preview it or set a trigger.
+
+**Export or upload individual files** opens the animation and sound previews
+separately. Sound previews audition the first piece and uploads split long
+selections into up to 29-second pieces. **Save animation and sound…** writes
+matching `.anim` and `.wav` files to a folder you choose.
+
+Default file and inventory names start with `Webcam Tracking` and a short
+source label, local capture date/time and unique take suffix. Media links use
+a platform and shortened public video identifier when available, or the host
+name. The generated inventory names fit within 63 ASCII bytes, including
+audio segment suffixes.
+
+Gesture assets are separate inventory items and use the usual asset
+permissions. The grid plays clips as separate sound events, so later chunks
+can be affected by asset loading or timing on the receiving viewer.
 
 ### Edit a recorded take
 

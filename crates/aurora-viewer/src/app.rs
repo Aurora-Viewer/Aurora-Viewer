@@ -4136,6 +4136,8 @@ impl App {
                 return;
             }
             let material_map = self.imports.uploading_entry(request);
+            let gesture_asset = material_map.is_some_and(|entry| self.webcam.owns_gesture_asset(entry));
+            let failed = result.is_err();
             let cost = result.as_ref().map_or(0, |receipt| receipt.cost);
             if let Some(item) = self.imports.uploaded(request, result) {
                 if let Some(entry) = material_map {
@@ -4144,7 +4146,9 @@ impl App {
                 }
                 let id = item.id;
                 self.world.inventory.add_items(vec![item]);
-                self.show_uploaded(id, cost);
+                self.show_uploaded(id, cost, !gesture_asset);
+            } else if gesture_asset && failed {
+                self.imports.open_window(&self.egui_ctx);
             }
             return;
         }
@@ -21100,6 +21104,7 @@ impl App {
                     self.imports.review_webcam_uploads(&ctx, &[entry]);
                 }
                 if let Some(media) = self.webcam.take_media_upload() {
+                    let was_open = self.imports.open;
                     let animation_entry = media.animation.map(|recording| {
                         self.imports.authored_animation(
                             &self.world,
@@ -21114,7 +21119,7 @@ impl App {
                         .into_iter()
                         .enumerate()
                         .map(|(index, (at, sound))| {
-                            let name = format!("{} - {:02}", media.name, index + 1);
+                            let name = format!("{} Audio {:02}", media.name, index + 1);
                             (at, self.imports.authored_sound(&self.world, &self.settings.inventory, name, sound))
                         })
                         .collect::<Vec<_>>();
@@ -21124,7 +21129,12 @@ impl App {
                         .chain(sound_entries.iter().map(|(_, id)| *id))
                         .collect();
                     self.imports.active = entries.first().copied();
-                    self.imports.review_webcam_uploads(&ctx, &entries);
+                    if media.direct && self.imports.webcam_confirm.is_none() {
+                        self.imports.open = was_open;
+                        self.imports.webcam_confirm = Some(entries.clone());
+                    } else {
+                        self.imports.review_webcam_uploads(&ctx, &entries);
+                    }
                     if let Some(entry) = animation_entry {
                         self.webcam.track_gesture_upload(entry, sound_entries);
                     } else {

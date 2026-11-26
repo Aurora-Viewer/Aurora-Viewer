@@ -2,7 +2,7 @@
 //! entirely offline demo server.
 
 use super::*;
-use crate::imports::{Playback, Source, ui::Action};
+use crate::imports::{Choice, Playback, Source, ui::Action};
 use aurora_net::inventory::upload::{Prices, Receipt};
 
 const SOUND_PREVIEW: u64 = u64::MAX - 10;
@@ -16,7 +16,7 @@ impl App {
     /// never past @showinv. The L$ spent sound is the balance's, past
     /// UISndMoneyChangeThreshold, as there: the balance is asked again after
     /// every upload.
-    pub(super) fn show_uploaded(&mut self, id: uuid::Uuid, cost: i32) {
+    pub(super) fn show_uploaded(&mut self, id: uuid::Uuid, cost: i32, reveal: bool) {
         if cost > 0 && self.settings.imports.show_payment {
             self.world.notifications.push(
                 crate::world::notifications::Kind::Info,
@@ -24,6 +24,9 @@ impl App {
                 aurora_i18n::tr!("import-upload-payment", cost = cost),
                 crate::world::notifications::Data::None,
             );
+        }
+        if !reveal {
+            return;
         }
         let shown = self.panels.inventory && !ui::widgets::floater_minimized(&self.egui_ctx, "inventory");
         self.inventory_ui.show_uploaded(&self.world.inventory, id, shown);
@@ -474,6 +477,17 @@ impl App {
                         imports.start_confirmed(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
                     });
                 }
+                Action::StartWebcam(ids, approved_cost) => {
+                    let prices = self.import_prices();
+                    self.imports.with_choice(Choice::Bulk, |imports| {
+                        imports.with_only(&ids, |imports| {
+                            if imports.total(&prices) == Some(approved_cost) {
+                                imports.start_confirmed(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
+                            }
+                        });
+                    });
+                }
+                Action::CancelWebcam => self.webcam.clear_gesture_upload(),
                 Action::Cancel => self.imports.cancel_remaining(),
                 Action::Quick(answer) => {
                     let prices = self.import_prices();
@@ -958,7 +972,9 @@ impl App {
     }
 
     fn save_import_animation_models(&mut self) {
-        if std::mem::take(&mut self.imports.animation_models_dirty) {
+        if std::mem::take(&mut self.imports.animation_models_dirty)
+            && !(self.demo && std::env::var_os("AURORA_DEMO_IMPORT_MODEL").is_some())
+        {
             self.settings
                 .imports
                 .animation_models

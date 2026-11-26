@@ -7156,6 +7156,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open\|delete` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the import floating block; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
+| `AURORA_DEMO_IMPORT_MODEL=<file>` | Custom rigged preview model for the offline animation-custom Import scenario |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel\|deleted` | Applied-local-appearance warning, highlight toggle, confirmed removal and object deletion |
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
@@ -7910,6 +7911,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   avatar. The slider and the pose must stay fixed until Resume.
   `animation-custom` loads a local rigged Bento tail and its looping animation,
   with the saved-model list open to show the removal icons at each row's right.
+  Set `AURORA_DEMO_IMPORT_FILE` to a captured animation and
+  `AURORA_DEMO_IMPORT_MODEL` to a local rigged DAE, glTF or GLB to see the
+  motion on that model without saving it to the regular model list.
   Its tail must move in the preview. Choose model loads a rigged DAE, glTF or
   GLB from disk; its initial camera includes the bones' rotational reach, so a
   tail or wing must remain in view while turning. Standard restores the

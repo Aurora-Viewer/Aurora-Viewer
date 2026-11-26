@@ -198,7 +198,10 @@ impl Panel {
     }
 
     fn preview(&self, ui: &mut egui::Ui, palette: &Palette, mirror: bool, empty: &str) {
-        let (stage, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 180.0), egui::Sense::hover());
+        let (stage, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), (ui.available_height() * 0.43).clamp(72.0, 180.0)),
+            egui::Sense::hover(),
+        );
         let painter = ui.painter().with_clip_rect(stage);
         painter.rect_filled(stage, ui.visuals().widgets.inactive.corner_radius, palette.field);
         if let Some(texture) = self.texture.as_ref().filter(|_| self.last_preview.is_some()) {
@@ -273,9 +276,14 @@ impl Webcam {
             self.panel.update_preview(ctx, preview);
         }
         let mut open = self.open;
-        let mut floater = widgets::Floater::new(WINDOW, tr!("webcam-title"), egui::pos2(72.0, 120.0), egui::vec2(460.0, 585.0))
-            .framed_header("video-filled")
-            .steady_size();
+        let mut floater = widgets::Floater::new(
+            WINDOW,
+            tr!("webcam-video-motion-title"),
+            egui::pos2(72.0, 120.0),
+            egui::vec2(460.0, 585.0),
+        )
+        .framed_header("video-filled")
+        .steady_size();
         floater.min_size = egui::vec2(390.0, 485.0);
         floater.show(ctx, palette, &mut open, |ui| {
             play_video |= self.source_controls(ui, palette);
@@ -284,10 +292,18 @@ impl Webcam {
             ui.add_space(6.0);
             self.preview_stage(ui, palette);
             widgets::divider(ui, palette);
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                self.video_controls(ui, palette);
-                self.controls(ui, palette, rig);
-            });
+            let footer = if self.recorder.gesture_available() { 44.0 } else { 0.0 };
+            egui::ScrollArea::vertical()
+                .max_height((ui.available_height() - footer).max(0.0))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    self.video_controls(ui, palette);
+                    self.controls(ui, palette, rig);
+                });
+            if self.recorder.gesture_available() {
+                widgets::divider(ui, palette);
+                self.recorder.gesture_button(ui, palette);
+            }
         });
         self.open = open;
         if !open {
@@ -326,7 +342,7 @@ impl Webcam {
                 self.panel.pick_file();
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let label = tr!("webcam-link-play");
             let font = egui::TextStyle::Button.resolve(ui.style());
             let button_width = ui.fonts_mut(|fonts| fonts.layout_no_wrap(label.to_owned(), font, egui::Color32::WHITE).size().x);
@@ -564,7 +580,24 @@ impl Webcam {
                 .as_ref()
                 .is_some_and(|(at, frame)| at.elapsed() < Duration::from_millis(250) && frame.detected());
         let was_recording = self.recorder.is_active();
-        let preview = self.recorder.ui(ui, palette, live, rig);
+        let preview = self.recorder.ui(
+            ui,
+            palette,
+            live,
+            || match &self.panel.source {
+                Source::Camera(camera) => self
+                    .panel
+                    .devices
+                    .iter()
+                    .find(|device| device.camera == *camera)
+                    .map_or_else(|| format!("Camera {}", camera.index + 1), |device| device.name.clone()),
+                Source::File(path, _) => path
+                    .file_stem()
+                    .map_or_else(|| "File".into(), |stem| stem.to_string_lossy().into_owned()),
+                Source::Link(url) => super::recording::link_label(url),
+            },
+            rig,
+        );
         if self.running && (preview || (was_recording && !self.recorder.is_active())) {
             if self.transport.duration > 0.0 {
                 self.pause_video(self.transport.position(Instant::now()));
