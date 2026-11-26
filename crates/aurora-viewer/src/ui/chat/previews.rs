@@ -1330,7 +1330,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             let (row, _) = ui.allocate_exact_size(Vec2::new(card_width, size.y), egui::Sense::hover());
             let area = egui::Rect::from_center_size(row.center(), size);
             let visible_area = area.intersect(ui.clip_rect());
-            visible = visible_area.is_positive() && visible_area.height() >= size.y * 0.5;
+            visible = visible_area.is_positive() && visible_area.width() * visible_area.height() > size.x * size.y * 0.5;
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(area)
@@ -1342,7 +1342,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                         v.drawn = pass;
                     }
                     web.show(v, &mut child, p, size);
-                    if !provider_click && (v.muted || ui.rect_contains_pointer(visible_area)) {
+                    if !provider_click && video.is_none() && (v.muted || ui.rect_contains_pointer(visible_area)) {
                         let button = egui::Rect::from_min_size(visible_area.right_top() + Vec2::new(-32.0, 6.0), Vec2::splat(26.0));
                         let icon = if v.muted { "volume-off" } else { "volume" };
                         if visible_area.contains_rect(button) && overlay_button(ui, p, button, icon, sound_action(v.muted)) {
@@ -1443,15 +1443,28 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                     ui.horizontal(|ui| {
                         // room kept for the buttons while it plays here, so
                         // the title does not move when they appear
-                        let buttons = if here == Some(false) { 5.0 } else { 2.0 } * (20.0 + 6.0);
+                        // YouTube's controls and picture stay clear of overlays.
+                        let youtube = here == Some(false) && video.is_some();
+                        let buttons = (if here == Some(false) { 5.0 } else { 2.0 } + if youtube { 1.0 } else { 0.0 }) * (20.0 + 6.0);
                         ui.vertical(|ui| {
                             ui.set_width((ui.available_width() - buttons).max(60.0));
                             ui.spacing_mut().item_spacing.y = 2.0;
                             ui.add(egui::Label::new(RichText::new(&title).size(13.5).strong().color(p.ink)).truncate());
                             ui.add(egui::Label::new(RichText::new(&channel).size(11.5).color(p.muted)).truncate());
                         });
-                        if shown > 0.01 {
+                        let sound_visible = youtube && pv.playing.as_ref().is_some_and(|v| v.muted || over);
+                        if shown > 0.01 || sound_visible {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if sound_visible && let Some(v) = &mut pv.playing {
+                                    let icon = if v.muted { "volume-off" } else { "volume" };
+                                    if crate::ui::widgets::icon_button(ui, p, icon, sound_action(v.muted), true) {
+                                        v.muted = !v.muted;
+                                        v.automatic = false;
+                                    }
+                                }
+                                if shown <= 0.01 {
+                                    return;
+                                }
                                 ui.multiply_opacity(shown);
                                 if crate::ui::widgets::icon_button(ui, p, "external-link-filled", &link_tip(url, false), true) {
                                     super::open_web_link(ui.ctx(), url);
