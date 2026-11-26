@@ -9100,6 +9100,10 @@ failure. Grid validation and any paid upload are performed by the human.
   780 with `AURORA_FPS_LIMIT=60`. Debug logs from
   `aurora_viewer::app::inventory` record the chat-drop preflight without
   names or IDs.
+  The `inventory_drag_delivers_batched_motion_and_release_to_an_earlier_target`
+  regression presses an inventory row, delivers motion and release
+  together, and checks that a target drawn before the source receives the
+  item once. A short click still selects normally.
 
 - **`AURORA_DEMO_CONTENTS_DROP=world|panel[:ctrl][:drop]`**: with
   `AURORA_DEMO_INVENTORY=1` and `AURORA_DEMO_ACTIONS=1`, a selection of
