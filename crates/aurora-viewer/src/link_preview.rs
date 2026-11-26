@@ -279,6 +279,14 @@ impl Clip {
         }
     }
 
+    /// The directly playable file, available for a resident-requested save.
+    pub fn download_url(&self) -> Option<&str> {
+        match &self.0 {
+            ClipSource::File(url) => Some(url),
+            _ => None,
+        }
+    }
+
     pub fn native_video(&self) -> bool {
         matches!(self.0, ClipSource::Reddit(_))
     }
@@ -922,12 +930,20 @@ pub fn client(trusted_only: bool) -> Option<reqwest::Client> {
 }
 
 fn configure(trusted_only: bool, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    configure_requests(trusted_only, false, builder)
+}
+
+fn configure_requests(trusted_only: bool, https_only: bool, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
         let to = attempt.url().as_str();
         let off_trusted = trusted_only && crate::link_trust::classify(to) != Trust::Trusted;
         // a redirect never leads a preview to a region (`waits_for_click`):
         // only a link the user clicked may name one
-        if attempt.previous().len() >= MAX_REDIRECTS || off_trusted || waits_for_click(to) || crate::link_trust::leads_to_local_network(to)
+        if attempt.previous().len() >= MAX_REDIRECTS
+            || off_trusted
+            || (https_only && attempt.url().scheme() != "https")
+            || waits_for_click(to)
+            || crate::link_trust::leads_to_local_network(to)
         {
             attempt.stop()
         } else {
@@ -942,6 +958,46 @@ fn configure(trusted_only: bool, builder: reqwest::ClientBuilder) -> reqwest::Cl
             .retry(reqwest::retry::never())
             .redirect(policy),
     )
+}
+
+/// Save a direct video without using the browser's cookies or keeping the file in memory.
+pub async fn save_video(url: &str, path: &std::path::Path) -> anyhow::Result<()> {
+    use std::io::Write;
+    const LIMIT: u64 = 512 * 1024 * 1024;
+    let clip = Clip::of(url).ok_or_else(|| anyhow::anyhow!("unrecognized video link"))?;
+    let direct = clip.download_url().ok_or_else(|| anyhow::anyhow!("not a direct video file"))?;
+    let client = aurora_proxy::http_client(|builder| configure_requests(true, true, builder))?;
+    let mut response = client
+        .get(direct)
+        .timeout(Duration::from_secs(600))
+        .send()
+        .await?
+        .error_for_status()?;
+    let media_type = response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok());
+    anyhow::ensure!(
+        response.status() == reqwest::StatusCode::OK
+            && media_type.is_some_and(|value| matches!(value.split(';').next().unwrap_or("").trim(), "video/mp4" | "video/webm"))
+            && response.content_length().is_none_or(|size| (1..=LIMIT).contains(&size)),
+        "unsupported or oversized video response"
+    );
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+    let result = async {
+        let mut written = 0_u64;
+        while let Some(chunk) = response.chunk().await? {
+            written += chunk.len() as u64;
+            anyhow::ensure!(written <= LIMIT, "video exceeds the download limit");
+            file.write_all(&chunk)?;
+        }
+        anyhow::ensure!(written > 0, "empty video response");
+        file.sync_all()?;
+        Ok(())
+    }
+    .await;
+    drop(file);
+    if result.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    result
 }
 
 /// The `PublicOnly` resolver, when the names are resolved here: behind a

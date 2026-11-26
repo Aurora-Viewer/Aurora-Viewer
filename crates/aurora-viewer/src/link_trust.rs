@@ -108,6 +108,7 @@ const TRUSTED: &[&str] = &[
     "youtube.com",
     "youtu.be",
     "twitch.tv",
+    "kick.com",
     "tiktok.com",
     "tiktokcdn.com",
     "tiktokcdn-us.com",

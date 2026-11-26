@@ -14,6 +14,8 @@ pub(super) enum Hosted {
     FacebookReel(String),
     TwitchClip(String),
     TwitchVideo(String),
+    TwitchLive(String),
+    KickLive(String),
 }
 
 fn id_ok(id: &str, max: usize) -> bool {
@@ -46,6 +48,44 @@ fn twitch_clip_id(id: &str) -> bool {
         && !matches!(id, "dashboard" | "directory")
 }
 
+fn live_channel(name: &str) -> bool {
+    (2..=25).contains(&name.len())
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        && !matches!(
+            name.to_ascii_lowercase().as_str(),
+            "directory"
+                | "downloads"
+                | "jobs"
+                | "p"
+                | "settings"
+                | "subscriptions"
+                | "videos"
+                | "wallet"
+                | "browse"
+                | "categories"
+                | "following"
+                | "search"
+                | "about"
+                | "terms"
+                | "privacy"
+                | "turbo"
+                | "login"
+                | "signup"
+                | "dashboard"
+                | "friends"
+                | "inventory"
+                | "clips"
+                | "store"
+                | "drops"
+                | "partners"
+                | "creatorcamp"
+                | "community"
+                | "support"
+                | "explore"
+                | "prime"
+        )
+}
+
 impl Hosted {
     pub(super) fn requires_player_click(&self) -> bool {
         matches!(self, Self::InstagramReel(_) | Self::FacebookReel(_))
@@ -53,7 +93,7 @@ impl Hosted {
     pub(super) fn minimum_width(&self) -> f32 {
         match self {
             // Twitch requires at least 400 × 300 CSS pixels.
-            Self::TwitchClip(_) | Self::TwitchVideo(_) => 534.0,
+            Self::TwitchClip(_) | Self::TwitchVideo(_) | Self::TwitchLive(_) => 534.0,
             _ => 0.0,
         }
     }
@@ -82,6 +122,12 @@ impl Hosted {
             }
             ("www.twitch.tv" | "twitch.tv" | "m.twitch.tv", ["videos", id]) if digits(id, 1, 20) => {
                 return Some(Self::TwitchVideo((*id).to_owned()));
+            }
+            ("www.twitch.tv" | "twitch.tv" | "m.twitch.tv", [channel]) if live_channel(channel) && !channel.contains('-') => {
+                return Some(Self::TwitchLive(channel.to_ascii_lowercase()));
+            }
+            ("kick.com" | "www.kick.com", [channel]) if live_channel(channel) => {
+                return Some(Self::KickLive(channel.to_ascii_lowercase()));
             }
             ("tiktok.com" | "www.tiktok.com" | "m.tiktok.com", [account, "video", id])
                 if account.strip_prefix('@').is_some_and(tiktok_account) && digits(id, 15, 20) =>
@@ -156,6 +202,8 @@ impl Hosted {
             Self::Framatube(id) => format!("https://framatube.org/w/{id}"),
             Self::TwitchClip(id) => format!("https://clips.twitch.tv/{id}"),
             Self::TwitchVideo(id) => format!("https://www.twitch.tv/videos/{id}"),
+            Self::TwitchLive(channel) => format!("https://www.twitch.tv/{channel}"),
+            Self::KickLive(channel) => format!("https://kick.com/{channel}"),
             Self::TikTok { account, id } => format!("https://www.tiktok.com/{account}/video/{id}"),
             Self::Bilibili { id, part } => format!("https://www.bilibili.com/video/{id}?p={part}"),
             Self::Streamable(id) => format!("https://streamable.com/{id}"),
@@ -173,6 +221,8 @@ impl Hosted {
             Self::Framatube(id) => format!("https://framatube.org/videos/embed/{id}?autoplay=1&muted=0&p2p=0"),
             Self::TwitchClip(id) => format!("https://clips.twitch.tv/embed?clip={id}&parent=127.0.0.1&autoplay=true&muted=false"),
             Self::TwitchVideo(id) => format!("https://player.twitch.tv/?video=v{id}&parent=127.0.0.1&autoplay=true&muted=false"),
+            Self::TwitchLive(channel) => format!("https://player.twitch.tv/?channel={channel}&parent=127.0.0.1&autoplay=true&muted=false"),
+            Self::KickLive(channel) => format!("https://player.kick.com/{channel}?autoplay=true&muted=false"),
             Self::TikTok { id, .. } => format!("https://www.tiktok.com/player/v1/{id}?autoplay=1&force_muted=0&rel=0"),
             Self::Bilibili { id, part } => {
                 let id = id
@@ -194,7 +244,13 @@ impl Hosted {
             Self::Vimeo { .. } => "https://vimeo.com/api/oembed.json",
             Self::TikTok { .. } => "https://www.tiktok.com/oembed",
             Self::Framatube(_) => "https://framatube.org/services/oembed",
-            Self::Bilibili { .. } | Self::TwitchClip(_) | Self::TwitchVideo(_) | Self::InstagramReel(_) | Self::FacebookReel(_) => {
+            Self::Bilibili { .. }
+            | Self::TwitchClip(_)
+            | Self::TwitchVideo(_)
+            | Self::TwitchLive(_)
+            | Self::KickLive(_)
+            | Self::InstagramReel(_)
+            | Self::FacebookReel(_) => {
                 return None;
             }
         };
@@ -221,7 +277,13 @@ impl Hosted {
             Self::Vimeo { .. } => host == "i.vimeocdn.com",
             Self::Framatube(_) => host == "framatube.org" && parsed.path().starts_with("/static/"),
             Self::TikTok { .. } => host.ends_with(".tiktokcdn.com") || host.ends_with(".tiktokcdn-us.com"),
-            Self::Bilibili { .. } | Self::TwitchClip(_) | Self::TwitchVideo(_) | Self::InstagramReel(_) | Self::FacebookReel(_) => false,
+            Self::Bilibili { .. }
+            | Self::TwitchClip(_)
+            | Self::TwitchVideo(_)
+            | Self::TwitchLive(_)
+            | Self::KickLive(_)
+            | Self::InstagramReel(_)
+            | Self::FacebookReel(_) => false,
         };
         permitted.then_some(url)
     }
