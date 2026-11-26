@@ -13,6 +13,8 @@ mod admin;
 mod admin_tests;
 pub mod align;
 pub mod anim_pause;
+#[cfg(test)]
+mod bar_click_tests;
 pub mod contents;
 pub mod contents_drop;
 pub mod costs;
@@ -47,12 +49,15 @@ mod save_to_contents_tests;
 pub mod script_queue;
 #[cfg(test)]
 mod selection_tests;
+#[cfg(test)]
+mod shape_capture_tests;
 pub mod shapes;
 pub mod silhouette;
 #[cfg(test)]
 mod take_tests;
 pub mod task_inventory;
 pub mod texture_copy;
+mod tool_windows;
 pub mod ui;
 
 use crate::scene::Scene;
@@ -233,10 +238,16 @@ pub struct BuildSettings {
     /// RenderReflectionProbeVolumes: off at each start (Persist=0).
     #[serde(skip)]
     pub show_probe_volumes: bool,
-    /// Create tool: shape (index in `shapes::SHAPES`).
+    /// Create tool: shape (`shapes::captured_index` says how it counts).
     pub create_shape: usize,
+    /// The shapes captured from prims by the Aurora Create window's picker,
+    /// after the tree and the grass (`BuildTool::capture_shape`).
+    pub captured_shapes: Vec<shapes::CapturedShape>,
     /// CreateToolKeepSelected.
     pub keep_tool: bool,
+    /// The Aurora Create window shows its options under the shapes (the
+    /// section folds; Aurora's own).
+    pub create_options_shown: bool,
     /// Firestorm RezUnderLandGroup, enabled by default.
     pub rez_under_land_group: bool,
     /// New prim size (FSBuildPrefs_X/Y/Zsize).
@@ -293,10 +304,23 @@ pub struct BuildSettings {
     pub select_surrounding: bool,
     /// FSBuildToolDecimalPrecision: decimals of the Object tab numbers.
     pub decimal_precision: u8,
-    /// CreateToolCopySelection / CopyCenters / CopyRotates.
+    /// CreateToolCopySelection / CopyCenters / CopyRotates (the Legacy
+    /// style's Create options).
     pub copy_selection: bool,
     pub copy_centers: bool,
     pub copy_rotates: bool,
+    /// The Aurora Create window's placement options, for every shape it
+    /// makes (human requests, 2026-11-25; `creation_pose`). On a prim
+    /// clicked, `create_centers` ("Center on prim") and `create_rotates`
+    /// ("Copy prim rotation") do what "Copy selection"'s Center and Rotate
+    /// do for a copy: on the middle of the face clicked, and the prim's
+    /// rotation. `create_aligns` ("Align to surface", Aurora's own) turns
+    /// the shape to stand on the surface clicked, a prim's or the
+    /// ground's; it and `create_rotates` are one or the other. All off, as
+    /// the Legacy Viewer's Create tool places a prim.
+    pub create_centers: bool,
+    pub create_rotates: bool,
+    pub create_aligns: bool,
     /// LastSelectedTree / LastSelectedGrass: species name, empty = random.
     pub last_tree: String,
     pub last_grass: String,
@@ -397,6 +421,82 @@ impl BuildSettings {
         }
     }
 
+    /// The prim the Create tool rezzes, None for a tree or grass: its
+    /// shape, its placement rotation and its own size (a captured shape's;
+    /// the others take `new_prim_size`).
+    pub fn create_volume(&self) -> Option<(aurora_prim::RawShape, Quat, Option<Vec3>)> {
+        let all = shapes::shapes();
+        if let Some(sh) = all.get(self.create_shape) {
+            return Some((sh.raw(), sh.rotation(), None));
+        }
+        let captured = self.captured_shapes.get(shapes::captured_index(self.create_shape)?)?;
+        Some((captured.shape, Quat::IDENTITY, Some(Vec3::from_array(captured.scale))))
+    }
+
+    /// Where the Create tool's prim of `scale`, turned by its shape's own
+    /// `rotation`, goes for the click `hit`: its centre and its rotation. It
+    /// rests on the point, upright, as the region places LLToolPlacer's
+    /// prim. On a prim, "Center on prim" and "Copy prim rotation" do what
+    /// "Copy selection"'s Center and Rotate do for a copy
+    /// (ObjectDuplicateOnRay's CopyCenters and CopyRotates, which the
+    /// region applies): on the middle of the face clicked, beside the prim
+    /// and centred on it, and the prim's rotation; on the ground they do
+    /// nothing, as for a copy. "Align to surface" turns it to stand on the
+    /// surface clicked, the ground's too.
+    pub fn creation_pose(&self, rotation: Quat, scale: Vec3, hit: CreationHit) -> (Vec3, Quat) {
+        let half_along = |rotation: Quat, dir: Vec3| {
+            let axes = glam::Mat3::from_quat(rotation);
+            Vec3::new(axes.x_axis.dot(dir), axes.y_axis.dot(dir), axes.z_axis.dot(dir))
+                .abs()
+                .dot(scale)
+                * 0.5
+        };
+        let upright = (hit.point + Vec3::Z * half_along(rotation, Vec3::Z), rotation);
+        let prim = hit.prim.filter(|_| self.create_centers || self.create_rotates);
+        if prim.is_none() && !self.create_aligns {
+            return upright;
+        }
+        let normal = hit.normal.normalize_or(Vec3::Z);
+        let rotation = match prim {
+            _ if self.create_aligns => (Quat::from_rotation_arc(Vec3::Z, normal) * rotation).normalize(),
+            Some(prim) if self.create_rotates => (prim.rotation * rotation).normalize(),
+            _ => rotation,
+        };
+        let pose = match prim.filter(|_| self.create_centers) {
+            Some(prim) => {
+                // the face clicked, as one of the prim's own axes (the
+                // face's axis-aligned normal the region uses for a centred
+                // copy)
+                let local = prim.rotation.inverse() * normal;
+                let axis = (0..3).max_by(|&a, &b| local[a].abs().total_cmp(&local[b].abs())).unwrap_or(2);
+                let mut face = Vec3::ZERO;
+                face[axis] = local[axis].signum();
+                let face = (prim.rotation * face).normalize_or(Vec3::Z);
+                prim.center + face * (prim.scale[axis] * 0.5 + half_along(rotation, face))
+            }
+            None => hit.point + normal * half_along(rotation, normal),
+        };
+        if pose.is_finite() && rotation.is_finite() {
+            (pose, rotation)
+        } else {
+            upright
+        }
+    }
+
+    /// Removes the captured shape `k`; the choice follows its shape, or
+    /// goes back to the cube when it was that one.
+    pub fn remove_captured(&mut self, k: usize) {
+        if k >= self.captured_shapes.len() {
+            return;
+        }
+        self.captured_shapes.remove(k);
+        match shapes::captured_index(self.create_shape) {
+            Some(chosen) if chosen == k => self.create_shape = 0,
+            Some(chosen) if chosen > k => self.create_shape -= 1,
+            _ => {}
+        }
+    }
+
     /// MaxSelectDistance while LimitSelectDistance is on.
     pub fn select_limit(&self) -> Option<f32> {
         self.limit_select_distance
@@ -426,6 +526,24 @@ fn sane_distance(value: f32, default: f32) -> f32 {
 
 #[cfg(test)]
 mod worn_tests;
+
+/// What is under the Create tool's click: the point, the surface's normal
+/// toward the camera, and the prim clicked, if one was (`place::creation_hit`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CreationHit {
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub prim: Option<CreationPrim>,
+}
+
+/// The prim under the Create tool's click: its centre and rotation in the
+/// world, and its size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CreationPrim {
+    pub center: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+}
 
 /// LLManipTranslate / Rotate / Scale::canAffectSelection (Firestorm): the
 /// simulator's effective flags apply before any local transform. Moving a
@@ -808,6 +926,8 @@ impl Default for BuildSettings {
             show_probe_volumes: false,
             create_shape: 0,
             keep_tool: false,
+            create_options_shown: true,
+            captured_shapes: Vec::new(),
             rez_under_land_group: true,
             new_prim_size: [0.5; 3],
             new_prim_material: 3,
@@ -835,6 +955,9 @@ impl Default for BuildSettings {
             copy_selection: false,
             copy_centers: true,
             copy_rotates: false,
+            create_centers: false,
+            create_rotates: false,
+            create_aligns: false,
             last_tree: String::new(),
             last_grass: String::new(),
             expanded: true,
@@ -960,6 +1083,12 @@ pub struct BuildTool {
     /// The build floater is open (build mode).
     pub open: bool,
     pub tool: Tool,
+    /// The Aurora style's main window is shown (the Edit tool's: its
+    /// sections); the Legacy style's single window, whenever `open`.
+    pub main_open: bool,
+    /// The Aurora style's tool windows shown (Camera, Move, Create,
+    /// Land), in the order they opened (tool_windows.rs).
+    tool_windows: Vec<Tool>,
     pub edit_mode: EditMode,
     pub focus_mode: FocusMode,
     pub grab_mode: GrabMode,
@@ -1043,9 +1172,21 @@ pub struct BuildTool {
     /// Objects created / duplicated with FLAGS_CREATE_SELECTED: select them
     /// when they arrive (LLViewerObjectList). (Sent at, objects already flagged.)
     pending_create: Option<(Instant, HashSet<Uuid>)>,
+    /// The Create window's picker is armed: the next world click captures
+    /// the shape of the prim under it (`capture_shape`); Escape, the
+    /// window closed or the picker's button again put it down.
+    pub shape_capture: bool,
     /// Prims the Create tool asked for whose new objects' look is still to
     /// be given (new_defaults.rs).
     new_defaults_pending: u32,
+    /// For each of those, the place and rotation it is put at once it
+    /// arrives, when the Aurora window's Center or Rotate chose them (the
+    /// region's own placement is not exact: FSFloaterImport::
+    /// processPrimCreated sends the position again the same way).
+    new_poses: std::collections::VecDeque<Option<(RegionHandle, Vec3, Quat)>>,
+    /// What is under the Create tool's click (`place::creation_hit`), given
+    /// by the app with the click.
+    pub creation_hit: Option<CreationHit>,
     /// Selection rectangle being dragged (start, current in pixels, extend).
     pub rect: Option<((f32, f32), (f32, f32), bool)>,
     /// The press behind `rect`, until it is known to be a click: the object
@@ -1081,6 +1222,8 @@ impl Default for BuildTool {
             keep_material_tab: false,
             open: false,
             tool: Tool::Edit,
+            main_open: false,
+            tool_windows: Vec::new(),
             edit_mode: EditMode::Move,
             focus_mode: FocusMode::Zoom,
             grab_mode: GrabMode::Move,
@@ -1121,7 +1264,10 @@ impl Default for BuildTool {
             land: land::LandTool::default(),
             silhouettes: silhouette::Cache::default(),
             pending_create: None,
+            shape_capture: false,
             new_defaults_pending: 0,
+            new_poses: Default::default(),
+            creation_hit: None,
             rect: None,
             press: None,
             press_face: None,
@@ -1429,11 +1575,20 @@ impl BuildTool {
         .is_some_and(|frame| self.manip.pick(&self.cam, &frame, mode, cursor).is_some())
     }
 
+    /// Opens the build tools on `tool`, which becomes the one in use: in
+    /// the Aurora style the main window for Edit, the tool's own window
+    /// for the others (tool_windows.rs); the Legacy style's single window.
     pub fn open_build(&mut self, tool: Tool) {
         self.open = true;
         // a right-click selection becomes the build selection
         self.menu_selection = false;
         self.set_tool(tool);
+        if self.ui.legacy() || tool == Tool::Edit {
+            self.main_open = true;
+        } else {
+            self.tool_windows.retain(|t| *t != tool);
+            self.tool_windows.push(tool);
+        }
     }
 
     /// LLFloaterTools::onClose: everything is deselected, the tools reset
@@ -1443,10 +1598,13 @@ impl BuildTool {
             self.status = aurora_i18n::tr!("replace-waiting-server").into();
             return;
         }
+        self.shape_capture = false;
         self.cancel_replacement(world);
         self.cancel_color_picker(world);
         self.commit_color_edit();
         self.open = false;
+        self.main_open = false;
+        self.tool_windows.clear();
         self.place.stop();
         self.manip.cancel();
         self.land.cancel();
@@ -2881,6 +3039,7 @@ impl BuildTool {
         let random = Uuid::new_v4().as_u128() as u32;
         let n = shapes::shapes().len();
         let plant = s.create_shape == n || s.create_shape == n + 1;
+        let mut exact = None;
         let (pcode, shape, rotation, state, scale, flags) = if plant {
             // trees and grass: not created selected (LLToolPlacer)
             let tree = s.create_shape == n;
@@ -2903,13 +3062,29 @@ impl BuildTool {
             };
             (pcode, aurora_prim::RawShape::default(), glam::Quat::IDENTITY, state, scale, 0)
         } else {
-            let sh = &shapes::shapes()[s.create_shape.min(n - 1)];
+            let Some((shape, rotation, own_size)) = s.create_volume() else {
+                return;
+            };
+            let scale = world.prim_limits().clamp3(own_size.unwrap_or(Vec3::from_array(s.new_prim_size)));
+            let hit = self
+                .creation_hit
+                .take()
+                .filter(|hit| hit.point.abs_diff_eq(point, 1e-3))
+                .unwrap_or(CreationHit {
+                    point,
+                    normal: Vec3::Z,
+                    prim: None,
+                });
+            let (center, rotation) = s.creation_pose(rotation, scale, hit);
+            if s.create_aligns || (hit.prim.is_some() && (s.create_centers || s.create_rotates)) {
+                exact = Some((handle, center - off, rotation));
+            }
             (
                 aurora_prim::params::LL_PCODE_VOLUME,
-                sh.raw(),
-                sh.rotation(),
+                shape,
+                rotation,
                 0,
-                world.prim_limits().clamp3(Vec3::from_array(s.new_prim_size)),
+                scale,
                 FLAGS_CREATE_SELECTED,
             )
         };
@@ -2934,7 +3109,7 @@ impl BuildTool {
         if !plant {
             self.expect_created(world);
             // (trees and grass are not created selected: no look of their own)
-            self.expect_new_defaults();
+            self.expect_new_defaults(exact);
         }
         // LLToolPlacer::addObject
         world.ui_sounds.push(crate::ui_sound::UiSound::ObjectCreate);
@@ -2942,6 +3117,55 @@ impl BuildTool {
             self.set_tool(Tool::Edit);
             self.edit_mode = EditMode::Move;
         }
+    }
+
+    /// The Create window's picker: the shape of the prim `idx` clicked
+    /// becomes a shape of its own, chosen (Aurora's own, human request
+    /// 2026-11-24). The Legacy Viewer's rule for copying a prim's shape,
+    /// LLPanelObject::onCopyParams and its button's state in
+    /// LLPanelObject::getState: a prim we may modify, not a mesh. Stricter:
+    /// no sculpted prim either (ObjectAdd carries no sculpt map), and not
+    /// while RLVa forbids editing it (RlvActions::canEdit). False when
+    /// refused, with the reason in `status`.
+    pub fn capture_shape(&mut self, world: &World, s: &mut BuildSettings, idx: usize) -> bool {
+        let Some(o) = world.objects.get(idx) else { return false };
+        let refused = if o.pcode != aurora_prim::params::LL_PCODE_VOLUME {
+            Some(aurora_i18n::tr!("build-capture-shape-not-a-prim"))
+        } else if o.volume.sculpt.is_some() {
+            Some(aurora_i18n::tr!("build-capture-shape-mesh-or-sculpt"))
+        } else if !self.can_modify(world, idx) || !world.rlva_can_edit(idx) {
+            Some(aurora_i18n::tr!("build-capture-shape-no-modify"))
+        } else {
+            None
+        };
+        if let Some(reason) = refused {
+            self.status = reason.into();
+            return false;
+        }
+        let mut volume = o.volume;
+        // a flexible prim's path is a line once rezzed without its flexible
+        // parameters (LLPanelObject::onPasteParams' rule)
+        if volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE {
+            volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        }
+        let captured = shapes::CapturedShape {
+            shape: volume.to_raw(),
+            scale: o.scale.to_array(),
+        };
+        let k = match s.captured_shapes.iter().position(|c| *c == captured) {
+            Some(k) => k,
+            None if s.captured_shapes.len() >= shapes::MAX_CAPTURED => {
+                self.status = aurora_i18n::tr!("build-capture-shape-full").into();
+                return false;
+            }
+            None => {
+                s.captured_shapes.push(captured);
+                s.captured_shapes.len() - 1
+            }
+        };
+        s.create_shape = shapes::shapes().len() + 2 + k;
+        s.copy_selection = false;
+        true
     }
 
     /// "Copy selection": ObjectDuplicateOnRay of the selected roots
@@ -3036,7 +3260,8 @@ impl BuildTool {
             && !self.replacement_active()
             && !self.ui.color_picker.pipette
             && !s.copy_selection
-            && s.create_shape < shapes::shapes().len()
+            && !self.shape_capture
+            && s.create_volume().is_some()
             && !over_ui
             && !(mods.shift || mods.ctrl || mods.alt)
     }
