@@ -448,8 +448,9 @@ fn overlay_of(ctx: &egui::Context, id: egui::ViewportId) -> Option<egui::Id> {
 /// stays with that window until it closes, and goes back to the viewer's
 /// window if that window does (closed, brought back inside). A dialog
 /// opened while the viewer's own window has the focus, and one asked in a
-/// window's own pass, is drawn where it is asked. Not in the Legacy
-/// Viewer, whose windows all stay inside its own.
+/// window's own pass, is drawn where it is asked, and so is a second
+/// dialog asked while another is over that window (`over_alone`). Not in
+/// the Legacy Viewer, whose windows all stay inside its own.
 pub(crate) fn modal_window(ctx: &egui::Context, modal: egui::Id) -> Option<egui::Id> {
     if ctx.viewport_id() != egui::ViewportId::ROOT || ctx.embed_viewports() {
         return None;
@@ -461,9 +462,27 @@ pub(crate) fn modal_window(ctx: &egui::Context, modal: egui::Id) -> Option<egui:
         Some((at, owner)) if at + 1 >= frame => owner,
         _ => ctx.data(|d| d.get_temp::<egui::Id>(front_id())),
     };
-    let owner = owner.filter(|window| wanted(ctx, *window) && native(ctx, *window));
+    let owner = owner
+        .filter(|window| wanted(ctx, *window) && native(ctx, *window))
+        .filter(|window| over_alone(ctx, *window, modal, frame));
     ctx.data_mut(|d| d.insert_temp(key, (frame, owner)));
     owner
+}
+
+/// Whether the dialog `modal` is the one drawn over `window` at `frame`:
+/// the first that asked, until a frame goes without it. A window outside
+/// has one pass for a dialog ([`overlay`]), which reads its events: a
+/// second dialog there would be drawn in place of the first and leave it
+/// the clicks. It is drawn in the viewer's window, where dialogs stack.
+fn over_alone(ctx: &egui::Context, window: egui::Id, modal: egui::Id, frame: u64) -> bool {
+    let key = window.with("aurora outside modal over");
+    match ctx.data(|d| d.get_temp::<(u64, egui::Id)>(key)) {
+        Some((at, other)) if other != modal && at + 1 >= frame => false,
+        _ => {
+            ctx.data_mut(|d| d.insert_temp(key, (frame, modal)));
+            true
+        }
+    }
 }
 
 /// A window of a Wayland session, where no program takes the focus by
@@ -1871,6 +1890,30 @@ mod tests {
     /// there while it is shown, and goes back to the viewer's window when
     /// that window does; asked in a window's own pass, or with the focus in
     /// the viewer's window, it is drawn where it is asked.
+    #[test]
+    fn a_second_dialog_over_a_window_outside_is_drawn_in_the_viewers() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let window = egui::Id::unique("two modals owner");
+        let (first, second) = (egui::Id::unique("a first modal"), egui::Id::unique("a second modal"));
+        want(&ctx, window, true);
+        set_native(&ctx, window, true);
+        let run = |modals: &[egui::Id]| {
+            let mut owners = Vec::new();
+            focus_for_test(&ctx, Some(window));
+            crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
+                owners = modals.iter().map(|modal| modal_window(ui.ctx(), *modal)).collect();
+            }));
+            owners
+        };
+        assert_eq!(run(&[first]), [Some(window)]);
+        assert_eq!(run(&[first, second]), [Some(window), None], "the window has one pass for a dialog");
+        assert_eq!(run(&[second, first]), [None, Some(window)], "whichever is asked first in the frame");
+        assert_eq!(run(&[second]), [None], "it stays in the viewer's window until it closes");
+        run(&[]);
+        assert_eq!(run(&[second]), [Some(window)], "asked again, the window is free");
+    }
+
     #[test]
     fn a_modal_opens_over_the_window_outside_with_the_focus() {
         let ctx = egui::Context::default();
