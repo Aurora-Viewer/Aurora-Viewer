@@ -21815,13 +21815,18 @@ impl App {
                     &mut open,
                 );
                 self.panels.world_map = open;
+                let tracker_sort = self.settings.region_tracker_sort;
                 self.region_tracker_ui.show(
                     &ctx,
                     &p,
                     &mut self.world,
                     &mut self.panels.region_tracker,
                     &mut self.panels.world_map,
+                    &mut self.settings.region_tracker_sort,
                 );
+                if self.settings.region_tracker_sort != tracker_sort {
+                    self.settings.save();
+                }
                 for wa in wm {
                     match wa {
                         ui::worldmap::WorldMapAction::TrackRegion(name) => {
