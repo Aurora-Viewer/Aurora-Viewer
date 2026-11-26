@@ -40,9 +40,11 @@ comes before English (`pt-BR` would serve `pt-PT` without its catalogue);
 the two Chinese scripts are never swapped this way. A missing locale or
 message uses English. Australian English first tries British English
 before American English. English locales for New Zealand, Ireland,
-South Africa, India and Singapore select British English when no exact
-catalogue exists. Canadian English selects American English. Explicit
-saved language choices continue to take precedence.
+South Africa, India, Singapore, Hong Kong, Malaysia and Malta select
+British English when no exact catalogue exists. Canadian and World English
+select American English. Explicit saved language choices continue to take
+precedence. Imported Australian English catalogues also inherit bundled
+British English before canonical American English.
 
 The language and its visibility to scripts are sent to the simulator through
 `UpdateAgentLanguage`, after login, a region change or a change to the
@@ -85,7 +87,13 @@ be copied out of the source tree and imported through the language file
 picker.
 
 For a release, save the previous and current English catalogues and run
-the delta report for each language:
+the delta report for each community language. Do not run this report
+against `en-GB.ftl` or `en-AU.ftl`: these are intentionally sparse regional
+override catalogues, and missing entries are inherited rather than
+untranslated. Regional English overrides are maintained in each PR and
+validated by the regional consistency tests.
+
+For example:
 
 ```text
 cargo run -q -p aurora-i18n --example catalog_delta -- previous-en.ftl crates/aurora-i18n/locales/en.ftl crates/aurora-i18n/locales/zh-Hans.ftl

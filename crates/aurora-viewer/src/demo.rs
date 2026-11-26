@@ -1009,7 +1009,14 @@ fn demo_raw() -> Llsd {
         (aurora_i18n::tr!("common-trash"), 14),
         (aurora_i18n::tr!("common-my-outfits"), 48),
         ("Materials", 57),
-        (aurora_i18n::tr!("common-favorites"), 23),
+        (
+            if matches!(aurora_i18n::language(), "en-GB" | "en-AU") {
+                aurora_i18n::text_in("en", "common-favorites")
+            } else {
+                aurora_i18n::tr!("common-favorites")
+            },
+            23,
+        ),
     ]
     .iter()
     .enumerate()

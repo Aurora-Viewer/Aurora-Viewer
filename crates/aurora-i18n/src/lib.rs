@@ -33,6 +33,7 @@ static USER: OnceLock<Catalog> = OnceLock::new();
 static CURRENT: AtomicUsize = AtomicUsize::new(usize::MAX);
 const USER_INDEX: usize = usize::MAX - 1;
 static SYSTEM: OnceLock<String> = OnceLock::new();
+static BRITISH_ENGLISH: LazyLock<Option<usize>> = LazyLock::new(|| index("en-GB"));
 
 /// The money symbol messages show for "L$" (Tea::sActiveCurrency): an
 /// OpenSim grid's or region's own, "L$" on Second Life.
@@ -126,7 +127,8 @@ pub struct UserCatalog {
     pub code: &'static str,
     /// Whether the file's name gave the language.
     pub named: bool,
-    /// The messages it holds; the others are shown in English.
+    /// The messages it holds; missing messages use the regional parent,
+    /// when available, and then canonical English.
     pub messages: usize,
     /// The entries Fluent could not read, left out.
     pub errors: usize,
@@ -159,8 +161,9 @@ pub fn user_catalog_code(stem: &str) -> Option<String> {
 
 /// Installs the user's catalog file (its name without the extension, and
 /// its text), at most once per process. `select_with` can then choose it;
-/// a message or a variable it lacks uses English, as for the bundled
-/// catalogs. An entry Fluent cannot read is left out, not the whole file.
+/// a message or a variable it lacks uses the regional parent, when
+/// available, and then canonical English. An entry Fluent cannot read is
+/// left out, not the whole file.
 pub fn install_user_catalog(stem: &str, source: &str) -> Result<UserCatalog, UserCatalogError> {
     if USER.get().is_some() {
         return Err(UserCatalogError::AlreadyInstalled);
@@ -244,7 +247,7 @@ fn language_index<'a>(code: &str, available: impl Iterator<Item = &'a str> + Clo
                 .unwrap_or_default();
             let regional = match region.to_ascii_lowercase().as_str() {
                 "au" => Some("en-AU"),
-                "gb" | "nz" | "ie" | "za" | "in" | "sg" => Some("en-GB"),
+                "gb" | "nz" | "ie" | "za" | "in" | "sg" | "hk" | "my" | "mt" => Some("en-GB"),
                 _ => None,
             };
             if let Some(index) = regional.and_then(find) {
@@ -491,8 +494,8 @@ fn wrap_owned(text: String) -> String {
 }
 
 fn regional_parent(catalog: &Catalog) -> Option<&'static Catalog> {
-    if catalog.code == "en-AU" && USER.get().is_none_or(|user| !std::ptr::eq(catalog, user)) {
-        index("en-GB").map(bundled)
+    if catalog.code.eq_ignore_ascii_case("en-AU") {
+        (*BRITISH_ENGLISH).map(bundled)
     } else {
         None
     }

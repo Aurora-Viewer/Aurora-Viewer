@@ -44,7 +44,13 @@ else's work.
    add the key and its English, French and Japanese versions in the same
    PR, never a hard-coded label. The other catalogues of
    `crates/aurora-i18n/locales/` (community languages) catch up at each
-   release and show English until then: do not translate into them. A key
+   release and show English until then: do not translate into them.
+   Regional English catalogues are an exception: maintain `en-GB` and
+   `en-AU` overrides in the same PR as changes to their canonical English
+   messages. Review new English messages for regional spelling differences
+   and add overrides where needed. Preserve official Second Life terminology,
+   inventory folder names, commands and protocol identifiers. Australian
+   English inherits British overrides; do not duplicate them. A key
    you remove or rename goes from every catalogue in the same PR (a stale
    key fails the test), and an English message whose meaning changes takes a
    new key. Variables, plurals and the Japanese rules follow

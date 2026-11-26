@@ -803,8 +803,10 @@ Brazilian Portuguese (Português (Brasil)), Spanish (Español), Italian
 detects the system language
 by default. A choice saved in Preferences applies at once. English (US),
 English (UK) and English (AU) are available independently. New Zealand,
-Ireland, South Africa, India and Singapore use British English by default;
-Canada uses American English. Existing explicit language choices are retained.
+Ireland, South Africa, India, Singapore, Hong Kong, Malaysia and Malta use
+British English by default; Canada uses American English. Existing explicit
+language choices are retained. Users following their system language may
+automatically switch to British or Australian English after updating.
 The Japanese translation covers every message, with the official Second Life
 Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic
 UI or MS UI Gothic) and writes dates the Japanese way. The other languages

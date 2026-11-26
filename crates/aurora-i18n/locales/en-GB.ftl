@@ -145,8 +145,6 @@ ui-place-details-add-to-favorites-bar = Add to favourites bar
 
 ui-options-synchronizes-frames-with-the-monitor-refresh-rate-no-tearing = Synchronises frames with the monitor refresh rate (no tearing, slightly higher latency). Disabled by default
 
-ui-environment-probe-ambiance = Probe ambience
-
 ui-options-blend-order-help = Standard sorts the transparent surfaces object by object, as the Legacy Viewer does: surfaces that cross or sit inside one another can show in the wrong order. Exact composes them in their true order at each pixel, whatever the object, for more GPU time and video memory. Its levels set how faint a layer must be to be mixed with its neighbours instead of placed one by one: Full places every layer, Fast costs the least. Stochastic estimates that order from 8 random samples per pixel averaged over the frames: close to Exact when still, with a faint grain and a softer image in motion; the only one of the two that also works with MSAA. Standard is used in place of Exact with MSAA
 
 ui-options-colored-sky-ambient = Coloured sky ambient
@@ -194,12 +192,6 @@ color-picker-apply-hint = Preview the colour on the object while choosing.
 color-picker-open = Open the colour picker
 
 ui-minimap-auto-centering = Auto-centring
-
-ui-appearance-items-center-3 = Centre
-
-ui-appearance-items-center-2-2 = Centre 2
-
-ui-appearance-items-avatar-center-2 = Avatar Centre
 
 build-ui-tools-center = Centre
 
@@ -417,8 +409,6 @@ ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wai
 build-ui-texture-synchronize-materials = Synchronise materials
 
 build-ui-object-size-meters = Size (metres)
-
-ui-options-tone-mapping-classic-sky = No effect with a classic sky (reflection probe ambience 0): it is not tone mapped
 
 ui-options-tone-mapping-mix-help = Mix between the linear and the tone mapped colours (0.7 as in the Legacy Viewer)
 
@@ -837,3 +827,20 @@ vr-vibrancy = VR Colour vibrancy
 vr-vibrancy-help = Adjust headset colour intensity. The default is 1.0.
 
 game-control-crosshair-hint = Draw a crosshair at the centre of the screen while flying the flycam.
+
+notecard-lsl-demo =
+    # LSL in a notecard
+    Use the **LSL** button, then type as in the script editor.
+
+    ```lsl
+    default
+    { "{" }
+        state_entry()
+    { "    {" }
+            // LSL colours and indentation
+            integer count = 2;
+            vector tint = <1.0, 0.5, 0.0>;
+            llSay(PUBLIC_CHANNEL, "Hello 🐺");
+    { "    }" }
+    { "}" }
+    ```

@@ -416,6 +416,10 @@ fn english_regional_locales_respect_system_and_saved_preferences() {
         ("en-ZA", "en-GB"),
         ("en-IN", "en-GB"),
         ("en-SG", "en-GB"),
+        ("en-HK", "en-GB"),
+        ("en-MY", "en-GB"),
+        ("en-MT", "en-GB"),
+        ("en-001", "en"),
         ("en-Latn-AU", "en-AU"),
         ("en", "en"),
     ] {
@@ -469,6 +473,19 @@ fn english_regional_locales_use_consistent_spelling() {
 #[test]
 fn english_regional_locales_preserve_technical_terms() {
     for locale in ["en", "en-AU", "en-GB"] {
+        for (key, expected) in [
+            ("ui-environment-probe-ambiance", "Probe ambiance"),
+            ("ui-appearance-items-center-3", "Center"),
+            ("ui-appearance-items-center-2-2", "Center 2"),
+            ("ui-appearance-items-avatar-center-2", "Avatar Center"),
+            (
+                "ui-options-tone-mapping-classic-sky",
+                "No effect with a classic sky (reflection probe ambiance 0): it is not tone mapped",
+            ),
+        ] {
+            assert_eq!(aurora_i18n::text_in(locale, key), expected, "{locale}/{key}");
+        }
+
         assert_eq!(aurora_i18n::text_in(locale, "ui-options-commands-cmd-meters"), "cmd meters");
         assert_eq!(aurora_i18n::text_in(locale, "omnifilter-source-dialog"), "Dialog");
         assert_eq!(aurora_i18n::text_in(locale, "common-apply"), "Apply");
@@ -505,63 +522,62 @@ fn english_regional_catalogs_inherit_messages() {
     assert_eq!(aurora_i18n::resolve_language("default", "en-NZ", &["en", "fr"]), "en");
 }
 
-fn normalize_regional_spelling(value: &str) -> String {
-    const SPELLINGS: &[(&str, &str)] = &[
-        ("acknowledgements", "acknowledgments"),
-        ("ambience", "ambiance"),
-        ("analogue", "analog"),
-        ("analyse", "analyze"),
-        ("analysing", "analyzing"),
-        ("authorisation", "authorization"),
-        ("authorised", "authorized"),
-        ("behaviour", "behavior"),
-        ("cancelled", "canceled"),
-        ("catalogue", "catalog"),
-        ("catalogues", "catalogs"),
-        ("centre", "center"),
-        ("centred", "centered"),
-        ("centring", "centering"),
-        ("centimetres", "centimeters"),
-        ("colour", "color"),
-        ("coloured", "colored"),
-        ("colours", "colors"),
-        ("customise", "customize"),
-        ("enrolment", "enrollment"),
-        ("favourite", "favorite"),
-        ("favourited", "favorited"),
-        ("favourites", "favorites"),
-        ("grey", "gray"),
-        ("greyed", "grayed"),
-        ("initialise", "initialize"),
-        ("initialising", "initializing"),
-        ("kilometres", "kilometers"),
-        ("licence", "license"),
-        ("licences", "licenses"),
-        ("linearise", "linearize"),
-        ("metre", "meter"),
-        ("metres", "meters"),
-        ("minimise", "minimize"),
-        ("minimised", "minimized"),
-        ("minimising", "minimizing"),
-        ("neighbour", "neighbor"),
-        ("neighbouring", "neighboring"),
-        ("neighbours", "neighbors"),
-        ("optimiser", "optimizer"),
-        ("organise", "organize"),
-        ("organising", "organizing"),
-        ("posterise", "posterize"),
-        ("recognise", "recognize"),
-        ("recognised", "recognized"),
-        ("synchronisation", "synchronization"),
-        ("synchronise", "synchronize"),
-        ("synchronised", "synchronized"),
-        ("synchronises", "synchronizes"),
-        ("synchronising", "synchronizing"),
-        ("unrecognised", "unrecognized"),
-        ("visualiser", "visualizer"),
-        ("visualisers", "visualizers"),
-    ];
+const SPELLINGS: &[(&str, &str)] = &[
+    ("acknowledgements", "acknowledgments"),
+    ("analogue", "analog"),
+    ("analyse", "analyze"),
+    ("analysing", "analyzing"),
+    ("authorisation", "authorization"),
+    ("authorised", "authorized"),
+    ("behaviour", "behavior"),
+    ("cancelled", "canceled"),
+    ("catalogue", "catalog"),
+    ("catalogues", "catalogs"),
+    ("centre", "center"),
+    ("centred", "centered"),
+    ("centring", "centering"),
+    ("centimetres", "centimeters"),
+    ("colour", "color"),
+    ("coloured", "colored"),
+    ("colours", "colors"),
+    ("customise", "customize"),
+    ("enrolment", "enrollment"),
+    ("favourite", "favorite"),
+    ("favourited", "favorited"),
+    ("favourites", "favorites"),
+    ("grey", "gray"),
+    ("greyed", "grayed"),
+    ("initialise", "initialize"),
+    ("initialising", "initializing"),
+    ("kilometres", "kilometers"),
+    ("licence", "license"),
+    ("licences", "licenses"),
+    ("linearise", "linearize"),
+    ("metre", "meter"),
+    ("metres", "meters"),
+    ("minimise", "minimize"),
+    ("minimised", "minimized"),
+    ("minimising", "minimizing"),
+    ("neighbour", "neighbor"),
+    ("neighbouring", "neighboring"),
+    ("neighbours", "neighbors"),
+    ("optimiser", "optimizer"),
+    ("organise", "organize"),
+    ("organising", "organizing"),
+    ("posterise", "posterize"),
+    ("recognise", "recognize"),
+    ("recognised", "recognized"),
+    ("synchronisation", "synchronization"),
+    ("synchronise", "synchronize"),
+    ("synchronised", "synchronized"),
+    ("synchronises", "synchronizes"),
+    ("synchronising", "synchronizing"),
+    ("unrecognised", "unrecognized"),
+    ("visualiser", "visualizer"),
+    ("visualisers", "visualizers"),
+];
 
+fn normalize_regional_spelling(value: &str) -> String {
     fn append_word(result: &mut String, word: &str, spellings: &[(&str, &str)]) {
         let lower = word.to_ascii_lowercase();
         if let Some((_, american)) = spellings.iter().find(|(regional, _)| *regional == lower) {
@@ -662,4 +678,114 @@ fn english_regional_overrides_remain_consistent_with_canonical_messages() {
             );
         }
     }
+}
+
+#[test]
+fn english_regional_catalogs_cover_american_spellings() {
+    const PROTECTED: &[(&str, &[&str])] = &[
+        ("ui-appearance-items-center-3", &["center"]),
+        ("ui-appearance-items-center-2-2", &["center"]),
+        ("ui-appearance-items-avatar-center-2", &["center"]),
+        ("report-abuse-copyright", &["behavior"]),
+        ("ui-options-commands-cmd-meters", &["meters"]),
+        ("demo-media-page", &["center", "color"]),
+        ("demo-nearby-media-page-cinema", &["center", "color"]),
+        ("demo-nearby-media-page-next-door", &["center", "color"]),
+        ("status-aurora-viewer-skin-theme-json-colors", &["colors"]),
+        ("wearable-favorites-new-folder-prompt", &["favorite"]),
+        ("wearable-favorites-rename-prompt", &["favorite"]),
+        ("wearable-favorites-invalid-name", &["favorite"]),
+    ];
+
+    fn collect_inline<'a>(value: &ast::InlineExpression<&'a str>, texts: &mut Vec<&'a str>) {
+        match value {
+            ast::InlineExpression::StringLiteral { value } => texts.push(value),
+            ast::InlineExpression::Placeable { expression } => {
+                collect_expression(expression, texts);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_expression<'a>(value: &ast::Expression<&'a str>, texts: &mut Vec<&'a str>) {
+        match value {
+            ast::Expression::Inline(value) => collect_inline(value, texts),
+            ast::Expression::Select { variants, .. } => {
+                for variant in variants {
+                    collect_pattern(&variant.value, texts);
+                }
+            }
+        }
+    }
+
+    fn collect_pattern<'a>(value: &ast::Pattern<&'a str>, texts: &mut Vec<&'a str>) {
+        for element in &value.elements {
+            match element {
+                ast::PatternElement::TextElement { value } => texts.push(value),
+                ast::PatternElement::Placeable { expression } => {
+                    collect_expression(expression, texts);
+                }
+            }
+        }
+    }
+
+    let canonical = SOURCES.iter().find(|(code, _)| *code == "en").unwrap();
+    let british = SOURCES.iter().find(|(code, _)| *code == "en-GB").unwrap();
+
+    let canonical = fluent_syntax::parser::parse(canonical.1).expect("valid English catalogue");
+    let british = fluent_syntax::parser::parse(british.1).expect("valid British catalogue");
+
+    let overrides: BTreeSet<_> = british
+        .body
+        .iter()
+        .filter_map(|entry| match entry {
+            ast::Entry::Message(message) => Some(message.id.name),
+            _ => None,
+        })
+        .collect();
+
+    let mut missing = BTreeSet::new();
+
+    for entry in &canonical.body {
+        let ast::Entry::Message(message) = entry else {
+            continue;
+        };
+
+        let key = message.id.name;
+
+        if overrides.contains(key) {
+            continue;
+        }
+
+        let protected = PROTECTED
+            .iter()
+            .find(|(protected_key, _)| *protected_key == key)
+            .map_or(&[][..], |(_, words)| *words);
+
+        let mut texts = Vec::new();
+
+        if let Some(value) = &message.value {
+            collect_pattern(value, &mut texts);
+        }
+
+        for attribute in &message.attributes {
+            collect_pattern(&attribute.value, &mut texts);
+        }
+
+        for text in texts {
+            for word in text.split(|character: char| !character.is_ascii_alphabetic()) {
+                let lower = word.to_ascii_lowercase();
+
+                if SPELLINGS.iter().any(|(_, american)| *american == lower) && !protected.contains(&lower.as_str()) {
+                    missing.insert(format!("{key}: {word}"));
+                }
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "Missing British English spelling overrides:\n{}",
+        missing.into_iter().collect::<Vec<_>>().join("\n")
+    );
 }
