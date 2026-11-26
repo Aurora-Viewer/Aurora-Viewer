@@ -33,7 +33,8 @@
 // comes within a surface thickness of its own. Changes from the original:
 // integer texel loads instead of a clamp-to-border sampler (outside the
 // screen reads the far depth), the pixels of a wavefront placed without
-// going through the light's point (exact however far off screen it is), the early-out of a whole wavefront through
+// going through the light's point (exact however far off screen it is),
+// the early-out of a whole wavefront through
 // workgroup memory (no wave intrinsics in WGSL), the shadow stored rather
 // than the light, no debug outputs, occluders taken as deep as the ray went
 // under them (up to `tuning.w`) rather than a shell (`depth_delta`), more
