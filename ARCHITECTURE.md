@@ -68,8 +68,10 @@ their pending retry.
 `session/inventory_reads.rs` coalesces ordinary and attachment AIS reads by
 owner and item within a session and admits up to 16 at once, separately
 from background folder reads. An attachment consumer promotes a queued
-ordinary read. A logical item read has a 180-second total deadline, including
-paced attempts, and repeated failures use per-key 2/10/60-second cooldowns.
+ordinary read. Each single-item HTTP attempt has a 180-second deadline.
+The queue handles retry pacing with per-key 2/10/60-second cooldowns.
+On 429 or 503 the item's capability also pauses new single-item starts
+for the server's Retry-After (up to 60 seconds, at least 2 seconds).
 Only newly discovered records in a version-checked folder snapshot acknowledge
 redundant ordinary reads. A background reply that arrives after its read has
 been retired cannot apply snapshots or cancel item reads. Shared successes

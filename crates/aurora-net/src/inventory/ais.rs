@@ -336,6 +336,7 @@ fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], de
 struct TryState {
     /// A throttle or an overload (429 or 503) was answered.
     overloaded: std::sync::atomic::AtomicBool,
+    retry_after_secs: std::sync::atomic::AtomicU64,
     /// When the attempt in progress was sent; `None` between attempts.
     sending: std::sync::Mutex<Option<std::time::Instant>>,
 }
@@ -394,6 +395,9 @@ async fn get_with(
     let mut timeouts = 0;
     loop {
         attempt += 1;
+        if attempt > 1 {
+            crate::probe::http_retry(crate::probe::HttpKind::Inventory);
+        }
         let timed = crate::probe::HttpRequest::start(crate::probe::HttpKind::Inventory);
         if let Some(state) = state {
             state.sending(Some(std::time::Instant::now()));
@@ -436,6 +440,17 @@ async fn get_with(
                 t.finish(status, 0, false);
             }
             let failure = FetchError::status_of(status);
+            let wait = retry_after(&response);
+            if let Some(state) = state {
+                state.sending(None);
+                if matches!(status, 429 | 503) {
+                    use std::sync::atomic::Ordering::Relaxed;
+                    state.overloaded.store(true, Relaxed);
+                    state
+                        .retry_after_secs
+                        .fetch_max(wait.unwrap_or_default().as_secs().min(60), Relaxed);
+                }
+            }
             // (a gateway that gave up on a subtree read gives up on it
             // again: the walk reads it in parts at once; a throttle, 429,
             // waits as always)
@@ -443,13 +458,7 @@ async fn get_with(
             let gateway = matches!(status, 502 | 504) && timeout_retries < RETRY_ATTEMPTS;
             if failure.kind == FetchFailure::Transient && attempt <= retries && !gateway {
                 log::debug!("AIS inventory read failed (status {status}); retry {attempt}");
-                if let Some(state) = state {
-                    state.sending(None);
-                    if matches!(status, 429 | 503) {
-                        state.overloaded.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-                tokio::time::sleep(retry_backoff(attempt, retry_after(&response))).await;
+                tokio::time::sleep(retry_backoff(attempt, wait)).await;
                 continue;
             }
             return Err(failure);
@@ -552,14 +561,17 @@ pub struct ItemReads {
     pub missing: Vec<Uuid>,
     /// Network error, other status, unreadable answer: proves nothing.
     pub failed: Vec<Uuid>,
+    /// The overloaded AIS item capability should pause before starting another read.
+    pub overload_pause: Option<std::time::Duration>,
 }
 
-/// The session queue owns admission and recovery. Bound this logical read,
-/// including paced HTTP retries, independently of the subtree deadlines.
+/// One HTTP attempt. The session queue owns admission and retry pacing so
+/// an unavailable original cannot hold an active slot through nested retries.
 pub(crate) async fn read_one_item(http: &reqwest::Client, cap: &str, owner: Uuid, id: Uuid) -> ItemReads {
     let mut result = ItemReads::default();
     let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
-    match tokio::time::timeout(TREE_TIMEOUT, get(http, url)).await {
+    let state = TryState::default();
+    match tokio::time::timeout(TREE_TIMEOUT, get_with(http, url, TREE_TIMEOUT, 0, 0, Some(&state))).await {
         Ok(Ok(doc)) => match parse_item_reply(&doc, id, owner) {
             Ok(item) => result.items.push(item),
             Err(reason) => {
@@ -578,6 +590,10 @@ pub(crate) async fn read_one_item(http: &reqwest::Client, cap: &str, owner: Uuid
             log::debug!("AIS item {id} exceeded its 180-second read budget");
             result.failed.push(id);
         }
+    }
+    use std::sync::atomic::Ordering::Relaxed;
+    if state.overloaded.load(Relaxed) {
+        result.overload_pause = Some(std::time::Duration::from_secs(state.retry_after_secs.load(Relaxed).max(2)));
     }
     result
 }
@@ -1157,6 +1173,36 @@ mod tests {
         assert_eq!(error.kind, FetchFailure::TooBig);
         assert_eq!(error.status, Some(403));
         assert_eq!(server.await.expect("server"), 1, "a hard limit is not hammered with retries");
+    }
+
+    #[tokio::test]
+    async fn an_overloaded_session_item_returns_after_one_attempt_with_its_retry_hint() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("request");
+            let mut request = Vec::new();
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let mut buffer = [0; 1024];
+                let n = socket.read(&mut buffer).await.expect("read");
+                assert_ne!(n, 0);
+                request.extend_from_slice(&buffer[..n]);
+            }
+            socket
+                .write_all(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 27\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .expect("response");
+            crate::test_http::finish(socket);
+            listener
+        });
+        let http = crate::test_http_client();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(4), read_one_item(&http, &url, id(2), id(3)))
+            .await
+            .expect("the reader returns before retrying");
+        let _listener = server.await.expect("server");
+        assert_eq!(result.failed, [id(3)]);
+        assert!(result.missing.is_empty());
+        assert_eq!(result.overload_pause, Some(std::time::Duration::from_secs(27)));
     }
 
     #[tokio::test]

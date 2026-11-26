@@ -36,6 +36,7 @@ struct Queue {
     entries: HashMap<Key, Entry>,
     waiting: VecDeque<Key>,
     failures: HashMap<Key, (u8, Instant, Arc<str>)>,
+    overloaded_until: Option<(Arc<str>, Instant)>,
     next_generation: u64,
     suspended: bool,
 }
@@ -118,7 +119,7 @@ impl Queue {
         let index = self.waiting.iter().position(|key| {
             self.entries
                 .get(key)
-                .is_some_and(|entry| entry.due <= now && entry.reading_generation.is_none())
+                .is_some_and(|entry| self.due(entry) <= now && entry.reading_generation.is_none())
         })?;
         let key = self.waiting.remove(index)?;
         let entry = self.entries.get_mut(&key)?;
@@ -170,9 +171,26 @@ impl Queue {
         self.waiting
             .iter()
             .filter_map(|key| self.entries.get(key))
-            .map(|entry| entry.due)
+            .map(|entry| self.due(entry))
             .min()
             .map_or(Duration::from_secs(86400), |due| due.saturating_duration_since(Instant::now()))
+    }
+
+    fn due(&self, entry: &Entry) -> Instant {
+        self.overloaded_until
+            .as_ref()
+            .filter(|(cap, _)| *cap == entry.cap)
+            .map_or(entry.due, |(_, until)| entry.due.max(*until))
+    }
+
+    fn pause_overloaded(&mut self, cap: Arc<str>, delay: Duration) {
+        let due = Instant::now() + delay;
+        let pause = self.overloaded_until.get_or_insert_with(|| (cap.clone(), due));
+        if pause.0 == cap {
+            pause.1 = pause.1.max(due);
+        } else {
+            *pause = (cap, due);
+        }
     }
 }
 
@@ -298,6 +316,9 @@ impl Reader {
                         // Serialize delivery with a capability switch.
                         let mut queue = worker_queue.lock();
                         if let Some((ordinary, attachment)) = queue.finish(&read, !reads.failed.is_empty()) {
+                            if let Some(delay) = reads.overload_pause {
+                                queue.pause_overloaded(read.cap, delay);
+                            }
                             super::send_item_reads(&worker_events, reads, attachment && !ordinary, attachment && ordinary);
                         }
                     },
@@ -373,6 +394,23 @@ mod tests {
         let new = queue.start().unwrap();
         assert_eq!(&*new.cap, "new");
         assert_eq!(queue.finish(&new, false), Some((true, true)));
+    }
+
+    #[test]
+    fn an_overload_pauses_new_item_reads_on_that_capability_only() {
+        let mut queue = Queue::default();
+        let owner = Uuid::nil();
+        let first = Uuid::from_u128(1);
+        let next = Uuid::from_u128(2);
+        let old: Arc<str> = Arc::from("old");
+        queue.enqueue(owner, vec![first, next], old.clone(), false);
+        let active = queue.start().unwrap();
+        assert_eq!(queue.finish(&active, true), Some((true, false)));
+        queue.pause_overloaded(old, Duration::from_secs(27));
+        assert!(queue.start().is_none(), "a fresh item must also honor the server's pause");
+        assert!(queue.delay() > Duration::from_secs(20));
+        queue.retarget(Some(Arc::from("new")));
+        assert_eq!(queue.start().unwrap().key, (owner, next));
     }
 
     #[tokio::test]
