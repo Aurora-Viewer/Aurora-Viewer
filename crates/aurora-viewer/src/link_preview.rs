@@ -926,7 +926,7 @@ pub struct PostInfo {
 }
 
 pub enum Content {
-    Post(PostInfo, Option<Picture>),
+    Post(PostInfo, Option<(Picture, String)>),
     Picture(Picture),
     Video(VideoInfo),
     Clip(ClipInfo),
@@ -1224,7 +1224,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 && let Some((post, poster)) = services::from_dailymotion_oembed(&page, &body)
             {
                 let picture = match poster {
-                    Some(source) => fetch_picture(client, &source).await.ok(),
+                    Some(source) => post_picture(client, source).await,
                     None => None,
                 };
                 return Ok(Content::Post(post, picture));
@@ -1236,7 +1236,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 .unwrap_or_default();
             let summary = services::metadata(&html, &["og:description", "twitter:description"]).unwrap_or_default();
             let picture = match services::publisher_poster(&page, &html) {
-                Some(source) => fetch_picture(client, &source).await.ok(),
+                Some(source) => post_picture(client, source).await,
                 None => None,
             };
             return Ok(Content::Post(PostInfo { title, channel, summary }, picture));
@@ -1254,7 +1254,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 source
             })
         }
-        Step::Feed { feed, page } => {
+        Step::Feed { feed, page, share_image } => {
             let now = std::time::Instant::now();
             let paused = REDDIT_PAUSE.lock().ok().and_then(|p| *p).is_some_and(|until| now < until);
             if !paused {
@@ -1268,9 +1268,13 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                     }
                     if let Some(post) = services::reddit_feed(&xml) {
                         let mut picture = None;
-                        for source in services::reddit_animation(&xml).into_iter().chain(services::from_feed(&xml)) {
-                            if let Ok(image) = fetch_picture(client, &source).await {
-                                picture = Some(image);
+                        let sources = services::reddit_animation(&xml)
+                            .into_iter()
+                            .chain([share_image])
+                            .chain(services::from_feed(&xml));
+                        for source in sources {
+                            picture = post_picture(client, source).await;
+                            if picture.is_some() {
                                 break;
                             }
                         }
@@ -1279,8 +1283,8 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 }
             }
             {
-                let endpoint =
-                    reqwest::Url::parse_with_params("https://www.reddit.com/oembed", [("url", page)]).map_err(|_| Failure::Unavailable)?;
+                let endpoint = reqwest::Url::parse_with_params("https://www.reddit.com/oembed", [("url", page.as_str())])
+                    .map_err(|_| Failure::Unavailable)?;
                 if let Some(data) = download(client, endpoint.as_str(), "application/json", 64 * 1024)
                     .await
                     .ok()
@@ -1290,10 +1294,10 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                     return Ok(Content::Post(
                         PostInfo {
                             title: title.chars().take(200).collect(),
-                            channel: data["author_name"].as_str().unwrap_or("").chars().take(80).collect(),
+                            channel: reddit_permalink_channel(&page, data["author_name"].as_str()),
                             summary: String::new(),
                         },
-                        None,
+                        post_picture(client, share_image).await,
                     ));
                 }
             }
@@ -1316,6 +1320,36 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
         source,
         sensitive,
     })
+}
+
+async fn post_picture(client: &reqwest::Client, source: String) -> Option<(Picture, String)> {
+    Some((fetch_picture(client, &source).await.ok()?, source))
+}
+
+fn reddit_permalink_channel(page: &str, author: Option<&str>) -> String {
+    if let Ok(page) = reqwest::Url::parse(page)
+        && let Some(mut parts) = page.path_segments()
+        && parts.next() == Some("r")
+        && let Some(community) = parts.next()
+        && !community.is_empty()
+        && community.len() <= 80
+        && community.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        return format!("r/{community}");
+    }
+    author.unwrap_or_default().chars().take(80).collect()
+}
+
+#[test]
+fn reddit_preview_byline_uses_the_community_of_the_permalink() {
+    assert_eq!(
+        reddit_permalink_channel("https://www.reddit.com/r/funnyvideos/comments/15byye8/example/", Some("example")),
+        "r/funnyvideos"
+    );
+    assert_eq!(
+        reddit_permalink_channel("https://www.reddit.com/comments/15byye8/", Some("example")),
+        "example"
+    );
 }
 
 /// A clip a service's page leads to, with its thumbnail: the first of its

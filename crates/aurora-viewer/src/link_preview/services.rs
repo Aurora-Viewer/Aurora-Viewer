@@ -95,7 +95,7 @@ pub(super) enum Step {
     /// Public sharing metadata from a recognized video publisher.
     Publisher(String),
     /// Reddit's Atom feed of a post.
-    Feed { feed: String, page: String },
+    Feed { feed: String, page: String, share_image: String },
     /// A Bluesky or X post as JSON (`from_post`).
     Post(String),
 }
@@ -312,6 +312,7 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
                     Step::Feed {
                         feed: format!("https://www.reddit.com/comments/{id}/.rss?limit=1"),
                         page,
+                        share_image: format!("https://share.redd.it/preview/post/{id}?format=webp"),
                     },
                 )
             })

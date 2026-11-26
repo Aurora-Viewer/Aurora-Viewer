@@ -127,7 +127,8 @@ fn each_service_s_page_links_are_recognized() {
             step(url),
             Some(Step::Feed {
                 feed: expected_feed.into(),
-                page: format!("https://www.reddit.com{path}")
+                page: format!("https://www.reddit.com{path}"),
+                share_image: "https://share.redd.it/preview/post/demo01?format=webp".into(),
             }),
             "{url}",
         );

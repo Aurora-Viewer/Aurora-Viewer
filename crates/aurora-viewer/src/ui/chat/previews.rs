@@ -425,7 +425,13 @@ impl Previews {
             self.in_flight = self.in_flight.saturating_sub(1);
             let entry = match result {
                 Ok(Content::Picture(p)) => Entry::Picture(Shown::new(ctx, &url, p)),
-                Ok(Content::Post(post, picture)) => Entry::Post(post, picture.map(|p| Shown::new(ctx, &url, p))),
+                Ok(Content::Post(post, picture)) => Entry::Post(
+                    post,
+                    picture.map(|(picture, source)| Shown {
+                        source: Some(source),
+                        ..Shown::new(ctx, &url, picture)
+                    }),
+                ),
                 Ok(Content::Page {
                     picture,
                     source,
@@ -946,9 +952,18 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
                 .inner_margin(10)
                 .show(ui, |ui| {
                     ui.set_max_width(width);
-                    ui.label(RichText::new(&post.title).strong().color(p.ink));
-                    if !post.channel.is_empty() {
-                        ui.label(RichText::new(&post.channel).size(11.5).color(p.muted));
+                    if matches!(target, Target::Page(lp::Service::Reddit)) {
+                        if !post.channel.is_empty() {
+                            ui.label(RichText::new(&post.channel).size(11.5).color(p.muted));
+                        }
+                        if ui.link(RichText::new(&post.title).strong()).clicked() {
+                            super::open_web_link(ui.ctx(), url);
+                        }
+                    } else {
+                        ui.label(RichText::new(&post.title).strong().color(p.ink));
+                        if !post.channel.is_empty() {
+                            ui.label(RichText::new(&post.channel).size(11.5).color(p.muted));
+                        }
                     }
                     if !post.summary.is_empty() {
                         if pv.place == Place::Group && pv.settings.blur_groups && !pv.revealed.contains(&k) {
