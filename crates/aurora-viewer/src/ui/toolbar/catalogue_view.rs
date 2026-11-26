@@ -313,7 +313,14 @@ pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &comman
     let mut tiles: Vec<_> = catalogue(layout)
         .into_iter()
         .filter(|button| {
-            ![super::structure::DIVIDER, super::drawers::FLOATING, super::drawers::INTERFACES].contains(&button.command.as_str())
+            // "Customize interface" ends the Interfaces block
+            ![
+                super::structure::DIVIDER,
+                super::drawers::FLOATING,
+                super::drawers::INTERFACES,
+                super::drawers::EDIT_INTERFACE,
+            ]
+            .contains(&button.command.as_str())
         })
         .map(|button| Tile {
             category: category(&button.command),

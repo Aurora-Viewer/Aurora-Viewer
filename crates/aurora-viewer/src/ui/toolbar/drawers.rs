@@ -30,8 +30,17 @@ pub const IMPORT_ICON: &str = "file-upload-filled";
 /// drawn (`shown_buttons`): it keeps none and takes no drop.
 pub const INTERFACES: &str = "drawer:interfaces";
 /// The command of an Interfaces block's button: this, then a built-in
-/// preset's key (`Preset::key`) or a personal interface's item id.
+/// preset's key (`Preset::key`) or a personal interface's item id, or
+/// `INTERFACE_CUSTOMIZE`.
 pub const INTERFACE_PREFIX: &str = "interface:";
+/// The key of the Interfaces block's last button, "Customize interface",
+/// which opens the editor as the command it replaces on the bars did.
+pub const INTERFACE_CUSTOMIZE: &str = "customize";
+/// "Customize interface": on a bar, it becomes the Interfaces block, which
+/// ends with it (`migrate_interfaces`).
+pub const EDIT_INTERFACE: &str = "edit_interface";
+/// The Interfaces block's button.
+pub const INTERFACES_ICON: &str = "layout-dashboard-filled";
 /// The catalogue's "Floating block": dropped on the screen, or on a bar with
 /// its button there, a new empty floating block.
 pub const FLOATING: &str = "toolbar_floating";
@@ -161,10 +170,68 @@ pub(super) fn interface_buttons<'a>(
         icon: "file-text-filled".into(),
         tooltip: name.into(),
     });
+    let customize = ToolButton {
+        command: format!("{INTERFACE_PREFIX}{INTERFACE_CUSTOMIZE}"),
+        icon: super::catalogue::find(EDIT_INTERFACE)
+            .map_or("layout-grid-filled", |command| command.icon)
+            .into(),
+        tooltip: aurora_i18n::tr!("toolbar-interface-edit").into(),
+    };
     builtin
         .chain(personal)
         .filter(|button| !settings.hidden_interfaces.contains(&button.command[INTERFACE_PREFIX.len()..]))
+        .chain([customize])
         .collect()
+}
+
+/// "Customize interface" on a bar becomes the Interfaces block, which ends
+/// with it (human request, 2026-11-26): its button takes its place, with
+/// its look, its block's style and profile; where the block is already
+/// placed, it goes. True when one changed.
+pub(super) fn migrate_interfaces(settings: &mut ToolbarSettings) -> bool {
+    let toggle = ToolButton {
+        command: INTERFACES.into(),
+        icon: INTERFACES_ICON.into(),
+        tooltip: String::new(),
+    };
+    let bars = || {
+        [&settings.left, &settings.right, &settings.top]
+            .into_iter()
+            .chain(settings.buttons.iter())
+            .flatten()
+    };
+    if !bars().any(|button| button.command == EDIT_INTERFACE) {
+        return false;
+    }
+    let mut placed = bars().any(|button| button.command == INTERFACES);
+    let lists = settings
+        .buttons
+        .iter_mut()
+        .chain([&mut settings.left, &mut settings.right, &mut settings.top]);
+    for buttons in lists {
+        buttons.retain_mut(|button| {
+            if button.command != EDIT_INTERFACE {
+                return true;
+            }
+            if placed {
+                return false;
+            }
+            *button = toggle.clone();
+            placed = true;
+            true
+        });
+    }
+    settings.drawers.entry(INTERFACES.into()).or_default();
+    if let Some(look) = settings.appearance.remove(EDIT_INTERFACE) {
+        settings.appearance.entry(INTERFACES.into()).or_insert(look);
+    }
+    if let Some(style) = settings.block_styles.remove(EDIT_INTERFACE) {
+        settings.block_styles.entry(INTERFACES.into()).or_insert(style);
+    }
+    if let Some(profile) = settings.block_profiles.remove(EDIT_INTERFACE) {
+        settings.block_profiles.entry(INTERFACES.into()).or_insert(profile);
+    }
+    true
 }
 
 /// Opens or closes the eye of the interface `key` (`Preset::key` or a

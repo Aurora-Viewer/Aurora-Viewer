@@ -2605,9 +2605,20 @@ fn the_interfaces_block_lists_the_presets_then_the_personal_interfaces() {
             .collect::<Vec<_>>()
     };
     let all = commands(&settings);
-    assert_eq!(all.len(), presets::Preset::ALL.len() + 2);
+    assert_eq!(all.len(), presets::Preset::ALL.len() + 3);
     assert_eq!(all[0], ("interface:light".into(), presets::Preset::Light.label().into()));
     assert_eq!(all[presets::Preset::ALL.len()], (format!("interface:{mine}"), "Mine".into()));
+    // Customize interface ends it, without an eye
+    assert_eq!(
+        all.last().cloned(),
+        Some(("interface:customize".into(), aurora_i18n::tr!("toolbar-interface-edit").into()))
+    );
+    assert!(drawers::show_interface(&mut settings, "customize", false));
+    assert_eq!(
+        commands(&settings).last().map(|(command, _)| command.as_str()),
+        Some("interface:customize")
+    );
+    settings.hidden_interfaces.clear();
     assert!(drawers::show_interface(&mut settings, "legacy", false));
     assert!(drawers::show_interface(&mut settings, &mine.to_string(), false));
     assert!(!drawers::show_interface(&mut settings, "legacy", false), "already hidden");
@@ -2623,6 +2634,45 @@ fn the_interfaces_block_lists_the_presets_then_the_personal_interfaces() {
     for preset in presets::Preset::ALL {
         assert_eq!(presets::Preset::from_key(preset.key()), Some(preset));
     }
+}
+
+/// "Customize interface" on a bar becomes the Interfaces block, with its
+/// look and its block's style, once (human request,
+/// 2026-11-26).
+#[test]
+fn customize_interface_on_a_bar_becomes_the_interfaces_block() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(vec![button("inventory")]),
+        top: vec![button("people"), button(drawers::EDIT_INTERFACE)],
+        ..Default::default()
+    };
+    settings.appearance.insert(
+        drawers::EDIT_INTERFACE.into(),
+        appearance::Appearance {
+            mode: Some(ButtonMode::TextOnly),
+            icon: None,
+        },
+    );
+    settings.block_styles.insert(
+        drawers::EDIT_INTERFACE.into(),
+        BarStyle {
+            mode: Some(ButtonMode::TextOnly),
+            ..Default::default()
+        },
+    );
+    settings.sanitize();
+    assert_eq!(commands(&settings.top), ["people", drawers::INTERFACES]);
+    assert!(settings.drawers[drawers::INTERFACES].buttons.is_empty());
+    assert_eq!(settings.appearance[drawers::INTERFACES].mode, Some(ButtonMode::TextOnly));
+    assert_eq!(settings.block_styles[drawers::INTERFACES].mode, Some(ButtonMode::TextOnly));
+    assert!(!settings.appearance.contains_key(drawers::EDIT_INTERFACE));
+    assert!(!settings.migrate_interfaces(), "once");
+    // another one goes: the block is placed
+    settings.left = vec![button(drawers::EDIT_INTERFACE)];
+    assert!(settings.migrate_interfaces());
+    assert!(settings.left.is_empty());
+    assert_eq!(commands(&settings.top), ["people", drawers::INTERFACES]);
 }
 
 /// The import bar takes its buttons once, out of a drawer included (the

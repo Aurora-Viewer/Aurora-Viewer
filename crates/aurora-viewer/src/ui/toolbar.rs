@@ -487,6 +487,12 @@ impl ToolbarSettings {
     /// (2026-11-24): a button saved with the former ones, on any bar or in
     /// a drawer, takes the new ones; an icon the user chose is in its
     /// appearance and stays.
+    /// "Customize interface" on a bar becomes the Interfaces block
+    /// (`drawers::migrate_interfaces`).
+    pub fn migrate_interfaces(&mut self) -> bool {
+        drawers::migrate_interfaces(self)
+    }
+
     pub fn migrate_build_icons(&mut self) -> bool {
         const FORMER: [(&str, &str); 2] = [("build_edit", "pencil-filled"), ("build_create", "circle-plus-filled")];
         let mut changed = false;
@@ -620,6 +626,7 @@ impl ToolbarSettings {
     /// No empty or retired command (`howto`), and each command once over the four toolbars
     /// (the bottom one first).
     pub fn sanitize(&mut self) {
+        self.migrate_interfaces();
         self.separators.retain(|command, style| {
             *style = style.sanitized();
             command.starts_with(structure::PREFIX) && *style != Default::default()

@@ -332,6 +332,7 @@ pub(crate) fn apply(profile: Profile, settings: &mut crate::settings::Settings) 
     settings.show_bug_report = profile.toolbar.placed("report_bug", &Layout::default());
     let mut toolbar = profile.toolbar;
     toolbar.migrate_build_icons();
+    toolbar.migrate_interfaces();
     settings.toolbar = Some(toolbar);
 }
 

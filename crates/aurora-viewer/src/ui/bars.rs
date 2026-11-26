@@ -4191,7 +4191,11 @@ pub(crate) fn toolbar_row(
         // nor edited alone (`drawers::INTERFACES`)
         if let Some(key) = b.command.strip_prefix(super::toolbar::drawers::INTERFACE_PREFIX) {
             if response.clicked() && !row.editing {
-                toolbar.interface_clicked(key);
+                if key == super::toolbar::drawers::INTERFACE_CUSTOMIZE {
+                    *action = BarAction::CustomizeBars;
+                } else {
+                    toolbar.interface_clicked(key);
+                }
             }
             continue;
         }

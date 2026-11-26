@@ -17,9 +17,11 @@ static OLD_SCHOOL: LazyLock<ToolbarSettings> = LazyLock::new(|| bundled(include_
 static BUILDER: LazyLock<ToolbarSettings> = LazyLock::new(|| bundled(include_str!("../../../assets/toolbar/aurora-builder.json")));
 
 fn bundled(text: &str) -> ToolbarSettings {
-    super::profile::read(text)
+    let mut toolbar = super::profile::read(text)
         .expect("bundled toolbar preset must be a valid interface profile")
-        .toolbar
+        .toolbar;
+    toolbar.migrate_interfaces();
+    toolbar
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -267,18 +269,23 @@ mod tests {
                 let editor = toolbar
                     .top
                     .split(|button| structure::is_separator(&button.command))
-                    .find(|group| group.iter().any(|button| button.command == "edit_interface"))
-                    .expect("Aurora presets expose interface customization");
+                    .find(|group| group.iter().any(|button| button.command == crate::ui::toolbar::drawers::INTERFACES))
+                    .expect("Aurora presets expose the Interfaces block, which ends with Customize interface");
+                assert!(toolbar.drawers.contains_key(crate::ui::toolbar::drawers::INTERFACES));
                 // the Aurora layout's block also shows and hides the quick
                 // import bar (human request, 2026-11-25)
                 let commands: Vec<_> = editor.iter().map(|button| button.command.as_str()).collect();
                 if matches!(preset, Preset::Light | Preset::Photographer) {
                     let import = crate::ui::toolbar::drawers::IMPORT_BAR;
-                    assert_eq!(commands, ["edit_interface", import]);
+                    assert_eq!(commands, [crate::ui::toolbar::drawers::INTERFACES, import]);
                     assert_eq!(toolbar.drawers[import].buttons.len(), 9, "its buttons");
                     assert!(toolbar.shortcuts.contains_key(import), "its Ctrl+U");
                 } else {
-                    assert_eq!(commands, ["edit_interface"], "the editor has its own block");
+                    assert_eq!(
+                        commands,
+                        [crate::ui::toolbar::drawers::INTERFACES],
+                        "the interfaces have their own block"
+                    );
                 }
             }
             let all = Bar::ALL
@@ -401,7 +408,7 @@ mod tests {
         assert!(structure::is_separator(&old.top[1].command));
         assert_eq!(old.top[2].command, "report_bug");
         assert!(structure::is_separator(&old.top[3].command));
-        assert_eq!(old.top[4].command, "edit_interface");
+        assert_eq!(old.top[4].command, crate::ui::toolbar::drawers::INTERFACES);
         assert!(structure::is_separator(&old.top[5].command));
         let start = old
             .top
