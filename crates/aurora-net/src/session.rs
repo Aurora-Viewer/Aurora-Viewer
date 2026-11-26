@@ -4477,19 +4477,20 @@ impl Session<'_> {
         self.sims.get(&addr).map(|s| s.handle).unwrap_or(0)
     }
 
-    /// `LLMessageSystem::sendSemiReliable`: one reliable send, no resend,
-    /// timeout `max(1s, 5 × ping)` (`llmessage/message.cpp`).
+    /// `LLMessageSystem::sendSemiReliable` (indra/llmessage/message.cpp):
+    /// one reliable send, never resent, given up after
+    /// `max(1 s, 5 × getPingDelayAveraged())`, the circuit's own timeout
+    /// for a reliable packet (`timeout: None`).
     fn send_semi<M: Msg>(&mut self, addr: SocketAddr, msg: &M) {
         let Some(sim) = self.sims.get_mut(&addr) else {
             return;
         };
-        let timeout = (sim.circuit.rtt * 5).max(Duration::from_secs(1));
         let _ = sim.circuit.send_reliable_with(
             &self.sock,
             &self.sh.stats,
             msg,
             Resend {
-                timeout: Some(timeout),
+                timeout: None,
                 max_retries: 0,
             },
         );

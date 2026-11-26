@@ -265,7 +265,11 @@ impl Fetch {
         }
         let mut batches = Vec::new();
         for (region, mut items) in requests {
-            items.sort_by_key(|item| item.image);
+            // LLTextureFetchWorker::Compare (indra/newview/lltexturefetch.cpp):
+            // the highest priority first, so a simulator with more than 50
+            // wants gets the most important ones in the first message; the
+            // id keeps equal priorities in a stable order
+            items.sort_by(|a, b| b.priority.total_cmp(&a.priority).then(a.image.cmp(&b.image)));
             push_chunks(region, items, &mut batches);
         }
         for (region, mut items) in cancel_by {
@@ -551,6 +555,33 @@ mod tests {
         assert_eq!(back, message);
         // 10 Hz: nothing else leaves in the same tenth of a second.
         assert!(fetch.take_outbound(t0 + Duration::from_millis(50), |_| true).is_empty());
+    }
+
+    #[test]
+    fn the_most_wanted_bakes_leave_in_the_first_message() {
+        let mut fetch = Fetch::default();
+        // 51 wants: the one of id 51 ranks first, ids 1 and 2 share the
+        // lowest priority, every other one is in between
+        let wants: Vec<Want> = (1..=51)
+            .map(|n| Want {
+                priority: match n {
+                    51 => 900.0,
+                    1 | 2 => 1.0,
+                    _ => 500.0,
+                },
+                ..want(n)
+            })
+            .collect();
+        fetch.sync(&wants);
+        let batches = fetch.take_outbound(Instant::now(), |_| true);
+        assert_eq!(batches.len(), 2, "{batches:?}");
+        assert_eq!(batches[0].items[0].image, Uuid::from_u128(51));
+        assert_eq!(batches[0].items[1].image, Uuid::from_u128(3));
+        // the lowest two, in id order, are the last: one ends the first
+        // message, the other is alone in the second
+        assert_eq!(batches[0].items[49].image, Uuid::from_u128(1));
+        assert_eq!(batches[1].items.len(), 1);
+        assert_eq!(batches[1].items[0].image, Uuid::from_u128(2));
     }
 
     /// A want for a region with no circuit yet is not spent on a send that
