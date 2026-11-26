@@ -9089,6 +9089,18 @@ failure. Grid validation and any paid upload are performed by the human.
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
 
+- **Inventory Give checks**: use `AURORA_DEMO_CONV=aurora:compact` with
+  `AURORA_DEMO_INVENTORY=aurora-give-next-owner` and
+  `AURORA_DEMO_CONV_GIVE=next-owner`. The unattached object's current rights
+  include Transfer and its next-owner rights exclude Transfer. The private
+  chat drop opens the confirmation with Give enabled. With
+  `AURORA_DEMO_INVENTORY=aurora-give-worn` and
+  `AURORA_DEMO_CONV_GIVE=worn`, the worn full-permission boots are excluded.
+  Give is grey and the reason is visible in the dialog. Capture at frame
+  780 with `AURORA_FPS_LIMIT=60`. Debug logs from
+  `aurora_viewer::app::inventory` record the chat-drop preflight without
+  names or IDs.
+
 - **`AURORA_DEMO_CONTENTS_DROP=world|panel[:ctrl][:drop]`**: with
   `AURORA_DEMO_INVENTORY=1` and `AURORA_DEMO_ACTIONS=1`, a selection of
   four entries (a notecard, a script, a sound and an object) is carried

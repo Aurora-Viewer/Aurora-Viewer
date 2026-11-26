@@ -683,6 +683,20 @@ fn offers_are_bounded_and_include_the_folder_as_the_first_tuple() {
 }
 
 #[test]
+fn giving_uses_current_transfer_rights_and_reports_a_worn_object_separately() {
+    let mut inv = fixture();
+    let item = id(8100);
+    let object = inv.items.get_mut(&item).expect("demo object");
+    object.next_owner_mask &= !TRANSFER;
+    assert_ne!(object.owner_mask & TRANSFER, 0);
+    assert!(offer(&inv, item, &HashSet::new()).is_ok());
+    assert_eq!(offer(&inv, item, &HashSet::from([item])).unwrap_err(), OfferRefusal::Worn);
+    assert_eq!(offer(&inv, id(8113), &HashSet::new()).unwrap_err(), OfferRefusal::Link);
+    inv.items.get_mut(&item).expect("demo object").owner_mask &= !TRANSFER;
+    assert_eq!(offer(&inv, item, &HashSet::new()), Err(OfferRefusal::NoTransfer));
+}
+
+#[test]
 fn a_multi_resident_gift_rechecks_permissions_when_it_is_sent() {
     let mut inv = fixture();
     let worn = HashSet::new();

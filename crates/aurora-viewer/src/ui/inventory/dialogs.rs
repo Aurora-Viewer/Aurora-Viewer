@@ -466,10 +466,16 @@ fn share(
                     (Fate::NoCopy, aurora_i18n::tr!("ui-inventory-dialogs-no-copy"), String::new())
                 }
                 Ok(_) => (Fate::Given, "", String::new()),
-                Err(why) if item.is_some_and(|it| rules::held(inv, it) & rules::TRANSFER == 0) => {
-                    (Fate::Excluded, aurora_i18n::tr!("ui-inventory-dialogs-no-transfer"), why)
-                }
-                Err(why) => (Fate::Excluded, aurora_i18n::tr!("ui-inventory-dialogs-left-out"), why),
+                Err(why @ rules::OfferRefusal::NoTransfer) if item.is_some() => (
+                    Fate::Excluded,
+                    aurora_i18n::tr!("ui-inventory-dialogs-no-transfer"),
+                    why.text().to_owned(),
+                ),
+                Err(why) => (
+                    Fate::Excluded,
+                    aurora_i18n::tr!("ui-inventory-dialogs-left-out"),
+                    why.text().to_owned(),
+                ),
             };
             (icon, rules::name(inv, *id).to_string(), fate, tag, why)
         })
@@ -551,17 +557,15 @@ fn share(
         // icons line up
         if excluded > 0 {
             ui.add_space(4.0);
-            share_note(
-                ui,
-                "info-circle-filled",
-                p.muted,
-                None,
-                aurora_i18n::tr!(
+            let reason = match rows.as_slice() {
+                [(_, _, Fate::Excluded, _, why)] if !why.is_empty() => why.clone(),
+                _ => aurora_i18n::tr!(
                     "ui-inventory-dialogs-not-given",
                     count = excluded,
                     number = aurora_i18n::integer(excluded as i64)
                 ),
-            );
+            };
+            share_note(ui, "info-circle-filled", p.muted, None, reason);
         }
         if no_copy > 0 {
             ui.add_space(4.0);
@@ -579,13 +583,16 @@ fn share(
         }
         ui.add_space(14.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // nothing left to give: Give stays greyed, the line above says why
-            ui.add_enabled_ui(!given.is_empty(), |ui| {
-                let primary =
-                    crate::ui::widgets::primary_button_sized(ui, p, aurora_i18n::tr!("ui-inventory-dialogs-give"), Vec2::new(96.0, 28.0));
-                ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("inventory_share_give", ui_id)), primary.rect));
-                give = !given.is_empty() && (primary.clicked() || crate::ui::widgets::enter_pressed(ui));
-            });
+            let label = aurora_i18n::tr!("ui-inventory-dialogs-give");
+            let size = Vec2::new(96.0, 28.0);
+            let primary = if given.is_empty() {
+                widgets::action_button_if(ui, p, "", label, widgets::ActionKind::Flat, size, false)
+            } else {
+                let primary = widgets::primary_button_sized(ui, p, label, size);
+                give = primary.clicked() || widgets::enter_pressed(ui);
+                primary
+            };
+            ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("inventory_share_give", ui_id)), primary.rect));
             cancel = crate::ui::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(96.0, 28.0)).clicked();
         });
     });
@@ -2907,9 +2914,22 @@ mod tests {
             modifiers: Default::default(),
         };
         st.dialog = Some(EditDialog::Share(vec![no_transfer], vec![resident]));
+        let mut texts = Vec::new();
         for _ in 0..3 {
-            frame(&mut st, Vec::new());
+            texts = frame(&mut st, Vec::new()).0;
         }
+        assert!(
+            texts
+                .iter()
+                .any(|text| text == aurora_i18n::tr!("inventory-give-transfer-required"))
+        );
+        let disabled_give = ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_share_give", st.ui_id))))
+            .expect("give button")
+            .center();
+        frame(&mut st, vec![egui::Event::PointerMoved(disabled_give), press(true, disabled_give)]);
+        let (_, actions) = frame(&mut st, vec![press(false, disabled_give)]);
+        assert!(actions.is_empty() && st.dialog.is_some(), "clicking cannot give the excluded item");
         let (_, actions) = frame(&mut st, vec![enter]);
         assert!(actions.is_empty() && st.dialog.is_some(), "nothing to give");
         // Escape

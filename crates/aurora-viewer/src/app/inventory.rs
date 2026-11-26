@@ -17,6 +17,26 @@ enum Undo {
 }
 
 impl App {
+    pub(super) fn log_inventory_give_drop(&self, items: &[Uuid]) {
+        if !log::log_enabled!(log::Level::Debug) {
+            return;
+        }
+        let inventory = &self.world.inventory;
+        let worn = crate::ui::appearance::items::worn_items(&self.world);
+        for &id in items {
+            let result = rules::offer(inventory, id, &worn);
+            let item = inventory.items.get(&id);
+            log::debug!(
+                "inventory chat give preflight: asset_type={:?}, current_transfer={:?}, next_owner_transfer={:?}, worn={}, result={:?}",
+                item.map(|item| item.asset_type),
+                item.map(|item| rules::held(inventory, item) & rules::TRANSFER != 0),
+                item.map(|item| item.next_owner_mask & rules::TRANSFER != 0),
+                worn.contains(&id),
+                result.map(|_| ())
+            );
+        }
+    }
+
     fn offer_feedback(&mut self, reason: crate::world::inventory::outgoing::Feedback) {
         let text = reason.text();
         self.inventory_ui.message.clone_from(&text);

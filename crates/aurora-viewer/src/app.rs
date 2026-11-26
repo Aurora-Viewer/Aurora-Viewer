@@ -20861,6 +20861,7 @@ impl App {
                         // the inventory's Share dialog confirms, then gives
                         // (LLGiveInventory::doGiveInventoryItem)
                         ui::chat::ConvAction::GiveItems { to, items } => {
+                            self.log_inventory_give_drop(&items);
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
                             self.inventory_ui.share_in_session = Some(to);
                         }
@@ -24717,6 +24718,8 @@ impl ApplicationHandler for App {
                         | "aurora-sidebar-medium"
                         | "aurora-sidebar-wide"
                         | "aurora-rights"
+                        | "aurora-give-worn"
+                        | "aurora-give-next-owner"
                         | "aurora-no-details"
                         | "aurora-medium-no-details"
                         | "aurora-wide-no-details"
@@ -24814,7 +24817,13 @@ impl ApplicationHandler for App {
                         }
                         // Aurora's window at each width, on the demo object
                         // of the right-click tests, a favourite beside it.
-                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                        let item = uuid::Uuid::from_u128(if view == "aurora-give-worn" { 720 } else { 8100 });
+                        if view == "aurora-give-next-owner"
+                            && let Some(item) = self.world.inventory.items.get_mut(&item)
+                        {
+                            item.next_owner_mask &= !crate::world::inventory::actions::TRANSFER;
+                        }
+                        self.inventory_ui.show_original(&self.world.inventory, item);
                         if view.starts_with("aurora-worn") || view == "aurora-search-worn" {
                             self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(715));
                             self.inventory_ui.selected = None;
@@ -24823,7 +24832,7 @@ impl ApplicationHandler for App {
                         if let Some(shirt) = self.world.inventory.items.get_mut(&uuid::Uuid::from_u128(8111)) {
                             shirt.favorite = true;
                         }
-                        if view == "aurora-rights" {
+                        if matches!(view.as_str(), "aurora-rights" | "aurora-give-next-owner") {
                             self.settings.inventory.rights = ui::inventory::permissions::Rights::Both;
                         }
                         if view.starts_with("aurora-columns") {

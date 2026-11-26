@@ -1128,45 +1128,89 @@ pub fn paste_allowed(
             || ids.iter().any(|id| original(inv, *id).is_some_and(|id| outfit_link_target(inv, id))))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OfferRefusal {
+    TooManyEntries,
+    Protected,
+    Trash,
+    Worn,
+    FolderUnavailable,
+    Missing,
+    Link,
+    NoTransfer,
+    EmptyFolder,
+}
+
+impl OfferRefusal {
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::TooManyEntries => aurora_i18n::tr!("world-inventory-actions-sharing-is-limited-to-42-items-per-folder"),
+            Self::Protected => aurora_i18n::tr!("inventory-give-protected"),
+            Self::Trash => aurora_i18n::tr!("inventory-give-trash"),
+            Self::Worn => aurora_i18n::tr!("inventory-give-take-off-first"),
+            Self::FolderUnavailable => aurora_i18n::tr!("world-inventory-actions-choose-a-fully-loaded-personal-folder"),
+            Self::Missing => aurora_i18n::tr!("common-item-not-found"),
+            Self::Link => aurora_i18n::tr!("inventory-give-use-original"),
+            Self::NoTransfer => aurora_i18n::tr!("inventory-give-transfer-required"),
+            Self::EmptyFolder => aurora_i18n::tr!("world-inventory-actions-the-folder-is-empty"),
+        }
+    }
+}
+
 /// LLGiveInventory::giveInventoryCategory: type/UUID tuples, bounded below
 /// the simulator's UDP MTU. Refuse a partially loaded folder rather than offer
 /// an incomplete selection. Copy-protected contents need UI confirmation.
-pub fn offer(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>) -> Result<Vec<u8>, String> {
+pub fn offer(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>) -> Result<Vec<u8>, OfferRefusal> {
     let mut todo = vec![id];
     let mut seen = HashSet::new();
     let mut bucket = Vec::new();
     while let Some(id) = todo.pop() {
         if !seen.insert(id) || seen.len() > 42 {
-            return Err(aurora_i18n::tr!("world-inventory-actions-sharing-is-limited-to-42-items-per-folder").into());
+            return Err(OfferRefusal::TooManyEntries);
         }
-        if !mutable(inv, id) || in_type(inv, id, 14) || worn.contains(&id) {
-            return Err(aurora_i18n::tr!("world-inventory-actions-a-protected-trashed-or-worn-item-cannot-be-shared").into());
+        if !mutable(inv, id) {
+            return Err(if inv.items.contains_key(&id) || inv.folders.contains_key(&id) {
+                OfferRefusal::Protected
+            } else {
+                OfferRefusal::Missing
+            });
+        }
+        if in_type(inv, id, 14) {
+            return Err(OfferRefusal::Trash);
+        }
+        // LLGiveInventory::isInventoryGiveAcceptable checks whether the
+        // object is worn independently of its owner's transfer permission.
+        if worn.contains(&id) {
+            return Err(OfferRefusal::Worn);
         }
         if let Some(f) = inv.folders.get(&id) {
             if f.state != FetchState::Fetched || f.info.type_default != -1 {
-                return Err(aurora_i18n::tr!("world-inventory-actions-choose-a-fully-loaded-personal-folder").into());
+                return Err(OfferRefusal::FolderUnavailable);
             }
             bucket.push(8);
             bucket.extend_from_slice(id.as_bytes());
             todo.extend(f.items.iter().chain(&f.children).copied());
         } else {
-            let it = inv.items.get(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
-            if held(inv, it) & TRANSFER == 0 || matches!(it.asset_type, 24 | 25) {
-                return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-non-transferable-item-or-a").into());
+            let it = inv.items.get(&id).ok_or(OfferRefusal::Missing)?;
+            if matches!(it.asset_type, 24 | 25) {
+                return Err(OfferRefusal::Link);
+            }
+            if held(inv, it) & TRANSFER == 0 {
+                return Err(OfferRefusal::NoTransfer);
             }
             bucket.push(it.asset_type as u8);
             bucket.extend_from_slice(id.as_bytes());
         }
     }
     if bucket.len() == 17 && inv.folders.contains_key(&id) {
-        return Err(aurora_i18n::tr!("world-inventory-actions-the-folder-is-empty").into());
+        return Err(OfferRefusal::EmptyFolder);
     }
     Ok(bucket)
 }
 
 /// Rebuild the confirmed gift from current permissions before each send.
 pub fn offer_for_residents(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>, recipient_count: usize) -> Result<Vec<u8>, String> {
-    let bucket = offer(inv, id, worn)?;
+    let bucket = offer(inv, id, worn).map_err(OfferRefusal::text)?;
     if recipient_count > 1 && offer_has_no_copy(inv, &bucket) {
         return Err(aurora_i18n::tr!("ui-inventory-dialogs-no-copy-one-resident").into());
     }
