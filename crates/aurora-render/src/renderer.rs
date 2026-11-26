@@ -2274,6 +2274,10 @@ pub(crate) struct Backend {
     /// The lean scene pipelines being compiled after the start (Metal,
     /// `start_lean_build`), if any.
     lean_build: Option<LeanBuild>,
+    /// The samples, SSR and soft shadows a lean build failed for (its worker
+    /// not started, or stopped without the pipelines): not tried again until
+    /// they change, so a build that always fails is not started every frame.
+    lean_failed: Option<(u32, bool, bool)>,
     /// The pipeline workers still running, a set no longer wanted included:
     /// waited for when the renderer is dropped (`wait_pipeline_workers`).
     pipeline_workers: Vec<std::thread::JoinHandle<()>>,
@@ -4853,6 +4857,7 @@ impl Backend {
             msaa_samples,
             pipeline_build: None,
             lean_build: None,
+            lean_failed: None,
             soft_pipelines: soft_path(&settings),
             pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
@@ -7717,6 +7722,9 @@ impl Backend {
             return;
         }
         let (samples, ssr, soft) = (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines);
+        if self.lean_failed == Some((samples, ssr, soft)) {
+            return;
+        }
         if self
             .lean_build
             .as_ref()
@@ -7770,7 +7778,10 @@ impl Backend {
                 });
             }
             // the frames keep the full shader
-            Err(e) => log::error!("cannot start the lean pipelines' worker: {e}"),
+            Err(e) => {
+                log::error!("cannot start the lean pipelines' worker: {e}");
+                self.lean_failed = Some((samples, ssr, soft));
+            }
         }
     }
 
@@ -7792,6 +7803,7 @@ impl Backend {
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 log::error!("the lean pipelines' worker stopped: the full scene shader stays");
+                self.lean_failed = Some((build.samples, build.ssr, build.soft));
                 self.lean_build = None;
                 return;
             }

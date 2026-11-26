@@ -37,7 +37,12 @@ const LEGACY_NAN_CHECK: u32 = 0x40_0000;
 /// unless `AURORA_SCENE_VARIANT=full`. When not, the lean pipelines are not
 /// made and `choose` is not asked.
 pub(crate) fn specialised(backend: wgpu::Backend) -> bool {
-    backend_specialised(backend) && !forced_full()
+    specialised_with(backend, forced_full())
+}
+
+/// `specialised` with `AURORA_SCENE_VARIANT=full` given (`forced_full`).
+fn specialised_with(backend: wgpu::Backend, forced_full: bool) -> bool {
+    backend_specialised(backend) && !forced_full
 }
 
 fn backend_specialised(backend: wgpu::Backend) -> bool {
@@ -116,7 +121,12 @@ pub(crate) fn material_classes(blend: &[crate::types::DrawCmd], records: &crate:
 
 fn forced_full() -> bool {
     static FULL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FULL.get_or_init(|| std::env::var("AURORA_SCENE_VARIANT").is_ok_and(|v| v.trim() == "full"))
+    *FULL.get_or_init(|| forced_full_from(std::env::var("AURORA_SCENE_VARIANT").ok().as_deref()))
+}
+
+/// Whether `AURORA_SCENE_VARIANT`'s value keeps the full variant.
+fn forced_full_from(value: Option<&str>) -> bool {
+    value.is_some_and(|v| v.trim() == "full")
 }
 
 #[cfg(test)]
@@ -134,7 +144,21 @@ mod tests {
             wgpu::Backend::Noop,
         ] {
             assert!(!backend_specialised(other), "{other:?}");
+            assert!(!specialised_with(other, false), "{other:?}");
         }
+        assert!(specialised_with(wgpu::Backend::Metal, false));
+        // AURORA_SCENE_VARIANT=full keeps Metal on the full shader
+        assert!(!specialised_with(wgpu::Backend::Metal, true));
+    }
+
+    #[test]
+    fn only_full_forces_the_full_variant() {
+        assert!(forced_full_from(Some("full")));
+        assert!(forced_full_from(Some(" full\n")));
+        assert!(!forced_full_from(None));
+        assert!(!forced_full_from(Some("")));
+        assert!(!forced_full_from(Some("lean")));
+        assert!(!forced_full_from(Some("Full")));
     }
 
     #[test]

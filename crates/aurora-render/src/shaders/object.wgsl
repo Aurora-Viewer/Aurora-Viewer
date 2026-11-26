@@ -1050,9 +1050,11 @@ fn avatar_snow_on(m_in: Material, in: VsOut) -> Material {
 // (`scene_variant::material_class`): 0 any face; 1 a face with a legacy
 // material (LLMaterial), 2 a PBR face, 3 a face with neither; none of them
 // fullbright nor a portal surface. The
-// tests below then fold to constants and the paths a class never takes
-// leave the shader, which holds fewer registers: the same light, more
-// fragments in flight on the GPU.
+// tests below then fold to constants where the class decides them, and the
+// paths they rule out leave the shader, which holds fewer registers: the
+// same light, more fragments in flight on the GPU. The PBR class (2) still
+// reads the legacy material flag (`rec_legacy_mat`), so its pipeline keeps
+// the legacy path: the safe choice for a face carrying both flags.
 override MATERIAL_CLASS: u32 = 0u;
 
 fn rec_pbr(flags: u32) -> bool {

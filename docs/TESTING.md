@@ -13322,7 +13322,7 @@ What the inventory must show with these scenarios:
   on Metal the scene pass draws with pipelines specialised to the frame
   (lean variants without the paths no face can take: portal clip, debug
   views, NaN check, water effects, the other sky's branch, the rez effect
-  while nothing rezzes) and to the faces' material class (legacy material,
+  while nothing rezzes and, with the rez grid on, no texture still loads) and to the faces' material class (legacy material,
   PBR, neither). With the variable the lean pipelines are not made and every
   frame draws with the full shader, as Vulkan always does: for a comparison
   of the image (captures of both at the same frame, with
