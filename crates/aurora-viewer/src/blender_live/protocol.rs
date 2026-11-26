@@ -152,8 +152,8 @@ pub struct PreparedSource {
     pub scene: Arc<Scene>,
     /// A hash of what Blender sent for this source (its encoded batches,
     /// colours, materials and texture ids, name and link), made on the
-    /// transport thread: the window
-    /// tells which object a revision changed (`Live::changed`).
+    /// transport thread: the window tells which object a revision changed
+    /// (`Live::changed`).
     pub digest: u64,
 }
 
