@@ -126,6 +126,26 @@ fn objects_and_folders_need_ctrl_in_the_world_and_go_into_the_prim_under_the_poi
 }
 
 #[test]
+fn marketplace_purchases_can_drop_directly_into_contents() {
+    let (mut w, _, child) = world();
+    crate::world::inventory::demo::seed_received(&mut w.inventory, w.agent_id);
+    let object = id(8_300_002);
+    let script = id(SCRIPT);
+    let mut item = w.inventory.items[&script].clone();
+    item.id = id(8_300_004);
+    item.parent = w.inventory.items[&object].parent;
+    let inbox_script = item.id;
+    w.inventory.add_items(vec![item]);
+    assert!(rules::in_type(&w.inventory, object, 50));
+    assert!(rules::in_type(&w.inventory, inbox_script, 50));
+
+    let child_id = w.objects.get(child).unwrap().key.local_id;
+    let drops = plan(&w, &[object, inbox_script], child, false, Target::Panel).unwrap();
+    assert_eq!(sent(&drops), vec![(child_id, object, None), (child_id, inbox_script, Some(true))]);
+    assert!(drops.iter().all(|d| d.consume.is_none()));
+}
+
+#[test]
 fn one_refused_item_refuses_the_whole_drop() {
     let (mut w, root, child) = world();
     let other = id(88001);

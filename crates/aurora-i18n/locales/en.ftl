@@ -14573,6 +14573,8 @@ received-delivery-several = { $count ->
     }
 received-delivery-demo = Example Marketplace purchase
 received-marketplace-folder = MarketPlace
+received-inbox-destination-blocked = Choose a regular inventory folder. You cannot move or paste items into Marketplace Received Items.
+received-inbox-edit-move-out = Move this item out of Marketplace Received Items to edit its properties.
 received-filing-demo-gift = Example gift
 received-filing-demo-photo = Example photo
 received-filing-demo-object = Gift from a scripted object

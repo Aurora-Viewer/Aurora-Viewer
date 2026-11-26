@@ -757,6 +757,16 @@ fn details_below(
         line = aurora_i18n::tr!("inventory-details-in", kind = line, folder = place);
     }
     ui.label(egui::RichText::new(line).size(12.5).color(p.muted));
+    if inv.items.get(&id).is_some_and(|it| !matches!(it.asset_type, 2 | 24 | 25)) && rules::in_type(inv, id, 50) {
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(aurora_i18n::tr!("received-inbox-edit-move-out"))
+                    .size(12.5)
+                    .color(p.muted),
+            )
+            .wrap(),
+        );
+    }
     if let Some(folder) = inv.folders.get(&id) {
         ui.horizontal(|ui| {
             if widgets::action_button(

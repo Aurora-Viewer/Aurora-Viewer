@@ -14578,6 +14578,8 @@ received-delivery-several = { $count ->
     }
 received-delivery-demo = Achat Marketplace de démonstration
 received-marketplace-folder = MarketPlace
+received-inbox-destination-blocked = Choisissez un dossier normal de l’inventaire. Vous ne pouvez pas déplacer ni coller d’articles dans les réceptions du Marketplace.
+received-inbox-edit-move-out = Sortez cet article des réceptions du Marketplace pour modifier ses propriétés.
 received-filing-demo-gift = Cadeau de démonstration
 received-filing-demo-photo = Photo de démonstration
 received-filing-demo-object = Cadeau envoyé par un objet scripté

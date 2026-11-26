@@ -607,7 +607,7 @@ pub(super) fn shortcuts(
                         rules::parent(inv, id).unwrap_or(root)
                     }
                 });
-                if paste_allowed(inv, st, to, prefs, facts) {
+                if rules::in_type(inv, to, 50) || paste_allowed(inv, st, to, prefs, facts) {
                     paste(inv, to, false, st, prefs, facts, actions);
                 }
             }

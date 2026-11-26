@@ -14419,6 +14419,8 @@ received-delivery-several = { $count ->
     }
 received-delivery-demo = マーケットプレイスの購入の例
 received-marketplace-folder = マーケットプレイス
+received-inbox-destination-blocked = 通常のインベントリフォルダーを選んでください。マーケットプレイスの受取アイテムには移動や貼り付けができません。
+received-inbox-edit-move-out = プロパティを編集するには、このアイテムをマーケットプレイスの受取アイテムから別のフォルダーに移動してください。
 received-filing-demo-gift = 贈り物の例
 received-filing-demo-photo = 写真の例
 received-filing-demo-object = スクリプト付きオブジェクトからの贈り物

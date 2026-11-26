@@ -321,7 +321,8 @@ pub fn next_owner_editable(it: &aurora_net::inventory::InvItem) -> bool {
     it.owner_mask & TRANSFER != 0 && !matches!(it.inv_type, 2 | 3) && !matches!(it.asset_type, 2 | 3)
 }
 /// Can be edited (renamed or created in): not in the Library, the current
-/// outfit nor Received Items, which only lets its contents leave.
+/// outfit nor Received Items. Moving and using existing entries have their
+/// own checks.
 /// The locked folders do not count: they only hold themselves in place
 /// (`movable`).
 pub fn mutable(inv: &Inventory, id: Uuid) -> bool {
@@ -597,6 +598,9 @@ pub fn move_selection(
         return super::super::outfit_folders::move_into(inv, ids, to);
     }
     if !destination(inv, to) && Some(to) != system(inv, 14) {
+        if in_type(inv, to, 50) {
+            return Err(aurora_i18n::tr!("received-inbox-destination-blocked").into());
+        }
         return Err(aurora_i18n::tr!("world-inventory-actions-this-folder-cannot-receive-the-selection").into());
     }
     let mut change = Mutation::default();
@@ -703,6 +707,9 @@ pub fn paste(
     worn: &HashSet<Uuid>,
 ) -> Result<Mutation, String> {
     if ids.is_empty() || !(if links { link_destination(inv, to) } else { destination(inv, to) }) {
+        if !ids.is_empty() && in_type(inv, to, 50) {
+            return Err(aurora_i18n::tr!("received-inbox-destination-blocked").into());
+        }
         return Err(aurora_i18n::tr!("world-inventory-actions-the-clipboard-is-empty-or-the-folder-is-protected").into());
     }
     if let Some(root) = crate::world::marketplace::root(inv).filter(|root| under(inv, to, *root)) {

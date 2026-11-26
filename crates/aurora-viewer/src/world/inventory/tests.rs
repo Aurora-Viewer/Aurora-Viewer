@@ -405,6 +405,28 @@ fn protected_folder_cannot_move_but_its_contents_can_move_in_and_out() {
 }
 
 #[test]
+fn moving_or_pasting_into_received_items_explains_the_folder_restriction() {
+    let mut inv = fixture();
+    super::demo::seed_received(&mut inv, id(1));
+    let outside = id(8100);
+    let inbox = system(&inv, 50).expect("inbox");
+    let purchase = id(8_300_001);
+    let none = HashSet::new();
+    let message = aurora_i18n::tr!("received-inbox-destination-blocked");
+
+    for to in [inbox, purchase] {
+        assert_eq!(move_selection(&inv, &[outside], to, &none, &none).err().as_deref(), Some(message));
+        for (cut, links) in [(true, false), (false, false), (false, true)] {
+            assert_eq!(
+                paste(&inv, &[outside], to, cut, links, &none, &none).err().as_deref(),
+                Some(message)
+            );
+        }
+    }
+    assert!(move_selection(&inv, &[id(8_300_002)], inv.root, &none, &none).is_ok());
+}
+
+#[test]
 fn a_folder_holding_a_locked_folder_goes_to_the_trash_with_it() {
     let inv = fixture();
     let (outer, locked) = (id(8000), id(8001));
