@@ -300,7 +300,6 @@ owned-land-contribution = { $area } m²
 toolbar-edit = Symbolleistenschaltflächen…
 toolbar-title = Schaltflächen in der Symbolleiste
 toolbar-remove = Diese Schaltfläche entfernen
-toolbar-locked = Gesperrt
 toolbar-locked-bars = Leisten sperren
 toolbar-help = Ziehen Sie eine Schaltfläche in das Dock oder in eine Seitenleiste. Legen Sie es hier zurück, um es zu entfernen. Klicken Sie mit der rechten Maustaste auf eine Leiste, um dieselben Einstellungen vorzunehmen.
 toolbar-help-classic = Ziehen Sie eine Schaltfläche in die untere Leiste oder in eine Seitenleiste. Legen Sie es hier zurück, um es zu entfernen. Klicken Sie mit der rechten Maustaste auf eine Leiste, um dieselben Einstellungen vorzunehmen.

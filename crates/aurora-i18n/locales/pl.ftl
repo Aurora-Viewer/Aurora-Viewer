@@ -301,7 +301,6 @@ owned-land-contribution = { $area } m²
 toolbar-edit = Przyciski paska narzędzi…
 toolbar-title = Przyciski paska narzędzi
 toolbar-remove = Usuń ten przycisk
-toolbar-locked = Zablokowane
 toolbar-locked-bars = Zablokuj paski
 toolbar-help = Przeciągnij przycisk do doku lub na pasek boczny; upuść go z powrotem tutaj, aby go usunąć. Kliknij pasek prawym przyciskiem myszy, aby otworzyć te same ustawienia.
 toolbar-help-classic = Przeciągnij przycisk do dolnego paska lub paska bocznego; upuść go z powrotem tutaj, aby go usunąć. Kliknij prawym przyciskiem myszy pasek, aby uzyskać te same ustawienia.

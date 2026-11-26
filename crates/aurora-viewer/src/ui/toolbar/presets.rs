@@ -4,7 +4,7 @@
 
 use std::sync::LazyLock;
 
-use super::{Align, BarStyle, ButtonMode, Sizing, ToolbarSettings, catalogue, structure};
+use super::{Align, BarStyle, ButtonMode, Sizing, ToolbarSettings, catalogue, drawers, structure};
 use crate::{
     settings::Settings,
     ui::skin::{Layout, ToolButton},
@@ -147,6 +147,19 @@ impl Preset {
                 .iter()
                 .filter_map(|id| button(id))
                 .collect();
+                // the Interfaces block right of Report a bug (human request,
+                // 2026-11-26)
+                if let Some(at) = settings.top.iter().position(|button| button.command == "report_bug") {
+                    settings.top.insert(
+                        at + 1,
+                        ToolButton {
+                            command: drawers::INTERFACES.into(),
+                            icon: drawers::INTERFACES_ICON.into(),
+                            tooltip: String::new(),
+                        },
+                    );
+                    settings.drawers.insert(drawers::INTERFACES.into(), Default::default());
+                }
                 settings
             }
         }
@@ -267,7 +280,15 @@ mod tests {
             assert_eq!(settings.chat_thumbnails, ChatThumbnails::TopRight);
             let toolbar = settings.toolbar.as_ref().expect("preset layout");
             assert_eq!(toolbar.block_styles["bar_chat"].align, Some(Align::Start));
-            if preset != Preset::Legacy {
+            if preset == Preset::Legacy {
+                let top: Vec<_> = toolbar.top.iter().map(|button| button.command.as_str()).collect();
+                assert_eq!(
+                    top[..3],
+                    ["aurora_menu", "report_bug", crate::ui::toolbar::drawers::INTERFACES],
+                    "the Interfaces block right of Report a bug"
+                );
+                assert!(toolbar.drawers.contains_key(crate::ui::toolbar::drawers::INTERFACES));
+            } else {
                 let editor = toolbar
                     .top
                     .split(|button| structure::is_separator(&button.command))

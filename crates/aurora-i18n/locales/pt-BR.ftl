@@ -301,7 +301,6 @@ owned-land-contribution = { $area } m²
 toolbar-edit = Botões da barra de ferramentas…
 toolbar-title = Botões da barra de ferramentas
 toolbar-remove = Remover este botão
-toolbar-locked = Bloqueado
 toolbar-locked-bars = Travar as barras
 toolbar-help = Arraste um botão para o dock ou para uma barra lateral; solte-o aqui para removê-lo. Clique com o botão direito em uma barra para obter as mesmas configurações.
 toolbar-help-classic = Arraste um botão para a barra inferior ou para uma barra lateral; solte-o aqui para removê-lo. Clique com o botão direito em uma barra para obter as mesmas configurações.

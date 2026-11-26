@@ -512,8 +512,11 @@ fn normal_native_contexts_share_one_customization_entry_and_select_the_clicked_c
                     let copy = menu_point(&bench, aurora_i18n::tr!("bug-copy-version"));
                     assert!(copy.y < button_heading.y, "its own action first");
                 }
+                // the lock, the interface edited or not, just above the
+                // shared entry (human request, 2026-11-26)
+                let lock = menu_point(&bench, aurora_i18n::tr!("toolbar-interface-locked"));
+                assert!(lock.y < entries[0].1.top(), "the lock before the shared entry: {command}");
                 for key in [
-                    "toolbar-locked",
                     "toolbar-add-spacer",
                     "ui-bars-show-in-island",
                     "ui-bars-show-clock",
@@ -690,7 +693,7 @@ fn block_settings_remove_only_the_selected_block_and_respect_locks() {
                 open_block_settings(&mut bench, bar, "inventory");
                 assert_eq!(bench.settings, before, "opening settings never saves");
                 let footer = menu_point(&bench, aurora_i18n::tr!("toolbar-interface-edit"));
-                assert!(footer.y > menu_point(&bench, aurora_i18n::tr!("toolbar-locked")).y);
+                assert!(footer.y > menu_point(&bench, aurora_i18n::tr!("toolbar-interface-locked")).y);
                 let remove = menu_point(&bench, aurora_i18n::tr!("toolbar-block-remove"));
                 bench.pointer(remove, Some(true));
                 bench.pointer(remove, Some(false));

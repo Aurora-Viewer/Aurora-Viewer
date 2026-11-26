@@ -298,7 +298,6 @@ owned-land-contribution = { $area } 平方米
 toolbar-edit = 工具列按鈕…
 toolbar-title = 工具列按鈕
 toolbar-remove = 移除此按鈕
-toolbar-locked = 已鎖定
 toolbar-locked-bars = 鎖定工具列
 toolbar-help = 將按鈕拖到停靠區或側邊工具列；拖回此處即可移除。在工具列上按一下右鍵可開啟相同設定。
 toolbar-help-classic = 將按鈕拖到底部工具列或側邊工具列；拖回此處即可移除。在工具列上按一下右鍵可開啟相同設定。

@@ -435,13 +435,20 @@ pub(super) fn float(settings: &mut ToolbarSettings, layout: &Layout, bar: Bar, c
     }
     if is_drawer(command) {
         let toggle = settings.bar(bar, layout).iter().find(|button| button.command == command)?.clone();
-        let drawer = settings.drawers.get_mut(command)?;
+        let drawer = settings.drawers.get(command)?;
         if drawer.floating.is_some() || drawer.buttons.iter().any(|button| structure::is_block(&button.command)) {
             return None;
         }
+        // the icon it is drawn with: the one chosen for it, else its button's
+        let icon = settings
+            .appearance
+            .get(command)
+            .and_then(|look| look.icon.clone())
+            .unwrap_or(toggle.icon);
+        let drawer = settings.drawers.get_mut(command)?;
         drawer.floating = Some(Floating {
             name: toggle.tooltip,
-            icon: toggle.icon,
+            icon,
             vertical: drawer.vertical,
             shown: true,
             closes: false,
@@ -464,17 +471,20 @@ pub(super) fn float(settings: &mut ToolbarSettings, layout: &Layout, bar: Bar, c
         .find(|button| !structure::is_separator(&button.command) && !structure::is_divider(&button.command))?
         .clone();
     let profile = take_profile(settings, &buttons[range.clone()]).unwrap_or_default();
-    let icon = settings
-        .appearance
-        .get(&first.command)
-        .and_then(|look| look.icon.clone())
+    // the name and the icon it had as a drawer or a floating block (human
+    // request, 2026-11-26), else its first button's
+    let icon = profile
+        .look
+        .icon
+        .clone()
+        .or_else(|| settings.appearance.get(&first.command).and_then(|look| look.icon.clone()))
         .unwrap_or_else(|| first.icon.clone());
     let name = if profile.name.is_empty() {
         super::label(&first).to_owned()
     } else {
         profile.name.clone()
     };
-    let id = format!("{PREFIX}{}", uuid::Uuid::new_v4());
+    let id = profile.block_id(settings, layout);
     let block_style = settings.block_styles.get(command).copied().unwrap_or_default();
     let mode = block_style.mode.or(settings.style(bar).mode).unwrap_or_default();
     let toggle = ToolButton {
@@ -530,6 +540,13 @@ pub(super) fn dock(settings: &mut ToolbarSettings, layout: &Layout, id: &str) ->
     let floating = drawer.floating.take()?;
     drawer.vertical = floating.vertical;
     if let Some(bar) = settings.location(id, layout) {
+        // its button in the bar: the block's name and icon (human request,
+        // 2026-11-26), which a fixed block made of it keeps
+        let mut buttons = settings.bar(bar, layout).to_vec();
+        if let Some(button) = buttons.iter_mut().find(|button| button.command == id) {
+            *button = floating.button(id);
+            settings.set_bar(bar, buttons);
+        }
         return Some(bar);
     }
     let mut buttons = settings.bar(Bar::Bottom, layout).to_vec();
@@ -543,8 +560,10 @@ pub(super) fn dock(settings: &mut ToolbarSettings, layout: &Layout, id: &str) ->
 
 /// What a fixed block keeps for when it becomes a drawer or a floating
 /// block ("Edit block", human request, 2026-11-26): its button's name and
-/// look, whether it closes after a click, its orientation and whether its
-/// button hides while floating. Saved under one of its buttons
+/// look (its icon included), whether it closes after a click, its
+/// orientation, whether its button hides while floating, and the id of the
+/// drawer or floating block it was (the import block stays the import
+/// block). Saved under one of its buttons
 /// (`ToolbarSettings::block_profiles`), it goes to the drawer it becomes
 /// and comes back when the drawer is a fixed block again.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -561,6 +580,19 @@ pub struct BlockProfile {
     pub hides_button: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub close_button: bool,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub id: String,
+}
+
+impl BlockProfile {
+    /// The id of the drawer or floating block the fixed block becomes: the
+    /// one it was, while no other block has it, else a new one.
+    pub(super) fn block_id(&self, settings: &ToolbarSettings, layout: &Layout) -> String {
+        if is_drawer(&self.id) && self.id != INTERFACES && !settings.drawers.contains_key(&self.id) && !settings.placed(&self.id, layout) {
+            return self.id.clone();
+        }
+        format!("{PREFIX}{}", uuid::Uuid::new_v4())
+    }
 }
 
 /// The profile of the fixed block of `members`: the first one saved under
@@ -596,11 +628,17 @@ pub(super) fn put_profile(settings: &mut ToolbarSettings, members: &[ToolButton]
 }
 
 /// A drawer's or a floating block's profile, for the fixed block it becomes
-/// (Unfold): its button's name and look, its closing, its orientation.
-pub(super) fn drawer_profile(settings: &mut ToolbarSettings, id: &str, drawer: &Drawer, name: &str) -> BlockProfile {
+/// (Unfold): its button's name and look, its icon included, its closing,
+/// its orientation, its id.
+pub(super) fn drawer_profile(settings: &mut ToolbarSettings, id: &str, drawer: &Drawer, toggle: &ToolButton) -> BlockProfile {
+    let mut look = settings.appearance.remove(id).unwrap_or_default();
+    if look.icon.is_none() && !toggle.icon.is_empty() {
+        look.icon = Some(toggle.icon.clone());
+    }
     BlockProfile {
-        name: name.to_owned(),
-        look: settings.appearance.remove(id).unwrap_or_default(),
+        name: toggle.tooltip.clone(),
+        look,
+        id: id.to_owned(),
         closes: Some(drawer.closes),
         vertical: Some(drawer.vertical),
         hides_button: drawer.hides_button,

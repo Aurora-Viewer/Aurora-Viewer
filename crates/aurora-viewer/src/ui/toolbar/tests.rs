@@ -2900,6 +2900,73 @@ fn blocks_drawers_and_floating_blocks_switch_into_one_another() {
     assert!(!settings.drawers.contains_key(drawers::IMPORT_BAR));
 }
 
+/// A block made a fixed block, then a drawer or a floating block again,
+/// keeps the name, the icon and the id it had: the import block stays the
+/// import block (human request, 2026-11-26).
+#[test]
+fn a_block_keeps_its_name_icon_and_id_through_its_types() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(Vec::new()),
+        top: vec![button("search")],
+        ..Default::default()
+    };
+    assert!(settings.ensure_import_bar(&layout()));
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Dock(drawers::IMPORT_BAR.into(), true)),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout(), &mut settings));
+    let bar = settings.location(drawers::IMPORT_BAR, &layout()).expect("its button in a bar");
+    state.pending = Some(Edit::Float(bar, drawers::IMPORT_BAR.into(), egui::pos2(10.0, 60.0)));
+    assert!(state.commit(&layout(), &mut settings));
+    // renamed while floating: only its block holds the new name
+    settings
+        .drawers
+        .get_mut(drawers::IMPORT_BAR)
+        .and_then(|drawer| drawer.floating.as_mut())
+        .expect("floating")
+        .name = "My imports".into();
+    let pos = egui::pos2(10.0, 60.0);
+    let floating = |settings: &ToolbarSettings| {
+        let floating = settings.drawers[drawers::IMPORT_BAR]
+            .floating
+            .clone()
+            .expect("the import block, floating");
+        (floating.name, floating.icon)
+    };
+    for _ in 0..2 {
+        // a fixed block, then floating again
+        state.pending = Some(Edit::Dock(drawers::IMPORT_BAR.into(), false));
+        assert!(state.commit(&layout(), &mut settings));
+        assert!(!settings.drawers.contains_key(drawers::IMPORT_BAR));
+        let bar = settings.location("import_texture", &layout()).expect("a fixed block");
+        state.pending = Some(Edit::Float(bar, "import_texture".into(), pos));
+        assert!(state.commit(&layout(), &mut settings));
+        assert_eq!(floating(&settings), ("My imports".into(), drawers::IMPORT_ICON.into()));
+    }
+    // a fixed block, a drawer, then floating again
+    state.pending = Some(Edit::Dock(drawers::IMPORT_BAR.into(), false));
+    assert!(state.commit(&layout(), &mut settings));
+    let bar = settings.location("import_texture", &layout()).expect("a fixed block");
+    state.pending = Some(Edit::Fold(bar, "import_texture".into()));
+    assert!(state.commit(&layout(), &mut settings));
+    let toggle = settings
+        .bar(bar, &layout())
+        .iter()
+        .find(|button| button.command == drawers::IMPORT_BAR)
+        .expect("the import drawer's button")
+        .clone();
+    assert_eq!(toggle.tooltip, "My imports");
+    assert_eq!(
+        settings.appearance.get(drawers::IMPORT_BAR).and_then(|look| look.icon.as_deref()),
+        Some(drawers::IMPORT_ICON)
+    );
+    state.pending = Some(Edit::Float(bar, drawers::IMPORT_BAR.into(), pos));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(floating(&settings), ("My imports".into(), drawers::IMPORT_ICON.into()));
+}
+
 /// A plain block's shortcut follows it into a drawer, a floating block and
 /// back (human request, 2026-11-25).
 #[test]

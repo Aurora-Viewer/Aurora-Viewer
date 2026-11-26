@@ -1050,8 +1050,15 @@ fn insertion(rects: &[Rect], pos: egui::Pos2, vertical: bool) -> usize {
 }
 
 impl ToolbarUi {
-    /// Shared final row of interface-customization context menus.
+    /// Shared final rows of every interface right click: "Interface
+    /// locked", the interface edited or not (human request, 2026-11-26),
+    /// then "Customize interface".
     pub(crate) fn interface_edit_menu(&mut self, ui: &mut egui::Ui, p: &Palette, command: Option<&str>) {
+        let locked = appearance::settings(ui.ctx()).locked;
+        if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("toolbar-interface-locked"), locked, true) {
+            self.pending = Some(Edit::Lock);
+        }
+        native_context::start_group(ui, p);
         if native_context::item(ui, p) {
             self.open = true;
             let settings = appearance::settings(ui.ctx());
@@ -1170,12 +1177,6 @@ impl ToolbarUi {
                 }
                 None => {}
             }
-            if self.open {
-                native_context::start_group(ui, p);
-                if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("toolbar-locked"), locked, true) {
-                    self.pending = Some(Edit::Lock);
-                }
-            }
             native_context::start_group(ui, p);
             self.interface_edit_menu(ui, p, button.map(|button| button.command.as_str()));
         }
@@ -1254,12 +1255,6 @@ impl ToolbarUi {
         let settings = appearance::settings(ui.ctx());
         section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
         self.drawer_items(ui, p, &settings, id, Bar::Top, Rect::NOTHING, settings.locked);
-        if self.open {
-            native_context::start_group(ui, p);
-            if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("toolbar-locked"), settings.locked, true) {
-                self.pending = Some(Edit::Lock);
-            }
-        }
         native_context::start_group(ui, p);
         self.interface_edit_menu(ui, p, Some(id));
     }
@@ -1602,10 +1597,11 @@ impl ToolbarUi {
                 if buttons[range.clone()].iter().any(|b| drawers::is_drawer(&b.command)) {
                     return false;
                 }
-                let id = format!("{}{}", drawers::PREFIX, uuid::Uuid::new_v4());
                 let block_style = settings.block_styles.get(&command).copied().unwrap_or_default();
                 let mode = block_style.mode.or(settings.style(bar).mode).unwrap_or_default();
                 let profile = drawers::take_profile(settings, &buttons[range.clone()]).unwrap_or_default();
+                // the drawer or floating block it was, its id kept
+                let id = profile.block_id(settings, layout);
                 let mut toggle = crate::ui::bars::top::button(&id, "folder-filled");
                 if !profile.name.is_empty() {
                     toggle.tooltip = profile.name.clone();
@@ -1646,7 +1642,7 @@ impl ToolbarUi {
                     return false;
                 };
                 shortcuts::out_of_drawer(settings, &command, &drawer.buttons);
-                let profile = drawers::drawer_profile(settings, &command, &drawer, &buttons[at].tooltip);
+                let profile = drawers::drawer_profile(settings, &command, &drawer, &buttons[at]);
                 drawers::put_profile(settings, &drawer.buttons, profile);
                 let mut block_style = settings.block_styles.get(&command).copied().unwrap_or_default();
                 block_style.mode = Some(drawer.mode);

@@ -299,7 +299,6 @@ owned-land-contribution = { $area } m²
 toolbar-edit = Pulsanti della barra…
 toolbar-title = Pulsanti della barra
 toolbar-remove = Rimuovi questo pulsante
-toolbar-locked = Bloccata
 toolbar-locked-bars = Blocca le barre
 toolbar-help = Trascinare un pulsante nel dock o in una barra laterale; rimetterlo qui per rimuoverlo. Fare clic destro su una barra per le stesse impostazioni.
 toolbar-help-classic = Trascinare un pulsante nella barra inferiore o in una barra laterale; rimetterlo qui per rimuoverlo. Fare clic destro su una barra per le stesse impostazioni.

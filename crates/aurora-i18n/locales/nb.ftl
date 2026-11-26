@@ -299,7 +299,6 @@ owned-land-contribution = { $area } m²
 toolbar-edit = Verktøylinjeknapper…
 toolbar-title = Verktøylinjeknapper
 toolbar-remove = Fjern denne knappen
-toolbar-locked = Låst
 toolbar-locked-bars = Lås linjene
 toolbar-help = Dra en knapp til dokken eller til en sidelinje; slipp den tilbake her for å fjerne den. Høyreklikk på en linje for de samme innstillingene.
 toolbar-help-classic = Dra en knapp til den nederste linjen eller til en sidelinje; slipp den tilbake her for å fjerne den. Høyreklikk på en linje for de samme innstillingene.

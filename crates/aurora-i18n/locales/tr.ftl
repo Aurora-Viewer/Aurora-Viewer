@@ -299,7 +299,6 @@ owned-land-contribution = { $area } m²
 toolbar-edit = Araç çubuğu düğmeleri…
 toolbar-title = Araç çubuğu düğmeleri
 toolbar-remove = Bu düğmeyi kaldır
-toolbar-locked = Kilitli
 toolbar-locked-bars = Çubukları kilitle
 toolbar-help = Bir düğmeyi rıhtıma veya bir yan çubuğa sürükleyin; kaldırmak için buraya geri bırakın. Aynı ayarlar için bir çubuğa sağ tıklayın.
 toolbar-help-classic = Bir düğmeyi alt çubuğa veya bir yan çubuğa sürükleyin; kaldırmak için buraya geri bırakın. Aynı ayarlar için bir çubuğa sağ tıklayın.
