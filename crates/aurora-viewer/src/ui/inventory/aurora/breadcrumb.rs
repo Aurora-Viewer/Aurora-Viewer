@@ -143,10 +143,16 @@ pub(crate) fn resolve(inv: &Inventory, base: Uuid, text: &str) -> Option<Uuid> {
         // the longest name that ends where a level ends
         let next = subfolders(inv, at)
             .into_iter()
-            .filter_map(|(id, name)| {
-                strip_name(rest, &name)
-                    .filter(|after| after.is_empty() || after.starts_with(SEPARATOR))
-                    .map(|after| (id, name.len(), after))
+            .flat_map(|(id, label)| {
+                // Keep paths written with the stored system folder name usable.
+                [label, rules::name(inv, id)]
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(move |(index, name)| {
+                        strip_name(rest, &name)
+                            .filter(|after| after.is_empty() || after.starts_with(SEPARATOR))
+                            .map(|after| (id, (name.len(), index == 0), after))
+                    })
             })
             .max_by_key(|(_, len, _)| *len)?;
         at = next.0;
