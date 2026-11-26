@@ -418,6 +418,11 @@ fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFol
     });
 }
 
+/// A `FetchInventory2` item read's timeout: the Legacy Viewer's
+/// `initHttpRequest` (llinventorymodel.cpp, `setTransferTimeout(300)`).
+/// Deliberate difference: one try, where llcorehttp retries on top.
+const LEGACY_ITEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Items read, items the server says do not exist, and failed reads.
 fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool) {
     if !reads.items.is_empty() {
@@ -428,11 +433,17 @@ fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::It
         });
     }
     if !reads.missing.is_empty() {
-        let _ = events.send(NetEvent::InventoryItemsMissing { items: reads.missing });
+        let _ = events.send(NetEvent::InventoryItemsMissing {
+            items: reads.missing,
+            attachment,
+        });
     }
     if !reads.failed.is_empty() {
         log::warn!("{} inventory item reads failed", reads.failed.len());
-        let _ = events.send(NetEvent::InventoryItemsFailed { items: reads.failed });
+        let _ = events.send(NetEvent::InventoryItemsFailed {
+            items: reads.failed,
+            attachment,
+        });
     }
 }
 
@@ -3950,13 +3961,18 @@ impl Session<'_> {
                 }
             };
             if let Some(cap) = ais {
-                for chunk in items.chunks(16) {
+                for chunk in items.chunks(crate::inventory::ais::ITEM_CHUNK) {
                     receive(crate::inventory::ais::read_items(&http, &cap, owner, chunk).await);
                 }
             } else if let Some(url) = legacy {
                 for chunk in items.chunks(50) {
                     let body = crate::inventory::fetch_items_body(chunk, owner);
-                    let reads = match caps::post_llsd(&http, &url, &body).await {
+                    // (each chunk answers within LEGACY_ITEM_TIMEOUT, so the
+                    // viewer's one-read-at-a-time claim outlasts it)
+                    let posted = tokio::time::timeout(LEGACY_ITEM_TIMEOUT, caps::post_llsd(&http, &url, &body))
+                        .await
+                        .unwrap_or_else(|_| Err(caps::CapsError::Http("timed out".to_owned())));
+                    let reads = match posted {
                         Ok(doc) => crate::inventory::item_reads(&doc, chunk),
                         Err(e) => {
                             log::warn!("item fetch failed: {e}");
@@ -4295,18 +4311,22 @@ impl Session<'_> {
             }
             "TeleportFailed" => {
                 let reason = b["Info"][0]["Reason"].as_str().to_owned();
+                let alert = &b["AlertInfo"][0];
+                let code = alert["Message"].as_str().to_owned();
                 transition::end(
                     Some(transition::Kind::Teleport),
-                    &format!("failed (TeleportFailed: {reason})"),
+                    &format!(
+                        "failed (TeleportFailed: {reason}{})",
+                        if code.is_empty() { String::new() } else { format!(", {code}") }
+                    ),
                     &self.sh.stats,
                 );
                 // handle_teleport_access_blocked: a refusal for the rating
-                let alert = &b["AlertInfo"][0];
                 let extra = crate::teleport_access::extra_bytes(&alert["ExtraParams"]);
-                if let Some(blocked) = crate::teleport_access::from_alert_info(alert["Message"].as_str(), &extra) {
+                if let Some(blocked) = crate::teleport_access::from_alert_info(&code, &extra) {
                     emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
                 }
-                emit(self.sh, NetEvent::TeleportFailed { reason });
+                emit(self.sh, crate::teleport_failed::event(reason, Some((code, &extra))));
             }
             "DisableSimulator" => {
                 transition::link(|| {
@@ -5749,25 +5769,30 @@ impl Session<'_> {
             );
         } else if id == TeleportFailed::ID {
             let m: TeleportFailed = pkt.decode()?;
+            let alert = m
+                .alert_info
+                .first()
+                .map(|info| (field_str(&info.message), info.extra_params.as_slice()));
             transition::end(
                 Some(transition::Kind::Teleport),
-                &format!("failed (TeleportFailed: {})", field_str(&m.info.reason)),
+                &format!(
+                    "failed (TeleportFailed: {}{})",
+                    field_str(&m.info.reason),
+                    alert
+                        .as_ref()
+                        .filter(|(code, _)| !code.is_empty())
+                        .map_or(String::new(), |(code, _)| format!(", {code}"))
+                ),
                 &self.sh.stats,
             );
             // handle_teleport_access_blocked: a refusal for the rating
-            if let Some(blocked) = m
-                .alert_info
-                .first()
-                .and_then(|info| crate::teleport_access::from_alert_info(&field_str(&info.message), &info.extra_params))
+            if let Some(blocked) = alert
+                .as_ref()
+                .and_then(|(code, extra)| crate::teleport_access::from_alert_info(code, extra))
             {
                 emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
             }
-            emit(
-                self.sh,
-                NetEvent::TeleportFailed {
-                    reason: field_str(&m.info.reason),
-                },
-            );
+            emit(self.sh, crate::teleport_failed::event(field_str(&m.info.reason), alert));
         } else if id == ParcelMediaCommandMessage::ID {
             let m: ParcelMediaCommandMessage = pkt.decode()?;
             let c = &m.command_block;

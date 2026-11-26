@@ -18,6 +18,9 @@ use uuid::Uuid;
 mod table;
 use table::{Column, Row, Sort, Table};
 
+/// The window id of Script info.
+pub const WINDOW: &str = "land_scripts";
+
 /// SIZE_OF_ONE_KB.
 const KB: i64 = 1024;
 
@@ -36,9 +39,15 @@ pub(super) struct ScriptsUi {
 }
 
 impl ScriptsUi {
-    /// Open on the parcel's tab and ask (StartRequestChain).
-    pub(super) fn open(&mut self) {
-        self.open = true;
+    /// Open on the parcel's tab and ask (StartRequestChain); shown again, a
+    /// minimized window expands (LLFloaterReg::showInstance).
+    pub(super) fn open(&mut self, ctx: &egui::Context) {
+        widgets::open_floater(ctx, WINDOW, &mut self.open);
+        self.start();
+    }
+
+    /// On the parcel's tab, the request chain started again.
+    fn start(&mut self) {
         self.tab = 0;
         self.pending = true;
         self.mine_asked = false;
@@ -49,7 +58,8 @@ impl ScriptsUi {
 
     /// Explicit offline fixtures of the real tables, never grid requests.
     pub(super) fn demo(&mut self, mode: &str) {
-        self.open();
+        self.open = true;
+        self.start();
         match mode {
             "scripts-descending" => self.parcel_table.sort.descending = true,
             "scripts-name" => self.parcel_table.filter = aurora_i18n::tr!("demo-fountain").into(),
@@ -220,7 +230,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, st: &mut ScriptsUi, v: &Vie
     let size = Vec2::new(680.0, 440.0);
     let mut open = st.open;
     let mut floater = Floater::new(
-        "land_scripts",
+        WINDOW,
         aurora_i18n::tr!("ui-land-general-script-info"),
         screen.center() - size / 2.0,
         size,
@@ -515,6 +525,19 @@ fn mine_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, world: &mut Worl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Script info shown again expands when it is minimized
+    /// (LLFloaterReg::showInstance → LLFloater::openFloater).
+    #[test]
+    fn script_info_shown_again_expands() {
+        let ctx = egui::Context::default();
+        let mut scripts = ScriptsUi::default();
+        scripts.open(&ctx);
+        assert!(scripts.open);
+        widgets::minimize_floater(&ctx, WINDOW);
+        scripts.open(&ctx);
+        assert!(widgets::floater_expand_asked(&ctx, WINDOW));
+    }
 
     #[test]
     fn search_keeps_room_for_the_table_and_actions_at_every_window_height() {
