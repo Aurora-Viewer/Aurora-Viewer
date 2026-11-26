@@ -290,6 +290,58 @@ fn hosted_video_rearms_after_autoplay_is_enabled() {
 }
 
 #[test]
+fn autoplay_keeps_its_card_size_between_the_start_and_stop_scroll_boundaries() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let url = "https://i.imgur.com/example.mp4";
+    let (target, start) = lp::decide(&lp::Settings::default(), lp::Place::Im, lp::Sender::Resident, url).unwrap();
+    let lp::Target::Clip(clip) = &target else {
+        panic!("a direct video should resolve to a clip");
+    };
+    let mut pv = Previews::default();
+    pv.cache.insert(
+        url.into(),
+        crate::ui::chat::previews::Cached {
+            entry: Entry::Video {
+                title: "Direct video".into(),
+                channel: String::new(),
+                thumbnail: None,
+                aspect: 16.0 / 9.0,
+                clip: Some(clip.clone()),
+            },
+            used: 0,
+        },
+    );
+    let draw = |pv: &mut Previews, shown_height: f32| {
+        let mut size = Vec2::ZERO;
+        let _ = run_ui(&ctx, input(vec![]), |ui| {
+            let viewport = Rect::from_min_size(ui.cursor().min, Vec2::new(800.0, shown_height));
+            ui.set_clip_rect(ui.clip_rect().intersect(viewport));
+            card(ui, &p, pv, 7, url, &target, start);
+            size = ui.min_rect().size();
+            pv.player_window(ui.ctx(), &p);
+        });
+        size
+    };
+    let poster = draw(&mut pv, 70.0);
+    assert!(!pv.playing());
+    let _ = draw(&mut pv, 130.0);
+    assert!(pv.playing());
+    for _ in 0..5 {
+        assert_eq!(draw(&mut pv, 70.0), poster);
+        assert!(pv.playing(), "a partially visible video should not lose its player");
+    }
+    for _ in 0..5 {
+        draw(&mut pv, 8.0);
+    }
+    assert!(!pv.playing());
+    draw(&mut pv, 70.0);
+    assert!(!pv.playing(), "the video should wait until most of it is visible again");
+    draw(&mut pv, 130.0);
+    assert!(pv.playing());
+}
+
+#[test]
 fn video_hover_actions_copy_the_original_url_and_use_the_browser_confirmation_path() {
     let ctx = Context::default();
     let p = crate::theme::Theme::default().palette();
