@@ -16,7 +16,8 @@
 //!   that their picture shows as on new lines;
 //! - the chat server's recent messages of a group (`Origin::ServerLog`) go
 //!   between the file's history and the new lines, without those the file
-//!   already has.
+//!   already has nor, in a chat a message opened, that message and those
+//!   after it.
 
 use super::chat_log::conversations::{self, Conversation, Kind};
 use super::chat_log::{Entry, Loaded, format, import, names};
@@ -48,11 +49,32 @@ pub struct SessionLog {
     pending: Vec<(SystemTime, String, String)>,
     /// The chat server's history, held until the end of the file was read.
     server_history: Option<Vec<HistoryLine>>,
+    /// The message that opened the chat, until the server's history it
+    /// asked for is merged.
+    opener: Option<Opener>,
+}
+
+/// Where the server's history of a chat a message opened stops
+/// (LLIMSession::addMessagesFromServerHistory, llimview.cpp).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Opener {
+    /// The invitation's timestamp (Unix time): the lines sent before it.
+    At(u32),
+    /// No timestamp: the lines before the server's last copy of the opening
+    /// message (its sender and trimmed text), or every line when it has
+    /// none. Never the local clock: it need not match the server's.
+    Message(Uuid, String),
 }
 
 impl SessionLog {
     pub fn stem(&self) -> Option<&str> {
         self.stem.as_deref()
+    }
+
+    /// The chat was opened by a message: the server's history stops
+    /// before it (the target_* of chatterBoxHistoryCoro).
+    pub(super) fn opened_by(&mut self, opener: Opener) {
+        self.opener = Some(opener);
     }
 }
 
@@ -587,7 +609,13 @@ impl World {
     /// of the one before. `keep_all`: one line per entry, the empty ones
     /// too (the History window counts them). `peer`: the other resident of
     /// a private conversation, the sender of its lines whose name is not
-    /// cached (a group's or the nearby chat's stay unknown then).
+    /// cached, for their picture and their profile (a group's or the nearby
+    /// chat's stay unknown then); its lines are `ChatLine::private_history`,
+    /// whose names are looked up when they are drawn, a line's only when
+    /// the name it was written with is its sender's
+    /// (`ui::chat::cached_line_sender`): one we wrote under an earlier
+    /// account name falls to `peer` here and keeps that name. Every line
+    /// keeps the name the file gives in `from`.
     pub fn history_lines(&self, entries: Vec<Entry>, nearby: bool, keep_all: bool, peer: Option<Uuid>) -> Vec<ChatLine> {
         let own = self.own_log_names();
         let names = &self.social.avatar_names;
@@ -626,15 +654,25 @@ impl World {
                     blocked: false,
                     beyond_range: false,
                     speaker: Default::default(),
+                    private_history: peer.is_some(),
                 }
             })
             .collect()
     }
 
+    /// The other resident of a conversation when it is a private one: a
+    /// private conversation is keyed by the other resident; a group's or a
+    /// conference's is not one, by its session or by our membership (as
+    /// `transcript_stem` names its file), nor the nearby chat (nil). Its
+    /// history lines resolve their names when drawn (`history_lines`).
+    pub fn private_peer(&self, conversation: Uuid) -> Option<Uuid> {
+        let id = conversation;
+        (!id.is_nil() && !self.is_group_session(&id) && self.groups.group(&id).is_none()).then_some(id)
+    }
+
     fn apply_history(&mut self, loaded: Loaded) {
         let nearby = loaded.conversation.is_nil();
-        // a private conversation is keyed by the other resident
-        let peer = (!nearby && !self.is_group_session(&loaded.conversation)).then_some(loaded.conversation);
+        let peer = self.private_peer(loaded.conversation);
         let lines = self.history_lines(loaded.entries, nearby, false, peer);
         if nearby {
             self.nearby_history = HistoryState::Done;
@@ -681,9 +719,18 @@ impl World {
     fn merge_server_history(&mut self, session: Uuid, history: Vec<HistoryLine>) {
         let me = self.agent_id;
         let own = self.own_name();
-        let Some(s) = self.social.ims.iter().find(|s| s.other == session) else {
+        let Some(s) = self.social.ims.iter_mut().find(|s| s.other == session) else {
             return;
         };
+        let opener = s.log.opener.take();
+        let total = history.len();
+        // a chat quiet for a while that one message opens: the server's
+        // only line is that message, whatever its text or time say
+        if total == 1 && opener.is_some() && !s.lines.is_empty() {
+            log::debug!("server history of {session}: the opening message only, 0 kept, 1 dropped");
+            return;
+        }
+        let s = &*s;
         // what the file's history ends with: older server lines are in it
         // or before it, and in its last minute the texts tell
         let last_minute = s.lines.iter().rev().find(|l| l.origin == Origin::Log).map(|l| minute(l.time));
@@ -691,25 +738,40 @@ impl World {
             .lines
             .iter()
             .filter(|l| l.origin == Origin::Log && Some(minute(l.time)) == last_minute)
-            .map(|l| l.text.as_str())
+            .map(|l| l.text.trim())
             .collect();
         let known: std::collections::HashSet<(Uuid, &str)> = s
             .lines
             .iter()
             .filter(|l| l.origin != Origin::Log)
-            .map(|l| (l.source, l.text.as_str()))
+            .map(|l| (l.source, l.text.trim()))
             .collect();
+        // the server's last copy of the opening message, when the
+        // invitation had no timestamp
+        let copy = match &opener {
+            Some(Opener::Message(from, text)) => history.iter().rposition(|h| h.from_id == *from && h.message.trim() == text),
+            _ => None,
+        };
         let older: Vec<ChatLine> = history
             .into_iter()
+            .enumerate()
+            // the opening message and what came after it are, or will be,
+            // live lines
+            .filter(|(i, h)| match &opener {
+                Some(Opener::At(t)) => h.time < *t,
+                Some(Opener::Message(..)) => copy.is_none_or(|c| *i < c),
+                None => true,
+            })
+            .map(|(_, h)| h)
             .filter(|h| !self.mutes.text_muted(&h.from_id, &h.from))
             .filter(|h| match last_minute {
                 Some(m) => {
                     let hm = u64::from(h.time) / 60;
-                    hm > m || (hm == m && !last_texts.contains(&h.message.as_str()))
+                    hm > m || (hm == m && !last_texts.contains(&h.message.trim()))
                 }
                 None => true,
             })
-            .filter(|h| !known.contains(&(if h.from_id == me { Uuid::nil() } else { h.from_id }, h.message.as_str())))
+            .filter(|h| !known.contains(&(if h.from_id == me { Uuid::nil() } else { h.from_id }, h.message.trim())))
             .map(|h| {
                 let mine = h.from_id == me;
                 ChatLine {
@@ -722,9 +784,11 @@ impl World {
                     blocked: false,
                     beyond_range: false,
                     speaker: Default::default(),
+                    private_history: false,
                 }
             })
             .collect();
+        log::debug!("server history of {session}: {} kept, {} dropped", older.len(), total - older.len());
         if older.is_empty() {
             return;
         }
@@ -890,6 +954,9 @@ mod tests {
         // other resident of the conversation), ours names nobody, as live
         let sources: Vec<Uuid> = s.lines.iter().take(2).map(|l| l.source).collect();
         assert_eq!(sources, [jane, Uuid::nil()]);
+        // a private conversation's history, its names looked up when drawn
+        let private: Vec<bool> = s.lines.iter().map(|l| l.private_history).collect();
+        assert_eq!(private, [true, true, false]);
         assert_eq!(s.unread, 1);
         assert_eq!(file_texts(&w, "Jane Doe").len(), 3);
         clean(&w, &root);
@@ -973,6 +1040,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         });
         // ours, as the simulator echoes it, keeps its volume and its verb
         // (#1323)
@@ -1090,9 +1158,168 @@ mod tests {
                 ("later", Origin::ServerLog),
             ]
         );
+        // a group's history keeps the names it was written with
+        assert!(w.social.ims[0].lines.iter().all(|l| !l.private_history));
         // opened by us: the server's lines are now in the file too
         assert!(w.chat_log.flush(WAIT));
         assert_eq!(file_texts(&w, &stem).len(), 4);
+        clean(&w, &root);
+    }
+
+    fn join(w: &mut World, group: Uuid, name: &str) {
+        w.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: name.into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+    }
+
+    fn invite(group: Uuid, from: Uuid, from_name: &str, text: &str, timestamp: u32) -> aurora_net::NetEvent {
+        aurora_net::NetEvent::SessionInvite(aurora_net::SessionInvite {
+            session: group,
+            from,
+            from_name: from_name.into(),
+            message: text.into(),
+            session_name: String::new(),
+            offline: false,
+            timestamp,
+        })
+    }
+
+    fn server_line(from_id: Uuid, from: &str, time: u32, text: &str) -> HistoryLine {
+        HistoryLine {
+            from_id,
+            from: from.into(),
+            message: text.into(),
+            time,
+        }
+    }
+
+    /// #2174: the message that opened a group chat, and those after it,
+    /// come live; the server's history stops before it.
+    #[test]
+    fn the_servers_history_stops_at_the_message_that_opened_the_chat() {
+        let root = temp();
+        let (group, jane, bob) = (Uuid::from_u128(0x6200), Uuid::from_u128(2), Uuid::from_u128(3));
+        let mut w = world(&root, Uuid::from_u128(1));
+        join(&mut w, group, "Les Loups");
+        w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
+        let t = 1_790_000_000;
+        w.apply(invite(group, jane, "Jane Doe", "hi all", t));
+        settle(&mut w);
+        // the server's answer has the opening message, and one sent after
+        // it whose live copy is still on its way
+        w.add_server_history(
+            group,
+            vec![
+                server_line(bob, "Bob Roe", t - 30, "earlier"),
+                server_line(jane, "Jane Doe", t, "hi all"),
+                server_line(bob, "Bob Roe", t + 5, "second"),
+            ],
+        );
+        w.apply(aurora_net::NetEvent::InstantMessage(InstantMessage {
+            dialog: crate::world::groups::dialog::SESSION_SEND,
+            session_id: group,
+            ..im(bob, "Bob Roe", "second")
+        }));
+        settle(&mut w);
+        let s = w.social.ims.iter().find(|s| s.other == group).unwrap();
+        let shown: Vec<(&str, Origin)> = s.lines.iter().map(|l| (l.text.as_str(), l.origin)).collect();
+        assert_eq!(
+            shown,
+            [("earlier", Origin::ServerLog), ("hi all", Origin::Live), ("second", Origin::Live)]
+        );
+        clean(&w, &root);
+    }
+
+    /// #2174 without an invitation timestamp: the cut is the server's own
+    /// copy of the opening message, never this PC's clock (a clock ahead or
+    /// behind the server's must not drop or repeat lines), and with no copy
+    /// there is no cut (LLIMSession::addMessagesFromServerHistory).
+    #[test]
+    fn without_a_timestamp_the_history_stops_at_the_servers_copy_of_the_opening_message() {
+        let root = temp();
+        let (group, other, jane, bob) = (
+            Uuid::from_u128(0x6200),
+            Uuid::from_u128(0x6400),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+        );
+        let mut w = world(&root, Uuid::from_u128(1));
+        join(&mut w, group, "Les Loups");
+        join(&mut w, other, "Les Ours");
+        w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
+        // server times far from this PC's clock either way
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
+        let ahead = now + 3600;
+        w.apply(invite(group, jane, "Jane Doe", " hi all ", 0));
+        settle(&mut w);
+        w.add_server_history(
+            group,
+            vec![
+                server_line(bob, "Bob Roe", ahead - 5, "just before"),
+                server_line(jane, "Jane Doe", ahead, "hi all"),
+                server_line(bob, "Bob Roe", now - 3600, "after, by a slow server clock"),
+            ],
+        );
+        settle(&mut w);
+        let s = w.social.ims.iter().find(|s| s.other == group).unwrap();
+        let shown: Vec<(&str, Origin)> = s.lines.iter().map(|l| (l.text.trim(), l.origin)).collect();
+        assert_eq!(shown, [("just before", Origin::ServerLog), ("hi all", Origin::Live)]);
+
+        // no copy of the opening message in the server's answer: no cut
+        w.apply(invite(other, jane, "Jane Doe", "anyone here?", 0));
+        settle(&mut w);
+        w.add_server_history(
+            other,
+            vec![
+                server_line(bob, "Bob Roe", ahead, "first"),
+                server_line(bob, "Bob Roe", ahead + 1, "second"),
+            ],
+        );
+        settle(&mut w);
+        let s = w.social.ims.iter().find(|s| s.other == other).unwrap();
+        let shown: Vec<(&str, Origin)> = s.lines.iter().map(|l| (l.text.trim(), l.origin)).collect();
+        assert_eq!(
+            shown,
+            [
+                ("first", Origin::ServerLog),
+                ("second", Origin::ServerLog),
+                ("anyone here?", Origin::Live)
+            ]
+        );
+        clean(&w, &root);
+    }
+
+    /// #2174: a group chat opened by one message after a silence: a server
+    /// history of one line is that message, even when its text or time is
+    /// not quite the same. A chat we open ourselves shows it.
+    #[test]
+    fn a_one_line_history_adds_nothing_to_the_message_that_opened_the_chat() {
+        let root = temp();
+        let (group, quiet, jane) = (Uuid::from_u128(0x6200), Uuid::from_u128(0x6300), Uuid::from_u128(2));
+        let mut w = world(&root, Uuid::from_u128(1));
+        join(&mut w, group, "Les Loups");
+        join(&mut w, quiet, "Le Calme");
+        w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
+        let t = 1_790_000_000;
+        w.apply(invite(group, jane, "Jane Doe", "hi all", t));
+        settle(&mut w);
+        w.add_server_history(group, vec![server_line(jane, "Jane Doe", t - 1, "hi all!")]);
+        let s = w.social.ims.iter().find(|s| s.other == group).unwrap();
+        let shown: Vec<(&str, Origin)> = s.lines.iter().map(|l| (l.text.as_str(), l.origin)).collect();
+        assert_eq!(shown, [("hi all", Origin::Live)]);
+        w.start_group_chat(quiet, false);
+        settle(&mut w);
+        w.add_server_history(quiet, vec![server_line(jane, "Jane Doe", t - 600, "anyone?")]);
+        settle(&mut w);
+        let s = w.social.ims.iter().find(|s| s.other == quiet).unwrap();
+        let shown: Vec<(&str, Origin)> = s.lines.iter().map(|l| (l.text.as_str(), l.origin)).collect();
+        assert_eq!(shown, [("anyone?", Origin::ServerLog)]);
         clean(&w, &root);
     }
 
@@ -1369,16 +1596,70 @@ mod tests {
                 entry(chat_log::format::SYSTEM_FROM, "a notice"),
             ]
         };
-        // a group or the nearby chat: the cached name only
-        let sources: Vec<Uuid> = w.history_lines(entries(), false, false, None).iter().map(|l| l.source).collect();
+        // a group or the nearby chat: the cached name only, and every line
+        // keeps the file's names (Bob's cached one included)
+        let lines = w.history_lines(entries(), false, false, None);
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
         assert_eq!(sources, [bob, Uuid::nil(), Uuid::nil()]);
-        // a private conversation: its other resident when the name is unknown
-        let sources: Vec<Uuid> = w
-            .history_lines(entries(), false, false, Some(jane))
-            .iter()
-            .map(|l| l.source)
-            .collect();
+        assert!(lines.iter().all(|l| !l.private_history));
+        // a private conversation: its other resident when the name is
+        // unknown, and its names looked up when drawn
+        let lines = w.history_lines(entries(), false, false, Some(jane));
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
         assert_eq!(sources, [bob, jane, Uuid::nil()]);
+        assert!(lines.iter().all(|l| l.private_history));
+        clean(&w, &root);
+    }
+
+    /// A private conversation's line whose name is not recognised takes the
+    /// other resident for its picture and its profile, never for its name:
+    /// one we wrote under an earlier account name keeps it, whether the
+    /// other resident's name was cached when the history loaded or later.
+    #[test]
+    fn a_private_history_line_under_another_name_keeps_it() {
+        let root = temp();
+        let (me, near) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut w = world(&root, me);
+        let entry = |from: &str| Entry {
+            stamp: String::new(),
+            time: None,
+            from: from.into(),
+            text: "hello".into(),
+        };
+        // theirs, then one of ours from before an account rename
+        let entries = || vec![entry("Near Tester"), entry("Myold Name")];
+        let senders =
+            |w: &World, lines: &[ChatLine]| -> Vec<String> { lines.iter().map(|l| crate::ui::chat::sender_name(w, "Me", l)).collect() };
+        let nova = aurora_net::AvatarNameData {
+            id: near,
+            username: "near.tester".into(),
+            display_name: "Nova".into(),
+            legacy_first: "Near".into(),
+            legacy_last: "Tester".into(),
+            ..Default::default()
+        };
+        // their name not cached yet when the history loads: both lines fall
+        // to them, and show the file's names
+        let late = w.history_lines(entries(), false, false, Some(near));
+        let sources: Vec<Uuid> = late.iter().map(|l| l.source).collect();
+        assert_eq!(sources, [near, near]);
+        assert_eq!(senders(&w, &late), ["Near Tester", "Myold Name"]);
+        // their name arrives: their line resolves, ours keeps its name
+        w.social.avatar_names.on_display_names(std::slice::from_ref(&nova), &[], Some(3600));
+        assert_eq!(senders(&w, &late), ["Nova", "Myold Name"]);
+        // cached when it loads: the same
+        let lines = w.history_lines(entries(), false, false, Some(near));
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
+        assert_eq!(sources, [near, near]);
+        assert_eq!(senders(&w, &lines), ["Nova", "Myold Name"]);
+        // their name written in another form is still theirs, and follows
+        // the name options as the live lines do
+        let forms = || vec![entry("Nova (near.tester)"), entry("near tester")];
+        let lines = w.history_lines(forms(), false, false, Some(near));
+        assert_eq!(senders(&w, &lines), ["Nova", "Nova"]);
+        w.social.avatar_names.options.use_display_names = false;
+        assert_eq!(senders(&w, &lines), ["Near Tester", "Near Tester"]);
+        assert_eq!(senders(&w, &late), ["Near Tester", "Myold Name"]);
         clean(&w, &root);
     }
 

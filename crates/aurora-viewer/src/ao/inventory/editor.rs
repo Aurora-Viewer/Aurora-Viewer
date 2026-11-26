@@ -51,7 +51,7 @@ pub fn save_track(inv: &Inventory, track: &Track) -> Result<Mutation, String> {
     actions::patch(
         inv,
         track.id,
-        llsd_map! { "name" => format!("{}:TR:OR{}{}", valid_name(&track.name)?, folder_order(inv, track.id), track.cycle.suffix()) },
+        llsd_map! { "name" => super::encoded_name(&valid_name(&track.name)?, &format!(":TR:OR{}{}", folder_order(inv, track.id), track.cycle.suffix())) },
     )
 }
 
@@ -63,7 +63,7 @@ fn append(change: &mut Mutation, part: Mutation) {
 
 fn step_order(inv: &Inventory, change: &mut Mutation, step: &Step, order: usize) -> Result<(), String> {
     let body = if step.group {
-        llsd_map! { "name" => format!("{}:OR{order}", step.name) }
+        llsd_map! { "name" => super::encoded_name(&step.name, &format!(":OR{order}")) }
     } else {
         llsd_map! { "desc" => order.to_string() }
     };
@@ -109,7 +109,7 @@ pub fn combine(
     } else {
         format!(":OR{position}")
     };
-    let id = folder(&mut change, parent, format!("{name}{suffix}"));
+    let id = folder(&mut change, parent, super::encoded_name(&name, &suffix));
     let members: Vec<_> = chosen.iter().flat_map(|s| &s.members).cloned().collect();
     links(&mut change, id, &members);
     // Only obsolete Aurora link items are deleted, after destination creation.
@@ -137,7 +137,7 @@ pub fn rename_container(inv: &Inventory, set: &Set, state: State, id: Uuid, name
     let c = config(inv, set, state)?;
     let name = name_available(Some(c), name, Some(id))?;
     if let Some((order, _)) = c.steps.iter().enumerate().find(|(_, s)| s.group && s.id == id) {
-        actions::patch(inv, id, llsd_map! { "name" => format!("{name}:OR{order}") })
+        actions::patch(inv, id, llsd_map! { "name" => super::encoded_name(&name, &format!(":OR{order}")) })
     } else if let Some(track) = c.tracks.iter().find(|t| t.id == id) {
         let mut track = track.clone();
         track.name = name;
@@ -219,7 +219,7 @@ pub fn reorder(inv: &Inventory, set: &Set, state: State, list: List, source: Uui
                     actions::patch(
                         inv,
                         id,
-                        llsd_map! { "name" => format!("{}:TR:OR{order}{}", t.name, t.cycle.suffix()) },
+                        llsd_map! { "name" => super::encoded_name(&t.name, &format!(":TR:OR{order}{}", t.cycle.suffix())) },
                     )?,
                 );
             }

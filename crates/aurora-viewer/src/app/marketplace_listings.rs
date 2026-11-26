@@ -49,17 +49,15 @@ impl App {
         let Some(root) = mp::root(&self.world.inventory) else { return };
         let worn = self.worn_items();
         let mut actions = Vec::new();
-        self.listings_ui.open = true;
+        // shown again, a minimized window expands (LLFloaterReg::showInstance)
+        ui::widgets::open_floater(&self.egui_ctx, ui::marketplace_listings::WINDOW, &mut self.listings_ui.open);
         self.listings_ui
             .inventory_command(&self.world.inventory, &worn, root, item, command, &mut actions);
         for action in actions {
             match action {
                 Action::Edit(change) => self.apply_inventory_action(InvAction::Edit(change)),
                 Action::Delete(deletion) => self.submit_inventory_delete(*deletion),
-                Action::Paste { change, cut } => {
-                    self.inventory_ui.consume_clipboard = cut;
-                    self.submit_inventory_change(change);
-                }
+                Action::Paste { change, cut, editor } => self.submit_marketplace_paste(change, cut, editor),
                 Action::OpenMarketplace(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::MarketplaceWindow)),
                 Action::OpenExternal(url) => self.on_ctx_action(ui::context::CtxAction::OpenUrlExternal(url)),
                 Action::Notify { text, url } => self.marketplace_alert(text, url),
@@ -69,7 +67,7 @@ impl App {
     }
     /// Me › Marketplace listings (LLFloaterMarketplaceListings::onOpen).
     pub(super) fn open_marketplace_listings(&mut self) {
-        if self.listings_ui.open() {
+        if self.listings_ui.open(&self.egui_ctx) {
             self.send(NetCommand::RequestMerchantStatus);
         }
     }
@@ -206,10 +204,7 @@ impl App {
                 }
                 Action::Edit(change) => self.submit_inventory_change(change),
                 Action::Delete(deletion) => self.submit_inventory_delete(*deletion),
-                Action::Paste { change, cut } => {
-                    self.inventory_ui.consume_clipboard = cut;
-                    self.submit_inventory_change(change);
-                }
+                Action::Paste { change, cut, editor } => self.submit_marketplace_paste(change, cut, editor),
                 Action::OpenMarketplace(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::MarketplaceWindow)),
                 Action::OpenExternal(url) => self.on_ctx_action(ui::context::CtxAction::OpenUrlExternal(url)),
                 Action::Notify { text, url } => self.marketplace_alert(text, url),
@@ -235,10 +230,7 @@ impl App {
         );
         for action in actions {
             match action {
-                Action::Paste { change, cut } => {
-                    self.inventory_ui.consume_clipboard = cut;
-                    self.submit_inventory_change(change);
-                }
+                Action::Paste { change, cut, editor } => self.submit_marketplace_paste(change, cut, editor),
                 Action::Notify { text, url } => self.marketplace_alert(text, url),
                 _ => {}
             }

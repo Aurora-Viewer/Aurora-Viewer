@@ -1,10 +1,20 @@
 //! Inventory actions: execute network mutations only after the UI returns.
 
 use super::*;
-use crate::ui::inventory::InvAction;
+use crate::ui::inventory::{InvAction, plays};
 use crate::world::inventory::actions as rules;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use uuid::Uuid;
+
+/// What the undo history does with a change (`world::inventory::undo`).
+enum Undo {
+    /// Not the user's own (outfits, listings, scripts…): not recorded.
+    Skip,
+    /// The user's change: a step once the server accepts it.
+    Record,
+    /// An undo (true) or a redo of this step.
+    Step(bool, crate::world::inventory::undo::Step),
+}
 
 impl App {
     fn offer_feedback(&mut self, reason: crate::world::inventory::outgoing::Feedback) {
@@ -176,7 +186,8 @@ impl App {
     }
 
     /// The inventory pane an action came from: the right pane of the
-    /// dual-panel layout, or the main window for everything else.
+    /// dual-panel layout, an open folder or additional window by its id, or
+    /// the main window for everything else.
     pub(super) fn inventory_pane(&mut self, editor: Uuid) -> &mut crate::ui::inventory::InventoryUi {
         pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor)
     }
@@ -284,6 +295,8 @@ impl App {
             0 => {
                 if texture_preview {
                     st.attachment_preview = Some(item);
+                } else {
+                    self.rlva_view_blocked(0);
                 }
             }
             2 => {
@@ -303,13 +316,39 @@ impl App {
     }
 
     pub(super) fn submit_inventory_change(&mut self, change: aurora_net::inventory::operations::Mutation) {
-        self.submit_inventory_edit(change, None, Uuid::nil());
+        self.submit_inventory_edit(change, None, Uuid::nil(), Undo::Skip);
+    }
+
+    pub(super) fn submit_marketplace_paste(&mut self, change: aurora_net::inventory::operations::Mutation, cut: bool, editor: Uuid) {
+        self.inventory_ui.consume_clipboard = cut;
+        self.submit_inventory_edit(change, None, editor, Undo::Skip);
     }
 
     pub(super) fn submit_inventory_delete(&mut self, deletion: ui::inventory::DeleteRequest) {
         self.inventory_ui.consume_clipboard = false;
         let editor = deletion.selection.window();
-        self.submit_inventory_edit(deletion.change, Some(deletion.selection), editor);
+        self.submit_inventory_edit(deletion.change, Some(deletion.selection), editor, Undo::Record);
+    }
+
+    /// Ctrl+Z / Ctrl+Y and the menus' Undo and Redo (`undo` false for a
+    /// redo): the history's next step, through the inventory's rules, or
+    /// why not in the pane that asked.
+    fn inventory_history(&mut self, undo: bool, named: bool, editor: Uuid) {
+        // a change on its way (a paste's copies still arriving): said, not
+        // silently ignored
+        if self.inventory_ui.pending.is_some() || self.world.inventory.undo.busy() {
+            self.inventory_pane(editor).message = aurora_i18n::tr!("ui-inventory-wait-for-the-current-change-to-finish").into();
+            return;
+        }
+        let worn: HashSet<Uuid> = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();
+        let rules_of = crate::world::inventory::undo::Rules {
+            protected: &self.settings.inventory.protected,
+            worn: &worn,
+        };
+        match self.world.inventory.plan_history(undo, &rules_of, named) {
+            Ok((change, step)) => self.submit_inventory_edit(change, None, editor, Undo::Step(undo, step)),
+            Err(reason) => self.inventory_pane(editor).message = reason,
+        }
     }
 
     /// One inventory change at a time for the whole viewer (the main
@@ -320,7 +359,10 @@ impl App {
         mut change: aurora_net::inventory::operations::Mutation,
         selection: Option<ui::inventory::DeleteSelection>,
         editor: Uuid,
+        undo: Undo,
     ) {
+        // a "+" New Folder's mark goes with this change only, sent or not
+        let in_all = std::mem::take(&mut self.inventory_pane(editor).new_folder_in_all);
         if self.inventory_ui.pending.is_some() {
             self.inventory_ui.consume_clipboard = false;
             return;
@@ -341,6 +383,15 @@ impl App {
             change.copies.len()
         );
         self.inventory_ui.begin_mutation(request, &change);
+        let inv = &mut self.world.inventory;
+        let moves = crate::world::inventory::trash_origins::TrashOrigins::moves(inv, &change);
+        inv.trash_origins.begin(request, moves);
+        match undo {
+            Undo::Skip => {}
+            Undo::Record => inv.record_change(request, &change),
+            Undo::Step(undo, step) => inv.undo.begin(request, undo, step),
+        }
+        let delete = selection.is_some();
         if let Some(selection) = selection {
             self.inventory_pane(selection.window()).begin_delete(request, selection);
         }
@@ -353,35 +404,42 @@ impl App {
                 None
             }
         });
+        pane.created_in_all = in_all.is_some() && in_all == pane.created_selection;
         pane.message.clear();
+        // RLVa judges a Delete's moves to the Trash as removals
+        if delete {
+            self.world.rlva.deletes.insert(request);
+        }
         self.send(NetCommand::EditInventory { request, change });
+        self.world.rlva.deletes.remove(&request);
     }
 
     /// An inventory change, after the listings' questions; `drag` when it
     /// comes from a drop on a folder.
-    fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
+    pub(super) fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
         // the clipboard is shared by both panes: the main window holds it
         let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
-        if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
+        if let Some(change) = self
+            .listings_ui
+            .guard_inventory_change(&self.world.inventory, change, cut, drag, editor)
+        {
             self.inventory_ui.consume_clipboard = cut;
-            self.submit_inventory_edit(change, None, editor);
+            self.submit_inventory_edit(change, None, editor, Undo::Record);
         }
     }
 
-    /// An animation preview's Play buttons (LLPreviewAnim::play): whatever
-    /// a preview played stops first, then `asset` plays for everyone or
-    /// locally. An object's contents use it without opening the inventory's
-    /// own animation window.
+    /// An animation preview's Play buttons (LLPreviewAnim::play): `asset`
+    /// plays for everyone or locally, or stops, whatever the other previews
+    /// play. An object's contents use it without opening the inventory's own
+    /// animation window.
     pub(super) fn play_preview_animation(&mut self, asset: Uuid, local: bool, start: bool) {
-        if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
-            if was_local || self.demo {
-                self.world.preview_animation(playing, false);
+        // (one that plays already starts over)
+        if let Some(play) = plays::take(&mut self.inventory_ui.plays, asset).filter(|play| !start || !play.over) {
+            if play.local || self.demo {
+                self.world.preview_animation(asset, false);
             }
-            if !was_local {
-                self.send(NetCommand::AgentAnimation {
-                    anim: playing,
-                    start: false,
-                });
+            if !play.local {
+                self.send(NetCommand::AgentAnimation { anim: asset, start: false });
             }
         }
         if start {
@@ -392,7 +450,34 @@ impl App {
             if !local {
                 self.send(NetCommand::AgentAnimation { anim: asset, start: true });
             }
-            self.inventory_ui.playing = Some((asset, local));
+            self.inventory_ui.plays.push(plays::PreviewPlay::new(asset, local));
+        }
+    }
+
+    /// A motion of ours played to its end: its preview's Play buttons come
+    /// back (LLPreviewAnim::draw, cleanup).
+    pub(super) fn preview_animation_finished(&mut self, asset: Uuid) {
+        plays::take(&mut self.inventory_ui.plays, asset);
+        self.world.preview_finished(asset);
+    }
+
+    /// LLPreviewAnim::draw: the Play buttons of a preview come back once its
+    /// animation, seen playing, no longer does (a script or the simulator
+    /// stopped it).
+    pub(super) fn poll_preview_animations(&mut self) {
+        if self.inventory_ui.plays.is_empty() {
+            return;
+        }
+        let motions = self.world.animations.get(&self.world.agent_id).map_or(&[][..], Vec::as_slice);
+        plays::follow(&mut self.inventory_ui.plays, |asset| motions.iter().any(|m| m.id == asset));
+    }
+
+    /// "Stop animations" ends the local previews too. Deliberate difference:
+    /// LLAgent::stopCurrentAnimations only stops what the simulator signals
+    /// (mPlayingAnimations), and leaves a local preview playing.
+    pub(super) fn stop_preview_animations(&mut self) {
+        for play in std::mem::take(&mut self.inventory_ui.plays) {
+            self.world.preview_animation(play.asset, false);
         }
     }
 
@@ -403,12 +488,39 @@ impl App {
         ui::inventory::resize_for_dual(&self.egui_ctx, self.panels.inventory_dual);
     }
 
+    /// Demo: the Detach and Delete confirmation's button, then where `item`
+    /// is at `log_frame` (worn or active, in the Trash, the wait, the message).
+    pub(super) fn demo_detach_delete_steps(&mut self, label: &str, item: uuid::Uuid, confirm: bool, log: bool) {
+        let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+        if confirm {
+            let actions = self
+                .inventory_ui
+                .demo_confirm_detach_delete(&self.world.inventory, &self.settings.inventory, &facts);
+            log::info!("demo {label}: confirmed at frame {}, {} action(s)", self.frame_count, actions.len());
+            for action in actions {
+                self.apply_inventory_action(action);
+            }
+        }
+        if log {
+            log::info!(
+                "demo {label}: frame {} worn={} active={} trash={} waiting={} message={:?}",
+                self.frame_count,
+                facts.worn.contains(&item),
+                facts.active_gestures.contains(&item),
+                crate::world::inventory::actions::in_type(&self.world.inventory, item, 14),
+                self.inventory_ui.demo_detach_waiting(),
+                self.inventory_ui.message,
+            );
+        }
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         self.apply_inventory_action_from(Uuid::nil(), action);
     }
 
     /// `editor`: the pane the action came from (`ui::inventory::DUAL_PANE`
-    /// for the right pane of the dual-panel layout, nil for the main one).
+    /// for the right pane of the dual-panel layout, a folder or additional
+    /// window's id for that window, nil for the main one).
     pub(super) fn apply_inventory_action_from(&mut self, editor: Uuid, action: InvAction) {
         match action {
             InvAction::Panel { editor, action } => self.apply_inventory_action_from(editor, *action),
@@ -430,6 +542,7 @@ impl App {
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
+            InvAction::Notice(text) => self.world.system_message(text),
             InvAction::Edit(change) => self.edit_inventory(change, false, editor),
             InvAction::Delete(deletion) => {
                 if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {
@@ -437,7 +550,16 @@ impl App {
                 }
             }
             InvAction::Drop(change) => self.edit_inventory(change, true, editor),
+            InvAction::History { undo, named } => self.inventory_history(undo, named, editor),
             InvAction::Create { parent, kind, name } => {
+                // nil: New from the empty space of Recent, Worn or
+                // Favorites, into the type's own folder
+                let parent = if parent.is_nil() {
+                    let inv = &self.world.inventory;
+                    rules::system(inv, kind.types().0.into()).unwrap_or(inv.root)
+                } else {
+                    parent
+                };
                 if rules::destination(&self.world.inventory, parent) {
                     if let aurora_net::inventory::operations::NewItem::Wearable(kind) = kind {
                         match crate::world::inventory::wearable::create_with_permissions(
@@ -478,8 +600,13 @@ impl App {
                 }
             }
             InvAction::Appearance(action) => {
+                let asked = removed_items(&action);
                 self.inventory_ui.message.clear();
                 self.apply_appearance_action(action);
+                if !asked.is_empty() && !self.inventory_ui.message.is_empty() {
+                    let reason = self.inventory_ui.message.clone();
+                    self.inventory_ui.detach_refused(&asked, &reason);
+                }
             }
             InvAction::Animation { asset, local, start } => {
                 if start {
@@ -492,6 +619,40 @@ impl App {
                 self.scene.sounds.want(asset);
                 self.scene.sounds.play_ui(self.audio_engine.as_ref(), asset);
             }
+            // the preview pane's notecard text, asked once and kept a while
+            // (`ui::inventory::PaneText`), read under the window's rule
+            InvAction::PaneText(id) => {
+                use crate::ui::inventory::PaneText;
+                let Some(key) = crate::ui::inventory::pane_key(&self.world.inventory, id, self.world.god_level) else {
+                    return;
+                };
+                if self.inventory_ui.pane_texts.contains_key(&key) {
+                    return;
+                }
+                let (original, asset, readable) = key;
+                let item = self.world.inventory.items.get(&original).cloned();
+                let texts = std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts);
+                // the texts read go, the ones on their way stay for their
+                // answer (`inventory_preview` keeps only an awaited one)
+                if texts.len() >= 32 {
+                    texts.retain(|_, text| *text == PaneText::Loading);
+                }
+                match item {
+                    Some(_) if readable && asset.is_nil() => {
+                        texts.insert(key, PaneText::Text(String::new()));
+                    }
+                    Some(it) if readable => {
+                        texts.insert(key, PaneText::Loading);
+                        self.send(NetCommand::PreviewInventoryItem(it));
+                    }
+                    _ => {
+                        texts.insert(
+                            key,
+                            PaneText::Unavailable(aurora_i18n::tr!("app-inventory-you-are-not-allowed-to-read-this-content").into()),
+                        );
+                    }
+                }
+            }
             InvAction::TriggerSound(asset) => {
                 self.record_library_asset(asset, 1);
                 self.send_sound_trigger(asset);
@@ -499,13 +660,8 @@ impl App {
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id, owner) => {
-                if self
-                    .world
-                    .inventory
-                    .items
-                    .get(&id)
-                    .is_some_and(|it| !self.world.inventory.can_preview(it.asset_type))
-                {
+                let kind = self.world.inventory.items.get(&id).map(|it| it.asset_type);
+                if kind.is_some_and(|kind| self.rlva_preview_refused(kind)) {
                     return;
                 }
                 if crate::ui::texture_library::catalogue::resource(&self.world.inventory, id).is_some() {
@@ -625,10 +781,16 @@ impl App {
             }
             InvAction::Environment(asset, flags) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
-                    self.world.eep.request_local(asset, kind);
+                    self.world.eep.request_local_item(asset, kind);
                 }
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
+            InvAction::EnvironmentSaveParcel(asset, flags) => {
+                if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
+                    self.world.eep.request_local(asset, kind);
+                    self.world.save_parcel_environment();
+                }
+            }
             InvAction::Marketplace(item, command) => self.inventory_marketplace_command(item, command),
             InvAction::ShowMain(item) => {
                 let inv = &self.world.inventory;
@@ -744,6 +906,9 @@ impl App {
 
     pub(super) fn inventory_result(&mut self, request: Uuid, result: Result<aurora_net::inventory::operations::Reply, String>) {
         if let Some(refresh) = self.inventory_ui.finish_copy(request, result.is_ok()) {
+            // the copies arrived: the step holds them now
+            let created = result.as_ref().map(|reply| reply.created.clone()).unwrap_or_default();
+            self.world.inventory.changed(request, result.is_ok(), &created);
             if let Err(reason) = result {
                 self.inventory_ui.message = reason;
                 for id in refresh {
@@ -762,7 +927,7 @@ impl App {
         }
         let editor = self.inventory_mutation_editor.unwrap_or_default();
         let thumbnail_upload = self.inventory_images.contains_request(request);
-        let result = match result {
+        let mut result = match result {
             Ok(reply) if !reply.copies.is_empty() => {
                 self.world.inventory.remove(&reply.removed);
                 self.world.inventory.apply(reply.contents.clone());
@@ -770,9 +935,10 @@ impl App {
                 let inv = &self.world.inventory;
                 let pane = pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor);
                 if let Some(id) = pane.created_selection.and_then(|id| reply.created.get(&id)) {
-                    pane.show_original(inv, *id);
+                    pane.show_created(inv, *id);
                 }
                 self.inventory_ui.watch_copy(request, &reply);
+                self.world.inventory.undo.created(request, &reply.created);
                 self.send(NetCommand::FinishInventoryCopies { request, reply });
                 return;
             }
@@ -794,11 +960,17 @@ impl App {
         } else {
             self.finish_inventory_image(request, result.as_ref().err().cloned());
         }
+        if let Ok(reply) = &mut result {
+            self.world.inventory.remove(&reply.removed);
+            self.world.inventory.apply(std::mem::take(&mut reply.contents));
+            self.world.inventory.created_folders(std::mem::take(&mut reply.folders));
+        }
+        // the history and the Trash's origins keep what the server accepted,
+        // once the inventory holds it
+        let created = result.as_ref().map(|reply| reply.created.clone()).unwrap_or_default();
+        self.world.inventory.changed(request, result.is_ok(), &created);
         match result {
             Ok(reply) => {
-                self.world.inventory.remove(&reply.removed);
-                self.world.inventory.apply(reply.contents);
-                self.world.inventory.created_folders(reply.folders);
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| self.inventory_ui.pending_refresh.contains(&id)) {
                     let sync = crate::world::appearance::sync_plan_keeping(
                         &self.world.inventory,
@@ -821,7 +993,7 @@ impl App {
                 if let Some(id) = pane.created_selection.and_then(|id| reply.created.get(&id))
                     && !pane.select_created_listing(inv, *id)
                 {
-                    pane.show_original(inv, *id);
+                    pane.show_created(inv, *id);
                     pane.begin_rename(inv, *id);
                 }
                 pane.message.clear();
@@ -844,15 +1016,38 @@ impl App {
         self.inventory_ui.pending_refresh.clear();
         self.inventory_ui.created_selection = None;
         self.dual_inventory_ui.created_selection = None;
+        self.inventory_ui.created_in_all = false;
+        self.dual_inventory_ui.created_in_all = false;
         self.inventory_mutation_editor = None;
         for w in &mut self.inventory_ui.windows {
-            w.state.message.clone_from(&self.inventory_ui.message);
+            // the folder window that made the change keeps its own message
+            if w.id != editor {
+                w.state.message.clone_from(&self.inventory_ui.message);
+            }
+            w.state.created_selection = None;
+            w.state.created_in_all = false;
         }
     }
 
     pub(super) fn inventory_preview(&mut self, item: Uuid, asset: Uuid, result: Result<Vec<u8>, String>) {
         if self.world.inventory.items.get(&item).is_none_or(|it| it.asset_id != asset) {
+            // saved or gone since: the pane's wait for this text ends
+            let key = (item, asset, true);
+            if self.inventory_ui.pane_texts.get(&key) == Some(&crate::ui::inventory::PaneText::Loading) {
+                std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts).remove(&key);
+            }
             return;
+        }
+        let key = (item, asset, true);
+        if self.inventory_ui.pane_texts.get(&key) == Some(&crate::ui::inventory::PaneText::Loading) {
+            use crate::ui::inventory::PaneText;
+            let text = match &result {
+                Ok(data) => {
+                    crate::world::inventory::preview::text(7, data).map_or_else(PaneText::Unavailable, |(text, _)| PaneText::Text(text))
+                }
+                Err(reason) => PaneText::Unavailable(reason.clone()),
+            };
+            std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts).insert(key, text);
         }
         if self.env_editor.loading == Some(item) {
             self.env_editor_asset(item, result);
@@ -1025,10 +1220,17 @@ impl App {
             .appearance_ui
             .pending
             .is_none_or(|(request, _)| self.world.attachment_inventory.owns(request));
+        let asked = removed_items(&action);
         let (detach, action) = self.world.recover_attachment_removal(action, allow_recovery);
         let recovered = !detach.is_empty();
         for command in detach {
             self.send_from(command, actor);
+        }
+        if recovered {
+            // what the outfit update still has to take off was not detached here
+            let left = action.as_ref().map(removed_items).unwrap_or_default();
+            let detached: Vec<_> = asked.into_iter().filter(|id| !left.contains(id)).collect();
+            self.inventory_ui.take_off_sent(&detached);
         }
         let Some(action) = action else {
             if recovered {
@@ -1083,8 +1285,8 @@ impl App {
                 self.open_outfit_portrait(id, super::outfit_portrait::Kind::Viewfinder);
                 return;
             }
-            crate::world::appearance::Action::OutfitBatch(outfits) => {
-                self.open_outfit_batch(outfits);
+            crate::world::appearance::Action::OutfitBatch(outfits, folder) => {
+                self.open_outfit_batch(outfits, folder);
                 return;
             }
             _ => {}
@@ -1115,7 +1317,21 @@ impl App {
                 | crate::world::appearance::Action::SaveIn(..)
                 | crate::world::appearance::Action::ImportJson { .. }
         );
-        let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
+        // RLVa: a link is worn by its own folder's locks (rlva_note_wear_entry)
+        self.world.rlva_note_wear_request(&action);
+        let mut attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
+        // RLVa: rez_attachment takes the point the names give while a point
+        // is locked (Wear, Add, a drop on the avatar; not an outfit)
+        if matches!(
+            action,
+            crate::world::appearance::Action::WearItem { .. }
+                | crate::world::appearance::Action::WearItems { .. }
+                | crate::world::appearance::Action::Add(_)
+        ) {
+            for attachment in &mut attachments {
+                attachment.point = self.world.rlva_rez_point(attachment.item_id, attachment.point);
+            }
+        }
         match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();
@@ -1181,13 +1397,34 @@ impl App {
     }
 }
 
+/// The items an outfit action takes off.
+fn removed_items(action: &crate::world::appearance::Action) -> Vec<Uuid> {
+    match action {
+        crate::world::appearance::Action::Remove(item) => vec![*item],
+        crate::world::appearance::Action::RemoveItems(items) | crate::world::appearance::Action::Force { remove: items, .. } => {
+            items.clone()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// `App::inventory_pane` for a caller that also borrows another field.
 fn pane_of<'a>(
     main: &'a mut crate::ui::inventory::InventoryUi,
     dual: &'a mut crate::ui::inventory::InventoryUi,
     editor: Uuid,
 ) -> &'a mut crate::ui::inventory::InventoryUi {
-    if editor == ui::inventory::DUAL_PANE { dual } else { main }
+    if editor == ui::inventory::DUAL_PANE {
+        return dual;
+    }
+    // An open list window (a folder's tree, the additional window) gets what
+    // it asked for itself, such as the folder it created (#4700). A closed
+    // one still drawing a dialog lets the main window answer, where its
+    // message is seen (as `begin_delete` skips closed windows).
+    match main.windows.iter().position(|w| !editor.is_nil() && w.id == editor && w.open) {
+        Some(index) => main.windows[index].state.as_mut(),
+        None => main,
+    }
 }
 
 #[cfg(test)]
@@ -1208,5 +1445,18 @@ mod tests {
         // an additional window's id is not the right pane's
         pane_of(&mut main, &mut dual, Uuid::from_u128(7)).message = "window".into();
         assert_eq!((main.message.as_str(), dual.message.as_str()), ("window", "dual"));
+        // a folder window's change comes back to that window (#4700)
+        main.open_folder_window(Uuid::from_u128(20));
+        let folder_window = main.windows[0].id;
+        pane_of(&mut main, &mut dual, folder_window).message = "folder".into();
+        assert_eq!(main.windows[0].state.message, "folder");
+        assert_eq!(main.message, "window");
+        // closed, it may still draw a dialog: the main window answers for it
+        main.windows[0].open = false;
+        pane_of(&mut main, &mut dual, folder_window).message = "closed".into();
+        assert_eq!(
+            (main.message.as_str(), main.windows[0].state.message.as_str()),
+            ("closed", "folder")
+        );
     }
 }

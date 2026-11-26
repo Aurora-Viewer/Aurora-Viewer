@@ -70,6 +70,11 @@ pub fn subject_at(world: &World, idx: Option<usize>, point: Vec3) -> Option<Subj
         });
     };
     let o = world.objects.get(idx)?;
+    // our copies (the animation editor's mirror, the Fit lab's mannequins)
+    // and what they wear are no one's: nothing to look up or offer for them
+    if world.on_local_copy(idx) {
+        return None;
+    }
     if o.is_avatar() {
         return Some(Subject::Avatar { idx, id: o.full_id });
     }
@@ -589,6 +594,13 @@ pub fn rlva_allows(world: &World, subject: Subject, point: Vec3) -> bool {
     }
 }
 
+/// The description of an object as it shows: "(No Description)" is the
+/// simulator's empty one.
+pub fn written(description: &str) -> &str {
+    let text = description.trim();
+    if text == "(No Description)" { "" } else { text }
+}
+
 fn object_tip(world: &mut World, idx: usize, root: usize, root_id: Uuid, s: &Sources, settings: &HoverTips) -> Option<Tip> {
     let props = s.props.get(&root_id);
     if !settings.all_objects && !interactive(world, idx, props) {
@@ -614,11 +626,7 @@ fn object_tip(world: &mut World, idx: usize, root: usize, root_id: Uuid, s: &Sou
                 aurora_i18n::tr!("common-loading").to_owned()
             }
         });
-    // "(No Description)" is the simulator's empty description
-    let desc = props
-        .map(|p| p.description.trim())
-        .filter(|d| !d.is_empty() && *d != "(No Description)")
-        .map(str::to_owned);
+    let desc = props.map(|p| written(&p.description)).filter(|d| !d.is_empty()).map(str::to_owned);
     let owner = props.and_then(|p| {
         let group = p.owner_id.is_nil() && !p.group_id.is_nil() || (p.owner_id == p.group_id && !p.group_id.is_nil());
         let id = if p.owner_id.is_nil() { p.group_id } else { p.owner_id };

@@ -80,6 +80,19 @@ pub fn still_origin(part: [f32; 4], photo: (u32, u32)) -> (u32, u32) {
     (at(part[0], photo.0), at(part[1], photo.1))
 }
 
+/// The Earth's radius (km): the layer's planet when the world is flat.
+const EARTH_KM: f32 = crate::curvature::EARTH_RADIUS / 1000.0;
+
+/// The layer's planet for planet curvature's radius (m): the same planet
+/// as the sea's, within the radii the setting allows.
+fn planet_km(radius: f32) -> f32 {
+    if radius.is_finite() {
+        radius.clamp(crate::curvature::RADIUS_MIN, crate::curvature::RADIUS_MAX) / 1000.0
+    } else {
+        EARTH_KM
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct CloudU {
@@ -96,6 +109,7 @@ struct CloudU {
     sizes: [u32; 4],
     misc: [u32; 4],
     gen_z: [u32; 4],
+    planet: [f32; 4],
 }
 
 /// What a frame gives the clouds, worked out from the sky ([`Params::new`]).
@@ -125,6 +139,14 @@ pub struct Params {
     pub extinction: f32,
     /// Hash of what the weather map is made of ([`weather_key`]).
     pub weather_key: u64,
+    /// The radius of the planet the layer lies around (km): planet
+    /// curvature's (curvature.rs), the Earth's when the world is flat.
+    pub planet_km: f32,
+    /// The camera's height above the sea (km), and whether the world is
+    /// drawn curved: then the clouds go on under eye level, where the sky
+    /// shows down to the sea's horizon.
+    pub sea_below_km: f32,
+    pub curved: bool,
 }
 
 impl Params {
@@ -158,6 +180,9 @@ impl Params {
             ],
             layer: layer_km(kind),
             kind,
+            planet_km: f.curvature.map_or(EARTH_KM, planet_km),
+            sea_below_km: ((cam.z - f.water_height) / 1000.0).max(0.0),
+            curved: f.curvature.is_some(),
             tile_km: tile,
             extinction: extinction(s.cloud_pos_density1.z),
             weather_key: weather_key(
@@ -423,9 +448,6 @@ pub(crate) struct Clouds {
     pipelines: Pipelines,
     uniform: wgpu::Buffer,
     sampler: wgpu::Sampler,
-    /// Clamped copy of the sampler for the screen-space history and the
-    /// composite: the repeat sampler would blend the opposite edge in.
-    screen_sampler: wgpu::Sampler,
     base: wgpu::TextureView,
     detail: wgpu::TextureView,
     curl: wgpu::TextureView,
@@ -445,7 +467,7 @@ pub(crate) struct Clouds {
     prev_camera_km: [f64; 2],
     frame: u32,
     layout: wgpu::BindGroupLayout,
-    composite: Vec<((u32, bool), wgpu::RenderPipeline)>,
+    composite: Vec<((u32, Option<wgpu::TextureFormat>), wgpu::RenderPipeline)>,
     composite_group: Option<wgpu::BindGroup>,
 }
 
@@ -523,22 +545,14 @@ impl Clouds {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let screen_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("clouds screen"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("clouds"),
             size: std::mem::size_of::<CloudU>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // the composite's group: the uniform, the image, the sampler
+        // the composite's group: the uniform and the image (read texel by
+        // texel: clouds.wgsl `read_samples`)
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("clouds composite"),
             entries: &[
@@ -550,12 +564,6 @@ impl Clouds {
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
@@ -575,7 +583,6 @@ impl Clouds {
             pipelines,
             uniform,
             sampler,
-            screen_sampler,
             base: view(&base),
             detail: view(&detail),
             curl: view(&curl),
@@ -790,6 +797,7 @@ impl Clouds {
                 Some(s) => [step.base_z.unwrap_or(0), s.origin.0, s.origin.1, STILL_SAMPLES],
                 None => [step.base_z.unwrap_or(0), 0, 0, 0],
             },
+            planet: [p.planet_km, p.sea_below_km, f32::from(u8::from(p.curved)), 0.0],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         let group = |pipeline: &wgpu::ComputePipeline, label: &str, entries: &[wgpu::BindGroupEntry<'_>]| {
@@ -873,11 +881,7 @@ impl Clouds {
             self.composite_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("clouds composite"),
                 layout: &self.layout,
-                entries: &[
-                    entry(0, self.uniform.as_entire_binding()),
-                    entry(9, wgpu::BindingResource::Sampler(&self.screen_sampler)),
-                    entry(15, tv(target)),
-                ],
+                entries: &[entry(0, self.uniform.as_entire_binding()), entry(15, tv(target))],
             }));
             return;
         }
@@ -915,7 +919,6 @@ impl Clouds {
                 "recon",
                 &[
                     entry(0, self.uniform.as_entire_binding()),
-                    entry(9, wgpu::BindingResource::Sampler(&self.screen_sampler)),
                     entry(13, tv(&sized.trace)),
                     entry(14, tv(&sized.depth)),
                     entry(15, tv(&sized.history[read])),
@@ -928,11 +931,7 @@ impl Clouds {
         self.composite_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("clouds composite"),
             layout: &self.layout,
-            entries: &[
-                entry(0, self.uniform.as_entire_binding()),
-                entry(9, wgpu::BindingResource::Sampler(&self.screen_sampler)),
-                entry(15, tv(&sized.history[write])),
-            ],
+            entries: &[entry(0, self.uniform.as_entire_binding()), entry(15, tv(&sized.history[write]))],
         }));
         self.latest = Some(write);
         self.prev_vp = p.vp;
@@ -955,14 +954,14 @@ impl Clouds {
     }
 
     /// Makes the composite pipeline for the scene pass's sample count and
-    /// G-buffer, if not made yet: before the pass begins.
+    /// G-buffer (`gbuf`: its format), if not made yet: before the pass
+    /// begins.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
         samples: u32,
-        gbuf: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         color: wgpu::TextureFormat,
-        gbuf_format: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
     ) {
         if self.composite.iter().any(|(k, _)| *k == (samples, gbuf)) {
@@ -988,9 +987,9 @@ impl Clouds {
             blend: Some(blend),
             write_mask: wgpu::ColorWrites::COLOR,
         })];
-        if gbuf {
+        if let Some(format) = gbuf {
             targets.push(Some(wgpu::ColorTargetState {
-                format: gbuf_format,
+                format,
                 blend: None,
                 write_mask: wgpu::ColorWrites::empty(),
             }));
@@ -1019,7 +1018,7 @@ impl Clouds {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &self.module,
-                entry_point: Some(if gbuf { "fs_clouds_g" } else { "fs_clouds" }),
+                entry_point: Some(if gbuf.is_some() { "fs_clouds_g" } else { "fs_clouds" }),
                 compilation_options: Default::default(),
                 targets: &targets,
             }),
@@ -1031,7 +1030,7 @@ impl Clouds {
 
     /// Draws the clouds over the sky in scene pass A, if [`Self::encode`]
     /// made them this frame. `prepare` has been called for these `samples`.
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, gbuf: bool) {
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, gbuf: Option<wgpu::TextureFormat>) {
         let (Some(group), Some((_, pipeline))) = (&self.composite_group, self.composite.iter().find(|(k, _)| *k == (samples, gbuf))) else {
             return;
         };
@@ -1115,10 +1114,10 @@ mod tests {
 
     #[test]
     fn the_uniform_matches_the_shader() {
-        // U in shaders/clouds.wgsl: 2 mat4x4 + 8 vec4 + 3 vec4<u32>
-        assert_eq!(std::mem::size_of::<CloudU>(), 2 * 64 + 8 * 16 + 3 * 16);
+        // U in shaders/clouds.wgsl: 2 mat4x4 + 8 vec4 + 3 vec4<u32> + 1 vec4
+        assert_eq!(std::mem::size_of::<CloudU>(), 2 * 64 + 8 * 16 + 3 * 16 + 16);
         let src = include_str!("shaders/clouds.wgsl");
-        assert!(src.contains("sizes: vec4u") && src.contains("gen: vec4u"));
+        assert!(src.contains("sizes: vec4u") && src.contains("gen: vec4u") && src.contains("planet: vec4f"));
     }
 
     #[test]
@@ -1371,6 +1370,9 @@ mod tests {
             tile_km: 26.25,
             extinction: 1.0,
             weather_key: 0,
+            planet_km: EARTH_KM,
+            sea_below_km: 0.0,
+            curved: false,
         };
         let [x, y] = p.offset_km();
         assert!((x - 3.5).abs() < 1e-3, "{x}");

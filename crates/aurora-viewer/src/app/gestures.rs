@@ -261,7 +261,7 @@ impl App {
     }
 
     pub(super) fn gesture_play(&mut self, id: Uuid, key: Option<u8>) {
-        if self.world.rlva.has("sendgesture") {
+        if !gesture_allowed(&self.world.rlva) {
             return;
         }
         if let Some(definition) = self.gesture_state.manager.entries.get(&id).map(|e| e.definition.clone()) {
@@ -272,6 +272,12 @@ impl App {
     }
 
     fn gesture_preview(&mut self, id: Uuid, definition: Gesture, key: Option<u8>) {
+        // LLGestureMgr::playGesture (indra/newview/llgesturemgr.cpp) stops
+        // every play under @sendgesture, the gesture editor's Preview
+        // (LLPreviewGesture::onClickPreview) included
+        if !gesture_allowed(&self.world.rlva) {
+            return;
+        }
         for step in &definition.steps {
             match step {
                 Step::Animation { asset, flags, .. } if flags & ANIM_STOP == 0 && !asset.is_nil() => {
@@ -403,7 +409,7 @@ impl App {
                     kind: aurora_net::inventory::operations::NewItem::Gesture,
                     name: aurora_i18n::tr!("gesture-new-name").into(),
                 });
-                self.panels.inventory = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             Action::Delete(ids) => {
                 // LLFloaterGesture::onDeleteSelected moves the gestures to the
@@ -420,7 +426,7 @@ impl App {
                     &mut actions,
                     ids,
                 ) {
-                    self.panels.inventory = true;
+                    crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                 }
                 for action in actions {
                     self.apply_inventory_action(action);
@@ -428,7 +434,7 @@ impl App {
             }
             Action::ShowInventory(id) => {
                 self.inventory_ui.show_original(&self.world.inventory, id);
-                self.panels.inventory = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             Action::AddToOutfit(ids) => {
                 if let Some(cof) = crate::world::appearance::cof(&self.world.inventory) {
@@ -470,6 +476,23 @@ impl App {
 
     pub(super) fn update_gestures(&mut self) {
         self.seed_gesture_demo();
+        if self.demo && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "delete") {
+            static STEP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            const FRAMES: [u64; 4] = [600, 650, 700, 900];
+            let step = STEP.load(std::sync::atomic::Ordering::Relaxed);
+            if step < FRAMES.len() && self.frame_count >= FRAMES[step] {
+                STEP.store(step + 1, std::sync::atomic::Ordering::Relaxed);
+                let item = Uuid::from_u128(8106);
+                if step == 1 {
+                    let facts = crate::ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+                    let asked = self
+                        .inventory_ui
+                        .ask_detach_delete(&self.world.inventory, &self.settings.inventory, &facts, item);
+                    log::info!("demo gesture delete: Detach and Delete asked: {asked:?}");
+                }
+                self.demo_detach_delete_steps("gesture delete", item, step == 2, step != 1);
+            }
+        }
         if self.demo
             && !self.gesture_state.demo_played
             && self.frame_count >= 650
@@ -790,23 +813,16 @@ impl App {
                         editor.open = false;
                     }
                 }
-                let similar = if self.gesture_state.manager.active.contains(&item) {
-                    self.gesture_state.manager.similar(item, &save.definition)
-                } else {
-                    Vec::new()
-                };
-                for id in similar {
-                    self.gesture_active(id, false, true);
-                }
-                let effects = self.gesture_state.manager.stop(item);
-                self.gesture_effects(effects);
-                self.gesture_state.manager.entries.insert(
+                // LLPreviewGesture::onSaveComplete → replaceGesture: no other
+                // gesture is deactivated, whatever its shortcut (#4167)
+                let effects = self.gesture_state.manager.replace(
                     item,
                     Entry {
                         asset,
                         definition: save.definition,
                     },
                 );
+                self.gesture_effects(effects);
                 if self.gesture_state.manager.active.contains(&item) {
                     self.send(NetCommand::SetGestureActive { item, asset, active: true });
                 }
@@ -1237,6 +1253,11 @@ fn demo_replay_gestures(sound: Uuid) -> Vec<(u128, &'static str, Gesture)> {
     ]
 }
 
+/// RlvActions::canPlayGestures (indra/newview/rlvactions.cpp).
+fn gesture_allowed(rlva: &crate::world::rlva::Rlva) -> bool {
+    !rlva.has("sendgesture")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1344,5 +1365,17 @@ mod tests {
         state.queue_load(item, new, true, false, None, false);
         assert!(state.take_load(item, old).is_none());
         assert_eq!(state.take_load(item, new).expect("new load").asset, new);
+    }
+
+    /// LLGestureMgr::playGesture: @sendgesture stops the editor's Preview
+    /// too, which plays the gesture through `gesture_preview`.
+    #[test]
+    fn rlva_sendgesture_stops_every_gesture_play() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        world.rlva.configure(true);
+        assert!(gesture_allowed(&world.rlva));
+        world.rlva_console_input("@sendgesture=n");
+        assert!(!gesture_allowed(&world.rlva));
     }
 }

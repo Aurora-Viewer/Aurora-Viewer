@@ -10,6 +10,13 @@ use crate::ui::snapshot::SnapshotUi;
 use egui::{Align2, Id, Order, Pos2, Rect, Sense, Stroke, Vec2};
 
 const WIDTH: f32 = 360.0;
+/// The cards' room at the least before they scroll: two closed cards.
+const HEAD_ROOM: f32 = 88.0;
+/// The editor's height at most; the room its title row and margins take
+/// over it, and the room kept under it at the screen's bottom.
+const MAX_HEIGHT: f32 = 860.0;
+const TITLE_ROOM: f32 = 56.0;
+const BOTTOM_ROOM: f32 = 24.0 + TITLE_ROOM;
 
 impl Viewfinder {
     /// The panel, left of the dock: the looks editor.
@@ -22,11 +29,25 @@ impl Viewfinder {
         panel: &mut SnapshotUi,
         out: &mut Vec<Out>,
     ) {
-        egui::Area::new(Id::unique("vf_looks"))
+        // moved anywhere by its background, its top kept where it was left:
+        // it grows and shrinks from its bottom only (centred, it moved at
+        // both ends with every change of height)
+        let id = Id::unique("vf_looks");
+        let width = WIDTH + 24.0;
+        let default = Pos2::new(screen.right() - 84.0 - width, (screen.top() + 60.0).max(screen.center().y - 440.0));
+        // kept on the screen by its width and its title, whatever its height
+        let grip = Vec2::new(width, TITLE_ROOM);
+        let pos = match self.looks_drag {
+            Some(dragged) => crate::ui::photo_reel::tray_place(None, screen, grip, dragged),
+            None => crate::ui::photo_reel::tray_place(s.viewfinder.filters_at, screen, grip, default),
+        };
+        // the editor reaches down to the screen's bottom at most
+        let height = (screen.bottom() - pos.y - BOTTOM_ROOM).clamp(HEAD_ROOM * 4.0, MAX_HEIGHT);
+        let area = egui::Area::new(id)
             .order(Order::Foreground)
             .fade_in(false)
-            .pivot(Align2::RIGHT_CENTER)
-            .fixed_pos(Pos2::new(screen.right() - 84.0, screen.center().y))
+            .movable(true)
+            .current_pos(pos)
             .show(ctx, |ui| {
                 widgets::overlay(ui, p, egui::Margin::same(12), |ui| {
                     ui.set_width(WIDTH);
@@ -43,20 +64,75 @@ impl Viewfinder {
                             }
                         });
                     });
-                    // the stack and the settings take their room, the list the rest
-                    let layers = s.looks.len() as f32;
-                    let room = (screen.height() - 560.0 - layers * 30.0).max(120.0);
+                    // the catalogue about two fifths of the room
+                    let list_height = (height * 0.42).clamp(150.0, 380.0);
                     let mut actions = Vec::new();
+                    let thumbs = &panel.thumbs;
+                    let thumb = |id: &str| thumbs.get(id).copied();
                     let opts = crate::ui::looks_editor::Options {
-                        list_height: room,
+                        list_height,
+                        height: Some(height),
                         compare: true,
                         luts: &panel.lut_names,
                         pano: panel.pano,
+                        thumb: &thumb,
                     };
                     let mut state = std::mem::take(&mut panel.looks);
-                    state.show(ui, p, s, opts, &mut actions);
+                    state.show(ui, p, crate::ui::looks_editor::Stack::photo(s), opts, &mut actions);
                     panel.looks = state;
                     out.extend(actions.into_iter().map(Out::Panel));
+                });
+            });
+        // moved: followed live, kept once let go (the settings are saved
+        // when they change, not every frame of the drag)
+        let resp = &area.response;
+        if resp.dragged() {
+            self.looks_drag = Some(pos + resp.drag_delta());
+            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+        if resp.drag_stopped()
+            && let Some(dragged) = self.looks_drag.take()
+        {
+            let kept = crate::ui::photo_reel::tray_place(None, screen, grip, dragged);
+            s.viewfinder.filters_at = Some(crate::ui::photo_reel::tray_fraction(kept, screen));
+        }
+    }
+
+    /// The look pointed at in the catalogue, named over the photo while it
+    /// is tried there (as Genshin Impact's photo mode and Photos' filters
+    /// do): its name and what it does, in a small pill at the top of the
+    /// frame; with the stack full and Replace off, why nothing is tried.
+    pub(super) fn look_preview(&mut self, ctx: &egui::Context, p: &Palette, frame: Rect, s: &Settings, panel: &SnapshotUi) {
+        let Some(pointed) = &panel.looks.hover else {
+            return;
+        };
+        let full = s.looks.len() >= crate::snapshot::looks::MAX_LAYERS && !panel.looks.replace;
+        let (title, about) = match pointed {
+            None => (aurora_i18n::tr!("photo-look-none").to_owned(), None),
+            Some(id) if full => (
+                crate::snapshot::looks::label(Some(id)).into_owned(),
+                Some(aurora_i18n::tr!("photo-looks-full", max = crate::snapshot::looks::MAX_LAYERS)),
+            ),
+            Some(id) => (
+                crate::snapshot::looks::label(Some(id)).into_owned(),
+                crate::snapshot::looks::tip(id).map(str::to_owned),
+            ),
+        };
+        egui::Area::new(Id::unique("vf_look_preview"))
+            .order(Order::Foreground)
+            .interactable(false)
+            .pivot(Align2::CENTER_TOP)
+            .fixed_pos(Pos2::new(frame.center().x, frame.top() + 16.0))
+            .show(ctx, |ui| {
+                widgets::overlay(ui, p, egui::Margin::symmetric(14, 7), |ui| {
+                    ui.set_max_width(420.0);
+                    ui.vertical_centered(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.label(egui::RichText::new(title).font(bold(ctx, 13.0)).color(p.ink));
+                        if let Some(about) = about {
+                            ui.add(egui::Label::new(egui::RichText::new(about).size(11.5).color(p.muted)).wrap());
+                        }
+                    });
                 });
             });
     }

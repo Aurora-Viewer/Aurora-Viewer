@@ -241,17 +241,20 @@ fn rlva_inventory_wire_order_attachment_groups_and_own_locks_match_the_reference
         ("torso", "Chest"),
         ("arms", "Left Hand"),
         ("legs", "Left Foot"),
-        ("hud", "Center 2"),
+        // rlvAttachGroupFromIndex (rlvhelper.cpp): "hud" is avatar_lad
+        // group 8, the Bento additions; the real HUD points (group 9) are in
+        // no group, so the worn Center 2 is not listed
+        ("hud", ""),
     ] {
         let text = format!("getattachnames:{group}=123");
         let c = Command::parse(&text).unwrap();
         assert_eq!(world.rlva_inventory_query(&c, A).as_deref(), Some(expected));
     }
     let hud_points = world.rlva_inventory_query(&query("getaddattachnames:hud=123"), A).unwrap();
-    assert!(hud_points.split(',').any(|p| p == "Center 2"));
+    assert!(!hud_points.split(',').any(|p| p == "Center 2"));
     assert!(
-        !hud_points.split(',').any(|p| p == "Left Ring Finger"),
-        "Bento group 8 is not a HUD"
+        hud_points.split(',').any(|p| p == "Left Ring Finger"),
+        "the Bento group 8 is the \"hud\" group"
     );
     let head = Uuid::from_u128(702);
     command(&mut world.rlva, head, "@detach=n");
@@ -316,7 +319,7 @@ fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release
     };
     assert!(!world.rlva_allows_command(&landmark, Uuid::nil()));
     let mut dialog = crate::ui::landmark_create::CreateLandmarkUi::default();
-    assert!(dialog.open(&world, None).is_none() && !dialog.open);
+    assert!(dialog.open(&egui::Context::default(), &world, None).is_none() && !dialog.open);
     let mut pick = PickInfo {
         id: TARGET,
         creator: world.agent_id,
@@ -349,8 +352,10 @@ fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release
     assert!(!world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified.clone())), Uuid::nil()));
     world.profiles.classifieds.insert(classified.id, classified.clone());
     assert!(world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified.clone())), Uuid::nil()));
+    // an existing classified's "Set location" has no RLVa test
+    // (LLPanelProfileClassified::onSetLocationClick)
     classified.pos_global.x += 1.0;
-    assert!(!world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified)), Uuid::nil()));
+    assert!(world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified)), Uuid::nil()));
     world.rlva.configure(false);
     world.refresh_rlva_privacy();
     assert!(world.rlva_can_name(Uuid::from_u128(99)) && !crate::ui::people::nearby(&world).is_empty());
@@ -371,20 +376,25 @@ fn rlva_debug_resolution_writes_are_allowlisted_locked_ordered_and_released() {
     assert_eq!(r.resolution_divisor, Some(12));
     assert_eq!(writes[1].1.behaviour, "getdebug_renderresolutiondivisor");
     let force = |value| Command::parse(&format!("setdebug_renderresolutiondivisor:{value}=force")).unwrap();
-    for value in ["-1", "NaN", "4294967296", "2.5"] {
+    // LLStringUtil::convertToU32: no NaN, no overflow, no "default"
+    for value in ["NaN", "4294967296", "default", ""] {
         r.debug_force(A, &force(value));
     }
     assert_eq!(r.resolution_divisor, Some(12));
     r.debug_force(B, &force("4"));
     assert_eq!(r.resolution_divisor, Some(12), "another issuer cannot bypass the debug lock");
-    r.debug_force(A, &force("default"));
-    assert_eq!(r.resolution_divisor, None);
+    r.debug_force(A, &force("2.5"));
+    assert_eq!(r.resolution_divisor, Some(2), "what follows the number is ignored");
     r.debug_force(A, &force("4"));
     r.configure(false);
     assert_eq!(r.resolution_divisor, None);
     r.debug_force(A, &force("4"));
     assert_eq!(r.resolution_divisor, None);
-    assert!(command_list("renderresolutiondivisor;force").contains("setdebug_renderresolutiondivisor"));
+    assert_eq!(
+        command_list("renderresolutiondivisor;force"),
+        "",
+        "@setdebug_ names are not dictionary entries"
+    );
 }
 
 #[test]
@@ -607,13 +617,16 @@ fn rlva_multi_wear_leaves_out_only_the_blocked_attachment() {
             library: false,
         },
     );
-    // (id, attachment point): spine, skull, left hand.
-    let items = [(41, 9), (42, 2), (43, 5)];
-    for (id, point) in items {
+    // (id, attachment point, name): spine, skull, left hand. The point is
+    // named, as RlvAttachmentLocks::canAttach reads it (rlvlocks.h): a
+    // point saved on the item alone gives RLV_WEAR.
+    let items = [(41, 9, "Tail (spine)"), (42, 2, "Hat (skull)"), (43, 5, "Ring (left hand)")];
+    for (id, point, name) in items {
         w.inventory.items.insert(
             Uuid::from_u128(id),
             InvItem {
                 id: Uuid::from_u128(id),
+                name: name.to_owned(),
                 asset_type: 6,
                 flags: point,
                 ..Default::default()
@@ -621,7 +634,7 @@ fn rlva_multi_wear_leaves_out_only_the_blocked_attachment() {
         );
     }
     command(&mut w.rlva, A, "@addattach:spine=n");
-    let ids: Vec<_> = items.iter().map(|(id, _)| Uuid::from_u128(*id)).collect();
+    let ids: Vec<_> = items.iter().map(|(id, _, _)| Uuid::from_u128(*id)).collect();
     for replace_unlocked in [true, false] {
         w.rlva.preferences.replace_unlocked = replace_unlocked;
         let mut cmd = aurora_net::NetCommand::UpdateOutfit {
@@ -817,7 +830,7 @@ fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_d
 }
 
 #[test]
-fn rlva_temporary_attachment_locks_and_detachme_do_not_require_inventory_or_cof() {
+fn rlva_temporary_attachment_locks_do_not_require_inventory_or_cof() {
     use aurora_net::{AttachRequest, NetCommand};
     let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     for event in crate::demo::events() {
@@ -856,10 +869,11 @@ fn rlva_temporary_attachment_locks_and_detachme_do_not_require_inventory_or_cof(
     assert!(world.rlva_pending().is_empty(), "detachme skips nostrip, not attachment locks");
     command(&mut world.rlva, A, "@detach=y,detachme=force");
     assert!(
-        world
+        !world
             .rlva_pending()
             .iter()
-            .any(|(actor, cmd)| *actor == A && matches!(cmd, NetCommand::DetachObject { .. }))
+            .any(|(actor, cmd)| *actor == A && matches!(cmd, NetCommand::DetachObject { .. })),
+        "LLVOAvatarSelf::detachAttachmentIntoInventory needs an inventory item: a temporary attachment stays on"
     );
     command(&mut world.rlva, B, "@remattach:left hand=n");
     assert!(
@@ -929,7 +943,8 @@ fn rlva_visual_effect_lifetimes_capacity_and_disable_follow_the_issuing_object()
         A,
         "@setsphere=n,setsphere_color:0.1/0.2/0.3=force,setoverlay=n,setoverlay_texture:00000000-0000-0000-0000-000000000003=force",
     );
-    assert_eq!(r.visuals.spheres[&A].sample(std::time::Instant::now()).0, [0.1, 0.2, 0.3, 0.0]);
+    // onColorChanged stores LLVector4(color, 1.0f)
+    assert_eq!(r.visuals.spheres[&A].sample(std::time::Instant::now()).0, [0.1, 0.2, 0.3, 1.0]);
     assert_eq!(r.visuals.overlays[&A].texture, TARGET);
     command(&mut r, B, "@setsphere_color:1/0/0=force");
     assert!(!r.visuals.spheres.contains_key(&B), "modifiers require an active issuing object");
@@ -1062,13 +1077,16 @@ fn sent(commands: Vec<NetCommand>) -> Vec<(String, i32, ChatType)> {
 }
 
 #[test]
-fn rlva_redirection_is_deduplicated_and_never_leaks_to_public_chat() {
+fn rlva_redirection_goes_once_per_object_rule_and_never_leaks_to_public_chat() {
     let mut r = enabled();
     command(&mut r, A, "@sendchat=n,redirchat:456=n");
     command(&mut r, B, "@redirchat:456=n,redirchat:789=n");
+    // RlvHandler::redirectChatOrEmote: one copy per object's rule, in the
+    // order they were stored
     assert_eq!(
         sent(r.outgoing_chat("hello", 0, ChatType::Normal)),
         vec![
+            ("hello".to_owned(), 456, ChatType::Shout),
             ("hello".to_owned(), 456, ChatType::Shout),
             ("hello".to_owned(), 789, ChatType::Shout)
         ]
@@ -1089,7 +1107,9 @@ fn rlva_chat_filter_is_utf8_safe_and_preserves_ooc_and_short_commands() {
     );
     let text = "/me éééééééééééééééééééééééé";
     let result = sent(r.outgoing_chat(text, 0, ChatType::Normal));
-    assert_eq!(result[0].0.chars().count(), 20);
+    // 20 characters, the last one a multibyte character the Legacy Viewer
+    // cuts in two: dropped instead
+    assert_eq!(result[0].0.chars().count(), 19);
     assert_eq!(sent(r.outgoing_chat("/test", 0, ChatType::Normal))[0].0, "/test");
     assert_eq!(sent(r.outgoing_chat("/me says (hello)", 0, ChatType::Normal))[0].0, "...");
 }
@@ -1215,7 +1235,12 @@ fn rlva_camera_replies_and_forces_match_modifier_lifetimes_and_preset_locks() {
         "an offset restriction locks forced preset writes too"
     );
     r.camera_force(A, &force("setcam_fov", "1.2"));
-    assert_eq!(r.camera_settings(&crate::camera::CameraSettings::default(), 1.0).fov, 1.2);
+    // B's @setcam_fovmax counts at its default under A's @setcam
+    // (RlvActions::getCameraFOVLimits, the modifier keeping A's values only)
+    assert_eq!(
+        r.camera_settings(&crate::camera::CameraSettings::default(), 1.0).fov,
+        crate::camera::DEFAULT_FOV
+    );
     r.camera_force(A, &force("setcam_fov", ""));
     assert_eq!(
         r.camera_settings(&crate::camera::CameraSettings::default(), 1.0).fov,
@@ -1255,9 +1280,11 @@ fn rlva_camera_focus_defaults_fit_objects_and_positions_without_changing_identit
     assert!(position.camera(at, Vec3::ZERO, at).unwrap().distance(at) < 0.002);
     let explicit = FocusRequest::parse(&format!("{TARGET};4;0/0/-2")).unwrap();
     assert_eq!(explicit.camera(at, Vec3::ZERO, at).unwrap(), at - Vec3::Z * 4.0);
-    for text in ["", "10/20/NaN", "10/20/30;NaN", "10/20/30;;1/0", "10/20/30;4;1/0/0;extra"] {
+    for text in ["", "10/20/NaN", "10/20/30;NaN", "10/20/30;;1/0"] {
         assert!(FocusRequest::parse(text).is_none(), "{text}");
     }
+    // RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>: the tokens after the third are ignored
+    assert!(FocusRequest::parse("10/20/30;4;1/0/0;extra").is_some());
 }
 
 #[test]
@@ -1275,7 +1302,9 @@ fn rlva_camera_preference_mutations_preserve_locked_fields_and_allow_unrelated_o
     assert_eq!(requested.zoom_time, 2.0);
     command(&mut r, A, "@setcam=n");
     r.preserve_camera_settings(&mut requested, &before);
-    assert_eq!(requested.fov, before.fov);
+    // LLZoomer and the CameraAngle setting have no RLVa check: the lens
+    // stays the user's under @setcam, bounded by the fov limits only
+    assert_eq!(requested.fov, 0.8);
     r.configure(false);
     requested.camera_offset = [-8.0, 2.0, 3.0];
     r.preserve_camera_settings(&mut requested, &before);
@@ -1289,10 +1318,9 @@ fn rlva_command_discovery_includes_strict_and_supported_environment_variants() {
     for set in [false, true] {
         let commands = environment::command_names(set);
         assert!(commands.iter().all(|name| environment::supports(name, set)));
-        let listed = command_list(if set { "setenv_;force" } else { "getenv_;reply" });
-        for name in commands {
-            assert!(listed.split(';').any(|n| n == name), "{name}");
-        }
+        // RlvBehaviourDictionary::getCommands lists dictionary entries only:
+        // the @setenv_/@getenv_ names are handled by RlvEnvironment.
+        assert_eq!(command_list(if set { "setenv_;force" } else { "getenv_;reply" }), "");
     }
     let mut r = enabled();
     command(&mut r, A, "@setcam_fov_sec:1=force,getcam_fov_sec=123,getenv_daytime_sec=123");
@@ -1391,8 +1419,10 @@ fn rlva_inventory_queries_keep_the_shared_root_and_report_descendants() {
     assert_eq!(w.rlva_inventory_query(&query, A).as_deref(), Some(""));
     query = Command::parse("getinvworn=123").expect("query");
     assert_eq!(w.rlva_inventory_query(&query, A).as_deref(), Some("|01,Test outfit|10"));
+    // RlvHandler::onGetInvWorn answers at once with what gInventory holds
+    // (rlvhandler.cpp): a folder still being fetched gives what it has
     w.inventory.folders.get_mut(&child).expect("folder").state = FetchState::Unknown;
-    assert!(w.rlva_inventory_query(&query, A).is_none(), "unloaded is not empty");
+    assert_eq!(w.rlva_inventory_query(&query, A).as_deref(), Some("|01,Test outfit|10"));
 }
 
 #[test]
@@ -1503,12 +1533,17 @@ fn rlva_editing_and_permissions_are_enforced_on_linksets_and_wire_commands() {
     assert!(w.rlva_can_edit(child));
     command(&mut w.rlva, B, &format!("@editobj:{id}=n"));
     assert!(!w.rlva_can_edit(child));
+    // a material dropped on it still passes (LLToolDragAndDrop::
+    // dad3dApplyToObject asks willObjectAcceptInventory alone)
+    let material = NetCommand::Build(BuildCmd::Cap {
+        handle: key.region,
+        cap: "ModifyMaterialParams".into(),
+        put: false,
+        body: aurora_llsd::Llsd::Array(vec![aurora_llsd::llsd_map! { "object_id" => id }]),
+        tag: 0,
+    });
+    assert!(!w.rlva_contents_locked(root) && w.rlva_allows_command(&material, Uuid::nil()));
     for (cap, put, body) in [
-        (
-            "ModifyMaterialParams",
-            false,
-            aurora_llsd::Llsd::Array(vec![aurora_llsd::llsd_map! { "object_id" => id }]),
-        ),
         (
             "ObjectMedia",
             false,
@@ -1674,25 +1709,50 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
         panic!("a forced folder wear is one Force batch");
     };
     assert!(remove.is_empty());
-    assert_eq!(wear.len(), 5);
-    assert!(wear[0].replace);
-    assert!(wear.iter().skip(1).take(3).all(|w| !w.replace));
-    assert!(
-        wear[4].item == object && wear[4].point == 1 && wear[4].replace,
-        "a folded attachment folder chooses the attachment point"
+    // LLInventoryModel::collectDescendentsIf (llinventorymodel.cpp): the
+    // subfolders first, depth first, then the folder's own items; the first
+    // shirt replaces, the next ones add (fSeenWType, RlvForceWear::forceFolder)
+    let order: Vec<(Uuid, bool)> = wear.iter().map(|w| (w.item, w.replace)).collect();
+    assert_eq!(
+        order,
+        vec![
+            (Uuid::from_u128(20), true),
+            (Uuid::from_u128(21), false),
+            (object, true),
+            (Uuid::from_u128(22), false),
+            (TARGET, false),
+        ]
     );
+    assert_eq!(wear[2].point, 1, "a folded attachment folder chooses the attachment point");
     w.rlva.appearance.clear();
+    // RlvHandler::processCommand answers the query as it comes, while
+    // RlvForceWear::done has only started the COF update: the reply does not
+    // wait for the outfit change, and neither does the next one.
     command(&mut w.rlva, A, "@attach:Outfit=force,getgroup=123");
     w.rlva_pending();
-    assert_eq!(w.rlva.pending.len(), 1, "the query waits for the outfit transaction");
-    assert!(w.rlva.out.is_empty());
-    w.rlva.appearance.clear();
+    assert!(w.rlva.pending.is_empty());
+    assert!(matches!(w.rlva.out.last(), Some(NetCommand::ChatReply { channel: 123, message, .. }) if message == "none"));
+    w.rlva.out.clear();
     w.rlva.appearance_busy = true;
+    command(&mut w.rlva, A, "@attach:Outfit=force,getgroup=124,getsitid=125");
     w.rlva_pending();
-    assert_eq!(w.rlva.pending.len(), 1);
+    assert_eq!(w.rlva.pending.len(), 1, "only the force waits for the outfit change");
+    assert!(matches!(w.rlva.pending[0].1.param, Param::Force));
+    let channels: Vec<i32> = w
+        .rlva
+        .out
+        .iter()
+        .filter_map(|c| match c {
+            NetCommand::ChatReply { channel, .. } => Some(*channel),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(channels, vec![124, 125], "the replies keep their order");
+    w.rlva.appearance.clear();
     w.rlva.appearance_busy = false;
     w.rlva_pending();
-    assert!(matches!(w.rlva.out.last(), Some(NetCommand::ChatReply { channel: 123, message, .. }) if message == "none"));
+    assert!(w.rlva.pending.is_empty());
+    assert_eq!(w.rlva.appearance.len(), 1, "the held force runs once the outfit change is over");
 }
 
 #[test]
@@ -1754,6 +1814,8 @@ fn rlva_im_ranges_and_nametag_distances_follow_exclusions_and_strict_exceptions(
 fn rlva_queued_force_reads_the_rules_it_was_received_under() {
     let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     w.rlva.configure(true);
+    // (a takeoff the land allows: LLAgent::canFly)
+    w.fly_override = true;
     command(&mut w.rlva, B, "@fly=n");
     command(&mut w.rlva, A, "@fly=force");
     command(&mut w.rlva, B, "@fly=y");
@@ -1794,12 +1856,13 @@ fn rlva_stand_return_waits_for_a_successful_sit_and_is_cancelled_by_disabling() 
     command(&mut w.rlva, A, "@standtp=n,tploc=n");
     let origin = (42, glam::Vec3::new(100.0, 100.0, 30.0));
     w.rlva.stand_origin = Some(origin);
-    w.rlva_update_stand();
+    w.rlva_sitting_tick();
+    w.rlva_sitting_tick();
     assert!(w.rlva.stand_return.is_none(), "an unanswered sit is not a stand");
     w.agent.ground_sit = true;
-    w.rlva_update_stand();
+    w.rlva_sitting_tick();
     w.agent.ground_sit = false;
-    w.rlva_update_stand();
+    w.rlva_sitting_tick();
     assert_eq!(w.rlva.stand_return, Some(origin));
     let c = NetCommand::TeleportTo {
         handle: 42,
@@ -2027,7 +2090,17 @@ fn rlva_watchdog_folder_locks_resolved_once_match_single_checks() {
             }),
         );
     }
+    // RlvFolderLocks::getLockedFolders, ST_ATTACHMENT (rlvlocks.cpp): an
+    // issuer's own lock takes the folder of its own item only, so the
+    // collar, whose item is outside #RLV, names its link's folder
     command(&mut world.rlva, collar_item, "@detachallthis=n,attachallthis=n");
+    let free_locks = super::inventory::FolderLocks::default();
+    assert!(
+        world.rlva_folder_allowed_in(&free_locks, collar, false, Uuid::nil()),
+        "the issuer's own item is outside #RLV"
+    );
+    command(&mut world.rlva, collar_item, "@clear");
+    command(&mut world.rlva, collar_item, "@detachallthis:Collar=n,attachallthis:Collar=n");
     command(&mut world.rlva, cuff, "@detachthis:Cuffs=n");
     let locks = super::inventory::FolderLocks::default();
     for folder in [root, rlv, collar, cuffs, other] {
@@ -2239,8 +2312,8 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
         );
     }
     // (id, asset type, flags, name): worn shirt and shape, then a new shirt,
-    // jacket, shape, an object naming the chest, one naming no point and
-    // never worn, and one naming no point last worn on the chest.
+    // jacket, shape, an object naming the chest, one naming no point, and
+    // one naming no point with the chest saved on the item.
     let items = [
         (40, 5, 4, "Old shirt"),
         (41, 13, 0, "Old shape"),
@@ -2319,19 +2392,11 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
     assert_eq!(locks.wear(&w.inventory, id(46), 0), all, "no point named: it attaches where it can");
     assert_eq!(locks.wear(&w.inventory, id(46), 1), locked, "Attach To the chest");
     assert_eq!(locks.wear(&w.inventory, id(46), 2), all);
-    assert_eq!(
-        locks.wear(&w.inventory, id(47), 0),
-        locked,
-        "Wear goes to the chest it was last worn on"
-    );
-    assert_eq!(locks.wear(&w.inventory, id(47), 2), all, "Attach To another point still works");
-    w.rlva.last_points.note(id(46), 1, std::time::Instant::now());
-    assert_eq!(
-        w.rlva_wear_locks().wear(&w.inventory, id(46), 0),
-        locked,
-        "without a saved point, the point it was last seen on"
-    );
-    w.rlva.last_points = Default::default();
+    // RlvAttachmentLocks::canAttach(const LLInventoryItem*) (rlvlocks.h):
+    // RlvAttachPtLookup::getAttachPoint reads the names only, so a point
+    // saved on the item gives RLV_WEAR
+    assert_eq!(locks.wear(&w.inventory, id(47), 0), all, "a saved point is no named point");
+    assert_eq!(locks.wear(&w.inventory, id(47), 1), locked, "Attach To the chest");
     assert!(locks.folder_allows(clothes, true) && locks.folder_allows(clothes, false));
 
     command(&mut w.rlva, A, "@clear");
@@ -2345,9 +2410,9 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
     assert_eq!(w.rlva_wear_locks().wear(&w.inventory, id(42), 0), all);
 }
 
-/// Wear onto a point a locked attachment holds is greyed (deliberate
-/// difference, human decision of 2026-10-31), Add stays: RLV lets an object
-/// attach beside a locked one.
+/// RlvAttachmentLocks::canAttach (rlvlocks.h): Wear onto a point a locked
+/// attachment holds is greyed when the names give that point, Add stays; an
+/// object whose names give no point is RLV_WEAR, whatever its saved point.
 #[test]
 fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
     use super::wear_locks::Wear;
@@ -2358,12 +2423,13 @@ fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
     }
     world.rlva.configure(true);
     let region = world.main_region.expect("demo region");
-    let (held, named, unnamed) = (Uuid::from_u128(60), Uuid::from_u128(61), Uuid::from_u128(62));
-    for (id, flags) in [(held, 1), (named, 1), (unnamed, 0)] {
+    let (held, named, unnamed, saved) = (Uuid::from_u128(60), Uuid::from_u128(61), Uuid::from_u128(62), Uuid::from_u128(63));
+    for (id, flags, name) in [(held, 1, ""), (named, 0, "Collar (chest)"), (unnamed, 0, ""), (saved, 1, "")] {
         world.inventory.items.insert(
             id,
             InvItem {
                 id,
+                name: name.to_owned(),
                 asset_type: 6,
                 flags,
                 owner_mask: 0x4000,
@@ -2399,11 +2465,10 @@ fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
         all,
         "no point known: it attaches where it can"
     );
-    world.rlva.last_points.note(unnamed, 1, std::time::Instant::now());
     assert_eq!(
-        world.rlva_wear_locks().wear(&world.inventory, unnamed, 0),
-        add_only,
-        "last worn on the held chest"
+        locks.wear(&world.inventory, saved, 0),
+        all,
+        "the chest saved on the item is no named point"
     );
 }
 
@@ -2753,35 +2818,40 @@ fn rlva_linking_refuses_the_locked_seat_like_can_stand_but_sittp_alone_does_not(
     assert!(!world.rlva_can_link(&[seat, other]));
 }
 
-/// #3154: `@setenv_daytime:-1=force` and `@setenv_reset=force` go back to the
-/// shared environment, unless `@setenv=n` came before them.
+/// #3154: `@setenv_daytime:-1=force` goes back to the shared environment, unless `@setenv=n` came before them: then they clear
+/// RLVa's own sky (ENV_EDIT, RlvEnvironment::getTargetEnvironment) and the
+/// user's local environment stays.
 #[test]
 fn rlva_environment_reset_returns_to_the_shared_environment_unless_locked() {
     use crate::world::{World, eep::SkyFrame, eep_env::SourceRights};
-    for reset in ["setenv_daytime:-1=force", "setenv_reset=force"] {
-        for (lines, shared) in [
-            (vec![format!("@{reset}")], true),
-            (vec![format!("@{reset},setenv=n")], true),
-            (vec![format!("@setenv=n,{reset}")], false),
-            (vec!["@setenv=n".to_owned(), format!("@{reset}")], false),
-            (vec!["@setenv=n".to_owned(), "@setenv=y".to_owned(), format!("@{reset}")], true),
-        ] {
-            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-            world.rlva.configure(true);
-            // a sky the user picked, then an RLVa sky over it
-            world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
-            world.on_chat(chat("@setenv_ambient:0.2/0.4/0.6=force"));
+    let reset = "setenv_daytime:-1=force";
+    for (lines, shared, held) in [
+        (vec![format!("@{reset}")], true, false),
+        (vec![format!("@{reset},setenv=n")], true, true),
+        (vec![format!("@setenv=n,{reset}")], false, false),
+        (vec!["@setenv=n".to_owned(), format!("@{reset}")], false, false),
+        (
+            vec!["@setenv=n".to_owned(), "@setenv=y".to_owned(), format!("@{reset}")],
+            true,
+            false,
+        ),
+    ] {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.rlva.configure(true);
+        // a sky the user picked, then an RLVa sky over it: unlocked, the
+        // force writes the user's own local environment
+        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
+        world.on_chat(chat("@setenv_ambient:0.2/0.4/0.6=force"));
+        world.rlva_pending();
+        assert!(world.eep.has_local() && world.rlva.environment.is_none());
+        for line in &lines {
+            world.on_chat(chat(line));
             world.rlva_pending();
-            assert!(world.rlva.environment.is_some());
-            for line in &lines {
-                world.on_chat(chat(line));
-                world.rlva_pending();
-            }
-            assert_eq!(world.eep.has_local(), !shared, "{lines:?}: the user's local sky");
-            assert!(world.rlva.environment.is_none(), "{lines:?}: RLVa's sky stays");
         }
+        assert_eq!(world.eep.has_local(), !shared, "{lines:?}: the user's local sky");
+        assert_eq!(world.rlva.environment.is_some(), held, "{lines:?}: RLVa's sky (the lock's copy)");
     }
-    assert!(environment::supports("setenv_reset", true));
+    assert!(!environment::supports("setenv_reset", true));
     assert!(!environment::supports("getenv_reset", false));
 }
 
@@ -2803,11 +2873,7 @@ fn rlva_environment_forces_respect_other_objects_at_receipt_and_at_dispatch() {
     );
 
     say(&mut world, A, "@setenv=n");
-    for cmd in [
-        "@setenv_reset=force",
-        "@setenv_daytime:-1=force",
-        "@setenv_ambient:0.2/0.4/0.6=force",
-    ] {
+    for cmd in ["@setenv_daytime:-1=force", "@setenv_ambient:0.2/0.4/0.6=force"] {
         say(&mut world, B, cmd);
         assert!(world.rlva.pending.is_empty(), "{cmd}: the other object's lock already applies");
     }
@@ -2815,7 +2881,7 @@ fn rlva_environment_forces_respect_other_objects_at_receipt_and_at_dispatch() {
     world.rlva_pending();
     assert!(world.eep.has_local() && world.rlva.environment.is_none());
 
-    say(&mut world, B, "@setenv_reset=force");
+    say(&mut world, B, "@setenv_daytime:-1=force");
     say(&mut world, A, "@setenv=n");
     world.rlva_pending();
     assert!(world.eep.has_local());
@@ -2824,7 +2890,7 @@ fn rlva_environment_forces_respect_other_objects_at_receipt_and_at_dispatch() {
         Some(A),
         "the new lock also protects its sky"
     );
-    say(&mut world, A, "@setenv_reset=force");
+    say(&mut world, A, "@setenv_daytime:-1=force");
     world.rlva_pending();
     assert!(
         world.eep.has_local() && world.rlva.environment.is_none(),
@@ -2836,7 +2902,7 @@ fn rlva_environment_forces_respect_other_objects_at_receipt_and_at_dispatch() {
     say(&mut world, B, "@setenv_preset:midday=force");
     world.rlva_pending();
     assert!(world.rlva.environment_request.is_some());
-    say(&mut world, B, "@setenv_reset=force");
+    say(&mut world, B, "@setenv_daytime:-1=force");
     assert!(!world.rlva.pending.is_empty());
     world.reset();
     world.rlva.configure(true);
@@ -2951,8 +3017,9 @@ fn rlva_attach_request_leaves_refused_attachments_out_instead_of_being_refused()
 }
 
 /// RlvForceWear::addAttachment: attachments with no known point (the default
-/// point) each replace what their own point holds; only a known point is one
-/// slot, whose first item replaces and the next ones add (#3635).
+/// point) each replace what their own point holds (#3635). The point is the
+/// one RlvAttachPtLookup::getAttachPointIndex reads from the names: a point
+/// saved on the item alone is no slot, so all four replace.
 #[test]
 fn rlva_forced_replace_wears_every_attachment_of_unknown_point_as_a_replacement() {
     use crate::world::appearance::Action;
@@ -3007,7 +3074,7 @@ fn rlva_forced_replace_wears_every_attachment_of_unknown_point_as_a_replacement(
     };
     let mut modes: Vec<_> = wear.iter().map(|w| (w.item.as_u128(), w.replace)).collect();
     modes.sort_unstable();
-    assert_eq!(modes, [(31, true), (32, true), (33, true), (34, false)]);
+    assert_eq!(modes, [(31, true), (32, true), (33, true), (34, true)]);
 }
 
 /// A world with RLVa on and a fetched inventory: folders (id, parent, name,
@@ -3113,11 +3180,13 @@ fn rlva_wear_locks_are_built_once_and_rebuilt_only_when_their_inputs_change() {
     assert!(!placed.folder_allows(id(15), true) && placed.folder_allows(id(14), true));
 }
 
-/// A "…this" lock on what is worn names the folders of the worn item and of
-/// its links under #RLV only: a link kept elsewhere locks nothing, and the
-/// rest of the inventory is not read to find it.
+/// A "…this" lock on what is worn names the folder of the worn item under
+/// #RLV only (RlvCommandOptionGetPath::getItemIDs reads the COF links'
+/// targets, RlvInventory::getPath their folders; rlvhelper.cpp,
+/// rlvinventory.cpp): the folder of another link to it is not locked, and
+/// the rest of the inventory is not read to find it.
 #[test]
-fn rlva_this_lock_on_a_layer_finds_the_shared_folders_of_the_item_and_its_links() {
+fn rlva_this_lock_on_a_layer_finds_the_shared_folder_of_the_worn_item() {
     let id = Uuid::from_u128;
     let mut w = inventory_world(
         &[
@@ -3133,7 +3202,7 @@ fn rlva_this_lock_on_a_layer_finds_the_shared_folders_of_the_item_and_its_links(
     command(&mut w.rlva, A, "@detachthis:shirt=n");
     let locks = w.rlva_wear_locks();
     assert!(!locks.folder_allows(id(12), false), "the folder of the worn shirt");
-    assert!(!locks.folder_allows(id(13), false), "the folder of its shared link");
+    assert!(locks.folder_allows(id(13), false), "the folder of another link to it");
     assert!(locks.folder_allows(id(14), false), "a link outside #RLV locks nothing");
     assert!(locks.folder_allows(id(20), false));
     assert!(!locks.can_remove(id(31)));
@@ -3567,7 +3636,7 @@ fn rlva_killed_attachment_clears_the_rules_rooted_on_it_but_not_during_a_telepor
     assert!(world.objects.index_of_uuid(&root).is_some(), "a kill during a teleport is ignored");
     assert!(world.rlva.has("fly") && world.rlva.has("jump") && world.rlva.has("alwaysrun"));
     assert!(parity_replies(&mut world.rlva).iter().all(|(channel, _)| *channel != 123));
-    world.apply(NetEvent::TeleportFailed { reason: "no".into() });
+    world.apply(NetEvent::viewer_teleport_failed("no"));
 
     // a child prim killed on its own, before its root: nothing is cleared yet
     world.apply(NetEvent::ObjectsKilled {
@@ -3710,9 +3779,11 @@ fn rlva_touchme_overrides_touchall_but_not_interact() {
     command(&mut world.rlva, A, "@touchall=n");
     assert!(touch(&world, inviting), "@touchme lifts @touchall for its own object");
     assert!(!touch(&world, plain));
+    // @interact drops the pick before RlvActions::canTouch is asked
+    // (LLViewerWindow::cursorIntersect); canTouch itself does not ask it
     command(&mut world.rlva, A, "@interact=n");
-    assert!(!touch(&world, inviting), "@interact is decided before @touchme");
-    assert!(!touch(&world, plain));
+    assert!(world.rlva_drops_picks(), "@interact is decided before @touchme, at the pick");
+    assert!(touch(&world, inviting) && !touch(&world, plain));
     assert!(world.rlva_can_touch(region, hud_local), "the HUDs stay");
     command(&mut world.rlva, A, "@interact=y");
     assert!(touch(&world, inviting));
@@ -3823,6 +3894,7 @@ fn rlva_force_fly_reads_numbers_and_words() {
     }
     let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     world.rlva.configure(true);
+    world.fly_override = true;
     let fly = |world: &mut crate::world::World, source: Uuid, option: &str| {
         command(&mut world.rlva, source, &format!("@fly{option}=force"));
         assert!(world.rlva_pending().is_empty());
@@ -3982,6 +4054,65 @@ fn build_escape_world() -> (crate::world::World, usize, usize) {
     (world, seat, other)
 }
 
+/// LLTaskInvFVBridge::renameItem through `BuildTool::rename_item`: the script
+/// editor's title rename and the Contents panel share one guard, so a locked
+/// attachment (@remattach) keeps the names of its contents.
+#[test]
+fn locked_attachment_prevents_script_rename() {
+    use crate::build::BuildTool;
+    use aurora_net::build::{BuildCmd, TaskItem, perm};
+
+    let (mut world, _, _) = build_escape_world();
+    let chest = worn_attachment(&mut world, 9101, 1);
+    let worn = world
+        .objects
+        .iter()
+        .find(|(_, o)| o.attachment_item_id() == Some(chest))
+        .map(|(i, _)| i)
+        .expect("worn attachment");
+
+    let object = world.objects.get(worn).unwrap().full_id;
+    let item_id = Uuid::from_u128(9102);
+    let mut tool = BuildTool::default();
+
+    tool.contents.objects.entry(object).or_default().items.push(TaskItem {
+        item_id,
+        name: "Original".into(),
+        owner_mask: perm::MODIFY,
+        ..Default::default()
+    });
+
+    // Object permissions must not obscure the RLVa restriction.
+    world.god_level = 1;
+    assert!(tool.contents_items_editable(&world, worn));
+
+    command(&mut world.rlva, A, "@remattach:chest=n");
+    assert!(world.rlva_locked_attachment(worn));
+    assert!(!tool.contents_items_editable(&world, worn));
+
+    tool.rename_item(&world, worn, item_id, "Blocked");
+
+    assert_eq!(tool.contents.objects[&object].items[0].name, "Original");
+    assert!(
+        !tool
+            .out
+            .iter()
+            .any(|command| matches!(command, NetCommand::Build(BuildCmd::UpdateTaskInventory { .. }))),
+        "a locked attachment must not send a rename"
+    );
+
+    command(&mut world.rlva, A, "@remattach:chest=y");
+    assert!(!world.rlva_locked_attachment(worn));
+
+    tool.rename_item(&world, worn, item_id, "Allowed");
+    assert_eq!(tool.contents.objects[&object].items[0].name, "Allowed");
+    assert!(tool.out.iter().any(|command| matches!(
+        command,
+        NetCommand::Build(BuildCmd::UpdateTaskInventory { item, .. })
+            if item.item_id == item_id && item.name == "Allowed"
+    )));
+}
+
 /// LLTaskInvFVBridge::isItemRemovable / isItemMovable, LLPanelContents::getState
 /// and willObjectAcceptInventory: the contents of an attachment that cannot be
 /// taken off, and of the seat under @unsit or @sittp, stay as they are; the
@@ -4117,12 +4248,28 @@ fn rlva_locked_attachment_and_restrained_seat_keep_their_contents_place_and_link
     assert!(world.rlva_locked_attachment(worn) && world.rlva_contents_locked(worn));
     assert!(none(&world, contents(&world, worn)) && none(&world, scripts(&world, worn)) && none(&world, open(&world, worn)));
     assert!(all(&world, transform(&world, worn)), "a locked attachment is still adjusted");
+    // LLTaskInvFVBridge::buildContextMenu greys "Open" out: its notecards
+    // and scripts, not its textures
+    let blocked = |world: &World, i: usize| [7, 10, 0, 1].map(|t| world.rlva_task_open_blocked(i, t));
+    assert_eq!(blocked(&world, worn), [true, true, false, false]);
+    assert_eq!(blocked(&world, other), [false; 4]);
     for i in [seat, other] {
         assert!(!world.rlva_contents_locked(i));
         assert!(all(&world, contents(&world, i)) && all(&world, scripts(&world, i)) && all(&world, open(&world, i)));
     }
     command(&mut world.rlva, A, "@remattach:chest=y");
     assert!(all(&world, contents(&world, worn)) && all(&world, scripts(&world, worn)) && all(&world, open(&world, worn)));
+    // and on any object under @viewnote, @viewscript and @viewtexture
+    for (view, expected) in [
+        ("viewnote", [true, false, false, false]),
+        ("viewscript", [false, true, false, false]),
+        ("viewtexture", [false, false, true, false]),
+    ] {
+        command(&mut world.rlva, A, &format!("@{view}=n"));
+        assert_eq!(blocked(&world, other), expected, "{view}");
+        command(&mut world.rlva, A, &format!("@{view}=y"));
+    }
+    assert_eq!(blocked(&world, worn), [false; 4]);
     // the seat under @sittp: contents and place, not the links (RlvActions::canStand)
     command(&mut world.rlva, A, "@sittp=n");
     assert!(world.rlva_restrained_seat(seat) && world.rlva_contents_locked(seat) && !world.rlva_contents_locked(other));
@@ -4555,4 +4702,311 @@ fn the_second_camera_pauses_while_rlva_holds_the_view() {
     let mut r = enabled();
     command(&mut r, A, "@tplm=n");
     assert!(!r.second_camera_blocked());
+}
+
+/// RlvHandler::isException (rlvhandler.cpp) for @recvimfrom, @sendimto,
+/// @startimto, @recvchatfrom and @recvemotefrom: once strict (@permissive=n
+/// or a `_sec` rule), an object holding the bare rule (the null key) must
+/// name the resident too, or the resident is no longer targeted.
+#[test]
+fn rlva_strict_from_rules_need_every_bare_holder_to_name_the_resident() {
+    let person = TARGET.to_string();
+    for behaviour in ["recvimfrom", "sendimto", "startimto", "recvchatfrom", "recvemotefrom"] {
+        let mut r = enabled();
+        command(&mut r, A, &format!("@{behaviour}:{person}=n"));
+        assert!(r.targets_strictly(behaviour, &person), "{behaviour}");
+        command(&mut r, B, &format!("@{behaviour}=n"));
+        assert!(r.targets_strictly(behaviour, &person), "{behaviour}: not strict yet");
+        command(&mut r, B, "@permissive=n");
+        assert!(!r.targets_strictly(behaviour, &person), "{behaviour}: B names no one");
+        command(&mut r, B, &format!("@{behaviour}:{person}=n"));
+        assert!(r.targets_strictly(behaviour, &person), "{behaviour}: both name the resident");
+        // a `_sec` bare rule is strict on its own, a plain one is then ignored
+        let mut r = enabled();
+        command(&mut r, A, &format!("@{behaviour}:{person}=n,{behaviour}=n"));
+        command(&mut r, B, &format!("@{behaviour}_sec=n"));
+        assert!(!r.targets_strictly(behaviour, &person), "{behaviour}: B's secure rule");
+    }
+    let mut r = enabled();
+    command(&mut r, A, &format!("@recvimfrom:{person}=n"));
+    command(&mut r, B, "@recvimfrom=n,permissive=n");
+    assert!(r.allows_im("recvim", TARGET), "@recvimfrom no longer applies");
+}
+#[cfg(test)]
+#[path = "interaction_parity_tests.rs"]
+mod interaction_parity;
+
+/// An environment test world: RLVa on, the issuers' lines said and run.
+fn environment_world() -> crate::world::World {
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva.configure(true);
+    world
+}
+
+fn environment_say(world: &mut crate::world::World, source_id: Uuid, line: &str) {
+    world.on_chat(ChatMessage { source_id, ..chat(line) });
+    world.rlva_pending();
+}
+
+fn last_reply(world: &crate::world::World) -> Option<String> {
+    world.rlva.out.iter().rev().find_map(|c| match c {
+        NetCommand::ChatReply { message, .. } => Some(message.clone()),
+        _ => None,
+    })
+}
+
+/// rlvGetColorComponentFromCharacter (rlvenvironment.cpp): r/x, g/y, b/d
+/// and i; `z` is no suffix there.
+#[test]
+fn rlva_environment_colour_suffixes_follow_the_legacy_table() {
+    for name in ["cloudd", "ambientd", "ambientb", "ambientx", "ambienti", "bluedensityy"] {
+        assert!(environment::supports(&format!("getenv_{name}"), false), "{name}");
+        assert!(environment::supports(&format!("setenv_{name}"), true), "{name}");
+    }
+    assert!(!environment::supports("setenv_ambientz", true));
+    assert!(!environment::supports("getenv_ambientz", false));
+    for set in [false, true] {
+        assert!(!environment::command_names(set).iter().any(|n| n.ends_with("ambientz")));
+    }
+}
+
+/// registerGetEnvFn("daytime"): -1 only when the target environment has no
+/// instance, 2 otherwise (ENV_LOCAL unlocked, ENV_EDIT locked).
+#[test]
+fn rlva_getenv_daytime_answers_whether_the_target_environment_exists() {
+    let mut world = environment_world();
+    environment_say(&mut world, A, "@getenv_daytime=2222");
+    assert_eq!(last_reply(&world).as_deref(), Some("-1.000000"), "nothing local");
+    // the sky editor's preview is not ENV_LOCAL
+    world.eep.set_edit(Default::default(), Default::default());
+    environment_say(&mut world, A, "@getenv_daytime=2222");
+    assert_eq!(last_reply(&world).as_deref(), Some("-1.000000"), "an editor's preview");
+    world.eep.clear_edit();
+    // a local day is an instance too
+    world.eep.apply_local_day(crate::world::eep::DayCycle::default());
+    environment_say(&mut world, A, "@getenv_daytime=2222");
+    assert_eq!(last_reply(&world).as_deref(), Some("2.000000"), "a local day");
+    world.eep.clear_local();
+    // the lock makes ENV_EDIT
+    environment_say(&mut world, A, "@setenv=n");
+    environment_say(&mut world, A, "@getenv_daytime=2222");
+    assert_eq!(last_reply(&world).as_deref(), Some("2.000000"), "ENV_EDIT");
+}
+
+/// registerSetEnvFn("daytime") under the lock: ENV_EDIT's own day only, and
+/// the lock's copy has none, so nothing changes.
+#[test]
+fn rlva_setenv_daytime_under_the_lock_needs_a_day_of_rlva_own() {
+    let mut world = environment_world();
+    let mut day = crate::world::eep::DayCycle::default();
+    day.sky_tracks[0] = vec![(
+        0.0,
+        crate::world::eep::SkyFrame {
+            gamma: 3.0,
+            ..Default::default()
+        },
+    )];
+    world.eep.apply_local_day(day);
+    environment_say(&mut world, A, "@setenv=n");
+    let copy = world.rlva.environment.map(|(_, sky)| sky.gamma);
+    environment_say(&mut world, A, "@setenv_daytime:0.5=force");
+    assert_eq!(
+        world.rlva.environment.map(|(_, sky)| sky.gamma),
+        copy,
+        "the user's day is not ENV_EDIT's"
+    );
+}
+
+/// A force made without the lock is the user's own local environment
+/// (ENV_LOCAL): it outlives its object. ENV_EDIT goes with `@setenv=n`,
+/// which one object holds at a time (RLV_RET_FAILED_LOCK for another).
+#[test]
+fn rlva_environment_outlives_its_object_and_the_lock_copy_goes_with_its_holder() {
+    let mut world = environment_world();
+    environment_say(&mut world, A, "@setenv_daytime:0.25=force,setenv_ambient:0.2/0.4/0.6=force");
+    world.rlva.release(A);
+    assert!(world.eep.has_local(), "the forced sky stays once the object is gone");
+    world.eep.clear_local();
+    environment_say(&mut world, A, "@setenv=n");
+    assert_eq!(world.rlva.environment.map(|(id, _)| id), Some(A));
+    world.rlva.release(A);
+    assert!(world.rlva.environment.is_none() && world.rlva.environment_water.is_none());
+}
+
+/// Aurora's own views that place the eye and the focus (photo free camera,
+/// Director free switch) give way while the view is RLVa's (`@setcam`) or
+/// its focus is pinned on the avatar (`@setcam_unlock`); the distance limits
+/// alone bound them instead, as the Legacy Viewer's Alt-camera.
+#[test]
+fn rlva_camera_view_is_held_by_setcam_and_setcam_unlock_only() {
+    let mut r = enabled();
+    assert!(!r.camera_view_held());
+    command(&mut r, A, "@setcam_avdistmax:5=n,setcam_fovmax:1=n");
+    assert!(!r.camera_view_held(), "limits bound the free views, they do not take them");
+    command(&mut r, A, "@setcam_unlock=n");
+    assert!(r.camera_view_held());
+    command(&mut r, A, "@clear");
+    command(&mut r, B, "@setcam=n");
+    assert!(r.camera_view_held());
+    r.configure(false);
+    assert!(!r.camera_view_held());
+}
+
+/// LLAgentCamera::changeCameraToCustomizeAvatar refuses only when the
+/// avatar may not stand up (RlvActions::canStand).
+#[test]
+fn rlva_avatar_studio_is_refused_only_while_seated_under_unsit() {
+    let mut world = environment_world();
+    environment_say(&mut world, A, "@setcam=n,setcam_avdistmax:1=n,unsit=n");
+    assert!(!world.rlva_studio_refused(), "standing: nothing refuses it");
+    world.agent.seated = true;
+    assert!(world.rlva_studio_refused());
+    environment_say(&mut world, A, "@unsit=y");
+    assert!(!world.rlva_studio_refused(), "the camera rules do not refuse it");
+}
+
+/// RlvBehaviourModifier::hasValue: under another object's `@setcam`, a held
+/// fov limit counts at its default (DEFAULT_FIELD_OF_VIEW) and a held
+/// `@setcam_avdist` gives silhouettes from 0.
+#[test]
+fn rlva_limits_of_objects_other_than_the_setcam_holder_count_at_their_default() {
+    let mut r = enabled();
+    command(&mut r, B, "@setcam=n");
+    command(&mut r, A, "@setcam_fovmin:1.2=n,setcam_avdist:4=n");
+    let (low, _) = r.camera_fov_limits(1.0).expect("a held limit counts");
+    assert!((low - crate::camera::DEFAULT_FOV).abs() < 1e-6);
+    assert_eq!(r.silhouette_distance(), Some(0.0));
+    command(&mut r, B, "@setcam=y");
+    let (low, _) = r.camera_fov_limits(1.0).unwrap();
+    assert!((low - 1.2).abs() < 1e-6, "without @setcam the value given counts");
+    assert_eq!(r.silhouette_distance(), Some(4.0));
+}
+
+/// `@setcam_fov=force` sets the lens once: the user's next zoom or
+/// CameraAngle change replaces it, under `@setcam` too.
+#[test]
+fn rlva_user_lens_changes_replace_a_forced_fov_under_setcam_too() {
+    let mut r = enabled();
+    command(&mut r, A, "@setcam=n");
+    assert!(r.camera_force(A, &Command::parse("setcam_fov:0.5=force").unwrap()));
+    let before = crate::camera::CameraSettings::default();
+    assert!((r.camera_settings(&before, 1.0).fov - 0.5).abs() < 1e-6);
+    let mut requested = before.clone();
+    requested.fov = 0.9;
+    r.preserve_camera_settings(&mut requested, &before);
+    assert_eq!(requested.fov, 0.9);
+    assert_eq!(r.camera_value("setcam_fov"), None);
+    assert!((r.camera_settings(&requested, 1.0).fov - 0.9).abs() < 1e-6);
+    r.camera_force(A, &Command::parse("setcam_fov:0.5=force").unwrap());
+    r.user_chose_fov();
+    assert_eq!(r.camera_value("setcam_fov"), None, "the zoom keys replace it as well");
+}
+
+/// LLAgentCamera::switchCameraPreset: picking a view leaves RLVa's, and the
+/// forced offsets go, unless a rule locks the preset.
+#[test]
+fn rlva_forced_offsets_go_when_the_user_picks_a_view_unless_locked() {
+    let mut r = enabled();
+    r.camera_force(A, &Command::parse("setcam_eyeoffset:1/2/3=force").unwrap());
+    assert!(r.camera_view().eye_offset.is_some());
+    let before = crate::camera::CameraSettings::default();
+    let mut requested = before.clone();
+    requested.camera_offset = [-5.0, 0.0, 2.0];
+    r.preserve_camera_settings(&mut requested, &before);
+    assert_eq!(r.camera_view().eye_offset, None);
+    assert_eq!(requested.camera_offset, [-5.0, 0.0, 2.0]);
+    r.camera_force(A, &Command::parse("setcam_eyeoffset:1/2/3=force").unwrap());
+    command(&mut r, B, "@setcam_eyeoffsetscale:1=n");
+    r.user_chose_camera_view();
+    assert!(r.camera_view().eye_offset.is_some(), "a locked preset keeps them");
+}
+
+/// RlvBehaviourModifier::addValue without a comparator: the first value
+/// added wins, whichever object sent it.
+#[test]
+fn rlva_eye_offsets_of_several_objects_keep_the_first_value_added() {
+    let mut r = enabled();
+    command(&mut r, B, "@setcam_eyeoffset:1/0/0=n");
+    command(&mut r, A, "@setcam_eyeoffset:2/0/0=n");
+    assert_eq!(r.camera_view().eye_offset, Some(glam::Vec3::X));
+    command(&mut r, B, "@setcam_eyeoffset:1/0/0=y");
+    assert_eq!(r.camera_view().eye_offset, Some(glam::Vec3::X * 2.0));
+    command(&mut r, B, "@setcam_eyeoffset:3/0/0=n");
+    assert_eq!(
+        r.camera_view().eye_offset,
+        Some(glam::Vec3::X * 2.0),
+        "a later value waits its turn"
+    );
+}
+
+/// The rising edges the app turns into handle_reset_view (`@setcam_unlock`)
+/// and into the RLVa view's reset (setCameraOverride → switchCameraPreset).
+#[test]
+fn rlva_camera_toggles_report_the_unlock_and_the_rlva_view_once() {
+    let mut r = enabled();
+    assert_eq!(r.camera_toggles(), (false, false));
+    command(&mut r, A, "@setcam_unlock=n");
+    assert_eq!(r.camera_toggles(), (true, false));
+    assert_eq!(r.camera_toggles(), (false, false));
+    command(&mut r, A, "@setcam_eyeoffset:1/0/0=n");
+    assert_eq!(r.camera_toggles(), (false, true));
+    assert_eq!(r.camera_toggles(), (false, false));
+    command(&mut r, A, "@clear");
+    assert_eq!(r.camera_toggles(), (false, false));
+    r.camera_force(A, &Command::parse("setcam_focusoffset:0/0/1=force").unwrap());
+    assert_eq!(r.camera_toggles(), (false, true), "a forced offset puts RLVa's view on too");
+    command(&mut r, A, "@setcam_unlock=n");
+    assert_eq!(r.camera_toggles(), (true, false));
+}
+
+/// RlvBehaviourSetCamFovHandler: the user's lens is kept at the first fov
+/// limit and given back at the last; a forced one was never persisted.
+#[test]
+fn rlva_fov_limits_give_the_user_lens_back_when_the_last_goes() {
+    let mut r = enabled();
+    let mut fov = 0.7;
+    assert!(!r.track_fov_limits(&mut fov));
+    command(&mut r, A, "@setcam_fovmin:1=n");
+    command(&mut r, B, "@setcam_fovmax:1.5=n");
+    assert!(!r.track_fov_limits(&mut fov));
+    fov = 1.2;
+    command(&mut r, A, "@setcam_fovmin:1=y");
+    assert!(!r.track_fov_limits(&mut fov), "one limit is still held");
+    command(&mut r, B, "@setcam_fovmax:1.5=y");
+    assert!(r.track_fov_limits(&mut fov));
+    assert_eq!(fov, 0.7);
+    r.camera_force(A, &Command::parse("setcam_fov:0.4=force").unwrap());
+    command(&mut r, A, "@setcam_fovmax:2=n");
+    r.track_fov_limits(&mut fov);
+    command(&mut r, A, "@clear");
+    assert!(r.track_fov_limits(&mut fov));
+    assert_eq!(fov, crate::camera::DEFAULT_FOV);
+}
+
+/// RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>: llmax(F_APPROXIMATELY_ZERO, dist).
+#[test]
+fn rlva_camera_focus_keeps_the_legacy_minimum_distance() {
+    let at = glam::Vec3::new(10.0, 20.0, 30.0);
+    let request = camera::FocusRequest::parse("10/20/30;0").unwrap();
+    let camera = request.camera(at, glam::Vec3::ZERO, at + glam::Vec3::X).unwrap();
+    assert!((camera.distance(at) - 1e-5).abs() < 1e-6);
+}
+
+/// `@setenv_reset` is not a Legacy Viewer command (no "reset" in
+/// RlvEnvironment's registered names): it is refused like any unknown
+/// environment property, and `@getcommand` does not list it.
+#[test]
+fn rlva_setenv_reset_is_an_unknown_command_like_the_legacy_viewer() {
+    let mut world = environment_world();
+    world.eep.apply_local_sky(
+        crate::world::eep::SkyFrame::default(),
+        crate::world::eep_env::SourceRights::Flags(0),
+    );
+    for line in ["@setenv_reset=force", "@setenv_unknownthing=force"] {
+        environment_say(&mut world, A, line);
+        assert!(world.eep.has_local(), "{line}: the user's local sky stays");
+        assert!(world.rlva.pending.is_empty(), "{line}");
+    }
+    assert!(!environment::command_names(true).iter().any(|name| name == "setenv_reset"));
+    assert!(!command_list("setenv_;force").split(';').any(|name| name == "setenv_reset"));
 }

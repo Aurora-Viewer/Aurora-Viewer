@@ -42,6 +42,7 @@
 //! steady rate, to measure a click's cost in a loaded scene.
 
 use super::*;
+use crate::world::objects::ObjKey;
 use std::collections::VecDeque;
 use uuid::Uuid;
 
@@ -63,6 +64,14 @@ pub(super) enum Click {
     Gun { at_cursor: bool },
 }
 
+/// State of the pointer at button-up, before a pending GPU pick can delay it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct MouseRelease {
+    pub(super) cursor: (f32, f32),
+    pub(super) mods: crate::build::Mods,
+    pub(super) command: bool,
+}
+
 /// What follows a click that waits for its depth, kept in order.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Held {
@@ -74,9 +83,9 @@ pub(super) enum Held {
     /// Mouse motion (camera drags), summed while nothing comes between.
     Motion(f32, f32),
     Click(Click),
-    LeftRelease,
+    LeftRelease(MouseRelease),
     /// The build tools' own release (demo script).
-    BuildRelease,
+    BuildRelease(MouseRelease),
     /// A demo script's log line about the click before it.
     Note(DemoNote),
     /// A world press made while a text field had the keyboard: what follows
@@ -106,6 +115,8 @@ pub(super) enum DemoNote {
     Media((f32, f32), u64),
     /// AURORA_DEMO_MMO: the mouse mode after the press on the avatar.
     Mmo,
+    /// Object view with Build open: retain this selection while focusing.
+    ObjectView(Vec<ObjKey>),
 }
 
 /// The cursor ray and the depth under the cursor of a click, both of the
@@ -118,6 +129,7 @@ pub(super) struct Picked {
     /// whose surface it is when the GPU alone poses it (scene/drawn.rs).
     /// Camera clicks use the visible-surface mode of that same pass.
     pub drawn: aurora_render::Drawn,
+    pub through_ignored: bool,
     /// A displayed name tag captured at the original press, before waiting
     /// for the depth. Camera/avatar motion cannot move its hit rectangle.
     pub tag: Option<(Uuid, Vec3)>,
@@ -143,10 +155,10 @@ impl Picked {
 
 /// A click whose depth is asked.
 struct Pending {
-    ticket: u64,
-    /// The request for the drawn faces, when the click asks it, and the
-    /// two answers as they come.
-    drawn: Option<u64>,
+    through_ignored: bool,
+    /// The main view's depth is redundant when the drawn faces supply it.
+    depth_ticket: Option<u64>,
+    drawn_ticket: u64,
     depth_answer: Option<Option<Vec3>>,
     drawn_answer: Option<aurora_render::Drawn>,
     click: Click,
@@ -160,6 +172,15 @@ struct Pending {
     frame: u64,
     /// AURORA_CLICK_PICK=check: the waiting read made at the click.
     check: Option<Check>,
+}
+
+impl Pending {
+    fn forget(&self, renderer: &mut aurora_render::Renderer) {
+        if let Some(ticket) = self.depth_ticket {
+            renderer.forget_pick(ticket);
+        }
+        renderer.forget_drawn(self.drawn_ticket);
+    }
 }
 
 /// What the read that waits gave at the time of the click.
@@ -326,7 +347,10 @@ impl App {
         if self.studio_mouse(button, pressed, over_ui) {
             return;
         }
-        if self.clicks.waiting() {
+        // Capture the end of a drag even when its press is waiting for the GPU.
+        if button == MouseButton::Left && !pressed {
+            self.with_mouse_mods(Self::on_left_release);
+        } else if self.clicks.waiting() {
             self.clicks.hold(Held::Button { button, pressed, over_ui });
         } else {
             self.with_mouse_mods(|app| app.mouse_button(button, pressed, over_ui));
@@ -473,6 +497,7 @@ impl App {
             // (the read that waits knows nothing of the faces drawn: a
             // rigged mesh is not designated, as before)
             let picked = Picked {
+                through_ignored: false,
                 ray,
                 depth,
                 drawn: Default::default(),
@@ -486,7 +511,6 @@ impl App {
             let depth = g.renderer.pick_world(x, y);
             (depth, t.elapsed())
         });
-        let ticket = g.renderer.request_pick(x, y);
         self.frame_profile.trace_click();
         // LLToolCamera::handleMouseDown: displayed surfaces, including the
         // transparency overlay. Posed geometry avoids an attachment's bind pose.
@@ -494,14 +518,19 @@ impl App {
         let camera = (self.alt && !matches!(click, Click::Gun { .. }))
             || self.object_view
             || (self.build.open && self.build.tool == crate::build::Tool::Focus);
+        let through_ignored =
+            !self.build.open && matches!(click, Click::Press | Click::World) && ray.is_some_and(|r| self.scene.may_pick_ignored(r));
+        // The comparison diagnostic still measures the main view's depth.
+        let depth_ticket = (!through_ignored || check.is_some()).then(|| g.renderer.request_pick(x, y));
         let mode = match (click == Click::Menu, camera) {
+            (false, _) if through_ignored => aurora_render::DrawnMode::WorldPress { camera },
             (true, true) => aurora_render::DrawnMode::Visible,
             (true, false) => aurora_render::DrawnMode::Interaction,
             (false, true) => aurora_render::DrawnMode::LeftVisible,
             (false, false) => aurora_render::DrawnMode::Left,
         };
         self.hover_drawn.cancel(&mut g.renderer);
-        let drawn = Some(g.renderer.request_drawn(x, y, mode));
+        let drawn_ticket = g.renderer.request_drawn(x, y, mode);
         let tags = self.name_tag_candidates(ray);
         let check = check.map(|(depth, waited)| Check {
             depth,
@@ -509,8 +538,9 @@ impl App {
             waited,
         });
         self.clicks.pending = Some(Pending {
-            ticket,
-            drawn,
+            through_ignored,
+            depth_ticket,
+            drawn_ticket,
             depth_answer: None,
             drawn_answer: None,
             click,
@@ -547,10 +577,22 @@ impl App {
                     None
                 }
             });
-        if picked.tag.is_some() || picked.particles.is_some() || object.is_some_and(|idx| self.world.hud_root(idx).is_none()) {
-            None
-        } else {
-            Some(picked)
+        let hud = object.map(|idx| self.world.hud_root(idx).is_some());
+        match overlay_pick(
+            picked.tag.is_some(),
+            picked.particles.is_some(),
+            hud,
+            picked.visible_point().is_some(),
+        ) {
+            OverlayPick::Keep => Some(picked),
+            OverlayPick::Drop => None,
+            // the particle stays picked, along the whole ray
+            OverlayPick::Particles => Some(Picked {
+                depth: None,
+                drawn: Default::default(),
+                tag: None,
+                ..picked
+            }),
         }
     }
 
@@ -563,27 +605,23 @@ impl App {
             let Some(g) = self.gfx.as_mut() else {
                 return;
             };
-            if p.depth_answer.is_none() {
-                p.depth_answer = g.renderer.take_pick(p.ticket);
-            }
-            if let Some(ticket) = p.drawn
-                && p.drawn_answer.is_none()
+            if let Some(ticket) = p.depth_ticket
+                && p.depth_answer.is_none()
             {
-                p.drawn_answer = g.renderer.take_drawn(ticket);
+                p.depth_answer = g.renderer.take_pick(ticket);
             }
-            let answer = match (p.depth_answer, p.drawn, p.drawn_answer) {
-                (Some(depth), None, _) => Some((depth, Default::default())),
-                (Some(depth), Some(_), Some(drawn)) => Some((depth, drawn)),
+            if p.drawn_answer.is_none() {
+                p.drawn_answer = g.renderer.take_drawn(p.drawn_ticket);
+            }
+            let answer = match p.drawn_answer {
+                Some(drawn) if p.depth_ticket.is_none() || p.depth_answer.is_some() => Some((p.depth_answer.flatten(), drawn)),
                 _ if p.asked.elapsed() < GIVE_UP => return,
                 _ => {
                     log::warn!(
                         "click pick: no answer after {:.1} s, click dropped",
                         p.asked.elapsed().as_secs_f32()
                     );
-                    g.renderer.forget_pick(p.ticket);
-                    if let Some(ticket) = p.drawn {
-                        g.renderer.forget_drawn(ticket);
-                    }
+                    p.forget(&mut g.renderer);
                     None
                 }
             };
@@ -603,8 +641,16 @@ impl App {
                     Some(c) => self.log_click_check(&p, c, depth, frames, ms),
                     None => self.note_pick(format_args!("answered after {frames} frames, {ms:.2} ms")),
                 }
+                // Use the same opaque surface for the touch, avatar and name
+                // tag. A filtered sky hit has no depth at all.
+                let depth = if p.through_ignored {
+                    drawn.opaque.map(|face| face.point)
+                } else {
+                    depth
+                };
                 let tag = super::plate_click::visible_tag(&p.tags, depth, p.ray);
                 self.clicks.in_hand = Some(Picked {
+                    through_ignored: p.through_ignored,
                     ray: p.ray,
                     depth,
                     drawn,
@@ -626,7 +672,7 @@ impl App {
     /// field has committed to the selection it was typed for).
     pub(super) fn press_while_typing(&mut self) {
         let turn = Held::UiTurn {
-            pass: self.egui_ctx.cumulative_pass_nr(),
+            pass: self.egui_ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT),
             cursor: self.cursor_pos,
             mods: [self.alt, self.ctrl, self.shift],
         };
@@ -636,7 +682,7 @@ impl App {
     /// Run what is held, in order, until a click waits for its depth again
     /// or a `UiTurn` waits for the end of the interface's pass.
     fn drain_held(&mut self) {
-        while let Some((input, restore)) = self.clicks.next_held(self.egui_ctx.cumulative_pass_nr()) {
+        while let Some((input, restore)) = self.clicks.next_held(self.egui_ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT)) {
             let Some((cursor, mods)) = restore else {
                 self.replay(input);
                 continue;
@@ -670,8 +716,8 @@ impl App {
             }
             Held::Motion(dx, dy) => self.camera_mouse_delta(dx, dy),
             Held::Click(click) => self.run_click(click),
-            Held::LeftRelease => self.on_left_release(),
-            Held::BuildRelease => self.build_release(),
+            Held::LeftRelease(release) => self.apply_left_release(release),
+            Held::BuildRelease(release) => self.finish_build_release(release),
             Held::Note(note) => self.demo_note(note),
             Held::UiTurn { .. } => {}
         }
@@ -679,20 +725,34 @@ impl App {
 
     /// The object a click designates from the faces drawn under its pixel
     /// (scene/drawn.rs); None when the search on the CPU speaks for it.
-    /// `found`: the point that search settled on.
+    /// `found`: the point that search settled on; `on_face`: the object
+    /// whose face it took there, which bounds the faces drawn even at the
+    /// depth's own point (a far face taken where it is drawn,
+    /// `Scene::drawn_at`), and no nearer than where the ray meets it
+    /// (`Scene::found_bound`).
     pub(super) fn designate(
         &mut self,
         gesture: crate::scene::drawn::Gesture,
         picked: &Picked,
         found: Option<Vec3>,
+        on_face: Option<usize>,
     ) -> Option<crate::scene::drawn::DrawnObject> {
+        let bound = match (on_face, picked.ray, found) {
+            (Some(idx), Some(ray), Some(p)) => {
+                Some(
+                    self.scene
+                        .found_bound(&self.world, idx, ray, p, gesture == crate::scene::drawn::Gesture::Build),
+                )
+            }
+            _ => found,
+        };
         let shown = self.scene.designated(
             &self.world,
             gesture,
             &picked.drawn,
             picked.ray,
-            found,
-            picked.depth,
+            bound,
+            picked.depth.filter(|_| on_face.is_none()),
             self.build.open,
         );
         if self.clicks.scripted()
@@ -761,23 +821,22 @@ impl App {
         if let Some(p) = self.clicks.pending.take()
             && let Some(g) = self.gfx.as_mut()
         {
-            g.renderer.forget_pick(p.ticket);
-            if let Some(ticket) = p.drawn {
-                g.renderer.forget_drawn(ticket);
-            }
+            p.forget(&mut g.renderer);
         }
         self.clicks.held.clear();
         self.build.drop_press();
+        // nor does a click on our own plate run its action
+        self.own_plate_click = None;
     }
 
     /// The build tools' release of a demo script, behind its press.
     pub(super) fn build_release(&mut self) {
+        let release = self.mouse_release();
         if self.clicks.waiting() {
-            self.clicks.hold(Held::BuildRelease);
-            return;
+            self.clicks.hold(Held::BuildRelease(release));
+        } else {
+            self.finish_build_release(release);
         }
-        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene));
-        self.flush_build();
     }
 
     /// A demo script's log line about the click it just made: written once
@@ -788,6 +847,20 @@ impl App {
             return;
         }
         match note {
+            DemoNote::ObjectView(selection) => {
+                let unchanged = self.build.selection == selection;
+                let focused = self.mouse_mode == MouseMode::FocusOrbit;
+                let pass = self.object_view && self.build.open && unchanged && focused;
+                log::info!(
+                    "demo object view: {}; build={}, selection_unchanged={}, selected={}, mouse={:?}, focus={:?}",
+                    if pass { "PASS" } else { "FAIL" },
+                    self.build.open,
+                    unchanged,
+                    self.build.selection.len(),
+                    self.mouse_mode,
+                    self.camera.focus_point(),
+                );
+            }
             DemoNote::Camera(frame) => log::info!(
                 "demo camera f{frame}: {} (mouse {:?}, agent yaw {:.2}, right orbit={}, menu={}, down={}, cursor held={}, alt free={}, typing={})",
                 self.camera.describe(),
@@ -802,7 +875,7 @@ impl App {
                 self.egui_ctx.egui_wants_keyboard_input()
             ),
             DemoNote::Action(mode) => log::info!(
-                "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, media_url={}",
+                "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, focus_object={:?}, media_url={}",
                 self.interactions.dialog.is_some(),
                 self.world.agent.is_sitting(),
                 self.interactions
@@ -815,6 +888,11 @@ impl App {
                 self.media.find(&crate::media::MediaKey::Parcel).is_some_and(|m| m.paused),
                 self.build.selection,
                 self.camera.focus_point(),
+                self.camera
+                    .focus_object_id()
+                    .and_then(|id| self.world.objects.index_of_uuid(&id))
+                    .and_then(|idx| self.world.objects.get(idx))
+                    .map(|o| o.key.local_id),
                 self.interactions.media_url.is_some(),
             ),
             DemoNote::Media(pos, frame) => log::info!("demo media click at {pos:?} (frame {frame}): focus {:?}", self.media.focus),
@@ -846,7 +924,7 @@ impl App {
     fn click_target(&self, click: Click, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>) -> Target {
         let now = Instant::now();
         let build = self.build.open;
-        let tools = build && !self.alt && matches!(click, Click::Press | Click::Build);
+        let tools = build && !self.alt && !self.object_view && matches!(click, Click::Press | Click::Build);
         let selection_pick = if click == Click::Menu {
             Scene::selection_pick
         } else {
@@ -970,7 +1048,7 @@ impl App {
             DemoKind::Alt => self.alt = true,
             // (the menu of the click before)
             DemoKind::Menu => self.context_menu = None,
-            DemoKind::Build | DemoKind::Focus => {
+            DemoKind::Build | DemoKind::Focus | DemoKind::ObjectView => {
                 let tool = if spec.kind == DemoKind::Focus {
                     crate::build::Tool::Focus
                 } else {
@@ -981,7 +1059,16 @@ impl App {
                 }
             }
         }
+        let selection = (spec.kind == DemoKind::ObjectView).then(|| {
+            self.object_view = true;
+            self.panels.camera_controls = true;
+            self.build.selection.clone()
+        });
         self.mouse_input(button, true, false);
+        if let Some(selection) = selection {
+            // Wait behind the real GPU pick and before the button's release.
+            self.demo_note(DemoNote::ObjectView(selection));
+        }
         // (a short human click)
         self.clicks.demo.up = Some(now + Duration::from_millis(60).min(spec.period / 2));
     }
@@ -1025,7 +1112,7 @@ impl App {
     }
 }
 
-/// AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus]": a
+/// AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus|object-view]": a
 /// click on the world every `ms` milliseconds (250 if it is not a number)
 /// once the world shows, held 60 ms: at pixel (x, y) of the window (a
 /// quarter of the width, near the bottom, by default), or with `sweep` at a
@@ -1063,6 +1150,7 @@ enum DemoKind {
     Menu,
     Build,
     Focus,
+    ObjectView,
 }
 
 fn demo_spec(var: &str) -> DemoSpec {
@@ -1073,6 +1161,7 @@ fn demo_spec(var: &str) -> DemoSpec {
         Some("menu") => DemoKind::Menu,
         Some("build") => DemoKind::Build,
         Some("focus") => DemoKind::Focus,
+        Some("object-view") => DemoKind::ObjectView,
         _ => DemoKind::Left,
     };
     let at = match numbers[..] {
@@ -1110,14 +1199,42 @@ impl DemoClicks {
     }
 }
 
+/// What a click keeps under an overlay that blocks the touch.
+#[derive(Debug, PartialEq)]
+enum OverlayPick {
+    Keep,
+    Drop,
+    /// The particles only: the world hit goes.
+    Particles,
+}
+
+/// LLPickInfo::fetchResults (indra/newview/llviewerwindow.cpp) under an
+/// overlay that blocks the touch: whatever the ray hit that is not a HUD
+/// attachment is dropped, the ground included (the land is a surface patch
+/// object there) and an avatar's name tag (LLPipeline::lineSegmentIntersectInWorld
+/// returns the avatar for it). The particle pick is kept: it then runs along
+/// the whole ray. `hud` is None when no object was hit, `surface` whether
+/// something was (the ground, the water).
+fn overlay_pick(tag: bool, particles: bool, hud: Option<bool>, surface: bool) -> OverlayPick {
+    if hud == Some(true) && !tag {
+        return OverlayPick::Keep;
+    }
+    match (tag || hud.is_some() || surface, particles) {
+        (false, _) => OverlayPick::Keep,
+        (true, true) => OverlayPick::Particles,
+        (true, false) => OverlayPick::Drop,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn pending_pick() -> Pending {
         Pending {
-            ticket: 1,
-            drawn: None,
+            through_ignored: false,
+            depth_ticket: Some(1),
+            drawn_ticket: 2,
             depth_answer: None,
             drawn_answer: None,
             click: Click::Press,
@@ -1138,6 +1255,17 @@ mod tests {
             pressed: true,
             over_ui: false,
         }
+    }
+
+    fn release() -> Held {
+        Held::LeftRelease(MouseRelease {
+            cursor: (30.0, 45.0),
+            mods: crate::build::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+            command: false,
+        })
     }
 
     fn ui_turn() -> Held {
@@ -1189,20 +1317,17 @@ mod tests {
     fn an_older_release_finishes_before_a_later_ui_turn() {
         for pass in [7, 8] {
             let mut h = ReplayHarness::default();
-            h.clicks.hold(Held::LeftRelease);
+            h.clicks.hold(release());
             h.clicks.hold(ui_turn());
             h.clicks.hold(press());
             h.drain(pass);
-            assert_eq!(h.seen.first(), Some(&(Held::LeftRelease, None)));
+            assert_eq!(h.seen.first(), Some(&(release(), None)));
             if pass == 7 {
                 assert_eq!(h.seen.len(), 1, "only the newer press waits for the UI");
                 assert!(h.clicks.waiting(), "new arrivals still wait behind the turn");
                 h.drain(8);
             }
-            assert_eq!(
-                h.seen,
-                [(Held::LeftRelease, None), (press(), Some(((10.0, 20.0), [false, false, true])))]
-            );
+            assert_eq!(h.seen, [(release(), None), (press(), Some(((10.0, 20.0), [false, false, true])))]);
             assert!(!h.clicks.waiting());
         }
     }
@@ -1211,7 +1336,7 @@ mod tests {
     fn older_motion_and_release_stay_before_the_new_press() {
         let mut h = ReplayHarness::default();
         h.clicks.hold(Held::Motion(5.0, -2.0));
-        h.clicks.hold(Held::LeftRelease);
+        h.clicks.hold(release());
         h.clicks.hold(ui_turn());
         h.clicks.hold(press());
         h.drain(8);
@@ -1219,7 +1344,7 @@ mod tests {
             h.seen,
             [
                 (Held::Motion(5.0, -2.0), None),
-                (Held::LeftRelease, None),
+                (release(), None),
                 (press(), Some(((10.0, 20.0), [false, false, true])))
             ]
         );
@@ -1313,12 +1438,12 @@ mod tests {
         let restore = Some(((10.0, 20.0), [false, false, true]));
         let mut w = ClickWait::default();
         // left behind by a GPU recovery (forget_pending keeps `held`)
-        w.hold(Held::LeftRelease);
+        w.hold(release());
         w.hold(turn(7));
         w.hold(button(true));
         w.hold(button(false));
         assert!(w.waiting(), "the press and what follows are held");
-        assert_eq!(w.next_held(7), Some((Held::LeftRelease, None)), "held before the turn: as it was");
+        assert_eq!(w.next_held(7), Some((release(), None)), "held before the turn: as it was");
         assert_eq!(w.next_held(7), None, "no pass has ended since the press");
         assert!(w.waiting());
         assert_eq!(w.next_held(8), Some((button(true), restore)));
@@ -1328,8 +1453,9 @@ mod tests {
 
         // behind a click that waits for its depth: the depth, then the pass
         w.pending = Some(Pending {
-            ticket: 1,
-            drawn: None,
+            through_ignored: false,
+            depth_ticket: Some(1),
+            drawn_ticket: 2,
             depth_answer: None,
             drawn_answer: None,
             click: Click::Press,
@@ -1359,19 +1485,14 @@ mod tests {
         assert!(!w.waiting());
         w.hold(Held::Motion(1.0, 2.0));
         w.hold(Held::Motion(3.0, -1.0));
-        w.hold(Held::LeftRelease);
+        w.hold(release());
         w.hold(Held::Motion(1.0, 1.0));
         w.hold(Held::Click(Click::Menu));
         // motion is summed only while nothing comes between: a drag held
         // before the release must not move the camera after it
         assert_eq!(
             w.held,
-            [
-                Held::Motion(4.0, 1.0),
-                Held::LeftRelease,
-                Held::Motion(1.0, 1.0),
-                Held::Click(Click::Menu)
-            ]
+            [Held::Motion(4.0, 1.0), release(), Held::Motion(1.0, 1.0), Held::Click(Click::Menu)]
         );
     }
 
@@ -1408,6 +1529,7 @@ mod tests {
             (Duration::from_millis(100), DemoAt::Sweep, DemoKind::Build)
         );
         assert_eq!(demo_spec("250,focus").kind, DemoKind::Focus);
+        assert_eq!(demo_spec("250,object-view").kind, DemoKind::ObjectView);
         let d = demo_spec("300,rigged,menu");
         assert_eq!((d.at, d.kind, d.clickable), (DemoAt::Rigged, DemoKind::Menu, false));
         let d = demo_spec("300,rigged,clickable,left");
@@ -1417,5 +1539,32 @@ mod tests {
         assert!(places.iter().all(|(u, v)| (0.0..1.0).contains(u) && (0.0..1.0).contains(v)));
         let cells: std::collections::HashSet<(u32, u32)> = places.iter().map(|(u, v)| ((u * 8.0) as u32, (v * 8.0) as u32)).collect();
         assert!(cells.len() > 56, "{} of 64 cells", cells.len());
+    }
+
+    /// LLPickInfo::fetchResults: under a blocking overlay a HUD is still
+    /// touched; objects and the ground are not; a click on the sky hit
+    /// nothing to drop.
+    #[test]
+    fn rlva_overlay_drops_ground_and_world_picks_but_not_huds() {
+        assert_eq!(overlay_pick(false, false, Some(true), true), OverlayPick::Keep, "a HUD");
+        assert_eq!(overlay_pick(false, false, Some(false), true), OverlayPick::Drop, "an object");
+        assert_eq!(overlay_pick(false, false, None, true), OverlayPick::Drop, "the ground");
+        assert_eq!(overlay_pick(false, false, None, false), OverlayPick::Keep, "the sky");
+        assert_eq!(overlay_pick(true, false, None, false), OverlayPick::Drop, "a name tag");
+    }
+
+    /// The particle pick of LLPickInfo::fetchResults is not under the
+    /// overlay's test: a particle in front of an object stays picked.
+    #[test]
+    fn rlva_overlay_keeps_the_particle_pick() {
+        assert_eq!(
+            overlay_pick(false, true, Some(false), true),
+            OverlayPick::Particles,
+            "before an object"
+        );
+        assert_eq!(overlay_pick(false, true, None, true), OverlayPick::Particles, "before the ground");
+        assert_eq!(overlay_pick(true, true, None, false), OverlayPick::Particles, "before a name tag");
+        assert_eq!(overlay_pick(false, true, None, false), OverlayPick::Keep, "against the sky");
+        assert_eq!(overlay_pick(false, true, Some(true), true), OverlayPick::Keep, "on a HUD");
     }
 }

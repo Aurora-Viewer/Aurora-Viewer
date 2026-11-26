@@ -53,6 +53,13 @@ enum Kind {
 struct Param {
     /// `name=` (an appearance XML writes it next to the id).
     name: Box<str>,
+    /// `label=`, or the name without one: LLViewerVisualParamInfo's display
+    /// name, the `display=` of an appearance XML.
+    display: Box<str>,
+    /// The element that defines it (`param_morph`, `param_skeleton`,
+    /// `param_driver`, `param_color`, `param_alpha`), the `type=` of an
+    /// appearance XML (dump_visual_param, indra/newview/llvoavatar.cpp).
+    element: &'static str,
     group: u8,
     min: f32,
     max: f32,
@@ -78,6 +85,8 @@ pub struct ShapeParams {
 pub struct WearableParam<'a> {
     pub id: i32,
     pub name: &'a str,
+    pub display: &'a str,
+    pub element: &'static str,
     pub min: f32,
     pub max: f32,
     pub default: f32,
@@ -238,8 +247,15 @@ impl ShapeParams {
         } else {
             Kind::Other
         };
+        let element = ["param_morph", "param_skeleton", "param_driver", "param_color", "param_alpha"]
+            .into_iter()
+            .find(|name| e.child(name).is_some())
+            .unwrap_or("unknown");
+        let name = e.attr("name").unwrap_or_default();
         Some(Param {
-            name: e.attr("name").unwrap_or_default().into(),
+            name: name.into(),
+            display: e.attr("label").unwrap_or(name).into(),
+            element,
             group,
             min,
             max,
@@ -271,6 +287,8 @@ impl ShapeParams {
             .map(|(&id, p)| WearableParam {
                 id,
                 name: &p.name,
+                display: &p.display,
+                element: p.element,
                 min: p.min,
                 max: p.max,
                 default: p.default,

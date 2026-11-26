@@ -266,6 +266,7 @@ impl App {
             "O4" => d.freeze_culling,
             "O5" => d.skeletons,
             "O6" => d.complexity_tags,
+            "O10" => d.avatar_hitboxes,
             "O9" => self.scene.sculpt_watch_target().is_some(),
             "P3" => self.scene.slow_sync().is_some(),
             "P4" => self.scene.still.is_some(),
@@ -305,6 +306,7 @@ impl App {
             "O4" => d.freeze_culling = on,
             "O5" => d.skeletons = on,
             "O6" => d.complexity_tags = on,
+            "O10" => d.avatar_hitboxes = on,
             "O9" => {
                 let target = on.then(|| self.target_avatar()).flatten();
                 if on && target.is_none() {
@@ -439,6 +441,7 @@ impl App {
             }),
             "N2" => Some(self.region_text()),
             "J10" => Some(self.contacts_text()),
+            "N4" => Some(self.world.inventory_loading_report()),
             "L1" => Some(self.cursor_text(renderer)),
             "L2" => Some(self.worn_text()),
             "L3" => Some(warnings_text(20, &AssetIds::diagnostics(&self.world))),

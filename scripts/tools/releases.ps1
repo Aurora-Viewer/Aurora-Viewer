@@ -65,7 +65,7 @@ function Show-ReleaseList($Releases) {
 
 function Invoke-Releases {
     $repo = Get-RepoSlug
-    if (-not $repo) { Write-Color '  GitHub repository not found (remote origin).' danger; Wait-Back; return }
+    if (-not $repo) { Write-Color '  GitHub repository not found (no GitHub remote: upstream, origin or the one gh repo set-default chose).' danger; Wait-Back; return }
     while ($true) {
         Show-Logo 'Releases'
         Write-Color "  Repository: $($repo.Slug)" muted
@@ -185,7 +185,7 @@ function New-AuroraRelease($Repo) {
         if ($LASTEXITCODE -eq 0) {
             $url = gh release view $tag -R $Repo.Slug --json url --jq .url 2>$null
             Write-Color "  Release published: $url" success
-            if ($url -and (Read-YesNo 'Open it in the browser?')) { Start-Process $url }
+            if ($url -and (Read-YesNo 'Open it in the browser?')) { Open-External $url }
         } else {
             $url = gh release view $tag -R $Repo.Slug --json url --jq .url 2>$null
             if ($url) {

@@ -260,14 +260,15 @@ fn parse_bvh_channels(bytes: &[u8], skeleton: &Skeleton, keep_static: bool, reje
             let values = &motion[frame * channels + joint.offset..];
             let mut position = Vec3::ZERO;
             let mut rotation = Quat::IDENTITY;
-            // mayaQ applies channels in their declared order; Hamilton product
-            // is reversed relative to LLQuaternion's product.
+            // Declared rotation channels compose left to right, as the BVH
+            // format and Blender read them: "Xrotation Yrotation Zrotation"
+            // is X·Y·Z (the Z turn applies first to the bone). bvhStringToOrder
+            // reverses the declared order before mayaQ, whose LLQuaternion
+            // product is itself the reverse of the Hamilton one: the same X·Y·Z.
             for (channel, value) in joint.channels.iter().zip(values) {
                 match *channel {
                     Channel::Position(axis) => position[axis] = *value,
-                    Channel::Rotation(axis) => {
-                        rotation = Quat::from_axis_angle([Vec3::X, Vec3::Y, Vec3::Z][axis], value.to_radians()) * rotation
-                    }
+                    Channel::Rotation(axis) => rotation *= Quat::from_axis_angle([Vec3::X, Vec3::Y, Vec3::Z][axis], value.to_radians()),
                 }
             }
             (position, rotation.normalize())
@@ -470,7 +471,8 @@ pub fn encode_bvh(animation: &Animation, skeleton: &Skeleton, fps: u32) -> Resul
             let rotation = motion
                 .and_then(|motion| motion.rotation_at(time.unwrap_or(0.0)))
                 .unwrap_or(Quat::IDENTITY);
-            let (y, x, z) = (to_bvh * rotation * basis).normalize().to_euler(glam::EulerRot::YXZ);
+            // Zrotation Xrotation Yrotation channels read back as Z·X·Y
+            let (z, x, y) = (to_bvh * rotation * basis).normalize().to_euler(glam::EulerRot::ZXY);
             let angles = Vec3::new(z, x, y).map(f32::to_degrees);
             let angles = if frame > 1 { euler_filter(angles, previous[index]) } else { angles };
             previous[index] = angles;
@@ -638,6 +640,28 @@ mod tests {
         assert_eq!(joint.joint_name, "mPelvis");
         assert!((joint.pos_keys.last().expect("key").position.z - 0.508).abs() < 0.0002);
         assert!((joint.rot_keys.last().expect("key").rotation * Vec3::Z - Vec3::NEG_Y).length() < 0.001);
+    }
+    /// A joint turned on all three axes at once: the declared channels
+    /// compose left to right, as LLBVHLoader (bvhStringToOrder, then mayaQ)
+    /// and Blender read them. Quarter turns keep the expected axes exact: BVH
+    /// X, Y, Z are Second Life's Y, Z, X.
+    #[test]
+    fn multi_axis_rotations_compose_in_the_declared_order() {
+        let rotation = |channels: &str| {
+            let text = format!(
+                "HIERARCHY ROOT hip {{ OFFSET 0 0 0 CHANNELS 6 Xposition Yposition Zposition {channels} \
+                 End Site {{ OFFSET 0 1 0 }} }} MOTION Frames: 2 Frame Time: 0.1 \
+                 0 0 0 0 0 0 0 0 0 90 90 90"
+            );
+            let bvh = parse_bvh(text.as_bytes(), &skeleton()).expect("BVH");
+            bvh.animation.joints[0].rot_keys.last().expect("key").rotation
+        };
+        // X·Y·Z: the Z turn takes BVH X to Y, X's turn takes it on to Z
+        let xyz = rotation("Xrotation Yrotation Zrotation");
+        assert!((xyz * Vec3::Y - Vec3::X).length() < 0.001, "{}", xyz * Vec3::Y);
+        // Z·X·Y: Y takes BVH X to -Z, X takes it to Y, Z takes it to -X
+        let zxy = rotation("Zrotation Xrotation Yrotation");
+        assert!((zxy * Vec3::Y - Vec3::NEG_Y).length() < 0.001, "{}", zxy * Vec3::Y);
     }
     #[test]
     fn malformed_motion_and_unknown_root_fail_without_panics() {

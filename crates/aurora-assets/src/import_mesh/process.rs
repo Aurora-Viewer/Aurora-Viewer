@@ -7,13 +7,15 @@ use parry3d::{math::Vector, transformation::try_convex_hull};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 mod adaptive;
+mod material_floor;
+#[cfg(test)]
+mod tests;
 pub use adaptive::base_hull as adaptive_base_hull;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
-    Auto,
     Reliable,
-    Precise,
+    /// Internal collision reduction; not an import LOD source.
     Fast,
     /// The Legacy Viewer's own automatic chain, part by part (`legacy_lod`).
     Legacy,
@@ -67,58 +69,10 @@ pub fn degenerate([a, b, c]: [Vec3; 3]) -> bool {
     ab.cross(ac).length_squared() < tolerance || (b - a).cross(b - c).length_squared() < tolerance || x * z - ab.dot(cb).powi(2) == 0.0
 }
 
-fn shadow_indices(model: &Model, ranges: &[(u32, u32)], attributes: u8) -> Vec<u32> {
-    let mut shadow = Vec::with_capacity(model.triangles() * 3);
-    for (face, (start, _)) in model.faces.iter().zip(ranges) {
-        let mut welded = std::collections::HashMap::new();
-        for index in &face.indices {
-            let vertex = &face.vertices[*index as usize];
-            let bits = |value: f32| if value == 0.0 { 0 } else { value.to_bits() };
-            let mut key = [0; 8];
-            key[..3].copy_from_slice(&vertex.position.map(bits));
-            if attributes == 2 {
-                key[3..6].copy_from_slice(&vertex.normal.map(bits));
-            }
-            if attributes > 0 {
-                key[6..].copy_from_slice(&vertex.uv.map(bits));
-            }
-            let key = (key, vertex.joints, vertex.weights.map(bits));
-            let representative = *welded.entry(key).or_insert(*start + *index);
-            shadow.push(representative);
-        }
-    }
-    shadow
-}
-
-fn simplify_shadow(indices: &[u32], vertices: &[Vertex], target: usize, error: f32) -> Vec<u32> {
-    // Unused copies at a welded position still look like locked seams to
-    // meshoptimizer. Compact its input, then map back to the original slots.
-    let mut remap = vec![u32::MAX; vertices.len()];
-    let mut original = Vec::new();
-    let mut compact_vertices = Vec::new();
-    let compact_indices = indices
-        .iter()
-        .map(|index| {
-            let mapped = &mut remap[*index as usize];
-            if *mapped == u32::MAX {
-                *mapped = original.len() as u32;
-                original.push(*index);
-                compact_vertices.push(vertices[*index as usize].clone());
-            }
-            *mapped
-        })
-        .collect::<Vec<_>>();
-    meshopt::simplify_decoder(
-        &compact_indices,
-        &compact_vertices,
-        target,
-        error,
-        meshopt::SimplifyOptions::None,
-        None,
-    )
-    .into_iter()
-    .map(|index| original[index as usize])
-    .collect()
+/// Every occupied material slot keeps geometry, including on split models.
+/// Empty source slots remain empty; instances do not add to this floor.
+pub fn minimum_lod_triangles(model: &Model) -> usize {
+    model.faces.iter().filter(|face| face.indices.len() >= 3).count()
 }
 
 /// The passes of LLModelPreview::genMeshOptimizerPerModel
@@ -277,144 +231,67 @@ fn legacy_lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result
             }
         }
     }
-    let mut reduced = current.unwrap_or_else(|| model.clone());
-    if let Some(angle) = options.crease_angle {
-        for face in &mut reduced.faces {
-            normals(face, angle)?;
-        }
-    }
-    Ok(reduced)
+    Ok(current.unwrap_or_else(|| model.clone()))
 }
 
 pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Model, AssetError> {
     if !options.error.is_finite() || !(0.0..=1.0).contains(&options.error) {
         return Err(AssetError::invalid("LOD error threshold"));
     }
-    if options.method == Method::Legacy {
-        return legacy_lod(model, options, cancel);
-    }
-    let source_triangles = model.triangles().max(1);
-    let mut reduced = model.clone();
-    if options.method == Method::Auto {
-        // One triangle budget across the model, with material boundaries
-        // represented by separate vertex ranges. Unlike a per-face budget,
-        // this spends triangles where the geometry actually needs them.
-        let mut vertices = Vec::new();
-        let mut ranges = Vec::new();
-        for face in &model.faces {
-            face.validate()?;
-            let start = vertices.len() as u32;
-            ranges.push((start, start + face.vertices.len() as u32));
-            vertices.extend_from_slice(&face.vertices);
-        }
+    for face in &model.faces {
         if cancel.load(Ordering::Relaxed) {
             return Err(AssetError::invalid("cancelled"));
         }
-        // Firestorm's FULL pass also welds identical exported corners, in
-        // both triangle and error modes, without relaxing any attributes.
-        let indices = shadow_indices(model, &ranges, 2);
-        let target = if options.error_only {
-            3.min(indices.len())
-        } else {
-            options.triangles.saturating_mul(3).min(indices.len())
-        };
-        let mut output = if target == 0 && !options.error_only {
-            Vec::new()
-        } else {
-            simplify_shadow(&indices, &vertices, target, options.error)
-        };
-        // Port of LLModelPreview::genMeshOptimizerLODs (llmodelpreview.cpp,
-        // LGPL 2.1): AUTO progressively welds normal/UV seams
-        // when precise simplification misses the triangle budget by > 1.8x.
-        // Keep each material's vertex range separate so no face changes slots.
-        if !options.error_only && target > 0 {
-            for attributes in [1, 0] {
-                if output.len() as f64 <= target as f64 * 1.8 {
-                    break;
-                }
-                if cancel.load(Ordering::Relaxed) {
-                    return Err(AssetError::invalid("cancelled"));
-                }
-                let shadow = shadow_indices(model, &ranges, attributes);
-                let candidate = simplify_shadow(&shadow, &vertices, target, options.error);
-                if !candidate.is_empty() && candidate.len() < output.len() {
-                    output = candidate;
-                }
-            }
-            if output.len() as f64 > target as f64 * 1.8 {
-                let mut candidate = Vec::new();
-                for (face, (start, _)) in model.faces.iter().zip(&ranges) {
-                    if cancel.load(Ordering::Relaxed) {
-                        return Err(AssetError::invalid("cancelled"));
-                    }
-                    if face.indices.is_empty() {
-                        continue;
-                    }
-                    let budget = (face.indices.len() / 3 * options.triangles / source_triangles).max(1) * 3;
-                    let reduced = meshopt::simplify_sloppy_decoder(
-                        &face.indices,
-                        &face.vertices,
-                        budget.min(face.indices.len()),
-                        options.error,
-                        None,
-                    );
-                    candidate.extend(reduced.iter().map(|index| *start + *index));
-                }
-                if !candidate.is_empty() && candidate.len() < output.len() {
-                    output = candidate;
-                }
-            }
-        }
-        for face in &mut reduced.faces {
-            face.indices.clear();
-        }
-        for triangle in output.as_chunks::<3>().0 {
-            if let Some((face, (start, _))) = ranges
-                .iter()
-                .enumerate()
-                .find(|(_, (start, end))| triangle.iter().all(|i| i >= start && i < end))
-            {
-                reduced.faces[face].indices.extend(triangle.iter().map(|i| i - *start));
-            } else {
-                return Err(AssetError::invalid("LOD crossed a material boundary"));
-            }
-        }
-        for face in &mut reduced.faces {
-            face.compact();
-            if let Some(angle) = options.crease_angle {
-                normals(face, angle)?;
-            }
-        }
-        return Ok(reduced);
+        face.validate()?;
     }
+    let mut reduced = if options.method == Method::Legacy {
+        if !options.error_only && options.triangles <= minimum_lod_triangles(model) {
+            // The per-material floor runs the Legacy passes itself; avoid a
+            // whole-model reduction whose result would immediately be replaced.
+            model.clone()
+        } else {
+            legacy_lod(model, options, cancel)?
+        }
+    } else {
+        let minimum = minimum_lod_triangles(model);
+        let available = model.triangles().saturating_sub(minimum);
+        let remaining = options.triangles.saturating_sub(minimum).min(available);
+        let mut reduced = model.clone();
+        for face in &mut reduced.faces {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(AssetError::invalid("cancelled"));
+            }
+            if face.indices.is_empty() {
+                continue;
+            }
+            // Reserve one triangle per occupied material before distributing
+            // the remainder. Small faces must not round down to zero.
+            let target = if options.error_only {
+                3
+            } else {
+                let extra = (face.indices.len() / 3 - 1) as u128 * remaining as u128 / available.max(1) as u128;
+                (1 + extra as usize) * 3
+            };
+            face.indices = if options.method == Method::Fast {
+                meshopt::simplify_sloppy_decoder(&face.indices, &face.vertices, target, options.error, None)
+            } else {
+                meshopt::simplify_decoder(
+                    &face.indices,
+                    &face.vertices,
+                    target,
+                    options.error,
+                    meshopt::SimplifyOptions::LockBorder,
+                    None,
+                )
+            };
+        }
+        reduced
+    };
+    material_floor::enforce(model, &mut reduced, options, cancel)?;
     for face in &mut reduced.faces {
         if cancel.load(Ordering::Relaxed) {
             return Err(AssetError::invalid("cancelled"));
         }
-        let target = if options.error_only {
-            3.min(face.indices.len())
-        } else {
-            (face.indices.len() / 3 * options.triangles / source_triangles) * 3
-        };
-        let flags = match options.method {
-            Method::Reliable => meshopt::SimplifyOptions::LockBorder,
-            Method::Auto | Method::Precise | Method::Legacy => meshopt::SimplifyOptions::None,
-            Method::Fast => meshopt::SimplifyOptions::Permissive | meshopt::SimplifyOptions::Prune,
-        };
-        face.indices = if target == 0 && !options.error_only {
-            Vec::new()
-        } else if options.method == Method::Fast {
-            meshopt::simplify_sloppy_decoder(&face.indices, &face.vertices, target.min(face.indices.len()), options.error, None)
-        } else {
-            meshopt::simplify_decoder(
-                &face.indices,
-                &face.vertices,
-                target.min(face.indices.len()),
-                options.error,
-                flags,
-                None,
-            )
-        };
         face.compact();
         if let Some(angle) = options.crease_angle {
             normals(face, angle)?;

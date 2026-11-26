@@ -1,6 +1,7 @@
 use super::*;
 use crate::{demo, scene::avatar::AvatarLibrary};
 use aurora_net::NetEvent;
+use document::Channel;
 
 #[test]
 fn animation_playback_hides_bone_overlays_and_pause_restores_them() {
@@ -313,7 +314,7 @@ fn studio_timeline_key_hover_and_drag_move_the_key_under_the_pointer() {
     frames.run(vec![egui::Event::PointerMoved(key), button(key, true)], &mut draw);
     frames.run(vec![egui::Event::PointerMoved(key + egui::vec2(7.0, 0.0))], &mut draw);
     drop(draw);
-    assert_eq!(editor.clip.drag_key, Some((head, 0, 0)));
+    assert_eq!(editor.clip.drag_key, Some(((head, Channel::Both), 0, 0)));
     let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
     let (_, dragging) = frames.run_with_output(vec![egui::Event::PointerMoved(destination)], &mut draw);
     assert_eq!(dragging.cursor_icon, egui::CursorIcon::Grabbing);
@@ -510,6 +511,41 @@ fn selected_avatar_frame_values_stay_still_until_the_playhead_moves() {
         (editor.position.z - paused_position.z - 0.8).abs() < 0.0001,
         "playing preview continues to refresh the selected joint"
     );
+}
+
+#[test]
+fn avatar_center_preview_and_project_round_trip_keep_root_relative_keys() {
+    use aurora_assets::{JointMotion, anim::PosKey};
+
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let center = rig.names["Avatar Center"];
+    let key = Vec3::new(0.4, -0.1, 0.2);
+    let mut imported = Document::new().meta;
+    imported.joints = vec![JointMotion {
+        joint_name: "Avatar Center".to_owned(),
+        priority: 4,
+        rot_keys: Vec::new(),
+        pos_keys: vec![PosKey { time: 0.0, position: key }],
+    }];
+    let document = Document::from_animation(imported, rig).unwrap();
+    let saved = document.project_json().unwrap();
+    let reopened = Document::from_project_json(&saved, rig).unwrap();
+    assert_eq!(reopened.tracks[0].motion.pos_keys[0].position, key);
+    let bytes = aurora_assets::import_animation::encode(&reopened.animation().unwrap()).unwrap();
+    let exported = aurora_assets::anim::parse_animation_upload(&bytes).unwrap();
+    assert!(exported.joints[0].pos_keys[0].position.abs_diff_eq(key, 0.0002));
+    let sample = ik::animations::Sample {
+        animation: Arc::new(BoundAnim::bind(exported, rig)),
+        frame: 0,
+        time_seconds: None,
+    };
+    let mut pose = ik::LocalPose {
+        rotations: rig.local_rot.clone(),
+        positions: rig.local_pos.clone(),
+    };
+    ik::animations::apply(rig, &mut pose, Vec3::Z * 0.37, &[sample]);
+    assert!(pose.positions[center].abs_diff_eq(rig.local_pos[rig.pelvis] + key, 0.0002));
 }
 
 #[test]
@@ -793,6 +829,8 @@ fn previous_and_next_key_follow_the_selected_bone_or_every_keyed_bone() {
         enabled: true,
         authored,
         keys: keys.to_vec(),
+        rotation: keys.to_vec(),
+        location: Vec::new(),
     };
     let tracks = [track(1, true, &[0, 30, 60]), track(2, true, &[0, 45]), track(3, false, &[0, 10])];
     assert_eq!(timeline::neighbour_key(&tracks, Some(1), 30, true), Some(60));
@@ -883,7 +921,7 @@ fn releasing_a_key_drag_commits_the_frame_it_reached() {
         clip: State {
             active: true,
             document: Some(Arc::new(document)),
-            drag_key: Some((head, 0, 15)),
+            drag_key: Some(((head, Channel::Both), 0, 15)),
             ..Default::default()
         },
         ..Default::default()
@@ -892,7 +930,7 @@ fn releasing_a_key_drag_commits_the_frame_it_reached() {
     editor.finish_timeline_key_drag(true);
     assert_eq!(
         editor.clip.drag_key,
-        Some((head, 0, 15)),
+        Some(((head, Channel::Both), 0, 15)),
         "the drag goes on while the button is down"
     );
     assert!(editor.clip.undo.is_empty());
@@ -1433,6 +1471,21 @@ fn playback_pause_resumes_fractional_time_and_restarts_from_clip_start_at_the_en
 }
 
 #[test]
+fn one_frame_loop_preserves_fades_longer_than_its_period() {
+    let mut document = Document::new();
+    document.range(0, 1);
+    document.meta.looping = true;
+    document.meta.ease_in = 1.25;
+    document.meta.ease_out = 12.5;
+    document.timing();
+    let animation = document.preview().expect("loop preview");
+    assert_eq!((animation.ease_in, animation.ease_out), (1.25, 12.5));
+    document.meta.looping = false;
+    document.timing();
+    assert!(document.meta.ease_in + document.meta.ease_out <= document.meta.duration + 1e-6);
+}
+
+#[test]
 fn edited_loop_metadata_keeps_a_valid_loop_window() {
     let mut document = Document::new();
     document.range(0, 30);
@@ -1639,8 +1692,8 @@ fn whole_pose_keyframes_copy_paste_and_delete_across_bone_tracks() {
     doc.paste_keyframe(45, &copied);
     assert_eq!(doc.frames(None), vec![0, 30, 45]);
     assert_eq!(doc.copy_keyframe(45).len(), 2);
-    doc.move_track_keyframe(head, 45, 60);
-    doc.move_track_keyframe(wrist, 45, 60);
+    doc.move_track_keyframe(head, Channel::Both, 45, 60);
+    doc.move_track_keyframe(wrist, Channel::Both, 45, 60);
     assert_eq!(doc.frames(None), vec![0, 30, 60]);
     doc.remove_keyframe(60);
     assert_eq!(doc.frames(None), vec![0, 30]);
@@ -1661,7 +1714,7 @@ fn dragging_a_timeline_key_moves_only_the_bone_track_that_was_grabbed() {
     doc.record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), 30, &[head, wrist], &[])
         .unwrap();
 
-    doc.move_track_keyframe(head, 30, 45);
+    doc.move_track_keyframe(head, Channel::Both, 30, 45);
 
     assert_eq!(doc.frames(Some(head)), vec![0, 45]);
     assert_eq!(doc.frames(Some(wrist)), vec![0, 30]);
@@ -1699,7 +1752,7 @@ fn moving_onto_an_occupied_frame_replaces_it_in_either_drag_direction() {
     let late = document.tracks[0].rotation_at(2.0).unwrap();
 
     let mut forward = document.clone();
-    forward.move_track_keyframe(head, 30, 60);
+    forward.move_track_keyframe(head, Channel::Both, 30, 60);
     let track = forward.tracks.iter().find(|track| track.bone == head).unwrap();
     assert!(
         track.rotation_at(2.0).unwrap().dot(middle).abs() > 0.99999,
@@ -1709,7 +1762,7 @@ fn moving_onto_an_occupied_frame_replaces_it_in_either_drag_direction() {
     assert_eq!(forward.frames(Some(head)), vec![0, 60]);
 
     let mut backward = document;
-    backward.move_track_keyframe(head, 60, 30);
+    backward.move_track_keyframe(head, Channel::Both, 60, 30);
     let track = backward.tracks.iter().find(|track| track.bone == head).unwrap();
     assert!(
         track.rotation_at(1.0).unwrap().dot(late).abs() > 0.99999,
@@ -1734,7 +1787,7 @@ fn deleting_a_timeline_key_from_one_bone_keeps_other_tracks_at_that_frame() {
     doc.record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), 30, &[head, wrist], &[])
         .unwrap();
 
-    doc.remove_track_keyframe(head, 30);
+    doc.remove_track_keyframe(head, Channel::Both, 30);
 
     assert_eq!(doc.frames(Some(head)), vec![0]);
     assert_eq!(doc.frames(Some(wrist)), vec![0, 30]);
@@ -3004,7 +3057,7 @@ fn resetting_the_animation_keeps_the_rest_pose_out_of_the_export() {
     let rig = &lib.rig;
     let mut editor = Editor::default();
     editor.clip.document = Some(Arc::new(Document::new()));
-    editor.clip.drag_key = Some((0, 0, 5));
+    editor.clip.drag_key = Some(((0, Channel::Both), 0, 5));
     // a bone posed by hand and not keyed yet
     editor.clip.active = true;
     editor.clip.frame = 40;
@@ -3347,7 +3400,7 @@ fn a_key_drag_ends_with_the_document_it_started_on() {
     let dragging = || State {
         active: true,
         document: Some(document.clone()),
-        drag_key: Some((3, 10, 20)),
+        drag_key: Some(((3, Channel::Both), 10, 20)),
         ..Default::default()
     };
 
@@ -3355,7 +3408,7 @@ fn a_key_drag_ends_with_the_document_it_started_on() {
     state.checkpoint();
     assert!(state.undo());
     assert_eq!(state.drag_key, None, "undo");
-    state.drag_key = Some((3, 10, 20));
+    state.drag_key = Some(((3, Channel::Both), 10, 20));
     assert!(state.redo());
     assert_eq!(state.drag_key, None, "redo");
 
@@ -3558,7 +3611,7 @@ fn dragging_one_of_several_picked_keys_moves_them_all() {
         clip: State {
             active: true,
             document: Some(Arc::new(document)),
-            selected_keys: BTreeSet::from([(head, 0), (head, 10)]),
+            selected_keys: BTreeSet::from([(head, Channel::Both, 0), (head, Channel::Both, 10)]),
             ..Default::default()
         },
         ..Default::default()
@@ -3595,7 +3648,7 @@ fn dragging_one_of_several_picked_keys_moves_them_all() {
     assert_eq!(document.frames(Some(head)), vec![5, 15, 30], "both picked keys moved five frames");
     assert_eq!(
         editor.clip.selected_keys,
-        BTreeSet::from([(head, 5), (head, 15)]),
+        BTreeSet::from([(head, Channel::Both, 5), (head, Channel::Both, 15)]),
         "and stay picked"
     );
     assert_eq!(editor.clip.undo.len(), 1, "one step of the undo history");
@@ -3623,8 +3676,8 @@ fn a_group_drag_that_cannot_move_leaves_undo_and_redo_alone() {
             document: Some(document.clone()),
             redo: vec![document.clone()],
             // the group holds a key at frame 0, dragged five frames left
-            selected_keys: BTreeSet::from([(head, 0), (head, 10)]),
-            drag_key: Some((head, 10, 5)),
+            selected_keys: BTreeSet::from([(head, Channel::Both, 0), (head, Channel::Both, 10)]),
+            drag_key: Some(((head, Channel::Both), 10, 5)),
             ..Default::default()
         },
         ..Default::default()
@@ -3655,7 +3708,7 @@ fn delete_removes_every_picked_key_in_one_undo_step() {
         clip: State {
             active: true,
             document: Some(Arc::new(document)),
-            selected_keys: BTreeSet::from([(head, 10), (head, 20)]),
+            selected_keys: BTreeSet::from([(head, Channel::Both, 10), (head, Channel::Both, 20)]),
             ..Default::default()
         },
         ..Default::default()
@@ -3668,7 +3721,10 @@ fn delete_removes_every_picked_key_in_one_undo_step() {
     // with nothing picked and no bone selected, Delete is left to the viewer
     assert!(!editor.handle_timeline_shortcut(&ctx, egui::Key::Delete, egui::Modifiers::NONE));
     assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::A, egui::Modifiers::COMMAND));
-    assert_eq!(editor.clip.selected_keys, BTreeSet::from([(head, 0), (head, 30)]));
+    assert_eq!(
+        editor.clip.selected_keys,
+        BTreeSet::from([(head, Channel::Both, 0), (head, Channel::Both, 30)])
+    );
     assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::Escape, egui::Modifiers::NONE));
     assert!(editor.clip.selected_keys.is_empty());
     assert!(!editor.handle_timeline_shortcut(&ctx, egui::Key::Escape, egui::Modifiers::NONE));
@@ -3741,7 +3797,10 @@ fn shift_and_a_drag_from_a_key_boxes_keys_instead_of_moving_it() {
     frames.run(vec![button(end, false)], &mut draw);
     frames.run(vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)], &mut draw);
 
-    assert_eq!(editor.clip.selected_keys, BTreeSet::from([(head, 10), (head, 20)]));
+    assert_eq!(
+        editor.clip.selected_keys,
+        BTreeSet::from([(head, Channel::Both, 10), (head, Channel::Both, 20)])
+    );
     assert!(editor.clip.key_box.is_none());
     let document = editor.clip.document.as_ref().unwrap();
     assert_eq!(document.frames(Some(head)), vec![0, 10, 20, 30], "no key moved");
@@ -3767,7 +3826,7 @@ fn ctrl_c_with_several_picked_keys_copies_them_and_ctrl_v_pastes_them_at_the_pla
         clip: State {
             active: true,
             document: Some(Arc::new(document)),
-            selected_keys: BTreeSet::from([(head, 10), (head, 20)]),
+            selected_keys: BTreeSet::from([(head, Channel::Both, 10), (head, Channel::Both, 20)]),
             ..Default::default()
         },
         ..Default::default()
@@ -3780,11 +3839,11 @@ fn ctrl_c_with_several_picked_keys_copies_them_and_ctrl_v_pastes_them_at_the_pla
     assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![0, 10, 20, 40, 50]);
     assert_eq!(
         editor.clip.selected_keys,
-        BTreeSet::from([(head, 40), (head, 50)]),
+        BTreeSet::from([(head, Channel::Both, 40), (head, Channel::Both, 50)]),
         "the pasted keys are picked"
     );
     // one picked key (a plain click) still copies the frame's pose
-    editor.clip.selected_keys = BTreeSet::from([(head, 10)]);
+    editor.clip.selected_keys = BTreeSet::from([(head, Channel::Both, 10)]);
     editor.clip.frame = 10;
     assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::C, egui::Modifiers::COMMAND));
     assert!(!editor.clip.clipboard.is_empty());
@@ -3864,7 +3923,10 @@ fn a_box_dragged_from_under_the_lanes_does_not_move_the_window() {
     let after = baseline(&mut frames, &mut draw);
 
     assert_eq!(before, after, "the window stays where it was");
-    assert_eq!(editor.clip.selected_keys, BTreeSet::from([(head, 10), (head, 20)]));
+    assert_eq!(
+        editor.clip.selected_keys,
+        BTreeSet::from([(head, Channel::Both, 10), (head, Channel::Both, 20)])
+    );
 }
 
 #[test]
@@ -3889,7 +3951,7 @@ fn a_right_click_over_the_lanes_drops_the_picked_keys() {
         clip: State {
             active: true,
             document: Some(Arc::new(document)),
-            selected_keys: BTreeSet::from([(head, 10), (head, 20)]),
+            selected_keys: BTreeSet::from([(head, Channel::Both, 10), (head, Channel::Both, 20)]),
             ..Default::default()
         },
         ..Default::default()
@@ -4411,4 +4473,42 @@ fn the_scene_hands_the_editor_the_pose_under_its_edits() {
     pose.edit = ik::EditRequest::default();
     let _ = pose.apply(rig, &playing, &rig.local_pos, pelvis, &rig.scale, now, true);
     assert!(pose.edit_base.is_none(), "no base outside an edit session");
+}
+
+#[test]
+fn location_keying_moves_a_joint_out_of_its_ik_chain() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let wrist = rig.names["mWristLeft"];
+    let mut editor = Editor::default();
+    editor.clip.active = true;
+
+    editor.select(wrist, &rig, &original);
+    assert_eq!(editor.mode, Mode::Ik, "Auto keeps the chain");
+
+    for keying in [document::Keying::Location, document::Keying::LocationRotation] {
+        editor.clip.keying = keying;
+        editor.select(wrist, &rig, &original);
+        assert_eq!(editor.mode, Mode::Direct, "{keying:?} moves the wrist alone");
+        assert!(editor.pole.is_none());
+    }
+
+    // an IK goal kept from before is taken alone too
+    editor.clip.keying = document::Keying::Auto;
+    editor.select(wrist, &rig, &original);
+    editor.commit();
+    editor.clip.keying = document::Keying::Location;
+    editor.select(wrist, &rig, &original);
+    assert_eq!(editor.mode, Mode::Direct);
+
+    // Rotation keys only turn: the chain is offered again
+    editor.clip.keying = document::Keying::Rotation;
+    editor.select(rig.names["mHead"], &rig, &original);
+    assert_eq!(editor.mode, Mode::Ik);
+    // and outside the animation editor the choice does nothing
+    editor.clip.keying = document::Keying::Location;
+    editor.clip.active = false;
+    editor.select(wrist, &rig, &original);
+    assert_eq!(editor.mode, Mode::Ik);
 }

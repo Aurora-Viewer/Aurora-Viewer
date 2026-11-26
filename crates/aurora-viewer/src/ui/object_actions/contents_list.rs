@@ -138,7 +138,7 @@ fn root_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, object: Uuid, items: 
     let r = ui
         .interact(row.response.rect, root_id().with(object), egui::Sense::click_and_drag())
         .on_hover_text(aurora_i18n::tr!("contents-root-drag-tip"));
-    if r.hovered() || r.drag_started() || r.dragged() {
+    if r.hovered() || r.is_pointer_button_down_on() {
         let all: Vec<_> = items.iter().map(|item| task_inventory::from_inventory(object, item)).collect();
         inventory::task_drop::root_source(
             ui,
@@ -177,7 +177,11 @@ pub(super) fn show(
         .inner_margin(4)
         .show(ui, |ui| {
             widgets::inventory_spacing(ui);
-            let height = (ui.available_height() - 8.0).clamp(80.0, 200.0);
+            // the list follows the window's height, as the Legacy Viewer's
+            // object_contents panel does (follows="all",
+            // floater_openobject.xml); it was held at 200 px, about eight
+            // rows, however tall the window was made (#4844)
+            let height = (ui.available_height() - 8.0).max(80.0);
             let background = ui.interact(
                 egui::Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), height)),
                 focus_id(object),
@@ -233,7 +237,7 @@ pub(super) fn show(
                             } else {
                                 std::slice::from_ref(&single)
                             };
-                            if response.hovered() || response.dragged() || response.drag_started() {
+                            if response.hovered() || response.is_pointer_button_down_on() {
                                 inventory::task_drop::source(
                                     ui,
                                     &response,
@@ -247,7 +251,7 @@ pub(super) fn show(
                                 && world
                                     .objects
                                     .index_of_uuid(&object)
-                                    .is_some_and(|idx| build.task_preview_allowed(world, idx, item));
+                                    .is_some_and(|idx| build.task_preview_offered(world, idx, item));
                             let document = || match item.asset_type {
                                 10 => Some(ContentsAction::Script(object, item.id)),
                                 7 => Some(ContentsAction::Notecard(object, item.id)),
@@ -260,8 +264,15 @@ pub(super) fn show(
                             menu::context_menu(&response, p, |ui| {
                                 let transfers: Result<Vec<_>, _> =
                                     taken.iter().map(|item| build.task_transfer_kind(world, object, item)).collect();
+                                // LLTaskInvFVBridge::buildContextMenu: greyed out, not
+                                // hidden, when RLVa keeps the item closed.
+                                let blocked = world
+                                    .objects
+                                    .index_of_uuid(&object)
+                                    .is_some_and(|idx| world.rlva_task_open_blocked(idx, item.asset_type));
+                                let tip = if blocked { aurora_i18n::tr!("rlva-blocked") } else { "" };
                                 if (matches!(item.asset_type, 7 | 10) || preview)
-                                    && menu::item(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open"))
+                                    && menu::item_tip(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open"), !blocked, tip)
                                 {
                                     actions.extend(document());
                                 }

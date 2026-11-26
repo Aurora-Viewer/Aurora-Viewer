@@ -599,22 +599,31 @@ impl World {
     /// (its call with it) and a conference starts with the resident and the
     /// new ones, a voice conference if a call was in progress.
     pub fn convert_to_conference(&mut self, other: Uuid, added: Vec<Uuid>) {
-        // A rejected conversion must leave the existing conversation and
-        // its call intact (LLAvatarActions::startConference/startAdhocCall).
-        if !self.rlva_start_ims(&added) || !self.rlva_start_ims(&[other]) {
-            return;
-        }
         let voice = self.call_of(&other).is_some();
         self.conversation_closed(&other);
         let mut residents = vec![other];
         residents.extend(added.iter().copied());
+        // FSFloaterIM::addP2PSessionParticipants (fsfloaterim.cpp) closes the
+        // conversation first (onClose → LLIMMgr::leaveSession): the
+        // conference's canStartIM then finds no open session with the
+        // other resident, and a refused conversion leaves it closed.
+        let refused = residents.iter().any(|id| {
+            if *id == other {
+                !self.rlva_allows_im("startim", other)
+            } else {
+                !self.rlva_can_start_im(*id)
+            }
+        });
+        if refused {
+            self.leave_session(other);
+        }
         if voice {
             self.start_conference(residents);
         } else {
             self.start_text_conference(residents);
         }
         // the new ones are the invited of the new conference (mInitialInvitedIDs)
-        if let Some(session) = self.social.focus_im.filter(|s| self.calls.conferences.contains_key(s)) {
+        if !refused && let Some(session) = self.social.focus_im.filter(|s| self.calls.conferences.contains_key(s)) {
             self.calls.invited.insert(session, added);
         }
     }
@@ -726,11 +735,13 @@ impl World {
                     self.calls.invited.insert(session, invited);
                 }
             }
-            // The permanent ID and its roster are in place. Each message goes
-            // through the normal send path again, including its current RLVa rules.
+            // The permanent ID is in place. Each message leaves as RLVa
+            // decided it when it was written: FSFloaterIM::
+            // sessionInitReplyReceived (fsfloaterim.cpp) sends
+            // mQueuedMsgsForInit with LLIMModel::sendMessage, no check again.
             if let Some(info) = self.groups.sessions.get_mut(&session) {
                 for text in std::mem::take(&mut info.pending_messages) {
-                    self.send_session_im(session, &text);
+                    self.send_session_text(session, text, true);
                 }
             }
         }
@@ -934,6 +945,7 @@ impl World {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             },
             true,
         );

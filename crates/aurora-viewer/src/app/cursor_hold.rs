@@ -6,10 +6,28 @@
 //!
 //! While held the cursor is the tool's (the mouse capture of LLToolGun and
 //! LLToolCamera): the windows neither see it hover, nor get its clicks or its
-//! wheel. Windows and X11 cannot lock it, only confine it to the window, so
-//! mouselook brings it back to the centre whenever it moves
+//! wheel. Mouselook brings it back to the centre whenever it moves
 //! (LLToolGun::handleHover → LLViewerWindow::moveCursorToCenter,
-//! indra/newview/lltoolgun.cpp): it never drifts over a window (#1343).
+//! indra/newview/lltoolgun.cpp): X11 cannot lock it, only confine it to the
+//! window, and there it never drifts over a window (#1343); on Wayland the
+//! move under the lock is the hint of where it shows when given back.
+//! Except on macOS: a warp there couples the cursor to the mouse again,
+//! undoing the lock, and the warp back came in as an equal and opposite raw
+//! motion that turned the view back where mouselook began (#3310). The
+//! Legacy Viewer does not warp a decoupled cursor there either
+//! (LLViewerWindow::moveCursorToCenter, isWrapMouse is !mCursorDecoupled,
+//! indra/llwindow/llwindowmacosx.h).
+//!
+//! Wayland only moves the cursor while it is locked, as a hint the
+//! compositor applies when the lock ends, once a surface commit carried it
+//! (winit refuses a move of an unlocked cursor). So every give-back that
+//! moves the cursor (Alt+click, the camera drags, leaving mouselook) moves
+//! it before the lock is released, and the release waits two frames, which
+//! normally present the hint: released first, the cursor stayed where it was
+//! pressed instead of coming back at the centre after an Alt+click. The
+//! cursor stays hidden until the release, and egui's icon with it
+//! ([`CursorHold::hidden`]): egui shows the cursor again whenever its icon
+//! changes, which flashed it at the press position for a frame or two.
 
 use super::App;
 use winit::event::{ElementState, WindowEvent};
@@ -62,6 +80,17 @@ pub(super) struct CursorHold {
     /// it while the interface is built): done as soon as the frame gives the
     /// window back, so the cursor is never left hidden and locked.
     pending: Option<bool>,
+    /// macOS locked the cursor: a warp would undo the lock, so mouselook
+    /// never brings it back to the centre.
+    warp_unlocks: bool,
+    /// The next raw motion is dropped: on macOS the first one after the lock
+    /// still carries the warp to the centre that preceded it
+    /// (LLWindowMacOSX::adjustCursorDecouple sets mCursorIgnoreNextDelta,
+    /// indra/llwindow/llwindowmacosx.cpp).
+    skip_motion: bool,
+    /// Wayland: the frame of a give-back whose cursor move is still a hint;
+    /// the lock is released, and the cursor shown, two frames later.
+    unlock_after: Option<u64>,
 }
 
 impl CursorHold {
@@ -69,12 +98,46 @@ impl CursorHold {
         self.kind.is_some()
     }
 
+    /// The system answered the lock asked after `take`. `warped`: the cursor
+    /// was just moved to the centre, a move macOS reports in the next raw
+    /// motion.
+    pub(super) fn locked(&mut self, locked: bool, warped: bool) {
+        self.lock_answer(locked, warped, cfg!(target_os = "macos"));
+    }
+
+    /// `locked`, the system given (`macos`) so that the tests cover both.
+    fn lock_answer(&mut self, locked: bool, warped: bool, macos: bool) {
+        self.warp_unlocks = locked && macos;
+        self.skip_motion = self.warp_unlocks && warped;
+    }
+
+    /// The held cursor moved: whether mouselook must bring it back to the
+    /// centre (everywhere but a cursor macOS locked).
+    pub(super) fn recenters(&self) -> bool {
+        self.kind == Some(HoldKind::Mouselook) && !self.warp_unlocks
+    }
+
+    /// A raw motion arrived: false when it is the warp's and must not turn
+    /// the view.
+    pub(super) fn take_motion(&mut self) -> bool {
+        !std::mem::take(&mut self.skip_motion)
+    }
+
+    /// Whether the cursor must stay hidden: held, or given back on Wayland
+    /// and still locked under its hint. egui shows the cursor again whenever
+    /// its icon changes, so its icon stays None until then.
+    pub(super) fn hidden(&self) -> bool {
+        self.held() || self.unlock_after.is_some()
+    }
+
     /// Take the cursor; None when it is already held (a drag that turns into
     /// mouselook keeps its first hold). `focus`: the camera drag began on a
     /// valid focus point.
     pub(super) fn take(&mut self, mouselook: bool, focus: bool, cursor: (f32, f32)) -> Option<HoldKind> {
-        // a hold asked after a postponed give-back keeps the cursor
+        // a hold asked after a postponed give-back keeps the cursor, and
+        // so does one asked while a Wayland release waits for its frame
         self.pending = None;
+        self.unlock_after = None;
         if self.kind.is_some() {
             return None;
         }
@@ -93,12 +156,35 @@ impl CursorHold {
     /// window lost the focus, the cursor stays where the system left it.
     pub(super) fn give_back(&mut self, focus_lost: bool) -> Option<Return> {
         self.pending = None;
+        self.warp_unlocks = false;
+        self.skip_motion = false;
         let kind = self.kind.take()?;
         Some(match kind {
             _ if focus_lost => Return::Stay,
             HoldKind::Mouselook | HoldKind::Focus => Return::Center,
             HoldKind::Drag { origin } => Return::At(origin),
         })
+    }
+
+    /// Wayland: the cursor was given back at `frame` and moved by a hint;
+    /// the lock waits for [`Self::unlock_due`].
+    fn unlock_later(&mut self, frame: u64) {
+        self.unlock_after = Some(frame);
+    }
+
+    /// Whether the waiting release is due at `frame`: two `frame()` calls
+    /// later, so that a whole frame, and normally the surface commit of its
+    /// present, came between the hint and the release. A frame that was not
+    /// presented (an acquire timeout) still counts: the release then comes
+    /// before the hint, and the cursor stays where it was, as before.
+    fn unlock_due(&mut self, frame: u64) -> bool {
+        match self.unlock_after {
+            Some(at) if frame >= at + 2 => {
+                self.unlock_after = None;
+                true
+            }
+            _ => false,
+        }
     }
 }
 
@@ -226,33 +312,34 @@ impl App {
         let Some(kind) = self.cursor_hold.take(mouselook, focus, origin) else {
             return;
         };
-        if kind == HoldKind::Mouselook {
+        let warped = kind == HoldKind::Mouselook;
+        if warped {
             // LLToolGun::handleSelect: the hidden cursor waits at the centre,
-            // not over the button that started mouselook
+            // not over the button that started mouselook. Before the lock:
+            // on macOS a warp undoes it.
             self.move_cursor_to_center();
         }
         let Some(g) = &self.gfx else {
             return;
         };
-        if let Err(e) = g
-            .window
-            .set_cursor_grab(CursorGrabMode::Locked)
-            .or_else(|_| g.window.set_cursor_grab(CursorGrabMode::Confined))
-        {
+        let locked = g.window.set_cursor_grab(CursorGrabMode::Locked).is_ok();
+        if !locked && let Err(e) = g.window.set_cursor_grab(CursorGrabMode::Confined) {
             log::warn!("camera: the cursor could not be locked ({e}), it is only hidden");
         }
         g.window.set_cursor_visible(false);
+        self.cursor_hold.locked(locked, warped);
         // the windows stop seeing it now: a window it was over loses its hover
         if let Some(g) = &mut self.gfx {
             g.egui_state.egui_input_mut().events.push(egui::Event::PointerGone);
         }
     }
 
-    /// The hidden mouselook cursor moved (it can only be confined): back to
-    /// the centre, like LLToolGun::handleHover. The view turns from the raw
-    /// motion, which the move back does not produce.
+    /// The hidden mouselook cursor moved: back to the centre, like
+    /// LLToolGun::handleHover. The view turns from the raw motion, which the
+    /// move back does not produce outside macOS, where a locked cursor is
+    /// left alone (see the module comment).
     pub(super) fn recenter_mouselook_cursor(&mut self) {
-        if self.cursor_hold.kind != Some(HoldKind::Mouselook) {
+        if !self.cursor_hold.recenters() {
             return;
         }
         let Some(g) = &self.gfx else {
@@ -271,11 +358,17 @@ impl App {
     pub(super) fn release_cursor(&mut self, focus_lost: bool) {
         if self.gfx.is_none() {
             // the window is the frame's for now: forgetting the hold here
-            // left the cursor hidden and locked for good
+            // left the cursor hidden and locked for good. A Wayland release
+            // still waiting keeps its frame: the next frame with the window
+            // releases it.
             if self.cursor_hold.held() {
                 self.cursor_hold.pending = Some(focus_lost);
             }
             return;
+        }
+        if focus_lost && self.cursor_hold.unlock_after.take().is_some() {
+            // the window goes: no frame to wait for, release it now
+            self.unlock_cursor();
         }
         let Some(back) = self.cursor_hold.give_back(focus_lost) else {
             return;
@@ -283,21 +376,41 @@ impl App {
         let Some(g) = &self.gfx else {
             return;
         };
+        if back != Return::Stay && wayland(&g.window) {
+            // moved while still locked: the only move Wayland allows
+            match back {
+                Return::Center => self.move_cursor_to_center(),
+                Return::At((x, y)) => self.move_cursor((x, y)),
+                Return::Stay => {}
+            }
+            self.cursor_hold.unlock_later(self.frame_count);
+            return;
+        }
         let _ = g.window.set_cursor_grab(CursorGrabMode::None);
         match back {
             Return::Stay => {}
             Return::Center => self.move_cursor_to_center(),
             Return::At((x, y)) => self.move_cursor((x, y)),
         }
+        self.unlock_cursor();
+    }
+
+    /// Release the lock and show the cursor.
+    fn unlock_cursor(&mut self) {
         if let Some(g) = &self.gfx {
+            let _ = g.window.set_cursor_grab(CursorGrabMode::None);
             g.window.set_cursor_visible(true);
         }
     }
 
-    /// The give-back the frame postponed, once it has the window back.
+    /// The give-back the frame postponed, once it has the window back, and
+    /// the Wayland release once the frames after its cursor hint went by.
     pub(super) fn release_postponed_cursor(&mut self) {
         if let Some(focus_lost) = self.cursor_hold.pending {
             self.release_cursor(focus_lost);
+        }
+        if self.gfx.is_some() && self.cursor_hold.unlock_due(self.frame_count) {
+            self.unlock_cursor();
         }
     }
 
@@ -320,9 +433,40 @@ impl App {
     }
 }
 
+/// Whether the window is a Wayland surface, where the cursor can only be
+/// moved while locked.
+fn wayland(window: &winit::window::Window) -> bool {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    window
+        .window_handle()
+        .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wayland_release_waits_two_frames_hidden() {
+        let mut hold = CursorHold::default();
+        hold.take(false, true, (40.0, 50.0));
+        assert_eq!(hold.give_back(false), Some(Return::Center));
+        hold.unlock_later(10);
+        // the frame that carries the hint has not gone by yet
+        assert!(!hold.unlock_due(10));
+        assert!(!hold.unlock_due(11));
+        assert!(!hold.held());
+        assert!(hold.hidden());
+        assert!(hold.unlock_due(12));
+        assert!(!hold.hidden());
+        // once only
+        assert!(!hold.unlock_due(13));
+        // a new hold before it is due keeps the cursor locked and hidden
+        hold.unlock_later(20);
+        hold.take(false, true, (40.0, 50.0));
+        assert!(!hold.unlock_due(30));
+        assert!(hold.hidden());
+    }
 
     #[test]
     fn mouselook_gives_the_cursor_back_at_the_centre() {
@@ -410,6 +554,55 @@ mod tests {
         assert!(!alt.free());
         // back with Alt still held: freed again once mouselook took it
         assert_eq!(alt.update(true, true), Some(AltSwitch::Free));
+    }
+
+    #[test]
+    fn only_a_cursor_macos_locked_is_left_off_the_centre() {
+        // Windows and Wayland lock it, X11 only confines it: recentred as
+        // before (on Wayland the move is where it shows when given back)
+        for (locked, macos) in [(true, false), (false, false), (false, true)] {
+            let mut hold = CursorHold::default();
+            hold.take(true, false, (0.0, 0.0));
+            hold.lock_answer(locked, true, macos);
+            assert!(hold.recenters(), "locked {locked}, macOS {macos}");
+            assert!(hold.take_motion(), "locked {locked}, macOS {macos}");
+        }
+        // macOS locked it: a warp would undo the lock (#3310)
+        let mut hold = CursorHold::default();
+        hold.take(true, false, (0.0, 0.0));
+        hold.lock_answer(true, true, true);
+        assert!(!hold.recenters());
+        // given back and taken again (Alt), the lock refused this time
+        hold.give_back(false);
+        hold.take(true, false, (0.0, 0.0));
+        hold.lock_answer(false, true, true);
+        assert!(hold.recenters());
+        // a camera drag is never recentred
+        let mut drag = CursorHold::default();
+        drag.take(false, false, (40.0, 50.0));
+        drag.lock_answer(false, false, false);
+        assert!(!drag.recenters());
+    }
+
+    #[test]
+    fn the_warp_before_a_macos_lock_does_not_turn_the_view() {
+        let mut hold = CursorHold::default();
+        hold.take(true, false, (0.0, 0.0));
+        hold.lock_answer(true, true, true);
+        // the first raw motion after it carries the warp: dropped, once
+        assert!(!hold.take_motion());
+        assert!(hold.take_motion());
+        // no warp before the lock (a camera drag): nothing is dropped
+        hold.give_back(false);
+        hold.take(false, false, (0.0, 0.0));
+        hold.lock_answer(true, false, true);
+        assert!(hold.take_motion());
+        // a give-back forgets a motion still to drop
+        hold.give_back(false);
+        hold.take(true, false, (0.0, 0.0));
+        hold.lock_answer(true, true, true);
+        hold.give_back(false);
+        assert!(hold.take_motion());
     }
 
     #[test]

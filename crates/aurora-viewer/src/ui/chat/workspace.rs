@@ -179,10 +179,10 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     ui.interact(all, ui.scope_id().with("workspace_still"), egui::Sense::drag());
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let contacts_sub = if friends.is_some() {
-            sidebar::ContactsSub::Friends
-        } else {
-            sidebar::ContactsSub::Lists
+        let contacts_sub = match &friends {
+            Some(f) if f.st.pane_groups => sidebar::ContactsSub::Groups,
+            Some(_) => sidebar::ContactsSub::Friends,
+            None => sidebar::ContactsSub::Lists,
         };
         let contacts_clicked = sidebar::show(
             ui,
@@ -275,6 +275,8 @@ pub(super) fn pane(
     narrow: bool,
     h: f32,
 ) {
+    // the conversation may have changed since the pass began (Ctrl+W, a tab)
+    super::popout::pickers_follow_view(st);
     let pane = ui.available_rect_before_wrap();
     let pane = egui::Rect::from_min_size(pane.min, egui::vec2(pane.width(), h));
     // the mockup's `.main`: the field's colour at 55 %, its bottom right
@@ -380,7 +382,7 @@ pub(super) fn pane(
         // the hint over the faded messages; over the pane, where `drops`
         // outlines the zone, it takes the ink
         let area = egui::Rect::from_min_size(egui::pos2(pane.left(), body_top), egui::vec2(lines_w, lines_h));
-        let over = ui.rect_contains_pointer(pane) && crate::ui::inventory::drag::carried_count(ui.ctx()).is_some();
+        let over = ui.rect_contains_pointer(pane) && crate::ui::inventory::drag::give_count(ui.ctx()).is_some();
         give_drop::hint(ui.painter(), p, give_id, area, over, &world.session_title(&id), fade);
     }
     let mut quote = None;
@@ -543,8 +545,14 @@ fn note_new_line(ui: &egui::Ui, world: &World, st: &mut ChatUi, read: Option<(us
     };
     let unread = read.map_or(0, |(unread, _)| unread);
     let looked = ui.input(|i| i.focused) && !st.views.get(&st.selected).is_some_and(view::View::is_paused);
-    st.new_lines
-        .frame(st.selected, ui.ctx().cumulative_frame_nr(), looked, first, lines, unread);
+    st.new_lines.frame(
+        st.selected,
+        ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),
+        looked,
+        first,
+        lines,
+        unread,
+    );
 }
 
 /// Where the "New" line of each conversation sits (the human's rule of

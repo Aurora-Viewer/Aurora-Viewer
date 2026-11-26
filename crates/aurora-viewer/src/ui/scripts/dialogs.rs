@@ -23,15 +23,18 @@ pub(super) struct Search {
     pub query: String,
     pub replacement: String,
     pub insensitive: bool,
+    pub whole_words: bool,
     pub up: bool,
     pub focus: bool,
     pub owner: Option<Id>,
     status: String,
+    // Explicitly retain the current find result while Find / Replace owns focus.
+    current: Option<std::ops::Range<usize>>,
 }
 
 impl Search {
     pub const WINDOW: &str = "script_search";
-    const SIZE: Vec2 = Vec2::new(360.0, 185.0);
+    const SIZE: Vec2 = Vec2::new(360.0, 216.0);
     const INLINE_FIELD_WIDTH: f32 = 140.0;
     const INLINE_BUTTON_PADDING: f32 = 4.0;
 
@@ -58,7 +61,7 @@ impl Search {
         ];
         let second_row = Self::INLINE_FIELD_WIDTH
             + 8.0
-            + 3.0 * ui.spacing().item_spacing.x
+            + 4.0 * ui.spacing().item_spacing.x
             + actions
                 .into_iter()
                 .map(|label| {
@@ -68,7 +71,8 @@ impl Search {
                         .x
                         + 2.0 * Self::INLINE_BUTTON_PADDING
                 })
-                .sum::<f32>();
+                .sum::<f32>()
+            + checkbox_width(aurora_i18n::tr!("script-search-whole-words"));
         first_row.max(second_row).max(440.0)
     }
 
@@ -81,11 +85,6 @@ impl Search {
 
     pub fn owns(&self, id: Id) -> bool {
         self.open && self.owner == Some(id)
-    }
-
-    pub fn focused(ctx: &egui::Context) -> bool {
-        let window = Id::unique(Self::WINDOW);
-        ctx.memory(|m| m.has_focus(window.with("query")) || m.has_focus(window.with("replacement")))
     }
 
     pub fn placement(ctx: &egui::Context, parent: egui::Rect, content_top: f32, prefer_left: bool) -> (egui::Pos2, bool) {
@@ -123,7 +122,7 @@ impl Search {
         self.open = true;
         self.focus = true;
         self.owner = Some(owner);
-        self.status.clear();
+        self.refresh_selected_match(ctx, id, source);
         crate::ui::widgets::expand_floater(ctx, Self::WINDOW);
     }
 
@@ -141,7 +140,7 @@ impl Search {
         });
         if compact {
             let height = ctx.memory(|m| m.area_rect(window)).map_or(Self::SIZE.y, |r| r.height());
-            crate::ui::widgets::place_floater(ctx, Self::WINDOW, pos, Vec2::new(Self::SIZE.x, height));
+            crate::ui::widgets::place_floater(ctx, Self::WINDOW, pos, Vec2::new(Self::SIZE.x, height.max(Self::SIZE.y)));
         }
         crate::ui::widgets::move_floater(ctx, Self::WINDOW, pos);
         if self.focus {
@@ -175,8 +174,19 @@ impl Search {
             });
         });
         ui.horizontal(|ui| {
+            let before = self.insensitive;
             crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
+            if self.insensitive != before {
+                self.refresh_selected_match(ui.ctx(), id, source);
+            }
             crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
+        });
+        ui.horizontal(|ui| {
+            let before = self.whole_words;
+            crate::ui::widgets::checkbox(ui, p, &mut self.whole_words, aurora_i18n::tr!("script-search-whole-words"));
+            if self.whole_words != before {
+                self.refresh_selected_match(ui.ctx(), id, source);
+            }
         });
         ui.horizontal(|ui| {
             if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
@@ -201,6 +211,9 @@ impl Search {
                 .desired_width(width)
         })
         .on_hover_text(aurora_i18n::tr!("script-search-query"));
+        if response.changed() {
+            self.refresh_selected_match(ui.ctx(), id, source);
+        }
         if !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut self.focus) {
             editing::select(ui.ctx(), response.id, 0..self.query.chars().count(), true);
         }
@@ -222,8 +235,12 @@ impl Search {
         ui.horizontal(|ui| {
             ui.set_min_height(row_height);
             self.query_field(ui, p, id, source, Self::INLINE_FIELD_WIDTH);
+            let before_case = self.insensitive;
             crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
             crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
+            if self.insensitive != before_case {
+                self.refresh_selected_match(ui.ctx(), id, source);
+            }
             if !self.status.is_empty() {
                 ui.add(egui::Label::new(RichText::new(&self.status).small().color(p.muted)).truncate())
                     .on_hover_text(&self.status);
@@ -238,6 +255,11 @@ impl Search {
                     .desired_width(Self::INLINE_FIELD_WIDTH)
             })
             .on_hover_text(aurora_i18n::tr!("script-search-replacement"));
+            let before = self.whole_words;
+            crate::ui::widgets::checkbox(ui, p, &mut self.whole_words, aurora_i18n::tr!("script-search-whole-words"));
+            if self.whole_words != before {
+                self.refresh_selected_match(ui.ctx(), id, source);
+            }
             if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
                 self.find(&ctx, id, source);
             }
@@ -252,50 +274,104 @@ impl Search {
         });
     }
 
+    /// The last Find result, not merely the editor's native selection (which
+    /// can become visually inactive while the Find / Replace floater has focus).
+    /// Keep the remembered result only while the editor selection still
+    /// agrees with it. egui keeps a selection only in the field with the
+    /// keyboard: elsewhere it shrinks to its moving end, the start of the
+    /// match when it was selected right to left, else its end.
+    fn current_match(&self, ctx: &egui::Context, id: Id, matches: &[std::ops::Range<usize>]) -> Option<std::ops::Range<usize>> {
+        let current = self.current.as_ref()?;
+        let [start, end] = editing::cursor(ctx, id).sorted_cursors();
+        let selected = start.index.0..end.index.0;
+        let caret_at_edge = selected.is_empty() && (selected.start == current.start || selected.start == current.end);
+
+        (matches.contains(current) && (selected == *current || caret_at_edge)).then(|| current.clone())
+    }
+
+    pub(super) fn active_range_from_matches(
+        &self,
+        ctx: &egui::Context,
+        id: Id,
+        matches: &[std::ops::Range<usize>],
+    ) -> Option<std::ops::Range<usize>> {
+        if !self.open || self.query.is_empty() {
+            return None;
+        }
+        self.current_match(ctx, id, matches)
+    }
+
+    /// Test helper: exercise active-result validation independently of the UI.
+    #[cfg(test)]
+    pub(super) fn active_range(&self, ctx: &egui::Context, id: Id, source: &str) -> Option<std::ops::Range<usize>> {
+        let matches = editing::matches_filtered(source, &self.query, self.insensitive, self.whole_words);
+        self.active_range_from_matches(ctx, id, &matches)
+    }
+
+    /// Refresh the active match without moving the editor's selection.
+    /// Opening Find and changing its options only update highlighting.
+    fn refresh_selected_match(&mut self, ctx: &egui::Context, id: Id, source: &str) {
+        let [start, end] = editing::cursor(ctx, id).sorted_cursors();
+        let selected = start.index.0..end.index.0;
+        let matches = editing::matches_filtered(source, &self.query, self.insensitive, self.whole_words);
+        // A selected match becomes the current one; otherwise the match Find
+        // went to stays current while the caret egui left on it has not moved
+        // (Ctrl+F again after Find, or an option that keeps it a match).
+        self.current = if matches.contains(&selected) {
+            Some(selected)
+        } else {
+            self.current_match(ctx, id, &matches)
+        };
+        self.status.clear();
+        ctx.request_repaint();
+    }
+
     pub fn find(&mut self, ctx: &egui::Context, id: Id, source: &str) {
-        let matches = editing::matches(source, &self.query, self.insensitive);
+        let matches = editing::matches_filtered(source, &self.query, self.insensitive, self.whole_words);
         let range = editing::cursor(ctx, id).sorted_cursors();
-        if let Some(found) = editing::next_match(&matches, range[0].index.0..range[1].index.0, self.up) {
-            editing::select(ctx, id, found, false);
+        let native = range[0].index.0..range[1].index.0;
+        let from = self.current_match(ctx, id, &matches).unwrap_or(native);
+        if let Some(found) = editing::next_match(&matches, from, self.up) {
+            editing::select(ctx, id, found.clone(), false);
+            self.current = Some(found);
             self.status.clear();
         } else {
+            self.current = None;
             self.status = aurora_i18n::tr!("script-search-not-found").into();
         }
     }
 
     fn replace(&mut self, ctx: &egui::Context, id: Id, source: &mut String) {
         let range = editing::cursor(ctx, id).sorted_cursors();
-        let selected = range[0].index.0..range[1].index.0;
-        let matches = editing::matches(source, &self.query, self.insensitive);
+        let native = range[0].index.0..range[1].index.0;
+        let matches = editing::matches_filtered(source, &self.query, self.insensitive, self.whole_words);
+        let selected = if matches.contains(&native) {
+            native
+        } else {
+            self.current_match(ctx, id, &matches).unwrap_or(native)
+        };
         if matches.contains(&selected) && !editing::replace(ctx, id, source, selected, &self.replacement) {
             self.status = aurora_i18n::tr!("script-source-too-large").into();
             return;
         }
+        self.current = None;
         self.find(ctx, id, source);
     }
 
     fn replace_all(&mut self, ctx: &egui::Context, id: Id, source: &mut String) {
-        let ranges = editing::matches(source, &self.query, self.insensitive);
+        let ranges = editing::matches_filtered(source, &self.query, self.insensitive, self.whole_words);
         let count = ranges.len();
         if count == 0 {
             self.status = aurora_i18n::tr!("script-search-not-found").into();
             return;
         }
-        let boundaries: Vec<_> = source.char_indices().map(|(i, _)| i).chain([source.len()]).collect();
-        let removed: usize = ranges.iter().map(|r| boundaries[r.end] - boundaries[r.start]).sum();
-        if source.len() - removed + count.saturating_mul(self.replacement.len()) > aurora_net::scripts::MAX_SOURCE {
+        let output = editing::replaced_all(source, &ranges, &self.replacement);
+        if output.len() > aurora_net::scripts::MAX_SOURCE {
             self.status = aurora_i18n::tr!("script-source-too-large").into();
             return;
         }
-        let mut output = String::new();
-        let mut previous = 0;
-        for range in ranges {
-            output.push_str(&source[previous..boundaries[range.start]]);
-            output.push_str(&self.replacement);
-            previous = boundaries[range.end];
-        }
-        output.push_str(&source[previous..]);
-        editing::replace(ctx, id, source, 0..boundaries.len() - 1, &output);
+        editing::replace_text(ctx, id, source, 0..source.chars().count(), &output);
+        self.current = None;
         self.status = aurora_i18n::tr!("script-search-replaced", count = count as i64);
     }
 }
@@ -308,6 +384,8 @@ pub(super) struct Preferences {
 }
 
 impl Preferences {
+    pub(super) const WINDOW: &str = "script_preferences";
+
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, settings: &mut ScriptSettings) -> bool {
         if !self.open {
             return false;
@@ -319,7 +397,7 @@ impl Preferences {
                 settings.include_directory = path;
             }
         }
-        Floater::new("script_preferences", aurora_i18n::tr!("script-preferences-title"),
+        Floater::new(Self::WINDOW, aurora_i18n::tr!("script-preferences-title"),
             ctx.content_rect().center() - Vec2::new(255.0, 330.0), Vec2::new(510.0, 660.0))
             .show(ctx, p, &mut self.open, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -339,7 +417,7 @@ impl Preferences {
                     });
                     let preview = "/* LSL */\ninteger counter = 0;\ndefault\n{\n    state_entry()\n    {\n        string greeting = \"Hello\";\n        llSay(PUBLIC_CHANNEL, greeting);\n    }\n}";
                     egui::Frame::new().fill(settings.color(ColorRole::Background, p)).inner_margin(6.0).show(ui, |ui| {
-                        ui.add(egui::Label::new(self.preview.custom(preview, p, egui::FontId::monospace(settings.font_size.clamp(8.0,32.0)), settings, "", false, false)));
+                        ui.add(egui::Label::new(self.preview.custom(preview, p, egui::FontId::monospace(settings.font_size.clamp(8.0,32.0)), settings, "", false, false, false)));
                     });
                     crate::ui::widgets::divider(ui, p);
                     crate::ui::widgets::switch_labeled(ui, p, &mut settings.word_wrap, aurora_i18n::tr!("script-preferences-word-wrap"));
@@ -483,6 +561,157 @@ impl Help {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn opening_find_preserves_the_selected_match_and_replaces_that_one() {
+        let ctx = egui::Context::default();
+        let id = Id::unique("script_preserve_selection");
+        let mut source = "hi high hi_there hi".to_owned();
+        let last = source.chars().count() - 2;
+
+        editing::select(&ctx, id, last..last + 2, true);
+        let before = editing::cursor(&ctx, id).as_sorted_char_range();
+
+        let mut search = Search {
+            replacement: "HELLO".into(),
+            whole_words: true,
+            ..Default::default()
+        };
+
+        search.begin(&ctx, id, id, &source);
+
+        assert_eq!(search.query, "hi");
+        assert_eq!(search.active_range(&ctx, id, &source), Some(last..last + 2));
+        assert_eq!(editing::cursor(&ctx, id).as_sorted_char_range(), before);
+
+        search.replace(&ctx, id, &mut source);
+        assert_eq!(source, "hi high hi_there HELLO");
+    }
+
+    #[test]
+    fn refreshing_the_query_does_not_move_the_selection() {
+        let ctx = egui::Context::default();
+        let id = Id::unique("script_query_preserves_selection");
+        let source = "hi high hi".to_owned();
+
+        editing::select(&ctx, id, 8..10, true);
+
+        let mut search = Search {
+            open: true,
+            query: "hi".into(),
+            whole_words: true,
+            ..Default::default()
+        };
+
+        search.refresh_selected_match(&ctx, id, &source);
+        assert_eq!(search.active_range(&ctx, id, &source), Some(8..10));
+
+        search.query = "high".into();
+        search.refresh_selected_match(&ctx, id, &source);
+
+        assert_eq!(search.active_range(&ctx, id, &source), None);
+        assert_eq!(
+            editing::cursor(&ctx, id).as_sorted_char_range(),
+            egui::text::CharIndex(8)..egui::text::CharIndex(10)
+        );
+    }
+
+    #[test]
+    fn active_result_survives_find_window_focus_and_clears_for_a_different_query() {
+        let ctx = egui::Context::default();
+        let id = Id::unique("script_active_search");
+        let source = "\u{C9}t\u{E9} \u{E9}t\u{E9} \u{C9}T\u{C9}";
+        let mut search = Search {
+            open: true,
+            query: "\u{E9}t\u{E9}".into(),
+            insensitive: true,
+            ..Default::default()
+        };
+        search.find(&ctx, id, source);
+        assert_eq!(search.active_range(&ctx, id, source), Some(0..3));
+        // The Find field owns keyboard focus; active navigation must still
+        // advance and the active result must remain available for painting.
+        ctx.memory_mut(|m| m.request_focus(Id::unique("script_search_field")));
+        search.find(&ctx, id, source);
+        assert_eq!(search.active_range(&ctx, id, source), Some(4..7));
+        search.up = true;
+        search.find(&ctx, id, source);
+        assert_eq!(search.active_range(&ctx, id, source), Some(0..3));
+        search.query = "missing".into();
+        assert_eq!(search.active_range(&ctx, id, source), None);
+        search.open = false;
+        assert_eq!(search.active_range(&ctx, id, source), None);
+    }
+
+    #[test]
+    fn moving_the_caret_changes_where_find_continues() {
+        let ctx = egui::Context::default();
+        let id = Id::unique("script_moved_caret");
+        let source = "hit gap hit gap hit";
+
+        let mut search = Search {
+            open: true,
+            query: "hit".into(),
+            ..Default::default()
+        };
+
+        search.find(&ctx, id, source);
+        assert_eq!(search.active_range(&ctx, id, source), Some(0..3));
+
+        // Move the caret beyond the second hit. The next result must
+        // come after the caret, not after the remembered first hit.
+        editing::select(&ctx, id, 12..12, true);
+
+        assert_eq!(search.active_range(&ctx, id, source), None);
+
+        search.find(&ctx, id, source);
+        assert_eq!(search.active_range(&ctx, id, source), Some(16..19));
+    }
+
+    #[test]
+    fn replace_does_not_change_a_stale_result_after_caret_movement() {
+        let ctx = egui::Context::default();
+        let id = Id::unique("script_stale_replace");
+        let mut source = "hit gap hit gap hit".to_owned();
+
+        let mut search = Search {
+            open: true,
+            query: "hit".into(),
+            replacement: "DONE".into(),
+            ..Default::default()
+        };
+
+        search.find(&ctx, id, &source);
+        assert_eq!(search.active_range(&ctx, id, &source), Some(0..3));
+
+        // The caret is now between the first and second matches.
+        // Replace must not change the old remembered result.
+        editing::select(&ctx, id, 5..5, true);
+        search.replace(&ctx, id, &mut source);
+
+        assert_eq!(source, "hit gap hit gap hit");
+        assert_eq!(search.active_range(&ctx, id, &source), Some(8..11));
+    }
+
+    #[test]
+    fn whole_words_only_applies_to_script_replace_all() {
+        let ctx = egui::Context::default();
+        let id = Id::unique("whole_script_replace");
+        let mut source = "This hi high hi_there hi-there".to_string();
+        let mut search = Search {
+            query: "hi".into(),
+            whole_words: true,
+            replacement: "hello".into(),
+            ..Default::default()
+        };
+        search.replace_all(&ctx, id, &mut source);
+        assert_eq!(source, "This hello high hi_there hello-there");
+        editing::undo(&ctx, id, &mut source, false);
+        assert_eq!(source, "This hi high hi_there hi-there");
+        // A closed search does not expose an active result.
+        search.open = false;
+        assert_eq!(search.active_range(&ctx, id, &source), None);
+    }
+
     #[test]
     fn replace_all_is_one_undoable_unicode_edit_and_search_wraps_in_both_directions() {
         let ctx = egui::Context::default();

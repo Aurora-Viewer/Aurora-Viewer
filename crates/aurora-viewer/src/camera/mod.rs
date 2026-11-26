@@ -582,6 +582,36 @@ impl Default for Camera {
 /// larger offset is a reference mismatch, and the camera must not fly off.
 const FOLLOW_JOINT_MAX_OFFSET: f32 = 2.0;
 
+/// The poser's framings (Aurora, #2477; the Legacy Viewer's poser never
+/// moves the camera). Only explicit actions ask for one: opening the poser,
+/// and a click that selects a joint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoserFraming {
+    /// The poser opened: the whole avatar in view.
+    Open,
+    /// A joint was click-selected: closer, to see what is edited.
+    Joint,
+}
+
+/// The farthest the opening framing leaves the camera from the avatar's
+/// pelvis: the whole body fits at the default field of view.
+const POSER_OPEN_FARTHEST: f32 = 4.2;
+/// The farthest a joint's framing leaves the camera from that joint.
+const POSER_JOINT_FARTHEST: f32 = 2.8;
+/// The poser's framing keeps the camera's distance within this range, so
+/// that a camera far off or inside the body comes to a working distance.
+const POSER_FRAME_MIN_DISTANCE: f32 = 1.8;
+const POSER_FRAME_MAX_DISTANCE: f32 = 5.0;
+
+impl PoserFraming {
+    fn farthest(self) -> f32 {
+        match self {
+            Self::Open => POSER_OPEN_FARTHEST,
+            Self::Joint => POSER_JOINT_FARTHEST,
+        }
+    }
+}
+
 fn follow_joint_intensity_scale(percent: u16) -> f32 {
     f32::from(percent.min(500)) / 100.0
 }
@@ -761,8 +791,13 @@ impl Camera {
         // mouselook ends the free camera (the flycam's toggle the other way)
         self.free = None;
         self.clear_flycam();
-        // the view keeps its direction: the avatar turns to it
-        agent.yaw += self.orbit_yaw;
+        // the view keeps its direction: the avatar turns to it, unless a
+        // script holds left and right (#3450): LLAgentCamera::changeCameraTo-
+        // Mouselook never turns the avatar, so the body keeps its heading and
+        // the view comes back along it
+        if !agent.rotate_grabbed {
+            agent.yaw += self.orbit_yaw;
+        }
         self.orbit_yaw = 0.0;
         agent.pitch = -self.pitch;
         self.pitch = 0.0;
@@ -1057,6 +1092,28 @@ impl Camera {
         self.set_camera_pos_and_focus(camera, focus, None, s);
     }
 
+    /// The poser's one-shot framing ("Frame the avatar while posing", an
+    /// Aurora option, #2477): `focus` from the camera's current side, no
+    /// nearer or farther than the framing allows. A free camera, a
+    /// joystick flycam or mouselook is the user's view: left alone (false).
+    pub fn frame_poser_joint(&mut self, focus: Vec3, framing: PoserFraming, agent: &mut AgentState, s: &CameraSettings) -> bool {
+        if self.free.is_some() || self.flycam.is_some() || self.mouselook() {
+            return false;
+        }
+        let direction = (self.position - self.target).normalize_or_zero();
+        let direction = if direction.length_squared() > 0.5 {
+            direction
+        } else {
+            Vec3::new(-1.0, 0.0, 0.25).normalize()
+        };
+        let distance = (self.position - self.target)
+            .length()
+            .clamp(POSER_FRAME_MIN_DISTANCE, POSER_FRAME_MAX_DISTANCE)
+            .min(framing.farthest());
+        self.set_view(focus + direction * distance, focus, agent, s);
+        true
+    }
+
     /// Appearance framing, including a changed eye with an unchanged focus.
     /// Like changeCameraToCustomizeAvatar (llagentcamera.cpp), allow time for
     /// the 1.35 s customise turn. Other camera operations retain their paths.
@@ -1229,6 +1286,11 @@ impl Camera {
         }
         self.zoom_fraction = 1.0;
         self.fov_zoom = 0.0;
+        // LLAgentCamera::switchCameraPreset returns focus to the avatar without resetting its axes.
+        if !self.focus_on_avatar {
+            self.set_focus_on_avatar(true, true, false, agent, s);
+            self.set_focus_global(None, None, None, s);
+        }
         self.reset_view(agent, s, true, true, false, false);
     }
 
@@ -1560,10 +1622,11 @@ impl Camera {
 
     // ------------------------------------------------------------------ input
 
-    /// LLAgentCamera::cameraOrbitAround.
+    /// LLAgentCamera::cameraOrbitAround. Around the avatar it is
+    /// LLAgent::yaw, which a script's hold on yaw blocks (rotateGrabbed).
     fn orbit_around(&mut self, radians: f32, agent: &mut AgentState) {
         if self.focus_on_avatar && !self.mouselook() {
-            agent.yaw += radians;
+            agent.yaw_by(radians);
         } else {
             self.focus_offset_target = Quat::from_rotation_z(radians) * self.focus_offset_target;
             self.zoom_in(1.0);
@@ -1944,7 +2007,7 @@ impl Camera {
                     // the agent in avatar follow. Keep that steering turn
                     // when ClickOnAvatarKeepsCamera retains a detached focus.
                     if steering && !self.focus_on_avatar {
-                        agent.yaw -= dx * k;
+                        agent.yaw_by(-dx * k);
                     }
                     self.orbit_around(-dx * k, agent);
                 }
@@ -2582,6 +2645,20 @@ impl Camera {
                 if self.force_mouselook && self.vr_mode.is_none() {
                     self.change_to_mouselook(agent, s, true);
                 }
+            }
+            (Some(rot), Some(mut seat)) if self.avatar.camera_decoupled && self.mouselook() => {
+                // VEHICLE_FLAG_CAMERA_DECOUPLED keeps the mouselook agent
+                // frame in world space (LLAgent::changeCameraToMouselook
+                // resets its axes); the third-person sit camera still turns
+                // with the vehicle (LLAgentCamera::calcCameraPositionTargetGlobal).
+                // Track that heading in seat space in case the flag is
+                // cleared, or mouselook left, while the agent remains seated.
+                let world_heading = Vec3::new(agent.yaw.cos(), agent.yaw.sin(), 0.0);
+                if let Some(local_yaw) = flat(rot.inverse() * world_heading) {
+                    seat.local_yaw = local_yaw;
+                }
+                seat.written_yaw = agent.yaw;
+                self.seat = Some(seat);
             }
             (Some(rot), Some(mut seat)) => {
                 // turning keys and steering change the heading inside the seat
@@ -4465,6 +4542,35 @@ mod tests {
     }
 
     #[test]
+    fn the_poser_framing_keeps_a_free_camera_and_mouselook() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let joint = Vec3::new(128.0, 128.0, 25.4);
+        // third person: the joint centred, no farther than a joint's framing
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.frame_poser_joint(joint, PoserFraming::Joint, &mut w.agent, &s));
+        assert!(cam.focus_target.distance(joint) < 1e-4);
+        assert!(cam.focus_offset_target.length() <= POSER_JOINT_FARTHEST + 1e-4);
+        // a free camera flies on, and is still the free camera
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        cam.start_free(&mut w.agent, &s);
+        let before = (cam.focus_target, cam.focus_offset_target);
+        assert!(!cam.frame_poser_joint(joint, PoserFraming::Open, &mut w.agent, &s));
+        assert!(cam.free().is_some());
+        assert_eq!((cam.focus_target, cam.focus_offset_target), before);
+        // mouselook stays mouselook
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        cam.change_to_mouselook(&mut w.agent, &s, false);
+        let before = (cam.focus_target, cam.focus_offset_target);
+        assert!(!cam.frame_poser_joint(joint, PoserFraming::Joint, &mut w.agent, &s));
+        assert!(cam.mouselook());
+        assert_eq!((cam.focus_target, cam.focus_offset_target), before);
+    }
+
+    #[test]
     fn disabling_appearance_movement_stops_mid_turn_and_keeps_manual_camera_controls() {
         for smoothing in [0.0, 1.0] {
             let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
@@ -5654,6 +5760,32 @@ mod tests {
         let (yaw, pitch) = (world.agent.yaw, world.agent.pitch);
         let aim = Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin());
         assert!(camera.forward().abs_diff_eq(aim, 1e-4), "{:?} vs {aim:?}", camera.forward());
+        // Turning a camera-decoupled vehicle must not drag the world-space
+        // mouselook aim with it on later frames either.
+        for turn in [0.3, -1.1, 0.8] {
+            set_rotation(&mut world, Quat::from_rotation_z(turn) * Quat::from_rotation_y(0.6));
+            camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+            assert_eq!(world.agent.yaw, yaw);
+            assert_eq!(world.agent.pitch, pitch);
+            assert!(camera.forward().abs_diff_eq(aim, 1e-4), "{:?} vs {aim:?}", camera.forward());
+        }
+        // out of mouselook the decoupled vehicle's turns carry the heading again
+        camera.change_to_default(&mut world.agent, &settings);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let before = world.agent.yaw;
+        set_rotation(&mut world, Quat::from_rotation_z(0.8 + 0.5) * Quat::from_rotation_y(0.6));
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let turned = (world.agent.yaw - before + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        assert!((turned - 0.5).abs() < 1e-3, "third person follows the vehicle: {turned}");
+        // and a vehicle without the flag turns the mouselook heading with it
+        world.objects.get_mut(seat).unwrap().update_flags &= !FLAGS_CAMERA_DECOUPLED;
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let before = world.agent.yaw;
+        set_rotation(&mut world, Quat::from_rotation_z(0.8 + 0.5 + 0.4) * Quat::from_rotation_y(0.6));
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let turned = (world.agent.yaw - before + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        assert!((turned - 0.4).abs() < 1e-3, "a coupled vehicle turns the aim: {turned}");
     }
 
     #[test]
@@ -6324,6 +6456,31 @@ mod tests {
             "back to the rear view: {:?} vs {rest:?}",
             cam.position
         );
+    }
+
+    #[test]
+    fn a_camera_preset_returns_from_an_object_without_turning_the_avatar() {
+        for view in [CameraPreset::Front, CameraPreset::Rear, CameraPreset::Side] {
+            let (mut world, mut cam, mut s, _) = focused_object();
+            world.agent.yaw = 1.25;
+            let position = world.agent.position;
+            assert!(!cam.focus_on_avatar && cam.focus_object.is_some());
+            s.apply_view(view, &SavedViews::default());
+            cam.reset_to_defaults(&mut world.agent, &s);
+            settle(&mut cam, &mut world, &s);
+            assert_eq!(world.agent.yaw, 1.25);
+            assert_eq!(world.agent.position, position);
+            assert!(cam.focus_on_avatar && cam.focus_object.is_none() && cam.focus_geom.is_none());
+            let pan = CameraKeys {
+                pan_right: 1.0,
+                ..Default::default()
+            };
+            cam.apply_keys(pan, true, &mut world.agent, &s, 0.1);
+            assert!(!cam.focus_on_avatar);
+            cam.reset_to_defaults(&mut world.agent, &s);
+            assert!(cam.focus_on_avatar);
+            assert_eq!(world.agent.yaw, 1.25);
+        }
     }
 
     #[test]
@@ -7664,6 +7821,55 @@ mod tests {
         }
     }
 
+    /// LLToolPie mouse steering and LLAgentCamera::cameraOrbitAround around
+    /// the avatar turn it with LLAgent::yaw, which rotateGrabbed blocks: a
+    /// vehicle that took left/right keeps its heading (#3450).
+    #[test]
+    fn a_grabbed_yaw_stops_mouse_steering_and_orbiting_around_the_avatar() {
+        for follow in [true, false] {
+            let (mut w, mut cam, s, _) = focused_object();
+            w.agent.yaw = 0.0;
+            if follow {
+                cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+                settle(&mut cam, &mut w, &s);
+            }
+            w.agent.rotate_grabbed = true;
+            cam.begin_drag(true);
+            cam.drag(ToolMode::Zoom, 256.0, 0.0, 1280.0, &mut w.agent);
+            assert_eq!(w.agent.yaw, 0.0, "steering, follow={follow}");
+            cam.end_drag();
+        }
+        let (mut w, mut cam, s, _) = focused_object();
+        cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        w.agent.yaw = 0.0;
+        w.agent.rotate_grabbed = true;
+        cam.orbit_around(0.5, &mut w.agent);
+        assert_eq!(w.agent.yaw, 0.0, "orbit around the avatar");
+        w.agent.rotate_grabbed = false;
+        cam.orbit_around(0.5, &mut w.agent);
+        assert!((w.agent.yaw - 0.5).abs() < 1e-6, "released: it turns again");
+    }
+
+    /// Mouselook entered after orbiting the camera around the avatar: the
+    /// body takes the orbit, unless a script holds left and right (#3450).
+    #[test]
+    fn a_grabbed_yaw_keeps_the_heading_on_mouselook_entry() {
+        for grabbed in [true, false] {
+            let (mut w, mut cam, s, _) = focused_object();
+            cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+            settle(&mut cam, &mut w, &s);
+            w.agent.yaw = 0.0;
+            w.agent.rotate_grabbed = grabbed;
+            cam.orbit_yaw = 0.7;
+            cam.toggle_mouselook(&mut w.agent, &s);
+            assert!(cam.mouselook());
+            let expected = if grabbed { 0.0 } else { 0.7 };
+            assert!((w.agent.yaw - expected).abs() < 1e-6, "grabbed={grabbed}: yaw {}", w.agent.yaw);
+            assert_eq!(cam.orbit_yaw, 0.0);
+        }
+    }
+
     #[test]
     fn avatar_keep_orbit_drag_does_not_turn_the_avatar_while_stationary() {
         // ClickOnAvatarKeepsCamera while still on follow: left-drag orbits
@@ -7975,7 +8181,7 @@ mod tests {
             }
             let held_end = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
             assert!(held_end.distance(held_start) > 2.0);
-            tool.mouse_up(&mut w, &settings, None);
+            tool.mouse_up(&mut w, &settings, None, (1590.0, start.1), Mods::default());
             assert_eq!(tool.manip.camera_pan(&settings, &tool.cam, (1590.0, start.1), f.dt), Vec3::ZERO);
             let stopped = camera.position;
             for _ in 0..30 {

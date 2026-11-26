@@ -63,6 +63,10 @@ struct Capture {
     context: LiveContext,
     timestamp: u32,
     logged_at: u32,
+    /// The bodies of the IMs a long sent line left as, each kept by the
+    /// service as its own row (`aurora_net::message_split`); empty when the
+    /// line left whole.
+    parts: Vec<String>,
 }
 
 /// The history of one direct conversation, an IM session's or the History
@@ -147,6 +151,14 @@ impl Env for WorldEnv<'_> {
     fn cached_name(&self, id: Uuid) -> Option<AvatarName> {
         self.names.raw(&id).filter(|n| !n.temporary).cloned()
     }
+}
+
+/// The grid's time now, in seconds (time_corrected): what the LL viewer
+/// stamps a live message's capture and recording with, so that it lands
+/// in the service row's window whatever the computer's clock says (#4233:
+/// 133 s behind, every message shown again from the service).
+fn grid_now() -> u32 {
+    unix_secs(crate::ui::bars::clock::grid_time(SystemTime::now()))
 }
 
 fn unix_secs(t: SystemTime) -> u32 {
@@ -395,11 +407,13 @@ impl World {
             }),
             Action::SweepTranscripts { ticket } => {
                 // the plaintext first (deleteTranscriptContent), then the
-                // service's files; no transcript folder is a failure
-                let dir = self.chat_log.dir().map(std::path::Path::to_path_buf);
+                // service's files; no transcript folder is a failure, and a
+                // folder shared with the Legacy Viewer keeps every
+                // transcript, the delete finishing on the service's files
+                let sweep = self.chat_log.service_sweep();
                 let swept = self.chat_service.swept.clone();
                 self.storage_job(Reply::Swept(ticket, false), move |s| {
-                    let erased = dir.map(|d| super::chat_log::store::erase(&d));
+                    let erased = sweep.map(|w| w.run());
                     if let Some(Ok(n)) = &erased {
                         swept.store(*n, std::sync::atomic::Ordering::Relaxed);
                     }
@@ -516,9 +530,9 @@ impl World {
         if !self.chat_service.running() || self.chat_log.shared() || self.chat_log.busy() {
             return false;
         }
-        // time_corrected: Aurora reads the computer's UTC clock, as the
-        // conversation log does
-        let micros = SystemTime::now()
+        // clickTicks: the click on the grid's clock (time_corrected), so
+        // that a computer behind the grid deletes its newest rows too
+        let micros = crate::ui::bars::clock::grid_time(SystemTime::now())
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| i64::try_from(d.as_micros()).unwrap_or(i64::MAX));
         let Some(ticks) = super::chat_service::click_ticks(micros) else {
@@ -706,7 +720,12 @@ impl World {
     }
 
     /// The session's live lines as session rows, newest first, each with
-    /// its line's index and its capture.
+    /// its line's index and its capture. A sent line that left in parts
+    /// gives one row per part, its capture with that part's body, so that
+    /// each part consumes its own service row; the line itself is placed
+    /// once ([`World::direct_place`]). Aurora sends a long IM in parts like
+    /// the Legacy Viewer (LLIMModel::sendMessage, indra/newview/llimview.cpp),
+    /// and the service keeps one row per part.
     fn direct_live_rows(&self, id: Uuid) -> Messages {
         let Some(s) = self.social.ims.iter().find(|s| s.other == id) else {
             return Vec::new();
@@ -717,7 +736,7 @@ impl World {
             .iter()
             .enumerate()
             .filter(|(_, l)| l.origin != Origin::Log)
-            .map(|(i, l)| {
+            .flat_map(|(i, l)| {
                 let (from, text) = self.transcript_text(NameScope::Roster, l);
                 let capture = captures.iter().rev().find(|c| c.time == l.time && c.text == l.text);
                 let from_id = match l.kind {
@@ -731,14 +750,33 @@ impl World {
                     message: text,
                     time: format::stamp(l.time, true),
                     datetime: format::stamp(l.time, true),
-                    timestamp: Some(capture.map_or(unix_secs(l.time), |c| c.timestamp) as i32),
+                    // the line's computer time on the grid's clock, as the
+                    // capture's (grid_now)
+                    timestamp: Some(capture.map_or(unix_secs(crate::ui::bars::clock::grid_time(l.time)), |c| c.timestamp) as i32),
                     ..HistoryMessage::default()
                 };
                 row.extra.insert(LINE_KEY.into(), aurora_llsd::Llsd::Integer(i as i32));
                 if let Some(c) = capture {
                     record_live_message(&mut row, &c.context, c.logged_at);
                 }
-                row
+                let parts = capture.map_or(&[][..], |c| c.parts.as_slice());
+                if parts.is_empty() {
+                    return vec![row];
+                }
+                // the first part keeps the displayed body, which a plaintext
+                // line of the whole message can still consume
+                parts
+                    .iter()
+                    .enumerate()
+                    .map(|(n, part)| {
+                        let mut part_row = row.clone();
+                        part_row.original_text = Some(part.clone());
+                        if n > 0 {
+                            part_row.message.clone_from(part);
+                        }
+                        part_row
+                    })
+                    .collect()
             })
             .collect();
         rows.reverse();
@@ -782,12 +820,15 @@ impl World {
         };
         let old: Vec<ChatLine> = s.lines.drain(..).collect();
         let mut history = history_lines.into_iter();
+        // the rows of a line sent in parts share its index: placed once
+        let mut placed = HashSet::new();
         for m in current.iter().rev() {
             if m.is_history {
                 if let Some(l) = history.next() {
                     s.lines.push_back(l);
                 }
             } else if let Some(aurora_llsd::Llsd::Integer(i)) = m.extra.get(LINE_KEY)
+                && placed.insert(*i)
                 && let Some(l) = old.get(*i as usize)
             {
                 s.lines.push_back(l.clone());
@@ -799,7 +840,9 @@ impl World {
     /// History rows as conversation lines: ours, the system's or the
     /// sender's by id, by the cached legacy name, else the other resident
     /// (LLIMSession::addMessagesFromHistoryCache). A row without a time
-    /// takes the one before.
+    /// takes the one before. The other resident taken for want of a
+    /// better one gives a line its picture and its profile, and its name
+    /// only when the row's name is theirs, as `World::history_lines`.
     pub fn service_lines<'a>(&self, rows: impl Iterator<Item = &'a HistoryMessage>, peer: Option<Uuid>) -> Vec<ChatLine> {
         let names = &self.social.avatar_names;
         let trim = names.options.trim_resident;
@@ -839,6 +882,8 @@ impl World {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                // a direct conversation's, as `World::history_lines` marks them
+                private_history: peer.is_some(),
             }
         })
         .collect()
@@ -855,7 +900,7 @@ impl World {
         }
         let context = incoming_context(offline.then_some(raw), !offline);
         let mut timestamp = if offline { sent } else { 0 };
-        let now = unix_secs(SystemTime::now());
+        let now = grid_now();
         let context = capture_live_message(raw, &mut timestamp, &context, now);
         self.direct_capture(from, line_time, line_text, context, timestamp, now);
         let env = WorldEnv {
@@ -885,12 +930,19 @@ impl World {
     }
 
     /// An outgoing IM_NOTHING_SPECIAL entered its session: its capture,
-    /// then the resident's activity (sent).
+    /// with the parts it leaves as when it is longer than one IM
+    /// (`NetCommand::SendIm`), then the resident's activity (sent).
     pub(super) fn direct_outgoing(&mut self, to: Uuid, context: LiveContext, line_time: SystemTime, line_text: &str) {
-        let now = unix_secs(SystemTime::now());
+        let now = grid_now();
         let mut timestamp = 0;
         let context = capture_live_message(line_text, &mut timestamp, &context, now);
         self.direct_capture(to, line_time, line_text, context, timestamp, now);
+        let parts = aurora_net::message_split::message_parts(line_text);
+        if parts.len() > 1
+            && let Some(c) = self.chat_service.views.get_mut(&to).and_then(|v| v.captures.last_mut())
+        {
+            c.parts = parts.into_iter().map(str::to_owned).collect();
+        }
         let env = WorldEnv {
             mutes: &self.mutes,
             names: &self.social.avatar_names,
@@ -908,6 +960,7 @@ impl World {
                 context,
                 timestamp,
                 logged_at,
+                parts: Vec::new(),
             });
             // the lines are bounded: so are their captures
             let excess = v.captures.len().saturating_sub(super::MAX_CHAT);

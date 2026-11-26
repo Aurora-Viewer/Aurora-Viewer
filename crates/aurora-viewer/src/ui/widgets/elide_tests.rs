@@ -12,6 +12,9 @@ pub(crate) const SHORT: &str = "Nova";
 /// Frames of one egui context, 1/60 s apart.
 pub(crate) struct Frames {
     pub ctx: egui::Context,
+    pub screen_size: egui::Vec2,
+    /// The window has the system's focus (on by default).
+    pub focused: bool,
     frame: usize,
 }
 
@@ -19,11 +22,13 @@ impl Frames {
     pub fn new() -> Self {
         Self {
             ctx: egui::Context::default(),
+            screen_size: egui::vec2(1280.0, 900.0),
+            focused: true,
             frame: 0,
         }
     }
 
-    /// Run one frame of `body` in a 1280 × 900 screen; its texts are returned.
+    /// Run one frame of `body` in the test viewport; its texts are returned.
     pub fn run(&mut self, events: Vec<egui::Event>, body: impl FnMut(&mut egui::Ui)) -> Vec<Text> {
         self.run_with_output(events, body).0
     }
@@ -56,9 +61,10 @@ impl Frames {
         self.frame += 1;
         let mut output = self.ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.screen_size)),
                 time: Some(self.frame as f64 / 60.0),
                 events,
+                focused: self.focused,
                 ..Default::default()
             },
             |ui| body(ui),

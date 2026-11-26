@@ -196,7 +196,7 @@ pub fn skeleton_model(world: &World, meshes: &MeshStreamer, owner_idx: usize, po
 /// originally LGPL 2.1): the bind shape's 3x3 with each axis normalised, then
 /// inverted (left as it is when singular, like LLMatrix3::invert), as a
 /// rotation. glam's columns are LL's rows: the same matrix, not transposed.
-fn unscaled_bind_rotation(bind_shape: Mat4) -> Option<Quat> {
+pub fn unscaled_bind_rotation(bind_shape: Mat4) -> Option<Quat> {
     let m = glam::Mat3::from_mat4(bind_shape);
     let unit = |axis: Vec3| {
         let len = axis.length();
@@ -838,6 +838,7 @@ impl Scene {
             }
         }
         renderer.set_palette_slots(&self.palettes, &posed, PALETTE_JOINTS);
+        renderer.set_rt_own_palette(self.palette_slots.get(&world.agent_id).map(|s| *s * PALETTE_JOINTS as u32));
         for range in moved {
             renderer.set_palette_range(&self.palettes, range);
         }
@@ -1020,7 +1021,8 @@ mod tests {
             let joint = rig.names[name];
             let parent = rig.parent[joint];
             world.objects.get_mut(root).unwrap().state = point.rotate_left(4);
-            let position = rig.local_pos[joint] + Vec3::new(0.25, -0.3, 0.6);
+            // Asset keys are local to the XML attachment parent, including mRoot.
+            let position = lib.attach_points[&point].position + Vec3::new(0.25, -0.3, 0.6);
             let rotation = Quat::from_rotation_y(0.9) * Quat::from_rotation_z(-0.4);
             let mut animation = crate::demo::idle_animation();
             animation.ease_in = 0.0;
@@ -1057,7 +1059,7 @@ mod tests {
                 if let Some(parent) = parent {
                     assert!(posed[parent].abs_diff_eq(rest[parent], 1e-5), "the parent bone stays still");
                 }
-                let (expected_pos, expected_rot) = parent.map_or((position, rotation), |p| {
+                let (expected_pos, expected_rot) = parent.map_or((rig.local_pos[rig.pelvis] + position, rotation), |p| {
                     let (_, rot, _) = rest[p].to_scale_rotation_translation();
                     (rest[p].transform_point3(position), rot * rotation)
                 });

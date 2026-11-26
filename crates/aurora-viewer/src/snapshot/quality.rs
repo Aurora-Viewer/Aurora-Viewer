@@ -15,7 +15,7 @@
 //! 6 / 7; MSAA 8x at 3440 x 1369 and the rest of the boost wanted about
 //! 1.4 GB more, and the GPU was lost 1.4 s later). See [`plan`].
 
-use crate::graphics_presets::{Preset, Values};
+use crate::graphics_presets::Values;
 use crate::scene::texture_budget::MAX_PRESSURE;
 use crate::settings::Settings;
 use std::collections::BTreeSet;
@@ -67,11 +67,13 @@ macro_rules! each_value {
             $($args),*,
             draw_distance,
             lod_factor,
+            tree_lod_factor,
             max_avatars,
             max_complexity,
             max_particles,
             shadow_quality,
             projector_shadows,
+            projector_shadow_limit,
             ssao,
             ao_method,
             gtao_quality,
@@ -81,10 +83,14 @@ macro_rules! each_value {
             reflection_probes,
             probe_count,
             antialiasing,
+            blend_order,
             anisotropy,
             sharpen,
             glow,
+            avatar_physics_detail,
+            hdr_emissive,
             max_texture_resolution,
+            local_light_count,
             effects
         )
     };
@@ -171,7 +177,7 @@ fn photo_maxima() -> Values {
         reflection_probes: 3,
         probe_count: 256,
         anisotropy: 16,
-        ..Preset::Deluxe.values()
+        ..crate::graphics_presets::deluxe_v45()
     }
 }
 
@@ -289,6 +295,9 @@ const MB: u64 = 1 << 20;
 /// `Renderer::make_targets`, with some room; also what a photo's pass
 /// counts (`app::snapshot`).
 pub const BYTES_PER_SAMPLE: u64 = 18;
+/// What the G-buffer takes more per sample in 16 bits per channel
+/// (Rgba16Unorm, 8: "Reflection precision", [`Screen::wide_normals`]).
+const WIDE_NORMALS_BYTES_PER_SAMPLE: u64 = 4;
 
 /// Bytes per square metre of ground a longer draw distance brings in
 /// (geometry, the textures' share the budget lets through), from a grid
@@ -311,6 +320,9 @@ pub struct Screen {
     /// (`RenderStats::target_bytes_per_pixel`): what a step that changes
     /// the MSAA replaces ([`made_bytes`]).
     pub target_bytes: u64,
+    /// The reflections, once on, keep their normals in 16 bits
+    /// (`Settings::normals_high`).
+    pub wide_normals: bool,
 }
 
 /// Estimated video memory the settings `v` hold that grows with the boost.
@@ -318,7 +330,12 @@ fn held_bytes(v: &Values, screen: Screen) -> u64 {
     let px = screen.pixels as f64;
     let n = samples(v.antialiasing).min(screen.max_samples.max(1));
     let msaa = if n > 1 {
-        u64::from(n) * BYTES_PER_SAMPLE * screen.pixels
+        let wide = if v.ssr && screen.wide_normals {
+            WIDE_NORMALS_BYTES_PER_SAMPLE
+        } else {
+            0
+        };
+        u64::from(n) * (BYTES_PER_SAMPLE + wide) * screen.pixels
     } else {
         0
     };
@@ -524,6 +541,65 @@ mod tests {
         assert_eq!((s.draw_distance, s.antialiasing, s.shadow_quality), (128.0, 6, 1));
     }
 
+    /// Every setting of the photo quality's set that a Preferences row (or
+    /// a Phototools one) can change while the boost is on becomes the
+    /// user's: kept when the boost ends.
+    #[test]
+    fn every_value_changed_during_the_boost_becomes_the_users() {
+        let changes: Vec<(&str, Box<dyn Fn(&mut Settings)>)> = vec![
+            ("draw_distance", Box::new(|s| s.draw_distance = 640.0)),
+            ("lod_factor", Box::new(|s| s.lod_factor = 5.0)),
+            ("tree_lod_factor", Box::new(|s| s.tree_lod_factor = 0.25)),
+            ("max_avatars", Box::new(|s| s.max_avatars = 7)),
+            ("max_particles", Box::new(|s| s.max_particles += 1)),
+            (
+                "projector_shadow_limit",
+                Box::new(|s| s.projector_shadow_limit = if s.projector_shadow_limit == 3 { 2 } else { 3 }),
+            ),
+            ("ssao", Box::new(|s| s.ssao = if s.ssao == 1 { 0 } else { 1 })),
+            ("ao_method", Box::new(|s| s.ao_method ^= 1)),
+            ("gtao_quality", Box::new(|s| s.gtao_quality = (s.gtao_quality + 1) % 4)),
+            ("blend_order", Box::new(|s| s.blend_order = if s.blend_order == 1 { 2 } else { 1 })),
+            ("anisotropy", Box::new(|s| s.anisotropy = if s.anisotropy == 4 { 2 } else { 4 })),
+            ("sharpen", Box::new(|s| s.sharpen += 0.1)),
+            ("avatar_physics_detail", Box::new(|s| s.avatar_physics_detail -= 0.25)),
+            ("hdr_emissive", Box::new(|s| s.hdr_emissive = !s.hdr_emissive)),
+            ("local_light_count", Box::new(|s| s.local_light_count -= 1)),
+        ];
+        for (name, change) in changes {
+            let mut s = Settings::default();
+            let mut held = boost(&mut s);
+            let mut changed = s.clone();
+            change(&mut changed);
+            assert_ne!(Values::read(&changed), Values::read(&s), "{name}: the change must differ");
+            s = changed;
+            let mine = Values::read(&s);
+            held.sync(&s);
+            held.restore(&mut s);
+            let after = Values::read(&s);
+            // the boost's own values do not come back over the user's
+            let now_equal = match name {
+                "draw_distance" => after.draw_distance == mine.draw_distance,
+                "lod_factor" => after.lod_factor == mine.lod_factor,
+                "tree_lod_factor" => after.tree_lod_factor == mine.tree_lod_factor,
+                "max_avatars" => after.max_avatars == mine.max_avatars,
+                "max_particles" => after.max_particles == mine.max_particles,
+                "projector_shadow_limit" => after.projector_shadow_limit == mine.projector_shadow_limit,
+                "ssao" => after.ssao == mine.ssao,
+                "ao_method" => after.ao_method == mine.ao_method,
+                "gtao_quality" => after.gtao_quality == mine.gtao_quality,
+                "blend_order" => after.blend_order == mine.blend_order,
+                "anisotropy" => after.anisotropy == mine.anisotropy,
+                "sharpen" => after.sharpen == mine.sharpen,
+                "avatar_physics_detail" => after.avatar_physics_detail == mine.avatar_physics_detail,
+                "hdr_emissive" => after.hdr_emissive == mine.hdr_emissive,
+                "local_light_count" => after.local_light_count == mine.local_light_count,
+                _ => unreachable!(),
+            };
+            assert!(now_equal, "{name} was not kept when the boost ended");
+        }
+    }
+
     #[test]
     fn photos_up_to_4k_are_drawn_at_twice_their_size() {
         assert_eq!(supersample((3840, 2160)), 2);
@@ -540,6 +616,7 @@ mod tests {
             pixels: w * h,
             max_samples: 8,
             target_bytes: 87,
+            wide_normals: false,
         }
     }
 
@@ -597,6 +674,19 @@ mod tests {
         assert_eq!(only_msaa(MSAA_8X), 8 * 18 * 3440 * 1369);
         assert_eq!(only_msaa(MSAA_4X), only_msaa(MSAA_8X) / 2);
         assert_eq!(only_msaa(user.antialiasing), 0);
+        // the reflections' normals in 16 bits: 4 bytes more per sample,
+        // with the screen-space reflections only
+        let wide = Screen { wide_normals: true, ..s };
+        let msaa_8x = |ssr| {
+            let user = Values { ssr, ..user };
+            let boosted = Values {
+                antialiasing: MSAA_8X,
+                ..user
+            };
+            extra_bytes(&user, &boosted, wide)
+        };
+        assert_eq!(msaa_8x(true), 8 * 22 * 3440 * 1369);
+        assert_eq!(msaa_8x(false), only_msaa(MSAA_8X));
         // a GPU with 4 samples at most
         let four = Screen { max_samples: 4, ..s };
         assert_eq!(

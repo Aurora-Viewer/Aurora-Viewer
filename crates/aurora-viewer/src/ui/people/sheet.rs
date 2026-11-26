@@ -17,6 +17,7 @@ use crate::ui::{menu, presence};
 use crate::world::World;
 use crate::world::names::NameScope;
 use crate::world::social::{Friend, rights};
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
 
@@ -231,16 +232,19 @@ fn head(
     closed
 }
 
-/// The permanent inline panel keeps its place when no friend matches.
-pub(super) fn empty(ui: &mut egui::Ui, p: &Palette) {
+/// The permanent inline panel keeps its place when no friend matches, or
+/// no group is chosen (`group`: Conversations › Contacts › Groups).
+pub(super) fn empty(ui: &mut egui::Ui, p: &Palette, group: bool) {
     let (content, _) = frame(ui, p);
     let center = content.center();
     let icon = Rect::from_center_size(center - Vec2::new(0.0, 22.0), Vec2::splat(32.0));
-    super::radar::icon(ui, "user-filled", icon, 32.0, p.muted_dim);
-    let mut job = egui::text::LayoutJob::single_section(
-        aurora_i18n::tr!("people-contact-details-empty").to_owned(),
-        egui::TextFormat::simple(FontId::proportional(13.0), p.muted),
-    );
+    let (glyph, text) = if group {
+        ("users-group", aurora_i18n::tr!("people-group-details-empty"))
+    } else {
+        ("user-filled", aurora_i18n::tr!("people-contact-details-empty"))
+    };
+    super::radar::icon(ui, glyph, icon, 32.0, p.muted_dim);
+    let mut job = egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(FontId::proportional(13.0), p.muted));
     job.wrap.max_width = content.width();
     let galley = ui.painter().layout_job(job);
     widgets::paint_ink_centered(ui.painter(), galley, center + Vec2::new(0.0, 16.0), p.muted);
@@ -337,7 +341,7 @@ fn buttons(
 /// The title of a part of the sheet, in small capitals.
 pub(super) fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
     ui.label(
-        egui::RichText::new(title.to_uppercase())
+        egui::RichText::new(title.ui_upper())
             .font(FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
             .color(p.muted_dim),
     );

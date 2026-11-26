@@ -1007,6 +1007,7 @@ pub(super) fn parse_properties(m: &msgs::ObjectProperties) -> Vec<ObjectProps> {
             sale_price: b.sale_price,
             category: b.category,
             inventory_serial: b.inventory_serial,
+            item_id: b.item_id,
             folder_id: b.folder_id,
             from_task_id: b.from_task_id,
             name: field_str(&b.name),

@@ -29,7 +29,7 @@ pub fn mirror_id(agent: Uuid) -> Uuid {
 }
 
 /// A full update that makes `object` again, as a client-only copy.
-fn copy_of(object: &objects::Object, full_id: Uuid, local_id: u32, parent_id: u32) -> ObjectUpdate {
+pub(super) fn copy_of(object: &objects::Object, full_id: Uuid, local_id: u32, parent_id: u32) -> ObjectUpdate {
     ObjectUpdate {
         local_id,
         full_id,
@@ -74,7 +74,7 @@ impl World {
 
     /// Whose appearance `avatar` shows: ours for the mirror.
     pub(crate) fn appearance_of(&self, avatar: &Uuid) -> Uuid {
-        if self.is_mirror(avatar) { self.agent_id } else { *avatar }
+        if self.is_local_copy(avatar) { self.agent_id } else { *avatar }
     }
 
     /// Make the mirror (or keep the one there): a copy of our avatar and
