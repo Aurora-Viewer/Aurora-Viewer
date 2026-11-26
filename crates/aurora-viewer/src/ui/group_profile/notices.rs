@@ -280,10 +280,27 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
         ui.label(egui::RichText::new(aurora_i18n::tr!("common-loading-2")).size(12.5).color(p.muted));
         return;
     };
-    // updateSelected: the first notice is read when nothing is chosen
+    // updateSelected's selectByID failing: a choice that cannot come back
+    // (the row of one sent from here, gone with Refresh, which brings the
+    // grid's copy under its own id) gives way to the first notice. The list
+    // arrives a packet at a time: a notice not listed yet but shown, or a
+    // sent one still kept, stays chosen. The price of that: a shown notice
+    // the whole list then leaves out (older than the 14 days it covers)
+    // stays chosen, where updateSelected would fall back to the first.
+    let gone = |id: Uuid| {
+        !list.iter().any(|n| n.id == id)
+            && v.data
+                .is_none_or(|d| d.notice.as_ref().is_none_or(|n| n.id != id) && d.sent_notice(id).is_none())
+    };
+    if st.notices.selected.is_some_and(gone) {
+        st.notices.selected = None;
+    }
+    // updateSelected: the first notice is read when nothing is chosen, not
+    // one just sent from here (onClickSendMessage leaves it unselected; the
+    // grid would never answer for it, #4325)
     if st.notices.selected.is_none()
         && st.notices.compose.is_none()
-        && let Some(first) = list.first()
+        && let Some(first) = list.iter().find(|n| v.data.is_none_or(|d| d.sent_notice(n.id).is_none()))
     {
         st.notices.selected = Some(first.id);
         actions.push(GroupAction::OpenNotice {
@@ -329,10 +346,14 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
     );
 }
 
-/// The notice chosen, as it came: sender, date, message, attachment.
+/// The notice chosen, as it came: sender, date, message, attachment. One
+/// sent from here, as it was sent.
 fn reading(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
-    let shown = v.data.and_then(|d| d.notice.as_ref()).filter(|n| Some(n.id) == st.notices.selected);
+    let shown = v.data.and_then(|d| {
+        let selected = st.notices.selected?;
+        d.notice.as_ref().filter(|n| n.id == selected).or_else(|| d.sent_notice(selected))
+    });
     let Some(n) = shown else {
         let text = if st.notices.selected.is_some() {
             aurora_i18n::tr!("common-loading-2")
@@ -428,6 +449,10 @@ fn reading(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                                     });
                                 },
                             );
+                            // one sent from here offers nothing to save
+                            if !n.offered() {
+                                return;
+                            }
                             let height = 26.0_f32.max(ui.text_style_height(&egui::TextStyle::Body) + 8.0);
                             if widgets::action_button_if(ui, p, icon, button_label, ActionKind::Flat, Vec2::new(0.0, height), !n.saved)
                                 .on_hover_text(label)

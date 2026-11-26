@@ -296,6 +296,14 @@ impl GroupProfileUi {
         }
     }
 
+    /// Choose a notice of the Notices tab, as a click on its row does (the
+    /// demo's captures); the caller asks for it (`GroupAction::OpenNotice`).
+    pub fn choose_notice(&mut self, id: Uuid) {
+        self.tab = Tab::Notices;
+        self.notices.selected = Some(id);
+        self.notices.compose = None;
+    }
+
     /// Open the Members tab with a member selected (the demo's captures).
     pub fn show_member(&mut self, id: Uuid) {
         self.tab = Tab::Members;

@@ -6894,7 +6894,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic][:wide]` | Group profile window, as a member, officer, owner or guest, in either look |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:sent\|:admin\|:identity\|:land\|:experiences][:no-links][:classic][:wide]` | Group profile window, as a member, officer, owner or guest, in either look |
 | `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
 | `AURORA_DEMO_ACTIVE_GROUP=none` | Starts the demo session with no active group (active group nil) |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
@@ -10836,7 +10836,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:
   Debug, `people`: Access, none: Region).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic][:wide]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:sent|:admin|:identity|:land|:experiences][:no-links][:classic][:wide]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -10884,7 +10884,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   a copyable and transferable item dragged from the inventory attaches,
   a no-copy one or a worn attachment is refused, and "Send to 1,248
   members" adds the notice to the list and brings it back as a group
-  notice in the notification center.
+  notice in the notification center. `:sent` (for example
+  `officer:sent`) opens a new notice too, sends "Build night on Friday" at
+  frame 640 and clicks the row it adds, as a resident does right after
+  sending (#4325): the notice reads at once as it was sent (subject,
+  message, our name), never "Loading…"; capture after frame 660. Refresh
+  asks the list again (the demo server's has no copy of it, the grid's
+  has, under its own id).
   `:land` opens the "Land and L$" tab (`:land-details` and `:land-sales`
   on those pages of the accounts): 4,608 m² in use out of 5,120 given,
   two parcels (Sandbox on Aurora Demo, Workshop on the sandbox region)

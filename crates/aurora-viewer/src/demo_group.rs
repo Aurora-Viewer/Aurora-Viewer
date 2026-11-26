@@ -13,9 +13,10 @@
 //! `:members` after the scenario opens the Members tab, a builder selected;
 //! `:invite` the invitation window with three residents (one already in);
 //! `:notices` the Notices tab, its two latest notices unread (`:compose`
-//! with a new notice open); `:land` the "Land and L$" tab (`:land-details`,
-//! `:land-sales` on those pages): two parcels, our 512 m² given out of the
-//! 1 024 we may give, and eight weeks of accounts; `:experiences` the
+//! with a new notice open, `:sent` right after one was sent); `:land` the
+//! "Land and L$" tab (`:land-details`, `:land-sales` on those pages): two
+//! parcels, our 512 m² given out of the 1 024 we may give, and eight weeks
+//! of accounts; `:experiences` the
 //! Experiences tab: the group owns the sandbox's doors, whose profile reads
 //! and changes our permission. `:classic` anywhere after the scenario shows
 //! the classic window (Preferences › Aurora › Profiles), the section of the
@@ -501,11 +502,24 @@ fn notice_im(notice: &Uuid) -> Option<NetEvent> {
 }
 
 /// `<scenario>:notices`: the Notices tab, the two latest notices unread;
-/// `:compose` on a new notice.
+/// `:compose` (and `:sent`) on a new notice.
 pub fn notices_tab() -> Option<(Uuid, Vec<Uuid>, bool)> {
     let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
     let mode = v.split(':').nth(1)?;
-    matches!(mode, "notices" | "compose").then(|| (DEMO_GROUP1, read_but_two(), mode == "compose"))
+    matches!(mode, "notices" | "compose" | "sent").then(|| (DEMO_GROUP1, read_but_two(), mode != "notices"))
+}
+
+/// `<scenario>:sent`: the subject and message of the new notice, sent at
+/// frame 640 and its row then clicked (#4325). What a resident types,
+/// not interface text: the subject must be ASCII (send_group_notice).
+pub fn sent_notice() -> Option<(String, String)> {
+    let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
+    (v.split(':').nth(1) == Some("sent")).then(|| {
+        (
+            "Build night on Friday".to_owned(),
+            "Bring your works in progress to the sandbox on Friday at 8 pm.".to_owned(),
+        )
+    })
 }
 
 /// The first group's notices read, all but the two latest.
