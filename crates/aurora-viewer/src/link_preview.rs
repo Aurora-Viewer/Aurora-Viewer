@@ -1236,24 +1236,24 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
         }
         Step::Feed { feed, page } => {
             let now = std::time::Instant::now();
-            if REDDIT_PAUSE.lock().ok().and_then(|p| *p).is_some_and(|until| now < until) {
-                return Err(Failure::Unavailable);
-            }
-            let (answer, pause) = text_head(client, &feed, "application/atom+xml", "</entry>").await;
-            if let (Some(pause), Ok(mut until)) = (pause, REDDIT_PAUSE.lock()) {
-                *until = Some(now + pause);
-            }
-            if let Some(found) = answer.as_ref().ok().and_then(|xml| services::clip_from_feed(xml)) {
-                return Ok(Content::Clip(fetch_found_clip(client, found).await));
-            }
-            if let Some(xml) = answer.ok()
-                && let Some(post) = services::reddit_feed(&xml)
-            {
-                let picture = match services::from_feed(&xml) {
-                    Some(source) => fetch_picture(client, &source).await.ok(),
-                    None => None,
-                };
-                return Ok(Content::Post(post, picture));
+            let paused = REDDIT_PAUSE.lock().ok().and_then(|p| *p).is_some_and(|until| now < until);
+            if !paused {
+                let (answer, pause) = text_head(client, &feed, "application/atom+xml", "</entry>").await;
+                if let (Some(pause), Ok(mut until)) = (pause, REDDIT_PAUSE.lock()) {
+                    *until = Some(now + pause);
+                }
+                if let Ok(xml) = answer {
+                    if let Some(found) = services::clip_from_feed(&xml) {
+                        return Ok(Content::Clip(fetch_found_clip(client, found).await));
+                    }
+                    if let Some(post) = services::reddit_feed(&xml) {
+                        let picture = match services::from_feed(&xml) {
+                            Some(source) => fetch_picture(client, &source).await.ok(),
+                            None => None,
+                        };
+                        return Ok(Content::Post(post, picture));
+                    }
+                }
             }
             {
                 let endpoint =

@@ -413,7 +413,16 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
             (8..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
         }
         ("dailymotion.com", ["video", id]) => id.starts_with('x') && slug(id),
-        ("arte.tv", [lang, "videos", id, ..]) => lang.len() == 2 && slug(id),
+        ("arte.tv", [lang, "videos", id, ..]) => {
+            lang.len() == 2
+                && id.rsplit_once('-').is_some_and(|(body, variant)| {
+                    variant.len() == 1
+                        && variant.bytes().all(|b| b.is_ascii_uppercase())
+                        && body
+                            .split_once('-')
+                            .is_some_and(|(programme, part)| digits(programme) && digits(part))
+                })
+        }
         ("bbc.com" | "bbc.co.uk", ["iplayer", "episode", id, ..]) => slug(id),
         ("tver.jp", ["episodes", id]) => slug(id),
         ("nicovideo.jp", ["watch", id]) => ["sm", "so", "nm"].iter().any(|prefix| id.strip_prefix(prefix).is_some_and(digits)),
