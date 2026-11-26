@@ -3,6 +3,16 @@
 //! to sharing isolated across logins, logouts and restarts while allowing
 //! one-time migration from pre-split global settings (the folder and the
 //! sharing option of PR #3588).
+//!
+//! An entry belongs to an account on a grid (`account_key`): the same agent
+//! id logs in on the main grid and on the beta grid, and the Legacy Viewer
+//! keeps InstantMessageLogPath in its `settings_per_account.xml`, in the
+//! `<first_last>[.<grid label>]` folder of LLDir::setLindenUserDir
+//! (indra/newview/llstartup.cpp, indra/llfilesystem/lldir.cpp), so a folder
+//! picked, or a yes to sharing, on one grid is never the other's. An entry
+//! keyed by the agent id alone (this file's first form, never released)
+//! cannot tell its grid: it stays in the file, so the uninstall still lists
+//! its folder, but no login takes it.
 
 use super::Settings;
 use serde::{Deserialize, Serialize};
@@ -33,12 +43,20 @@ impl Preferences {
     }
 }
 
+/// The key of an account's entry in `chat_log_accounts`, `<grid>/<agent id>`:
+/// `grid` is the grid of its transcript folders (`world::chat_log::grid_name`,
+/// as in `store::Identity`), which never holds a `/`.
+pub(crate) fn account_key(grid: &str, agent: Uuid) -> String {
+    format!("{grid}/{agent}")
+}
+
 impl Settings {
-    /// Bind before the account's transcripts open at login. Preserves any
+    /// Bind before the account's transcripts open at login, the account
+    /// `agent` on `grid` (`world::chat_log::grid_name`). Preserves any
     /// pre-split global folder/sharing settings in `chat_log_legacy_default` so
     /// every upgrading account without its own entry inherits them until it
     /// picks its own folder/layout.
-    pub(crate) fn select_chat_log_account(&mut self, account: Uuid) {
+    pub(crate) fn select_chat_log_account(&mut self, grid: &str, agent: Uuid) {
         self.remember_chat_log_account();
         if self.chat_log_accounts.is_none() {
             let former = Preferences::current(self);
@@ -47,14 +65,15 @@ impl Settings {
             }
             self.chat_log_accounts = Some(Default::default());
         }
+        let key = account_key(grid, agent);
         let preferences = self
             .chat_log_accounts
             .as_ref()
-            .and_then(|accounts| accounts.get(&account))
+            .and_then(|accounts| accounts.get(&key))
             .cloned()
             .or_else(|| self.chat_log_legacy_default.clone())
             .unwrap_or_default();
-        self.chat_log_account = Some(account);
+        self.chat_log_account = Some(key);
         preferences.apply(self);
         self.remember_chat_log_account();
     }
@@ -71,17 +90,15 @@ impl Settings {
     }
 
     pub(super) fn remember_chat_log_account(&mut self) {
-        if let Some(account) = self.chat_log_account {
+        if let Some(key) = self.chat_log_account.clone() {
             let preferences = Preferences::current(self);
-            self.chat_log_accounts
-                .get_or_insert_with(Default::default)
-                .insert(account, preferences);
+            self.chat_log_accounts.get_or_insert_with(Default::default).insert(key, preferences);
         }
     }
 
     /// Every non-empty custom transcript root across the active session, saved
-    /// accounts (sorted by account ID) and the inherited legacy default,
-    /// deduplicated in that order.
+    /// accounts (sorted by key, grid then account ID) and the inherited legacy
+    /// default, deduplicated in that order.
     pub fn chat_log_locations(&self) -> Vec<PathBuf> {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
@@ -116,7 +133,7 @@ mod tests {
     fn chat_log_accounts_stay_isolated_across_switches_logout_and_restart() {
         let (first, second) = (Uuid::from_u128(1), Uuid::from_u128(2));
         let mut settings = Settings::default();
-        settings.select_chat_log_account(first);
+        settings.select_chat_log_account("agni", first);
         settings.chat_log_location = "D:\\Firestorm".into();
         settings.log_legacy_layout = true;
         let first_prefs = Preferences::current(&settings);
@@ -126,7 +143,7 @@ mod tests {
         assert_eq!(Preferences::current(&settings), Preferences::default());
 
         // Account 2 starts clean with default location and without sharing.
-        settings.select_chat_log_account(second);
+        settings.select_chat_log_account("agni", second);
         assert_eq!(Preferences::current(&settings), Preferences::default());
         assert!(!settings.log_legacy_layout);
         settings.chat_log_location = "E:\\OtherLogs".into();
@@ -137,9 +154,9 @@ mod tests {
         assert_eq!(reloaded.chat_log_account, None);
         assert_eq!(Preferences::current(&reloaded), Preferences::default());
 
-        reloaded.select_chat_log_account(first);
+        reloaded.select_chat_log_account("agni", first);
         assert_eq!(Preferences::current(&reloaded), first_prefs);
-        reloaded.select_chat_log_account(second);
+        reloaded.select_chat_log_account("agni", second);
         assert_eq!(Preferences::current(&reloaded), second_prefs);
     }
 
@@ -160,12 +177,12 @@ mod tests {
         assert_eq!(Preferences::current(&settings), former);
 
         settings = restart(&settings);
-        settings.select_chat_log_account(first);
+        settings.select_chat_log_account("agni", first);
         assert_eq!(Preferences::current(&settings), former);
 
         settings.release_chat_log_account();
         settings = restart(&settings);
-        settings.select_chat_log_account(second);
+        settings.select_chat_log_account("agni", second);
         assert_eq!(Preferences::current(&settings), former);
 
         // Changing account 2's settings isolates it without touching account 1 or future alts.
@@ -174,12 +191,12 @@ mod tests {
 
         settings.release_chat_log_account();
         settings = restart(&settings);
-        settings.select_chat_log_account(third);
+        settings.select_chat_log_account("agni", third);
         assert_eq!(Preferences::current(&settings), former);
 
-        settings.select_chat_log_account(first);
+        settings.select_chat_log_account("agni", first);
         assert_eq!(Preferences::current(&settings), former);
-        settings.select_chat_log_account(second);
+        settings.select_chat_log_account("agni", second);
         assert_eq!(Preferences::current(&settings), second_prefs);
     }
 
@@ -193,21 +210,21 @@ mod tests {
         .unwrap();
         let legacy_default = Preferences::current(&settings);
 
-        settings.select_chat_log_account(first);
+        settings.select_chat_log_account("agni", first);
         settings.chat_log_location = "D:\\LogsA".into();
         let first_prefs = Preferences::current(&settings);
 
-        settings.select_chat_log_account(second);
+        settings.select_chat_log_account("agni", second);
         settings.chat_log_location = "E:\\LogsB".into();
 
         settings.reset_keeping_account();
         let mut loaded = restart(&settings);
-        loaded.select_chat_log_account(second);
+        loaded.select_chat_log_account("agni", second);
         assert_eq!(Preferences::current(&loaded), Preferences::default());
-        loaded.select_chat_log_account(first);
+        loaded.select_chat_log_account("agni", first);
         assert_eq!(Preferences::current(&loaded), first_prefs);
         // An alt not yet seen keeps inheriting the pre-split global settings across reset.
-        loaded.select_chat_log_account(third);
+        loaded.select_chat_log_account("agni", third);
         assert_eq!(Preferences::current(&loaded), legacy_default);
     }
 
@@ -220,11 +237,11 @@ mod tests {
         }))
         .unwrap();
         // Insert out of UUID key order so deterministic sorting is exercised.
-        settings.select_chat_log_account(third);
+        settings.select_chat_log_account("agni", third);
         settings.chat_log_location = "E:\\Other".into();
-        settings.select_chat_log_account(second);
+        settings.select_chat_log_account("agni", second);
         settings.chat_log_location = "D:\\Shared".into();
-        settings.select_chat_log_account(first);
+        settings.select_chat_log_account("agni", first);
         settings.chat_log_location = "D:\\Shared".into();
         settings.release_chat_log_account();
 
@@ -238,7 +255,7 @@ mod tests {
         );
 
         // Active account's folder is listed first, before saved accounts sorted by ID and inherited default.
-        settings.select_chat_log_account(active);
+        settings.select_chat_log_account("agni", active);
         settings.chat_log_location = "C:\\Active".into();
         assert_eq!(
             settings.chat_log_locations(),
@@ -249,5 +266,64 @@ mod tests {
                 PathBuf::from("F:\\LegacyDefault"),
             ]
         );
+    }
+
+    #[test]
+    fn chat_log_accounts_are_kept_per_grid() {
+        let me = Uuid::from_u128(1);
+        let mut settings = Settings::default();
+        // Share answered on the main grid
+        settings.select_chat_log_account("agni", me);
+        settings.chat_log_location = "D:\\LegacyRoot".into();
+        settings.log_legacy_layout = true;
+        let agni = Preferences::current(&settings);
+        settings.release_chat_log_account();
+
+        // the same agent id on the beta grid: nothing shared, no folder
+        settings.select_chat_log_account("aditi", me);
+        assert_eq!(Preferences::current(&settings), Preferences::default());
+        settings.chat_log_location = "E:\\BetaLogs".into();
+        let aditi = Preferences::current(&settings);
+        // nor on another grid
+        settings.select_chat_log_account("custom_grid_example_org", me);
+        assert_eq!(Preferences::current(&settings), Preferences::default());
+        settings.release_chat_log_account();
+
+        let mut reloaded = restart(&settings);
+        let saved = serde_json::to_value(reloaded.to_saved()).unwrap();
+        assert!(saved["chat_log_accounts"].get(account_key("agni", me)).is_some());
+        assert!(saved["chat_log_accounts"].get(account_key("aditi", me)).is_some());
+        assert!(saved["chat_log_accounts"].get(me.to_string()).is_none());
+        reloaded.select_chat_log_account("aditi", me);
+        assert_eq!(Preferences::current(&reloaded), aditi);
+        reloaded.select_chat_log_account("agni", me);
+        assert_eq!(Preferences::current(&reloaded), agni);
+    }
+
+    #[test]
+    fn an_entry_of_the_agent_id_alone_is_kept_but_taken_by_no_grid() {
+        let me = Uuid::from_u128(1);
+        // the first form of the entries, saved while that account was
+        // logged in (its values are the top-level ones too)
+        let mut settings: Settings = serde_json::from_value(serde_json::json!({
+            "chat_log_location": "D:\\LegacyRoot",
+            "log_legacy_layout": true,
+            "chat_log_accounts": {
+                me.to_string(): { "chat_log_location": "D:\\LegacyRoot", "log_legacy_layout": true },
+            },
+        }))
+        .unwrap();
+        for grid in ["agni", "aditi"] {
+            settings.select_chat_log_account(grid, me);
+            assert_eq!(Preferences::current(&settings), Preferences::default(), "{grid}");
+        }
+        // the top-level values were one account's, not a former global
+        // setting every account would inherit
+        assert_eq!(settings.chat_log_legacy_default, None);
+        settings.release_chat_log_account();
+        let reloaded = restart(&settings);
+        assert!(reloaded.chat_log_accounts.as_ref().unwrap().contains_key(&me.to_string()));
+        // its folder is still one the uninstall lists
+        assert_eq!(reloaded.chat_log_locations(), vec![PathBuf::from("D:\\LegacyRoot")]);
     }
 }

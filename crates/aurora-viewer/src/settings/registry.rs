@@ -238,7 +238,7 @@ impl Settings {
     fn keep_session(&mut self, current: &Settings) {
         self.debug = current.debug;
         self.hover_height_account = current.hover_height_account;
-        self.chat_log_account = current.chat_log_account;
+        self.chat_log_account = current.chat_log_account.clone();
         self.photo_held = current.photo_held.clone();
         self.draw_stepping = current.draw_stepping;
         // (Autotune's hold: without it, the tuned values would become the
@@ -430,7 +430,7 @@ mod tests {
             new_profile: true,
             camera_limits_restored: true,
             hover_height_account: Some(uuid::Uuid::from_u128(7)),
-            chat_log_account: Some(uuid::Uuid::from_u128(9)),
+            chat_log_account: Some(crate::settings::chat_log::account_key("agni", uuid::Uuid::from_u128(9))),
             mfa_hash: "kept".into(),
             ..Settings::default()
         };
@@ -445,7 +445,10 @@ mod tests {
         assert!(s.build.select_probes && s.radar.alert_sounds);
         assert!(s.world_overlays.land_owners && s.world_overlays.hide_particles);
         assert_eq!(s.hover_height_account, Some(uuid::Uuid::from_u128(7)));
-        assert_eq!(s.chat_log_account, Some(uuid::Uuid::from_u128(9)));
+        assert_eq!(
+            s.chat_log_account,
+            Some(crate::settings::chat_log::account_key("agni", uuid::Uuid::from_u128(9)))
+        );
         assert_eq!(s.mfa_hash, "kept");
         assert_eq!(s.username, "someone");
     }

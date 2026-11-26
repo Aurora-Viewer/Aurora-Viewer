@@ -2003,17 +2003,19 @@ pub struct Settings {
     /// The folder holding the conversation transcripts, one folder per
     /// account inside, "" for the default one (InstantMessageLogPath).
     pub chat_log_location: String,
-    /// None keeps the former shared transcript folder & layout until the
-    /// first login.
+    /// Each account's transcripts folder and yes to sharing, per grid
+    /// (`chat_log::account_key`, `<grid>/<agent id>`); None keeps the former
+    /// shared transcript folder & layout until the first login.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) chat_log_accounts: Option<std::collections::BTreeMap<uuid::Uuid, chat_log::Preferences>>,
+    pub(crate) chat_log_accounts: Option<std::collections::BTreeMap<String, chat_log::Preferences>>,
     /// Former pre-split global folder & layout preserved so every account that
     /// upgrades without an entry inherits them instead of losing the folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) chat_log_legacy_default: Option<chat_log::Preferences>,
-    /// Runtime transcript folder & layout belong to this account after login.
+    /// Runtime transcript folder & layout belong to this account after login
+    /// (its key in `chat_log_accounts`).
     #[serde(skip)]
-    pub(crate) chat_log_account: Option<uuid::Uuid>,
+    pub(crate) chat_log_account: Option<String>,
     /// The most the simulators may send, all channels together, in kb/s
     /// (Firestorm's ThrottleBandwidthKBPS; the default and the top of the
     /// range are Aurora's, `aurora_net::throttle::DEFAULT_KBPS`).

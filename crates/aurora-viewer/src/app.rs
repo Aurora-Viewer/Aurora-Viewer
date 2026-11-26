@@ -7576,11 +7576,15 @@ impl App {
         let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
         while let Ok((sent, ev)) = self.net.events.try_recv() {
             // Bind this account's transcript folder before `world.apply_received`
-            // opens `chat_log` or runs auto-import.
+            // opens `chat_log` or runs auto-import: the account on this grid,
+            // the grid of its folders (`sync_chat_log` gives the same one to
+            // `chat_log`), as the Legacy Viewer's per-account settings are
+            // per grid (LLDir::setLindenUserDir in llstartup.cpp).
             if !self.demo
                 && let NetEvent::LoggedIn(l) = &ev
             {
-                self.settings.select_chat_log_account(l.agent_id);
+                let grid = crate::world::chat_log::grid_name(&self.settings.grid, &self.settings.custom_login_uri, false);
+                self.settings.select_chat_log_account(&grid, l.agent_id);
                 self.sync_chat_log();
             }
             let folder_reply = matches!(

@@ -314,7 +314,7 @@ impl Settings {
         if let Some(account) = current.hover_height_account {
             self.select_hover_account(account);
         }
-        self.chat_log_account = current.chat_log_account;
+        self.chat_log_account = current.chat_log_account.clone();
         self.remember_chat_log_account();
     }
 }
@@ -348,10 +348,10 @@ mod tests {
             chat_log_location: "D:\\logs".into(),
             ..Settings::default()
         };
-        s.select_chat_log_account(Uuid::from_u128(1));
-        s.select_chat_log_account(Uuid::from_u128(2));
+        s.select_chat_log_account("agni", Uuid::from_u128(1));
+        s.select_chat_log_account("agni", Uuid::from_u128(2));
         s.chat_log_location = "D:\\logs-second".into();
-        s.select_chat_log_account(Uuid::from_u128(1));
+        s.select_chat_log_account("agni", Uuid::from_u128(1));
         s.audio.output_device = "Speakers".into();
         s.audio.voice_output_device = "Headset".into();
         s.audio.input_device = "Microphone".into();
@@ -457,24 +457,27 @@ mod tests {
     fn a_restore_keeps_this_pcs_chat_log_accounts_and_ignores_backups() {
         let (account_a, account_b, account_c) = (Uuid::from_u128(10), Uuid::from_u128(20), Uuid::from_u128(30));
         let mut other = Settings::default();
-        other.select_chat_log_account(account_c);
+        other.select_chat_log_account("agni", account_c);
         other.chat_log_location = "X:\\elsewhere".into();
         let backup = Backup::parse(&Backup::new(&other, None).to_bytes().unwrap()).unwrap();
 
         let mut current = Settings::default();
-        current.select_chat_log_account(account_b);
+        current.select_chat_log_account("agni", account_b);
         current.chat_log_location = "D:\\logs-b".into();
-        current.select_chat_log_account(account_a);
+        current.select_chat_log_account("agni", account_a);
         current.chat_log_location = "D:\\logs-a".into();
 
         let mut restored = backup.settings(&current).unwrap();
-        assert_eq!(restored.chat_log_account, Some(account_a));
+        assert_eq!(
+            restored.chat_log_account,
+            Some(crate::settings::chat_log::account_key("agni", account_a))
+        );
         assert_eq!(restored.chat_log_location, "D:\\logs-a");
 
-        restored.select_chat_log_account(account_b);
+        restored.select_chat_log_account("agni", account_b);
         assert_eq!(restored.chat_log_location, "D:\\logs-b");
 
-        restored.select_chat_log_account(account_c);
+        restored.select_chat_log_account("agni", account_c);
         assert!(restored.chat_log_location.is_empty());
     }
 
