@@ -81,38 +81,50 @@ pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sideb
                     .color(p.muted),
             );
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                super::link_button(ui, p, "brand-discord-filled", "Discord", crate::links::DISCORD);
-                super::link_button(ui, p, "brand-github-filled", "GitHub", crate::links::GITHUB);
-                super::link_button(ui, p, "world-filled", aurora_i18n::tr!("ui-login-website"), crate::links::WEBSITE);
-                let bug = widgets::action_button(
-                    ui,
-                    p,
-                    "bug-filled",
-                    aurora_i18n::tr!("bug-title"),
-                    ActionKind::Caution,
-                    Vec2::new(0.0, 30.0),
-                );
-                if bug.clicked() {
-                    action = LoginAction::ReportBug;
-                } else if bug.secondary_clicked() {
-                    action = LoginAction::CopyVersion;
-                }
-                if !sidebar_visible
-                    && widgets::action_button(
-                        ui,
-                        p,
-                        "article-filled",
-                        aurora_i18n::tr!("ui-login-news"),
-                        ActionKind::Flat,
-                        Vec2::new(0.0, 30.0),
-                    )
-                    .clicked()
-                {
-                    form.show_info = true;
-                }
-            });
+            // a narrow window scrolls the links instead of running them under
+            // Quit; the wheel moves them without Shift, as the chip rows do
+            let room = (screen.width() - 25.0 - 120.0).max(160.0);
+            let either_axis = std::mem::replace(&mut ui.style_mut().always_scroll_the_only_direction, true);
+            egui::ScrollArea::horizontal()
+                .id_salt("login_links_scroll")
+                .max_width(room)
+                .max_height(30.0)
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        super::link_button(ui, p, "brand-discord-filled", "Discord", crate::links::DISCORD);
+                        super::link_button(ui, p, "brand-github-filled", "GitHub", crate::links::GITHUB);
+                        super::link_button(ui, p, "world-filled", aurora_i18n::tr!("ui-login-website"), crate::links::WEBSITE);
+                        let bug = widgets::action_button(
+                            ui,
+                            p,
+                            "bug-filled",
+                            aurora_i18n::tr!("bug-title"),
+                            ActionKind::Caution,
+                            Vec2::new(0.0, 30.0),
+                        );
+                        if bug.clicked() {
+                            action = LoginAction::ReportBug;
+                        } else if bug.secondary_clicked() {
+                            action = LoginAction::CopyVersion;
+                        }
+                        if !sidebar_visible
+                            && widgets::action_button(
+                                ui,
+                                p,
+                                "article-filled",
+                                aurora_i18n::tr!("ui-login-news"),
+                                ActionKind::Flat,
+                                Vec2::new(0.0, 30.0),
+                            )
+                            .clicked()
+                        {
+                            form.show_info = true;
+                        }
+                    });
+                });
+            ui.style_mut().always_scroll_the_only_direction = either_axis;
         });
     if screen.width() < 1100.0 {
         egui::Area::new(Id::unique("login_footer_version"))

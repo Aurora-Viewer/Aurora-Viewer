@@ -544,39 +544,43 @@ pub(super) fn home_menu(resp: &egui::Response, p: &Palette, can_set_home: bool) 
 /// The balance's right click (the account island's in the islands): the
 /// Legacy Viewer's "Show Currency Balance" of its status bar menu
 /// (menu_hide_navbar.xml, FSShowCurrencyBalanceInStatusbar), then Buy L$.
-pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
-    let shown = st.show_balance;
-    if menu::check(ui, p, "coin-filled", aurora_i18n::tr!("ui-bars-show-balance"), shown, true) {
-        *action = BarAction::ShowBalance(!shown);
-    }
-    // the L$ received and spent under it, each on its own: nowhere to show
-    // them while it is hidden
-    let rows = st.balance_rows;
-    if menu::check(
-        ui,
-        p,
-        "square-rounded-plus-filled",
-        aurora_i18n::tr!("ui-bars-balance-received"),
-        rows.received,
-        shown,
-    ) {
-        *action = BarAction::BalanceRows(super::balance_gains::Shown {
-            received: !rows.received,
-            ..rows
-        });
-    }
-    if menu::check(
-        ui,
-        p,
-        "square-rounded-minus-filled",
-        aurora_i18n::tr!("ui-bars-balance-spent"),
-        rows.spent,
-        shown,
-    ) {
-        *action = BarAction::BalanceRows(super::balance_gains::Shown {
-            spent: !rows.spent,
-            ..rows
-        });
+pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut BarAction, compact: bool) {
+    // a compact row does not draw the balance, so showing or hiding it and
+    // its rows would do nothing; Buy L$ stays, as in Me (#4001)
+    if !compact {
+        let shown = st.show_balance;
+        if menu::check(ui, p, "coin-filled", aurora_i18n::tr!("ui-bars-show-balance"), shown, true) {
+            *action = BarAction::ShowBalance(!shown);
+        }
+        // the L$ received and spent under it, each on its own: nowhere to show
+        // them while it is hidden
+        let rows = st.balance_rows;
+        if menu::check(
+            ui,
+            p,
+            "square-rounded-plus-filled",
+            aurora_i18n::tr!("ui-bars-balance-received"),
+            rows.received,
+            shown,
+        ) {
+            *action = BarAction::BalanceRows(super::balance_gains::Shown {
+                received: !rows.received,
+                ..rows
+            });
+        }
+        if menu::check(
+            ui,
+            p,
+            "square-rounded-minus-filled",
+            aurora_i18n::tr!("ui-bars-balance-spent"),
+            rows.spent,
+            shown,
+        ) {
+            *action = BarAction::BalanceRows(super::balance_gains::Shown {
+                spent: !rows.spent,
+                ..rows
+            });
+        }
     }
     if menu::command(ui, p, "buy_currency") {
         *action = BarAction::BuyCurrency;
@@ -2434,6 +2438,11 @@ pub struct BellState {
     pub dnd: bool,
 }
 
+/// The width below which the Legacy-style top bar hides its low-priority
+/// status items: the window's old least width, where the full row still
+/// fits, and the point below which it used to overlap itself (#4001).
+const CLASSIC_FULL_MIN_WIDTH: f32 = 800.0;
+
 /// Top chrome: a single navigation bar (Aurora menu, notifications,
 /// teleport history, location) with the status on its right (balance,
 /// time, ping, media and volumes, frame rate). Aurora's notification center
@@ -2466,6 +2475,11 @@ pub fn top_bars(
             glass = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
             // the bar's background spans the whole window width
             ui.set_min_width(ui.available_width());
+            // a narrow window drops the bug report, the balance, the audio
+            // controls and the low-priority readouts; the back, forward and
+            // home arrows, the clock, the voice light and the location field
+            // stay, as the Legacy navigation bar's do (#4001)
+            let compact = ui.ctx().content_rect().width() < CLASSIC_FULL_MIN_WIDTH;
             ui.horizontal_centered(|ui| {
                 ui.set_min_width(ui.available_width());
                 ui.spacing_mut().item_spacing.x = 4.0;
@@ -2490,8 +2504,9 @@ pub fn top_bars(
                         action = BarAction::SetStatus(super::notifications::bell_dnd_toggled(st.status));
                     }
                 }
-                // online status (away, do not disturb, automatic responses)
-                if st.show_bug_report {
+                // online status (away, do not disturb, automatic responses);
+                // the bug report goes in a narrow window, and Help still has it
+                if st.show_bug_report && !compact {
                     let resp = icon_button_response(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON);
                     if resp.clicked() {
                         action = BarAction::ReportBug;
@@ -2529,12 +2544,12 @@ pub fn top_bars(
                 if home_menu(&home, p, st.can_set_home) {
                     action = BarAction::SetHome;
                 }
-                ui.add_space(6.0);
+                ui.add_space(if compact { 2.0 } else { 6.0 });
 
                 // status on the right (laid out from the right edge), the location
                 // field takes what is left
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
+                    ui.spacing_mut().item_spacing.x = if compact { 6.0 } else { 10.0 };
                     ui.add_space(2.0);
                     // Aurora's center: the bell at the right end, after the
                     // frame rate, its cards unroll under it
@@ -2551,26 +2566,32 @@ pub fn top_bars(
                             action = BarAction::SetStatus(super::notifications::bell_dnd_toggled(st.status));
                         }
                     }
-                    let fps_col = if st.fps >= 50.0 {
-                        p.teal
-                    } else if st.fps >= 25.0 {
-                        p.amber
-                    } else {
-                        p.danger
-                    };
-                    // a click opens (or closes) the performance window
-                    let fps = steady_label(ui, "fps", islands::fps_text(st.fps), fps_col, egui::Sense::click())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                    graphics::hover(&fps, p, st, &mut action);
-                    if fps.clicked() {
-                        super::widgets::toggle_floater(ui.ctx(), "perf", &mut panels.perf);
+                    if !compact {
+                        let fps_col = if st.fps >= 50.0 {
+                            p.teal
+                        } else if st.fps >= 25.0 {
+                            p.amber
+                        } else {
+                            p.danger
+                        };
+                        // a click opens (or closes) the performance window
+                        let fps = steady_label(ui, "fps", islands::fps_text(st.fps), fps_col, egui::Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        graphics::hover(&fps, p, st, &mut action);
+                        if fps.clicked() {
+                            super::widgets::toggle_floater(ui.ctx(), "perf", &mut panels.perf);
+                        }
                     }
-                    audio_action = super::audio::top_controls(ui, p, icons, audio, audio_ui, media, super::audio::BAR_SLOT);
+                    if !compact {
+                        audio_action = super::audio::top_controls(ui, p, icons, audio, audio_ui, media, super::audio::BAR_SLOT);
+                    }
                     if voice_light(ui, p, icons, st.voice.0, &st.voice.1) {
                         action = BarAction::VoicePrefs;
                     }
-                    steady_label(ui, "ping", islands::ping_text(st.ping_ms), p.muted, egui::Sense::hover())
-                        .on_hover_text(aurora_i18n::tr!("ui-bars-region-latency"));
+                    if !compact {
+                        steady_label(ui, "ping", islands::ping_text(st.ping_ms), p.muted, egui::Sense::hover())
+                            .on_hover_text(aurora_i18n::tr!("ui-bars-region-latency"));
+                    }
                     // a left click switches SLT and local time
                     let island = st.system_island;
                     let clock = steady_label(ui, "clock", clock::text(island), p.muted, egui::Sense::click())
@@ -2582,7 +2603,7 @@ pub fn top_bars(
                             ..island
                         });
                     }
-                    if let Some(b) = st.balance.filter(|_| st.show_balance) {
+                    if !compact && let Some(b) = st.balance.filter(|_| st.show_balance) {
                         // a click opens the L$ purchase, a right click hides it
                         let text = format!("{b} {}", aurora_i18n::currency());
                         let font = egui::FontId::proportional(12.0);
@@ -2603,38 +2624,40 @@ pub fn top_bars(
                             top: balance.rect.bottom() + 4.0,
                         };
                         super::balance_gains::paint(ui.ctx(), p, &st.balance_gains, &anchor, font);
-                        menu::context_menu(&balance, p, |ui| balance_menu(ui, p, st, &mut action));
+                        menu::context_menu(&balance, p, |ui| balance_menu(ui, p, st, &mut action, false));
                     }
-                    // the conversations' thumbnails, left of the balance as
-                    // the Legacy Viewer's chiclets (#1134)
-                    let size = super::chat::thumbnails::BAR_SIZE;
-                    let w = super::chat::thumbnails::top_width(st.conversation_thumbnails, size, 0.0, ui.available_width() / 3.0);
-                    if w > 0.0 {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::new(w, size), egui::Sense::hover());
-                        super::chat::thumbnails::reserve_top(ui.ctx(), rect, size, false);
-                    }
-                    for (on, text) in [
-                        (st.flying, aurora_i18n::tr!("ui-bars-flying")),
-                        (st.seated, aurora_i18n::tr!("ui-bars-sitting")),
-                    ] {
-                        if on {
-                            state_chip(ui, p, text);
+                    if !compact {
+                        // the conversations' thumbnails, left of the balance as
+                        // the Legacy Viewer's chiclets (#1134)
+                        let size = super::chat::thumbnails::BAR_SIZE;
+                        let w = super::chat::thumbnails::top_width(st.conversation_thumbnails, size, 0.0, ui.available_width() / 3.0);
+                        if w > 0.0 {
+                            let (rect, _) = ui.allocate_exact_size(Vec2::new(w, size), egui::Sense::hover());
+                            super::chat::thumbnails::reserve_top(ui.ctx(), rect, size, false);
                         }
-                    }
-                    // Pause clouds lasts the session: say so, and a click ends it
-                    if st.clouds_paused
-                        && super::widgets::action_button(
-                            ui,
-                            p,
-                            "cloud-filled",
-                            aurora_i18n::tr!("ui-bars-clouds-paused"),
-                            super::widgets::ActionKind::Flat,
-                            Vec2::new(0.0, CHIP_HEIGHT + 4.0),
-                        )
-                        .on_hover_text(aurora_i18n::tr!("ui-bars-clouds-paused-tip"))
-                        .clicked()
-                    {
-                        action = BarAction::ResumeClouds;
+                        for (on, text) in [
+                            (st.flying, aurora_i18n::tr!("ui-bars-flying")),
+                            (st.seated, aurora_i18n::tr!("ui-bars-sitting")),
+                        ] {
+                            if on {
+                                state_chip(ui, p, text);
+                            }
+                        }
+                        // Pause clouds lasts the session: say so, and a click ends it
+                        if st.clouds_paused
+                            && super::widgets::action_button(
+                                ui,
+                                p,
+                                "cloud-filled",
+                                aurora_i18n::tr!("ui-bars-clouds-paused"),
+                                super::widgets::ActionKind::Flat,
+                                Vec2::new(0.0, CHIP_HEIGHT + 4.0),
+                            )
+                            .on_hover_text(aurora_i18n::tr!("ui-bars-clouds-paused-tip"))
+                            .clicked()
+                        {
+                            action = BarAction::ResumeClouds;
+                        }
                     }
                     ui.add_space(4.0);
                     egui::Frame::new()
@@ -2642,7 +2665,9 @@ pub fn top_bars(
                         .corner_radius(ui.visuals().window_corner_radius)
                         .inner_margin(egui::Margin::symmetric(8, 1))
                         .show(ui, |ui| {
-                            ui.set_width((ui.available_width() - 4.0).max(160.0));
+                            // a narrow window keeps the field readable but
+                            // leaves the home button its room
+                            ui.set_width((ui.available_width() - 4.0).max(if compact { 140.0 } else { 160.0 }));
                             // the whole field is clickable (widgets added later, like the
                             // ⓘ button, stay on top of this area)
                             let field = ui.max_rect().expand2(Vec2::new(8.0, 1.0));
@@ -4063,6 +4088,8 @@ pub fn bottom_bar(
                 let target = ui.interact(zone, egui::Id::unique("toolbar_background"), egui::Sense::click());
                 toolbar.context(&target, p, bar, style, None, toolbar_settings.locked);
                 let mut rects = Vec::new();
+                // a plain wheel scrolls the bar, as the chip rows do (#3872)
+                let either_axis = std::mem::replace(&mut ui.style_mut().always_scroll_the_only_direction, true);
                 egui::ScrollArea::horizontal()
                     .id_salt("toolbar_scroll")
                     .auto_shrink([false, false])
@@ -4101,6 +4128,7 @@ pub fn bottom_bar(
                             rects = toolbar_row(ui, p, icons, buttons, look, toolbar, panels, mic, &row, &mut action);
                         });
                     });
+                ui.style_mut().always_scroll_the_only_direction = either_axis;
                 toolbar.drop_bar(&target, bar, &rects, p, toolbar_settings.locked);
             });
         });
