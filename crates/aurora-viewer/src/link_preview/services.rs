@@ -426,7 +426,7 @@ pub(super) fn from_oembed(service: Service, body: &[u8]) -> Option<String> {
     picture_host_ok(service, &url).then_some(url)
 }
 
-/// The clip of a Gyazo video capture, from its page's oEmbed answer.
+/// A clip identified by its provider's metadata.
 pub(super) struct FoundClip {
     pub clip: super::Clip,
     /// Its thumbnail's addresses, the larger first.
@@ -622,6 +622,66 @@ const BLUESKY_SENSITIVE: &[&str] = &[
     "!warn",
     "!hide",
 ];
+
+/// Select a public MP4 rendition from X's post metadata. Sensitive posts
+/// keep the existing blurred picture and browser path.
+pub(super) fn clip_from_post(service: Service, body: &[u8]) -> Option<FoundClip> {
+    if service != Service::X {
+        return None;
+    }
+    let post: serde_json::Value = serde_json::from_slice(body).ok()?;
+    if post["possibly_sensitive"].as_bool() == Some(true) {
+        return None;
+    }
+    let detail = &post["mediaDetails"][0];
+    let variants = detail["video_info"]["variants"]
+        .as_array()
+        .or_else(|| post["video"]["variants"].as_array())?;
+    let clip = variants
+        .iter()
+        .filter_map(|variant| {
+            let url = variant["url"].as_str().or_else(|| variant["src"].as_str())?;
+            let media = Url::parse(url).ok()?;
+            if media.host_str()? != "video.twimg.com" || !media.path().ends_with(".mp4") {
+                return None;
+            }
+            Some((variant["bitrate"].as_u64().unwrap_or(0), super::Clip::of(url)?))
+        })
+        .min_by_key(|(bitrate, _)| bitrate.abs_diff(1_200_000))?
+        .1;
+    let poster = detail["media_url_https"].as_str().or_else(|| post["video"]["poster"].as_str());
+    let size = &detail["original_info"];
+    Some(FoundClip {
+        clip,
+        posters: poster
+            .filter(|url| picture_host_ok(service, url))
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        size: size["width"].as_f64().zip(size["height"].as_f64()),
+    })
+}
+
+#[test]
+fn x_clips_require_a_public_mp4_on_the_official_video_host() {
+    let mut post = serde_json::json!({
+        "possibly_sensitive": false,
+        "video": {
+            "poster": "https://pbs.twimg.com/media/Preview.jpg",
+            "variants": [
+                {"src": "https://other.example/video.mp4"},
+                {"src": "https://video.twimg.com/test/master.m3u8"},
+                {"src": "https://video.twimg.com/test/clip.mp4"}
+            ]
+        }
+    });
+    let body = serde_json::to_vec(&post).unwrap();
+    let clip = clip_from_post(Service::X, &body).expect("public MP4 rendition");
+    assert_eq!(clip.clip.source(), "https://video.twimg.com/test/clip.mp4");
+    assert_eq!(clip.posters, ["https://pbs.twimg.com/media/Preview.jpg"]);
+    post["possibly_sensitive"] = true.into();
+    assert!(clip_from_post(Service::X, &serde_json::to_vec(&post).unwrap()).is_none());
+}
 
 /// The picture of a post's JSON answer and whether its network marks it
 /// sensitive: its first picture, or its video's thumbnail. A text post has

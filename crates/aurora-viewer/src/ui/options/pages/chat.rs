@@ -695,6 +695,11 @@ fn videos(cx: &mut Cx) {
     use aurora_i18n::tr;
     let p = cx.p;
     cx.group(tr!("ui-options-videos"), |cx| {
+        cx.toggle(
+            tr!("ui-chat-preview-autoplay"),
+            tr!("ui-options-video-autoplay-hint"),
+            &field!(link_previews.autoplay_video),
+        );
         cx.choice(
             tr!("ui-options-link-previews-player"),
             tr!("ui-options-link-previews-player-hint"),

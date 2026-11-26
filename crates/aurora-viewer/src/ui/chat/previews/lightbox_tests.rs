@@ -251,6 +251,7 @@ fn hosted_video_waits_for_a_play_click() {
         panic!("a hosted video should resolve to a clip");
     };
     let mut pv = Previews::default();
+    pv.settings.autoplay_video = false;
     pv.cache.insert(
         url.into(),
         crate::ui::chat::previews::Cached {
@@ -276,7 +277,15 @@ fn hosted_video_waits_for_a_play_click() {
             card(ui, &p, &mut pv, 7, url, &target, start);
         });
     }
-    assert!(pv.playing());
+    assert!(pv.playing.as_ref().is_some_and(|v| !v.muted));
+    pv.playing = None;
+    pv.settings.autoplay_video = true;
+    let _ = run_ui(&ctx, input(vec![]), |ui| card(ui, &p, &mut pv, 7, url, &target, start));
+    assert!(!pv.playing());
+    let _ = run_ui(&ctx, input(vec![]), |ui| card(ui, &p, &mut pv, 8, url, &target, lp::Start::Ask));
+    assert!(!pv.playing());
+    let _ = run_ui(&ctx, input(vec![]), |ui| card(ui, &p, &mut pv, 8, url, &target, start));
+    assert!(pv.playing.as_ref().is_some_and(|v| v.muted && v.automatic && !v.window));
 }
 
 #[test]
@@ -289,6 +298,7 @@ fn video_hover_actions_copy_the_original_url_and_use_the_browser_confirmation_pa
         demo_zoom: None,
         ..Default::default()
     };
+    pv.settings.autoplay_video = false;
     pv.cache.insert(
         url.into(),
         crate::ui::chat::previews::Cached {

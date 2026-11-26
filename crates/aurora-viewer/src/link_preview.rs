@@ -106,6 +106,8 @@ pub struct Settings {
     pub blur_groups: bool,
     pub load: Load,
     pub player: Player,
+    /// Play eligible video cards as they come into view, with sound off.
+    pub autoplay_video: bool,
     pub size: Size,
     /// Sites whose links get no preview (a link's menu adds them).
     pub hidden_sites: Vec<String>,
@@ -131,6 +133,7 @@ impl Default for Settings {
             blur_groups: true,
             load: Load::default(),
             player: Player::default(),
+            autoplay_video: true,
             size: Size::default(),
             hidden_sites: Vec::new(),
             picture_sites: Vec::new(),
@@ -256,6 +259,13 @@ impl Clip {
         }
     }
 
+    pub fn minimum_width(&self) -> f32 {
+        match &self.0 {
+            ClipSource::Hosted(video) => video.minimum_width(),
+            ClipSource::File(_) => 0.0,
+        }
+    }
+
     pub fn hosted(&self) -> bool {
         matches!(self.0, ClipSource::Hosted(_))
     }
@@ -306,10 +316,11 @@ fn attribute_text(s: &str) -> String {
 fn clip_page(clip: &Clip, volume: u8, key: u64) -> String {
     let src = attribute_text(&clip.player());
     if clip.hosted() {
-        // Streamable remembers its mute state across loads. This page is
-        // opened by Play, so request audio once through its Player.js adapter.
-        let audio = if matches!(&clip.0, ClipSource::Hosted(hosted::Hosted::Streamable(_))) {
-            r#"<script>(function(){
+        // The viewer controls the final audio level through its media plugin.
+        // Some embeds mute themselves independently when playback starts.
+        let audio = match &clip.0 {
+            ClipSource::Hosted(hosted::Hosted::Streamable(_)) => {
+                r#"<script>(function(){
                 var origin='https://streamable.com', ready=false, played=false;
                 window.addEventListener('message',function(e){
                     var frame=document.querySelector('iframe'), data;
@@ -332,8 +343,21 @@ fn clip_page(clip: &Clip, volume: u8, key: u64) -> String {
                     }
                 });
             })();</script>"#
-        } else {
-            ""
+            }
+            ClipSource::Hosted(hosted::Hosted::TikTok { .. }) => {
+                r#"<script>(function(){
+                var origin='https://www.tiktok.com', played=false;
+                window.addEventListener('message',function(e){
+                    var frame=document.querySelector('iframe'), data=e.data;
+                    if(played||!frame||e.origin!==origin||e.source!==frame.contentWindow||!data||data['x-tiktok-player']!==true)return;
+                    if(data.type==='onStateChange'&&data.value===1){
+                        played=true;
+                        frame.contentWindow.postMessage({type:'unMute','x-tiktok-player':true},origin);
+                    }
+                });
+            })();</script>"#
+            }
+            _ => "",
         };
         return format!(
             "<!doctype html><html><head><meta charset=\"utf-8\">\
@@ -1068,14 +1092,19 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
             }
             services::from_head(service, &html)
         }
-        Step::Post(endpoint) => download(client, &endpoint, "application/json", HEAD_BYTES as u64)
-            .await
-            .ok()
-            .and_then(|(body, _)| services::from_post(service, &body))
-            .map(|(source, marked)| {
+        Step::Post(endpoint) => {
+            let body = download(client, &endpoint, "application/json", HEAD_BYTES as u64)
+                .await
+                .ok()
+                .map(|(body, _)| body);
+            if let Some(found) = body.as_deref().and_then(|body| services::clip_from_post(service, body)) {
+                return Ok(Content::Clip(fetch_found_clip(client, found).await));
+            }
+            body.and_then(|body| services::from_post(service, &body)).map(|(source, marked)| {
                 sensitive = marked;
                 source
-            }),
+            })
+        }
         Step::Feed(feed) => {
             let now = std::time::Instant::now();
             if REDDIT_PAUSE.lock().ok().and_then(|p| *p).is_some_and(|until| now < until) {
@@ -1139,14 +1168,20 @@ pub async fn fetch_clip(client: &reqwest::Client, clip: &Clip) -> ClipInfo {
     let ClipSource::Hosted(video) = &clip.0 else {
         return info;
     };
-    if let Some(data) = download(client, &video.oembed(), "application/json", 64 * 1024)
+    info.aspect = video.aspect();
+    let Some(endpoint) = video.oembed() else {
+        return info;
+    };
+    if let Some(data) = download(client, &endpoint, "application/json", 64 * 1024)
         .await
         .ok()
         .and_then(|(bytes, _)| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
         .filter(|data| data["type"].as_str() == Some("video"))
     {
-        info.title = data["title"].as_str().unwrap_or_default().to_owned();
-        info.aspect = data["width"].as_f64().zip(data["height"].as_f64()).and_then(|(w, h)| aspect(w, h));
+        info.title = data["title"].as_str().unwrap_or_default().chars().take(200).collect();
+        info.aspect = info
+            .aspect
+            .or_else(|| data["width"].as_f64().zip(data["height"].as_f64()).and_then(|(w, h)| aspect(w, h)));
         if let Some(poster) = data["thumbnail_url"].as_str().and_then(|url| video.poster(url)) {
             info.thumbnail = fetch_picture(client, &poster).await.ok();
         }
@@ -1466,6 +1501,49 @@ mod tests {
 
     fn clip(file: &str) -> Option<Target> {
         Some(Target::Clip(Clip(ClipSource::File(file.into()))))
+    }
+
+    #[test]
+    fn regional_video_players_use_provider_owned_urls() {
+        let cases = [
+            (
+                "https://www.tiktok.com/@scout2015/video/6718335390845095173?tracking=keep-out",
+                "https://www.tiktok.com/player/v1/6718335390845095173?autoplay=1&force_muted=0&rel=0",
+            ),
+            (
+                "https://www.bilibili.com/video/BV1B7411m7LV/?p=2&tracking=keep-out",
+                "https://player.bilibili.com/player.html?bvid=BV1B7411m7LV&p=2&autoplay=1&muted=0",
+            ),
+            (
+                "https://www.twitch.tv/example/clip/IncredulousAbstemiousFennelImGlitch",
+                "https://clips.twitch.tv/embed?clip=IncredulousAbstemiousFennelImGlitch&parent=127.0.0.1&autoplay=true&muted=false",
+            ),
+            (
+                "https://framatube.org/w/9c9de5e8-0a1e-484a-b099-e80766180a6d",
+                "https://framatube.org/videos/embed/9c9de5e8-0a1e-484a-b099-e80766180a6d?autoplay=1&muted=0&p2p=0",
+            ),
+            (
+                "https://www.twitch.tv/videos/123456",
+                "https://player.twitch.tv/?video=v123456&parent=127.0.0.1&autoplay=true&muted=false",
+            ),
+        ];
+        for (url, player) in cases {
+            let (Target::Clip(clip), Start::Load) = decide(&Settings::default(), Place::Im, Sender::Resident, url).unwrap() else {
+                panic!("expected a playable video for {url}");
+            };
+            assert_eq!(clip.player(), player);
+            assert_eq!(Clip::of(clip.source().as_ref()), Some(clip));
+        }
+        for url in [
+            "http://www.tiktok.com/@scout2015/video/6718335390845095173",
+            "https://www.tiktok.com/@name/photo/6718335390845095173",
+            "https://www.tiktok.com.evil.example/@name/video/6718335390845095173",
+            "https://www.bilibili.com/video/not-a-video",
+            "https://www.twitch.tv/directory",
+            "https://clips.twitch.tv/IncredulousAbstemiousFennelImGlitch%26parent=example.com",
+        ] {
+            assert!(Clip::of(url).is_none(), "{url}");
+        }
     }
 
     #[test]
