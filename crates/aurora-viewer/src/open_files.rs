@@ -33,8 +33,9 @@ fn raised(soft: u64, hard: u64, cap: Option<u64>) -> Option<u64> {
 /// renderer.
 #[cfg(unix)]
 pub fn raise() {
-    // SAFETY: getrlimit / setrlimit only read and write the struct passed.
     let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    // SAFETY: `&mut limit` is a valid, writable `rlimit` on the stack, and
+    // getrlimit writes only that struct.
     if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
         log::warn!("open files: limit unknown ({})", std::io::Error::last_os_error());
         return;
@@ -53,7 +54,8 @@ pub fn raise() {
         rlim_cur: target,
         rlim_max: limit.rlim_max,
     };
-    // SAFETY: as above.
+    // SAFETY: `&wanted` is a valid `rlimit` on the stack, and setrlimit only
+    // reads that struct.
     if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &wanted) } == 0 {
         log::info!(
             "open files: soft limit raised from {} to {} (hard {})",
