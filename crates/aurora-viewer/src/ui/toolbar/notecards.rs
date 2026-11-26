@@ -369,7 +369,7 @@ impl State {
                                 let current = active.and_then(|source| source.personal(self.catalog.owner)) == Some(entry.id);
                                 let response = ui
                                     .add_enabled_ui(enabled && entry.available, |ui| {
-                                        widgets::action_button(
+                                        widgets::action_button_trailing(
                                             ui,
                                             p,
                                             "file-text-filled",
@@ -380,6 +380,7 @@ impl State {
                                                 widgets::ActionKind::Flat
                                             },
                                             egui::vec2(190.0, 30.0),
+                                            super::editor::EYE_ROOM,
                                         )
                                     })
                                     .inner;

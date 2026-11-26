@@ -69,7 +69,7 @@ pub(crate) fn item(ui: &mut Ui, p: &Palette) -> bool {
     let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ui.ctx()
         .data_mut(|data| data.insert_temp(ui.layer_id().id.with("toolbar_context_footer"), frame));
-    menu::item(ui, p, "layout-grid-filled", aurora_i18n::tr!("toolbar-interface-edit"))
+    menu::item(ui, p, super::drawers::CUSTOMIZE_ICON, aurora_i18n::tr!("toolbar-interface-edit"))
 }
 
 #[derive(Clone)]

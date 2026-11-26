@@ -203,7 +203,7 @@ pub fn source_menu(response: &egui::Response, p: &Palette, toolbar: &mut Toolbar
 
 pub(super) fn header(ui: &mut egui::Ui, p: &Palette, settings: &ToolbarSettings) {
     ui.horizontal_wrapped(|ui| {
-        widgets::glyph(ui, "layout-grid-filled", p.violet_light, 16.0);
+        widgets::glyph(ui, super::drawers::CUSTOMIZE_ICON, p.violet_light, 16.0);
         ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-interface-edit")).strong());
     });
     if settings.locked {

@@ -54,7 +54,6 @@ struct View {
     bar: Bar,
     /// The key of its shortcut; none for a block that cannot have one.
     shortcut: Option<String>,
-    floating: bool,
     /// The id the tests read its widgets by.
     key: String,
 }
@@ -97,7 +96,6 @@ fn view(settings: &ToolbarSettings, layout: &Layout, target: &Target) -> Option<
                 hint,
                 bar,
                 shortcut: Some(id.clone()),
-                floating: drawer.floating.is_some(),
                 key: id.clone(),
             })
         }
@@ -135,7 +133,6 @@ fn view(settings: &ToolbarSettings, layout: &Layout, target: &Target) -> Option<
                 hint: super::label(first).to_owned(),
                 bar: *bar,
                 shortcut: shortcuts::block_of(settings, buttons, command),
-                floating: false,
                 key: command.clone(),
             })
         }
@@ -162,7 +159,6 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, toolbar: &mut ToolbarUi, se
     let before = view.options.clone();
     let mut options = before.clone();
     let mut open = true;
-    let mut delete = false;
     let mut window = widgets::Floater::new(
         "toolbar_drawer_settings",
         aurora_i18n::tr!("toolbar-block-edit-title"),
@@ -178,7 +174,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, toolbar: &mut ToolbarUi, se
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 ui.add_enabled_ui(!settings.locked, |ui| {
-                    delete = fields(ui, p, toolbar, settings, &view, &mut options);
+                    fields(ui, p, toolbar, settings, &view, &mut options);
                 });
             });
     });
@@ -187,10 +183,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, toolbar: &mut ToolbarUi, se
             .drawer_appearance_editor
             .side_picker(ctx, p, &view.button, &mut options.look, rect, settings.locked);
     }
-    if delete && let Target::Drawer(id) = &target {
-        toolbar.pending = Some(Edit::FloatingDelete(id.clone()));
-        open = false;
-    } else if options != before {
+    if options != before {
         toolbar.pending = Some(Edit::BlockOptions(Box::new(Change {
             target,
             before,
@@ -206,9 +199,10 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, toolbar: &mut ToolbarUi, se
 
 /// The window's fields in the human's order (2026-11-26): name, icon,
 /// closing, shortcut, the button's and the buttons' displays, then the
-/// options of the fixed and the floating modes, always shown. True when
-/// Delete (a floating block's) is clicked.
-fn fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, settings: &ToolbarSettings, view: &View, options: &mut Options) -> bool {
+/// options of the fixed and the floating modes, always shown. A floating
+/// block has no Delete: emptied, it goes as any block (human request,
+/// 2026-11-26; `drawers::remove_emptied`).
+fn fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, settings: &ToolbarSettings, view: &View, options: &mut Options) {
     let key = view.key.as_str();
     ui.horizontal(|ui| {
         ui.label(aurora_i18n::tr!("toolbar-block-name"));
@@ -228,7 +222,7 @@ fn fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, settings: &To
     // (human request, 2026-11-26)
     if key == drawers::INTERFACES {
         shortcut_row(ui, p, toolbar, view, shortcut);
-        return false;
+        return;
     }
     let check = widgets::checkbox(ui, p, &mut options.closes, aurora_i18n::tr!("toolbar-drawer-closes"));
     #[cfg(test)]
@@ -268,19 +262,6 @@ fn fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, settings: &To
         .data_mut(|data| data.insert_temp(Id::unique(("drawer_close_button_check", key)), close.rect));
     #[cfg(not(test))]
     let _ = close;
-    if !view.floating {
-        return false;
-    }
-    ui.add_space(12.0);
-    widgets::action_button(
-        ui,
-        p,
-        "trash-filled",
-        aurora_i18n::tr!("toolbar-floating-delete"),
-        widgets::ActionKind::Danger,
-        Vec2::new(ui.available_width(), 32.0),
-    )
-    .clicked()
 }
 
 fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {

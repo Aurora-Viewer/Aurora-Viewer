@@ -333,6 +333,7 @@ pub(crate) fn apply(profile: Profile, settings: &mut crate::settings::Settings) 
     let mut toolbar = profile.toolbar;
     toolbar.migrate_build_icons();
     toolbar.migrate_interfaces();
+    toolbar.keep_interface_choices(settings.toolbar.as_ref());
     settings.toolbar = Some(toolbar);
 }
 

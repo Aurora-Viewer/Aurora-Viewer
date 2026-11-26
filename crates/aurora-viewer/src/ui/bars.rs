@@ -1021,7 +1021,9 @@ fn stand_up_enabled(seated: bool, sit_locked: bool) -> bool {
 /// (without "Advanced" unless `advanced`). An entry carries the icon its
 /// function has in the bottom toolbar and in the world menus.
 fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction, advanced: bool) {
-    if menu::command(ui, p, "toolbar-interface-edit").item("layout-grid-filled", aurora_i18n::tr!("toolbar-interface-edit")) {
+    if menu::command(ui, p, "toolbar-interface-edit")
+        .item(super::toolbar::drawers::CUSTOMIZE_ICON, aurora_i18n::tr!("toolbar-interface-edit"))
+    {
         *action = BarAction::CustomizeBars;
     }
     menu::command(ui, p, "common-me").submenu("user-filled", aurora_i18n::tr!("common-me"), true, |ui| {

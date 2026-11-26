@@ -2458,8 +2458,6 @@ fn floating_blocks_keep_one_place_per_command_and_only_the_users_are_deleted() {
     state.pending = Some(Edit::FloatingShown(id.clone(), false));
     assert!(state.commit(&layout(), &mut settings));
     assert!(settings.drawers[&id].floating.as_ref().is_some_and(|floating| !floating.shown));
-    state.pending = Some(Edit::FloatingDelete(id.clone()));
-    assert!(!state.commit(&layout(), &mut settings));
     settings.locked = false;
 
     // a button taken out goes where it is dropped
@@ -2473,15 +2471,24 @@ fn floating_blocks_keep_one_place_per_command_and_only_the_users_are_deleted() {
             .any(|b| b.command == "import_mesh")
     );
 
-    state.pending = Some(Edit::FloatingDelete(id.clone()));
+    // emptied, it goes as any block (human request, 2026-11-26)
+    state.pending = Some(Edit::Remove("inventory".into()));
     assert!(state.commit(&layout(), &mut settings));
     assert!(!settings.drawers.contains_key(&id));
     assert!(!settings.placed("inventory", &layout()), "its buttons go back to the catalogue");
 
-    // the import block is deleted like the others, and not made again
+    // the import block goes like the others, and is not made again
     // (human request, 2026-11-25)
-    state.pending = Some(Edit::FloatingDelete(drawers::IMPORT_BAR.into()));
-    assert!(state.commit(&layout(), &mut settings));
+    let import: Vec<_> = settings.drawers[drawers::IMPORT_BAR]
+        .buttons
+        .iter()
+        .filter(|button| !structure::is_divider(&button.command))
+        .map(|button| button.command.clone())
+        .collect();
+    for command in import {
+        state.pending = Some(Edit::Remove(command));
+        state.commit(&layout(), &mut settings);
+    }
     assert!(!settings.drawers.contains_key(drawers::IMPORT_BAR));
     assert!(!settings.ensure_import_bar(&layout()));
     assert!(!settings.drawers.contains_key(drawers::IMPORT_BAR));
@@ -2714,6 +2721,73 @@ fn customize_interface_alone_is_no_button_any_more() {
     }
 }
 
+/// The Interfaces block took "Customize interface"'s grid, which takes the
+/// dashboard; a block saved with the former icon takes the new one, an
+/// icon the user chose stays (human request, 2026-11-26).
+#[test]
+fn the_interfaces_block_and_customize_interface_swapped_their_icons() {
+    assert_eq!(drawers::INTERFACES_ICON, "layout-grid-filled");
+    assert_eq!(
+        catalogue::find(drawers::INTERFACES).map(|command| command.icon),
+        Some(drawers::INTERFACES_ICON)
+    );
+    let customize = drawers::interface_buttons(&ToolbarSettings::default(), [])
+        .pop()
+        .expect("Customize interface last");
+    assert_eq!(customize.icon, drawers::CUSTOMIZE_ICON);
+    assert_ne!(drawers::CUSTOMIZE_ICON, drawers::INTERFACES_ICON);
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(Vec::new()),
+        top: vec![crate::ui::bars::top::button(drawers::INTERFACES, "layout-dashboard-filled")],
+        ..Default::default()
+    };
+    settings.drawers.insert(drawers::INTERFACES.into(), Default::default());
+    assert!(settings.migrate_interfaces());
+    assert_eq!(settings.top[0].icon, drawers::INTERFACES_ICON);
+    assert!(!settings.migrate_interfaces(), "once");
+}
+
+/// A floating block emptied goes as any block, its button and its look
+/// with it: it has no Delete of its own (human request, 2026-11-26).
+#[test]
+fn a_floating_block_emptied_goes_as_any_block() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(vec![button("inventory"), button("people")]),
+        top: Vec::new(),
+        ..Default::default()
+    };
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Insert(Bar::Left, button(drawers::FLOATING), 0)),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout(), &mut settings));
+    let id = settings.left[0].command.clone();
+    settings.appearance.insert(
+        id.clone(),
+        appearance::Appearance {
+            mode: None,
+            icon: Some("star-filled".into()),
+        },
+    );
+    for command in ["inventory", "people"] {
+        state.pending = Some(Edit::DrawerInsert(id.clone(), button(command), 0));
+        assert!(state.commit(&layout(), &mut settings));
+    }
+    // a new one, empty, stays until something was in it
+    assert!(drawers::is_floating(&settings, &id));
+    state.pending = Some(Edit::Remove("inventory".into()));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(drawers::is_floating(&settings, &id), "one button left");
+    state.pending = Some(Edit::Insert(Bar::Bottom, button("people"), 0));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(!settings.drawers.contains_key(&id), "emptied, it goes");
+    assert!(settings.left.is_empty(), "its button with it");
+    assert!(!settings.appearance.contains_key(&id));
+    assert_eq!(settings.location("people", &layout()), Some(Bar::Bottom));
+}
+
 /// The import bar takes its buttons once, out of a drawer included (the
 /// human's had them all, 2026-11-25), and a drawer left with gaps only goes;
 /// made again later it takes only those placed nowhere.
@@ -2864,11 +2938,10 @@ fn a_blocks_shortcut_follows_it_through_drawers_and_floating_blocks() {
     state.pending = Some(Edit::Dock(floating.clone(), false));
     assert!(state.commit(&layout(), &mut settings));
     assert_eq!(settings.shortcuts.keys().collect::<Vec<_>>(), ["block:inventory"]);
-    // a floating block deleted takes its shortcut with it
+    // a floating block emptied takes its shortcut with it
     state.pending = Some(Edit::Float(Bar::Top, "inventory".into(), egui::pos2(10.0, 60.0)));
     assert!(state.commit(&layout(), &mut settings));
-    let floating = settings.top[0].command.clone();
-    state.pending = Some(Edit::FloatingDelete(floating));
+    state.pending = Some(Edit::RemoveBlock(vec!["inventory".into(), "people".into()]));
     assert!(state.commit(&layout(), &mut settings));
     assert!(settings.shortcuts.is_empty());
     // the shortcut window's edit, locked bars included

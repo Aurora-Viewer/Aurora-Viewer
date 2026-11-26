@@ -15797,7 +15797,6 @@ toolbar-floating-new = フローティングブロック
 toolbar-floating-orientation = 向き
 toolbar-floating-horizontal = 横
 toolbar-floating-vertical = 縦
-toolbar-floating-delete = このフローティングブロックを削除
 toolbar-floating-empty = ここにボタンをドロップ
 toolbar-shortcut = ショートカット…
 toolbar-shortcut-block = ブロックのショートカット…

@@ -46,7 +46,13 @@ fn customizes(command: &str) -> bool {
     command == EDIT_INTERFACE || command == EDIT_INTERFACE_MENU
 }
 /// The Interfaces block's button.
-pub const INTERFACES_ICON: &str = "layout-dashboard-filled";
+/// The Interfaces block's and "Customize interface"'s icons, swapped at
+/// the human's request (2026-11-26): the block took the grid "Customize
+/// interface" had, which takes the dashboard everywhere it shows.
+pub const INTERFACES_ICON: &str = "layout-grid-filled";
+pub const CUSTOMIZE_ICON: &str = "layout-dashboard-filled";
+/// The Interfaces block's icon before the swap, on a button saved then.
+const FORMER_INTERFACES_ICON: &str = "layout-dashboard-filled";
 /// The catalogue's "Floating block": dropped on the screen, or on a bar with
 /// its button there, a new empty floating block.
 pub const FLOATING: &str = "toolbar_floating";
@@ -178,7 +184,7 @@ pub(super) fn interface_buttons<'a>(
     });
     let customize = ToolButton {
         command: format!("{INTERFACE_PREFIX}{INTERFACE_CUSTOMIZE}"),
-        icon: "layout-grid-filled".into(),
+        icon: CUSTOMIZE_ICON.into(),
         tooltip: aurora_i18n::tr!("toolbar-interface-edit").into(),
     };
     builtin
@@ -198,6 +204,19 @@ pub(super) fn migrate_interfaces(settings: &mut ToolbarSettings) -> bool {
         icon: INTERFACES_ICON.into(),
         tooltip: String::new(),
     };
+    // a block saved with the former icon takes the new one; an icon the
+    // user chose is in its appearance and stays
+    let mut changed = false;
+    let lists = settings
+        .buttons
+        .iter_mut()
+        .chain([&mut settings.left, &mut settings.right, &mut settings.top]);
+    for button in lists.flatten() {
+        if button.command == INTERFACES && button.icon == FORMER_INTERFACES_ICON {
+            button.icon = INTERFACES_ICON.into();
+            changed = true;
+        }
+    }
     let bars = || {
         [&settings.left, &settings.right, &settings.top]
             .into_iter()
@@ -205,7 +224,7 @@ pub(super) fn migrate_interfaces(settings: &mut ToolbarSettings) -> bool {
             .flatten()
     };
     if !bars().any(|button| customizes(&button.command)) {
-        return false;
+        return changed;
     }
     let mut placed = bars().any(|button| button.command == INTERFACES);
     let lists = settings
@@ -241,6 +260,21 @@ pub(super) fn migrate_interfaces(settings: &mut ToolbarSettings) -> bool {
         }
     }
     true
+}
+
+/// The interfaces' eyes and their shortcuts belong to no interface: a
+/// preset, a personal interface or the defaults chosen, `next` keeps those
+/// of `previous` (human request, 2026-11-26).
+pub(super) fn keep_interface_choices(next: &mut ToolbarSettings, previous: &ToolbarSettings) {
+    next.hidden_interfaces = previous.hidden_interfaces.clone();
+    next.shortcuts.retain(|key, _| !key.starts_with(INTERFACE_PREFIX));
+    next.shortcuts.extend(
+        previous
+            .shortcuts
+            .iter()
+            .filter(|(key, _)| key.starts_with(INTERFACE_PREFIX))
+            .map(|(key, binding)| (key.clone(), binding.clone())),
+    );
 }
 
 /// The name of the interface `key` for a shortcut's warnings: a preset's,
@@ -604,24 +638,6 @@ pub(super) fn show_floating(settings: &mut ToolbarSettings, id: &str, shown: boo
     }
 }
 
-/// Deletes a floating block, its button with it; its buttons go back to
-/// the catalogue. The import block too (human request, 2026-11-25).
-pub(super) fn delete_floating(settings: &mut ToolbarSettings, layout: &Layout, id: &str) -> bool {
-    if settings.locked || !is_floating(settings, id) {
-        return false;
-    }
-    settings.drawers.remove(id);
-    settings.appearance.remove(id);
-    for bar in Bar::ALL {
-        let mut buttons = settings.bar(bar, layout).to_vec();
-        if buttons.iter().any(|button| button.command == id) {
-            buttons.retain(|button| button.command != id);
-            settings.set_bar(bar, buttons);
-        }
-    }
-    true
-}
-
 /// The buttons' default display, in the human's order (2026-11-26): icons
 /// only, labels only, then both.
 pub(super) fn default_mode_rows() -> [(ButtonMode, &'static str, &'static str); 3] {
@@ -699,8 +715,7 @@ pub(super) fn remove_emptied(settings: &mut ToolbarSettings, layout: &Layout, pr
         .drawers
         .iter()
         .filter(|(id, drawer)| {
-            drawer.floating.is_none()
-                && previous.get(*id).is_some_and(|count| *count > drawer.buttons.len())
+            previous.get(*id).is_some_and(|count| *count > drawer.buttons.len())
                 && drawer
                     .buttons
                     .iter()
@@ -710,6 +725,7 @@ pub(super) fn remove_emptied(settings: &mut ToolbarSettings, layout: &Layout, pr
         .collect();
     for id in &removed {
         settings.drawers.remove(id);
+        settings.appearance.remove(id);
     }
     for bar in Bar::ALL {
         let mut buttons = settings.bar(bar, layout).to_vec();

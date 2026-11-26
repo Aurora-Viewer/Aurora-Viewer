@@ -15969,7 +15969,6 @@ toolbar-floating-new = Bloc flottant
 toolbar-floating-orientation = Orientation
 toolbar-floating-horizontal = Horizontale
 toolbar-floating-vertical = Verticale
-toolbar-floating-delete = Supprimer ce bloc flottant
 toolbar-floating-empty = Déposez des boutons ici
 toolbar-shortcut = Raccourci…
 toolbar-shortcut-block = Raccourci du bloc…

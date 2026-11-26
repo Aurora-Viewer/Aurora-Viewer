@@ -483,16 +483,24 @@ impl ToolbarSettings {
         true
     }
 
-    /// Build - Edit and Build - Create took the build window's icons
-    /// (2026-11-24): a button saved with the former ones, on any bar or in
-    /// a drawer, takes the new ones; an icon the user chose is in its
-    /// appearance and stays.
     /// "Customize interface" on a bar becomes the Interfaces block
     /// (`drawers::migrate_interfaces`).
     pub fn migrate_interfaces(&mut self) -> bool {
         drawers::migrate_interfaces(self)
     }
 
+    /// The interfaces' eyes and shortcuts stay whatever interface is chosen
+    /// (`drawers::keep_interface_choices`).
+    pub fn keep_interface_choices(&mut self, previous: Option<&ToolbarSettings>) {
+        if let Some(previous) = previous {
+            drawers::keep_interface_choices(self, previous);
+        }
+    }
+
+    /// Build - Edit and Build - Create took the build window's icons
+    /// (2026-11-24): a button saved with the former ones, on any bar or in
+    /// a drawer, takes the new ones; an icon the user chose is in its
+    /// appearance and stays.
     pub fn migrate_build_icons(&mut self) -> bool {
         const FORMER: [(&str, &str); 2] = [("build_edit", "pencil-filled"), ("build_create", "circle-plus-filled")];
         let mut changed = false;
@@ -730,8 +738,6 @@ enum Edit {
     FloatingShown(String, bool),
     /// An interface's eye opened or closed (`drawers::show_interface`).
     InterfaceShown(String, bool),
-    /// A floating block of the user's deleted, its button with it.
-    FloatingDelete(String),
     /// A drawer, or the block of the button, made a floating block there.
     Float(Bar, String, Pos2),
     /// A floating block made a drawer (true) or a block of its bar again.
@@ -1422,7 +1428,6 @@ impl ToolbarUi {
             Edit::BlockOptions(change) => return block_window::apply(settings, layout, change),
             Edit::FloatingShown(id, shown) => return drawers::show_floating(settings, id, *shown),
             Edit::InterfaceShown(key, shown) => return drawers::show_interface(settings, key, *shown),
-            Edit::FloatingDelete(id) => return drawers::delete_floating(settings, layout, id),
             Edit::Shortcut(key, binding) => return shortcuts::set(settings, key, binding.clone()),
             Edit::Float(bar, command, pos) => {
                 let Some(id) = drawers::float(settings, layout, *bar, command) else {
@@ -1715,10 +1720,12 @@ impl ToolbarUi {
                     || !settings.menu_layout.is_empty()
                     || settings.address_visible.is_some()
                     || Bar::ALL.iter().any(|&b| settings.style(b) != BarStyle::default());
-                *settings = ToolbarSettings {
+                let mut restored = ToolbarSettings {
                     locked: settings.locked,
                     ..Default::default()
                 };
+                restored.keep_interface_choices(Some(settings));
+                *settings = restored;
                 return changed;
             }
             _ => {}
@@ -1917,7 +1924,6 @@ impl ToolbarUi {
             | Edit::FloatingNew(..)
             | Edit::FloatingShown(..)
             | Edit::InterfaceShown(..)
-            | Edit::FloatingDelete(..)
             | Edit::Float(..)
             | Edit::Dock(..)
             | Edit::Shortcut(..) => unreachable!(),

@@ -4706,12 +4706,6 @@ fn a_floating_blocks_right_click_edits_it_and_does_not_delete_it() {
             .iter()
             .any(|(text, _)| text == aurora_i18n::tr!("toolbar-block-kind-floating"))
     );
-    assert!(
-        !bench
-            .text
-            .iter()
-            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-floating-delete"))
-    );
     let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-block-edit"));
     bench.pointer(edit, Some(true));
     bench.pointer(edit, Some(false));
@@ -4724,12 +4718,6 @@ fn a_floating_blocks_right_click_edits_it_and_does_not_delete_it() {
             .text
             .iter()
             .any(|(text, _)| text == aurora_i18n::tr!("toolbar-block-edit-title"))
-    );
-    assert!(
-        bench
-            .text
-            .iter()
-            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-floating-delete"))
     );
 }
 
@@ -5118,6 +5106,100 @@ fn an_interfaces_shortcut_applies_it_from_its_right_click_even_closed() {
     bench.settings.hidden_interfaces.clear();
     bench.settings.top.clear();
     assert_eq!(shortcuts::target(&bench.settings, &layout, &binding), None);
+}
+
+/// An interface's name too long for its button beside its eye ends with
+/// "…", the whole name on hover; a short one is kept whole (human request,
+/// 2026-11-26).
+#[test]
+fn a_long_interface_name_ends_with_an_ellipsis_before_its_eye() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let long = "Interface Aurora Builder with a very long name";
+    let mut rects = Vec::new();
+    let output = ctx.run_ui(Default::default(), |ui| {
+        for label in [long, "Mine"] {
+            let response = crate::ui::widgets::action_button_trailing(
+                ui,
+                &p,
+                "file-text-filled",
+                label,
+                crate::ui::widgets::ActionKind::Flat,
+                Vec2::new(190.0, 30.0),
+                editor::EYE_ROOM,
+            );
+            rects.push(response.rect);
+        }
+    });
+    let mut texts = Vec::new();
+    fn gather(shape: &egui::Shape, texts: &mut Vec<(String, Rect, bool)>) {
+        match shape {
+            egui::Shape::Text(shape) => texts.push((shape.galley.text().to_owned(), shape.visual_bounding_rect(), shape.galley.elided)),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| gather(shape, texts)),
+            _ => {}
+        }
+    }
+    for shape in &output.shapes {
+        gather(&shape.shape, &mut texts);
+    }
+    let (_, rect, cut) = texts.iter().find(|(text, ..)| text == long).expect("the long name");
+    assert!(*cut, "cut with its ellipsis");
+    assert!(rect.right() <= rects[0].right() - editor::EYE_ROOM, "{rect:?} clear of the eye");
+    assert!(texts.iter().any(|(text, _, cut)| text == "Mine" && !cut), "a short name whole");
+}
+
+/// The eyes and the interfaces' shortcuts belong to no interface: choosing
+/// a preset, a personal interface or the defaults keeps them (human
+/// request, 2026-11-26).
+#[test]
+fn choosing_an_interface_keeps_the_eyes_and_the_interfaces_shortcuts() {
+    let layout = Layout::default();
+    let binding = crate::keybinds::Binding {
+        input: crate::keybinds::Input::Key("KeyO".into()),
+        ctrl: true,
+        shift: true,
+        alt: false,
+    };
+    let key = format!("{}{}", drawers::INTERFACE_PREFIX, presets::Preset::Build.key());
+    let mark = |toolbar: &mut ToolbarSettings| {
+        toolbar.hidden_interfaces.insert(presets::Preset::Legacy.key().into());
+        toolbar.shortcuts.insert(key.clone(), binding.clone());
+        toolbar.shortcuts.insert("inventory".into(), binding.clone());
+    };
+    for preset in presets::Preset::ALL {
+        let mut settings = crate::settings::Settings::default();
+        let mut toolbar = presets::Preset::Light.layout(&layout);
+        mark(&mut toolbar);
+        settings.toolbar = Some(toolbar);
+        assert!(preset.apply(&mut settings, &layout));
+        let toolbar = settings.toolbar.as_ref().expect("its bars");
+        assert!(toolbar.hidden_interfaces.contains(presets::Preset::Legacy.key()), "{preset:?}");
+        assert_eq!(toolbar.shortcuts.get(&key), Some(&binding), "{preset:?}");
+        assert!(!toolbar.shortcuts.contains_key("inventory"), "a button's goes with its interface");
+    }
+    // a personal interface
+    let mut settings = crate::settings::Settings::default();
+    let mut toolbar = presets::Preset::Light.layout(&layout);
+    mark(&mut toolbar);
+    settings.toolbar = Some(toolbar);
+    let profile = profile::Profile {
+        base: profile::Base::Aurora,
+        toolbar: presets::Preset::Photographer.layout(&layout),
+    };
+    profile::apply(profile, &mut settings);
+    let toolbar = settings.toolbar.as_ref().expect("its bars");
+    assert!(toolbar.hidden_interfaces.contains(presets::Preset::Legacy.key()));
+    assert_eq!(toolbar.shortcuts.get(&key), Some(&binding));
+    // the defaults
+    let mut toolbar = presets::Preset::Light.layout(&layout);
+    mark(&mut toolbar);
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Restore),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout, &mut toolbar));
+    assert!(toolbar.hidden_interfaces.contains(presets::Preset::Legacy.key()));
+    assert_eq!(toolbar.shortcuts.get(&key), Some(&binding));
 }
 
 /// Each preset's button in the editor has an eye, open by default: a click

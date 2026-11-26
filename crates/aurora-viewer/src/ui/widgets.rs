@@ -4255,11 +4255,47 @@ pub fn action_button_keyed(
     enabled: bool,
     key: Option<&crate::keybinds::Binding>,
 ) -> egui::Response {
+    action_button_inner(ui, p, icon, label, kind, size, enabled, key, 0.0)
+}
+
+/// `action_button` of a fixed `size` whose right `trailing` points hold a
+/// control of the caller's (an eye): its content is centred in the rest,
+/// and a label too long for it ends with "…", the whole label on hover.
+pub fn action_button_trailing(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    kind: ActionKind,
+    size: Vec2,
+    trailing: f32,
+) -> egui::Response {
+    action_button_inner(ui, p, icon, label, kind, size, true, None, trailing)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn action_button_inner(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    kind: ActionKind,
+    size: Vec2,
+    enabled: bool,
+    key: Option<&crate::keybinds::Binding>,
+    trailing: f32,
+) -> egui::Response {
     const ICON: f32 = KEYED_ICON;
     const GAP: f32 = KEYED_GAP;
     let enabled = enabled && ui.is_enabled();
     let font = control_font(ui, 12.5);
-    let (lead, text_w, caps_w) = keyed_parts(ui, icon, label, key);
+    let (lead, mut text_w, caps_w) = keyed_parts(ui, icon, label, key);
+    // the room the label has beside the caller's control
+    let room = (trailing > 0.0 && size.x > 0.0).then(|| (size.x - trailing - KEYED_PAD / 2.0 - lead - caps_w).max(0.0));
+    let elided = room.is_some_and(|room| text_w > room);
+    if let Some(room) = room {
+        text_w = text_w.min(room);
+    }
     let icon = if key.is_some() && size.x > 0.0 && lead + text_w + caps_w + 2.0 * GAP > size.x {
         ""
     } else {
@@ -4295,8 +4331,12 @@ pub fn action_button_keyed(
             .rect_stroke(rect, radius, Stroke::new(1.0, edge.gamma_multiply(fade)), egui::StrokeKind::Inside);
     }
     let ink = ink.gamma_multiply(fade);
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
-    let left = rect.center().x - content / 2.0;
+    let galley = if elided {
+        elided_galley(ui, RichText::new(label).font(font).color(ink), text_w)
+    } else {
+        ui.painter().layout_no_wrap(label.to_owned(), font, ink)
+    };
+    let left = rect.center().x - trailing / 2.0 - content / 2.0;
     if let Some(texture) = super::icons::global(icon) {
         ui.painter().image(
             texture.id(),
@@ -4317,6 +4357,9 @@ pub fn action_button_keyed(
     }
     if hot {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if elided {
+        resp = resp.on_hover_text(label);
     }
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     resp

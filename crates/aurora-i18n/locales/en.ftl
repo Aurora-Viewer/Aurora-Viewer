@@ -15960,7 +15960,6 @@ toolbar-floating-new = Floating block
 toolbar-floating-orientation = Orientation
 toolbar-floating-horizontal = Horizontal
 toolbar-floating-vertical = Vertical
-toolbar-floating-delete = Delete this floating block
 toolbar-floating-empty = Drop buttons here
 toolbar-shortcut = Shortcut…
 toolbar-shortcut-block = Block shortcut…

@@ -164,7 +164,9 @@ impl Preset {
                 crate::ui::options::Look::Aurora
             },
         );
-        settings.toolbar = Some(self.layout(skin));
+        let mut toolbar = self.layout(skin);
+        toolbar.keep_interface_choices(settings.toolbar.as_ref());
+        settings.toolbar = Some(toolbar);
         settings.toolbar_selection = Some(super::selection::Selection::builtin(self, skin));
         settings.show_bug_report = true;
         settings.chat_thumbnails = crate::settings::ChatThumbnails::TopRight;

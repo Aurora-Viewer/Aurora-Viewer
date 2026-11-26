@@ -264,7 +264,7 @@ impl ToolbarUi {
                         ui.horizontal_wrapped(|ui| {
                             for preset in super::presets::Preset::ALL {
                                 let active = source == Some(super::selection::Source::Builtin(preset));
-                                let response = widgets::action_button(
+                                let response = widgets::action_button_trailing(
                                     ui,
                                     p,
                                     preset.icon(),
@@ -275,6 +275,7 @@ impl ToolbarUi {
                                         widgets::ActionKind::Flat
                                     },
                                     Vec2::new(190.0, 30.0),
+                                    EYE_ROOM,
                                 );
                                 if response.clicked() {
                                     self.preset_request = Some(preset);
@@ -791,12 +792,10 @@ fn ghost_block(ctx: &egui::Context, p: &Palette, drag: &Drag, pointer: egui::Pos
         removal_outline(ctx, p, &shown.response);
     }
 }
-/// The settings of a demo run (`AURORA_DEMO_TOOLBAR`): `custom` is the
-/// mockup's "custom" state (Environments, Radar and Teleport history in the
-/// left bar, Performance out of the dock); `side` the same bars without the
-/// window (`sidemenu`: Radar's right click at frame 650); `right` them in
-/// the right bar; `labels` adds the dock's icons and labels and the left
-/// bar's labels. Never saved.
+
+/// The room an interface's button keeps for its eye (`interface_eye`).
+pub(super) const EYE_ROOM: f32 = 30.0;
+
 /// The eye at the right end of an interface's button in the editor (human
 /// request, 2026-11-26): open, the Interfaces block shows the interface
 /// `key`; a click gives its new state. On the active interface's violet
@@ -831,6 +830,12 @@ pub(super) fn interface_eye(ui: &mut egui::Ui, p: &Palette, button: Rect, key: &
     response.clicked().then_some(!shown)
 }
 
+/// The settings of a demo run (`AURORA_DEMO_TOOLBAR`): `custom` is the
+/// mockup's "custom" state (Environments, Radar and Teleport history in the
+/// left bar, Performance out of the dock); `side` the same bars without the
+/// window (`sidemenu`: Radar's right click at frame 650); `right` them in
+/// the right bar; `labels` adds the dock's icons and labels and the left
+/// bar's labels. Never saved.
 pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
     let Some(mode) = demo_mode() else { return };
     if mode.starts_with("notecard-") {
